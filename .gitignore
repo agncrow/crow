@@ -19,3 +19,8 @@ Cargo.lock
 # OS
 .DS_Store
 Thumbs.db
+
+
+# Added by cargo
+
+/target

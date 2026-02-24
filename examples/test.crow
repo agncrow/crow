@@ -1,0 +1,147 @@
+--- Test: variables and string interpolation ---
+name = 'crow'
+version = 1
+log['language: {name} v{version}']
+
+--- Test: arithmetic ---
+a = 10
+b = 3
+log['add: {a + b}']
+log['sub: {a - b}']
+log['mul: {a * b}']
+log['div: {a / b}']
+log['mod: {a % b}']
+
+--- Test: float arithmetic ---
+pi = 3.14
+r = 2.0
+area = pi * r * r
+log['area: {area}']
+
+--- Test: comparisons ---
+x = 5
+log['5 eq 5: {x eq 5}']
+log['5 ne 3: {x ne 3}']
+log['5 gt 3: {x gt 3}']
+log['5 lt 10: {x lt 10}']
+log['5 gte 5: {x gte 5}']
+log['5 lte 5: {x lte 5}']
+
+--- Test: boolean logic ---
+log['true and true: {true and true}']
+log['true or false: {true or false}']
+log['not false: {not false}']
+
+--- Test: functions ---
+fn add[a, b]
+    return a + b
+
+fn greet[who]
+    return 'hello, {who}'
+
+log['add: {add[2, 3]}']
+w = 'world'
+log['greet: {greet[w]}']
+
+--- Test: function without return ---
+fn say_hi[]
+    log['hi there']
+
+say_hi[]
+
+--- Test: if/else ---
+score = 85
+if score gte 90
+    log['grade: A']
+else
+    if score gte 80
+        log['grade: B']
+    else
+        log['grade: C']
+
+--- Test: for loop ---
+log['counting:']
+for i in [1, 2, 3, 4, 5]
+    log['  {i}']
+
+--- Test: for as expression ---
+squares = for x in [1, 2, 3, 4]
+    x * x
+log['squares: {squares}']
+
+--- Test: for with condition ---
+evens = for x in [1, 2, 3, 4, 5, 6]
+    if x % 2 eq 0
+        x
+log['evens: {evens}']
+
+--- Test: while loop ---
+count = 0
+while count lt 5
+    count = count + 1
+log['while result: {count}']
+
+--- Test: match ---
+val = 3
+match val
+    1
+        log['one']
+    2
+        log['two']
+    3
+        log['three']
+    _
+        log['other']
+
+--- Test: lists ---
+nums = [10, 20, 30]
+log['list: {nums}']
+
+--- Test: maps ---
+config = ['host' = 'localhost', 'port' = 8080]
+log['config: {config}']
+
+--- Test: empty map ---
+empty = map[]
+log['empty map: {empty}']
+
+--- Test: structs ---
+struct Point[x, y]
+
+p = Point[3, 4]
+log['point: {p}']
+log['point.x: {p.x}']
+log['point.y: {p.y}']
+
+--- Test: error handling ---
+fn safe_divide[a, b]
+    if b eq 0
+        return a / b
+    return a / b
+
+result = safe_divide[10, 2]
+log['safe divide: {result}']
+log['status: {result.status}']
+
+--- Test: variable reassignment ---
+counter = 0
+counter = counter + 1
+counter = counter + 1
+counter = counter + 1
+log['counter: {counter}']
+
+--- Test: negative numbers ---
+neg = -42
+log['negative: {neg}']
+
+--- Test: nested function calls ---
+fn double[n]
+    return n * 2
+
+fn triple[n]
+    return n * 3
+
+log['double of triple: {double[triple[4]]}']
+
+log['all tests complete']
+
