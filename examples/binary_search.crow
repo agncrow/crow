@@ -1,0 +1,37 @@
+--- binary search ---
+
+fn binary_search[list, target]
+    low = 0
+    high = list.length - 1
+
+    while low lte high
+        mid = (low + high) / 2
+        if list[mid] eq target
+            return mid
+        else
+            if list[mid] lt target
+                low = mid + 1
+            else
+                high = mid - 1
+
+    return -1
+
+--- test it ---
+nums = [1, 3, 5, 7, 9, 11, 13, 15]
+
+result = binary_search[nums, 7]
+log['found 7 at index: {result}']
+
+result2 = binary_search[nums, 10]
+log['search for 10: {result2}']
+
+result3 = binary_search[nums, 1]
+log['found 1 at index: {result3}']
+
+result4 = binary_search[nums, 15]
+log['found 15 at index: {result4}']
+
+log['list length: {nums.length}']
+log['first element: {nums[0]}']
+log['last element: {nums[7]}']
+
