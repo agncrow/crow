@@ -1,0 +1,42 @@
+--- test auto-parallelism for independent statements ---
+
+--- count primes up to n using trial division ---
+fn count_primes[n]
+    count = 0
+    i = 2
+    while i lte n
+        is_prime = true
+        j = 2
+        while j * j lte i
+            if i % j eq 0
+                is_prime = false
+            j = j + 1
+        if is_prime
+            count = count + 1
+        i = i + 1
+    return count
+
+--- these 4 assignments are independent ---
+--- the runtime detects this and runs them in parallel ---
+a = count_primes[15000]
+b = count_primes[12000]
+c = count_primes[18000]
+d = count_primes[10000]
+
+--- this depends on a and b, so it waits for them ---
+sum_ab = a + b
+
+--- this depends on c and d ---
+sum_cd = c + d
+
+--- this depends on both sums ---
+total = sum_ab + sum_cd
+
+log['a (primes to 15000): {a}']
+log['b (primes to 12000): {b}']
+log['c (primes to 18000): {c}']
+log['d (primes to 10000): {d}']
+log['a + b: {sum_ab}']
+log['c + d: {sum_cd}']
+log['total: {total}']
+

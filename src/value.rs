@@ -1,44 +1,73 @@
 use std::collections::BTreeMap;
 use std::fmt;
+use std::rc::Rc;
+
+/// Status of a CrowValue — avoids heap-allocating a String for every value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    Ok,
+    Done,
+    Error,
+}
+
+impl fmt::Display for Status {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Status::Ok => write!(f, "ok"),
+            Status::Done => write!(f, "done"),
+            Status::Error => write!(f, "error"),
+        }
+    }
+}
 
 /// Every value in Crow is a struct with status, result, reason.
 /// Values auto-unwrap — you use them directly.
 #[derive(Debug, Clone)]
 pub struct CrowValue {
-    pub status: String,   // "ok", "done", or "error"
+    pub status: Status,
     pub result: Value,    // the actual value
-    pub reason: String,   // error message (empty if not error)
+    pub reason: Option<String>,   // error message (None if not error)
 }
 
 impl CrowValue {
     pub fn ok(value: Value) -> Self {
         CrowValue {
-            status: "ok".to_string(),
+            status: Status::Ok,
             result: value,
-            reason: String::new(),
+            reason: None,
         }
     }
 
     pub fn done() -> Self {
         CrowValue {
-            status: "done".to_string(),
+            status: Status::Done,
             result: Value::Done,
-            reason: String::new(),
+            reason: None,
         }
     }
 
     pub fn error(reason: &str) -> Self {
         CrowValue {
-            status: "error".to_string(),
+            status: Status::Error,
             result: Value::Done,
-            reason: reason.to_string(),
+            reason: Some(reason.to_string()),
         }
+    }
+
+    #[inline(always)]
+    pub fn is_error(&self) -> bool {
+        self.status == Status::Error
+    }
+
+    #[inline(always)]
+    pub fn is_ok(&self) -> bool {
+        self.status == Status::Ok
     }
 
     /// Auto-unwrap: get the inner value, propagating errors
     pub fn unwrap_or_propagate(&self) -> Result<&Value, String> {
-        if self.status == "error" {
-            Err(self.reason.clone())
+        if self.status == Status::Error {
+            Err(self.reason.as_deref().unwrap_or("unknown error").to_string())
         } else {
             Ok(&self.result)
         }
@@ -57,6 +86,7 @@ pub enum Value {
     Fn(FnValue),
     StructDef(StructDef),
     StructInstance(StructInstance),
+    Module(ModuleValue),
     Done, // represents no value (from 'done' status)
 }
 
@@ -64,7 +94,7 @@ pub enum Value {
 pub struct FnValue {
     pub name: String,
     pub params: Vec<String>,
-    pub body: Vec<crate::ast::Stmt>,
+    pub body: Rc<Vec<crate::ast::Stmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +107,12 @@ pub struct StructDef {
 pub struct StructInstance {
     pub name: String,
     pub fields: BTreeMap<String, CrowValue>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModuleValue {
+    pub name: String,
+    pub bindings: BTreeMap<String, CrowValue>,
 }
 
 impl Value {
@@ -130,6 +166,7 @@ impl fmt::Display for Value {
                 }
                 write!(f, "]")
             }
+            Value::Module(m) => write!(f, "<module {}>", m.name),
             Value::Done => write!(f, "done"),
         }
     }

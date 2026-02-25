@@ -1,27 +1,58 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::PathBuf;
+use std::rc::Rc;
+
+use rayon::prelude::*;
 
 use crate::ast::*;
+use crate::lexer::Lexer;
+use crate::parser::Parser;
 use crate::value::*;
 
 /// Environment: a stack of scopes for variable lookup
 #[derive(Debug, Clone)]
 struct Env {
-    scopes: Vec<BTreeMap<String, CrowValue>>,
+    scopes: Vec<HashMap<String, CrowValue>>,
+    /// Saved scope stacks for function call isolation.
+    /// When a function is called, non-global scopes are saved here
+    /// so the function can only see globals + its own scope.
+    saved_stacks: Vec<Vec<HashMap<String, CrowValue>>>,
 }
 
 impl Env {
     fn new() -> Self {
         Env {
-            scopes: vec![BTreeMap::new()],
+            scopes: vec![HashMap::new()],
+            saved_stacks: Vec::new(),
         }
     }
 
     fn push_scope(&mut self) {
-        self.scopes.push(BTreeMap::new());
+        self.scopes.push(HashMap::new());
     }
 
     fn pop_scope(&mut self) {
         self.scopes.pop();
+    }
+
+    /// Push an isolated function scope.
+    /// Saves all non-global scopes and creates a fresh scope for the function.
+    /// This prevents function-local variables from clobbering caller variables.
+    fn push_call_scope(&mut self) {
+        let saved: Vec<HashMap<String, CrowValue>> = self.scopes.drain(1..).collect();
+        self.saved_stacks.push(saved);
+        // Now scopes = [global] only; push a fresh function scope
+        self.scopes.push(HashMap::new());
+    }
+
+    /// Pop an isolated function scope and restore the caller's scopes.
+    fn pop_call_scope(&mut self) {
+        // Pop the function scope
+        self.scopes.pop();
+        // Restore saved non-global scopes
+        if let Some(saved) = self.saved_stacks.pop() {
+            self.scopes.extend(saved);
+        }
     }
 
     fn set(&mut self, name: &str, value: CrowValue) {
@@ -43,7 +74,11 @@ impl Env {
 
     fn update(&mut self, name: &str, value: CrowValue) -> bool {
         // update in the scope where the variable exists
-        for scope in self.scopes.iter_mut().rev() {
+        // When inside a function call (saved_stacks non-empty), don't
+        // cross into the global scope (index 0) — this prevents
+        // function-local assignments from clobbering global variables.
+        let stop_at = if self.saved_stacks.is_empty() { 0 } else { 1 };
+        for scope in self.scopes[stop_at..].iter_mut().rev() {
             if scope.contains_key(name) {
                 scope.insert(name.to_string(), value);
                 return true;
@@ -60,29 +95,341 @@ enum Signal {
     Value(CrowValue), // expression result (for collecting in for loops)
 }
 
+/// Extract variable names read by string interpolation patterns {expr}
+fn str_interpolation_reads(s: &str) -> HashSet<String> {
+    let mut reads = HashSet::new();
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '{' {
+            let start = i + 1;
+            let mut depth = 1;
+            i += 1;
+            while i < chars.len() && depth > 0 {
+                if chars[i] == '{' { depth += 1; }
+                else if chars[i] == '}' { depth -= 1; }
+                if depth > 0 { i += 1; }
+            }
+            let expr_str: String = chars[start..i].iter().collect();
+            i += 1;
+            // parse the interpolation expression and extract reads
+            if let Ok(tokens) = crate::lexer::Lexer::new(&expr_str).tokenize() {
+                if let Ok(stmts) = crate::parser::Parser::new(tokens).parse() {
+                    if let Some(Stmt::ExprStmt(expr)) = stmts.first() {
+                        reads.extend(expr_reads(expr));
+                    }
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    reads
+}
+
+/// Extract all variable names read by an expression
+fn expr_reads(expr: &Expr) -> HashSet<String> {
+    let mut reads = HashSet::new();
+    match expr {
+        Expr::Ident(name) => { reads.insert(name.clone()); }
+        Expr::Int(_) | Expr::Float(_) | Expr::Bool(_) => {}
+        Expr::Str(s) => { reads.extend(str_interpolation_reads(s)); }
+        Expr::BinOp { left, right, .. } => {
+            reads.extend(expr_reads(left));
+            reads.extend(expr_reads(right));
+        }
+        Expr::UnaryOp { expr: e, .. } => { reads.extend(expr_reads(e)); }
+        Expr::Call { callee, args } => {
+            reads.extend(expr_reads(callee));
+            for a in args { reads.extend(expr_reads(a)); }
+        }
+        Expr::FieldAccess { object, .. } => { reads.extend(expr_reads(object)); }
+        Expr::List(items) => {
+            for item in items { reads.extend(expr_reads(item)); }
+        }
+        Expr::Map(entries) => {
+            for (k, v) in entries {
+                reads.extend(expr_reads(k));
+                reads.extend(expr_reads(v));
+            }
+        }
+        Expr::ForExpr { iter, body, .. } => {
+            reads.extend(expr_reads(iter));
+            for s in body { reads.extend(stmt_reads(s)); }
+        }
+    }
+    reads
+}
+
+/// Extract variables read by a statement
+fn stmt_reads(stmt: &Stmt) -> HashSet<String> {
+    match stmt {
+        Stmt::Assign { value, .. } => expr_reads(value),
+        Stmt::MultiAssign { values, .. } => {
+            let mut reads = HashSet::new();
+            for v in values { reads.extend(expr_reads(v)); }
+            reads
+        }
+        Stmt::ExprStmt(expr) => expr_reads(expr),
+        Stmt::Return(Some(expr)) => expr_reads(expr),
+        _ => HashSet::new(),
+    }
+}
+
+/// Extract variables written by a statement
+fn stmt_writes(stmt: &Stmt) -> HashSet<String> {
+    let mut writes = HashSet::new();
+    match stmt {
+        Stmt::Assign { name, .. } => { writes.insert(name.clone()); }
+        Stmt::MultiAssign { names, .. } => {
+            for n in names { writes.insert(n.clone()); }
+        }
+        Stmt::FnDecl { name, .. } => { writes.insert(name.clone()); }
+        Stmt::StructDecl { name, .. } => { writes.insert(name.clone()); }
+        _ => {}
+    }
+    writes
+}
+
+/// Check if a statement is a "barrier" that must execute alone and sequentially
+fn is_barrier(stmt: &Stmt) -> bool {
+    matches!(stmt,
+        Stmt::If { .. } | Stmt::For { .. } | Stmt::While { .. } |
+        Stmt::Match { .. } | Stmt::Return(_) | Stmt::Use { .. } |
+        Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::Resource { .. } |
+        Stmt::ExprStmt(_)
+    )
+}
+
+/// Group statements into waves of independent work.
+/// Each wave contains statements that can safely run in parallel.
+fn group_into_waves(stmts: &[Stmt]) -> Vec<Vec<usize>> {
+    let mut waves: Vec<Vec<usize>> = vec![];
+    let mut current_wave: Vec<usize> = vec![];
+    let mut wave_reads: HashSet<String> = HashSet::new();
+    let mut wave_writes: HashSet<String> = HashSet::new();
+
+    for (i, stmt) in stmts.iter().enumerate() {
+        if is_barrier(stmt) {
+            // flush current wave, then add barrier as its own wave
+            if !current_wave.is_empty() {
+                waves.push(current_wave);
+                current_wave = vec![];
+            }
+            waves.push(vec![i]);
+            wave_reads = HashSet::new();
+            wave_writes = HashSet::new();
+            continue;
+        }
+
+        let reads = stmt_reads(stmt);
+        let writes = stmt_writes(stmt);
+
+        // Check for dependencies with current wave:
+        // RAW: this reads something the wave writes
+        let raw = !reads.is_disjoint(&wave_writes);
+        // WAW: this writes something the wave writes
+        let waw = !writes.is_disjoint(&wave_writes);
+        // WAR: this writes something the wave reads
+        let war = !writes.is_disjoint(&wave_reads);
+
+        if raw || waw || war {
+            // flush current wave, start new one with this statement
+            if !current_wave.is_empty() {
+                waves.push(current_wave);
+            }
+            current_wave = vec![i];
+            wave_reads = reads;
+            wave_writes = writes;
+        } else {
+            current_wave.push(i);
+            wave_reads.extend(reads);
+            wave_writes.extend(writes);
+        }
+    }
+
+    if !current_wave.is_empty() {
+        waves.push(current_wave);
+    }
+
+    waves
+}
+
+#[derive(Clone)]
 pub struct Interpreter {
     env: Env,
+    cpu_count: Option<usize>,
+    gpu_count: Option<usize>,
+    source_dir: PathBuf,
+    module_paths: Vec<PathBuf>,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
-        Interpreter { env: Env::new() }
+        Interpreter {
+            env: Env::new(),
+            cpu_count: None,
+            gpu_count: None,
+            source_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            module_paths: vec![],
+        }
+    }
+
+    pub fn set_source_dir(&mut self, dir: PathBuf) {
+        self.source_dir = dir;
+    }
+
+    pub fn add_module_path(&mut self, dir: PathBuf) {
+        self.module_paths.push(dir);
+    }
+
+    pub fn set_cpu_count(&mut self, n: usize) {
+        self.cpu_count = Some(n);
+    }
+
+    pub fn set_gpu_count(&mut self, n: usize) {
+        self.gpu_count = Some(n);
     }
 
     pub fn get_var(&self, name: &str) -> Option<CrowValue> {
         self.env.get(name).cloned()
     }
 
+    /// Get all variables from the top-level scope (for module exports)
+    pub fn get_all_vars(&self) -> BTreeMap<String, CrowValue> {
+        if let Some(scope) = self.env.scopes.first() {
+            scope.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        } else {
+            BTreeMap::new()
+        }
+    }
+
     pub fn run(&mut self, stmts: &[Stmt]) -> Result<CrowValue, String> {
+        let waves = group_into_waves(stmts);
         let mut result = CrowValue::done();
-        for stmt in stmts {
-            match self.exec_stmt(stmt)? {
-                Signal::Return(val) => return Ok(val),
-                Signal::Value(val) => result = val,
-                Signal::None => {}
+
+        for wave in &waves {
+            if wave.len() == 1 {
+                // single statement - execute sequentially (no overhead)
+                match self.exec_stmt(&stmts[wave[0]])? {
+                    Signal::Return(val) => return Ok(val),
+                    Signal::Value(val) => result = val,
+                    Signal::None => {}
+                }
+            } else {
+                // multiple independent statements - execute in parallel
+                let pairs: Vec<(usize, &Stmt)> = wave.iter().map(|&i| (i, &stmts[i])).collect();
+
+                let run_parallel = |pairs: &[(usize, &Stmt)]| -> Result<Vec<(usize, Signal, Vec<(String, CrowValue)>)>, String> {
+                    pairs.par_iter().map(|&(idx, stmt)| {
+                        let mut interp = self.clone();
+                        let signal = interp.exec_stmt(stmt)?;
+                        // collect written variables
+                        let writes = stmt_writes(stmt);
+                        let mut written_vars = vec![];
+                        for var_name in &writes {
+                            if let Some(val) = interp.env.get(var_name) {
+                                written_vars.push((var_name.clone(), val.clone()));
+                            }
+                        }
+                        Ok((idx, signal, written_vars))
+                    }).collect()
+                };
+
+                let results = if let Some(n) = self.cpu_count {
+                    let pool = rayon::ThreadPoolBuilder::new()
+                        .num_threads(n)
+                        .build()
+                        .map_err(|e| format!("failed to create thread pool: {}", e))?;
+                    pool.install(|| run_parallel(&pairs))?
+                } else {
+                    run_parallel(&pairs)?
+                };
+
+                // merge results back in statement order
+                for (_idx, signal, written_vars) in results {
+                    // merge written variables back into main environment
+                    for (name, val) in written_vars {
+                        if !self.env.update(&name, val.clone()) {
+                            self.env.set(&name, val);
+                        }
+                    }
+                    match signal {
+                        Signal::Return(val) => return Ok(val),
+                        Signal::Value(val) => result = val,
+                        Signal::None => {}
+                    }
+                }
             }
         }
+
         Ok(result)
+    }
+
+    fn resolve_module_file(&self, module_path: &str) -> Result<PathBuf, String> {
+        // 1. try relative to source_dir: <source_dir>/<module_path>.crow
+        let rel_path = self.source_dir.join(format!("{}.crow", module_path));
+        if rel_path.exists() {
+            return Ok(rel_path);
+        }
+
+        // 2. search module_paths (e.g. crow_modules/)
+        for base in &self.module_paths {
+            // try <base>/<module_path>.crow
+            let p = base.join(format!("{}.crow", module_path));
+            if p.exists() {
+                return Ok(p);
+            }
+            // try <base>/<module_path>/main.crow (package with main entry)
+            let p = base.join(module_path).join("main.crow");
+            if p.exists() {
+                return Ok(p);
+            }
+        }
+
+        Err(format!("cannot find module '{}'", module_path))
+    }
+
+    fn load_module(&mut self, module_path: &str) -> Result<(), String> {
+        let file_path = self.resolve_module_file(module_path)?;
+
+        let source = std::fs::read_to_string(&file_path)
+            .map_err(|e| format!("cannot load module '{}': {}", module_path, e))?;
+
+        // lex and parse
+        let mut lexer = Lexer::new(&source);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse()?;
+
+        // run in a fresh interpreter with the module's directory as source_dir
+        let mut module_interp = Interpreter::new();
+        let module_dir = file_path.parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        module_interp.set_source_dir(module_dir);
+        // pass module_paths so deps can find their own deps
+        module_interp.module_paths = self.module_paths.clone();
+        module_interp.run(&stmts)?;
+
+        // extract the module name (last component of path)
+        let module_name = module_path
+            .rsplit('/')
+            .next()
+            .unwrap_or(module_path)
+            .to_string();
+
+        // collect all bindings from the module
+        let bindings = module_interp.get_all_vars();
+
+        // store as a module value
+        let module_val = CrowValue::ok(Value::Module(ModuleValue {
+            name: module_name.clone(),
+            bindings,
+        }));
+        self.env.set(&module_name, module_val);
+
+        Ok(())
     }
 
     fn exec_stmt(&mut self, stmt: &Stmt) -> Result<Signal, String> {
@@ -110,7 +457,7 @@ impl Interpreter {
                 let func = CrowValue::ok(Value::Fn(FnValue {
                     name: name.clone(),
                     params: params.clone(),
-                    body: body.clone(),
+                    body: Rc::new(body.clone()),
                 }));
                 self.env.set(name, func);
                 Ok(Signal::None)
@@ -147,8 +494,8 @@ impl Interpreter {
                 self.env.set(name, sd);
                 Ok(Signal::None)
             }
-            Stmt::Use { .. } => {
-                // modules not yet implemented
+            Stmt::Use { path } => {
+                self.load_module(path)?;
                 Ok(Signal::None)
             }
             Stmt::Resource { .. } => {
@@ -208,32 +555,48 @@ impl Interpreter {
         body: &[Stmt],
     ) -> Result<Vec<CrowValue>, String> {
         let iter_val = self.eval_expr(iter_expr)?;
-        let items = match iter_val.unwrap_or_propagate()? {
+        if iter_val.is_error() {
+            return Ok(vec![iter_val]);
+        }
+        let items = match &iter_val.result {
             Value::List(items) => items.clone(),
             _ => return Err("for loop requires a list".to_string()),
         };
 
-        let mut results = Vec::new();
-        for item in &items {
-            self.env.push_scope();
-            self.env.set(var, item.clone());
-            let mut last_val = CrowValue::done();
-            for stmt in body {
-                match self.exec_stmt(stmt)? {
-                    Signal::Return(_) => {
-                        self.env.pop_scope();
-                        return Err(
-                            "cannot return from inside a for loop".to_string()
-                        );
+        let run_parallel = |items: &[CrowValue], interp: &Self, var: &str, body: &[Stmt]| -> Result<Vec<CrowValue>, String> {
+            items
+                .par_iter()
+                .map(|item| {
+                    let mut local = interp.clone();
+                    local.env.push_scope();
+                    local.env.set(var, item.clone());
+                    let mut last_val = CrowValue::done();
+                    for stmt in body {
+                        match local.exec_stmt(stmt)? {
+                            Signal::Return(_) => {
+                                return Err(
+                                    "cannot return from inside a for loop".to_string()
+                                );
+                            }
+                            Signal::Value(val) => last_val = val,
+                            Signal::None => {}
+                        }
                     }
-                    Signal::Value(val) => last_val = val,
-                    Signal::None => {}
-                }
+                    Ok(last_val)
+                })
+                .collect()
+        };
+
+        match self.cpu_count {
+            Some(n) => {
+                let pool = rayon::ThreadPoolBuilder::new()
+                    .num_threads(n)
+                    .build()
+                    .map_err(|e| format!("failed to create thread pool: {}", e))?;
+                pool.install(|| run_parallel(&items, self, var, body))
             }
-            results.push(last_val);
-            self.env.pop_scope();
+            None => run_parallel(&items, self, var, body),
         }
-        Ok(results)
     }
 
     fn exec_while(
@@ -315,7 +678,7 @@ impl Interpreter {
     }
 
     fn is_truthy(&self, val: &CrowValue) -> bool {
-        if val.status == "error" {
+        if val.is_error() {
             return false;
         }
         match &val.result {
@@ -398,7 +761,7 @@ impl Interpreter {
                 // filter out 'done' results (from iterations that didn't produce a value)
                 let filtered: Vec<CrowValue> = results
                     .into_iter()
-                    .filter(|v| v.status == "ok")
+                    .filter(|v| v.is_ok())
                     .collect();
                 Ok(CrowValue::ok(Value::List(filtered)))
             }
@@ -422,12 +785,18 @@ impl Interpreter {
         }
 
         let callee_val = self.eval_expr(callee)?;
+
+        // soft error propagation: if callee is an error, propagate it
+        if callee_val.is_error() {
+            return Ok(callee_val);
+        }
+
         let arg_vals: Vec<CrowValue> = args
             .iter()
             .map(|a| self.eval_expr(a))
             .collect::<Result<_, _>>()?;
 
-        match callee_val.unwrap_or_propagate()? {
+        match &callee_val.result {
             Value::Fn(func) => {
                 let func = func.clone();
                 if func.params.len() != arg_vals.len() {
@@ -438,7 +807,9 @@ impl Interpreter {
                         arg_vals.len()
                     ));
                 }
-                self.env.push_scope();
+                // Use isolated call scope so function locals don't
+                // clobber caller variables with the same name.
+                self.env.push_call_scope();
                 for (param, val) in func.params.iter().zip(arg_vals) {
                     self.env.set(param, val);
                 }
@@ -446,13 +817,13 @@ impl Interpreter {
                 for stmt in &func.body {
                     match self.exec_stmt(stmt)? {
                         Signal::Return(val) => {
-                            self.env.pop_scope();
+                            self.env.pop_call_scope();
                             return Ok(val);
                         }
                         Signal::Value(_) | Signal::None => {}
                     }
                 }
-                self.env.pop_scope();
+                self.env.pop_call_scope();
                 Ok(result)
             }
             Value::StructDef(sd) => {
@@ -495,6 +866,21 @@ impl Interpreter {
                     _ => Err("list index must be an integer".to_string()),
                 }
             }
+            Value::Map(map) => {
+                // map['key'] - access
+                if arg_vals.len() != 1 {
+                    return Err("map access requires exactly one argument".to_string());
+                }
+                let key_val = arg_vals[0].unwrap_or_propagate()?;
+                let key_str = match key_val {
+                    Value::Str(s) => s.clone(),
+                    other => format!("{}", other),
+                };
+                match map.get(&key_str) {
+                    Some(val) => Ok(val.clone()),
+                    None => Err(format!("key '{}' not found in map", key_str)),
+                }
+            }
             _ => {
                 // check if callee is an ident for builtins
                 if let Expr::Ident(name) = callee {
@@ -506,11 +892,11 @@ impl Interpreter {
     }
 
     fn is_builtin(&self, name: &str) -> bool {
-        matches!(name, "log" | "map")
+        matches!(name, "log" | "map" | "cpu" | "gpu")
     }
 
     fn call_builtin(
-        &self,
+        &mut self,
         name: &str,
         args: &[CrowValue],
     ) -> Result<CrowValue, String> {
@@ -520,7 +906,11 @@ impl Interpreter {
                     if i > 0 {
                         print!(" ");
                     }
-                    print!("{}", arg.result);
+                    if arg.is_error() {
+                        print!("error: {}", arg.reason.as_deref().unwrap_or("unknown"));
+                    } else {
+                        print!("{}", arg.result);
+                    }
                 }
                 println!();
                 Ok(CrowValue::done())
@@ -533,6 +923,36 @@ impl Interpreter {
                     Err("map[] takes no arguments".to_string())
                 }
             }
+            "cpu" => {
+                if args.len() != 1 {
+                    return Err("cpu[] takes exactly 1 argument".to_string());
+                }
+                match args[0].unwrap_or_propagate()? {
+                    Value::Int(n) => {
+                        if *n < 1 {
+                            return Err("cpu[] requires a positive integer".to_string());
+                        }
+                        self.cpu_count = Some(*n as usize);
+                        Ok(CrowValue::done())
+                    }
+                    _ => Err("cpu[] requires an integer argument".to_string()),
+                }
+            }
+            "gpu" => {
+                if args.len() != 1 {
+                    return Err("gpu[] takes exactly 1 argument".to_string());
+                }
+                match args[0].unwrap_or_propagate()? {
+                    Value::Int(n) => {
+                        if *n < 1 {
+                            return Err("gpu[] requires a positive integer".to_string());
+                        }
+                        self.gpu_count = Some(*n as usize);
+                        Ok(CrowValue::done())
+                    }
+                    _ => Err("gpu[] requires an integer argument".to_string()),
+                }
+            }
             _ => Err(format!("undefined function '{}'", name)),
         }
     }
@@ -543,8 +963,16 @@ impl Interpreter {
         op: &BinOp,
         right: &CrowValue,
     ) -> Result<CrowValue, String> {
-        let l = left.unwrap_or_propagate()?;
-        let r = right.unwrap_or_propagate()?;
+        // soft error propagation: if either operand is an error, propagate it
+        if left.is_error() {
+            return Ok(left.clone());
+        }
+        if right.is_error() {
+            return Ok(right.clone());
+        }
+
+        let l = &left.result;
+        let r = &right.result;
 
         match op {
             BinOp::Add => match (l, r) {
@@ -634,7 +1062,12 @@ impl Interpreter {
         op: &UnaryOp,
         val: &CrowValue,
     ) -> Result<CrowValue, String> {
-        let v = val.unwrap_or_propagate()?;
+        // soft error propagation
+        if val.is_error() {
+            return Ok(val.clone());
+        }
+
+        let v = &val.result;
         match op {
             UnaryOp::Neg => match v {
                 Value::Int(n) => Ok(CrowValue::ok(Value::Int(-n))),
@@ -654,18 +1087,25 @@ impl Interpreter {
     ) -> Result<CrowValue, String> {
         let obj = self.eval_expr(object)?;
 
-        // special fields: .status, .result, .reason
+        // special fields: .status, .result, .reason — always work, even on errors
         match field {
             "status" => {
-                return Ok(CrowValue::ok(Value::Str(obj.status.clone())));
+                return Ok(CrowValue::ok(Value::Str(obj.status.to_string())));
             }
             "result" => {
                 return Ok(CrowValue::ok(obj.result.clone()));
             }
             "reason" => {
-                return Ok(CrowValue::ok(Value::Str(obj.reason.clone())));
+                return Ok(CrowValue::ok(Value::Str(
+                    obj.reason.as_deref().unwrap_or("").to_string(),
+                )));
             }
             _ => {}
+        }
+
+        // soft error propagation for other field access
+        if obj.is_error() {
+            return Ok(obj);
         }
 
         // .length property for lists and strings
@@ -681,7 +1121,7 @@ impl Interpreter {
             }
         }
 
-        // struct field access
+        // struct and module field access
         match &obj.result {
             Value::StructInstance(si) => {
                 match si.fields.get(field) {
@@ -689,6 +1129,15 @@ impl Interpreter {
                     None => Err(format!(
                         "struct '{}' has no field '{}'",
                         si.name, field
+                    )),
+                }
+            }
+            Value::Module(m) => {
+                match m.bindings.get(field) {
+                    Some(val) => Ok(val.clone()),
+                    None => Err(format!(
+                        "module '{}' has no member '{}'",
+                        m.name, field
                     )),
                 }
             }

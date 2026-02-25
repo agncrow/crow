@@ -1,0 +1,79 @@
+--- nbody benchmark (simplified) ---
+--- tests: structs, math, while loops, nested loops, function calls ---
+--- NOTE: Crow lacks sqrt and struct field mutation ---
+--- so we do a simplified gravitational simulation ---
+
+struct Body [x, y, vx, vy, mass]
+
+--- compute distance squared between two bodies ---
+fn dist_sq[b1, b2]
+    dx = b1.x - b2.x
+    dy = b1.y - b2.y
+    return dx * dx + dy * dy
+
+--- simplified: approximate sqrt using Newton's method ---
+fn approx_sqrt[n]
+    if n lte 0
+        return 0.0
+    guess = n / 2.0
+    i = 0
+    while i lt 10
+        guess = (guess + n / guess) / 2.0
+        i = i + 1
+    return guess
+
+--- compute total kinetic energy (0.5 * m * v^2) ---
+fn kinetic_energy[b]
+    return 0.5 * b.mass * (b.vx * b.vx + b.vy * b.vy)
+
+--- test struct creation and access ---
+sun = Body[0.0, 0.0, 0.0, 0.0, 1.0]
+earth = Body[1.0, 0.0, 0.0, 1.0, 0.003]
+moon = Body[1.003, 0.0, 0.0, 1.1, 0.00004]
+
+log['sun: x={sun.x} y={sun.y} mass={sun.mass}']
+log['earth: x={earth.x} y={earth.y} mass={earth.mass}']
+log['moon: x={moon.x} y={moon.y} mass={moon.mass}']
+
+--- test distance calculation ---
+d2 = dist_sq[sun, earth]
+log['dist_sq sun-earth: {d2}']
+
+d = approx_sqrt[d2]
+log['approx dist sun-earth: {d}']
+
+--- test kinetic energy ---
+ke = kinetic_energy[earth]
+log['kinetic energy of earth: {ke}']
+
+--- simulate simple motion with Euler integration ---
+--- without struct mutation, we create new structs each step ---
+fn step_body[b, ax, ay, dt]
+    new_vx = b.vx + ax * dt
+    new_vy = b.vy + ay * dt
+    new_x = b.x + new_vx * dt
+    new_y = b.y + new_vy * dt
+    return Body[new_x, new_y, new_vx, new_vy, b.mass]
+
+--- simple gravity: a = -GM/r^2 (toward origin) ---
+fn gravity_accel[b]
+    r2 = b.x * b.x + b.y * b.y
+    if r2 lt 0.0001
+        return Body[0.0, 0.0, 0.0, 0.0, 0.0]
+    r = approx_sqrt[r2]
+    r3 = r2 * r
+    ax = 0.0 - b.x / r3
+    ay = 0.0 - b.y / r3
+    return Body[ax, ay, 0.0, 0.0, 0.0]
+
+dt = 0.01
+body = earth
+step_num = 0
+while step_num lt 100
+    acc = gravity_accel[body]
+    body = step_body[body, acc.x, acc.y, dt]
+    step_num = step_num + 1
+
+log['after 100 steps: x={body.x} y={body.y} vx={body.vx} vy={body.vy}']
+log['nbody benchmark complete']
+

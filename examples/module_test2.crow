@@ -1,0 +1,7 @@
+--- test nested module import ---
+
+use myapp/utils
+
+log['triple 7:', utils.triple[7]]
+log[utils.greet['crow']]
+

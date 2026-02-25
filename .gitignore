@@ -20,7 +20,12 @@ Cargo.lock
 .DS_Store
 Thumbs.db
 
+# Crow build artifacts
+.crow_build/
 
-# Added by cargo
+# Compiled binaries from crow build (top-level)
+/examples_*
+/bench_*
 
-/target
+# Generated scripts
+gen_type_infer.py
