@@ -1,0 +1,30 @@
+
+fn count_primes(n: i64) -> i64 {
+    let mut count: i64 = 0_i64;
+    let mut i: i64 = 2_i64;
+    while i < n {
+        if is_prime(i) {
+            count = count + 1_i64;
+        }
+        i = i + 1_i64;
+    }
+    return count;
+}
+
+fn is_prime(n: i64) -> bool {
+    if n < 2_i64 {
+        return false;
+    }
+    let mut i: i64 = 2_i64;
+    while i * i <= n {
+        if n % i == 0_i64 {
+            return false;
+        }
+        i = i + 1_i64;
+    }
+    return true;
+}
+
+fn main() {
+    println!("primes below 100000: {}", count_primes(100000_i64));
+}
