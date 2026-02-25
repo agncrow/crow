@@ -7,8 +7,10 @@ pub struct Transpiler {
     ctx: TypeContext,
     indent: usize,
     output: String,
-    /// Track which variables have been declared with `let mut`
+    /// Track which variables have been declared with `let`
     declared: std::collections::HashSet<String>,
+    /// Variables that are reassigned after initial declaration (need `let mut`)
+    mutated_vars: std::collections::HashSet<String>,
     /// Current cpu thread count (set by cpu[n] statements)
     cpu_count: Option<usize>,
     /// Whether the transpiled code needs rayon for parallel iteration
@@ -26,6 +28,7 @@ impl Transpiler {
             indent: 0,
             output: String::new(),
             declared: std::collections::HashSet::new(),
+            mutated_vars: std::collections::HashSet::new(),
             cpu_count: None,
             needs_rayon: false,
             by_ref_params: std::collections::BTreeMap::new(),
@@ -127,6 +130,123 @@ impl Transpiler {
         None
     }
 
+    /// Operator precedence (higher = binds tighter).
+    fn op_precedence(op: &BinOp) -> u8 {
+        match op {
+            BinOp::Or => 1,
+            BinOp::And => 2,
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => 3,
+            BinOp::Add | BinOp::Sub => 4,
+            BinOp::Mul | BinOp::Div | BinOp::Mod => 5,
+        }
+    }
+
+    /// Get the precedence of an expression (only returns Some for BinOps).
+    fn expr_precedence(expr: &Expr) -> Option<u8> {
+        if let Expr::BinOp { op, .. } = expr {
+            Some(Self::op_precedence(op))
+        } else {
+            None
+        }
+    }
+
+    /// Check if a CrowType contains a Map anywhere.
+    fn type_uses_map(ty: &CrowType) -> bool {
+        match ty {
+            CrowType::Map(_) => true,
+            CrowType::List(inner) => Self::type_uses_map(inner),
+            _ => false,
+        }
+    }
+
+    /// Check if the program uses any Map types (to decide whether to import BTreeMap).
+    fn program_uses_map(&self) -> bool {
+        for ty in self.ctx.vars.values() {
+            if Self::type_uses_map(ty) { return true; }
+        }
+        for sig in self.ctx.functions.values() {
+            for (_, ty) in &sig.params {
+                if Self::type_uses_map(ty) { return true; }
+            }
+            if Self::type_uses_map(&sig.return_type) { return true; }
+        }
+        for sig in self.ctx.structs.values() {
+            for (_, ty) in &sig.fields {
+                if Self::type_uses_map(ty) { return true; }
+            }
+        }
+        false
+    }
+
+    /// Collect all variable names that are reassigned (assigned more than once) in a list of statements.
+    fn collect_reassigned_vars(stmts: &[Stmt], seen: &mut std::collections::HashSet<String>, mutated: &mut std::collections::HashSet<String>) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Assign { name, .. } => {
+                    if !seen.insert(name.clone()) {
+                        mutated.insert(name.clone());
+                    }
+                }
+                Stmt::MultiAssign { names, .. } => {
+                    for name in names {
+                        if !seen.insert(name.clone()) {
+                            mutated.insert(name.clone());
+                        }
+                    }
+                }
+                Stmt::If { then_body, else_body, .. } => {
+                    Self::collect_reassigned_vars(then_body, seen, mutated);
+                    if let Some(eb) = else_body {
+                        Self::collect_reassigned_vars(eb, seen, mutated);
+                    }
+                }
+                Stmt::While { body, .. } | Stmt::For { body, .. } => {
+                    // Any variable assigned inside a loop body is effectively mutated
+                    // because the loop may execute multiple times
+                    let mut loop_seen = std::collections::HashSet::new();
+                    Self::collect_loop_assigned_vars(body, &mut loop_seen);
+                    for name in &loop_seen {
+                        mutated.insert(name.clone());
+                    }
+                    Self::collect_reassigned_vars(body, seen, mutated);
+                }
+                Stmt::Match { arms, .. } => {
+                    for arm in arms {
+                        Self::collect_reassigned_vars(&arm.body, seen, mutated);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Collect all variable names assigned inside a loop body (they need mut).
+    fn collect_loop_assigned_vars(stmts: &[Stmt], assigned: &mut std::collections::HashSet<String>) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Assign { name, .. } => { assigned.insert(name.clone()); }
+                Stmt::MultiAssign { names, .. } => {
+                    for name in names { assigned.insert(name.clone()); }
+                }
+                Stmt::If { then_body, else_body, .. } => {
+                    Self::collect_loop_assigned_vars(then_body, assigned);
+                    if let Some(eb) = else_body {
+                        Self::collect_loop_assigned_vars(eb, assigned);
+                    }
+                }
+                Stmt::While { body, .. } | Stmt::For { body, .. } => {
+                    Self::collect_loop_assigned_vars(body, assigned);
+                }
+                Stmt::Match { arms, .. } => {
+                    for arm in arms {
+                        Self::collect_loop_assigned_vars(&arm.body, assigned);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Transpile a complete program to Rust source.
     pub fn transpile(&mut self, stmts: &[Stmt]) -> String {
         // Scan for rayon need (any cpu[n] with n > 1)
@@ -137,8 +257,10 @@ impl Transpiler {
         // Compute which params should be passed by reference
         self.compute_by_ref_params();
 
-        // Emit header
-        self.emit_line("use std::collections::BTreeMap;");
+        // Emit header — only import BTreeMap if actually used
+        if self.program_uses_map() {
+            self.emit_line("use std::collections::BTreeMap;");
+        }
         if self.needs_rayon {
             self.emit_line("use rayon::prelude::*;");
         }
@@ -155,6 +277,16 @@ impl Transpiler {
         for name in &fn_names {
             self.emit_function(name);
         }
+
+        // Compute which top-level variables need `mut`
+        let top_level_stmts: Vec<&Stmt> = stmts.iter()
+            .filter(|s| !matches!(s, Stmt::FnDecl { .. } | Stmt::StructDecl { .. }))
+            .collect();
+        let top_stmts_owned: Vec<Stmt> = top_level_stmts.iter().map(|s| (*s).clone()).collect();
+        let mut seen = std::collections::HashSet::new();
+        let mut mutated = std::collections::HashSet::new();
+        Self::collect_reassigned_vars(&top_stmts_owned, &mut seen, &mut mutated);
+        self.mutated_vars = mutated;
 
         // Emit main function with top-level statements
         self.emit_line("fn main() {");
@@ -184,14 +316,6 @@ impl Transpiler {
         }
         self.output.push_str(line);
         self.output.push('\n');
-    }
-
-    fn emit(&mut self, text: &str) {
-        self.output.push_str(text);
-    }
-
-    fn indent_str(&self) -> String {
-        "    ".repeat(self.indent)
     }
 
     fn emit_struct(&mut self, name: &str) {
@@ -242,8 +366,20 @@ impl Transpiler {
         let saved_declared = self.declared.clone();
         let saved_vars = self.ctx.vars.clone();
         let saved_ref_params = self.current_ref_params.clone();
+        let saved_mutated = self.mutated_vars.clone();
         self.declared.clear();
         self.current_ref_params = ref_set;
+
+        // Compute which local variables need `mut` in this function
+        let mut seen = std::collections::HashSet::new();
+        let mut mutated = std::collections::HashSet::new();
+        // Params count as first "assignment"
+        for (pname, _) in &sig.params {
+            seen.insert(pname.clone());
+        }
+        Self::collect_reassigned_vars(&sig.body, &mut seen, &mut mutated);
+        self.mutated_vars = mutated;
+
         // Mark params as declared and add to vars for type inference
         for (pname, ptype) in &sig.params {
             self.declared.insert(pname.clone());
@@ -257,6 +393,7 @@ impl Transpiler {
         self.declared = saved_declared;
         self.ctx.vars = saved_vars;
         self.current_ref_params = saved_ref_params;
+        self.mutated_vars = saved_mutated;
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
@@ -270,7 +407,8 @@ impl Transpiler {
                     self.emit_line(&format!("{} = {};", name, expr_str));
                 } else {
                     let ty = self.ctx.infer_expr(value);
-                    self.emit_line(&format!("let mut {}: {} = {};", name, ty.to_rust_type(), expr_str));
+                    let kw = if self.mutated_vars.contains(name) { "let mut" } else { "let" };
+                    self.emit_line(&format!("{} {}: {} = {};", kw, name, ty.to_rust_type(), expr_str));
                     self.declared.insert(name.clone());
                     self.ctx.vars.insert(name.clone(), ty);
                 }
@@ -282,7 +420,8 @@ impl Transpiler {
                         self.emit_line(&format!("{} = {};", name, expr_str));
                     } else {
                         let ty = self.ctx.infer_expr(value);
-                        self.emit_line(&format!("let mut {}: {} = {};", name, ty.to_rust_type(), expr_str));
+                        let kw = if self.mutated_vars.contains(name) { "let mut" } else { "let" };
+                        self.emit_line(&format!("{} {}: {} = {};", kw, name, ty.to_rust_type(), expr_str));
                         self.declared.insert(name.clone());
                         self.ctx.vars.insert(name.clone(), ty);
                     }
@@ -413,8 +552,18 @@ impl Transpiler {
                         return result;
                     }
                 }
+                let parent_prec = Self::op_precedence(op);
+                // Wrap left child in parens if it has strictly lower precedence
                 let l = self.expr_to_string(left);
+                let l = if Self::expr_precedence(left).map_or(false, |p| p < parent_prec) {
+                    format!("({})", l)
+                } else { l };
+                // Wrap right child in parens if it has lower or equal precedence (left-associative)
                 let r = self.expr_to_string(right);
+                let r = if Self::expr_precedence(right).map_or(false, |p| p <= parent_prec) {
+                    format!("({})", r)
+                } else { r };
+
                 let lt = self.ctx.infer_expr(left);
                 let rt = self.ctx.infer_expr(right);
                 let op_str = match op {
@@ -433,10 +582,11 @@ impl Transpiler {
                     BinOp::Or => "||",
                 };
                 // Handle mixed int/float: cast int side to f64
+                // Wrap cast target in parens because `as` binds tighter than arithmetic
                 match (&lt, &rt) {
-                    (CrowType::Int, CrowType::Float) => format!("(({} as f64) {} {})", l, op_str, r),
-                    (CrowType::Float, CrowType::Int) => format!("({} {} ({} as f64))", l, op_str, r),
-                    _ => format!("({} {} {})", l, op_str, r),
+                    (CrowType::Int, CrowType::Float) => format!("({}) as f64 {} {}", l, op_str, r),
+                    (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l, op_str, r),
+                    _ => format!("{} {} {}", l, op_str, r),
                 }
             }
             Expr::UnaryOp { op, expr: e } => {
