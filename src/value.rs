@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// Status of a CrowValue — avoids heap-allocating a String for every value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,7 +94,7 @@ pub enum Value {
 pub struct FnValue {
     pub name: String,
     pub params: Vec<String>,
-    pub body: Rc<Vec<crate::ast::Stmt>>,
+    pub body: Arc<Vec<crate::ast::Stmt>>,
 }
 
 #[derive(Debug, Clone)]
