@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use rayon::prelude::*;
 
@@ -457,7 +457,7 @@ impl Interpreter {
                 let func = CrowValue::ok(Value::Fn(FnValue {
                     name: name.clone(),
                     params: params.clone(),
-                    body: Rc::new(body.clone()),
+                    body: Arc::new(body.clone()),
                 }));
                 self.env.set(name, func);
                 Ok(Signal::None)
@@ -814,7 +814,7 @@ impl Interpreter {
                     self.env.set(param, val);
                 }
                 let result = CrowValue::done();
-                for stmt in &func.body {
+                for stmt in func.body.iter() {
                     match self.exec_stmt(stmt)? {
                         Signal::Return(val) => {
                             self.env.pop_call_scope();

@@ -13,6 +13,10 @@ pub struct Transpiler {
     cpu_count: Option<usize>,
     /// Whether the transpiled code needs rayon for parallel iteration
     pub needs_rayon: bool,
+    /// Map of function name -> set of param names that should be passed by reference
+    by_ref_params: std::collections::BTreeMap<String, std::collections::HashSet<String>>,
+    /// By-ref params in the current function being emitted
+    current_ref_params: std::collections::HashSet<String>,
 }
 
 impl Transpiler {
@@ -24,6 +28,8 @@ impl Transpiler {
             declared: std::collections::HashSet::new(),
             cpu_count: None,
             needs_rayon: false,
+            by_ref_params: std::collections::BTreeMap::new(),
+            current_ref_params: std::collections::HashSet::new(),
         }
     }
 
@@ -49,12 +55,87 @@ impl Transpiler {
         None
     }
 
+    /// Compute which function parameters should be passed by reference.
+    /// A struct param is by-ref if: the struct is non-Copy AND the param is not mutated in the body.
+    fn compute_by_ref_params(&mut self) {
+        let fn_names: Vec<String> = self.ctx.functions.keys().cloned().collect();
+        for name in &fn_names {
+            let sig = self.ctx.functions.get(name).unwrap().clone();
+            let mut ref_params = std::collections::HashSet::new();
+            for (pname, ptype) in &sig.params {
+                if let CrowType::Struct(sname) = ptype {
+                    if !self.is_struct_copy(sname) && !Self::is_param_mutated(pname, &sig.body) {
+                        ref_params.insert(pname.clone());
+                    }
+                }
+            }
+            if !ref_params.is_empty() {
+                self.by_ref_params.insert(name.clone(), ref_params);
+            }
+        }
+    }
+
+    /// Check if a struct type derives Copy (all fields are primitive).
+    fn is_struct_copy(&self, struct_name: &str) -> bool {
+        if let Some(sig) = self.ctx.structs.get(struct_name) {
+            sig.fields.iter().all(|(_, ftype)| {
+                matches!(ftype, CrowType::Int | CrowType::Float | CrowType::Bool)
+            })
+        } else {
+            false
+        }
+    }
+
+    /// Check if a parameter is assigned to (mutated) anywhere in the body.
+    fn is_param_mutated(param_name: &str, body: &[Stmt]) -> bool {
+        for stmt in body {
+            match stmt {
+                Stmt::Assign { name, .. } if name == param_name => return true,
+                Stmt::If { then_body, else_body, .. } => {
+                    if Self::is_param_mutated(param_name, then_body) { return true; }
+                    if let Some(eb) = else_body {
+                        if Self::is_param_mutated(param_name, eb) { return true; }
+                    }
+                }
+                Stmt::While { body, .. } | Stmt::For { body, .. } => {
+                    if Self::is_param_mutated(param_name, body) { return true; }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Like maybe_unwrap_optbox, but returns a reference instead of cloning.
+    /// Used when passing to a by-ref parameter.
+    fn maybe_unwrap_optbox_ref(&mut self, expr: &Expr) -> Option<String> {
+        if let Expr::FieldAccess { object, field } = expr {
+            let obj_type = self.ctx.infer_expr(object);
+            if let CrowType::Struct(struct_name) = obj_type {
+                if let Some(sig) = self.ctx.structs.get(&struct_name) {
+                    for (fname, ftype) in &sig.fields {
+                        if fname == field {
+                            if let CrowType::OptBoxStruct(_) = ftype {
+                                let obj_str = self.expr_to_string(object);
+                                return Some(format!("{}.{}.as_ref().unwrap()", obj_str, field));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Transpile a complete program to Rust source.
     pub fn transpile(&mut self, stmts: &[Stmt]) -> String {
         // Scan for rayon need (any cpu[n] with n > 1)
         self.needs_rayon = stmts.iter().any(|s| {
             Self::extract_cpu_call(s).map_or(false, |n| n > 1)
         });
+
+        // Compute which params should be passed by reference
+        self.compute_by_ref_params();
 
         // Emit header
         self.emit_line("use std::collections::BTreeMap;");
@@ -136,10 +217,17 @@ impl Transpiler {
 
     fn emit_function(&mut self, name: &str) {
         let sig = self.ctx.functions.get(name).unwrap().clone();
+        let ref_set = self.by_ref_params.get(name).cloned().unwrap_or_default();
 
-        // Build param list
+        // Build param list (use &StructName for by-ref params)
         let params: Vec<String> = sig.params.iter()
-            .map(|(pname, ptype)| format!("{}: {}", pname, ptype.to_rust_type()))
+            .map(|(pname, ptype)| {
+                if ref_set.contains(pname) {
+                    format!("{}: &{}", pname, ptype.to_rust_type())
+                } else {
+                    format!("{}: {}", pname, ptype.to_rust_type())
+                }
+            })
             .collect();
 
         let ret_str = match &sig.return_type {
@@ -153,7 +241,9 @@ impl Transpiler {
         // Save and reset declared vars for function scope
         let saved_declared = self.declared.clone();
         let saved_vars = self.ctx.vars.clone();
+        let saved_ref_params = self.current_ref_params.clone();
         self.declared.clear();
+        self.current_ref_params = ref_set;
         // Mark params as declared and add to vars for type inference
         for (pname, ptype) in &sig.params {
             self.declared.insert(pname.clone());
@@ -166,6 +256,7 @@ impl Transpiler {
 
         self.declared = saved_declared;
         self.ctx.vars = saved_vars;
+        self.current_ref_params = saved_ref_params;
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
@@ -356,16 +447,43 @@ impl Transpiler {
                 }
             }
             Expr::Call { callee, args } => {
-                // Build arg strings, unwrapping OptBoxStruct fields when needed
-                let arg_strs: Vec<String> = args.iter()
-                    .map(|a| {
-                        if let Some(unwrapped) = self.maybe_unwrap_optbox(a) {
-                            unwrapped
+                // Determine which params are by-ref for the callee
+                let callee_name = if let Expr::Ident(n) = callee.as_ref() { Some(n.clone()) } else { None };
+                let ref_flags: Vec<bool> = if let Some(ref cname) = callee_name {
+                    if let Some(ref_set) = self.by_ref_params.get(cname) {
+                        if let Some(sig) = self.ctx.functions.get(cname) {
+                            sig.params.iter().map(|(pn, _)| ref_set.contains(pn)).collect()
+                        } else { vec![false; args.len()] }
+                    } else { vec![false; args.len()] }
+                } else { vec![false; args.len()] };
+
+                // Build arg strings with by-ref awareness
+                let mut arg_strs: Vec<String> = Vec::new();
+                for (i, a) in args.iter().enumerate() {
+                    let is_by_ref = ref_flags.get(i).copied().unwrap_or(false);
+                    if is_by_ref {
+                        // By-ref param: pass reference, no clone
+                        if let Some(unwrapped) = self.maybe_unwrap_optbox_ref(a) {
+                            arg_strs.push(unwrapped);
+                        } else if let Expr::Ident(vname) = a {
+                            if self.current_ref_params.contains(vname) {
+                                arg_strs.push(vname.clone()); // already a reference
+                            } else {
+                                arg_strs.push(format!("&{}", vname));
+                            }
                         } else {
-                            self.expr_to_string(a)
+                            let expr_str = self.expr_to_string(a);
+                            arg_strs.push(format!("&{}", expr_str));
                         }
-                    })
-                    .collect();
+                    } else {
+                        // By-value param: existing behavior
+                        if let Some(unwrapped) = self.maybe_unwrap_optbox(a) {
+                            arg_strs.push(unwrapped);
+                        } else {
+                            arg_strs.push(self.expr_to_string(a));
+                        }
+                    }
+                }
 
                 if let Expr::Ident(name) = callee.as_ref() {
                     // Builtins
