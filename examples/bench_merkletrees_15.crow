@@ -1,0 +1,31 @@
+--- merkletrees benchmark - depth 15 (matches website input) ---
+
+struct MerkleNode [hash, left, right]
+
+fn hash_combine[a, b]
+    return (a * 31 + b) % 1000000007
+
+fn build_tree[depth, offset]
+    if depth eq 0
+        return MerkleNode[offset, 0, 0]
+    half = 1
+    i = 0
+    while i lt depth - 1
+        half = half * 2
+        i = i + 1
+    left = build_tree[depth - 1, offset]
+    right = build_tree[depth - 1, offset + half]
+    h = hash_combine[left.hash, right.hash]
+    return MerkleNode[h, left, right]
+
+fn count_nodes[node]
+    if node.left eq 0
+        return 1
+    return 1 + count_nodes[node.left] + count_nodes[node.right]
+
+log['building merkle tree depth 15...']
+tree15 = build_tree[15, 1]
+log['root hash: {tree15.hash}']
+log['nodes: {count_nodes[tree15]}']
+log['merkletrees depth 15 complete']
+

@@ -1,0 +1,7 @@
+--- utility module in subdirectory ---
+
+fn triple[x]
+    return x * 3
+
+fn greet[name]
+    return 'hello, {name}'

@@ -1,0 +1,43 @@
+--- nbody benchmark - 500000 steps (matches website input) ---
+
+struct Body [x, y, vx, vy, mass]
+
+fn approx_sqrt[n]
+    if n lte 0
+        return 0.0
+    guess = n / 2.0
+    i = 0
+    while i lt 10
+        guess = (guess + n / guess) / 2.0
+        i = i + 1
+    return guess
+
+fn step_body[b, ax, ay, dt]
+    new_vx = b.vx + ax * dt
+    new_vy = b.vy + ay * dt
+    new_x = b.x + new_vx * dt
+    new_y = b.y + new_vy * dt
+    return Body[new_x, new_y, new_vx, new_vy, b.mass]
+
+fn gravity_accel[b]
+    r2 = b.x * b.x + b.y * b.y
+    if r2 lt 0.0001
+        return Body[0.0, 0.0, 0.0, 0.0, 0.0]
+    r = approx_sqrt[r2]
+    r3 = r2 * r
+    ax = 0.0 - b.x / r3
+    ay = 0.0 - b.y / r3
+    return Body[ax, ay, 0.0, 0.0, 0.0]
+
+dt = 0.01
+body = Body[1.0, 0.0, 0.0, 1.0, 0.003]
+step_num = 0
+
+while step_num lt 500000
+    acc = gravity_accel[body]
+    body = step_body[body, acc.x, acc.y, dt]
+    step_num = step_num + 1
+
+log['after 500000 steps: x={body.x} y={body.y}']
+log['nbody 500000 steps complete']
+

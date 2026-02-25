@@ -1,6 +1,8 @@
 /// AST node types for the Crow language
 
-#[derive(Debug, Clone)]
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Stmt {
     /// Variable assignment: name = expr
     Assign {
@@ -60,13 +62,13 @@ pub enum Stmt {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchArm {
     pub pattern: Pattern,
     pub body: Vec<Stmt>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Pattern {
     /// Literal value
     Literal(Expr),
@@ -76,7 +78,7 @@ pub enum Pattern {
     Wildcard,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Expr {
     /// Integer literal
     Int(i64),
@@ -121,7 +123,7 @@ pub enum Expr {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BinOp {
     Add,
     Sub,
@@ -138,7 +140,7 @@ pub enum BinOp {
     Or,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UnaryOp {
     Neg,
     Not,
