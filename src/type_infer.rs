@@ -75,7 +75,7 @@ impl CrowType {
             (CrowType::List(a), CrowType::List(b)) => a.compatible(b),
             (CrowType::Map(a), CrowType::Map(b)) => a.compatible(b),
             (CrowType::Result(a), CrowType::Result(b)) => a.compatible(b),
-            (CrowType::Int, CrowType::Struct(name)) | (CrowType::Struct(name), CrowType::Int) => true, // OptBoxStruct
+            (CrowType::Int, CrowType::Struct(_)) | (CrowType::Struct(_), CrowType::Int) => true, // OptBoxStruct
             (CrowType::OptBoxStruct(_), CrowType::Int) | (CrowType::Int, CrowType::OptBoxStruct(_)) => true,
             (CrowType::OptBoxStruct(_), CrowType::Struct(_)) | (CrowType::Struct(_), CrowType::OptBoxStruct(_)) => true,
             _ => false,
@@ -859,7 +859,7 @@ impl TypeContext {
                     CrowType::Map(Box::new(vtype))
                 }
             }
-            Expr::ForExpr { var, iter, body } => {
+            Expr::ForExpr { var: _, iter, body } => {
                 // Determine element type from iterator
                 let iter_type = self.infer_expr(iter);
                 let _elem_type = match &iter_type {

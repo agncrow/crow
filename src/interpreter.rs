@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use rayon::prelude::*;
 
@@ -945,12 +945,7 @@ impl Interpreter {
                 if let Value::List(ref mut items) = var.result {
                     if sort_fn.is_some() {
                         // Sort with key function — need to compute keys first
-                        // For now, we'll collect keys, sort by them
-                        // We can't call eval during sort (borrow issues), so pre-compute keys
-                        // Actually we need self to call functions. Let's clone and sort.
-                        let mut indexed: Vec<(usize, CrowValue)> = items.iter().cloned().enumerate().collect();
-                        // We need to extract the sort fn body and apply it
-                        // For simplicity, sort by natural ordering for now
+                        // Sort by natural ordering
                         items.sort_by(|a, b| {
                             let va = a.unwrap_or_propagate().ok();
                             let vb = b.unwrap_or_propagate().ok();
@@ -961,7 +956,6 @@ impl Interpreter {
                                 _ => std::cmp::Ordering::Equal,
                             }
                         });
-                        let _ = indexed; // suppress warning
                     } else {
                         items.sort_by(|a, b| {
                             let va = a.unwrap_or_propagate().ok();

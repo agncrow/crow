@@ -762,10 +762,6 @@ fn parse_crowfile() -> CrowfileConfig {
     }
 }
 
-fn get_entry_file() -> String {
-    parse_crowfile().entry
-}
-
 fn read_file(filename: &str) -> String {
     match std::fs::read_to_string(filename) {
         Ok(s) => s,
