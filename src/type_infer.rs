@@ -43,6 +43,25 @@ impl CrowType {
         }
     }
 
+    /// Rust expression for a default/zero value of this type.
+    /// Used in auto-propagation to construct CrowResult error variants.
+    pub fn default_rust_value(&self) -> String {
+        match self {
+            CrowType::Int => "0_i64".into(),
+            CrowType::Float => "0.0_f64".into(),
+            CrowType::Bool => "false".into(),
+            CrowType::Str => "String::new()".into(),
+            CrowType::List(inner) => format!("Vec::<{}>::new()", inner.to_rust_type()),
+            CrowType::Map(inner) => format!("std::collections::BTreeMap::<String, {}>::new()", inner.to_rust_type()),
+            CrowType::Struct(name) => format!("unsafe {{ std::mem::zeroed::<{}>() }}", name),
+            CrowType::OptBoxStruct(_) => "None".into(),
+            CrowType::Fn(_, _) => "panic!(\"unreachable\")".into(),
+            CrowType::Result(inner) => format!("CrowResult {{ status: \"error\".to_string(), result: {}, reason: String::new(), line: 0 }}", inner.default_rust_value()),
+            CrowType::Void => "()".into(),
+            CrowType::Unknown => "String::new()".into(),
+        }
+    }
+
     /// Human-readable Crow type name for error messages.
     pub fn crow_name(&self) -> String {
         match self {
@@ -365,10 +384,12 @@ impl TypeContext {
                         let mut new_params = sig.params.clone();
                         for (i, at) in arg_types.iter().enumerate() {
                             if i < new_params.len() {
-                                // Normalize OptBoxStruct -> Struct for function params,
-                                // because the transpiler unwraps OptBoxStruct args before passing.
+                                // Normalize types for function params:
+                                // - OptBoxStruct -> Struct (transpiler unwraps before passing)
+                                // - Result<T> -> T (auto-propagation unwraps at call site)
                                 let normalized = match at {
                                     CrowType::OptBoxStruct(n) => CrowType::Struct(n.clone()),
+                                    CrowType::Result(inner) => *inner.clone(),
                                     other => other.clone(),
                                 };
                                 new_params[i].1 = new_params[i].1.unify(&normalized);
@@ -652,6 +673,135 @@ impl TypeContext {
         }
     }
 
+    /// Infer the base return type of a named call (function or builtin),
+    /// without auto-propagation wrapping.
+    pub fn infer_call_base(&self, name: &str, args: &[Expr], _callee: &Expr) -> CrowType {
+        // Struct constructor
+        if self.structs.contains_key(name) {
+            return CrowType::Struct(name.to_string());
+        }
+        // User-defined function call
+        if let Some(sig) = self.functions.get(name) {
+            return sig.return_type.clone();
+        }
+        // Builtins
+        match name {
+            "log" | "cpu" | "gpu" | "assert" => CrowType::Void,
+            "map" => CrowType::Map(Box::new(CrowType::Unknown)),
+            "range" => CrowType::List(Box::new(CrowType::Int)),
+            // Math builtins
+            "abs" => {
+                if let Some(arg) = args.first() {
+                    let t = self.infer_expr(arg);
+                    if let CrowType::Result(inner) = t { return *inner; }
+                    return t;
+                }
+                CrowType::Int
+            }
+            "sqrt" => CrowType::Float,
+            "floor" | "ceil" | "round" => CrowType::Int,
+            "pow" | "min" | "max" => {
+                if args.len() >= 2 {
+                    let t1 = self.infer_expr(&args[0]);
+                    let t2 = self.infer_expr(&args[1]);
+                    let t1u = if let CrowType::Result(inner) = t1 { *inner } else { t1 };
+                    let t2u = if let CrowType::Result(inner) = t2 { *inner } else { t2 };
+                    if t1u == CrowType::Float || t2u == CrowType::Float {
+                        return CrowType::Float;
+                    }
+                    return t1u;
+                }
+                CrowType::Int
+            }
+            // String builtins
+            "trim" | "upper" | "lower" | "replace" | "join" => CrowType::Str,
+            "split" => CrowType::List(Box::new(CrowType::Str)),
+            "starts" | "ends" | "contains" => CrowType::Bool,
+            // Conversion builtins — fallible when parsing from string
+            "int" => {
+                if let Some(arg) = args.first() {
+                    let arg_type = self.infer_expr(arg);
+                    let unwrapped = if let CrowType::Result(inner) = &arg_type { inner.as_ref() } else { &arg_type };
+                    if matches!(unwrapped, CrowType::Str) {
+                        return CrowType::Result(Box::new(CrowType::Int));
+                    }
+                }
+                CrowType::Int
+            }
+            "float" => {
+                if let Some(arg) = args.first() {
+                    let arg_type = self.infer_expr(arg);
+                    let unwrapped = if let CrowType::Result(inner) = &arg_type { inner.as_ref() } else { &arg_type };
+                    if matches!(unwrapped, CrowType::Str) {
+                        return CrowType::Result(Box::new(CrowType::Float));
+                    }
+                }
+                CrowType::Float
+            }
+            "str" => CrowType::Str,
+            // Collection builtins (mutating ones return void)
+            "push" | "sort" | "reverse" | "append" | "set" | "del" => CrowType::Void,
+            // Map builtins
+            "keys" => CrowType::List(Box::new(CrowType::Str)),
+            "has" => CrowType::Bool,
+            "values" => {
+                if let Some(arg) = args.first() {
+                    let map_type = self.infer_expr(arg);
+                    if let CrowType::Map(inner) = map_type {
+                        return CrowType::List(inner);
+                    }
+                }
+                CrowType::List(Box::new(CrowType::Unknown))
+            }
+            "pop" => {
+                if let Some(arg) = args.first() {
+                    let list_type = self.infer_expr(arg);
+                    if let CrowType::List(inner) = list_type {
+                        return *inner;
+                    }
+                }
+                CrowType::Unknown
+            }
+            "slice" => {
+                if let Some(arg) = args.first() {
+                    let t = self.infer_expr(arg);
+                    if let CrowType::Result(inner) = t { return *inner; }
+                    return t;
+                }
+                CrowType::Unknown
+            }
+            "len" => CrowType::Int,
+            "sum" => {
+                if let Some(arg) = args.first() {
+                    let arg_type = self.infer_expr(arg);
+                    return match arg_type {
+                        CrowType::List(inner) => match *inner {
+                            CrowType::Float => CrowType::Float,
+                            _ => CrowType::Int,
+                        },
+                        _ => CrowType::Int,
+                    };
+                }
+                CrowType::Int
+            }
+            // CLI / IO
+            "args" => CrowType::List(Box::new(CrowType::Str)),
+            "input" => CrowType::Result(Box::new(CrowType::Str)),
+            // File I/O
+            "read" => CrowType::Result(Box::new(CrowType::Str)),
+            "write" => CrowType::Result(Box::new(CrowType::Str)),
+            // System builtins
+            "rand" => {
+                if args.is_empty() { CrowType::Float } else { CrowType::Int }
+            }
+            "time" => CrowType::Float,
+            "sleep" => CrowType::Int,
+            "env" => CrowType::Str,
+            "exit" => CrowType::Int,
+            _ => CrowType::Unknown,
+        }
+    }
+
     /// Infer the type of an expression.
     pub fn infer_expr(&self, expr: &Expr) -> CrowType {
         match expr {
@@ -692,125 +842,16 @@ impl TypeContext {
             }
             Expr::Call { callee, args } => {
                 if let Expr::Ident(name) = callee.as_ref() {
-                    // Struct constructor
-                    if self.structs.contains_key(name) {
-                        return CrowType::Struct(name.clone());
+                    let base = self.infer_call_base(name, args, callee);
+                    // Auto-propagation: wrap in CrowResult if any arg is CrowResult
+                    let skip = matches!(name.as_str(), "log" | "assert" | "type" | "cpu" | "gpu");
+                    if !skip && !matches!(base, CrowType::Result(_) | CrowType::Void) {
+                        let has_result_arg = args.iter().any(|a| matches!(self.infer_expr(a), CrowType::Result(_)));
+                        if has_result_arg {
+                            return CrowType::Result(Box::new(base));
+                        }
                     }
-                    // Function call
-                    if let Some(sig) = self.functions.get(name) {
-                        return sig.return_type.clone();
-                    }
-                    // Builtins
-                    match name.as_str() {
-                        "log" | "cpu" | "gpu" | "assert" => return CrowType::Void,
-                        "map" => return CrowType::Map(Box::new(CrowType::Unknown)),
-                        "range" => return CrowType::List(Box::new(CrowType::Int)),
-                        // Math builtins
-                        "abs" => {
-                            if let Some(arg) = args.first() {
-                                return self.infer_expr(arg);
-                            }
-                            return CrowType::Int;
-                        }
-                        "sqrt" => return CrowType::Float,
-                        "floor" | "ceil" | "round" => return CrowType::Int,
-                        "pow" | "min" | "max" => {
-                            if args.len() >= 2 {
-                                let t1 = self.infer_expr(&args[0]);
-                                let t2 = self.infer_expr(&args[1]);
-                                if t1 == CrowType::Float || t2 == CrowType::Float {
-                                    return CrowType::Float;
-                                }
-                                return t1;
-                            }
-                            return CrowType::Int;
-                        }
-                        // String builtins
-                        "trim" | "upper" | "lower" | "replace" | "join" => return CrowType::Str,
-                        "split" => return CrowType::List(Box::new(CrowType::Str)),
-                        "starts" | "ends" | "contains" => return CrowType::Bool,
-                        // Conversion builtins — fallible when parsing from string
-                        "int" => {
-                            if let Some(arg) = args.first() {
-                                let arg_type = self.infer_expr(arg);
-                                if matches!(arg_type, CrowType::Str) {
-                                    return CrowType::Result(Box::new(CrowType::Int));
-                                }
-                            }
-                            return CrowType::Int;
-                        }
-                        "float" => {
-                            if let Some(arg) = args.first() {
-                                let arg_type = self.infer_expr(arg);
-                                if matches!(arg_type, CrowType::Str) {
-                                    return CrowType::Result(Box::new(CrowType::Float));
-                                }
-                            }
-                            return CrowType::Float;
-                        }
-                        "str" => return CrowType::Str,
-                        // Collection builtins (mutating ones return void)
-                        "push" | "sort" | "reverse" | "append" | "set" | "del" => return CrowType::Void,
-                        // Map builtins
-                        "keys" => return CrowType::List(Box::new(CrowType::Str)),
-                        "has" => return CrowType::Bool,
-                        "values" => {
-                            if let Some(arg) = args.first() {
-                                let map_type = self.infer_expr(arg);
-                                if let CrowType::Map(inner) = map_type {
-                                    return CrowType::List(inner);
-                                }
-                            }
-                            return CrowType::List(Box::new(CrowType::Unknown));
-                        }
-                        "pop" => {
-                            // Returns the element type of the list
-                            if let Some(arg) = args.first() {
-                                let list_type = self.infer_expr(arg);
-                                if let CrowType::List(inner) = list_type {
-                                    return *inner;
-                                }
-                            }
-                            return CrowType::Unknown;
-                        }
-                        "slice" => {
-                            // Returns same type as first arg
-                            if let Some(arg) = args.first() {
-                                return self.infer_expr(arg);
-                            }
-                            return CrowType::Unknown;
-                        }
-                        "len" => return CrowType::Int,
-                        "sum" => {
-                            if let Some(arg) = args.first() {
-                                let arg_type = self.infer_expr(arg);
-                                return match arg_type {
-                                    CrowType::List(inner) => match *inner {
-                                        CrowType::Float => CrowType::Float,
-                                        _ => CrowType::Int,
-                                    },
-                                    _ => CrowType::Int,
-                                };
-                            }
-                            return CrowType::Int;
-                        }
-                        // CLI / IO
-                        "args" => return CrowType::List(Box::new(CrowType::Str)),
-                        "input" => return CrowType::Result(Box::new(CrowType::Str)),
-                        // File I/O
-                        "read" => return CrowType::Result(Box::new(CrowType::Str)),
-                        "write" => return CrowType::Result(Box::new(CrowType::Str)),
-                        // System builtins
-                        "rand" => {
-                            if args.is_empty() { return CrowType::Float; }
-                            return CrowType::Int;
-                        }
-                        "time" => return CrowType::Float,
-                        "sleep" => return CrowType::Int, // returns done (0)
-                        "env" => return CrowType::Str,
-                        "exit" => return CrowType::Int,
-                        _ => {}
-                    }
+                    return base;
                 }
                 // List/Map indexing or indirect function call
                 let callee_type = self.infer_expr(callee);

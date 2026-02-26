@@ -24,6 +24,10 @@ pub struct Transpiler {
     modules: std::collections::HashSet<String>,
     /// Current source line number (from Stmt::Line markers)
     current_line: usize,
+    /// Flag: when true, CrowResult args are replaced with _prop_N.result.clone()
+    unwrap_result_args: bool,
+    /// Indices of CrowResult args being unwrapped (used with unwrap_result_args)
+    propagation_indices: Option<Vec<usize>>,
 }
 
 impl Transpiler {
@@ -40,6 +44,8 @@ impl Transpiler {
             current_ref_params: std::collections::HashSet::new(),
             modules: std::collections::HashSet::new(),
             current_line: 0,
+            unwrap_result_args: false,
+            propagation_indices: None,
         }
     }
 
@@ -413,7 +419,7 @@ impl Transpiler {
             self.indent += 1;
             self.emit_line("fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {");
             self.indent += 1;
-            self.emit_line("write!(f, \"{}\", self.result)");
+            self.emit_line("if self.status == \"error\" { write!(f, \"error: {}\", self.reason) } else { write!(f, \"{}\", self.result) }");
             self.indent -= 1;
             self.emit_line("}");
             self.indent -= 1;
@@ -1097,6 +1103,15 @@ impl Transpiler {
                 // Build arg strings with by-ref awareness
                 let mut arg_strs: Vec<String> = Vec::new();
                 for (i, a) in args.iter().enumerate() {
+                    // When unwrapping CrowResult args, replace with temp var .result
+                    if self.unwrap_result_args {
+                        if let Some(ref indices) = self.propagation_indices {
+                            if indices.contains(&i) {
+                                arg_strs.push(format!("_prop_{}.result.clone()", i));
+                                continue;
+                            }
+                        }
+                    }
                     let is_by_ref = ref_flags.get(i).copied().unwrap_or(false);
                     if is_by_ref {
                         // By-ref param: pass reference, no clone
@@ -1118,6 +1133,48 @@ impl Transpiler {
                             arg_strs.push(unwrapped);
                         } else {
                             arg_strs.push(self.expr_to_string(a));
+                        }
+                    }
+                }
+
+                // --- Auto-propagation: detect CrowResult args ---
+                if !self.unwrap_result_args {
+                    let skip_propagation = callee_name.as_ref()
+                        .map(|n| matches!(n.as_str(), "log" | "assert" | "cpu" | "gpu" | "type"))
+                        .unwrap_or(true);
+                    if !skip_propagation {
+                        let result_arg_indices: Vec<usize> = args.iter().enumerate()
+                            .filter(|(_, a)| matches!(self.ctx.infer_expr(a), CrowType::Result(_)))
+                            .map(|(i, _)| i)
+                            .collect();
+                        if !result_arg_indices.is_empty() {
+                            // Save original arg expressions for temp var bindings
+                            let orig_arg_strs: Vec<String> = result_arg_indices.iter()
+                                .map(|&i| arg_strs[i].clone())
+                                .collect();
+                            // Re-enter with unwrapping enabled
+                            self.unwrap_result_args = true;
+                            self.propagation_indices = Some(result_arg_indices.clone());
+                            let inner_expr = self.expr_to_string(expr);
+                            self.unwrap_result_args = false;
+                            self.propagation_indices = None;
+                            // Determine return type for error default
+                            let full_type = self.ctx.infer_expr(expr);
+                            let inner_type = match &full_type {
+                                CrowType::Result(inner) => inner.as_ref().clone(),
+                                other => other.clone(),
+                            };
+                            // Check if the inner call already returns CrowResult
+                            let base_name = callee_name.as_deref().unwrap_or("");
+                            let base_type = self.ctx.infer_call_base(base_name, args, callee);
+                            let already_result = matches!(base_type, CrowType::Result(_));
+                            return self.emit_propagation_block(
+                                &result_arg_indices,
+                                &orig_arg_strs,
+                                &inner_expr,
+                                &inner_type,
+                                already_result,
+                            );
                         }
                     }
                 }
@@ -1237,7 +1294,7 @@ impl Transpiler {
                         return match ty {
                             CrowType::Int => arg_strs[0].clone(),
                             CrowType::Float => format!("({}) as i64", arg_strs[0]),
-                            CrowType::Str => format!("match ({}).parse::<i64>() {{ Ok(v) => CrowResult {{ status: \"ok\".to_string(), result: v, reason: \"\".to_string(), line: 0 }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: 0_i64, reason: e.to_string(), line: {} }} }}", arg_strs[0], self.current_line),
+                            CrowType::Str => format!("{{ let _int_arg = {}; match _int_arg.parse::<i64>() {{ Ok(v) => CrowResult {{ status: \"ok\".to_string(), result: v, reason: \"\".to_string(), line: 0 }}, Err(_) => CrowResult {{ status: \"error\".to_string(), result: 0_i64, reason: format!(\"cannot convert '{{}}' to int\", _int_arg), line: {} }} }} }}", arg_strs[0], self.current_line),
                             CrowType::Bool => format!("if {} {{ 1_i64 }} else {{ 0_i64 }}", arg_strs[0]),
                             _ => format!("({}) as i64", arg_strs[0]),
                         };
@@ -1247,7 +1304,7 @@ impl Transpiler {
                         return match ty {
                             CrowType::Float => arg_strs[0].clone(),
                             CrowType::Int => format!("({}) as f64", arg_strs[0]),
-                            CrowType::Str => format!("match ({}).parse::<f64>() {{ Ok(v) => CrowResult {{ status: \"ok\".to_string(), result: v, reason: \"\".to_string(), line: 0 }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: 0.0_f64, reason: e.to_string(), line: {} }} }}", arg_strs[0], self.current_line),
+                            CrowType::Str => format!("{{ let _float_arg = {}; match _float_arg.parse::<f64>() {{ Ok(v) => CrowResult {{ status: \"ok\".to_string(), result: v, reason: \"\".to_string(), line: 0 }}, Err(_) => CrowResult {{ status: \"error\".to_string(), result: 0.0_f64, reason: format!(\"cannot convert '{{}}' to float\", _float_arg), line: {} }} }} }}", arg_strs[0], self.current_line),
                             CrowType::Bool => format!("if {} {{ 1.0_f64 }} else {{ 0.0_f64 }}", arg_strs[0]),
                             _ => format!("({}) as f64", arg_strs[0]),
                         };
@@ -1776,6 +1833,43 @@ impl Transpiler {
         }
     }
 
+    /// Emit a propagation block that checks CrowResult args for errors before calling.
+    /// If any arg is an error, returns a CrowResult with that error.
+    /// Otherwise, executes the inner call and wraps the result.
+    fn emit_propagation_block(
+        &self,
+        result_indices: &[usize],
+        orig_arg_strs: &[String],
+        inner_expr: &str,
+        inner_type: &CrowType,
+        already_result: bool,
+    ) -> String {
+        let default_val = inner_type.default_rust_value();
+        let error_result = |idx: usize| -> String {
+            format!(
+                "CrowResult {{ status: \"error\".to_string(), result: {}, reason: _prop_{}.reason.clone(), line: _prop_{}.line }}",
+                default_val, idx, idx
+            )
+        };
+        let success_expr = if already_result {
+            inner_expr.to_string()
+        } else {
+            format!(
+                "CrowResult {{ status: \"ok\".to_string(), result: {}, reason: \"\".to_string(), line: 0 }}",
+                inner_expr
+            )
+        };
+        // Build nested if-else from inside out
+        let mut result = success_expr;
+        for (pos, &idx) in result_indices.iter().enumerate().rev() {
+            result = format!(
+                "{{ let _prop_{} = {}.clone(); if _prop_{}.status == \"error\" {{ {} }} else {{ {} }} }}",
+                idx, orig_arg_strs[pos], idx, error_result(idx), result
+            );
+        }
+        result
+    }
+
     /// Emit a log[] call as println!()
     fn emit_log_call(&mut self, args: &[String], orig_exprs: &[Expr]) -> String {
         if args.is_empty() {
@@ -2139,5 +2233,36 @@ mod tests {
         let src = "x = 5\ny = x.line\n";
         let rust = transpile(src);
         assert!(rust.contains("0_i64"), "raw value .line should be 0\n{}", rust);
+    }
+
+    #[test]
+    fn test_auto_propagation_uses_if_else() {
+        let src = "fn double[x]\n    return x * 2\nbad = int['hello']\nresult = double[bad]\n";
+        let rust = transpile(src);
+        assert!(rust.contains("_prop_"), "should generate propagation temp vars\n{}", rust);
+        assert!(rust.contains("\"error\""), "should check for error status\n{}", rust);
+        assert!(rust.contains("else"), "should use if-else for propagation\n{}", rust);
+    }
+
+    #[test]
+    fn test_auto_propagation_unwraps_args() {
+        let src = "fn double[x]\n    return x * 2\nbad = int['hello']\nresult = double[bad]\n";
+        let rust = transpile(src);
+        // Function should take i64, not CrowResult<i64>
+        assert!(rust.contains("fn double(x: i64)"), "function param should be base type, not CrowResult\n{}", rust);
+    }
+
+    #[test]
+    fn test_int_error_message_format() {
+        let src = "x = int['bad']\n";
+        let rust = transpile(src);
+        assert!(rust.contains("cannot convert"), "should use Crow-style error message\n{}", rust);
+    }
+
+    #[test]
+    fn test_crow_result_display_shows_error() {
+        let src = "x = int['bad']\nlog[x]\n";
+        let rust = transpile(src);
+        assert!(rust.contains("\"error\""), "Display impl should check error status\n{}", rust);
     }
 }
