@@ -11,6 +11,7 @@ use interpreter::Interpreter;
 use lexer::Lexer;
 use parser::Parser;
 use std::process;
+use std::collections::HashMap;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -277,8 +278,10 @@ fn cmd_install() {
                 }
             }
         } else {
-            // Version string - future registry support
-            eprintln!("  {} v{} - registry not yet available, skipping", name, source);
+            // Version string - resolve from registry
+            if !install_from_registry(name, source, &dest) {
+                process::exit(1);
+            }
         }
     }
 
@@ -298,6 +301,160 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result
         }
     }
     Ok(())
+}
+
+// --- Package Registry ---
+
+const DEFAULT_REGISTRY_URL: &str = "https://raw.githubusercontent.com/vsriram/registry/main/index.json";
+
+#[derive(serde::Deserialize, Debug)]
+struct RegistryIndex {
+    packages: HashMap<String, RegistryPackage>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct RegistryPackage {
+    repo: String,
+    versions: Vec<String>,
+}
+
+fn get_registry_url() -> String {
+    std::env::var("CROW_REGISTRY").unwrap_or_else(|_| DEFAULT_REGISTRY_URL.to_string())
+}
+
+fn registry_cache_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home).join(".crow").join("registry").join("index.json")
+}
+
+fn fetch_registry_index() -> Option<RegistryIndex> {
+    let cache_path = registry_cache_path();
+    let url = get_registry_url();
+
+    // Try fetching fresh index with curl
+    let output = std::process::Command::new("curl")
+        .args(["-sfL", "--max-time", "10", &url])
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => {
+            let json = String::from_utf8_lossy(&out.stdout);
+            // Cache it
+            if let Some(parent) = cache_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&cache_path, &*json);
+            match serde_json::from_str(&json) {
+                Ok(index) => return Some(index),
+                Err(e) => {
+                    eprintln!("warning: failed to parse registry index: {}", e);
+                }
+            }
+        }
+        _ => {
+            eprintln!("warning: failed to fetch registry from {}", url);
+        }
+    }
+
+    // Fall back to cached index
+    if cache_path.exists() {
+        if let Ok(json) = std::fs::read_to_string(&cache_path) {
+            match serde_json::from_str(&json) {
+                Ok(index) => {
+                    eprintln!("  using cached registry index");
+                    return Some(index);
+                }
+                Err(_) => {}
+            }
+        }
+    }
+
+    None
+}
+
+fn install_from_registry(name: &str, version: &str, dest: &std::path::Path) -> bool {
+    let index = match fetch_registry_index() {
+        Some(idx) => idx,
+        None => {
+            eprintln!("error: could not fetch package registry");
+            return false;
+        }
+    };
+
+    let pkg = match index.packages.get(name) {
+        Some(p) => p,
+        None => {
+            eprintln!("error: package '{}' not found in registry", name);
+            eprintln!("  available packages: {}", index.packages.keys().cloned().collect::<Vec<_>>().join(", "));
+            return false;
+        }
+    };
+
+    if !pkg.versions.contains(&version.to_string()) {
+        eprintln!("error: package '{}' has no version '{}'", name, version);
+        eprintln!("  available versions: {}", pkg.versions.join(", "));
+        return false;
+    }
+
+    // Clone at the specific version tag
+    let tag = format!("v{}", version);
+    println!("installing {} v{} from {}...", name, version, pkg.repo);
+
+    if dest.exists() {
+        // Check out the right version
+        println!("  updating {}...", name);
+        let status = std::process::Command::new("git")
+            .args(["fetch", "--quiet", "--tags"])
+            .current_dir(dest)
+            .status();
+        if let Ok(s) = status {
+            if s.success() {
+                let _ = std::process::Command::new("git")
+                    .args(["checkout", "--quiet", &tag])
+                    .current_dir(dest)
+                    .status();
+                println!("  updated {} to v{}", name, version);
+                return true;
+            }
+        }
+        eprintln!("  warning: failed to update {}", name);
+        return false;
+    }
+
+    // Fresh clone at specific tag
+    let status = std::process::Command::new("git")
+        .args([
+            "clone", "--quiet", "--depth", "1",
+            "--branch", &tag,
+            &pkg.repo, &dest.to_string_lossy(),
+        ])
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            println!("  installed {} v{}", name, version);
+            true
+        }
+        _ => {
+            // Tag might not exist, try cloning without tag
+            eprintln!("  warning: tag '{}' not found, cloning latest", tag);
+            let status = std::process::Command::new("git")
+                .args(["clone", "--quiet", "--depth", "1", &pkg.repo, &dest.to_string_lossy()])
+                .status();
+            match status {
+                Ok(s) if s.success() => {
+                    println!("  installed {} (latest)", name);
+                    true
+                }
+                _ => {
+                    eprintln!("error: failed to clone {}", pkg.repo);
+                    false
+                }
+            }
+        }
+    }
 }
 
 /// Transpile a .crow file to Rust, compile it, and return the path to the binary.
