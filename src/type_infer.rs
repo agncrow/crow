@@ -800,6 +800,15 @@ impl TypeContext {
                         // File I/O
                         "read" => return CrowType::Result(Box::new(CrowType::Str)),
                         "write" => return CrowType::Result(Box::new(CrowType::Str)),
+                        // System builtins
+                        "rand" => {
+                            if args.is_empty() { return CrowType::Float; }
+                            return CrowType::Int;
+                        }
+                        "time" => return CrowType::Float,
+                        "sleep" => return CrowType::Int, // returns done (0)
+                        "env" => return CrowType::Str,
+                        "exit" => return CrowType::Int,
                         _ => {}
                     }
                 }

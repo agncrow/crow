@@ -288,6 +288,27 @@ impl Lexer {
                     self.advance();
                     break;
                 }
+                Some('\\') => {
+                    self.advance(); // skip backslash
+                    match self.peek() {
+                        Some('n') => { s.push('\n'); self.advance(); }
+                        Some('t') => { s.push('\t'); self.advance(); }
+                        Some('\\') => { s.push('\\'); self.advance(); }
+                        Some('\'') => { s.push('\''); self.advance(); }
+                        Some(ch) => {
+                            return Err(format!(
+                                "unknown escape sequence '\\{}' at line {}, col {}",
+                                ch, self.line, self.col
+                            ));
+                        }
+                        None => {
+                            return Err(format!(
+                                "unterminated string at line {}, col {}",
+                                line, col
+                            ));
+                        }
+                    }
+                }
                 Some(ch) => {
                     s.push(ch);
                     self.advance();
@@ -368,6 +389,8 @@ impl Lexer {
             "match" => Token::Match,
             "struct" => Token::Struct,
             "use" => Token::Use,
+            "break" => Token::Break,
+            "continue" => Token::Continue,
             "true" => Token::True,
             "false" => Token::False,
             "eq" => Token::Eq,

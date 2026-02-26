@@ -72,6 +72,10 @@ pub enum Stmt {
         kind: String, // "cpu" or "gpu"
         count: Expr,
     },
+    /// Break out of a loop
+    Break,
+    /// Continue to next loop iteration
+    Continue,
     /// Line marker for error reporting (not a real statement)
     Line(usize),
 }
