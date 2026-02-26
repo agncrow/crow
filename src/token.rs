@@ -118,6 +118,7 @@ impl std::fmt::Display for Token {
 pub struct SpannedToken {
     pub token: Token,
     pub line: usize,
+    #[allow(dead_code)]
     pub col: usize,
 }
 
