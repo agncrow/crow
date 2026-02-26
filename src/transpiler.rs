@@ -704,6 +704,13 @@ impl Transpiler {
             Stmt::Assign { name, value } => {
                 let expr_str = self.expr_to_string(value);
                 if self.declared.contains(name) {
+                    // Check for type-changing reassignment
+                    let new_ty = self.ctx.infer_expr(value);
+                    if let Some(existing_ty) = self.ctx.vars.get(name).cloned() {
+                        if !existing_ty.compatible(&new_ty) {
+                            panic!("error: cannot reassign '{}' from {} to {} — variable type cannot change", name, existing_ty.crow_name(), new_ty.crow_name());
+                        }
+                    }
                     self.emit_line(&format!("{} = {};", name, expr_str));
                 } else {
                     let mut ty = self.ctx.infer_expr(value);
@@ -727,6 +734,16 @@ impl Transpiler {
                 for value in values.iter() {
                     exprs.push(self.expr_to_string(value));
                     types.push(self.ctx.infer_expr(value));
+                }
+                // Check for type-changing reassignment
+                for (i, name) in names.iter().enumerate() {
+                    if self.declared.contains(name) {
+                        if let Some(existing_ty) = self.ctx.vars.get(name).cloned() {
+                            if !existing_ty.compatible(&types[i]) {
+                                panic!("error: cannot reassign '{}' from {} to {} — variable type cannot change", name, existing_ty.crow_name(), types[i].crow_name());
+                            }
+                        }
+                    }
                 }
                 // Check if any RHS reads a variable that a previous LHS writes (swap pattern)
                 let rhs_reads: std::collections::HashSet<String> = values.iter().flat_map(|v| crate::parallel::expr_reads(v)).collect();
@@ -1899,5 +1916,29 @@ mod tests {
         let src = "x = 3.14\ny = int[x]\n";
         let rust = transpile(src);
         assert!(!rust.contains("CrowResult"), "int from float should not use CrowResult\n{}", rust);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot reassign")]
+    fn test_type_changing_reassignment_error() {
+        // x = 5 (int), then x = read['f'] (CrowResult<String>) — should panic
+        let src = "x = 5\nx = read['file.txt']\n";
+        transpile(src);
+    }
+
+    #[test]
+    fn test_same_type_reassignment_ok() {
+        // x = 5, then x = 10 — same type, should be fine
+        let src = "x = 5\nx = 10\n";
+        let rust = transpile(src);
+        assert!(rust.contains("x = 10"), "same-type reassignment should work\n{}", rust);
+    }
+
+    #[test]
+    fn test_int_float_reassignment_ok() {
+        // x = 5, then x = 3.14 — int/float are compatible
+        let src = "x = 5\nx = 3.14\n";
+        let rust = transpile(src);
+        assert!(rust.contains("x = 3.14"), "int/float reassignment should work\n{}", rust);
     }
 }
