@@ -268,16 +268,7 @@ impl Transpiler {
                         Self::collect_reassigned_vars(&arm.body, seen, mutated);
                     }
                 }
-                // Detect mutating builtin calls: push[x, v], pop[x], sort[x], reverse[x], append[x, y], set[x, k, v], del[x, k]
-                Stmt::ExprStmt(Expr::Call { callee, args }) => {
-                    if let Expr::Ident(name) = callee.as_ref() {
-                        if matches!(name.as_str(), "push" | "pop" | "sort" | "reverse" | "append" | "set" | "del") {
-                            if let Some(Expr::Ident(var_name)) = args.first() {
-                                mutated.insert(var_name.clone());
-                            }
-                        }
-                    }
-                }
+
                 // Field assignment and index assignment mutate the root variable
                 Stmt::FieldAssign { object, .. } | Stmt::IndexAssign { object, .. } => {
                     if let Some(var_name) = Self::extract_root_var(object) {
@@ -321,16 +312,7 @@ impl Transpiler {
                         Self::collect_loop_assigned_vars(&arm.body, assigned);
                     }
                 }
-                // Detect mutating builtin calls inside loops too
-                Stmt::ExprStmt(Expr::Call { callee, args }) => {
-                    if let Expr::Ident(name) = callee.as_ref() {
-                        if matches!(name.as_str(), "push" | "pop" | "sort" | "reverse" | "append" | "set" | "del") {
-                            if let Some(Expr::Ident(var_name)) = args.first() {
-                                assigned.insert(var_name.clone());
-                            }
-                        }
-                    }
-                }
+
                 _ => {}
             }
         }
@@ -1344,21 +1326,21 @@ impl Transpiler {
                             _ => format!("({})[({}) as usize..({}) as usize].to_vec()", arg_strs[0], arg_strs[1], arg_strs[2]),
                         };
                     }
-                    // Mutating collection builtins
+                    // Immutable collection builtins (return new values)
                     if name == "push" && arg_strs.len() == 2 {
-                        return format!("{}.push({})", arg_strs[0], arg_strs[1]);
+                        return format!("{{ let mut tmp = {}.clone(); tmp.push({}); tmp }}", arg_strs[0], arg_strs[1]);
                     }
                     if name == "pop" && arg_strs.len() == 1 {
-                        return format!("{}.pop().unwrap_or_default()", arg_strs[0]);
+                        return format!("{{ let mut tmp = {}.clone(); tmp.pop(); tmp }}", arg_strs[0]);
                     }
                     if name == "sort" {
-                        return format!("{}.sort()", arg_strs[0]);
+                        return format!("{{ let mut tmp = {}.clone(); tmp.sort(); tmp }}", arg_strs[0]);
                     }
                     if name == "reverse" && arg_strs.len() == 1 {
-                        return format!("{}.reverse()", arg_strs[0]);
+                        return format!("{{ let mut tmp = {}.clone(); tmp.reverse(); tmp }}", arg_strs[0]);
                     }
                     if name == "append" && arg_strs.len() == 2 {
-                        return format!("{}.extend({}.iter().cloned())", arg_strs[0], arg_strs[1]);
+                        return format!("{{ let mut tmp = {}.clone(); tmp.extend({}.iter().cloned()); tmp }}", arg_strs[0], arg_strs[1]);
                     }
                     // --- Map builtins ---
                     if name == "keys" && arg_strs.len() == 1 {
@@ -1371,10 +1353,10 @@ impl Transpiler {
                         return format!("{}.contains_key(&{})", arg_strs[0], arg_strs[1]);
                     }
                     if name == "set" && arg_strs.len() == 3 {
-                        return format!("{}.insert({}, {})", arg_strs[0], arg_strs[1], arg_strs[2]);
+                        return format!("{{ let mut tmp = {}.clone(); tmp.insert({}, {}); tmp }}", arg_strs[0], arg_strs[1], arg_strs[2]);
                     }
                     if name == "del" && arg_strs.len() == 2 {
-                        return format!("{}.remove(&{})", arg_strs[0], arg_strs[1]);
+                        return format!("{{ let mut tmp = {}.clone(); tmp.remove(&{}); tmp }}", arg_strs[0], arg_strs[1]);
                     }
                     // --- CLI / IO builtins ---
                     if name == "args" && arg_strs.is_empty() {

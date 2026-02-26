@@ -259,11 +259,11 @@ data = map[]             --- empty map ---
 | Function | Description |
 |----------|-------------|
 | `len[x]` | Length of list, string, or map |
-| `push[list, value]` | Append to list (mutates) |
-| `pop[list]` | Remove and return last element (mutates) |
-| `append[list, other]` | Extend list with another list (mutates) |
-| `sort[list]` | Sort list in place (mutates) |
-| `reverse[list]` | Reverse list in place (mutates) |
+| `push[list, value]` | Return new list with value appended |
+| `pop[list]` | Return new list without last element |
+| `append[list, other]` | Return new list with other's elements added |
+| `sort[list]` | Return new sorted list |
+| `reverse[list]` | Return new reversed list |
 | `contains[list, value]` | Check if list contains value |
 | `slice[list, start, end]` | Extract sublist |
 | `sum[list]` | Sum of a list of numbers (int or float) |
@@ -275,8 +275,10 @@ data = map[]             --- empty map ---
 | `keys[m]` | List of map keys |
 | `values[m]` | List of map values |
 | `has[m, key]` | Check if map contains key |
-| `set[m, key, value]` | Set map entry (mutates) |
-| `del[m, key]` | Delete map entry (mutates) |
+| `set[m, key, value]` | Return new map with entry added/updated |
+| `del[m, key]` | Return new map with entry removed |
+
+**All builtins are immutable.** No builtin modifies its arguments. To update a variable, reassign: `nums = push[nums, 4]`. The transpiler optimizes `x = f[x]` patterns into in-place operations automatically.
 
 #### I/O
 
@@ -543,7 +545,11 @@ x + 1 then str          --- str[x + 1] ---
 x then str eq '5'       --- (str[x]) eq '5' ---
 ```
 
-**Note:** Mutating builtins (`push`, `pop`, `sort`, `reverse`, `append`, `set`, `del`) cannot be used with `then` because they require a variable name as the first argument, not a value.
+Since all builtins are immutable and return new values, `then` works with every builtin:
+
+```
+nums = nums then sort then reverse then slice[0, 3]
+```
 
 ## 9. Modules & Imports
 
@@ -1027,7 +1033,7 @@ Build a map from two lists:
 ```
 m = map[]
 for i in range[len[keys]]
-    set[m, keys[i], values[i]]
+    m = set[m, keys[i], values[i]]
 ```
 
 The pattern is always the same: iterate over indices with `range[len[list]]`, access elements by index. One pattern, zero new concepts.
