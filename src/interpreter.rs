@@ -885,7 +885,7 @@ impl Interpreter {
             | "split" | "trim" | "replace" | "upper" | "lower" | "starts" | "ends" | "join"
             | "int" | "float" | "str"
             | "push" | "pop" | "sort" | "reverse" | "append" | "contains" | "slice"
-            | "read" | "write" | "len"
+            | "read" | "write" | "len" | "sum"
             | "keys" | "values" | "has" | "set" | "del"
             | "args" | "input"
             | "assert"
@@ -1341,6 +1341,29 @@ impl Interpreter {
                     Value::Str(s) => Ok(CrowValue::ok(Value::Int(s.len() as i64))),
                     Value::Map(m) => Ok(CrowValue::ok(Value::Int(m.len() as i64))),
                     _ => Err("length[] requires a list, string, or map".into()),
+                }
+            }
+            "sum" => {
+                if args.len() != 1 { return Err("sum[] takes exactly 1 argument".into()); }
+                match args[0].unwrap_or_propagate()? {
+                    Value::List(items) => {
+                        let mut int_sum: i64 = 0;
+                        let mut float_sum: f64 = 0.0;
+                        let mut is_float = false;
+                        for item in items {
+                            match &item.result {
+                                Value::Int(n) => int_sum += n,
+                                Value::Float(f) => { is_float = true; float_sum += f; }
+                                _ => return Err("sum[] requires a list of numbers".into()),
+                            }
+                        }
+                        if is_float {
+                            Ok(CrowValue::ok(Value::Float(float_sum + int_sum as f64)))
+                        } else {
+                            Ok(CrowValue::ok(Value::Int(int_sum)))
+                        }
+                    }
+                    _ => Err("sum[] requires a list".into()),
                 }
             }
             "contains" => {
