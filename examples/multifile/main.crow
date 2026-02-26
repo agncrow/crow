@@ -1,0 +1,12 @@
+--- multi-file project test ---
+
+use math
+use helpers
+
+log['double 5:', math.double[5]]
+log['square 3:', math.square[3]]
+log['quad 4:', helpers.quad[4]]
+log['circle area r=1:', helpers.circle_area[1]]
+log['label:', helpers.label]
+log['pi:', math.pi]
+

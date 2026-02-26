@@ -240,6 +240,18 @@ impl Parser {
                     // already parsed as single, handle comma case
                     Ok(Stmt::Assign { name, value })
                 }
+                // field assignment: obj.field = value
+                Expr::FieldAccess { object, field } => {
+                    self.advance(); // skip '='
+                    let value = self.parse_expr()?;
+                    Ok(Stmt::FieldAssign { object: *object, field, value })
+                }
+                // index assignment: list[idx] = value, map[key] = value
+                Expr::Call { callee, args } if args.len() == 1 => {
+                    self.advance(); // skip '='
+                    let value = self.parse_expr()?;
+                    Ok(Stmt::IndexAssign { object: *callee, index: args.into_iter().next().unwrap(), value })
+                }
                 _ => {
                     Err(format!(
                         "invalid assignment target at line {}",

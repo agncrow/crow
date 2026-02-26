@@ -1,0 +1,25 @@
+struct Point[x, y]
+
+p = Point[10, 20]
+log['before:', p.x, p.y]
+p.x = 99
+log['after:', p.x, p.y]
+assert[p.x eq 99, 'field mutation failed']
+assert[p.y eq 20, 'other field changed']
+
+nums = [1, 2, 3, 4, 5]
+log['before:', nums]
+nums[0] = 99
+log['after:', nums]
+assert[nums[0] eq 99, 'list index mutation failed']
+assert[nums[1] eq 2, 'other index changed']
+
+m = map[]
+set[m, 'a', 1]
+set[m, 'b', 2]
+m['a'] = 99
+log['map after:', m]
+assert[m['a'] eq 99, 'map index mutation failed']
+
+log['all mutation tests passed']
+

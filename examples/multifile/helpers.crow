@@ -1,0 +1,12 @@
+--- helpers module that uses math ---
+
+use math
+
+fn quad[x]
+    return math.double[math.double[x]]
+
+fn circle_area[r]
+    return math.pi * math.square[r]
+
+label = 'helpers v1'
+

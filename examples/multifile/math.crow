@@ -1,0 +1,10 @@
+--- basic math module ---
+
+fn double[x]
+    return x * 2
+
+fn square[x]
+    return x * x
+
+pi = 3.14159
+
