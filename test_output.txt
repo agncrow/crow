@@ -1,0 +1,11 @@
+double via op: 10
+square via op: 25
+apply double 3: 6
+apply square 4: 16
+ops[0] on 3: 6
+ops[1] on 3: 9
+map fns over 10: [20, 100]
+picked double, apply to 7: 14
+picked square, apply to 7: 49
+runtime error: unexpected character '"' at line 1, col 9
+EXIT:1

@@ -11,4 +11,5 @@ When designing or implementing the Crow language:
 7. **Minimize shift-key usage.** Prefer symbols that don't require the shift key (e.g. prefer `,` over `:`, avoid `{}` `()` `!` `@` `#` `$` `%` `^` `&` `*` `+` where possible). The language should be easy to type.
 8. **One way to do things.** There should be exactly one obvious way to accomplish any task. No aliases, no alternative syntax, no shortcuts that duplicate existing functionality.
 9. **One concept, one way.** Every value is a struct. Every call uses `[]`. Every block uses indentation. Consistency across the entire language — no special cases.
+10. **Builtin naming convention.** Builtin names must be short, single-word, lowercase, with no prefixes (`to_`, `get_`, `is_`) and no suffixes (`_with`, `_by`, `_from`). Use the shortest unambiguous name: `int` not `to_int`, `upper` not `to_upper`, `starts` not `starts_with`, `len` not `length`. If a name needs underscores, it's probably too long.
 

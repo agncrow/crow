@@ -2,7 +2,7 @@
 
 fn binary_search[list, target]
     low = 0
-    high = list.length - 1
+    high = list.len - 1
 
     while low lte high
         mid = (low + high) / 2
@@ -31,7 +31,7 @@ log['found 1 at index: {result3}']
 result4 = binary_search[nums, 15]
 log['found 15 at index: {result4}']
 
-log['list length: {nums.length}']
+log['list len: {nums.len}']
 log['first element: {nums[0]}']
 log['last element: {nums[7]}']
 

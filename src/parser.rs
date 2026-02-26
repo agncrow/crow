@@ -15,6 +15,8 @@ impl Parser {
         let mut stmts = Vec::new();
         self.skip_newlines();
         while !self.is_at_end() {
+            let line = self.current_line();
+            stmts.push(Stmt::Line(line));
             let stmt = self.parse_stmt()?;
             stmts.push(stmt);
             self.skip_newlines();
@@ -298,6 +300,8 @@ impl Parser {
             if self.check(&Token::Dedent) || self.is_at_end() {
                 break;
             }
+            let line = self.current_line();
+            stmts.push(Stmt::Line(line));
             let stmt = self.parse_stmt()?;
             stmts.push(stmt);
             self.skip_newlines();

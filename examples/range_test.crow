@@ -1,0 +1,18 @@
+log['range[5]:']
+log[range[5]]
+
+log['range[2, 8]:']
+log[range[2, 8]]
+
+log['range[0, 20, 3]:']
+log[range[0, 20, 3]]
+
+log['sum range[1, 11]:']
+nums = range[1, 11]
+s = 0
+i = 0
+while i lt nums.len
+    s = s + nums[i]
+    i = i + 1
+log[s]
+

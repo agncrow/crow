@@ -60,6 +60,8 @@ pub enum Stmt {
         kind: String, // "cpu" or "gpu"
         count: Expr,
     },
+    /// Line marker for error reporting (not a real statement)
+    Line(usize),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

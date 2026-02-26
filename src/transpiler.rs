@@ -36,6 +36,16 @@ impl Transpiler {
         }
     }
 
+    /// Map Crow function names to valid Rust names.
+    /// User-defined `main` becomes `crow_main` to avoid clashing with Rust's entry point.
+    fn rust_fn_name(name: &str) -> String {
+        if name == "main" {
+            "crow_main".to_string()
+        } else {
+            name.to_string()
+        }
+    }
+
     /// Check if a statement is a cpu[n] call. Returns the count if so.
     fn extract_cpu_call(stmt: &Stmt) -> Option<i64> {
         if let Stmt::ExprStmt(Expr::Call { callee, args }) = stmt {
@@ -215,6 +225,16 @@ impl Transpiler {
                         Self::collect_reassigned_vars(&arm.body, seen, mutated);
                     }
                 }
+                // Detect mutating builtin calls: push[x, v], pop[x], sort[x], reverse[x], append[x, y], set[x, k, v], del[x, k]
+                Stmt::ExprStmt(Expr::Call { callee, args }) => {
+                    if let Expr::Ident(name) = callee.as_ref() {
+                        if matches!(name.as_str(), "push" | "pop" | "sort" | "reverse" | "append" | "set" | "del") {
+                            if let Some(Expr::Ident(var_name)) = args.first() {
+                                mutated.insert(var_name.clone());
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -240,6 +260,16 @@ impl Transpiler {
                 Stmt::Match { arms, .. } => {
                     for arm in arms {
                         Self::collect_loop_assigned_vars(&arm.body, assigned);
+                    }
+                }
+                // Detect mutating builtin calls inside loops too
+                Stmt::ExprStmt(Expr::Call { callee, args }) => {
+                    if let Expr::Ident(name) = callee.as_ref() {
+                        if matches!(name.as_str(), "push" | "pop" | "sort" | "reverse" | "append" | "set" | "del") {
+                            if let Some(Expr::Ident(var_name)) = args.first() {
+                                assigned.insert(var_name.clone());
+                            }
+                        }
                     }
                 }
                 _ => {}
@@ -280,7 +310,7 @@ impl Transpiler {
 
         // Compute which top-level variables need `mut`
         let top_level_stmts: Vec<&Stmt> = stmts.iter()
-            .filter(|s| !matches!(s, Stmt::FnDecl { .. } | Stmt::StructDecl { .. }))
+            .filter(|s| !matches!(s, Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::Line(_)))
             .collect();
         let top_stmts_owned: Vec<Stmt> = top_level_stmts.iter().map(|s| (*s).clone()).collect();
         let mut seen = std::collections::HashSet::new();
@@ -359,7 +389,8 @@ impl Transpiler {
             t => format!(" -> {}", t.to_rust_type()),
         };
 
-        self.emit_line(&format!("fn {}({}){} {{", name, params.join(", "), ret_str));
+        let rust_name = Self::rust_fn_name(name);
+        self.emit_line(&format!("fn {}({}){} {{", rust_name, params.join(", "), ret_str));
         self.indent += 1;
 
         // Save and reset declared vars for function scope
@@ -406,7 +437,14 @@ impl Transpiler {
                 if self.declared.contains(name) {
                     self.emit_line(&format!("{} = {};", name, expr_str));
                 } else {
-                    let ty = self.ctx.infer_expr(value);
+                    let mut ty = self.ctx.infer_expr(value);
+                    // If the expression type has Unknown (e.g. map[]), use the
+                    // resolved variable type from the inference pass instead
+                    if format!("{:?}", ty).contains("Unknown") {
+                        if let Some(resolved) = self.ctx.vars.get(name) {
+                            ty = resolved.clone();
+                        }
+                    }
                     let kw = if self.mutated_vars.contains(name) { "let mut" } else { "let" };
                     self.emit_line(&format!("{} {}: {} = {};", kw, name, ty.to_rust_type(), expr_str));
                     self.declared.insert(name.clone());
@@ -544,7 +582,15 @@ impl Transpiler {
             }
             Expr::Bool(b) => format!("{}", b),
             Expr::Str(s) => self.string_to_rust(s),
-            Expr::Ident(name) => name.clone(),
+            Expr::Ident(name) => {
+                // If this ident refers to a user-defined function (used as a value),
+                // apply the same renaming to avoid Rust collisions
+                if self.ctx.functions.contains_key(name) {
+                    Self::rust_fn_name(name)
+                } else {
+                    name.clone()
+                }
+            }
             Expr::BinOp { left, op, right } => {
                 // Check for OptBoxStruct comparison with sentinel: field eq 0 => field.is_none()
                 if matches!(op, BinOp::Eq | BinOp::Ne) {
@@ -638,7 +684,218 @@ impl Transpiler {
                 if let Expr::Ident(name) = callee.as_ref() {
                     // Builtins
                     if name == "log" {
-                        return self.emit_log_call(&arg_strs);
+                        return self.emit_log_call(&arg_strs, args);
+                    }
+
+                    // range[stop], range[start, stop], range[start, stop, step]
+                    if name == "range" {
+                        return match arg_strs.len() {
+                            1 => format!("(0..{}).collect::<Vec<i64>>()", arg_strs[0]),
+                            2 => format!("({}..{}).collect::<Vec<i64>>()", arg_strs[0], arg_strs[1]),
+                            3 => format!("({}..{}).step_by(({}) as usize).collect::<Vec<i64>>()", arg_strs[0], arg_strs[1], arg_strs[2]),
+                            _ => "vec![]".to_string(),
+                        };
+                    }
+
+                    // map[] — empty map constructor
+                    if name == "map" && arg_strs.is_empty() {
+                        return "BTreeMap::new()".to_string();
+                    }
+
+                    // --- Math builtins ---
+                    if name == "abs" && arg_strs.len() == 1 {
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        return match ty {
+                            CrowType::Float => format!("({}).abs()", arg_strs[0]),
+                            _ => format!("({}).abs()", arg_strs[0]),
+                        };
+                    }
+                    if name == "sqrt" && arg_strs.len() == 1 {
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        return match ty {
+                            CrowType::Float => format!("({}).sqrt()", arg_strs[0]),
+                            _ => format!("(({}) as f64).sqrt()", arg_strs[0]),
+                        };
+                    }
+                    if name == "floor" && arg_strs.len() == 1 {
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        return match ty {
+                            CrowType::Float => format!("({}).floor() as i64", arg_strs[0]),
+                            _ => arg_strs[0].clone(),
+                        };
+                    }
+                    if name == "ceil" && arg_strs.len() == 1 {
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        return match ty {
+                            CrowType::Float => format!("({}).ceil() as i64", arg_strs[0]),
+                            _ => arg_strs[0].clone(),
+                        };
+                    }
+                    if name == "round" && arg_strs.len() == 1 {
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        return match ty {
+                            CrowType::Float => format!("({}).round() as i64", arg_strs[0]),
+                            _ => arg_strs[0].clone(),
+                        };
+                    }
+                    if name == "pow" && arg_strs.len() == 2 {
+                        let t1 = self.ctx.infer_expr(&args[0]);
+                        let t2 = self.ctx.infer_expr(&args[1]);
+                        return if t1 == CrowType::Float || t2 == CrowType::Float {
+                            format!("(({}) as f64).powf(({}) as f64)", arg_strs[0], arg_strs[1])
+                        } else {
+                            format!("({}).pow(({}) as u32)", arg_strs[0], arg_strs[1])
+                        };
+                    }
+                    if name == "min" && arg_strs.len() == 2 {
+                        let t1 = self.ctx.infer_expr(&args[0]);
+                        let t2 = self.ctx.infer_expr(&args[1]);
+                        return if t1 == CrowType::Float || t2 == CrowType::Float {
+                            format!("(({}) as f64).min(({}) as f64)", arg_strs[0], arg_strs[1])
+                        } else {
+                            format!("std::cmp::min({}, {})", arg_strs[0], arg_strs[1])
+                        };
+                    }
+                    if name == "max" && arg_strs.len() == 2 {
+                        let t1 = self.ctx.infer_expr(&args[0]);
+                        let t2 = self.ctx.infer_expr(&args[1]);
+                        return if t1 == CrowType::Float || t2 == CrowType::Float {
+                            format!("(({}) as f64).max(({}) as f64)", arg_strs[0], arg_strs[1])
+                        } else {
+                            format!("std::cmp::max({}, {})", arg_strs[0], arg_strs[1])
+                        };
+                    }
+                    // --- String builtins ---
+                    if name == "split" && arg_strs.len() == 2 {
+                        return format!("({}).split(&{}).map(|s| s.to_string()).collect::<Vec<String>>()", arg_strs[0], arg_strs[1]);
+                    }
+                    if name == "trim" && arg_strs.len() == 1 {
+                        return format!("({}).trim().to_string()", arg_strs[0]);
+                    }
+                    if name == "replace" && arg_strs.len() == 3 {
+                        return format!("({}).replace(&{}, &{})", arg_strs[0], arg_strs[1], arg_strs[2]);
+                    }
+                    if name == "upper" && arg_strs.len() == 1 {
+                        return format!("({}).to_uppercase()", arg_strs[0]);
+                    }
+                    if name == "lower" && arg_strs.len() == 1 {
+                        return format!("({}).to_lowercase()", arg_strs[0]);
+                    }
+                    if name == "join" && arg_strs.len() == 2 {
+                        return format!("{}.iter().map(|s| s.to_string()).collect::<Vec<String>>().join(&{})", arg_strs[0], arg_strs[1]);
+                    }
+                    if name == "starts" && arg_strs.len() == 2 {
+                        return format!("({}).starts_with(&*{})", arg_strs[0], arg_strs[1]);
+                    }
+                    if name == "ends" && arg_strs.len() == 2 {
+                        return format!("({}).ends_with(&*{})", arg_strs[0], arg_strs[1]);
+                    }
+                    // --- Conversion builtins ---
+                    if name == "int" && arg_strs.len() == 1 {
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        return match ty {
+                            CrowType::Int => arg_strs[0].clone(),
+                            CrowType::Float => format!("({}) as i64", arg_strs[0]),
+                            CrowType::Str => format!("({}).parse::<i64>().unwrap()", arg_strs[0]),
+                            CrowType::Bool => format!("if {} {{ 1_i64 }} else {{ 0_i64 }}", arg_strs[0]),
+                            _ => format!("({}) as i64", arg_strs[0]),
+                        };
+                    }
+                    if name == "float" && arg_strs.len() == 1 {
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        return match ty {
+                            CrowType::Float => arg_strs[0].clone(),
+                            CrowType::Int => format!("({}) as f64", arg_strs[0]),
+                            CrowType::Str => format!("({}).parse::<f64>().unwrap()", arg_strs[0]),
+                            CrowType::Bool => format!("if {} {{ 1.0_f64 }} else {{ 0.0_f64 }}", arg_strs[0]),
+                            _ => format!("({}) as f64", arg_strs[0]),
+                        };
+                    }
+                    if name == "str" && arg_strs.len() == 1 {
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        return match ty {
+                            CrowType::Str => arg_strs[0].clone(),
+                            _ => format!("format!(\"{{}}\", {})", arg_strs[0]),
+                        };
+                    }
+                    // --- Collection builtins ---
+                    if name == "len" && arg_strs.len() == 1 {
+                        return format!("({}).len() as i64", arg_strs[0]);
+                    }
+                    if name == "contains" && arg_strs.len() == 2 {
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        return match ty {
+                            CrowType::Str => format!("({}).contains(&*{})", arg_strs[0], arg_strs[1]),
+                            _ => format!("({}).contains(&{})", arg_strs[0], arg_strs[1]),
+                        };
+                    }
+                    if name == "slice" && arg_strs.len() == 3 {
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        return match ty {
+                            CrowType::Str => format!("({})[({}) as usize..({}) as usize].to_string()", arg_strs[0], arg_strs[1], arg_strs[2]),
+                            _ => format!("({})[({}) as usize..({}) as usize].to_vec()", arg_strs[0], arg_strs[1], arg_strs[2]),
+                        };
+                    }
+                    // Mutating collection builtins
+                    if name == "push" && arg_strs.len() == 2 {
+                        return format!("{}.push({})", arg_strs[0], arg_strs[1]);
+                    }
+                    if name == "pop" && arg_strs.len() == 1 {
+                        return format!("{}.pop().unwrap()", arg_strs[0]);
+                    }
+                    if name == "sort" {
+                        return format!("{}.sort()", arg_strs[0]);
+                    }
+                    if name == "reverse" && arg_strs.len() == 1 {
+                        return format!("{}.reverse()", arg_strs[0]);
+                    }
+                    if name == "append" && arg_strs.len() == 2 {
+                        return format!("{}.extend({}.iter().cloned())", arg_strs[0], arg_strs[1]);
+                    }
+                    // --- Map builtins ---
+                    if name == "keys" && arg_strs.len() == 1 {
+                        return format!("{}.keys().cloned().collect::<Vec<String>>()", arg_strs[0]);
+                    }
+                    if name == "values" && arg_strs.len() == 1 {
+                        return format!("{}.values().cloned().collect::<Vec<_>>()", arg_strs[0]);
+                    }
+                    if name == "has" && arg_strs.len() == 2 {
+                        return format!("{}.contains_key(&{})", arg_strs[0], arg_strs[1]);
+                    }
+                    if name == "set" && arg_strs.len() == 3 {
+                        return format!("{}.insert({}, {})", arg_strs[0], arg_strs[1], arg_strs[2]);
+                    }
+                    if name == "del" && arg_strs.len() == 2 {
+                        return format!("{}.remove(&{})", arg_strs[0], arg_strs[1]);
+                    }
+                    // --- CLI / IO builtins ---
+                    if name == "args" && arg_strs.is_empty() {
+                        return "std::env::args().skip(1).collect::<Vec<String>>()".to_string();
+                    }
+                    if name == "input" && arg_strs.is_empty() {
+                        return "{ let mut _line = String::new(); std::io::stdin().read_line(&mut _line).unwrap(); _line.trim_end().to_string() }".to_string();
+                    }
+                    // --- Assert ---
+                    if name == "assert" && (arg_strs.len() == 1 || arg_strs.len() == 2) {
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        let cond = match ty {
+                            CrowType::Bool => arg_strs[0].clone(),
+                            CrowType::Int => format!("({}) != 0", arg_strs[0]),
+                            CrowType::Str => format!("!({}).is_empty()", arg_strs[0]),
+                            _ => format!("({}) != 0", arg_strs[0]),
+                        };
+                        if arg_strs.len() == 2 {
+                            return format!("if !({}) {{ panic!(\"assertion failed: {{}}\", {}); }}", cond, arg_strs[1]);
+                        } else {
+                            return format!("assert!({})", cond);
+                        }
+                    }
+                    // --- File I/O builtins ---
+                    if name == "read" && arg_strs.len() == 1 {
+                        return format!("std::fs::read_to_string(&*{}).unwrap()", arg_strs[0]);
+                    }
+                    if name == "write" && arg_strs.len() == 2 {
+                        return format!("std::fs::write(&*{}, &*{}).unwrap()", arg_strs[0], arg_strs[1]);
                     }
 
                     // Struct constructor
@@ -663,34 +920,126 @@ impl Transpiler {
                         return format!("{} {{ {} }}", name, field_inits.join(", "));
                     }
 
-                    // Regular function call
-                    return format!("{}({})", name, arg_strs.join(", "));
+                    // Known function → direct call
+                    if self.ctx.functions.contains_key(name) {
+                        return format!("{}({})", Self::rust_fn_name(name), arg_strs.join(", "));
+                    }
+
+                    // Check variable type for list/map indexing vs indirect function call
+                    let var_type = self.ctx.vars.get(name).cloned()
+                        .unwrap_or(CrowType::Unknown);
+                    match &var_type {
+                        CrowType::List(_) => {
+                            // List indexing: list[i] → list[i as usize]
+                            return format!("{}[{} as usize]", name, arg_strs.join(", "));
+                        }
+                        CrowType::Map(_) => {
+                            // Map lookup: map[key] → map[&key]
+                            return format!("{}[&{}].clone()", name, arg_strs.join(", "));
+                        }
+                        _ => {
+                            // Function pointer call or unknown: name(args)
+                            return format!("{}({})", name, arg_strs.join(", "));
+                        }
+                    }
                 }
 
-                // Method-style or indexed call
+                // Non-ident callee (e.g., list[0][3] or expr returning a function)
+                let callee_type = self.ctx.infer_expr(callee);
                 let callee_str = self.expr_to_string(callee);
-                format!("{}({})", callee_str, arg_strs.join(", "))
+                match &callee_type {
+                    CrowType::List(_) => format!("{}[{} as usize]", callee_str, arg_strs.join(", ")),
+                    CrowType::Map(_) => format!("{}[&{}].clone()", callee_str, arg_strs.join(", ")),
+                    CrowType::Fn(_, _) => format!("{}({})", callee_str, arg_strs.join(", ")),
+                    _ => format!("{}({})", callee_str, arg_strs.join(", ")),
+                }
             }
             Expr::FieldAccess { object, field } => {
                 let obj = self.expr_to_string(object);
+                // Map Crow's .len to Rust's .len()
+                if field == "len" {
+                    let obj_type = self.ctx.infer_expr(object);
+                    if matches!(obj_type, CrowType::List(_) | CrowType::Str) {
+                        return format!("{}.len() as i64", obj);
+                    }
+                }
+                // .status on non-struct types returns 0 (no error)
+                if field == "status" {
+                    let obj_type = self.ctx.infer_expr(object);
+                    if !matches!(obj_type, CrowType::Struct(_)) {
+                        return "0_i64".to_string();
+                    }
+                }
                 // Check if this field is OptBoxStruct — if so, the caller
                 // will handle unwrapping when it's used as a function argument.
                 // Here we just emit the raw field access.
                 format!("{}.{}", obj, field)
             }
             Expr::List(items) => {
-                let vals: Vec<String> = items.iter()
-                    .map(|i| self.expr_to_string(i))
-                    .collect();
+                // Check if this is a list of functions — need explicit fn pointer cast
+                let inner_type = if !items.is_empty() {
+                    let mut t = CrowType::Unknown;
+                    for item in items {
+                        t = t.unify(&self.ctx.infer_expr(item));
+                    }
+                    t
+                } else {
+                    CrowType::Unknown
+                };
+                let vals: Vec<String> = if let CrowType::Fn(_, _) = &inner_type {
+                    // Cast each item to fn pointer type to avoid Rust's distinct fn item types
+                    let fn_type = inner_type.to_rust_type();
+                    items.iter()
+                        .map(|i| format!("{} as {}", self.expr_to_string(i), fn_type))
+                        .collect()
+                } else {
+                    items.iter()
+                        .map(|i| self.expr_to_string(i))
+                        .collect()
+                };
                 format!("vec![{}]", vals.join(", "))
             }
             Expr::Map(pairs) => {
                 if pairs.is_empty() {
                     "BTreeMap::new()".to_string()
                 } else {
-                    let entries: Vec<String> = pairs.iter()
-                        .map(|(k, v)| format!("({}, {})", self.expr_to_string(k), self.expr_to_string(v)))
+                    // Check individual value types to detect mixed-type maps
+                    let val_types: Vec<CrowType> = pairs.iter()
+                        .map(|(_, v)| self.ctx.infer_expr(v))
                         .collect();
+                    let val_type = {
+                        let mut t = CrowType::Unknown;
+                        for vt in &val_types {
+                            t = t.unify(vt);
+                        }
+                        t
+                    };
+                    // Detect mixed types: if any value type differs from the unified type,
+                    // convert everything to String
+                    let has_mixed = val_types.iter().any(|vt| vt != &val_type && *vt != CrowType::Unknown);
+                    let entries: Vec<String> = if let CrowType::Fn(_, _) = &val_type {
+                        let fn_type = val_type.to_rust_type();
+                        pairs.iter()
+                            .map(|(k, v)| format!("({}, {} as {})", self.expr_to_string(k), self.expr_to_string(v), fn_type))
+                            .collect()
+                    } else if has_mixed {
+                        // Mixed-type map: convert all values to String
+                        pairs.iter()
+                            .zip(val_types.iter())
+                            .map(|((k, v), vt)| {
+                                let v_str = self.expr_to_string(v);
+                                let v_as_str = match vt {
+                                    CrowType::Str => v_str,
+                                    _ => format!("{}.to_string()", v_str),
+                                };
+                                format!("({}, {})", self.expr_to_string(k), v_as_str)
+                            })
+                            .collect()
+                    } else {
+                        pairs.iter()
+                            .map(|(k, v)| format!("({}, {})", self.expr_to_string(k), self.expr_to_string(v)))
+                            .collect()
+                    };
                     format!("BTreeMap::from([{}])", entries.join(", "))
                 }
             }
@@ -700,8 +1049,35 @@ impl Transpiler {
         }
     }
 
+    /// Check if a for-expr body is a filter pattern:
+    /// The last non-line stmt is an `if` without `else`, whose then_body's last stmt
+    /// is an ExprStmt (the value to keep).
+    fn is_filter_pattern(body: &[Stmt]) -> bool {
+        let last = body.iter().rev().find(|s| !matches!(s, Stmt::Line(_)));
+        if let Some(Stmt::If { else_body: None, then_body, .. }) = last {
+            // Check that then_body ends with an ExprStmt
+            let last_then = then_body.iter().rev().find(|s| !matches!(s, Stmt::Line(_)));
+            matches!(last_then, Some(Stmt::ExprStmt(_)))
+        } else {
+            false
+        }
+    }
+
+    /// Extract the filter condition and value expression from a filter pattern.
+    fn extract_filter_parts(body: &[Stmt]) -> Option<(&Expr, &Expr)> {
+        let last = body.iter().rev().find(|s| !matches!(s, Stmt::Line(_)));
+        if let Some(Stmt::If { condition, else_body: None, then_body }) = last {
+            let last_then = then_body.iter().rev().find(|s| !matches!(s, Stmt::Line(_)));
+            if let Some(Stmt::ExprStmt(val_expr)) = last_then {
+                return Some((condition, val_expr));
+            }
+        }
+        None
+    }
+
     /// Emit a ForExpr as .iter().map(|var| { body }).collect()
     /// Uses par_iter() when cpu_count > 1.
+    /// Detects filter patterns (if without else) and uses filter_map instead.
     fn emit_for_expr(&mut self, var: &str, iter: &Expr, body: &[Stmt]) -> String {
         let iter_str = self.expr_to_string(iter);
         let use_par = self.cpu_count.map_or(false, |n| n > 1);
@@ -715,8 +1091,36 @@ impl Transpiler {
         };
         let is_copy = matches!(elem_type, CrowType::Int | CrowType::Float | CrowType::Bool);
 
+        // Build the closure parameter pattern
+        let param_pattern = if is_copy {
+            format!("|&{}|", var)
+        } else {
+            format!("|{}|", var)
+        };
+
+        // Check for filter pattern: for x in list \n if cond \n x
+        if Self::is_filter_pattern(body) {
+            if let Some((cond, val_expr)) = Self::extract_filter_parts(body) {
+                // Save state for closure body
+                let saved_vars = self.ctx.vars.clone();
+                self.ctx.vars.insert(var.to_string(), elem_type.clone());
+
+                let cond_str = self.expr_to_string(cond);
+                let val_str = self.expr_to_string(val_expr);
+                let val_type = self.ctx.infer_expr(val_expr);
+
+                self.ctx.vars = saved_vars;
+
+                let collect_type = val_type.to_rust_type();
+                return format!(
+                    "{}.{}().filter_map({} {{ if {} {{ Some({}) }} else {{ None }} }}).collect::<Vec<{}>>()",
+                    iter_str, iter_method, param_pattern, cond_str, val_str, collect_type
+                );
+            }
+        }
+
         // Determine the return type of each iteration (last expression)
-        let last_type = if let Some(last_stmt) = body.last() {
+        let last_type = if let Some(last_stmt) = body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
             match last_stmt {
                 Stmt::ExprStmt(e) => self.ctx.infer_expr(e),
                 _ => CrowType::Unknown,
@@ -738,11 +1142,15 @@ impl Transpiler {
         self.ctx.vars.insert(var.to_string(), elem_type.clone());
 
         // Split body into init statements and last expression
-        let has_last_expr = body.last().map_or(false, |s| matches!(s, Stmt::ExprStmt(_)));
-        let (init_stmts, last_expr) = if has_last_expr && body.len() > 1 {
-            (&body[..body.len() - 1], body.last())
-        } else if has_last_expr {
-            (&body[..0], body.last())
+        let last_non_line = body.iter().rposition(|s| !matches!(s, Stmt::Line(_)));
+        let has_last_expr = last_non_line.map_or(false, |i| matches!(body[i], Stmt::ExprStmt(_)));
+        let (init_stmts, last_expr) = if has_last_expr {
+            let idx = last_non_line.unwrap();
+            if idx > 0 {
+                (&body[..idx], Some(&body[idx]))
+            } else {
+                (&body[..0], Some(&body[idx]))
+            }
         } else {
             (body, None)
         };
@@ -765,13 +1173,6 @@ impl Transpiler {
         self.declared = saved_declared;
         self.ctx.vars = saved_vars;
         self.indent = saved_indent;
-
-        // Build the closure parameter pattern
-        let param_pattern = if is_copy {
-            format!("|&{}|", var)
-        } else {
-            format!("|{}|", var)
-        };
 
         let indent = "    ".repeat(self.indent);
         let collect_type = last_type.to_rust_type();
@@ -812,12 +1213,12 @@ impl Transpiler {
                 if let Ok(tokens) = lexer.tokenize() {
                     let mut parser = crate::parser::Parser::new(tokens);
                     if let Ok(stmts) = parser.parse() {
-                        if let Some(crate::ast::Stmt::ExprStmt(expr)) = stmts.first() {
+                        if let Some(crate::ast::Stmt::ExprStmt(expr)) = stmts.iter().find(|s| !matches!(s, Stmt::Line(_))) {
                             let rust_expr = self.expr_to_string(expr);
-                            // Use {:?} for collection types (Vec, Map) since they don't impl Display
+                            // Use {:?} for collection/struct types since they don't impl Display
                             let expr_type = self.ctx.infer_expr(expr);
                             match expr_type {
-                                CrowType::List(_) | CrowType::Map(_) => fmt_str.push_str("{:?}"),
+                                CrowType::List(_) | CrowType::Map(_) | CrowType::Struct(_) => fmt_str.push_str("{:?}"),
                                 _ => fmt_str.push_str("{}"),
                             }
                             args.push(rust_expr);
@@ -848,7 +1249,7 @@ impl Transpiler {
     }
 
     /// Emit a log[] call as println!()
-    fn emit_log_call(&mut self, args: &[String]) -> String {
+    fn emit_log_call(&mut self, args: &[String], orig_exprs: &[Expr]) -> String {
         if args.is_empty() {
             "println!()".to_string()
         } else {
@@ -858,7 +1259,18 @@ impl Transpiler {
                 // Replace format!(...) with println!(...)
                 format!("println!{}", &arg[7..])
             } else {
-                format!("println!(\"{{}}\", {})", arg)
+                // Check if the expression is a collection/struct type — use {:?} instead of {}
+                let needs_debug = if let Some(expr) = orig_exprs.first() {
+                    let ty = self.ctx.infer_expr(expr);
+                    matches!(ty, CrowType::List(_) | CrowType::Map(_) | CrowType::Struct(_))
+                } else {
+                    false
+                };
+                if needs_debug {
+                    format!("println!(\"{{:?}}\", {})", arg)
+                } else {
+                    format!("println!(\"{{}}\", {})", arg)
+                }
             }
         }
     }
