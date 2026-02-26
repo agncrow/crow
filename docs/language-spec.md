@@ -247,6 +247,7 @@ data = map[]             --- empty map ---
 | `reverse[list]` | Reverse list in place (mutates) |
 | `contains[list, value]` | Check if list contains value |
 | `slice[list, start, end]` | Extract sublist |
+| `sum[list]` | Sum of a list of numbers (int or float) |
 
 #### Map Operations
 
