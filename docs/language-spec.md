@@ -907,3 +907,41 @@ for i in range[len[keys]]
 ```
 
 The pattern is always the same: iterate over indices with `range[len[list]]`, access elements by index. One pattern, zero new concepts.
+
+
+## Design Note: No Reduce, Any, or All
+
+Crow intentionally omits `reduce`, `any`, and `all` builtins.
+
+**Why they were rejected:**
+
+1. **`reduce` is redundant.** Every common reduction already has a dedicated builtin: `sum[list]` for addition, `join[list, sep]` for string concatenation, `max[list]` and `min[list]` for extremes. The remaining cases are rare enough for a loop.
+
+2. **`any` and `all` need lambdas to be ergonomic.** In Python: `any(x > 90 for x in scores)`. In Rust: `scores.iter().any(|x| x > 90)`. Without lambdas, Crow would require defining a named function for every one-off predicate — no savings over the loop version.
+
+3. **The loop versions are the same length.** Defining a throwaway predicate function for `any[list, pred]` takes 3 lines. The loop version also takes 3 lines but uses concepts Crow already has.
+
+**What to use instead:**
+
+Instead of `reduce` (product):
+```
+acc = 1
+for x in nums
+    acc = acc * x
+```
+
+Instead of `any` (is any score above 90?):
+```
+found = false
+for x in scores
+    if x gt 90
+        found = true
+```
+
+Instead of `all` (are all passwords long enough?):
+```
+valid = true
+for x in passwords
+    if len[x] lt 8
+        valid = false
+```
