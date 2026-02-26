@@ -20,13 +20,14 @@ impl fmt::Display for Status {
     }
 }
 
-/// Every value in Crow is a struct with status, result, reason.
+/// Every value in Crow is a struct with status, result, reason, line.
 /// Values auto-unwrap — you use them directly.
 #[derive(Debug, Clone)]
 pub struct CrowValue {
     pub status: Status,
     pub result: Value,    // the actual value
     pub reason: Option<String>,   // error message (None if not error)
+    pub line: usize,              // line number where error originated (0 = not an error)
 }
 
 impl CrowValue {
@@ -35,6 +36,7 @@ impl CrowValue {
             status: Status::Ok,
             result: value,
             reason: None,
+            line: 0,
         }
     }
 
@@ -43,14 +45,16 @@ impl CrowValue {
             status: Status::Done,
             result: Value::Done,
             reason: None,
+            line: 0,
         }
     }
 
-    pub fn error(reason: &str) -> Self {
+    pub fn error(reason: &str, line: usize) -> Self {
         CrowValue {
             status: Status::Error,
             result: Value::Done,
             reason: Some(reason.to_string()),
+            line,
         }
     }
 
