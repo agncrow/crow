@@ -16,7 +16,6 @@ pub enum CrowType {
     /// Used when a struct field holds both a sentinel (e.g. 0) and a recursive struct reference.
     OptBoxStruct(String),
     Fn(Vec<CrowType>, Box<CrowType>),
-    Iterator(Box<CrowType>),
     Void,
     Unknown,
 }
@@ -36,7 +35,6 @@ impl CrowType {
                 let param_types: Vec<String> = params.iter().map(|p| p.to_rust_type()).collect();
                 format!("fn({}) -> {}", param_types.join(", "), ret.to_rust_type())
             }
-            CrowType::Iterator(inner) => format!("Box<dyn Iterator<Item = {}>>", inner.to_rust_type()),
             CrowType::Void => "()".into(),
             CrowType::Unknown => "String".into(),
         }
@@ -61,7 +59,6 @@ impl CrowType {
             (CrowType::OptBoxStruct(name), CrowType::Struct(_)) | (CrowType::Struct(_), CrowType::OptBoxStruct(name)) => {
                 CrowType::OptBoxStruct(name.clone())
             }
-            (CrowType::Iterator(a), CrowType::Iterator(b)) => CrowType::Iterator(Box::new(a.unify(b))),
             // Fn unification
             (CrowType::Fn(p1, r1), CrowType::Fn(p2, r2)) if p1.len() == p2.len() => {
                 let params: Vec<CrowType> = p1.iter().zip(p2.iter()).map(|(a, b)| a.unify(b)).collect();
@@ -356,24 +353,6 @@ impl TypeContext {
                                             target.return_type = new_ret;
                                         }
                                     }
-                                }
-                            }
-                        }
-                    }
-
-                    // Iterator builtins: propagate element type to callback function params
-                    // each[iterExpr, fn] and filter[iterExpr, fn]
-                    if (name == "each" || name == "filter") && args.len() == 2 {
-                        let iter_type = self.infer_expr(&args[0]);
-                        if let CrowType::Iterator(inner) = iter_type {
-                            if let Expr::Ident(fn_name) = &args[1] {
-                                if self.functions.contains_key(fn_name) {
-                                    let target_sig = self.functions.get(fn_name).unwrap().clone();
-                                    let mut new_params = target_sig.params.clone();
-                                    if !new_params.is_empty() {
-                                        new_params[0].1 = new_params[0].1.unify(&inner);
-                                    }
-                                    self.functions.get_mut(fn_name).unwrap().params = new_params;
                                 }
                             }
                         }
@@ -745,43 +724,6 @@ impl TypeContext {
                         // File I/O
                         "read" => return CrowType::Str,
                         "write" => return CrowType::Void,
-                        // Iterator builtins
-                        "iter" => {
-                            if let Some(arg) = args.first() {
-                                let arg_type = self.infer_expr(arg);
-                                if let CrowType::List(inner) = arg_type {
-                                    return CrowType::Iterator(inner);
-                                }
-                            }
-                            return CrowType::Iterator(Box::new(CrowType::Unknown));
-                        }
-                        "next" => {
-                            if let Some(arg) = args.first() {
-                                let arg_type = self.infer_expr(arg);
-                                if let CrowType::Iterator(inner) = arg_type {
-                                    return *inner;
-                                }
-                            }
-                            return CrowType::Unknown;
-                        }
-                        "collect" => {
-                            if let Some(arg) = args.first() {
-                                let arg_type = self.infer_expr(arg);
-                                if let CrowType::Iterator(inner) = arg_type {
-                                    return CrowType::List(inner);
-                                }
-                            }
-                            return CrowType::List(Box::new(CrowType::Unknown));
-                        }
-                        "take" | "skip" | "filter" | "each" => {
-                            if let Some(arg) = args.first() {
-                                let arg_type = self.infer_expr(arg);
-                                if let CrowType::Iterator(inner) = arg_type {
-                                    return CrowType::Iterator(inner);
-                                }
-                            }
-                            return CrowType::Iterator(Box::new(CrowType::Unknown));
-                        }
                         _ => {}
                     }
                 }

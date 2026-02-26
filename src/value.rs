@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /// Status of a CrowValue — avoids heap-allocating a String for every value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,16 +87,7 @@ pub enum Value {
     StructDef(StructDef),
     StructInstance(StructInstance),
     Module(ModuleValue),
-    Iterator(IteratorValue),
     Done, // represents no value (from 'done' status)
-}
-
-/// A lazy iterator over CrowValues.
-/// Wraps a Vec with an index for sequential access.
-#[derive(Debug, Clone)]
-pub struct IteratorValue {
-    pub items: Arc<Vec<CrowValue>>,
-    pub pos: Arc<Mutex<usize>>,
 }
 
 #[derive(Debug, Clone)]
@@ -176,10 +167,6 @@ impl fmt::Display for Value {
                 write!(f, "]")
             }
             Value::Module(m) => write!(f, "<module {}>", m.name),
-            Value::Iterator(it) => {
-                let pos = *it.pos.lock().unwrap();
-                write!(f, "<iterator pos={} len={}>", pos, it.items.len())
-            }
             Value::Done => write!(f, "done"),
         }
     }
