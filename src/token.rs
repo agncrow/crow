@@ -22,6 +22,8 @@ pub enum Token {
     Match,
     Struct,
     Use,
+    Break,
+    Continue,
 
     // Comparison operators (word-based)
     Eq,
@@ -82,6 +84,8 @@ impl std::fmt::Display for Token {
             Token::Match => write!(f, "match"),
             Token::Struct => write!(f, "struct"),
             Token::Use => write!(f, "use"),
+            Token::Break => write!(f, "break"),
+            Token::Continue => write!(f, "continue"),
             Token::Eq => write!(f, "eq"),
             Token::Ne => write!(f, "ne"),
             Token::Gt => write!(f, "gt"),

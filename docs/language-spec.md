@@ -37,6 +37,23 @@ The built-in types are:
 | list   | `[1, 2, 3]`          |
 | map    | `['name' = 'crow', 'age' = 3]` |
 
+### String Escape Sequences
+
+Strings support escape sequences with backslash:
+
+| Escape | Character |
+|--------|-----------|
+| `\n` | Newline |
+| `\t` | Tab |
+| `\\` | Literal backslash |
+| `\'` | Literal single quote |
+
+```
+log['line1\nline2']
+log['col1\tcol2']
+log['it\'s here']
+```
+
 ### String Interpolation
 
 Strings support inline expressions using `{}`.
@@ -269,6 +286,19 @@ data = map[]             --- empty map ---
 | `input[]` | Read a line from stdin (error-value on failure) |
 | `input[prompt]` | Print prompt, then read a line (error-value on failure) |
 
+#### System
+
+| Function | Description |
+|----------|-------------|
+| `rand[]` | Random float between 0.0 and 1.0 |
+| `rand[n]` | Random int between 0 and n-1 |
+| `rand[min, max]` | Random int between min and max (inclusive) |
+| `time[]` | Current unix timestamp as float (seconds) |
+| `sleep[ms]` | Sleep for ms milliseconds (int) or seconds (float) |
+| `env[name]` | Get environment variable (empty string if not set) |
+| `exit[]` | Exit with code 0 |
+| `exit[code]` | Exit with given code |
+
 ## 4. Control Flow
 
 ### if / else
@@ -326,12 +356,34 @@ result = for x in [1, 2, 3, 4, 5]
 
 ### while
 
-`while` loops run sequentially.
+`while` loops run sequentially. They support `break` and `continue`.
 
 ```
 while x gt 0
     x = x - 1
 ```
+
+#### break and continue
+
+`break` exits the loop immediately. `continue` skips to the next iteration.
+
+```
+x = 0
+while x lt 100
+    if x eq 10
+        break
+    x = x + 1
+
+total = 0
+i = 0
+while i lt 10
+    i = i + 1
+    if i eq 5
+        continue
+    total = total + i
+```
+
+> **Design Note:** `break` and `continue` are only valid in `while` loops. `for` loops are parallel by default (§12), and `break`/`continue` are inherently sequential concepts. Using `break` in a parallel loop would silently force sequential execution — a hidden performance trap. Use `if` inside `for` to skip items, or use `while` when you need early exit.
 
 ## 6. Design Note: No Pattern Matching or Sum Types
 

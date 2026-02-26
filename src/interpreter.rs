@@ -103,6 +103,8 @@ enum Signal {
     None,
     Return(CrowValue),
     Value(CrowValue), // expression result (for collecting in for loops)
+    Break,
+    Continue,
 }
 
 
@@ -186,7 +188,7 @@ impl Interpreter {
                 match self.exec_stmt(&stmts[wave[0]]).map_err(|e| self.line_err(e))? {
                     Signal::Return(val) => return Ok(val),
                     Signal::Value(val) => result = val,
-                    Signal::None => {}
+                    Signal::Break | Signal::Continue | Signal::None => {}
                 }
             } else {
                 // multiple independent statements - execute in parallel
@@ -229,7 +231,7 @@ impl Interpreter {
                     match signal {
                         Signal::Return(val) => return Ok(val),
                         Signal::Value(val) => result = val,
-                        Signal::None => {}
+                        Signal::Break | Signal::Continue | Signal::None => {}
                     }
                 }
             }
@@ -341,6 +343,8 @@ impl Interpreter {
                 };
                 Ok(Signal::Return(val))
             }
+            Stmt::Break => Ok(Signal::Break),
+            Stmt::Continue => Ok(Signal::Continue),
             Stmt::ExprStmt(expr) => {
                 let val = self.eval_expr(expr)?;
                 Ok(Signal::Value(val))
@@ -505,6 +509,14 @@ impl Interpreter {
                         self.env.pop_scope();
                         return Ok(Signal::Return(val));
                     }
+                    Signal::Break => {
+                        self.env.pop_scope();
+                        return Ok(Signal::Break);
+                    }
+                    Signal::Continue => {
+                        self.env.pop_scope();
+                        return Ok(Signal::Continue);
+                    }
                     Signal::Value(val) => last_signal = Signal::Value(val),
                     Signal::None => {}
                 }
@@ -519,6 +531,14 @@ impl Interpreter {
                     Signal::Return(val) => {
                         self.env.pop_scope();
                         return Ok(Signal::Return(val));
+                    }
+                    Signal::Break => {
+                        self.env.pop_scope();
+                        return Ok(Signal::Break);
+                    }
+                    Signal::Continue => {
+                        self.env.pop_scope();
+                        return Ok(Signal::Continue);
                     }
                     Signal::Value(val) => last_signal = Signal::Value(val),
                     Signal::None => {}
@@ -561,7 +581,7 @@ impl Interpreter {
                                 );
                             }
                             Signal::Value(val) => last_val = val,
-                            Signal::None => {}
+                            Signal::None | Signal::Break | Signal::Continue => {}
                         }
                     }
                     Ok(last_val)
@@ -592,16 +612,20 @@ impl Interpreter {
                 break;
             }
             self.env.push_scope();
+            let mut should_break = false;
             for stmt in body {
                 match self.exec_stmt(stmt)? {
                     Signal::Return(val) => {
                         self.env.pop_scope();
                         return Ok(Signal::Return(val));
                     }
+                    Signal::Break => { should_break = true; break; }
+                    Signal::Continue => break,
                     Signal::Value(_) | Signal::None => {}
                 }
             }
             self.env.pop_scope();
+            if should_break { break; }
         }
         Ok(Signal::None)
     }
@@ -620,6 +644,14 @@ impl Interpreter {
                         Signal::Return(v) => {
                             self.env.pop_scope();
                             return Ok(Signal::Return(v));
+                        }
+                        Signal::Break => {
+                            self.env.pop_scope();
+                            return Ok(Signal::Break);
+                        }
+                        Signal::Continue => {
+                            self.env.pop_scope();
+                            return Ok(Signal::Continue);
                         }
                         Signal::Value(_) | Signal::None => {}
                     }
@@ -808,7 +840,7 @@ impl Interpreter {
                             return Ok(val);
                         }
                         Signal::Value(val) => { result = val; }
-                        Signal::None => {}
+                        Signal::Break | Signal::Continue | Signal::None => {}
                     }
                 }
                 self.env.pop_call_scope();
@@ -889,6 +921,7 @@ impl Interpreter {
             | "keys" | "values" | "has" | "set" | "del"
             | "args" | "input"
             | "assert"
+            | "rand" | "time" | "sleep" | "env" | "exit"
         )
     }
 
@@ -1479,6 +1512,97 @@ impl Interpreter {
                     }
                     Err(e) => Ok(CrowValue::error(&format!("input error: {}", e))),
                 }
+            }
+            // --- System builtins ---
+            "rand" => {
+                if args.len() > 2 { return Err("rand[] takes 0, 1, or 2 arguments".into()); }
+                if args.is_empty() {
+                    // rand[] — random float between 0.0 and 1.0
+                    use std::collections::hash_map::DefaultHasher;
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = DefaultHasher::new();
+                    std::time::SystemTime::now().hash(&mut hasher);
+                    std::thread::current().id().hash(&mut hasher);
+                    let hash = hasher.finish();
+                    let val = (hash as f64) / (u64::MAX as f64);
+                    Ok(CrowValue::ok(Value::Float(val)))
+                } else if args.len() == 1 {
+                    // rand[n] — random int between 0 and n-1
+                    match args[0].unwrap_or_propagate()? {
+                        Value::Int(n) => {
+                            use std::collections::hash_map::DefaultHasher;
+                            use std::hash::{Hash, Hasher};
+                            let mut hasher = DefaultHasher::new();
+                            std::time::SystemTime::now().hash(&mut hasher);
+                            std::thread::current().id().hash(&mut hasher);
+                            let hash = hasher.finish();
+                            let val = (hash % (*n as u64)) as i64;
+                            Ok(CrowValue::ok(Value::Int(val)))
+                        }
+                        _ => Err("rand[n] requires an integer".into()),
+                    }
+                } else {
+                    // rand[min, max] — random int between min and max (inclusive)
+                    match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
+                        (Value::Int(min), Value::Int(max)) => {
+                            use std::collections::hash_map::DefaultHasher;
+                            use std::hash::{Hash, Hasher};
+                            let mut hasher = DefaultHasher::new();
+                            std::time::SystemTime::now().hash(&mut hasher);
+                            std::thread::current().id().hash(&mut hasher);
+                            let hash = hasher.finish();
+                            let range = (max - min + 1) as u64;
+                            let val = min + (hash % range) as i64;
+                            Ok(CrowValue::ok(Value::Int(val)))
+                        }
+                        _ => Err("rand[min, max] requires two integers".into()),
+                    }
+                }
+            }
+            "time" => {
+                if !args.is_empty() { return Err("time[] takes no arguments".into()); }
+                match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+                    Ok(d) => Ok(CrowValue::ok(Value::Float(d.as_secs_f64()))),
+                    Err(_) => Ok(CrowValue::error("system time before unix epoch")),
+                }
+            }
+            "sleep" => {
+                if args.len() != 1 { return Err("sleep[] takes exactly 1 argument".into()); }
+                match args[0].unwrap_or_propagate()? {
+                    Value::Int(ms) => {
+                        std::thread::sleep(std::time::Duration::from_millis(*ms as u64));
+                        Ok(CrowValue::done())
+                    }
+                    Value::Float(s) => {
+                        std::thread::sleep(std::time::Duration::from_secs_f64(*s));
+                        Ok(CrowValue::done())
+                    }
+                    _ => Err("sleep[] requires a number (milliseconds as int, or seconds as float)".into()),
+                }
+            }
+            "env" => {
+                if args.len() != 1 { return Err("env[] takes exactly 1 argument".into()); }
+                match args[0].unwrap_or_propagate()? {
+                    Value::Str(name) => {
+                        match std::env::var(name) {
+                            Ok(val) => Ok(CrowValue::ok(Value::Str(val))),
+                            Err(_) => Ok(CrowValue::ok(Value::Str(String::new()))),
+                        }
+                    }
+                    _ => Err("env[] requires a string".into()),
+                }
+            }
+            "exit" => {
+                if args.len() > 1 { return Err("exit[] takes 0 or 1 arguments".into()); }
+                let code = if args.is_empty() {
+                    0
+                } else {
+                    match args[0].unwrap_or_propagate()? {
+                        Value::Int(n) => *n as i32,
+                        _ => return Err("exit[] requires an integer".into()),
+                    }
+                };
+                std::process::exit(code);
             }
             // --- File I/O builtins ---
             "read" => {

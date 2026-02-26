@@ -823,6 +823,12 @@ impl Transpiler {
             Stmt::Return(None) => {
                 self.emit_line("return;");
             }
+            Stmt::Break => {
+                self.emit_line("break;");
+            }
+            Stmt::Continue => {
+                self.emit_line("continue;");
+            }
             Stmt::ExprStmt(_) => {
                 // Check if this is a cpu[n] call - update cpu_count instead of emitting code
                 if let Some(n) = Self::extract_cpu_call(stmt) {
@@ -875,7 +881,8 @@ impl Transpiler {
 
                 // Parallel by default. Fall back to sequential if:
                 // 1. cpu[1] was explicitly set, OR
-                // 2. The loop body mutates variables from the outer scope
+                // 2. The loop body mutates variables from the outer scope, OR
+                // 3. The loop body contains break or continue
                 let forced_sequential = self.cpu_count.map_or(false, |n| n <= 1);
                 let mutates_outer = Self::for_body_mutates_outer(body, var, &self.declared);
                 let use_par = !forced_sequential && !mutates_outer;
@@ -1292,6 +1299,36 @@ impl Transpiler {
                         }
                         return "{ let mut _line = String::new(); match std::io::stdin().read_line(&mut _line) { Ok(_) => CrowResult { status: \"ok\".to_string(), result: _line.trim_end().to_string(), reason: \"\".to_string() }, Err(e) => CrowResult { status: \"error\".to_string(), result: String::new(), reason: e.to_string() } } }".to_string();
                     }
+                    // --- System builtins ---
+                    if name == "rand" {
+                        if arg_strs.is_empty() {
+                            return "{ use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher}; let mut h = DefaultHasher::new(); std::time::SystemTime::now().hash(&mut h); std::thread::current().id().hash(&mut h); (h.finish() as f64) / (u64::MAX as f64) }".to_string();
+                        } else if arg_strs.len() == 1 {
+                            return format!("{{ use std::collections::hash_map::DefaultHasher; use std::hash::{{Hash, Hasher}}; let mut h = DefaultHasher::new(); std::time::SystemTime::now().hash(&mut h); std::thread::current().id().hash(&mut h); (h.finish() % ({} as u64)) as i64 }}", arg_strs[0]);
+                        } else if arg_strs.len() == 2 {
+                            return format!("{{ use std::collections::hash_map::DefaultHasher; use std::hash::{{Hash, Hasher}}; let mut h = DefaultHasher::new(); std::time::SystemTime::now().hash(&mut h); std::thread::current().id().hash(&mut h); let _min = {}; let _max = {}; _min + (h.finish() % ((_max - _min + 1) as u64)) as i64 }}", arg_strs[0], arg_strs[1]);
+                        }
+                    }
+                    if name == "time" && arg_strs.is_empty() {
+                        return "std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64()".to_string();
+                    }
+                    if name == "sleep" && arg_strs.len() == 1 {
+                        let arg_type = self.ctx.infer_expr(&args[0]);
+                        return match arg_type {
+                            CrowType::Int => format!("std::thread::sleep(std::time::Duration::from_millis({} as u64))", arg_strs[0]),
+                            _ => format!("std::thread::sleep(std::time::Duration::from_secs_f64({}))", arg_strs[0]),
+                        };
+                    }
+                    if name == "env" && arg_strs.len() == 1 {
+                        return format!("std::env::var({}).unwrap_or_default()", arg_strs[0]);
+                    }
+                    if name == "exit" {
+                        if arg_strs.is_empty() {
+                            return "std::process::exit(0)".to_string();
+                        } else if arg_strs.len() == 1 {
+                            return format!("std::process::exit({} as i32)", arg_strs[0]);
+                        }
+                    }
                     // --- Assert ---
                     if name == "assert" && (arg_strs.len() == 1 || arg_strs.len() == 2) {
                         let ty = self.ctx.infer_expr(&args[0]);
@@ -1682,7 +1719,15 @@ impl Transpiler {
                     args.push(expr_str);
                 }
             } else {
-                fmt_str.push(chars[i]);
+                // Escape special characters for Rust string literal
+                match chars[i] {
+                    '\n' => fmt_str.push_str("\\n"),
+                    '\t' => fmt_str.push_str("\\t"),
+                    '\\' => fmt_str.push_str("\\\\"),
+                    '"' => fmt_str.push_str("\\\""),
+                    '\r' => fmt_str.push_str("\\r"),
+                    ch => fmt_str.push(ch),
+                }
                 i += 1;
             }
         }

@@ -83,6 +83,8 @@ impl Parser {
         match self.peek().clone() {
             Token::Fn => self.parse_fn_decl(),
             Token::Return => self.parse_return(),
+            Token::Break => { self.advance(); Ok(Stmt::Break) }
+            Token::Continue => { self.advance(); Ok(Stmt::Continue) }
             Token::If => self.parse_if(),
             Token::For => self.parse_for_stmt(),
             Token::While => self.parse_while(),
