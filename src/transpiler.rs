@@ -327,6 +327,42 @@ impl Transpiler {
         }
     }
 
+    /// Check if a for loop body mutates variables from the outer scope.
+    /// If it does, the loop must run sequentially (not with par_iter).
+    /// "Outer scope" means any variable that was declared before the loop,
+    /// excluding the loop variable itself.
+    fn for_body_mutates_outer(body: &[Stmt], loop_var: &str, outer_vars: &std::collections::HashSet<String>) -> bool {
+        let mut body_writes = std::collections::HashSet::new();
+        Self::collect_loop_assigned_vars(body, &mut body_writes);
+        // Check if any written variable is from the outer scope (and not the loop var)
+        for name in &body_writes {
+            if name != loop_var && outer_vars.contains(name) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Recursively check if any for loop exists in the statements (for rayon detection).
+    fn has_for_loop(stmts: &[Stmt]) -> bool {
+        for stmt in stmts {
+            match stmt {
+                Stmt::For { .. } => return true,
+                Stmt::If { then_body, else_body, .. } => {
+                    if Self::has_for_loop(then_body) { return true; }
+                    if let Some(eb) = else_body {
+                        if Self::has_for_loop(eb) { return true; }
+                    }
+                }
+                Stmt::While { body, .. } => {
+                    if Self::has_for_loop(body) { return true; }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// Transpile a complete program to Rust source.
     pub fn transpile(&mut self, stmts: &[Stmt]) -> String {
         // Register all module names upfront so function bodies can resolve module references
@@ -341,9 +377,11 @@ impl Transpiler {
         let needs_par_iter = stmts.iter().any(|s| {
             Self::extract_cpu_call(s).map_or(false, |n| n > 1)
         });
+        // For loops are parallel by default — any for loop means we need rayon
+        let has_for = Self::has_for_loop(stmts) || self.ctx.functions.values().any(|sig| Self::has_for_loop(&sig.body));
         // Check for parallel waves (uses rayon::join, no prelude needed)
         let needs_parallel_waves = Self::has_parallel_waves(stmts) || self.ctx.functions.values().any(|sig| Self::has_parallel_waves(&sig.body));
-        self.needs_rayon = needs_par_iter || needs_parallel_waves;
+        self.needs_rayon = needs_par_iter || needs_parallel_waves || has_for;
 
         // Compute which params should be passed by reference
         self.compute_by_ref_params();
@@ -352,7 +390,7 @@ impl Transpiler {
         if self.program_uses_map() {
             self.emit_line("use std::collections::BTreeMap;");
         }
-        if needs_par_iter {
+        if needs_par_iter || has_for {
             self.emit_line("use rayon::prelude::*;");
         }
         self.emit_line("");
@@ -826,7 +864,6 @@ impl Transpiler {
             }
             Stmt::For { var, iter, body } => {
                 let iter_str = self.expr_to_string(iter);
-                let use_par = self.cpu_count.map_or(false, |n| n > 1);
 
                 // Determine element type for closure pattern
                 let iter_type = self.ctx.infer_expr(iter);
@@ -835,6 +872,13 @@ impl Transpiler {
                     _ => CrowType::Unknown,
                 };
                 let is_copy = matches!(elem_type, CrowType::Int | CrowType::Float | CrowType::Bool);
+
+                // Parallel by default. Fall back to sequential if:
+                // 1. cpu[1] was explicitly set, OR
+                // 2. The loop body mutates variables from the outer scope
+                let forced_sequential = self.cpu_count.map_or(false, |n| n <= 1);
+                let mutates_outer = Self::for_body_mutates_outer(body, var, &self.declared);
+                let use_par = !forced_sequential && !mutates_outer;
 
                 let saved = self.declared.clone();
                 if use_par {
@@ -1476,11 +1520,13 @@ impl Transpiler {
     }
 
     /// Emit a ForExpr as .iter().map(|var| { body }).collect()
-    /// Uses par_iter() when cpu_count > 1.
+    /// Parallel by default. Falls back to sequential if body mutates outer state or cpu[1].
     /// Detects filter patterns (if without else) and uses filter_map instead.
     fn emit_for_expr(&mut self, var: &str, iter: &Expr, body: &[Stmt]) -> String {
         let iter_str = self.expr_to_string(iter);
-        let use_par = self.cpu_count.map_or(false, |n| n > 1);
+        let forced_sequential = self.cpu_count.map_or(false, |n| n <= 1);
+        let mutates_outer = Self::for_body_mutates_outer(body, var, &self.declared);
+        let use_par = !forced_sequential && !mutates_outer;
         let iter_method = if use_par { "par_iter" } else { "iter" };
 
         // Determine element type of the iterator for the closure pattern
@@ -1964,5 +2010,37 @@ mod tests {
         let src = "x = [1.0, 2.0, 3.0]\ny = sum[x]\n";
         let rust = transpile(src);
         assert!(rust.contains(".iter().sum::<f64>()"), "sum of float list should use sum::<f64>()\n{}", rust);
+    }
+
+    #[test]
+    fn test_for_loop_parallel_by_default() {
+        let src = "items = [1, 2, 3]\nfor x in items\n    log['{x}']\n";
+        let rust = transpile(src);
+        assert!(rust.contains("par_iter()"), "for loop should use par_iter by default\n{}", rust);
+        assert!(rust.contains("for_each"), "parallel for should use for_each\n{}", rust);
+        assert!(rust.contains("use rayon::prelude::*"), "should import rayon prelude\n{}", rust);
+    }
+
+    #[test]
+    fn test_for_loop_sequential_when_mutates_outer() {
+        // Loop body assigns to `total` which is in outer scope — must be sequential
+        let src = "total = 0\nitems = [1, 2, 3]\nfor x in items\n    total = total + x\nlog['{total}']\n";
+        let rust = transpile(src);
+        assert!(rust.contains("for") && rust.contains(".iter()"), "mutating loop should use iter()\n{}", rust);
+        assert!(!rust.contains("par_iter"), "mutating loop should NOT use par_iter\n{}", rust);
+    }
+
+    #[test]
+    fn test_for_loop_sequential_with_cpu_1() {
+        let src = "cpu[1]\nitems = [1, 2, 3]\nfor x in items\n    log['{x}']\n";
+        let rust = transpile(src);
+        assert!(!rust.contains("par_iter"), "cpu[1] should force sequential for loop\n{}", rust);
+    }
+
+    #[test]
+    fn test_for_expr_parallel_by_default() {
+        let src = "items = [1, 2, 3]\ndoubled = for x in items\n    x * 2\nlog['{doubled}']\n";
+        let rust = transpile(src);
+        assert!(rust.contains("par_iter()"), "for-expr should use par_iter by default\n{}", rust);
     }
 }
