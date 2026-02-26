@@ -739,8 +739,53 @@ impl TypeContext {
                 CrowType::Float
             }
             "str" => CrowType::Str,
-            // Collection builtins (mutating ones return void)
-            "push" | "sort" | "reverse" | "append" | "set" | "del" => CrowType::Void,
+            // Immutable collection builtins (return same type as first arg)
+            "push" => {
+                // push[list, val] returns List with element type from val
+                if let Some(arg) = args.first() {
+                    let list_type = self.infer_expr(arg);
+                    if args.len() == 2 {
+                        let val_type = self.infer_expr(&args[1]);
+                        let existing_inner = if let CrowType::List(inner) = &list_type {
+                            *inner.clone()
+                        } else {
+                            CrowType::Unknown
+                        };
+                        return CrowType::List(Box::new(existing_inner.unify(&val_type)));
+                    }
+                    return list_type;
+                }
+                CrowType::Unknown
+            }
+            "pop" | "sort" | "reverse" | "append" => {
+                if let Some(arg) = args.first() {
+                    return self.infer_expr(arg);
+                }
+                CrowType::Unknown
+            }
+            "set" => {
+                // set[map, key, val] returns Map with value type from val arg
+                if let Some(arg) = args.first() {
+                    let map_type = self.infer_expr(arg);
+                    if args.len() == 3 {
+                        let val_type = self.infer_expr(&args[2]);
+                        let existing_inner = if let CrowType::Map(inner) = &map_type {
+                            *inner.clone()
+                        } else {
+                            CrowType::Unknown
+                        };
+                        return CrowType::Map(Box::new(existing_inner.unify(&val_type)));
+                    }
+                    return map_type;
+                }
+                CrowType::Unknown
+            }
+            "del" => {
+                if let Some(arg) = args.first() {
+                    return self.infer_expr(arg);
+                }
+                CrowType::Unknown
+            }
             // Map builtins
             "keys" => CrowType::List(Box::new(CrowType::Str)),
             "has" => CrowType::Bool,
@@ -752,15 +797,6 @@ impl TypeContext {
                     }
                 }
                 CrowType::List(Box::new(CrowType::Unknown))
-            }
-            "pop" => {
-                if let Some(arg) = args.first() {
-                    let list_type = self.infer_expr(arg);
-                    if let CrowType::List(inner) = list_type {
-                        return *inner;
-                    }
-                }
-                CrowType::Unknown
             }
             "slice" => {
                 if let Some(arg) = args.first() {

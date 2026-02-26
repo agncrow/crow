@@ -15,8 +15,8 @@ assert[nums[0] eq 99, 'list index mutation failed']
 assert[nums[1] eq 2, 'other index changed']
 
 m = map[]
-set[m, 'a', 1]
-set[m, 'b', 2]
+m = set[m, 'a', 1]
+m = set[m, 'b', 2]
 m['a'] = 99
 log['map after:', m]
 assert[m['a'] eq 99, 'map index mutation failed']

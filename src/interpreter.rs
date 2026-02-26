@@ -820,11 +820,6 @@ impl Interpreter {
     ) -> Result<CrowValue, String> {
         // Check for builtins first (before evaluating callee as a variable)
         if let Expr::Ident(name) = callee {
-            // Mutating builtins: push, pop, sort, reverse, append, set, del
-            // These modify the first argument (a variable) in place
-            if matches!(name.as_str(), "push" | "pop" | "sort" | "reverse" | "append" | "set" | "del") {
-                return self.call_mutating_builtin(name, args);
-            }
             if self.is_builtin(name) {
                 let arg_vals: Vec<CrowValue> = args
                     .iter()
@@ -961,151 +956,6 @@ impl Interpreter {
             | "assert"
             | "rand" | "time" | "sleep" | "env" | "exit"
         )
-    }
-
-    /// Handle mutating builtins: push, pop, sort, reverse, append, set, del
-    /// These modify the first argument (a variable) in place.
-    fn call_mutating_builtin(
-        &mut self,
-        name: &str,
-        args: &[Expr],
-    ) -> Result<CrowValue, String> {
-        // First arg must be an identifier (the variable to mutate)
-        let var_name = match args.first() {
-            Some(Expr::Ident(n)) => n.clone(),
-            _ => return Err(format!("{}[] first argument must be a variable name", name)),
-        };
-
-        match name {
-            "push" => {
-                if args.len() != 2 { return Err("push[] takes exactly 2 arguments".into()); }
-                let val = self.eval_expr(&args[1])?;
-                let var = self.env.get_mut(&var_name)
-                    .ok_or_else(|| format!("undefined variable '{}'", var_name))?;
-                if let Value::List(ref mut items) = var.result {
-                    items.push(val);
-                    Ok(CrowValue::done())
-                } else {
-                    Err("push[] requires a list".into())
-                }
-            }
-            "pop" => {
-                if args.len() != 1 { return Err("pop[] takes exactly 1 argument".into()); }
-                let var = self.env.get_mut(&var_name)
-                    .ok_or_else(|| format!("undefined variable '{}'", var_name))?;
-                if let Value::List(ref mut items) = var.result {
-                    match items.pop() {
-                        Some(val) => Ok(val),
-                        None => Ok(CrowValue::error("pop from empty list", self.current_line)),
-                    }
-                } else {
-                    Err("pop[] requires a list".into())
-                }
-            }
-            "sort" => {
-                if args.len() > 2 { return Err("sort[] takes 1 or 2 arguments".into()); }
-                // If a sort key function is provided, evaluate it
-                let sort_fn = if args.len() == 2 {
-                    let fn_val = self.eval_expr(&args[1])?;
-                    Some(fn_val)
-                } else {
-                    None
-                };
-                let var = self.env.get_mut(&var_name)
-                    .ok_or_else(|| format!("undefined variable '{}'", var_name))?;
-                if let Value::List(ref mut items) = var.result {
-                    if sort_fn.is_some() {
-                        // Sort with key function — need to compute keys first
-                        // Sort by natural ordering
-                        items.sort_by(|a, b| {
-                            let va = a.unwrap_or_propagate().ok();
-                            let vb = b.unwrap_or_propagate().ok();
-                            match (va, vb) {
-                                (Some(Value::Int(x)), Some(Value::Int(y))) => x.cmp(y),
-                                (Some(Value::Float(x)), Some(Value::Float(y))) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
-                                (Some(Value::Str(x)), Some(Value::Str(y))) => x.cmp(y),
-                                _ => std::cmp::Ordering::Equal,
-                            }
-                        });
-                    } else {
-                        items.sort_by(|a, b| {
-                            let va = a.unwrap_or_propagate().ok();
-                            let vb = b.unwrap_or_propagate().ok();
-                            match (va, vb) {
-                                (Some(Value::Int(x)), Some(Value::Int(y))) => x.cmp(y),
-                                (Some(Value::Float(x)), Some(Value::Float(y))) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
-                                (Some(Value::Str(x)), Some(Value::Str(y))) => x.cmp(y),
-                                _ => std::cmp::Ordering::Equal,
-                            }
-                        });
-                    }
-                    Ok(CrowValue::done())
-                } else {
-                    Err("sort[] requires a list".into())
-                }
-            }
-            "reverse" => {
-                if args.len() != 1 { return Err("reverse[] takes exactly 1 argument".into()); }
-                let var = self.env.get_mut(&var_name)
-                    .ok_or_else(|| format!("undefined variable '{}'", var_name))?;
-                if let Value::List(ref mut items) = var.result {
-                    items.reverse();
-                    Ok(CrowValue::done())
-                } else {
-                    Err("reverse[] requires a list".into())
-                }
-            }
-            "append" => {
-                if args.len() != 2 { return Err("append[] takes exactly 2 arguments".into()); }
-                let other = self.eval_expr(&args[1])?;
-                let other_items = match other.unwrap_or_propagate()? {
-                    Value::List(items) => items.clone(),
-                    _ => return Err("append[] second argument must be a list".into()),
-                };
-                let var = self.env.get_mut(&var_name)
-                    .ok_or_else(|| format!("undefined variable '{}'", var_name))?;
-                if let Value::List(ref mut items) = var.result {
-                    items.extend(other_items);
-                    Ok(CrowValue::done())
-                } else {
-                    Err("append[] requires a list".into())
-                }
-            }
-            "set" => {
-                if args.len() != 3 { return Err("set[] takes exactly 3 arguments".into()); }
-                let key = self.eval_expr(&args[1])?;
-                let val = self.eval_expr(&args[2])?;
-                let key_str = match key.unwrap_or_propagate()? {
-                    Value::Str(s) => s.clone(),
-                    _ => return Err("set[] key must be a string".into()),
-                };
-                let var = self.env.get_mut(&var_name)
-                    .ok_or_else(|| format!("undefined variable '{}'", var_name))?;
-                if let Value::Map(ref mut map) = var.result {
-                    map.insert(key_str, val);
-                    Ok(CrowValue::done())
-                } else {
-                    Err("set[] requires a map".into())
-                }
-            }
-            "del" => {
-                if args.len() != 2 { return Err("del[] takes exactly 2 arguments".into()); }
-                let key = self.eval_expr(&args[1])?;
-                let key_str = match key.unwrap_or_propagate()? {
-                    Value::Str(s) => s.clone(),
-                    _ => return Err("del[] key must be a string".into()),
-                };
-                let var = self.env.get_mut(&var_name)
-                    .ok_or_else(|| format!("undefined variable '{}'", var_name))?;
-                if let Value::Map(ref mut map) = var.result {
-                    map.remove(&key_str);
-                    Ok(CrowValue::done())
-                } else {
-                    Err("del[] requires a map".into())
-                }
-            }
-            _ => Err(format!("unknown mutating builtin '{}'", name)),
-        }
     }
 
     fn call_builtin(
@@ -1537,6 +1387,103 @@ impl Interpreter {
                         Ok(CrowValue::ok(Value::Bool(m.contains_key(&key_str))))
                     }
                     _ => Err("has[] requires a map".into()),
+                }
+            }
+            // --- Immutable collection builtins (return new values) ---
+            "push" => {
+                if args.len() != 2 { return Err("push[] takes exactly 2 arguments".into()); }
+                match args[0].unwrap_or_propagate()? {
+                    Value::List(items) => {
+                        let mut new_items = items.clone();
+                        new_items.push(args[1].clone());
+                        Ok(CrowValue::ok(Value::List(new_items)))
+                    }
+                    _ => Err("push[] requires a list".into()),
+                }
+            }
+            "pop" => {
+                if args.len() != 1 { return Err("pop[] takes exactly 1 argument".into()); }
+                match args[0].unwrap_or_propagate()? {
+                    Value::List(items) => {
+                        if items.is_empty() {
+                            return Ok(CrowValue::error("pop from empty list", self.current_line));
+                        }
+                        let new_items = items[..items.len() - 1].to_vec();
+                        Ok(CrowValue::ok(Value::List(new_items)))
+                    }
+                    _ => Err("pop[] requires a list".into()),
+                }
+            }
+            "sort" => {
+                if args.len() < 1 || args.len() > 2 { return Err("sort[] takes 1 or 2 arguments".into()); }
+                match args[0].unwrap_or_propagate()? {
+                    Value::List(items) => {
+                        let mut new_items = items.clone();
+                        new_items.sort_by(|a, b| {
+                            let va = a.unwrap_or_propagate().ok();
+                            let vb = b.unwrap_or_propagate().ok();
+                            match (va, vb) {
+                                (Some(Value::Int(x)), Some(Value::Int(y))) => x.cmp(y),
+                                (Some(Value::Float(x)), Some(Value::Float(y))) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+                                (Some(Value::Str(x)), Some(Value::Str(y))) => x.cmp(y),
+                                _ => std::cmp::Ordering::Equal,
+                            }
+                        });
+                        Ok(CrowValue::ok(Value::List(new_items)))
+                    }
+                    _ => Err("sort[] requires a list".into()),
+                }
+            }
+            "reverse" => {
+                if args.len() != 1 { return Err("reverse[] takes exactly 1 argument".into()); }
+                match args[0].unwrap_or_propagate()? {
+                    Value::List(items) => {
+                        let mut new_items = items.clone();
+                        new_items.reverse();
+                        Ok(CrowValue::ok(Value::List(new_items)))
+                    }
+                    _ => Err("reverse[] requires a list".into()),
+                }
+            }
+            "append" => {
+                if args.len() != 2 { return Err("append[] takes exactly 2 arguments".into()); }
+                match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
+                    (Value::List(items), Value::List(other)) => {
+                        let mut new_items = items.clone();
+                        new_items.extend(other.clone());
+                        Ok(CrowValue::ok(Value::List(new_items)))
+                    }
+                    _ => Err("append[] requires two lists".into()),
+                }
+            }
+            "set" => {
+                if args.len() != 3 { return Err("set[] takes exactly 3 arguments".into()); }
+                match args[0].unwrap_or_propagate()? {
+                    Value::Map(m) => {
+                        let key_str = match args[1].unwrap_or_propagate()? {
+                            Value::Str(s) => s.clone(),
+                            _ => return Err("set[] key must be a string".into()),
+                        };
+                        let mut new_map = m.clone();
+                        new_map.insert(key_str, args[2].clone());
+                        Ok(CrowValue::ok(Value::Map(new_map)))
+                    }
+                    _ => Err("set[] requires a map".into()),
+                }
+            }
+            "del" => {
+                if args.len() != 2 { return Err("del[] takes exactly 2 arguments".into()); }
+                match args[0].unwrap_or_propagate()? {
+                    Value::Map(m) => {
+                        let key_str = match args[1].unwrap_or_propagate()? {
+                            Value::Str(s) => s.clone(),
+                            _ => return Err("del[] key must be a string".into()),
+                        };
+                        let mut new_map = m.clone();
+                        new_map.remove(&key_str);
+                        Ok(CrowValue::ok(Value::Map(new_map)))
+                    }
+                    _ => Err("del[] requires a map".into()),
                 }
             }
             // --- CLI / IO builtins ---

@@ -45,30 +45,29 @@ log[len[items]]
 log[contains[items, 5]]
 log[contains[items, 99]]
 
---- push (mutating) ---
+--- push (immutable) ---
 nums = [1, 2, 3]
-push[nums, 4]
-push[nums, 5]
+nums = push[nums, 4]
+nums = push[nums, 5]
 log[nums]
 
---- pop (mutating) ---
-last = pop[nums]
-log[last]
+--- pop (immutable, returns new list without last element) ---
+nums = pop[nums]
 log[nums]
 
---- sort (mutating) ---
+--- sort (immutable) ---
 data = [5, 3, 8, 1, 9, 2]
-sort[data]
+data = sort[data]
 log[data]
 
---- reverse (mutating) ---
-reverse[data]
+--- reverse (immutable) ---
+data = reverse[data]
 log[data]
 
---- append (mutating) ---
+--- append (immutable) ---
 a = [1, 2]
 b = [3, 4]
-append[a, b]
+a = append[a, b]
 log[a]
 
 --- slice ---
@@ -88,18 +87,18 @@ log[keys[m]]
 log[values[m]]
 log[has[m, 'name']]
 log[has[m, 'color']]
-set[m, 'color', 'black']
+m = set[m, 'color', 'black']
 log[has[m, 'color']]
 log[m['color']]
-del[m, 'age']
+m = del[m, 'age']
 log[has[m, 'age']]
 log[keys[m]]
 
 --- word counter example ---
 counts = map[]
-set[counts, 'hello', 1]
-set[counts, 'world', 2]
-set[counts, 'hello', 3]
+counts = set[counts, 'hello', 1]
+counts = set[counts, 'world', 2]
+counts = set[counts, 'hello', 3]
 log[counts['hello']]
 log[len[counts]]
 
