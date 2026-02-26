@@ -178,7 +178,7 @@ impl Transpiler {
     fn type_uses_map(ty: &CrowType) -> bool {
         match ty {
             CrowType::Map(_) => true,
-            CrowType::List(inner) => Self::type_uses_map(inner),
+            CrowType::List(inner) | CrowType::Result(inner) => Self::type_uses_map(inner),
             _ => false,
         }
     }
@@ -198,6 +198,26 @@ impl Transpiler {
             for (_, ty) in &sig.fields {
                 if Self::type_uses_map(ty) { return true; }
             }
+        }
+        false
+    }
+
+    /// Check if a CrowType contains a Result anywhere.
+    fn type_uses_result(ty: &CrowType) -> bool {
+        match ty {
+            CrowType::Result(_) => true,
+            CrowType::List(inner) => Self::type_uses_result(inner),
+            _ => false,
+        }
+    }
+
+    /// Check if the program uses any CrowResult types.
+    fn program_uses_result(&self) -> bool {
+        for ty in self.ctx.vars.values() {
+            if Self::type_uses_result(ty) { return true; }
+        }
+        for sig in self.ctx.functions.values() {
+            if Self::type_uses_result(&sig.return_type) { return true; }
         }
         false
     }
@@ -336,6 +356,28 @@ impl Transpiler {
             self.emit_line("use rayon::prelude::*;");
         }
         self.emit_line("");
+
+        // Emit CrowResult<T> struct if any fallible builtins are used
+        if self.program_uses_result() {
+            self.emit_line("#[derive(Debug, Clone)]");
+            self.emit_line("struct CrowResult<T: Clone> {");
+            self.indent += 1;
+            self.emit_line("status: String,");
+            self.emit_line("result: T,");
+            self.emit_line("reason: String,");
+            self.indent -= 1;
+            self.emit_line("}");
+            self.emit_line("impl<T: Clone + std::fmt::Display> std::fmt::Display for CrowResult<T> {");
+            self.indent += 1;
+            self.emit_line("fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {");
+            self.indent += 1;
+            self.emit_line("write!(f, \"{}\", self.result)");
+            self.indent -= 1;
+            self.emit_line("}");
+            self.indent -= 1;
+            self.emit_line("}");
+            self.emit_line("");
+        }
 
         // Emit module-level variable assigns as top-level statics so functions can access them
         let mut module_vars = std::collections::HashSet::new();
@@ -906,6 +948,13 @@ impl Transpiler {
 
                 let lt = self.ctx.infer_expr(left);
                 let rt = self.ctx.infer_expr(right);
+                // Auto-unwrap CrowResult in BinOp: access .result
+                let (l, lt) = if let CrowType::Result(inner) = &lt {
+                    (format!("{}.result", l), *inner.clone())
+                } else { (l, lt) };
+                let (r, rt) = if let CrowType::Result(inner) = &rt {
+                    (format!("{}.result", r), *inner.clone())
+                } else { (r, rt) };
                 let op_str = match op {
                     BinOp::Add => "+",
                     BinOp::Sub => "-",
@@ -1090,7 +1139,7 @@ impl Transpiler {
                         return match ty {
                             CrowType::Int => arg_strs[0].clone(),
                             CrowType::Float => format!("({}) as i64", arg_strs[0]),
-                            CrowType::Str => format!("({}).parse::<i64>().unwrap_or(0_i64)", arg_strs[0]),
+                            CrowType::Str => format!("match ({}).parse::<i64>() {{ Ok(v) => CrowResult {{ status: \"ok\".to_string(), result: v, reason: \"\".to_string() }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: 0_i64, reason: e.to_string() }} }}", arg_strs[0]),
                             CrowType::Bool => format!("if {} {{ 1_i64 }} else {{ 0_i64 }}", arg_strs[0]),
                             _ => format!("({}) as i64", arg_strs[0]),
                         };
@@ -1100,7 +1149,7 @@ impl Transpiler {
                         return match ty {
                             CrowType::Float => arg_strs[0].clone(),
                             CrowType::Int => format!("({}) as f64", arg_strs[0]),
-                            CrowType::Str => format!("({}).parse::<f64>().unwrap_or(0.0_f64)", arg_strs[0]),
+                            CrowType::Str => format!("match ({}).parse::<f64>() {{ Ok(v) => CrowResult {{ status: \"ok\".to_string(), result: v, reason: \"\".to_string() }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: 0.0_f64, reason: e.to_string() }} }}", arg_strs[0]),
                             CrowType::Bool => format!("if {} {{ 1.0_f64 }} else {{ 0.0_f64 }}", arg_strs[0]),
                             _ => format!("({}) as f64", arg_strs[0]),
                         };
@@ -1168,9 +1217,9 @@ impl Transpiler {
                     }
                     if name == "input" {
                         if arg_strs.len() == 1 {
-                            return format!("{{ print!(\"{{}}\", {}); use std::io::Write; std::io::stdout().flush().unwrap(); let mut _line = String::new(); std::io::stdin().read_line(&mut _line).unwrap(); _line.trim_end().to_string() }}", arg_strs[0]);
+                            return format!("{{ print!(\"{{}}\", {}); use std::io::Write; std::io::stdout().flush().unwrap(); let mut _line = String::new(); match std::io::stdin().read_line(&mut _line) {{ Ok(_) => CrowResult {{ status: \"ok\".to_string(), result: _line.trim_end().to_string(), reason: \"\".to_string() }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: String::new(), reason: e.to_string() }} }} }}", arg_strs[0]);
                         }
-                        return "{ let mut _line = String::new(); std::io::stdin().read_line(&mut _line).unwrap(); _line.trim_end().to_string() }".to_string();
+                        return "{ let mut _line = String::new(); match std::io::stdin().read_line(&mut _line) { Ok(_) => CrowResult { status: \"ok\".to_string(), result: _line.trim_end().to_string(), reason: \"\".to_string() }, Err(e) => CrowResult { status: \"error\".to_string(), result: String::new(), reason: e.to_string() } } }".to_string();
                     }
                     // --- Assert ---
                     if name == "assert" && (arg_strs.len() == 1 || arg_strs.len() == 2) {
@@ -1189,7 +1238,7 @@ impl Transpiler {
                     }
                     // --- File I/O builtins ---
                     if name == "read" && arg_strs.len() == 1 {
-                        return format!("std::fs::read_to_string(&*{}).unwrap_or_else(|e| {{ eprintln!(\"error: {{}}\", e); String::new() }})", arg_strs[0]);
+                        return format!("match std::fs::read_to_string(&*{}) {{ Ok(v) => CrowResult {{ status: \"ok\".to_string(), result: v, reason: \"\".to_string() }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: String::new(), reason: e.to_string() }} }}", arg_strs[0]);
                     }
                     if name == "write" && arg_strs.len() == 2 {
                         return format!("{{ if let Err(e) = std::fs::write(&*{}, &*{}) {{ eprintln!(\"error: {{}}\", e); }} }}", arg_strs[0], arg_strs[1]);
@@ -1278,11 +1327,20 @@ impl Transpiler {
                         return format!("{}.len() as i64", obj);
                     }
                 }
-                // .status on non-struct types returns 0 (no error)
-                if field == "status" {
+                // Error-value struct field access: .status, .result, .reason
+                if field == "status" || field == "result" || field == "reason" {
                     let obj_type = self.ctx.infer_expr(object);
-                    if !matches!(obj_type, CrowType::Struct(_)) {
-                        return "0_i64".to_string();
+                    if let CrowType::Result(_) = &obj_type {
+                        // Real CrowResult<T> — access the field directly
+                        return format!("{}.{}.clone()", obj, field);
+                    } else if !matches!(obj_type, CrowType::Struct(_)) {
+                        // Raw type — return synthetic defaults
+                        return match field.as_str() {
+                            "status" => "\"ok\".to_string()".to_string(),
+                            "result" => obj,
+                            "reason" => "\"\".to_string()".to_string(),
+                            _ => unreachable!(),
+                        };
                     }
                 }
                 // Check if this field is OptBoxStruct — if so, the caller
@@ -1715,18 +1773,18 @@ mod tests {
     }
 
     #[test]
-    fn test_int_parse_no_unwrap() {
+    fn test_int_parse_returns_crow_result() {
         let src = "x = int['42']\nlog['{x}']\n";
         let rust = transpile(src);
+        assert!(rust.contains("CrowResult"), "int[] from string should return CrowResult\n{}", rust);
         assert!(!rust.contains(".unwrap()"), "int[] should not use .unwrap()\n{}", rust);
-        assert!(rust.contains("unwrap_or(0") || rust.contains("unwrap_or_default"),
-            "int[] should use safe fallback\n{}", rust);
     }
 
     #[test]
-    fn test_float_parse_no_unwrap() {
+    fn test_float_parse_returns_crow_result() {
         let src = "x = float['3.14']\nlog['{x}']\n";
         let rust = transpile(src);
+        assert!(rust.contains("CrowResult"), "float[] from string should return CrowResult\n{}", rust);
         assert!(!rust.contains(".unwrap()"), "float[] should not use .unwrap()\n{}", rust);
     }
 
@@ -1768,11 +1826,11 @@ mod tests {
     }
 
     #[test]
-    fn test_read_no_panic() {
+    fn test_read_returns_crow_result() {
         let src = "content = read['/tmp/crow_test_read.txt']\nlog['{content}']\n";
         let rust = transpile(src);
+        assert!(rust.contains("CrowResult"), "read[] should return CrowResult\n{}", rust);
         assert!(!rust.contains(".unwrap()"), "read[] should not use .unwrap()\n{}", rust);
-        assert!(rust.contains("unwrap_or"), "read[] should use safe fallback\n{}", rust);
     }
 
     #[test]
@@ -1789,5 +1847,57 @@ mod tests {
         let rust = transpile(src);
         // Dependent assignments should NOT be in rayon::join
         assert!(!rust.contains("rayon::join"), "dependent stmts should be sequential\n{}", rust);
+    }
+
+    #[test]
+    fn test_crow_result_struct_emitted() {
+        let src = "x = int['42']\n";
+        let rust = transpile(src);
+        assert!(rust.contains("struct CrowResult<T: Clone>"), "should emit CrowResult struct\n{}", rust);
+        assert!(rust.contains("status: String"), "CrowResult should have status field\n{}", rust);
+        assert!(rust.contains("result: T"), "CrowResult should have result field\n{}", rust);
+        assert!(rust.contains("reason: String"), "CrowResult should have reason field\n{}", rust);
+    }
+
+    #[test]
+    fn test_crow_result_not_emitted_when_unnecessary() {
+        let src = "x = 5\nlog[x]\n";
+        let rust = transpile(src);
+        assert!(!rust.contains("CrowResult"), "should not emit CrowResult when not needed\n{}", rust);
+    }
+
+    #[test]
+    fn test_status_on_raw_type() {
+        let src = "x = 5\nlog[x.status]\n";
+        let rust = transpile(src);
+        assert!(rust.contains("\"ok\""), "status on raw type should return 'ok'\n{}", rust);
+    }
+
+    #[test]
+    fn test_result_field_access() {
+        let src = "x = int['42']\nlog[x.result]\n";
+        let rust = transpile(src);
+        assert!(rust.contains(".result"), "should access .result field\n{}", rust);
+    }
+
+    #[test]
+    fn test_status_field_access_on_result() {
+        let src = "x = int['42']\nlog[x.status]\n";
+        let rust = transpile(src);
+        assert!(rust.contains(".status"), "should access .status field on CrowResult\n{}", rust);
+    }
+
+    #[test]
+    fn test_auto_unwrap_in_binop() {
+        let src = "x = int['42']\ny = x + 1\n";
+        let rust = transpile(src);
+        assert!(rust.contains(".result"), "should auto-unwrap CrowResult in BinOp\n{}", rust);
+    }
+
+    #[test]
+    fn test_int_from_float_no_result() {
+        let src = "x = 3.14\ny = int[x]\n";
+        let rust = transpile(src);
+        assert!(!rust.contains("CrowResult"), "int from float should not use CrowResult\n{}", rust);
     }
 }
