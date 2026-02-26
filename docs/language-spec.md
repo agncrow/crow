@@ -597,9 +597,10 @@ log[x]            --- 5 ---
 x.status          --- 'ok' ---
 x.result          --- 5 ---
 x.reason          --- '' ---
+x.line            --- 0 ---
 ```
 
-Non-fallible values always have `status` of `'ok'`, `result` is the value itself, and `reason` is `''`.
+Non-fallible values always have `status` of `'ok'`, `result` is the value itself, `reason` is `''`, and `line` is `0`.
 
 ### Auto Unwrap
 
@@ -635,8 +636,16 @@ Every error-value has:
 | `status` | `'ok'` or `'error'`                  |
 | `result` | the return value (safe default on error) |
 | `reason` | error message (empty on success)      |
+| `line`   | source line number where the error originated (0 on success) |
 
-On failure, `result` contains a safe default (`0` for int, `0.0` for float, `''` for string) and `reason` describes what went wrong.
+On failure, `result` contains a safe default (`0` for int, `0.0` for float, `''` for string), `reason` describes what went wrong, and `line` records where the error occurred.
+
+```
+x = int['hello']
+log[x.status]     --- 'error' ---
+log[x.reason]     --- 'cannot convert ...' ---
+log[x.line]       --- 1 ---
+```
 
 ### Error Messages
 

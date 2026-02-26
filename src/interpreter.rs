@@ -197,6 +197,13 @@ impl Interpreter {
                 let run_parallel = |pairs: &[(usize, &Stmt)]| -> Result<Vec<(usize, Signal, Vec<(String, CrowValue)>)>, String> {
                     pairs.par_iter().map(|&(idx, stmt)| {
                         let mut interp = self.clone();
+                        // Find the Line marker preceding this specific statement
+                        for j in (0..idx).rev() {
+                            if let Stmt::Line(n) = &stmts[j] {
+                                interp.current_line = *n;
+                                break;
+                            }
+                        }
                         let signal = interp.exec_stmt(stmt).map_err(|e| interp.line_err(e))?;
                         // collect written variables
                         let writes = stmt_writes(stmt);
@@ -958,7 +965,7 @@ impl Interpreter {
                 if let Value::List(ref mut items) = var.result {
                     match items.pop() {
                         Some(val) => Ok(val),
-                        None => Ok(CrowValue::error("pop from empty list")),
+                        None => Ok(CrowValue::error("pop from empty list", self.current_line)),
                     }
                 } else {
                     Err("pop[] requires a list".into())
@@ -1336,10 +1343,10 @@ impl Interpreter {
                     Value::Float(n) => Ok(CrowValue::ok(Value::Int(*n as i64))),
                     Value::Str(s) => match s.parse::<i64>() {
                         Ok(n) => Ok(CrowValue::ok(Value::Int(n))),
-                        Err(_) => Ok(CrowValue::error(&format!("cannot convert '{}' to int", s))),
+                        Err(_) => Ok(CrowValue::error(&format!("cannot convert '{}' to int", s), self.current_line)),
                     },
                     Value::Bool(b) => Ok(CrowValue::ok(Value::Int(if *b { 1 } else { 0 }))),
-                    _ => Ok(CrowValue::error("cannot convert to int")),
+                    _ => Ok(CrowValue::error("cannot convert to int", self.current_line)),
                 }
             }
             "float" => {
@@ -1349,10 +1356,10 @@ impl Interpreter {
                     Value::Float(n) => Ok(CrowValue::ok(Value::Float(*n))),
                     Value::Str(s) => match s.parse::<f64>() {
                         Ok(n) => Ok(CrowValue::ok(Value::Float(n))),
-                        Err(_) => Ok(CrowValue::error(&format!("cannot convert '{}' to float", s))),
+                        Err(_) => Ok(CrowValue::error(&format!("cannot convert '{}' to float", s), self.current_line)),
                     },
                     Value::Bool(b) => Ok(CrowValue::ok(Value::Float(if *b { 1.0 } else { 0.0 }))),
-                    _ => Ok(CrowValue::error("cannot convert to float")),
+                    _ => Ok(CrowValue::error("cannot convert to float", self.current_line)),
                 }
             }
             "str" => {
@@ -1510,7 +1517,7 @@ impl Interpreter {
                         let trimmed = line.trim_end_matches('\n').trim_end_matches('\r').to_string();
                         Ok(CrowValue::ok(Value::Str(trimmed)))
                     }
-                    Err(e) => Ok(CrowValue::error(&format!("input error: {}", e))),
+                    Err(e) => Ok(CrowValue::error(&format!("input error: {}", e), self.current_line)),
                 }
             }
             // --- System builtins ---
@@ -1563,7 +1570,7 @@ impl Interpreter {
                 if !args.is_empty() { return Err("time[] takes no arguments".into()); }
                 match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
                     Ok(d) => Ok(CrowValue::ok(Value::Float(d.as_secs_f64()))),
-                    Err(_) => Ok(CrowValue::error("system time before unix epoch")),
+                    Err(_) => Ok(CrowValue::error("system time before unix epoch", self.current_line)),
                 }
             }
             "sleep" => {
@@ -1611,7 +1618,7 @@ impl Interpreter {
                     Value::Str(path) => {
                         match std::fs::read_to_string(path) {
                             Ok(content) => Ok(CrowValue::ok(Value::Str(content))),
-                            Err(e) => Ok(CrowValue::error(&format!("cannot read '{}': {}", path, e))),
+                            Err(e) => Ok(CrowValue::error(&format!("cannot read '{}': {}", path, e), self.current_line)),
                         }
                     }
                     _ => Err("read[] requires a string path".into()),
@@ -1623,7 +1630,7 @@ impl Interpreter {
                     (Value::Str(path), Value::Str(content)) => {
                         match std::fs::write(path, content) {
                             Ok(_) => Ok(CrowValue::done()),
-                            Err(e) => Ok(CrowValue::error(&format!("cannot write '{}': {}", path, e))),
+                            Err(e) => Ok(CrowValue::error(&format!("cannot write '{}': {}", path, e), self.current_line)),
                         }
                     }
                     _ => Err("write[] requires a string path and string content".into()),
@@ -1699,7 +1706,7 @@ impl Interpreter {
             BinOp::Div => match (l, r) {
                 (Value::Int(a), Value::Int(b)) => {
                     if *b == 0 {
-                        Ok(CrowValue::error("division by zero"))
+                        Ok(CrowValue::error("division by zero", self.current_line))
                     } else {
                         Ok(CrowValue::ok(Value::Int(a / b)))
                     }
@@ -1712,7 +1719,7 @@ impl Interpreter {
             BinOp::Mod => match (l, r) {
                 (Value::Int(a), Value::Int(b)) => {
                     if *b == 0 {
-                        Ok(CrowValue::error("modulo by zero"))
+                        Ok(CrowValue::error("modulo by zero", self.current_line))
                     } else {
                         Ok(CrowValue::ok(Value::Int(a % b)))
                     }
@@ -1787,7 +1794,7 @@ impl Interpreter {
     ) -> Result<CrowValue, String> {
         let obj = self.eval_expr(object)?;
 
-        // special fields: .status, .result, .reason — always work, even on errors
+        // special fields: .status, .result, .reason, .line — always work, even on errors
         match field {
             "status" => {
                 return Ok(CrowValue::ok(Value::Str(obj.status.to_string())));
@@ -1799,6 +1806,9 @@ impl Interpreter {
                 return Ok(CrowValue::ok(Value::Str(
                     obj.reason.as_deref().unwrap_or("").to_string(),
                 )));
+            }
+            "line" => {
+                return Ok(CrowValue::ok(Value::Int(obj.line as i64)));
             }
             _ => {}
         }
@@ -1889,3 +1899,61 @@ impl Interpreter {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run_program(src: &str) -> CrowValue {
+        let mut lexer = crate::lexer::Lexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let mut interp = Interpreter::new();
+        interp.run(&stmts).unwrap()
+    }
+
+    fn get_var(src: &str, var: &str) -> CrowValue {
+        let mut lexer = crate::lexer::Lexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let mut interp = Interpreter::new();
+        interp.run(&stmts).unwrap();
+        interp.env.get(var).unwrap().clone()
+    }
+
+    #[test]
+    fn test_error_line_int_parse() {
+        let val = get_var("x = int['bad']\n", "x");
+        assert_eq!(val.status, crate::value::Status::Error);
+        assert_eq!(val.line, 1);
+    }
+
+    #[test]
+    fn test_error_line_second_line() {
+        let val = get_var("y = 10\nx = int['bad']\n", "x");
+        assert_eq!(val.status, crate::value::Status::Error);
+        assert_eq!(val.line, 2);
+    }
+
+    #[test]
+    fn test_error_line_read() {
+        let val = get_var("x = read['nonexistent_test_file.txt']\n", "x");
+        assert_eq!(val.status, crate::value::Status::Error);
+        assert_eq!(val.line, 1);
+    }
+
+    #[test]
+    fn test_ok_value_line_zero() {
+        let val = get_var("x = int['42']\n", "x");
+        assert_eq!(val.status, crate::value::Status::Ok);
+        assert_eq!(val.line, 0);
+    }
+
+    #[test]
+    fn test_raw_value_line_field() {
+        // raw values (non-error-value) should report line 0
+        let val = get_var("x = 5\n", "x");
+        assert_eq!(val.line, 0);
+    }
+}

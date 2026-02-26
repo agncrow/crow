@@ -22,6 +22,8 @@ pub struct Transpiler {
     current_ref_params: std::collections::HashSet<String>,
     /// Module names from `use` imports (for resolving module.field → module_field)
     modules: std::collections::HashSet<String>,
+    /// Current source line number (from Stmt::Line markers)
+    current_line: usize,
 }
 
 impl Transpiler {
@@ -37,6 +39,7 @@ impl Transpiler {
             by_ref_params: std::collections::BTreeMap::new(),
             current_ref_params: std::collections::HashSet::new(),
             modules: std::collections::HashSet::new(),
+            current_line: 0,
         }
     }
 
@@ -403,6 +406,7 @@ impl Transpiler {
             self.emit_line("status: String,");
             self.emit_line("result: T,");
             self.emit_line("reason: String,");
+            self.emit_line("line: usize,");
             self.indent -= 1;
             self.emit_line("}");
             self.emit_line("impl<T: Clone + std::fmt::Display> std::fmt::Display for CrowResult<T> {");
@@ -584,9 +588,25 @@ impl Transpiler {
     fn emit_stmts_parallel(&mut self, stmts: &[Stmt]) {
         let waves = group_into_waves(stmts);
         for wave in &waves {
+            // Update current_line from nearest preceding Line marker for each wave
+            if let Some(&first_idx) = wave.first() {
+                for j in (0..first_idx).rev() {
+                    if let Stmt::Line(n) = &stmts[j] {
+                        self.current_line = *n;
+                        break;
+                    }
+                }
+            }
             if wave.len() <= 1 {
                 // Single statement — emit normally
                 for &i in wave {
+                    // Update line for this specific statement
+                    for j in (0..i).rev() {
+                        if let Stmt::Line(n) = &stmts[j] {
+                            self.current_line = *n;
+                            break;
+                        }
+                    }
                     if let Some(n) = Self::extract_cpu_call(&stmts[i]) {
                         self.cpu_count = Some(n as usize);
                     } else {
@@ -609,6 +629,13 @@ impl Transpiler {
         // Collect (name, expr, type) for each assignment in the wave
         let mut assigns: Vec<(String, String, CrowType)> = vec![];
         for &i in wave {
+            // Update current_line for this specific statement
+            for j in (0..i).rev() {
+                if let Stmt::Line(n) = &stmts[j] {
+                    self.current_line = *n;
+                    break;
+                }
+            }
             match &stmts[i] {
                 Stmt::Assign { name, value } => {
                     let expr_str = self.expr_to_string(value);
@@ -956,6 +983,9 @@ impl Transpiler {
                     }
                 }
             }
+            Stmt::Line(n) => {
+                self.current_line = *n;
+            }
             _ => {}
         }
     }
@@ -1207,7 +1237,7 @@ impl Transpiler {
                         return match ty {
                             CrowType::Int => arg_strs[0].clone(),
                             CrowType::Float => format!("({}) as i64", arg_strs[0]),
-                            CrowType::Str => format!("match ({}).parse::<i64>() {{ Ok(v) => CrowResult {{ status: \"ok\".to_string(), result: v, reason: \"\".to_string() }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: 0_i64, reason: e.to_string() }} }}", arg_strs[0]),
+                            CrowType::Str => format!("match ({}).parse::<i64>() {{ Ok(v) => CrowResult {{ status: \"ok\".to_string(), result: v, reason: \"\".to_string(), line: 0 }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: 0_i64, reason: e.to_string(), line: {} }} }}", arg_strs[0], self.current_line),
                             CrowType::Bool => format!("if {} {{ 1_i64 }} else {{ 0_i64 }}", arg_strs[0]),
                             _ => format!("({}) as i64", arg_strs[0]),
                         };
@@ -1217,7 +1247,7 @@ impl Transpiler {
                         return match ty {
                             CrowType::Float => arg_strs[0].clone(),
                             CrowType::Int => format!("({}) as f64", arg_strs[0]),
-                            CrowType::Str => format!("match ({}).parse::<f64>() {{ Ok(v) => CrowResult {{ status: \"ok\".to_string(), result: v, reason: \"\".to_string() }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: 0.0_f64, reason: e.to_string() }} }}", arg_strs[0]),
+                            CrowType::Str => format!("match ({}).parse::<f64>() {{ Ok(v) => CrowResult {{ status: \"ok\".to_string(), result: v, reason: \"\".to_string(), line: 0 }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: 0.0_f64, reason: e.to_string(), line: {} }} }}", arg_strs[0], self.current_line),
                             CrowType::Bool => format!("if {} {{ 1.0_f64 }} else {{ 0.0_f64 }}", arg_strs[0]),
                             _ => format!("({}) as f64", arg_strs[0]),
                         };
@@ -1294,10 +1324,11 @@ impl Transpiler {
                         return "std::env::args().skip(1).collect::<Vec<String>>()".to_string();
                     }
                     if name == "input" {
+                        let ln = self.current_line;
                         if arg_strs.len() == 1 {
-                            return format!("{{ print!(\"{{}}\", {}); use std::io::Write; std::io::stdout().flush().unwrap(); let mut _line = String::new(); match std::io::stdin().read_line(&mut _line) {{ Ok(_) => CrowResult {{ status: \"ok\".to_string(), result: _line.trim_end().to_string(), reason: \"\".to_string() }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: String::new(), reason: e.to_string() }} }} }}", arg_strs[0]);
+                            return format!("{{ print!(\"{{}}\", {}); use std::io::Write; std::io::stdout().flush().unwrap(); let mut _line = String::new(); match std::io::stdin().read_line(&mut _line) {{ Ok(_) => CrowResult {{ status: \"ok\".to_string(), result: _line.trim_end().to_string(), reason: \"\".to_string(), line: 0 }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: String::new(), reason: e.to_string(), line: {} }} }} }}", arg_strs[0], ln);
                         }
-                        return "{ let mut _line = String::new(); match std::io::stdin().read_line(&mut _line) { Ok(_) => CrowResult { status: \"ok\".to_string(), result: _line.trim_end().to_string(), reason: \"\".to_string() }, Err(e) => CrowResult { status: \"error\".to_string(), result: String::new(), reason: e.to_string() } } }".to_string();
+                        return format!("{{ let mut _line = String::new(); match std::io::stdin().read_line(&mut _line) {{ Ok(_) => CrowResult {{ status: \"ok\".to_string(), result: _line.trim_end().to_string(), reason: \"\".to_string(), line: 0 }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: String::new(), reason: e.to_string(), line: {} }} }} }}", ln);
                     }
                     // --- System builtins ---
                     if name == "rand" {
@@ -1346,10 +1377,12 @@ impl Transpiler {
                     }
                     // --- File I/O builtins ---
                     if name == "read" && arg_strs.len() == 1 {
-                        return format!("match std::fs::read_to_string(&*{}) {{ Ok(v) => CrowResult {{ status: \"ok\".to_string(), result: v, reason: \"\".to_string() }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: String::new(), reason: e.to_string() }} }}", arg_strs[0]);
+                        let ln = self.current_line;
+                        return format!("match std::fs::read_to_string(&*{}) {{ Ok(v) => CrowResult {{ status: \"ok\".to_string(), result: v, reason: \"\".to_string(), line: 0 }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: String::new(), reason: e.to_string(), line: {} }} }}", arg_strs[0], ln);
                     }
                     if name == "write" && arg_strs.len() == 2 {
-                        return format!("match std::fs::write(&*{}, &*{}) {{ Ok(_) => CrowResult {{ status: \"ok\".to_string(), result: \"\".to_string(), reason: \"\".to_string() }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: \"\".to_string(), reason: e.to_string() }} }}", arg_strs[0], arg_strs[1]);
+                        let ln = self.current_line;
+                        return format!("match std::fs::write(&*{}, &*{}) {{ Ok(_) => CrowResult {{ status: \"ok\".to_string(), result: \"\".to_string(), reason: \"\".to_string(), line: 0 }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: \"\".to_string(), reason: e.to_string(), line: {} }} }}", arg_strs[0], arg_strs[1], ln);
                     }
 
 
@@ -1435,11 +1468,14 @@ impl Transpiler {
                         return format!("{}.len() as i64", obj);
                     }
                 }
-                // Error-value struct field access: .status, .result, .reason
-                if field == "status" || field == "result" || field == "reason" {
+                // Error-value struct field access: .status, .result, .reason, .line
+                if field == "status" || field == "result" || field == "reason" || field == "line" {
                     let obj_type = self.ctx.infer_expr(object);
                     if let CrowType::Result(_) = &obj_type {
                         // Real CrowResult<T> — access the field directly
+                        if field == "line" {
+                            return format!("({}.line as i64)", obj);
+                        }
                         return format!("{}.{}.clone()", obj, field);
                     } else if !matches!(obj_type, CrowType::Struct(_)) {
                         // Raw type — return synthetic defaults
@@ -1447,6 +1483,7 @@ impl Transpiler {
                             "status" => "\"ok\".to_string()".to_string(),
                             "result" => obj,
                             "reason" => "\"\".to_string()".to_string(),
+                            "line" => "0_i64".to_string(),
                             _ => unreachable!(),
                         };
                     }
@@ -1975,6 +2012,7 @@ mod tests {
         assert!(rust.contains("status: String"), "CrowResult should have status field\n{}", rust);
         assert!(rust.contains("result: T"), "CrowResult should have result field\n{}", rust);
         assert!(rust.contains("reason: String"), "CrowResult should have reason field\n{}", rust);
+        assert!(rust.contains("line: usize"), "CrowResult should have line field\n{}", rust);
     }
 
     #[test]
@@ -2087,5 +2125,19 @@ mod tests {
         let src = "items = [1, 2, 3]\ndoubled = for x in items\n    x * 2\nlog['{doubled}']\n";
         let rust = transpile(src);
         assert!(rust.contains("par_iter()"), "for-expr should use par_iter by default\n{}", rust);
+    }
+
+    #[test]
+    fn test_error_line_field_access() {
+        let src = "x = int['bad']\ny = x.line\n";
+        let rust = transpile(src);
+        assert!(rust.contains(".line"), "should access .line field on CrowResult\n{}", rust);
+    }
+
+    #[test]
+    fn test_raw_value_line_is_zero() {
+        let src = "x = 5\ny = x.line\n";
+        let rust = transpile(src);
+        assert!(rust.contains("0_i64"), "raw value .line should be 0\n{}", rust);
     }
 }
