@@ -1,6 +1,7 @@
 /// Crow -> Rust transpiler: emits clean Rust source from typed AST.
 
 use crate::ast::*;
+use crate::parallel::group_into_waves;
 use crate::type_infer::{CrowType, TypeContext};
 
 pub struct Transpiler {
@@ -47,6 +48,12 @@ impl Transpiler {
         } else {
             name.to_string()
         }
+    }
+
+    /// Check if a list of statements contains any parallel waves (2+ independent stmts).
+    fn has_parallel_waves(stmts: &[Stmt]) -> bool {
+        let waves = group_into_waves(stmts);
+        waves.iter().any(|w| w.len() > 1)
     }
 
     /// Check if a statement is a cpu[n] call. Returns the count if so.
@@ -306,10 +313,13 @@ impl Transpiler {
             }
         }
 
-        // Scan for rayon need (any cpu[n] with n > 1)
-        self.needs_rayon = stmts.iter().any(|s| {
+        // Scan for rayon need
+        let needs_par_iter = stmts.iter().any(|s| {
             Self::extract_cpu_call(s).map_or(false, |n| n > 1)
         });
+        // Check for parallel waves (uses rayon::join, no prelude needed)
+        let needs_parallel_waves = Self::has_parallel_waves(stmts) || self.ctx.functions.values().any(|sig| Self::has_parallel_waves(&sig.body));
+        self.needs_rayon = needs_par_iter || needs_parallel_waves;
 
         // Compute which params should be passed by reference
         self.compute_by_ref_params();
@@ -318,7 +328,7 @@ impl Transpiler {
         if self.program_uses_map() {
             self.emit_line("use std::collections::BTreeMap;");
         }
-        if self.needs_rayon {
+        if needs_par_iter {
             self.emit_line("use rayon::prelude::*;");
         }
         self.emit_line("");
@@ -374,23 +384,23 @@ impl Transpiler {
         Self::collect_reassigned_vars(&top_stmts_owned, &mut seen, &mut mutated);
         self.mutated_vars = mutated;
 
-        // Emit main function with top-level statements
+        // Collect main-body statements (excluding already-emitted items)
+        let main_stmts: Vec<Stmt> = stmts.iter()
+            .filter(|s| !matches!(s, Stmt::FnDecl { .. } | Stmt::StructDecl { .. }))
+            .filter(|s| {
+                if let Stmt::Assign { name, .. } = s {
+                    !module_vars.contains(name)
+                } else {
+                    true
+                }
+            })
+            .cloned()
+            .collect();
+
+        // Emit main function with automatic parallelism
         self.emit_line("fn main() {");
         self.indent += 1;
-        for stmt in stmts {
-            match stmt {
-                Stmt::FnDecl { .. } | Stmt::StructDecl { .. } => {} // already emitted
-                Stmt::Assign { name, .. } if module_vars.contains(name) => {} // already emitted as top-level const
-                _ => {
-                    // Check if this is a cpu[n] call
-                    if let Some(n) = Self::extract_cpu_call(stmt) {
-                        self.cpu_count = Some(n as usize);
-                    } else {
-                        self.emit_stmt(stmt);
-                    }
-                }
-            }
-        }
+        self.emit_stmts_parallel(&main_stmts);
         self.indent -= 1;
         self.emit_line("}");
 
@@ -474,9 +484,7 @@ impl Transpiler {
             self.ctx.vars.insert(pname.clone(), ptype.clone());
         }
 
-        for stmt in &sig.body {
-            self.emit_stmt(stmt);
-        }
+        self.emit_stmts_parallel(&sig.body);
 
         self.declared = saved_declared;
         self.ctx.vars = saved_vars;
@@ -485,6 +493,164 @@ impl Transpiler {
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
+    }
+
+    /// Emit a block of statements with automatic parallelism.
+    /// Groups independent assignments into waves and emits rayon::join for parallel waves.
+    fn emit_stmts_parallel(&mut self, stmts: &[Stmt]) {
+        let waves = group_into_waves(stmts);
+        for wave in &waves {
+            if wave.len() <= 1 {
+                // Single statement — emit normally
+                for &i in wave {
+                    if let Some(n) = Self::extract_cpu_call(&stmts[i]) {
+                        self.cpu_count = Some(n as usize);
+                    } else {
+                        self.emit_stmt(&stmts[i]);
+                    }
+                }
+            } else {
+                // Multiple independent assignments — emit in parallel
+                self.emit_parallel_wave(wave, stmts);
+            }
+        }
+    }
+
+    /// Emit a wave of independent assignments using rayon::join.
+    /// For 2 stmts: let (a, b) = rayon::join(|| expr1, || expr2);
+    /// For 3+: nested rayon::join
+    fn emit_parallel_wave(&mut self, wave: &[usize], stmts: &[Stmt]) {
+        self.needs_rayon = true;
+
+        // Collect (name, expr, type) for each assignment in the wave
+        let mut assigns: Vec<(String, String, CrowType)> = vec![];
+        for &i in wave {
+            match &stmts[i] {
+                Stmt::Assign { name, value } => {
+                    let expr_str = self.expr_to_string(value);
+                    let mut ty = self.ctx.infer_expr(value);
+                    if format!("{:?}", ty).contains("Unknown") {
+                        if let Some(resolved) = self.ctx.vars.get(name) {
+                            ty = resolved.clone();
+                        }
+                    }
+                    assigns.push((name.clone(), expr_str, ty));
+                }
+                Stmt::MultiAssign { names, values } => {
+                    for (name, value) in names.iter().zip(values.iter()) {
+                        let expr_str = self.expr_to_string(value);
+                        let ty = self.ctx.infer_expr(value);
+                        assigns.push((name.clone(), expr_str, ty));
+                    }
+                }
+                _ => {
+                    // Shouldn't happen (barriers are filtered), but emit normally
+                    self.emit_stmt(&stmts[i]);
+                }
+            }
+        }
+
+        if assigns.is_empty() {
+            return;
+        }
+
+        // Check which vars are new declarations vs reassignments
+        let all_new = assigns.iter().all(|(name, _, _)| !self.declared.contains(name));
+
+        // Build the nested rayon::join expression
+        let join_expr = self.build_rayon_join(&assigns, 0);
+
+        // Build the destructuring pattern
+        let pattern = self.build_join_pattern(&assigns, 0);
+
+        if all_new {
+            // All new declarations: let (a, b, ...) = rayon::join(...)
+            // Build type annotation
+            let type_pattern = self.build_join_type_pattern(&assigns, 0);
+            self.emit_line(&format!("let {}: {} = {};", pattern, type_pattern, join_expr));
+            for (name, _, ty) in &assigns {
+                self.declared.insert(name.clone());
+                self.ctx.vars.insert(name.clone(), ty.clone());
+            }
+        } else {
+            // Mixed or all reassignments: use temp names
+            let temp_pattern = self.build_join_temp_pattern(&assigns, 0);
+            let type_pattern = self.build_join_type_pattern(&assigns, 0);
+            self.emit_line(&format!("let {}: {} = {};", temp_pattern, type_pattern, join_expr));
+            for (idx, (name, _, ty)) in assigns.iter().enumerate() {
+                let temp = format!("_par_{}", idx);
+                if self.declared.contains(name) {
+                    self.emit_line(&format!("{} = {};", name, temp));
+                } else {
+                    let kw = if self.mutated_vars.contains(name) { "let mut" } else { "let" };
+                    self.emit_line(&format!("{} {} = {};", kw, name, temp));
+                    self.declared.insert(name.clone());
+                    self.ctx.vars.insert(name.clone(), ty.clone());
+                }
+            }
+        }
+    }
+
+    /// Build nested rayon::join expression from assignments.
+    /// 2 items: rayon::join(|| e1, || e2)
+    /// 3+ items: rayon::join(|| e1, || rayon::join(|| e2, || e3))
+    fn build_rayon_join(&self, assigns: &[(String, String, CrowType)], start: usize) -> String {
+        let remaining = assigns.len() - start;
+        if remaining == 1 {
+            assigns[start].1.clone()
+        } else if remaining == 2 {
+            format!("rayon::join(|| {}, || {})", assigns[start].1, assigns[start + 1].1)
+        } else {
+            let rest = self.build_rayon_join(assigns, start + 1);
+            format!("rayon::join(|| {}, || {})", assigns[start].1, rest)
+        }
+    }
+
+    /// Build destructuring pattern: (mut a, (b, mut c)) for nested join
+    fn build_join_pattern(&self, assigns: &[(String, String, CrowType)], start: usize) -> String {
+        let remaining = assigns.len() - start;
+        let name_with_mut = |idx: usize| -> String {
+            let name = &assigns[idx].0;
+            if self.mutated_vars.contains(name) {
+                format!("mut {}", name)
+            } else {
+                name.clone()
+            }
+        };
+        if remaining == 1 {
+            name_with_mut(start)
+        } else if remaining == 2 {
+            format!("({}, {})", name_with_mut(start), name_with_mut(start + 1))
+        } else {
+            let rest = self.build_join_pattern(assigns, start + 1);
+            format!("({}, {})", name_with_mut(start), rest)
+        }
+    }
+
+    /// Build temp name pattern: (_par_0, (_par_1, _par_2))
+    fn build_join_temp_pattern(&self, assigns: &[(String, String, CrowType)], start: usize) -> String {
+        let remaining = assigns.len() - start;
+        if remaining == 1 {
+            format!("_par_{}", start)
+        } else if remaining == 2 {
+            format!("(_par_{}, _par_{})", start, start + 1)
+        } else {
+            let rest = self.build_join_temp_pattern(assigns, start + 1);
+            format!("(_par_{}, {})", start, rest)
+        }
+    }
+
+    /// Build type pattern: (i64, (String, f64))
+    fn build_join_type_pattern(&self, assigns: &[(String, String, CrowType)], start: usize) -> String {
+        let remaining = assigns.len() - start;
+        if remaining == 1 {
+            assigns[start].2.to_rust_type()
+        } else if remaining == 2 {
+            format!("({}, {})", assigns[start].2.to_rust_type(), assigns[start + 1].2.to_rust_type())
+        } else {
+            let rest = self.build_join_type_pattern(assigns, start + 1);
+            format!("({}, {})", assigns[start].2.to_rust_type(), rest)
+        }
     }
 
     fn emit_stmt(&mut self, stmt: &Stmt) {
