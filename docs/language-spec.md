@@ -822,3 +822,37 @@ Crow previously had a set of iterator builtins: `iter`, `collect`, `take`, `skip
 | `collect[filter[iter[list], pred]]` | `for x in list \n    if pred[x] \n        x` |
 | `collect[take[iter[list], n]]` | `slice[list, 0, n]` |
 | `collect[skip[iter[list], n]]` | `slice[list, n, len[list]]` |
+
+
+## Design Note: No Lambdas or Closures
+
+Crow intentionally has no anonymous functions (lambdas), closures, or inline function expressions.
+
+**Why they were rejected:**
+
+1. **Violates "one way to do things."** If lambdas existed, there would be two ways to define behavior: `fn double[x]` and `fn[x] x * 2`. Every code review becomes a style debate. One syntax for functions means zero ambiguity.
+
+2. **Closures add hidden complexity.** Closures capture variables from their enclosing scope, which creates hidden data dependencies. In a language designed for automatic parallelism (§12), captured mutable state would silently break parallel execution or require complex borrow-checking rules that Crow deliberately avoids.
+
+3. **Named functions are more readable.** `map[items, double]` is clearer than `map[items, fn[x] x * 2]`. The name `double` documents intent. Anonymous functions save a line of code but cost readability — a bad trade for a language optimized for clarity.
+
+4. **LLM-unfriendly.** Lambda syntax varies wildly across languages (`=>`, `->`, `lambda`, `\x ->`, `fn[x]`). A single `fn name[params]` declaration is unambiguous for both humans and language models.
+
+5. **First-class named functions cover every use case.** Crow supports passing named functions as values — `map[items, double]`, `sort[list, compare]`, storing functions in variables. There is no expressiveness gap.
+
+**What to use instead:**
+
+```
+--- define the behavior once, with a name ---
+fn double[x]
+    return x * 2
+
+result = map[items, double]
+```
+
+For one-off transformations, `for`-as-expression is often simpler than `map` + lambda anyway:
+
+```
+result = for x in items
+    x * 2
+```
