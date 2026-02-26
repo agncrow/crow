@@ -1,0 +1,50 @@
+--- Error-Value Struct Tests ---
+--- Tests .status, .result, .reason on fallible and non-fallible values ---
+
+--- Non-fallible: raw int ---
+x = 5
+log['raw int status: {x.status}']
+log['raw int result: {x.result}']
+log['raw int reason: {x.reason}']
+
+--- Fallible: int from string (success) ---
+good = int['42']
+log['int good status: {good.status}']
+log['int good result: {good.result}']
+
+--- Fallible: int from string (failure) ---
+bad = int['hello']
+log['int bad status: {bad.status}']
+log['int bad result: {bad.result}']
+log['int bad reason: {bad.reason}']
+
+--- Fallible: float from string (success) ---
+fgood = float['3.14']
+log['float good status: {fgood.status}']
+log['float good result: {fgood.result}']
+
+--- Fallible: float from string (failure) ---
+fbad = float['nope']
+log['float bad status: {fbad.status}']
+log['float bad result: {fbad.result}']
+log['float bad reason: {fbad.reason}']
+
+--- Auto-unwrap in arithmetic ---
+val = int['10']
+doubled = val + val
+log['auto-unwrap arithmetic: {doubled}']
+
+--- Non-fallible int conversion (no CrowResult) ---
+y = 3.14
+z = int[y]
+log['int from float: {z}']
+
+--- Status check pattern ---
+result = int['maybe']
+if result.status eq 'error'
+    log['error handled: {result.reason}']
+else
+    log['success: {result.result}']
+
+log['all error-value tests passed']
+

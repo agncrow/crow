@@ -265,8 +265,8 @@ data = map[]             --- empty map ---
 | `read[path]` | Read file contents (error-value on failure) |
 | `write[path, content]` | Write string to file (error-value on failure) |
 | `args[]` | CLI arguments as list of strings |
-| `input[]` | Read a line from stdin |
-| `input[prompt]` | Print prompt, then read a line from stdin |
+| `input[]` | Read a line from stdin (error-value on failure) |
+| `input[prompt]` | Print prompt, then read a line (error-value on failure) |
 
 ## 4. Control Flow
 
@@ -520,25 +520,44 @@ comment
 
 ## 11. Error Handling
 
-Every variable in Crow is a struct with `status`, `result`, and `reason`. Values auto-unwrap — you use them directly without worrying about the struct.
+Fallible operations return an error-value struct with `status`, `result`, and `reason` fields. Values auto-unwrap — you use them directly without worrying about the struct.
 
-### Every Value is a Struct
+### Fallible Builtins
+
+These builtins can fail and return an error-value struct:
+
+| Builtin | When it fails |
+|---------|---------------|
+| `read[path]` | File doesn't exist or can't be read |
+| `input[]` / `input[prompt]` | Stdin read fails |
+| `int[string]` | String can't be parsed as integer |
+| `float[string]` | String can't be parsed as float |
+
+Non-fallible conversions (e.g. `int[3.14]`, `int[true]`) return raw values, not error-value structs.
+
+### Every Value Has Status
 
 ```
 x = 5
-log[x]            --- 5, auto-unwraps ---
+log[x]            --- 5 ---
 x.status          --- 'ok' ---
 x.result          --- 5 ---
+x.reason          --- '' ---
 ```
+
+Non-fallible values always have `status` of `'ok'`, `result` is the value itself, and `reason` is `''`.
 
 ### Auto Unwrap
 
 ```
 content = read['file.txt']
-log[content]               --- just works, content unwraps to the result ---
+log[content]               --- just works, auto-unwraps to the result ---
+
+val = int['42']
+doubled = val + val        --- auto-unwraps in arithmetic: 84 ---
 ```
 
-If `read` fails, the error propagates automatically up the call chain. No try/catch needed.
+When an error-value is used in arithmetic, string interpolation, or `log[]`, the `.result` is automatically accessed.
 
 ### Explicit Handling
 
@@ -555,13 +574,15 @@ else
 
 ### Value Struct
 
-Every value has:
+Every error-value has:
 
 | Field    | Description                          |
 |----------|--------------------------------------|
-| `status` | `'ok'`, `'done'`, or `'error'`      |
-| `result` | the return value (undefined on error or done)|
-| `reason` | error message (undefined on ok or done)     |
+| `status` | `'ok'` or `'error'`                 |
+| `result` | the return value (default on error)  |
+| `reason` | error message (empty on success)     |
+
+On failure, `result` contains a safe default (`0` for int, `0.0` for float, `''` for string) and `reason` describes what went wrong.
 
 ### Error Messages
 

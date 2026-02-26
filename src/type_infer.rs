@@ -16,6 +16,8 @@ pub enum CrowType {
     /// Used when a struct field holds both a sentinel (e.g. 0) and a recursive struct reference.
     OptBoxStruct(String),
     Fn(Vec<CrowType>, Box<CrowType>),
+    /// Error-value wrapper: CrowResult<T> with .status, .result, .reason
+    Result(Box<CrowType>),
     Void,
     Unknown,
 }
@@ -35,6 +37,7 @@ impl CrowType {
                 let param_types: Vec<String> = params.iter().map(|p| p.to_rust_type()).collect();
                 format!("fn({}) -> {}", param_types.join(", "), ret.to_rust_type())
             }
+            CrowType::Result(inner) => format!("CrowResult<{}>", inner.to_rust_type()),
             CrowType::Void => "()".into(),
             CrowType::Unknown => "String".into(),
         }
@@ -59,6 +62,8 @@ impl CrowType {
             (CrowType::OptBoxStruct(name), CrowType::Struct(_)) | (CrowType::Struct(_), CrowType::OptBoxStruct(name)) => {
                 CrowType::OptBoxStruct(name.clone())
             }
+            // Result unification
+            (CrowType::Result(a), CrowType::Result(b)) => CrowType::Result(Box::new(a.unify(b))),
             // Fn unification
             (CrowType::Fn(p1, r1), CrowType::Fn(p2, r2)) if p1.len() == p2.len() => {
                 let params: Vec<CrowType> = p1.iter().zip(p2.iter()).map(|(a, b)| a.unify(b)).collect();
@@ -630,6 +635,9 @@ impl TypeContext {
             Expr::BinOp { left, op, right } => {
                 let lt = self.infer_expr(left);
                 let rt = self.infer_expr(right);
+                // Auto-unwrap CrowResult in BinOp
+                let lt = if let CrowType::Result(inner) = lt { *inner } else { lt };
+                let rt = if let CrowType::Result(inner) = rt { *inner } else { rt };
                 match op {
                     BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt
                     | BinOp::Gte | BinOp::Lte | BinOp::And | BinOp::Or => CrowType::Bool,
@@ -682,9 +690,25 @@ impl TypeContext {
                         "trim" | "upper" | "lower" | "replace" | "join" => return CrowType::Str,
                         "split" => return CrowType::List(Box::new(CrowType::Str)),
                         "starts" | "ends" | "contains" => return CrowType::Bool,
-                        // Conversion builtins
-                        "int" => return CrowType::Int,
-                        "float" => return CrowType::Float,
+                        // Conversion builtins — fallible when parsing from string
+                        "int" => {
+                            if let Some(arg) = args.first() {
+                                let arg_type = self.infer_expr(arg);
+                                if matches!(arg_type, CrowType::Str) {
+                                    return CrowType::Result(Box::new(CrowType::Int));
+                                }
+                            }
+                            return CrowType::Int;
+                        }
+                        "float" => {
+                            if let Some(arg) = args.first() {
+                                let arg_type = self.infer_expr(arg);
+                                if matches!(arg_type, CrowType::Str) {
+                                    return CrowType::Result(Box::new(CrowType::Float));
+                                }
+                            }
+                            return CrowType::Float;
+                        }
                         "str" => return CrowType::Str,
                         // Collection builtins (mutating ones return void)
                         "push" | "sort" | "reverse" | "append" | "set" | "del" => return CrowType::Void,
@@ -720,9 +744,9 @@ impl TypeContext {
                         "len" => return CrowType::Int,
                         // CLI / IO
                         "args" => return CrowType::List(Box::new(CrowType::Str)),
-                        "input" => return CrowType::Str,
+                        "input" => return CrowType::Result(Box::new(CrowType::Str)),
                         // File I/O
-                        "read" => return CrowType::Str,
+                        "read" => return CrowType::Result(Box::new(CrowType::Str)),
                         "write" => return CrowType::Void,
                         _ => {}
                     }
