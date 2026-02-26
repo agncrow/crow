@@ -40,6 +40,10 @@ impl Transpiler {
         }
     }
 
+    pub fn set_cpu_count(&mut self, n: usize) {
+        self.cpu_count = Some(n);
+    }
+
     /// Map Crow function names to valid Rust names.
     /// User-defined `main` becomes `crow_main` to avoid clashing with Rust's entry point.
     fn rust_fn_name(name: &str) -> String {
@@ -675,16 +679,43 @@ impl Transpiler {
                 }
             }
             Stmt::MultiAssign { names, values } => {
-                for (name, value) in names.iter().zip(values.iter()) {
-                    let expr_str = self.expr_to_string(value);
-                    if self.declared.contains(name) {
-                        self.emit_line(&format!("{} = {};", name, expr_str));
-                    } else {
-                        let ty = self.ctx.infer_expr(value);
-                        let kw = if self.mutated_vars.contains(name) { "let mut" } else { "let" };
-                        self.emit_line(&format!("{} {}: {} = {};", kw, name, ty.to_rust_type(), expr_str));
-                        self.declared.insert(name.clone());
-                        self.ctx.vars.insert(name.clone(), ty);
+                // Evaluate all RHS into temporaries first (needed for swap: a, b = b, a)
+                let mut exprs: Vec<String> = Vec::new();
+                let mut types: Vec<CrowType> = Vec::new();
+                for value in values.iter() {
+                    exprs.push(self.expr_to_string(value));
+                    types.push(self.ctx.infer_expr(value));
+                }
+                // Check if any RHS reads a variable that a previous LHS writes (swap pattern)
+                let rhs_reads: std::collections::HashSet<String> = values.iter().flat_map(|v| crate::parallel::expr_reads(v)).collect();
+                let lhs_names: std::collections::HashSet<String> = names.iter().cloned().collect();
+                let needs_temps = !rhs_reads.is_disjoint(&lhs_names) && names.iter().any(|n| self.declared.contains(n));
+                if needs_temps {
+                    // Use temporaries for safe swap
+                    for (i, (expr, ty)) in exprs.iter().zip(types.iter()).enumerate() {
+                        self.emit_line(&format!("let _multi_{}: {} = {};", i, ty.to_rust_type(), expr));
+                    }
+                    for (i, name) in names.iter().enumerate() {
+                        if self.declared.contains(name) {
+                            self.emit_line(&format!("{} = _multi_{};", name, i));
+                        } else {
+                            let kw = if self.mutated_vars.contains(name) { "let mut" } else { "let" };
+                            self.emit_line(&format!("{} {}: {} = _multi_{};", kw, name, types[i].to_rust_type(), i));
+                            self.declared.insert(name.clone());
+                            self.ctx.vars.insert(name.clone(), types[i].clone());
+                        }
+                    }
+                } else {
+                    // No swap conflict — emit directly
+                    for (i, name) in names.iter().enumerate() {
+                        if self.declared.contains(name) {
+                            self.emit_line(&format!("{} = {};", name, exprs[i]));
+                        } else {
+                            let kw = if self.mutated_vars.contains(name) { "let mut" } else { "let" };
+                            self.emit_line(&format!("{} {}: {} = {};", kw, name, types[i].to_rust_type(), exprs[i]));
+                            self.declared.insert(name.clone());
+                            self.ctx.vars.insert(name.clone(), types[i].clone());
+                        }
                     }
                 }
             }
@@ -710,12 +741,16 @@ impl Transpiler {
                 let cond_str = self.expr_to_string(condition);
                 self.emit_line(&format!("if {} {{", cond_str));
                 self.indent += 1;
+                let saved = self.declared.clone();
                 for s in then_body { self.emit_stmt(s); }
+                self.declared = saved;
                 self.indent -= 1;
                 if let Some(eb) = else_body {
                     self.emit_line("} else {");
                     self.indent += 1;
+                    let saved = self.declared.clone();
                     for s in eb { self.emit_stmt(s); }
+                    self.declared = saved;
                     self.indent -= 1;
                 }
                 self.emit_line("}");
@@ -724,7 +759,9 @@ impl Transpiler {
                 let cond_str = self.expr_to_string(condition);
                 self.emit_line(&format!("while {} {{", cond_str));
                 self.indent += 1;
+                let saved = self.declared.clone();
                 for s in body { self.emit_stmt(s); }
+                self.declared = saved;
                 self.indent -= 1;
                 self.emit_line("}");
             }
@@ -740,6 +777,7 @@ impl Transpiler {
                 };
                 let is_copy = matches!(elem_type, CrowType::Int | CrowType::Float | CrowType::Bool);
 
+                let saved = self.declared.clone();
                 if use_par {
                     let param = if is_copy { format!("|&{}|", var) } else { format!("|{}|", var) };
                     self.emit_line(&format!("{}.par_iter().for_each({} {{", iter_str, param));
@@ -759,6 +797,7 @@ impl Transpiler {
                     self.indent -= 1;
                     self.emit_line("}");
                 }
+                self.declared = saved;
             }
             Stmt::Match { value, arms } => {
                 let val_str = self.expr_to_string(value);
@@ -1051,7 +1090,7 @@ impl Transpiler {
                         return match ty {
                             CrowType::Int => arg_strs[0].clone(),
                             CrowType::Float => format!("({}) as i64", arg_strs[0]),
-                            CrowType::Str => format!("({}).parse::<i64>().unwrap()", arg_strs[0]),
+                            CrowType::Str => format!("({}).parse::<i64>().unwrap_or(0_i64)", arg_strs[0]),
                             CrowType::Bool => format!("if {} {{ 1_i64 }} else {{ 0_i64 }}", arg_strs[0]),
                             _ => format!("({}) as i64", arg_strs[0]),
                         };
@@ -1061,7 +1100,7 @@ impl Transpiler {
                         return match ty {
                             CrowType::Float => arg_strs[0].clone(),
                             CrowType::Int => format!("({}) as f64", arg_strs[0]),
-                            CrowType::Str => format!("({}).parse::<f64>().unwrap()", arg_strs[0]),
+                            CrowType::Str => format!("({}).parse::<f64>().unwrap_or(0.0_f64)", arg_strs[0]),
                             CrowType::Bool => format!("if {} {{ 1.0_f64 }} else {{ 0.0_f64 }}", arg_strs[0]),
                             _ => format!("({}) as f64", arg_strs[0]),
                         };
@@ -1096,7 +1135,7 @@ impl Transpiler {
                         return format!("{}.push({})", arg_strs[0], arg_strs[1]);
                     }
                     if name == "pop" && arg_strs.len() == 1 {
-                        return format!("{}.pop().unwrap()", arg_strs[0]);
+                        return format!("{}.pop().unwrap_or_default()", arg_strs[0]);
                     }
                     if name == "sort" {
                         return format!("{}.sort()", arg_strs[0]);
@@ -1127,7 +1166,10 @@ impl Transpiler {
                     if name == "args" && arg_strs.is_empty() {
                         return "std::env::args().skip(1).collect::<Vec<String>>()".to_string();
                     }
-                    if name == "input" && arg_strs.is_empty() {
+                    if name == "input" {
+                        if arg_strs.len() == 1 {
+                            return format!("{{ print!(\"{{}}\", {}); use std::io::Write; std::io::stdout().flush().unwrap(); let mut _line = String::new(); std::io::stdin().read_line(&mut _line).unwrap(); _line.trim_end().to_string() }}", arg_strs[0]);
+                        }
                         return "{ let mut _line = String::new(); std::io::stdin().read_line(&mut _line).unwrap(); _line.trim_end().to_string() }".to_string();
                     }
                     // --- Assert ---
@@ -1147,10 +1189,10 @@ impl Transpiler {
                     }
                     // --- File I/O builtins ---
                     if name == "read" && arg_strs.len() == 1 {
-                        return format!("std::fs::read_to_string(&*{}).unwrap()", arg_strs[0]);
+                        return format!("std::fs::read_to_string(&*{}).unwrap_or_else(|e| {{ eprintln!(\"error: {{}}\", e); String::new() }})", arg_strs[0]);
                     }
                     if name == "write" && arg_strs.len() == 2 {
-                        return format!("std::fs::write(&*{}, &*{}).unwrap()", arg_strs[0], arg_strs[1]);
+                        return format!("{{ if let Err(e) = std::fs::write(&*{}, &*{}) {{ eprintln!(\"error: {{}}\", e); }} }}", arg_strs[0], arg_strs[1]);
                     }
 
                     // --- Iterator builtins ---
@@ -1158,7 +1200,7 @@ impl Transpiler {
                         return format!("{}.clone().into_iter()", arg_strs[0]);
                     }
                     if name == "next" && arg_strs.len() == 1 {
-                        return format!("{}.next().unwrap()", arg_strs[0]);
+                        return format!("{}.next().unwrap_or_default()", arg_strs[0]);
                     }
                     if name == "collect" && arg_strs.len() == 1 {
                         let iter_type = self.ctx.infer_expr(&args[0]);
