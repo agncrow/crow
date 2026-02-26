@@ -332,17 +332,24 @@ while x gt 0
     x = x - 1
 ```
 
-## 6. Pattern Matching
+## 6. Design Note: No Pattern Matching or Sum Types
+
+Crow intentionally omits pattern matching (`match`) and sum types (enums with variants).
+
+**Why no pattern matching?** Without sum types, `match` is syntactic sugar for `if/else`. It adds a second way to branch, violating "one way to do things." Use `if/else` instead:
 
 ```
-match value
-    0
-        log['zero']
-    1..10
-        log['small']
-    _
-        log['big']
+if value eq 0
+    log['zero']
+else if value gt 0 and value lt 10
+    log['small']
+else
+    log['big']
 ```
+
+**Why no sum types?** Sum types shine in systems programming and compiler design, where you model distinct variants (e.g. `Shape = Circle | Rectangle`). Crow targets data science and practical programming, where data lives in collections, tables, and structs — not algebraic types. Crow's error-value system (§11) handles the most common sum type use case (success vs failure) without additional syntax.
+
+**If both were added, they would need to come together.** Pattern matching without sum types is pointless sugar. Sum types without pattern matching are unusable. Neither earns its place alone in a language optimized for simplicity and LLM-friendliness.
 
 
 ## 7. Structs
@@ -666,7 +673,7 @@ Dependencies can be:
 
 | Format | Example | Description |
 |--------|---------|-------------|
-| Version | `'math' = '1.0'` | Registry package (not yet available) |
+| Version | `'math' = '1.0'` | Registry package (resolved via central index) |
 | Git URL | `'math' = 'https://github.com/user/crow-math'` | Cloned from git |
 | Local path | `'utils' = './libs/utils'` | Symlinked from local directory |
 
@@ -710,7 +717,7 @@ Running `crow` with no arguments starts an interactive REPL. Variables and funct
 20
 ```
 
-Multi-line blocks (functions, if, for, while, match, struct) are entered by typing the first line, then indenting the body. An empty line or a non-indented line ends the block.
+Multi-line blocks (functions, if, for, while, struct) are entered by typing the first line, then indenting the body. An empty line or a non-indented line ends the block.
 
 ### Package Manager
 
@@ -723,7 +730,21 @@ crow install
 crow run
 ```
 
-Git dependencies are cloned. Local path dependencies are symlinked. Installed modules are imported with `use`.
+**Registry packages** (version strings like `'1.0'`) are resolved via a central index hosted on GitHub. The registry maps package names to git repositories and available versions. When installing, Crow fetches the index, finds the repo URL, and clones it at the matching git tag (`v1.0`, `v2.3`, etc.). If the exact tag is not found, the latest commit is used with a warning.
+
+**Git dependencies** are cloned directly from the URL. **Local path dependencies** are symlinked.
+
+Installed modules are imported with `use`.
+
+#### Registry
+
+The default registry index is hosted at `crow-lang/registry` on GitHub. Override it with the `CROW_REGISTRY` environment variable:
+
+```bash
+CROW_REGISTRY=https://example.com/index.json crow install
+```
+
+The index is cached locally at `~/.crow/registry/index.json` and refreshed on each `crow install`.
 
 ## 14. Type System
 

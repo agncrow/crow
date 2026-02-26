@@ -85,6 +85,42 @@ Run the project defined by the `crowfile` in the current directory.
 crow run
 ```
 
+### `crow install`
+
+Install dependencies listed in the `crowfile` into `crow_modules/`.
+
+```
+--- crowfile ---
+name = 'myapp'
+entry = 'main.crow'
+deps = ['math' = '1.0', 'utils' = 'https://github.com/user/crow-utils']
+```
+
+```bash
+crow install
+```
+
+Three dependency formats are supported:
+
+| Format | Example | How it works |
+|--------|---------|--------------|
+| Version | `'math' = '1.0'` | Resolved from the package registry, cloned at git tag `v1.0` |
+| Git URL | `'lib' = 'https://...'` | Cloned directly from the git URL |
+| Local path | `'utils' = './libs/utils'` | Symlinked into `crow_modules/` |
+
+After installing, import with `use`:
+
+```
+use math
+log[math.double[5]]
+```
+
+To use a custom registry, set the `CROW_REGISTRY` environment variable:
+
+```bash
+CROW_REGISTRY=https://example.com/index.json crow install
+```
+
 ## Language Basics
 
 ### Variables
