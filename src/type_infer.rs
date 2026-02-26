@@ -747,7 +747,7 @@ impl TypeContext {
                         "input" => return CrowType::Result(Box::new(CrowType::Str)),
                         // File I/O
                         "read" => return CrowType::Result(Box::new(CrowType::Str)),
-                        "write" => return CrowType::Void,
+                        "write" => return CrowType::Result(Box::new(CrowType::Str)),
                         _ => {}
                     }
                 }

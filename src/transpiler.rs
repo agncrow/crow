@@ -1241,7 +1241,7 @@ impl Transpiler {
                         return format!("match std::fs::read_to_string(&*{}) {{ Ok(v) => CrowResult {{ status: \"ok\".to_string(), result: v, reason: \"\".to_string() }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: String::new(), reason: e.to_string() }} }}", arg_strs[0]);
                     }
                     if name == "write" && arg_strs.len() == 2 {
-                        return format!("{{ if let Err(e) = std::fs::write(&*{}, &*{}) {{ eprintln!(\"error: {{}}\", e); }} }}", arg_strs[0], arg_strs[1]);
+                        return format!("match std::fs::write(&*{}, &*{}) {{ Ok(_) => CrowResult {{ status: \"ok\".to_string(), result: \"\".to_string(), reason: \"\".to_string() }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: \"\".to_string(), reason: e.to_string() }} }}", arg_strs[0], arg_strs[1]);
                     }
 
 

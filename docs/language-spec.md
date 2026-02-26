@@ -107,7 +107,7 @@ fn add[a, b]
     a + b                    --- implicit return ---
 
 fn greet[name]
-    log['hello, {name}']    --- no return value, status is 'done' ---
+    log['hello, {name}']
 
 fn safe_div[a, b]
     if b eq 0
@@ -529,6 +529,7 @@ These builtins can fail and return an error-value struct:
 | Builtin | When it fails |
 |---------|---------------|
 | `read[path]` | File doesn't exist or can't be read |
+| `write[path, content]` | File can't be written |
 | `input[]` / `input[prompt]` | Stdin read fails |
 | `int[string]` | String can't be parsed as integer |
 | `float[string]` | String can't be parsed as float |
@@ -578,9 +579,9 @@ Every error-value has:
 
 | Field    | Description                          |
 |----------|--------------------------------------|
-| `status` | `'ok'` or `'error'`                 |
-| `result` | the return value (default on error)  |
-| `reason` | error message (empty on success)     |
+| `status` | `'ok'` or `'error'`                  |
+| `result` | the return value (safe default on error) |
+| `reason` | error message (empty on success)      |
 
 On failure, `result` contains a safe default (`0` for int, `0.0` for float, `''` for string) and `reason` describes what went wrong.
 
