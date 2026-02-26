@@ -770,3 +770,33 @@ The transpiler is the source of truth. If a program works in the interpreter but
 ### No `none`
 
 Crow has no null, nil, or none value. Every variable always holds a concrete value. Missing or failed data is represented through the error-value system (`status`, `result`, `reason`) — see Error Handling.
+
+
+## Design Note: No Iterator Builtins
+
+Crow previously had a set of iterator builtins: `iter`, `collect`, `take`, `skip`, `filter`, `each`, and `next`. These converted a list to a lazy iterator, transformed/filtered it through chained calls, and materialized it back into a list with `collect`.
+
+**Why they were removed:**
+
+1. **Too verbose.** Chained iterator calls read inside-out and require excessive nesting:
+   `collect[each[filter[take[iter[nums], 5], is_even], double]]` — hard to read, hard to write.
+
+2. **Violates "one way to do things."** Crow's `for`-as-expression already handles mapping, filtering, and combined map+filter more readably:
+   ```
+   result = for x in nums
+       if x % 2 eq 0
+           x * 2
+   ```
+
+3. **`slice` covers take/skip.** `slice[list, start, end]` replaces `take` and `skip` without needing an iterator abstraction.
+
+4. **Laziness isn't needed.** Crow's automatic parallelism (§12) handles performance at the statement level. Lazy evaluation adds complexity without meaningful benefit for Crow's target audience.
+
+**What to use instead:**
+
+| Old (iterators) | New (for + slice) |
+|---|---|
+| `collect[each[iter[list], fn]]` | `for x in list \n    fn[x]` |
+| `collect[filter[iter[list], pred]]` | `for x in list \n    if pred[x] \n        x` |
+| `collect[take[iter[list], n]]` | `slice[list, 0, n]` |
+| `collect[skip[iter[list], n]]` | `slice[list, n, len[list]]` |

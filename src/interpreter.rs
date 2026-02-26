@@ -487,36 +487,6 @@ impl Interpreter {
         }
     }
 
-    /// Call a function value with the given arguments (used by filter/each on iterators)
-    fn call_function_value(&mut self, fn_val: &CrowValue, args: &[CrowValue]) -> Result<CrowValue, String> {
-        match &fn_val.result {
-            Value::Fn(func) => {
-                let func = func.clone();
-                if func.params.len() != args.len() {
-                    return Err(format!("{}[] expects {} args, got {}", func.name, func.params.len(), args.len()));
-                }
-                self.env.push_call_scope();
-                for (param, val) in func.params.iter().zip(args) {
-                    self.env.set(param, val.clone());
-                }
-                let mut result = CrowValue::done();
-                for stmt in func.body.iter() {
-                    match self.exec_stmt(stmt)? {
-                        Signal::Return(val) => {
-                            self.env.pop_call_scope();
-                            return Ok(val);
-                        }
-                        Signal::Value(val) => { result = val; }
-                        Signal::None => {}
-                    }
-                }
-                self.env.pop_call_scope();
-                Ok(result)
-            }
-            _ => Err("expected a function value".to_string()),
-        }
-    }
-
     // --- Control flow ---
 
     fn exec_if(
@@ -919,7 +889,6 @@ impl Interpreter {
             | "keys" | "values" | "has" | "set" | "del"
             | "args" | "input"
             | "assert"
-            | "iter" | "next" | "collect" | "take" | "skip" | "filter" | "each"
         )
     }
 
@@ -1541,135 +1510,6 @@ impl Interpreter {
                     return Err(msg);
                 }
                 Ok(CrowValue::done())
-            }
-            // --- Iterator builtins ---
-            "iter" => {
-                if args.len() != 1 {
-                    return Err("iter[] takes 1 argument".to_string());
-                }
-                match &args[0].result {
-                    Value::List(items) => {
-                        Ok(CrowValue::ok(Value::Iterator(IteratorValue {
-                            items: Arc::new(items.iter().cloned().collect()),
-                            pos: Arc::new(Mutex::new(0)),
-                        })))
-                    }
-                    _ => Err("iter[] requires a list".to_string()),
-                }
-            }
-            "next" => {
-                if args.len() != 1 {
-                    return Err("next[] takes 1 argument".to_string());
-                }
-                match &args[0].result {
-                    Value::Iterator(it) => {
-                        let mut pos = it.pos.lock().unwrap();
-                        if *pos < it.items.len() {
-                            let val = it.items[*pos].clone();
-                            *pos += 1;
-                            Ok(val)
-                        } else {
-                            Ok(CrowValue::done())
-                        }
-                    }
-                    _ => Err("next[] requires an iterator".to_string()),
-                }
-            }
-            "collect" => {
-                if args.len() != 1 {
-                    return Err("collect[] takes 1 argument".to_string());
-                }
-                match &args[0].result {
-                    Value::Iterator(it) => {
-                        let pos = *it.pos.lock().unwrap();
-                        let remaining: Vec<CrowValue> = it.items[pos..].to_vec();
-                        Ok(CrowValue::ok(Value::List(remaining)))
-                    }
-                    _ => Err("collect[] requires an iterator".to_string()),
-                }
-            }
-            "take" => {
-                if args.len() != 2 {
-                    return Err("take[] takes 2 arguments (iterator, count)".to_string());
-                }
-                match (&args[0].result, &args[1].result) {
-                    (Value::Iterator(it), Value::Int(n)) => {
-                        let pos = *it.pos.lock().unwrap();
-                        let end = std::cmp::min(pos + *n as usize, it.items.len());
-                        let taken: Vec<CrowValue> = it.items[pos..end].to_vec();
-                        Ok(CrowValue::ok(Value::Iterator(IteratorValue {
-                            items: Arc::new(taken),
-                            pos: Arc::new(Mutex::new(0)),
-                        })))
-                    }
-                    _ => Err("take[] requires (iterator, int)".to_string()),
-                }
-            }
-            "skip" => {
-                if args.len() != 2 {
-                    return Err("skip[] takes 2 arguments (iterator, count)".to_string());
-                }
-                match (&args[0].result, &args[1].result) {
-                    (Value::Iterator(it), Value::Int(n)) => {
-                        let pos = *it.pos.lock().unwrap();
-                        let new_pos = std::cmp::min(pos + *n as usize, it.items.len());
-                        let remaining: Vec<CrowValue> = it.items[new_pos..].to_vec();
-                        Ok(CrowValue::ok(Value::Iterator(IteratorValue {
-                            items: Arc::new(remaining),
-                            pos: Arc::new(Mutex::new(0)),
-                        })))
-                    }
-                    _ => Err("skip[] requires (iterator, int)".to_string()),
-                }
-            }
-            "filter" => {
-                if args.len() != 2 {
-                    return Err("filter[] takes 2 arguments (iterator, function)".to_string());
-                }
-                match &args[0].result {
-                    Value::Iterator(it) => {
-                        let pos = *it.pos.lock().unwrap();
-                        let fn_val = &args[1];
-                        let mut filtered = Vec::new();
-                        for item in &it.items[pos..] {
-                            let result = self.call_function_value(fn_val, &[item.clone()])?;
-                            let keep = match &result.result {
-                                Value::Bool(b) => *b,
-                                Value::Int(n) => *n != 0,
-                                _ => true,
-                            };
-                            if keep {
-                                filtered.push(item.clone());
-                            }
-                        }
-                        Ok(CrowValue::ok(Value::Iterator(IteratorValue {
-                            items: Arc::new(filtered),
-                            pos: Arc::new(Mutex::new(0)),
-                        })))
-                    }
-                    _ => Err("filter[] requires an iterator as first argument".to_string()),
-                }
-            }
-            "each" => {
-                if args.len() != 2 {
-                    return Err("each[] takes 2 arguments (iterator, function)".to_string());
-                }
-                match &args[0].result {
-                    Value::Iterator(it) => {
-                        let pos = *it.pos.lock().unwrap();
-                        let fn_val = &args[1];
-                        let mut mapped = Vec::new();
-                        for item in &it.items[pos..] {
-                            let result = self.call_function_value(fn_val, &[item.clone()])?;
-                            mapped.push(result);
-                        }
-                        Ok(CrowValue::ok(Value::Iterator(IteratorValue {
-                            items: Arc::new(mapped),
-                            pos: Arc::new(Mutex::new(0)),
-                        })))
-                    }
-                    _ => Err("each[] requires an iterator as first argument".to_string()),
-                }
             }
             _ => Err(format!("undefined function '{}'", name)),
         }

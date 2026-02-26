@@ -1195,33 +1195,6 @@ impl Transpiler {
                         return format!("{{ if let Err(e) = std::fs::write(&*{}, &*{}) {{ eprintln!(\"error: {{}}\", e); }} }}", arg_strs[0], arg_strs[1]);
                     }
 
-                    // --- Iterator builtins ---
-                    if name == "iter" && arg_strs.len() == 1 {
-                        return format!("{}.clone().into_iter()", arg_strs[0]);
-                    }
-                    if name == "next" && arg_strs.len() == 1 {
-                        return format!("{}.next().unwrap_or_default()", arg_strs[0]);
-                    }
-                    if name == "collect" && arg_strs.len() == 1 {
-                        let iter_type = self.ctx.infer_expr(&args[0]);
-                        if let CrowType::Iterator(inner) = iter_type {
-                            return format!("{}.collect::<Vec<{}>>()", arg_strs[0], inner.to_rust_type());
-                        }
-                        return format!("{}.collect::<Vec<_>>()", arg_strs[0]);
-                    }
-                    if name == "take" && arg_strs.len() == 2 {
-                        return format!("{}.take({} as usize)", arg_strs[0], arg_strs[1]);
-                    }
-                    if name == "skip" && arg_strs.len() == 2 {
-                        return format!("{}.skip({} as usize)", arg_strs[0], arg_strs[1]);
-                    }
-                    if name == "filter" && arg_strs.len() == 2 {
-                        // Rust's filter takes &T, so wrap the callback
-                        return format!("{}.filter(|x| {}(x.clone()))", arg_strs[0], arg_strs[1]);
-                    }
-                    if name == "each" && arg_strs.len() == 2 {
-                        return format!("{}.map({})", arg_strs[0], arg_strs[1]);
-                    }
 
                     // Struct constructor
                     if self.ctx.structs.contains_key(name) {
