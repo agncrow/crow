@@ -617,11 +617,19 @@ log[c]
 
 ### For Loops
 
-`for` loops run iterations in parallel by default.
+`for` loops run iterations in parallel by default using `rayon::par_iter`.
 
 ```
 for x in items
     process[x]        --- each iteration runs in parallel ---
+```
+
+If the loop body mutates a variable from the outer scope, Crow automatically falls back to sequential execution for safety:
+
+```
+total = 0
+for x in items
+    total = total + x  --- sequential: mutates outer 'total' ---
 ```
 
 ### While Loops
