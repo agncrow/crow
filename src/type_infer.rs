@@ -43,6 +43,45 @@ impl CrowType {
         }
     }
 
+    /// Human-readable Crow type name for error messages.
+    pub fn crow_name(&self) -> String {
+        match self {
+            CrowType::Int => "int".into(),
+            CrowType::Float => "float".into(),
+            CrowType::Bool => "bool".into(),
+            CrowType::Str => "str".into(),
+            CrowType::List(inner) => format!("list[{}]", inner.crow_name()),
+            CrowType::Map(inner) => format!("map[{}]", inner.crow_name()),
+            CrowType::Struct(name) => name.clone(),
+            CrowType::OptBoxStruct(name) => name.clone(),
+            CrowType::Fn(params, ret) => {
+                let p: Vec<String> = params.iter().map(|p| p.crow_name()).collect();
+                format!("fn[{}] -> {}", p.join(", "), ret.crow_name())
+            }
+            CrowType::Result(inner) => format!("result[{}]", inner.crow_name()),
+            CrowType::Void => "void".into(),
+            CrowType::Unknown => "unknown".into(),
+        }
+    }
+
+    /// Check if two types are compatible for reassignment.
+    /// Returns true if the same variable can hold both types.
+    pub fn compatible(&self, other: &CrowType) -> bool {
+        if self == other { return true; }
+        match (self, other) {
+            (CrowType::Unknown, _) | (_, CrowType::Unknown) => true,
+            (CrowType::Void, _) | (_, CrowType::Void) => true,
+            (CrowType::Int, CrowType::Float) | (CrowType::Float, CrowType::Int) => true,
+            (CrowType::List(a), CrowType::List(b)) => a.compatible(b),
+            (CrowType::Map(a), CrowType::Map(b)) => a.compatible(b),
+            (CrowType::Result(a), CrowType::Result(b)) => a.compatible(b),
+            (CrowType::Int, CrowType::Struct(name)) | (CrowType::Struct(name), CrowType::Int) => true, // OptBoxStruct
+            (CrowType::OptBoxStruct(_), CrowType::Int) | (CrowType::Int, CrowType::OptBoxStruct(_)) => true,
+            (CrowType::OptBoxStruct(_), CrowType::Struct(_)) | (CrowType::Struct(_), CrowType::OptBoxStruct(_)) => true,
+            _ => false,
+        }
+    }
+
     pub fn unify(&self, other: &CrowType) -> CrowType {
         if self == other { return self.clone(); }
         match (self, other) {
