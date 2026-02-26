@@ -1005,3 +1005,17 @@ for x in passwords
     if len[x] lt 8
         valid = false
 ```
+
+## Design Note: No Double-Quote Strings
+
+Crow uses single quotes for all strings. There is no double-quote alternative.
+
+**Why:** Adding a second string delimiter would create two ways to write the same thing, violating "one way to do things." Every language that supports both `'...'` and `"..."` spawns style debates and inconsistency.
+
+**Nested quotes:** Use the `\'` escape sequence. Most strings don't contain quotes. When they do, `\'` handles it cleanly:
+
+```
+msg = 'he said \'hello\' to me'
+```
+
+For heavy quoting (SQL, JSON, HTML), build strings with concatenation or load from a file with `read[]`.
