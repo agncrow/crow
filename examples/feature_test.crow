@@ -1,0 +1,70 @@
+--- Feature Test: multiple assignment, swap, scope, error handling ---
+
+--- 1. Multiple assignment ---
+x, y = 10, 20
+log['multi assign: x={x} y={y}']
+
+--- 2. Swap ---
+a, b = 1, 2
+log['before swap: a={a} b={b}']
+a, b = b, a
+log['after swap: a={a} b={b}']
+
+--- 3. Triple swap ---
+p, q, r = 100, 200, 300
+log['before triple: p={p} q={q} r={r}']
+p, q, r = r, p, q
+log['after triple: p={p} q={q} r={r}']
+
+--- 4. Scope enforcement: if block vars don't leak ---
+outer = 'visible'
+if true
+    inner = 'hidden'
+    log['inside if: {inner}']
+log['outer still ok: {outer}']
+
+--- 5. Scope enforcement: for block var ---
+for i in [1, 2, 3]
+    temp = i * 10
+    log['  for temp: {temp}']
+
+--- 6. Scope enforcement: while block ---
+n = 3
+while n gt 0
+    n = n - 1
+log['while done, n={n}']
+
+--- 7. Error-safe int parsing ---
+good = int['42']
+log['int good: {good}']
+bad = int['not_a_number']
+log['int bad: {bad}']
+
+--- 8. Error-safe float parsing ---
+fgood = float['3.14']
+log['float good: {fgood}']
+fbad = float['nope']
+log['float bad: {fbad}']
+
+--- 9. String conversion ---
+s = str[42]
+log['str: {s}']
+s2 = str[3.14]
+log['str float: {s2}']
+
+--- 10. Nested scope ---
+val = 'top'
+if true
+    val = 'mid'
+    if true
+        val = 'deep'
+        log['deep: {val}']
+    log['mid after deep: {val}']
+log['top after ifs: {val}']
+
+--- 11. Multiple assignment with expressions ---
+c, d = 2 + 3, 4 * 5
+log['expr multi: c={c} d={d}']
+
+log['all feature tests passed']
+

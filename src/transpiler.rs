@@ -1705,3 +1705,116 @@ impl Transpiler {
     }
 }
 
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+
+    /// Helper: parse Crow source, run type inference, transpile to Rust
+    fn transpile(source: &str) -> String {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().expect("lexer failed");
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().expect("parser failed");
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        let mut t = Transpiler::new(ctx);
+        t.transpile(&stmts)
+    }
+
+    #[test]
+    fn test_multi_assign() {
+        let src = "x, y = 10, 20\nlog['{x} {y}']\n";
+        let rust = transpile(src);
+        assert!(rust.contains("let x: i64 = 10"), "should declare x\n{}", rust);
+        assert!(rust.contains("let y: i64 = 20"), "should declare y\n{}", rust);
+    }
+
+    #[test]
+    fn test_swap_uses_temporaries() {
+        let src = "a = 1\nb = 2\na, b = b, a\nlog['{a} {b}']\n";
+        let rust = transpile(src);
+        // Swap should use temp variables
+        assert!(rust.contains("_multi_"), "swap should use temp vars\n{}", rust);
+    }
+
+    #[test]
+    fn test_int_parse_no_unwrap() {
+        let src = "x = int['42']\nlog['{x}']\n";
+        let rust = transpile(src);
+        assert!(!rust.contains(".unwrap()"), "int[] should not use .unwrap()\n{}", rust);
+        assert!(rust.contains("unwrap_or(0") || rust.contains("unwrap_or_default"),
+            "int[] should use safe fallback\n{}", rust);
+    }
+
+    #[test]
+    fn test_float_parse_no_unwrap() {
+        let src = "x = float['3.14']\nlog['{x}']\n";
+        let rust = transpile(src);
+        assert!(!rust.contains(".unwrap()"), "float[] should not use .unwrap()\n{}", rust);
+    }
+
+    #[test]
+    fn test_scope_if_block() {
+        // Variable declared inside if should not affect outer scope declarations
+        let src = "x = 1\nif true\n    y = 2\n    x = 10\nx = 5\n";
+        let rust = transpile(src);
+        // x should be declared with let mut (reassigned)
+        // y inside if should be a separate let
+        assert!(rust.contains("let y:"), "y should be declared inside if\n{}", rust);
+    }
+
+    #[test]
+    fn test_scope_while_block() {
+        let src = "n = 5\nwhile n gt 0\n    step = n\n    n = n - 1\n";
+        let rust = transpile(src);
+        assert!(rust.contains("let") && rust.contains("step:"), "step should be declared inside while\n{}", rust);
+    }
+
+    #[test]
+    fn test_scope_for_block() {
+        let src = "for i in [1, 2, 3]\n    temp = i * 10\n    log['{temp}']\n";
+        let rust = transpile(src);
+        assert!(rust.contains("let") && rust.contains("temp:"), "temp should be declared inside for\n{}", rust);
+    }
+
+    #[test]
+    fn test_cpu_count_wiring() {
+        let mut lexer = Lexer::new("x = 1\nlog['{x}']\n");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        let mut t = Transpiler::new(ctx);
+        t.set_cpu_count(4);
+        assert_eq!(t.cpu_count, Some(4));
+    }
+
+    #[test]
+    fn test_read_no_panic() {
+        let src = "content = read['/tmp/crow_test_read.txt']\nlog['{content}']\n";
+        let rust = transpile(src);
+        assert!(!rust.contains(".unwrap()"), "read[] should not use .unwrap()\n{}", rust);
+        assert!(rust.contains("unwrap_or"), "read[] should use safe fallback\n{}", rust);
+    }
+
+    #[test]
+    fn test_parallel_independent_stmts() {
+        let src = "a = 1 + 2\nb = 3 + 4\nc = 5 + 6\n";
+        let rust = transpile(src);
+        // Independent assignments should be grouped into a rayon::join
+        assert!(rust.contains("rayon::join"), "independent stmts should use rayon::join\n{}", rust);
+    }
+
+    #[test]
+    fn test_dependent_stmts_sequential() {
+        let src = "a = 1\nb = a + 1\nc = b + 1\n";
+        let rust = transpile(src);
+        // Dependent assignments should NOT be in rayon::join
+        assert!(!rust.contains("rayon::join"), "dependent stmts should be sequential\n{}", rust);
+    }
+}
