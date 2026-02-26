@@ -857,3 +857,53 @@ For one-off transformations, `for`-as-expression is often simpler than `map` + l
 result = for x in items
     x * 2
 ```
+
+
+## Design Note: No Enumerate or Zip
+
+Crow intentionally omits `enumerate` and `zip` builtins.
+
+**Why they were rejected:**
+
+1. **Mixed-type problem.** `enumerate[['a','b']]` would need to return `[[0,'a'], [1,'b']]` — lists mixing int and string. Crow lists are single-typed, so this doesn't fit the type system. `zip[[1,2], ['a','b']]` has the same problem.
+
+2. **`range[len[list]]` already covers every use case.** Index-based iteration with `for i in range[len[list]]` handles every scenario that `enumerate` or `zip` would address, with no new concepts.
+
+3. **No new concepts needed.** Adding `enumerate` or `zip` would require either tuples, anonymous structs, or mixed-type lists — none of which exist in Crow. The cost of adding a new type concept outweighs saving one line of code.
+
+**What to use instead:**
+
+Numbered output:
+```
+for i in range[len[players]]
+    log['{i + 1}. {players[i]}']
+```
+
+Find index of something:
+```
+for i in range[len[scores]]
+    if scores[i] eq max[scores]
+        log['best at index {i}']
+```
+
+Combine parallel lists (instead of zip):
+```
+for i in range[len[names]]
+    log['{names[i]}: {scores[i]}']
+```
+
+Dot product (instead of zip + map):
+```
+products = for i in range[len[a]]
+    a[i] * b[i]
+total = sum[products]
+```
+
+Build a map from two lists:
+```
+m = map[]
+for i in range[len[keys]]
+    set[m, keys[i], values[i]]
+```
+
+The pattern is always the same: iterate over indices with `range[len[list]]`, access elements by index. One pattern, zero new concepts.
