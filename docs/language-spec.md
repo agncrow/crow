@@ -1083,3 +1083,31 @@ msg = 'he said \'hello\' to me'
 ```
 
 For heavy quoting (SQL, JSON, HTML), build strings with concatenation or load from a file with `read[]`.
+
+## Design Note: No Inline Error Fallback
+
+Crow intentionally has no inline error recovery syntax (e.g. `x = int['bad'] rescue 0` or `x = int['bad'] or 0`).
+
+**What was considered:** A keyword (`rescue`, `catch`, `alt`, `fail`, etc.) that silently replaces an error-value with a default, turning a 3-line check into a one-liner.
+
+**Why it was rejected:** Inline fallbacks hide errors. The program continues with a value that may be wrong, and the error's `.reason` and `.line` are silently discarded. This contradicts Crow's error philosophy — errors are values that propagate visibly, carrying context, until you consciously handle them.
+
+Crow's errors don't crash the program. They propagate safely through function calls and operators:
+
+```
+x = int['bad']          --- error-value, no crash ---
+y = x + 10              --- still error-value, no crash ---
+log[y.status]           --- 'error' ---
+log[y.reason]           --- original reason preserved ---
+```
+
+**What to use instead:** Check errors explicitly. The verbosity is intentional — it forces you to acknowledge the error:
+
+```
+x = int[input[]]
+if x.status eq 'error'
+    log['invalid: {x.reason}']
+    x = 0
+```
+
+This may be revisited in the future if a design emerges that preserves error visibility while reducing verbosity.
