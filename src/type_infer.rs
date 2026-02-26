@@ -31,9 +31,12 @@ impl CrowType {
             CrowType::Map(inner) => format!("std::collections::BTreeMap<String, {}>", inner.to_rust_type()),
             CrowType::Struct(name) => name.clone(),
             CrowType::OptBoxStruct(name) => format!("Option<Box<{}>>", name),
-            CrowType::Fn(_, _) => "fn".into(),
+            CrowType::Fn(params, ret) => {
+                let param_types: Vec<String> = params.iter().map(|p| p.to_rust_type()).collect();
+                format!("fn({}) -> {}", param_types.join(", "), ret.to_rust_type())
+            }
             CrowType::Void => "()".into(),
-            CrowType::Unknown => "CrowVal".into(),
+            CrowType::Unknown => "String".into(),
         }
     }
 
@@ -55,6 +58,12 @@ impl CrowType {
             }
             (CrowType::OptBoxStruct(name), CrowType::Struct(_)) | (CrowType::Struct(_), CrowType::OptBoxStruct(name)) => {
                 CrowType::OptBoxStruct(name.clone())
+            }
+            // Fn unification
+            (CrowType::Fn(p1, r1), CrowType::Fn(p2, r2)) if p1.len() == p2.len() => {
+                let params: Vec<CrowType> = p1.iter().zip(p2.iter()).map(|(a, b)| a.unify(b)).collect();
+                let ret = r1.unify(r2);
+                CrowType::Fn(params, Box::new(ret))
             }
             _ => self.clone(),
         }
@@ -79,6 +88,9 @@ pub struct TypeContext {
     pub functions: BTreeMap<String, FnSig>,
     pub structs: BTreeMap<String, StructSig>,
     pub cpu_count: Option<usize>,
+    /// Param names of the function currently being body-scanned (to avoid
+    /// incorrectly inferring [] indexing as a function call on params).
+    current_fn_params: Vec<String>,
 }
 
 impl TypeContext {
@@ -88,6 +100,7 @@ impl TypeContext {
             functions: BTreeMap::new(),
             structs: BTreeMap::new(),
             cpu_count: None,
+            current_fn_params: Vec::new(),
         }
     }
 
@@ -119,13 +132,16 @@ impl TypeContext {
             }
         }
 
-        // Pass 2+3: iterate call-site scanning and function body inference
+        // Pass 2+: iterate call-site scanning and function body inference
         // until types stabilize (handles cross-function type propagation)
-        for _round in 0..3 {
+        for _round in 0..5 {
             // Scan call sites with function-local variable context
             for stmt in stmts {
                 self.collect_call_types_stmt(stmt);
             }
+
+            // Propagate types from indirect calls back to original functions
+            self.propagate_indirect_fn_types(stmts);
 
             // Infer function bodies and return types
             let fn_entries: Vec<(String, Vec<Stmt>)> = self.functions.iter()
@@ -141,6 +157,66 @@ impl TypeContext {
             self.infer_stmt(stmt);
         }
     }
+
+    /// Propagate types from indirect function calls back to original function declarations.
+    /// When we see `op = double` and `op[5]`, propagate i64 back to double's param.
+    fn propagate_indirect_fn_types(&mut self, stmts: &[Stmt]) {
+        // Collect var -> function name mappings from assignments
+        let mut var_to_fn: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+        self.collect_var_fn_assignments(stmts, &mut var_to_fn);
+
+        // For each variable that holds a function, if the variable has a Fn type
+        // with concrete params, propagate those to the original function
+        for (var_name, fn_names) in &var_to_fn {
+            if let Some(var_type) = self.vars.get(var_name).cloned() {
+                if let CrowType::Fn(param_types, ret_type) = &var_type {
+                    for fn_name in fn_names {
+                        if let Some(sig) = self.functions.get(fn_name).cloned() {
+                            let mut new_params = sig.params.clone();
+                            for (i, pt) in param_types.iter().enumerate() {
+                                if i < new_params.len() {
+                                    new_params[i].1 = new_params[i].1.unify(pt);
+                                }
+                            }
+                            let new_ret = sig.return_type.unify(ret_type);
+                            let target = self.functions.get_mut(fn_name).unwrap();
+                            target.params = new_params;
+                            target.return_type = new_ret;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Collect assignments of function names to variables.
+    fn collect_var_fn_assignments(&self, stmts: &[Stmt], map: &mut std::collections::BTreeMap<String, Vec<String>>) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Assign { name, value } => {
+                    if let Expr::Ident(fn_name) = value {
+                        if self.functions.contains_key(fn_name) {
+                            map.entry(name.clone()).or_default().push(fn_name.clone());
+                        }
+                    }
+                }
+                Stmt::FnDecl { body, .. } => {
+                    self.collect_var_fn_assignments(body, map);
+                }
+                Stmt::If { then_body, else_body, .. } => {
+                    self.collect_var_fn_assignments(then_body, map);
+                    if let Some(eb) = else_body {
+                        self.collect_var_fn_assignments(eb, map);
+                    }
+                }
+                Stmt::For { body, .. } | Stmt::While { body, .. } => {
+                    self.collect_var_fn_assignments(body, map);
+                }
+                _ => {}
+            }
+        }
+    }
+
 
     /// Scan a statement for call sites to infer parameter types.
     fn collect_call_types_stmt(&mut self, stmt: &Stmt) {
@@ -163,12 +239,30 @@ impl TypeContext {
             Stmt::FnDecl { name, body, .. } => {
                 // Add function params as known vars before scanning body
                 let saved_vars = self.vars.clone();
+                let saved_fn_params = self.current_fn_params.clone();
                 if let Some(sig) = self.functions.get(name) {
+                    self.current_fn_params = sig.params.iter().map(|(n, _)| n.clone()).collect();
                     for (pname, pty) in &sig.params.clone() {
                         self.vars.insert(pname.clone(), pty.clone());
                     }
                 }
                 for s in body { self.collect_call_types_stmt(s); }
+
+                // After scanning body, propagate any updated Fn-typed param types back.
+                // This handles `f[result, list[i]]` where `f` is a known function param.
+                if let Some(sig) = self.functions.get(name).cloned() {
+                    let mut new_params = sig.params.clone();
+                    for (i, (pname, _pty)) in sig.params.iter().enumerate() {
+                        if let Some(updated_type) = self.vars.get(pname) {
+                            if let CrowType::Fn(_, _) = updated_type {
+                                new_params[i].1 = new_params[i].1.unify(updated_type);
+                            }
+                        }
+                    }
+                    self.functions.get_mut(name).unwrap().params = new_params;
+                }
+
+                self.current_fn_params = saved_fn_params;
                 self.vars = saved_vars;
             }
             Stmt::Return(Some(e)) => self.collect_call_types_expr(e),
@@ -228,6 +322,31 @@ impl TypeContext {
                             }
                         }
                         self.functions.get_mut(name).unwrap().params = new_params;
+
+                        // Propagate types to functions passed as arguments:
+                        // If param type is Fn(...) and arg is a function name, update that function's signature
+                        let updated_sig = self.functions.get(name).unwrap().clone();
+                        for (i, arg) in args.iter().enumerate() {
+                            if i < updated_sig.params.len() {
+                                if let CrowType::Fn(param_types, ret_type) = &updated_sig.params[i].1 {
+                                    if let Expr::Ident(fn_name) = arg {
+                                        if self.functions.contains_key(fn_name) {
+                                            let target_sig = self.functions.get(fn_name).unwrap().clone();
+                                            let mut new_target_params = target_sig.params.clone();
+                                            for (j, pt) in param_types.iter().enumerate() {
+                                                if j < new_target_params.len() {
+                                                    new_target_params[j].1 = new_target_params[j].1.unify(pt);
+                                                }
+                                            }
+                                            let new_ret = target_sig.return_type.unify(ret_type);
+                                            let target = self.functions.get_mut(fn_name).unwrap();
+                                            target.params = new_target_params;
+                                            target.return_type = new_ret;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // Is it a struct constructor?
@@ -240,6 +359,29 @@ impl TypeContext {
                             }
                         }
                         self.structs.get_mut(name).unwrap().fields = new_fields;
+                    }
+
+                    // Is it a variable holding a function? (not a declared function or struct)
+                    // Only update Fn type — don't override concrete types like List/Map.
+                    // For function params with Unknown type, skip — [] is ambiguous (call vs index)
+                    // and the call site will provide the actual type.
+                    // For params already known to be Fn, allow refinement of arg types.
+                    if !self.functions.contains_key(name) && !self.structs.contains_key(name) {
+                        let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
+                        let is_param = self.current_fn_params.contains(name);
+                        match &existing {
+                            CrowType::Fn(_, _) => {
+                                // Already known to be Fn — refine arg types
+                                let fn_type = CrowType::Fn(arg_types, Box::new(CrowType::Unknown));
+                                self.vars.insert(name.clone(), existing.unify(&fn_type));
+                            }
+                            CrowType::Unknown if !is_param => {
+                                // Non-param Unknown variable called with [] — assume it's a function
+                                let fn_type = CrowType::Fn(arg_types, Box::new(CrowType::Unknown));
+                                self.vars.insert(name.clone(), fn_type);
+                            }
+                            _ => {} // List, Map, param with Unknown — [] means indexing
+                        }
                     }
                 }
                 // Recurse into args
@@ -299,7 +441,7 @@ impl TypeContext {
                 if let Ok(tokens) = lexer.tokenize() {
                     let mut parser = crate::parser::Parser::new(tokens);
                     if let Ok(stmts) = parser.parse() {
-                        if let Some(crate::ast::Stmt::ExprStmt(expr)) = stmts.first() {
+                        if let Some(crate::ast::Stmt::ExprStmt(expr)) = stmts.iter().find(|s| !matches!(s, Stmt::Line(_))) {
                             self.collect_call_types_expr(expr);
                         }
                     }
@@ -398,6 +540,19 @@ impl TypeContext {
                 }
                 for s in body { self.infer_stmt(s); }
             }
+            Stmt::ExprStmt(Expr::Call { callee, args }) => {
+                // Propagate value type from set[map_var, key, val] to the map variable
+                if let Expr::Ident(name) = callee.as_ref() {
+                    if name == "set" && args.len() == 3 {
+                        if let Expr::Ident(var_name) = &args[0] {
+                            let val_type = self.infer_expr(&args[2]);
+                            let map_type = CrowType::Map(Box::new(val_type));
+                            let existing = self.vars.get(var_name).cloned().unwrap_or(CrowType::Unknown);
+                            self.vars.insert(var_name.clone(), existing.unify(&map_type));
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -410,7 +565,16 @@ impl TypeContext {
             Expr::Bool(_) => CrowType::Bool,
             Expr::Str(_) => CrowType::Str,
             Expr::Ident(name) => {
-                self.vars.get(name).cloned().unwrap_or(CrowType::Unknown)
+                // Check local vars first
+                if let Some(ty) = self.vars.get(name) {
+                    return ty.clone();
+                }
+                // Check if it's a known function name — return as CrowType::Fn
+                if let Some(sig) = self.functions.get(name) {
+                    let param_types: Vec<CrowType> = sig.params.iter().map(|(_, t)| t.clone()).collect();
+                    return CrowType::Fn(param_types, Box::new(sig.return_type.clone()));
+                }
+                CrowType::Unknown
             }
             Expr::BinOp { left, op, right } => {
                 let lt = self.infer_expr(left);
@@ -440,16 +604,84 @@ impl TypeContext {
                     }
                     // Builtins
                     match name.as_str() {
-                        "log" | "cpu" | "gpu" => return CrowType::Void,
-                        "map" => return CrowType::List(Box::new(CrowType::Unknown)),
+                        "log" | "cpu" | "gpu" | "assert" => return CrowType::Void,
+                        "map" => return CrowType::Map(Box::new(CrowType::Unknown)),
+                        "range" => return CrowType::List(Box::new(CrowType::Int)),
+                        // Math builtins
+                        "abs" => {
+                            if let Some(arg) = args.first() {
+                                return self.infer_expr(arg);
+                            }
+                            return CrowType::Int;
+                        }
+                        "sqrt" => return CrowType::Float,
+                        "floor" | "ceil" | "round" => return CrowType::Int,
+                        "pow" | "min" | "max" => {
+                            if args.len() >= 2 {
+                                let t1 = self.infer_expr(&args[0]);
+                                let t2 = self.infer_expr(&args[1]);
+                                if t1 == CrowType::Float || t2 == CrowType::Float {
+                                    return CrowType::Float;
+                                }
+                                return t1;
+                            }
+                            return CrowType::Int;
+                        }
+                        // String builtins
+                        "trim" | "upper" | "lower" | "replace" | "join" => return CrowType::Str,
+                        "split" => return CrowType::List(Box::new(CrowType::Str)),
+                        "starts" | "ends" | "contains" => return CrowType::Bool,
+                        // Conversion builtins
+                        "int" => return CrowType::Int,
+                        "float" => return CrowType::Float,
+                        "str" => return CrowType::Str,
+                        // Collection builtins (mutating ones return void)
+                        "push" | "sort" | "reverse" | "append" | "set" | "del" => return CrowType::Void,
+                        // Map builtins
+                        "keys" => return CrowType::List(Box::new(CrowType::Str)),
+                        "has" => return CrowType::Bool,
+                        "values" => {
+                            if let Some(arg) = args.first() {
+                                let map_type = self.infer_expr(arg);
+                                if let CrowType::Map(inner) = map_type {
+                                    return CrowType::List(inner);
+                                }
+                            }
+                            return CrowType::List(Box::new(CrowType::Unknown));
+                        }
+                        "pop" => {
+                            // Returns the element type of the list
+                            if let Some(arg) = args.first() {
+                                let list_type = self.infer_expr(arg);
+                                if let CrowType::List(inner) = list_type {
+                                    return *inner;
+                                }
+                            }
+                            return CrowType::Unknown;
+                        }
+                        "slice" => {
+                            // Returns same type as first arg
+                            if let Some(arg) = args.first() {
+                                return self.infer_expr(arg);
+                            }
+                            return CrowType::Unknown;
+                        }
+                        "len" => return CrowType::Int,
+                        // CLI / IO
+                        "args" => return CrowType::List(Box::new(CrowType::Str)),
+                        "input" => return CrowType::Str,
+                        // File I/O
+                        "read" => return CrowType::Str,
+                        "write" => return CrowType::Void,
                         _ => {}
                     }
                 }
-                // List/Map indexing
+                // List/Map indexing or indirect function call
                 let callee_type = self.infer_expr(callee);
                 match callee_type {
                     CrowType::List(inner) => *inner,
                     CrowType::Map(inner) => *inner,
+                    CrowType::Fn(_, ret) => *ret,
                     _ => CrowType::Unknown,
                 }
             }
@@ -497,7 +729,7 @@ impl TypeContext {
                 };
 
                 // Try to find the return type from the body's last expression
-                let last_type = if let Some(last_stmt) = body.last() {
+                let last_type = if let Some(last_stmt) = body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
                     match last_stmt {
                         Stmt::ExprStmt(e) => self.infer_expr(e),
                         _ => CrowType::Unknown,

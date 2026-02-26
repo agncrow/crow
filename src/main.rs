@@ -16,12 +16,13 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
-        print_usage();
-        process::exit(1);
+        cmd_repl();
+        return;
     }
 
     match args[1].as_str() {
         "init" => cmd_init(),
+        "install" => cmd_install(),
         "build" => cmd_build(),
         "run" => {
             // Check for -i flag (interpreter mode)
@@ -32,17 +33,19 @@ fn main() {
                     cmd_run_interpreted();
                 }
             } else if args.len() > 2 {
-                // crow run file.crow -> transpile + compile + run
-                cmd_run_file(&args[2]);
+                // crow run file.crow arg1 arg2 ... -> transpile + compile + run
+                let extra_args = args[3..].to_vec();
+                cmd_run_file(&args[2], &extra_args);
             } else {
                 // crow run (uses crowfile) -> transpile + compile + run
-                cmd_run();
+                cmd_run(&[]);
             }
         }
         other => {
             // check if it's a .crow or .crowc file (shortcut)
             if other.ends_with(".crow") || other.ends_with(".crowc") {
-                cmd_run_file(other);
+                let extra_args = args[2..].to_vec();
+                cmd_run_file(other, &extra_args);
             } else {
                 eprintln!("unknown command: {}", other);
                 print_usage();
@@ -54,12 +57,115 @@ fn main() {
 
 fn print_usage() {
     eprintln!("usage:");
+    eprintln!("  crow                   start interactive REPL");
     eprintln!("  crow init              create new project with crowfile");
+    eprintln!("  crow install           install deps from crowfile into crow_modules/");
     eprintln!("  crow build             transpile to rust and compile to native binary");
     eprintln!("  crow build file.crow   transpile a specific file");
     eprintln!("  crow run               transpile + compile + run (uses crowfile)");
     eprintln!("  crow run file.crow     transpile + compile + run a specific file");
     eprintln!("  crow run -i file.crow  run with interpreter (slow, for debugging)");
+}
+
+fn cmd_repl() {
+    use std::io::{self, Write, BufRead};
+
+    println!("crow repl - type expressions or statements, ctrl-d to exit");
+    let mut interpreter = Interpreter::new();
+    let stdin = io::stdin();
+    let mut buffer = String::new();
+    let mut in_block = false;
+
+    loop {
+        // Print prompt
+        if in_block {
+            print!("  ");
+        } else {
+            print!("> ");
+        }
+        io::stdout().flush().unwrap();
+
+        // Read line
+        let mut line = String::new();
+        match stdin.lock().read_line(&mut line) {
+            Ok(0) => {
+                // EOF (ctrl-d)
+                println!();
+                break;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("read error: {}", e);
+                break;
+            }
+        }
+
+        let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
+
+        // Multi-line block handling
+        if in_block {
+            if trimmed.is_empty() || (!trimmed.starts_with(' ') && !trimmed.starts_with('\t')) {
+                // Empty line or non-indented line ends the block
+                in_block = false;
+                let source = std::mem::take(&mut buffer);
+                repl_eval(&mut interpreter, &source);
+                // If this line is non-empty and non-indented, process it below
+                if trimmed.is_empty() {
+                    continue;
+                }
+                // Fall through to process this line
+            } else {
+                buffer.push_str(&line);
+                continue;
+            }
+        }
+
+        // Check if this line expects a block to follow
+        // Any line containing a block keyword (not inside a string) needs indented body
+        let needs_block = {
+            // Strip string literals to avoid matching keywords inside strings
+            let stripped = trimmed.replace(|c: char| c == '\'', "\x00")
+                .split('\x00')
+                .enumerate()
+                .filter(|(i, _)| i % 2 == 0) // keep non-string parts
+                .map(|(_, s)| s)
+                .collect::<Vec<_>>()
+                .join(" ");
+            stripped.split_whitespace()
+                .any(|w| matches!(w, "if" | "for" | "while" | "fn" | "match" | "struct"))
+        };
+
+        if needs_block {
+            in_block = true;
+            buffer = line;
+            continue;
+        }
+
+        // Single line - evaluate immediately
+        repl_eval(&mut interpreter, trimmed);
+    }
+}
+
+fn repl_eval(interpreter: &mut Interpreter, source: &str) {
+    let source = source.trim();
+    if source.is_empty() {
+        return;
+    }
+
+    match build(source) {
+        Ok(stmts) => {
+            match interpreter.run(&stmts) {
+                Ok(val) => {
+                    // Print result if it's not Done (void)
+                    if !matches!(val.result, value::Value::Done) {
+                        println!("{}", val);
+                    }
+                }
+                Err(e) => eprintln!("error: {}", e),
+            }
+        }
+        Err(e) => eprintln!("error: {}", e),
+    }
 }
 
 fn cmd_init() {
@@ -92,6 +198,106 @@ fn cmd_init() {
     }
 
     println!("initialized crow project '{}'", dir_name);
+}
+
+fn cmd_install() {
+    let config = parse_crowfile();
+
+    if config.deps.is_empty() {
+        println!("no deps in crowfile");
+        return;
+    }
+
+    let modules_dir = std::path::PathBuf::from("crow_modules");
+    std::fs::create_dir_all(&modules_dir).unwrap_or_else(|e| {
+        eprintln!("error creating crow_modules/: {}", e);
+        process::exit(1);
+    });
+
+    for (name, source) in &config.deps {
+        let dest = modules_dir.join(&name);
+
+        if source.starts_with("https://") || source.starts_with("git://") || source.starts_with("http://") {
+            // Git dependency
+            if dest.exists() {
+                // Pull latest
+                println!("updating {}...", name);
+                let status = std::process::Command::new("git")
+                    .args(["pull", "--quiet"])
+                    .current_dir(&dest)
+                    .status();
+                match status {
+                    Ok(s) if s.success() => println!("  updated {}", name),
+                    _ => eprintln!("  warning: failed to update {}", name),
+                }
+            } else {
+                // Clone
+                println!("installing {}...", name);
+                let status = std::process::Command::new("git")
+                    .args(["clone", "--quiet", source, &dest.to_string_lossy()])
+                    .status();
+                match status {
+                    Ok(s) if s.success() => println!("  installed {}", name),
+                    _ => {
+                        eprintln!("error: failed to clone {}", source);
+                        process::exit(1);
+                    }
+                }
+            }
+        } else if source.starts_with("./") || source.starts_with("/") || source.starts_with("../") {
+            // Local path dependency - symlink
+            let src_path = std::path::PathBuf::from(source);
+            if !src_path.exists() {
+                eprintln!("error: local dep path '{}' not found", source);
+                process::exit(1);
+            }
+            if dest.exists() {
+                println!("  {} already linked", name);
+            } else {
+                #[cfg(unix)]
+                {
+                    let abs_src = std::fs::canonicalize(&src_path).unwrap_or_else(|e| {
+                        eprintln!("error resolving path '{}': {}", source, e);
+                        process::exit(1);
+                    });
+                    std::os::unix::fs::symlink(&abs_src, &dest).unwrap_or_else(|e| {
+                        eprintln!("error symlinking {}: {}", name, e);
+                        process::exit(1);
+                    });
+                    println!("  linked {} -> {}", name, abs_src.display());
+                }
+                #[cfg(not(unix))]
+                {
+                    // On non-unix, copy instead
+                    copy_dir_all(&src_path, &dest).unwrap_or_else(|e| {
+                        eprintln!("error copying {}: {}", name, e);
+                        process::exit(1);
+                    });
+                    println!("  copied {}", name);
+                }
+            }
+        } else {
+            // Version string - future registry support
+            eprintln!("  {} v{} - registry not yet available, skipping", name, source);
+        }
+    }
+
+    println!("done");
+}
+
+#[cfg(not(unix))]
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &dst.join(entry.file_name()))?;
+        } else {
+            std::fs::copy(entry.path(), dst.join(entry.file_name()))?;
+        }
+    }
+    Ok(())
 }
 
 /// Transpile a .crow file to Rust, compile it, and return the path to the binary.
@@ -203,9 +409,10 @@ struct CrowfileConfig {
     deps: Vec<(String, String)>,  // (name, version)
 }
 
-/// Run a binary, forwarding its exit code.
-fn run_binary(binary: &std::path::Path) {
+/// Run a binary, forwarding its exit code and passing extra args.
+fn run_binary(binary: &std::path::Path, extra_args: &[String]) {
     let status = std::process::Command::new(binary)
+        .args(extra_args)
         .status()
         .unwrap_or_else(|e| {
             eprintln!("error running binary: {}", e);
@@ -214,15 +421,15 @@ fn run_binary(binary: &std::path::Path) {
     process::exit(status.code().unwrap_or(1));
 }
 
-fn cmd_run() {
+fn cmd_run(extra_args: &[String]) {
     let config = parse_crowfile();
     let binary = transpile_and_compile(&config.entry, true);
-    run_binary(&binary);
+    run_binary(&binary, extra_args);
 }
 
-fn cmd_run_file(filename: &str) {
+fn cmd_run_file(filename: &str, extra_args: &[String]) {
     let binary = transpile_and_compile(filename, true);
-    run_binary(&binary);
+    run_binary(&binary, extra_args);
 }
 
 fn cmd_run_interpreted() {

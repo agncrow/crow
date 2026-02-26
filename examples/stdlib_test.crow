@@ -1,0 +1,111 @@
+--- Math builtins ---
+log['=== MATH ===']
+log[abs[-5]]
+log[abs[3.14]]
+log[sqrt[16]]
+log[sqrt[2]]
+log[floor[3.7]]
+log[ceil[3.2]]
+log[round[3.5]]
+log[round[3.4]]
+log[pow[2, 10]]
+log[pow[2.0, 0.5]]
+log[min[3, 7]]
+log[min[3.5, 2.1]]
+log[max[3, 7]]
+log[max[1.5, 9.2]]
+
+--- String builtins ---
+log['=== STRING ===']
+log[split['hello world foo', ' ']]
+log[trim['  hello  ']]
+log[replace['hello world', 'world', 'crow']]
+log[upper['hello']]
+log[lower['HELLO']]
+log[starts['hello', 'hel']]
+log[starts['hello', 'xyz']]
+log[ends['hello', 'llo']]
+log[ends['hello', 'xyz']]
+log[join[['hello', 'world', 'crow'], ', ']]
+log[join[['a', 'b', 'c'], '-']]
+
+--- Conversion builtins ---
+log['=== CONVERSION ===']
+log[int[3.7]]
+log[int['42']]
+log[float[5]]
+log[float['3.14']]
+log[str[42]]
+log[str[3.14]]
+
+--- Collection builtins ---
+log['=== COLLECTIONS ===']
+items = [3, 1, 4, 1, 5, 9, 2, 6]
+log[len[items]]
+log[contains[items, 5]]
+log[contains[items, 99]]
+
+--- push (mutating) ---
+nums = [1, 2, 3]
+push[nums, 4]
+push[nums, 5]
+log[nums]
+
+--- pop (mutating) ---
+last = pop[nums]
+log[last]
+log[nums]
+
+--- sort (mutating) ---
+data = [5, 3, 8, 1, 9, 2]
+sort[data]
+log[data]
+
+--- reverse (mutating) ---
+reverse[data]
+log[data]
+
+--- append (mutating) ---
+a = [1, 2]
+b = [3, 4]
+append[a, b]
+log[a]
+
+--- slice ---
+log[slice[[10, 20, 30, 40, 50], 1, 4]]
+
+--- contains with strings ---
+log[contains['hello world', 'world']]
+log[contains['hello world', 'xyz']]
+
+--- len with strings ---
+log[len['hello']]
+
+--- Map Operations ---
+log['=== MAP OPS ===']
+m = ['name' = 'crow', 'age' = '3']
+log[keys[m]]
+log[values[m]]
+log[has[m, 'name']]
+log[has[m, 'color']]
+set[m, 'color', 'black']
+log[has[m, 'color']]
+log[m['color']]
+del[m, 'age']
+log[has[m, 'age']]
+log[keys[m]]
+
+--- word counter example ---
+counts = map[]
+set[counts, 'hello', 1]
+set[counts, 'world', 2]
+set[counts, 'hello', 3]
+log[counts['hello']]
+log[len[counts]]
+
+--- File I/O ---
+log['=== FILE IO ===']
+write['/tmp/crow_test.txt', 'hello from crow']
+content = read['/tmp/crow_test.txt']
+log[content]
+

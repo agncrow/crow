@@ -15,16 +15,18 @@ active = true
 
 ### Reassignment
 
-Variables can be reassigned freely, including to a different type.
+Variables can be reassigned freely.
 
 ```
 x = 10
-x = 'hello'
+x = 20
 ```
 
 ### Types
 
-Crow is dynamically typed. Types are inferred at runtime. The built-in types are:
+Crow is statically typed with full type inference — you never write type annotations, but every variable has a concrete type determined at compile time. The transpiler infers types from usage; if a type cannot be determined, the program is invalid.
+
+The built-in types are:
 
 | Type   | Example              |
 |--------|----------------------|
@@ -98,14 +100,19 @@ next_thing[]
 
 ### Declaration
 
-Functions are declared with `fn`. Use explicit `return`. Functions without `return` have status `'done'`.
+Functions are declared with `fn`. The last expression in the body is the implicit return value. Use explicit `return` for early returns.
 
 ```
-fn greet[name]
-    log['hello, {name}']    --- no return, status is 'done' ---
-
 fn add[a, b]
-    return a + b             --- returns value, status is 'ok' ---
+    a + b                    --- implicit return ---
+
+fn greet[name]
+    log['hello, {name}']    --- no return value, status is 'done' ---
+
+fn safe_div[a, b]
+    if b eq 0
+        return 0             --- early return ---
+    a / b                    --- implicit return ---
 ```
 
 ### Calling
@@ -135,6 +142,40 @@ person = ['name' = 'crow', 'age' = 3]
 person['name']           --- 'crow' ---
 ```
 
+### First-Class Functions
+
+A function name without `[]` evaluates to the function itself. Functions can be passed as arguments, stored in lists and maps, and called later with `[]`.
+
+```
+fn double[x]
+    return x * 2
+
+fn apply[f, x]
+    return f[x]
+
+result = apply[double, 5]    --- 10 ---
+
+ops = [double, square]
+ops[0][3]                     --- 6 ---
+```
+
+### No Lambdas
+
+Crow has no anonymous functions. Every function must be declared with `fn` and a name. To pass behavior, define a named function and pass it.
+
+```
+--- correct ---
+fn double[x]
+    return x * 2
+
+result = map[items, double]
+
+--- not supported ---
+result = map[items, fn[x] x * 2]    --- no anonymous functions ---
+```
+
+This follows Crow's "one way to do things" principle — there is exactly one way to define a function.
+
 ### Empty Containers
 
 `[]` is always an empty list. Use `map[]` for an empty map.
@@ -143,6 +184,89 @@ person['name']           --- 'crow' ---
 items = []               --- empty list ---
 data = map[]             --- empty map ---
 ```
+
+### Built-in Functions
+
+#### Core
+
+| Function | Description |
+|----------|-------------|
+| `log[value]` | Print a value to stdout |
+| `range[stop]` | List of ints from 0 to stop (exclusive) |
+| `range[start, stop]` | List of ints from start to stop (exclusive) |
+| `range[start, stop, step]` | List of ints with custom step |
+| `map[]` | Create an empty map |
+| `assert[cond]` | Halt with error if condition is falsy |
+| `assert[cond, msg]` | Halt with custom error message |
+| `cpu[n]` | Set thread count for parallel loops |
+| `gpu[n]` | Set GPU count for parallel compute |
+
+#### Math
+
+| Function | Description |
+|----------|-------------|
+| `abs[n]` | Absolute value |
+| `sqrt[n]` | Square root (returns float) |
+| `floor[n]` | Floor (returns int) |
+| `ceil[n]` | Ceiling (returns int) |
+| `round[n]` | Round to nearest int |
+| `pow[base, exp]` | Exponentiation |
+| `min[a, b]` | Minimum of two numbers |
+| `max[a, b]` | Maximum of two numbers |
+
+#### Strings
+
+| Function | Description |
+|----------|-------------|
+| `split[s, delim]` | Split string into list |
+| `trim[s]` | Remove leading/trailing whitespace |
+| `replace[s, old, new]` | Replace all occurrences |
+| `upper[s]` | Convert to uppercase |
+| `lower[s]` | Convert to lowercase |
+| `starts[s, prefix]` | Check if string starts with prefix |
+| `ends[s, suffix]` | Check if string ends with suffix |
+| `join[list, sep]` | Join list elements into string |
+
+#### Conversion
+
+| Function | Description |
+|----------|-------------|
+| `int[value]` | Convert to int (error-value on failure) |
+| `float[value]` | Convert to float (error-value on failure) |
+| `str[value]` | Convert to string |
+
+#### Collections
+
+| Function | Description |
+|----------|-------------|
+| `len[x]` | Length of list, string, or map |
+| `push[list, value]` | Append to list (mutates) |
+| `pop[list]` | Remove and return last element (mutates) |
+| `append[list, other]` | Extend list with another list (mutates) |
+| `sort[list]` | Sort list in place (mutates) |
+| `reverse[list]` | Reverse list in place (mutates) |
+| `contains[list, value]` | Check if list contains value |
+| `slice[list, start, end]` | Extract sublist |
+
+#### Map Operations
+
+| Function | Description |
+|----------|-------------|
+| `keys[m]` | List of map keys |
+| `values[m]` | List of map values |
+| `has[m, key]` | Check if map contains key |
+| `set[m, key, value]` | Set map entry (mutates) |
+| `del[m, key]` | Delete map entry (mutates) |
+
+#### I/O
+
+| Function | Description |
+|----------|-------------|
+| `read[path]` | Read file contents (error-value on failure) |
+| `write[path, content]` | Write string to file (error-value on failure) |
+| `args[]` | CLI arguments as list of strings |
+| `input[]` | Read a line from stdin |
+| `input[prompt]` | Print prompt, then read a line from stdin |
 
 ## 4. Control Flow
 
@@ -265,6 +389,12 @@ fly[b]
 
 ```
 +  -  /  *  %
+```
+
+`+` also concatenates strings:
+
+```
+'hello' + ' world'    --- 'hello world' ---
 ```
 
 Division is type-determined — one operator, no ambiguity:
@@ -426,6 +556,14 @@ Every value has:
 | `result` | the return value (undefined on error or done)|
 | `reason` | error message (undefined on ok or done)     |
 
+### Error Messages
+
+Runtime errors include line numbers for easy debugging:
+
+```
+runtime error: line 3: undefined variable 'z'
+runtime error: line 7: assertion failed: expected positive
+```
 
 
 ## 12. Parallelism
@@ -524,6 +662,14 @@ gpu = 1
 deps = ['math' = '1.0', 'http' = '2.3']
 ```
 
+Dependencies can be:
+
+| Format | Example | Description |
+|--------|---------|-------------|
+| Version | `'math' = '1.0'` | Registry package (not yet available) |
+| Git URL | `'math' = 'https://github.com/user/crow-math'` | Cloned from git |
+| Local path | `'utils' = './libs/utils'` | Symlinked from local directory |
+
 ### File Extension
 
 Crow source files use the `.crow` extension.
@@ -537,9 +683,69 @@ myapp/worker.crow
 ### CLI
 
 ```
+crow                        --- start interactive REPL ---
 crow init                   --- create new project with crowfile ---
-crow build                  --- compile .crow files to bytecode, check for errors ---
-crow run                    --- build + run ---
+crow install                --- install deps from crowfile into crow_modules/ ---
+crow build                  --- transpile to Rust and compile to native binary ---
+crow build file.crow        --- transpile a specific file ---
+crow run                    --- transpile + compile + run (uses crowfile) ---
+crow run file.crow          --- transpile + compile + run a specific file ---
+crow run -i file.crow       --- run with interpreter (for debugging) ---
 ```
 
-`crow build` compiles `.crow` source files to bytecode and reports any errors. `crow run` builds and then executes the bytecode.
+`crow build` transpiles `.crow` source files to Rust and compiles to a native binary. `crow run` builds and then executes the binary.
+
+### REPL
+
+Running `crow` with no arguments starts an interactive REPL. Variables and functions persist between lines. Expression results are printed automatically.
+
+```
+> x = 10
+> x + 5
+15
+> fn double[n]
+      n * 2
+
+> double[x]
+20
+```
+
+Multi-line blocks (functions, if, for, while, match, struct) are entered by typing the first line, then indenting the body. An empty line or a non-indented line ends the block.
+
+### Package Manager
+
+`crow install` reads deps from the `crowfile` and installs them into `crow_modules/`.
+
+```bash
+crow init
+--- edit crowfile to add deps ---
+crow install
+crow run
+```
+
+Git dependencies are cloned. Local path dependencies are symlinked. Installed modules are imported with `use`.
+
+## 14. Type System
+
+Crow is **statically typed with inference**. No type annotations are needed — the transpiler infers concrete types from how values are used.
+
+### Rules
+
+- Every variable has exactly one type throughout its scope
+- Types are inferred from assignment: `x = 5` makes `x` an `int`
+- Function parameter and return types are inferred from call sites
+- If the transpiler cannot determine a type, the program is invalid
+
+### Execution Modes
+
+| Mode | Command | Role |
+|------|---------|------|
+| Transpiler | `crow run file.crow` | **Primary.** Compiles to native Rust. This is the authority on valid Crow programs. |
+| Interpreter | `crow run -i file.crow` | **Dev tool.** Runs code directly for quick iteration. Slower, but convenient. |
+| REPL | `crow` | **Interactive.** Explore and test code interactively. Uses the interpreter. |
+
+The transpiler is the source of truth. If a program works in the interpreter but fails the transpiler, the program has a type error and should be fixed. The interpreter is internally dynamic for convenience, but users should write code that the transpiler can handle.
+
+### No `none`
+
+Crow has no null, nil, or none value. Every variable always holds a concrete value. Missing or failed data is represented through the error-value system (`status`, `result`, `reason`) — see Error Handling.
