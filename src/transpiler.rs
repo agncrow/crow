@@ -19,6 +19,8 @@ pub struct Transpiler {
     by_ref_params: std::collections::BTreeMap<String, std::collections::HashSet<String>>,
     /// By-ref params in the current function being emitted
     current_ref_params: std::collections::HashSet<String>,
+    /// Module names from `use` imports (for resolving module.field → module_field)
+    modules: std::collections::HashSet<String>,
 }
 
 impl Transpiler {
@@ -33,6 +35,7 @@ impl Transpiler {
             needs_rayon: false,
             by_ref_params: std::collections::BTreeMap::new(),
             current_ref_params: std::collections::HashSet::new(),
+            modules: std::collections::HashSet::new(),
         }
     }
 
@@ -235,8 +238,24 @@ impl Transpiler {
                         }
                     }
                 }
+                // Field assignment and index assignment mutate the root variable
+                Stmt::FieldAssign { object, .. } | Stmt::IndexAssign { object, .. } => {
+                    if let Some(var_name) = Self::extract_root_var(object) {
+                        mutated.insert(var_name);
+                    }
+                }
                 _ => {}
             }
+        }
+    }
+
+    /// Extract the root variable name from a nested expression (for mutation tracking)
+    fn extract_root_var(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Ident(name) => Some(name.clone()),
+            Expr::FieldAccess { object, .. } => Self::extract_root_var(object),
+            Expr::Call { callee, .. } => Self::extract_root_var(callee),
+            _ => None,
         }
     }
 
@@ -279,6 +298,14 @@ impl Transpiler {
 
     /// Transpile a complete program to Rust source.
     pub fn transpile(&mut self, stmts: &[Stmt]) -> String {
+        // Register all module names upfront so function bodies can resolve module references
+        for stmt in stmts {
+            if let Stmt::Use { path } = stmt {
+                let module_name = path.rsplit('/').next().unwrap_or(path).to_string();
+                self.modules.insert(module_name);
+            }
+        }
+
         // Scan for rayon need (any cpu[n] with n > 1)
         self.needs_rayon = stmts.iter().any(|s| {
             Self::extract_cpu_call(s).map_or(false, |n| n > 1)
@@ -295,6 +322,35 @@ impl Transpiler {
             self.emit_line("use rayon::prelude::*;");
         }
         self.emit_line("");
+
+        // Emit module-level variable assigns as top-level statics so functions can access them
+        let mut module_vars = std::collections::HashSet::new();
+        for stmt in stmts {
+            if let Stmt::Assign { name, value } = stmt {
+                // Check if this variable is prefixed with a known module name
+                for mod_name in &self.modules {
+                    if name.starts_with(&format!("{}_", mod_name)) {
+                        let expr_str = self.expr_to_string(value);
+                        let ty = self.ctx.infer_expr(value);
+                        let rust_ty = ty.to_rust_type();
+                        if rust_ty == "String" {
+                            // For string literals, emit as &str const
+                            let str_val = expr_str.trim_end_matches(".to_string()");
+                            self.emit_line("#[allow(non_upper_case_globals)]");
+                            self.emit_line(&format!("const {}: &str = {};", name, str_val));
+                        } else {
+                            self.emit_line("#[allow(non_upper_case_globals)]");
+                            self.emit_line(&format!("const {}: {} = {};", name, rust_ty, expr_str));
+                        }
+                        module_vars.insert(name.clone());
+                        break;
+                    }
+                }
+            }
+        }
+        if !module_vars.is_empty() {
+            self.emit_line("");
+        }
 
         // Emit struct definitions
         let struct_names: Vec<String> = self.ctx.structs.keys().cloned().collect();
@@ -324,6 +380,7 @@ impl Transpiler {
         for stmt in stmts {
             match stmt {
                 Stmt::FnDecl { .. } | Stmt::StructDecl { .. } => {} // already emitted
+                Stmt::Assign { name, .. } if module_vars.contains(name) => {} // already emitted as top-level const
                 _ => {
                     // Check if this is a cpu[n] call
                     if let Some(n) = Self::extract_cpu_call(stmt) {
@@ -552,6 +609,30 @@ impl Transpiler {
                 self.indent -= 1;
                 self.emit_line("}");
             }
+            Stmt::FieldAssign { object, field, value } => {
+                let obj_str = self.expr_to_string(object);
+                let val_str = self.expr_to_string(value);
+                self.emit_line(&format!("{}.{} = {};", obj_str, field, val_str));
+            }
+            Stmt::IndexAssign { object, index, value } => {
+                let obj_str = self.expr_to_string(object);
+                let val_str = self.expr_to_string(value);
+                // Determine if object is a map or list
+                let obj_type = self.ctx.infer_expr(object);
+                match obj_type {
+                    CrowType::Map(_) => {
+                        let key_str = self.expr_to_string(index);
+                        self.emit_line(&format!("{}.insert({}, {});", obj_str, key_str, val_str));
+                    }
+                    _ => {
+                        let idx_str = self.expr_to_string(index);
+                        self.emit_line(&format!("{}[{} as usize] = {};", obj_str, idx_str, val_str));
+                    }
+                }
+            }
+            Stmt::Use { path } => {
+                self.emit_use(path);
+            }
             Stmt::Resource { kind, count } => {
                 // Update cpu thread count at runtime
                 if kind == "cpu" {
@@ -562,6 +643,14 @@ impl Transpiler {
             }
             _ => {}
         }
+    }
+
+    /// Handle a `use` import. Module declarations have already been expanded and
+    /// type-inferred as prefixed names (e.g., mymath_double) by expand_module_imports.
+    /// We just need to record the module name so FieldAccess can resolve module.var.
+    fn emit_use(&mut self, path: &str) {
+        let module_name = path.rsplit('/').next().unwrap_or(path).to_string();
+        self.modules.insert(module_name);
     }
 
     fn pattern_to_string(&mut self, pattern: &Pattern) -> String {
@@ -898,6 +987,34 @@ impl Transpiler {
                         return format!("std::fs::write(&*{}, &*{}).unwrap()", arg_strs[0], arg_strs[1]);
                     }
 
+                    // --- Iterator builtins ---
+                    if name == "iter" && arg_strs.len() == 1 {
+                        return format!("{}.clone().into_iter()", arg_strs[0]);
+                    }
+                    if name == "next" && arg_strs.len() == 1 {
+                        return format!("{}.next().unwrap()", arg_strs[0]);
+                    }
+                    if name == "collect" && arg_strs.len() == 1 {
+                        let iter_type = self.ctx.infer_expr(&args[0]);
+                        if let CrowType::Iterator(inner) = iter_type {
+                            return format!("{}.collect::<Vec<{}>>()", arg_strs[0], inner.to_rust_type());
+                        }
+                        return format!("{}.collect::<Vec<_>>()", arg_strs[0]);
+                    }
+                    if name == "take" && arg_strs.len() == 2 {
+                        return format!("{}.take({} as usize)", arg_strs[0], arg_strs[1]);
+                    }
+                    if name == "skip" && arg_strs.len() == 2 {
+                        return format!("{}.skip({} as usize)", arg_strs[0], arg_strs[1]);
+                    }
+                    if name == "filter" && arg_strs.len() == 2 {
+                        // Rust's filter takes &T, so wrap the callback
+                        return format!("{}.filter(|x| {}(x.clone()))", arg_strs[0], arg_strs[1]);
+                    }
+                    if name == "each" && arg_strs.len() == 2 {
+                        return format!("{}.map({})", arg_strs[0], arg_strs[1]);
+                    }
+
                     // Struct constructor
                     if self.ctx.structs.contains_key(name) {
                         let sig = self.ctx.structs.get(name).unwrap().clone();
@@ -944,6 +1061,16 @@ impl Transpiler {
                     }
                 }
 
+                // Module function call: module.func[args] → module_func(args)
+                if let Expr::FieldAccess { object, field } = callee.as_ref() {
+                    if let Expr::Ident(mod_name) = object.as_ref() {
+                        let prefixed = format!("{}_{}", mod_name, field);
+                        if self.ctx.functions.contains_key(&prefixed) {
+                            return format!("{}({})", prefixed, arg_strs.join(", "));
+                        }
+                    }
+                }
+
                 // Non-ident callee (e.g., list[0][3] or expr returning a function)
                 let callee_type = self.ctx.infer_expr(callee);
                 let callee_str = self.expr_to_string(callee);
@@ -955,6 +1082,13 @@ impl Transpiler {
                 }
             }
             Expr::FieldAccess { object, field } => {
+                // Module variable access: module.var → module_var
+                if let Expr::Ident(mod_name) = object.as_ref() {
+                    if self.modules.contains(mod_name) {
+                        let prefixed = format!("{}_{}", mod_name, field);
+                        return prefixed;
+                    }
+                }
                 let obj = self.expr_to_string(object);
                 // Map Crow's .len to Rust's .len()
                 if field == "len" {
@@ -1251,28 +1385,43 @@ impl Transpiler {
     /// Emit a log[] call as println!()
     fn emit_log_call(&mut self, args: &[String], orig_exprs: &[Expr]) -> String {
         if args.is_empty() {
-            "println!()".to_string()
-        } else {
-            // The arg is already a string expression from string_to_rust
+            return "println!()".to_string();
+        }
+        if args.len() == 1 {
             let arg = &args[0];
             if arg.starts_with("format!(") {
-                // Replace format!(...) with println!(...)
-                format!("println!{}", &arg[7..])
-            } else {
-                // Check if the expression is a collection/struct type — use {:?} instead of {}
-                let needs_debug = if let Some(expr) = orig_exprs.first() {
-                    let ty = self.ctx.infer_expr(expr);
-                    matches!(ty, CrowType::List(_) | CrowType::Map(_) | CrowType::Struct(_))
-                } else {
-                    false
-                };
-                if needs_debug {
-                    format!("println!(\"{{:?}}\", {})", arg)
-                } else {
-                    format!("println!(\"{{}}\", {})", arg)
-                }
+                return format!("println!{}", &arg[7..]);
             }
+            let needs_debug = if let Some(expr) = orig_exprs.first() {
+                let ty = self.ctx.infer_expr(expr);
+                matches!(ty, CrowType::List(_) | CrowType::Map(_) | CrowType::Struct(_))
+            } else {
+                false
+            };
+            return if needs_debug {
+                format!("println!(\"{{:?}}\", {})", arg)
+            } else {
+                format!("println!(\"{{}}\", {})", arg)
+            };
         }
+        // Multi-argument log: join all args with spaces
+        let mut fmt_parts = Vec::new();
+        let mut fmt_args = Vec::new();
+        for (i, arg) in args.iter().enumerate() {
+            let needs_debug = if i < orig_exprs.len() {
+                let ty = self.ctx.infer_expr(&orig_exprs[i]);
+                matches!(ty, CrowType::List(_) | CrowType::Map(_) | CrowType::Struct(_))
+            } else {
+                false
+            };
+            if needs_debug {
+                fmt_parts.push("{:?}".to_string());
+            } else {
+                fmt_parts.push("{}".to_string());
+            }
+            fmt_args.push(arg.clone());
+        }
+        format!("println!(\"{}\", {})", fmt_parts.join(" "), fmt_args.join(", "))
     }
 
     /// Check if a binary comparison involves an OptBoxStruct field compared to a sentinel (0).

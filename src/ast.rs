@@ -51,6 +51,18 @@ pub enum Stmt {
         name: String,
         fields: Vec<String>,
     },
+    /// Field assignment: obj.field = value
+    FieldAssign {
+        object: Expr,
+        field: String,
+        value: Expr,
+    },
+    /// Index assignment: list[idx] = value, map[key] = value
+    IndexAssign {
+        object: Expr,
+        index: Expr,
+        value: Expr,
+    },
     /// Use statement: use module/path
     Use {
         path: String,

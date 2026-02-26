@@ -1,0 +1,6 @@
+struct Point[x, y]
+p = Point[10, 20]
+log[p.x]
+p.x = 99
+log[p.x]
+

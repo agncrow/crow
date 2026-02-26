@@ -312,6 +312,13 @@ fn transpile_and_compile(entry: &str, quiet: bool) -> std::path::PathBuf {
         }
     };
 
+    // Expand module imports before type inference so call sites inform param types
+    let source_dir = std::path::Path::new(entry)
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+    let mut visited = std::collections::HashSet::new();
+    let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
+
     // Run type inference
     let mut ctx = type_infer::TypeContext::new();
     ctx.infer_program(&stmts);
@@ -612,4 +619,99 @@ fn build(source: &str) -> Result<Vec<ast::Stmt>, String> {
     let tokens = lexer.tokenize()?;
     let mut parser = Parser::new(tokens);
     parser.parse()
+}
+
+/// Expand `use` imports by parsing module files and inserting prefixed
+/// FnDecl/StructDecl/Assign statements. This must run *before* type inference
+/// so the main program's call sites can inform module function param types.
+fn expand_module_imports(
+    stmts: &[ast::Stmt],
+    source_dir: &std::path::Path,
+    visited: &mut std::collections::HashSet<String>,
+) -> Vec<ast::Stmt> {
+    let mut expanded = Vec::new();
+    for stmt in stmts {
+        if let ast::Stmt::Use { path } = stmt {
+            let module_name = path.rsplit('/').next().unwrap_or(path).to_string();
+
+            // Circular import detection
+            if visited.contains(path) {
+                expanded.push(stmt.clone());
+                continue;
+            }
+            visited.insert(path.clone());
+
+            // Try to find the module file
+            let candidates = vec![
+                source_dir.join(format!("{}.crow", path)),
+                source_dir.join(format!("crow_modules/{}.crow", path)),
+                source_dir.join(format!("crow_modules/{}/main.crow", path)),
+            ];
+            let file_path = candidates.iter().find(|p| p.exists());
+            let file_path = match file_path {
+                Some(p) => p.clone(),
+                None => {
+                    expanded.push(stmt.clone());
+                    continue;
+                }
+            };
+            let source = match std::fs::read_to_string(&file_path) {
+                Ok(s) => s,
+                Err(_) => {
+                    expanded.push(stmt.clone());
+                    continue;
+                }
+            };
+            // Parse the module
+            let mut lexer = Lexer::new(&source);
+            let tokens = match lexer.tokenize() {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            let mut parser = Parser::new(tokens);
+            let mod_stmts = match parser.parse() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            // Recursively expand any `use` statements within the module
+            let mod_dir = file_path.parent().unwrap_or(source_dir);
+            let mod_stmts = expand_module_imports(&mod_stmts, mod_dir, visited);
+
+            // Rewrite module declarations with prefixed names
+            for mod_stmt in &mod_stmts {
+                match mod_stmt {
+                    ast::Stmt::FnDecl { name, params, body } => {
+                        expanded.push(ast::Stmt::FnDecl {
+                            name: format!("{}_{}", module_name, name),
+                            params: params.clone(),
+                            body: body.clone(),
+                        });
+                    }
+                    ast::Stmt::StructDecl { name, fields } => {
+                        expanded.push(ast::Stmt::StructDecl {
+                            name: format!("{}_{}", module_name, name),
+                            fields: fields.clone(),
+                        });
+                    }
+                    ast::Stmt::Assign { name, value } => {
+                        // Module-level variables become prefixed assigns
+                        expanded.push(ast::Stmt::Assign {
+                            name: format!("{}_{}", module_name, name),
+                            value: value.clone(),
+                        });
+                    }
+                    // Pass through nested Use statements so the transpiler
+                    // registers those module names too
+                    ast::Stmt::Use { .. } => {
+                        expanded.push(mod_stmt.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // Keep the original statement (including Use, so transpiler knows about it)
+        expanded.push(stmt.clone());
+    }
+    expanded
 }

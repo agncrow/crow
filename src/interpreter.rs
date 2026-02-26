@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use rayon::prelude::*;
 
@@ -206,6 +206,7 @@ fn is_barrier(stmt: &Stmt) -> bool {
         Stmt::If { .. } | Stmt::For { .. } | Stmt::While { .. } |
         Stmt::Match { .. } | Stmt::Return(_) | Stmt::Use { .. } |
         Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::Resource { .. } |
+        Stmt::FieldAssign { .. } | Stmt::IndexAssign { .. } |
         Stmt::ExprStmt(_)
     )
 }
@@ -527,6 +528,27 @@ impl Interpreter {
                 self.env.set(name, sd);
                 Ok(Signal::None)
             }
+            Stmt::FieldAssign { object, field, value } => {
+                let new_val = self.eval_expr(value)?;
+                // Find root variable name from expression
+                let var_name = Self::root_var_name(object)
+                    .ok_or_else(|| "field assignment target must be a variable".to_string())?;
+                let var = self.env.get_mut(&var_name)
+                    .ok_or_else(|| format!("undefined variable '{}'", var_name))?;
+                // Navigate to the right nested field using the expression chain
+                Self::assign_field(&mut var.result, object, field, new_val)?;
+                Ok(Signal::None)
+            }
+            Stmt::IndexAssign { object, index, value } => {
+                let new_val = self.eval_expr(value)?;
+                let idx_val = self.eval_expr(index)?;
+                let var_name = Self::root_var_name(object)
+                    .ok_or_else(|| "index assignment target must be a variable".to_string())?;
+                let var = self.env.get_mut(&var_name)
+                    .ok_or_else(|| format!("undefined variable '{}'", var_name))?;
+                Self::assign_index(&mut var.result, object, idx_val, new_val)?;
+                Ok(Signal::None)
+            }
             Stmt::Use { path } => {
                 self.load_module(path)?;
                 Ok(Signal::None)
@@ -539,6 +561,121 @@ impl Interpreter {
                 self.current_line = *n;
                 Ok(Signal::None)
             }
+        }
+    }
+
+    // --- Mutation helpers ---
+
+    /// Extract the root variable name from a nested expression (e.g., p.x → p, nums[0] → nums)
+    fn root_var_name(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Ident(name) => Some(name.clone()),
+            Expr::FieldAccess { object, .. } => Self::root_var_name(object),
+            Expr::Call { callee, .. } => Self::root_var_name(callee),
+            _ => None,
+        }
+    }
+
+    /// Assign to a struct field, navigating nested field access chains
+    fn assign_field(val: &mut Value, object_expr: &Expr, field: &str, new_val: CrowValue) -> Result<(), String> {
+        match object_expr {
+            Expr::Ident(_) => {
+                // Direct field access: var.field = value
+                if let Value::StructInstance(si) = val {
+                    if si.fields.contains_key(field) {
+                        si.fields.insert(field.to_string(), new_val);
+                        Ok(())
+                    } else {
+                        Err(format!("struct '{}' has no field '{}'", si.name, field))
+                    }
+                } else {
+                    Err("field assignment requires a struct".to_string())
+                }
+            }
+            Expr::FieldAccess { object, field: outer_field } => {
+                // Nested: obj.outer.field = value — navigate to outer first
+                if let Value::StructInstance(si) = val {
+                    let inner = si.fields.get_mut(outer_field)
+                        .ok_or_else(|| format!("struct '{}' has no field '{}'", si.name, outer_field))?;
+                    Self::assign_field(&mut inner.result, object, field, new_val)
+                } else {
+                    Err("field assignment requires a struct".to_string())
+                }
+            }
+            _ => Err("invalid field assignment target".to_string()),
+        }
+    }
+
+    /// Assign to a list index or map key
+    fn assign_index(val: &mut Value, object_expr: &Expr, idx_val: CrowValue, new_val: CrowValue) -> Result<(), String> {
+        match object_expr {
+            Expr::Ident(_) => {
+                match val {
+                    Value::List(items) => {
+                        if let Value::Int(i) = &idx_val.result {
+                            let idx = *i as usize;
+                            if idx < items.len() {
+                                items[idx] = new_val;
+                                Ok(())
+                            } else {
+                                Err(format!("index {} out of bounds (len {})", idx, items.len()))
+                            }
+                        } else {
+                            Err("list index must be an integer".to_string())
+                        }
+                    }
+                    Value::Map(map) => {
+                        if let Value::Str(key) = &idx_val.result {
+                            map.insert(key.clone(), new_val);
+                            Ok(())
+                        } else {
+                            Err("map key must be a string".to_string())
+                        }
+                    }
+                    _ => Err("index assignment requires a list or map".to_string()),
+                }
+            }
+            Expr::FieldAccess { object, field } => {
+                // Nested: obj.field[idx] = value
+                if let Value::StructInstance(si) = val {
+                    let inner = si.fields.get_mut(field)
+                        .ok_or_else(|| format!("struct '{}' has no field '{}'", si.name, field))?;
+                    Self::assign_index(&mut inner.result, object, idx_val, new_val)
+                } else {
+                    Err("nested index assignment requires a struct".to_string())
+                }
+            }
+            _ => Err("invalid index assignment target".to_string()),
+        }
+    }
+
+    /// Call a function value with the given arguments (used by filter/each on iterators)
+    fn call_function_value(&mut self, fn_val: &CrowValue, args: &[CrowValue]) -> Result<CrowValue, String> {
+        match &fn_val.result {
+            Value::Fn(func) => {
+                let func = func.clone();
+                if func.params.len() != args.len() {
+                    return Err(format!("{}[] expects {} args, got {}", func.name, func.params.len(), args.len()));
+                }
+                self.env.push_call_scope();
+                for (param, val) in func.params.iter().zip(args) {
+                    self.env.set(param, val.clone());
+                }
+                let mut result = CrowValue::done();
+                for stmt in func.body.iter() {
+                    match self.exec_stmt(stmt)? {
+                        Signal::Return(val) => {
+                            self.env.pop_call_scope();
+                            return Ok(val);
+                        }
+                        Signal::Value(val) => { result = val; }
+                        Signal::None => {}
+                    }
+                }
+                self.env.pop_call_scope();
+                Ok(result)
+            }
+            _ => Err("expected a function value".to_string()),
         }
     }
 
@@ -944,6 +1081,7 @@ impl Interpreter {
             | "keys" | "values" | "has" | "set" | "del"
             | "args" | "input"
             | "assert"
+            | "iter" | "next" | "collect" | "take" | "skip" | "filter" | "each"
         )
     }
 
@@ -1565,6 +1703,135 @@ impl Interpreter {
                     return Err(msg);
                 }
                 Ok(CrowValue::done())
+            }
+            // --- Iterator builtins ---
+            "iter" => {
+                if args.len() != 1 {
+                    return Err("iter[] takes 1 argument".to_string());
+                }
+                match &args[0].result {
+                    Value::List(items) => {
+                        Ok(CrowValue::ok(Value::Iterator(IteratorValue {
+                            items: Arc::new(items.iter().cloned().collect()),
+                            pos: Arc::new(Mutex::new(0)),
+                        })))
+                    }
+                    _ => Err("iter[] requires a list".to_string()),
+                }
+            }
+            "next" => {
+                if args.len() != 1 {
+                    return Err("next[] takes 1 argument".to_string());
+                }
+                match &args[0].result {
+                    Value::Iterator(it) => {
+                        let mut pos = it.pos.lock().unwrap();
+                        if *pos < it.items.len() {
+                            let val = it.items[*pos].clone();
+                            *pos += 1;
+                            Ok(val)
+                        } else {
+                            Ok(CrowValue::done())
+                        }
+                    }
+                    _ => Err("next[] requires an iterator".to_string()),
+                }
+            }
+            "collect" => {
+                if args.len() != 1 {
+                    return Err("collect[] takes 1 argument".to_string());
+                }
+                match &args[0].result {
+                    Value::Iterator(it) => {
+                        let pos = *it.pos.lock().unwrap();
+                        let remaining: Vec<CrowValue> = it.items[pos..].to_vec();
+                        Ok(CrowValue::ok(Value::List(remaining)))
+                    }
+                    _ => Err("collect[] requires an iterator".to_string()),
+                }
+            }
+            "take" => {
+                if args.len() != 2 {
+                    return Err("take[] takes 2 arguments (iterator, count)".to_string());
+                }
+                match (&args[0].result, &args[1].result) {
+                    (Value::Iterator(it), Value::Int(n)) => {
+                        let pos = *it.pos.lock().unwrap();
+                        let end = std::cmp::min(pos + *n as usize, it.items.len());
+                        let taken: Vec<CrowValue> = it.items[pos..end].to_vec();
+                        Ok(CrowValue::ok(Value::Iterator(IteratorValue {
+                            items: Arc::new(taken),
+                            pos: Arc::new(Mutex::new(0)),
+                        })))
+                    }
+                    _ => Err("take[] requires (iterator, int)".to_string()),
+                }
+            }
+            "skip" => {
+                if args.len() != 2 {
+                    return Err("skip[] takes 2 arguments (iterator, count)".to_string());
+                }
+                match (&args[0].result, &args[1].result) {
+                    (Value::Iterator(it), Value::Int(n)) => {
+                        let pos = *it.pos.lock().unwrap();
+                        let new_pos = std::cmp::min(pos + *n as usize, it.items.len());
+                        let remaining: Vec<CrowValue> = it.items[new_pos..].to_vec();
+                        Ok(CrowValue::ok(Value::Iterator(IteratorValue {
+                            items: Arc::new(remaining),
+                            pos: Arc::new(Mutex::new(0)),
+                        })))
+                    }
+                    _ => Err("skip[] requires (iterator, int)".to_string()),
+                }
+            }
+            "filter" => {
+                if args.len() != 2 {
+                    return Err("filter[] takes 2 arguments (iterator, function)".to_string());
+                }
+                match &args[0].result {
+                    Value::Iterator(it) => {
+                        let pos = *it.pos.lock().unwrap();
+                        let fn_val = &args[1];
+                        let mut filtered = Vec::new();
+                        for item in &it.items[pos..] {
+                            let result = self.call_function_value(fn_val, &[item.clone()])?;
+                            let keep = match &result.result {
+                                Value::Bool(b) => *b,
+                                Value::Int(n) => *n != 0,
+                                _ => true,
+                            };
+                            if keep {
+                                filtered.push(item.clone());
+                            }
+                        }
+                        Ok(CrowValue::ok(Value::Iterator(IteratorValue {
+                            items: Arc::new(filtered),
+                            pos: Arc::new(Mutex::new(0)),
+                        })))
+                    }
+                    _ => Err("filter[] requires an iterator as first argument".to_string()),
+                }
+            }
+            "each" => {
+                if args.len() != 2 {
+                    return Err("each[] takes 2 arguments (iterator, function)".to_string());
+                }
+                match &args[0].result {
+                    Value::Iterator(it) => {
+                        let pos = *it.pos.lock().unwrap();
+                        let fn_val = &args[1];
+                        let mut mapped = Vec::new();
+                        for item in &it.items[pos..] {
+                            let result = self.call_function_value(fn_val, &[item.clone()])?;
+                            mapped.push(result);
+                        }
+                        Ok(CrowValue::ok(Value::Iterator(IteratorValue {
+                            items: Arc::new(mapped),
+                            pos: Arc::new(Mutex::new(0)),
+                        })))
+                    }
+                    _ => Err("each[] requires an iterator as first argument".to_string()),
+                }
             }
             _ => Err(format!("undefined function '{}'", name)),
         }

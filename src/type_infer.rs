@@ -16,6 +16,7 @@ pub enum CrowType {
     /// Used when a struct field holds both a sentinel (e.g. 0) and a recursive struct reference.
     OptBoxStruct(String),
     Fn(Vec<CrowType>, Box<CrowType>),
+    Iterator(Box<CrowType>),
     Void,
     Unknown,
 }
@@ -35,6 +36,7 @@ impl CrowType {
                 let param_types: Vec<String> = params.iter().map(|p| p.to_rust_type()).collect();
                 format!("fn({}) -> {}", param_types.join(", "), ret.to_rust_type())
             }
+            CrowType::Iterator(inner) => format!("Box<dyn Iterator<Item = {}>>", inner.to_rust_type()),
             CrowType::Void => "()".into(),
             CrowType::Unknown => "String".into(),
         }
@@ -59,6 +61,7 @@ impl CrowType {
             (CrowType::OptBoxStruct(name), CrowType::Struct(_)) | (CrowType::Struct(_), CrowType::OptBoxStruct(name)) => {
                 CrowType::OptBoxStruct(name.clone())
             }
+            (CrowType::Iterator(a), CrowType::Iterator(b)) => CrowType::Iterator(Box::new(a.unify(b))),
             // Fn unification
             (CrowType::Fn(p1, r1), CrowType::Fn(p2, r2)) if p1.len() == p2.len() => {
                 let params: Vec<CrowType> = p1.iter().zip(p2.iter()).map(|(a, b)| a.unify(b)).collect();
@@ -293,6 +296,15 @@ impl TypeContext {
                     for s in &arm.body { self.collect_call_types_stmt(s); }
                 }
             }
+            Stmt::FieldAssign { object, value, .. } => {
+                self.collect_call_types_expr(object);
+                self.collect_call_types_expr(value);
+            }
+            Stmt::IndexAssign { object, index, value } => {
+                self.collect_call_types_expr(object);
+                self.collect_call_types_expr(index);
+                self.collect_call_types_expr(value);
+            }
             _ => {}
         }
     }
@@ -349,6 +361,24 @@ impl TypeContext {
                         }
                     }
 
+                    // Iterator builtins: propagate element type to callback function params
+                    // each[iterExpr, fn] and filter[iterExpr, fn]
+                    if (name == "each" || name == "filter") && args.len() == 2 {
+                        let iter_type = self.infer_expr(&args[0]);
+                        if let CrowType::Iterator(inner) = iter_type {
+                            if let Expr::Ident(fn_name) = &args[1] {
+                                if self.functions.contains_key(fn_name) {
+                                    let target_sig = self.functions.get(fn_name).unwrap().clone();
+                                    let mut new_params = target_sig.params.clone();
+                                    if !new_params.is_empty() {
+                                        new_params[0].1 = new_params[0].1.unify(&inner);
+                                    }
+                                    self.functions.get_mut(fn_name).unwrap().params = new_params;
+                                }
+                            }
+                        }
+                    }
+
                     // Is it a struct constructor?
                     if self.structs.contains_key(name) {
                         let sig = self.structs.get(name).unwrap().clone();
@@ -381,6 +411,29 @@ impl TypeContext {
                                 self.vars.insert(name.clone(), fn_type);
                             }
                             _ => {} // List, Map, param with Unknown — [] means indexing
+                        }
+                    }
+                }
+                // Module function call: module.func[args] → resolve as module_func
+                if let Expr::FieldAccess { object, field } = callee.as_ref() {
+                    if let Expr::Ident(mod_name) = object.as_ref() {
+                        let prefixed = format!("{}_{}", mod_name, field);
+                        if self.functions.contains_key(&prefixed) {
+                            let arg_types: Vec<CrowType> = args.iter()
+                                .map(|a| self.infer_expr(a))
+                                .collect();
+                            let sig = self.functions.get(&prefixed).unwrap().clone();
+                            let mut new_params = sig.params.clone();
+                            for (i, at) in arg_types.iter().enumerate() {
+                                if i < new_params.len() {
+                                    let normalized = match at {
+                                        CrowType::OptBoxStruct(n) => CrowType::Struct(n.clone()),
+                                        other => other.clone(),
+                                    };
+                                    new_params[i].1 = new_params[i].1.unify(&normalized);
+                                }
+                            }
+                            self.functions.get_mut(&prefixed).unwrap().params = new_params;
                         }
                     }
                 }
@@ -553,6 +606,25 @@ impl TypeContext {
                     }
                 }
             }
+            Stmt::FieldAssign { value, .. } => {
+                // Just infer the value expression for side effects
+                self.infer_expr(value);
+            }
+            Stmt::IndexAssign { object, value, .. } => {
+                // Infer value type and update the collection's element type
+                let val_type = self.infer_expr(value);
+                let obj_type = self.infer_expr(object);
+                // If assigning to a map, unify value type
+                if let Expr::Ident(var_name) = object {
+                    match &obj_type {
+                        CrowType::Map(inner) => {
+                            let new_inner = inner.unify(&val_type);
+                            self.vars.insert(var_name.clone(), CrowType::Map(Box::new(new_inner)));
+                        }
+                        _ => {}
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -673,6 +745,43 @@ impl TypeContext {
                         // File I/O
                         "read" => return CrowType::Str,
                         "write" => return CrowType::Void,
+                        // Iterator builtins
+                        "iter" => {
+                            if let Some(arg) = args.first() {
+                                let arg_type = self.infer_expr(arg);
+                                if let CrowType::List(inner) = arg_type {
+                                    return CrowType::Iterator(inner);
+                                }
+                            }
+                            return CrowType::Iterator(Box::new(CrowType::Unknown));
+                        }
+                        "next" => {
+                            if let Some(arg) = args.first() {
+                                let arg_type = self.infer_expr(arg);
+                                if let CrowType::Iterator(inner) = arg_type {
+                                    return *inner;
+                                }
+                            }
+                            return CrowType::Unknown;
+                        }
+                        "collect" => {
+                            if let Some(arg) = args.first() {
+                                let arg_type = self.infer_expr(arg);
+                                if let CrowType::Iterator(inner) = arg_type {
+                                    return CrowType::List(inner);
+                                }
+                            }
+                            return CrowType::List(Box::new(CrowType::Unknown));
+                        }
+                        "take" | "skip" | "filter" | "each" => {
+                            if let Some(arg) = args.first() {
+                                let arg_type = self.infer_expr(arg);
+                                if let CrowType::Iterator(inner) = arg_type {
+                                    return CrowType::Iterator(inner);
+                                }
+                            }
+                            return CrowType::Iterator(Box::new(CrowType::Unknown));
+                        }
                         _ => {}
                     }
                 }
@@ -694,6 +803,18 @@ impl TypeContext {
                                 return ftype.clone();
                             }
                         }
+                    }
+                }
+                // Module variable access: module.var → look up module_var
+                if let Expr::Ident(mod_name) = object.as_ref() {
+                    let prefixed = format!("{}_{}", mod_name, field);
+                    if let Some(t) = self.vars.get(&prefixed) {
+                        return t.clone();
+                    }
+                    // Also check if it's a module function reference
+                    if let Some(sig) = self.functions.get(&prefixed) {
+                        let param_types: Vec<CrowType> = sig.params.iter().map(|(_, t)| t.clone()).collect();
+                        return CrowType::Fn(param_types, Box::new(sig.return_type.clone()));
                     }
                 }
                 CrowType::Unknown

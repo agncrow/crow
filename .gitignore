@@ -27,5 +27,9 @@ Thumbs.db
 /examples_*
 /bench_*
 
+# Compiled binaries in examples/
+examples/iterator_test
+examples/module_test
+
 # Generated scripts
 gen_type_infer.py
