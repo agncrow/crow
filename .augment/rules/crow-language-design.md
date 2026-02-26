@@ -12,4 +12,5 @@ When designing or implementing the Crow language:
 8. **One way to do things.** There should be exactly one obvious way to accomplish any task. No aliases, no alternative syntax, no shortcuts that duplicate existing functionality.
 9. **One concept, one way.** Every value is a struct. Every call uses `[]`. Every block uses indentation. Consistency across the entire language — no special cases.
 10. **Builtin naming convention.** Builtin names must be short, single-word, lowercase, with no prefixes (`to_`, `get_`, `is_`) and no suffixes (`_with`, `_by`, `_from`). Use the shortest unambiguous name: `int` not `to_int`, `upper` not `to_upper`, `starts` not `starts_with`, `len` not `length`. If a name needs underscores, it's probably too long.
+11. **After implementing a feature:** Always (a) update `docs/language-spec.md` to reflect the new or changed behavior, (b) write a `.crow` test program in `examples/` that exercises the feature end-to-end, and (c) add Rust `#[test]` unit tests in the relevant source file to verify transpiler/interpreter output. A feature is not done until the spec, the test program, and the unit tests are all in place and passing.
 
