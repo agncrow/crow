@@ -2064,4 +2064,32 @@ mod tests {
         let val = get_var("x = int['bad']\ny = log[x]\n", "y");
         assert_eq!(val.status, crate::value::Status::Done);
     }
+
+    #[test]
+    fn test_then_simple() {
+        // x then f desugars to f[x]
+        let val = get_var("x = '  hello  '\ny = x then trim\n", "y");
+        assert_eq!(format!("{}", val.result), "hello");
+    }
+
+    #[test]
+    fn test_then_chain() {
+        // chaining multiple then
+        let val = get_var("x = '  hello  '\ny = x then trim then upper\n", "y");
+        assert_eq!(format!("{}", val.result), "HELLO");
+    }
+
+    #[test]
+    fn test_then_with_args() {
+        // x then f[a] desugars to f[x, a]
+        let val = get_var("x = 'hello world'\ny = x then split[' '] then join['-']\n", "y");
+        assert_eq!(format!("{}", val.result), "hello-world");
+    }
+
+    #[test]
+    fn test_then_with_conversion() {
+        // then works with conversion builtins
+        let val = get_var("x = 42\ny = x then str\n", "y");
+        assert_eq!(format!("{}", val.result), "42");
+    }
 }
