@@ -317,6 +317,18 @@ impl Interpreter {
         match stmt {
             Stmt::Assign { name, value } => {
                 let val = self.eval_expr(value)?;
+                // Check for type-changing reassignment
+                if let Some(existing) = self.env.get(name) {
+                    if !existing.result.type_compatible(&val.result)
+                        && !matches!(existing.result, Value::Done)
+                        && !matches!(val.result, Value::Done)
+                    {
+                        return Err(self.line_err(format!(
+                            "cannot reassign '{}' from {} to {} — variable type cannot change",
+                            name, existing.result.type_name(), val.result.type_name()
+                        )));
+                    }
+                }
                 if !self.env.update(name, val.clone()) {
                     self.env.set(name, val);
                 }
@@ -328,6 +340,18 @@ impl Interpreter {
                     .map(|v| self.eval_expr(v))
                     .collect::<Result<_, _>>()?;
                 for (name, val) in names.iter().zip(vals) {
+                    // Check for type-changing reassignment
+                    if let Some(existing) = self.env.get(name) {
+                        if !existing.result.type_compatible(&val.result)
+                            && !matches!(existing.result, Value::Done)
+                            && !matches!(val.result, Value::Done)
+                        {
+                            return Err(self.line_err(format!(
+                                "cannot reassign '{}' from {} to {} — variable type cannot change",
+                                name, existing.result.type_name(), val.result.type_name()
+                            )));
+                        }
+                    }
                     if !self.env.update(name, val.clone()) {
                         self.env.set(name, val);
                     }
@@ -822,6 +846,13 @@ impl Interpreter {
             .map(|a| self.eval_expr(a))
             .collect::<Result<_, _>>()?;
 
+        // Auto-propagation: if any argument is an error-value, return the first error
+        for arg in &arg_vals {
+            if arg.is_error() {
+                return Ok(arg.clone());
+            }
+        }
+
         match &callee_val.result {
             Value::Fn(func) => {
                 let func = func.clone();
@@ -1082,6 +1113,15 @@ impl Interpreter {
         name: &str,
         args: &[CrowValue],
     ) -> Result<CrowValue, String> {
+        // Auto-propagation: if any argument is an error-value, return the first error.
+        // Exception: `log` intentionally prints error-values, and `type` inspects them.
+        if !matches!(name, "log" | "type") {
+            for arg in args {
+                if arg.is_error() {
+                    return Ok(arg.clone());
+                }
+            }
+        }
         match name {
             "log" => {
                 for (i, arg) in args.iter().enumerate() {
@@ -1955,5 +1995,73 @@ mod tests {
         // raw values (non-error-value) should report line 0
         let val = get_var("x = 5\n", "x");
         assert_eq!(val.line, 0);
+    }
+
+    #[test]
+    fn test_type_change_reassign_error() {
+        let mut lexer = crate::lexer::Lexer::new("x = 1\nx = 'hello'\n");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let mut interp = Interpreter::new();
+        let result = interp.run(&stmts);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cannot reassign"));
+    }
+
+    #[test]
+    fn test_same_type_reassign_ok() {
+        let val = get_var("x = 1\nx = 42\n", "x");
+        match val.result {
+            Value::Int(n) => assert_eq!(n, 42),
+            _ => panic!("expected int"),
+        }
+    }
+
+    #[test]
+    fn test_int_float_reassign_ok() {
+        let val = get_var("x = 1\nx = 3.14\n", "x");
+        match val.result {
+            Value::Float(f) => assert!((f - 3.14).abs() < 0.001),
+            _ => panic!("expected float"),
+        }
+    }
+
+    #[test]
+    fn test_auto_propagation_builtin() {
+        // Error should propagate through len[]
+        let val = get_var("x = int['bad']\ny = len[x]\n", "y");
+        assert_eq!(val.status, crate::value::Status::Error);
+        assert!(val.reason.as_deref().unwrap().contains("convert"));
+    }
+
+    #[test]
+    fn test_auto_propagation_user_fn() {
+        // Error should propagate through user functions
+        let val = get_var("fn double[n]\n    return n * 2\nx = int['bad']\ny = double[x]\n", "y");
+        assert_eq!(val.status, crate::value::Status::Error);
+        assert!(val.reason.as_deref().unwrap().contains("convert"));
+    }
+
+    #[test]
+    fn test_auto_propagation_chain() {
+        // Error propagates through a chain of calls
+        let val = get_var("fn a[x]\n    return x + 1\nfn b[x]\n    return a[x]\ne = int['bad']\nr = b[e]\n", "r");
+        assert_eq!(val.status, crate::value::Status::Error);
+    }
+
+    #[test]
+    fn test_auto_propagation_preserves_line() {
+        // The original error line should be preserved
+        let val = get_var("fn double[n]\n    return n * 2\nz = 10\nx = int['bad']\ny = double[x]\n", "y");
+        assert_eq!(val.status, crate::value::Status::Error);
+        assert_eq!(val.line, 4);
+    }
+
+    #[test]
+    fn test_log_no_propagation() {
+        // log should NOT propagate — it should print and return done
+        let val = get_var("x = int['bad']\ny = log[x]\n", "y");
+        assert_eq!(val.status, crate::value::Status::Done);
     }
 }

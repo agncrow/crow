@@ -127,6 +127,33 @@ impl Value {
             other => write!(f, "{}", other),
         }
     }
+
+    /// Return the Crow type name for this value
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Value::Int(_) => "int",
+            Value::Float(_) => "float",
+            Value::Str(_) => "string",
+            Value::Bool(_) => "bool",
+            Value::List(_) => "list",
+            Value::Map(_) => "map",
+            Value::Fn(_) => "fn",
+            Value::StructDef(_) => "struct",
+            Value::StructInstance(_) => "struct_instance",
+            Value::Module(_) => "module",
+            Value::Done => "done",
+        }
+    }
+
+    /// Check if two values have compatible types for reassignment
+    pub fn type_compatible(&self, other: &Value) -> bool {
+        match (self, other) {
+            // int and float are compatible
+            (Value::Int(_), Value::Float(_)) | (Value::Float(_), Value::Int(_)) => true,
+            // same variant is compatible
+            _ => std::mem::discriminant(self) == std::mem::discriminant(other),
+        }
+    }
 }
 
 impl fmt::Display for Value {

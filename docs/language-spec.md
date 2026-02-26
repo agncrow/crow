@@ -15,11 +15,13 @@ active = true
 
 ### Reassignment
 
-Variables can be reassigned freely.
+Variables can be reassigned, but the type cannot change. `int` and `float` are compatible with each other.
 
 ```
 x = 10
-x = 20
+x = 20          --- ok, same type ---
+x = 3.14        --- ok, int/float compatible ---
+x = 'hello'     --- error: cannot reassign from int to string ---
 ```
 
 ### Types
@@ -646,6 +648,30 @@ log[x.status]     --- 'error' ---
 log[x.reason]     --- 'cannot convert ...' ---
 log[x.line]       --- 1 ---
 ```
+
+### Auto-Propagation
+
+Error-values propagate automatically through function calls. When a function (builtin or user-defined) receives an error-value as an argument, it returns that error immediately without executing. The original error's `.reason` and `.line` are preserved.
+
+```
+fn process[x]
+    return x * 2
+
+fn pipeline[x]
+    a = process[x]
+    b = process[a]
+    return b
+
+data = int['bad']           --- error-value ---
+result = pipeline[data]     --- error propagates through pipeline → process ---
+log[result.status]          --- 'error' ---
+log[result.reason]          --- 'cannot convert ...' ---
+log[result.line]            --- line where int[] failed ---
+```
+
+**Exception:** `log[]` does not propagate — it prints error-values directly for debugging.
+
+Errors also propagate through operators (`+`, `-`, etc.) and unary operations. If either operand of a binary op is an error, the result is that error.
 
 ### Error Messages
 
