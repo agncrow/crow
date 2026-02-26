@@ -460,7 +460,7 @@ fn install_from_registry(name: &str, version: &str, dest: &std::path::Path) -> b
 
 /// Transpile a .crow file to Rust, compile it, and return the path to the binary.
 /// If `quiet` is true, suppress cargo build output (used for `crow run`).
-fn transpile_and_compile(entry: &str, quiet: bool) -> std::path::PathBuf {
+fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>) -> std::path::PathBuf {
     let source = read_file(entry);
     let stmts = match build(&source) {
         Ok(s) => s,
@@ -483,6 +483,9 @@ fn transpile_and_compile(entry: &str, quiet: bool) -> std::path::PathBuf {
 
     // Transpile to Rust
     let mut transpiler = transpiler::Transpiler::new(ctx);
+    if let Some(n) = cpu {
+        transpiler.set_cpu_count(n);
+    }
     let rust_source = transpiler.transpile(&stmts);
 
     // Create build directory
@@ -537,16 +540,17 @@ fn transpile_and_compile(entry: &str, quiet: bool) -> std::path::PathBuf {
 
 fn cmd_build() {
     let args: Vec<String> = std::env::args().collect();
-    let entry = if args.len() > 2 {
-        args[2].clone()
+    let (entry, cpu) = if args.len() > 2 {
+        (args[2].clone(), None)
     } else if std::path::Path::new("crowfile").exists() {
-        get_entry_file()
+        let config = parse_crowfile();
+        (config.entry, config.cpu)
     } else {
         eprintln!("usage: crow build <file.crow> or run from a project with crowfile");
         process::exit(1);
     };
 
-    let binary = transpile_and_compile(&entry, false);
+    let binary = transpile_and_compile(&entry, false, cpu);
 
     // Copy binary to current directory
     let binary_name = binary.file_name().unwrap().to_string_lossy().to_string();
@@ -588,12 +592,12 @@ fn run_binary(binary: &std::path::Path, extra_args: &[String]) {
 
 fn cmd_run(extra_args: &[String]) {
     let config = parse_crowfile();
-    let binary = transpile_and_compile(&config.entry, true);
+    let binary = transpile_and_compile(&config.entry, true, config.cpu);
     run_binary(&binary, extra_args);
 }
 
 fn cmd_run_file(filename: &str, extra_args: &[String]) {
-    let binary = transpile_and_compile(filename, true);
+    let binary = transpile_and_compile(filename, true, None);
     run_binary(&binary, extra_args);
 }
 
