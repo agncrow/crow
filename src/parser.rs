@@ -361,7 +361,7 @@ impl Parser {
     }
 
     fn parse_comparison(&mut self) -> Result<Expr, String> {
-        let mut left = self.parse_addition()?;
+        let mut left = self.parse_then()?;
         loop {
             let op = match self.peek() {
                 Token::Eq => BinOp::Eq,
@@ -373,11 +373,34 @@ impl Parser {
                 _ => break,
             };
             self.advance();
-            let right = self.parse_addition()?;
+            let right = self.parse_then()?;
             left = Expr::BinOp {
                 left: Box::new(left),
                 op,
                 right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    /// Parse `then` chaining: `x then f` → `f[x]`, `x then f[a, b]` → `f[x, a, b]`
+    fn parse_then(&mut self) -> Result<Expr, String> {
+        let mut left = self.parse_addition()?;
+        while self.check(&Token::Then) {
+            self.advance();
+            // Right side must be an identifier (function name)
+            let func_name = self.expect_ident()?;
+            // Check if followed by [ for additional args
+            let mut args = vec![left];
+            if self.check(&Token::LBracket) {
+                self.advance();
+                let extra_args = self.parse_arg_list()?;
+                self.expect(&Token::RBracket)?;
+                args.extend(extra_args);
+            }
+            left = Expr::Call {
+                callee: Box::new(Expr::Ident(func_name)),
+                args,
             };
         }
         Ok(left)

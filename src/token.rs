@@ -24,6 +24,7 @@ pub enum Token {
     Use,
     Break,
     Continue,
+    Then,
 
     // Comparison operators (word-based)
     Eq,
@@ -86,6 +87,7 @@ impl std::fmt::Display for Token {
             Token::Use => write!(f, "use"),
             Token::Break => write!(f, "break"),
             Token::Continue => write!(f, "continue"),
+            Token::Then => write!(f, "then"),
             Token::Eq => write!(f, "eq"),
             Token::Ne => write!(f, "ne"),
             Token::Gt => write!(f, "gt"),

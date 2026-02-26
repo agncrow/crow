@@ -516,6 +516,35 @@ if x eq 1 or x eq 2
 ```
 
 
+### Then Chaining
+
+`then` pipes the left value as the first argument to the right function, enabling left-to-right composition instead of nested calls.
+
+```
+--- x then f = f[x] ---
+s = '  hello  '
+result = s then trim                --- trim[s] ---
+
+--- x then f[a] = f[x, a] ---
+result = 'hello world' then split[' '] then join['-']
+--- split['hello world', ' '] then join[..., '-'] → 'hello-world' ---
+```
+
+Chains of any length:
+
+```
+result = s then trim then split[' '] then join[', ']
+```
+
+`then` binds tighter than comparisons and logical operators, but looser than arithmetic:
+
+```
+x + 1 then str          --- str[x + 1] ---
+x then str eq '5'       --- (str[x]) eq '5' ---
+```
+
+**Note:** Mutating builtins (`push`, `pop`, `sort`, `reverse`, `append`, `set`, `del`) cannot be used with `then` because they require a variable name as the first argument, not a value.
+
 ## 9. Modules & Imports
 
 ### Importing

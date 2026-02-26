@@ -1,0 +1,28 @@
+--- then chaining: left-to-right function composition ---
+
+--- basic: x then f = f[x] ---
+s = '  hello world  '
+result = s then trim
+log[result]
+
+--- chaining: x then f then g = g[f[x]] ---
+result = s then trim then upper
+log[result]
+
+--- with args: x then f[a] = f[x, a] ---
+result = s then trim then split[' '] then join['-']
+log[result]
+
+--- longer chain ---
+result = s then trim then split[' '] then join[', ']
+log[result]
+
+--- works with conversion builtins ---
+n = '42' then int
+log[n + 8]
+
+--- works with error propagation ---
+bad = 'xyz' then int
+log[bad.status]
+log[bad.reason]
+

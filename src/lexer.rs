@@ -402,6 +402,7 @@ impl Lexer {
             "and" => Token::And,
             "or" => Token::Or,
             "not" => Token::Not,
+            "then" => Token::Then,
             "_" => Token::Underscore,
             _ => Token::Ident(ident),
         };
