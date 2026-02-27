@@ -139,13 +139,17 @@ impl Interpreter {
         self.current_file = file.to_string();
     }
 
-    /// Format a trace entry like "line 3 in validate (file.crow)" or "line 7 in file.crow"
+    /// Format a trace entry like "math.divide:5" or "main:3"
     fn trace_entry(&self) -> String {
-        let file = if self.current_file.is_empty() { "unknown" } else { &self.current_file };
-        if self.current_function.is_empty() {
-            format!("line {} in {}", self.current_line, file)
+        let file_stem = if self.current_file.is_empty() {
+            "unknown"
         } else {
-            format!("line {} in {} ({})", self.current_line, self.current_function, file)
+            self.current_file.strip_suffix(".crow").unwrap_or(&self.current_file)
+        };
+        if self.current_function.is_empty() {
+            format!("{}:{}", file_stem, self.current_line)
+        } else {
+            format!("{}.{}:{}", file_stem, self.current_function, self.current_line)
         }
     }
 
@@ -307,6 +311,10 @@ impl Interpreter {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."));
         module_interp.set_source_dir(module_dir);
+        // set source file for trace entries
+        if let Some(fname) = file_path.file_name() {
+            module_interp.set_source_file(&fname.to_string_lossy());
+        }
         // pass module_paths so deps can find their own deps
         module_interp.module_paths = self.module_paths.clone();
         module_interp.run(&stmts)?;
