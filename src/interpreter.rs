@@ -319,13 +319,13 @@ impl Interpreter {
                 let val = self.eval_expr(value)?;
                 // Check for type-changing reassignment
                 if let Some(existing) = self.env.get(name) {
-                    if !existing.result.type_compatible(&val.result)
-                        && !matches!(existing.result, Value::Done)
-                        && !matches!(val.result, Value::Done)
+                    if !existing.value.type_compatible(&val.value)
+                        && !matches!(existing.value, Value::Done)
+                        && !matches!(val.value, Value::Done)
                     {
                         return Err(self.line_err(format!(
                             "cannot reassign '{}' from {} to {} — variable type cannot change",
-                            name, existing.result.type_name(), val.result.type_name()
+                            name, existing.value.type_name(), val.value.type_name()
                         )));
                     }
                 }
@@ -342,13 +342,13 @@ impl Interpreter {
                 for (name, val) in names.iter().zip(vals) {
                     // Check for type-changing reassignment
                     if let Some(existing) = self.env.get(name) {
-                        if !existing.result.type_compatible(&val.result)
-                            && !matches!(existing.result, Value::Done)
-                            && !matches!(val.result, Value::Done)
+                        if !existing.value.type_compatible(&val.value)
+                            && !matches!(existing.value, Value::Done)
+                            && !matches!(val.value, Value::Done)
                         {
                             return Err(self.line_err(format!(
                                 "cannot reassign '{}' from {} to {} — variable type cannot change",
-                                name, existing.result.type_name(), val.result.type_name()
+                                name, existing.value.type_name(), val.value.type_name()
                             )));
                         }
                     }
@@ -409,7 +409,7 @@ impl Interpreter {
                 let var = self.env.get_mut(&var_name)
                     .ok_or_else(|| format!("undefined variable '{}'", var_name))?;
                 // Navigate to the right nested field using the expression chain
-                Self::assign_field(&mut var.result, object, field, new_val)?;
+                Self::assign_field(&mut var.value, object, field, new_val)?;
                 Ok(Signal::None)
             }
             Stmt::IndexAssign { object, index, value } => {
@@ -419,7 +419,7 @@ impl Interpreter {
                     .ok_or_else(|| "index assignment target must be a variable".to_string())?;
                 let var = self.env.get_mut(&var_name)
                     .ok_or_else(|| format!("undefined variable '{}'", var_name))?;
-                Self::assign_index(&mut var.result, object, idx_val, new_val)?;
+                Self::assign_index(&mut var.value, object, idx_val, new_val)?;
                 Ok(Signal::None)
             }
             Stmt::Use { path } => {
@@ -470,7 +470,7 @@ impl Interpreter {
                 if let Value::StructInstance(si) = val {
                     let inner = si.fields.get_mut(outer_field)
                         .ok_or_else(|| format!("struct '{}' has no field '{}'", si.name, outer_field))?;
-                    Self::assign_field(&mut inner.result, object, field, new_val)
+                    Self::assign_field(&mut inner.value, object, field, new_val)
                 } else {
                     Err("field assignment requires a struct".to_string())
                 }
@@ -485,7 +485,7 @@ impl Interpreter {
             Expr::Ident(_) => {
                 match val {
                     Value::List(items) => {
-                        if let Value::Int(i) = &idx_val.result {
+                        if let Value::Int(i) = &idx_val.value {
                             let idx = *i as usize;
                             if idx < items.len() {
                                 items[idx] = new_val;
@@ -498,7 +498,7 @@ impl Interpreter {
                         }
                     }
                     Value::Map(map) => {
-                        if let Value::Str(key) = &idx_val.result {
+                        if let Value::Str(key) = &idx_val.value {
                             map.insert(key.clone(), new_val);
                             Ok(())
                         } else {
@@ -513,7 +513,7 @@ impl Interpreter {
                 if let Value::StructInstance(si) = val {
                     let inner = si.fields.get_mut(field)
                         .ok_or_else(|| format!("struct '{}' has no field '{}'", si.name, field))?;
-                    Self::assign_index(&mut inner.result, object, idx_val, new_val)
+                    Self::assign_index(&mut inner.value, object, idx_val, new_val)
                 } else {
                     Err("nested index assignment requires a struct".to_string())
                 }
@@ -591,7 +591,7 @@ impl Interpreter {
         if iter_val.is_error() {
             return Ok(vec![iter_val]);
         }
-        let items = match &iter_val.result {
+        let items = match &iter_val.value {
             Value::List(items) => items.clone(),
             _ => return Err("for loop requires a list".to_string()),
         };
@@ -726,7 +726,7 @@ impl Interpreter {
         if val.is_error() {
             return false;
         }
-        match &val.result {
+        match &val.value {
             Value::Bool(b) => *b,
             Value::Int(n) => *n != 0,
             Value::Float(n) => *n != 0.0,
@@ -738,7 +738,7 @@ impl Interpreter {
     }
 
     fn values_equal(&self, a: &CrowValue, b: &CrowValue) -> bool {
-        match (&a.result, &b.result) {
+        match (&a.value, &b.value) {
             (Value::Int(x), Value::Int(y)) => x == y,
             (Value::Float(x), Value::Float(y)) => x == y,
             (Value::Int(x), Value::Float(y)) => (*x as f64) == *y,
@@ -833,7 +833,9 @@ impl Interpreter {
 
         // soft error propagation: if callee is an error, propagate it
         if callee_val.is_error() {
-            return Ok(callee_val);
+            let mut err = callee_val;
+            err.append_trace(&format!("line {}", self.current_line));
+            return Ok(err);
         }
 
         let arg_vals: Vec<CrowValue> = args
@@ -844,11 +846,13 @@ impl Interpreter {
         // Auto-propagation: if any argument is an error-value, return the first error
         for arg in &arg_vals {
             if arg.is_error() {
-                return Ok(arg.clone());
+                let mut err = arg.clone();
+                err.append_trace(&format!("line {}", self.current_line));
+                return Ok(err);
             }
         }
 
-        match &callee_val.result {
+        match &callee_val.value {
             Value::Fn(func) => {
                 let func = func.clone();
                 if func.params.len() != arg_vals.len() {
@@ -953,7 +957,7 @@ impl Interpreter {
             | "read" | "write" | "len" | "sum"
             | "keys" | "values" | "has" | "set" | "del"
             | "args" | "input"
-            | "assert"
+            | "assert" | "error"
             | "rand" | "time" | "sleep" | "env" | "exit"
             | "json" | "encode"
         )
@@ -965,11 +969,13 @@ impl Interpreter {
         args: &[CrowValue],
     ) -> Result<CrowValue, String> {
         // Auto-propagation: if any argument is an error-value, return the first error.
-        // Exception: `log` intentionally prints error-values, and `type` inspects them.
-        if !matches!(name, "log" | "type") {
+        // Exception: `log` intentionally prints error-values, `type` inspects them, `error` creates them.
+        if !matches!(name, "log" | "type" | "error") {
             for arg in args {
                 if arg.is_error() {
-                    return Ok(arg.clone());
+                    let mut err = arg.clone();
+                    err.append_trace(&format!("line {}", self.current_line));
+                    return Ok(err);
                 }
             }
         }
@@ -980,9 +986,9 @@ impl Interpreter {
                         print!(" ");
                     }
                     if arg.is_error() {
-                        print!("error: {}", arg.reason.as_deref().unwrap_or("unknown"));
+                        print!("error: {}", arg.reason);
                     } else {
-                        print!("{}", arg.result);
+                        print!("{}", arg.value);
                     }
                 }
                 println!();
@@ -1234,10 +1240,10 @@ impl Interpreter {
                     Value::Float(n) => Ok(CrowValue::ok(Value::Int(*n as i64))),
                     Value::Str(s) => match s.parse::<i64>() {
                         Ok(n) => Ok(CrowValue::ok(Value::Int(n))),
-                        Err(_) => Ok(CrowValue::error(&format!("cannot convert '{}' to int", s), self.current_line)),
+                        Err(_) => Ok(CrowValue::error_with_kind(&format!("cannot convert '{}' to int", s), "parse", self.current_line)),
                     },
                     Value::Bool(b) => Ok(CrowValue::ok(Value::Int(if *b { 1 } else { 0 }))),
-                    _ => Ok(CrowValue::error("cannot convert to int", self.current_line)),
+                    _ => Ok(CrowValue::error_with_kind("cannot convert to int", "parse", self.current_line)),
                 }
             }
             "float" => {
@@ -1247,10 +1253,10 @@ impl Interpreter {
                     Value::Float(n) => Ok(CrowValue::ok(Value::Float(*n))),
                     Value::Str(s) => match s.parse::<f64>() {
                         Ok(n) => Ok(CrowValue::ok(Value::Float(n))),
-                        Err(_) => Ok(CrowValue::error(&format!("cannot convert '{}' to float", s), self.current_line)),
+                        Err(_) => Ok(CrowValue::error_with_kind(&format!("cannot convert '{}' to float", s), "parse", self.current_line)),
                     },
                     Value::Bool(b) => Ok(CrowValue::ok(Value::Float(if *b { 1.0 } else { 0.0 }))),
-                    _ => Ok(CrowValue::error("cannot convert to float", self.current_line)),
+                    _ => Ok(CrowValue::error_with_kind("cannot convert to float", "parse", self.current_line)),
                 }
             }
             "str" => {
@@ -1276,7 +1282,7 @@ impl Interpreter {
                         let mut float_sum: f64 = 0.0;
                         let mut is_float = false;
                         for item in items {
-                            match &item.result {
+                            match &item.value {
                                 Value::Int(n) => int_sum += n,
                                 Value::Float(f) => { is_float = true; float_sum += f; }
                                 _ => return Err("sum[] requires a list of numbers".into()),
@@ -1505,7 +1511,7 @@ impl Interpreter {
                         let trimmed = line.trim_end_matches('\n').trim_end_matches('\r').to_string();
                         Ok(CrowValue::ok(Value::Str(trimmed)))
                     }
-                    Err(e) => Ok(CrowValue::error(&format!("input error: {}", e), self.current_line)),
+                    Err(e) => Ok(CrowValue::error_with_kind(&format!("input error: {}", e), "io", self.current_line)),
                 }
             }
             // --- System builtins ---
@@ -1606,7 +1612,7 @@ impl Interpreter {
                     Value::Str(path) => {
                         match std::fs::read_to_string(path) {
                             Ok(content) => Ok(CrowValue::ok(Value::Str(content))),
-                            Err(e) => Ok(CrowValue::error(&format!("cannot read '{}': {}", path, e), self.current_line)),
+                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot read '{}': {}", path, e), "io", self.current_line)),
                         }
                     }
                     _ => Err("read[] requires a string path".into()),
@@ -1618,7 +1624,7 @@ impl Interpreter {
                     (Value::Str(path), Value::Str(content)) => {
                         match std::fs::write(path, content) {
                             Ok(_) => Ok(CrowValue::done()),
-                            Err(e) => Ok(CrowValue::error(&format!("cannot write '{}': {}", path, e), self.current_line)),
+                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot write '{}': {}", path, e), "io", self.current_line)),
                         }
                     }
                     _ => Err("write[] requires a string path and string content".into()),
@@ -1631,7 +1637,7 @@ impl Interpreter {
                     Value::Str(s) => {
                         match serde_json::from_str::<serde_json::Value>(s) {
                             Ok(jval) => Ok(self.json_to_crow(&jval)),
-                            Err(e) => Ok(CrowValue::error(&format!("invalid JSON: {}", e), self.current_line)),
+                            Err(e) => Ok(CrowValue::error_with_kind(&format!("invalid JSON: {}", e), "parse", self.current_line)),
                         }
                     }
                     _ => Err("json[] requires a string argument".into()),
@@ -1650,7 +1656,7 @@ impl Interpreter {
                     return Err("assert[] takes 1 or 2 arguments".to_string());
                 }
                 let cond = &args[0];
-                let passed = match &cond.result {
+                let passed = match &cond.value {
                     Value::Bool(b) => *b,
                     Value::Int(n) => *n != 0,
                     Value::Str(s) => !s.is_empty(),
@@ -1660,13 +1666,32 @@ impl Interpreter {
                 };
                 if !passed {
                     let msg = if args.len() == 2 {
-                        format!("assertion failed: {}", args[1].result)
+                        format!("assertion failed: {}", args[1].value)
                     } else {
                         "assertion failed".to_string()
                     };
                     return Err(msg);
                 }
                 Ok(CrowValue::done())
+            }
+            "error" => {
+                // error[reason] or error[reason, kind]
+                if args.is_empty() || args.len() > 2 {
+                    return Err("error[] takes 1 or 2 arguments".to_string());
+                }
+                let reason = match args[0].unwrap_or_propagate()? {
+                    Value::Str(s) => s.clone(),
+                    other => format!("{}", other),
+                };
+                let kind = if args.len() == 2 {
+                    match args[1].unwrap_or_propagate()? {
+                        Value::Str(s) => s.clone(),
+                        other => format!("{}", other),
+                    }
+                } else {
+                    String::new()
+                };
+                Ok(CrowValue::error_with_kind(&reason, &kind, self.current_line))
             }
             _ => Err(format!("undefined function '{}'", name)),
         }
@@ -1676,7 +1701,7 @@ impl Interpreter {
     /// JSON null becomes an error-value with reason "null".
     fn json_to_crow(&self, jval: &serde_json::Value) -> CrowValue {
         match jval {
-            serde_json::Value::Null => CrowValue::error("null", self.current_line),
+            serde_json::Value::Null => CrowValue::error_with_kind("null", "parse", self.current_line),
             serde_json::Value::Bool(b) => CrowValue::ok(Value::Bool(*b)),
             serde_json::Value::Number(n) => {
                 if let Some(i) = n.as_i64() {
@@ -1708,7 +1733,7 @@ impl Interpreter {
             // Error-values encode as JSON null (round-trip with json[])
             return Ok(serde_json::Value::Null);
         }
-        match &val.result {
+        match &val.value {
             Value::Int(n) => Ok(serde_json::Value::Number(serde_json::Number::from(*n))),
             Value::Float(f) => {
                 match serde_json::Number::from_f64(*f) {
@@ -1730,7 +1755,7 @@ impl Interpreter {
                 Ok(serde_json::Value::Object(obj))
             }
             Value::Done => Ok(serde_json::Value::Null),
-            _ => Err(format!("cannot encode {} to JSON", val.result.type_name())),
+            _ => Err(format!("cannot encode {} to JSON", val.value.type_name())),
         }
     }
 
@@ -1747,9 +1772,10 @@ impl Interpreter {
         if right.is_error() {
             return Ok(right.clone());
         }
+        // Note: trace is appended at the call site (eval_call / call_builtin), not here
 
-        let l = &left.result;
-        let r = &right.result;
+        let l = &left.value;
+        let r = &right.value;
 
         match op {
             BinOp::Add => match (l, r) {
@@ -1777,7 +1803,7 @@ impl Interpreter {
             BinOp::Div => match (l, r) {
                 (Value::Int(a), Value::Int(b)) => {
                     if *b == 0 {
-                        Ok(CrowValue::error("division by zero", self.current_line))
+                        Ok(CrowValue::error_with_kind("division by zero", "math", self.current_line))
                     } else {
                         Ok(CrowValue::ok(Value::Int(a / b)))
                     }
@@ -1790,7 +1816,7 @@ impl Interpreter {
             BinOp::Mod => match (l, r) {
                 (Value::Int(a), Value::Int(b)) => {
                     if *b == 0 {
-                        Ok(CrowValue::error("modulo by zero", self.current_line))
+                        Ok(CrowValue::error_with_kind("modulo by zero", "math", self.current_line))
                     } else {
                         Ok(CrowValue::ok(Value::Int(a % b)))
                     }
@@ -1845,7 +1871,7 @@ impl Interpreter {
             return Ok(val.clone());
         }
 
-        let v = &val.result;
+        let v = &val.value;
         match op {
             UnaryOp::Neg => match v {
                 Value::Int(n) => Ok(CrowValue::ok(Value::Int(-n))),
@@ -1865,21 +1891,22 @@ impl Interpreter {
     ) -> Result<CrowValue, String> {
         let obj = self.eval_expr(object)?;
 
-        // special fields: .status, .result, .reason, .line — always work, even on errors
+        // special fields: .ok, .reason, .kind, .trace — always work, even on errors
         match field {
-            "status" => {
-                return Ok(CrowValue::ok(Value::Str(obj.status.to_string())));
-            }
-            "result" => {
-                return Ok(CrowValue::ok(obj.result.clone()));
+            "ok" => {
+                return Ok(CrowValue::ok(Value::Bool(obj.ok)));
             }
             "reason" => {
-                return Ok(CrowValue::ok(Value::Str(
-                    obj.reason.as_deref().unwrap_or("").to_string(),
-                )));
+                return Ok(CrowValue::ok(Value::Str(obj.reason.clone())));
             }
-            "line" => {
-                return Ok(CrowValue::ok(Value::Int(obj.line as i64)));
+            "kind" => {
+                return Ok(CrowValue::ok(Value::Str(obj.kind.clone())));
+            }
+            "trace" => {
+                let trace_list: Vec<CrowValue> = obj.trace.iter()
+                    .map(|s| CrowValue::ok(Value::Str(s.clone())))
+                    .collect();
+                return Ok(CrowValue::ok(Value::List(trace_list)));
             }
             _ => {}
         }
@@ -1891,7 +1918,7 @@ impl Interpreter {
 
         // .length property for lists and strings
         if field == "len" {
-            match &obj.result {
+            match &obj.value {
                 Value::List(items) => {
                     return Ok(CrowValue::ok(Value::Int(items.len() as i64)));
                 }
@@ -1903,7 +1930,7 @@ impl Interpreter {
         }
 
         // struct and module field access
-        match &obj.result {
+        match &obj.value {
             Value::StructInstance(si) => {
                 match si.fields.get(field) {
                     Some(val) => Ok(val.clone()),
@@ -1958,7 +1985,7 @@ impl Interpreter {
 
                 if let Some(crate::ast::Stmt::ExprStmt(expr)) = stmts.iter().find(|s| !matches!(s, crate::ast::Stmt::Line(_))) {
                     let val = self.eval_expr(expr)?;
-                    result.push_str(&format!("{}", val.result));
+                    result.push_str(&format!("{}", val.value));
                 }
             } else {
                 result.push(chars[i]);
@@ -1996,36 +2023,36 @@ mod tests {
     #[test]
     fn test_error_line_int_parse() {
         let val = get_var("x = int['bad']\n", "x");
-        assert_eq!(val.status, crate::value::Status::Error);
-        assert_eq!(val.line, 1);
+        assert!(!val.ok);
+        assert!(val.trace.iter().any(|t| t.contains("1")));
     }
 
     #[test]
     fn test_error_line_second_line() {
         let val = get_var("y = 10\nx = int['bad']\n", "x");
-        assert_eq!(val.status, crate::value::Status::Error);
-        assert_eq!(val.line, 2);
+        assert!(!val.ok);
+        assert!(val.trace.iter().any(|t| t.contains("2")));
     }
 
     #[test]
     fn test_error_line_read() {
         let val = get_var("x = read['nonexistent_test_file.txt']\n", "x");
-        assert_eq!(val.status, crate::value::Status::Error);
-        assert_eq!(val.line, 1);
+        assert!(!val.ok);
+        assert!(val.trace.iter().any(|t| t.contains("1")));
     }
 
     #[test]
     fn test_ok_value_line_zero() {
         let val = get_var("x = int['42']\n", "x");
-        assert_eq!(val.status, crate::value::Status::Ok);
-        assert_eq!(val.line, 0);
+        assert!(val.ok);
+        assert!(val.trace.is_empty());
     }
 
     #[test]
     fn test_raw_value_line_field() {
-        // raw values (non-error-value) should report line 0
+        // raw values (non-error-value) should have empty trace
         let val = get_var("x = 5\n", "x");
-        assert_eq!(val.line, 0);
+        assert!(val.trace.is_empty());
     }
 
     #[test]
@@ -2043,7 +2070,7 @@ mod tests {
     #[test]
     fn test_same_type_reassign_ok() {
         let val = get_var("x = 1\nx = 42\n", "x");
-        match val.result {
+        match val.value {
             Value::Int(n) => assert_eq!(n, 42),
             _ => panic!("expected int"),
         }
@@ -2052,7 +2079,7 @@ mod tests {
     #[test]
     fn test_int_float_reassign_ok() {
         let val = get_var("x = 1\nx = 3.14\n", "x");
-        match val.result {
+        match val.value {
             Value::Float(f) => assert!((f - 3.14).abs() < 0.001),
             _ => panic!("expected float"),
         }
@@ -2062,65 +2089,66 @@ mod tests {
     fn test_auto_propagation_builtin() {
         // Error should propagate through len[]
         let val = get_var("x = int['bad']\ny = len[x]\n", "y");
-        assert_eq!(val.status, crate::value::Status::Error);
-        assert!(val.reason.as_deref().unwrap().contains("convert"));
+        assert!(!val.ok);
+        assert!(val.reason.contains("convert"));
     }
 
     #[test]
     fn test_auto_propagation_user_fn() {
         // Error should propagate through user functions
         let val = get_var("fn double[n]\n    return n * 2\nx = int['bad']\ny = double[x]\n", "y");
-        assert_eq!(val.status, crate::value::Status::Error);
-        assert!(val.reason.as_deref().unwrap().contains("convert"));
+        assert!(!val.ok);
+        assert!(val.reason.contains("convert"));
     }
 
     #[test]
     fn test_auto_propagation_chain() {
         // Error propagates through a chain of calls
         let val = get_var("fn a[x]\n    return x + 1\nfn b[x]\n    return a[x]\ne = int['bad']\nr = b[e]\n", "r");
-        assert_eq!(val.status, crate::value::Status::Error);
+        assert!(!val.ok);
     }
 
     #[test]
     fn test_auto_propagation_preserves_line() {
-        // The original error line should be preserved
+        // The original error trace should contain the original line
         let val = get_var("fn double[n]\n    return n * 2\nz = 10\nx = int['bad']\ny = double[x]\n", "y");
-        assert_eq!(val.status, crate::value::Status::Error);
-        assert_eq!(val.line, 4);
+        assert!(!val.ok);
+        assert!(val.trace.iter().any(|t| t.contains("4")));
     }
 
     #[test]
     fn test_log_no_propagation() {
         // log should NOT propagate — it should print and return done
         let val = get_var("x = int['bad']\ny = log[x]\n", "y");
-        assert_eq!(val.status, crate::value::Status::Done);
+        assert!(val.ok);
+        assert!(matches!(val.value, Value::Done));
     }
 
     #[test]
     fn test_then_simple() {
         // x then f desugars to f[x]
         let val = get_var("x = '  hello  '\ny = x then trim\n", "y");
-        assert_eq!(format!("{}", val.result), "hello");
+        assert_eq!(format!("{}", val.value), "hello");
     }
 
     #[test]
     fn test_then_chain() {
         // chaining multiple then
         let val = get_var("x = '  hello  '\ny = x then trim then upper\n", "y");
-        assert_eq!(format!("{}", val.result), "HELLO");
+        assert_eq!(format!("{}", val.value), "HELLO");
     }
 
     #[test]
     fn test_then_with_args() {
         // x then f[a] desugars to f[x, a]
         let val = get_var("x = 'hello world'\ny = x then split[' '] then join['-']\n", "y");
-        assert_eq!(format!("{}", val.result), "hello-world");
+        assert_eq!(format!("{}", val.value), "hello-world");
     }
 
     #[test]
     fn test_then_with_conversion() {
         // then works with conversion builtins
         let val = get_var("x = 42\ny = x then str\n", "y");
-        assert_eq!(format!("{}", val.result), "42");
+        assert_eq!(format!("{}", val.value), "42");
     }
 }

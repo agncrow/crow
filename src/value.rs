@@ -2,79 +2,80 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
-/// Status of a CrowValue — avoids heap-allocating a String for every value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Status {
-    Ok,
-    Done,
-    Error,
-}
-
-impl fmt::Display for Status {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Status::Ok => write!(f, "ok"),
-            Status::Done => write!(f, "done"),
-            Status::Error => write!(f, "error"),
-        }
-    }
-}
-
-/// Every value in Crow is a struct with status, result, reason, line.
+/// Every value in Crow carries error metadata: ok, reason, kind, trace.
 /// Values auto-unwrap — you use them directly.
 #[derive(Debug, Clone)]
 pub struct CrowValue {
-    pub status: Status,
-    pub result: Value,    // the actual value
-    pub reason: Option<String>,   // error message (None if not error)
-    pub line: usize,              // line number where error originated (0 = not an error)
+    pub value: Value,              // the actual value
+    pub ok: bool,                  // true for normal values, false for errors
+    pub reason: String,            // error message ("" if not error)
+    pub kind: String,              // error category ("" if not error)
+    pub trace: Vec<String>,        // call trace, built during propagation
 }
 
 impl CrowValue {
     pub fn ok(value: Value) -> Self {
         CrowValue {
-            status: Status::Ok,
-            result: value,
-            reason: None,
-            line: 0,
+            value,
+            ok: true,
+            reason: String::new(),
+            kind: String::new(),
+            trace: Vec::new(),
         }
     }
 
     pub fn done() -> Self {
         CrowValue {
-            status: Status::Done,
-            result: Value::Done,
-            reason: None,
-            line: 0,
+            value: Value::Done,
+            ok: true,
+            reason: String::new(),
+            kind: String::new(),
+            trace: Vec::new(),
         }
     }
 
     pub fn error(reason: &str, line: usize) -> Self {
         CrowValue {
-            status: Status::Error,
-            result: Value::Done,
-            reason: Some(reason.to_string()),
-            line,
+            value: Value::Done,
+            ok: false,
+            reason: reason.to_string(),
+            kind: String::new(),
+            trace: vec![format!("line {}", line)],
+        }
+    }
+
+    pub fn error_with_kind(reason: &str, kind: &str, line: usize) -> Self {
+        CrowValue {
+            value: Value::Done,
+            ok: false,
+            reason: reason.to_string(),
+            kind: kind.to_string(),
+            trace: vec![format!("line {}", line)],
         }
     }
 
     #[inline(always)]
     pub fn is_error(&self) -> bool {
-        self.status == Status::Error
+        !self.ok
     }
 
     #[inline(always)]
     pub fn is_ok(&self) -> bool {
-        self.status == Status::Ok
+        self.ok
     }
 
     /// Auto-unwrap: get the inner value, propagating errors
     pub fn unwrap_or_propagate(&self) -> Result<&Value, String> {
-        if self.status == Status::Error {
-            Err(self.reason.as_deref().unwrap_or("unknown error").to_string())
+        if !self.ok {
+            Err(if self.reason.is_empty() { "unknown error".to_string() } else { self.reason.clone() })
         } else {
-            Ok(&self.result)
+            Ok(&self.value)
         }
+    }
+
+    /// Append a trace entry during auto-propagation
+    pub fn append_trace(&mut self, location: &str) {
+        self.trace.push(location.to_string());
     }
 }
 
@@ -169,7 +170,7 @@ impl fmt::Display for Value {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    item.result.fmt_repr(f)?;
+                    item.value.fmt_repr(f)?;
                 }
                 write!(f, "]")
             }
@@ -180,7 +181,7 @@ impl fmt::Display for Value {
                         write!(f, ", ")?;
                     }
                     write!(f, "'{}' = ", k)?;
-                    v.result.fmt_repr(f)?;
+                    v.value.fmt_repr(f)?;
                 }
                 write!(f, "]")
             }
@@ -193,7 +194,7 @@ impl fmt::Display for Value {
                         write!(f, ", ")?;
                     }
                     write!(f, "{} = ", k)?;
-                    v.result.fmt_repr(f)?;
+                    v.value.fmt_repr(f)?;
                 }
                 write!(f, "]")
             }
@@ -205,7 +206,11 @@ impl fmt::Display for Value {
 
 impl fmt::Display for CrowValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.result)
+        if self.ok {
+            write!(f, "{}", self.value)
+        } else {
+            write!(f, "error: {}", self.reason)
+        }
     }
 }
 

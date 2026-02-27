@@ -217,6 +217,8 @@ data = map[]             --- empty map ---
 | `map[]` | Create an empty map |
 | `assert[cond]` | Halt with error if condition is falsy |
 | `assert[cond, msg]` | Halt with custom error message |
+| `error[reason]` | Create an error-value with the given reason |
+| `error[reason, kind]` | Create an error-value with reason and category |
 | `cpu[n]` | Set thread count for parallel loops |
 | `gpu[n]` | Set GPU count for parallel compute |
 
@@ -297,14 +299,14 @@ data = map[]             --- empty map ---
 | `json[str]` | Parse JSON string into a Crow value (error-value on failure) |
 | `encode[value]` | Encode a Crow value as a JSON string |
 
-JSON type mapping: objects → maps, arrays → lists, strings → str, numbers → int/float, booleans → bool, `null` → error-value. JSON `null` maps to an error-value with `status: 'error'` and `reason: 'null'`, which auto-propagates through the error-value system (§11).
+JSON type mapping: objects → maps, arrays → lists, strings → str, numbers → int/float, booleans → bool, `null` → error-value. JSON `null` maps to an error-value with `ok: false` and `reason: 'null'`, which auto-propagates through the error-value system (§11).
 
 ```
 items = json['[1, 2, 3]']
 log[items[0]]              --- 1 ---
 
 n = json['null']
-log[n.status]              --- 'error' ---
+log[n.ok]                  --- false ---
 log[n.reason]              --- 'null' ---
 
 s = encode[items]
@@ -631,11 +633,11 @@ comment
 
 ## 11. Error Handling
 
-Fallible operations return an error-value struct with `status`, `result`, and `reason` fields. Values auto-unwrap — you use them directly without worrying about the struct.
+Every value in Crow is a result. Fallible operations set `ok` to `false` with a `reason`, `kind`, and `trace`. Values auto-unwrap — you use them directly without worrying about the struct.
 
 ### Fallible Builtins
 
-These builtins can fail and return an error-value struct:
+These builtins can fail and return an error-value:
 
 | Builtin | When it fails |
 |---------|---------------|
@@ -646,69 +648,90 @@ These builtins can fail and return an error-value struct:
 | `float[string]` | String can't be parsed as float |
 | `json[string]` | String is not valid JSON, or value is `null` |
 
-Non-fallible conversions (e.g. `int[3.14]`, `int[true]`) return raw values, not error-value structs.
+Non-fallible conversions (e.g. `int[3.14]`, `int[true]`) return raw values with `ok: true`.
 
 ### Every Value Has Status
 
 ```
 x = 5
 log[x]            --- 5 ---
-x.status          --- 'ok' ---
-x.result          --- 5 ---
+x.ok              --- true ---
 x.reason          --- '' ---
-x.line            --- 0 ---
+x.kind            --- '' ---
+x.trace           --- [] ---
 ```
 
-Non-fallible values always have `status` of `'ok'`, `result` is the value itself, `reason` is `''`, and `line` is `0`.
+Non-fallible values always have `ok` of `true`, `reason` and `kind` are `''`, and `trace` is `[]`.
 
 ### Auto Unwrap
 
 ```
 content = read['file.txt']
-log[content]               --- just works, auto-unwraps to the result ---
+log[content]               --- just works, auto-unwraps to the value ---
 
 val = int['42']
 doubled = val + val        --- auto-unwraps in arithmetic: 84 ---
 ```
 
-When an error-value is used in arithmetic, string interpolation, or `log[]`, the `.result` is automatically accessed.
+When an error-value is used in arithmetic, string interpolation, or `log[]`, the inner value is automatically accessed.
 
 ### Explicit Handling
 
-Check `.status` only when you want to handle errors yourself.
+Check `.ok` only when you want to handle errors yourself.
 
 ```
 content = read['file.txt']
 
-if content.status eq 'error'
+if not content.ok
     log['failed: {content.reason}']
+    log['kind: {content.kind}']
+    log['trace: {content.trace}']
 else
-    log[content.result]
+    log[content]
 ```
+
+### Creating Errors
+
+Use the `error[]` builtin to create custom error-values:
+
+```
+fn validate[age]
+    if age lt 0
+        return error['age cannot be negative', 'validation']
+    return age
+
+result = validate[-5]
+log[result.ok]          --- false ---
+log[result.reason]      --- 'age cannot be negative' ---
+log[result.kind]        --- 'validation' ---
+```
+
+`error[reason]` creates an error with an empty `kind`. `error[reason, kind]` creates an error with a category.
 
 ### Value Struct
 
-Every error-value has:
+Every value has:
 
 | Field    | Description                          |
 |----------|--------------------------------------|
-| `status` | `'ok'` or `'error'`                  |
-| `result` | the return value (safe default on error) |
+| `ok`     | `true` or `false`                    |
 | `reason` | error message (empty on success)      |
-| `line`   | source line number where the error originated (0 on success) |
+| `kind`   | error category (empty on success or if not specified) |
+| `trace`  | list of locations the error passed through (empty on success) |
 
-On failure, `result` contains a safe default (`0` for int, `0.0` for float, `''` for string), `reason` describes what went wrong, and `line` records where the error occurred.
+On failure, the value contains a safe default (`0` for int, `0.0` for float, `''` for string), `reason` describes what went wrong, `kind` categorizes the error, and `trace` records the call chain.
 
 ```
 x = int['hello']
-log[x.status]     --- 'error' ---
+log[x.ok]         --- false ---
 log[x.reason]     --- 'cannot convert ...' ---
-log[x.line]       --- 1 ---
+log[x.kind]       --- 'parse' ---
+log[x.trace]      --- ['line 1'] ---
 ```
 
 ### Auto-Propagation
 
-Error-values propagate automatically through function calls. When a function (builtin or user-defined) receives an error-value as an argument, it returns that error immediately without executing. The original error's `.reason` and `.line` are preserved.
+Error-values propagate automatically through function calls. When a function (builtin or user-defined) receives an error-value as an argument, it returns that error immediately without executing. The original error's `.reason` and `.kind` are preserved, and the new location is appended to `.trace`.
 
 ```
 fn process[x]
@@ -721,9 +744,9 @@ fn pipeline[x]
 
 data = int['bad']           --- error-value ---
 result = pipeline[data]     --- error propagates through pipeline → process ---
-log[result.status]          --- 'error' ---
+log[result.ok]              --- false ---
 log[result.reason]          --- 'cannot convert ...' ---
-log[result.line]            --- line where int[] failed ---
+log[result.trace]           --- ['line 5', 'line 6', ...] ---
 ```
 
 **Exception:** `log[]` does not propagate — it prints error-values directly for debugging.
@@ -969,7 +992,7 @@ The transpiler is the source of truth. If a program works in the interpreter but
 
 ### No `none`
 
-Crow has no null, nil, or none value. Every variable always holds a concrete value. Missing or failed data is represented through the error-value system (`status`, `result`, `reason`) — see Error Handling.
+Crow has no null, nil, or none value. Every variable always holds a concrete value. Missing or failed data is represented through the error-value system (`ok`, `reason`, `kind`, `trace`) — see Error Handling.
 
 
 ## Design Note: No Iterator Builtins
@@ -1150,7 +1173,7 @@ Crow's errors don't crash the program. They propagate safely through function ca
 ```
 x = int['bad']          --- error-value, no crash ---
 y = x + 10              --- still error-value, no crash ---
-log[y.status]           --- 'error' ---
+log[y.ok]               --- false ---
 log[y.reason]           --- original reason preserved ---
 ```
 
@@ -1158,7 +1181,7 @@ log[y.reason]           --- original reason preserved ---
 
 ```
 x = int[input[]]
-if x.status eq 'error'
+if not x.ok
     log['invalid: {x.reason}']
     x = 0
 ```

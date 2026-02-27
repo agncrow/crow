@@ -159,7 +159,7 @@ fn repl_eval(interpreter: &mut Interpreter, source: &str) {
             match interpreter.run(&stmts) {
                 Ok(val) => {
                     // Print result if it's not Done (void)
-                    if !matches!(val.result, value::Value::Done) {
+                    if !matches!(val.value, value::Value::Done) {
                         println!("{}", val);
                     }
                 }
@@ -734,7 +734,7 @@ fn parse_crowfile() -> CrowfileConfig {
             }
 
             let entry = match interpreter.get_var("entry") {
-                Some(val) => match &val.result {
+                Some(val) => match &val.value {
                     value::Value::Str(s) => s.clone(),
                     _ => {
                         eprintln!("crowfile: 'entry' must be a string");
@@ -748,7 +748,7 @@ fn parse_crowfile() -> CrowfileConfig {
             };
 
             let cpu = interpreter.get_var("cpu").and_then(|val| {
-                if let value::Value::Int(n) = &val.result {
+                if let value::Value::Int(n) = &val.value {
                     Some(*n as usize)
                 } else {
                     None
@@ -756,7 +756,7 @@ fn parse_crowfile() -> CrowfileConfig {
             });
 
             let gpu = interpreter.get_var("gpu").and_then(|val| {
-                if let value::Value::Int(n) = &val.result {
+                if let value::Value::Int(n) = &val.value {
                     Some(*n as usize)
                 } else {
                     None
@@ -765,9 +765,9 @@ fn parse_crowfile() -> CrowfileConfig {
 
             // parse deps: ['math' = '1.0', 'http' = '2.3']
             let deps = interpreter.get_var("deps").map(|val| {
-                if let value::Value::Map(map) = &val.result {
+                if let value::Value::Map(map) = &val.value {
                     map.iter().filter_map(|(name, v)| {
-                        if let value::Value::Str(ver) = &v.result {
+                        if let value::Value::Str(ver) = &v.value {
                             Some((name.clone(), ver.clone()))
                         } else {
                             None
