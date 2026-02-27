@@ -460,7 +460,8 @@ fn install_from_registry(name: &str, version: &str, dest: &std::path::Path) -> b
 
 /// Transpile a .crow file to Rust, compile it, and return the path to the binary.
 /// If `quiet` is true, suppress cargo build output (used for `crow run`).
-fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>) -> std::path::PathBuf {
+/// If `release` is true, compile with --release (optimized). Otherwise, use debug mode (fast compile).
+fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: bool) -> std::path::PathBuf {
     let source = read_file(entry);
     let stmts = match build(&source) {
         Ok(s) => s,
@@ -519,15 +520,32 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>) -> std::p
         process::exit(1);
     });
 
+    // Check if source has changed — skip compilation if binary is up-to-date
+    let main_rs_path = src_dir.join("main.rs");
+    let binary_path = if release {
+        build_dir.join("target/release").join(&project_name)
+    } else {
+        build_dir.join("target/debug").join(&project_name)
+    };
+
+    let existing_source = std::fs::read_to_string(&main_rs_path).unwrap_or_default();
+    if existing_source == rust_source && binary_path.exists() {
+        return binary_path;
+    }
+
     // Write transpiled Rust source
-    std::fs::write(src_dir.join("main.rs"), &rust_source).unwrap_or_else(|e| {
+    std::fs::write(&main_rs_path, &rust_source).unwrap_or_else(|e| {
         eprintln!("error writing main.rs: {}", e);
         process::exit(1);
     });
 
     // Compile with cargo (suppress output for quiet mode)
     let mut cmd = std::process::Command::new("cargo");
-    cmd.args(["build", "--release"]).current_dir(&build_dir);
+    if release {
+        cmd.args(["build", "--release"]).current_dir(&build_dir);
+    } else {
+        cmd.args(["build"]).current_dir(&build_dir);
+    }
     if quiet {
         cmd.stdout(std::process::Stdio::null())
            .stderr(std::process::Stdio::null());
@@ -542,7 +560,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>) -> std::p
         process::exit(1);
     }
 
-    build_dir.join("target/release").join(&project_name)
+    binary_path
 }
 
 fn cmd_build() {
@@ -557,7 +575,7 @@ fn cmd_build() {
         process::exit(1);
     };
 
-    let binary = transpile_and_compile(&entry, false, cpu);
+    let binary = transpile_and_compile(&entry, false, cpu, true);
 
     // Copy binary to current directory
     let binary_name = binary.file_name().unwrap().to_string_lossy().to_string();
@@ -599,12 +617,12 @@ fn run_binary(binary: &std::path::Path, extra_args: &[String]) {
 
 fn cmd_run(extra_args: &[String]) {
     let config = parse_crowfile();
-    let binary = transpile_and_compile(&config.entry, true, config.cpu);
+    let binary = transpile_and_compile(&config.entry, true, config.cpu, false);
     run_binary(&binary, extra_args);
 }
 
 fn cmd_run_file(filename: &str, extra_args: &[String]) {
-    let binary = transpile_and_compile(filename, true, None);
+    let binary = transpile_and_compile(filename, true, None, false);
     run_binary(&binary, extra_args);
 }
 
