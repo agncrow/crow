@@ -567,7 +567,8 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         });
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            eprintln!("compilation failed:\n{}", stderr);
+            let translated = translate_rust_compile_error(&stderr);
+            eprintln!("{}", translated);
             process::exit(1);
         }
     } else {
@@ -582,6 +583,28 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     }
 
     binary_path
+}
+
+/// Translate Rust compiler errors into Crow-friendly messages.
+/// If a known pattern is found, return a clean Crow error.
+/// Otherwise, fall back to showing the raw output.
+fn translate_rust_compile_error(stderr: &str) -> String {
+    // Try to extract the core error message from cargo output
+    // Rust errors look like: "error: ... attempt to divide `10_i64` by zero"
+    // or "error[E0308]: mismatched types"
+
+    if stderr.contains("attempt to divide") && stderr.contains("by zero") {
+        return "error: cannot divide by zero".to_string();
+    }
+    if stderr.contains("attempt to calculate the remainder") && stderr.contains("a divisor of zero") {
+        return "error: cannot divide by zero".to_string();
+    }
+    if stderr.contains("overflow") {
+        return "error: arithmetic overflow".to_string();
+    }
+
+    // Fallback: show raw output (this is a transpiler bug if it happens)
+    format!("compilation failed:\n{}", stderr)
 }
 
 fn cmd_build() {
