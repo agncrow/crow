@@ -34,23 +34,23 @@ impl CrowValue {
         }
     }
 
-    pub fn error(reason: &str, line: usize) -> Self {
+    pub fn error(reason: &str, trace_entry: &str) -> Self {
         CrowValue {
             value: Value::Done,
             ok: false,
             reason: reason.to_string(),
             kind: String::new(),
-            trace: vec![format!("line {}", line)],
+            trace: vec![trace_entry.to_string()],
         }
     }
 
-    pub fn error_with_kind(reason: &str, kind: &str, line: usize) -> Self {
+    pub fn error_with_kind(reason: &str, kind: &str, trace_entry: &str) -> Self {
         CrowValue {
             value: Value::Done,
             ok: false,
             reason: reason.to_string(),
             kind: kind.to_string(),
-            trace: vec![format!("line {}", line)],
+            trace: vec![trace_entry.to_string()],
         }
     }
 

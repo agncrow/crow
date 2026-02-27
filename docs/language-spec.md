@@ -719,14 +719,14 @@ Every value has:
 | `kind`   | error category (empty on success or if not specified) |
 | `trace`  | list of locations the error passed through (empty on success) |
 
-On failure, the value contains a safe default (`0` for int, `0.0` for float, `''` for string), `reason` describes what went wrong, `kind` categorizes the error, and `trace` records the call chain.
+On failure, the value contains a safe default (`0` for int, `0.0` for float, `''` for string), `reason` describes what went wrong, `kind` categorizes the error, and `trace` records the call chain. Each trace entry has the format `"line N in file.crow"` at top-level or `"line N in function (file.crow)"` inside a function.
 
 ```
 x = int['hello']
 log[x.ok]         --- false ---
 log[x.reason]     --- 'cannot convert ...' ---
 log[x.kind]       --- 'parse' ---
-log[x.trace]      --- ['line 1'] ---
+log[x.trace]      --- ['line 1 in main.crow'] ---
 ```
 
 ### Auto-Propagation
@@ -746,7 +746,7 @@ data = int['bad']           --- error-value ---
 result = pipeline[data]     --- error propagates through pipeline → process ---
 log[result.ok]              --- false ---
 log[result.reason]          --- 'cannot convert ...' ---
-log[result.trace]           --- ['line 5', 'line 6', ...] ---
+log[result.trace]           --- ['line 5 in validate (main.crow)', 'line 6 in main.crow', ...] ---
 ```
 
 **Exception:** `log[]` does not propagate — it prints error-values directly for debugging.
