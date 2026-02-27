@@ -563,11 +563,53 @@ impl Transpiler {
         // Emit main function with automatic parallelism
         self.emit_line("fn main() {");
         self.indent += 1;
+        self.emit_panic_hook();
         self.emit_stmts_parallel(&main_stmts);
         self.indent -= 1;
         self.emit_line("}");
 
         self.output.clone()
+    }
+
+    fn emit_panic_hook(&mut self) {
+        self.emit_line("std::panic::set_hook(Box::new(|info| {");
+        self.indent += 1;
+        self.emit_line("let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {");
+        self.emit_line("    s.to_string()");
+        self.emit_line("} else if let Some(s) = info.payload().downcast_ref::<String>() {");
+        self.emit_line("    s.clone()");
+        self.emit_line("} else {");
+        self.emit_line("    \"unknown error\".to_string()");
+        self.emit_line("};");
+        // Translate common Rust panic messages to Crow-friendly messages
+        self.emit_line("let crow_msg = if msg.contains(\"index out of bounds\") {");
+        self.emit_line("    let parts: Vec<&str> = msg.split(\"the len is \").collect();");
+        self.emit_line("    if parts.len() > 1 {");
+        self.emit_line("        let rest: Vec<&str> = parts[1].split(\" but the index is \").collect();");
+        self.emit_line("        if rest.len() > 1 {");
+        self.emit_line("            format!(\"index {} is out of range (list has {} items)\", rest[1], rest[0])");
+        self.emit_line("        } else { format!(\"index out of range\") }");
+        self.emit_line("    } else { format!(\"index out of range\") }");
+        self.emit_line("} else if msg.contains(\"divide by zero\") || msg.contains(\"division by zero\") {");
+        self.emit_line("    format!(\"cannot divide by zero\")");
+        self.emit_line("} else if msg.contains(\"attempt to divide by zero\") {");
+        self.emit_line("    format!(\"cannot divide by zero\")");
+        self.emit_line("} else if msg.contains(\"assertion failed\") {");
+        self.emit_line("    if msg.starts_with(\"assertion failed: \") {");
+        self.emit_line("        msg.clone()");
+        self.emit_line("    } else { format!(\"assertion failed\") }");
+        self.emit_line("} else if msg.contains(\"stack overflow\") {");
+        self.emit_line("    format!(\"stack overflow (possible infinite recursion)\")");
+        self.emit_line("} else if msg.contains(\"arithmetic operation overflowed\") || msg.contains(\"attempt to \") {");
+        self.emit_line("    let crow = msg.replace(\"attempt to \", \"\");");
+        self.emit_line("    format!(\"arithmetic error: {}\", crow)");
+        self.emit_line("} else {");
+        self.emit_line("    format!(\"runtime error: {}\", msg)");
+        self.emit_line("};");
+        self.emit_line("eprintln!(\"error: {}\", crow_msg);");
+        self.emit_line("std::process::exit(1);");
+        self.indent -= 1;
+        self.emit_line("}));");
     }
 
     fn emit_line(&mut self, line: &str) {
