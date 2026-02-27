@@ -70,14 +70,18 @@ impl Transpiler {
     }
 
     /// Generate a Rust format string for a trace entry.
-    /// Inside a function: "line N in func_name (file.crow)"
-    /// At top level: "line N in file.crow"
+    /// Inside a function: "file_stem.func_name:N"
+    /// At top level: "file_stem:N"
     fn trace_format_expr(&self) -> String {
-        let file = if self.source_file.is_empty() { "unknown" } else { &self.source_file };
-        if self.current_function_name.is_empty() {
-            format!("format!(\"line {{}} in {}\", {})", file, self.current_line)
+        let file_stem = if self.source_file.is_empty() {
+            "unknown"
         } else {
-            format!("format!(\"line {{}} in {} ({})\", {})", self.current_function_name, file, self.current_line)
+            self.source_file.strip_suffix(".crow").unwrap_or(&self.source_file)
+        };
+        if self.current_function_name.is_empty() {
+            format!("format!(\"{}:{{}}\", {})", file_stem, self.current_line)
+        } else {
+            format!("format!(\"{}.{}:{{}}\", {})", file_stem, self.current_function_name, self.current_line)
         }
     }
 
