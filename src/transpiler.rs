@@ -32,6 +32,10 @@ pub struct Transpiler {
     propagation_indices: Option<Vec<usize>>,
     /// Return type of the current function being emitted (for wrapping plain returns in CrowResult)
     current_fn_return_type: Option<CrowType>,
+    /// Name of the current function being emitted (for trace entries)
+    current_function_name: String,
+    /// Source file name (for trace entries)
+    source_file: String,
 }
 
 impl Transpiler {
@@ -52,11 +56,29 @@ impl Transpiler {
             unwrap_result_args: false,
             propagation_indices: None,
             current_fn_return_type: None,
+            current_function_name: String::new(),
+            source_file: String::new(),
         }
     }
 
     pub fn set_cpu_count(&mut self, n: usize) {
         self.cpu_count = Some(n);
+    }
+
+    pub fn set_source_file(&mut self, file: &str) {
+        self.source_file = file.to_string();
+    }
+
+    /// Generate a Rust format string for a trace entry.
+    /// Inside a function: "line N in func_name (file.crow)"
+    /// At top level: "line N in file.crow"
+    fn trace_format_expr(&self) -> String {
+        let file = if self.source_file.is_empty() { "unknown" } else { &self.source_file };
+        if self.current_function_name.is_empty() {
+            format!("format!(\"line {{}} in {}\", {})", file, self.current_line)
+        } else {
+            format!("format!(\"line {{}} in {} ({})\", {})", self.current_function_name, file, self.current_line)
+        }
     }
 
     /// Map Crow function names to valid Rust names.
@@ -604,9 +626,11 @@ impl Transpiler {
         let saved_ref_params = self.current_ref_params.clone();
         let saved_mutated = self.mutated_vars.clone();
         let saved_fn_return_type = self.current_fn_return_type.clone();
+        let saved_function_name = self.current_function_name.clone();
         self.declared.clear();
         self.current_ref_params = ref_set;
         self.current_fn_return_type = Some(sig.return_type.clone());
+        self.current_function_name = name.to_string();
 
         // Compute which local variables need `mut` in this function
         let mut seen = std::collections::HashSet::new();
@@ -631,6 +655,7 @@ impl Transpiler {
         self.current_ref_params = saved_ref_params;
         self.mutated_vars = saved_mutated;
         self.current_fn_return_type = saved_fn_return_type;
+        self.current_function_name = saved_function_name;
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
@@ -1357,7 +1382,7 @@ impl Transpiler {
                         return match ty {
                             CrowType::Int => arg_strs[0].clone(),
                             CrowType::Float => format!("({}) as i64", arg_strs[0]),
-                            CrowType::Str => format!("{{ let _int_arg = {}; match _int_arg.parse::<i64>() {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(_) => CrowResult {{ ok: false, value: 0_i64, reason: format!(\"cannot convert '{{}}' to int\", _int_arg), kind: \"parse\".to_string(), trace: vec![format!(\"line {{}}\", {})] }} }} }}", arg_strs[0], self.current_line),
+                            CrowType::Str => format!("{{ let _int_arg = {}; match _int_arg.parse::<i64>() {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(_) => CrowResult {{ ok: false, value: 0_i64, reason: format!(\"cannot convert '{{}}' to int\", _int_arg), kind: \"parse\".to_string(), trace: vec![{}] }} }} }}", arg_strs[0], self.trace_format_expr()),
                             CrowType::Bool => format!("if {} {{ 1_i64 }} else {{ 0_i64 }}", arg_strs[0]),
                             _ => format!("({}) as i64", arg_strs[0]),
                         };
@@ -1367,7 +1392,7 @@ impl Transpiler {
                         return match ty {
                             CrowType::Float => arg_strs[0].clone(),
                             CrowType::Int => format!("({}) as f64", arg_strs[0]),
-                            CrowType::Str => format!("{{ let _float_arg = {}; match _float_arg.parse::<f64>() {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(_) => CrowResult {{ ok: false, value: 0.0_f64, reason: format!(\"cannot convert '{{}}' to float\", _float_arg), kind: \"parse\".to_string(), trace: vec![format!(\"line {{}}\", {})] }} }} }}", arg_strs[0], self.current_line),
+                            CrowType::Str => format!("{{ let _float_arg = {}; match _float_arg.parse::<f64>() {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(_) => CrowResult {{ ok: false, value: 0.0_f64, reason: format!(\"cannot convert '{{}}' to float\", _float_arg), kind: \"parse\".to_string(), trace: vec![{}] }} }} }}", arg_strs[0], self.trace_format_expr()),
                             CrowType::Bool => format!("if {} {{ 1.0_f64 }} else {{ 0.0_f64 }}", arg_strs[0]),
                             _ => format!("({}) as f64", arg_strs[0]),
                         };
@@ -1444,11 +1469,11 @@ impl Transpiler {
                         return "std::env::args().skip(1).collect::<Vec<String>>()".to_string();
                     }
                     if name == "input" {
-                        let ln = self.current_line;
+                        let trace = self.trace_format_expr();
                         if arg_strs.len() == 1 {
-                            return format!("{{ print!(\"{{}}\", {}); use std::io::Write; std::io::stdout().flush().unwrap(); let mut _line = String::new(); match std::io::stdin().read_line(&mut _line) {{ Ok(_) => CrowResult {{ ok: true, value: _line.trim_end().to_string(), reason: String::new(), kind: String::new(), trace: vec![] }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![format!(\"line {{}}\", {})] }} }} }}", arg_strs[0], ln);
+                            return format!("{{ print!(\"{{}}\", {}); use std::io::Write; std::io::stdout().flush().unwrap(); let mut _line = String::new(); match std::io::stdin().read_line(&mut _line) {{ Ok(_) => CrowResult {{ ok: true, value: _line.trim_end().to_string(), reason: String::new(), kind: String::new(), trace: vec![] }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}] }} }} }}", arg_strs[0], trace);
                         }
-                        return format!("{{ let mut _line = String::new(); match std::io::stdin().read_line(&mut _line) {{ Ok(_) => CrowResult {{ ok: true, value: _line.trim_end().to_string(), reason: String::new(), kind: String::new(), trace: vec![] }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![format!(\"line {{}}\", {})] }} }} }}", ln);
+                        return format!("{{ let mut _line = String::new(); match std::io::stdin().read_line(&mut _line) {{ Ok(_) => CrowResult {{ ok: true, value: _line.trim_end().to_string(), reason: String::new(), kind: String::new(), trace: vec![] }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}] }} }} }}", trace);
                     }
                     // --- System builtins ---
                     if name == "rand" {
@@ -1497,7 +1522,7 @@ impl Transpiler {
                     }
                     // --- Error builtin ---
                     if name == "error" && (arg_strs.len() == 1 || arg_strs.len() == 2) {
-                        let ln = self.current_line;
+                        let trace = self.trace_format_expr();
                         let kind_expr = if arg_strs.len() == 2 {
                             format!("{}.to_string()", arg_strs[1])
                         } else {
@@ -1509,22 +1534,22 @@ impl Transpiler {
                         } else {
                             "String::new()".to_string()
                         };
-                        return format!("CrowResult {{ ok: false, value: {}, reason: {}.to_string(), kind: {}, trace: vec![format!(\"line {{}}\", {})] }}", default_val, arg_strs[0], kind_expr, ln);
+                        return format!("CrowResult {{ ok: false, value: {}, reason: {}.to_string(), kind: {}, trace: vec![{}] }}", default_val, arg_strs[0], kind_expr, trace);
                     }
                     // --- File I/O builtins ---
                     if name == "read" && arg_strs.len() == 1 {
-                        let ln = self.current_line;
-                        return format!("match std::fs::read_to_string(&*{}) {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![format!(\"line {{}}\", {})] }} }}", arg_strs[0], ln);
+                        let trace = self.trace_format_expr();
+                        return format!("match std::fs::read_to_string(&*{}) {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}] }} }}", arg_strs[0], trace);
                     }
                     if name == "write" && arg_strs.len() == 2 {
-                        let ln = self.current_line;
-                        return format!("match std::fs::write(&*{}, &*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![] }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![format!(\"line {{}}\", {})] }} }}", arg_strs[0], arg_strs[1], ln);
+                        let trace = self.trace_format_expr();
+                        return format!("match std::fs::write(&*{}, &*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![] }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}] }} }}", arg_strs[0], arg_strs[1], trace);
                     }
                     // --- JSON builtins ---
                     if name == "json" && arg_strs.len() == 1 {
                         self.needs_serde_json = true;
-                        let ln = self.current_line;
-                        return format!("match serde_json::from_str::<serde_json::Value>(&*{}) {{ Ok(v) => if v.is_null() {{ CrowResult {{ ok: false, value: serde_json::Value::Null, reason: \"null\".to_string(), kind: \"parse\".to_string(), trace: vec![format!(\"line {{}}\", {})] }} }} else {{ CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![] }} }}, Err(e) => CrowResult {{ ok: false, value: serde_json::Value::Null, reason: format!(\"invalid JSON: {{}}\", e), kind: \"parse\".to_string(), trace: vec![format!(\"line {{}}\", {})] }} }}", arg_strs[0], ln, ln);
+                        let trace = self.trace_format_expr();
+                        return format!("match serde_json::from_str::<serde_json::Value>(&*{}) {{ Ok(v) => if v.is_null() {{ CrowResult {{ ok: false, value: serde_json::Value::Null, reason: \"null\".to_string(), kind: \"parse\".to_string(), trace: vec![{}] }} }} else {{ CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![] }} }}, Err(e) => CrowResult {{ ok: false, value: serde_json::Value::Null, reason: format!(\"invalid JSON: {{}}\", e), kind: \"parse\".to_string(), trace: vec![{}] }} }}", arg_strs[0], trace, trace);
                     }
                     if name == "encode" && arg_strs.len() == 1 {
                         self.needs_serde_json = true;
@@ -1990,10 +2015,11 @@ impl Transpiler {
         already_result: bool,
     ) -> String {
         let default_val = inner_type.default_rust_value();
+        let trace_expr = self.trace_format_expr();
         let error_result = |idx: usize| -> String {
             format!(
-                "{{ let mut _err = CrowResult {{ ok: false, value: {}, reason: _prop_{}.reason.clone(), kind: _prop_{}.kind.clone(), trace: _prop_{}.trace.clone() }}; _err.trace.push(format!(\"line {{}}\", {})); _err }}",
-                default_val, idx, idx, idx, self.current_line
+                "{{ let mut _err = CrowResult {{ ok: false, value: {}, reason: _prop_{}.reason.clone(), kind: _prop_{}.kind.clone(), trace: _prop_{}.trace.clone() }}; _err.trace.push({}); _err }}",
+                default_val, idx, idx, idx, trace_expr
             )
         };
         let success_expr = if already_result {

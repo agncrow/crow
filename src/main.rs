@@ -484,6 +484,10 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
 
     // Transpile to Rust
     let mut transpiler = transpiler::Transpiler::new(ctx);
+    let entry_file = std::path::Path::new(entry).file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| entry.to_string());
+    transpiler.set_source_file(&entry_file);
     if let Some(n) = cpu {
         transpiler.set_cpu_count(n);
     }
@@ -651,6 +655,10 @@ fn cmd_run_interpreted() {
     };
 
     let mut interpreter = Interpreter::new();
+    let entry_file = std::path::Path::new(&config.entry).file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| config.entry.clone());
+    interpreter.set_source_file(&entry_file);
     if let Some(dir) = std::path::Path::new(&config.entry).parent() {
         if dir.as_os_str().len() > 0 {
             interpreter.set_source_dir(dir.to_path_buf());
@@ -705,6 +713,10 @@ fn cmd_run_file_interpreted(filename: &str) {
 
     let mut interpreter = Interpreter::new();
     let base = filename.replace(".crowc", ".crow");
+    let source_file = std::path::Path::new(&base).file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| base.clone());
+    interpreter.set_source_file(&source_file);
     if let Some(dir) = std::path::Path::new(&base).parent() {
         if dir.as_os_str().len() > 0 {
             interpreter.set_source_dir(dir.to_path_buf());

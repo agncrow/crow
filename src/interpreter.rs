@@ -117,6 +117,8 @@ pub struct Interpreter {
     source_dir: PathBuf,
     module_paths: Vec<PathBuf>,
     current_line: usize,
+    current_function: String,
+    current_file: String,
 }
 
 impl Interpreter {
@@ -128,6 +130,22 @@ impl Interpreter {
             source_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             module_paths: vec![],
             current_line: 0,
+            current_function: String::new(),
+            current_file: String::new(),
+        }
+    }
+
+    pub fn set_source_file(&mut self, file: &str) {
+        self.current_file = file.to_string();
+    }
+
+    /// Format a trace entry like "line 3 in validate (file.crow)" or "line 7 in file.crow"
+    fn trace_entry(&self) -> String {
+        let file = if self.current_file.is_empty() { "unknown" } else { &self.current_file };
+        if self.current_function.is_empty() {
+            format!("line {} in {}", self.current_line, file)
+        } else {
+            format!("line {} in {} ({})", self.current_line, self.current_function, file)
         }
     }
 
@@ -834,7 +852,7 @@ impl Interpreter {
         // soft error propagation: if callee is an error, propagate it
         if callee_val.is_error() {
             let mut err = callee_val;
-            err.append_trace(&format!("line {}", self.current_line));
+            err.append_trace(&self.trace_entry());
             return Ok(err);
         }
 
@@ -847,7 +865,7 @@ impl Interpreter {
         for arg in &arg_vals {
             if arg.is_error() {
                 let mut err = arg.clone();
-                err.append_trace(&format!("line {}", self.current_line));
+                err.append_trace(&self.trace_entry());
                 return Ok(err);
             }
         }
@@ -865,6 +883,8 @@ impl Interpreter {
                 }
                 // Use isolated call scope so function locals don't
                 // clobber caller variables with the same name.
+                let saved_function = self.current_function.clone();
+                self.current_function = func.name.clone();
                 self.env.push_call_scope();
                 for (param, val) in func.params.iter().zip(arg_vals) {
                     self.env.set(param, val);
@@ -874,6 +894,7 @@ impl Interpreter {
                     match self.exec_stmt(stmt)? {
                         Signal::Return(val) => {
                             self.env.pop_call_scope();
+                            self.current_function = saved_function;
                             return Ok(val);
                         }
                         Signal::Value(val) => { result = val; }
@@ -881,6 +902,7 @@ impl Interpreter {
                     }
                 }
                 self.env.pop_call_scope();
+                self.current_function = saved_function;
                 Ok(result)
             }
             Value::StructDef(sd) => {
@@ -974,7 +996,7 @@ impl Interpreter {
             for arg in args {
                 if arg.is_error() {
                     let mut err = arg.clone();
-                    err.append_trace(&format!("line {}", self.current_line));
+                    err.append_trace(&self.trace_entry());
                     return Ok(err);
                 }
             }
@@ -1240,10 +1262,10 @@ impl Interpreter {
                     Value::Float(n) => Ok(CrowValue::ok(Value::Int(*n as i64))),
                     Value::Str(s) => match s.parse::<i64>() {
                         Ok(n) => Ok(CrowValue::ok(Value::Int(n))),
-                        Err(_) => Ok(CrowValue::error_with_kind(&format!("cannot convert '{}' to int", s), "parse", self.current_line)),
+                        Err(_) => Ok(CrowValue::error_with_kind(&format!("cannot convert '{}' to int", s), "parse", &self.trace_entry())),
                     },
                     Value::Bool(b) => Ok(CrowValue::ok(Value::Int(if *b { 1 } else { 0 }))),
-                    _ => Ok(CrowValue::error_with_kind("cannot convert to int", "parse", self.current_line)),
+                    _ => Ok(CrowValue::error_with_kind("cannot convert to int", "parse", &self.trace_entry())),
                 }
             }
             "float" => {
@@ -1253,10 +1275,10 @@ impl Interpreter {
                     Value::Float(n) => Ok(CrowValue::ok(Value::Float(*n))),
                     Value::Str(s) => match s.parse::<f64>() {
                         Ok(n) => Ok(CrowValue::ok(Value::Float(n))),
-                        Err(_) => Ok(CrowValue::error_with_kind(&format!("cannot convert '{}' to float", s), "parse", self.current_line)),
+                        Err(_) => Ok(CrowValue::error_with_kind(&format!("cannot convert '{}' to float", s), "parse", &self.trace_entry())),
                     },
                     Value::Bool(b) => Ok(CrowValue::ok(Value::Float(if *b { 1.0 } else { 0.0 }))),
-                    _ => Ok(CrowValue::error_with_kind("cannot convert to float", "parse", self.current_line)),
+                    _ => Ok(CrowValue::error_with_kind("cannot convert to float", "parse", &self.trace_entry())),
                 }
             }
             "str" => {
@@ -1413,7 +1435,7 @@ impl Interpreter {
                 match args[0].unwrap_or_propagate()? {
                     Value::List(items) => {
                         if items.is_empty() {
-                            return Ok(CrowValue::error("pop from empty list", self.current_line));
+                            return Ok(CrowValue::error("pop from empty list", &self.trace_entry()));
                         }
                         let new_items = items[..items.len() - 1].to_vec();
                         Ok(CrowValue::ok(Value::List(new_items)))
@@ -1511,7 +1533,7 @@ impl Interpreter {
                         let trimmed = line.trim_end_matches('\n').trim_end_matches('\r').to_string();
                         Ok(CrowValue::ok(Value::Str(trimmed)))
                     }
-                    Err(e) => Ok(CrowValue::error_with_kind(&format!("input error: {}", e), "io", self.current_line)),
+                    Err(e) => Ok(CrowValue::error_with_kind(&format!("input error: {}", e), "io", &self.trace_entry())),
                 }
             }
             // --- System builtins ---
@@ -1564,7 +1586,7 @@ impl Interpreter {
                 if !args.is_empty() { return Err("time[] takes no arguments".into()); }
                 match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
                     Ok(d) => Ok(CrowValue::ok(Value::Float(d.as_secs_f64()))),
-                    Err(_) => Ok(CrowValue::error("system time before unix epoch", self.current_line)),
+                    Err(_) => Ok(CrowValue::error("system time before unix epoch", &self.trace_entry())),
                 }
             }
             "sleep" => {
@@ -1612,7 +1634,7 @@ impl Interpreter {
                     Value::Str(path) => {
                         match std::fs::read_to_string(path) {
                             Ok(content) => Ok(CrowValue::ok(Value::Str(content))),
-                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot read '{}': {}", path, e), "io", self.current_line)),
+                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot read '{}': {}", path, e), "io", &self.trace_entry())),
                         }
                     }
                     _ => Err("read[] requires a string path".into()),
@@ -1624,7 +1646,7 @@ impl Interpreter {
                     (Value::Str(path), Value::Str(content)) => {
                         match std::fs::write(path, content) {
                             Ok(_) => Ok(CrowValue::done()),
-                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot write '{}': {}", path, e), "io", self.current_line)),
+                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot write '{}': {}", path, e), "io", &self.trace_entry())),
                         }
                     }
                     _ => Err("write[] requires a string path and string content".into()),
@@ -1637,7 +1659,7 @@ impl Interpreter {
                     Value::Str(s) => {
                         match serde_json::from_str::<serde_json::Value>(s) {
                             Ok(jval) => Ok(self.json_to_crow(&jval)),
-                            Err(e) => Ok(CrowValue::error_with_kind(&format!("invalid JSON: {}", e), "parse", self.current_line)),
+                            Err(e) => Ok(CrowValue::error_with_kind(&format!("invalid JSON: {}", e), "parse", &self.trace_entry())),
                         }
                     }
                     _ => Err("json[] requires a string argument".into()),
@@ -1648,7 +1670,7 @@ impl Interpreter {
                 let jval = self.crow_to_json(&args[0]);
                 match jval {
                     Ok(v) => Ok(CrowValue::ok(Value::Str(v.to_string()))),
-                    Err(e) => Ok(CrowValue::error(&e, self.current_line)),
+                    Err(e) => Ok(CrowValue::error(&e, &self.trace_entry())),
                 }
             }
             "assert" => {
@@ -1691,7 +1713,7 @@ impl Interpreter {
                 } else {
                     String::new()
                 };
-                Ok(CrowValue::error_with_kind(&reason, &kind, self.current_line))
+                Ok(CrowValue::error_with_kind(&reason, &kind, &self.trace_entry()))
             }
             _ => Err(format!("undefined function '{}'", name)),
         }
@@ -1701,7 +1723,7 @@ impl Interpreter {
     /// JSON null becomes an error-value with reason "null".
     fn json_to_crow(&self, jval: &serde_json::Value) -> CrowValue {
         match jval {
-            serde_json::Value::Null => CrowValue::error_with_kind("null", "parse", self.current_line),
+            serde_json::Value::Null => CrowValue::error_with_kind("null", "parse", &self.trace_entry()),
             serde_json::Value::Bool(b) => CrowValue::ok(Value::Bool(*b)),
             serde_json::Value::Number(n) => {
                 if let Some(i) = n.as_i64() {
@@ -1803,7 +1825,7 @@ impl Interpreter {
             BinOp::Div => match (l, r) {
                 (Value::Int(a), Value::Int(b)) => {
                     if *b == 0 {
-                        Ok(CrowValue::error_with_kind("division by zero", "math", self.current_line))
+                        Ok(CrowValue::error_with_kind("division by zero", "math", &self.trace_entry()))
                     } else {
                         Ok(CrowValue::ok(Value::Int(a / b)))
                     }
@@ -1816,7 +1838,7 @@ impl Interpreter {
             BinOp::Mod => match (l, r) {
                 (Value::Int(a), Value::Int(b)) => {
                     if *b == 0 {
-                        Ok(CrowValue::error_with_kind("modulo by zero", "math", self.current_line))
+                        Ok(CrowValue::error_with_kind("modulo by zero", "math", &self.trace_entry()))
                     } else {
                         Ok(CrowValue::ok(Value::Int(a % b)))
                     }
