@@ -16,7 +16,7 @@ pub enum CrowType {
     /// Used when a struct field holds both a sentinel (e.g. 0) and a recursive struct reference.
     OptBoxStruct(String),
     Fn(Vec<CrowType>, Box<CrowType>),
-    /// Error-value wrapper: CrowResult<T> with .status, .result, .reason
+    /// Error-value wrapper: CrowResult<T> with .ok, .reason, .kind, .trace
     Result(Box<CrowType>),
     /// Dynamic JSON value (serde_json::Value) — returned by json[]
     Json,
@@ -59,7 +59,7 @@ impl CrowType {
             CrowType::Struct(name) => format!("unsafe {{ std::mem::zeroed::<{}>() }}", name),
             CrowType::OptBoxStruct(_) => "None".into(),
             CrowType::Fn(_, _) => "panic!(\"unreachable\")".into(),
-            CrowType::Result(inner) => format!("CrowResult {{ status: \"error\".to_string(), result: {}, reason: String::new(), line: 0 }}", inner.default_rust_value()),
+            CrowType::Result(inner) => format!("CrowResult {{ ok: false, value: {}, reason: String::new(), kind: String::new(), trace: vec![] }}", inner.default_rust_value()),
             CrowType::Json => "serde_json::Value::Null".into(),
             CrowType::Void => "()".into(),
             CrowType::Unknown => "String::new()".into(),
@@ -708,6 +708,7 @@ impl TypeContext {
         // Builtins (check before vars to prevent builtins from being shadowed by Fn inference)
         match name {
             "log" | "cpu" | "gpu" | "assert" => CrowType::Void,
+            "error" => CrowType::Result(Box::new(CrowType::Str)),
             "map" => CrowType::Map(Box::new(CrowType::Unknown)),
             "range" => CrowType::List(Box::new(CrowType::Int)),
             // Math builtins
@@ -915,7 +916,7 @@ impl TypeContext {
                 if let Expr::Ident(name) = callee.as_ref() {
                     let base = self.infer_call_base(name, args, callee);
                     // Auto-propagation: wrap in CrowResult if any arg is CrowResult
-                    let skip = matches!(name.as_str(), "log" | "assert" | "type" | "cpu" | "gpu");
+                    let skip = matches!(name.as_str(), "log" | "assert" | "type" | "cpu" | "gpu" | "error");
                     if !skip && !matches!(base, CrowType::Result(_) | CrowType::Void) {
                         let has_result_arg = args.iter().any(|a| matches!(self.infer_expr(a), CrowType::Result(_)));
                         if has_result_arg {
@@ -950,6 +951,13 @@ impl TypeContext {
             }
             Expr::FieldAccess { object, field } => {
                 let obj_type = self.infer_expr(object);
+                // Error-value metadata fields
+                match field.as_str() {
+                    "ok" => return CrowType::Bool,
+                    "reason" | "kind" => return CrowType::Str,
+                    "trace" => return CrowType::List(Box::new(CrowType::Str)),
+                    _ => {}
+                }
                 if let CrowType::Struct(name) = obj_type {
                     if let Some(sig) = self.structs.get(&name) {
                         for (fname, ftype) in &sig.fields {
