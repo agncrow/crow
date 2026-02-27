@@ -218,6 +218,7 @@ impl TypeContext {
             for (name, body) in &fn_entries {
                 self.infer_function_body(name, body);
             }
+
         }
 
         // Pass 4: infer top-level variables
@@ -451,8 +452,9 @@ impl TypeContext {
                         match &existing {
                             CrowType::Fn(_, _) => {
                                 // Already known to be Fn — refine arg types
-                                let fn_type = CrowType::Fn(arg_types, Box::new(CrowType::Unknown));
-                                self.vars.insert(name.clone(), existing.unify(&fn_type));
+                                let fn_type = CrowType::Fn(arg_types.clone(), Box::new(CrowType::Unknown));
+                                let unified = existing.unify(&fn_type);
+                                self.vars.insert(name.clone(), unified);
                             }
                             CrowType::Unknown if !is_param => {
                                 // Non-param Unknown variable called with [] — assume it's a function
@@ -857,9 +859,14 @@ impl TypeContext {
             "json" => CrowType::Result(Box::new(CrowType::Json)),
             "encode" => CrowType::Result(Box::new(CrowType::Str)),
             _ => {
-                // First-class function call: variable with Fn type (e.g. f[x] where f is a parameter)
-                if let Some(CrowType::Fn(_, ret)) = self.vars.get(name) {
-                    return *ret.clone();
+                // Check variable type: could be a function call, list/map indexing, etc.
+                if let Some(var_type) = self.vars.get(name) {
+                    match var_type {
+                        CrowType::Fn(_, ret) => return *ret.clone(),
+                        CrowType::List(inner) => return *inner.clone(),
+                        CrowType::Map(inner) => return *inner.clone(),
+                        _ => {}
+                    }
                 }
                 CrowType::Unknown
             },
