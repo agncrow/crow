@@ -689,7 +689,7 @@ impl TypeContext {
         if let Some(sig) = self.functions.get(name) {
             return sig.return_type.clone();
         }
-        // Builtins
+        // Builtins (check before vars to prevent builtins from being shadowed by Fn inference)
         match name {
             "log" | "cpu" | "gpu" | "assert" => CrowType::Void,
             "map" => CrowType::Map(Box::new(CrowType::Unknown)),
@@ -842,7 +842,13 @@ impl TypeContext {
             // JSON builtins
             "json" => CrowType::Result(Box::new(CrowType::Json)),
             "encode" => CrowType::Result(Box::new(CrowType::Str)),
-            _ => CrowType::Unknown,
+            _ => {
+                // First-class function call: variable with Fn type (e.g. f[x] where f is a parameter)
+                if let Some(CrowType::Fn(_, ret)) = self.vars.get(name) {
+                    return *ret.clone();
+                }
+                CrowType::Unknown
+            },
         }
     }
 

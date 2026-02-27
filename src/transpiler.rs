@@ -348,10 +348,21 @@ impl Transpiler {
     }
 
     /// Recursively check if any for loop exists in the statements (for rayon detection).
+    /// Check if an expression contains a ForExpr (for-as-expression).
+    fn expr_has_for_expr(expr: &Expr) -> bool {
+        match expr {
+            Expr::ForExpr { .. } => true,
+            _ => false,
+        }
+    }
+
     fn has_for_loop(stmts: &[Stmt]) -> bool {
         for stmt in stmts {
             match stmt {
                 Stmt::For { .. } => return true,
+                Stmt::Assign { value, .. } => {
+                    if Self::expr_has_for_expr(value) { return true; }
+                }
                 Stmt::If { then_body, else_body, .. } => {
                     if Self::has_for_loop(then_body) { return true; }
                     if let Some(eb) = else_body {
@@ -911,8 +922,14 @@ impl Transpiler {
                 self.emit_line("}");
             }
             Stmt::While { condition, body } => {
-                let cond_str = self.expr_to_string(condition);
-                self.emit_line(&format!("while {} {{", cond_str));
+                // Detect `while true` and emit `loop {}` to avoid Rust warning
+                let is_infinite = matches!(condition, Expr::Bool(true));
+                if is_infinite {
+                    self.emit_line("loop {");
+                } else {
+                    let cond_str = self.expr_to_string(condition);
+                    self.emit_line(&format!("while {} {{", cond_str));
+                }
                 self.indent += 1;
                 let saved = self.declared.clone();
                 for s in body { self.emit_stmt(s); }
@@ -1716,6 +1733,9 @@ impl Transpiler {
         let forced_sequential = self.cpu_count.map_or(false, |n| n <= 1);
         let mutates_outer = Self::for_body_mutates_outer(body, var, &self.declared);
         let use_par = !forced_sequential && !mutates_outer;
+        if use_par {
+            self.needs_rayon = true;
+        }
         let iter_method = if use_par { "par_iter" } else { "iter" };
 
         // Determine element type of the iterator for the closure pattern
