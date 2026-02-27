@@ -955,6 +955,7 @@ impl Interpreter {
             | "args" | "input"
             | "assert"
             | "rand" | "time" | "sleep" | "env" | "exit"
+            | "json" | "encode"
         )
     }
 
@@ -1623,6 +1624,27 @@ impl Interpreter {
                     _ => Err("write[] requires a string path and string content".into()),
                 }
             }
+            // --- JSON builtins ---
+            "json" => {
+                if args.len() != 1 { return Err("json[] takes exactly 1 argument".into()); }
+                match args[0].unwrap_or_propagate()? {
+                    Value::Str(s) => {
+                        match serde_json::from_str::<serde_json::Value>(s) {
+                            Ok(jval) => Ok(self.json_to_crow(&jval)),
+                            Err(e) => Ok(CrowValue::error(&format!("invalid JSON: {}", e), self.current_line)),
+                        }
+                    }
+                    _ => Err("json[] requires a string argument".into()),
+                }
+            }
+            "encode" => {
+                if args.len() != 1 { return Err("encode[] takes exactly 1 argument".into()); }
+                let jval = self.crow_to_json(&args[0]);
+                match jval {
+                    Ok(v) => Ok(CrowValue::ok(Value::Str(v.to_string()))),
+                    Err(e) => Ok(CrowValue::error(&e, self.current_line)),
+                }
+            }
             "assert" => {
                 if args.is_empty() || args.len() > 2 {
                     return Err("assert[] takes 1 or 2 arguments".to_string());
@@ -1647,6 +1669,68 @@ impl Interpreter {
                 Ok(CrowValue::done())
             }
             _ => Err(format!("undefined function '{}'", name)),
+        }
+    }
+
+    /// Convert a serde_json::Value to a CrowValue.
+    /// JSON null becomes an error-value with reason "null".
+    fn json_to_crow(&self, jval: &serde_json::Value) -> CrowValue {
+        match jval {
+            serde_json::Value::Null => CrowValue::error("null", self.current_line),
+            serde_json::Value::Bool(b) => CrowValue::ok(Value::Bool(*b)),
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    CrowValue::ok(Value::Int(i))
+                } else if let Some(f) = n.as_f64() {
+                    CrowValue::ok(Value::Float(f))
+                } else {
+                    CrowValue::ok(Value::Int(0))
+                }
+            }
+            serde_json::Value::String(s) => CrowValue::ok(Value::Str(s.clone())),
+            serde_json::Value::Array(arr) => {
+                let items: Vec<CrowValue> = arr.iter().map(|v| self.json_to_crow(v)).collect();
+                CrowValue::ok(Value::List(items))
+            }
+            serde_json::Value::Object(obj) => {
+                let mut map = BTreeMap::new();
+                for (k, v) in obj {
+                    map.insert(k.clone(), self.json_to_crow(v));
+                }
+                CrowValue::ok(Value::Map(map))
+            }
+        }
+    }
+
+    /// Convert a CrowValue to a serde_json::Value for encoding.
+    fn crow_to_json(&self, val: &CrowValue) -> Result<serde_json::Value, String> {
+        if val.is_error() {
+            // Error-values encode as JSON null (round-trip with json[])
+            return Ok(serde_json::Value::Null);
+        }
+        match &val.result {
+            Value::Int(n) => Ok(serde_json::Value::Number(serde_json::Number::from(*n))),
+            Value::Float(f) => {
+                match serde_json::Number::from_f64(*f) {
+                    Some(n) => Ok(serde_json::Value::Number(n)),
+                    None => Err(format!("cannot encode float {} to JSON", f)),
+                }
+            }
+            Value::Str(s) => Ok(serde_json::Value::String(s.clone())),
+            Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
+            Value::List(items) => {
+                let arr: Result<Vec<serde_json::Value>, String> = items.iter().map(|v| self.crow_to_json(v)).collect();
+                Ok(serde_json::Value::Array(arr?))
+            }
+            Value::Map(map) => {
+                let mut obj = serde_json::Map::new();
+                for (k, v) in map {
+                    obj.insert(k.clone(), self.crow_to_json(v)?);
+                }
+                Ok(serde_json::Value::Object(obj))
+            }
+            Value::Done => Ok(serde_json::Value::Null),
+            _ => Err(format!("cannot encode {} to JSON", val.result.type_name())),
         }
     }
 

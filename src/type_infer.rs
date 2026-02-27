@@ -18,6 +18,8 @@ pub enum CrowType {
     Fn(Vec<CrowType>, Box<CrowType>),
     /// Error-value wrapper: CrowResult<T> with .status, .result, .reason
     Result(Box<CrowType>),
+    /// Dynamic JSON value (serde_json::Value) — returned by json[]
+    Json,
     Void,
     Unknown,
 }
@@ -38,6 +40,7 @@ impl CrowType {
                 format!("fn({}) -> {}", param_types.join(", "), ret.to_rust_type())
             }
             CrowType::Result(inner) => format!("CrowResult<{}>", inner.to_rust_type()),
+            CrowType::Json => "serde_json::Value".into(),
             CrowType::Void => "()".into(),
             CrowType::Unknown => "String".into(),
         }
@@ -57,6 +60,7 @@ impl CrowType {
             CrowType::OptBoxStruct(_) => "None".into(),
             CrowType::Fn(_, _) => "panic!(\"unreachable\")".into(),
             CrowType::Result(inner) => format!("CrowResult {{ status: \"error\".to_string(), result: {}, reason: String::new(), line: 0 }}", inner.default_rust_value()),
+            CrowType::Json => "serde_json::Value::Null".into(),
             CrowType::Void => "()".into(),
             CrowType::Unknown => "String::new()".into(),
         }
@@ -78,6 +82,7 @@ impl CrowType {
                 format!("fn[{}] -> {}", p.join(", "), ret.crow_name())
             }
             CrowType::Result(inner) => format!("result[{}]", inner.crow_name()),
+            CrowType::Json => "json".into(),
             CrowType::Void => "void".into(),
             CrowType::Unknown => "unknown".into(),
         }
@@ -834,6 +839,9 @@ impl TypeContext {
             "sleep" => CrowType::Int,
             "env" => CrowType::Str,
             "exit" => CrowType::Int,
+            // JSON builtins
+            "json" => CrowType::Result(Box::new(CrowType::Json)),
+            "encode" => CrowType::Result(Box::new(CrowType::Str)),
             _ => CrowType::Unknown,
         }
     }
@@ -889,11 +897,12 @@ impl TypeContext {
                     }
                     return base;
                 }
-                // List/Map indexing or indirect function call
+                // List/Map/Json indexing or indirect function call
                 let callee_type = self.infer_expr(callee);
                 match callee_type {
                     CrowType::List(inner) => *inner,
                     CrowType::Map(inner) => *inner,
+                    CrowType::Json => CrowType::Json,
                     CrowType::Fn(_, ret) => *ret,
                     _ => CrowType::Unknown,
                 }

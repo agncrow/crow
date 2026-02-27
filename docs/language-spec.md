@@ -290,6 +290,27 @@ data = map[]             --- empty map ---
 | `input[]` | Read a line from stdin (error-value on failure) |
 | `input[prompt]` | Print prompt, then read a line (error-value on failure) |
 
+#### JSON
+
+| Function | Description |
+|----------|-------------|
+| `json[str]` | Parse JSON string into a Crow value (error-value on failure) |
+| `encode[value]` | Encode a Crow value as a JSON string |
+
+JSON type mapping: objects → maps, arrays → lists, strings → str, numbers → int/float, booleans → bool, `null` → error-value. JSON `null` maps to an error-value with `status: 'error'` and `reason: 'null'`, which auto-propagates through the error-value system (§11).
+
+```
+items = json['[1, 2, 3]']
+log[items[0]]              --- 1 ---
+
+n = json['null']
+log[n.status]              --- 'error' ---
+log[n.reason]              --- 'null' ---
+
+s = encode[items]
+log[s]                     --- [1,2,3] ---
+```
+
 #### System
 
 | Function | Description |
@@ -623,6 +644,7 @@ These builtins can fail and return an error-value struct:
 | `input[]` / `input[prompt]` | Stdin read fails |
 | `int[string]` | String can't be parsed as integer |
 | `float[string]` | String can't be parsed as float |
+| `json[string]` | String is not valid JSON, or value is `null` |
 
 Non-fallible conversions (e.g. `int[3.14]`, `int[true]`) return raw values, not error-value structs.
 

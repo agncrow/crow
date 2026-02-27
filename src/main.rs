@@ -498,10 +498,17 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>) -> std::p
 
     // Write Cargo.toml
     let project_name = entry.replace(".crow", "").replace('/', "_");
-    let deps = if transpiler.needs_rayon {
-        "\n[dependencies]\nrayon = \"1.10\"\n"
+    let mut dep_list = Vec::new();
+    if transpiler.needs_rayon {
+        dep_list.push("rayon = \"1.10\"");
+    }
+    if transpiler.needs_serde_json {
+        dep_list.push("serde_json = \"1\"");
+    }
+    let deps = if dep_list.is_empty() {
+        String::new()
     } else {
-        ""
+        format!("\n[dependencies]\n{}\n", dep_list.join("\n"))
     };
     let cargo_toml = format!(
         "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{}\n[profile.release]\nopt-level = 3\nlto = true\n",
