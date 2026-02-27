@@ -463,7 +463,7 @@ impl TypeContext {
                         }
                     }
                 }
-                // Module function call: module.func[args] → resolve as module_func
+                // Module function/struct call: module.func[args] or module.Struct[args]
                 if let Expr::FieldAccess { object, field } = callee.as_ref() {
                     if let Expr::Ident(mod_name) = object.as_ref() {
                         let prefixed = format!("{}_{}", mod_name, field);
@@ -483,6 +483,20 @@ impl TypeContext {
                                 }
                             }
                             self.functions.get_mut(&prefixed).unwrap().params = new_params;
+                        }
+                        // Module struct constructor: update field types from args
+                        if self.structs.contains_key(&prefixed) {
+                            let arg_types: Vec<CrowType> = args.iter()
+                                .map(|a| self.infer_expr(a))
+                                .collect();
+                            let sig = self.structs.get(&prefixed).unwrap().clone();
+                            let mut new_fields = sig.fields.clone();
+                            for (i, at) in arg_types.iter().enumerate() {
+                                if i < new_fields.len() {
+                                    new_fields[i].1 = new_fields[i].1.unify(at);
+                                }
+                            }
+                            self.structs.get_mut(&prefixed).unwrap().fields = new_fields;
                         }
                     }
                 }
@@ -902,6 +916,20 @@ impl TypeContext {
                         }
                     }
                     return base;
+                }
+                // Module call: module.func[args] or module.Struct[args]
+                if let Expr::FieldAccess { object, field } = callee.as_ref() {
+                    if let Expr::Ident(_mod_name) = object.as_ref() {
+                        let prefixed = format!("{}_{}", _mod_name, field);
+                        // Module struct constructor
+                        if self.structs.contains_key(&prefixed) {
+                            return CrowType::Struct(prefixed);
+                        }
+                        // Module function call
+                        if let Some(sig) = self.functions.get(&prefixed) {
+                            return sig.return_type.clone();
+                        }
+                    }
                 }
                 // List/Map/Json indexing or indirect function call
                 let callee_type = self.infer_expr(callee);
