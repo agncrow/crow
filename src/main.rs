@@ -6,6 +6,7 @@ mod parser;
 mod token;
 mod transpiler;
 mod type_infer;
+mod validator;
 mod value;
 
 use interpreter::Interpreter;
@@ -481,6 +482,13 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     // Run type inference
     let mut ctx = type_infer::TypeContext::new();
     ctx.infer_program(&stmts);
+
+    // Run validation pass — catch user errors before transpilation
+    let mut v = validator::Validator::new(&ctx);
+    if let Err(e) = v.validate(&stmts) {
+        eprintln!("{}", e);
+        process::exit(1);
+    }
 
     // Transpile to Rust
     let mut transpiler = transpiler::Transpiler::new(ctx);
