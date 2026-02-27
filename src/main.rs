@@ -585,26 +585,185 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     binary_path
 }
 
+/// Map Rust type names to Crow type names.
+fn rust_type_to_crow(rust_type: &str) -> String {
+    let t = rust_type.trim().trim_matches('`').trim_matches('&');
+    match t {
+        "i64" | "i64_" => "int".to_string(),
+        "f64" | "f64_" => "float".to_string(),
+        "bool" => "bool".to_string(),
+        "String" | "&str" | "str" => "string".to_string(),
+        s if s.starts_with("Vec<") => "list".to_string(),
+        s if s.starts_with("HashMap<") => "map".to_string(),
+        s if s.contains("CrowResult") => "result".to_string(),
+        other => other.to_string(),
+    }
+}
+
 /// Translate Rust compiler errors into Crow-friendly messages.
 /// If a known pattern is found, return a clean Crow error.
 /// Otherwise, fall back to showing the raw output.
 fn translate_rust_compile_error(stderr: &str) -> String {
-    // Try to extract the core error message from cargo output
-    // Rust errors look like: "error: ... attempt to divide `10_i64` by zero"
-    // or "error[E0308]: mismatched types"
-
+    // --- Division by zero (compile-time constant) ---
     if stderr.contains("attempt to divide") && stderr.contains("by zero") {
         return "error: cannot divide by zero".to_string();
     }
     if stderr.contains("attempt to calculate the remainder") && stderr.contains("a divisor of zero") {
         return "error: cannot divide by zero".to_string();
     }
-    if stderr.contains("overflow") {
+
+    // --- Arithmetic overflow ---
+    if stderr.contains("arithmetic operation overflowed") || stderr.contains("overflow") && stderr.contains("attempt to") {
         return "error: arithmetic overflow".to_string();
     }
 
-    // Fallback: show raw output (this is a transpiler bug if it happens)
+    // --- Type mismatch (E0308) ---
+    // e.g. "expected `&str`, found `i64`"
+    if stderr.contains("mismatched types") {
+        if let Some(msg) = extract_type_mismatch(stderr) {
+            return format!("error: {}", msg);
+        }
+    }
+
+    // --- Cannot apply operator (E0277) ---
+    // e.g. "cannot add `i64` to `String`"
+    if let Some(msg) = extract_cannot_op(stderr) {
+        return format!("error: {}", msg);
+    }
+
+    // --- Non-primitive cast (E0605) ---
+    // e.g. "non-primitive cast: `String` as `usize`"
+    if stderr.contains("non-primitive cast") {
+        return "error: type mismatch — cannot use string as list index (use int)".to_string();
+    }
+
+    // --- Undefined variable (E0425) ---
+    // e.g. "cannot find value `x` in this scope"
+    if stderr.contains("cannot find value") {
+        if let Some(name) = extract_between(stderr, "cannot find value `", "`") {
+            return format!("error: undefined variable '{}'", name);
+        }
+        return "error: undefined variable".to_string();
+    }
+
+    // --- Undefined function (E0425) ---
+    if stderr.contains("cannot find function") {
+        if let Some(name) = extract_between(stderr, "cannot find function `", "`") {
+            return format!("error: undefined function '{}'", name);
+        }
+        return "error: undefined function".to_string();
+    }
+
+    // --- Immutable variable (E0384) ---
+    if stderr.contains("cannot assign twice to immutable variable") {
+        if let Some(name) = extract_between(stderr, "immutable variable `", "`") {
+            return format!("error: cannot reassign '{}' — variable is immutable", name);
+        }
+        return "error: cannot reassign immutable variable".to_string();
+    }
+
+    // --- Borrow checker (E0502, E0505, E0382) ---
+    if stderr.contains("borrow of moved value") || stderr.contains("value used here after move") {
+        return "error: value was already used and cannot be accessed again".to_string();
+    }
+    if stderr.contains("cannot borrow") && stderr.contains("as mutable") {
+        return "error: cannot modify value while it is being read".to_string();
+    }
+
+    // --- Missing field on struct ---
+    if stderr.contains("no field") && stderr.contains("on type") {
+        if let Some(field) = extract_between(stderr, "no field `", "`") {
+            return format!("error: no field '{}' on this value", field);
+        }
+    }
+
+    // --- Wrong number of arguments ---
+    if stderr.contains("this function takes") && stderr.contains("but") && stderr.contains("supplied") {
+        if let Some(msg) = extract_between(stderr, "this function takes ", " but") {
+            if let Some(got) = extract_between(stderr, "but ", " was supplied")
+                .or_else(|| extract_between(stderr, "but ", " were supplied")) {
+                return format!("error: wrong number of arguments — expected {} but got {}", msg, got);
+            }
+        }
+        return "error: wrong number of arguments".to_string();
+    }
+
+    // --- Index out of bounds (compile-time) ---
+    if stderr.contains("index out of bounds") {
+        return "error: index out of range".to_string();
+    }
+
+    // --- Fallback: extract just the error lines and clean them up ---
+    let error_lines: Vec<&str> = stderr.lines()
+        .filter(|l| l.starts_with("error"))
+        .filter(|l| !l.contains("could not compile") && !l.contains("aborting due to"))
+        .collect();
+    if !error_lines.is_empty() {
+        let cleaned: Vec<String> = error_lines.iter()
+            .map(|l| {
+                let mut s = l.to_string();
+                // Strip error codes like [E0308]
+                if let Some(start) = s.find('[') {
+                    if let Some(end) = s.find("]: ") {
+                        s = format!("error: {}", &s[end + 3..]);
+                    }
+                }
+                // Replace Rust types with Crow types
+                s = s.replace("i64", "int").replace("f64", "float")
+                     .replace("String", "string").replace("&str", "string")
+                     .replace("bool", "bool").replace("usize", "int");
+                s
+            })
+            .collect();
+        return cleaned.join("\n");
+    }
+
+    // Absolute fallback
     format!("compilation failed:\n{}", stderr)
+}
+
+/// Extract "expected X, found Y" from a type mismatch error.
+fn extract_type_mismatch(stderr: &str) -> Option<String> {
+    let expected = extract_between(stderr, "expected `", "`")?;
+    let found = extract_between(stderr, "found `", "`")?;
+    Some(format!(
+        "type mismatch — expected {} but got {}",
+        rust_type_to_crow(&expected),
+        rust_type_to_crow(&found)
+    ))
+}
+
+/// Extract "cannot add/multiply/etc" operator errors.
+fn extract_cannot_op(stderr: &str) -> Option<String> {
+    for op in &["add", "subtract", "multiply", "divide"] {
+        let pattern = format!("cannot {} `", op);
+        if stderr.contains(&pattern) {
+            let rhs = extract_between(stderr, &pattern, "`")?;
+            let lhs = extract_between(stderr, &format!("` to `"), "`")?;
+            let crow_op = match *op {
+                "add" => "+",
+                "subtract" => "-",
+                "multiply" => "*",
+                "divide" => "/",
+                _ => op,
+            };
+            return Some(format!(
+                "cannot use '{}' with {} and {}",
+                crow_op,
+                rust_type_to_crow(&lhs),
+                rust_type_to_crow(&rhs)
+            ));
+        }
+    }
+    None
+}
+
+/// Extract text between two markers in a string.
+fn extract_between<'a>(text: &'a str, start_marker: &str, end_marker: &str) -> Option<String> {
+    let start = text.find(start_marker)? + start_marker.len();
+    let rest = &text[start..];
+    let end = rest.find(end_marker)?;
+    Some(rest[..end].to_string())
 }
 
 fn cmd_build() {
