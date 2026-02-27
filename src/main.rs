@@ -543,7 +543,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         process::exit(1);
     });
 
-    // Compile with cargo (suppress output for quiet mode)
+    // Compile with cargo (suppress output for quiet mode, but capture errors)
     let mut cmd = std::process::Command::new("cargo");
     if release {
         cmd.args(["build", "--release"]).current_dir(&build_dir);
@@ -552,16 +552,25 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     }
     if quiet {
         cmd.stdout(std::process::Stdio::null())
-           .stderr(std::process::Stdio::null());
-    }
-    let status = cmd.status().unwrap_or_else(|e| {
-        eprintln!("error running cargo: {}", e);
-        process::exit(1);
-    });
-
-    if !status.success() {
-        eprintln!("compilation failed");
-        process::exit(1);
+           .stderr(std::process::Stdio::piped());
+        let output = cmd.output().unwrap_or_else(|e| {
+            eprintln!("error running cargo: {}", e);
+            process::exit(1);
+        });
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!("compilation failed:\n{}", stderr);
+            process::exit(1);
+        }
+    } else {
+        let status = cmd.status().unwrap_or_else(|e| {
+            eprintln!("error running cargo: {}", e);
+            process::exit(1);
+        });
+        if !status.success() {
+            eprintln!("compilation failed");
+            process::exit(1);
+        }
     }
 
     binary_path
