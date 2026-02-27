@@ -932,6 +932,31 @@ Crow is **statically typed with inference**. No type annotations are needed — 
 - Function parameter and return types are inferred from call sites
 - If the transpiler cannot determine a type, the program is invalid
 
+### Call-Site Inference (No Generics Needed)
+
+Crow has no generics, no type parameters, and no type annotations — but you can still write functions that work across different types. The transpiler infers concrete types from each call site, effectively specializing the function for the types used.
+
+```
+fn filter[items, f]
+    result = for x in items
+        if f[x]
+            x
+    return result
+
+fn is_even[x]
+    return x % 2 eq 0
+
+fn is_positive[x]
+    return x gt 0
+
+evens = filter[[1, 2, 3, 4], is_even]         --- items: list[int], f: fn[int] -> bool ---
+positives = filter[[-1, 0, 3], is_positive]    --- same types, different function ---
+```
+
+This works because `filter[[1, 2, 3, 4], is_even]` tells the transpiler that `items` is a list of ints and `f` is a function taking an int and returning a bool. No annotations needed — the call site *is* the type information.
+
+This means higher-order functions like `filter`, `map`, and `reduce` can be written as normal Crow functions. You don't need generics, and you don't need builtins — the type system handles it automatically.
+
 ### Execution Modes
 
 | Mode | Command | Role |
