@@ -30,6 +30,8 @@ pub struct Transpiler {
     unwrap_result_args: bool,
     /// Indices of CrowResult args being unwrapped (used with unwrap_result_args)
     propagation_indices: Option<Vec<usize>>,
+    /// Return type of the current function being emitted (for wrapping plain returns in CrowResult)
+    current_fn_return_type: Option<CrowType>,
 }
 
 impl Transpiler {
@@ -49,6 +51,7 @@ impl Transpiler {
             current_line: 0,
             unwrap_result_args: false,
             propagation_indices: None,
+            current_fn_return_type: None,
         }
     }
 
@@ -600,8 +603,10 @@ impl Transpiler {
         let saved_vars = self.ctx.vars.clone();
         let saved_ref_params = self.current_ref_params.clone();
         let saved_mutated = self.mutated_vars.clone();
+        let saved_fn_return_type = self.current_fn_return_type.clone();
         self.declared.clear();
         self.current_ref_params = ref_set;
+        self.current_fn_return_type = Some(sig.return_type.clone());
 
         // Compute which local variables need `mut` in this function
         let mut seen = std::collections::HashSet::new();
@@ -625,6 +630,7 @@ impl Transpiler {
         self.ctx.vars = saved_vars;
         self.current_ref_params = saved_ref_params;
         self.mutated_vars = saved_mutated;
+        self.current_fn_return_type = saved_fn_return_type;
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
@@ -892,7 +898,17 @@ impl Transpiler {
             }
             Stmt::Return(Some(e)) => {
                 let expr_str = self.expr_to_string(e);
-                self.emit_line(&format!("return {};", expr_str));
+                let expr_type = self.ctx.infer_expr(e);
+                // If the function returns CrowResult<T> but this expression is a plain T, wrap it
+                if let Some(CrowType::Result(_)) = &self.current_fn_return_type {
+                    if !matches!(expr_type, CrowType::Result(_)) {
+                        self.emit_line(&format!("return CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![] }};", expr_str));
+                    } else {
+                        self.emit_line(&format!("return {};", expr_str));
+                    }
+                } else {
+                    self.emit_line(&format!("return {};", expr_str));
+                }
             }
             Stmt::Return(None) => {
                 self.emit_line("return;");
@@ -1341,7 +1357,7 @@ impl Transpiler {
                         return match ty {
                             CrowType::Int => arg_strs[0].clone(),
                             CrowType::Float => format!("({}) as i64", arg_strs[0]),
-                            CrowType::Str => format!("{{ let _int_arg = {}; match _int_arg.parse::<i64>() {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(_) => CrowResult {{ ok: false, value: 0_i64, reason: format!(\"cannot convert '{{{{}}}}' to int\", _int_arg), kind: \"parse\".to_string(), trace: vec![format!(\"line {{}}\", {})] }} }} }}", arg_strs[0], self.current_line),
+                            CrowType::Str => format!("{{ let _int_arg = {}; match _int_arg.parse::<i64>() {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(_) => CrowResult {{ ok: false, value: 0_i64, reason: format!(\"cannot convert '{{}}' to int\", _int_arg), kind: \"parse\".to_string(), trace: vec![format!(\"line {{}}\", {})] }} }} }}", arg_strs[0], self.current_line),
                             CrowType::Bool => format!("if {} {{ 1_i64 }} else {{ 0_i64 }}", arg_strs[0]),
                             _ => format!("({}) as i64", arg_strs[0]),
                         };
@@ -1351,7 +1367,7 @@ impl Transpiler {
                         return match ty {
                             CrowType::Float => arg_strs[0].clone(),
                             CrowType::Int => format!("({}) as f64", arg_strs[0]),
-                            CrowType::Str => format!("{{ let _float_arg = {}; match _float_arg.parse::<f64>() {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(_) => CrowResult {{ ok: false, value: 0.0_f64, reason: format!(\"cannot convert '{{{{}}}}' to float\", _float_arg), kind: \"parse\".to_string(), trace: vec![format!(\"line {{}}\", {})] }} }} }}", arg_strs[0], self.current_line),
+                            CrowType::Str => format!("{{ let _float_arg = {}; match _float_arg.parse::<f64>() {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(_) => CrowResult {{ ok: false, value: 0.0_f64, reason: format!(\"cannot convert '{{}}' to float\", _float_arg), kind: \"parse\".to_string(), trace: vec![format!(\"line {{}}\", {})] }} }} }}", arg_strs[0], self.current_line),
                             CrowType::Bool => format!("if {} {{ 1.0_f64 }} else {{ 0.0_f64 }}", arg_strs[0]),
                             _ => format!("({}) as f64", arg_strs[0]),
                         };
@@ -1487,7 +1503,13 @@ impl Transpiler {
                         } else {
                             "String::new()".to_string()
                         };
-                        return format!("CrowResult {{ ok: false, value: String::new(), reason: {}.to_string(), kind: {}, trace: vec![format!(\"line {{}}\", {})] }}", arg_strs[0], kind_expr, ln);
+                        // Determine the default value for the Result's inner type
+                        let default_val = if let Some(CrowType::Result(inner)) = &self.current_fn_return_type {
+                            inner.default_rust_value()
+                        } else {
+                            "String::new()".to_string()
+                        };
+                        return format!("CrowResult {{ ok: false, value: {}, reason: {}.to_string(), kind: {}, trace: vec![format!(\"line {{}}\", {})] }}", default_val, arg_strs[0], kind_expr, ln);
                     }
                     // --- File I/O builtins ---
                     if name == "read" && arg_strs.len() == 1 {

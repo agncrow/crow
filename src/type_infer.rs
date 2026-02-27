@@ -127,6 +127,9 @@ impl CrowType {
             }
             // Result unification
             (CrowType::Result(a), CrowType::Result(b)) => CrowType::Result(Box::new(a.unify(b))),
+            // Result(T) + U => Result(U): the non-error return tells us the actual value type
+            (CrowType::Result(_), other) => CrowType::Result(Box::new(other.clone())),
+            (other, CrowType::Result(_)) => CrowType::Result(Box::new(other.clone())),
             // Fn unification
             (CrowType::Fn(p1, r1), CrowType::Fn(p2, r2)) if p1.len() == p2.len() => {
                 let params: Vec<CrowType> = p1.iter().zip(p2.iter()).map(|(a, b)| a.unify(b)).collect();
