@@ -492,9 +492,18 @@ impl Transpiler {
             self.emit_struct(name);
         }
 
-        // Emit function definitions
+        // Emit function definitions (skip uncalled module functions whose types couldn't be inferred)
         let fn_names: Vec<String> = self.ctx.functions.keys().cloned().collect();
         for name in &fn_names {
+            // Check if this is a module-prefixed function with unresolved types
+            let is_module_fn = self.modules.iter().any(|m| name.starts_with(&format!("{}_", m)));
+            if is_module_fn {
+                let sig = self.ctx.functions.get(name).unwrap();
+                let has_unknown = sig.params.iter().any(|(_, t)| matches!(t, CrowType::Unknown));
+                if has_unknown {
+                    continue; // Skip uncalled module functions
+                }
+            }
             self.emit_function(name);
         }
 
@@ -545,6 +554,7 @@ impl Transpiler {
         let all_copy = sig.fields.iter().all(|(_, ftype)| {
             matches!(ftype, CrowType::Int | CrowType::Float | CrowType::Bool)
         });
+        self.emit_line("#[allow(non_camel_case_types)]");
         if all_copy {
             self.emit_line("#[derive(Debug, Clone, Copy)]");
         } else {
@@ -1556,10 +1566,31 @@ impl Transpiler {
                     }
                 }
 
-                // Module function call: module.func[args] → module_func(args)
+                // Module function/struct call: module.func[args] or module.Struct[args]
                 if let Expr::FieldAccess { object, field } = callee.as_ref() {
                     if let Expr::Ident(mod_name) = object.as_ref() {
                         let prefixed = format!("{}_{}", mod_name, field);
+                        // Module struct constructor
+                        if self.ctx.structs.contains_key(&prefixed) {
+                            let sig = self.ctx.structs.get(&prefixed).unwrap().clone();
+                            let field_inits: Vec<String> = sig.fields.iter()
+                                .zip(args.iter())
+                                .zip(arg_strs.iter())
+                                .map(|(((fname, ftype), orig_expr), val)| {
+                                    if let CrowType::OptBoxStruct(_) = ftype {
+                                        if matches!(orig_expr, Expr::Int(0)) {
+                                            format!("{}: None", fname)
+                                        } else {
+                                            format!("{}: Some(Box::new({}))", fname, val)
+                                        }
+                                    } else {
+                                        format!("{}: {}", fname, val)
+                                    }
+                                })
+                                .collect();
+                            return format!("{} {{ {} }}", prefixed, field_inits.join(", "));
+                        }
+                        // Module function call
                         if self.ctx.functions.contains_key(&prefixed) {
                             return format!("{}({})", prefixed, arg_strs.join(", "));
                         }
