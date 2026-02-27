@@ -16,6 +16,8 @@ pub struct Transpiler {
     cpu_count: Option<usize>,
     /// Whether the transpiled code needs rayon for parallel iteration
     pub needs_rayon: bool,
+    /// Whether the transpiled code needs serde_json for JSON parsing/encoding
+    pub needs_serde_json: bool,
     /// Map of function name -> set of param names that should be passed by reference
     by_ref_params: std::collections::BTreeMap<String, std::collections::HashSet<String>>,
     /// By-ref params in the current function being emitted
@@ -40,6 +42,7 @@ impl Transpiler {
             mutated_vars: std::collections::HashSet::new(),
             cpu_count: None,
             needs_rayon: false,
+            needs_serde_json: false,
             by_ref_params: std::collections::BTreeMap::new(),
             current_ref_params: std::collections::HashSet::new(),
             modules: std::collections::HashSet::new(),
@@ -216,6 +219,16 @@ impl Transpiler {
         match ty {
             CrowType::Result(_) => true,
             CrowType::List(inner) => Self::type_uses_result(inner),
+            _ => false,
+        }
+    }
+
+    /// Check if a CrowType contains Json anywhere.
+    fn type_uses_json(ty: &CrowType) -> bool {
+        match ty {
+            CrowType::Json => true,
+            CrowType::Result(inner) => Self::type_uses_json(inner),
+            CrowType::List(inner) => Self::type_uses_json(inner),
             _ => false,
         }
     }
@@ -402,6 +415,30 @@ impl Transpiler {
             self.emit_line("fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {");
             self.indent += 1;
             self.emit_line("if self.status == \"error\" { write!(f, \"error: {}\", self.reason) } else { write!(f, \"{}\", self.result) }");
+            self.indent -= 1;
+            self.emit_line("}");
+            self.indent -= 1;
+            self.emit_line("}");
+            self.emit_line("");
+        }
+
+        // Pre-scan: check if any variable uses Json type (sets needs_serde_json)
+        for ty in self.ctx.vars.values() {
+            if Self::type_uses_json(ty) {
+                self.needs_serde_json = true;
+                break;
+            }
+        }
+
+        // Emit JSON display helper if serde_json is used
+        if self.needs_serde_json {
+            self.emit_line("fn crow_json_display(v: &serde_json::Value) -> String {");
+            self.indent += 1;
+            self.emit_line("match v {");
+            self.indent += 1;
+            self.emit_line("serde_json::Value::String(s) => s.clone(),");
+            self.emit_line("serde_json::Value::Null => \"null\".to_string(),");
+            self.emit_line("other => other.to_string(),");
             self.indent -= 1;
             self.emit_line("}");
             self.indent -= 1;
@@ -1423,7 +1460,16 @@ impl Transpiler {
                         let ln = self.current_line;
                         return format!("match std::fs::write(&*{}, &*{}) {{ Ok(_) => CrowResult {{ status: \"ok\".to_string(), result: \"\".to_string(), reason: \"\".to_string(), line: 0 }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: \"\".to_string(), reason: e.to_string(), line: {} }} }}", arg_strs[0], arg_strs[1], ln);
                     }
-
+                    // --- JSON builtins ---
+                    if name == "json" && arg_strs.len() == 1 {
+                        self.needs_serde_json = true;
+                        let ln = self.current_line;
+                        return format!("match serde_json::from_str::<serde_json::Value>(&*{}) {{ Ok(v) => if v.is_null() {{ CrowResult {{ status: \"error\".to_string(), result: serde_json::Value::Null, reason: \"null\".to_string(), line: {} }} }} else {{ CrowResult {{ status: \"ok\".to_string(), result: v, reason: \"\".to_string(), line: 0 }} }}, Err(e) => CrowResult {{ status: \"error\".to_string(), result: serde_json::Value::Null, reason: format!(\"invalid JSON: {{}}\", e), line: {} }} }}", arg_strs[0], ln, ln);
+                    }
+                    if name == "encode" && arg_strs.len() == 1 {
+                        self.needs_serde_json = true;
+                        return format!("CrowResult {{ status: \"ok\".to_string(), result: serde_json::to_string(&{}).unwrap_or_default(), reason: \"\".to_string(), line: 0 }}", arg_strs[0]);
+                    }
 
                     // Struct constructor
                     if self.ctx.structs.contains_key(name) {
@@ -1452,17 +1498,39 @@ impl Transpiler {
                         return format!("{}({})", Self::rust_fn_name(name), arg_strs.join(", "));
                     }
 
-                    // Check variable type for list/map indexing vs indirect function call
+                    // Check variable type for list/map/json indexing vs indirect function call
                     let var_type = self.ctx.vars.get(name).cloned()
                         .unwrap_or(CrowType::Unknown);
-                    match &var_type {
+                    // Unwrap CrowResult for indexing purposes
+                    let inner_type = match &var_type {
+                        CrowType::Result(inner) => inner.as_ref(),
+                        other => other,
+                    };
+                    let is_result = matches!(&var_type, CrowType::Result(_));
+                    let base_name = if is_result {
+                        format!("{}.result", name)
+                    } else {
+                        name.to_string()
+                    };
+                    match inner_type {
                         CrowType::List(_) => {
                             // List indexing: list[i] → list[i as usize]
-                            return format!("{}[{} as usize]", name, arg_strs.join(", "));
+                            return format!("{}[{} as usize]", base_name, arg_strs.join(", "));
                         }
                         CrowType::Map(_) => {
                             // Map lookup: map[key] → map[&key]
-                            return format!("{}[&{}].clone()", name, arg_strs.join(", "));
+                            return format!("{}[&{}].clone()", base_name, arg_strs.join(", "));
+                        }
+                        CrowType::Json => {
+                            // JSON indexing: data["key"] or data[0] → data[key].clone()
+                            let idx = &arg_strs[0];
+                            // serde_json::Value indexes by &str or usize
+                            let arg_type = self.ctx.infer_expr(&args[0]);
+                            let idx_expr = match arg_type {
+                                CrowType::Int => format!("{} as usize", idx),
+                                _ => format!("&*{}", idx),
+                            };
+                            return format!("{}[{}].clone()", base_name, idx_expr);
                         }
                         _ => {
                             // Function pointer call or unknown: name(args)
@@ -1487,6 +1555,14 @@ impl Transpiler {
                 match &callee_type {
                     CrowType::List(_) => format!("{}[{} as usize]", callee_str, arg_strs.join(", ")),
                     CrowType::Map(_) => format!("{}[&{}].clone()", callee_str, arg_strs.join(", ")),
+                    CrowType::Json => {
+                        let arg_type = self.ctx.infer_expr(&args[0]);
+                        let idx_expr = match arg_type {
+                            CrowType::Int => format!("{} as usize", arg_strs[0]),
+                            _ => format!("&*{}", arg_strs[0]),
+                        };
+                        format!("{}[{}].clone()", callee_str, idx_expr)
+                    }
                     CrowType::Fn(_, _) => format!("{}({})", callee_str, arg_strs.join(", ")),
                     _ => format!("{}({})", callee_str, arg_strs.join(", ")),
                 }
@@ -1862,14 +1938,27 @@ impl Transpiler {
             if arg.starts_with("format!(") {
                 return format!("println!{}", &arg[7..]);
             }
-            let needs_debug = if let Some(expr) = orig_exprs.first() {
+            let (needs_debug, json_kind) = if let Some(expr) = orig_exprs.first() {
                 let ty = self.ctx.infer_expr(expr);
-                matches!(ty, CrowType::List(_) | CrowType::Map(_) | CrowType::Struct(_))
+                let (inner, is_result) = match &ty {
+                    CrowType::Result(inner) => (inner.as_ref().clone(), true),
+                    other => (other.clone(), false),
+                };
+                let debug = matches!(inner, CrowType::List(_) | CrowType::Map(_) | CrowType::Struct(_));
+                let jk = if matches!(inner, CrowType::Json) {
+                    if is_result { 2 } else { 1 }  // 2=Result<Json>, 1=Json
+                } else { 0 };
+                (debug, jk)
             } else {
-                false
+                (false, 0)
             };
             return if needs_debug {
                 format!("println!(\"{{:?}}\", {})", arg)
+            } else if json_kind == 2 {
+                // CrowResult<Json> — check status, display result with crow_json_display
+                format!("{{ let _jv = {}.clone(); if _jv.status == \"error\" {{ println!(\"error: {{}}\", _jv.reason); }} else {{ println!(\"{{}}\", crow_json_display(&_jv.result)); }} }}", arg)
+            } else if json_kind == 1 {
+                format!("println!(\"{{}}\", crow_json_display(&{}))", arg)
             } else {
                 format!("println!(\"{{}}\", {})", arg)
             };
@@ -1878,18 +1967,32 @@ impl Transpiler {
         let mut fmt_parts = Vec::new();
         let mut fmt_args = Vec::new();
         for (i, arg) in args.iter().enumerate() {
-            let needs_debug = if i < orig_exprs.len() {
+            let (needs_debug, json_kind) = if i < orig_exprs.len() {
                 let ty = self.ctx.infer_expr(&orig_exprs[i]);
-                matches!(ty, CrowType::List(_) | CrowType::Map(_) | CrowType::Struct(_))
+                let (inner, is_result) = match &ty {
+                    CrowType::Result(inner) => (inner.as_ref().clone(), true),
+                    other => (other.clone(), false),
+                };
+                let debug = matches!(inner, CrowType::List(_) | CrowType::Map(_) | CrowType::Struct(_));
+                let jk = if matches!(inner, CrowType::Json) {
+                    if is_result { 2 } else { 1 }
+                } else { 0 };
+                (debug, jk)
             } else {
-                false
+                (false, 0)
             };
             if needs_debug {
                 fmt_parts.push("{:?}".to_string());
             } else {
                 fmt_parts.push("{}".to_string());
             }
-            fmt_args.push(arg.clone());
+            if json_kind == 2 {
+                fmt_args.push(format!("crow_json_display(&{}.result)", arg));
+            } else if json_kind == 1 {
+                fmt_args.push(format!("crow_json_display(&{})", arg));
+            } else {
+                fmt_args.push(arg.clone());
+            }
         }
         format!("println!(\"{}\", {})", fmt_parts.join(" "), fmt_args.join(", "))
     }
@@ -2246,5 +2349,42 @@ mod tests {
         let src = "x = int['bad']\nlog[x]\n";
         let rust = transpile(src);
         assert!(rust.contains("\"error\""), "Display impl should check error status\n{}", rust);
+    }
+
+    #[test]
+    fn test_json_builtin_emits_serde() {
+        let src = "items = json['[1,2,3]']\nlog[items[0]]\n";
+        let rust = transpile(src);
+        assert!(rust.contains("serde_json::from_str"), "json[] should use serde_json\n{}", rust);
+        assert!(rust.contains("CrowResult"), "json[] should return CrowResult\n{}", rust);
+    }
+
+    #[test]
+    fn test_json_null_returns_error() {
+        let src = "n = json['null']\nlog[n.status]\n";
+        let rust = transpile(src);
+        assert!(rust.contains("is_null()"), "json[] should check for null\n{}", rust);
+        assert!(rust.contains("\"error\""), "null should map to error status\n{}", rust);
+    }
+
+    #[test]
+    fn test_encode_builtin() {
+        let src = "items = json['[1,2,3]']\ns = encode[items]\nlog[s]\n";
+        let rust = transpile(src);
+        assert!(rust.contains("serde_json::to_string"), "encode[] should use serde_json::to_string\n{}", rust);
+    }
+
+    #[test]
+    fn test_json_display_helper_emitted() {
+        let src = "s = json['\"hello\"']\nlog[s]\n";
+        let rust = transpile(src);
+        assert!(rust.contains("crow_json_display"), "should emit crow_json_display helper\n{}", rust);
+    }
+
+    #[test]
+    fn test_json_indexing_with_int() {
+        let src = "items = json['[1,2,3]']\nlog[items[0]]\n";
+        let rust = transpile(src);
+        assert!(rust.contains("as usize"), "int index on JSON should cast to usize\n{}", rust);
     }
 }
