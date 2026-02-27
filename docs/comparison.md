@@ -32,7 +32,7 @@ The tradeoff: no lambdas, no pattern matching, no sum types. Languages like Elix
 | Elixir | Dynamic | No | No (tagged tuples) | Yes (core feature) |
 | Rust | Static | Yes (powerful) | Yes (enums) | Yes (core feature) |
 
-Crow is comparable to Go in type system power — simple, no generics, no sum types — but with better ergonomics since you never write type annotations. It is significantly less expressive than Rust, Crystal, or Elixir for modeling complex domains.
+Crow has no explicit generics or sum types, but its call-site type inference effectively monomorphizes functions — you can write `fn filter[items, f]` and it works across types because the transpiler infers concrete types from each call site. This is similar to C++ templates or Julia's specialization, but with zero syntax overhead. Less expressive than Rust or Elixir for modeling complex domains, but more capable than Go for higher-order abstractions.
 
 ## Parallelism
 
@@ -106,7 +106,7 @@ Subjective scores from 1 (weakest) to 10 (strongest):
 |-----------|------|--------|-------|------|------|---------|-----|--------|
 | Syntax simplicity | 9 | 9 | 7 | 4 | 8 | 7 | 6 | 7 |
 | Type safety | 7 | 3 | 4 | 10 | 2 | 8 | 8 | 3 |
-| Expressiveness | 4 | 8 | 9 | 9 | 9 | 7 | 5 | 8 |
+| Expressiveness | 6 | 8 | 9 | 9 | 9 | 7 | 5 | 8 |
 | Parallelism | 8 | 2 | 7 | 7 | 2 | 4 | 8 | 9 |
 | Performance | 9 | 3 | 8 | 10 | 3 | 8 | 8 | 4 |
 | Error handling | 6 | 5 | 5 | 9 | 5 | 7 | 6 | 8 |
@@ -119,10 +119,10 @@ Subjective scores from 1 (weakest) to 10 (strongest):
 
 **Strengths:** Syntax minimalism, automatic parallelism, native performance, LLM-friendliness (consistent grammar, one way to do things).
 
-**Weaknesses:** Expressiveness (no generics, no lambdas, no sum types, no pattern matching), ecosystem (brand new), and the library-author problem — without generics, most reusable abstractions must be builtins rather than user-written code.
+**Weaknesses:** No lambdas, no sum types, no pattern matching. No async/concurrency model for I/O-bound work. Error types are strings, not structured.
 
 **Closest competitors:**
 
-- **Crystal** — similar vision (Ruby-like syntax, compiled, inferred types), but has generics and union types
+- **Crystal** — similar vision (Ruby-like syntax, compiled, inferred types), but has union types and explicit generics
 - **Julia** — similar target audience (data/science), but dynamic with JIT
 - **Go** — similar simplicity philosophy, but no type inference and manual concurrency
