@@ -1139,3 +1139,19 @@ if x.status eq 'error'
 ```
 
 This may be revisited in the future if a design emerges that preserves error visibility while reducing verbosity.
+
+## Appendix: Implementation Status
+
+All core language features have interpreter–transpiler parity. The following items were identified during development and have been resolved:
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| First-class function return types | ✅ Resolved | Transpiler correctly infers return types for variable-stored functions |
+| For-as-expression rayon dependency | ✅ Resolved | `ForExpr` in assignments correctly sets `needs_rayon` |
+| `while true` → `loop {}` | ✅ Resolved | Transpiler emits `loop {` instead of `while true {` |
+| Modules (`use`) in transpiler | ✅ Resolved | Module code is flattened into generated Rust with prefixed names |
+| Functions in collections type inference | ✅ Resolved | `list[i]` and `map[k]` return correct element types in `infer_call_base` |
+| Automatic statement-level parallelism | ✅ Resolved | Independent assignments grouped into `rayon::join` waves via dependency analysis |
+| REPL (`crow` with no args) | ✅ Resolved | Interactive interpreter REPL |
+| `crow init` | ✅ Resolved | Project scaffolding creates `crowfile` and `main.crow` |
+| `crow install` | ✅ Resolved | Package manager with registry, git, and local path support |
