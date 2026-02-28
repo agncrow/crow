@@ -88,7 +88,9 @@ fn cmd_repl() {
     use std::io::{self, Write, BufRead};
 
     println!("crow repl - type expressions or statements, ctrl-d to exit");
+    println!("  :check to verify, :help for commands");
     let mut interpreter = Interpreter::new();
+    let mut accumulated_stmts: Vec<ast::Stmt> = Vec::new();
     let stdin = io::stdin();
     let mut buffer = String::new();
     let mut in_block = false;
@@ -119,13 +121,36 @@ fn cmd_repl() {
 
         let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
 
+        // REPL commands
+        if !in_block {
+            match trimmed {
+                ":check" => {
+                    repl_check(&accumulated_stmts);
+                    continue;
+                }
+                ":help" => {
+                    println!("  :check  — run verification on all defined functions");
+                    println!("  :clear  — reset the session");
+                    println!("  ctrl-d  — exit");
+                    continue;
+                }
+                ":clear" => {
+                    interpreter = Interpreter::new();
+                    accumulated_stmts.clear();
+                    println!("  session cleared");
+                    continue;
+                }
+                _ => {}
+            }
+        }
+
         // Multi-line block handling
         if in_block {
             if trimmed.is_empty() || (!trimmed.starts_with(' ') && !trimmed.starts_with('\t')) {
                 // Empty line or non-indented line ends the block
                 in_block = false;
                 let source = std::mem::take(&mut buffer);
-                repl_eval(&mut interpreter, &source);
+                repl_eval(&mut interpreter, &source, &mut accumulated_stmts);
                 // If this line is non-empty and non-indented, process it below
                 if trimmed.is_empty() {
                     continue;
@@ -138,13 +163,11 @@ fn cmd_repl() {
         }
 
         // Check if this line expects a block to follow
-        // Any line containing a block keyword (not inside a string) needs indented body
         let needs_block = {
-            // Strip string literals to avoid matching keywords inside strings
             let stripped = trimmed.replace(|c: char| c == '\'', "\x00")
                 .split('\x00')
                 .enumerate()
-                .filter(|(i, _)| i % 2 == 0) // keep non-string parts
+                .filter(|(i, _)| i % 2 == 0)
                 .map(|(_, s)| s)
                 .collect::<Vec<_>>()
                 .join(" ");
@@ -159,11 +182,43 @@ fn cmd_repl() {
         }
 
         // Single line - evaluate immediately
-        repl_eval(&mut interpreter, trimmed);
+        repl_eval(&mut interpreter, trimmed, &mut accumulated_stmts);
     }
 }
 
-fn repl_eval(interpreter: &mut Interpreter, source: &str) {
+fn repl_check(stmts: &[ast::Stmt]) {
+    if stmts.is_empty() {
+        println!("  nothing to check — define some functions first");
+        return;
+    }
+
+    let mut ctx = type_infer::TypeContext::new();
+    ctx.infer_program(stmts);
+
+    let result = checker::run_check(stmts, &ctx, false);
+
+    if result.issues.is_empty() {
+        println!("  \x1b[32m✓ all good\x1b[0m — {} functions checked, {} edge cases generated",
+            result.total_functions, result.edge_cases_generated);
+    } else {
+        println!("  \x1b[33m⚠ {} issue{}\x1b[0m — {} functions checked, {} edge cases generated\n",
+            result.issues.len(),
+            if result.issues.len() == 1 { "" } else { "s" },
+            result.total_functions,
+            result.edge_cases_generated);
+
+        for (i, issue) in result.issues.iter().enumerate() {
+            let line_info = if issue.line() > 0 {
+                format!(" (line {})", issue.line())
+            } else {
+                String::new()
+            };
+            println!("  {}. {}{}", i + 1, issue.summary(), line_info);
+        }
+    }
+}
+
+fn repl_eval(interpreter: &mut Interpreter, source: &str, accumulated: &mut Vec<ast::Stmt>) {
     let source = source.trim();
     if source.is_empty() {
         return;
@@ -171,6 +226,9 @@ fn repl_eval(interpreter: &mut Interpreter, source: &str) {
 
     match build(source) {
         Ok(stmts) => {
+            // Accumulate statements for :check
+            accumulated.extend(stmts.clone());
+
             match interpreter.run(&stmts) {
                 Ok(val) => {
                     // Print result if it's not Done (void)
