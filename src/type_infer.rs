@@ -833,19 +833,6 @@ impl TypeContext {
                 CrowType::Unknown
             }
             "len" => CrowType::Int,
-            "sum" => {
-                if let Some(arg) = args.first() {
-                    let arg_type = self.infer_expr(arg);
-                    return match arg_type {
-                        CrowType::List(inner) => match *inner {
-                            CrowType::Float => CrowType::Float,
-                            _ => CrowType::Int,
-                        },
-                        _ => CrowType::Int,
-                    };
-                }
-                CrowType::Int
-            }
             // CLI / IO
             "args" => CrowType::List(Box::new(CrowType::Str)),
             "input" => CrowType::Result(Box::new(CrowType::Str)),

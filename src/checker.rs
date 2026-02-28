@@ -22,7 +22,7 @@ const BUILTINS: &[&str] = &[
     "abs", "sqrt", "floor", "ceil", "round", "pow", "min", "max",
     "split", "trim", "replace", "upper", "lower", "join", "starts", "ends",
     "int", "float", "str",
-    "len", "sum", "contains", "slice", "push", "pop", "sort", "reverse", "append",
+    "len", "contains", "slice", "push", "pop", "sort", "reverse", "append",
     "range", "map",
     "keys", "values", "has", "set", "del",
     "args", "input",

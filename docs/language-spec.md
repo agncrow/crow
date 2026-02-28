@@ -301,7 +301,6 @@ type[error['x']]  --- 'error' ---
 | `reverse[list]` | Return new reversed list |
 | `contains[list, value]` | Check if list contains value |
 | `slice[list, start, end]` | Extract sublist |
-| `sum[list]` | Sum of a list of numbers (int or float) |
 
 #### Map Operations
 
@@ -1298,6 +1297,24 @@ fn greet[name]
 fn greet_with[name, greeting]
     log['{greeting}, {name}']
 ```
+
+## Design Note: No sum, min[list], max[list] in Core
+
+Crow intentionally omits `sum[list]`, `min[list]`, and `max[list]` from core builtins.
+
+**What was considered:** `sum[[1, 2, 3]]` → `6`, `min[[3, 1, 2]]` → `1`, `max[[3, 1, 2]]` → `3`.
+
+**Why they were removed/rejected:** All three are straightforward loops:
+
+```
+total = 0
+for x in nums
+    total = total + x
+```
+
+Including `sum` but not `min[list]`/`max[list]` created an inconsistency — all three are the same pattern (reduce a list to a single value). Rather than adding more, we removed `sum` to keep core honest: if you can write it with a loop, write it with a loop.
+
+**What to use instead:** Loops for now. A future `math` library will provide `sum`, `min`, `max`, `product`, and other list reductions.
 
 ## Design Note: No Ternary Expression
 

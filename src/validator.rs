@@ -16,7 +16,7 @@ const BUILTINS: &[&str] = &[
     // Conversion
     "int", "float", "str",
     // Collections
-    "len", "sum", "contains", "slice", "push", "pop", "sort", "reverse", "append",
+    "len", "contains", "slice", "push", "pop", "sort", "reverse", "append",
     "range", "map",
     // Map
     "keys", "values", "has", "set", "del",
@@ -325,7 +325,7 @@ impl<'a> Validator<'a> {
             "join" => argc == 2,
             "starts" | "ends" => argc == 2,
             "int" | "float" | "str" => argc == 1,
-            "len" | "sum" => argc == 1,
+            "len" => argc == 1,
             "contains" => argc == 2,
             "slice" => argc == 3,
             "push" | "append" => argc == 2,
