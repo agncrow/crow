@@ -68,6 +68,29 @@ impl Issue {
             _ => None,
         }
     }
+
+    /// Suggest a fix for this issue.
+    pub fn suggest(&self) -> String {
+        match self {
+            Issue::UnusedVariable { var, .. } =>
+                format!("remove '{}' or prefix with _ to mark intentional", var),
+            Issue::UnreachableCode { .. } =>
+                "remove the dead code or move it before the return".to_string(),
+            Issue::EdgeCaseCrash { error, .. } => {
+                if error.contains("overflow") {
+                    "add a bounds check or use saturating arithmetic".to_string()
+                } else if error.contains("out of bounds") || error.contains("index") {
+                    "check length before indexing, e.g. if len[lst] > 0".to_string()
+                } else if error.contains("divide by zero") || error.contains("division by zero") {
+                    "check for zero before dividing, e.g. if b != 0".to_string()
+                } else {
+                    "add a guard to handle this edge case".to_string()
+                }
+            }
+            Issue::RegressionChange { was, now, .. } =>
+                format!("was {} — verify the new result {} is correct, then press 'a' to accept", was, now),
+        }
+    }
 }
 
 // --- Purity analysis ---
