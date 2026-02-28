@@ -314,6 +314,12 @@ fn collect_reads_from_stmt(stmt: &Stmt, reads: &mut BTreeSet<String>) {
 fn collect_reads_from_expr(expr: &Expr, reads: &mut BTreeSet<String>) {
     match expr {
         Expr::Ident(name) => { reads.insert(name.clone()); }
+        Expr::Str(s) => {
+            // Extract reads from string interpolation: '{x.ok}' reads x
+            for name in crate::parallel::str_interpolation_reads(s) {
+                reads.insert(name);
+            }
+        }
         Expr::BinOp { left, right, .. } => {
             collect_reads_from_expr(left, reads);
             collect_reads_from_expr(right, reads);
