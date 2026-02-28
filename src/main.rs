@@ -1,4 +1,5 @@
 mod ast;
+mod checker;
 mod interpreter;
 mod lexer;
 mod parallel;
@@ -27,6 +28,16 @@ fn main() {
         "init" => cmd_init(),
         "install" => cmd_install(),
         "build" => cmd_build(),
+        "check" => {
+            let filename = if args.len() > 2 {
+                args[2].clone()
+            } else {
+                let config = parse_crowfile();
+                config.entry
+            };
+            let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
+            cmd_check(&filename, verbose);
+        }
         "run" => {
             // Check for -i flag (interpreter mode)
             if args.len() > 2 && args[2] == "-i" {
@@ -68,6 +79,9 @@ fn print_usage() {
     eprintln!("  crow run               transpile + compile + run (uses crowfile)");
     eprintln!("  crow run file.crow     transpile + compile + run a specific file");
     eprintln!("  crow run -i file.crow  run with interpreter (slow, for debugging)");
+    eprintln!("  crow check             auto-verify project (uses crowfile)");
+    eprintln!("  crow check file.crow   auto-verify a specific file");
+    eprintln!("  crow check -v          verbose output with purity and snapshot details");
 }
 
 fn cmd_repl() {
@@ -816,6 +830,178 @@ fn run_binary(binary: &std::path::Path, extra_args: &[String]) {
             process::exit(1);
         });
     process::exit(status.code().unwrap_or(1));
+}
+
+fn run_check_pipeline(filename: &str) -> checker::CheckResult {
+    let source = read_file(filename);
+    let stmts = match build(&source) {
+        Ok(stmts) => stmts,
+        Err(e) => {
+            eprintln!("{}", e);
+            process::exit(1);
+        }
+    };
+    let mut ctx = type_infer::TypeContext::new();
+    ctx.infer_program(&stmts);
+    checker::run_check(&stmts, &ctx, false)
+}
+
+fn print_check_summary(result: &checker::CheckResult, verbose: bool) {
+    if result.issues.is_empty() {
+        println!("\n  \x1b[32m✓ all good\x1b[0m — {} functions checked, {} edge cases generated",
+            result.total_functions, result.edge_cases_generated);
+    } else {
+        println!("\n  \x1b[33m⚠ {} issue{}\x1b[0m — {} functions checked, {} edge cases generated",
+            result.issues.len(),
+            if result.issues.len() == 1 { "" } else { "s" },
+            result.total_functions,
+            result.edge_cases_generated);
+    }
+    if verbose {
+        println!("  pure: {:?}", result.pure_fns);
+        println!("  impure: {:?}", result.impure_fns);
+        println!("  snapshots: {} saved, {} unchanged",
+            result.snapshots_saved, result.snapshots_unchanged);
+    }
+}
+
+fn cmd_check(filename: &str, verbose: bool) {
+    use std::io::{self, Write, BufRead};
+
+    let mut result = run_check_pipeline(filename);
+    print_check_summary(&result, verbose);
+
+    if result.issues.is_empty() {
+        return;
+    }
+
+    // Verbose mode: dump all issues and exit (for CI)
+    if verbose {
+        println!();
+        for (i, issue) in result.issues.iter().enumerate() {
+            let line_info = if issue.line() > 0 {
+                format!(" (line {})", issue.line())
+            } else {
+                String::new()
+            };
+            println!("  {}. {}{}", i + 1, issue.summary(), line_info);
+        }
+        process::exit(1);
+    }
+
+    // Interactive mode: present issues one at a time
+    let stdin = io::stdin();
+    let mut idx = 0;
+
+    while idx < result.issues.len() {
+        let issue = &result.issues[idx];
+        let total = result.issues.len();
+
+        // Present the issue
+        println!();
+        let line_info = if issue.line() > 0 {
+            format!(" (line {})", issue.line())
+        } else {
+            String::new()
+        };
+        println!("  \x1b[1m[{}/{}]\x1b[0m {}{}", idx + 1, total, issue.summary(), line_info);
+
+        if let Some(try_cmd) = issue.try_input() {
+            println!("        try: {}", try_cmd);
+        }
+
+        // Show prompt with available commands
+        let has_try = issue.try_input().is_some();
+        let is_regression = matches!(issue, checker::Issue::RegressionChange { .. });
+        let mut prompt_parts = vec!["enter = recheck", "s = skip"];
+        if has_try { prompt_parts.push("t = try input"); }
+        if is_regression { prompt_parts.push("a = accept new"); }
+        prompt_parts.push("q = quit");
+        print!("\n        {} > ", prompt_parts.join(", "));
+        io::stdout().flush().unwrap();
+
+        // Read command
+        let mut input = String::new();
+        match stdin.lock().read_line(&mut input) {
+            Ok(0) => { println!(); break; } // EOF
+            Ok(_) => {}
+            Err(_) => break,
+        }
+
+        match input.trim() {
+            "" => {
+                // Recheck: re-read file, re-run pipeline
+                println!("\n  rechecking...");
+                result = run_check_pipeline(filename);
+                print_check_summary(&result, false);
+                if result.issues.is_empty() {
+                    break;
+                }
+                // Reset to first issue (the list may have changed)
+                idx = 0;
+            }
+            "s" => {
+                idx += 1;
+            }
+            "t" if has_try => {
+                // Run the try input through the interpreter
+                if let Some(try_cmd) = issue.try_input() {
+                    println!();
+                    let source = read_file(filename);
+                    let stmts = match build(&source) {
+                        Ok(s) => s,
+                        Err(e) => { eprintln!("  parse error: {}", e); continue; }
+                    };
+                    // Suppress panic output during try
+                    let prev_hook = std::panic::take_hook();
+                    std::panic::set_hook(Box::new(|_| {}));
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let mut interp = interpreter::Interpreter::new();
+                        // Load function declarations (ignore top-level errors)
+                        let _ = interp.run(&stmts);
+                        let call_src = format!("log[{}]", try_cmd);
+                        match build(&call_src) {
+                            Ok(call_stmts) => {
+                                match interp.run(&call_stmts) {
+                                    Ok(_) => None,
+                                    Err(e) => Some(e),
+                                }
+                            }
+                            Err(e) => Some(format!("parse error: {}", e)),
+                        }
+                    }));
+                    std::panic::set_hook(prev_hook);
+                    match result {
+                        Ok(Some(e)) => println!("  error: {}", e),
+                        Ok(None) => {} // output already printed by log[]
+                        Err(panic_info) => {
+                            let msg = if let Some(s) = panic_info.downcast_ref::<String>() {
+                                s.clone()
+                            } else if let Some(s) = panic_info.downcast_ref::<&str>() {
+                                s.to_string()
+                            } else {
+                                "panic during execution".to_string()
+                            };
+                            println!("  crash: {}", msg);
+                        }
+                    }
+                }
+            }
+            "a" if is_regression => {
+                // Accept new behavior — skip this issue, snapshot already saved
+                println!("  accepted");
+                idx += 1;
+            }
+            "q" => break,
+            other => {
+                println!("  unknown command: '{}' — press enter to recheck, s to skip", other);
+            }
+        }
+    }
+
+    if !result.issues.is_empty() {
+        process::exit(1);
+    }
 }
 
 fn cmd_run(extra_args: &[String]) {

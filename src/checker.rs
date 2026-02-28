@@ -48,6 +48,25 @@ impl Issue {
             Issue::RegressionChange { .. } => 0,
         }
     }
+
+    /// Get the function name this issue belongs to.
+    pub fn func(&self) -> &str {
+        match self {
+            Issue::UnusedVariable { func, .. } => func,
+            Issue::UnreachableCode { func, .. } => func,
+            Issue::EdgeCaseCrash { func, .. } => func,
+            Issue::RegressionChange { func, .. } => func,
+        }
+    }
+
+    /// Get a "try" command the user can paste, if applicable.
+    pub fn try_input(&self) -> Option<String> {
+        match self {
+            Issue::EdgeCaseCrash { input_desc, .. } => Some(input_desc.clone()),
+            Issue::RegressionChange { input_desc, .. } => Some(input_desc.clone()),
+            _ => None,
+        }
+    }
 }
 
 // --- Purity analysis ---
