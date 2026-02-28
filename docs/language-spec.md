@@ -265,6 +265,16 @@ data = map[]             --- empty map ---
 | `int[value]` | Convert to int (error-value on failure) |
 | `float[value]` | Convert to float (error-value on failure) |
 | `str[value]` | Convert to string |
+| `type[value]` | Type name as string: `'int'`, `'float'`, `'str'`, `'bool'`, `'list'`, `'map'`, `'fn'`, `'none'`, `'error'`, or struct name |
+
+```
+type[42]          --- 'int' ---
+type[3.14]        --- 'float' ---
+type['hello']     --- 'str' ---
+type[[1, 2]]      --- 'list' ---
+type[Point[1, 2]] --- 'Point' ---
+type[error['x']]  --- 'error' ---
+```
 
 #### Collections
 

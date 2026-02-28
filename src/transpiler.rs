@@ -1638,6 +1638,35 @@ impl Transpiler {
                         };
                         return format!("CrowResult {{ ok: false, value: {}, reason: {}.to_string(), kind: {}, trace: vec![{}] }}", default_val, arg_strs[0], kind_expr, trace);
                     }
+                    // --- Type builtin ---
+                    if name == "type" && arg_strs.len() == 1 {
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        let type_str = match ty {
+                            CrowType::Int => "\"int\"".to_string(),
+                            CrowType::Float => "\"float\"".to_string(),
+                            CrowType::Str => "\"str\"".to_string(),
+                            CrowType::Bool => "\"bool\"".to_string(),
+                            CrowType::List(_) => "\"list\"".to_string(),
+                            CrowType::Map(_) => "\"map\"".to_string(),
+                            CrowType::Fn(_, _) => "\"fn\"".to_string(),
+                            CrowType::Void => "\"none\"".to_string(),
+                            CrowType::Struct(name) => format!("\"{}\"", name),
+                            CrowType::Result(_) => format!("{{ let _v = &{}; if _v.ok {{ \"{}\" }} else {{ \"error\" }} }}", arg_strs[0], {
+                                match &ty {
+                                    CrowType::Result(inner) => match inner.as_ref() {
+                                        CrowType::Int => "int",
+                                        CrowType::Float => "float",
+                                        CrowType::Str => "str",
+                                        CrowType::Bool => "bool",
+                                        _ => "unknown",
+                                    },
+                                    _ => "unknown",
+                                }
+                            }),
+                            _ => "\"unknown\"".to_string(),
+                        };
+                        return format!("{}.to_string()", type_str);
+                    }
                     // --- File I/O builtins ---
                     if name == "read" && arg_strs.len() == 1 {
                         let trace = self.trace_format_expr();
@@ -2830,5 +2859,23 @@ mod tests {
     fn test_negative_index_assign_transpile() {
         let rust = transpile("nums = [10, 20, 30]\nnums[-1] = 99\n");
         assert!(rust.contains("if _i < 0"), "should emit negative index handling for assignment\n{}", rust);
+    }
+
+    #[test]
+    fn test_type_builtin_transpile() {
+        let rust = transpile("x = type[42]\n");
+        assert!(rust.contains("\"int\""), "type[42] should produce 'int'\n{}", rust);
+    }
+
+    #[test]
+    fn test_type_builtin_str_transpile() {
+        let rust = transpile("x = type['hello']\n");
+        assert!(rust.contains("\"str\""), "type['hello'] should produce 'str'\n{}", rust);
+    }
+
+    #[test]
+    fn test_type_builtin_list_transpile() {
+        let rust = transpile("x = type[[1, 2]]\n");
+        assert!(rust.contains("\"list\""), "type[[1,2]] should produce 'list'\n{}", rust);
     }
 }
