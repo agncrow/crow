@@ -145,12 +145,22 @@ result = add[3, 4]
 
 ### List Access
 
-Lists are functions from index to value.
+Lists are functions from index to value. Negative indices count from the end: `-1` is the last element, `-2` is second-to-last, etc.
 
 ```
 numbers = [1, 2, 3]
 numbers[0]               --- 1 ---
+numbers[-1]              --- 3 (last) ---
+numbers[-2]              --- 2 (second-to-last) ---
 ```
+
+Negative indices also work for assignment:
+
+```
+numbers[-1] = 99         --- sets last element ---
+```
+
+Out-of-bounds indices (positive or negative) are a runtime error.
 
 ### Map Access
 
@@ -1145,6 +1155,22 @@ for x in passwords
     if len[x] lt 8
         valid = false
 ```
+
+## Design Note: No Augmented Assignment
+
+Crow intentionally has no `+=`, `-=`, `*=`, `/=`, or any compound assignment operators.
+
+**Why:** `x += 1` is syntactic sugar for `x = x + 1`. Adding it creates two ways to write the same thing, violating "one way to do things." Every language that supports both spawns style debates about when to use which form.
+
+**What to use instead:**
+
+```
+x = x + 1
+total = total + item
+name = name + ' jr.'
+```
+
+The explicit form is clear, consistent, and only a few characters longer. The transpiler can optimize `x = x + op` patterns into in-place operations automatically — the sugar adds no performance benefit.
 
 ## Design Note: No Double-Quote Strings
 
