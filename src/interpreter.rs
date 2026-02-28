@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use rayon::prelude::*;
 
@@ -119,6 +120,7 @@ pub struct Interpreter {
     current_line: usize,
     current_function: String,
     current_file: String,
+    cancelled: Option<Arc<AtomicBool>>,
 }
 
 impl Interpreter {
@@ -132,11 +134,22 @@ impl Interpreter {
             current_line: 0,
             current_function: String::new(),
             current_file: String::new(),
+            cancelled: None,
         }
     }
 
     pub fn set_source_file(&mut self, file: &str) {
         self.current_file = file.to_string();
+    }
+
+    /// Set a cancellation flag that will cause loops to exit early.
+    pub fn set_cancel_flag(&mut self, flag: Arc<AtomicBool>) {
+        self.cancelled = Some(flag);
+    }
+
+    /// Check if this interpreter has been cancelled.
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.as_ref().map_or(false, |f| f.load(Ordering::Relaxed))
     }
 
     /// Format a trace entry like "math.divide:5" or "main:3"
@@ -171,6 +184,11 @@ impl Interpreter {
 
     pub fn get_var(&self, name: &str) -> Option<CrowValue> {
         self.env.get(name).cloned()
+    }
+
+    /// Public wrapper for eval_expr, used by the checker module.
+    pub fn eval_expr_pub(&mut self, expr: &Expr) -> Result<CrowValue, String> {
+        self.eval_expr(expr)
     }
 
     /// Get all variables from the top-level scope (for module exports)
@@ -613,6 +631,9 @@ impl Interpreter {
         iter_expr: &Expr,
         body: &[Stmt],
     ) -> Result<Vec<CrowValue>, String> {
+        if self.is_cancelled() {
+            return Err("execution cancelled".to_string());
+        }
         let iter_val = self.eval_expr(iter_expr)?;
         if iter_val.is_error() {
             return Ok(vec![iter_val]);
@@ -664,6 +685,9 @@ impl Interpreter {
         body: &[Stmt],
     ) -> Result<Signal, String> {
         loop {
+            if self.is_cancelled() {
+                return Err("execution cancelled".to_string());
+            }
             let cond = self.eval_expr(condition)?;
             if !self.is_truthy(&cond) {
                 break;
