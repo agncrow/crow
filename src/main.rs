@@ -25,20 +25,21 @@ fn main() {
     }
 
     match args[1].as_str() {
-        "-v" | "-V" | "--version" | "version" => {
+        "-v" => {
             println!("crow {}", env!("CARGO_PKG_VERSION"));
         }
         "init" => cmd_init(),
         "install" => cmd_install(),
         "build" => cmd_build(),
         "check" => {
-            let filename = if args.len() > 2 {
-                args[2].clone()
-            } else {
-                let config = parse_crowfile();
-                config.entry
-            };
-            let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
+            let verbose = args.iter().any(|a| a == "--verbose");
+            let filename = args.iter().skip(2)
+                .find(|a| !a.starts_with('-'))
+                .cloned()
+                .unwrap_or_else(|| {
+                    let config = parse_crowfile();
+                    config.entry
+                });
             cmd_check(&filename, verbose);
         }
         "run" => {
@@ -84,7 +85,8 @@ fn print_usage() {
     eprintln!("  crow run -i file.crow  run with interpreter (slow, for debugging)");
     eprintln!("  crow check             auto-verify project (uses crowfile)");
     eprintln!("  crow check file.crow   auto-verify a specific file");
-    eprintln!("  crow check -v          verbose output with purity and snapshot details");
+    eprintln!("  crow check --verbose   verbose output with purity and snapshot details");
+    eprintln!("  crow -v                show version");
 }
 
 fn cmd_repl() {
