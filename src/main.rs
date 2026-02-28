@@ -943,6 +943,7 @@ fn cmd_check(filename: &str, verbose: bool) {
                 String::new()
             };
             println!("  {}. {}{}", i + 1, issue.summary(), line_info);
+            println!("     fix: {}", issue.suggest());
         }
         process::exit(1);
     }
@@ -963,6 +964,7 @@ fn cmd_check(filename: &str, verbose: bool) {
             String::new()
         };
         println!("  \x1b[1m[{}/{}]\x1b[0m {}{}", idx + 1, total, issue.summary(), line_info);
+        println!("        \x1b[36mfix: {}\x1b[0m", issue.suggest());
 
         if let Some(try_cmd) = issue.try_input() {
             println!("        try: {}", try_cmd);
