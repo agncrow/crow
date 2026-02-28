@@ -1734,6 +1734,11 @@ impl Transpiler {
                             let idx = &arg_strs[0];
                             return format!("{}[{{ let _i = {}; if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }} }}]", base_name, idx, base_name);
                         }
+                        CrowType::Str => {
+                            // String indexing with negative index support
+                            let idx = &arg_strs[0];
+                            return format!("{{ let _s: Vec<char> = {}.chars().collect(); let _i = {}; let _idx = if _i < 0 {{ (_s.len() as i64 + _i) as usize }} else {{ _i as usize }}; _s[_idx].to_string() }}", base_name, idx);
+                        }
                         CrowType::Map(_) => {
                             // Map lookup: map[key] → map[&key]
                             return format!("{}[&{}].clone()", base_name, arg_strs.join(", "));
@@ -1794,6 +1799,10 @@ impl Transpiler {
                     CrowType::List(_) => {
                         let idx = &arg_strs[0];
                         format!("{}[{{ let _i = {}; if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }} }}]", callee_str, idx, callee_str)
+                    }
+                    CrowType::Str => {
+                        let idx = &arg_strs[0];
+                        format!("{{ let _s: Vec<char> = {}.chars().collect(); let _i = {}; let _idx = if _i < 0 {{ (_s.len() as i64 + _i) as usize }} else {{ _i as usize }}; _s[_idx].to_string() }}", callee_str, idx)
                     }
                     CrowType::Map(_) => format!("{}[&{}].clone()", callee_str, arg_strs.join(", ")),
                     CrowType::Json => {
@@ -2877,5 +2886,17 @@ mod tests {
     fn test_type_builtin_list_transpile() {
         let rust = transpile("x = type[[1, 2]]\n");
         assert!(rust.contains("\"list\""), "type[[1,2]] should produce 'list'\n{}", rust);
+    }
+
+    #[test]
+    fn test_string_index_transpile() {
+        let rust = transpile("s = 'hello'\nx = s[0]\n");
+        assert!(rust.contains(".chars().collect()"), "string indexing should use chars()\n{}", rust);
+    }
+
+    #[test]
+    fn test_string_negative_index_transpile() {
+        let rust = transpile("s = 'hello'\nx = s[-1]\n");
+        assert!(rust.contains("if _i < 0"), "should handle negative string index\n{}", rust);
     }
 }

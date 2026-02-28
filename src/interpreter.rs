@@ -980,6 +980,30 @@ impl Interpreter {
                     _ => Err("list index must be an integer".to_string()),
                 }
             }
+            Value::Str(s) => {
+                // string[index] - character access
+                if arg_vals.len() != 1 {
+                    return Err("string indexing requires exactly one argument".to_string());
+                }
+                let index_val = arg_vals[0].unwrap_or_propagate()?;
+                match index_val {
+                    Value::Int(idx) => {
+                        let idx = *idx;
+                        let chars: Vec<char> = s.chars().collect();
+                        let len = chars.len() as i64;
+                        let resolved = if idx < 0 { len + idx } else { idx };
+                        if resolved < 0 || resolved >= len {
+                            return Err(format!(
+                                "index {} out of bounds for string of length {}",
+                                idx,
+                                chars.len()
+                            ));
+                        }
+                        Ok(CrowValue::ok(Value::Str(chars[resolved as usize].to_string())))
+                    }
+                    _ => Err("string index must be an integer".to_string()),
+                }
+            }
             Value::Map(map) => {
                 // map['key'] - access
                 if arg_vals.len() != 1 {
@@ -3065,5 +3089,49 @@ mod tests {
     fn test_type_error() {
         let val = get_var("e = error['oops']\nx = type[e]\n", "x");
         assert_eq!(format!("{}", val.value), "error");
+    }
+
+    // ===== String Indexing =====
+
+    #[test]
+    fn test_string_index_first() {
+        let val = get_var("x = 'hello'[0]\n", "x");
+        assert_eq!(format!("{}", val.value), "h");
+    }
+
+    #[test]
+    fn test_string_index_last_positive() {
+        let val = get_var("x = 'hello'[4]\n", "x");
+        assert_eq!(format!("{}", val.value), "o");
+    }
+
+    #[test]
+    fn test_string_negative_index() {
+        let val = get_var("x = 'hello'[-1]\n", "x");
+        assert_eq!(format!("{}", val.value), "o");
+    }
+
+    #[test]
+    fn test_string_negative_index_first() {
+        let val = get_var("x = 'hello'[-5]\n", "x");
+        assert_eq!(format!("{}", val.value), "h");
+    }
+
+    #[test]
+    fn test_string_index_out_of_bounds() {
+        let src = "x = 'hi'[5]\n";
+        let mut lexer = crate::lexer::Lexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let mut interp = Interpreter::new();
+        let result = interp.run(&stmts);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_string_index_via_variable() {
+        let val = get_var("s = 'crow'\nx = s[2]\n", "x");
+        assert_eq!(format!("{}", val.value), "o");
     }
 }

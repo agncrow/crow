@@ -1,0 +1,21 @@
+--- String Indexing ---
+
+word = 'hello'
+
+--- positive index ---
+log[word[0]]
+log[word[4]]
+
+--- negative index ---
+log[word[-1]]
+log[word[-5]]
+
+--- string literal indexing ---
+log['crow'[0]]
+
+--- via variable ---
+i = 2
+log[word[i]]
+
+log['all string index tests passed']
+
