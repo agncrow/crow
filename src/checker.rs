@@ -16,12 +16,30 @@ const IMPURE_BUILTINS: &[&str] = &[
     "args",
 ];
 
+/// All builtin function names (reused from validator for undefined-variable detection).
+const BUILTINS: &[&str] = &[
+    "log", "assert", "type",
+    "abs", "sqrt", "floor", "ceil", "round", "pow", "min", "max",
+    "split", "trim", "replace", "upper", "lower", "join", "starts", "ends",
+    "int", "float", "str",
+    "len", "sum", "contains", "slice", "push", "pop", "sort", "reverse", "append",
+    "range", "map",
+    "keys", "values", "has", "set", "del",
+    "args", "input",
+    "read", "write",
+    "rand", "time", "sleep", "env", "exit",
+    "json", "encode",
+    "error",
+    "cpu", "gpu",
+];
+
 // --- Issue types ---
 
 #[derive(Debug, Clone)]
 pub enum Issue {
     UnusedVariable { func: String, var: String, line: usize },
     UnreachableCode { func: String, line: usize, detail: String },
+    UndefinedVariable { func: String, var: String, line: usize },
     EdgeCaseCrash { func: String, input_desc: String, error: String },
     RegressionChange { func: String, input_desc: String, was: String, now: String },
 }
@@ -33,6 +51,8 @@ impl Issue {
                 format!("{} has unused variable '{}'", func, var),
             Issue::UnreachableCode { func, detail, .. } =>
                 format!("{} has unreachable code — {}", func, detail),
+            Issue::UndefinedVariable { func, var, .. } =>
+                format!("{} uses undefined variable '{}'", func, var),
             Issue::EdgeCaseCrash { func, input_desc, error } =>
                 format!("{} crashes on {} — {}", func, input_desc, error),
             Issue::RegressionChange { func, input_desc, was, now } =>
@@ -44,6 +64,7 @@ impl Issue {
         match self {
             Issue::UnusedVariable { line, .. } => *line,
             Issue::UnreachableCode { line, .. } => *line,
+            Issue::UndefinedVariable { line, .. } => *line,
             Issue::EdgeCaseCrash { .. } => 0,
             Issue::RegressionChange { .. } => 0,
         }
@@ -55,6 +76,7 @@ impl Issue {
         match self {
             Issue::UnusedVariable { func, .. } => func,
             Issue::UnreachableCode { func, .. } => func,
+            Issue::UndefinedVariable { func, .. } => func,
             Issue::EdgeCaseCrash { func, .. } => func,
             Issue::RegressionChange { func, .. } => func,
         }
@@ -80,6 +102,8 @@ impl Issue {
                 },
             Issue::UnreachableCode { .. } =>
                 "remove the dead code or move it before the return".to_string(),
+            Issue::UndefinedVariable { var, .. } =>
+                format!("'{}' is not defined — check for typos or add an assignment", var),
             Issue::EdgeCaseCrash { error, .. } => {
                 if error.contains("overflow") {
                     "add a bounds check or use saturating arithmetic".to_string()
@@ -390,6 +414,139 @@ fn check_unreachable(name: &str, stmts: &[Stmt], issues: &mut Vec<Issue>) {
     }
 }
 
+/// Find undefined variable references in a function body.
+/// A variable is undefined if it is read but not a parameter, not assigned before use,
+/// not a builtin, and not a user-defined function or struct name.
+fn find_undefined_vars_in_fn(
+    name: &str, params: &[String], body: &[Stmt], ctx: &TypeContext,
+) -> Vec<Issue> {
+    let mut defined: BTreeSet<String> = BTreeSet::new();
+    // Parameters are defined
+    for p in params { defined.insert(p.clone()); }
+    // Builtins are defined
+    for b in BUILTINS { defined.insert(b.to_string()); }
+    // User-defined functions and structs are defined (global scope)
+    for fname in ctx.functions.keys() { defined.insert(fname.clone()); }
+    for sname in ctx.structs.keys() { defined.insert(sname.clone()); }
+    // Boolean literals that parse as identifiers
+    defined.insert("true".to_string());
+    defined.insert("false".to_string());
+
+    let mut issues = Vec::new();
+    collect_undefined_in_stmts(name, body, &defined, &mut issues);
+    issues
+}
+
+/// Walk statements, tracking local assignments and flagging undefined reads.
+fn collect_undefined_in_stmts(
+    func: &str, stmts: &[Stmt], outer_defined: &BTreeSet<String>, issues: &mut Vec<Issue>,
+) {
+    let mut defined = outer_defined.clone();
+    let mut current_line = 0usize;
+    for stmt in stmts {
+        if let Stmt::Line(n) = stmt { current_line = *n; continue; }
+        match stmt {
+            Stmt::Assign { name, value, .. } => {
+                // Check value for undefined reads before adding name to scope
+                collect_undefined_in_expr(func, value, &defined, current_line, issues);
+                defined.insert(name.clone());
+            }
+            Stmt::MultiAssign { names, values, .. } => {
+                for v in values {
+                    collect_undefined_in_expr(func, v, &defined, current_line, issues);
+                }
+                for n in names { defined.insert(n.clone()); }
+            }
+            Stmt::ExprStmt(e) => {
+                collect_undefined_in_expr(func, e, &defined, current_line, issues);
+            }
+            Stmt::Return(Some(e)) => {
+                collect_undefined_in_expr(func, e, &defined, current_line, issues);
+            }
+            Stmt::If { condition, then_body, else_body } => {
+                collect_undefined_in_expr(func, condition, &defined, current_line, issues);
+                collect_undefined_in_stmts(func, then_body, &defined, issues);
+                if let Some(eb) = else_body {
+                    collect_undefined_in_stmts(func, eb, &defined, issues);
+                }
+            }
+            Stmt::For { var, iter, body, .. } => {
+                collect_undefined_in_expr(func, iter, &defined, current_line, issues);
+                let mut inner = defined.clone();
+                inner.insert(var.clone());
+                collect_undefined_in_stmts(func, body, &inner, issues);
+            }
+            Stmt::While { condition, body } => {
+                collect_undefined_in_expr(func, condition, &defined, current_line, issues);
+                collect_undefined_in_stmts(func, body, &defined, issues);
+            }
+            Stmt::IndexAssign { object, index, value } => {
+                collect_undefined_in_expr(func, object, &defined, current_line, issues);
+                collect_undefined_in_expr(func, index, &defined, current_line, issues);
+                collect_undefined_in_expr(func, value, &defined, current_line, issues);
+            }
+            Stmt::FnDecl { .. } | Stmt::StructDecl { .. } => {
+                // Already tracked globally via ctx
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Check a single expression for undefined variable reads.
+fn collect_undefined_in_expr(
+    func: &str, expr: &Expr, defined: &BTreeSet<String>, line: usize, issues: &mut Vec<Issue>,
+) {
+    match expr {
+        Expr::Ident(name) => {
+            if !defined.contains(name) {
+                issues.push(Issue::UndefinedVariable {
+                    func: func.to_string(), var: name.clone(), line,
+                });
+            }
+        }
+        Expr::Str(s) => {
+            for name in crate::parallel::str_interpolation_reads(s) {
+                if !defined.contains(&name) {
+                    issues.push(Issue::UndefinedVariable {
+                        func: func.to_string(), var: name, line,
+                    });
+                }
+            }
+        }
+        Expr::BinOp { left, right, .. } => {
+            collect_undefined_in_expr(func, left, defined, line, issues);
+            collect_undefined_in_expr(func, right, defined, line, issues);
+        }
+        Expr::UnaryOp { expr: e, .. } => {
+            collect_undefined_in_expr(func, e, defined, line, issues);
+        }
+        Expr::Call { callee, args } => {
+            collect_undefined_in_expr(func, callee, defined, line, issues);
+            for a in args { collect_undefined_in_expr(func, a, defined, line, issues); }
+        }
+        Expr::FieldAccess { object, .. } => {
+            collect_undefined_in_expr(func, object, defined, line, issues);
+        }
+        Expr::List(items) => {
+            for item in items { collect_undefined_in_expr(func, item, defined, line, issues); }
+        }
+        Expr::Map(entries) => {
+            for (k, v) in entries {
+                collect_undefined_in_expr(func, k, defined, line, issues);
+                collect_undefined_in_expr(func, v, defined, line, issues);
+            }
+        }
+        Expr::ForExpr { var, iter, body } => {
+            collect_undefined_in_expr(func, iter, defined, line, issues);
+            let mut inner = defined.clone();
+            inner.insert(var.clone());
+            collect_undefined_in_stmts(func, body, &inner, issues);
+        }
+        _ => {}
+    }
+}
+
 /// Run all static checks on functions and top-level code.
 pub fn run_static_checks(ctx: &TypeContext, top_level_stmts: &[Stmt]) -> Vec<Issue> {
     let mut issues = Vec::new();
@@ -398,6 +555,7 @@ pub fn run_static_checks(ctx: &TypeContext, top_level_stmts: &[Stmt]) -> Vec<Iss
         let param_names: Vec<String> = sig.params.iter().map(|(n, _)| n.clone()).collect();
         issues.extend(find_unused_vars_in_fn(name, &param_names, &sig.body));
         issues.extend(find_unreachable_code(name, &sig.body));
+        issues.extend(find_undefined_vars_in_fn(name, &param_names, &sig.body, ctx));
     }
     // Check top-level code
     let top_stmts: Vec<&Stmt> = top_level_stmts.iter()
@@ -407,6 +565,7 @@ pub fn run_static_checks(ctx: &TypeContext, top_level_stmts: &[Stmt]) -> Vec<Iss
         let top_owned: Vec<Stmt> = top_stmts.into_iter().cloned().collect();
         issues.extend(find_unused_vars_in_fn("<top-level>", &[], &top_owned));
         issues.extend(find_unreachable_code("<top-level>", &top_owned));
+        issues.extend(find_undefined_vars_in_fn("<top-level>", &[], &top_owned, ctx));
     }
     issues
 }
