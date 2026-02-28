@@ -889,6 +889,33 @@ fn task_b[]
         heavy[x]
 ```
 
+### GPU Support
+
+`gpu[n]` specifies intent — "use n GPUs." The language does not expose any GPU vendor API. The compiler decides what is GPU-eligible (numeric operations on lists) and what falls back to CPU (string ops, I/O, map lookups).
+
+#### Backend Detection
+
+The toolchain auto-detects the available GPU runtime:
+
+- NVIDIA → CUDA
+- Apple Silicon → Metal
+- Cross-platform → Vulkan / WebGPU
+
+The backend can be pinned in the `crowfile`:
+
+```
+gpu_backend = 'auto'        --- default: detect at build time ---
+gpu_backend = 'cuda'
+gpu_backend = 'metal'
+gpu_backend = 'vulkan'
+```
+
+#### Decoupled from Language Version
+
+New GPU vendors, new CUDA versions, or new backends are **toolchain updates** (`crow update`), not language changes. The `.crow` source files never change. This follows the same model as LLVM — Rust and Swift don't change when LLVM adds a new target.
+
+The language specifies *intent*. The toolchain handles *implementation*.
+
 ## 13. Project Configuration
 
 ### crowfile
