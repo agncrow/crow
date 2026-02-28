@@ -115,7 +115,7 @@ fn cmd_repl() {
         if in_block {
             print!("  ");
         } else {
-            print!("> ");
+            print!("crow> ");
         }
         io::stdout().flush().unwrap();
 
