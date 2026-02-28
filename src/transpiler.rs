@@ -1111,7 +1111,7 @@ impl Transpiler {
                     }
                     _ => {
                         let idx_str = self.expr_to_string(index);
-                        self.emit_line(&format!("{}[{} as usize] = {};", obj_str, idx_str, val_str));
+                        self.emit_line(&format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}[_idx] = {}; }}", idx_str, obj_str, obj_str, val_str));
                     }
                 }
             }
@@ -1701,8 +1701,9 @@ impl Transpiler {
                     };
                     match inner_type {
                         CrowType::List(_) => {
-                            // List indexing: list[i] → list[i as usize]
-                            return format!("{}[{} as usize]", base_name, arg_strs.join(", "));
+                            // List indexing with negative index support
+                            let idx = &arg_strs[0];
+                            return format!("{}[{{ let _i = {}; if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }} }}]", base_name, idx, base_name);
                         }
                         CrowType::Map(_) => {
                             // Map lookup: map[key] → map[&key]
@@ -1761,7 +1762,10 @@ impl Transpiler {
                 let callee_type = self.ctx.infer_expr(callee);
                 let callee_str = self.expr_to_string(callee);
                 match &callee_type {
-                    CrowType::List(_) => format!("{}[{} as usize]", callee_str, arg_strs.join(", ")),
+                    CrowType::List(_) => {
+                        let idx = &arg_strs[0];
+                        format!("{}[{{ let _i = {}; if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }} }}]", callee_str, idx, callee_str)
+                    }
                     CrowType::Map(_) => format!("{}[&{}].clone()", callee_str, arg_strs.join(", ")),
                     CrowType::Json => {
                         let arg_type = self.ctx.infer_expr(&args[0]);
@@ -2814,5 +2818,17 @@ mod tests {
     fn test_then_chaining_transpile() {
         let rust = transpile("x = '  hello  '\ny = x then trim\n");
         assert!(rust.contains("trim"), "then should desugar to function call\n{}", rust);
+    }
+
+    #[test]
+    fn test_negative_index_transpile() {
+        let rust = transpile("nums = [10, 20, 30]\nx = nums[-1]\n");
+        assert!(rust.contains("if _i < 0"), "should emit negative index handling\n{}", rust);
+    }
+
+    #[test]
+    fn test_negative_index_assign_transpile() {
+        let rust = transpile("nums = [10, 20, 30]\nnums[-1] = 99\n");
+        assert!(rust.contains("if _i < 0"), "should emit negative index handling for assignment\n{}", rust);
     }
 }

@@ -530,12 +530,13 @@ impl Interpreter {
                 match val {
                     Value::List(items) => {
                         if let Value::Int(i) = &idx_val.value {
-                            let idx = *i as usize;
-                            if idx < items.len() {
-                                items[idx] = new_val;
+                            let len = items.len() as i64;
+                            let resolved = if *i < 0 { len + *i } else { *i };
+                            if resolved >= 0 && (resolved as usize) < items.len() {
+                                items[resolved as usize] = new_val;
                                 Ok(())
                             } else {
-                                Err(format!("index {} out of bounds (len {})", idx, items.len()))
+                                Err(format!("index {} out of bounds (len {})", i, items.len()))
                             }
                         } else {
                             Err("list index must be an integer".to_string())
@@ -965,14 +966,16 @@ impl Interpreter {
                 match index_val {
                     Value::Int(idx) => {
                         let idx = *idx;
-                        if idx < 0 || idx >= items.len() as i64 {
+                        let len = items.len() as i64;
+                        let resolved = if idx < 0 { len + idx } else { idx };
+                        if resolved < 0 || resolved >= len {
                             return Err(format!(
                                 "index {} out of bounds for list of length {}",
                                 idx,
                                 items.len()
                             ));
                         }
-                        Ok(items[idx as usize].clone())
+                        Ok(items[resolved as usize].clone())
                     }
                     _ => Err("list index must be an integer".to_string()),
                 }
@@ -2934,5 +2937,49 @@ mod tests {
     fn test_scope_inner_accesses_outer() {
         let val = get_var("x = 10\nif true\n    y = x + 5\n    x = y\n", "x");
         assert!(matches!(val.value, Value::Int(15)));
+    }
+
+    // ===== Negative Indexing =====
+
+    #[test]
+    fn test_negative_index_last() {
+        let val = get_var("nums = [10, 20, 30]\nx = nums[-1]\n", "x");
+        assert!(matches!(val.value, Value::Int(30)));
+    }
+
+    #[test]
+    fn test_negative_index_second_to_last() {
+        let val = get_var("nums = [10, 20, 30]\nx = nums[-2]\n", "x");
+        assert!(matches!(val.value, Value::Int(20)));
+    }
+
+    #[test]
+    fn test_negative_index_first_via_neg_len() {
+        let val = get_var("nums = [10, 20, 30]\nx = nums[-3]\n", "x");
+        assert!(matches!(val.value, Value::Int(10)));
+    }
+
+    #[test]
+    fn test_negative_index_out_of_bounds() {
+        let src = "nums = [10, 20, 30]\nx = nums[-4]\n";
+        let mut lexer = crate::lexer::Lexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let mut interp = Interpreter::new();
+        let result = interp.run(&stmts);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_negative_index_assign() {
+        let val = get_var("nums = [10, 20, 30]\nnums[-1] = 99\nx = nums[2]\n", "x");
+        assert!(matches!(val.value, Value::Int(99)));
+    }
+
+    #[test]
+    fn test_positive_index_still_works() {
+        let val = get_var("nums = [10, 20, 30]\nx = nums[0]\n", "x");
+        assert!(matches!(val.value, Value::Int(10)));
     }
 }

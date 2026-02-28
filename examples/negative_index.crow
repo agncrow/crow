@@ -1,0 +1,27 @@
+--- Negative Indexing ---
+
+nums = [10, 20, 30, 40, 50]
+
+--- last element ---
+log[nums[-1]]
+
+--- second to last ---
+log[nums[-2]]
+
+--- first element (positive, still works) ---
+log[nums[0]]
+
+--- last via variable ---
+i = -1
+log[nums[i]]
+
+--- negative index assignment ---
+nums[-1] = 99
+log[nums[-1]]
+log[nums[4]]
+
+--- edge: -len gives first element ---
+log[nums[-5]]
+
+log['all negative index tests passed']
+
