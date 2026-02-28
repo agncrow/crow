@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use crate::ast::*;
 
 /// Extract variable names read by string interpolation expressions like "hello {name}"
-fn str_interpolation_reads(s: &str) -> HashSet<String> {
+pub fn str_interpolation_reads(s: &str) -> HashSet<String> {
     let mut reads = HashSet::new();
     let chars: Vec<char> = s.chars().collect();
     let mut i = 0;
