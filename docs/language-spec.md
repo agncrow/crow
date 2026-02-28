@@ -162,6 +162,19 @@ numbers[-1] = 99         --- sets last element ---
 
 Out-of-bounds indices (positive or negative) are a runtime error.
 
+### String Access
+
+Strings support indexing just like lists. Each index returns a single-character string. Negative indices count from the end.
+
+```
+word = 'hello'
+word[0]                  --- 'h' ---
+word[-1]                 --- 'o' ---
+word[2]                  --- 'l' ---
+```
+
+Out-of-bounds indices are a runtime error.
+
 ### Map Access
 
 Maps are functions from key to value.
@@ -1165,6 +1178,23 @@ for x in passwords
     if len[x] lt 8
         valid = false
 ```
+
+## Design Note: No find/index Builtin
+
+Crow intentionally has no `find` or `index` builtin for locating the position of an element in a list or a substring in a string.
+
+**Why:** Finding a position is straightforward with a loop:
+
+```
+pos = -1
+for i in range[len[items]]
+    if items[i] eq target
+        pos = i
+```
+
+This is clear, explicit, and doesn't require a new builtin. Adding `find` would create a second way to accomplish the same task. Unlike `contains` — which genuinely can't be written cleanly without a builtin (Crow has no `break`, so a loop needs a flag variable and always runs to completion) — `find` maps directly to a simple loop pattern.
+
+**What to use instead:** A `for` loop over `range[len[x]]` with an `if` check.
 
 ## Design Note: No Augmented Assignment
 

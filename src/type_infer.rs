@@ -870,6 +870,7 @@ impl TypeContext {
                         CrowType::Fn(_, ret) => return *ret.clone(),
                         CrowType::List(inner) => return *inner.clone(),
                         CrowType::Map(inner) => return *inner.clone(),
+                        CrowType::Str => return CrowType::Str,
                         _ => {}
                     }
                 }
