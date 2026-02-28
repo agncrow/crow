@@ -60,6 +60,7 @@ impl CrowValue {
     }
 
     #[inline(always)]
+    #[allow(dead_code)]
     pub fn is_ok(&self) -> bool {
         self.ok
     }

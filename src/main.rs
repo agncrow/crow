@@ -775,7 +775,7 @@ fn translate_rust_compile_error(stderr: &str) -> String {
             .map(|l| {
                 let mut s = l.to_string();
                 // Strip error codes like [E0308]
-                if let Some(start) = s.find('[') {
+                if let Some(_start) = s.find('[') {
                     if let Some(end) = s.find("]: ") {
                         s = format!("error: {}", &s[end + 3..]);
                     }

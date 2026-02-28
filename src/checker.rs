@@ -50,6 +50,7 @@ impl Issue {
     }
 
     /// Get the function name this issue belongs to.
+    #[allow(dead_code)]
     pub fn func(&self) -> &str {
         match self {
             Issue::UnusedVariable { func, .. } => func,
