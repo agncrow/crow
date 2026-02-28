@@ -1510,16 +1510,7 @@ impl Transpiler {
                     if name == "len" && arg_strs.len() == 1 {
                         return format!("({}).len() as i64", arg_strs[0]);
                     }
-                    if name == "sum" && arg_strs.len() == 1 {
-                        let ty = self.ctx.infer_expr(&args[0]);
-                        return match ty {
-                            CrowType::List(inner) => match *inner {
-                                CrowType::Float => format!("({}).iter().sum::<f64>()", arg_strs[0]),
-                                _ => format!("({}).iter().sum::<i64>()", arg_strs[0]),
-                            },
-                            _ => format!("({}).iter().sum::<i64>()", arg_strs[0]),
-                        };
-                    }
+
                     if name == "contains" && arg_strs.len() == 2 {
                         let ty = self.ctx.infer_expr(&args[0]);
                         return match ty {
@@ -2545,20 +2536,6 @@ mod tests {
         let src = "x = 5\nx = 3.14\n";
         let rust = transpile(src);
         assert!(rust.contains("x = 3.14"), "int/float reassignment should work\n{}", rust);
-    }
-
-    #[test]
-    fn test_sum_int_list() {
-        let src = "x = [1, 2, 3]\ny = sum[x]\n";
-        let rust = transpile(src);
-        assert!(rust.contains(".iter().sum::<i64>()"), "sum of int list should use sum::<i64>()\n{}", rust);
-    }
-
-    #[test]
-    fn test_sum_float_list() {
-        let src = "x = [1.0, 2.0, 3.0]\ny = sum[x]\n";
-        let rust = transpile(src);
-        assert!(rust.contains(".iter().sum::<f64>()"), "sum of float list should use sum::<f64>()\n{}", rust);
     }
 
     #[test]
