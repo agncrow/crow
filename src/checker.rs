@@ -73,7 +73,7 @@ impl Issue {
     pub fn suggest(&self) -> String {
         match self {
             Issue::UnusedVariable { var, .. } =>
-                format!("remove '{}' or prefix with _ to mark intentional", var),
+                format!("remove '{}' or rename to _ if intentionally unused", var),
             Issue::UnreachableCode { .. } =>
                 "remove the dead code or move it before the return".to_string(),
             Issue::EdgeCaseCrash { error, .. } => {
