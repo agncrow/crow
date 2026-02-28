@@ -832,7 +832,7 @@ impl Interpreter {
                 // filter out 'done' results (from iterations that didn't produce a value)
                 let filtered: Vec<CrowValue> = results
                     .into_iter()
-                    .filter(|v| v.is_ok())
+                    .filter(|v| !matches!(v.value, Value::Done))
                     .collect();
                 Ok(CrowValue::ok(Value::List(filtered)))
             }
@@ -2050,6 +2050,330 @@ mod tests {
         interp.env.get(var).unwrap().clone()
     }
 
+    // ===== §1: Variables & Types =====
+
+    #[test]
+    fn test_var_int() {
+        let val = get_var("x = 42\n", "x");
+        assert!(matches!(val.value, Value::Int(42)));
+    }
+
+    #[test]
+    fn test_var_negative_int() {
+        let val = get_var("x = -7\n", "x");
+        assert!(matches!(val.value, Value::Int(-7)));
+    }
+
+    #[test]
+    fn test_var_float() {
+        let val = get_var("x = 3.14\n", "x");
+        assert!(matches!(val.value, Value::Float(f) if (f - 3.14).abs() < 0.001));
+    }
+
+    #[test]
+    fn test_var_string() {
+        let val = get_var("x = 'hello'\n", "x");
+        assert_eq!(format!("{}", val.value), "hello");
+    }
+
+    #[test]
+    fn test_var_bool_true() {
+        let val = get_var("x = true\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_var_bool_false() {
+        let val = get_var("x = false\n", "x");
+        assert!(matches!(val.value, Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_var_list() {
+        let val = get_var("x = [1, 2, 3]\n", "x");
+        assert!(matches!(val.value, Value::List(ref items) if items.len() == 3));
+    }
+
+    #[test]
+    fn test_var_empty_list() {
+        let val = get_var("x = []\n", "x");
+        assert!(matches!(val.value, Value::List(ref items) if items.is_empty()));
+    }
+
+    #[test]
+    fn test_string_interpolation() {
+        let val = get_var("name = 'crow'\nx = 'hello, {name}'\n", "x");
+        assert_eq!(format!("{}", val.value), "hello, crow");
+    }
+
+    #[test]
+    fn test_string_interpolation_expr() {
+        let val = get_var("x = '1 + 2 = {1 + 2}'\n", "x");
+        assert_eq!(format!("{}", val.value), "1 + 2 = 3");
+    }
+
+    #[test]
+    fn test_multi_assign() {
+        let val_x = get_var("x, y, z = 1, 2, 3\n", "x");
+        let val_z = get_var("x, y, z = 1, 2, 3\n", "z");
+        assert!(matches!(val_x.value, Value::Int(1)));
+        assert!(matches!(val_z.value, Value::Int(3)));
+    }
+
+    #[test]
+    fn test_swap() {
+        let val_a = get_var("a = 1\nb = 2\na, b = b, a\n", "a");
+        let val_b = get_var("a = 1\nb = 2\na, b = b, a\n", "b");
+        assert!(matches!(val_a.value, Value::Int(2)));
+        assert!(matches!(val_b.value, Value::Int(1)));
+    }
+
+    #[test]
+    fn test_reassignment_same_type() {
+        let val = get_var("x = 10\nx = 20\n", "x");
+        assert!(matches!(val.value, Value::Int(20)));
+    }
+
+    #[test]
+    fn test_reassignment_int_float_compatible() {
+        let val = get_var("x = 10\nx = 3.14\n", "x");
+        assert!(matches!(val.value, Value::Float(f) if (f - 3.14).abs() < 0.001));
+    }
+
+    // ===== §3: Functions =====
+
+    #[test]
+    fn test_fn_implicit_return() {
+        let val = get_var("fn add[a, b]\n    a + b\nresult = add[3, 4]\n", "result");
+        assert!(matches!(val.value, Value::Int(7)));
+    }
+
+    #[test]
+    fn test_fn_explicit_return() {
+        let val = get_var("fn safe_div[a, b]\n    if b eq 0\n        return 0\n    a / b\nresult = safe_div[10, 0]\n", "result");
+        assert!(matches!(val.value, Value::Int(0)));
+    }
+
+    #[test]
+    fn test_fn_explicit_return_nonzero() {
+        let val = get_var("fn safe_div[a, b]\n    if b eq 0\n        return 0\n    a / b\nresult = safe_div[10, 2]\n", "result");
+        assert!(matches!(val.value, Value::Int(5)));
+    }
+
+    #[test]
+    fn test_fn_no_args() {
+        let val = get_var("fn greet[]\n    return 'hello'\nresult = greet[]\n", "result");
+        assert_eq!(format!("{}", val.value), "hello");
+    }
+
+    #[test]
+    fn test_fn_first_class() {
+        let val = get_var("fn double[x]\n    return x * 2\nfn apply[f, x]\n    return f[x]\nresult = apply[double, 5]\n", "result");
+        assert!(matches!(val.value, Value::Int(10)));
+    }
+
+    // ===== §4: Control Flow =====
+
+    #[test]
+    fn test_if_true() {
+        let val = get_var("x = 0\nif true\n    x = 1\n", "x");
+        assert!(matches!(val.value, Value::Int(1)));
+    }
+
+    #[test]
+    fn test_if_false() {
+        let val = get_var("x = 0\nif false\n    x = 1\n", "x");
+        assert!(matches!(val.value, Value::Int(0)));
+    }
+
+    #[test]
+    fn test_if_else() {
+        let val = get_var("x = 0\nif false\n    x = 1\nelse\n    x = 2\n", "x");
+        assert!(matches!(val.value, Value::Int(2)));
+    }
+
+    #[test]
+    fn test_if_else_if() {
+        let val = get_var("x = 0\nif false\n    x = 1\nelse if true\n    x = 2\nelse\n    x = 3\n", "x");
+        assert!(matches!(val.value, Value::Int(2)));
+    }
+
+    // ===== §5: Loops =====
+
+    #[test]
+    fn test_while_basic() {
+        let val = get_var("x = 5\nwhile x gt 0\n    x = x - 1\n", "x");
+        assert!(matches!(val.value, Value::Int(0)));
+    }
+
+    #[test]
+    fn test_while_break() {
+        let val = get_var("x = 0\nwhile true\n    x = x + 1\n    if x eq 5\n        break\n", "x");
+        assert!(matches!(val.value, Value::Int(5)));
+    }
+
+    #[test]
+    fn test_while_continue() {
+        // Sum 1-10 skipping 5
+        let val = get_var("total = 0\ni = 0\nwhile i lt 10\n    i = i + 1\n    if i eq 5\n        continue\n    total = total + i\n", "total");
+        assert!(matches!(val.value, Value::Int(50))); // 55 - 5 = 50
+    }
+
+    #[test]
+    fn test_for_as_expression() {
+        let val = get_var("doubled = for x in [1, 2, 3]\n    x * 2\n", "doubled");
+        if let Value::List(items) = &val.value {
+            assert_eq!(items.len(), 3);
+            assert!(matches!(items[0].value, Value::Int(2)));
+            assert!(matches!(items[1].value, Value::Int(4)));
+            assert!(matches!(items[2].value, Value::Int(6)));
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn test_for_as_expression_filter() {
+        let val = get_var("evens = for x in [1, 2, 3, 4, 5]\n    if x % 2 eq 0\n        x\n", "evens");
+        if let Value::List(items) = &val.value {
+            assert_eq!(items.len(), 2);
+            assert!(matches!(items[0].value, Value::Int(2)));
+            assert!(matches!(items[1].value, Value::Int(4)));
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    // ===== §7: Structs =====
+
+    #[test]
+    fn test_struct_creation() {
+        let val = get_var("struct Bird [name, speed]\nb = Bird['crow', 50]\n", "b");
+        if let Value::StructInstance(si) = &val.value {
+            assert_eq!(si.name, "Bird");
+        } else {
+            panic!("expected struct");
+        }
+    }
+
+    #[test]
+    fn test_struct_field_access() {
+        let val = get_var("struct Bird [name, speed]\nb = Bird['crow', 50]\nx = b.name\n", "x");
+        assert_eq!(format!("{}", val.value), "crow");
+    }
+
+    #[test]
+    fn test_struct_field_access_int() {
+        let val = get_var("struct Bird [name, speed]\nb = Bird['crow', 50]\nx = b.speed\n", "x");
+        assert!(matches!(val.value, Value::Int(50)));
+    }
+
+    // ===== §8: Operators =====
+
+    #[test]
+    fn test_arithmetic_add() {
+        let val = get_var("x = 3 + 4\n", "x");
+        assert!(matches!(val.value, Value::Int(7)));
+    }
+
+    #[test]
+    fn test_arithmetic_sub() {
+        let val = get_var("x = 10 - 3\n", "x");
+        assert!(matches!(val.value, Value::Int(7)));
+    }
+
+    #[test]
+    fn test_arithmetic_mul() {
+        let val = get_var("x = 6 * 7\n", "x");
+        assert!(matches!(val.value, Value::Int(42)));
+    }
+
+    #[test]
+    fn test_arithmetic_div_int() {
+        let val = get_var("x = 7 / 2\n", "x");
+        assert!(matches!(val.value, Value::Int(3)));
+    }
+
+    #[test]
+    fn test_arithmetic_div_float() {
+        let val = get_var("x = 7.0 / 2\n", "x");
+        assert!(matches!(val.value, Value::Float(f) if (f - 3.5).abs() < 0.001));
+    }
+
+    #[test]
+    fn test_arithmetic_modulo() {
+        let val = get_var("x = 10 % 3\n", "x");
+        assert!(matches!(val.value, Value::Int(1)));
+    }
+
+    #[test]
+    fn test_string_concat() {
+        let val = get_var("x = 'hello' + ' world'\n", "x");
+        assert_eq!(format!("{}", val.value), "hello world");
+    }
+
+    #[test]
+    fn test_comparison_eq() {
+        let val = get_var("x = 5 eq 5\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_comparison_ne() {
+        let val = get_var("x = 5 ne 3\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_comparison_gt() {
+        let val = get_var("x = 10 gt 5\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_comparison_lt() {
+        let val = get_var("x = 3 lt 5\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_comparison_gte() {
+        let val = get_var("x = 5 gte 5\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_comparison_lte() {
+        let val = get_var("x = 5 lte 5\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_logical_and() {
+        let val = get_var("x = true and false\n", "x");
+        assert!(matches!(val.value, Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_logical_or() {
+        let val = get_var("x = false or true\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_logical_not() {
+        let val = get_var("x = not true\n", "x");
+        assert!(matches!(val.value, Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_expression_grouping() {
+        let val = get_var("x = (1 + 2) * 3\n", "x");
+        assert!(matches!(val.value, Value::Int(9)));
+    }
+
+    // ===== Existing error tests =====
+
     #[test]
     fn test_error_line_int_parse() {
         let val = get_var("x = int['bad']\n", "x");
@@ -2204,5 +2528,387 @@ mod tests {
         // then works with conversion builtins
         let val = get_var("x = 42\ny = x then str\n", "y");
         assert_eq!(format!("{}", val.value), "42");
+    }
+
+    // ===== Builtins: range =====
+
+    #[test]
+    fn test_range_single_arg() {
+        let val = get_var("x = range[5]\n", "x");
+        if let Value::List(items) = &val.value {
+            assert_eq!(items.len(), 5);
+            assert!(matches!(items[0].value, Value::Int(0)));
+            assert!(matches!(items[4].value, Value::Int(4)));
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn test_range_two_args() {
+        let val = get_var("x = range[2, 5]\n", "x");
+        if let Value::List(items) = &val.value {
+            assert_eq!(items.len(), 3);
+            assert!(matches!(items[0].value, Value::Int(2)));
+            assert!(matches!(items[2].value, Value::Int(4)));
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn test_range_three_args() {
+        let val = get_var("x = range[0, 10, 3]\n", "x");
+        if let Value::List(items) = &val.value {
+            assert_eq!(items.len(), 4); // 0, 3, 6, 9
+            assert!(matches!(items[0].value, Value::Int(0)));
+            assert!(matches!(items[3].value, Value::Int(9)));
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    // ===== Builtins: math =====
+
+    #[test]
+    fn test_abs() {
+        let val = get_var("x = abs[-5]\n", "x");
+        assert!(matches!(val.value, Value::Int(5)));
+    }
+
+    #[test]
+    fn test_sqrt() {
+        let val = get_var("x = sqrt[16]\n", "x");
+        assert!(matches!(val.value, Value::Float(f) if (f - 4.0).abs() < 0.001));
+    }
+
+    #[test]
+    fn test_floor() {
+        let val = get_var("x = floor[3.7]\n", "x");
+        assert!(matches!(val.value, Value::Int(3)));
+    }
+
+    #[test]
+    fn test_ceil() {
+        let val = get_var("x = ceil[3.2]\n", "x");
+        assert!(matches!(val.value, Value::Int(4)));
+    }
+
+    #[test]
+    fn test_round() {
+        let val = get_var("x = round[3.5]\n", "x");
+        assert!(matches!(val.value, Value::Int(4)));
+    }
+
+    #[test]
+    fn test_pow() {
+        let val = get_var("x = pow[2, 10]\n", "x");
+        assert!(matches!(val.value, Value::Int(1024)));
+    }
+
+    #[test]
+    fn test_min() {
+        let val = get_var("x = min[3, 7]\n", "x");
+        assert!(matches!(val.value, Value::Int(3)));
+    }
+
+    #[test]
+    fn test_max() {
+        let val = get_var("x = max[3, 7]\n", "x");
+        assert!(matches!(val.value, Value::Int(7)));
+    }
+
+    // ===== Builtins: strings =====
+
+    #[test]
+    fn test_split() {
+        let val = get_var("x = split['a,b,c', ',']\n", "x");
+        if let Value::List(items) = &val.value {
+            assert_eq!(items.len(), 3);
+            assert_eq!(format!("{}", items[0].value), "a");
+            assert_eq!(format!("{}", items[2].value), "c");
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn test_trim() {
+        let val = get_var("x = trim['  hello  ']\n", "x");
+        assert_eq!(format!("{}", val.value), "hello");
+    }
+
+    #[test]
+    fn test_replace() {
+        let val = get_var("x = replace['hello world', 'world', 'crow']\n", "x");
+        assert_eq!(format!("{}", val.value), "hello crow");
+    }
+
+    #[test]
+    fn test_upper() {
+        let val = get_var("x = upper['hello']\n", "x");
+        assert_eq!(format!("{}", val.value), "HELLO");
+    }
+
+    #[test]
+    fn test_lower() {
+        let val = get_var("x = lower['HELLO']\n", "x");
+        assert_eq!(format!("{}", val.value), "hello");
+    }
+
+    #[test]
+    fn test_starts() {
+        let val = get_var("x = starts['hello', 'hel']\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_ends() {
+        let val = get_var("x = ends['hello', 'llo']\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_join() {
+        let val = get_var("x = join[['a', 'b', 'c'], '-']\n", "x");
+        assert_eq!(format!("{}", val.value), "a-b-c");
+    }
+
+    // ===== Builtins: conversion =====
+
+    #[test]
+    fn test_int_from_string_success() {
+        let val = get_var("x = int['42']\n", "x");
+        assert!(val.ok);
+        assert!(matches!(val.value, Value::Int(42)));
+    }
+
+    #[test]
+    fn test_int_from_string_fail() {
+        let val = get_var("x = int['bad']\n", "x");
+        assert!(!val.ok);
+    }
+
+    #[test]
+    fn test_int_from_float() {
+        let val = get_var("x = int[3.14]\n", "x");
+        assert!(matches!(val.value, Value::Int(3)));
+    }
+
+    #[test]
+    fn test_float_from_string_success() {
+        let val = get_var("x = float['3.14']\n", "x");
+        assert!(val.ok);
+        assert!(matches!(val.value, Value::Float(f) if (f - 3.14).abs() < 0.001));
+    }
+
+    #[test]
+    fn test_str_conversion() {
+        let val = get_var("x = str[42]\n", "x");
+        assert_eq!(format!("{}", val.value), "42");
+    }
+
+    // ===== Builtins: collections =====
+
+    #[test]
+    fn test_len_list() {
+        let val = get_var("x = len[[1, 2, 3]]\n", "x");
+        assert!(matches!(val.value, Value::Int(3)));
+    }
+
+    #[test]
+    fn test_len_string() {
+        let val = get_var("x = len['hello']\n", "x");
+        assert!(matches!(val.value, Value::Int(5)));
+    }
+
+    #[test]
+    fn test_push() {
+        let val = get_var("x = push[[1, 2], 3]\n", "x");
+        if let Value::List(items) = &val.value {
+            assert_eq!(items.len(), 3);
+            assert!(matches!(items[2].value, Value::Int(3)));
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn test_pop() {
+        let val = get_var("x = pop[[1, 2, 3]]\n", "x");
+        if let Value::List(items) = &val.value {
+            assert_eq!(items.len(), 2);
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn test_append() {
+        let val = get_var("x = append[[1, 2], [3, 4]]\n", "x");
+        if let Value::List(items) = &val.value {
+            assert_eq!(items.len(), 4);
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn test_sort() {
+        let val = get_var("x = sort[[3, 1, 2]]\n", "x");
+        if let Value::List(items) = &val.value {
+            assert!(matches!(items[0].value, Value::Int(1)));
+            assert!(matches!(items[1].value, Value::Int(2)));
+            assert!(matches!(items[2].value, Value::Int(3)));
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn test_reverse() {
+        let val = get_var("x = reverse[[1, 2, 3]]\n", "x");
+        if let Value::List(items) = &val.value {
+            assert!(matches!(items[0].value, Value::Int(3)));
+            assert!(matches!(items[2].value, Value::Int(1)));
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn test_contains() {
+        let val = get_var("x = contains[[1, 2, 3], 2]\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_contains_false() {
+        let val = get_var("x = contains[[1, 2, 3], 5]\n", "x");
+        assert!(matches!(val.value, Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_slice() {
+        let val = get_var("x = slice[[10, 20, 30, 40, 50], 1, 3]\n", "x");
+        if let Value::List(items) = &val.value {
+            assert_eq!(items.len(), 2);
+            assert!(matches!(items[0].value, Value::Int(20)));
+            assert!(matches!(items[1].value, Value::Int(30)));
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn test_sum_int() {
+        let val = get_var("x = sum[[1, 2, 3, 4]]\n", "x");
+        assert!(matches!(val.value, Value::Int(10)));
+    }
+
+    #[test]
+    fn test_list_index() {
+        let val = get_var("nums = [10, 20, 30]\nx = nums[1]\n", "x");
+        assert!(matches!(val.value, Value::Int(20)));
+    }
+
+    // ===== Builtins: map operations =====
+
+    #[test]
+    fn test_map_creation() {
+        let val = get_var("x = ['name' = 'crow', 'age' = 3]\n", "x");
+        assert!(matches!(val.value, Value::Map(_)));
+    }
+
+    #[test]
+    fn test_map_access() {
+        let val = get_var("m = ['name' = 'crow']\nx = m['name']\n", "x");
+        assert_eq!(format!("{}", val.value), "crow");
+    }
+
+    #[test]
+    fn test_map_empty() {
+        let val = get_var("x = map[]\n", "x");
+        assert!(matches!(val.value, Value::Map(_)));
+    }
+
+    #[test]
+    fn test_keys() {
+        let val = get_var("m = ['a' = 1, 'b' = 2]\nx = keys[m]\n", "x");
+        if let Value::List(items) = &val.value {
+            assert_eq!(items.len(), 2);
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn test_values() {
+        let val = get_var("m = ['a' = 1, 'b' = 2]\nx = values[m]\n", "x");
+        if let Value::List(items) = &val.value {
+            assert_eq!(items.len(), 2);
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn test_has() {
+        let val = get_var("m = ['a' = 1]\nx = has[m, 'a']\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_has_false() {
+        let val = get_var("m = ['a' = 1]\nx = has[m, 'b']\n", "x");
+        assert!(matches!(val.value, Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_set() {
+        let val = get_var("m = ['a' = 1]\nm = set[m, 'b', 2]\nx = has[m, 'b']\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_del() {
+        let val = get_var("m = ['a' = 1, 'b' = 2]\nm = del[m, 'a']\nx = has[m, 'a']\n", "x");
+        assert!(matches!(val.value, Value::Bool(false)));
+    }
+
+    // ===== Builtins: error[] =====
+
+    #[test]
+    fn test_error_builtin() {
+        let val = get_var("x = error['something went wrong']\n", "x");
+        assert!(!val.ok);
+        assert_eq!(val.reason, "something went wrong");
+    }
+
+    #[test]
+    fn test_error_builtin_with_kind() {
+        let val = get_var("x = error['bad input', 'validation']\n", "x");
+        assert!(!val.ok);
+        assert_eq!(val.reason, "bad input");
+        assert_eq!(val.kind, "validation");
+    }
+
+    // ===== §11: Error value status on normal values =====
+
+    #[test]
+    fn test_ok_on_normal_value() {
+        let val = get_var("x = 5\n", "x");
+        assert!(val.ok);
+        assert_eq!(val.reason, "");
+        assert_eq!(val.kind, "");
+        assert!(val.trace.is_empty());
+    }
+
+    // ===== Scope =====
+
+    #[test]
+    fn test_scope_inner_accesses_outer() {
+        let val = get_var("x = 10\nif true\n    y = x + 5\n    x = y\n", "x");
+        assert!(matches!(val.value, Value::Int(15)));
     }
 }

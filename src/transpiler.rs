@@ -2632,4 +2632,187 @@ mod tests {
         let rust = transpile(src);
         assert!(rust.contains("as usize"), "int index on JSON should cast to usize\n{}", rust);
     }
+
+    // ===== §1: Variables & Types =====
+
+    #[test]
+    fn test_var_int_transpile() {
+        let rust = transpile("x = 42\n");
+        assert!(rust.contains("let x: i64 = 42"), "int var\n{}", rust);
+    }
+
+    #[test]
+    fn test_var_float_transpile() {
+        let rust = transpile("x = 3.14\n");
+        assert!(rust.contains("let x: f64 = 3.14"), "float var\n{}", rust);
+    }
+
+    #[test]
+    fn test_var_string_transpile() {
+        let rust = transpile("x = 'hello'\n");
+        assert!(rust.contains("let x: String"), "string var\n{}", rust);
+    }
+
+    #[test]
+    fn test_var_bool_transpile() {
+        let rust = transpile("x = true\n");
+        assert!(rust.contains("let x: bool = true"), "bool var\n{}", rust);
+    }
+
+    #[test]
+    fn test_var_list_transpile() {
+        let rust = transpile("x = [1, 2, 3]\n");
+        assert!(rust.contains("Vec"), "list should use Vec\n{}", rust);
+    }
+
+    #[test]
+    fn test_string_interpolation_transpile() {
+        let rust = transpile("name = 'crow'\nx = 'hello {name}'\n");
+        assert!(rust.contains("format!"), "interpolation should use format!\n{}", rust);
+    }
+
+    // ===== §3: Functions =====
+
+    #[test]
+    fn test_fn_declaration_transpile() {
+        let rust = transpile("fn add[a, b]\n    a + b\n");
+        assert!(rust.contains("fn add("), "should declare function\n{}", rust);
+    }
+
+    #[test]
+    fn test_fn_return_transpile() {
+        let rust = transpile("fn greet[]\n    return 'hello'\nx = greet[]\n");
+        assert!(rust.contains("return"), "should have return\n{}", rust);
+    }
+
+    // ===== §4: Control Flow =====
+
+    #[test]
+    fn test_if_else_transpile() {
+        let rust = transpile("x = 5\nif x gt 3\n    log['big']\nelse\n    log['small']\n");
+        assert!(rust.contains("if"), "should have if\n{}", rust);
+        assert!(rust.contains("else"), "should have else\n{}", rust);
+    }
+
+    // ===== §5: Loops =====
+
+    #[test]
+    fn test_while_transpile() {
+        let rust = transpile("x = 5\nwhile x gt 0\n    x = x - 1\n");
+        assert!(rust.contains("while") || rust.contains("loop"), "should have loop\n{}", rust);
+    }
+
+    #[test]
+    fn test_while_break_transpile() {
+        let rust = transpile("x = 0\nwhile true\n    x = x + 1\n    if x eq 5\n        break\n");
+        assert!(rust.contains("break"), "should have break\n{}", rust);
+    }
+
+    #[test]
+    fn test_for_expr_transpile() {
+        let rust = transpile("doubled = for x in [1, 2, 3]\n    x * 2\n");
+        assert!(rust.contains("collect"), "for-expr should collect results\n{}", rust);
+    }
+
+    // ===== §7: Structs =====
+
+    #[test]
+    fn test_struct_transpile() {
+        let rust = transpile("struct Bird [name, speed]\nb = Bird['crow', 50]\n");
+        assert!(rust.contains("struct Bird"), "should declare struct\n{}", rust);
+    }
+
+    #[test]
+    fn test_struct_field_transpile() {
+        let rust = transpile("struct Bird [name, speed]\nb = Bird['crow', 50]\nlog[b.name]\n");
+        assert!(rust.contains(".name"), "should access field\n{}", rust);
+    }
+
+    // ===== §8: Operators =====
+
+    #[test]
+    fn test_comparison_operators_transpile() {
+        let rust = transpile("x = 5\ny = x gt 3\n");
+        assert!(rust.contains(">"), "gt should map to >\n{}", rust);
+    }
+
+    #[test]
+    fn test_logical_operators_transpile() {
+        let rust = transpile("x = true and false\n");
+        assert!(rust.contains("&&"), "and should map to &&\n{}", rust);
+    }
+
+    #[test]
+    fn test_expression_grouping_transpile() {
+        let rust = transpile("x = (1 + 2) * 3\n");
+        assert!(rust.contains("(1") && rust.contains("* 3"), "should preserve grouping\n{}", rust);
+    }
+
+    // ===== Builtins =====
+
+    #[test]
+    fn test_range_transpile() {
+        let rust = transpile("x = range[5]\n");
+        assert!(rust.contains("0..5") || rust.contains("range"), "should generate range\n{}", rust);
+    }
+
+    #[test]
+    fn test_len_transpile() {
+        let rust = transpile("x = [1, 2, 3]\ny = len[x]\n");
+        assert!(rust.contains(".len()"), "should use .len()\n{}", rust);
+    }
+
+    #[test]
+    fn test_push_transpile() {
+        let rust = transpile("x = [1, 2]\ny = push[x, 3]\n");
+        assert!(rust.contains("push"), "should use push\n{}", rust);
+    }
+
+    #[test]
+    fn test_sort_transpile() {
+        let rust = transpile("x = [3, 1, 2]\ny = sort[x]\n");
+        assert!(rust.contains("sort"), "should use sort\n{}", rust);
+    }
+
+    #[test]
+    fn test_map_operations_transpile() {
+        let rust = transpile("m = map[]\nm = set[m, 'a', 1]\n");
+        assert!(rust.contains("BTreeMap") || rust.contains("HashMap"), "should use map type\n{}", rust);
+    }
+
+    #[test]
+    fn test_error_builtin_transpile() {
+        let rust = transpile("x = error['something went wrong']\n");
+        assert!(rust.contains("ok: false"), "error[] should create error value\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_sqrt_transpile() {
+        let rust = transpile("x = sqrt[16]\n");
+        assert!(rust.contains("sqrt"), "should use sqrt\n{}", rust);
+    }
+
+    #[test]
+    fn test_string_upper_transpile() {
+        let rust = transpile("x = upper['hello']\n");
+        assert!(rust.contains("to_uppercase"), "should use to_uppercase\n{}", rust);
+    }
+
+    #[test]
+    fn test_string_split_transpile() {
+        let rust = transpile("x = split['a,b', ',']\n");
+        assert!(rust.contains("split"), "should use split\n{}", rust);
+    }
+
+    #[test]
+    fn test_contains_transpile() {
+        let rust = transpile("x = [1, 2, 3]\ny = contains[x, 2]\n");
+        assert!(rust.contains("contains") || rust.contains("any"), "should check contains\n{}", rust);
+    }
+
+    #[test]
+    fn test_then_chaining_transpile() {
+        let rust = transpile("x = '  hello  '\ny = x then trim\n");
+        assert!(rust.contains("trim"), "then should desugar to function call\n{}", rust);
+    }
 }
