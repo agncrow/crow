@@ -391,6 +391,13 @@ for x in [1, 2, 3]
     log[x]
 ```
 
+When a `for` loop is used as a statement (not assigned to a variable), the results of each iteration are discarded. The loop runs only for its side effects:
+
+```
+for x in [1, 2, 3]
+    log[x]               --- prints 1, 2, 3; results discarded ---
+```
+
 ### for as Expression
 
 Assign a `for` loop to a variable to collect results into a list.
@@ -1225,6 +1232,90 @@ msg = 'he said \'hello\' to me'
 ```
 
 For heavy quoting (SQL, JSON, HTML), build strings with concatenation or load from a file with `read[]`.
+
+## Design Note: No Destructuring
+
+Crow intentionally has no destructuring assignment from function returns or collections (e.g. `a, b = f[]`).
+
+**What was considered:** Allowing `a, b = divmod[7, 3]` where a function returns a list and multi-assign unpacks it.
+
+**Why it was rejected:** Multi-assign already exists for literal values (`a, b = 1, 2`). Extending it to destructure lists would create two ways to access list elements — destructuring and indexing (`result[0]`, `result[1]`). This violates "one way to do things."
+
+**What to use instead:** Return a list and access elements by index:
+
+```
+result = divmod[7, 3]
+a = result[0]
+b = result[1]
+```
+
+## Design Note: No chars Builtin
+
+Crow intentionally has no `chars` builtin to split a string into a list of characters.
+
+**Why:** With string indexing (`s[0]`, `s[-1]`) and `for`-as-expression, splitting a string into characters is a one-liner:
+
+```
+chars = for i in range[len[s]]
+    s[i]
+```
+
+Adding a dedicated `chars` builtin would create a second way to do the same thing.
+
+## Design Note: No map Higher-Order Function
+
+Crow intentionally has no `map[items, fn]` higher-order function.
+
+**What was considered:** `map[items, double]` to apply a function to each element.
+
+**Why it was rejected:**
+
+1. **`for`-as-expression already does this.** `doubled = for x in items / x * 2` is mapping. Adding `map` creates a second way.
+2. **Naming conflict.** `map[]` already creates an empty map. Overloading the name with a completely different concept (higher-order function application) would be confusing.
+3. **Requires first-class functions.** `map[items, fn]` needs function references as arguments, which pulls toward lambdas and closures — features Crow intentionally omits.
+
+**What to use instead:** `for`-as-expression:
+
+```
+doubled = for x in items
+    x * 2
+```
+
+## Design Note: No Default Parameters
+
+Crow intentionally has no default parameter values for functions.
+
+**What was considered:** `fn greet[name, greeting = 'hello']` where omitting the second argument uses the default.
+
+**Why it was rejected:** Default parameters create two ways to call the same function (`greet['alice']` vs `greet['alice', 'hi']`), making call sites ambiguous. They also complicate function signatures and type inference.
+
+**What to use instead:** Write separate functions or check explicitly:
+
+```
+fn greet[name]
+    greet_with[name, 'hello']
+
+fn greet_with[name, greeting]
+    log['{greeting}, {name}']
+```
+
+## Design Note: No Ternary Expression
+
+Crow intentionally has no ternary or inline conditional expression (e.g. `x = if val gt 0 then val else -val`).
+
+**What was considered:** An expression-level `if/else` that returns a value inline.
+
+**Why it was rejected:** Crow already has `if/else` as a statement. Adding an expression form creates two ways to write conditionals. The statement form is always clear and never ambiguous about precedence.
+
+**What to use instead:** `if/else` with assignment:
+
+```
+x = 0
+if val gt 0
+    x = val
+else
+    x = -val
+```
 
 ## Design Note: No Inline Error Fallback
 
