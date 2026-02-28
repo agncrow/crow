@@ -32,6 +32,15 @@ fn main() {
         "install" => cmd_install(),
         "build" => cmd_build(),
         "check" => {
+            for a in args.iter().skip(2) {
+                if a.starts_with('-') && a != "--verbose" {
+                    eprintln!("unknown flag '{}' for crow check", a);
+                    if a == "-v" {
+                        eprintln!("  did you mean 'crow -v' or 'crow check --verbose'?");
+                    }
+                    process::exit(1);
+                }
+            }
             let verbose = args.iter().any(|a| a == "--verbose");
             let filename = args.iter().skip(2)
                 .find(|a| !a.starts_with('-'))
