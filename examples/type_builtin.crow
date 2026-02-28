@@ -1,0 +1,17 @@
+--- type builtin ---
+
+log[type[42]]
+log[type[3.14]]
+log[type['hello']]
+log[type[true]]
+log[type[[1, 2, 3]]]
+log[type[['a' = 1]]]
+
+--- struct instance ---
+struct Point [x, y]
+
+p = Point[1, 2]
+log[type[p]]
+
+log['all type tests passed']
+

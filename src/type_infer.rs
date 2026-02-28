@@ -711,6 +711,7 @@ impl TypeContext {
         // Builtins (check before vars to prevent builtins from being shadowed by Fn inference)
         match name {
             "log" | "cpu" | "gpu" | "assert" => CrowType::Void,
+            "type" => CrowType::Str,
             "error" => CrowType::Result(Box::new(CrowType::Str)),
             "map" => CrowType::Map(Box::new(CrowType::Unknown)),
             "range" => CrowType::List(Box::new(CrowType::Int)),

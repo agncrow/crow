@@ -1017,6 +1017,7 @@ impl Interpreter {
             | "assert" | "error"
             | "rand" | "time" | "sleep" | "env" | "exit"
             | "json" | "encode"
+            | "type"
         )
     }
 
@@ -1050,6 +1051,27 @@ impl Interpreter {
                 }
                 println!();
                 Ok(CrowValue::done())
+            }
+            "type" => {
+                if args.len() != 1 { return Err("type[] takes exactly 1 argument".into()); }
+                let type_name = if args[0].is_error() {
+                    "error".to_string()
+                } else {
+                    match &args[0].value {
+                        Value::Int(_) => "int".to_string(),
+                        Value::Float(_) => "float".to_string(),
+                        Value::Str(_) => "str".to_string(),
+                        Value::Bool(_) => "bool".to_string(),
+                        Value::List(_) => "list".to_string(),
+                        Value::Map(_) => "map".to_string(),
+                        Value::Fn(_) => "fn".to_string(),
+                        Value::StructDef(sd) => sd.name.clone(),
+                        Value::StructInstance(si) => si.name.clone(),
+                        Value::Module(m) => format!("module:{}", m.name),
+                        Value::Done => "none".to_string(),
+                    }
+                };
+                Ok(CrowValue::ok(Value::Str(type_name)))
             }
             "map" => {
                 // map[] creates an empty map
@@ -2981,5 +3003,67 @@ mod tests {
     fn test_positive_index_still_works() {
         let val = get_var("nums = [10, 20, 30]\nx = nums[0]\n", "x");
         assert!(matches!(val.value, Value::Int(10)));
+    }
+
+    // ===== type[] builtin =====
+
+    #[test]
+    fn test_type_int() {
+        let val = get_var("x = type[42]\n", "x");
+        assert_eq!(format!("{}", val.value), "int");
+    }
+
+    #[test]
+    fn test_type_float() {
+        let val = get_var("x = type[3.14]\n", "x");
+        assert_eq!(format!("{}", val.value), "float");
+    }
+
+    #[test]
+    fn test_type_str() {
+        let val = get_var("x = type['hello']\n", "x");
+        assert_eq!(format!("{}", val.value), "str");
+    }
+
+    #[test]
+    fn test_type_bool() {
+        let val = get_var("x = type[true]\n", "x");
+        assert_eq!(format!("{}", val.value), "bool");
+    }
+
+    #[test]
+    fn test_type_list() {
+        let val = get_var("x = type[[1, 2]]\n", "x");
+        assert_eq!(format!("{}", val.value), "list");
+    }
+
+    #[test]
+    fn test_type_map() {
+        let val = get_var("x = type[['a' = 1]]\n", "x");
+        assert_eq!(format!("{}", val.value), "map");
+    }
+
+    #[test]
+    fn test_type_none() {
+        let val = get_var("fn f[]\n    x = 1\nx = type[f[]]\n", "x");
+        assert_eq!(format!("{}", val.value), "none");
+    }
+
+    #[test]
+    fn test_type_fn() {
+        let val = get_var("fn f[]\n    x = 1\nx = type[f]\n", "x");
+        assert_eq!(format!("{}", val.value), "fn");
+    }
+
+    #[test]
+    fn test_type_struct_instance() {
+        let val = get_var("struct Point [x, y]\np = Point[1, 2]\nx = type[p]\n", "x");
+        assert_eq!(format!("{}", val.value), "Point");
+    }
+
+    #[test]
+    fn test_type_error() {
+        let val = get_var("e = error['oops']\nx = type[e]\n", "x");
+        assert_eq!(format!("{}", val.value), "error");
     }
 }
