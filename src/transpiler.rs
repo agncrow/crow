@@ -2449,6 +2449,32 @@ mod tests {
     }
 
     #[test]
+    fn test_binop_propagation_right_operand() {
+        let src = "x = int['42']\ny = 10 + x\n";
+        let rust = transpile(src);
+        // Right operand is CrowResult, should generate propagation
+        assert!(rust.contains("_binr_"), "should generate binop right propagation temp var\n{}", rust);
+        assert!(rust.contains(".ok"), "should check ok field\n{}", rust);
+    }
+
+    #[test]
+    fn test_binop_no_propagation_plain() {
+        let src = "x = 5\ny = x + 10\n";
+        let rust = transpile(src);
+        // No CrowResult operands, should NOT generate propagation
+        assert!(!rust.contains("_binl_"), "should not generate binop propagation for plain types\n{}", rust);
+        assert!(!rust.contains("_binr_"), "should not generate binop propagation for plain types\n{}", rust);
+    }
+
+    #[test]
+    fn test_binop_result_type_is_crow_result() {
+        let src = "x = int['42']\ny = x + 1\nlog[y.ok]\n";
+        let rust = transpile(src);
+        // y should be CrowResult since x is CrowResult
+        assert!(rust.contains("y.ok"), "y should be CrowResult with .ok field\n{}", rust);
+    }
+
+    #[test]
     fn test_int_from_float_no_result() {
         let src = "x = 3.14\ny = int[x]\n";
         let rust = transpile(src);

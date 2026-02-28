@@ -2147,6 +2147,30 @@ mod tests {
     }
 
     #[test]
+    fn test_binop_propagates_left_error() {
+        // Error in left operand should propagate through arithmetic
+        let val = get_var("bad = int['hello']\nx = bad + 10\n", "x");
+        assert!(!val.ok, "binop with error left operand should propagate error");
+        assert!(val.reason.contains("convert"), "should preserve original error reason");
+    }
+
+    #[test]
+    fn test_binop_propagates_right_error() {
+        // Error in right operand should propagate through arithmetic
+        let val = get_var("bad = int['hello']\nx = 10 + bad\n", "x");
+        assert!(!val.ok, "binop with error right operand should propagate error");
+        assert!(val.reason.contains("convert"), "should preserve original error reason");
+    }
+
+    #[test]
+    fn test_binop_success_unwraps() {
+        // Successful CrowResult should auto-unwrap in arithmetic
+        let val = get_var("good = int['42']\nx = good + 10\n", "x");
+        assert!(val.ok, "binop with successful result should produce ok value");
+        assert!(matches!(val.value, Value::Int(52)), "expected 52, got {:?}", val.value);
+    }
+
+    #[test]
     fn test_log_no_propagation() {
         // log should NOT propagate — it should print and return done
         let val = get_var("x = int['bad']\ny = log[x]\n", "y");
