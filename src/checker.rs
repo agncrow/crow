@@ -72,8 +72,12 @@ impl Issue {
     /// Suggest a fix for this issue.
     pub fn suggest(&self) -> String {
         match self {
-            Issue::UnusedVariable { var, .. } =>
-                format!("remove '{}' or rename to _ if intentionally unused", var),
+            Issue::UnusedVariable { var, line, .. } =>
+                if *line == 0 {
+                    format!("remove parameter '{}'", var)
+                } else {
+                    format!("remove '{}' or use _ for destructuring", var)
+                },
             Issue::UnreachableCode { .. } =>
                 "remove the dead code or move it before the return".to_string(),
             Issue::EdgeCaseCrash { error, .. } => {
@@ -247,7 +251,7 @@ fn find_unused_vars_in_fn(name: &str, params: &[String], body: &[Stmt]) -> Vec<I
     let mut read: BTreeSet<String> = BTreeSet::new();
     collect_reads_from_stmts(body, &mut read);
     for p in params {
-        if !read.contains(p) && p != "_" {
+        if !read.contains(p) {
             issues.push(Issue::UnusedVariable {
                 func: name.to_string(), var: p.clone(), line: 0,
             });
