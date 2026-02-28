@@ -36,6 +36,8 @@ pub struct Transpiler {
     current_function_name: String,
     /// Source file name (for trace entries)
     source_file: String,
+    /// Counter for generating unique variable names in BinOp propagation
+    binop_counter: usize,
 }
 
 impl Transpiler {
@@ -58,6 +60,7 @@ impl Transpiler {
             current_fn_return_type: None,
             current_function_name: String::new(),
             source_file: String::new(),
+            binop_counter: 0,
         }
     }
 
@@ -1186,13 +1189,14 @@ impl Transpiler {
 
                 let lt = self.ctx.infer_expr(left);
                 let rt = self.ctx.infer_expr(right);
-                // Auto-unwrap CrowResult in BinOp: access .value
-                let (l, lt) = if let CrowType::Result(inner) = &lt {
-                    (format!("{}.value", l), *inner.clone())
-                } else { (l, lt) };
-                let (r, rt) = if let CrowType::Result(inner) = &rt {
-                    (format!("{}.value", r), *inner.clone())
-                } else { (r, rt) };
+
+                let l_is_result = matches!(&lt, CrowType::Result(_));
+                let r_is_result = matches!(&rt, CrowType::Result(_));
+
+                // Unwrap inner types
+                let lt_inner = if let CrowType::Result(inner) = &lt { *inner.clone() } else { lt.clone() };
+                let rt_inner = if let CrowType::Result(inner) = &rt { *inner.clone() } else { rt.clone() };
+
                 let op_str = match op {
                     BinOp::Add => "+",
                     BinOp::Sub => "-",
@@ -1208,12 +1212,64 @@ impl Transpiler {
                     BinOp::And => "&&",
                     BinOp::Or => "||",
                 };
-                // Handle mixed int/float: cast int side to f64
-                // Wrap cast target in parens because `as` binds tighter than arithmetic
-                match (&lt, &rt) {
-                    (CrowType::Int, CrowType::Float) => format!("({}) as f64 {} {}", l, op_str, r),
-                    (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l, op_str, r),
-                    _ => format!("{} {} {}", l, op_str, r),
+
+                if l_is_result || r_is_result {
+                    // Auto-propagation: check .ok and propagate errors
+                    let ctr = self.binop_counter;
+                    self.binop_counter += 1;
+                    let result_type = match op {
+                        BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt
+                        | BinOp::Gte | BinOp::Lte | BinOp::And | BinOp::Or => CrowType::Bool,
+                        BinOp::Mod => CrowType::Int,
+                        _ => lt_inner.unify(&rt_inner),
+                    };
+                    let default_val = result_type.default_rust_value();
+                    let trace_expr = self.trace_format_expr();
+
+                    // Build the inner arithmetic expression using .value
+                    let l_val = if l_is_result { format!("_binl_{}.value", ctr) } else { l.clone() };
+                    let r_val = if r_is_result { format!("_binr_{}.value", ctr) } else { r.clone() };
+                    let inner_expr = match (&lt_inner, &rt_inner) {
+                        (CrowType::Int, CrowType::Float) => format!("({}) as f64 {} {}", l_val, op_str, r_val),
+                        (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l_val, op_str, r_val),
+                        _ => format!("{} {} {}", l_val, op_str, r_val),
+                    };
+
+                    let success = format!(
+                        "CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![] }}",
+                        inner_expr
+                    );
+
+                    // Build nested checks: check left first, then right
+                    let mut result = success;
+                    if r_is_result {
+                        let error_r = format!(
+                            "{{ let mut _err = CrowResult {{ ok: false, value: {}, reason: _binr_{}.reason.clone(), kind: _binr_{}.kind.clone(), trace: _binr_{}.trace.clone() }}; _err.trace.push({}); _err }}",
+                            default_val, ctr, ctr, ctr, trace_expr
+                        );
+                        result = format!(
+                            "{{ let _binr_{} = {}.clone(); if !_binr_{}.ok {{ {} }} else {{ {} }} }}",
+                            ctr, r, ctr, error_r, result
+                        );
+                    }
+                    if l_is_result {
+                        let error_l = format!(
+                            "{{ let mut _err = CrowResult {{ ok: false, value: {}, reason: _binl_{}.reason.clone(), kind: _binl_{}.kind.clone(), trace: _binl_{}.trace.clone() }}; _err.trace.push({}); _err }}",
+                            default_val, ctr, ctr, ctr, trace_expr
+                        );
+                        result = format!(
+                            "{{ let _binl_{} = {}.clone(); if !_binl_{}.ok {{ {} }} else {{ {} }} }}",
+                            ctr, l, ctr, error_l, result
+                        );
+                    }
+                    result
+                } else {
+                    // No CrowResult operands — simple arithmetic
+                    match (&lt_inner, &rt_inner) {
+                        (CrowType::Int, CrowType::Float) => format!("({}) as f64 {} {}", l, op_str, r),
+                        (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l, op_str, r),
+                        _ => format!("{} {} {}", l, op_str, r),
+                    }
                 }
             }
             Expr::UnaryOp { op, expr: e } => {
@@ -2386,7 +2442,10 @@ mod tests {
     fn test_auto_unwrap_in_binop() {
         let src = "x = int['42']\ny = x + 1\n";
         let rust = transpile(src);
-        assert!(rust.contains(".value"), "should auto-unwrap CrowResult in BinOp\n{}", rust);
+        // Should generate propagation block that checks .ok and propagates errors
+        assert!(rust.contains("_binl_"), "should generate binop propagation temp vars\n{}", rust);
+        assert!(rust.contains(".ok"), "should check ok field for propagation\n{}", rust);
+        assert!(rust.contains(".value"), "should access .value for success case\n{}", rust);
     }
 
     #[test]

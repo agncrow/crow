@@ -899,14 +899,22 @@ impl TypeContext {
             Expr::BinOp { left, op, right } => {
                 let lt = self.infer_expr(left);
                 let rt = self.infer_expr(right);
-                // Auto-unwrap CrowResult in BinOp
-                let lt = if let CrowType::Result(inner) = lt { *inner } else { lt };
-                let rt = if let CrowType::Result(inner) = rt { *inner } else { rt };
-                match op {
+                // Check if either operand is CrowResult (for auto-propagation)
+                let has_result = matches!(&lt, CrowType::Result(_)) || matches!(&rt, CrowType::Result(_));
+                // Unwrap to get inner types for determining result type
+                let lt_inner = if let CrowType::Result(inner) = &lt { *inner.clone() } else { lt };
+                let rt_inner = if let CrowType::Result(inner) = &rt { *inner.clone() } else { rt };
+                let result_type = match op {
                     BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt
                     | BinOp::Gte | BinOp::Lte | BinOp::And | BinOp::Or => CrowType::Bool,
                     BinOp::Mod => CrowType::Int,
-                    _ => lt.unify(&rt),
+                    _ => lt_inner.unify(&rt_inner),
+                };
+                // If either operand was CrowResult, wrap the result type
+                if has_result {
+                    CrowType::Result(Box::new(result_type))
+                } else {
+                    result_type
                 }
             }
             Expr::UnaryOp { op, expr: e } => {
