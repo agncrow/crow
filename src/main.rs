@@ -26,7 +26,7 @@ fn main() {
 
     match args[1].as_str() {
         "-v" => {
-            println!("crow {}", env!("CARGO_PKG_VERSION"));
+            println!("(o.o) crow {}", env!("CARGO_PKG_VERSION"));
         }
         "init" => cmd_init(),
         "install" => cmd_install(),
@@ -101,7 +101,8 @@ fn print_usage() {
 fn cmd_repl() {
     use std::io::{self, Write, BufRead};
 
-    println!("crow repl - type expressions or statements, ctrl-d to exit");
+    println!("(o.o) crow {} repl", env!("CARGO_PKG_VERSION"));
+    println!("  type expressions or statements, ctrl-d to exit");
     println!("  :check to verify, :help for commands");
     let mut interpreter = Interpreter::new();
     let mut accumulated_stmts: Vec<ast::Stmt> = Vec::new();
