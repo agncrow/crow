@@ -208,12 +208,14 @@ fn repl_check(stmts: &[ast::Stmt]) {
             result.edge_cases_generated);
 
         for (i, issue) in result.issues.iter().enumerate() {
-            let line_info = if issue.line() > 0 {
-                format!(" (line {})", issue.line())
+            let func = issue.func();
+            let loc = if func != "<top-level>" {
+                format!("in {}", func)
             } else {
-                String::new()
+                "<top-level>".to_string()
             };
-            println!("  {}. {}{}", i + 1, issue.summary(), line_info);
+            println!("  {}. \x1b[90m{}\x1b[0m {}", i + 1, loc, issue.summary());
+            println!("     \x1b[36mfix: {}\x1b[0m", issue.suggest());
         }
     }
 }
@@ -923,6 +925,32 @@ fn print_check_summary(result: &checker::CheckResult, verbose: bool) {
     }
 }
 
+/// Format a clickable location string like "file.crow:12 in add"
+fn format_location(filename: &str, issue: &checker::Issue, fn_lines: &std::collections::BTreeMap<String, usize>) -> String {
+    let func = issue.func();
+    let line = issue.line();
+
+    // For issues with a direct line number, use that
+    if line > 0 {
+        if func == "<top-level>" {
+            return format!("{}:{}", filename, line);
+        }
+        return format!("{}:{} in {}", filename, line, func);
+    }
+
+    // For edge case / regression issues, look up the function's declaration line
+    if func != "<top-level>" {
+        if let Some(&fn_line) = fn_lines.get(func) {
+            if fn_line > 0 {
+                return format!("{}:{} in {}", filename, fn_line, func);
+            }
+        }
+        return format!("{} in {}", filename, func);
+    }
+
+    filename.to_string()
+}
+
 fn cmd_check(filename: &str, verbose: bool) {
     use std::io::{self, Write, BufRead};
 
@@ -937,12 +965,9 @@ fn cmd_check(filename: &str, verbose: bool) {
     if verbose {
         println!();
         for (i, issue) in result.issues.iter().enumerate() {
-            let line_info = if issue.line() > 0 {
-                format!(" (line {})", issue.line())
-            } else {
-                String::new()
-            };
-            println!("  {}. {}{}", i + 1, issue.summary(), line_info);
+            let loc = format_location(filename, issue, &result.fn_lines);
+            println!("  {}. \x1b[90m{}\x1b[0m", i + 1, loc);
+            println!("     {}", issue.summary());
             println!("     fix: {}", issue.suggest());
         }
         process::exit(1);
@@ -958,12 +983,9 @@ fn cmd_check(filename: &str, verbose: bool) {
 
         // Present the issue
         println!();
-        let line_info = if issue.line() > 0 {
-            format!(" (line {})", issue.line())
-        } else {
-            String::new()
-        };
-        println!("  \x1b[1m[{}/{}]\x1b[0m {}{}", idx + 1, total, issue.summary(), line_info);
+        let loc = format_location(filename, issue, &result.fn_lines);
+        println!("  \x1b[1m[{}/{}]\x1b[0m \x1b[90m{}\x1b[0m", idx + 1, total, loc);
+        println!("        {}", issue.summary());
         println!("        \x1b[36mfix: {}\x1b[0m", issue.suggest());
 
         if let Some(try_cmd) = issue.try_input() {

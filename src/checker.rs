@@ -401,6 +401,23 @@ pub fn run_static_checks(ctx: &TypeContext, top_level_stmts: &[Stmt]) -> Vec<Iss
     issues
 }
 
+/// Build a map of function name → declaration line number by scanning for
+/// Line markers preceding FnDecl statements.
+pub fn find_fn_lines(stmts: &[Stmt]) -> BTreeMap<String, usize> {
+    let mut map = BTreeMap::new();
+    let mut last_line = 0usize;
+    for stmt in stmts {
+        match stmt {
+            Stmt::Line(n) => { last_line = *n; }
+            Stmt::FnDecl { name, .. } => {
+                map.insert(name.clone(), last_line);
+            }
+            _ => {}
+        }
+    }
+    map
+}
+
 // --- Edge case generation ---
 
 /// Generate boundary values for a CrowType.
@@ -703,6 +720,8 @@ pub struct CheckResult {
     pub edge_cases_generated: usize,
     pub snapshots_saved: usize,
     pub snapshots_unchanged: usize,
+    /// Map of function name → declaration line number.
+    pub fn_lines: BTreeMap<String, usize>,
 }
 
 /// Run the full check pipeline on parsed + type-inferred code.
@@ -742,6 +761,8 @@ pub fn run_check(
     let snapshots_saved = new_snapshots.len();
     save_snapshots(&new_snapshots);
 
+    let fn_lines = find_fn_lines(stmts);
+
     CheckResult {
         pure_fns,
         impure_fns,
@@ -750,6 +771,7 @@ pub fn run_check(
         edge_cases_generated,
         snapshots_saved,
         snapshots_unchanged,
+        fn_lines,
     }
 }
 
