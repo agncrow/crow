@@ -25,6 +25,9 @@ fn main() {
     }
 
     match args[1].as_str() {
+        "-v" | "-V" | "--version" | "version" => {
+            println!("crow {}", env!("CARGO_PKG_VERSION"));
+        }
         "init" => cmd_init(),
         "install" => cmd_install(),
         "build" => cmd_build(),
