@@ -3,17 +3,17 @@ y = 'hello'
 z = true
 
 fn add[a, b]
-    return a + b
+  return a + b
 
 fn greet[name]
-    msg = 'hello ' + name
-    return msg
+  msg = 'hello ' + name
+  return msg
 
 if x eq 1
-    log['x is one']
+  log['x is one']
 
 for i in [1, 2, 3]
-    log[i]
+  log[i]
 
 result = y then upper then len
 log[result]

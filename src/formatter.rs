@@ -1,6 +1,6 @@
 /// Crow source code formatter
 ///
-/// Normalizes indentation (4 spaces), trailing whitespace,
+/// Normalizes indentation (2 spaces), trailing whitespace,
 /// blank lines, and final newline. Works at the source level
 /// (not AST) to preserve comments, then chains, and all syntax.
 
@@ -34,9 +34,9 @@ pub fn format_source(source: &str) -> Result<String, String> {
         let leading = leading_whitespace_len(line);
         let level = if indent_size > 0 { leading / indent_size } else { 0 };
 
-        // Emit with normalized 4-space indentation
+        // Emit with normalized 2-space indentation
         for _ in 0..level {
-            output.push_str("    ");
+            output.push_str("  ");
         }
         output.push_str(trimmed);
         output.push('\n');
@@ -72,7 +72,7 @@ fn detect_indent_size(source: &str) -> usize {
         }
     }
 
-    min_indent.unwrap_or(4)
+    min_indent.unwrap_or(2)
 }
 
 /// Count leading whitespace as equivalent spaces (tab = 4 spaces).
@@ -112,17 +112,17 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_indent_2_to_4() {
-        let input = "if true\n  x = 1\n  y = 2\n";
+    fn test_normalize_indent_4_to_2() {
+        let input = "if true\n    x = 1\n    y = 2\n";
         let result = format_source(input).unwrap();
-        assert_eq!(result, "if true\n    x = 1\n    y = 2\n");
+        assert_eq!(result, "if true\n  x = 1\n  y = 2\n");
     }
 
     #[test]
     fn test_normalize_indent_tab() {
         let input = "if true\n\tx = 1\n";
         let result = format_source(input).unwrap();
-        assert_eq!(result, "if true\n    x = 1\n");
+        assert_eq!(result, "if true\n  x = 1\n");
     }
 
     #[test]
@@ -168,9 +168,9 @@ mod tests {
 
     #[test]
     fn test_nested_indent() {
-        let input = "fn foo[]\n  if true\n    x = 1\n";
+        let input = "fn foo[]\n    if true\n        x = 1\n";
         let result = format_source(input).unwrap();
-        assert_eq!(result, "fn foo[]\n    if true\n        x = 1\n");
+        assert_eq!(result, "fn foo[]\n  if true\n    x = 1\n");
     }
 
     #[test]
@@ -197,16 +197,16 @@ mod tests {
 
     #[test]
     fn test_for_loop_indent() {
-        let input = "for i in [1, 2, 3]\n  log[i]\n";
+        let input = "for i in [1, 2, 3]\n    log[i]\n";
         let result = format_source(input).unwrap();
-        assert_eq!(result, "for i in [1, 2, 3]\n    log[i]\n");
+        assert_eq!(result, "for i in [1, 2, 3]\n  log[i]\n");
     }
 
     #[test]
     fn test_mixed_content() {
-        let input = "\n\nx = 1   \n\n\n\nif true\n  y = 2\n\nlog[x]\n\n\n";
+        let input = "\n\nx = 1   \n\n\n\nif true\n    y = 2\n\nlog[x]\n\n\n";
         let result = format_source(input).unwrap();
-        assert_eq!(result, "x = 1\n\nif true\n    y = 2\n\nlog[x]\n");
+        assert_eq!(result, "x = 1\n\nif true\n  y = 2\n\nlog[x]\n");
     }
 }
 
