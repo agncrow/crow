@@ -13,6 +13,7 @@ const BUILTINS: &[&str] = &[
     "abs", "sqrt", "floor", "ceil", "round", "pow", "min", "max",
     // String
     "split", "trim", "replace", "upper", "lower", "join", "starts", "ends",
+    "repeat", "pad",
     // Conversion
     "int", "float", "str",
     // Collections
@@ -328,6 +329,7 @@ impl<'a> Validator<'a> {
             "len" => argc == 1,
             "contains" => argc == 2,
             "slice" => argc == 3,
+            "repeat" | "pad" => argc == 2,
             "push" | "append" => argc == 2,
             "pop" | "sort" | "reverse" => argc == 1,
             "range" => argc >= 1 && argc <= 3,
