@@ -109,7 +109,7 @@ fn cmd_repl() {
 
     println!("(o.o) crow {} repl", env!("CARGO_PKG_VERSION"));
     println!("  type expressions or statements, ctrl-d to exit");
-    println!("  :check to verify, :help for commands");
+    println!("  check to verify, help for commands");
     let mut interpreter = Interpreter::new();
     let mut accumulated_stmts: Vec<ast::Stmt> = Vec::new();
     let mut buffer = String::new();
@@ -141,20 +141,26 @@ fn cmd_repl() {
                 // REPL commands
                 if !in_block {
                     match trimmed {
-                        ":check" => {
+                        "check" => {
                             repl_check(&accumulated_stmts);
                             continue;
                         }
-                        ":help" => {
-                            println!("  :check  — run verification on all defined functions");
-                            println!("  :clear  — reset the session");
+                        "help" => {
+                            println!("  clear   — clear the screen");
+                            println!("  reset   — reset the session");
+                            println!("  check   — run verification on all defined functions");
                             println!("  ctrl-d  — exit");
                             continue;
                         }
-                        ":clear" => {
+                        "clear" => {
+                            print!("\x1b[2J\x1b[H");
+                            std::io::Write::flush(&mut std::io::stdout()).ok();
+                            continue;
+                        }
+                        "reset" => {
                             interpreter = Interpreter::new();
                             accumulated_stmts.clear();
-                            println!("  session cleared");
+                            println!("  session reset");
                             continue;
                         }
                         _ => {}
