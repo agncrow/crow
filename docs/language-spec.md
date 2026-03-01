@@ -962,9 +962,21 @@ crow build file.crow        --- transpile a specific file ---
 crow run                    --- transpile + compile + run (uses crowfile) ---
 crow run file.crow          --- transpile + compile + run a specific file ---
 crow run -i file.crow       --- run with interpreter (for debugging) ---
+crow fmt                    --- format project (uses crowfile) ---
+crow fmt file.crow          --- format a specific file ---
+crow fmt --check            --- check if formatting needed (exit 1 if not) ---
 ```
 
 `crow build` transpiles `.crow` source files to Rust and compiles to a native binary. `crow run` builds and then executes the binary.
+
+`crow fmt` auto-formats Crow source files. Formatting rules:
+- 4-space indentation (normalizes tabs, 2-space, or mixed indentation)
+- No trailing whitespace
+- At most one consecutive blank line
+- Single newline at end of file
+- No leading blank lines
+
+The formatter validates syntax before formatting. It works at the source level (not AST), so comments, `then` chains, and all syntax are preserved exactly. `crow fmt --check` exits with code 1 if any file needs formatting (useful for CI).
 
 ### REPL
 
