@@ -108,7 +108,7 @@ fn cmd_repl() {
     use rustyline::DefaultEditor;
 
     println!("(o.o) crow {} repl", env!("CARGO_PKG_VERSION"));
-    println!("  type expressions or statements, ctrl-d to exit");
+    println!("  type expressions or statements, ctrl-c to exit");
     println!("  check to verify, help for commands");
     let mut interpreter = Interpreter::new();
     let mut accumulated_stmts: Vec<ast::Stmt> = Vec::new();
@@ -149,7 +149,7 @@ fn cmd_repl() {
                             println!("  clear   — clear the screen");
                             println!("  reset   — reset the session");
                             println!("  check   — run verification on all defined functions");
-                            println!("  ctrl-d  — exit");
+                            println!("  ctrl-c  — exit");
                             continue;
                         }
                         "clear" => {
@@ -206,16 +206,12 @@ fn cmd_repl() {
                 repl_eval(&mut interpreter, trimmed, &mut accumulated_stmts);
             }
             Err(ReadlineError::Interrupted) => {
-                // Ctrl-C: cancel current input
-                if in_block {
-                    in_block = false;
-                    buffer.clear();
-                    println!("  (cancelled)");
-                }
-                continue;
+                // Ctrl-C: exit
+                println!();
+                break;
             }
             Err(ReadlineError::Eof) => {
-                // Ctrl-D: exit
+                // Ctrl-D: also exit
                 println!();
                 break;
             }
