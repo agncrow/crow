@@ -104,106 +104,131 @@ fn print_usage() {
 }
 
 fn cmd_repl() {
-    use std::io::{self, Write, BufRead};
+    use rustyline::error::ReadlineError;
+    use rustyline::DefaultEditor;
 
     println!("(o.o) crow {} repl", env!("CARGO_PKG_VERSION"));
     println!("  type expressions or statements, ctrl-d to exit");
     println!("  :check to verify, :help for commands");
     let mut interpreter = Interpreter::new();
     let mut accumulated_stmts: Vec<ast::Stmt> = Vec::new();
-    let stdin = io::stdin();
     let mut buffer = String::new();
     let mut in_block = false;
 
-    loop {
-        // Print prompt
-        if in_block {
-            print!("  ");
-        } else {
-            print!("crow> ");
-        }
-        io::stdout().flush().unwrap();
+    let mut rl = DefaultEditor::new().unwrap_or_else(|e| {
+        eprintln!("error initializing editor: {}", e);
+        process::exit(1);
+    });
 
-        // Read line
-        let mut line = String::new();
-        match stdin.lock().read_line(&mut line) {
-            Ok(0) => {
-                // EOF (ctrl-d)
+    // Load history from ~/.crow_history
+    let history_path = home_dir().map(|h| h.join(".crow_history"));
+    if let Some(ref path) = history_path {
+        let _ = rl.load_history(path);
+    }
+
+    loop {
+        let prompt = if in_block { "  " } else { "crow> " };
+
+        match rl.readline(prompt) {
+            Ok(line) => {
+                let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
+
+                // Add non-empty, non-block-continuation lines to history
+                if !in_block && !trimmed.is_empty() {
+                    let _ = rl.add_history_entry(&line);
+                }
+
+                // REPL commands
+                if !in_block {
+                    match trimmed {
+                        ":check" => {
+                            repl_check(&accumulated_stmts);
+                            continue;
+                        }
+                        ":help" => {
+                            println!("  :check  — run verification on all defined functions");
+                            println!("  :clear  — reset the session");
+                            println!("  ctrl-d  — exit");
+                            continue;
+                        }
+                        ":clear" => {
+                            interpreter = Interpreter::new();
+                            accumulated_stmts.clear();
+                            println!("  session cleared");
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Multi-line block handling
+                if in_block {
+                    if trimmed.is_empty() || (!trimmed.starts_with(' ') && !trimmed.starts_with('\t')) {
+                        in_block = false;
+                        let source = std::mem::take(&mut buffer);
+                        repl_eval(&mut interpreter, &source, &mut accumulated_stmts);
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                    } else {
+                        buffer.push_str(trimmed);
+                        buffer.push('\n');
+                        continue;
+                    }
+                }
+
+                // Check if this line expects a block to follow
+                let needs_block = {
+                    let stripped = trimmed.replace(|c: char| c == '\'', "\x00")
+                        .split('\x00')
+                        .enumerate()
+                        .filter(|(i, _)| i % 2 == 0)
+                        .map(|(_, s)| s)
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    stripped.split_whitespace()
+                        .any(|w| matches!(w, "if" | "for" | "while" | "fn" | "match" | "struct"))
+                };
+
+                if needs_block {
+                    in_block = true;
+                    buffer = format!("{}\n", trimmed);
+                    continue;
+                }
+
+                // Single line - evaluate immediately
+                repl_eval(&mut interpreter, trimmed, &mut accumulated_stmts);
+            }
+            Err(ReadlineError::Interrupted) => {
+                // Ctrl-C: cancel current input
+                if in_block {
+                    in_block = false;
+                    buffer.clear();
+                    println!("  (cancelled)");
+                }
+                continue;
+            }
+            Err(ReadlineError::Eof) => {
+                // Ctrl-D: exit
                 println!();
                 break;
             }
-            Ok(_) => {}
             Err(e) => {
                 eprintln!("read error: {}", e);
                 break;
             }
         }
-
-        let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
-
-        // REPL commands
-        if !in_block {
-            match trimmed {
-                ":check" => {
-                    repl_check(&accumulated_stmts);
-                    continue;
-                }
-                ":help" => {
-                    println!("  :check  — run verification on all defined functions");
-                    println!("  :clear  — reset the session");
-                    println!("  ctrl-d  — exit");
-                    continue;
-                }
-                ":clear" => {
-                    interpreter = Interpreter::new();
-                    accumulated_stmts.clear();
-                    println!("  session cleared");
-                    continue;
-                }
-                _ => {}
-            }
-        }
-
-        // Multi-line block handling
-        if in_block {
-            if trimmed.is_empty() || (!trimmed.starts_with(' ') && !trimmed.starts_with('\t')) {
-                // Empty line or non-indented line ends the block
-                in_block = false;
-                let source = std::mem::take(&mut buffer);
-                repl_eval(&mut interpreter, &source, &mut accumulated_stmts);
-                // If this line is non-empty and non-indented, process it below
-                if trimmed.is_empty() {
-                    continue;
-                }
-                // Fall through to process this line
-            } else {
-                buffer.push_str(&line);
-                continue;
-            }
-        }
-
-        // Check if this line expects a block to follow
-        let needs_block = {
-            let stripped = trimmed.replace(|c: char| c == '\'', "\x00")
-                .split('\x00')
-                .enumerate()
-                .filter(|(i, _)| i % 2 == 0)
-                .map(|(_, s)| s)
-                .collect::<Vec<_>>()
-                .join(" ");
-            stripped.split_whitespace()
-                .any(|w| matches!(w, "if" | "for" | "while" | "fn" | "match" | "struct"))
-        };
-
-        if needs_block {
-            in_block = true;
-            buffer = line;
-            continue;
-        }
-
-        // Single line - evaluate immediately
-        repl_eval(&mut interpreter, trimmed, &mut accumulated_stmts);
     }
+
+    // Save history
+    if let Some(ref path) = history_path {
+        let _ = rl.save_history(path);
+    }
+}
+
+/// Get user home directory
+fn home_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(std::path::PathBuf::from)
 }
 
 fn repl_check(stmts: &[ast::Stmt]) {
