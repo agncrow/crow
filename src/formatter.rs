@@ -93,13 +93,6 @@ fn gcd(a: usize, b: usize) -> usize {
     if b == 0 { a } else { gcd(b, a % b) }
 }
 
-/// Check if source is already correctly formatted.
-/// Returns true if no changes needed.
-pub fn is_formatted(source: &str) -> Result<bool, String> {
-    let formatted = format_source(source)?;
-    Ok(formatted == source)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,7 +156,8 @@ mod tests {
     #[test]
     fn test_already_formatted() {
         let input = "x = 1\ny = 2\n";
-        assert!(is_formatted(input).unwrap());
+        let result = format_source(input).unwrap();
+        assert_eq!(result, input);
     }
 
     #[test]
