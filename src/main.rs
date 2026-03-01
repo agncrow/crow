@@ -8,6 +8,7 @@ mod token;
 mod transpiler;
 mod type_infer;
 mod validator;
+mod formatter;
 mod value;
 
 use interpreter::Interpreter;
@@ -30,6 +31,7 @@ fn main() {
         }
         "init" => cmd_init(),
         "install" => cmd_install(),
+        "fmt" => cmd_fmt(),
         "build" => cmd_build(),
         "check" => {
             for a in args.iter().skip(2) {
@@ -94,6 +96,9 @@ fn print_usage() {
     eprintln!("  crow run -i file.crow  run with interpreter (slow, for debugging)");
     eprintln!("  crow check             auto-verify project (uses crowfile)");
     eprintln!("  crow check file.crow   auto-verify a specific file");
+    eprintln!("  crow fmt               format project (uses crowfile)");
+    eprintln!("  crow fmt file.crow     format a specific file");
+    eprintln!("  crow fmt --check       check formatting without changing files");
     eprintln!("  crow check --verbose   verbose output with purity and snapshot details");
     eprintln!("  crow -v                show version");
 }
@@ -855,6 +860,78 @@ fn extract_between<'a>(text: &'a str, start_marker: &str, end_marker: &str) -> O
     Some(rest[..end].to_string())
 }
 
+
+fn cmd_fmt() {
+    let args: Vec<String> = std::env::args().collect();
+    let check_mode = args.iter().any(|a| a == "--check");
+
+    // Collect files to format
+    let files: Vec<String> = args.iter().skip(2)
+        .filter(|a| !a.starts_with('-'))
+        .cloned()
+        .collect();
+
+    let files = if files.is_empty() {
+        // Use crowfile entry
+        if std::path::Path::new("crowfile").exists() {
+            let config = parse_crowfile();
+            vec![config.entry]
+        } else {
+            eprintln!("usage: crow fmt <file.crow> or run from a project with crowfile");
+            process::exit(1);
+        }
+    } else {
+        files
+    };
+
+    let mut any_changed = false;
+
+    for file in &files {
+        let source = match std::fs::read_to_string(file) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("error reading {}: {}", file, e);
+                process::exit(1);
+            }
+        };
+
+        let formatted = match formatter::format_source(&source) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("error in {}: {}", file, e);
+                process::exit(1);
+            }
+        };
+
+        if formatted == source {
+            if !check_mode {
+                println!("  {} (no changes)", file);
+            }
+            continue;
+        }
+
+        any_changed = true;
+
+        if check_mode {
+            println!("  {} needs formatting", file);
+        } else {
+            std::fs::write(file, &formatted).unwrap_or_else(|e| {
+                eprintln!("error writing {}: {}", file, e);
+                process::exit(1);
+            });
+            println!("  {} (formatted)", file);
+        }
+    }
+
+    if check_mode {
+        if any_changed {
+            process::exit(1);
+        } else {
+            println!("all files formatted");
+        }
+    }
+}
+
 fn cmd_build() {
     let args: Vec<String> = std::env::args().collect();
     let (entry, cpu) = if args.len() > 2 {
@@ -1291,7 +1368,7 @@ fn read_file(filename: &str) -> String {
     }
 }
 
-fn build(source: &str) -> Result<Vec<ast::Stmt>, String> {
+pub(crate) fn build(source: &str) -> Result<Vec<ast::Stmt>, String> {
     let mut lexer = Lexer::new(source);
     let tokens = lexer.tokenize()?;
     let mut parser = Parser::new(tokens);

@@ -1,0 +1,22 @@
+x = 1
+y = 'hello'
+z = true
+
+fn add[a, b]
+    return a + b
+
+fn greet[name]
+    msg = 'hello ' + name
+    return msg
+
+if x eq 1
+    log['x is one']
+
+for i in [1, 2, 3]
+    log[i]
+
+result = y then upper then len
+log[result]
+
+log[greet['world']]
+log[add[1, 2]]
