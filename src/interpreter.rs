@@ -1888,7 +1888,7 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a + b))),
                 (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 + b))),
                 (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a + *b as f64))),
-                (Value::Str(a), Value::Str(b)) => Ok(CrowValue::ok(Value::Str(format!("{}{}", a, b)))),
+                (Value::Str(_), Value::Str(_)) => Err("cannot use '+' with strings — use string interpolation instead".to_string()),
                 _ => Err("cannot add these types".to_string()),
             },
             BinOp::Sub => match (l, r) {
@@ -2382,9 +2382,12 @@ mod tests {
     }
 
     #[test]
-    fn test_string_concat() {
-        let val = get_var("x = 'hello' + ' world'\n", "x");
-        assert_eq!(format!("{}", val.value), "hello world");
+    fn test_string_concat_rejected() {
+        // String + is not allowed — use interpolation instead
+        let result = std::panic::catch_unwind(|| {
+            get_var("x = 'hello' + ' world'\n", "x");
+        });
+        assert!(result.is_err(), "string + should be rejected");
     }
 
     #[test]

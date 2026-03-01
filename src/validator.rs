@@ -370,9 +370,9 @@ impl<'a> Validator<'a> {
 
         match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
-                // String concatenation with + is valid
+                // String + is not allowed — use interpolation instead
                 if matches!(op, BinOp::Add) && (matches!(lt, CrowType::Str) || matches!(rt, CrowType::Str)) {
-                    // String + anything is valid (concatenation)
+                    self.error("cannot use '+' with strings — use string interpolation instead".to_string());
                     return;
                 }
                 // Numeric ops: both must be numeric
@@ -459,9 +459,10 @@ mod tests {
     }
 
     #[test]
-    fn test_valid_string_concat() {
+    fn test_string_concat_rejected() {
         let result = validate_source("x = 'hello' + ' world'\n");
-        assert!(result.is_ok(), "string concat should be valid: {:?}", result);
+        assert!(result.is_err(), "string + should be rejected");
+        assert!(result.unwrap_err().contains("interpolation"), "should suggest interpolation");
     }
 
     #[test]

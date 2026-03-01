@@ -1268,7 +1268,7 @@ impl Transpiler {
                     match (&lt_inner, &rt_inner) {
                         (CrowType::Int, CrowType::Float) => format!("({}) as f64 {} {}", l, op_str, r),
                         (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l, op_str, r),
-                        (CrowType::Str, CrowType::Str) if matches!(op, BinOp::Add) => format!("{} + &*{}", l, r),
+                        // String + is not allowed — use interpolation instead
                         _ => format!("{} {} {}", l, op_str, r),
                     }
                 }
