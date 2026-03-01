@@ -141,26 +141,23 @@ fn cmd_repl() {
                 // REPL commands
                 if !in_block {
                     match trimmed {
+                        "exit" => {
+                            break;
+                        }
                         "check" => {
                             repl_check(&accumulated_stmts);
                             continue;
                         }
                         "help" => {
-                            println!("  clear   — clear the screen");
-                            println!("  reset   — reset the session");
+                            println!("  clear   — reset the session");
                             println!("  check   — run verification on all defined functions");
-                            println!("  ctrl-c  — exit");
+                            println!("  exit    — exit (or ctrl-c)");
                             continue;
                         }
                         "clear" => {
-                            print!("\x1b[3J\x1b[2J\x1b[H");
-                            std::io::Write::flush(&mut std::io::stdout()).ok();
-                            continue;
-                        }
-                        "reset" => {
                             interpreter = Interpreter::new();
                             accumulated_stmts.clear();
-                            println!("  session reset");
+                            println!("  session cleared");
                             continue;
                         }
                         _ => {}
