@@ -1268,6 +1268,7 @@ impl Transpiler {
                     match (&lt_inner, &rt_inner) {
                         (CrowType::Int, CrowType::Float) => format!("({}) as f64 {} {}", l, op_str, r),
                         (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l, op_str, r),
+                        (CrowType::Str, CrowType::Str) if matches!(op, BinOp::Add) => format!("{} + &*{}", l, r),
                         _ => format!("{} {} {}", l, op_str, r),
                     }
                 }
@@ -1478,6 +1479,12 @@ impl Transpiler {
                     if name == "ends" && arg_strs.len() == 2 {
                         return format!("({}).ends_with(&*{})", arg_strs[0], arg_strs[1]);
                     }
+                    if name == "repeat" && arg_strs.len() == 2 {
+                        return format!("({}).repeat(({}) as usize)", arg_strs[0], arg_strs[1]);
+                    }
+                    if name == "pad" && arg_strs.len() == 2 {
+                        return format!("format!(\"{{:<width$}}\", {}, width = ({}) as usize)", arg_strs[0], arg_strs[1]);
+                    }
                     // --- Conversion builtins ---
                     if name == "int" && arg_strs.len() == 1 {
                         let ty = self.ctx.infer_expr(&args[0]);
@@ -1536,7 +1543,11 @@ impl Transpiler {
                         return format!("{{ let mut tmp = {}.clone(); tmp.sort(); tmp }}", arg_strs[0]);
                     }
                     if name == "reverse" && arg_strs.len() == 1 {
-                        return format!("{{ let mut tmp = {}.clone(); tmp.reverse(); tmp }}", arg_strs[0]);
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        return match ty {
+                            CrowType::Str => format!("({}).chars().rev().collect::<String>()", arg_strs[0]),
+                            _ => format!("{{ let mut tmp = {}.clone(); tmp.reverse(); tmp }}", arg_strs[0]),
+                        };
                     }
                     if name == "append" && arg_strs.len() == 2 {
                         return format!("{{ let mut tmp = {}.clone(); tmp.extend({}.iter().cloned()); tmp }}", arg_strs[0], arg_strs[1]);

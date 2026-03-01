@@ -1033,6 +1033,7 @@ impl Interpreter {
         matches!(name, "log" | "map" | "cpu" | "gpu" | "range"
             | "abs" | "sqrt" | "floor" | "ceil" | "round" | "pow" | "min" | "max"
             | "split" | "trim" | "replace" | "upper" | "lower" | "starts" | "ends" | "join"
+            | "repeat" | "pad"
             | "int" | "float" | "str"
             | "push" | "pop" | "sort" | "reverse" | "append" | "contains" | "slice"
             | "read" | "write" | "len"
@@ -1335,6 +1336,26 @@ impl Interpreter {
                     _ => Err("ends_with[] requires two strings".into()),
                 }
             }
+            "repeat" => {
+                if args.len() != 2 { return Err("repeat[] takes exactly 2 arguments".into()); }
+                match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
+                    (Value::Str(s), Value::Int(n)) => {
+                        if *n < 0 { return Err("repeat[] count cannot be negative".into()); }
+                        Ok(CrowValue::ok(Value::Str(s.repeat(*n as usize))))
+                    }
+                    _ => Err("repeat[] requires a string and an int".into()),
+                }
+            }
+            "pad" => {
+                if args.len() != 2 { return Err("pad[] takes exactly 2 arguments".into()); }
+                match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
+                    (Value::Str(s), Value::Int(n)) => {
+                        if *n < 0 { return Err("pad[] width cannot be negative".into()); }
+                        Ok(CrowValue::ok(Value::Str(format!("{:<width$}", s, width = *n as usize))))
+                    }
+                    _ => Err("pad[] requires a string and an int".into()),
+                }
+            }
             // --- Conversion builtins ---
             "int" => {
                 if args.len() != 1 { return Err("int[] takes exactly 1 argument".into()); }
@@ -1530,7 +1551,10 @@ impl Interpreter {
                         new_items.reverse();
                         Ok(CrowValue::ok(Value::List(new_items)))
                     }
-                    _ => Err("reverse[] requires a list".into()),
+                    Value::Str(s) => {
+                        Ok(CrowValue::ok(Value::Str(s.chars().rev().collect())))
+                    }
+                    _ => Err("reverse[] requires a list or string".into()),
                 }
             }
             "append" => {
@@ -2723,6 +2747,42 @@ mod tests {
     fn test_join() {
         let val = get_var("x = join[['a', 'b', 'c'], '-']\n", "x");
         assert_eq!(format!("{}", val.value), "a-b-c");
+    }
+
+    #[test]
+    fn test_repeat() {
+        let val = get_var("x = repeat['ha', 3]\n", "x");
+        assert_eq!(format!("{}", val.value), "hahaha");
+    }
+
+    #[test]
+    fn test_repeat_zero() {
+        let val = get_var("x = repeat['ha', 0]\n", "x");
+        assert_eq!(format!("{}", val.value), "");
+    }
+
+    #[test]
+    fn test_pad() {
+        let val = get_var("x = pad['hi', 5]\n", "x");
+        assert_eq!(format!("{}", val.value), "hi   ");
+    }
+
+    #[test]
+    fn test_pad_shorter() {
+        let val = get_var("x = pad['hello', 3]\n", "x");
+        assert_eq!(format!("{}", val.value), "hello");
+    }
+
+    #[test]
+    fn test_reverse_string() {
+        let val = get_var("x = reverse['hello']\n", "x");
+        assert_eq!(format!("{}", val.value), "olleh");
+    }
+
+    #[test]
+    fn test_reverse_empty_string() {
+        let val = get_var("x = reverse['']\n", "x");
+        assert_eq!(format!("{}", val.value), "");
     }
 
     // ===== Builtins: conversion =====

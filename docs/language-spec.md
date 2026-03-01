@@ -270,6 +270,9 @@ data = map[]             --- empty map ---
 | `starts[s, prefix]` | Check if string starts with prefix |
 | `ends[s, suffix]` | Check if string ends with suffix |
 | `join[list, sep]` | Join list elements into string |
+| `repeat[s, n]` | Repeat string `n` times |
+| `pad[s, n]` | Right-pad string to width `n` with spaces |
+| `reverse[s]` | Reverse a string |
 
 #### Conversion
 
