@@ -520,12 +520,6 @@ fly[b]
 +  -  /  *  %
 ```
 
-`+` also concatenates strings:
-
-```
-'hello' + ' world'    --- 'hello world' ---
-```
-
 Division is type-determined — one operator, no ambiguity:
 
 ```
@@ -1255,7 +1249,6 @@ Crow intentionally has no `+=`, `-=`, `*=`, `/=`, or any compound assignment ope
 ```
 x = x + 1
 total = total + item
-name = name + ' jr.'
 ```
 
 The explicit form is clear, consistent, and only a few characters longer. The transpiler can optimize `x = x + op` patterns into in-place operations automatically — the sugar adds no performance benefit.
@@ -1272,7 +1265,22 @@ Crow uses single quotes for all strings. There is no double-quote alternative.
 msg = 'he said \'hello\' to me'
 ```
 
-For heavy quoting (SQL, JSON, HTML), build strings with concatenation or load from a file with `read[]`.
+For heavy quoting (SQL, JSON, HTML), use interpolation or load from a file with `read[]`.
+
+## Design Note: No String Concatenation with `+`
+
+Crow does not allow `+` to concatenate strings. String interpolation is the only way to combine strings.
+
+**What was considered:** `'hello' + ' world'` producing `'hello world'`.
+
+**Why it was rejected:** String interpolation (`'hello {name}'`) already handles every string-combining use case. Adding `+` as a second way violates "one way to do things" and creates style debates about when to use which form.
+
+**What to use instead:**
+
+```
+greeting = 'hello {name}'
+full = '{first} {last}'
+```
 
 ## Design Note: No Destructuring
 
