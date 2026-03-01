@@ -970,7 +970,7 @@ crow fmt --check            --- check if formatting needed (exit 1 if not) ---
 `crow build` transpiles `.crow` source files to Rust and compiles to a native binary. `crow run` builds and then executes the binary.
 
 `crow fmt` auto-formats Crow source files. Formatting rules:
-- 4-space indentation (normalizes tabs, 2-space, or mixed indentation)
+- 2-space indentation (normalizes tabs, 4-space, or mixed indentation)
 - No trailing whitespace
 - At most one consecutive blank line
 - Single newline at end of file
