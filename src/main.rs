@@ -107,9 +107,7 @@ fn cmd_repl() {
     use rustyline::error::ReadlineError;
     use rustyline::DefaultEditor;
 
-    println!("(o.o) crow {} repl", env!("CARGO_PKG_VERSION"));
-    println!("  type expressions or statements, ctrl-c to exit");
-    println!("  check to verify, help for commands");
+    println!("(o.o) crow {} — type help for commands, ctrl-c to exit", env!("CARGO_PKG_VERSION"));
     let mut interpreter = Interpreter::new();
     let mut accumulated_stmts: Vec<ast::Stmt> = Vec::new();
     let mut buffer = String::new();
