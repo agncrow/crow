@@ -153,7 +153,7 @@ fn cmd_repl() {
                             continue;
                         }
                         "clear" => {
-                            print!("\x1b[2J\x1b[H");
+                            print!("\x1b[3J\x1b[2J\x1b[H");
                             std::io::Write::flush(&mut std::io::stdout()).ok();
                             continue;
                         }
