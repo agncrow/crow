@@ -31,6 +31,9 @@ log[math.sum[b]]
 log[math.mean[b]]
 log[math.min[d]]
 log[math.max[d]]
+log[math.prod[math.linspace[1, 4, 4]]]
+log[math.argmax[d]]
+log[math.argmin[d]]
 
 --- shape ops ---
 i = math.reshape[b, 3, 2]

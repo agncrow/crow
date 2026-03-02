@@ -721,6 +721,45 @@ impl CrowTensor {
             .fold(f64::INFINITY, f64::min)
     }
 
+    /// Product of all elements.
+    pub fn prod(&self) -> f64 {
+        self.to_vec().iter().copied().fold(1.0, |a, b| a * b)
+    }
+
+    /// Index of maximum element (flat index).
+    pub fn argmax(&self) -> usize {
+        let data = self.to_vec();
+        if data.is_empty() {
+            return 0;
+        }
+        let mut max_idx = 0;
+        let mut max_val = data[0];
+        for (i, &v) in data.iter().enumerate().skip(1) {
+            if v > max_val {
+                max_val = v;
+                max_idx = i;
+            }
+        }
+        max_idx
+    }
+
+    /// Index of minimum element (flat index).
+    pub fn argmin(&self) -> usize {
+        let data = self.to_vec();
+        if data.is_empty() {
+            return 0;
+        }
+        let mut min_idx = 0;
+        let mut min_val = data[0];
+        for (i, &v) in data.iter().enumerate().skip(1) {
+            if v < min_val {
+                min_val = v;
+                min_idx = i;
+            }
+        }
+        min_idx
+    }
+
     /// Sum along a given axis, reducing that dimension.
     pub fn sum_axis(&self, axis: usize) -> CrowTensor {
         assert!(axis < self.ndim(), "sum_axis: axis {} out of range", axis);
@@ -757,6 +796,53 @@ impl CrowTensor {
     pub fn mean_axis(&self, axis: usize) -> CrowTensor {
         let axis_size = self.shape[axis] as f64;
         self.sum_axis(axis).mul_scalar(1.0 / axis_size)
+    }
+
+    /// Generic reduction along an axis with an initial value and combining function.
+    fn reduce_axis(&self, axis: usize, init: f64, f: impl Fn(f64, f64) -> f64) -> CrowTensor {
+        assert!(axis < self.ndim(), "reduce_axis: axis {} out of range", axis);
+        let mut new_shape: Vec<usize> = self.shape.clone();
+        let _axis_size = new_shape.remove(axis);
+        if new_shape.is_empty() {
+            let data = self.to_vec();
+            let result = data.iter().copied().fold(init, &f);
+            return CrowTensor::scalar(result);
+        }
+        let out_n = Self::numel(&new_shape);
+        let mut data = vec![init; out_n];
+        let out_strides = Self::row_major_strides(&new_shape);
+        let src = self.to_vec();
+        let src_strides = Self::row_major_strides(&self.shape);
+        for flat in 0..self.len() {
+            let mut remaining = flat;
+            let mut out_flat = 0usize;
+            let mut out_dim = 0;
+            for d in 0..self.ndim() {
+                let idx = remaining / src_strides[d];
+                remaining %= src_strides[d];
+                if d != axis {
+                    out_flat += idx * out_strides[out_dim];
+                    out_dim += 1;
+                }
+            }
+            data[out_flat] = f(data[out_flat], src[flat]);
+        }
+        Self::from_vec(data, new_shape)
+    }
+
+    /// Max along a given axis.
+    pub fn max_axis(&self, axis: usize) -> CrowTensor {
+        self.reduce_axis(axis, f64::NEG_INFINITY, f64::max)
+    }
+
+    /// Min along a given axis.
+    pub fn min_axis(&self, axis: usize) -> CrowTensor {
+        self.reduce_axis(axis, f64::INFINITY, f64::min)
+    }
+
+    /// Product along a given axis.
+    pub fn prod_axis(&self, axis: usize) -> CrowTensor {
+        self.reduce_axis(axis, 1.0, |a, b| a * b)
     }
 }
 
@@ -1063,6 +1149,64 @@ mod tests {
         assert_eq!(m.shape(), &[3]);
         assert_eq!(m.to_vec(), vec![2.5, 3.5, 4.5]);
     }
+
+    #[test]
+    fn test_prod() {
+        let t = CrowTensor::from_vec(vec![2.0, 3.0, 4.0], vec![3]);
+        assert_eq!(t.prod(), 24.0);
+    }
+
+    #[test]
+    fn test_prod_empty() {
+        let t = CrowTensor::from_vec(vec![], vec![0]);
+        assert_eq!(t.prod(), 1.0); // empty product is 1
+    }
+
+    #[test]
+    fn test_argmax() {
+        let t = CrowTensor::from_vec(vec![1.0, 5.0, 3.0, 2.0], vec![4]);
+        assert_eq!(t.argmax(), 1);
+    }
+
+    #[test]
+    fn test_argmin() {
+        let t = CrowTensor::from_vec(vec![3.0, 1.0, 4.0, 1.5], vec![4]);
+        assert_eq!(t.argmin(), 1);
+    }
+
+    #[test]
+    fn test_argmax_first_occurrence() {
+        // When multiple elements share the max, return first index
+        let t = CrowTensor::from_vec(vec![5.0, 5.0, 3.0], vec![3]);
+        assert_eq!(t.argmax(), 0);
+    }
+
+    #[test]
+    fn test_max_axis() {
+        // [[1, 5, 3], [4, 2, 6]] → max axis 0 → [4, 5, 6]
+        let t = CrowTensor::from_vec(vec![1.0, 5.0, 3.0, 4.0, 2.0, 6.0], vec![2, 3]);
+        let r = t.max_axis(0);
+        assert_eq!(r.shape(), &[3]);
+        assert_eq!(r.to_vec(), vec![4.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn test_min_axis() {
+        let t = CrowTensor::from_vec(vec![1.0, 5.0, 3.0, 4.0, 2.0, 6.0], vec![2, 3]);
+        let r = t.min_axis(0);
+        assert_eq!(r.shape(), &[3]);
+        assert_eq!(r.to_vec(), vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_prod_axis() {
+        // [[2, 3], [4, 5]] → prod axis 0 → [8, 15]
+        let t = CrowTensor::from_vec(vec![2.0, 3.0, 4.0, 5.0], vec![2, 2]);
+        let r = t.prod_axis(0);
+        assert_eq!(r.shape(), &[2]);
+        assert_eq!(r.to_vec(), vec![8.0, 15.0]);
+    }
+
 
     // ── Display ─────────────────────────────────────────────────────
 

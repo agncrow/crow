@@ -773,6 +773,11 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 | `math.mean[t]` | Mean of all elements (float) |
 | `math.min[t]` | Minimum element (float) |
 | `math.max[t]` | Maximum element (float) |
+| `math.prod[t]` | Product of all elements (float) |
+| `math.argmax[t]` | Index of maximum element (int) |
+| `math.argmin[t]` | Index of minimum element (int) |
+
+All reductions except `argmax`/`argmin` accept an optional axis parameter: `math.sum[t, axis]` reduces along that axis and returns a tensor instead of a scalar.
 
 #### Shape Operations
 
