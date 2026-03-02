@@ -2237,6 +2237,12 @@ impl Transpiler {
                     };
                     match inner_type {
                         CrowType::NumArray(inner) => {
+                            // Check if index is a NumArray (gather/advanced indexing)
+                            let idx_type = self.ctx.infer_expr(&args[0]);
+                            if matches!(idx_type, CrowType::NumArray(_)) {
+                                let idx = &arg_strs[0];
+                                return format!("{}.gather(&{})", base_name, idx);
+                            }
                             // CrowTensor indexing with negative index support
                             let idx = &arg_strs[0];
                             let cast = if matches!(inner.as_ref(), CrowType::Int) { " as i64" } else { "" };
@@ -2420,9 +2426,16 @@ impl Transpiler {
                 let callee_str = self.expr_to_string(callee);
                 match &callee_type {
                     CrowType::NumArray(inner) => {
-                        let idx = &arg_strs[0];
-                        let cast = if matches!(inner.as_ref(), CrowType::Int) { " as i64" } else { "" };
-                        format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.get_flat(_idx){} }}", idx, callee_str, callee_str, cast)
+                        // Check if index is a NumArray (gather/advanced indexing)
+                        let idx_type = self.ctx.infer_expr(&args[0]);
+                        if matches!(idx_type, CrowType::NumArray(_)) {
+                            let idx = &arg_strs[0];
+                            format!("{}.gather(&{})", callee_str, idx)
+                        } else {
+                            let idx = &arg_strs[0];
+                            let cast = if matches!(inner.as_ref(), CrowType::Int) { " as i64" } else { "" };
+                            format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.get_flat(_idx){} }}", idx, callee_str, callee_str, cast)
+                        }
                     }
                     CrowType::Array(_) => {
                         let idx = &arg_strs[0];
@@ -3934,5 +3947,27 @@ mod tests {
     fn test_math_stack_transpile() {
         let rust = transpile("use math\nx = math.stack[[math.ones[3], math.ones[3]]]\n");
         assert!(rust.contains("CrowTensor::stack("), "should emit CrowTensor::stack()\n{}", rust);
+    }
+
+    // ===== Broadcasting transpiler tests =====
+
+    #[test]
+    fn test_broadcast_add_transpile() {
+        let rust = transpile("use math\na = math.reshape[math.ones[3], 3, 1]\nb = math.reshape[math.ones[4], 1, 4]\nx = a + b\n");
+        assert!(rust.contains(".add("), "should emit .add() for broadcast\n{}", rust);
+    }
+
+    #[test]
+    fn test_broadcast_elem_mul_transpile() {
+        let rust = transpile("use math\na = math.reshape[math.ones[6], 3, 1]\nb = math.reshape[math.ones[2], 1, 2]\nx = a .* b\n");
+        assert!(rust.contains(".mul("), "should emit .mul() for broadcast elem mul\n{}", rust);
+    }
+
+    // ===== Advanced indexing (gather) transpiler tests =====
+
+    #[test]
+    fn test_gather_transpile() {
+        let rust = transpile("use math\na = math.linspace[10, 50, 5]\nidx = math.linspace[0, 2, 3]\nx = a[idx]\n");
+        assert!(rust.contains(".gather("), "should emit .gather() for tensor indexing by tensor\n{}", rust);
     }
 }

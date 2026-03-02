@@ -808,6 +808,36 @@ Note: `sort[t]` is a core builtin (not in the math module) that works on both ar
 
 Note: `slice[t, start, end]` is a core builtin (not in the math module) that works on arrays, tensors, and strings.
 
+#### Broadcasting
+
+Element-wise operations on tensors with different shapes automatically broadcast following NumPy rules:
+- Dimensions are right-aligned
+- Size-1 dimensions expand to match the other tensor
+- Missing dimensions are treated as size 1
+
+```
+use math
+a = math.reshape[math.linspace[1, 3, 3], 3, 1]   --- shape [3, 1] ---
+b = math.reshape[math.linspace[10, 40, 4], 1, 4]  --- shape [1, 4] ---
+c = a + b                                          --- shape [3, 4] ---
+```
+
+Broadcasting works with all element-wise operators: `+`, `-`, `.*`, `./`, `.^`.
+
+Incompatible shapes (e.g. `[3] + [4]`) produce a runtime error.
+
+#### Advanced Indexing
+
+Tensors can be indexed with another tensor to gather elements by index:
+
+```
+a = math.linspace[10, 50, 5]
+indices = math.linspace[0, 2, 3]
+y = a[indices]                    --- gathers elements at indices 0, 1, 2 ---
+```
+
+Negative indices are supported (wrap around from the end). The result tensor has the same shape as the index tensor.
+
 #### Shape Operations
 
 | Function | Description |

@@ -920,6 +920,23 @@ impl CrowTensor {
         Self::from_vec(data, self.shape.clone())
     }
 
+    // ── Advanced Indexing ─────────────────────────────────────────────
+
+    /// Gather elements by index array. For a 1D tensor, returns elements at the given indices.
+    /// The indices tensor contains integer indices (as f64).
+    pub fn gather(&self, indices: &CrowTensor) -> CrowTensor {
+        let src = self.to_vec();
+        let idx = indices.to_vec();
+        let n = src.len() as i64;
+        let data: Vec<f64> = idx.iter().map(|&i| {
+            let mut ii = i as i64;
+            if ii < 0 { ii += n; }
+            assert!(ii >= 0 && ii < n, "gather: index {} out of bounds for tensor of length {}", i as i64, n);
+            src[ii as usize]
+        }).collect();
+        Self::from_vec(data, indices.shape.clone())
+    }
+
     // ── Combining Ops ──────────────────────────────────────────────────
 
     /// Concatenate two tensors along an axis.
@@ -1467,6 +1484,80 @@ mod tests {
         assert_eq!(r.shape(), &[3, 2]);
         assert_eq!(r.to_vec(), vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
     }
+
+    // ===== Broadcasting tests =====
+
+    #[test]
+    fn test_broadcast_add_3x1_1x4() {
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3, 1]);
+        let b = CrowTensor::from_vec(vec![10.0, 20.0, 30.0, 40.0], vec![1, 4]);
+        let r = a.add(&b);
+        assert_eq!(r.shape(), &[3, 4]);
+        assert_eq!(r.to_vec(), vec![11.0, 21.0, 31.0, 41.0, 12.0, 22.0, 32.0, 42.0, 13.0, 23.0, 33.0, 43.0]);
+    }
+
+    #[test]
+    fn test_broadcast_mul_1d_2d() {
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
+        let b = CrowTensor::from_vec(vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0], vec![2, 3]);
+        let r = a.mul(&b);
+        assert_eq!(r.shape(), &[2, 3]);
+        assert_eq!(r.to_vec(), vec![10.0, 40.0, 90.0, 40.0, 100.0, 180.0]);
+    }
+
+    // ===== Advanced indexing (gather) tests =====
+
+    #[test]
+    fn test_gather_basic() {
+        let a = CrowTensor::from_vec(vec![10.0, 20.0, 30.0, 40.0, 50.0], vec![5]);
+        let idx = CrowTensor::from_vec(vec![0.0, 2.0, 4.0], vec![3]);
+        let r = a.gather(&idx);
+        assert_eq!(r.to_vec(), vec![10.0, 30.0, 50.0]);
+        assert_eq!(r.shape(), &[3]);
+    }
+
+    #[test]
+    fn test_gather_negative_index() {
+        let a = CrowTensor::from_vec(vec![10.0, 20.0, 30.0], vec![3]);
+        let idx = CrowTensor::from_vec(vec![-1.0, -2.0], vec![2]);
+        let r = a.gather(&idx);
+        assert_eq!(r.to_vec(), vec![30.0, 20.0]);
+    }
+
+    #[test]
+    fn test_gather_repeated_indices() {
+        let a = CrowTensor::from_vec(vec![10.0, 20.0, 30.0], vec![3]);
+        let idx = CrowTensor::from_vec(vec![0.0, 0.0, 1.0, 1.0], vec![4]);
+        let r = a.gather(&idx);
+        assert_eq!(r.to_vec(), vec![10.0, 10.0, 20.0, 20.0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "gather: index")]
+    fn test_gather_out_of_bounds() {
+        let a = CrowTensor::from_vec(vec![10.0, 20.0, 30.0], vec![3]);
+        let idx = CrowTensor::from_vec(vec![5.0], vec![1]);
+        let _ = a.gather(&idx);
+    }
+
+
+    #[test]
+    fn test_broadcast_scalar_tensor() {
+        let a = CrowTensor::from_vec(vec![5.0], vec![1]);
+        let b = CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
+        let r = a.add(&b);
+        assert_eq!(r.shape(), &[3]);
+        assert_eq!(r.to_vec(), vec![6.0, 7.0, 8.0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "broadcast: incompatible shapes")]
+    fn test_broadcast_incompatible() {
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
+        let b = CrowTensor::from_vec(vec![1.0, 2.0], vec![2]);
+        let _ = a.add(&b);
+    }
+
 
 
 
