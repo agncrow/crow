@@ -875,6 +875,24 @@ impl TypeContext {
             // JSON builtins
             "json" => CrowType::Result(Box::new(CrowType::Json)),
             "encode" => CrowType::Result(Box::new(CrowType::Str)),
+            // Autograd
+            "grad" => {
+                // grad[f] returns a function with the same arity as f, but all params are Float
+                // and return is Float (1 param) or Array<Float> (N params)
+                if let Some(Expr::Ident(fn_name)) = args.first() {
+                    if let Some(sig) = self.functions.get(fn_name) {
+                        let n = sig.params.len();
+                        let param_types = vec![CrowType::Float; n];
+                        let ret = if n == 1 {
+                            CrowType::Float
+                        } else {
+                            CrowType::Array(Box::new(CrowType::Float))
+                        };
+                        return CrowType::Fn(param_types, Box::new(ret));
+                    }
+                }
+                CrowType::Fn(vec![CrowType::Float], Box::new(CrowType::Float))
+            }
             _ => {
                 // Check variable type: could be a function call, array/map indexing, etc.
                 if let Some(var_type) = self.vars.get(name) {

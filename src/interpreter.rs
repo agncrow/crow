@@ -885,6 +885,11 @@ impl Interpreter {
             (Value::Float(x), Value::Float(y)) => x == y,
             (Value::Int(x), Value::Float(y)) => (*x as f64) == *y,
             (Value::Float(x), Value::Int(y)) => *x == (*y as f64),
+            (Value::Dual(x, _), Value::Dual(y, _)) => x == y,
+            (Value::Dual(x, _), Value::Float(y)) => x == y,
+            (Value::Float(x), Value::Dual(y, _)) => x == y,
+            (Value::Dual(x, _), Value::Int(y)) => *x == (*y as f64),
+            (Value::Int(x), Value::Dual(y, _)) => (*x as f64) == *y,
             (Value::Str(x), Value::Str(y)) => x == y,
             (Value::Bool(x), Value::Bool(y)) => x == y,
             (Value::NumArray(x), Value::NumArray(y)) => x.to_vec() == y.to_vec(),
@@ -1075,6 +1080,88 @@ impl Interpreter {
                 self.current_function = saved_function;
                 Ok(result)
             }
+            Value::GradFn(func) => {
+                // Forward-mode AD: for each parameter, run f with that param as Dual(x, 1.0)
+                // and all others as Dual(x, 0.0), extract derivative from result.
+                let func = func.clone();
+                if func.params.len() != arg_vals.len() {
+                    return Err(format!(
+                        "grad[{}][] expects {} args, got {}",
+                        func.name,
+                        func.params.len(),
+                        arg_vals.len()
+                    ));
+                }
+
+                // Convert args to f64
+                let float_args: Vec<f64> = arg_vals.iter().map(|a| {
+                    match &a.value {
+                        Value::Int(n) => Ok(*n as f64),
+                        Value::Float(n) => Ok(*n),
+                        Value::Dual(n, _) => Ok(*n),
+                        _ => Err(format!("grad[{}][] requires numeric arguments", func.name)),
+                    }
+                }).collect::<Result<_, _>>()?;
+
+                let n = float_args.len();
+                let mut derivatives = Vec::with_capacity(n);
+
+                for i in 0..n {
+                    // Run function with param i as Dual(xi, 1.0), rest as Dual(xj, 0.0)
+                    let saved_function = self.current_function.clone();
+                    self.current_function = func.name.clone();
+                    self.env.push_call_scope();
+                    for (j, param) in func.params.iter().enumerate() {
+                        let dual_val = if j == i {
+                            Value::Dual(float_args[j], 1.0)
+                        } else {
+                            Value::Dual(float_args[j], 0.0)
+                        };
+                        self.env.set(param, CrowValue::ok(dual_val));
+                    }
+                    let mut result = CrowValue::done();
+                    for stmt in func.body.iter() {
+                        match self.exec_stmt(stmt)? {
+                            Signal::Return(val) => {
+                                result = val;
+                                break;
+                            }
+                            Signal::Value(val) => { result = val; }
+                            Signal::Break | Signal::Continue | Signal::None => {}
+                        }
+                    }
+                    self.env.pop_call_scope();
+                    self.current_function = saved_function;
+
+                    // Extract derivative from result
+                    let deriv = match &result.value {
+                        Value::Dual(_, d) => *d,
+                        Value::Float(v) => {
+                            // Constant function — derivative is 0
+                            let _ = v;
+                            0.0
+                        }
+                        Value::Int(_) => 0.0,
+                        _ => return Err(format!(
+                            "grad[{}][] requires function to return a number, got {}",
+                            func.name,
+                            result.value.type_name()
+                        )),
+                    };
+                    derivatives.push(deriv);
+                }
+
+                if n == 1 {
+                    // Single param: return scalar
+                    Ok(CrowValue::ok(Value::Float(derivatives[0])))
+                } else {
+                    // Multiple params: return array
+                    let arr: Vec<CrowValue> = derivatives.into_iter()
+                        .map(|d| CrowValue::ok(Value::Float(d)))
+                        .collect();
+                    Ok(CrowValue::ok(Value::Array(arr)))
+                }
+            }
             Value::StructDef(sd) => {
                 let sd = sd.clone();
                 if sd.fields.len() != arg_vals.len() {
@@ -1207,7 +1294,7 @@ impl Interpreter {
             | "assert" | "error"
             | "rand" | "time" | "sleep" | "env" | "exit"
             | "json" | "encode"
-            | "type"
+            | "type" | "grad"
         )
     }
 
@@ -1464,10 +1551,19 @@ impl Interpreter {
                         Value::StructDef(sd) => sd.name.clone(),
                         Value::StructInstance(si) => si.name.clone(),
                         Value::Module(m) => format!("module:{}", m.name),
+                        Value::Dual(_, _) => "float".to_string(),
+                        Value::GradFn(_) => "fn".to_string(),
                         Value::Done => "none".to_string(),
                     }
                 };
                 Ok(CrowValue::ok(Value::Str(type_name)))
+            }
+            "grad" => {
+                if args.len() != 1 { return Err("grad[] takes exactly 1 argument".into()); }
+                match &args[0].value {
+                    Value::Fn(f) => Ok(CrowValue::ok(Value::GradFn(f.clone()))),
+                    _ => Err("grad[] requires a function".into()),
+                }
             }
             "map" => {
                 // map[] creates an empty map
@@ -1564,6 +1660,11 @@ impl Interpreter {
                 match args[0].unwrap_or_propagate()? {
                     Value::Int(n) => Ok(CrowValue::ok(Value::Int(n.abs()))),
                     Value::Float(n) => Ok(CrowValue::ok(Value::Float(n.abs()))),
+                    Value::Dual(a, da) => {
+                        // abs'(x) = sign(x) * x'
+                        let sign = if *a > 0.0 { 1.0 } else if *a < 0.0 { -1.0 } else { 0.0 };
+                        Ok(CrowValue::ok(Value::Dual(a.abs(), da * sign)))
+                    }
                     _ => Err("abs[] requires a number".into()),
                 }
             }
@@ -1572,6 +1673,11 @@ impl Interpreter {
                 match args[0].unwrap_or_propagate()? {
                     Value::Int(n) => Ok(CrowValue::ok(Value::Float((*n as f64).sqrt()))),
                     Value::Float(n) => Ok(CrowValue::ok(Value::Float(n.sqrt()))),
+                    Value::Dual(a, da) => {
+                        // sqrt'(x) = x' / (2*sqrt(x))
+                        let s = a.sqrt();
+                        Ok(CrowValue::ok(Value::Dual(s, da / (2.0 * s))))
+                    }
                     _ => Err("sqrt[] requires a number".into()),
                 }
             }
@@ -1580,6 +1686,10 @@ impl Interpreter {
                 match args[0].unwrap_or_propagate()? {
                     Value::Int(n) => Ok(CrowValue::ok(Value::Int(*n))),
                     Value::Float(n) => Ok(CrowValue::ok(Value::Int(n.floor() as i64))),
+                    Value::Dual(a, _) => {
+                        // floor is a step function, derivative is 0
+                        Ok(CrowValue::ok(Value::Dual(a.floor(), 0.0)))
+                    }
                     _ => Err("floor[] requires a number".into()),
                 }
             }
@@ -1588,6 +1698,9 @@ impl Interpreter {
                 match args[0].unwrap_or_propagate()? {
                     Value::Int(n) => Ok(CrowValue::ok(Value::Int(*n))),
                     Value::Float(n) => Ok(CrowValue::ok(Value::Int(n.ceil() as i64))),
+                    Value::Dual(a, _) => {
+                        Ok(CrowValue::ok(Value::Dual(a.ceil(), 0.0)))
+                    }
                     _ => Err("ceil[] requires a number".into()),
                 }
             }
@@ -1596,12 +1709,29 @@ impl Interpreter {
                 match args[0].unwrap_or_propagate()? {
                     Value::Int(n) => Ok(CrowValue::ok(Value::Int(*n))),
                     Value::Float(n) => Ok(CrowValue::ok(Value::Int(n.round() as i64))),
+                    Value::Dual(a, _) => {
+                        Ok(CrowValue::ok(Value::Dual(a.round(), 0.0)))
+                    }
                     _ => Err("round[] requires a number".into()),
                 }
             }
             "pow" => {
                 if args.len() != 2 { return Err("pow[] takes exactly 2 arguments".into()); }
                 match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
+                    // Dual base: d/dx(x^n) = n * x^(n-1) * x'
+                    (Value::Dual(a, da), Value::Int(b)) => {
+                        let bf = *b as f64;
+                        Ok(CrowValue::ok(Value::Dual(a.powf(bf), da * bf * a.powf(bf - 1.0))))
+                    }
+                    (Value::Dual(a, da), Value::Float(b)) => {
+                        Ok(CrowValue::ok(Value::Dual(a.powf(*b), da * b * a.powf(b - 1.0))))
+                    }
+                    (Value::Dual(a, da), Value::Dual(b, db)) => {
+                        // d/d(x^y) = x^y * (y' * ln(x) + y * x'/x)
+                        let val = a.powf(*b);
+                        let deriv = val * (db * a.ln() + b * da / a);
+                        Ok(CrowValue::ok(Value::Dual(val, deriv)))
+                    }
                     (Value::Int(a), Value::Int(b)) => {
                         if *b >= 0 {
                             Ok(CrowValue::ok(Value::Int(a.pow(*b as u32))))
@@ -2357,6 +2487,12 @@ impl Interpreter {
 
         match op {
             BinOp::Add => match (l, r) {
+                // Dual number rules: dual(a,a') + dual(b,b') = dual(a+b, a'+b')
+                (Value::Dual(a, da), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(a + b, da + db))),
+                (Value::Dual(a, da), Value::Float(b)) => Ok(CrowValue::ok(Value::Dual(a + b, *da))),
+                (Value::Float(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(a + b, *db))),
+                (Value::Dual(a, da), Value::Int(b)) => Ok(CrowValue::ok(Value::Dual(a + *b as f64, *da))),
+                (Value::Int(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(*a as f64 + b, *db))),
                 (Value::Int(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Int(a + b))),
                 (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a + b))),
                 (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 + b))),
@@ -2370,6 +2506,12 @@ impl Interpreter {
                 _ => Err("cannot add these types".to_string()),
             },
             BinOp::Sub => match (l, r) {
+                // Dual: dual(a,a') - dual(b,b') = dual(a-b, a'-b')
+                (Value::Dual(a, da), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(a - b, da - db))),
+                (Value::Dual(a, da), Value::Float(b)) => Ok(CrowValue::ok(Value::Dual(a - b, *da))),
+                (Value::Float(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(a - b, -db))),
+                (Value::Dual(a, da), Value::Int(b)) => Ok(CrowValue::ok(Value::Dual(a - *b as f64, *da))),
+                (Value::Int(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(*a as f64 - b, -db))),
                 (Value::Int(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Int(a - b))),
                 (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a - b))),
                 (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 - b))),
@@ -2382,6 +2524,12 @@ impl Interpreter {
                 _ => Err("cannot subtract these types".to_string()),
             },
             BinOp::Mul => match (l, r) {
+                // Dual: dual(a,a') * dual(b,b') = dual(a*b, a'*b + a*b')
+                (Value::Dual(a, da), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(a * b, da * b + a * db))),
+                (Value::Dual(a, da), Value::Float(b)) => Ok(CrowValue::ok(Value::Dual(a * b, da * b))),
+                (Value::Float(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(a * b, a * db))),
+                (Value::Dual(a, da), Value::Int(b)) => Ok(CrowValue::ok(Value::Dual(a * *b as f64, da * *b as f64))),
+                (Value::Int(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(*a as f64 * b, *a as f64 * db))),
                 (Value::Int(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Int(a * b))),
                 (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a * b))),
                 (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 * b))),
@@ -2394,6 +2542,22 @@ impl Interpreter {
                 _ => Err("cannot multiply these types".to_string()),
             },
             BinOp::Div => match (l, r) {
+                // Dual: dual(a,a') / dual(b,b') = dual(a/b, (a'*b - a*b') / b^2)
+                (Value::Dual(a, da), Value::Dual(b, db)) => {
+                    Ok(CrowValue::ok(Value::Dual(a / b, (da * b - a * db) / (b * b))))
+                }
+                (Value::Dual(a, da), Value::Float(b)) => Ok(CrowValue::ok(Value::Dual(a / b, da / b))),
+                (Value::Float(a), Value::Dual(b, db)) => {
+                    Ok(CrowValue::ok(Value::Dual(a / b, (-a * db) / (b * b))))
+                }
+                (Value::Dual(a, da), Value::Int(b)) => {
+                    let bf = *b as f64;
+                    Ok(CrowValue::ok(Value::Dual(a / bf, da / bf)))
+                }
+                (Value::Int(a), Value::Dual(b, db)) => {
+                    let af = *a as f64;
+                    Ok(CrowValue::ok(Value::Dual(af / b, (-af * db) / (b * b))))
+                }
                 (Value::Int(a), Value::Int(b)) => {
                     if *b == 0 {
                         Ok(CrowValue::error_with_kind("division by zero", "math", &self.trace_entry()))
@@ -2461,6 +2625,21 @@ impl Interpreter {
             (Value::Float(a), Value::Int(b)) => {
                 Ok(CrowValue::ok(Value::Bool(cmp(*a, *b as f64))))
             }
+            (Value::Dual(a, _), Value::Dual(b, _)) => {
+                Ok(CrowValue::ok(Value::Bool(cmp(*a, *b))))
+            }
+            (Value::Dual(a, _), Value::Float(b)) => {
+                Ok(CrowValue::ok(Value::Bool(cmp(*a, *b))))
+            }
+            (Value::Float(a), Value::Dual(b, _)) => {
+                Ok(CrowValue::ok(Value::Bool(cmp(*a, *b))))
+            }
+            (Value::Dual(a, _), Value::Int(b)) => {
+                Ok(CrowValue::ok(Value::Bool(cmp(*a, *b as f64))))
+            }
+            (Value::Int(a), Value::Dual(b, _)) => {
+                Ok(CrowValue::ok(Value::Bool(cmp(*a as f64, *b))))
+            }
             _ => Err("cannot compare these types".to_string()),
         }
     }
@@ -2480,6 +2659,7 @@ impl Interpreter {
             UnaryOp::Neg => match v {
                 Value::Int(n) => Ok(CrowValue::ok(Value::Int(-n))),
                 Value::Float(n) => Ok(CrowValue::ok(Value::Float(-n))),
+                Value::Dual(a, da) => Ok(CrowValue::ok(Value::Dual(-a, -da))),
                 Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(t.neg()))),
                 _ => Err("cannot negate this type".to_string()),
             },
@@ -3990,5 +4170,78 @@ mod tests {
         }).unwrap();
         assert!(crow_runtime::gpu::is_gpu_enabled());
         crow_runtime::gpu::set_gpu_enabled(false);
+    }
+
+    // ===== §grad: Automatic differentiation =====
+
+    #[test]
+    fn test_grad_single_param() {
+        // f(x) = x^2, f'(x) = 2x
+        let val = get_var("fn f[x]\n  x * x\ndf = grad[f]\nr = df[3]\n", "r");
+        match val.value {
+            Value::Float(v) => assert!((v - 6.0).abs() < 1e-10),
+            Value::Int(v) => assert_eq!(v, 6),
+            _ => panic!("expected numeric, got {:?}", val.value),
+        }
+    }
+
+    #[test]
+    fn test_grad_multi_param() {
+        // g(x,y) = x^2 + y^2, ∇g = [2x, 2y]
+        let val = get_var("fn g[x, y]\n  x * x + y * y\ndg = grad[g]\nr = dg[3, 4]\n", "r");
+        if let Value::Array(arr) = val.value {
+            assert_eq!(arr.len(), 2);
+            match (&arr[0].value, &arr[1].value) {
+                (Value::Float(a), Value::Float(b)) => {
+                    assert!((a - 6.0).abs() < 1e-10);
+                    assert!((b - 8.0).abs() < 1e-10);
+                }
+                (Value::Int(a), Value::Int(b)) => {
+                    assert_eq!(*a, 6);
+                    assert_eq!(*b, 8);
+                }
+                _ => panic!("expected numeric gradient"),
+            }
+        } else {
+            panic!("expected array, got {:?}", val.value);
+        }
+    }
+
+    #[test]
+    fn test_grad_polynomial() {
+        // h(x) = x^3 + 2x, h'(x) = 3x^2 + 2, h'(2) = 14
+        let val = get_var("fn h[x]\n  x * x * x + 2 * x\ndh = grad[h]\nr = dh[2]\n", "r");
+        match val.value {
+            Value::Float(v) => assert!((v - 14.0).abs() < 1e-10),
+            Value::Int(v) => assert_eq!(v, 14),
+            _ => panic!("expected numeric, got {:?}", val.value),
+        }
+    }
+
+    #[test]
+    fn test_grad_sqrt() {
+        // p(x) = sqrt(x), p'(x) = 1/(2*sqrt(x)), p'(4) = 0.25
+        let val = get_var("fn p[x]\n  sqrt[x]\ndp = grad[p]\nr = dp[4]\n", "r");
+        match val.value {
+            Value::Float(v) => assert!((v - 0.25).abs() < 1e-10),
+            _ => panic!("expected float, got {:?}", val.value),
+        }
+    }
+
+    #[test]
+    fn test_grad_returns_gradfn() {
+        // grad[f] should produce a GradFn value
+        let val = get_var("fn f[x]\n  x * x\ndf = grad[f]\n", "df");
+        assert!(matches!(val.value, Value::GradFn(_)));
+    }
+
+    #[test]
+    fn test_grad_abs_derivative() {
+        // abs'(x) = sign(x), abs'(-3) = -1
+        let val = get_var("fn q[x]\n  abs[x]\ndq = grad[q]\nr = dq[-3]\n", "r");
+        match val.value {
+            Value::Float(v) => assert!((v - (-1.0)).abs() < 1e-10),
+            _ => panic!("expected float, got {:?}", val.value),
+        }
     }
 }

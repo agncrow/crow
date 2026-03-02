@@ -33,6 +33,8 @@ const BUILTINS: &[&str] = &[
     "error",
     // Resource
     "cpu", "gpu",
+    // Autograd
+    "grad",
 ];
 
 pub struct Validator<'a> {
@@ -356,6 +358,7 @@ impl<'a> Validator<'a> {
             "error" => argc >= 1 && argc <= 2,
             "cpu" => argc == 1,
             "gpu" => argc <= 1,
+            "grad" => argc == 1,
             _ => true,
         };
         if !valid {
@@ -490,5 +493,17 @@ mod tests {
     fn test_for_loop_var_defined() {
         let result = validate_source("for i in range[5]\n  log[i]\n");
         assert!(result.is_ok(), "for loop var should be defined: {:?}", result);
+    }
+
+    #[test]
+    fn test_grad_valid() {
+        let result = validate_source("fn f[x]\n  x * x\ndf = grad[f]\nlog[df[3]]\n");
+        assert!(result.is_ok(), "grad[f] should be valid: {:?}", result);
+    }
+
+    #[test]
+    fn test_grad_wrong_arg_count() {
+        let result = validate_source("fn f[x]\n  x * x\nfn g[x]\n  x + 1\ndf = grad[f, g]\n");
+        assert!(result.is_err(), "grad should require exactly 1 arg");
     }
 }
