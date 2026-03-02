@@ -1644,6 +1644,64 @@ impl Interpreter {
                 Ok(CrowValue::ok(Value::Float(t.norm(p))))
             }
 
+            // Random & Distributions
+            "seed" => {
+                if args.len() != 1 { return Err(format!("math.seed: expected 1 argument, got {}", args.len())); }
+                let n = match &args[0].value {
+                    Value::Int(i) => *i as u64,
+                    Value::Float(f) => *f as u64,
+                    _ => return Err("math.seed: expected integer".into()),
+                };
+                crow_runtime::rng::set_seed(n);
+                Ok(CrowValue::done())
+            }
+            "normal" => {
+                if args.len() < 2 { return Err(format!("math.normal: expected at least 2 arguments (mean, std, dims...), got {}", args.len())); }
+                let mean = to_f64(&args[0])?;
+                let std = to_f64(&args[1])?;
+                let shape = shape_from_args(&args[2..])?;
+                let shape = if shape.is_empty() { vec![1] } else { shape };
+                Ok(CrowValue::ok(Value::NumArray(CrowTensor::normal(shape, mean, std))))
+            }
+            "uniform" => {
+                if args.len() < 2 { return Err(format!("math.uniform: expected at least 2 arguments (low, high, dims...), got {}", args.len())); }
+                let low = to_f64(&args[0])?;
+                let high = to_f64(&args[1])?;
+                let shape = shape_from_args(&args[2..])?;
+                let shape = if shape.is_empty() { vec![1] } else { shape };
+                Ok(CrowValue::ok(Value::NumArray(CrowTensor::rand_range(shape, low, high))))
+            }
+            "poisson" => {
+                if args.len() < 1 { return Err(format!("math.poisson: expected at least 1 argument (lambda, dims...), got {}", args.len())); }
+                let lambda = to_f64(&args[0])?;
+                let shape = shape_from_args(&args[1..])?;
+                let shape = if shape.is_empty() { vec![1] } else { shape };
+                Ok(CrowValue::ok(Value::NumArray(CrowTensor::poisson(shape, lambda))))
+            }
+            "bernoulli" => {
+                if args.len() < 1 { return Err(format!("math.bernoulli: expected at least 1 argument (p, dims...), got {}", args.len())); }
+                let p = to_f64(&args[0])?;
+                let shape = shape_from_args(&args[1..])?;
+                let shape = if shape.is_empty() { vec![1] } else { shape };
+                Ok(CrowValue::ok(Value::NumArray(CrowTensor::bernoulli(shape, p))))
+            }
+            "shuffle" => {
+                if args.len() != 1 { return Err(format!("math.shuffle: expected 1 argument, got {}", args.len())); }
+                let t = to_tensor(&args[0])?;
+                Ok(CrowValue::ok(Value::NumArray(t.shuffle())))
+            }
+            "choice" => {
+                if args.len() != 2 { return Err(format!("math.choice: expected 2 arguments (tensor, n), got {}", args.len())); }
+                let t = to_tensor(&args[0])?;
+                let n = to_usize(&args[1])?;
+                Ok(CrowValue::ok(Value::NumArray(t.choice(n))))
+            }
+            "permutation" => {
+                if args.len() != 1 { return Err(format!("math.permutation: expected 1 argument, got {}", args.len())); }
+                let n = to_usize(&args[0])?;
+                Ok(CrowValue::ok(Value::NumArray(CrowTensor::permutation(n))))
+            }
+
             _ => Err(format!("math.{}: unknown math function", name)),
         }
     }
@@ -4841,6 +4899,54 @@ mod tests {
         match val.value {
             Value::Float(v) => assert!((v - (-1.0)).abs() < 1e-10),
             _ => panic!("expected float, got {:?}", val.value),
+        }
+    }
+
+    // ===== Layer 3: Random & Distributions =====
+
+    #[test]
+    fn test_math_seed_reproducibility() {
+        let val = get_var("use math\nmath.seed[42]\na = math.rand[3]\nmath.seed[42]\nb = math.rand[3]\nr = math.sum[a] - math.sum[b]\n", "r");
+        match val.value {
+            Value::Float(v) => assert!((v).abs() < 1e-15, "same seed should give same rand, diff={}", v),
+            _ => panic!("expected float"),
+        }
+    }
+
+    #[test]
+    fn test_math_normal_interp() {
+        let val = get_var("use math\nmath.seed[7]\nx = math.normal[0, 1, 4]\n", "x");
+        match &val.value {
+            Value::NumArray(t) => assert_eq!(t.to_vec().len(), 4),
+            _ => panic!("expected numarray"),
+        }
+    }
+
+    #[test]
+    fn test_math_uniform_interp() {
+        let val = get_var("use math\nmath.seed[7]\nx = math.uniform[2, 5, 3]\n", "x");
+        match &val.value {
+            Value::NumArray(t) => {
+                assert_eq!(t.to_vec().len(), 3);
+                for v in t.to_vec() {
+                    assert!(v >= 2.0 && v < 5.0, "expected in [2,5), got {}", v);
+                }
+            }
+            _ => panic!("expected numarray"),
+        }
+    }
+
+    #[test]
+    fn test_math_permutation_interp() {
+        let val = get_var("use math\nmath.seed[1]\nx = math.permutation[5]\n", "x");
+        match &val.value {
+            Value::NumArray(t) => {
+                assert_eq!(t.to_vec().len(), 5);
+                let mut v = t.to_vec();
+                v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                assert_eq!(v, vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+            }
+            _ => panic!("expected numarray"),
         }
     }
 }
