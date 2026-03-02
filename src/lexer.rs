@@ -101,12 +101,30 @@ impl Lexer {
             }
 
             // two-character tokens
-            if ch == '.' && self.peek_at(1) == Some('.') {
-                let tok = self.make_token(Token::DotDot);
-                self.advance();
-                self.advance();
-                tokens.push(tok);
-                continue;
+            if ch == '.' {
+                match self.peek_at(1) {
+                    Some('.') => {
+                        let tok = self.make_token(Token::DotDot);
+                        self.advance(); self.advance();
+                        tokens.push(tok); continue;
+                    }
+                    Some('*') => {
+                        let tok = self.make_token(Token::DotStar);
+                        self.advance(); self.advance();
+                        tokens.push(tok); continue;
+                    }
+                    Some('/') => {
+                        let tok = self.make_token(Token::DotSlash);
+                        self.advance(); self.advance();
+                        tokens.push(tok); continue;
+                    }
+                    Some('^') => {
+                        let tok = self.make_token(Token::DotCaret);
+                        self.advance(); self.advance();
+                        tokens.push(tok); continue;
+                    }
+                    _ => {} // fall through to single-char '.'
+                }
             }
 
             // single-character tokens
@@ -116,6 +134,7 @@ impl Lexer {
                 '*' => Token::Star,
                 '/' => Token::Slash,
                 '%' => Token::Percent,
+                '^' => Token::Caret,
                 '=' => Token::Assign,
                 ',' => Token::Comma,
                 '.' => Token::Dot,

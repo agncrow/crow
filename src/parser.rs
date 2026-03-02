@@ -426,16 +426,18 @@ impl Parser {
     }
 
     fn parse_multiplication(&mut self) -> Result<Expr, String> {
-        let mut left = self.parse_unary()?;
+        let mut left = self.parse_power()?;
         loop {
             let op = match self.peek() {
                 Token::Star => BinOp::Mul,
                 Token::Slash => BinOp::Div,
                 Token::Percent => BinOp::Mod,
+                Token::DotStar => BinOp::ElemMul,
+                Token::DotSlash => BinOp::ElemDiv,
                 _ => break,
             };
             self.advance();
-            let right = self.parse_unary()?;
+            let right = self.parse_power()?;
             left = Expr::BinOp {
                 left: Box::new(left),
                 op,
@@ -443,6 +445,23 @@ impl Parser {
             };
         }
         Ok(left)
+    }
+
+    fn parse_power(&mut self) -> Result<Expr, String> {
+        let base = self.parse_unary()?;
+        let op = match self.peek() {
+            Token::Caret => BinOp::Pow,
+            Token::DotCaret => BinOp::ElemPow,
+            _ => return Ok(base),
+        };
+        self.advance();
+        // Right-associative: parse_power recurses
+        let exp = self.parse_power()?;
+        Ok(Expr::BinOp {
+            left: Box::new(base),
+            op,
+            right: Box::new(exp),
+        })
     }
 
     fn parse_unary(&mut self) -> Result<Expr, String> {

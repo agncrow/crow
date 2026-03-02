@@ -746,7 +746,7 @@ impl TypeContext {
             }
             "sqrt" => CrowType::Float,
             "floor" | "ceil" | "round" => CrowType::Int,
-            "pow" | "min" | "max" => {
+            "min" | "max" => {
                 if args.len() >= 2 {
                     let t1 = self.infer_expr(&args[0]);
                     let t2 = self.infer_expr(&args[1]);
@@ -941,6 +941,32 @@ impl TypeContext {
                     BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt
                     | BinOp::Gte | BinOp::Lte | BinOp::And | BinOp::Or => CrowType::Bool,
                     BinOp::Mod => CrowType::Int,
+                    BinOp::Pow => {
+                        // ^ returns Float if either operand is Float, else Int
+                        if lt_inner == CrowType::Float || rt_inner == CrowType::Float {
+                            CrowType::Float
+                        } else {
+                            CrowType::Int
+                        }
+                    }
+                    BinOp::ElemMul | BinOp::ElemDiv | BinOp::ElemPow => {
+                        // Element-wise tensor ops return NumArray
+                        if matches!(&lt_inner, CrowType::NumArray(_)) {
+                            lt_inner.clone()
+                        } else if matches!(&rt_inner, CrowType::NumArray(_)) {
+                            rt_inner.clone()
+                        } else {
+                            lt_inner.unify(&rt_inner)
+                        }
+                    }
+                    BinOp::Mul => {
+                        // * on tensor-tensor is matmul (returns NumArray)
+                        if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
+                            CrowType::NumArray(Box::new(CrowType::Float))
+                        } else {
+                            lt_inner.unify(&rt_inner)
+                        }
+                    }
                     _ => lt_inner.unify(&rt_inner),
                 };
                 // If either operand was CrowResult, wrap the result type
@@ -978,11 +1004,15 @@ impl TypeContext {
                                 "zeros" | "ones" | "eye" | "rand" | "randn" | "linspace"
                                 | "arange" | "full" | "diag" | "tensor" => CrowType::NumArray(Box::new(CrowType::Float)),
                                 // Element-wise → NumArray(Float)
-                                "exp" | "log" | "sqrt" | "sin" | "cos" | "abs" => CrowType::NumArray(Box::new(CrowType::Float)),
+                                "exp" | "log" | "sqrt" | "sin" | "cos" | "abs"
+                                | "sign" | "floor" | "ceil" | "round" | "clip" | "mod"
+                                | "tan" | "asin" | "acos" | "atan" | "atan2"
+                                | "sinh" | "cosh" | "tanh" => CrowType::NumArray(Box::new(CrowType::Float)),
                                 // Shape ops → NumArray(Float)
                                 "reshape" | "flatten" | "transpose" => CrowType::NumArray(Box::new(CrowType::Float)),
                                 // Linalg returning tensor
-                                "matmul" | "solve" | "inv" | "cholesky" => CrowType::NumArray(Box::new(CrowType::Float)),
+                                // matmul removed — use * operator instead
+                                "solve" | "inv" | "cholesky" => CrowType::NumArray(Box::new(CrowType::Float)),
                                 // Linalg returning scalar
                                 "det" => CrowType::Float,
                                 // Reductions returning scalar

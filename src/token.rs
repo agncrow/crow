@@ -45,6 +45,10 @@ pub enum Token {
     Star,
     Slash,
     Percent,
+    Caret,     // ^  (power)
+    DotStar,   // .* (element-wise multiply)
+    DotSlash,  // ./ (element-wise divide)
+    DotCaret,  // .^ (element-wise power)
 
     // Symbols
     Assign,    // =
@@ -102,6 +106,10 @@ impl std::fmt::Display for Token {
             Token::Star => write!(f, "*"),
             Token::Slash => write!(f, "/"),
             Token::Percent => write!(f, "%"),
+            Token::Caret => write!(f, "^"),
+            Token::DotStar => write!(f, ".*"),
+            Token::DotSlash => write!(f, "./"),
+            Token::DotCaret => write!(f, ".^"),
             Token::Assign => write!(f, "="),
             Token::Comma => write!(f, ","),
             Token::Dot => write!(f, "."),
