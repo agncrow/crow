@@ -769,6 +769,25 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 | `math.cholesky[a]` | Cholesky (L*L^T) for symmetric positive-definite |
 | `math.eigen[a]` | Eigenvalues → returns [real, imag] |
 
+#### Constants
+
+| Constant | Description |
+|---|---|
+| `math.pi` | π = 3.14159... |
+| `math.e` | Euler's number e = 2.71828... |
+| `math.inf` | Positive infinity |
+| `math.nan` | Not a number |
+
+#### Properties
+
+| Property | Description |
+|---|---|
+| `.shape` | Array of dimension sizes |
+| `.len` | Total number of elements |
+| `.dtype` | Data type (`'float'`) |
+| `.device` | Where the tensor lives (`'cpu'` or `'gpu'`) |
+| `.grad` | Gradient status (`'none'` if no gradient) |
+
 ```
 use math
 
@@ -776,6 +795,14 @@ a = math.zeros[3, 3]
 b = math.eye[3]
 c = math.matmul[a, b]
 d = math.det[b]           --- 1.0 ---
+
+--- constants ---
+log[math.pi]               --- 3.141592653589793 ---
+
+--- properties ---
+log[a.shape]               --- [3, 3] ---
+log[a.dtype]               --- float ---
+log[a.device]              --- cpu ---
 ```
 
 ### File Structure

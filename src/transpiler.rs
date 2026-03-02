@@ -2410,6 +2410,18 @@ impl Transpiler {
                 }
             }
             Expr::FieldAccess { object, field } => {
+                // Math module constants: math.pi, math.e, math.inf, math.nan
+                if let Expr::Ident(mod_name) = object.as_ref() {
+                    if mod_name == "math" {
+                        match field.as_str() {
+                            "pi" => return "std::f64::consts::PI".to_string(),
+                            "e" => return "std::f64::consts::E".to_string(),
+                            "inf" => return "f64::INFINITY".to_string(),
+                            "nan" => return "f64::NAN".to_string(),
+                            _ => {}
+                        }
+                    }
+                }
                 // Module variable access: module.var → module_var
                 if let Expr::Ident(mod_name) = object.as_ref() {
                     if self.modules.contains(mod_name) {
@@ -2446,6 +2458,19 @@ impl Transpiler {
                             "trace" => "Vec::<String>::new()".to_string(),
                             _ => unreachable!(),
                         };
+                    }
+                }
+                // NumArray properties: .shape, .dtype, .device, .grad
+                {
+                    let obj_type = self.ctx.infer_expr(object);
+                    if matches!(obj_type, CrowType::NumArray(_)) {
+                        match field.as_str() {
+                            "shape" => return format!("{}.shape().iter().map(|&s| s as i64).collect::<Vec<i64>>()", obj),
+                            "dtype" => return "\"float\".to_string()".to_string(),
+                            "device" => return format!("if {}.is_gpu() {{ \"gpu\".to_string() }} else {{ \"cpu\".to_string() }}", obj),
+                            "grad" => return "\"none\".to_string()".to_string(),
+                            _ => {}
+                        }
                     }
                 }
                 // Map dot access: map.key → map["key"].clone()
@@ -3654,5 +3679,41 @@ mod tests {
         assert!(rust.contains("impl std::ops::Mul"), "CrowDual should impl Mul\n{}", rust);
         assert!(rust.contains("impl std::ops::Sub"), "CrowDual should impl Sub\n{}", rust);
         assert!(rust.contains("impl std::ops::Div"), "CrowDual should impl Div\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_pi_transpile() {
+        let rust = transpile("use math\nx = math.pi\n");
+        assert!(rust.contains("std::f64::consts::PI"), "should emit PI constant\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_e_transpile() {
+        let rust = transpile("use math\nx = math.e\n");
+        assert!(rust.contains("std::f64::consts::E"), "should emit E constant\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_inf_transpile() {
+        let rust = transpile("use math\nx = math.inf\n");
+        assert!(rust.contains("f64::INFINITY"), "should emit INFINITY\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_nan_transpile() {
+        let rust = transpile("use math\nx = math.nan\n");
+        assert!(rust.contains("f64::NAN"), "should emit NAN\n{}", rust);
+    }
+
+    #[test]
+    fn test_numarray_dtype_transpile() {
+        let rust = transpile("use math\nx = math.ones[3]\ny = x.dtype\n");
+        assert!(rust.contains("\"float\""), "should emit dtype as float string\n{}", rust);
+    }
+
+    #[test]
+    fn test_numarray_device_transpile() {
+        let rust = transpile("use math\nx = math.ones[3]\ny = x.device\n");
+        assert!(rust.contains("is_gpu()"), "should emit device check\n{}", rust);
     }
 }
