@@ -779,6 +779,35 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 
 All reductions except `argmax`/`argmin` accept an optional axis parameter: `math.sum[t, axis]` reduces along that axis and returns a tensor instead of a scalar.
 
+#### Sorting & Selection
+
+| Function | Returns |
+|---|---|
+| `math.argsort[t]` | Indices that would sort the tensor (NumArray) |
+| `math.topk[t, k]` | Top k largest values, sorted descending (NumArray) |
+| `math.unique[t]` | Unique values, sorted (NumArray) |
+| `math.where[cond, a, b]` | Element-wise: a where cond≠0, else b (NumArray) |
+
+Note: `sort[t]` is a core builtin (not in the math module) that works on both arrays and tensors.
+
+#### Cumulative Ops
+
+| Function | Returns |
+|---|---|
+| `math.cumsum[t]` | Cumulative sum (NumArray, same shape) |
+| `math.cumprod[t]` | Cumulative product (NumArray, same shape) |
+
+#### Combining Ops
+
+| Function | Returns |
+|---|---|
+| `math.concat[a, b]` | Concatenate two tensors along axis 0 (NumArray) |
+| `math.concat[a, b, axis]` | Concatenate two tensors along given axis (NumArray) |
+| `math.stack[tensors]` | Stack array of tensors along new axis 0 (NumArray) |
+| `math.stack[tensors, axis]` | Stack array of tensors along new axis (NumArray) |
+
+Note: `slice[t, start, end]` is a core builtin (not in the math module) that works on arrays, tensors, and strings.
+
 #### Shape Operations
 
 | Function | Description |

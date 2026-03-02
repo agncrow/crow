@@ -35,6 +35,19 @@ log[math.prod[math.linspace[1, 4, 4]]]
 log[math.argmax[d]]
 log[math.argmin[d]]
 
+--- sorting and selection ---
+log[math.argsort[d]]
+log[math.topk[d, 3]]
+log[math.unique[math.linspace[1, 3, 5]]]
+
+--- cumulative ops ---
+log[math.cumsum[math.linspace[1, 4, 4]]]
+log[math.cumprod[math.linspace[1, 4, 4]]]
+
+--- combining ops ---
+log[math.concat[math.linspace[1, 3, 3], math.linspace[4, 5, 2]]]
+log[math.stack[[math.linspace[1, 3, 3], math.linspace[4, 6, 3]]]]
+
 --- shape ops ---
 i = math.reshape[b, 3, 2]
 log[i]

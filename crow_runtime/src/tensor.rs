@@ -844,6 +844,178 @@ impl CrowTensor {
     pub fn prod_axis(&self, axis: usize) -> CrowTensor {
         self.reduce_axis(axis, 1.0, |a, b| a * b)
     }
+
+    // ── Sorting & Selection ────────────────────────────────────────────
+
+    /// Sort elements in ascending order (flattened).
+    pub fn sort(&self) -> CrowTensor {
+        let mut data = self.to_vec();
+        data.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let len = data.len();
+        Self::from_vec(data, vec![len])
+    }
+
+    /// Return indices that would sort the tensor (flattened).
+    pub fn argsort(&self) -> CrowTensor {
+        let data = self.to_vec();
+        let mut indices: Vec<usize> = (0..data.len()).collect();
+        indices.sort_by(|&a, &b| data[a].partial_cmp(&data[b]).unwrap_or(std::cmp::Ordering::Equal));
+        let len = indices.len();
+        Self::from_vec(indices.into_iter().map(|i| i as f64).collect(), vec![len])
+    }
+
+    /// Return the top-k largest values (sorted descending).
+    pub fn topk(&self, k: usize) -> CrowTensor {
+        let mut data = self.to_vec();
+        data.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        let k = k.min(data.len());
+        Self::from_vec(data[..k].to_vec(), vec![k])
+    }
+
+    /// Return unique values (sorted).
+    pub fn unique(&self) -> CrowTensor {
+        let mut data = self.to_vec();
+        data.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        data.dedup();
+        let len = data.len();
+        Self::from_vec(data, vec![len])
+    }
+
+    // ── Cumulative Ops ──────────────────────────────────────────────
+
+    /// Cumulative sum (flattened).
+    pub fn cumsum(&self) -> CrowTensor {
+        let data = self.to_vec();
+        let mut result = Vec::with_capacity(data.len());
+        let mut acc = 0.0;
+        for &v in &data {
+            acc += v;
+            result.push(acc);
+        }
+        Self::from_vec(result, self.shape.clone())
+    }
+
+    /// Cumulative product (flattened).
+    pub fn cumprod(&self) -> CrowTensor {
+        let data = self.to_vec();
+        let mut result = Vec::with_capacity(data.len());
+        let mut acc = 1.0;
+        for &v in &data {
+            acc *= v;
+            result.push(acc);
+        }
+        Self::from_vec(result, self.shape.clone())
+    }
+
+    /// Conditional selection: where cond is nonzero, take from self, else from other.
+    pub fn where_cond(&self, on_true: &CrowTensor, on_false: &CrowTensor) -> CrowTensor {
+        let cond = self.to_vec();
+        let a = on_true.to_vec();
+        let b = on_false.to_vec();
+        assert_eq!(cond.len(), a.len(), "where: cond and a must have same length");
+        assert_eq!(cond.len(), b.len(), "where: cond and b must have same length");
+        let data: Vec<f64> = cond.iter().zip(a.iter().zip(b.iter()))
+            .map(|(&c, (&av, &bv))| if c != 0.0 { av } else { bv })
+            .collect();
+        Self::from_vec(data, self.shape.clone())
+    }
+
+    // ── Combining Ops ──────────────────────────────────────────────────
+
+    /// Concatenate two tensors along an axis.
+    pub fn concat(&self, other: &CrowTensor, axis: usize) -> CrowTensor {
+        assert_eq!(self.ndim(), other.ndim(), "concat: tensors must have same number of dimensions");
+        assert!(axis < self.ndim(), "concat: axis {} out of range", axis);
+        for d in 0..self.ndim() {
+            if d != axis {
+                assert_eq!(self.shape[d], other.shape[d],
+                    "concat: shapes must match on all axes except concat axis (axis {}: {} vs {})", d, self.shape[d], other.shape[d]);
+            }
+        }
+        if self.ndim() == 1 {
+            let mut data = self.to_vec();
+            data.extend_from_slice(&other.to_vec());
+            let len = data.len();
+            return Self::from_vec(data, vec![len]);
+        }
+        // General N-D concat
+        let mut new_shape = self.shape.clone();
+        new_shape[axis] = self.shape[axis] + other.shape[axis];
+        let out_n = Self::numel(&new_shape);
+        let mut data = vec![0.0; out_n];
+        let out_strides = Self::row_major_strides(&new_shape);
+        let src_a = self.to_vec();
+        let src_b = other.to_vec();
+        let strides_a = Self::row_major_strides(&self.shape);
+        let strides_b = Self::row_major_strides(&other.shape);
+        // Copy from self
+        for flat in 0..self.len() {
+            let mut remaining = flat;
+            let mut out_flat = 0;
+            for d in 0..self.ndim() {
+                let idx = remaining / strides_a[d];
+                remaining %= strides_a[d];
+                out_flat += idx * out_strides[d];
+            }
+            data[out_flat] = src_a[flat];
+        }
+        // Copy from other (offset along concat axis)
+        for flat in 0..other.len() {
+            let mut remaining = flat;
+            let mut out_flat = 0;
+            for d in 0..other.ndim() {
+                let idx = remaining / strides_b[d];
+                remaining %= strides_b[d];
+                let out_idx = if d == axis { idx + self.shape[axis] } else { idx };
+                out_flat += out_idx * out_strides[d];
+            }
+            data[out_flat] = src_b[flat];
+        }
+        Self::from_vec(data, new_shape)
+    }
+
+    /// Stack tensors along a new axis. All tensors must have the same shape.
+    pub fn stack(tensors: &[CrowTensor], axis: usize) -> CrowTensor {
+        assert!(!tensors.is_empty(), "stack: need at least one tensor");
+        let base_shape = tensors[0].shape();
+        for t in &tensors[1..] {
+            assert_eq!(t.shape(), base_shape, "stack: all tensors must have the same shape");
+        }
+        assert!(axis <= base_shape.len(), "stack: axis {} out of range for ndim {}", axis, base_shape.len());
+        // New shape: insert tensors.len() at position axis
+        let mut new_shape = base_shape.to_vec();
+        new_shape.insert(axis, tensors.len());
+        let mut data = Vec::with_capacity(Self::numel(&new_shape));
+        if axis == 0 {
+            // Simple: just concatenate all data
+            for t in tensors {
+                data.extend_from_slice(&t.to_vec());
+            }
+        } else {
+            // General case: interleave
+            let out_strides = Self::row_major_strides(&new_shape);
+            let base_strides = Self::row_major_strides(base_shape);
+            let out_n = Self::numel(&new_shape);
+            data.resize(out_n, 0.0);
+            for (ti, t) in tensors.iter().enumerate() {
+                let src = t.to_vec();
+                for flat in 0..t.len() {
+                    let mut remaining = flat;
+                    let mut out_flat = ti * out_strides[axis];
+                    let mut out_dim = 0;
+                    for d in 0..base_shape.len() {
+                        if out_dim == axis { out_dim += 1; }
+                        let idx = remaining / base_strides[d];
+                        remaining %= base_strides[d];
+                        out_flat += idx * out_strides[out_dim];
+                        out_dim += 1;
+                    }
+                    data[out_flat] = src[flat];
+                }
+            }
+        }
+        Self::from_vec(data, new_shape)
+    }
 }
 
 // ── Display ─────────────────────────────────────────────────────────────
@@ -1206,6 +1378,98 @@ mod tests {
         assert_eq!(r.shape(), &[2]);
         assert_eq!(r.to_vec(), vec![8.0, 15.0]);
     }
+
+    #[test]
+    fn test_sort() {
+        let t = CrowTensor::from_vec(vec![3.0, 1.0, 4.0, 1.0, 5.0], vec![5]);
+        let s = t.sort();
+        assert_eq!(s.to_vec(), vec![1.0, 1.0, 3.0, 4.0, 5.0]);
+    }
+
+    #[test]
+    fn test_argsort() {
+        let t = CrowTensor::from_vec(vec![3.0, 1.0, 4.0, 1.0, 5.0], vec![5]);
+        let s = t.argsort();
+        assert_eq!(s.to_vec(), vec![1.0, 3.0, 0.0, 2.0, 4.0]);
+    }
+
+    #[test]
+    fn test_topk() {
+        let t = CrowTensor::from_vec(vec![3.0, 1.0, 4.0, 1.0, 5.0], vec![5]);
+        let top = t.topk(3);
+        assert_eq!(top.to_vec(), vec![5.0, 4.0, 3.0]);
+        assert_eq!(top.shape(), &[3]);
+    }
+
+    #[test]
+    fn test_unique() {
+        let t = CrowTensor::from_vec(vec![3.0, 1.0, 4.0, 1.0, 3.0], vec![5]);
+        let u = t.unique();
+        assert_eq!(u.to_vec(), vec![1.0, 3.0, 4.0]);
+        assert_eq!(u.shape(), &[3]);
+    }
+
+    #[test]
+    fn test_where_cond() {
+        let cond = CrowTensor::from_vec(vec![1.0, 0.0, 1.0, 0.0], vec![4]);
+        let a = CrowTensor::from_vec(vec![10.0, 20.0, 30.0, 40.0], vec![4]);
+        let b = CrowTensor::from_vec(vec![100.0, 200.0, 300.0, 400.0], vec![4]);
+        let r = cond.where_cond(&a, &b);
+        assert_eq!(r.to_vec(), vec![10.0, 200.0, 30.0, 400.0]);
+    }
+
+    #[test]
+    fn test_cumsum() {
+        let t = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![4]);
+        let r = t.cumsum();
+        assert_eq!(r.to_vec(), vec![1.0, 3.0, 6.0, 10.0]);
+    }
+
+    #[test]
+    fn test_cumprod() {
+        let t = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![4]);
+        let r = t.cumprod();
+        assert_eq!(r.to_vec(), vec![1.0, 2.0, 6.0, 24.0]);
+    }
+
+    #[test]
+    fn test_concat_1d() {
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
+        let b = CrowTensor::from_vec(vec![4.0, 5.0], vec![2]);
+        let r = a.concat(&b, 0);
+        assert_eq!(r.to_vec(), vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+        assert_eq!(r.shape(), &[5]);
+    }
+
+    #[test]
+    fn test_concat_2d() {
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let b = CrowTensor::from_vec(vec![5.0, 6.0], vec![1, 2]);
+        let r = a.concat(&b, 0);
+        assert_eq!(r.shape(), &[3, 2]);
+        assert_eq!(r.to_vec(), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn test_stack_1d() {
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
+        let b = CrowTensor::from_vec(vec![4.0, 5.0, 6.0], vec![3]);
+        let r = CrowTensor::stack(&[a, b], 0);
+        assert_eq!(r.shape(), &[2, 3]);
+        assert_eq!(r.to_vec(), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn test_stack_axis1() {
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
+        let b = CrowTensor::from_vec(vec![4.0, 5.0, 6.0], vec![3]);
+        let r = CrowTensor::stack(&[a, b], 1);
+        assert_eq!(r.shape(), &[3, 2]);
+        assert_eq!(r.to_vec(), vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
+    }
+
+
+
 
 
     // ── Display ─────────────────────────────────────────────────────

@@ -1504,6 +1504,53 @@ impl Interpreter {
             "argmax" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::Int(t.argmax() as i64))) }
             "argmin" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::Int(t.argmin() as i64))) }
 
+            // Cumulative ops
+            "cumsum" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.cumsum()))) }
+            "cumprod" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.cumprod()))) }
+
+            // Combining ops
+            "concat" => {
+                if args.len() < 2 { return Err("math.concat: expected at least 2 arguments (a, b, [axis])".into()); }
+                let a = to_tensor(&args[0])?;
+                let b = to_tensor(&args[1])?;
+                let axis = if args.len() >= 3 { to_f64(&args[2])? as usize } else { 0 };
+                Ok(CrowValue::ok(Value::NumArray(a.concat(&b, axis))))
+            }
+            "stack" => {
+                if args.len() < 1 { return Err("math.stack: expected at least 1 argument (array of tensors, [axis])".into()); }
+                match args[0].unwrap_or_propagate()? {
+                    Value::Array(items) => {
+                        let tensors: Result<Vec<CrowTensor>, String> = items.iter().map(|item| {
+                            match &item.value {
+                                Value::NumArray(t) => Ok(t.clone()),
+                                _ => Err("math.stack: all elements must be tensors".into()),
+                            }
+                        }).collect();
+                        let tensors = tensors?;
+                        let axis = if args.len() >= 2 { to_f64(&args[1])? as usize } else { 0 };
+                        Ok(CrowValue::ok(Value::NumArray(CrowTensor::stack(&tensors, axis))))
+                    }
+                    _ => Err("math.stack: first argument must be an array of tensors".into()),
+                }
+            }
+
+            // Sorting & selection
+            "argsort" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.argsort()))) }
+            "topk" => {
+                if args.len() < 2 { return Err("math.topk: expected 2 arguments (tensor, k)".into()); }
+                let t = to_tensor(&args[0])?;
+                let k = to_f64(&args[1])? as usize;
+                Ok(CrowValue::ok(Value::NumArray(t.topk(k))))
+            }
+            "unique" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.unique()))) }
+            "where" => {
+                if args.len() < 3 { return Err("math.where: expected 3 arguments (cond, a, b)".into()); }
+                let cond = to_tensor(&args[0])?;
+                let a = to_tensor(&args[1])?;
+                let b = to_tensor(&args[2])?;
+                Ok(CrowValue::ok(Value::NumArray(cond.where_cond(&a, &b))))
+            }
+
             // Shape ops
             "reshape" => {
                 if args.len() < 2 { return Err(format!("math.reshape: expected at least 2 arguments (tensor, dims...), got {}", args.len())); }
@@ -4518,6 +4565,80 @@ mod tests {
             assert_eq!(t.to_vec(), &[3.0, 8.0]);
         } else { panic!("expected NumArray"); }
     }
+
+    // ===== Sorting & selection tests =====
+
+    #[test]
+    fn test_math_argsort() {
+        let val = get_var("use math\nx = math.argsort[math.tensor[[3, 1, 4, 1, 5]]]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), vec![1.0, 3.0, 0.0, 2.0, 4.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_math_topk() {
+        let val = get_var("use math\nx = math.topk[math.tensor[[3, 1, 4, 1, 5]], 2]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), vec![5.0, 4.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_math_unique() {
+        let val = get_var("use math\nx = math.unique[math.tensor[[3, 1, 4, 1, 3]]]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), vec![1.0, 3.0, 4.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_math_where() {
+        let val = get_var("use math\ncond = math.tensor[[1, 0, 1]]\na = math.tensor[[10, 20, 30]]\nb = math.tensor[[100, 200, 300]]\nx = math.where[cond, a, b]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), vec![10.0, 200.0, 30.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    // ===== Cumulative ops tests =====
+
+    #[test]
+    fn test_math_cumsum() {
+        let val = get_var("use math\nx = math.cumsum[math.tensor[[1, 2, 3, 4]]]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), vec![1.0, 3.0, 6.0, 10.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_math_cumprod() {
+        let val = get_var("use math\nx = math.cumprod[math.tensor[[1, 2, 3, 4]]]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), vec![1.0, 2.0, 6.0, 24.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    // ===== Combining ops tests =====
+
+    #[test]
+    fn test_math_concat() {
+        let val = get_var("use math\na = math.tensor[[1, 2, 3]]\nb = math.tensor[[4, 5]]\nx = math.concat[a, b]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_math_stack() {
+        let val = get_var("use math\na = math.tensor[[1, 2, 3]]\nb = math.tensor[[4, 5, 6]]\nx = math.stack[[a, b]]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.shape(), &[2, 3]);
+            assert_eq!(t.to_vec(), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+
+
 
 
 

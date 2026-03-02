@@ -1024,6 +1024,12 @@ impl TypeContext {
                                     }
                                 }
                                 "argmax" | "argmin" => CrowType::Int,
+                                // Cumulative ops (return NumArray)
+                                "cumsum" | "cumprod" => CrowType::NumArray(Box::new(CrowType::Float)),
+                                // Combining ops (return NumArray)
+                                "concat" | "stack" => CrowType::NumArray(Box::new(CrowType::Float)),
+                                // Sorting & selection (return NumArray)
+                                "argsort" | "topk" | "unique" | "where" => CrowType::NumArray(Box::new(CrowType::Float)),
                                 // Decompositions returning arrays of tensors
                                 "svd" | "qr" | "eigen" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
                                 _ => CrowType::Unknown,
