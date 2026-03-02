@@ -6,109 +6,89 @@
 
 ## Overview
 
-One command, zero annotations:
+One command. Zero effort. Interactive.
 
 ```
 crow check
 
-  --- static analysis ---
-  functions analyzed: 12
-  pure: 8/12  impure: 4/12
-  crash-free: 11/12
-    WARNING: parse_csv may crash on empty input (line 34)
-  termination: 12/12 proven
-  parallel safety: no races detected
+  12 functions checked, 2 need review
 
-  --- dynamic analysis ---
-  47 functions tested, 312 edge cases generated
-  all passed
-  mutation score: 94% (289/307 mutants killed)
-  3 weak spots:
-    - binary_search: test with duplicates needed
-    - parse_csv: empty string not tested
-    - sort: single-element list not tested
-  snapshots saved
+  [1/2] src/parser.crow > get_middle crashes on empty list (line 3)
+        items[mid] — but items is empty
+        try: get_middle[[]]
+
+        enter = recheck, s = skip, t = try input >
 ```
 
-Static analysis runs first (instant, no execution). Then dynamic analysis generates edge cases and runs them. One command does everything.
+When everything is fine:
+
+```
+crow check
+
+  ✓ 12 functions checked, no issues found
+```
+
+For CI or batch mode, `crow check -v` dumps the full report with no interaction:
+
+```
+crow check -v
+
+  static analysis
+    functions: 12 (8 pure, 4 impure)
+    unused variables: none
+    unreachable code: none
+    parallel safety: no races
+    for loops: all terminate
+
+  dynamic analysis (pure functions only)
+    8 functions tested
+    47 edge cases generated, all passed
+    snapshots: 6 unchanged
+
+  ✓ no issues found
+```
+
+### Interactive flow
+
+```
+developer runs crow check
+  ↓
+static analysis (instant)
+  ↓
+generate edge cases for pure functions (simple types only)
+  ↓
+run edge cases in interpreter (fast)
+  ↓
+show summary: "12 functions checked, 2 need review"
+  ↓
+present first issue
+  ↓
+developer fixes code ←──────┐
+  ↓                          │
+re-run just that function    │
+  ↓                          │
+still broken? show again ────┘
+  ↓
+fixed? show next issue
+  ↓
+all done? "✓ no issues found"
+```
+
+### Output principles
+
+| Principle | Rule |
+|---|---|
+| Lead with the answer | "2 need review" or "no issues found" — not stats |
+| Plain English | "crashes on empty list" — not "index out of bounds at line 3" |
+| Give a repro | `try: get_middle[[]]` — they can paste it into `crow run` |
+| Hide stats by default | Coverage, branch counts, etc. only shown with `-v` |
+| No jargon | Edge cases are generated but aren't counted unless `-v` is used. |
+| One line when green | `✓ 12 functions checked, no issues found` |
+| Module context | `src/parser.crow > get_middle` — not just `get_middle` |
 
 ---
 
-## Feature 1: Crash-Proof Analysis
-
-**Command:** `crow check`
-**Effort:** Zero
-**What it catches:** Index out of bounds, division by zero, type mismatches
-
-The compiler traces data flow through every function and proves that operations are safe — or reports exactly where they aren't.
-
-### Example
-
-```
-fn binary_search[items, key]
-  low = 0
-  high = len[items] - 1
-  while low lte high
-    mid = floor[[low + high] / 2]
-    if items[mid] eq key
-      return mid
-    if items[mid] lt key
-      low = mid + 1
-    else
-      high = mid - 1
-  return -1
-```
-
-The compiler traces:
-- `low` starts at 0, `high` starts at `len[items] - 1`
-- `mid = floor[[low + high] / 2]` — always between `low` and `high`
-- Loop condition `low lte high` ensures `mid` is a valid index
-- But what if `items` is empty? `high = -1`, loop doesn't execute → safe
-
-```
-crow check
-
-  binary_search: crash-free ✓
-    items[mid] — proven safe (mid always in bounds when loop runs)
-    floor division — no division by zero
-```
-
-### When it can't prove safety
-
-```
-fn get_middle[items]
-  mid = len[items] / 2
-  return items[mid]
-```
-
-```
-crow check
-
-  get_middle: items[mid] may be out of bounds
-    when: items = []
-    fix:  add 'if len[items] eq 0' guard
-```
-
-### Techniques
-
-- **Abstract interpretation** — track value ranges through branches and loops
-- **Interval arithmetic** — `low` is in `[0, len-1]`, `high` is in `[0, len-1]`, so `mid` is in `[0, len-1]`
-- **Path-sensitive analysis** — inside `if len[items] gt 0`, the compiler knows the list is non-empty
-
-### Prior art
-
-| Tool | Language | Approach |
-|---|---|---|
-| SPARK | Ada | Formal verification with contracts |
-| Zig | Zig | Runtime bounds checks + safety analysis |
-| Infer | Java/C | Facebook's static analyzer for null/bounds |
-| Prusti | Rust | Verification for Rust via Viper |
-
-**Crow's difference:** No contracts, no annotations. The analysis is fully automatic.
-
----
-
-## Feature 2: Purity Detection
+## Feature 1: Purity Detection
 
 **Command:** `crow check`
 **Effort:** Zero
@@ -137,14 +117,14 @@ fn process[items]         --- pure: only calls pure functions
 4. **Impure functions need attention.** The compiler flags them so the developer knows where the risk is.
 
 ```
-crow check
+crow check -v
 
-  pure:   double, binary_search, fibonacci, sort, filter  (auto-verified ✓)
-  impure: fetch_user, save_report, send_email             (need review)
-    fetch_user: calls read[] (I/O)
-    save_report: calls write[] (I/O)
-    send_email: calls fetch[] (network)
+  purity:
+    pure:   double, binary_search, fibonacci, sort, filter
+    impure: fetch_user (read[]), save_report (write[]), send_email (fetch[])
 ```
+
+Purity classification is silent in normal mode — it only matters internally (determines which functions get edge case testing). Shown with `-v`.
 
 ### What makes a function impure
 
@@ -162,81 +142,109 @@ A function is pure if it (and everything it calls) uses none of these.
 
 ---
 
-## Feature 3: Termination Proof
+## Feature 2: Guaranteed Static Checks
 
 **Command:** `crow check`
 **Effort:** Zero
-**What it catches:** Infinite loops
+**What it catches:** Unused variables, unreachable code, infinite loops, parallel safety violations
 
-### For loops — always terminate
+These checks are always correct — zero false positives. The compiler is certain.
 
-`for` loops iterate over a finite collection. They always terminate. Nothing to check.
+### What's guaranteed
 
-```
-for x in items        --- finite collection → terminates ✓
-  log[x]
+| Check | How |
+|---|---|
+| **Unused variables** | Variable assigned, never read. Syntactic check. |
+| **Unreachable code** | Code after `return`. Dead `else` after `if true`. |
+| **For-loop termination** | `for` iterates a finite collection. Always terminates. |
+| **While-loop termination** | Ranking function analysis — does the loop variable converge? |
+| **Parallel safety** | RAW/WAW/WAR hazard detection on parallel waves. Already implemented in `src/parallel.rs`. |
 
-for i in range[100]   --- range is finite → terminates ✓
-  log[i]
-```
-
-### While loops — need analysis
-
-The compiler checks: does the loop condition's variable converge toward termination?
+### Example
 
 ```
-while low lte high
-  ...
-  low = mid + 1       --- low increases
-  high = mid - 1      --- or high decreases
-                      --- gap always shrinks → terminates ✓
-```
+fn process[items]
+    x = 10
+    y = 20
+    result = x + y
+    return result
 
-```
-while len[queue] gt 0
-  item = pop[queue]   --- queue shrinks each iteration → terminates ✓
-  process[item]
-```
-
-### When it can't prove termination
-
-```
-fn collatz[n]
-  while n neq 1
-    if n % 2 eq 0
-      n = n / 2
-    else
-      n = n * 3 + 1
-  return n
+fn categorize[score]
+    if score gt 90
+        return 'A'
+    if score gt 80
+        return 'B'
+    return 'C'
+    return 'D'
 ```
 
 ```
 crow check
 
-  WARNING: collatz — while loop may not terminate
-    loop variable 'n' has no guaranteed convergence
-    (this is an open problem in mathematics)
+  2 issues found
+
+  [1/2] src/utils.crow > process has unused variable (line 3)
+        y = 20 — assigned but never read
+
+  [2/2] src/utils.crow > categorize has unreachable code (line 12)
+        return 'D' — after return 'C', can never execute
+
+  enter = recheck, s = skip >
 ```
 
-The compiler doesn't block compilation — it just warns. Some loops are genuinely undecidable, and that's fine.
+### Termination analysis
 
-### Techniques
+`for` loops always terminate (finite collection). `while` loops need analysis:
 
-- **Ranking functions** — find a value that strictly decreases each iteration and is bounded below
-- **Loop variant analysis** — `len[queue]` decreases by 1 each iteration, bounded by 0
-- **Simple patterns** — counter moving toward a bound (`i = i + 1` with `while i lt n`)
+```
+while low lte high
+  low = mid + 1       --- low increases or high decreases
+  high = mid - 1      --- gap always shrinks → terminates ✓
+```
+
+When the compiler can't prove termination, it warns but doesn't block:
+
+```
+  [1/1] src/math.crow > collatz — while loop may not terminate (line 3)
+        loop variable 'n' has no guaranteed convergence
+```
+
+### Parallel safety
+
+```
+crow check -v
+
+  parallel waves:
+    wave 1: [a, c]     --- parallel ✓
+    wave 2: [b]        --- needs a
+    wave 3: [d]        --- needs a, b, c
+  no data races ✓
+```
 
 ---
 
-## Feature 4: Automatic Edge Case Generation
+## Feature 3: Edge Case Generation
 
 **Command:** `crow check`
 **Effort:** Zero
-**What it catches:** Boundary bugs, off-by-one errors, empty input crashes, type edge cases
+**What it catches:** Boundary bugs, off-by-one errors, empty input crashes
 
-The compiler reads the function signature and body, then generates inputs that exercise every branch and boundary.
+For pure functions with simple parameter types, the compiler generates boundary inputs and runs them automatically. Functions with complex types (maps, structs, nested structures) are skipped.
 
-### Example
+### Supported parameter types
+
+| Type | Generated inputs |
+|---|---|
+| `int` | `0`, `1`, `-1`, `max_int`, `min_int` |
+| `float` | `0.0`, `1.0`, `-1.0`, `0.5`, `-0.5` |
+| `str` | `''`, `'a'`, `'hello'` |
+| `bool` | `true`, `false` |
+| `list of int` | `[]`, `[0]`, `[1, 2, 3]`, `[1]`, `[-1, 0, 1]` |
+| `list of str` | `[]`, `['']`, `['a', 'b']` |
+
+Functions with `map`, `struct`, or nested list parameters are **not tested** — they're silently skipped. This is a known limitation. The system tests what it can and is honest about what it can't.
+
+### Example — all passing
 
 ```
 fn binary_search[items, key]
@@ -254,112 +262,69 @@ fn binary_search[items, key]
 ```
 
 ```
-crow test
+crow check
 
-  binary_search:
-    binary_search[[], 5]              = -1     --- empty list
-    binary_search[[5], 5]             = 0      --- single element, found
-    binary_search[[5], 3]             = -1     --- single element, not found
-    binary_search[[1, 2, 3], 1]       = 0      --- first element
-    binary_search[[1, 2, 3], 3]       = 2      --- last element
-    binary_search[[1, 2, 3], 2]       = 1      --- middle element
-    binary_search[[1, 2, 3], 4]       = -1     --- above range
-    binary_search[[1, 2, 3], 0]       = -1     --- below range
-    binary_search[[1, 1, 1], 1]       = 1      --- duplicates
-    binary_search[[1..1000], 500]     = 499    --- large list
+  ✓ 12 functions checked, no issues found
+```
 
-    10/10 passed, 0 crashes, 100% path coverage ✓
+With `-v`:
+
+```
+crow check -v
+
+  fn binary_search — 10 edge cases, all passed ✓
+    binary_search[[], 0]           → -1
+    binary_search[[1], 1]          → 0
+    binary_search[[1], 2]          → -1
+    binary_search[[1, 2, 3], 2]    → 1
+    binary_search[[1, 2, 3], 4]    → -1
+    ... 5 more
+
+  fn process_config — skipped (map parameter, not supported yet)
+```
+
+### Example — bug found
+
+```
+fn get_middle[items]
+  mid = len[items] / 2
+  return items[mid]
+```
+
+```
+crow check
+
+  1 issue found
+
+  [1/1] src/utils.crow > get_middle crashes on empty list (line 3)
+        items[mid] — but items is empty
+        try: get_middle[[]]
+
+        enter = recheck, s = skip, t = try input >
 ```
 
 ### How it generates inputs
 
-| Source | Strategy |
-|---|---|
-| **Parameter types** | `items` is a list of ints → generate `[]`, `[x]`, `[x,y]`, `[x,y,z]`, large lists |
-| **Branch conditions** | `items[mid] eq key` → generate inputs where key is present and absent |
-| **Boundary values** | `len[items] - 1` → test length 0, 1, 2 |
-| **Comparisons in code** | `lt`, `lte`, `eq` → test values at, above, and below the boundary |
-| **Loop structure** | `while low lte high` → test 0 iterations, 1 iteration, many iterations |
-| **Concolic execution** | Run symbolically, solve constraints to find inputs that hit uncovered branches |
-
-### What the developer does
-
-Nothing. They look at the output for 5 seconds. If `binary_search[[1,2,3], 2]` returns `1`, it's correct. If it returns `0`, something's wrong. The system finds the edge cases, the human judges correctness.
+The system uses the transpiler's type inference — by the time Crow code is transpiled to Rust, parameter types are known. It then generates boundary values for each type using the table above. All combinations of boundary values across parameters are tested (capped at ~50 combinations per function to stay fast).
 
 ---
 
-## Feature 5: Mutation Testing
+## Feature 4: Regression Snapshots
 
 **Command:** `crow check`
 **Effort:** Zero
-**What it catches:** Weak test coverage — places where a bug could hide undetected
-
-After generating and running edge cases, Crow automatically **mutates** the code and re-runs:
-
-### How it works
-
-1. Take the original function
-2. Create "mutants" — small changes that might introduce bugs
-3. Run all generated test cases against each mutant
-4. If a mutant passes all tests, the tests are weak at that point
-
-### Mutation operators
-
-| Original | Mutant | What it tests |
-|---|---|---|
-| `lt` | `lte` | Off-by-one in comparisons |
-| `lte` | `lt` | Off-by-one in comparisons |
-| `eq` | `neq` | Inverted conditions |
-| `+ 1` | `- 1` | Arithmetic direction |
-| `+ 1` | `+ 0` | Boundary adjustment |
-| `return mid` | `return mid + 1` | Off-by-one in results |
-| `return -1` | `return 0` | Wrong default value |
-
-### Example output
-
-```
-crow test
-
-  binary_search: 10/10 edge cases passed ✓
-  mutation testing:
-    mutant 1: changed 'lt' to 'lte' on line 7 — KILLED by test case 4 ✓
-    mutant 2: changed 'lte' to 'lt' on line 4 — KILLED by test case 2 ✓
-    mutant 3: changed '+ 1' to '- 1' on line 9 — KILLED by test case 6 ✓
-    mutant 4: changed 'mid' to 'mid + 1' on line 6 — KILLED by test case 1 ✓
-    mutant 5: changed '-1' to '0' on line 12 — KILLED by test case 3 ✓
-
-  mutation score: 5/5 mutants killed ✓ (100%)
-```
-
-If a mutant survives:
-
-```
-  mutant 6: changed 'lte' to 'lt' on line 4 — SURVIVED
-    → no test case distinguishes original from mutant
-    → try: binary_search[[1], 1] — original returns 0, mutant returns -1
-    → suggested test case added to next run
-```
-
-The system tells you **exactly** what's undertested and suggests the missing test case.
-
----
-
-## Feature 6: Regression Snapshots
-
-**Command:** `crow check`
-**Effort:** Zero
-**What it catches:** Accidental behavior changes
+**What it catches:** Accidental behavior changes during refactoring or parameter tuning
 
 ### First run — snapshot created
 
 ```
-crow test
+crow check
 
-  binary_search: 10 cases generated, all passed ✓
-  snapshot saved → .crow/snapshots/binary_search.snap
+  ✓ 12 functions checked, no issues found
+  snapshots saved for 8 pure functions
 ```
 
-The snapshot records every input-output pair:
+Behind the scenes, `.crow/snapshots/` records every input-output pair from edge case generation:
 
 ```
 --- .crow/snapshots/binary_search.snap ---
@@ -373,19 +338,21 @@ binary_search[[1, 2, 3], 3] = 2
 
 ### Later — behavior change detected
 
-You edit the function. Run `crow test` again:
+You edit the function. Run `crow check` again:
 
 ```
-crow test
+crow check
 
-  binary_search: REGRESSION
-    binary_search[[1, 1, 1], 1] was 1, now 0
-    changed on line 8
+  1 issue found
 
-  accept new behavior? [y/n]
+  [1/1] src/search.crow > binary_search behavior changed (line 8)
+        binary_search[[1, 1, 1], 1] was 1, now 0
+        try: binary_search[[1, 1, 1], 1]
+
+        enter = recheck, a = accept new behavior, s = skip >\
 ```
 
-If you type `y`, the snapshot updates. If you type `n`, you know you introduced a bug.
+If you press `a`, the snapshot updates. If you fix the code and press enter, it rechecks.
 
 ### Why this is powerful
 
@@ -393,69 +360,48 @@ If you type `y`, the snapshot updates. If you type `n`, you know you introduced 
 - **Catches subtle changes.** Even if the function still "works", any behavior difference is flagged.
 - **Works across refactors.** Rename variables, restructure code — if the outputs match, it passes.
 - **Version controlled.** `.crow/snapshots/` goes in git. Team members see regressions too.
+- **Parameter tuning.** Change a threshold in a config, instantly see which functions produce different outputs.
 
 ---
 
-## Feature 7: Parallel Safety Verification
+## Guaranteed vs. Best-Effort
 
-**Command:** `crow check`
-**Effort:** Zero
-**What it catches:** Data races in automatically parallelized code
+Not all checks carry the same confidence:
 
-Crow parallelizes `for` loops and independent statements automatically. The compiler must verify this is safe.
-
-### Already implemented
-
-Crow already detects outer-scope mutation in `for` loops and falls back to sequential:
-
-```
-total = 0
-for x in items
-  total = total + x    --- mutates outer 'total' → sequential ✓
-```
-
-### Extended analysis
-
-```
-crow check
-
-  main:
-    a = compute[x]     --- independent ┐
-    c = compute[y]     --- independent ┘ parallel ✓
-    b = compute[a]     --- depends on a → sequential after a ✓
-    d = a + b + c      --- depends on a, b, c → sequential after all ✓
-
-  parallel waves:
-    wave 1: [a, c]     --- parallel
-    wave 2: [b]        --- sequential (needs a)
-    wave 3: [d]        --- sequential (needs a, b, c)
-
-  no data races detected ✓
-```
-
-### What it checks
-
-| Hazard | Description | Example |
+| Category | Features | Confidence |
 |---|---|---|
-| RAW | Read-after-write — reading a value that's being computed in parallel | `a = 1; b = a + 1` (b reads a) |
-| WAW | Write-after-write — two parallel statements writing the same variable | `a = 1; a = 2` |
-| WAR | Write-after-read — writing a variable that's being read in parallel | `b = a; a = 5` |
+| **Guaranteed** | Purity detection, unused variables, unreachable code, parallel safety | 100% correct. Zero false positives. Provable from the AST. |
+| **Best-effort static** | Termination proof | Usually correct. Some cases are undecidable (halting problem). Warns, never blocks. |
+| **Dynamic** | Edge case generation, regression snapshots | Finds real bugs, but can't prove absence of bugs. Limited to simple parameter types. |
 
-All three are already detected by `src/parallel.rs`. This feature just surfaces the analysis to the developer.
+The developer should know: green on guaranteed checks means **proven safe**. Green on dynamic checks means **no bugs found in the inputs we tested**.
+
+---
+
+## Limitations
+
+Honest about what `crow check` can't do:
+
+| Limitation | Why |
+|---|---|
+| **Complex parameter types** | Edge case generation only works for `int`, `float`, `str`, `bool`, and lists of those. Functions taking maps, structs, or nested structures are skipped. |
+| **No shrinking** | When a crash is found, the system reports the first failing input. It doesn't try to find a simpler one. The boundary-value approach usually produces simple inputs anyway. |
+| **No coverage tracking** | The system doesn't know which branches were hit. It generates inputs from the type signature, not from branch analysis. |
+| **No concolic execution** | No symbolic execution or constraint solving. Just boundary values. |
+| **Impure functions** | Not tested at all. Only pure functions get edge cases. |
+
+These are all candidates for future improvement, but the V1 scope is deliberately small and honest.
 
 ---
 
 ## Summary
 
-| Feature | Phase | Effort | Catches |
-|---|---|---|---|
-| Crash-proof analysis | Static | Zero | Index OOB, div by zero, type errors |
-| Purity detection | Static | Zero | Side effects, testability classification |
-| Termination proof | Static | Zero | Infinite loops |
-| Parallel safety | Static | Zero | Data races |
-| Edge case generation | Dynamic | Zero | Boundary bugs, off-by-one, empty inputs |
-| Mutation testing | Dynamic | Zero | Weak test coverage |
-| Regression snapshots | Dynamic | Zero | Accidental behavior changes |
+| # | Feature | Phase | Confidence | Catches |
+|---|---|---|---|---|
+| 1 | Purity detection | Static | Guaranteed | Side effects, testability classification |
+| 2 | Static checks | Static | Guaranteed | Unused vars, unreachable code, parallel safety |
+| 3 | Edge case generation | Dynamic | Best-effort | Boundary bugs, crashes (simple types only) |
+| 4 | Regression snapshots | Dynamic | Best-effort | Accidental behavior changes |
 
 All run under one command: `crow check`.
 
@@ -464,27 +410,59 @@ All run under one command: `crow check`.
 | Priority | Feature | Complexity | Value |
 |---|---|---|---|
 | 1 | Purity detection | Low | Foundation for everything else |
-| 2 | Edge case generation | Medium | Highest developer-visible value |
-| 3 | Regression snapshots | Low | Easy win, huge practical value |
-| 4 | Crash-proof analysis | High | Strongest safety guarantee |
-| 5 | Mutation testing | Medium | Makes edge case generation trustworthy |
-| 6 | Termination proof | Medium | Nice to have, hard edge cases |
-| 7 | Parallel safety (extended) | Low | Already mostly implemented |
+| 2 | Static checks | Low | Guaranteed correctness, easy wins |
+| 3 | Edge case generation | Medium | The actual differentiator |
+| 4 | Regression snapshots | Low | Huge practical value for refactoring |
 
 ### Design principles
 
 1. **Zero effort.** No annotations, no contracts, no test files. The code is the spec.
 2. **One command.** `crow check`. That's it.
-3. **Helpful, not blocking.** Warnings, not errors. The developer decides what to fix.
-4. **Incremental.** Each feature works independently. Ship them one at a time.
-5. **Fast.** `crow check` should run in under a second for typical projects. `crow test` in under 10 seconds.
+3. **Interactive.** One issue at a time. Fix and recheck. Not a wall of text.
+4. **Helpful, not blocking.** Warnings, not errors. The developer decides what to fix.
+5. **Plain English.** "crashes on empty list" — not "IndexOutOfBoundsException".
+6. **Fast.** `crow check` should complete in under a second for typical projects.
+7. **Honest.** Only test what we can. Skip what we can't. No false confidence.
 
 ### What no other language does
 
-- **Dafny/SPARK** require contracts (pre/post conditions). Crow doesn't.
 - **Rust** requires type annotations and lifetime management. Crow doesn't.
 - **Haskell** requires monads to separate pure from impure. Crow detects it automatically.
-- **QuickCheck** requires you to write properties. Crow generates tests from the code itself.
-- **Mutation testing tools** (Stryker, mutmut) require an existing test suite. Crow generates its own.
+- **QuickCheck/Hypothesis** require you to write properties or test functions. Crow generates tests from the code itself.
+- **Snapshot tools** (Jest snapshots, etc.) require existing test files. Crow generates its own.
 
-Crow would be the first language where `crow test` with zero test files gives you edge case coverage, mutation testing, and regression snapshots — all from the code alone.
+Crow is the first language where `crow check` with zero test files gives you edge case generation, regression snapshots, and interactive fixing — for pure functions with simple types, fully automatically.
+
+---
+
+## Design Note: No Mutation Testing
+
+**Considered:** Automatically mutating code (changing `lt` to `lte`, `+1` to `-1`) and re-running edge cases to find weak spots in test coverage.
+
+**Rejected:** Mutation testing is computationally expensive, produces noisy results, and creates a false sense of completeness. It also adds significant complexity to the toolchain.
+
+**What to use instead:** If `crow check` finds no crashes and snapshots are stable, the code is in good shape. If you want more confidence, write explicit tests — Crow doesn't prevent manual testing, it just doesn't require it.
+
+**Revisit when:** The language is mature, the edge case generator is battle-tested, and there's evidence that mutation testing catches bugs the other features miss.
+
+---
+
+## Design Note: No Auto-Fix
+
+**Considered:** Having `crow check` suggest and automatically apply fixes (e.g., adding `if len[items] eq 0` guards).
+
+**Rejected:** The compiler doesn't know the developer's intent. Adding a guard might be wrong — maybe the function should return a default value, or maybe the caller should never pass an empty list. Auto-fix trains developers to accept suggestions without understanding the underlying problem.
+
+**What to use instead:** `crow check` shows the problem clearly ("crashes on empty list") and provides a reproducible input (`try: get_middle[[]]`). The developer decides the right fix.
+
+---
+
+## Design Note: No Shrinking or Coverage Tracking (Initially)
+
+**Considered:** Shrinking (reducing failing inputs to minimal reproductions) and coverage tracking (instrumenting the interpreter to find untested branches, then auto-generating inputs to fill gaps).
+
+**Rejected for V1:** Shrinking requires a search algorithm that understands how to simplify each type — doable but adds complexity. Coverage-guided input generation is essentially constraint solving — a research-grade problem. Both are valuable but not necessary for V1.
+
+**What to use instead:** The boundary-value approach already produces small, readable inputs (`[]`, `[1]`, `0`, `-1`). Most crashes will be caught by these simple cases. Coverage tracking can be added later as a `-v` diagnostic without changing the user-facing behavior.
+
+**Revisit when:** V1 is shipped and real-world usage shows that boundary values miss important bugs that shrinking or coverage-guided generation would catch.

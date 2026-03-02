@@ -498,37 +498,48 @@ impl Interpreter {
         match object_expr {
             Expr::Ident(_) => {
                 // Direct field access: var.field = value
-                if let Value::StructInstance(si) = val {
-                    if si.fields.contains_key(field) {
-                        si.fields.insert(field.to_string(), new_val);
-                        Ok(())
-                    } else {
-                        Err(format!("struct '{}' has no field '{}'", si.name, field))
+                match val {
+                    Value::StructInstance(si) => {
+                        if si.fields.contains_key(field) {
+                            si.fields.insert(field.to_string(), new_val);
+                            Ok(())
+                        } else {
+                            Err(format!("struct '{}' has no field '{}'", si.name, field))
+                        }
                     }
-                } else {
-                    Err("field assignment requires a struct".to_string())
+                    Value::Map(m) => {
+                        m.insert(field.to_string(), new_val);
+                        Ok(())
+                    }
+                    _ => Err("field assignment requires a struct or map".to_string()),
                 }
             }
             Expr::FieldAccess { object, field: outer_field } => {
                 // Nested: obj.outer.field = value — navigate to outer first
-                if let Value::StructInstance(si) = val {
-                    let inner = si.fields.get_mut(outer_field)
-                        .ok_or_else(|| format!("struct '{}' has no field '{}'", si.name, outer_field))?;
-                    Self::assign_field(&mut inner.value, object, field, new_val)
-                } else {
-                    Err("field assignment requires a struct".to_string())
+                match val {
+                    Value::StructInstance(si) => {
+                        let inner = si.fields.get_mut(outer_field)
+                            .ok_or_else(|| format!("struct '{}' has no field '{}'", si.name, outer_field))?;
+                        Self::assign_field(&mut inner.value, object, field, new_val)
+                    }
+                    Value::Map(m) => {
+                        let inner = m.get_mut(outer_field)
+                            .ok_or_else(|| format!("map has no key '{}'", outer_field))?;
+                        Self::assign_field(&mut inner.value, object, field, new_val)
+                    }
+                    _ => Err("field assignment requires a struct or map".to_string()),
                 }
             }
             _ => Err("invalid field assignment target".to_string()),
         }
     }
 
-    /// Assign to a list index or map key
+    /// Assign to an array index or map key
     fn assign_index(val: &mut Value, object_expr: &Expr, idx_val: CrowValue, new_val: CrowValue) -> Result<(), String> {
         match object_expr {
             Expr::Ident(_) => {
                 match val {
-                    Value::List(items) => {
+                    Value::Array(items) => {
                         if let Value::Int(i) = &idx_val.value {
                             let len = items.len() as i64;
                             let resolved = if *i < 0 { len + *i } else { *i };
@@ -539,7 +550,7 @@ impl Interpreter {
                                 Err(format!("index {} out of bounds (len {})", i, items.len()))
                             }
                         } else {
-                            Err("list index must be an integer".to_string())
+                            Err("array index must be an integer".to_string())
                         }
                     }
                     Value::Map(map) => {
@@ -550,7 +561,7 @@ impl Interpreter {
                             Err("map key must be a string".to_string())
                         }
                     }
-                    _ => Err("index assignment requires a list or map".to_string()),
+                    _ => Err("index assignment requires an array or map".to_string()),
                 }
             }
             Expr::FieldAccess { object, field } => {
@@ -640,8 +651,8 @@ impl Interpreter {
             return Ok(vec![iter_val]);
         }
         let items = match &iter_val.value {
-            Value::List(items) => items.clone(),
-            _ => return Err("for loop requires a list".to_string()),
+            Value::Array(items) => items.clone(),
+            _ => return Err("for loop requires an array".to_string()),
         };
 
         let run_parallel = |items: &[CrowValue], interp: &Self, var: &str, body: &[Stmt]| -> Result<Vec<CrowValue>, String> {
@@ -782,7 +793,7 @@ impl Interpreter {
             Value::Int(n) => *n != 0,
             Value::Float(n) => *n != 0.0,
             Value::Str(s) => !s.is_empty(),
-            Value::List(l) => !l.is_empty(),
+            Value::Array(l) => !l.is_empty(),
             Value::Done => false,
             _ => true,
         }
@@ -832,12 +843,12 @@ impl Interpreter {
             Expr::FieldAccess { object, field } => {
                 self.eval_field_access(object, field)
             }
-            Expr::List(items) => {
+            Expr::Array(items) => {
                 let vals: Vec<CrowValue> = items
                     .iter()
                     .map(|e| self.eval_expr(e))
                     .collect::<Result<_, _>>()?;
-                Ok(CrowValue::ok(Value::List(vals)))
+                Ok(CrowValue::ok(Value::Array(vals)))
             }
             Expr::Map(pairs) => {
                 let mut map = BTreeMap::new();
@@ -859,7 +870,7 @@ impl Interpreter {
                     .into_iter()
                     .filter(|v| !matches!(v.value, Value::Done))
                     .collect();
-                Ok(CrowValue::ok(Value::List(filtered)))
+                Ok(CrowValue::ok(Value::Array(filtered)))
             }
         }
     }
@@ -957,10 +968,10 @@ impl Interpreter {
                     fields,
                 })))
             }
-            Value::List(items) => {
-                // list[index] - indexing
+            Value::Array(items) => {
+                // array[index] - indexing
                 if arg_vals.len() != 1 {
-                    return Err("list indexing requires exactly one argument".to_string());
+                    return Err("array indexing requires exactly one argument".to_string());
                 }
                 let index_val = arg_vals[0].unwrap_or_propagate()?;
                 match index_val {
@@ -970,14 +981,14 @@ impl Interpreter {
                         let resolved = if idx < 0 { len + idx } else { idx };
                         if resolved < 0 || resolved >= len {
                             return Err(format!(
-                                "index {} out of bounds for list of length {}",
+                                "index {} out of bounds for array of length {}",
                                 idx,
                                 items.len()
                             ));
                         }
                         Ok(items[resolved as usize].clone())
                     }
-                    _ => Err("list index must be an integer".to_string()),
+                    _ => Err("array index must be an integer".to_string()),
                 }
             }
             Value::Str(s) => {
@@ -1087,7 +1098,7 @@ impl Interpreter {
                         Value::Float(_) => "float".to_string(),
                         Value::Str(_) => "str".to_string(),
                         Value::Bool(_) => "bool".to_string(),
-                        Value::List(_) => "list".to_string(),
+                        Value::Array(_) => "array".to_string(),
                         Value::Map(_) => "map".to_string(),
                         Value::Fn(_) => "fn".to_string(),
                         Value::StructDef(sd) => sd.name.clone(),
@@ -1178,7 +1189,7 @@ impl Interpreter {
                         i += step;
                     }
                 }
-                Ok(CrowValue::ok(Value::List(result)))
+                Ok(CrowValue::ok(Value::Array(result)))
             }
             // --- Math builtins ---
             "abs" => {
@@ -1265,7 +1276,7 @@ impl Interpreter {
                         let parts: Vec<CrowValue> = s.split(delim.as_str())
                             .map(|p| CrowValue::ok(Value::Str(p.to_string())))
                             .collect();
-                        Ok(CrowValue::ok(Value::List(parts)))
+                        Ok(CrowValue::ok(Value::Array(parts)))
                     }
                     _ => Err("split[] requires two strings".into()),
                 }
@@ -1303,7 +1314,7 @@ impl Interpreter {
             "join" => {
                 if args.len() != 2 { return Err("join[] takes exactly 2 arguments".into()); }
                 match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                    (Value::List(items), Value::Str(sep)) => {
+                    (Value::Array(items), Value::Str(sep)) => {
                         let parts: Vec<String> = items.iter()
                             .map(|item| match item.unwrap_or_propagate() {
                                 Ok(Value::Str(s)) => s.clone(),
@@ -1315,7 +1326,7 @@ impl Interpreter {
                             .collect();
                         Ok(CrowValue::ok(Value::Str(parts.join(sep.as_str()))))
                     }
-                    _ => Err("join[] requires a list and a string separator".into()),
+                    _ => Err("join[] requires an array and a string separator".into()),
                 }
             }
             "starts" => {
@@ -1392,17 +1403,17 @@ impl Interpreter {
             "len" => {
                 if args.len() != 1 { return Err("len[] takes exactly 1 argument".into()); }
                 match args[0].unwrap_or_propagate()? {
-                    Value::List(items) => Ok(CrowValue::ok(Value::Int(items.len() as i64))),
+                    Value::Array(items) => Ok(CrowValue::ok(Value::Int(items.len() as i64))),
                     Value::Str(s) => Ok(CrowValue::ok(Value::Int(s.len() as i64))),
                     Value::Map(m) => Ok(CrowValue::ok(Value::Int(m.len() as i64))),
-                    _ => Err("length[] requires a list, string, or map".into()),
+                    _ => Err("length[] requires an array, string, or map".into()),
                 }
             }
 
             "contains" => {
                 if args.len() != 2 { return Err("contains[] takes exactly 2 arguments".into()); }
                 match args[0].unwrap_or_propagate()? {
-                    Value::List(items) => {
+                    Value::Array(items) => {
                         let needle = args[1].unwrap_or_propagate()?;
                         let found = items.iter().any(|item| {
                             if let Ok(v) = item.unwrap_or_propagate() {
@@ -1425,21 +1436,21 @@ impl Interpreter {
                             _ => Err("contains[] with string requires a string needle".into()),
                         }
                     }
-                    _ => Err("contains[] requires a list or string".into()),
+                    _ => Err("contains[] requires an array or string".into()),
                 }
             }
             "slice" => {
                 if args.len() != 3 { return Err("slice[] takes exactly 3 arguments".into()); }
                 match args[0].unwrap_or_propagate()? {
-                    Value::List(items) => {
+                    Value::Array(items) => {
                         match (args[1].unwrap_or_propagate()?, args[2].unwrap_or_propagate()?) {
                             (Value::Int(start), Value::Int(end)) => {
                                 let s = (*start).max(0) as usize;
                                 let e = (*end as usize).min(items.len());
                                 if s >= e {
-                                    Ok(CrowValue::ok(Value::List(vec![])))
+                                    Ok(CrowValue::ok(Value::Array(vec![])))
                                 } else {
-                                    Ok(CrowValue::ok(Value::List(items[s..e].to_vec())))
+                                    Ok(CrowValue::ok(Value::Array(items[s..e].to_vec())))
                                 }
                             }
                             _ => Err("slice[] requires integer start and end".into()),
@@ -1459,7 +1470,7 @@ impl Interpreter {
                             _ => Err("slice[] requires integer start and end".into()),
                         }
                     }
-                    _ => Err("slice[] requires a list or string".into()),
+                    _ => Err("slice[] requires an array or string".into()),
                 }
             }
             // --- Map builtins (non-mutating) ---
@@ -1470,7 +1481,7 @@ impl Interpreter {
                         let key_list: Vec<CrowValue> = m.keys()
                             .map(|k| CrowValue::ok(Value::Str(k.clone())))
                             .collect();
-                        Ok(CrowValue::ok(Value::List(key_list)))
+                        Ok(CrowValue::ok(Value::Array(key_list)))
                     }
                     _ => Err("keys[] requires a map".into()),
                 }
@@ -1480,7 +1491,7 @@ impl Interpreter {
                 match args[0].unwrap_or_propagate()? {
                     Value::Map(m) => {
                         let val_list: Vec<CrowValue> = m.values().cloned().collect();
-                        Ok(CrowValue::ok(Value::List(val_list)))
+                        Ok(CrowValue::ok(Value::Array(val_list)))
                     }
                     _ => Err("values[] requires a map".into()),
                 }
@@ -1502,31 +1513,31 @@ impl Interpreter {
             "push" => {
                 if args.len() != 2 { return Err("push[] takes exactly 2 arguments".into()); }
                 match args[0].unwrap_or_propagate()? {
-                    Value::List(items) => {
+                    Value::Array(items) => {
                         let mut new_items = items.clone();
                         new_items.push(args[1].clone());
-                        Ok(CrowValue::ok(Value::List(new_items)))
+                        Ok(CrowValue::ok(Value::Array(new_items)))
                     }
-                    _ => Err("push[] requires a list".into()),
+                    _ => Err("push[] requires an array".into()),
                 }
             }
             "pop" => {
                 if args.len() != 1 { return Err("pop[] takes exactly 1 argument".into()); }
                 match args[0].unwrap_or_propagate()? {
-                    Value::List(items) => {
+                    Value::Array(items) => {
                         if items.is_empty() {
-                            return Ok(CrowValue::error("pop from empty list", &self.trace_entry()));
+                            return Ok(CrowValue::error("pop from empty array", &self.trace_entry()));
                         }
                         let new_items = items[..items.len() - 1].to_vec();
-                        Ok(CrowValue::ok(Value::List(new_items)))
+                        Ok(CrowValue::ok(Value::Array(new_items)))
                     }
-                    _ => Err("pop[] requires a list".into()),
+                    _ => Err("pop[] requires an array".into()),
                 }
             }
             "sort" => {
                 if args.len() < 1 || args.len() > 2 { return Err("sort[] takes 1 or 2 arguments".into()); }
                 match args[0].unwrap_or_propagate()? {
-                    Value::List(items) => {
+                    Value::Array(items) => {
                         let mut new_items = items.clone();
                         new_items.sort_by(|a, b| {
                             let va = a.unwrap_or_propagate().ok();
@@ -1538,34 +1549,34 @@ impl Interpreter {
                                 _ => std::cmp::Ordering::Equal,
                             }
                         });
-                        Ok(CrowValue::ok(Value::List(new_items)))
+                        Ok(CrowValue::ok(Value::Array(new_items)))
                     }
-                    _ => Err("sort[] requires a list".into()),
+                    _ => Err("sort[] requires an array".into()),
                 }
             }
             "reverse" => {
                 if args.len() != 1 { return Err("reverse[] takes exactly 1 argument".into()); }
                 match args[0].unwrap_or_propagate()? {
-                    Value::List(items) => {
+                    Value::Array(items) => {
                         let mut new_items = items.clone();
                         new_items.reverse();
-                        Ok(CrowValue::ok(Value::List(new_items)))
+                        Ok(CrowValue::ok(Value::Array(new_items)))
                     }
                     Value::Str(s) => {
                         Ok(CrowValue::ok(Value::Str(s.chars().rev().collect())))
                     }
-                    _ => Err("reverse[] requires a list or string".into()),
+                    _ => Err("reverse[] requires an array or string".into()),
                 }
             }
             "append" => {
                 if args.len() != 2 { return Err("append[] takes exactly 2 arguments".into()); }
                 match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                    (Value::List(items), Value::List(other)) => {
+                    (Value::Array(items), Value::Array(other)) => {
                         let mut new_items = items.clone();
                         new_items.extend(other.clone());
-                        Ok(CrowValue::ok(Value::List(new_items)))
+                        Ok(CrowValue::ok(Value::Array(new_items)))
                     }
-                    _ => Err("append[] requires two lists".into()),
+                    _ => Err("append[] requires two arrays".into()),
                 }
             }
             "set" => {
@@ -1606,7 +1617,7 @@ impl Interpreter {
                     .skip_while(|a| a == "run" || a == "-i" || a.ends_with(".crow") || a.ends_with(".crowc"))
                     .map(|a| CrowValue::ok(Value::Str(a)))
                     .collect();
-                Ok(CrowValue::ok(Value::List(cli_args)))
+                Ok(CrowValue::ok(Value::Array(cli_args)))
             }
             "input" => {
                 if !args.is_empty() { return Err("input[] takes no arguments".into()); }
@@ -1765,7 +1776,7 @@ impl Interpreter {
                     Value::Bool(b) => *b,
                     Value::Int(n) => *n != 0,
                     Value::Str(s) => !s.is_empty(),
-                    Value::List(l) => !l.is_empty(),
+                    Value::Array(l) => !l.is_empty(),
                     Value::Map(m) => !m.is_empty(),
                     _ => true,
                 };
@@ -1820,7 +1831,7 @@ impl Interpreter {
             serde_json::Value::String(s) => CrowValue::ok(Value::Str(s.clone())),
             serde_json::Value::Array(arr) => {
                 let items: Vec<CrowValue> = arr.iter().map(|v| self.json_to_crow(v)).collect();
-                CrowValue::ok(Value::List(items))
+                CrowValue::ok(Value::Array(items))
             }
             serde_json::Value::Object(obj) => {
                 let mut map = BTreeMap::new();
@@ -1848,7 +1859,7 @@ impl Interpreter {
             }
             Value::Str(s) => Ok(serde_json::Value::String(s.clone())),
             Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
-            Value::List(items) => {
+            Value::Array(items) => {
                 let arr: Result<Vec<serde_json::Value>, String> = items.iter().map(|v| self.crow_to_json(v)).collect();
                 Ok(serde_json::Value::Array(arr?))
             }
@@ -2011,7 +2022,7 @@ impl Interpreter {
                 let trace_list: Vec<CrowValue> = obj.trace.iter()
                     .map(|s| CrowValue::ok(Value::Str(s.clone())))
                     .collect();
-                return Ok(CrowValue::ok(Value::List(trace_list)));
+                return Ok(CrowValue::ok(Value::Array(trace_list)));
             }
             _ => {}
         }
@@ -2024,13 +2035,13 @@ impl Interpreter {
         // .length property for lists and strings
         if field == "len" {
             match &obj.value {
-                Value::List(items) => {
+                Value::Array(items) => {
                     return Ok(CrowValue::ok(Value::Int(items.len() as i64)));
                 }
                 Value::Str(s) => {
                     return Ok(CrowValue::ok(Value::Int(s.len() as i64)));
                 }
-                _ => return Err("only lists and strings have .len".to_string()),
+                _ => return Err("only arrays and strings have .len".to_string()),
             }
         }
 
@@ -2052,6 +2063,12 @@ impl Interpreter {
                         "module '{}' has no member '{}'",
                         m.name, field
                     )),
+                }
+            }
+            Value::Map(m) => {
+                match m.get(field) {
+                    Some(val) => Ok(val.clone()),
+                    None => Err(format!("map has no key '{}'", field)),
                 }
             }
             _ => Err(format!("cannot access field '{}' on this value", field)),
@@ -2166,13 +2183,13 @@ mod tests {
     #[test]
     fn test_var_list() {
         let val = get_var("x = [1, 2, 3]\n", "x");
-        assert!(matches!(val.value, Value::List(ref items) if items.len() == 3));
+        assert!(matches!(val.value, Value::Array(ref items) if items.len() == 3));
     }
 
     #[test]
     fn test_var_empty_list() {
         let val = get_var("x = []\n", "x");
-        assert!(matches!(val.value, Value::List(ref items) if items.is_empty()));
+        assert!(matches!(val.value, Value::Array(ref items) if items.is_empty()));
     }
 
     #[test]
@@ -2297,7 +2314,7 @@ mod tests {
     #[test]
     fn test_for_as_expression() {
         let val = get_var("doubled = for x in [1, 2, 3]\n    x * 2\n", "doubled");
-        if let Value::List(items) = &val.value {
+        if let Value::Array(items) = &val.value {
             assert_eq!(items.len(), 3);
             assert!(matches!(items[0].value, Value::Int(2)));
             assert!(matches!(items[1].value, Value::Int(4)));
@@ -2310,7 +2327,7 @@ mod tests {
     #[test]
     fn test_for_as_expression_filter() {
         let val = get_var("evens = for x in [1, 2, 3, 4, 5]\n    if x % 2 eq 0\n        x\n", "evens");
-        if let Value::List(items) = &val.value {
+        if let Value::Array(items) = &val.value {
             assert_eq!(items.len(), 2);
             assert!(matches!(items[0].value, Value::Int(2)));
             assert!(matches!(items[1].value, Value::Int(4)));
@@ -2613,7 +2630,7 @@ mod tests {
     #[test]
     fn test_range_single_arg() {
         let val = get_var("x = range[5]\n", "x");
-        if let Value::List(items) = &val.value {
+        if let Value::Array(items) = &val.value {
             assert_eq!(items.len(), 5);
             assert!(matches!(items[0].value, Value::Int(0)));
             assert!(matches!(items[4].value, Value::Int(4)));
@@ -2625,7 +2642,7 @@ mod tests {
     #[test]
     fn test_range_two_args() {
         let val = get_var("x = range[2, 5]\n", "x");
-        if let Value::List(items) = &val.value {
+        if let Value::Array(items) = &val.value {
             assert_eq!(items.len(), 3);
             assert!(matches!(items[0].value, Value::Int(2)));
             assert!(matches!(items[2].value, Value::Int(4)));
@@ -2637,7 +2654,7 @@ mod tests {
     #[test]
     fn test_range_three_args() {
         let val = get_var("x = range[0, 10, 3]\n", "x");
-        if let Value::List(items) = &val.value {
+        if let Value::Array(items) = &val.value {
             assert_eq!(items.len(), 4); // 0, 3, 6, 9
             assert!(matches!(items[0].value, Value::Int(0)));
             assert!(matches!(items[3].value, Value::Int(9)));
@@ -2701,7 +2718,7 @@ mod tests {
     #[test]
     fn test_split() {
         let val = get_var("x = split['a,b,c', ',']\n", "x");
-        if let Value::List(items) = &val.value {
+        if let Value::Array(items) = &val.value {
             assert_eq!(items.len(), 3);
             assert_eq!(format!("{}", items[0].value), "a");
             assert_eq!(format!("{}", items[2].value), "c");
@@ -2839,7 +2856,7 @@ mod tests {
     #[test]
     fn test_push() {
         let val = get_var("x = push[[1, 2], 3]\n", "x");
-        if let Value::List(items) = &val.value {
+        if let Value::Array(items) = &val.value {
             assert_eq!(items.len(), 3);
             assert!(matches!(items[2].value, Value::Int(3)));
         } else {
@@ -2850,7 +2867,7 @@ mod tests {
     #[test]
     fn test_pop() {
         let val = get_var("x = pop[[1, 2, 3]]\n", "x");
-        if let Value::List(items) = &val.value {
+        if let Value::Array(items) = &val.value {
             assert_eq!(items.len(), 2);
         } else {
             panic!("expected list");
@@ -2860,7 +2877,7 @@ mod tests {
     #[test]
     fn test_append() {
         let val = get_var("x = append[[1, 2], [3, 4]]\n", "x");
-        if let Value::List(items) = &val.value {
+        if let Value::Array(items) = &val.value {
             assert_eq!(items.len(), 4);
         } else {
             panic!("expected list");
@@ -2870,7 +2887,7 @@ mod tests {
     #[test]
     fn test_sort() {
         let val = get_var("x = sort[[3, 1, 2]]\n", "x");
-        if let Value::List(items) = &val.value {
+        if let Value::Array(items) = &val.value {
             assert!(matches!(items[0].value, Value::Int(1)));
             assert!(matches!(items[1].value, Value::Int(2)));
             assert!(matches!(items[2].value, Value::Int(3)));
@@ -2882,7 +2899,7 @@ mod tests {
     #[test]
     fn test_reverse() {
         let val = get_var("x = reverse[[1, 2, 3]]\n", "x");
-        if let Value::List(items) = &val.value {
+        if let Value::Array(items) = &val.value {
             assert!(matches!(items[0].value, Value::Int(3)));
             assert!(matches!(items[2].value, Value::Int(1)));
         } else {
@@ -2905,7 +2922,7 @@ mod tests {
     #[test]
     fn test_slice() {
         let val = get_var("x = slice[[10, 20, 30, 40, 50], 1, 3]\n", "x");
-        if let Value::List(items) = &val.value {
+        if let Value::Array(items) = &val.value {
             assert_eq!(items.len(), 2);
             assert!(matches!(items[0].value, Value::Int(20)));
             assert!(matches!(items[1].value, Value::Int(30)));
@@ -2924,14 +2941,44 @@ mod tests {
 
     #[test]
     fn test_map_creation() {
+        let val = get_var("x = [name = 'crow', age = 3]\n", "x");
+        assert!(matches!(val.value, Value::Map(_)));
+    }
+
+    #[test]
+    fn test_map_creation_quoted_keys() {
         let val = get_var("x = ['name' = 'crow', 'age' = 3]\n", "x");
         assert!(matches!(val.value, Value::Map(_)));
     }
 
     #[test]
     fn test_map_access() {
-        let val = get_var("m = ['name' = 'crow']\nx = m['name']\n", "x");
+        let val = get_var("m = [name = 'crow']\nx = m['name']\n", "x");
         assert_eq!(format!("{}", val.value), "crow");
+    }
+
+    #[test]
+    fn test_map_dot_access() {
+        let val = get_var("m = [name = 'crow', age = 3]\nx = m.name\n", "x");
+        assert_eq!(format!("{}", val.value), "crow");
+    }
+
+    #[test]
+    fn test_map_dot_access_int() {
+        let val = get_var("m = [name = 'crow', age = 3]\nx = m.age\n", "x");
+        assert!(matches!(val.value, Value::Int(3)));
+    }
+
+    #[test]
+    fn test_map_nested_dot_access() {
+        let val = get_var("m = [layer1 = [w = 10, b = 20]]\nx = m.layer1.b\n", "x");
+        assert!(matches!(val.value, Value::Int(20)));
+    }
+
+    #[test]
+    fn test_map_dot_assign() {
+        let val = get_var("m = [x = 1]\nm.x = 42\nx = m.x\n", "x");
+        assert!(matches!(val.value, Value::Int(42)));
     }
 
     #[test]
@@ -2942,8 +2989,8 @@ mod tests {
 
     #[test]
     fn test_keys() {
-        let val = get_var("m = ['a' = 1, 'b' = 2]\nx = keys[m]\n", "x");
-        if let Value::List(items) = &val.value {
+        let val = get_var("m = [a = 1, b = 2]\nx = keys[m]\n", "x");
+        if let Value::Array(items) = &val.value {
             assert_eq!(items.len(), 2);
         } else {
             panic!("expected list");
@@ -2952,8 +2999,8 @@ mod tests {
 
     #[test]
     fn test_values() {
-        let val = get_var("m = ['a' = 1, 'b' = 2]\nx = values[m]\n", "x");
-        if let Value::List(items) = &val.value {
+        let val = get_var("m = [a = 1, b = 2]\nx = values[m]\n", "x");
+        if let Value::Array(items) = &val.value {
             assert_eq!(items.len(), 2);
         } else {
             panic!("expected list");
@@ -2962,25 +3009,25 @@ mod tests {
 
     #[test]
     fn test_has() {
-        let val = get_var("m = ['a' = 1]\nx = has[m, 'a']\n", "x");
+        let val = get_var("m = [a = 1]\nx = has[m, 'a']\n", "x");
         assert!(matches!(val.value, Value::Bool(true)));
     }
 
     #[test]
     fn test_has_false() {
-        let val = get_var("m = ['a' = 1]\nx = has[m, 'b']\n", "x");
+        let val = get_var("m = [a = 1]\nx = has[m, 'b']\n", "x");
         assert!(matches!(val.value, Value::Bool(false)));
     }
 
     #[test]
     fn test_set() {
-        let val = get_var("m = ['a' = 1]\nm = set[m, 'b', 2]\nx = has[m, 'b']\n", "x");
+        let val = get_var("m = [a = 1]\nm = set[m, 'b', 2]\nx = has[m, 'b']\n", "x");
         assert!(matches!(val.value, Value::Bool(true)));
     }
 
     #[test]
     fn test_del() {
-        let val = get_var("m = ['a' = 1, 'b' = 2]\nm = del[m, 'a']\nx = has[m, 'a']\n", "x");
+        let val = get_var("m = [a = 1, b = 2]\nm = del[m, 'a']\nx = has[m, 'a']\n", "x");
         assert!(matches!(val.value, Value::Bool(false)));
     }
 
@@ -3091,14 +3138,14 @@ mod tests {
     }
 
     #[test]
-    fn test_type_list() {
+    fn test_type_array() {
         let val = get_var("x = type[[1, 2]]\n", "x");
-        assert_eq!(format!("{}", val.value), "list");
+        assert_eq!(format!("{}", val.value), "array");
     }
 
     #[test]
     fn test_type_map() {
-        let val = get_var("x = type[['a' = 1]]\n", "x");
+        let val = get_var("x = type[[a = 1]]\n", "x");
         assert_eq!(format!("{}", val.value), "map");
     }
 

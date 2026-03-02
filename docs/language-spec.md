@@ -36,8 +36,17 @@ The built-in types are:
 | float  | `3.14`, `-0.5`       |
 | str    | `'hello'`, `'crow'`  |
 | bool   | `true`, `false`      |
-| list   | `[1, 2, 3]`          |
-| map    | `['name' = 'crow', 'age' = 3]` |
+| array  | `[1, 2, 3]`, `[[1, 2], [3, 4]]` |
+| map    | `[name = 'crow', age = 3]` |
+
+Arrays are homogeneous — all elements must be the same type. Use maps for mixed-type named data.
+
+```
+[1, 2, 3]                    --- int array ---
+['a', 'b', 'c']              --- str array ---
+[[1, 2], [3, 4]]             --- 2D int array ---
+[1, 'hello', true]           --- error: mixed types ---
+```
 
 ### String Escape Sequences
 
@@ -134,6 +143,31 @@ fn safe_div[a, b]
     a / b                    --- implicit return ---
 ```
 
+### Named Arguments with Defaults
+
+Parameters with `= value` are named arguments with default values. Named arguments must come after all positional arguments.
+
+```
+fn train[data, lr = 0.01, epochs = 100]
+    for i in range[epochs]
+        update[data, lr]
+```
+
+Callers can omit named arguments (uses default), provide them by name, or by position:
+
+```
+train[my_data]                     --- uses defaults ---
+train[my_data, lr = 0.001]         --- override one ---
+train[my_data, 0.001, 50]          --- positional also works ---
+```
+
+Named arguments are required for axis parameters in math operations:
+
+```
+s = sum[x, axis = 0]              --- sum along axis 0 ---
+mx = max[x, axis = 1]             --- max along axis 1 ---
+```
+
 ### Calling
 
 Functions are called using `[]`.
@@ -143,9 +177,9 @@ greet['crow']
 result = add[3, 4]
 ```
 
-### List Access
+### Array Access
 
-Lists are functions from index to value. Negative indices count from the end: `-1` is the last element, `-2` is second-to-last, etc.
+Arrays are functions from index to value. Negative indices count from the end: `-1` is the last element, `-2` is second-to-last, etc.
 
 ```
 numbers = [1, 2, 3]
@@ -162,9 +196,25 @@ numbers[-1] = 99         --- sets last element ---
 
 Out-of-bounds indices (positive or negative) are a runtime error.
 
+### Multidimensional Arrays
+
+Nested brackets create multidimensional arrays. All inner arrays must be the same length.
+
+```
+m = [[1, 2, 3],
+     [4, 5, 6]]              --- 2x3 array ---
+
+m[0]                          --- [1, 2, 3] (first row) ---
+m[1][2]                       --- 6 ---
+
+--- creation by shape ---
+z = zeros[3, 4]               --- 3x4 of zeros ---
+r = rand[2, 3]                --- 2x3 random ---
+```
+
 ### String Access
 
-Strings support indexing just like lists. Each index returns a single-character string. Negative indices count from the end.
+Strings support indexing just like arrays. Each index returns a single-character string. Negative indices count from the end.
 
 ```
 word = 'hello'
@@ -177,16 +227,25 @@ Out-of-bounds indices are a runtime error.
 
 ### Map Access
 
-Maps are functions from key to value.
+Maps use bare names as keys. Access with dot notation or string key.
 
 ```
-person = ['name' = 'crow', 'age' = 3]
-person['name']           --- 'crow' ---
+person = [name = 'crow', age = 3]
+person.name              --- 'crow' ---
+person['name']           --- 'crow' (string key also works) ---
+```
+
+Bare-name keys are stored as strings internally. Use quoted string keys when the key is dynamic or contains special characters:
+
+```
+data = ['content-type' = 'json']
+key = 'name'
+person[key]              --- dynamic lookup ---
 ```
 
 ### First-Class Functions
 
-A function name without `[]` evaluates to the function itself. Functions can be passed as arguments, stored in lists and maps, and called later with `[]`.
+A function name without `[]` evaluates to the function itself. Functions can be passed as arguments, stored in arrays and maps, and called later with `[]`.
 
 ```
 fn double[x]
@@ -220,10 +279,10 @@ This follows Crow's "one way to do things" principle — there is exactly one wa
 
 ### Empty Containers
 
-`[]` is always an empty list. Use `map[]` for an empty map.
+`[]` is always an empty array. Use `map[]` for an empty map.
 
 ```
-items = []               --- empty list ---
+items = []               --- empty array ---
 data = map[]             --- empty map ---
 ```
 
@@ -234,16 +293,17 @@ data = map[]             --- empty map ---
 | Function | Description |
 |----------|-------------|
 | `log[value]` | Print a value to stdout |
-| `range[stop]` | List of ints from 0 to stop (exclusive) |
-| `range[start, stop]` | List of ints from start to stop (exclusive) |
-| `range[start, stop, step]` | List of ints with custom step |
+| `range[stop]` | Array of ints from 0 to stop (exclusive) |
+| `range[start, stop]` | Array of ints from start to stop (exclusive) |
+| `range[start, stop, step]` | Array of ints with custom step |
 | `map[]` | Create an empty map |
 | `assert[cond]` | Halt with error if condition is falsy |
 | `assert[cond, msg]` | Halt with custom error message |
 | `error[reason]` | Create an error-value with the given reason |
 | `error[reason, kind]` | Create an error-value with reason and category |
 | `cpu[n]` | Set thread count for parallel loops |
-| `gpu[n]` | Set GPU count for parallel compute |
+| `gpu[n]` | Set GPU count (`gpu[]` for all GPUs) |
+| `nodes[n]` | Set machine count for distributed compute |
 
 #### Math
 
@@ -262,14 +322,14 @@ data = map[]             --- empty map ---
 
 | Function | Description |
 |----------|-------------|
-| `split[s, delim]` | Split string into list |
+| `split[s, delim]` | Split string into array |
 | `trim[s]` | Remove leading/trailing whitespace |
 | `replace[s, old, new]` | Replace all occurrences |
 | `upper[s]` | Convert to uppercase |
 | `lower[s]` | Convert to lowercase |
 | `starts[s, prefix]` | Check if string starts with prefix |
 | `ends[s, suffix]` | Check if string ends with suffix |
-| `join[list, sep]` | Join list elements into string |
+| `join[arr, sep]` | Join array elements into string |
 | `repeat[s, n]` | Repeat string `n` times |
 | `pad[s, n]` | Right-pad string to width `n` with spaces |
 | `reverse[s]` | Reverse a string |
@@ -281,13 +341,13 @@ data = map[]             --- empty map ---
 | `int[value]` | Convert to int (error-value on failure) |
 | `float[value]` | Convert to float (error-value on failure) |
 | `str[value]` | Convert to string |
-| `type[value]` | Type name as string: `'int'`, `'float'`, `'str'`, `'bool'`, `'list'`, `'map'`, `'fn'`, `'none'`, `'error'`, or struct name |
+| `type[value]` | Type name as string: `'int'`, `'float'`, `'str'`, `'bool'`, `'array'`, `'map'`, `'fn'`, `'none'`, `'error'`, or struct name |
 
 ```
 type[42]          --- 'int' ---
 type[3.14]        --- 'float' ---
 type['hello']     --- 'str' ---
-type[[1, 2]]      --- 'list' ---
+type[[1, 2]]      --- 'array' ---
 type[Point[1, 2]] --- 'Point' ---
 type[error['x']]  --- 'error' ---
 ```
@@ -296,21 +356,21 @@ type[error['x']]  --- 'error' ---
 
 | Function | Description |
 |----------|-------------|
-| `len[x]` | Length of list, string, or map |
-| `push[list, value]` | Return new list with value appended |
-| `pop[list]` | Return new list without last element |
-| `append[list, other]` | Return new list with other's elements added |
-| `sort[list]` | Return new sorted list |
-| `reverse[list]` | Return new reversed list |
-| `contains[list, value]` | Check if list contains value |
-| `slice[list, start, end]` | Extract sublist |
+| `len[x]` | Length of array, string, or map |
+| `push[arr, value]` | Return new array with value appended |
+| `pop[arr]` | Return new array without last element |
+| `append[arr, other]` | Return new array with other's elements added |
+| `sort[arr]` | Return new sorted array |
+| `reverse[arr]` | Return new reversed array |
+| `contains[arr, value]` | Check if array contains value |
+| `slice[arr, start, end]` | Extract subarray |
 
 #### Map Operations
 
 | Function | Description |
 |----------|-------------|
-| `keys[m]` | List of map keys |
-| `values[m]` | List of map values |
+| `keys[m]` | Array of map keys |
+| `values[m]` | Array of map values |
 | `has[m, key]` | Check if map contains key |
 | `set[m, key, value]` | Return new map with entry added/updated |
 | `del[m, key]` | Return new map with entry removed |
@@ -323,7 +383,7 @@ type[error['x']]  --- 'error' ---
 |----------|-------------|
 | `read[path]` | Read file contents (error-value on failure) |
 | `write[path, content]` | Write string to file (error-value on failure) |
-| `args[]` | CLI arguments as list of strings |
+| `args[]` | CLI arguments as array of strings |
 | `input[]` | Read a line from stdin (error-value on failure) |
 | `input[prompt]` | Print prompt, then read a line (error-value on failure) |
 
@@ -334,7 +394,7 @@ type[error['x']]  --- 'error' ---
 | `json[str]` | Parse JSON string into a Crow value (error-value on failure) |
 | `encode[value]` | Encode a Crow value as a JSON string |
 
-JSON type mapping: objects → maps, arrays → lists, strings → str, numbers → int/float, booleans → bool, `null` → error-value. JSON `null` maps to an error-value with `ok: false` and `reason: 'null'`, which auto-propagates through the error-value system (§11).
+JSON type mapping: objects → maps, arrays → arrays, strings → str, numbers → int/float, booleans → bool, `null` → error-value. JSON `null` maps to an error-value with `ok: false` and `reason: 'null'`, which auto-propagates through the error-value system (§11).
 
 ```
 items = json['[1, 2, 3]']
@@ -402,7 +462,7 @@ for x in [1, 2, 3]
 
 ### for as Expression
 
-Assign a `for` loop to a variable to collect results into a list.
+Assign a `for` loop to a variable to collect results into an array.
 
 ```
 --- transform each item ---
@@ -753,7 +813,7 @@ Every value has:
 | `ok`     | `true` or `false`                    |
 | `reason` | error message (empty on success)      |
 | `kind`   | error category (empty on success or if not specified) |
-| `trace`  | list of locations the error passed through (empty on success) |
+| `trace`  | array of locations the error passed through (empty on success) |
 
 On failure, the value contains a safe default (`0` for int, `0.0` for float, `''` for string), `reason` describes what went wrong, `kind` categorizes the error, and `trace` records the call chain. Each trace entry uses the format `"file.function:line"` inside a function or `"file:line"` at top-level (e.g. `"math.divide:5"`, `"main:3"`).
 
@@ -846,7 +906,15 @@ while x gt 0
 
 ### Resource Control
 
-By default, Crow uses all available CPU cores. Use `cpu` or `gpu` to limit or control resources.
+By default, Crow uses all available CPU cores. Use `cpu`, `gpu`, or `nodes` to control resources.
+
+```
+cpu[4]                   --- 4 CPU cores ---
+gpu[]                    --- all GPUs on this machine ---
+gpu[2]                   --- 2 GPUs on this machine ---
+nodes[4]                 --- 4 machines ---
+nodes[4, gpu = 2]        --- 4 machines, 2 GPUs each ---
+```
 
 #### Function-level
 
@@ -857,9 +925,9 @@ fn heavy_work[]
         process[x]           --- 4 cores ---
 
 fn gpu_work[]
-    gpu[2]
+    gpu[]
     for x in items
-        compute[x]           --- 2 GPUs ---
+        compute[x]           --- all GPUs ---
 ```
 
 #### Global
@@ -870,7 +938,7 @@ Set program-wide defaults in the `crowfile`. Any function can override locally.
 --- crowfile ---
 
 cpu = 4
-gpu = 1
+gpu = 'all'
 ```
 
 ```
@@ -888,7 +956,18 @@ fn task_b[]
 
 ### GPU Support
 
-`gpu[n]` specifies intent — "use n GPUs." The language does not expose any GPU vendor API. The compiler decides what is GPU-eligible (numeric operations on lists) and what falls back to CPU (string ops, I/O, map lookups).
+`gpu[n]` specifies intent — "use n GPUs." `gpu[]` uses all available GPUs. The language does not expose any GPU vendor API. The compiler decides what is GPU-eligible (numeric operations on arrays) and what falls back to CPU (string ops, I/O, map lookups).
+
+### Distributed Support
+
+`nodes[n]` specifies distributed training across multiple machines. The compiler handles data sharding, gradient synchronization, and communication automatically — no explicit `allreduce`, `broadcast`, `scatter`, or `gather` calls.
+
+```
+nodes[4]                 --- 4 machines ---
+nodes[4, gpu = 2]        --- 4 machines, 2 GPUs each ---
+```
+
+The user writes the same training loop. The compiler inserts the right communication pattern. Same philosophy as `gpu` — specify intent, compiler decides how.
 
 #### Backend Detection
 
@@ -925,18 +1004,18 @@ Every Crow project has a `crowfile` at the root. It uses Crow syntax.
 name = 'my-project'
 entry = 'main.crow'
 cpu = 4
-gpu = 1
+gpu = 'all'
 
-deps = ['math' = '1.0', 'http' = '2.3']
+deps = [math = '1.0', http = '2.3']
 ```
 
 Dependencies can be:
 
 | Format | Example | Description |
 |--------|---------|-------------|
-| Version | `'math' = '1.0'` | Registry package (resolved via central index) |
-| Git URL | `'math' = 'https://github.com/user/crow-math'` | Cloned from git |
-| Local path | `'utils' = './libs/utils'` | Symlinked from local directory |
+| Version | `math = '1.0'` | Registry package (resolved via central index) |
+| Git URL | `math = 'https://github.com/user/crow-math'` | Cloned from git |
+| Local path | `utils = './libs/utils'` | Symlinked from local directory |
 
 ### File Extension
 
@@ -1047,11 +1126,11 @@ fn is_even[x]
 fn is_positive[x]
     return x gt 0
 
-evens = filter[[1, 2, 3, 4], is_even]         --- items: list[int], f: fn[int] -> bool ---
+evens = filter[[1, 2, 3, 4], is_even]         --- items: array[int], f: fn[int] -> bool ---
 positives = filter[[-1, 0, 3], is_positive]    --- same types, different function ---
 ```
 
-This works because `filter[[1, 2, 3, 4], is_even]` tells the transpiler that `items` is a list of ints and `f` is a function taking an int and returning a bool. No annotations needed — the call site *is* the type information.
+This works because `filter[[1, 2, 3, 4], is_even]` tells the transpiler that `items` is an array of ints and `f` is a function taking an int and returning a bool. No annotations needed — the call site *is* the type information.
 
 This means higher-order functions like `filter`, `map`, and `reduce` can be written as normal Crow functions. You don't need generics, and you don't need builtins — the type system handles it automatically.
 
@@ -1072,7 +1151,7 @@ Crow has no null, nil, or none value. Every variable always holds a concrete val
 
 ## Design Note: No Iterator Builtins
 
-Crow previously had a set of iterator builtins: `iter`, `collect`, `take`, `skip`, `filter`, `each`, and `next`. These converted a list to a lazy iterator, transformed/filtered it through chained calls, and materialized it back into a list with `collect`.
+Crow previously had a set of iterator builtins: `iter`, `collect`, `take`, `skip`, `filter`, `each`, and `next`. These converted an array to a lazy iterator, transformed/filtered it through chained calls, and materialized it back into an array with `collect`.
 
 **Why they were removed:**
 
@@ -1086,7 +1165,7 @@ Crow previously had a set of iterator builtins: `iter`, `collect`, `take`, `skip
            x * 2
    ```
 
-3. **`slice` covers take/skip.** `slice[list, start, end]` replaces `take` and `skip` without needing an iterator abstraction.
+3. **`slice` covers take/skip.** `slice[arr, start, end]` replaces `take` and `skip` without needing an iterator abstraction.
 
 4. **Laziness isn't needed.** Crow's automatic parallelism (§12) handles performance at the statement level. Lazy evaluation adds complexity without meaningful benefit for Crow's target audience.
 
@@ -1094,10 +1173,10 @@ Crow previously had a set of iterator builtins: `iter`, `collect`, `take`, `skip
 
 | Old (iterators) | New (for + slice) |
 |---|---|
-| `collect[each[iter[list], fn]]` | `for x in list \n    fn[x]` |
-| `collect[filter[iter[list], pred]]` | `for x in list \n    if pred[x] \n        x` |
-| `collect[take[iter[list], n]]` | `slice[list, 0, n]` |
-| `collect[skip[iter[list], n]]` | `slice[list, n, len[list]]` |
+| `collect[each[iter[arr], fn]]` | `for x in arr \n    fn[x]` |
+| `collect[filter[iter[arr], pred]]` | `for x in arr \n    if pred[x] \n        x` |
+| `collect[take[iter[arr], n]]` | `slice[arr, 0, n]` |
+| `collect[skip[iter[arr], n]]` | `slice[arr, n, len[arr]]` |
 
 
 ## Design Note: No Lambdas or Closures
@@ -1114,7 +1193,7 @@ Crow intentionally has no anonymous functions (lambdas), closures, or inline fun
 
 4. **LLM-unfriendly.** Lambda syntax varies wildly across languages (`=>`, `->`, `lambda`, `\x ->`, `fn[x]`). A single `fn name[params]` declaration is unambiguous for both humans and language models.
 
-5. **First-class named functions cover every use case.** Crow supports passing named functions as values — `map[items, double]`, `sort[list, compare]`, storing functions in variables. There is no expressiveness gap.
+5. **First-class named functions cover every use case.** Crow supports passing named functions as values — `map[items, double]`, `sort[arr, compare]`, storing functions in variables. There is no expressiveness gap.
 
 **What to use instead:**
 
@@ -1140,11 +1219,11 @@ Crow intentionally omits `enumerate` and `zip` builtins.
 
 **Why they were rejected:**
 
-1. **Mixed-type problem.** `enumerate[['a','b']]` would need to return `[[0,'a'], [1,'b']]` — lists mixing int and string. Crow lists are single-typed, so this doesn't fit the type system. `zip[[1,2], ['a','b']]` has the same problem.
+1. **Mixed-type problem.** `enumerate[['a','b']]` would need to return `[[0,'a'], [1,'b']]` — arrays mixing int and string. Crow arrays are homogeneous, so this doesn't fit the type system. `zip[[1,2], ['a','b']]` has the same problem.
 
-2. **`range[len[list]]` already covers every use case.** Index-based iteration with `for i in range[len[list]]` handles every scenario that `enumerate` or `zip` would address, with no new concepts.
+2. **`range[len[arr]]` already covers every use case.** Index-based iteration with `for i in range[len[arr]]` handles every scenario that `enumerate` or `zip` would address, with no new concepts.
 
-3. **No new concepts needed.** Adding `enumerate` or `zip` would require either tuples, anonymous structs, or mixed-type lists — none of which exist in Crow. The cost of adding a new type concept outweighs saving one line of code.
+3. **No new concepts needed.** Adding `enumerate` or `zip` would require either tuples, anonymous structs, or mixed-type arrays — none of which exist in Crow. The cost of adding a new type concept outweighs saving one line of code.
 
 **What to use instead:**
 
@@ -1161,7 +1240,7 @@ for i in range[len[scores]]
         log['best at index {i}']
 ```
 
-Combine parallel lists (instead of zip):
+Combine parallel arrays (instead of zip):
 ```
 for i in range[len[names]]
     log['{names[i]}: {scores[i]}']
@@ -1174,14 +1253,14 @@ products = for i in range[len[a]]
 total = sum[products]
 ```
 
-Build a map from two lists:
+Build a map from two arrays:
 ```
 m = map[]
 for i in range[len[keys]]
     m = set[m, keys[i], values[i]]
 ```
 
-The pattern is always the same: iterate over indices with `range[len[list]]`, access elements by index. One pattern, zero new concepts.
+The pattern is always the same: iterate over indices with `range[len[arr]]`, access elements by index. One pattern, zero new concepts.
 
 
 ## Design Note: No Reduce, Any, or All
@@ -1190,11 +1269,11 @@ Crow intentionally omits `reduce`, `any`, and `all` builtins.
 
 **Why they were rejected:**
 
-1. **`reduce` is redundant.** Every common reduction already has a dedicated builtin: `sum[list]` for addition, `join[list, sep]` for string concatenation, `max[list]` and `min[list]` for extremes. The remaining cases are rare enough for a loop.
+1. **`reduce` is redundant.** Every common reduction already has a dedicated builtin: `sum[arr]` for addition, `join[arr, sep]` for string concatenation, `max[arr]` and `min[arr]` for extremes. The remaining cases are rare enough for a loop.
 
 2. **`any` and `all` need lambdas to be ergonomic.** In Python: `any(x > 90 for x in scores)`. In Rust: `scores.iter().any(|x| x > 90)`. Without lambdas, Crow would require defining a named function for every one-off predicate — no savings over the loop version.
 
-3. **The loop versions are the same length.** Defining a throwaway predicate function for `any[list, pred]` takes 3 lines. The loop version also takes 3 lines but uses concepts Crow already has.
+3. **The loop versions are the same length.** Defining a throwaway predicate function for `any[arr, pred]` takes 3 lines. The loop version also takes 3 lines but uses concepts Crow already has.
 
 **What to use instead:**
 
@@ -1223,7 +1302,7 @@ for x in passwords
 
 ## Design Note: No find/index Builtin
 
-Crow intentionally has no `find` or `index` builtin for locating the position of an element in a list or a substring in a string.
+Crow intentionally has no `find` or `index` builtin for locating the position of an element in an array or a substring in a string.
 
 **Why:** Finding a position is straightforward with a loop:
 
@@ -1286,11 +1365,11 @@ full = '{first} {last}'
 
 Crow intentionally has no destructuring assignment from function returns or collections (e.g. `a, b = f[]`).
 
-**What was considered:** Allowing `a, b = divmod[7, 3]` where a function returns a list and multi-assign unpacks it.
+**What was considered:** Allowing `a, b = divmod[7, 3]` where a function returns an array and multi-assign unpacks it.
 
-**Why it was rejected:** Multi-assign already exists for literal values (`a, b = 1, 2`). Extending it to destructure lists would create two ways to access list elements — destructuring and indexing (`result[0]`, `result[1]`). This violates "one way to do things."
+**Why it was rejected:** Multi-assign already exists for literal values (`a, b = 1, 2`). Extending it to destructure arrays would create two ways to access array elements — destructuring and indexing (`result[0]`, `result[1]`). This violates "one way to do things."
 
-**What to use instead:** Return a list and access elements by index:
+**What to use instead:** Return an array and access elements by index:
 
 ```
 result = divmod[7, 3]
@@ -1300,7 +1379,7 @@ b = result[1]
 
 ## Design Note: No chars Builtin
 
-Crow intentionally has no `chars` builtin to split a string into a list of characters.
+Crow intentionally has no `chars` builtin to split a string into an array of characters.
 
 **Why:** With string indexing (`s[0]`, `s[-1]`) and `for`-as-expression, splitting a string into characters is a one-liner:
 
@@ -1330,27 +1409,30 @@ doubled = for x in items
     x * 2
 ```
 
-## Design Note: No Default Parameters
+## Design Note: Named Arguments with Defaults (Revised)
 
-Crow intentionally has no default parameter values for functions.
+Crow originally rejected default parameters because `greet['alice']` vs `greet['alice', 'hi']` created two ways to call the same function.
 
-**What was considered:** `fn greet[name, greeting = 'hello']` where omitting the second argument uses the default.
+**Why the decision was revised:** Data science operations like `sum[x]` vs `sum[x, axis = 0]` are fundamentally different operations — one sums everything, the other sums along an axis. Forcing separate function names (`sum` vs `sum_axis`) or requiring the argument every time makes the language worse for its target audience. Every data science language (Python, Julia, MATLAB, R) has this.
 
-**Why it was rejected:** Default parameters create two ways to call the same function (`greet['alice']` vs `greet['alice', 'hi']`), making call sites ambiguous. They also complicate function signatures and type inference.
-
-**What to use instead:** Write separate functions or check explicitly:
+**Rules:**
+1. Named arguments must come **after** all positional arguments
+2. Named arguments **must have defaults** — that's what makes them optional
+3. Callers can use name or position: `sum[x, 0]` and `sum[x, axis = 0]` both work
+4. Named arguments without a value at the call site use the default
 
 ```
-fn greet[name]
-    greet_with[name, 'hello']
+fn train[data, lr = 0.01, epochs = 100]
+    ...
 
-fn greet_with[name, greeting]
-    log['{greeting}, {name}']
+train[my_data]                     --- uses defaults ---
+train[my_data, lr = 0.001]         --- override one ---
+train[my_data, 0.001, 50]          --- positional also works ---
 ```
 
-## Design Note: No sum, min[list], max[list] in Core
+## Design Note: No sum, min[arr], max[arr] in Core
 
-Crow intentionally omits `sum[list]`, `min[list]`, and `max[list]` from core builtins.
+Crow intentionally omits `sum[arr]`, `min[arr]`, and `max[arr]` from core builtins.
 
 **What was considered:** `sum[[1, 2, 3]]` → `6`, `min[[3, 1, 2]]` → `1`, `max[[3, 1, 2]]` → `3`.
 
@@ -1362,9 +1444,9 @@ for x in nums
     total = total + x
 ```
 
-Including `sum` but not `min[list]`/`max[list]` created an inconsistency — all three are the same pattern (reduce a list to a single value). Rather than adding more, we removed `sum` to keep core honest: if you can write it with a loop, write it with a loop.
+Including `sum` but not `min[arr]`/`max[arr]` created an inconsistency — all three are the same pattern (reduce an array to a single value). Rather than adding more, we removed `sum` to keep core honest: if you can write it with a loop, write it with a loop.
 
-**What to use instead:** Loops for now. A future `math` library will provide `sum`, `min`, `max`, `product`, and other list reductions.
+**What to use instead:** Loops for now. A future `math` library will provide `sum`, `min`, `max`, `product`, and other array reductions.
 
 ## Design Note: No Ternary Expression
 
@@ -1422,8 +1504,112 @@ All core language features have interpreter–transpiler parity. The following i
 | For-as-expression rayon dependency | ✅ Resolved | `ForExpr` in assignments correctly sets `needs_rayon` |
 | `while true` → `loop {}` | ✅ Resolved | Transpiler emits `loop {` instead of `while true {` |
 | Modules (`use`) in transpiler | ✅ Resolved | Module code is flattened into generated Rust with prefixed names |
-| Functions in collections type inference | ✅ Resolved | `list[i]` and `map[k]` return correct element types in `infer_call_base` |
+| Functions in collections type inference | ✅ Resolved | `arr[i]` and `map[k]` return correct element types in `infer_call_base` |
 | Automatic statement-level parallelism | ✅ Resolved | Independent assignments grouped into `rayon::join` waves via dependency analysis |
 | REPL (`crow` with no args) | ✅ Resolved | Interactive interpreter REPL |
 | `crow init` | ✅ Resolved | Project scaffolding creates `crowfile` and `main.crow` |
 | `crow install` | ✅ Resolved | Package manager with registry, git, and local path support |
+
+## Design Note: Map Arithmetic Requires All-Numeric Leaves
+
+**Considered:** When doing arithmetic on maps (`model - lr * g`), what happens if a map contains non-numeric values like strings or bools?
+
+Three options were evaluated:
+
+1. **Error** — reject if any leaf is non-numeric
+2. **Skip** — silently ignore non-numeric leaves
+3. **Apply where possible** — multiply numbers, skip strings
+
+**Decision:** Error. Map arithmetic requires every leaf to be numeric (tensor, int, float). If any leaf is a string, bool, or other non-numeric type, it's an error.
+
+- **Compile time:** The transpiler checks map literal leaf types and rejects at compile time when types are statically known.
+- **Runtime:** The interpreter checks before applying arithmetic and errors on non-numeric leaves.
+
+```
+--- works: all leaves are numeric ---
+model = [w = [1, 2, 3], b = [4, 5, 6]]
+result = 2 * model
+
+--- compile error: non-numeric leaf ---
+config = [lr = 0.01, name = 'adam']
+result = 2 * config
+--- error: cannot multiply map with non-numeric value at key 'name' (str) ---
+```
+
+**What to use instead:** Keep weights and config in separate maps.
+
+```
+weights = [w = rand[784, 128], b = zeros[128]]
+config = [lr = 0.01, name = 'adam']
+
+g = dloss[weights, x, y]
+weights = weights - config.lr * g
+```
+
+**Why:** Silent skipping hides bugs. "Apply where possible" is ambiguous — does `2 * 'adam'` skip or error? Every other language (JAX, Julia/Flux, PyTorch, Mojo) either errors or requires explicit marking of trainable fields. Erroring is the simplest approach and matches Crow's philosophy of no hidden behavior. Separating weights from config is good practice regardless.
+
+## Design Note: Tensor Arithmetic Operators
+
+Crow uses MATLAB/Julia-style operators for tensor arithmetic. Plain operators are matrix operations; dot-prefixed operators are element-wise.
+
+| Operation | Operator | Meaning |
+|---|---|---|
+| `*` | matrix multiply | `W * x` — matmul |
+| `.*` | element-wise multiply | `A .* mask` — Hadamard product |
+| `/` | matrix divide | `A / B` |
+| `./` | element-wise divide | `values ./ total` |
+| `^` | matrix power | `A ^ 2` |
+| `.^` | element-wise power | `x .^ 2` |
+
+`+` and `-` are already element-wise for matrices (adding two matrices is always element-wise). No dot versions needed.
+
+```
+h = W * x + b               --- matmul ---
+scaled = W .* mask           --- element-wise multiply ---
+normed = values ./ total     --- element-wise divide ---
+squared = x .^ 2             --- element-wise power ---
+```
+
+**Shift-key tradeoff:** `^` and `.^` require the shift key, which normally violates Crow's principle #3 (shift-key minimization). This tradeoff is accepted because data scientists type power operations constantly, and `pow[x, 2]` is too clunky. There is no non-shift alternative for power that isn't worse.
+
+**Why not `matmul[]` builtin?** `W * x + b` is what every data scientist expects. A `matmul[W, x] + b` builtin adds noise to the most common operation in ML. `*` for matmul follows MATLAB and Julia — the two most established scientific computing languages.
+
+**Lexing:** `.*`, `./`, and `.^` are lexed as single tokens (`DotStar`, `DotSlash`, `DotCaret`), not `Dot` + `Star`. This avoids ambiguity with field access (`model.w`).
+
+## Design Note: Unified Arrays (No Separate List and Tensor Types)
+
+**What was considered:** Having separate `list` (heterogeneous, general) and `tensor` (homogeneous, numeric, N-dimensional) types, with `tensor[[1, 2, 3]]` as the creation syntax.
+
+**Decision:** One type — `array`. `[1, 2, 3]` is an array. Arrays are homogeneous (all elements same type). Nested brackets create multidimensional arrays: `[[1, 2], [3, 4]]`. No `tensor` keyword.
+
+```
+--- arrays ---
+[1, 2, 3]                    --- int array ---
+['a', 'b', 'c']              --- str array ---
+[[1, 2], [3, 4]]             --- 2D int array ---
+zeros[3, 4]                  --- 3x4 of zeros ---
+rand[2, 3]                   --- 2x3 random ---
+
+--- mixed types → use a map ---
+[name = 'alice', age = 25]   --- map (heterogeneous, named) ---
+
+--- error ---
+[1, 'hello', true]           --- error: mixed types ---
+```
+
+**Why:** Python has both `list` and `numpy.array` — the "two type problem." You constantly convert between them. MATLAB, Julia, and R have one array type and it works. For data science, columns are homogeneous arrays. For tabular data, a DataFrame is a map of arrays — which is exactly what Crow's bare-name maps provide:
+
+```
+df = [
+  name = ['alice', 'bob'],
+  age = [25, 30],
+  salary = [50000, 60000]
+]
+
+mean[df.salary]              --- works because arrays support math ---
+df.salary * 1.1              --- element-wise, no wrapper needed ---
+```
+
+**Mixed-type data uses maps, not arrays.** `[id = 1, name = 'alice', active = true]` is a map with named fields and dot access. This is clearer than a mixed-type list anyway — fields are named and self-documenting.
+
+**What this eliminates:** `tensor` keyword, `list` vs `tensor` confusion, `tensor[[1,2,3]]` wrapper syntax, mixed-type arrays.

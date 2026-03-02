@@ -230,7 +230,7 @@ impl<'a> Validator<'a> {
                     }
                 }
             }
-            Expr::List(items) => {
+            Expr::Array(items) => {
                 for item in items { self.validate_expr(item); }
             }
             Expr::Map(pairs) => {
@@ -298,7 +298,7 @@ impl<'a> Validator<'a> {
                             ));
                         }
                     }
-                    CrowType::List(_) | CrowType::Map(_) | CrowType::Json
+                    CrowType::Array(_) | CrowType::Map(_) | CrowType::Json
                     | CrowType::Result(_) => {
                         // indexing — valid
                     }

@@ -57,7 +57,7 @@ pub enum Stmt {
         field: String,
         value: Expr,
     },
-    /// Index assignment: list[idx] = value, map[key] = value
+    /// Index assignment: array[idx] = value, map[key] = value
     IndexAssign {
         object: Expr,
         index: Expr,
@@ -119,7 +119,7 @@ pub enum Expr {
         op: UnaryOp,
         expr: Box<Expr>,
     },
-    /// Function/list/map call: name[args] or expr[args]
+    /// Function/array/map call: name[args] or expr[args]
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>,
@@ -129,9 +129,9 @@ pub enum Expr {
         object: Box<Expr>,
         field: String,
     },
-    /// List literal: [1, 2, 3]
-    List(Vec<Expr>),
-    /// Map literal: ['key' = val, ...]
+    /// Array literal: [1, 2, 3]
+    Array(Vec<Expr>),
+    /// Map literal: [key = val, ...] (bare-name keys) or ['key' = val, ...]
     Map(Vec<(Expr, Expr)>),
     /// For expression (assigned to variable): for x in iter body
     ForExpr {

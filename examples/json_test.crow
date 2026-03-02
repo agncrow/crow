@@ -19,7 +19,7 @@ bad = json['not json']
 log[bad.status]
 log[bad.reason]
 
---- Encode a list back to JSON ---
+--- Encode an array back to JSON ---
 encoded = encode[items]
 log[encoded]
 

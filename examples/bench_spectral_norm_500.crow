@@ -1,6 +1,6 @@
 --- spectral-norm benchmark - n=500 (scalar approach) ---
 --- website uses n=2000-8000 with numpy arrays ---
---- we use scalar dot product since Crow lacks list mutation/concat ---
+--- we use scalar dot product since Crow lacks array mutation/concat ---
 
 fn a_element[i, j]
     return 1.0 / ((i + j) * (i + j + 1) / 2.0 + i + 1.0)

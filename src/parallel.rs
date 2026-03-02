@@ -53,7 +53,7 @@ pub fn expr_reads(expr: &Expr) -> HashSet<String> {
             for a in args { reads.extend(expr_reads(a)); }
         }
         Expr::FieldAccess { object, .. } => { reads.extend(expr_reads(object)); }
-        Expr::List(items) => {
+        Expr::Array(items) => {
             for item in items { reads.extend(expr_reads(item)); }
         }
         Expr::Map(entries) => {

@@ -229,7 +229,27 @@ Crow's `crowfile` is simpler than `Cargo.toml` or `package.json`. Loses a point 
 | Swift | 6 | Clean syntax but large language surface. |
 | Rust | 4 | Steep curve: ownership, borrowing, lifetimes, traits, macros. |
 
-## 12. Ecosystem
+## 12. Safety & Verification
+
+| Language | Built-in Verification | Effort Required | What It Catches | Rating |
+|----------|----------------------|-----------------|-----------------|--------|
+| **Crow** | `crow check` — purity detection, edge case generation (simple types), regression snapshots, static checks | Zero (no tests, no annotations, no contracts) | Crashes, boundary bugs, regressions, unused vars, parallel safety | **8** |
+| Rust | Borrow checker, type system, `clippy` linter | Moderate (type annotations, lifetime management) | Memory safety, data races, type errors | 8 |
+| Zig | Comptime checks, safety runtime | Low-moderate | Undefined behavior, bounds, null | 7 |
+| Swift | Optionals, ARC, static analysis | Low-moderate | Null safety, type errors | 6 |
+| Go | `go vet`, `staticcheck`, race detector | Low (but manual test writing) | Vet warnings, race conditions | 5 |
+| Crystal | Type inference, union types | Low | Type errors at compile time | 5 |
+| Elixir | Dialyzer (optional), pattern match coverage | Low-moderate | Type mismatches, unhandled patterns | 5 |
+| Julia | Test stdlib, `@code_warntype` | Manual | Type instability | 4 |
+| Python | `mypy` (optional), `pytest` (manual) | High (all manual) | Type errors (if annotated) | 3 |
+| JS | ESLint, TypeScript (optional) | High (all opt-in) | Type errors (if using TS) | 3 |
+| Ruby | Sorbet (optional), RSpec (manual) | High (all manual) | Type errors (if using Sorbet) | 2 |
+
+Crow's automatic verification is a strong differentiator alongside parallelism. No other language generates tests and tracks regressions with zero developer effort — even if Crow's V1 is limited to simple parameter types. Rust's borrow checker is stronger for memory safety (provable at compile time), but requires significant developer effort in the form of type annotations and lifetime management. Crow trades that rigor for zero-effort automation — the compiler does the work, not the developer.
+
+The key distinction: Rust proves your code is memory-safe. Crow finds bugs in your logic. They solve different problems. Crow's edge case generation is limited to functions with simple types (int, float, str, bool, lists of those) — functions with maps or structs are skipped.
+
+## 13. Ecosystem
 
 | Language | Age | Packages | Community | Rating |
 |----------|-----|----------|-----------|--------|
@@ -263,14 +283,15 @@ Subjective scores from 1 (weakest) to 10 (strongest):
 | Expressiveness | **7** | 9 | 9 | 5 | 7 | 8 | 9 | 8 |
 | Consistency | **10** | 6 | 5 | 7 | 3 | 5 | 6 | 6 |
 | Learnability | **9** | 9 | 4 | 7 | 6 | 6 | 6 | 5 |
+| Safety & verification | **8** | 3 | 8 | 5 | 3 | 6 | 4 | 5 |
 | Ecosystem | **1** | 10 | 8 | 8 | 10 | 7 | 5 | 5 |
-| **Average** | **7.7** | **6.3** | **7.3** | **6.8** | **5.4** | **6.9** | **6.5** | **6.2** |
+| **Average** | **7.7** | **6.1** | **7.3** | **6.7** | **5.6** | **6.8** | **6.5** | **6.5** |
 
 ## Summary
 
-**Crow's niche:** A language that combines Python-level simplicity with Rust-level performance and zero-effort parallelism. No other language occupies exactly this space.
+**Crow's niche:** A language that combines Python-level simplicity with Rust-level performance, zero-effort parallelism, and automatic verification. No other language occupies exactly this space.
 
-**Crow's biggest strengths:** Consistency (10), parallelism (9), error handling (9), syntax simplicity (9), learnability (9), performance (9). No other language scores above 7 in all six of these.
+**Crow's biggest strengths:** Consistency (10), parallelism (9), error handling (9), syntax simplicity (9), learnability (9), performance (9). Six dimensions at 9 or above, plus safety & verification at 8 — no other language scores this consistently across all dimensions.
 
 **Crow's biggest gap:** Ecosystem (1) and data structures (6). The ecosystem will grow with time. The data structures gap is the price of "one way to do things" — you trade expressiveness for consistency. For data science and scripting (Crow's target), this is usually fine. For systems programming, you'd feel it.
 
@@ -279,4 +300,4 @@ Subjective scores from 1 (weakest) to 10 (strongest):
 - **Crystal** — similar vision (Ruby-like syntax, compiled, inferred types), but has union types and explicit generics
 - **Julia** — similar target audience (data/science), but dynamic with JIT
 - **Go** — similar simplicity philosophy, but no type inference and manual concurrency
-- **Rust** — Crow transpiles to it, so performance is comparable. Rust is more expressive but far more complex
+- **Rust** — Crow transpiles to it, so performance is comparable. Rust is more expressive but far more complex. Stronger memory safety guarantees, but requires significant developer effort. Crow's automatic verification catches logic bugs that Rust's type system doesn't address.

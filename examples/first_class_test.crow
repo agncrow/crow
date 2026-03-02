@@ -20,7 +20,7 @@ fn apply[f, x]
 log['apply double 3: {apply[double, 3]}']
 log['apply square 4: {apply[square, 4]}']
 
---- 3. store functions in a list ---
+--- 3. store functions in an array ---
 ops = [double, square]
 log['ops[0] on 3: {ops[0][3]}']
 log['ops[1] on 3: {ops[1][3]}']
@@ -49,18 +49,18 @@ fn add[a, b]
 fn mul[a, b]
     return a * b
 
-ops_map = ['add' = add, 'mul' = mul]
-r1 = ops_map['add']
+ops_map = [add = add, mul = mul]
+r1 = ops_map.add
 log['map add: {r1[3, 4]}']
-r2 = ops_map['mul']
+r2 = ops_map.mul
 log['map mul: {r2[3, 4]}']
 
 --- 7. reduce pattern ---
-fn reduce[f, list, start]
+fn reduce[f, arr, start]
     result = start
     i = 0
-    while i lt list.len
-        result = f[result, list[i]]
+    while i lt arr.len
+        result = f[result, arr[i]]
         i = i + 1
     return result
 

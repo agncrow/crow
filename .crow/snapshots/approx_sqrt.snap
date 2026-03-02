@@ -1,0 +1,5 @@
+approx_sqrt[0] = 0
+approx_sqrt[1] = 1
+approx_sqrt[-1] = 0
+approx_sqrt[0.5] = 0.7071067811865475
+approx_sqrt[-0.5] = 0

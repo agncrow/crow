@@ -93,12 +93,12 @@ match val
     _
         log['other']
 
---- Test: lists ---
+--- Test: arrays ---
 nums = [10, 20, 30]
-log['list: {nums}']
+log['array: {nums}']
 
 --- Test: maps ---
-config = ['host' = 'localhost', 'port' = 8080]
+config = [host = 'localhost', port = 8080]
 log['config: {config}']
 
 --- Test: empty map ---

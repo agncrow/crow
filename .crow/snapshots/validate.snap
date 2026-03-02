@@ -1,0 +1,5 @@
+validate[0] = 0
+validate[1] = 1
+validate[-1] = error: age cannot be negative
+validate[9223372036854775807] = 9223372036854775807
+validate[-9223372036854775808] = error: age cannot be negative
