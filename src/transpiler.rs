@@ -129,6 +129,21 @@ impl Transpiler {
         None
     }
 
+    /// Check if a statement is a gpu[] or gpu[n] call.
+    fn is_gpu_call(stmt: &Stmt) -> bool {
+        if let Stmt::ExprStmt(Expr::Call { callee, args }) = stmt {
+            if let Expr::Ident(name) = callee.as_ref() {
+                if name == "gpu" && args.len() <= 1 {
+                    return true;
+                }
+            }
+        }
+        if let Stmt::Resource { kind, .. } = stmt {
+            return kind == "gpu";
+        }
+        false
+    }
+
     /// Compute which function parameters should be passed by reference.
     /// A struct param is by-ref if: the struct is non-Copy AND the param is not mutated in the body.
     fn compute_by_ref_params(&mut self) {
@@ -1026,6 +1041,12 @@ impl Transpiler {
                     self.cpu_count = Some(n as usize);
                     return;
                 }
+                // Check if this is a gpu[] or gpu[n] call
+                if Self::is_gpu_call(stmt) {
+                    self.needs_crow_runtime = true;
+                    self.emit_line("crow_runtime::gpu::set_gpu_enabled(true);");
+                    return;
+                }
                 if let Stmt::ExprStmt(e) = stmt {
                     let expr_str = self.expr_to_string(e);
                     self.emit_line(&format!("{};", expr_str));
@@ -1164,11 +1185,13 @@ impl Transpiler {
                 self.emit_use(path);
             }
             Stmt::Resource { kind, count } => {
-                // Update cpu thread count at runtime
                 if kind == "cpu" {
                     if let Expr::Int(n) = count {
                         self.cpu_count = Some(*n as usize);
                     }
+                } else if kind == "gpu" {
+                    self.needs_crow_runtime = true;
+                    self.emit_line("crow_runtime::gpu::set_gpu_enabled(true);");
                 }
             }
             Stmt::Line(n) => {
@@ -3174,5 +3197,38 @@ mod tests {
     fn test_numarray_for_loop_transpile() {
         let rust = transpile("cpu[1]\na = [1, 2, 3]\nfor x in a\n    log['{x}']\n");
         assert!(rust.contains("to_vec()"), "for loop over NumArray should use to_vec()\n{}", rust);
+    }
+
+    #[test]
+    fn test_gpu_call_transpile() {
+        let rust = transpile("gpu[1]\n");
+        assert!(rust.contains("set_gpu_enabled(true)"), "gpu[] should emit set_gpu_enabled\n{}", rust);
+    }
+
+    #[test]
+    fn test_gpu_no_args_transpile() {
+        let rust = transpile("gpu[]\n");
+        assert!(rust.contains("set_gpu_enabled(true)"), "gpu[] should emit set_gpu_enabled\n{}", rust);
+    }
+
+    #[test]
+    fn test_is_gpu_call() {
+        // ExprStmt path
+        let stmt = Stmt::ExprStmt(Expr::Call {
+            callee: Box::new(Expr::Ident("gpu".to_string())),
+            args: vec![],
+        });
+        assert!(Transpiler::is_gpu_call(&stmt));
+
+        // Resource path
+        let stmt2 = Stmt::Resource { kind: "gpu".to_string(), count: Expr::Int(2) };
+        assert!(Transpiler::is_gpu_call(&stmt2));
+
+        // Not a gpu call
+        let stmt3 = Stmt::ExprStmt(Expr::Call {
+            callee: Box::new(Expr::Ident("cpu".to_string())),
+            args: vec![Expr::Int(4)],
+        });
+        assert!(!Transpiler::is_gpu_call(&stmt3));
     }
 }

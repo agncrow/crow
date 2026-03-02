@@ -3,7 +3,7 @@ use std::sync::Arc;
 use rand::RngExt;
 use rand_distr::{Distribution, StandardNormal};
 
-use crate::gpu::GpuBuffer;
+use crate::gpu::{self, GpuBuffer, GpuContext};
 
 /// Storage backend for tensor data.
 #[derive(Debug)]
@@ -130,6 +130,24 @@ impl CrowTensor {
         matches!(self.data.as_ref(), TensorStorage::Gpu(_))
     }
 
+    /// If GPU mode is enabled, move tensor to GPU. Otherwise return self.
+    pub fn maybe_to_gpu(self) -> CrowTensor {
+        if gpu::is_gpu_enabled() && !self.is_gpu() {
+            if GpuContext::get().is_some() {
+                return self.to_gpu();
+            }
+        }
+        self
+    }
+
+    /// Get the GPU buffer, if tensor is on GPU.
+    fn gpu_buffer(&self) -> Option<&GpuBuffer> {
+        match self.data.as_ref() {
+            TensorStorage::Gpu(buf) => Some(buf),
+            _ => None,
+        }
+    }
+
     /// Return a contiguous copy of the data in row-major order.
     /// If already contiguous, returns a cheap clone (Arc).
     pub fn to_contiguous(&self) -> CrowTensor {
@@ -141,7 +159,12 @@ impl CrowTensor {
     }
 
     /// Collect all elements into a Vec<f64> in row-major order.
+    /// If tensor is on GPU, downloads to CPU first.
     pub fn to_vec(&self) -> Vec<f64> {
+        // Transparently handle GPU tensors
+        if self.is_gpu() {
+            return self.to_cpu().to_vec();
+        }
         let n = self.len();
         let mut out = Vec::with_capacity(n);
         let cpu = self.cpu_data();
@@ -219,19 +242,19 @@ impl CrowTensor {
     /// Create a tensor filled with zeros.
     pub fn zeros(shape: Vec<usize>) -> Self {
         let n = Self::numel(&shape);
-        Self::from_vec(vec![0.0; n], shape)
+        Self::from_vec(vec![0.0; n], shape).maybe_to_gpu()
     }
 
     /// Create a tensor filled with ones.
     pub fn ones(shape: Vec<usize>) -> Self {
         let n = Self::numel(&shape);
-        Self::from_vec(vec![1.0; n], shape)
+        Self::from_vec(vec![1.0; n], shape).maybe_to_gpu()
     }
 
     /// Create a tensor filled with a constant value.
     pub fn full(shape: Vec<usize>, value: f64) -> Self {
         let n = Self::numel(&shape);
-        Self::from_vec(vec![value; n], shape)
+        Self::from_vec(vec![value; n], shape).maybe_to_gpu()
     }
 
     /// Create a 1D tensor with values from start (inclusive) to end (exclusive), stepping by step.
@@ -251,7 +274,7 @@ impl CrowTensor {
             }
         }
         let n = data.len();
-        Self::from_vec(data, vec![n])
+        Self::from_vec(data, vec![n]).maybe_to_gpu()
     }
 
     /// Create a 1D tensor with `n` evenly spaced values from start to end (inclusive).
@@ -264,7 +287,7 @@ impl CrowTensor {
         }
         let step = (end - start) / (n - 1) as f64;
         let data: Vec<f64> = (0..n).map(|i| start + step * i as f64).collect();
-        Self::from_vec(data, vec![n])
+        Self::from_vec(data, vec![n]).maybe_to_gpu()
     }
 
     /// Create an identity matrix of size n×n.
@@ -273,7 +296,7 @@ impl CrowTensor {
         for i in 0..n {
             data[i * n + i] = 1.0;
         }
-        Self::from_vec(data, vec![n, n])
+        Self::from_vec(data, vec![n, n]).maybe_to_gpu()
     }
 
     /// Create a diagonal matrix from a 1D tensor, or extract the diagonal of a 2D tensor.
@@ -306,7 +329,7 @@ impl CrowTensor {
         let n = Self::numel(&shape);
         let mut rng = rand::rng();
         let data: Vec<f64> = (0..n).map(|_| rng.random::<f64>()).collect();
-        Self::from_vec(data, shape)
+        Self::from_vec(data, shape).maybe_to_gpu()
     }
 
     /// Create a tensor with standard normal random values (mean=0, std=1).
@@ -314,7 +337,7 @@ impl CrowTensor {
         let n = Self::numel(&shape);
         let mut rng = rand::rng();
         let data: Vec<f64> = (0..n).map(|_| StandardNormal.sample(&mut rng)).collect();
-        Self::from_vec(data, shape)
+        Self::from_vec(data, shape).maybe_to_gpu()
     }
 
     /// Create a tensor with uniform random values in [low, high).
@@ -324,7 +347,7 @@ impl CrowTensor {
         let data: Vec<f64> = (0..n)
             .map(|_| rng.random::<f64>() * (high - low) + low)
             .collect();
-        Self::from_vec(data, shape)
+        Self::from_vec(data, shape).maybe_to_gpu()
     }
 
     // ── Reshaping & Views ───────────────────────────────────────────
@@ -487,61 +510,106 @@ impl CrowTensor {
 
     // Convenience element-wise ops
 
+    /// Build a CrowTensor from a GpuBuffer, inheriting shape from self.
+    fn from_gpu_buffer(&self, buf: GpuBuffer) -> CrowTensor {
+        CrowTensor {
+            data: Arc::new(TensorStorage::Gpu(buf)),
+            shape: self.shape.clone(),
+            strides: Self::row_major_strides(&self.shape),
+            offset: 0,
+        }
+    }
+
+    /// GPU-dispatched binary op, or CPU fallback.
+    fn gpu_binary_or_cpu(&self, other: &CrowTensor, op: &str, cpu_fn: impl Fn(f64, f64) -> f64) -> CrowTensor {
+        if let (Some(a_buf), Some(b_buf)) = (self.gpu_buffer(), other.gpu_buffer()) {
+            if let Some(ctx) = GpuContext::get() {
+                let out = gpu::gpu_elementwise_binary(ctx, a_buf, b_buf, op);
+                return self.from_gpu_buffer(out);
+            }
+        }
+        self.zip_with(other, cpu_fn)
+    }
+
+    /// GPU-dispatched unary op, or CPU fallback.
+    fn gpu_unary_or_cpu(&self, op: &str, cpu_fn: impl Fn(f64) -> f64) -> CrowTensor {
+        if let Some(buf) = self.gpu_buffer() {
+            if let Some(ctx) = GpuContext::get() {
+                let out = gpu::gpu_elementwise_unary(ctx, buf, op);
+                return self.from_gpu_buffer(out);
+            }
+        }
+        self.map(cpu_fn)
+    }
+
     pub fn add(&self, other: &CrowTensor) -> CrowTensor {
-        self.zip_with(other, |a, b| a + b)
+        self.gpu_binary_or_cpu(other, "add", |a, b| a + b)
     }
 
     pub fn sub(&self, other: &CrowTensor) -> CrowTensor {
-        self.zip_with(other, |a, b| a - b)
+        self.gpu_binary_or_cpu(other, "sub", |a, b| a - b)
     }
 
     pub fn mul(&self, other: &CrowTensor) -> CrowTensor {
-        self.zip_with(other, |a, b| a * b)
+        self.gpu_binary_or_cpu(other, "mul", |a, b| a * b)
     }
 
     pub fn div(&self, other: &CrowTensor) -> CrowTensor {
-        self.zip_with(other, |a, b| a / b)
+        self.gpu_binary_or_cpu(other, "div", |a, b| a / b)
     }
 
     pub fn neg(&self) -> CrowTensor {
-        self.map(|x| -x)
+        self.gpu_unary_or_cpu("neg", |x| -x)
     }
 
     pub fn abs(&self) -> CrowTensor {
-        self.map(|x| x.abs())
+        self.gpu_unary_or_cpu("abs", |x| x.abs())
     }
 
     pub fn exp(&self) -> CrowTensor {
-        self.map(|x| x.exp())
+        self.gpu_unary_or_cpu("exp", |x| x.exp())
     }
 
     pub fn log(&self) -> CrowTensor {
-        self.map(|x| x.ln())
+        self.gpu_unary_or_cpu("log", |x| x.ln())
     }
 
     pub fn sqrt(&self) -> CrowTensor {
-        self.map(|x| x.sqrt())
+        self.gpu_unary_or_cpu("sqrt", |x| x.sqrt())
     }
 
     pub fn sin(&self) -> CrowTensor {
-        self.map(|x| x.sin())
+        self.gpu_unary_or_cpu("sin", |x| x.sin())
     }
 
     pub fn cos(&self) -> CrowTensor {
-        self.map(|x| x.cos())
+        self.gpu_unary_or_cpu("cos", |x| x.cos())
     }
 
     pub fn pow(&self, exponent: &CrowTensor) -> CrowTensor {
+        // pow not available as GPU shader yet — fall back to CPU
         self.zip_with(exponent, |a, b| a.powf(b))
     }
 
     /// Add a scalar to every element.
     pub fn add_scalar(&self, s: f64) -> CrowTensor {
+        if let Some(buf) = self.gpu_buffer() {
+            if let Some(ctx) = GpuContext::get() {
+                let out = gpu::gpu_scalar_op(ctx, buf, s as f32, "add");
+                return self.from_gpu_buffer(out);
+            }
+        }
         self.map(|x| x + s)
     }
 
     /// Multiply every element by a scalar.
     pub fn mul_scalar(&self, s: f64) -> CrowTensor {
+        if let Some(buf) = self.gpu_buffer() {
+            if let Some(ctx) = GpuContext::get() {
+                let out = gpu::gpu_scalar_op(ctx, buf, s as f32, "mul");
+                return self.from_gpu_buffer(out);
+            }
+        }
         self.map(|x| x * s)
     }
 }
@@ -552,6 +620,11 @@ impl CrowTensor {
 impl CrowTensor {
     /// Sum all elements.
     pub fn sum(&self) -> f64 {
+        if let Some(buf) = self.gpu_buffer() {
+            if let Some(ctx) = GpuContext::get() {
+                return gpu::gpu_sum(ctx, buf);
+            }
+        }
         self.to_vec().iter().sum()
     }
 
@@ -1001,5 +1074,53 @@ mod tests {
         let t = CrowTensor::rand(vec![3, 4]);
         assert_eq!(t.shape(), &[3, 4]);
         assert_eq!(t.len(), 12);
+    }
+
+    #[test]
+    fn test_gpu_flag_default_off() {
+        // GPU flag should be off by default — tensors created on CPU
+        gpu::set_gpu_enabled(false);
+        let t = CrowTensor::zeros(vec![4]);
+        assert!(!t.is_gpu());
+    }
+
+    #[test]
+    fn test_maybe_to_gpu_when_disabled() {
+        gpu::set_gpu_enabled(false);
+        let t = CrowTensor::ones(vec![3]);
+        // maybe_to_gpu should be a no-op when flag is off
+        let t2 = t.clone().maybe_to_gpu();
+        assert!(!t2.is_gpu());
+        assert_eq!(t2.to_vec(), vec![1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn test_gpu_binary_fallback_cpu() {
+        // When both tensors are on CPU, binary ops should work normally
+        gpu::set_gpu_enabled(false);
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
+        let b = CrowTensor::from_vec(vec![4.0, 5.0, 6.0], vec![3]);
+        let c = a.add(&b);
+        assert_eq!(c.to_vec(), vec![5.0, 7.0, 9.0]);
+    }
+
+    #[test]
+    fn test_gpu_unary_fallback_cpu() {
+        gpu::set_gpu_enabled(false);
+        let a = CrowTensor::from_vec(vec![-1.0, 2.0, -3.0], vec![3]);
+        let b = a.neg();
+        assert_eq!(b.to_vec(), vec![1.0, -2.0, 3.0]);
+        let c = a.abs();
+        assert_eq!(c.to_vec(), vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_gpu_scalar_fallback_cpu() {
+        gpu::set_gpu_enabled(false);
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
+        let b = a.add_scalar(10.0);
+        assert_eq!(b.to_vec(), vec![11.0, 12.0, 13.0]);
+        let c = a.mul_scalar(2.0);
+        assert_eq!(c.to_vec(), vec![2.0, 4.0, 6.0]);
     }
 }

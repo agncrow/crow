@@ -482,8 +482,25 @@ impl Interpreter {
                 self.load_module(path)?;
                 Ok(Signal::None)
             }
-            Stmt::Resource { .. } => {
-                // resource control not yet implemented
+            Stmt::Resource { kind, count } => {
+                if kind == "gpu" {
+                    if let Expr::Int(n) = count {
+                        if *n >= 1 {
+                            self.gpu_count = Some(*n as usize);
+                            crow_runtime::gpu::set_gpu_enabled(true);
+                        }
+                    } else {
+                        // gpu[] with no specific count — enable all GPUs
+                        self.gpu_count = None;
+                        crow_runtime::gpu::set_gpu_enabled(true);
+                    }
+                } else if kind == "cpu" {
+                    if let Expr::Int(n) = count {
+                        if *n >= 1 {
+                            self.cpu_count = Some(*n as usize);
+                        }
+                    }
+                }
                 Ok(Signal::None)
             }
             Stmt::Line(n) => {
@@ -1476,8 +1493,14 @@ impl Interpreter {
                 }
             }
             "gpu" => {
+                if args.is_empty() {
+                    // gpu[] — enable all GPUs
+                    self.gpu_count = None;
+                    crow_runtime::gpu::set_gpu_enabled(true);
+                    return Ok(CrowValue::done());
+                }
                 if args.len() != 1 {
-                    return Err("gpu[] takes exactly 1 argument".to_string());
+                    return Err("gpu[] takes 0 or 1 arguments".to_string());
                 }
                 match args[0].unwrap_or_propagate()? {
                     Value::Int(n) => {
@@ -1485,6 +1508,7 @@ impl Interpreter {
                             return Err("gpu[] requires a positive integer".to_string());
                         }
                         self.gpu_count = Some(*n as usize);
+                        crow_runtime::gpu::set_gpu_enabled(true);
                         Ok(CrowValue::done())
                     }
                     _ => Err("gpu[] requires an integer argument".to_string()),
@@ -3941,5 +3965,30 @@ mod tests {
             let val = get_var("x = math.zeros[3]\n", "x");
             !val.ok
         });
+    }
+
+    #[test]
+    fn test_gpu_call_sets_flag() {
+        // Reset GPU flag
+        crow_runtime::gpu::set_gpu_enabled(false);
+        assert!(!crow_runtime::gpu::is_gpu_enabled());
+        // gpu[1] should set the flag
+        run_program("gpu[1]\n");
+        assert!(crow_runtime::gpu::is_gpu_enabled());
+        // Reset
+        crow_runtime::gpu::set_gpu_enabled(false);
+    }
+
+    #[test]
+    fn test_gpu_resource_stmt() {
+        crow_runtime::gpu::set_gpu_enabled(false);
+        // Directly test the Stmt::Resource path
+        let mut interp = Interpreter::new();
+        interp.exec_stmt(&Stmt::Resource {
+            kind: "gpu".to_string(),
+            count: Expr::Int(2),
+        }).unwrap();
+        assert!(crow_runtime::gpu::is_gpu_enabled());
+        crow_runtime::gpu::set_gpu_enabled(false);
     }
 }

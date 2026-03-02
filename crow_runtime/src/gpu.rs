@@ -1,8 +1,22 @@
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use wgpu;
 
 /// Global GPU context — initialized lazily on first use.
 static GPU_CONTEXT: OnceLock<Option<GpuContext>> = OnceLock::new();
+
+/// Global flag: when true, tensor creation functions place data on GPU.
+static GPU_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Enable GPU mode — subsequent tensor creation will place data on GPU.
+pub fn set_gpu_enabled(enabled: bool) {
+    GPU_ENABLED.store(enabled, Ordering::SeqCst);
+}
+
+/// Check if GPU mode is enabled.
+pub fn is_gpu_enabled() -> bool {
+    GPU_ENABLED.load(Ordering::SeqCst)
+}
 
 /// Holds the wgpu device and queue for GPU compute.
 pub struct GpuContext {

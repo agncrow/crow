@@ -354,7 +354,8 @@ impl<'a> Validator<'a> {
             "exit" => argc <= 1,
             "json" | "encode" => argc == 1,
             "error" => argc >= 1 && argc <= 2,
-            "cpu" | "gpu" => argc == 1,
+            "cpu" => argc == 1,
+            "gpu" => argc <= 1,
             _ => true,
         };
         if !valid {
@@ -381,9 +382,9 @@ impl<'a> Validator<'a> {
                     self.error("cannot use '+' with strings — use string interpolation instead".to_string());
                     return;
                 }
-                // Numeric ops: both must be numeric
-                let lt_num = matches!(lt, CrowType::Int | CrowType::Float);
-                let rt_num = matches!(rt, CrowType::Int | CrowType::Float);
+                // Numeric ops: both must be numeric (including NumArray)
+                let lt_num = matches!(lt, CrowType::Int | CrowType::Float | CrowType::NumArray(_));
+                let rt_num = matches!(rt, CrowType::Int | CrowType::Float | CrowType::NumArray(_));
                 if !lt_num || !rt_num {
                     let op_str = match op {
                         BinOp::Add => "+", BinOp::Sub => "-", BinOp::Mul => "*",
