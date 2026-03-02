@@ -4,6 +4,7 @@ use rand::RngExt;
 use rand_distr::{Distribution, StandardNormal};
 
 use crate::gpu::{self, GpuBuffer, GpuContext};
+use crate::rng;
 
 /// Storage backend for tensor data.
 #[derive(Debug)]
@@ -327,27 +328,88 @@ impl CrowTensor {
     /// Create a tensor with uniform random values in [0, 1).
     pub fn rand(shape: Vec<usize>) -> Self {
         let n = Self::numel(&shape);
-        let mut rng = rand::rng();
-        let data: Vec<f64> = (0..n).map(|_| rng.random::<f64>()).collect();
+        let data = rng::gen_random_vec(n, |r| r.random::<f64>());
         Self::from_vec(data, shape).maybe_to_gpu()
     }
 
     /// Create a tensor with standard normal random values (mean=0, std=1).
     pub fn randn(shape: Vec<usize>) -> Self {
         let n = Self::numel(&shape);
-        let mut rng = rand::rng();
-        let data: Vec<f64> = (0..n).map(|_| StandardNormal.sample(&mut rng)).collect();
+        let data = rng::gen_random_vec(n, |r| {
+            let v: f64 = StandardNormal.sample(r);
+            v
+        });
         Self::from_vec(data, shape).maybe_to_gpu()
     }
 
     /// Create a tensor with uniform random values in [low, high).
     pub fn rand_range(shape: Vec<usize>, low: f64, high: f64) -> Self {
         let n = Self::numel(&shape);
-        let mut rng = rand::rng();
-        let data: Vec<f64> = (0..n)
-            .map(|_| rng.random::<f64>() * (high - low) + low)
-            .collect();
+        let data = rng::gen_random_vec(n, |r| r.random::<f64>() * (high - low) + low);
         Self::from_vec(data, shape).maybe_to_gpu()
+    }
+
+    /// Create a tensor with normal random values (custom mean and std).
+    pub fn normal(shape: Vec<usize>, mean: f64, std: f64) -> Self {
+        let n = Self::numel(&shape);
+        let data = rng::gen_random_vec(n, |r| {
+            let v: f64 = StandardNormal.sample(r);
+            v * std + mean
+        });
+        Self::from_vec(data, shape).maybe_to_gpu()
+    }
+
+    /// Create a tensor with Poisson-distributed random values.
+    pub fn poisson(shape: Vec<usize>, lambda: f64) -> Self {
+        use rand_distr::Poisson;
+        let dist: Poisson<f64> = Poisson::new(lambda).expect("poisson: lambda must be > 0");
+        let n = Self::numel(&shape);
+        let data = rng::gen_random_vec(n, |r| {
+            let v: f64 = dist.sample(r);
+            v
+        });
+        Self::from_vec(data, shape).maybe_to_gpu()
+    }
+
+    /// Create a tensor with Bernoulli-distributed random values (0.0 or 1.0).
+    pub fn bernoulli(shape: Vec<usize>, p: f64) -> Self {
+        use rand_distr::Bernoulli;
+        let dist = Bernoulli::new(p).expect("bernoulli: p must be in [0, 1]");
+        let n = Self::numel(&shape);
+        let data = rng::gen_random_vec(n, |r| if dist.sample(r) { 1.0 } else { 0.0 });
+        Self::from_vec(data, shape).maybe_to_gpu()
+    }
+
+    /// Shuffle tensor elements randomly (returns new tensor).
+    pub fn shuffle(&self) -> Self {
+        use rand::seq::SliceRandom;
+        let mut data = self.to_vec();
+        rng::with_rng(|r| data.shuffle(r));
+        Self::from_vec(data, self.shape.clone())
+    }
+
+    /// Randomly sample n elements from the tensor (without replacement).
+    pub fn choice(&self, n: usize) -> Self {
+        use rand::seq::index::sample;
+        let len = self.len();
+        assert!(n <= len, "choice: n ({}) must be <= tensor length ({})", n, len);
+        let flat = self.to_vec();
+        let mut result = Vec::with_capacity(n);
+        rng::with_rng(|r| {
+            let indices = sample(r, len, n);
+            for i in indices {
+                result.push(flat[i]);
+            }
+        });
+        Self::from_vec(result, vec![n])
+    }
+
+    /// Random permutation of 0..n as a tensor.
+    pub fn permutation(n: usize) -> Self {
+        use rand::seq::SliceRandom;
+        let mut data: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        rng::with_rng(|r| data.shuffle(r));
+        Self::from_vec(data, vec![n])
     }
 
     // ── Reshaping & Views ───────────────────────────────────────────
@@ -1689,5 +1751,88 @@ mod tests {
         assert_eq!(b.to_vec(), vec![11.0, 12.0, 13.0]);
         let c = a.mul_scalar(2.0);
         assert_eq!(c.to_vec(), vec![2.0, 4.0, 6.0]);
+    }
+
+    // ===== Layer 3: Random & Distributions =====
+
+    #[test]
+    fn test_seed_reproducibility() {
+        crate::rng::set_seed(42);
+        let a = CrowTensor::rand(vec![5]);
+        crate::rng::set_seed(42);
+        let b = CrowTensor::rand(vec![5]);
+        assert_eq!(a.to_vec(), b.to_vec(), "same seed should give same values");
+        crate::rng::clear_seed();
+    }
+
+    #[test]
+    fn test_normal_shape() {
+        crate::rng::set_seed(99);
+        let t = CrowTensor::normal(vec![3, 2], 5.0, 0.1);
+        assert_eq!(t.shape, vec![3, 2]);
+        assert_eq!(t.to_vec().len(), 6);
+        // Values should be near 5.0
+        for v in t.to_vec() {
+            assert!((v - 5.0).abs() < 2.0, "expected near 5.0, got {}", v);
+        }
+        crate::rng::clear_seed();
+    }
+
+    #[test]
+    fn test_poisson_shape() {
+        crate::rng::set_seed(7);
+        let t = CrowTensor::poisson(vec![10], 3.5);
+        assert_eq!(t.shape, vec![10]);
+        // All values should be non-negative integers
+        for v in t.to_vec() {
+            assert!(v >= 0.0 && v == v.floor(), "expected non-negative int, got {}", v);
+        }
+        crate::rng::clear_seed();
+    }
+
+    #[test]
+    fn test_bernoulli_values() {
+        crate::rng::set_seed(123);
+        let t = CrowTensor::bernoulli(vec![20], 0.5);
+        assert_eq!(t.shape, vec![20]);
+        for v in t.to_vec() {
+            assert!(v == 0.0 || v == 1.0, "expected 0.0 or 1.0, got {}", v);
+        }
+        crate::rng::clear_seed();
+    }
+
+    #[test]
+    fn test_shuffle_preserves_elements() {
+        crate::rng::set_seed(1);
+        let t = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], vec![5]);
+        let s = t.shuffle();
+        let mut sv = s.to_vec();
+        sv.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(sv, vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+        crate::rng::clear_seed();
+    }
+
+    #[test]
+    fn test_choice_subset() {
+        crate::rng::set_seed(2);
+        let t = CrowTensor::from_vec(vec![10.0, 20.0, 30.0, 40.0, 50.0], vec![5]);
+        let c = t.choice(3);
+        assert_eq!(c.shape, vec![3]);
+        let orig = t.to_vec();
+        for v in c.to_vec() {
+            assert!(orig.contains(&v), "choice value {} not in original", v);
+        }
+        crate::rng::clear_seed();
+    }
+
+    #[test]
+    fn test_permutation_range() {
+        crate::rng::set_seed(3);
+        let p = CrowTensor::permutation(5);
+        assert_eq!(p.shape, vec![5]);
+        let mut vals = p.to_vec();
+        vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(vals, vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+        crate::rng::clear_seed();
     }
 }

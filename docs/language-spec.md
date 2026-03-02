@@ -861,6 +861,21 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | `math.norm[x]` | L2 (Euclidean) norm (returns float) |
 | `math.norm[x, p]` | Lp norm (p=1 for L1, math.inf for L∞) |
 
+#### Random & Distributions
+
+| Function | Description |
+|---|---|
+| `math.seed[n]` | Set global RNG seed for reproducibility |
+| `math.rand[d1, d2, ...]` | Uniform random in [0, 1) |
+| `math.randn[d1, d2, ...]` | Standard normal (mean=0, std=1) |
+| `math.normal[mean, std, d1, d2, ...]` | Normal with custom mean/std |
+| `math.uniform[low, high, d1, d2, ...]` | Uniform in [low, high) |
+| `math.poisson[lambda, d1, d2, ...]` | Poisson distribution |
+| `math.bernoulli[p, d1, d2, ...]` | Bernoulli (0.0 or 1.0) |
+| `math.shuffle[x]` | Random permutation of tensor elements |
+| `math.choice[x, n]` | Random sample of n elements (no replacement) |
+| `math.permutation[n]` | Random permutation of 0..n |
+
 #### Constants
 
 | Constant | Description |

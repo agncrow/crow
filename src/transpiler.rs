@@ -2386,6 +2386,37 @@ impl Transpiler {
                                 // Norms
                                 "norm" if arg_strs.len() >= 2 => format!("{}.norm({} as f64)", arg_strs[0], arg_strs[1]),
                                 "norm" => format!("{}.norm(2.0)", arg_strs[0]),
+                                // Random & Distributions
+                                "seed" => format!("crow_runtime::rng::set_seed({} as u64)", arg_strs[0]),
+                                "normal" => {
+                                    let mean = &arg_strs[0];
+                                    let std = &arg_strs[1];
+                                    let shape_args: Vec<String> = arg_strs[2..].iter().map(|a| format!("{} as usize", a)).collect();
+                                    let shape = if shape_args.is_empty() { "1usize".to_string() } else { shape_args.join(", ") };
+                                    format!("CrowTensor::normal(vec![{}], {} as f64, {} as f64)", shape, mean, std)
+                                }
+                                "uniform" => {
+                                    let low = &arg_strs[0];
+                                    let high = &arg_strs[1];
+                                    let shape_args: Vec<String> = arg_strs[2..].iter().map(|a| format!("{} as usize", a)).collect();
+                                    let shape = if shape_args.is_empty() { "1usize".to_string() } else { shape_args.join(", ") };
+                                    format!("CrowTensor::rand_range(vec![{}], {} as f64, {} as f64)", shape, low, high)
+                                }
+                                "poisson" => {
+                                    let lambda = &arg_strs[0];
+                                    let shape_args: Vec<String> = arg_strs[1..].iter().map(|a| format!("{} as usize", a)).collect();
+                                    let shape = if shape_args.is_empty() { "1usize".to_string() } else { shape_args.join(", ") };
+                                    format!("CrowTensor::poisson(vec![{}], {} as f64)", shape, lambda)
+                                }
+                                "bernoulli" => {
+                                    let p = &arg_strs[0];
+                                    let shape_args: Vec<String> = arg_strs[1..].iter().map(|a| format!("{} as usize", a)).collect();
+                                    let shape = if shape_args.is_empty() { "1usize".to_string() } else { shape_args.join(", ") };
+                                    format!("CrowTensor::bernoulli(vec![{}], {} as f64)", shape, p)
+                                }
+                                "shuffle" => format!("{}.shuffle()", arg_strs[0]),
+                                "choice" => format!("{}.choice({} as usize)", arg_strs[0], arg_strs[1]),
+                                "permutation" => format!("CrowTensor::permutation({} as usize)", arg_strs[0]),
                                 _ => format!("/* unknown math.{} */", field),
                             };
                             return result;
@@ -3986,5 +4017,55 @@ mod tests {
     fn test_norm_lp_transpile() {
         let rust = transpile("use math\nx = math.norm[math.ones[3], 1]\n");
         assert!(rust.contains(".norm("), "should emit .norm() for Lp norm\n{}", rust);
+    }
+
+    // ===== Layer 3: Random & Distributions =====
+
+    #[test]
+    fn test_math_seed_transpile() {
+        let rust = transpile("use math\nmath.seed[42]\n");
+        assert!(rust.contains("set_seed(42"), "should emit set_seed\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_normal_transpile() {
+        let rust = transpile("use math\nx = math.normal[0, 1, 3, 4]\n");
+        assert!(rust.contains("CrowTensor::normal("), "should emit CrowTensor::normal\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_uniform_transpile() {
+        let rust = transpile("use math\nx = math.uniform[2, 5, 6]\n");
+        assert!(rust.contains("CrowTensor::rand_range("), "should emit CrowTensor::rand_range\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_poisson_transpile() {
+        let rust = transpile("use math\nx = math.poisson[3.5, 4]\n");
+        assert!(rust.contains("CrowTensor::poisson("), "should emit CrowTensor::poisson\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_bernoulli_transpile() {
+        let rust = transpile("use math\nx = math.bernoulli[0.5, 8]\n");
+        assert!(rust.contains("CrowTensor::bernoulli("), "should emit CrowTensor::bernoulli\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_shuffle_transpile() {
+        let rust = transpile("use math\nx = math.shuffle[math.ones[5]]\n");
+        assert!(rust.contains(".shuffle()"), "should emit .shuffle()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_choice_transpile() {
+        let rust = transpile("use math\nx = math.choice[math.ones[5], 3]\n");
+        assert!(rust.contains(".choice("), "should emit .choice()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_permutation_transpile() {
+        let rust = transpile("use math\nx = math.permutation[5]\n");
+        assert!(rust.contains("CrowTensor::permutation("), "should emit CrowTensor::permutation\n{}", rust);
     }
 }

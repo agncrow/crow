@@ -1032,6 +1032,10 @@ impl TypeContext {
                                 "argsort" | "topk" | "unique" | "where" => CrowType::NumArray(Box::new(CrowType::Float)),
                                 // Decompositions returning arrays of tensors
                                 "svd" | "qr" | "eigen" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
+                                // Random & Distributions
+                                "seed" => CrowType::Void,
+                                "normal" | "uniform" | "poisson" | "bernoulli"
+                                | "shuffle" | "choice" | "permutation" => CrowType::NumArray(Box::new(CrowType::Float)),
                                 _ => CrowType::Unknown,
                             };
                         }
