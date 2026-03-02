@@ -2383,6 +2383,9 @@ impl Transpiler {
                                 "qr" => format!("{{ let (_q, _r) = {}.qr_decomp(); vec![_q, _r] }}", arg_strs[0]),
                                 "cholesky" => format!("{}.cholesky_decomp()", arg_strs[0]),
                                 "eigen" => format!("{{ let (_re, _im) = {}.eigen_decomp(); vec![_re, _im] }}", arg_strs[0]),
+                                // Norms
+                                "norm" if arg_strs.len() >= 2 => format!("{}.norm({} as f64)", arg_strs[0], arg_strs[1]),
+                                "norm" => format!("{}.norm(2.0)", arg_strs[0]),
                                 _ => format!("/* unknown math.{} */", field),
                             };
                             return result;
@@ -3969,5 +3972,19 @@ mod tests {
     fn test_gather_transpile() {
         let rust = transpile("use math\na = math.linspace[10, 50, 5]\nidx = math.linspace[0, 2, 3]\nx = a[idx]\n");
         assert!(rust.contains(".gather("), "should emit .gather() for tensor indexing by tensor\n{}", rust);
+    }
+
+    // ===== Norm transpiler tests =====
+
+    #[test]
+    fn test_norm_l2_transpile() {
+        let rust = transpile("use math\nx = math.norm[math.ones[3]]\n");
+        assert!(rust.contains(".norm(2.0)"), "should emit .norm(2.0) for L2 norm\n{}", rust);
+    }
+
+    #[test]
+    fn test_norm_lp_transpile() {
+        let rust = transpile("use math\nx = math.norm[math.ones[3], 1]\n");
+        assert!(rust.contains(".norm("), "should emit .norm() for Lp norm\n{}", rust);
     }
 }

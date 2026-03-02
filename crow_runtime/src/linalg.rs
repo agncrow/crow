@@ -141,6 +141,24 @@ impl CrowTensor {
         matref_to_tensor(llt.L())
     }
 
+    /// Vector/matrix norm.
+    /// p = 2.0 → L2 (Euclidean) norm (default).
+    /// p = 1.0 → L1 norm (sum of absolute values).
+    /// p = f64::INFINITY → L∞ norm (max absolute value).
+    /// Any other p → Lp norm (sum |x_i|^p)^(1/p).
+    pub fn norm(&self, p: f64) -> f64 {
+        let data = self.to_vec();
+        if p == 2.0 {
+            data.iter().map(|x| x * x).sum::<f64>().sqrt()
+        } else if p == 1.0 {
+            data.iter().map(|x| x.abs()).sum::<f64>()
+        } else if p.is_infinite() && p > 0.0 {
+            data.iter().map(|x| x.abs()).fold(0.0_f64, f64::max)
+        } else {
+            data.iter().map(|x| x.abs().powf(p)).sum::<f64>().powf(1.0 / p)
+        }
+    }
+
     /// Eigendecomposition of a square matrix.
     /// Returns (eigenvalues_real, eigenvalues_imag).
     /// For symmetric matrices, imaginary parts will be zero.
@@ -312,5 +330,42 @@ mod tests {
             vec![3, 3],
         );
         approx_eq(a.det(), -306.0, 1e-8);
+    }
+
+    // ===== Norm tests =====
+
+    #[test]
+    fn test_norm_l2() {
+        // ||[3, 4]|| = 5
+        let a = CrowTensor::from_vec(vec![3.0, 4.0], vec![2]);
+        approx_eq(a.norm(2.0), 5.0, 1e-12);
+    }
+
+    #[test]
+    fn test_norm_l1() {
+        // L1([3, -4, 5]) = 12
+        let a = CrowTensor::from_vec(vec![3.0, -4.0, 5.0], vec![3]);
+        approx_eq(a.norm(1.0), 12.0, 1e-12);
+    }
+
+    #[test]
+    fn test_norm_linf() {
+        // L∞([-3, 7, -5]) = 7
+        let a = CrowTensor::from_vec(vec![-3.0, 7.0, -5.0], vec![3]);
+        approx_eq(a.norm(f64::INFINITY), 7.0, 1e-12);
+    }
+
+    #[test]
+    fn test_norm_lp() {
+        // L3([1, 2, 3]) = (1 + 8 + 27)^(1/3) = 36^(1/3)
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
+        approx_eq(a.norm(3.0), 36.0_f64.powf(1.0 / 3.0), 1e-12);
+    }
+
+    #[test]
+    fn test_norm_l2_2d() {
+        // Frobenius norm of [[1,2],[3,4]] = sqrt(1+4+9+16) = sqrt(30)
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        approx_eq(a.norm(2.0), 30.0_f64.sqrt(), 1e-12);
     }
 }

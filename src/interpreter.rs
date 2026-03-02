@@ -1629,6 +1629,20 @@ impl Interpreter {
                 ];
                 Ok(CrowValue::ok(Value::Array(result)))
             }
+            "norm" => {
+                if args.is_empty() || args.len() > 2 { return Err(format!("math.norm: expected 1-2 arguments, got {}", args.len())); }
+                let t = to_tensor(&args[0])?;
+                let p = if args.len() == 2 {
+                    match &args[1].value {
+                        Value::Int(i) => *i as f64,
+                        Value::Float(f) => *f,
+                        _ => return Err("math.norm: p must be a number".into()),
+                    }
+                } else {
+                    2.0
+                };
+                Ok(CrowValue::ok(Value::Float(t.norm(p))))
+            }
 
             _ => Err(format!("math.{}: unknown math function", name)),
         }
@@ -4304,6 +4318,20 @@ mod tests {
         let val = get_var("use math\na = math.eye[3]\nx = math.det[a]\n", "x");
         if let Value::Float(f) = val.value { assert!((f - 1.0).abs() < 1e-10); }
         else { panic!("expected Float"); }
+    }
+
+    #[test]
+    fn test_math_norm_l2() {
+        let val = get_var("use math\nx = math.norm[math.linspace[3, 4, 2]]\n", "x");
+        if let Value::Float(f) = val.value { assert!((f - 5.0).abs() < 1e-10); }
+        else { panic!("expected Float, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_math_norm_l1() {
+        let val = get_var("use math\nx = math.norm[math.linspace[1, 3, 3], 1]\n", "x");
+        if let Value::Float(f) = val.value { assert!((f - 6.0).abs() < 1e-10); }
+        else { panic!("expected Float, got {:?}", val.value); }
     }
 
     #[test]
