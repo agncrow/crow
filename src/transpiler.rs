@@ -2348,6 +2348,19 @@ impl Transpiler {
                                 "prod" => format!("{}.prod()", arg_strs[0]),
                                 "argmax" => format!("{}.argmax() as i64", arg_strs[0]),
                                 "argmin" => format!("{}.argmin() as i64", arg_strs[0]),
+                                // Cumulative ops
+                                "cumsum" => format!("{}.cumsum()", arg_strs[0]),
+                                "cumprod" => format!("{}.cumprod()", arg_strs[0]),
+                                // Combining ops
+                                "concat" if arg_strs.len() >= 3 => format!("{}.concat(&{}, {} as usize)", arg_strs[0], arg_strs[1], arg_strs[2]),
+                                "concat" => format!("{}.concat(&{}, 0)", arg_strs[0], arg_strs[1]),
+                                "stack" if arg_strs.len() >= 2 => format!("CrowTensor::stack(&{}, {} as usize)", arg_strs[0], arg_strs[1]),
+                                "stack" => format!("CrowTensor::stack(&{}, 0)", arg_strs[0]),
+                                // Sorting & selection
+                                "argsort" => format!("{}.argsort()", arg_strs[0]),
+                                "topk" => format!("{}.topk({} as usize)", arg_strs[0], arg_strs[1]),
+                                "unique" => format!("{}.unique()", arg_strs[0]),
+                                "where" => format!("{}.where_cond(&{}, &{})", arg_strs[0], arg_strs[1], arg_strs[2]),
                                 // Shape ops
                                 "reshape" => {
                                     let shape_args: Vec<String> = arg_strs[1..].iter().map(|a| format!("{} as usize", a)).collect();
@@ -3867,5 +3880,59 @@ mod tests {
     fn test_math_prod_axis_transpile() {
         let rust = transpile("use math\nx = math.prod[math.ones[2, 3], 0]\n");
         assert!(rust.contains(".prod_axis("), "should emit .prod_axis()\n{}", rust);
+    }
+
+    // ===== Sorting & selection transpiler tests =====
+
+    #[test]
+    fn test_math_argsort_transpile() {
+        let rust = transpile("use math\nx = math.argsort[math.ones[5]]\n");
+        assert!(rust.contains(".argsort()"), "should emit .argsort()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_topk_transpile() {
+        let rust = transpile("use math\nx = math.topk[math.ones[5], 3]\n");
+        assert!(rust.contains(".topk("), "should emit .topk()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_unique_transpile() {
+        let rust = transpile("use math\nx = math.unique[math.ones[5]]\n");
+        assert!(rust.contains(".unique()"), "should emit .unique()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_where_transpile() {
+        let rust = transpile("use math\nx = math.where[math.ones[3], math.ones[3], math.zeros[3]]\n");
+        assert!(rust.contains(".where_cond("), "should emit .where_cond()\n{}", rust);
+    }
+
+    // ===== Cumulative ops transpiler tests =====
+
+    #[test]
+    fn test_math_cumsum_transpile() {
+        let rust = transpile("use math\nx = math.cumsum[math.ones[5]]\n");
+        assert!(rust.contains(".cumsum()"), "should emit .cumsum()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_cumprod_transpile() {
+        let rust = transpile("use math\nx = math.cumprod[math.ones[5]]\n");
+        assert!(rust.contains(".cumprod()"), "should emit .cumprod()\n{}", rust);
+    }
+
+    // ===== Combining ops transpiler tests =====
+
+    #[test]
+    fn test_math_concat_transpile() {
+        let rust = transpile("use math\nx = math.concat[math.ones[3], math.ones[2]]\n");
+        assert!(rust.contains(".concat("), "should emit .concat()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_stack_transpile() {
+        let rust = transpile("use math\nx = math.stack[[math.ones[3], math.ones[3]]]\n");
+        assert!(rust.contains("CrowTensor::stack("), "should emit CrowTensor::stack()\n{}", rust);
     }
 }
