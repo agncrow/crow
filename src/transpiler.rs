@@ -18,6 +18,8 @@ pub struct Transpiler {
     pub needs_rayon: bool,
     /// Whether the transpiled code needs serde_json for JSON parsing/encoding
     pub needs_serde_json: bool,
+    /// Whether the transpiled code needs crow_runtime for CrowTensor
+    pub needs_crow_runtime: bool,
     /// Map of function name -> set of param names that should be passed by reference
     by_ref_params: std::collections::BTreeMap<String, std::collections::HashSet<String>>,
     /// By-ref params in the current function being emitted
@@ -51,6 +53,7 @@ impl Transpiler {
             cpu_count: None,
             needs_rayon: false,
             needs_serde_json: false,
+            needs_crow_runtime: false,
             by_ref_params: std::collections::BTreeMap::new(),
             current_ref_params: std::collections::HashSet::new(),
             modules: std::collections::HashSet::new(),
@@ -255,6 +258,16 @@ impl Transpiler {
         }
     }
 
+    /// Check if a CrowType contains NumArray anywhere.
+    fn type_uses_numarray(ty: &CrowType) -> bool {
+        match ty {
+            CrowType::NumArray(_) => true,
+            CrowType::Result(inner) => Self::type_uses_numarray(inner),
+            CrowType::Array(inner) => Self::type_uses_numarray(inner),
+            _ => false,
+        }
+    }
+
     /// Check if a CrowType contains Json anywhere.
     fn type_uses_json(ty: &CrowType) -> bool {
         match ty {
@@ -433,12 +446,23 @@ impl Transpiler {
         // Compute which params should be passed by reference
         self.compute_by_ref_params();
 
+        // Pre-scan: check if any variable uses NumArray type (sets needs_crow_runtime)
+        for ty in self.ctx.vars.values() {
+            if Self::type_uses_numarray(ty) {
+                self.needs_crow_runtime = true;
+                break;
+            }
+        }
+
         // Emit header — only import BTreeMap if actually used
         if self.program_uses_map() {
             self.emit_line("use std::collections::BTreeMap;");
         }
         if needs_par_iter || has_for {
             self.emit_line("use rayon::prelude::*;");
+        }
+        if self.needs_crow_runtime {
+            self.emit_line("use crow_runtime::tensor::CrowTensor;");
         }
         self.emit_line("");
 
@@ -1043,8 +1067,9 @@ impl Transpiler {
 
                 // Determine element type for closure pattern
                 let iter_type = self.ctx.infer_expr(iter);
+                let is_numarray = matches!(&iter_type, CrowType::NumArray(_));
                 let elem_type = match &iter_type {
-                    CrowType::Array(inner) => *inner.clone(),
+                    CrowType::Array(inner) | CrowType::NumArray(inner) => *inner.clone(),
                     _ => CrowType::Unknown,
                 };
                 let is_copy = matches!(elem_type, CrowType::Int | CrowType::Float | CrowType::Bool);
@@ -1057,10 +1082,22 @@ impl Transpiler {
                 let mutates_outer = Self::for_body_mutates_outer(body, var, &self.declared);
                 let use_par = !forced_sequential && !mutates_outer;
 
+                // For NumArray, convert to Vec<f64> first, then iterate
+                let actual_iter_str = if is_numarray {
+                    let inner_is_int = matches!(elem_type, CrowType::Int);
+                    if inner_is_int {
+                        format!("{}.to_vec().iter().map(|&v| v as i64).collect::<Vec<i64>>()", iter_str)
+                    } else {
+                        format!("{}.to_vec()", iter_str)
+                    }
+                } else {
+                    iter_str.clone()
+                };
+
                 let saved = self.declared.clone();
                 if use_par {
                     let param = if is_copy { format!("|&{}|", var) } else { format!("|{}|", var) };
-                    self.emit_line(&format!("{}.par_iter().for_each({} {{", iter_str, param));
+                    self.emit_line(&format!("{}.par_iter().for_each({} {{", actual_iter_str, param));
                     self.indent += 1;
                     self.declared.insert(var.clone());
                     self.ctx.vars.insert(var.clone(), elem_type);
@@ -1069,7 +1106,7 @@ impl Transpiler {
                     self.emit_line("});");
                 } else {
                     let param = if is_copy { format!("&{}", var) } else { var.clone() };
-                    self.emit_line(&format!("for {} in {}.iter() {{", param, iter_str));
+                    self.emit_line(&format!("for {} in {}.iter() {{", param, actual_iter_str));
                     self.indent += 1;
                     self.declared.insert(var.clone());
                     self.ctx.vars.insert(var.clone(), elem_type);
@@ -1270,18 +1307,62 @@ impl Transpiler {
                     result
                 } else {
                     // No CrowResult operands — simple arithmetic
-                    match (&lt_inner, &rt_inner) {
-                        (CrowType::Int, CrowType::Float) => format!("({}) as f64 {} {}", l, op_str, r),
-                        (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l, op_str, r),
-                        // String + is not allowed — use interpolation instead
-                        _ => format!("{} {} {}", l, op_str, r),
+                    // NumArray element-wise ops
+                    let l_is_numarray = matches!(&lt_inner, CrowType::NumArray(_));
+                    let r_is_numarray = matches!(&rt_inner, CrowType::NumArray(_));
+                    if l_is_numarray && r_is_numarray {
+                        // tensor op tensor
+                        let tensor_op = match op {
+                            BinOp::Add => "add",
+                            BinOp::Sub => "sub",
+                            BinOp::Mul => "mul",
+                            BinOp::Div => "div",
+                            BinOp::Eq => return format!("{} == {}", l, r),
+                            BinOp::Ne => return format!("{} != {}", l, r),
+                            _ => return format!("{} {} {}", l, op_str, r),
+                        };
+                        format!("{}.{}(&{})", l, tensor_op, r)
+                    } else if l_is_numarray && matches!(&rt_inner, CrowType::Int | CrowType::Float) {
+                        // tensor op scalar
+                        let scalar_op = match op {
+                            BinOp::Add => "add_scalar",
+                            BinOp::Sub => "sub_scalar",
+                            BinOp::Mul => "mul_scalar",
+                            BinOp::Div => "div_scalar",
+                            _ => return format!("{} {} {}", l, op_str, r),
+                        };
+                        format!("{}.{}({} as f64)", l, scalar_op, r)
+                    } else if r_is_numarray && matches!(&lt_inner, CrowType::Int | CrowType::Float) {
+                        // scalar op tensor
+                        let scalar_op = match op {
+                            BinOp::Add => "add_scalar",
+                            BinOp::Sub => return format!("({}).neg().add_scalar({} as f64)", r, l),
+                            BinOp::Mul => "mul_scalar",
+                            BinOp::Div => return format!("{{ let _t = &{}; CrowTensor::from_vec(_t.to_vec().iter().map(|&v| ({} as f64) / v).collect(), _t.shape().to_vec()) }}", r, l),
+                            _ => return format!("{} {} {}", l, op_str, r),
+                        };
+                        format!("{}.{}({} as f64)", r, scalar_op, l)
+                    } else {
+                        match (&lt_inner, &rt_inner) {
+                            (CrowType::Int, CrowType::Float) => format!("({}) as f64 {} {}", l, op_str, r),
+                            (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l, op_str, r),
+                            // String + is not allowed — use interpolation instead
+                            _ => format!("{} {} {}", l, op_str, r),
+                        }
                     }
                 }
             }
             Expr::UnaryOp { op, expr: e } => {
                 let inner = self.expr_to_string(e);
                 match op {
-                    UnaryOp::Neg => format!("(-{})", inner),
+                    UnaryOp::Neg => {
+                        let ty = self.ctx.infer_expr(e);
+                        if matches!(ty, CrowType::NumArray(_)) {
+                            format!("{}.neg()", inner)
+                        } else {
+                            format!("(-{})", inner)
+                        }
+                    }
                     UnaryOp::Not => format!("(!{})", inner),
                 }
             }
@@ -1476,6 +1557,10 @@ impl Transpiler {
                         return format!("({}).to_lowercase()", arg_strs[0]);
                     }
                     if name == "join" && arg_strs.len() == 2 {
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        if matches!(ty, CrowType::NumArray(_)) {
+                            return format!("{}.to_vec().iter().map(|v| {{ let i = *v; if i == (i as i64) as f64 && i.is_finite() {{ (i as i64).to_string() }} else {{ i.to_string() }} }}).collect::<Vec<String>>().join(&{})", arg_strs[0], arg_strs[1]);
+                        }
                         return format!("{}.iter().map(|s| s.to_string()).collect::<Vec<String>>().join(&{})", arg_strs[0], arg_strs[1]);
                     }
                     if name == "starts" && arg_strs.len() == 2 {
@@ -1526,6 +1611,7 @@ impl Transpiler {
                     if name == "contains" && arg_strs.len() == 2 {
                         let ty = self.ctx.infer_expr(&args[0]);
                         return match ty {
+                            CrowType::NumArray(_) => format!("{}.to_vec().contains(&({} as f64))", arg_strs[0], arg_strs[1]),
                             CrowType::Str => format!("({}).contains(&*{})", arg_strs[0], arg_strs[1]),
                             _ => format!("({}).contains(&{})", arg_strs[0], arg_strs[1]),
                         };
@@ -1533,28 +1619,46 @@ impl Transpiler {
                     if name == "slice" && arg_strs.len() == 3 {
                         let ty = self.ctx.infer_expr(&args[0]);
                         return match ty {
+                            CrowType::NumArray(_) => format!("{}.slice(0, ({}) as usize, ({}) as usize)", arg_strs[0], arg_strs[1], arg_strs[2]),
                             CrowType::Str => format!("({})[({}) as usize..({}) as usize].to_string()", arg_strs[0], arg_strs[1], arg_strs[2]),
                             _ => format!("({})[({}) as usize..({}) as usize].to_vec()", arg_strs[0], arg_strs[1], arg_strs[2]),
                         };
                     }
                     // Immutable collection builtins (return new values)
                     if name == "push" && arg_strs.len() == 2 {
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        if matches!(ty, CrowType::NumArray(_)) {
+                            return format!("{{ let mut tmp = {}.to_vec(); tmp.push({} as f64); CrowTensor::from_vec(tmp, vec![{}.len() + 1]) }}", arg_strs[0], arg_strs[1], arg_strs[0]);
+                        }
                         return format!("{{ let mut tmp = {}.clone(); tmp.push({}); tmp }}", arg_strs[0], arg_strs[1]);
                     }
                     if name == "pop" && arg_strs.len() == 1 {
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        if matches!(ty, CrowType::NumArray(_)) {
+                            return format!("{{ let mut tmp = {}.to_vec(); tmp.pop(); CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", arg_strs[0]);
+                        }
                         return format!("{{ let mut tmp = {}.clone(); tmp.pop(); tmp }}", arg_strs[0]);
                     }
                     if name == "sort" {
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        if matches!(ty, CrowType::NumArray(_)) {
+                            return format!("{{ let mut tmp = {}.to_vec(); tmp.sort_by(|a, b| a.partial_cmp(b).unwrap()); CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", arg_strs[0]);
+                        }
                         return format!("{{ let mut tmp = {}.clone(); tmp.sort(); tmp }}", arg_strs[0]);
                     }
                     if name == "reverse" && arg_strs.len() == 1 {
                         let ty = self.ctx.infer_expr(&args[0]);
                         return match ty {
+                            CrowType::NumArray(_) => format!("{{ let mut tmp = {}.to_vec(); tmp.reverse(); CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", arg_strs[0]),
                             CrowType::Str => format!("({}).chars().rev().collect::<String>()", arg_strs[0]),
                             _ => format!("{{ let mut tmp = {}.clone(); tmp.reverse(); tmp }}", arg_strs[0]),
                         };
                     }
                     if name == "append" && arg_strs.len() == 2 {
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        if matches!(ty, CrowType::NumArray(_)) {
+                            return format!("{{ let mut tmp = {}.to_vec(); tmp.extend({}.to_vec()); CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", arg_strs[0], arg_strs[1]);
+                        }
                         return format!("{{ let mut tmp = {}.clone(); tmp.extend({}.iter().cloned()); tmp }}", arg_strs[0], arg_strs[1]);
                     }
                     // --- Map builtins ---
@@ -1653,7 +1757,7 @@ impl Transpiler {
                             CrowType::Float => "\"float\"".to_string(),
                             CrowType::Str => "\"str\"".to_string(),
                             CrowType::Bool => "\"bool\"".to_string(),
-                            CrowType::Array(_) => "\"array\"".to_string(),
+                            CrowType::Array(_) | CrowType::NumArray(_) => "\"array\"".to_string(),
                             CrowType::Map(_) => "\"map\"".to_string(),
                             CrowType::Fn(_, _) => "\"fn\"".to_string(),
                             CrowType::Void => "\"none\"".to_string(),
@@ -1736,6 +1840,12 @@ impl Transpiler {
                         name.to_string()
                     };
                     match inner_type {
+                        CrowType::NumArray(inner) => {
+                            // CrowTensor indexing with negative index support
+                            let idx = &arg_strs[0];
+                            let cast = if matches!(inner.as_ref(), CrowType::Int) { " as i64" } else { "" };
+                            return format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.get_flat(_idx){} }}", idx, base_name, base_name, cast);
+                        }
                         CrowType::Array(_) => {
                             // Array indexing with negative index support
                             let idx = &arg_strs[0];
@@ -1803,6 +1913,11 @@ impl Transpiler {
                 let callee_type = self.ctx.infer_expr(callee);
                 let callee_str = self.expr_to_string(callee);
                 match &callee_type {
+                    CrowType::NumArray(inner) => {
+                        let idx = &arg_strs[0];
+                        let cast = if matches!(inner.as_ref(), CrowType::Int) { " as i64" } else { "" };
+                        format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.get_flat(_idx){} }}", idx, callee_str, callee_str, cast)
+                    }
                     CrowType::Array(_) => {
                         let idx = &arg_strs[0];
                         format!("{}[{{ let _i = {}; if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }} }}]", callee_str, idx, callee_str)
@@ -1836,7 +1951,7 @@ impl Transpiler {
                 // Map Crow's .len to Rust's .len()
                 if field == "len" {
                     let obj_type = self.ctx.infer_expr(object);
-                    if matches!(obj_type, CrowType::Array(_) | CrowType::Str) {
+                    if matches!(obj_type, CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Str) {
                         return format!("{}.len() as i64", obj);
                     }
                 }
@@ -1884,6 +1999,17 @@ impl Transpiler {
                 } else {
                     CrowType::Unknown
                 };
+                // All-numeric arrays become CrowTensor
+                if matches!(inner_type, CrowType::Int | CrowType::Float) && !items.is_empty() {
+                    let arr_type = self.ctx.infer_expr(&Expr::Array(items.clone()));
+                    if matches!(arr_type, CrowType::NumArray(_)) {
+                        let vals: Vec<String> = items.iter()
+                            .map(|i| format!("{} as f64", self.expr_to_string(i)))
+                            .collect();
+                        let n = items.len();
+                        return format!("CrowTensor::from_vec(vec![{}], vec![{}])", vals.join(", "), n);
+                    }
+                }
                 let vals: Vec<String> = if let CrowType::Fn(_, _) = &inner_type {
                     // Cast each item to fn pointer type to avoid Rust's distinct fn item types
                     let fn_type = inner_type.to_rust_type();
@@ -1988,11 +2114,24 @@ impl Transpiler {
 
         // Determine element type of the iterator for the closure pattern
         let iter_type = self.ctx.infer_expr(iter);
+        let is_numarray = matches!(&iter_type, CrowType::NumArray(_));
         let elem_type = match &iter_type {
-            CrowType::Array(inner) => *inner.clone(),
+            CrowType::Array(inner) | CrowType::NumArray(inner) => *inner.clone(),
             _ => CrowType::Unknown,
         };
         let is_copy = matches!(elem_type, CrowType::Int | CrowType::Float | CrowType::Bool);
+
+        // For NumArray, convert to Vec first
+        let iter_str = if is_numarray {
+            let inner_is_int = matches!(elem_type, CrowType::Int);
+            if inner_is_int {
+                format!("{}.to_vec().iter().map(|&v| v as i64).collect::<Vec<i64>>()", iter_str)
+            } else {
+                format!("{}.to_vec()", iter_str)
+            }
+        } else {
+            iter_str
+        };
 
         // Build the closure parameter pattern
         let param_pattern = if is_copy {
@@ -2896,5 +3035,82 @@ mod tests {
     fn test_string_negative_index_transpile() {
         let rust = transpile("s = 'hello'\nx = s[-1]\n");
         assert!(rust.contains("if _i < 0"), "should handle negative string index\n{}", rust);
+    }
+
+    // ===== NumArray transpiler tests =====
+
+    #[test]
+    fn test_numarray_literal_transpile() {
+        let rust = transpile("x = [1, 2, 3]\n");
+        assert!(rust.contains("CrowTensor::from_vec"), "numeric array should use CrowTensor::from_vec\n{}", rust);
+        assert!(rust.contains("as f64"), "elements should be cast to f64\n{}", rust);
+        assert!(rust.contains("vec![3]"), "shape should be [3]\n{}", rust);
+    }
+
+    #[test]
+    fn test_numarray_import_transpile() {
+        let rust = transpile("x = [1, 2, 3]\n");
+        assert!(rust.contains("use crow_runtime::tensor::CrowTensor"), "should import CrowTensor\n{}", rust);
+    }
+
+    #[test]
+    fn test_numarray_add_transpile() {
+        let rust = transpile("a = [1, 2, 3]\nb = [4, 5, 6]\nc = a + b\n");
+        assert!(rust.contains(".add(&"), "NumArray + NumArray should use .add()\n{}", rust);
+    }
+
+    #[test]
+    fn test_numarray_scalar_mul_transpile() {
+        let rust = transpile("a = [1, 2, 3]\nb = a * 2\n");
+        assert!(rust.contains(".mul_scalar("), "NumArray * scalar should use .mul_scalar()\n{}", rust);
+    }
+
+    #[test]
+    fn test_numarray_neg_transpile() {
+        let rust = transpile("a = [1, 2, 3]\nb = -a\n");
+        assert!(rust.contains(".neg()"), "negating NumArray should use .neg()\n{}", rust);
+    }
+
+    #[test]
+    fn test_numarray_indexing_transpile() {
+        let rust = transpile("nums = [10, 20, 30]\nx = nums[0]\n");
+        assert!(rust.contains("get_flat"), "NumArray indexing should use get_flat\n{}", rust);
+    }
+
+    #[test]
+    fn test_numarray_negative_index_transpile() {
+        let rust = transpile("nums = [10, 20, 30]\nx = nums[-1]\n");
+        assert!(rust.contains("get_flat"), "NumArray negative indexing should use get_flat\n{}", rust);
+        assert!(rust.contains("if _i < 0"), "should handle negative index\n{}", rust);
+    }
+
+    #[test]
+    fn test_numarray_type_builtin_transpile() {
+        let rust = transpile("x = type[[1, 2]]\n");
+        assert!(rust.contains("\"array\""), "type[[1,2]] should produce 'array'\n{}", rust);
+    }
+
+    #[test]
+    fn test_numarray_len_field_transpile() {
+        let rust = transpile("a = [1, 2, 3]\nn = a.len\n");
+        assert!(rust.contains(".len() as i64"), "NumArray .len should use .len() as i64\n{}", rust);
+    }
+
+    #[test]
+    fn test_numarray_sort_transpile() {
+        let rust = transpile("a = [3, 1, 2]\nb = sort[a]\n");
+        assert!(rust.contains("sort_by") || rust.contains("CrowTensor::from_vec"), "NumArray sort should produce CrowTensor\n{}", rust);
+    }
+
+    #[test]
+    fn test_numarray_contains_transpile() {
+        let rust = transpile("a = [1, 2, 3]\nb = contains[a, 2]\n");
+        assert!(rust.contains("to_vec().contains"), "NumArray contains should use to_vec().contains\n{}", rust);
+    }
+
+    #[test]
+    fn test_numarray_for_loop_transpile() {
+        let rust = transpile("cpu[1]\na = [1, 2, 3]\nfor x in a\n    log['{x}']\n");
+        assert!(rust.contains("to_vec()"), "for loop over NumArray should use to_vec()\n{}", rust);
     }
 }
