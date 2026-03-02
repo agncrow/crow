@@ -1234,7 +1234,11 @@ impl Interpreter {
                             Ok(CrowValue::ok(Value::Float(v)))
                         }
                     }
-                    _ => Err("array index must be an integer".to_string()),
+                    Value::NumArray(idx_tensor) => {
+                        // Advanced indexing: gather by index array
+                        Ok(CrowValue::ok(Value::NumArray(tensor.gather(idx_tensor))))
+                    }
+                    _ => Err("array index must be an integer or tensor".to_string()),
                 }
             }
             Value::Str(s) => {
@@ -4634,6 +4638,45 @@ mod tests {
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[2, 3]);
             assert_eq!(t.to_vec(), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+
+    // ===== Broadcasting tests =====
+
+    #[test]
+    fn test_broadcast_add() {
+        let val = get_var("use math\na = math.reshape[math.linspace[1, 3, 3], 3, 1]\nb = math.reshape[math.linspace[10, 40, 4], 1, 4]\nx = a + b\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.shape(), &[3, 4]);
+            assert_eq!(t.to_vec(), vec![11.0, 21.0, 31.0, 41.0, 12.0, 22.0, 32.0, 42.0, 13.0, 23.0, 33.0, 43.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_broadcast_elem_mul() {
+        let val = get_var("use math\na = math.reshape[math.linspace[1, 3, 3], 3, 1]\nb = math.reshape[math.linspace[1, 2, 2], 1, 2]\nx = a .* b\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.shape(), &[3, 2]);
+            assert_eq!(t.to_vec(), vec![1.0, 2.0, 2.0, 4.0, 3.0, 6.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    // ===== Advanced indexing (gather) tests =====
+
+    #[test]
+    fn test_gather_by_tensor() {
+        let val = get_var("use math\na = math.linspace[10, 50, 5]\nidx = math.linspace[0, 2, 3]\nx = a[idx]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), vec![10.0, 20.0, 30.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_gather_repeated() {
+        let val = get_var("use math\na = math.linspace[10, 30, 3]\nidx = math.linspace[0, 0, 3]\nx = a[idx]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), vec![10.0, 10.0, 10.0]);
         } else { panic!("expected NumArray"); }
     }
 

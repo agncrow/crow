@@ -1055,7 +1055,16 @@ impl TypeContext {
                 let callee_type = self.infer_expr(callee);
                 match callee_type {
                     CrowType::Array(inner) => *inner,
-                    CrowType::NumArray(inner) => *inner,
+                    CrowType::NumArray(inner) => {
+                        // Advanced indexing: tensor[tensor] → tensor (gather)
+                        if !args.is_empty() {
+                            let idx_type = self.infer_expr(&args[0]);
+                            if matches!(idx_type, CrowType::NumArray(_)) {
+                                return CrowType::NumArray(inner);
+                            }
+                        }
+                        *inner
+                    }
                     CrowType::Map(inner) => *inner,
                     CrowType::Json => CrowType::Json,
                     CrowType::Fn(_, ret) => *ret,
