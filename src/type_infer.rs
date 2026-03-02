@@ -951,6 +951,31 @@ impl TypeContext {
                     }
                     return base;
                 }
+                // Built-in math module: math.func[args]
+                if let Expr::FieldAccess { object, field } = callee.as_ref() {
+                    if let Expr::Ident(mod_name) = object.as_ref() {
+                        if mod_name == "math" {
+                            return match field.as_str() {
+                                // Tensor creation → NumArray(Float)
+                                "zeros" | "ones" | "eye" | "rand" | "randn" | "linspace"
+                                | "arange" | "full" | "diag" | "tensor" => CrowType::NumArray(Box::new(CrowType::Float)),
+                                // Element-wise → NumArray(Float)
+                                "exp" | "log" | "sqrt" | "sin" | "cos" | "abs" => CrowType::NumArray(Box::new(CrowType::Float)),
+                                // Shape ops → NumArray(Float)
+                                "reshape" | "flatten" | "transpose" => CrowType::NumArray(Box::new(CrowType::Float)),
+                                // Linalg returning tensor
+                                "matmul" | "solve" | "inv" | "cholesky" => CrowType::NumArray(Box::new(CrowType::Float)),
+                                // Linalg returning scalar
+                                "det" => CrowType::Float,
+                                // Reductions returning scalar
+                                "sum" | "mean" | "min" | "max" => CrowType::Float,
+                                // Decompositions returning arrays of tensors
+                                "svd" | "qr" | "eigen" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
+                                _ => CrowType::Unknown,
+                            };
+                        }
+                    }
+                }
                 // Module call: module.func[args] or module.Struct[args]
                 if let Expr::FieldAccess { object, field } = callee.as_ref() {
                     if let Expr::Ident(_mod_name) = object.as_ref() {

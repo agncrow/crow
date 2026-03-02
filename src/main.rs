@@ -1412,6 +1412,12 @@ fn expand_module_imports(
     let mut expanded = Vec::new();
     for stmt in stmts {
         if let ast::Stmt::Use { path } = stmt {
+            // Built-in modules: skip file lookup
+            if path == "math" {
+                expanded.push(stmt.clone());
+                continue;
+            }
+
             let module_name = path.rsplit('/').next().unwrap_or(path).to_string();
 
             // Circular import detection

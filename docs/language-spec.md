@@ -709,6 +709,75 @@ use math
 result = math.sqrt[16]    --- 4 ---
 ```
 
+### Built-in Module: `math`
+
+The `math` module is built in — no file needed. It provides tensor creation, element-wise operations, reductions, shape operations, and linear algebra.
+
+#### Tensor Creation
+
+| Function | Description |
+|---|---|
+| `math.zeros[d1, d2, ...]` | Tensor of zeros with given shape |
+| `math.ones[d1, d2, ...]` | Tensor of ones with given shape |
+| `math.full[d1, d2, ..., value]` | Tensor filled with `value` (last arg) |
+| `math.eye[n]` | n×n identity matrix |
+| `math.diag[tensor]` | Extract diagonal from a 2D tensor |
+| `math.linspace[start, end, n]` | `n` evenly spaced values from `start` to `end` |
+| `math.arange[start, end, step]` | Values from `start` to `end` by `step` |
+| `math.rand[d1, d2, ...]` | Uniform random values in [0, 1) |
+| `math.randn[d1, d2, ...]` | Normal random values (mean=0, std=1) |
+| `math.tensor[array]` | Convert an array to a tensor |
+
+#### Element-wise Operations
+
+| Function | Description |
+|---|---|
+| `math.exp[t]` | Element-wise exponential |
+| `math.log[t]` | Element-wise natural log |
+| `math.sqrt[t]` | Element-wise square root |
+| `math.sin[t]` | Element-wise sine |
+| `math.cos[t]` | Element-wise cosine |
+| `math.abs[t]` | Element-wise absolute value |
+
+#### Reductions
+
+| Function | Returns |
+|---|---|
+| `math.sum[t]` | Sum of all elements (float) |
+| `math.mean[t]` | Mean of all elements (float) |
+| `math.min[t]` | Minimum element (float) |
+| `math.max[t]` | Maximum element (float) |
+
+#### Shape Operations
+
+| Function | Description |
+|---|---|
+| `math.reshape[t, d1, d2, ...]` | Reshape to new dimensions |
+| `math.flatten[t]` | Flatten to 1D |
+| `math.transpose[t]` | Transpose (swap last two axes) |
+
+#### Linear Algebra
+
+| Function | Description |
+|---|---|
+| `math.matmul[a, b]` | Matrix multiplication |
+| `math.solve[a, b]` | Solve linear system Ax = b |
+| `math.inv[a]` | Matrix inverse |
+| `math.det[a]` | Determinant (returns float) |
+| `math.svd[a]` | SVD → returns [U, S, Vt] |
+| `math.qr[a]` | QR decomposition → returns [Q, R] |
+| `math.cholesky[a]` | Cholesky (L*L^T) for symmetric positive-definite |
+| `math.eigen[a]` | Eigenvalues → returns [real, imag] |
+
+```
+use math
+
+a = math.zeros[3, 3]
+b = math.eye[3]
+c = math.matmul[a, b]
+d = math.det[b]           --- 1.0 ---
+```
+
 ### File Structure
 
 Each file is a module. The file path is the module path.

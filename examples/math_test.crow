@@ -1,0 +1,59 @@
+use math
+
+--- tensor creation ---
+a = math.zeros[2, 3]
+log[a]
+
+b = math.ones[2, 3]
+log[b]
+
+c = math.eye[3]
+log[c]
+
+d = math.linspace[0, 1, 5]
+log[d]
+
+e = math.arange[0, 5, 1]
+log[e]
+
+f = math.full[2, 2, 7.0]
+log[f]
+
+--- element-wise math ---
+g = math.exp[d]
+log[g]
+
+h = math.sqrt[b]
+log[h]
+
+--- reductions ---
+log[math.sum[b]]
+log[math.mean[b]]
+log[math.min[d]]
+log[math.max[d]]
+
+--- shape ops ---
+i = math.reshape[b, 3, 2]
+log[i]
+
+j = math.flatten[c]
+log[j]
+
+k = math.transpose[c]
+log[k]
+
+--- linear algebra ---
+m1 = math.eye[2]
+m2 = math.full[2, 2, 2.0]
+log[math.matmul[m1, m2]]
+log[math.det[m1]]
+log[math.inv[m1]]
+
+--- qr decomposition ---
+qr = math.qr[c]
+log[qr]
+
+--- diag ---
+v = math.diag[c]
+log[v]
+
