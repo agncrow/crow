@@ -2335,11 +2335,19 @@ impl Transpiler {
                                 "sinh" => format!("{}.sinh()", arg_strs[0]),
                                 "cosh" => format!("{}.cosh()", arg_strs[0]),
                                 "tanh" => format!("{}.tanh()", arg_strs[0]),
-                                // Reductions (return scalars)
+                                // Reductions (return scalar or tensor if axis given)
+                                "sum" if arg_strs.len() >= 2 => format!("{}.sum_axis({} as usize)", arg_strs[0], arg_strs[1]),
                                 "sum" => format!("{}.sum()", arg_strs[0]),
+                                "mean" if arg_strs.len() >= 2 => format!("{}.mean_axis({} as usize)", arg_strs[0], arg_strs[1]),
                                 "mean" => format!("{}.mean()", arg_strs[0]),
+                                "min" if arg_strs.len() >= 2 => format!("{}.min_axis({} as usize)", arg_strs[0], arg_strs[1]),
                                 "min" => format!("{}.min()", arg_strs[0]),
+                                "max" if arg_strs.len() >= 2 => format!("{}.max_axis({} as usize)", arg_strs[0], arg_strs[1]),
                                 "max" => format!("{}.max()", arg_strs[0]),
+                                "prod" if arg_strs.len() >= 2 => format!("{}.prod_axis({} as usize)", arg_strs[0], arg_strs[1]),
+                                "prod" => format!("{}.prod()", arg_strs[0]),
+                                "argmax" => format!("{}.argmax() as i64", arg_strs[0]),
+                                "argmin" => format!("{}.argmin() as i64", arg_strs[0]),
                                 // Shape ops
                                 "reshape" => {
                                     let shape_args: Vec<String> = arg_strs[1..].iter().map(|a| format!("{} as usize", a)).collect();
@@ -3821,5 +3829,43 @@ mod tests {
     fn test_tensor_mul_is_matmul_transpile() {
         let rust = transpile("use math\nx = math.eye[2] * math.eye[2]\n");
         assert!(rust.contains(".matmul("), "* on tensors should emit .matmul()\n{}", rust);
+    }
+
+    // ===== Reduction tests: prod, argmax, argmin =====
+
+    #[test]
+    fn test_math_prod_transpile() {
+        let rust = transpile("use math\nx = math.prod[math.ones[3]]\n");
+        assert!(rust.contains(".prod()"), "should emit .prod()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_argmax_transpile() {
+        let rust = transpile("use math\nx = math.argmax[math.ones[3]]\n");
+        assert!(rust.contains(".argmax()"), "should emit .argmax()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_argmin_transpile() {
+        let rust = transpile("use math\nx = math.argmin[math.ones[3]]\n");
+        assert!(rust.contains(".argmin()"), "should emit .argmin()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_sum_axis_transpile() {
+        let rust = transpile("use math\nx = math.sum[math.ones[2, 3], 0]\n");
+        assert!(rust.contains(".sum_axis("), "should emit .sum_axis()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_max_axis_transpile() {
+        let rust = transpile("use math\nx = math.max[math.ones[2, 3], 1]\n");
+        assert!(rust.contains(".max_axis("), "should emit .max_axis()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_prod_axis_transpile() {
+        let rust = transpile("use math\nx = math.prod[math.ones[2, 3], 0]\n");
+        assert!(rust.contains(".prod_axis("), "should emit .prod_axis()\n{}", rust);
     }
 }

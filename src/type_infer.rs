@@ -1015,8 +1015,15 @@ impl TypeContext {
                                 "solve" | "inv" | "cholesky" => CrowType::NumArray(Box::new(CrowType::Float)),
                                 // Linalg returning scalar
                                 "det" => CrowType::Float,
-                                // Reductions returning scalar
-                                "sum" | "mean" | "min" | "max" => CrowType::Float,
+                                // Reductions: scalar if no axis, NumArray if axis given
+                                "sum" | "mean" | "min" | "max" | "prod" => {
+                                    if args.len() >= 2 {
+                                        CrowType::NumArray(Box::new(CrowType::Float))
+                                    } else {
+                                        CrowType::Float
+                                    }
+                                }
+                                "argmax" | "argmin" => CrowType::Int,
                                 // Decompositions returning arrays of tensors
                                 "svd" | "qr" | "eigen" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
                                 _ => CrowType::Unknown,

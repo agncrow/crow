@@ -1455,11 +1455,54 @@ impl Interpreter {
             "cosh" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.cosh()))) }
             "tanh" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.tanh()))) }
 
-            // Reductions (return scalars)
-            "sum" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::Float(t.sum()))) }
-            "mean" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::Float(t.mean()))) }
-            "min" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::Float(t.min()))) }
-            "max" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::Float(t.max()))) }
+            // Reductions (return scalars, or tensor if axis given)
+            "sum" => {
+                let t = to_tensor(&args[0])?;
+                if args.len() >= 2 {
+                    let axis = to_f64(&args[1])? as usize;
+                    Ok(CrowValue::ok(Value::NumArray(t.sum_axis(axis))))
+                } else {
+                    Ok(CrowValue::ok(Value::Float(t.sum())))
+                }
+            }
+            "mean" => {
+                let t = to_tensor(&args[0])?;
+                if args.len() >= 2 {
+                    let axis = to_f64(&args[1])? as usize;
+                    Ok(CrowValue::ok(Value::NumArray(t.mean_axis(axis))))
+                } else {
+                    Ok(CrowValue::ok(Value::Float(t.mean())))
+                }
+            }
+            "min" => {
+                let t = to_tensor(&args[0])?;
+                if args.len() >= 2 {
+                    let axis = to_f64(&args[1])? as usize;
+                    Ok(CrowValue::ok(Value::NumArray(t.min_axis(axis))))
+                } else {
+                    Ok(CrowValue::ok(Value::Float(t.min())))
+                }
+            }
+            "max" => {
+                let t = to_tensor(&args[0])?;
+                if args.len() >= 2 {
+                    let axis = to_f64(&args[1])? as usize;
+                    Ok(CrowValue::ok(Value::NumArray(t.max_axis(axis))))
+                } else {
+                    Ok(CrowValue::ok(Value::Float(t.max())))
+                }
+            }
+            "prod" => {
+                let t = to_tensor(&args[0])?;
+                if args.len() >= 2 {
+                    let axis = to_f64(&args[1])? as usize;
+                    Ok(CrowValue::ok(Value::NumArray(t.prod_axis(axis))))
+                } else {
+                    Ok(CrowValue::ok(Value::Float(t.prod())))
+                }
+            }
+            "argmax" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::Int(t.argmax() as i64))) }
+            "argmin" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::Int(t.argmin() as i64))) }
 
             // Shape ops
             "reshape" => {
@@ -4426,6 +4469,57 @@ mod tests {
             !val.ok
         });
     }
+
+    // ===== Reduction tests: prod, argmax, argmin =====
+
+    #[test]
+    fn test_math_prod() {
+        let val = get_var("use math\nx = math.prod[math.tensor[[2, 3, 4]]]\n", "x");
+        if let Value::Float(f) = val.value { assert!((f - 24.0).abs() < 1e-10); }
+        else { panic!("expected Float"); }
+    }
+
+    #[test]
+    fn test_math_argmax() {
+        let val = get_var("use math\nx = math.argmax[math.tensor[[1, 5, 3]]]\n", "x");
+        assert!(matches!(val.value, Value::Int(1)));
+    }
+
+    #[test]
+    fn test_math_argmin() {
+        let val = get_var("use math\nx = math.argmin[math.tensor[[3, 1, 4]]]\n", "x");
+        assert!(matches!(val.value, Value::Int(1)));
+    }
+
+    #[test]
+    fn test_math_sum_axis() {
+        // [[1,2,3],[4,5,6]] → sum axis 0 → [5,7,9]
+        let val = get_var("use math\na = math.reshape[math.linspace[1, 6, 6], 2, 3]\nx = math.sum[a, 0]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.shape(), &[3]);
+            assert_eq!(t.to_vec(), &[5.0, 7.0, 9.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_math_max_axis() {
+        let val = get_var("use math\na = math.reshape[math.linspace[1, 6, 6], 2, 3]\nx = math.max[a, 0]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.shape(), &[3]);
+            assert_eq!(t.to_vec(), &[4.0, 5.0, 6.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_math_prod_axis() {
+        let val = get_var("use math\na = math.reshape[math.linspace[1, 4, 4], 2, 2]\nx = math.prod[a, 0]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.shape(), &[2]);
+            assert_eq!(t.to_vec(), &[3.0, 8.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+
 
 
     #[test]
