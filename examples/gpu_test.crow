@@ -1,0 +1,31 @@
+--- GPU directive test ---
+--- Enable GPU for tensor operations ---
+use math
+
+gpu[1]
+
+--- Create tensors (auto-placed on GPU when available) ---
+a = math.zeros[3]
+b = math.ones[3]
+
+--- Element-wise ops dispatch to GPU shaders when on GPU ---
+c = a + b
+log['ones: {c}']
+
+d = math.linspace[0, 1, 5]
+log['linspace: {d}']
+
+--- Scalar ops ---
+e = c * 2
+log['scaled: {e}']
+
+--- Reductions ---
+s = math.sum[e]
+log['sum: {s}']
+
+--- Math ops ---
+f = math.exp[b]
+log['exp ones: {f}']
+
+log['gpu test done']
+

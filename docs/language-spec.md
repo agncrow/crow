@@ -1045,6 +1045,16 @@ fn task_b[]
 
 `gpu[n]` specifies intent — "use n GPUs." `gpu[]` uses all available GPUs. The language does not expose any GPU vendor API. The compiler decides what is GPU-eligible (numeric operations on arrays) and what falls back to CPU (string ops, I/O, map lookups).
 
+#### Implementation
+
+When `gpu[]` or `gpu[n]` is called, a global GPU-enabled flag is set. This has two effects:
+
+1. **Tensor auto-placement**: Tensor creation functions (`zeros`, `ones`, `full`, `arange`, `linspace`, `eye`, `rand`, `randn`) automatically place data on GPU memory when the flag is set and a GPU is available.
+
+2. **Op auto-dispatch**: Element-wise operations (`+`, `-`, `*`, `/`, `neg`, `abs`, `exp`, `log`, `sqrt`, `sin`, `cos`) and scalar operations automatically dispatch to GPU compute shaders (WGSL via wgpu) when both operands are on GPU. Reductions (`sum`) also dispatch to GPU. If tensors are on CPU, the CPU path is used as fallback.
+
+GPU uses f32 internally (wgpu limitation). CrowTensor uses f64. Conversion happens transparently during GPU upload/download, with ~7 significant digits of precision on GPU vs ~15 on CPU.
+
 ### Distributed Support
 
 `nodes[n]` specifies distributed training across multiple machines. The compiler handles data sharding, gradient synchronization, and communication automatically — no explicit `allreduce`, `broadcast`, `scatter`, or `gather` calls.
