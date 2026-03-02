@@ -858,6 +858,8 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | `math.qr[a]` | QR decomposition → returns [Q, R] |
 | `math.cholesky[a]` | Cholesky (L*L^T) for symmetric positive-definite |
 | `math.eigen[a]` | Eigenvalues → returns [real, imag] |
+| `math.norm[x]` | L2 (Euclidean) norm (returns float) |
+| `math.norm[x, p]` | Lp norm (p=1 for L1, math.inf for L∞) |
 
 #### Constants
 

@@ -1014,7 +1014,7 @@ impl TypeContext {
                                 // matmul removed — use * operator instead
                                 "solve" | "inv" | "cholesky" => CrowType::NumArray(Box::new(CrowType::Float)),
                                 // Linalg returning scalar
-                                "det" => CrowType::Float,
+                                "det" | "norm" => CrowType::Float,
                                 // Reductions: scalar if no axis, NumArray if axis given
                                 "sum" | "mean" | "min" | "max" | "prod" => {
                                     if args.len() >= 2 {
