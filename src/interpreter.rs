@@ -5,6 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use rayon::prelude::*;
 
+use crow_runtime::tensor::CrowTensor;
+
 use crate::ast::*;
 use crate::lexer::Lexer;
 use crate::parallel::{group_into_waves, stmt_writes};
@@ -553,6 +555,45 @@ impl Interpreter {
                             Err("array index must be an integer".to_string())
                         }
                     }
+                    Value::NumArray(tensor) => {
+                        if let Value::Int(i) = &idx_val.value {
+                            let len = tensor.len() as i64;
+                            let resolved = if *i < 0 { len + *i } else { *i };
+                            if resolved >= 0 && (resolved as usize) < tensor.len() {
+                                // Convert NumArray to Array for mutation
+                                let mut items: Vec<CrowValue> = tensor.to_vec().into_iter()
+                                    .map(|v| {
+                                        if v == (v as i64) as f64 && v.is_finite() {
+                                            CrowValue::ok(Value::Int(v as i64))
+                                        } else {
+                                            CrowValue::ok(Value::Float(v))
+                                        }
+                                    })
+                                    .collect();
+                                items[resolved as usize] = new_val;
+                                // Try to convert back to NumArray
+                                let all_numeric = items.iter().all(|v| {
+                                    v.ok && matches!(v.value, Value::Int(_) | Value::Float(_))
+                                });
+                                if all_numeric {
+                                    let data: Vec<f64> = items.iter().map(|v| match &v.value {
+                                        Value::Int(n) => *n as f64,
+                                        Value::Float(f) => *f,
+                                        _ => unreachable!(),
+                                    }).collect();
+                                    let n = data.len();
+                                    *val = Value::NumArray(CrowTensor::from_vec(data, vec![n]));
+                                } else {
+                                    *val = Value::Array(items);
+                                }
+                                Ok(())
+                            } else {
+                                Err(format!("index {} out of bounds (len {})", i, tensor.len()))
+                            }
+                        } else {
+                            Err("array index must be an integer".to_string())
+                        }
+                    }
                     Value::Map(map) => {
                         if let Value::Str(key) = &idx_val.value {
                             map.insert(key.clone(), new_val);
@@ -652,6 +693,17 @@ impl Interpreter {
         }
         let items = match &iter_val.value {
             Value::Array(items) => items.clone(),
+            Value::NumArray(tensor) => {
+                tensor.to_vec().into_iter()
+                    .map(|v| {
+                        if v == (v as i64) as f64 && v.is_finite() {
+                            CrowValue::ok(Value::Int(v as i64))
+                        } else {
+                            CrowValue::ok(Value::Float(v))
+                        }
+                    })
+                    .collect()
+            }
             _ => return Err("for loop requires an array".to_string()),
         };
 
@@ -794,6 +846,7 @@ impl Interpreter {
             Value::Float(n) => *n != 0.0,
             Value::Str(s) => !s.is_empty(),
             Value::Array(l) => !l.is_empty(),
+            Value::NumArray(t) => !t.is_empty(),
             Value::Done => false,
             _ => true,
         }
@@ -807,6 +860,7 @@ impl Interpreter {
             (Value::Float(x), Value::Int(y)) => *x == (*y as f64),
             (Value::Str(x), Value::Str(y)) => x == y,
             (Value::Bool(x), Value::Bool(y)) => x == y,
+            (Value::NumArray(x), Value::NumArray(y)) => x.to_vec() == y.to_vec(),
             _ => false,
         }
     }
@@ -848,7 +902,21 @@ impl Interpreter {
                     .iter()
                     .map(|e| self.eval_expr(e))
                     .collect::<Result<_, _>>()?;
-                Ok(CrowValue::ok(Value::Array(vals)))
+                // If all elements are numeric (Int or Float), create a NumArray
+                let all_numeric = !vals.is_empty() && vals.iter().all(|v| {
+                    v.ok && matches!(v.value, Value::Int(_) | Value::Float(_))
+                });
+                if all_numeric {
+                    let data: Vec<f64> = vals.iter().map(|v| match &v.value {
+                        Value::Int(n) => *n as f64,
+                        Value::Float(f) => *f,
+                        _ => unreachable!(),
+                    }).collect();
+                    let len = data.len();
+                    Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))))
+                } else {
+                    Ok(CrowValue::ok(Value::Array(vals)))
+                }
             }
             Expr::Map(pairs) => {
                 let mut map = BTreeMap::new();
@@ -870,7 +938,21 @@ impl Interpreter {
                     .into_iter()
                     .filter(|v| !matches!(v.value, Value::Done))
                     .collect();
-                Ok(CrowValue::ok(Value::Array(filtered)))
+                // If all results are numeric, create NumArray
+                let all_numeric = !filtered.is_empty() && filtered.iter().all(|v| {
+                    v.ok && matches!(v.value, Value::Int(_) | Value::Float(_))
+                });
+                if all_numeric {
+                    let data: Vec<f64> = filtered.iter().map(|v| match &v.value {
+                        Value::Int(n) => *n as f64,
+                        Value::Float(f) => *f,
+                        _ => unreachable!(),
+                    }).collect();
+                    let len = data.len();
+                    Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))))
+                } else {
+                    Ok(CrowValue::ok(Value::Array(filtered)))
+                }
             }
         }
     }
@@ -991,6 +1073,34 @@ impl Interpreter {
                     _ => Err("array index must be an integer".to_string()),
                 }
             }
+            Value::NumArray(tensor) => {
+                // NumArray[index] - indexing
+                if arg_vals.len() != 1 {
+                    return Err("array indexing requires exactly one argument".to_string());
+                }
+                let index_val = arg_vals[0].unwrap_or_propagate()?;
+                match index_val {
+                    Value::Int(idx) => {
+                        let idx = *idx;
+                        let len = tensor.len() as i64;
+                        let resolved = if idx < 0 { len + idx } else { idx };
+                        if resolved < 0 || resolved >= len {
+                            return Err(format!(
+                                "index {} out of bounds for array of length {}",
+                                idx, tensor.len()
+                            ));
+                        }
+                        let v = tensor.get_flat(resolved as usize);
+                        // Return as int if it's a whole number
+                        if v == (v as i64) as f64 && v.is_finite() {
+                            Ok(CrowValue::ok(Value::Int(v as i64)))
+                        } else {
+                            Ok(CrowValue::ok(Value::Float(v)))
+                        }
+                    }
+                    _ => Err("array index must be an integer".to_string()),
+                }
+            }
             Value::Str(s) => {
                 // string[index] - character access
                 if arg_vals.len() != 1 {
@@ -1098,7 +1208,7 @@ impl Interpreter {
                         Value::Float(_) => "float".to_string(),
                         Value::Str(_) => "str".to_string(),
                         Value::Bool(_) => "bool".to_string(),
-                        Value::Array(_) => "array".to_string(),
+                        Value::Array(_) | Value::NumArray(_) => "array".to_string(),
                         Value::Map(_) => "map".to_string(),
                         Value::Fn(_) => "fn".to_string(),
                         Value::StructDef(sd) => sd.name.clone(),
@@ -1326,6 +1436,18 @@ impl Interpreter {
                             .collect();
                         Ok(CrowValue::ok(Value::Str(parts.join(sep.as_str()))))
                     }
+                    (Value::NumArray(t), Value::Str(sep)) => {
+                        let parts: Vec<String> = t.to_vec().iter()
+                            .map(|v| {
+                                if *v == (*v as i64) as f64 && v.is_finite() {
+                                    format!("{}", *v as i64)
+                                } else {
+                                    format!("{}", v)
+                                }
+                            })
+                            .collect();
+                        Ok(CrowValue::ok(Value::Str(parts.join(sep.as_str()))))
+                    }
                     _ => Err("join[] requires an array and a string separator".into()),
                 }
             }
@@ -1404,6 +1526,7 @@ impl Interpreter {
                 if args.len() != 1 { return Err("len[] takes exactly 1 argument".into()); }
                 match args[0].unwrap_or_propagate()? {
                     Value::Array(items) => Ok(CrowValue::ok(Value::Int(items.len() as i64))),
+                    Value::NumArray(t) => Ok(CrowValue::ok(Value::Int(t.len() as i64))),
                     Value::Str(s) => Ok(CrowValue::ok(Value::Int(s.len() as i64))),
                     Value::Map(m) => Ok(CrowValue::ok(Value::Int(m.len() as i64))),
                     _ => Err("length[] requires an array, string, or map".into()),
@@ -1430,6 +1553,15 @@ impl Interpreter {
                         });
                         Ok(CrowValue::ok(Value::Bool(found)))
                     }
+                    Value::NumArray(t) => {
+                        let needle = match args[1].unwrap_or_propagate()? {
+                            Value::Int(n) => *n as f64,
+                            Value::Float(f) => *f,
+                            _ => return Err("contains[] on numeric array requires a number".into()),
+                        };
+                        let found = t.to_vec().iter().any(|v| *v == needle);
+                        Ok(CrowValue::ok(Value::Bool(found)))
+                    }
                     Value::Str(s) => {
                         match args[1].unwrap_or_propagate()? {
                             Value::Str(sub) => Ok(CrowValue::ok(Value::Bool(s.contains(sub.as_str())))),
@@ -1451,6 +1583,20 @@ impl Interpreter {
                                     Ok(CrowValue::ok(Value::Array(vec![])))
                                 } else {
                                     Ok(CrowValue::ok(Value::Array(items[s..e].to_vec())))
+                                }
+                            }
+                            _ => Err("slice[] requires integer start and end".into()),
+                        }
+                    }
+                    Value::NumArray(t) => {
+                        match (args[1].unwrap_or_propagate()?, args[2].unwrap_or_propagate()?) {
+                            (Value::Int(start), Value::Int(end)) => {
+                                let s = (*start).max(0) as usize;
+                                let e = (*end as usize).min(t.len());
+                                if s >= e {
+                                    Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(vec![], vec![0]))))
+                                } else {
+                                    Ok(CrowValue::ok(Value::NumArray(t.slice(0, s, e))))
                                 }
                             }
                             _ => Err("slice[] requires integer start and end".into()),
@@ -1518,6 +1664,17 @@ impl Interpreter {
                         new_items.push(args[1].clone());
                         Ok(CrowValue::ok(Value::Array(new_items)))
                     }
+                    Value::NumArray(t) => {
+                        let new_elem = match args[1].unwrap_or_propagate()? {
+                            Value::Int(n) => *n as f64,
+                            Value::Float(f) => *f,
+                            _ => return Err("push[] on numeric array requires a number".into()),
+                        };
+                        let mut data = t.to_vec();
+                        data.push(new_elem);
+                        let len = data.len();
+                        Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))))
+                    }
                     _ => Err("push[] requires an array".into()),
                 }
             }
@@ -1530,6 +1687,15 @@ impl Interpreter {
                         }
                         let new_items = items[..items.len() - 1].to_vec();
                         Ok(CrowValue::ok(Value::Array(new_items)))
+                    }
+                    Value::NumArray(t) => {
+                        if t.is_empty() {
+                            return Ok(CrowValue::error("pop from empty array", &self.trace_entry()));
+                        }
+                        let mut data = t.to_vec();
+                        data.pop();
+                        let len = data.len();
+                        Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))))
                     }
                     _ => Err("pop[] requires an array".into()),
                 }
@@ -1551,6 +1717,12 @@ impl Interpreter {
                         });
                         Ok(CrowValue::ok(Value::Array(new_items)))
                     }
+                    Value::NumArray(t) => {
+                        let mut data = t.to_vec();
+                        data.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                        let len = data.len();
+                        Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))))
+                    }
                     _ => Err("sort[] requires an array".into()),
                 }
             }
@@ -1561,6 +1733,12 @@ impl Interpreter {
                         let mut new_items = items.clone();
                         new_items.reverse();
                         Ok(CrowValue::ok(Value::Array(new_items)))
+                    }
+                    Value::NumArray(t) => {
+                        let mut data = t.to_vec();
+                        data.reverse();
+                        let len = data.len();
+                        Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))))
                     }
                     Value::Str(s) => {
                         Ok(CrowValue::ok(Value::Str(s.chars().rev().collect())))
@@ -1575,6 +1753,12 @@ impl Interpreter {
                         let mut new_items = items.clone();
                         new_items.extend(other.clone());
                         Ok(CrowValue::ok(Value::Array(new_items)))
+                    }
+                    (Value::NumArray(a), Value::NumArray(b)) => {
+                        let mut data = a.to_vec();
+                        data.extend(b.to_vec());
+                        let len = data.len();
+                        Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))))
                     }
                     _ => Err("append[] requires two arrays".into()),
                 }
@@ -1830,8 +2014,16 @@ impl Interpreter {
             }
             serde_json::Value::String(s) => CrowValue::ok(Value::Str(s.clone())),
             serde_json::Value::Array(arr) => {
-                let items: Vec<CrowValue> = arr.iter().map(|v| self.json_to_crow(v)).collect();
-                CrowValue::ok(Value::Array(items))
+                // Check if all elements are numeric
+                let all_numeric = !arr.is_empty() && arr.iter().all(|v| v.is_number());
+                if all_numeric {
+                    let data: Vec<f64> = arr.iter().map(|v| v.as_f64().unwrap_or(0.0)).collect();
+                    let len = data.len();
+                    CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len])))
+                } else {
+                    let items: Vec<CrowValue> = arr.iter().map(|v| self.json_to_crow(v)).collect();
+                    CrowValue::ok(Value::Array(items))
+                }
             }
             serde_json::Value::Object(obj) => {
                 let mut map = BTreeMap::new();
@@ -1862,6 +2054,19 @@ impl Interpreter {
             Value::Array(items) => {
                 let arr: Result<Vec<serde_json::Value>, String> = items.iter().map(|v| self.crow_to_json(v)).collect();
                 Ok(serde_json::Value::Array(arr?))
+            }
+            Value::NumArray(t) => {
+                let arr: Vec<serde_json::Value> = t.to_vec().iter().map(|v| {
+                    if *v == (*v as i64) as f64 && v.is_finite() {
+                        serde_json::Value::Number(serde_json::Number::from(*v as i64))
+                    } else {
+                        match serde_json::Number::from_f64(*v) {
+                            Some(n) => serde_json::Value::Number(n),
+                            None => serde_json::Value::Null,
+                        }
+                    }
+                }).collect();
+                Ok(serde_json::Value::Array(arr))
             }
             Value::Map(map) => {
                 let mut obj = serde_json::Map::new();
@@ -1899,6 +2104,11 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a + b))),
                 (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 + b))),
                 (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a + *b as f64))),
+                (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.add(b)))),
+                (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(a.add_scalar(*b as f64)))),
+                (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.add_scalar(*b)))),
+                (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.add_scalar(*a as f64)))),
+                (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.add_scalar(*a)))),
                 (Value::Str(_), Value::Str(_)) => Err("cannot use '+' with strings — use string interpolation instead".to_string()),
                 _ => Err("cannot add these types".to_string()),
             },
@@ -1907,6 +2117,11 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a - b))),
                 (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 - b))),
                 (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a - *b as f64))),
+                (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.sub(b)))),
+                (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(a.add_scalar(-(*b as f64))))),
+                (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.add_scalar(-*b)))),
+                (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.neg().add_scalar(*a as f64)))),
+                (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.neg().add_scalar(*a)))),
                 _ => Err("cannot subtract these types".to_string()),
             },
             BinOp::Mul => match (l, r) {
@@ -1914,6 +2129,11 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a * b))),
                 (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 * b))),
                 (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a * *b as f64))),
+                (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul(b)))),
+                (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(*b as f64)))),
+                (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(*b)))),
+                (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.mul_scalar(*a as f64)))),
+                (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.mul_scalar(*a)))),
                 _ => Err("cannot multiply these types".to_string()),
             },
             BinOp::Div => match (l, r) {
@@ -1927,6 +2147,17 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a / b))),
                 (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 / b))),
                 (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a / *b as f64))),
+                (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.div(b)))),
+                (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(1.0 / *b as f64)))),
+                (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(1.0 / *b)))),
+                (Value::Int(a), Value::NumArray(b)) => {
+                    let scalar_tensor = CrowTensor::full(b.shape().to_vec(), *a as f64);
+                    Ok(CrowValue::ok(Value::NumArray(scalar_tensor.div(b))))
+                }
+                (Value::Float(a), Value::NumArray(b)) => {
+                    let scalar_tensor = CrowTensor::full(b.shape().to_vec(), *a);
+                    Ok(CrowValue::ok(Value::NumArray(scalar_tensor.div(b))))
+                }
                 _ => Err("cannot divide these types".to_string()),
             },
             BinOp::Mod => match (l, r) {
@@ -1992,6 +2223,7 @@ impl Interpreter {
             UnaryOp::Neg => match v {
                 Value::Int(n) => Ok(CrowValue::ok(Value::Int(-n))),
                 Value::Float(n) => Ok(CrowValue::ok(Value::Float(-n))),
+                Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(t.neg()))),
                 _ => Err("cannot negate this type".to_string()),
             },
             UnaryOp::Not => {
@@ -2037,6 +2269,9 @@ impl Interpreter {
             match &obj.value {
                 Value::Array(items) => {
                     return Ok(CrowValue::ok(Value::Int(items.len() as i64)));
+                }
+                Value::NumArray(t) => {
+                    return Ok(CrowValue::ok(Value::Int(t.len() as i64)));
                 }
                 Value::Str(s) => {
                     return Ok(CrowValue::ok(Value::Int(s.len() as i64)));
@@ -2183,7 +2418,8 @@ mod tests {
     #[test]
     fn test_var_list() {
         let val = get_var("x = [1, 2, 3]\n", "x");
-        assert!(matches!(val.value, Value::Array(ref items) if items.len() == 3));
+        // All-numeric arrays become NumArray
+        assert!(matches!(val.value, Value::NumArray(ref t) if t.len() == 3));
     }
 
     #[test]
@@ -2314,26 +2550,13 @@ mod tests {
     #[test]
     fn test_for_as_expression() {
         let val = get_var("doubled = for x in [1, 2, 3]\n    x * 2\n", "doubled");
-        if let Value::Array(items) = &val.value {
-            assert_eq!(items.len(), 3);
-            assert!(matches!(items[0].value, Value::Int(2)));
-            assert!(matches!(items[1].value, Value::Int(4)));
-            assert!(matches!(items[2].value, Value::Int(6)));
-        } else {
-            panic!("expected list");
-        }
+        assert_eq!(format!("{}", val.value), "[2, 4, 6]");
     }
 
     #[test]
     fn test_for_as_expression_filter() {
         let val = get_var("evens = for x in [1, 2, 3, 4, 5]\n    if x % 2 eq 0\n        x\n", "evens");
-        if let Value::Array(items) = &val.value {
-            assert_eq!(items.len(), 2);
-            assert!(matches!(items[0].value, Value::Int(2)));
-            assert!(matches!(items[1].value, Value::Int(4)));
-        } else {
-            panic!("expected list");
-        }
+        assert_eq!(format!("{}", val.value), "[2, 4]");
     }
 
     // ===== §7: Structs =====
@@ -2856,55 +3079,31 @@ mod tests {
     #[test]
     fn test_push() {
         let val = get_var("x = push[[1, 2], 3]\n", "x");
-        if let Value::Array(items) = &val.value {
-            assert_eq!(items.len(), 3);
-            assert!(matches!(items[2].value, Value::Int(3)));
-        } else {
-            panic!("expected list");
-        }
+        assert_eq!(format!("{}", val.value), "[1, 2, 3]");
     }
 
     #[test]
     fn test_pop() {
         let val = get_var("x = pop[[1, 2, 3]]\n", "x");
-        if let Value::Array(items) = &val.value {
-            assert_eq!(items.len(), 2);
-        } else {
-            panic!("expected list");
-        }
+        assert_eq!(format!("{}", val.value), "[1, 2]");
     }
 
     #[test]
     fn test_append() {
         let val = get_var("x = append[[1, 2], [3, 4]]\n", "x");
-        if let Value::Array(items) = &val.value {
-            assert_eq!(items.len(), 4);
-        } else {
-            panic!("expected list");
-        }
+        assert_eq!(format!("{}", val.value), "[1, 2, 3, 4]");
     }
 
     #[test]
     fn test_sort() {
         let val = get_var("x = sort[[3, 1, 2]]\n", "x");
-        if let Value::Array(items) = &val.value {
-            assert!(matches!(items[0].value, Value::Int(1)));
-            assert!(matches!(items[1].value, Value::Int(2)));
-            assert!(matches!(items[2].value, Value::Int(3)));
-        } else {
-            panic!("expected list");
-        }
+        assert_eq!(format!("{}", val.value), "[1, 2, 3]");
     }
 
     #[test]
     fn test_reverse() {
         let val = get_var("x = reverse[[1, 2, 3]]\n", "x");
-        if let Value::Array(items) = &val.value {
-            assert!(matches!(items[0].value, Value::Int(3)));
-            assert!(matches!(items[2].value, Value::Int(1)));
-        } else {
-            panic!("expected list");
-        }
+        assert_eq!(format!("{}", val.value), "[3, 2, 1]");
     }
 
     #[test]
@@ -2922,13 +3121,7 @@ mod tests {
     #[test]
     fn test_slice() {
         let val = get_var("x = slice[[10, 20, 30, 40, 50], 1, 3]\n", "x");
-        if let Value::Array(items) = &val.value {
-            assert_eq!(items.len(), 2);
-            assert!(matches!(items[0].value, Value::Int(20)));
-            assert!(matches!(items[1].value, Value::Int(30)));
-        } else {
-            panic!("expected list");
-        }
+        assert_eq!(format!("{}", val.value), "[20, 30]");
     }
 
     #[test]
@@ -3215,5 +3408,148 @@ mod tests {
     fn test_string_index_via_variable() {
         let val = get_var("s = 'crow'\nx = s[2]\n", "x");
         assert_eq!(format!("{}", val.value), "o");
+    }
+
+    // ===== NumArray (CrowTensor integration) =====
+
+    #[test]
+    fn test_numarray_creation() {
+        let val = get_var("x = [1, 2, 3]\n", "x");
+        assert!(matches!(val.value, Value::NumArray(_)));
+        assert_eq!(format!("{}", val.value), "[1, 2, 3]");
+    }
+
+    #[test]
+    fn test_numarray_floats() {
+        let val = get_var("x = [1.5, 2.5, 3.5]\n", "x");
+        assert!(matches!(val.value, Value::NumArray(_)));
+        assert_eq!(format!("{}", val.value), "[1.5, 2.5, 3.5]");
+    }
+
+    #[test]
+    fn test_numarray_mixed_int_float() {
+        let val = get_var("x = [1, 2.5, 3]\n", "x");
+        assert!(matches!(val.value, Value::NumArray(_)));
+    }
+
+    #[test]
+    fn test_non_numeric_stays_array() {
+        let val = get_var("x = ['a', 'b']\n", "x");
+        assert!(matches!(val.value, Value::Array(_)));
+    }
+
+    #[test]
+    fn test_empty_array_stays_array() {
+        let val = get_var("x = []\n", "x");
+        assert!(matches!(val.value, Value::Array(_)));
+    }
+
+    #[test]
+    fn test_numarray_add() {
+        let val = get_var("x = [1, 2, 3] + [4, 5, 6]\n", "x");
+        assert_eq!(format!("{}", val.value), "[5, 7, 9]");
+    }
+
+    #[test]
+    fn test_numarray_sub() {
+        let val = get_var("x = [10, 20, 30] - [1, 2, 3]\n", "x");
+        assert_eq!(format!("{}", val.value), "[9, 18, 27]");
+    }
+
+    #[test]
+    fn test_numarray_mul() {
+        let val = get_var("x = [2, 3, 4] * [5, 6, 7]\n", "x");
+        assert_eq!(format!("{}", val.value), "[10, 18, 28]");
+    }
+
+    #[test]
+    fn test_numarray_div() {
+        let val = get_var("x = [10, 20, 30] / [2, 4, 5]\n", "x");
+        assert_eq!(format!("{}", val.value), "[5, 5, 6]");
+    }
+
+    #[test]
+    fn test_numarray_scalar_add() {
+        let val = get_var("x = [1, 2, 3] + 10\n", "x");
+        assert_eq!(format!("{}", val.value), "[11, 12, 13]");
+    }
+
+    #[test]
+    fn test_numarray_scalar_mul() {
+        let val = get_var("x = [1, 2, 3] * 2\n", "x");
+        assert_eq!(format!("{}", val.value), "[2, 4, 6]");
+    }
+
+    #[test]
+    fn test_scalar_numarray_add() {
+        let val = get_var("x = 10 + [1, 2, 3]\n", "x");
+        assert_eq!(format!("{}", val.value), "[11, 12, 13]");
+    }
+
+    #[test]
+    fn test_scalar_numarray_sub() {
+        let val = get_var("x = 10 - [1, 2, 3]\n", "x");
+        assert_eq!(format!("{}", val.value), "[9, 8, 7]");
+    }
+
+    #[test]
+    fn test_numarray_neg() {
+        let val = get_var("x = -[1, 2, 3]\n", "x");
+        assert_eq!(format!("{}", val.value), "[-1, -2, -3]");
+    }
+
+    #[test]
+    fn test_numarray_index() {
+        let val = get_var("x = [10, 20, 30][1]\n", "x");
+        assert!(matches!(val.value, Value::Int(20)));
+    }
+
+    #[test]
+    fn test_numarray_negative_index() {
+        let val = get_var("x = [10, 20, 30][-1]\n", "x");
+        assert!(matches!(val.value, Value::Int(30)));
+    }
+
+    #[test]
+    fn test_numarray_len() {
+        let val = get_var("x = len[[1, 2, 3, 4]]\n", "x");
+        assert!(matches!(val.value, Value::Int(4)));
+    }
+
+    #[test]
+    fn test_numarray_contains() {
+        let val = get_var("x = contains[[1, 2, 3], 2]\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_numarray_for_loop() {
+        // for-as-expression over a NumArray
+        let val = get_var("doubled = for x in [1, 2, 3]\n    x * 2\n", "doubled");
+        assert_eq!(format!("{}", val.value), "[2, 4, 6]");
+    }
+
+    #[test]
+    fn test_numarray_equality() {
+        let val = get_var("x = [1, 2, 3] eq [1, 2, 3]\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_numarray_type() {
+        let val = get_var("x = type[[1, 2, 3]]\n", "x");
+        assert_eq!(format!("{}", val.value), "array");
+    }
+
+    #[test]
+    fn test_numarray_join() {
+        let val = get_var("x = join[[1, 2, 3], ', ']\n", "x");
+        assert_eq!(format!("{}", val.value), "1, 2, 3");
+    }
+
+    #[test]
+    fn test_numarray_dot_len() {
+        let val = get_var("nums = [1, 2, 3]\nx = nums.len\n", "x");
+        assert!(matches!(val.value, Value::Int(3)));
     }
 }

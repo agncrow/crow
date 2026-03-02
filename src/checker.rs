@@ -803,6 +803,15 @@ fn value_to_expr(val: &CrowValue) -> Expr {
         Value::Array(items) => {
             Expr::Array(items.iter().map(|v| value_to_expr(v)).collect())
         }
+        Value::NumArray(t) => {
+            Expr::Array(t.to_vec().iter().map(|v| {
+                if *v == (*v as i64) as f64 && v.is_finite() {
+                    Expr::Int(*v as i64)
+                } else {
+                    Expr::Float(*v)
+                }
+            }).collect())
+        }
         _ => Expr::Str(format!("{}", val)),
     }
 }

@@ -589,6 +589,24 @@ Division is type-determined — one operator, no ambiguity:
 7.0 / 3      --- 2.3333...
 ```
 
+### Array Arithmetic
+
+Arithmetic operators (`+`, `-`, `*`, `/`) work element-wise on numeric arrays. Array-array operations require same-length arrays. Scalar-array operations broadcast the scalar.
+
+```
+[1, 2, 3] + [4, 5, 6]      --- [5, 7, 9] ---
+[10, 20, 30] - [1, 2, 3]   --- [9, 18, 27] ---
+[2, 3, 4] * [5, 6, 7]      --- [10, 18, 28] ---
+[10, 20, 30] / [2, 4, 5]   --- [5, 5, 6] ---
+
+[1, 2, 3] + 10              --- [11, 12, 13] ---
+[1, 2, 3] * 2               --- [2, 4, 6] ---
+10 - [1, 2, 3]              --- [9, 8, 7] ---
+-[1, 2, 3]                  --- [-1, -2, -3] ---
+```
+
+Internally, all-numeric arrays use a fast tensor representation for element-wise operations. This is transparent — numeric arrays behave identically to regular arrays for indexing, iteration, and all builtins.
+
 ### Expression Grouping
 
 Use `()` to group expressions and control evaluation order. Parentheses are **only** for grouping — function calls always use `[]`.

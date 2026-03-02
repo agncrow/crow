@@ -1,0 +1,57 @@
+--- NumArray: numeric arrays use fast tensor path ---
+
+--- creation ---
+nums = [1, 2, 3, 4, 5]
+log['nums: {nums}']
+log['type: {type[nums]}']
+log['len: {len[nums]}']
+
+--- element-wise arithmetic ---
+a = [1, 2, 3]
+b = [4, 5, 6]
+log['a + b: {a + b}']
+log['a - b: {a - b}']
+log['a * b: {a * b}']
+log['a / b: {a / b}']
+
+--- scalar operations ---
+log['a + 10: {a + 10}']
+log['a * 2: {a * 2}']
+log['10 - a: {10 - a}']
+log['-a: {-a}']
+
+--- indexing ---
+log['nums[0]: {nums[0]}']
+log['nums[-1]: {nums[-1]}']
+log['nums[2]: {nums[2]}']
+
+--- builtins ---
+log['contains 3: {contains[nums, 3]}']
+log['contains 99: {contains[nums, 99]}']
+log['slice: {slice[nums, 1, 3]}']
+log['sort desc: {sort[[5, 3, 1, 4, 2]]}']
+log['reverse: {reverse[nums]}']
+sep = ', '
+log['join: {join[nums, sep]}']
+log['push: {push[nums, 6]}']
+log['pop: {pop[nums]}']
+
+--- for-as-expression ---
+doubled = for x in a
+    x * 2
+log['doubled: {doubled}']
+
+--- float arrays ---
+floats = [1.5, 2.5, 3.5]
+log['floats: {floats}']
+log['floats + 1: {floats + 1}']
+
+--- mixed int/float ---
+mixed = [1, 2.5, 3]
+log['mixed: {mixed}']
+
+--- dot len ---
+log['nums.len: {nums.len}']
+
+log['done']
+

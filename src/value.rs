@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
+use crow_runtime::tensor::CrowTensor;
+
 /// Every value in Crow carries error metadata: ok, reason, kind, trace.
 /// Values auto-unwrap — you use them directly.
 #[derive(Debug, Clone)]
@@ -88,6 +90,7 @@ pub enum Value {
     Str(String),
     Bool(bool),
     Array(Vec<CrowValue>),
+    NumArray(CrowTensor),
     Map(BTreeMap<String, CrowValue>),
     Fn(FnValue),
     StructDef(StructDef),
@@ -138,6 +141,7 @@ impl Value {
             Value::Str(_) => "string",
             Value::Bool(_) => "bool",
             Value::Array(_) => "array",
+            Value::NumArray(_) => "array",
             Value::Map(_) => "map",
             Value::Fn(_) => "fn",
             Value::StructDef(_) => "struct",
@@ -152,6 +156,8 @@ impl Value {
         match (self, other) {
             // int and float are compatible
             (Value::Int(_), Value::Float(_)) | (Value::Float(_), Value::Int(_)) => true,
+            // Array and NumArray are compatible (both are "array")
+            (Value::Array(_), Value::NumArray(_)) | (Value::NumArray(_), Value::Array(_)) => true,
             // same variant is compatible
             _ => std::mem::discriminant(self) == std::mem::discriminant(other),
         }
@@ -172,6 +178,23 @@ impl fmt::Display for Value {
                         write!(f, ", ")?;
                     }
                     item.value.fmt_repr(f)?;
+                }
+                write!(f, "]")
+            }
+            Value::NumArray(tensor) => {
+                // Display 1D numeric arrays like regular arrays
+                let data = tensor.to_vec();
+                write!(f, "[")?;
+                for (i, v) in data.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    // Display as int if it's a whole number
+                    if *v == (*v as i64) as f64 && v.is_finite() {
+                        write!(f, "{}", *v as i64)?;
+                    } else {
+                        write!(f, "{}", v)?;
+                    }
                 }
                 write!(f, "]")
             }
