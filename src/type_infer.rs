@@ -1020,6 +1020,15 @@ impl TypeContext {
                 }
             }
             Expr::FieldAccess { object, field } => {
+                // Math module constants: math.pi, math.e, math.inf, math.nan
+                if let Expr::Ident(mod_name) = object.as_ref() {
+                    if mod_name == "math" {
+                        match field.as_str() {
+                            "pi" | "e" | "inf" | "nan" => return CrowType::Float,
+                            _ => {}
+                        }
+                    }
+                }
                 let obj_type = self.infer_expr(object);
                 // Error-value metadata fields
                 match field.as_str() {
@@ -1027,6 +1036,15 @@ impl TypeContext {
                     "reason" | "kind" => return CrowType::Str,
                     "trace" => return CrowType::Array(Box::new(CrowType::Str)),
                     _ => {}
+                }
+                // NumArray properties
+                if matches!(obj_type, CrowType::NumArray(_)) {
+                    match field.as_str() {
+                        "shape" => return CrowType::Array(Box::new(CrowType::Int)),
+                        "dtype" | "device" | "grad" => return CrowType::Str,
+                        "len" => return CrowType::Int,
+                        _ => {}
+                    }
                 }
                 if let CrowType::Struct(name) = obj_type {
                     if let Some(sig) = self.structs.get(&name) {

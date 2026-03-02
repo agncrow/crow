@@ -316,9 +316,14 @@ impl Interpreter {
     fn load_module(&mut self, module_path: &str) -> Result<(), String> {
         // Built-in module: math
         if module_path == "math" {
+            let mut bindings = BTreeMap::new();
+            bindings.insert("pi".to_string(), CrowValue::ok(Value::Float(std::f64::consts::PI)));
+            bindings.insert("e".to_string(), CrowValue::ok(Value::Float(std::f64::consts::E)));
+            bindings.insert("inf".to_string(), CrowValue::ok(Value::Float(f64::INFINITY)));
+            bindings.insert("nan".to_string(), CrowValue::ok(Value::Float(f64::NAN)));
             let module_val = CrowValue::ok(Value::Module(ModuleValue {
                 name: "math".to_string(),
-                bindings: BTreeMap::new(), // calls are intercepted in eval_call
+                bindings,
             }));
             self.env.set("math", module_val);
             return Ok(());
@@ -2717,6 +2722,30 @@ impl Interpreter {
             }
         }
 
+        // NumArray properties: .shape, .dtype, .device, .grad
+        if let Value::NumArray(t) = &obj.value {
+            match field {
+                "shape" => {
+                    let shape_vals: Vec<CrowValue> = t.shape().iter()
+                        .map(|&s| CrowValue::ok(Value::Int(s as i64)))
+                        .collect();
+                    return Ok(CrowValue::ok(Value::Array(shape_vals)));
+                }
+                "dtype" => {
+                    return Ok(CrowValue::ok(Value::Str("float".to_string())));
+                }
+                "device" => {
+                    let device_str = if t.is_gpu() { "gpu" } else { "cpu" };
+                    return Ok(CrowValue::ok(Value::Str(device_str.to_string())));
+                }
+                "grad" => {
+                    // For now, gradient is not stored on the tensor itself
+                    return Ok(CrowValue::ok(Value::Str("none".to_string())));
+                }
+                _ => return Err(format!("numarray has no property '{}'", field)),
+            }
+        }
+
         // struct and module field access
         match &obj.value {
             Value::StructInstance(si) => {
@@ -4146,6 +4175,70 @@ mod tests {
             !val.ok
         });
     }
+
+    #[test]
+    fn test_math_pi() {
+        let val = get_var("use math\nx = math.pi\n", "x");
+        if let Value::Float(f) = val.value {
+            assert!((f - std::f64::consts::PI).abs() < 1e-15);
+        } else { panic!("expected Float, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_math_e() {
+        let val = get_var("use math\nx = math.e\n", "x");
+        if let Value::Float(f) = val.value {
+            assert!((f - std::f64::consts::E).abs() < 1e-15);
+        } else { panic!("expected Float, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_math_inf() {
+        let val = get_var("use math\nx = math.inf\n", "x");
+        if let Value::Float(f) = val.value {
+            assert!(f.is_infinite() && f > 0.0);
+        } else { panic!("expected Float, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_math_nan() {
+        let val = get_var("use math\nx = math.nan\n", "x");
+        if let Value::Float(f) = val.value {
+            assert!(f.is_nan());
+        } else { panic!("expected Float, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_numarray_dtype() {
+        let val = get_var("use math\nx = math.ones[3]\ny = x.dtype\n", "y");
+        if let Value::Str(s) = &val.value { assert_eq!(s, "float"); }
+        else { panic!("expected Str, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_numarray_device() {
+        let val = get_var("use math\nx = math.ones[3]\ny = x.device\n", "y");
+        if let Value::Str(s) = &val.value { assert_eq!(s, "cpu"); }
+        else { panic!("expected Str, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_numarray_grad() {
+        let val = get_var("use math\nx = math.ones[3]\ny = x.grad\n", "y");
+        if let Value::Str(s) = &val.value { assert_eq!(s, "none"); }
+        else { panic!("expected Str, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_numarray_shape_property() {
+        let val = get_var("use math\nx = math.ones[2, 3]\ny = x.shape\n", "y");
+        if let Value::Array(items) = &val.value {
+            assert_eq!(items.len(), 2);
+            if let Value::Int(n) = items[0].value { assert_eq!(n, 2); } else { panic!("expected Int"); }
+            if let Value::Int(n) = items[1].value { assert_eq!(n, 3); } else { panic!("expected Int"); }
+        } else { panic!("expected Array, got {:?}", val.value); }
+    }
+
 
     #[test]
     fn test_gpu_call_sets_flag() {

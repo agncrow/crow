@@ -57,3 +57,16 @@ log[qr]
 v = math.diag[c]
 log[v]
 
+--- constants ---
+log[math.pi]
+log[math.e]
+log[math.inf]
+log[math.nan]
+
+--- properties ---
+log[b.shape]
+log[b.dtype]
+log[b.device]
+log[b.grad]
+log[b.len]
+
