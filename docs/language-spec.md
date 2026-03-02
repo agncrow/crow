@@ -1055,6 +1055,47 @@ When `gpu[]` or `gpu[n]` is called, a global GPU-enabled flag is set. This has t
 
 GPU uses f32 internally (wgpu limitation). CrowTensor uses f64. Conversion happens transparently during GPU upload/download, with ~7 significant digits of precision on GPU vs ~15 on CPU.
 
+### Automatic Differentiation (grad)
+
+`grad[f]` takes a function and returns a new function that computes the gradient of `f`. Uses forward-mode automatic differentiation with dual numbers.
+
+#### Single Parameter
+
+When `f` takes one parameter and returns a scalar, `grad[f]` returns a function that computes the derivative:
+
+```
+fn f[x]
+  x * x
+
+df = grad[f]
+log[df[3]]       --- 6 (derivative of x^2 at x=3 is 2*3=6) ---
+```
+
+#### Multiple Parameters
+
+When `f` takes multiple parameters, `grad[f]` returns a function that computes the gradient (array of partial derivatives):
+
+```
+fn g[x, y]
+  x * x + y * y
+
+dg = grad[g]
+log[dg[3, 4]]    --- [6, 8] (∂g/∂x=2x=6, ∂g/∂y=2y=8) ---
+```
+
+#### Supported Operations
+
+All arithmetic operations (`+`, `-`, `*`, `/`) and these math builtins are differentiable:
+
+- `sqrt` — derivative: 1/(2√x)
+- `abs` — derivative: sign(x)
+- `pow` — derivative: n·x^(n-1) for constant exponent
+- `floor`, `ceil`, `round` — derivative: 0 (piecewise constant)
+
+#### Implementation
+
+Uses forward-mode AD with dual numbers. Each number carries a value and a derivative component. For N parameters, N forward passes compute the full gradient. The `grad` builtin works identically in both the interpreter and transpiler.
+
 ### Distributed Support
 
 `nodes[n]` specifies distributed training across multiple machines. The compiler handles data sharding, gradient synchronization, and communication automatically — no explicit `allreduce`, `broadcast`, `scatter`, or `gather` calls.

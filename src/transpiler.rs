@@ -40,6 +40,12 @@ pub struct Transpiler {
     source_file: String,
     /// Counter for generating unique variable names in BinOp propagation
     binop_counter: usize,
+    /// Whether the transpiled code uses grad[] (needs CrowDual struct)
+    pub needs_grad: bool,
+    /// Set of function names that are passed to grad[] and need dual-mode versions
+    grad_functions: std::collections::HashSet<String>,
+    /// Flag: when true, we are emitting a dual-mode version of a function
+    emitting_dual: bool,
 }
 
 impl Transpiler {
@@ -64,6 +70,9 @@ impl Transpiler {
             current_function_name: String::new(),
             source_file: String::new(),
             binop_counter: 0,
+            needs_grad: false,
+            grad_functions: std::collections::HashSet::new(),
+            emitting_dual: false,
         }
     }
 
@@ -142,6 +151,74 @@ impl Transpiler {
             return kind == "gpu";
         }
         false
+    }
+
+    /// Recursively scan expressions for grad[func_name] calls and collect function names.
+    fn collect_grad_functions(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+        match expr {
+            Expr::Call { callee, args } => {
+                if let Expr::Ident(name) = callee.as_ref() {
+                    if name == "grad" && args.len() == 1 {
+                        if let Expr::Ident(fn_name) = &args[0] {
+                            out.insert(fn_name.clone());
+                        }
+                    }
+                }
+                // Recurse into callee and args
+                Self::collect_grad_functions(callee, out);
+                for a in args {
+                    Self::collect_grad_functions(a, out);
+                }
+            }
+            Expr::BinOp { left, right, .. } => {
+                Self::collect_grad_functions(left, out);
+                Self::collect_grad_functions(right, out);
+            }
+            Expr::UnaryOp { expr, .. } => {
+                Self::collect_grad_functions(expr, out);
+            }
+            Expr::Array(elems) => {
+                for e in elems {
+                    Self::collect_grad_functions(e, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Scan all statements for grad[func_name] calls.
+    fn scan_grad_functions(stmts: &[Stmt]) -> std::collections::HashSet<String> {
+        let mut out = std::collections::HashSet::new();
+        for stmt in stmts {
+            match stmt {
+                Stmt::Assign { value, .. } => Self::collect_grad_functions(value, &mut out),
+                Stmt::ExprStmt(e) => Self::collect_grad_functions(e, &mut out),
+                Stmt::If { condition, then_body, else_body, .. } => {
+                    Self::collect_grad_functions(condition, &mut out);
+                    let sub = Self::scan_grad_functions(then_body);
+                    out.extend(sub);
+                    if let Some(eb) = else_body {
+                        let sub = Self::scan_grad_functions(eb);
+                        out.extend(sub);
+                    }
+                }
+                Stmt::While { condition, body, .. } => {
+                    Self::collect_grad_functions(condition, &mut out);
+                    let sub = Self::scan_grad_functions(body);
+                    out.extend(sub);
+                }
+                Stmt::For { body, .. } => {
+                    let sub = Self::scan_grad_functions(body);
+                    out.extend(sub);
+                }
+                Stmt::FnDecl { body, .. } => {
+                    let sub = Self::scan_grad_functions(body);
+                    out.extend(sub);
+                }
+                _ => {}
+            }
+        }
+        out
     }
 
     /// Compute which function parameters should be passed by reference.
@@ -461,6 +538,28 @@ impl Transpiler {
         let needs_parallel_waves = Self::has_parallel_waves(stmts) || self.ctx.functions.values().any(|sig| Self::has_parallel_waves(&sig.body));
         self.needs_rayon = needs_par_iter || needs_parallel_waves || has_for;
 
+        // Scan for grad[] usage
+        let mut grad_fns = Self::scan_grad_functions(stmts);
+        // Also scan function bodies
+        for sig in self.ctx.functions.values() {
+            let sub = Self::scan_grad_functions(&sig.body);
+            grad_fns.extend(sub);
+        }
+        if !grad_fns.is_empty() {
+            self.needs_grad = true;
+            self.grad_functions = grad_fns.clone();
+            // Force grad-target function params to Float (they may be Unknown/String
+            // if the function is never called directly)
+            for fn_name in &grad_fns {
+                if let Some(sig) = self.ctx.functions.get_mut(fn_name) {
+                    for (_pname, ptype) in sig.params.iter_mut() {
+                        *ptype = CrowType::Float;
+                    }
+                    sig.return_type = CrowType::Float;
+                }
+            }
+        }
+
         // Compute which params should be passed by reference
         self.compute_by_ref_params();
 
@@ -506,6 +605,11 @@ impl Transpiler {
             self.indent -= 1;
             self.emit_line("}");
             self.emit_line("");
+        }
+
+        // Emit CrowDual struct if grad[] is used
+        if self.needs_grad {
+            self.emit_crow_dual_struct();
         }
 
         // Pre-scan: check if any variable uses Json type (sets needs_serde_json)
@@ -580,6 +684,14 @@ impl Transpiler {
                 }
             }
             self.emit_function(name);
+        }
+
+        // Emit dual-mode versions of functions passed to grad[]
+        if self.needs_grad {
+            let grad_fns: Vec<String> = self.grad_functions.iter().cloned().collect();
+            for name in &grad_fns {
+                self.emit_dual_function(name);
+            }
         }
 
         // Compute which top-level variables need `mut`
@@ -739,7 +851,17 @@ impl Transpiler {
             self.ctx.vars.insert(pname.clone(), ptype.clone());
         }
 
-        self.emit_stmts_parallel(&sig.body);
+        // For functions with non-void return type, convert last ExprStmt to Return
+        // so it becomes a tail expression (no semicolon) in Rust
+        let mut body = sig.body.clone();
+        if !matches!(sig.return_type, CrowType::Void) {
+            if let Some(last_idx) = body.iter().rposition(|s| !matches!(s, Stmt::Line(_))) {
+                if let Stmt::ExprStmt(e) = &body[last_idx] {
+                    body[last_idx] = Stmt::Return(Some(e.clone()));
+                }
+            }
+        }
+        self.emit_stmts_parallel(&body);
 
         self.declared = saved_declared;
         self.ctx.vars = saved_vars;
@@ -747,6 +869,170 @@ impl Transpiler {
         self.mutated_vars = saved_mutated;
         self.current_fn_return_type = saved_fn_return_type;
         self.current_function_name = saved_function_name;
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+    }
+
+    /// Emit the CrowDual struct with operator implementations for forward-mode AD.
+    fn emit_crow_dual_struct(&mut self) {
+        self.emit_line("#[derive(Debug, Clone, Copy)]");
+        self.emit_line("struct CrowDual { real: f64, dual: f64 }");
+        self.emit_line("impl CrowDual {");
+        self.indent += 1;
+        self.emit_line("fn new(real: f64, dual: f64) -> Self { CrowDual { real, dual } }");
+        self.emit_line("fn abs(self) -> Self { CrowDual { real: self.real.abs(), dual: self.dual * self.real.signum() } }");
+        self.emit_line("fn sqrt(self) -> Self { let s = self.real.sqrt(); CrowDual { real: s, dual: self.dual / (2.0 * s) } }");
+        self.emit_line("fn powf(self, n: CrowDual) -> Self { let r = self.real.powf(n.real); CrowDual { real: r, dual: r * (n.dual * self.real.ln() + n.real * self.dual / self.real) } }");
+        self.emit_line("fn powi_const(self, n: i64) -> Self { CrowDual { real: self.real.powi(n as i32), dual: (n as f64) * self.real.powi(n as i32 - 1) * self.dual } }");
+        self.emit_line("fn floor(self) -> CrowDual { CrowDual { real: self.real.floor(), dual: 0.0 } }");
+        self.emit_line("fn ceil(self) -> CrowDual { CrowDual { real: self.real.ceil(), dual: 0.0 } }");
+        self.emit_line("fn round(self) -> CrowDual { CrowDual { real: self.real.round(), dual: 0.0 } }");
+        self.indent -= 1;
+        self.emit_line("}");
+        // Implement Display to show only real part
+        self.emit_line("impl std::fmt::Display for CrowDual {");
+        self.indent += 1;
+        self.emit_line("fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { write!(f, \"{}\", self.real) }");
+        self.indent -= 1;
+        self.emit_line("}");
+        // Arithmetic ops
+        for (trait_name, op, body) in &[
+            ("Add", "+", "CrowDual { real: self.real + rhs.real, dual: self.dual + rhs.dual }"),
+            ("Sub", "-", "CrowDual { real: self.real - rhs.real, dual: self.dual - rhs.dual }"),
+            ("Mul", "*", "CrowDual { real: self.real * rhs.real, dual: self.dual * rhs.real + self.real * rhs.dual }"),
+            ("Div", "/", "CrowDual { real: self.real / rhs.real, dual: (self.dual * rhs.real - self.real * rhs.dual) / (rhs.real * rhs.real) }"),
+        ] {
+            self.emit_line(&format!("impl std::ops::{} for CrowDual {{", trait_name));
+            self.indent += 1;
+            self.emit_line("type Output = CrowDual;");
+            self.emit_line(&format!("fn {}(self, rhs: CrowDual) -> CrowDual {{ {} }}", op.to_lowercase().replace("+", "add").replace("-", "sub").replace("*", "mul").replace("/", "div"), body));
+            self.indent -= 1;
+            self.emit_line("}");
+        }
+        // Neg
+        self.emit_line("impl std::ops::Neg for CrowDual {");
+        self.indent += 1;
+        self.emit_line("type Output = CrowDual;");
+        self.emit_line("fn neg(self) -> CrowDual { CrowDual { real: -self.real, dual: -self.dual } }");
+        self.indent -= 1;
+        self.emit_line("}");
+        // Ops with f64 on both sides
+        for (trait_name, method, body_df, body_fd) in &[
+            ("Add", "add", "CrowDual { real: self.real + rhs, dual: self.dual }", "CrowDual { real: self + rhs.real, dual: rhs.dual }"),
+            ("Sub", "sub", "CrowDual { real: self.real - rhs, dual: self.dual }", "CrowDual { real: self - rhs.real, dual: -rhs.dual }"),
+            ("Mul", "mul", "CrowDual { real: self.real * rhs, dual: self.dual * rhs }", "CrowDual { real: self * rhs.real, dual: self * rhs.dual }"),
+            ("Div", "div", "CrowDual { real: self.real / rhs, dual: self.dual / rhs }", "CrowDual { real: self / rhs.real, dual: -self * rhs.dual / (rhs.real * rhs.real) }"),
+        ] {
+            // CrowDual op f64
+            self.emit_line(&format!("impl std::ops::{}<f64> for CrowDual {{", trait_name));
+            self.indent += 1;
+            self.emit_line("type Output = CrowDual;");
+            self.emit_line(&format!("fn {}(self, rhs: f64) -> CrowDual {{ {} }}", method, body_df));
+            self.indent -= 1;
+            self.emit_line("}");
+            // f64 op CrowDual
+            self.emit_line(&format!("impl std::ops::{}<CrowDual> for f64 {{", trait_name));
+            self.indent += 1;
+            self.emit_line("type Output = CrowDual;");
+            self.emit_line(&format!("fn {}(self, rhs: CrowDual) -> CrowDual {{ {} }}", method, body_fd));
+            self.indent -= 1;
+            self.emit_line("}");
+        }
+        // Ops with i64 on both sides
+        for (trait_name, method, body_di, body_id) in &[
+            ("Add", "add", "CrowDual { real: self.real + rhs as f64, dual: self.dual }", "CrowDual { real: self as f64 + rhs.real, dual: rhs.dual }"),
+            ("Sub", "sub", "CrowDual { real: self.real - rhs as f64, dual: self.dual }", "CrowDual { real: self as f64 - rhs.real, dual: -rhs.dual }"),
+            ("Mul", "mul", "CrowDual { real: self.real * rhs as f64, dual: self.dual * rhs as f64 }", "CrowDual { real: self as f64 * rhs.real, dual: self as f64 * rhs.dual }"),
+            ("Div", "div", "CrowDual { real: self.real / rhs as f64, dual: self.dual / rhs as f64 }", "CrowDual { real: self as f64 / rhs.real, dual: -(self as f64) * rhs.dual / (rhs.real * rhs.real) }"),
+        ] {
+            // CrowDual op i64
+            self.emit_line(&format!("impl std::ops::{}<i64> for CrowDual {{", trait_name));
+            self.indent += 1;
+            self.emit_line("type Output = CrowDual;");
+            self.emit_line(&format!("fn {}(self, rhs: i64) -> CrowDual {{ {} }}", method, body_di));
+            self.indent -= 1;
+            self.emit_line("}");
+            // i64 op CrowDual
+            self.emit_line(&format!("impl std::ops::{}<CrowDual> for i64 {{", trait_name));
+            self.indent += 1;
+            self.emit_line("type Output = CrowDual;");
+            self.emit_line(&format!("fn {}(self, rhs: CrowDual) -> CrowDual {{ {} }}", method, body_id));
+            self.indent -= 1;
+            self.emit_line("}");
+        }
+        // From conversions
+        self.emit_line("impl From<f64> for CrowDual { fn from(v: f64) -> Self { CrowDual { real: v, dual: 0.0 } } }");
+        self.emit_line("impl From<i64> for CrowDual { fn from(v: i64) -> Self { CrowDual { real: v as f64, dual: 0.0 } } }");
+        // PartialEq and PartialOrd for comparisons
+        self.emit_line("impl PartialEq for CrowDual { fn eq(&self, other: &Self) -> bool { self.real == other.real } }");
+        self.emit_line("impl PartialOrd for CrowDual { fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> { self.real.partial_cmp(&other.real) } }");
+        self.emit_line("");
+    }
+
+    /// Emit a dual-mode version of a function for use with grad[].
+    /// All numeric params become CrowDual, return type becomes CrowDual.
+    fn emit_dual_function(&mut self, name: &str) {
+        let sig = match self.ctx.functions.get(name) {
+            Some(s) => s.clone(),
+            None => return,
+        };
+
+        let params: Vec<String> = sig.params.iter()
+            .map(|(pname, _)| format!("{}: CrowDual", pname))
+            .collect();
+
+        let rust_name = format!("_dual_{}", Self::rust_fn_name(name));
+        self.emit_line(&format!("fn {}({}) -> CrowDual {{", rust_name, params.join(", ")));
+        self.indent += 1;
+
+        // Save state
+        let saved_declared = self.declared.clone();
+        let saved_vars = self.ctx.vars.clone();
+        let saved_ref_params = self.current_ref_params.clone();
+        let saved_mutated = self.mutated_vars.clone();
+        let saved_fn_return_type = self.current_fn_return_type.clone();
+        let saved_function_name = self.current_function_name.clone();
+        let saved_emitting_dual = self.emitting_dual;
+        self.declared.clear();
+        self.current_ref_params = std::collections::HashSet::new();
+        self.current_fn_return_type = Some(CrowType::Float); // placeholder
+        self.current_function_name = name.to_string();
+        self.emitting_dual = true;
+
+        // Compute mutated vars
+        let mut seen = std::collections::HashSet::new();
+        let mut mutated = std::collections::HashSet::new();
+        for (pname, _) in &sig.params {
+            seen.insert(pname.clone());
+        }
+        Self::collect_reassigned_vars(&sig.body, &mut seen, &mut mutated);
+        self.mutated_vars = mutated;
+
+        // Mark params as declared
+        for (pname, _) in &sig.params {
+            self.declared.insert(pname.clone());
+            self.ctx.vars.insert(pname.clone(), CrowType::Float);
+        }
+
+        // Convert last ExprStmt to Return for tail expression (no semicolon in Rust)
+        let mut body = sig.body.clone();
+        if let Some(last_idx) = body.iter().rposition(|s| !matches!(s, Stmt::Line(_))) {
+            if let Stmt::ExprStmt(e) = &body[last_idx] {
+                body[last_idx] = Stmt::Return(Some(e.clone()));
+            }
+        }
+        self.emit_stmts_parallel(&body);
+
+        // Restore state
+        self.emitting_dual = false;
+        self.declared = saved_declared;
+        self.ctx.vars = saved_vars;
+        self.current_ref_params = saved_ref_params;
+        self.mutated_vars = saved_mutated;
+        self.current_fn_return_type = saved_fn_return_type;
+        self.current_function_name = saved_function_name;
+        self.emitting_dual = saved_emitting_dual;
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
@@ -956,7 +1242,12 @@ impl Transpiler {
                         }
                     }
                     let kw = if self.mutated_vars.contains(name) { "let mut" } else { "let" };
-                    self.emit_line(&format!("{} {}: {} = {};", kw, name, ty.to_rust_type(), expr_str));
+                    if self.emitting_dual {
+                        // In dual mode, let Rust infer the type (CrowDual)
+                        self.emit_line(&format!("{} {} = {};", kw, name, expr_str));
+                    } else {
+                        self.emit_line(&format!("{} {}: {} = {};", kw, name, ty.to_rust_type(), expr_str));
+                    }
                     self.declared.insert(name.clone());
                     self.ctx.vars.insert(name.clone(), ty);
                 }
@@ -1223,11 +1514,22 @@ impl Transpiler {
 
     fn expr_to_string(&mut self, expr: &Expr) -> String {
         match expr {
-            Expr::Int(n) => format!("{}_i64", n),
+            Expr::Int(n) => {
+                if self.emitting_dual {
+                    format!("CrowDual::from({}_i64)", n)
+                } else {
+                    format!("{}_i64", n)
+                }
+            }
             Expr::Float(n) => {
                 let s = format!("{}", n);
-                if s.contains('.') { format!("{}_f64", s) }
-                else { format!("{}.0_f64", s) }
+                let lit = if s.contains('.') { format!("{}_f64", s) }
+                    else { format!("{}.0_f64", s) };
+                if self.emitting_dual {
+                    format!("CrowDual::from({})", lit)
+                } else {
+                    lit
+                }
             }
             Expr::Bool(b) => format!("{}", b),
             Expr::Str(s) => self.string_to_rust(s),
@@ -1373,11 +1675,16 @@ impl Transpiler {
                         };
                         format!("{}.{}({} as f64)", r, scalar_op, l)
                     } else {
-                        match (&lt_inner, &rt_inner) {
-                            (CrowType::Int, CrowType::Float) => format!("({}) as f64 {} {}", l, op_str, r),
-                            (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l, op_str, r),
-                            // String + is not allowed — use interpolation instead
-                            _ => format!("{} {} {}", l, op_str, r),
+                        if self.emitting_dual {
+                            // In dual mode, CrowDual handles mixed-type ops via trait impls
+                            format!("{} {} {}", l, op_str, r)
+                        } else {
+                            match (&lt_inner, &rt_inner) {
+                                (CrowType::Int, CrowType::Float) => format!("({}) as f64 {} {}", l, op_str, r),
+                                (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l, op_str, r),
+                                // String + is not allowed — use interpolation instead
+                                _ => format!("{} {} {}", l, op_str, r),
+                            }
                         }
                     }
                 }
@@ -1507,15 +1814,57 @@ impl Transpiler {
                         return "BTreeMap::new()".to_string();
                     }
 
+                    // --- grad[] builtin ---
+                    if name == "grad" && args.len() == 1 {
+                        if let Expr::Ident(fn_name) = &args[0] {
+                            let sig = self.ctx.functions.get(fn_name).cloned();
+                            if let Some(sig) = sig {
+                                let n_params = sig.params.len();
+                                let dual_fn = format!("_dual_{}", Self::rust_fn_name(fn_name));
+                                let param_names: Vec<String> = sig.params.iter().map(|(p, _)| p.clone()).collect();
+
+                                if n_params == 1 {
+                                    // Single param: return f64
+                                    return format!(
+                                        "|{p}: f64| -> f64 {{ {df}(CrowDual::new({p}, 1.0)).dual }}",
+                                        p = param_names[0],
+                                        df = dual_fn,
+                                    );
+                                } else {
+                                    // Multiple params: return Vec<f64>
+                                    let closure_params: Vec<String> = param_names.iter()
+                                        .map(|p| format!("{}: f64", p))
+                                        .collect();
+                                    let mut body_parts = Vec::new();
+                                    for i in 0..n_params {
+                                        let call_args: Vec<String> = (0..n_params).map(|j| {
+                                            if j == i {
+                                                format!("CrowDual::new({}, 1.0)", param_names[j])
+                                            } else {
+                                                format!("CrowDual::new({}, 0.0)", param_names[j])
+                                            }
+                                        }).collect();
+                                        body_parts.push(format!("{}({}).dual", dual_fn, call_args.join(", ")));
+                                    }
+                                    return format!(
+                                        "|{}| -> Vec<f64> {{ vec![{}] }}",
+                                        closure_params.join(", "),
+                                        body_parts.join(", "),
+                                    );
+                                }
+                            }
+                        }
+                    }
+
                     // --- Math builtins ---
                     if name == "abs" && arg_strs.len() == 1 {
-                        let ty = self.ctx.infer_expr(&args[0]);
-                        return match ty {
-                            CrowType::Float => format!("({}).abs()", arg_strs[0]),
-                            _ => format!("({}).abs()", arg_strs[0]),
-                        };
+                        // In dual mode, CrowDual has .abs()
+                        return format!("({}).abs()", arg_strs[0]);
                     }
                     if name == "sqrt" && arg_strs.len() == 1 {
+                        if self.emitting_dual {
+                            return format!("({}).sqrt()", arg_strs[0]);
+                        }
                         let ty = self.ctx.infer_expr(&args[0]);
                         return match ty {
                             CrowType::Float => format!("({}).sqrt()", arg_strs[0]),
@@ -1523,6 +1872,9 @@ impl Transpiler {
                         };
                     }
                     if name == "floor" && arg_strs.len() == 1 {
+                        if self.emitting_dual {
+                            return format!("({}).floor()", arg_strs[0]);
+                        }
                         let ty = self.ctx.infer_expr(&args[0]);
                         return match ty {
                             CrowType::Float => format!("({}).floor() as i64", arg_strs[0]),
@@ -1530,6 +1882,9 @@ impl Transpiler {
                         };
                     }
                     if name == "ceil" && arg_strs.len() == 1 {
+                        if self.emitting_dual {
+                            return format!("({}).ceil()", arg_strs[0]);
+                        }
                         let ty = self.ctx.infer_expr(&args[0]);
                         return match ty {
                             CrowType::Float => format!("({}).ceil() as i64", arg_strs[0]),
@@ -1537,6 +1892,9 @@ impl Transpiler {
                         };
                     }
                     if name == "round" && arg_strs.len() == 1 {
+                        if self.emitting_dual {
+                            return format!("({}).round()", arg_strs[0]);
+                        }
                         let ty = self.ctx.infer_expr(&args[0]);
                         return match ty {
                             CrowType::Float => format!("({}).round() as i64", arg_strs[0]),
@@ -1544,6 +1902,10 @@ impl Transpiler {
                         };
                     }
                     if name == "pow" && arg_strs.len() == 2 {
+                        if self.emitting_dual {
+                            // In dual mode, use CrowDual::powf for dual-dual or powi_const for constant exponent
+                            return format!("({}).powf({})", arg_strs[0], arg_strs[1]);
+                        }
                         let t1 = self.ctx.infer_expr(&args[0]);
                         let t2 = self.ctx.infer_expr(&args[1]);
                         return if t1 == CrowType::Float || t2 == CrowType::Float {
@@ -1901,6 +2263,18 @@ impl Transpiler {
                             };
                             return format!("{}[{}].clone()", base_name, idx_expr);
                         }
+                        CrowType::Fn(param_types, _) => {
+                            // Cast args to expected types (e.g., i64 → f64 for grad closures)
+                            let casted: Vec<String> = arg_strs.iter().enumerate().map(|(i, s)| {
+                                if let Some(CrowType::Float) = param_types.get(i) {
+                                    let arg_type = self.ctx.infer_expr(&args[i]);
+                                    if matches!(arg_type, CrowType::Int) {
+                                        format!("{} as f64", s)
+                                    } else { s.clone() }
+                                } else { s.clone() }
+                            }).collect();
+                            return format!("{}({})", name, casted.join(", "));
+                        }
                         _ => {
                             // Function pointer call or unknown: name(args)
                             return format!("{}({})", name, arg_strs.join(", "));
@@ -2020,7 +2394,18 @@ impl Transpiler {
                         };
                         format!("{}[{}].clone()", callee_str, idx_expr)
                     }
-                    CrowType::Fn(_, _) => format!("{}({})", callee_str, arg_strs.join(", ")),
+                    CrowType::Fn(param_types, _) => {
+                        // Cast args to expected types (e.g., i64 → f64 for grad closures)
+                        let casted: Vec<String> = arg_strs.iter().enumerate().map(|(i, s)| {
+                            if let Some(CrowType::Float) = param_types.get(i) {
+                                let arg_type = self.ctx.infer_expr(&args[i]);
+                                if matches!(arg_type, CrowType::Int) {
+                                    format!("{} as f64", s)
+                                } else { s.clone() }
+                            } else { s.clone() }
+                        }).collect();
+                        format!("{}({})", callee_str, casted.join(", "))
+                    }
                     _ => format!("{}({})", callee_str, arg_strs.join(", ")),
                 }
             }
@@ -3230,5 +3615,44 @@ mod tests {
             args: vec![Expr::Int(4)],
         });
         assert!(!Transpiler::is_gpu_call(&stmt3));
+    }
+
+    // ===== grad transpiler tests =====
+
+    #[test]
+    fn test_grad_emits_crow_dual() {
+        let rust = transpile("fn f[x]\n  x * x\ndf = grad[f]\nlog[df[3]]\n");
+        assert!(rust.contains("struct CrowDual"), "should emit CrowDual struct\n{}", rust);
+        assert!(rust.contains("_dual_f"), "should emit _dual_f function\n{}", rust);
+    }
+
+    #[test]
+    fn test_grad_single_param_closure() {
+        let rust = transpile("fn f[x]\n  x * x\ndf = grad[f]\nlog[df[3]]\n");
+        assert!(rust.contains("-> f64"), "grad closure should return f64\n{}", rust);
+        assert!(rust.contains("CrowDual::new"), "should use CrowDual::new\n{}", rust);
+        assert!(rust.contains(".dual"), "should extract .dual\n{}", rust);
+    }
+
+    #[test]
+    fn test_grad_multi_param_closure() {
+        let rust = transpile("fn g[x, y]\n  x * x + y * y\ndg = grad[g]\nlog[dg[3, 4]]\n");
+        assert!(rust.contains("Vec<f64>"), "multi-param grad should return Vec<f64>\n{}", rust);
+        assert!(rust.contains("_dual_g"), "should emit _dual_g\n{}", rust);
+    }
+
+    #[test]
+    fn test_grad_int_arg_cast() {
+        let rust = transpile("fn f[x]\n  x * x\ndf = grad[f]\nlog[df[3]]\n");
+        assert!(rust.contains("as f64"), "should cast int arg to f64\n{}", rust);
+    }
+
+    #[test]
+    fn test_grad_dual_struct_has_ops() {
+        let rust = transpile("fn f[x]\n  x * x\ndf = grad[f]\nlog[df[3]]\n");
+        assert!(rust.contains("impl std::ops::Add"), "CrowDual should impl Add\n{}", rust);
+        assert!(rust.contains("impl std::ops::Mul"), "CrowDual should impl Mul\n{}", rust);
+        assert!(rust.contains("impl std::ops::Sub"), "CrowDual should impl Sub\n{}", rust);
+        assert!(rust.contains("impl std::ops::Div"), "CrowDual should impl Div\n{}", rust);
     }
 }

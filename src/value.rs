@@ -96,6 +96,8 @@ pub enum Value {
     StructDef(StructDef),
     StructInstance(StructInstance),
     Module(ModuleValue),
+    Dual(f64, f64), // dual number for autograd: (real, derivative)
+    GradFn(FnValue), // gradient function wrapping a user function
     Done, // represents no value (from 'done' status)
 }
 
@@ -147,6 +149,8 @@ impl Value {
             Value::StructDef(_) => "struct",
             Value::StructInstance(_) => "struct_instance",
             Value::Module(_) => "module",
+            Value::Dual(_, _) => "float", // Dual appears as float to user
+            Value::GradFn(_) => "fn",
             Value::Done => "done",
         }
     }
@@ -154,8 +158,11 @@ impl Value {
     /// Check if two values have compatible types for reassignment
     pub fn type_compatible(&self, other: &Value) -> bool {
         match (self, other) {
-            // int and float are compatible
+            // int and float are compatible (Dual acts like float)
             (Value::Int(_), Value::Float(_)) | (Value::Float(_), Value::Int(_)) => true,
+            (Value::Dual(_, _), Value::Float(_)) | (Value::Float(_), Value::Dual(_, _)) => true,
+            (Value::Dual(_, _), Value::Int(_)) | (Value::Int(_), Value::Dual(_, _)) => true,
+            (Value::Dual(_, _), Value::Dual(_, _)) => true,
             // Array and NumArray are compatible (both are "array")
             (Value::Array(_), Value::NumArray(_)) | (Value::NumArray(_), Value::Array(_)) => true,
             // same variant is compatible
@@ -222,7 +229,16 @@ impl fmt::Display for Value {
                 }
                 write!(f, "]")
             }
+            Value::GradFn(func) => write!(f, "<grad {}>", func.name),
             Value::Module(m) => write!(f, "<module {}>", m.name),
+            Value::Dual(real, _) => {
+                // Display as float (user never sees the derivative)
+                if *real == (*real as i64) as f64 && real.is_finite() {
+                    write!(f, "{}", *real as i64)
+                } else {
+                    write!(f, "{}", real)
+                }
+            }
             Value::Done => write!(f, "done"),
         }
     }
