@@ -1288,7 +1288,7 @@ impl Interpreter {
 
     fn is_builtin(&self, name: &str) -> bool {
         matches!(name, "log" | "map" | "cpu" | "gpu" | "range"
-            | "abs" | "sqrt" | "floor" | "ceil" | "round" | "pow" | "min" | "max"
+            | "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max"
             | "split" | "trim" | "replace" | "upper" | "lower" | "starts" | "ends" | "join"
             | "repeat" | "pad"
             | "int" | "float" | "str"
@@ -1418,6 +1418,42 @@ impl Interpreter {
             "sin" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.sin()))) }
             "cos" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.cos()))) }
             "abs" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.abs()))) }
+            "sign" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.sign()))) }
+            "floor" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.floor()))) }
+            "ceil" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.ceil()))) }
+            "round" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.round()))) }
+            "clip" => {
+                if args.len() != 3 { return Err(format!("math.clip: expected 3 arguments (tensor, lo, hi), got {}", args.len())); }
+                let t = to_tensor(&args[0])?;
+                let lo = to_f64(&args[1])?;
+                let hi = to_f64(&args[2])?;
+                Ok(CrowValue::ok(Value::NumArray(t.clip(lo, hi))))
+            }
+            "mod" => {
+                if args.len() != 2 { return Err(format!("math.mod: expected 2 arguments, got {}", args.len())); }
+                let a = to_tensor(&args[0])?;
+                match &args[1].value {
+                    Value::NumArray(b) => Ok(CrowValue::ok(Value::NumArray(a.modulo(b)))),
+                    Value::Int(n) => Ok(CrowValue::ok(Value::NumArray(a.modulo_scalar(*n as f64)))),
+                    Value::Float(f) => Ok(CrowValue::ok(Value::NumArray(a.modulo_scalar(*f)))),
+                    _ => Err("math.mod: second argument must be a number or tensor".to_string()),
+                }
+            }
+
+            // Trigonometry
+            "tan" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.tan()))) }
+            "asin" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.asin()))) }
+            "acos" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.acos()))) }
+            "atan" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.atan()))) }
+            "atan2" => {
+                if args.len() != 2 { return Err(format!("math.atan2: expected 2 arguments, got {}", args.len())); }
+                let y = to_tensor(&args[0])?;
+                let x = to_tensor(&args[1])?;
+                Ok(CrowValue::ok(Value::NumArray(y.atan2(&x))))
+            }
+            "sinh" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.sinh()))) }
+            "cosh" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.cosh()))) }
+            "tanh" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.tanh()))) }
 
             // Reductions (return scalars)
             "sum" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::Float(t.sum()))) }
@@ -1444,12 +1480,7 @@ impl Interpreter {
             }
 
             // Linear algebra
-            "matmul" => {
-                if args.len() != 2 { return Err(format!("math.matmul: expected 2 arguments, got {}", args.len())); }
-                let a = to_tensor(&args[0])?;
-                let b = to_tensor(&args[1])?;
-                Ok(CrowValue::ok(Value::NumArray(a.matmul(&b))))
-            }
+            // matmul removed — use * operator instead
             "solve" => {
                 if args.len() != 2 { return Err(format!("math.solve: expected 2 arguments, got {}", args.len())); }
                 let a = to_tensor(&args[0])?;
@@ -1720,36 +1751,7 @@ impl Interpreter {
                     _ => Err("round[] requires a number".into()),
                 }
             }
-            "pow" => {
-                if args.len() != 2 { return Err("pow[] takes exactly 2 arguments".into()); }
-                match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                    // Dual base: d/dx(x^n) = n * x^(n-1) * x'
-                    (Value::Dual(a, da), Value::Int(b)) => {
-                        let bf = *b as f64;
-                        Ok(CrowValue::ok(Value::Dual(a.powf(bf), da * bf * a.powf(bf - 1.0))))
-                    }
-                    (Value::Dual(a, da), Value::Float(b)) => {
-                        Ok(CrowValue::ok(Value::Dual(a.powf(*b), da * b * a.powf(b - 1.0))))
-                    }
-                    (Value::Dual(a, da), Value::Dual(b, db)) => {
-                        // d/d(x^y) = x^y * (y' * ln(x) + y * x'/x)
-                        let val = a.powf(*b);
-                        let deriv = val * (db * a.ln() + b * da / a);
-                        Ok(CrowValue::ok(Value::Dual(val, deriv)))
-                    }
-                    (Value::Int(a), Value::Int(b)) => {
-                        if *b >= 0 {
-                            Ok(CrowValue::ok(Value::Int(a.pow(*b as u32))))
-                        } else {
-                            Ok(CrowValue::ok(Value::Float((*a as f64).powf(*b as f64))))
-                        }
-                    }
-                    (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a.powf(*b as f64)))),
-                    (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float((*a as f64).powf(*b)))),
-                    (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a.powf(*b)))),
-                    _ => Err("pow[] requires numbers".into()),
-                }
-            }
+            // pow removed — use ^ operator instead
             "min" => {
                 if args.len() != 2 { return Err("min[] takes exactly 2 arguments".into()); }
                 match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
@@ -2539,7 +2541,8 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a * b))),
                 (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 * b))),
                 (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a * *b as f64))),
-                (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul(b)))),
+                // tensor * tensor → matmul; tensor * scalar → scale
+                (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.matmul(b)))),
                 (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(*b as f64)))),
                 (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(*b)))),
                 (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.mul_scalar(*a as f64)))),
@@ -2573,7 +2576,8 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a / b))),
                 (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 / b))),
                 (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a / *b as f64))),
-                (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.div(b)))),
+                // tensor / tensor → error (use ./ for element-wise)
+                (Value::NumArray(_), Value::NumArray(_)) => Err("use ./ for element-wise tensor division".to_string()),
                 (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(1.0 / *b as f64)))),
                 (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(1.0 / *b)))),
                 (Value::Int(a), Value::NumArray(b)) => {
@@ -2595,6 +2599,65 @@ impl Interpreter {
                     }
                 }
                 _ => Err("modulo only works on integers".to_string()),
+            },
+            BinOp::Pow => match (l, r) {
+                // Dual: d/dx(x^n) = n * x^(n-1) * x'
+                (Value::Dual(a, da), Value::Int(b)) => {
+                    let bf = *b as f64;
+                    Ok(CrowValue::ok(Value::Dual(a.powf(bf), da * bf * a.powf(bf - 1.0))))
+                }
+                (Value::Dual(a, da), Value::Float(b)) => {
+                    Ok(CrowValue::ok(Value::Dual(a.powf(*b), da * b * a.powf(b - 1.0))))
+                }
+                (Value::Dual(a, da), Value::Dual(b, db)) => {
+                    let val = a.powf(*b);
+                    let deriv = val * (db * a.ln() + b * da / a);
+                    Ok(CrowValue::ok(Value::Dual(val, deriv)))
+                }
+                (Value::Int(a), Value::Int(b)) => {
+                    if *b >= 0 {
+                        Ok(CrowValue::ok(Value::Int(a.pow(*b as u32))))
+                    } else {
+                        Ok(CrowValue::ok(Value::Float((*a as f64).powf(*b as f64))))
+                    }
+                }
+                (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a.powf(*b as f64)))),
+                (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float((*a as f64).powf(*b)))),
+                (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a.powf(*b)))),
+                _ => Err("^ requires numbers".to_string()),
+            },
+            BinOp::ElemMul => match (l, r) {
+                (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul(b)))),
+                (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(*b as f64)))),
+                (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(*b)))),
+                (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.mul_scalar(*a as f64)))),
+                (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.mul_scalar(*a)))),
+                _ => Err(".* requires tensors or tensor and scalar".to_string()),
+            },
+            BinOp::ElemDiv => match (l, r) {
+                (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.div(b)))),
+                (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(1.0 / *b as f64)))),
+                (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(1.0 / *b)))),
+                (Value::Int(a), Value::NumArray(b)) => {
+                    let scalar_tensor = CrowTensor::full(b.shape().to_vec(), *a as f64);
+                    Ok(CrowValue::ok(Value::NumArray(scalar_tensor.div(b))))
+                }
+                (Value::Float(a), Value::NumArray(b)) => {
+                    let scalar_tensor = CrowTensor::full(b.shape().to_vec(), *a);
+                    Ok(CrowValue::ok(Value::NumArray(scalar_tensor.div(b))))
+                }
+                _ => Err("./ requires tensors or tensor and scalar".to_string()),
+            },
+            BinOp::ElemPow => match (l, r) {
+                (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.pow(b)))),
+                (Value::NumArray(a), Value::Int(b)) => {
+                    let s = *b as f64;
+                    Ok(CrowValue::ok(Value::NumArray(a.map(|x| x.powf(s)))))
+                }
+                (Value::NumArray(a), Value::Float(b)) => {
+                    Ok(CrowValue::ok(Value::NumArray(a.map(|x| x.powf(*b)))))
+                }
+                _ => Err(".^ requires tensors or tensor and scalar".to_string()),
             },
             BinOp::Eq => Ok(CrowValue::ok(Value::Bool(self.values_equal(left, right)))),
             BinOp::Ne => Ok(CrowValue::ok(Value::Bool(!self.values_equal(left, right)))),
@@ -3386,7 +3449,7 @@ mod tests {
 
     #[test]
     fn test_pow() {
-        let val = get_var("x = pow[2, 10]\n", "x");
+        let val = get_var("x = 2 ^ 10\n", "x");
         assert!(matches!(val.value, Value::Int(1024)));
     }
 
@@ -3924,13 +3987,15 @@ mod tests {
 
     #[test]
     fn test_numarray_mul() {
-        let val = get_var("x = [2, 3, 4] * [5, 6, 7]\n", "x");
+        // * on tensor-tensor is matmul; use .* for element-wise
+        let val = get_var("x = [2, 3, 4] .* [5, 6, 7]\n", "x");
         assert_eq!(format!("{}", val.value), "[10, 18, 28]");
     }
 
     #[test]
     fn test_numarray_div() {
-        let val = get_var("x = [10, 20, 30] / [2, 4, 5]\n", "x");
+        // / on tensor-tensor is error; use ./ for element-wise
+        let val = get_var("x = [10, 20, 30] ./ [2, 4, 5]\n", "x");
         assert_eq!(format!("{}", val.value), "[5, 5, 6]");
     }
 
@@ -4132,7 +4197,8 @@ mod tests {
 
     #[test]
     fn test_math_matmul() {
-        let val = get_var("use math\na = math.eye[2]\nb = math.full[2, 2, 3]\nx = math.matmul[a, b]\n", "x");
+        // matmul removed — use * operator instead
+        let val = get_var("use math\na = math.eye[2]\nb = math.full[2, 2, 3]\nx = a * b\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[2, 2]);
             assert!(t.to_vec().iter().all(|&v| (v - 3.0).abs() < 1e-10));
@@ -4207,6 +4273,160 @@ mod tests {
             assert!(f.is_nan());
         } else { panic!("expected Float, got {:?}", val.value); }
     }
+
+    #[test]
+    fn test_math_sign() {
+        let val = get_var("use math\nx = math.sign[math.linspace[-2, 2, 5]]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), &[-1.0, -1.0, 0.0, 1.0, 1.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_math_floor_tensor() {
+        let val = get_var("use math\nx = math.floor[math.linspace[0.5, 2.5, 3]]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), &[0.0, 1.0, 2.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_math_ceil_tensor() {
+        let val = get_var("use math\nx = math.ceil[math.linspace[0.5, 2.5, 3]]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), &[1.0, 2.0, 3.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_math_round_tensor() {
+        let val = get_var("use math\nx = math.round[math.linspace[0.4, 2.6, 3]]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), &[0.0, 2.0, 3.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_math_clip() {
+        let val = get_var("use math\nx = math.clip[math.linspace[-2, 2, 5], -1, 1]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), &[-1.0, -1.0, 0.0, 1.0, 1.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_math_mod_scalar() {
+        let val = get_var("use math\nx = math.mod[math.linspace[1, 5, 5], 2]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), &[1.0, 0.0, 1.0, 0.0, 1.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_math_tan() {
+        let val = get_var("use math\nx = math.tan[math.zeros[3]]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), &[0.0, 0.0, 0.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_math_asin() {
+        let val = get_var("use math\nx = math.asin[math.zeros[3]]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), &[0.0, 0.0, 0.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_math_tanh() {
+        let val = get_var("use math\nx = math.tanh[math.zeros[3]]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), &[0.0, 0.0, 0.0]);
+        } else { panic!("expected NumArray"); }
+    }
+
+
+    // ===== Operator tests: ^, .*, ./, .^ =====
+
+    #[test]
+    fn test_pow_int() {
+        let val = get_var("x = 2 ^ 10\n", "x");
+        assert!(matches!(val.value, Value::Int(1024)));
+    }
+
+    #[test]
+    fn test_pow_float() {
+        let val = get_var("x = 2.0 ^ 3.0\n", "x");
+        if let Value::Float(f) = val.value { assert!((f - 8.0).abs() < 1e-10); }
+        else { panic!("expected Float"); }
+    }
+
+    #[test]
+    fn test_pow_right_assoc() {
+        // 2 ^ 3 ^ 2 = 2 ^ (3 ^ 2) = 2 ^ 9 = 512
+        let val = get_var("x = 2 ^ 3 ^ 2\n", "x");
+        assert!(matches!(val.value, Value::Int(512)));
+    }
+
+    #[test]
+    fn test_pow_negative_exp() {
+        let val = get_var("x = 2 ^ -1\n", "x");
+        if let Value::Float(f) = val.value { assert!((f - 0.5).abs() < 1e-10); }
+        else { panic!("expected Float"); }
+    }
+
+    #[test]
+    fn test_elem_mul() {
+        let val = get_var("x = [2, 3, 4] .* [5, 6, 7]\n", "x");
+        assert_eq!(format!("{}", val.value), "[10, 18, 28]");
+    }
+
+    #[test]
+    fn test_elem_div() {
+        let val = get_var("x = [10, 20, 30] ./ [2, 4, 5]\n", "x");
+        assert_eq!(format!("{}", val.value), "[5, 5, 6]");
+    }
+
+    #[test]
+    fn test_elem_pow() {
+        let val = get_var("x = [2, 3] .^ [3, 2]\n", "x");
+        assert_eq!(format!("{}", val.value), "[8, 9]");
+    }
+
+    #[test]
+    fn test_elem_mul_scalar() {
+        let val = get_var("x = [1, 2, 3] .* 10\n", "x");
+        assert_eq!(format!("{}", val.value), "[10, 20, 30]");
+    }
+
+    #[test]
+    fn test_elem_pow_scalar() {
+        let val = get_var("x = [2, 3, 4] .^ 2\n", "x");
+        assert_eq!(format!("{}", val.value), "[4, 9, 16]");
+    }
+
+    #[test]
+    fn test_tensor_mul_is_matmul() {
+        let val = get_var("use math\na = math.eye[2]\nb = math.full[2, 2, 3]\nx = a * b\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.shape(), &[2, 2]);
+            assert!(t.to_vec().iter().all(|&v| (v - 3.0).abs() < 1e-10));
+        } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_tensor_div_error() {
+        // tensor / tensor should error
+        let result = std::panic::catch_unwind(|| {
+            get_var("x = [1, 2] / [3, 4]\n", "x")
+        });
+        assert!(result.is_err() || {
+            let val = result.unwrap();
+            !val.ok
+        });
+    }
+
 
     #[test]
     fn test_numarray_dtype() {

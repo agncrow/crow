@@ -10,7 +10,7 @@ use crate::type_infer::{CrowType, TypeContext};
 const BUILTINS: &[&str] = &[
     "log", "assert", "type",
     // Math
-    "abs", "sqrt", "floor", "ceil", "round", "pow", "min", "max",
+    "abs", "sqrt", "floor", "ceil", "round", "min", "max",
     // String
     "split", "trim", "replace", "upper", "lower", "join", "starts", "ends",
     "repeat", "pad",
@@ -327,7 +327,7 @@ impl<'a> Validator<'a> {
             "log" | "assert" => argc >= 1,
             "type" => argc == 1,
             "abs" | "sqrt" | "floor" | "ceil" | "round" => argc == 1,
-            "pow" | "min" | "max" => argc == 2,
+            "min" | "max" => argc == 2,
             "split" => argc == 2,
             "trim" | "upper" | "lower" => argc == 1,
             "replace" => argc == 3,
@@ -449,9 +449,9 @@ mod tests {
 
     #[test]
     fn test_wrong_arg_count_builtin() {
-        let result = validate_source("x = pow[1]\n");
+        let result = validate_source("x = min[1]\n");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("wrong number of arguments for 'pow'"));
+        assert!(result.unwrap_err().contains("wrong number of arguments for 'min'"));
     }
 
     #[test]

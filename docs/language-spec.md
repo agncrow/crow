@@ -314,7 +314,7 @@ data = map[]             --- empty map ---
 | `floor[n]` | Floor (returns int) |
 | `ceil[n]` | Ceiling (returns int) |
 | `round[n]` | Round to nearest int |
-| `pow[base, exp]` | Exponentiation |
+| `base ^ exp` | Exponentiation (use `^` operator) |
 | `min[a, b]` | Minimum of two numbers |
 | `max[a, b]` | Maximum of two numbers |
 
@@ -577,7 +577,15 @@ fly[b]
 ### Arithmetic
 
 ```
-+  -  /  *  %
++  -  /  *  %  ^
+```
+
+`^` is the power operator (right-associative):
+
+```
+2 ^ 10       --- 1024 ---
+2 ^ 3 ^ 2   --- 512 (right-associative: 2^(3^2) = 2^9) ---
+2.0 ^ 0.5   --- 1.4142... ---
 ```
 
 Division is type-determined — one operator, no ambiguity:
@@ -589,16 +597,34 @@ Division is type-determined — one operator, no ambiguity:
 7.0 / 3      --- 2.3333...
 ```
 
-### Array Arithmetic
+### Tensor Arithmetic
 
-Arithmetic operators (`+`, `-`, `*`, `/`) work element-wise on numeric arrays. Array-array operations require same-length arrays. Scalar-array operations broadcast the scalar.
+For tensors (numeric arrays), operators follow MATLAB/Julia semantics:
+
+| Operator | Meaning |
+|---|---|
+| `*` | Matrix multiply (matmul) for tensor×tensor; scalar multiply for tensor×scalar |
+| `.*` | Element-wise multiply |
+| `/` | Scalar divide (tensor÷scalar only; tensor÷tensor is an error — use `./`) |
+| `./` | Element-wise divide |
+| `^` | Scalar power |
+| `.^` | Element-wise power |
+| `+`, `-` | Element-wise (always) |
 
 ```
-[1, 2, 3] + [4, 5, 6]      --- [5, 7, 9] ---
-[10, 20, 30] - [1, 2, 3]   --- [9, 18, 27] ---
-[2, 3, 4] * [5, 6, 7]      --- [10, 18, 28] ---
-[10, 20, 30] / [2, 4, 5]   --- [5, 5, 6] ---
+use math
+W = math.eye[2]
+x = math.ones[2, 1]
+y = W * x                   --- matmul ---
+a = math.ones[3] .* math.full[3, 2]   --- element-wise multiply ---
+b = math.ones[3] ./ math.full[3, 2]   --- element-wise divide ---
+c = math.full[3, 2] .^ 3    --- element-wise power ---
+d = math.ones[3] * 2        --- scalar multiply ---
+```
 
+Scalar-array operations broadcast the scalar:
+
+```
 [1, 2, 3] + 10              --- [11, 12, 13] ---
 [1, 2, 3] * 2               --- [2, 4, 6] ---
 10 - [1, 2, 3]              --- [9, 8, 7] ---
@@ -760,7 +786,7 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 
 | Function | Description |
 |---|---|
-| `math.matmul[a, b]` | Matrix multiplication |
+| `a * b` | Matrix multiplication (use `*` operator) |
 | `math.solve[a, b]` | Solve linear system Ax = b |
 | `math.inv[a]` | Matrix inverse |
 | `math.det[a]` | Determinant (returns float) |
@@ -793,7 +819,7 @@ use math
 
 a = math.zeros[3, 3]
 b = math.eye[3]
-c = math.matmul[a, b]
+c = a * b
 d = math.det[b]           --- 1.0 ---
 
 --- constants ---
@@ -1116,7 +1142,7 @@ All arithmetic operations (`+`, `-`, `*`, `/`) and these math builtins are diffe
 
 - `sqrt` — derivative: 1/(2√x)
 - `abs` — derivative: sign(x)
-- `pow` — derivative: n·x^(n-1) for constant exponent
+- `^` (power) — derivative: n·x^(n-1) for constant exponent
 - `floor`, `ceil`, `round` — derivative: 0 (piecewise constant)
 
 #### Implementation
@@ -1723,7 +1749,7 @@ Crow uses MATLAB/Julia-style operators for tensor arithmetic. Plain operators ar
 | `.*` | element-wise multiply | `A .* mask` — Hadamard product |
 | `/` | matrix divide | `A / B` |
 | `./` | element-wise divide | `values ./ total` |
-| `^` | matrix power | `A ^ 2` |
+| `^` | scalar power | `x ^ 2` |
 | `.^` | element-wise power | `x .^ 2` |
 
 `+` and `-` are already element-wise for matrices (adding two matrices is always element-wise). No dot versions needed.

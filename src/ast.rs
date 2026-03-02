@@ -148,6 +148,10 @@ pub enum BinOp {
     Mul,
     Div,
     Mod,
+    Pow,      // ^ (scalar power)
+    ElemMul,  // .* (element-wise multiply)
+    ElemDiv,  // ./ (element-wise divide)
+    ElemPow,  // .^ (element-wise power)
     Eq,
     Ne,
     Gt,

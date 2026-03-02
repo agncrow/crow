@@ -612,6 +612,74 @@ impl CrowTensor {
         }
         self.map(|x| x * s)
     }
+
+    pub fn sub_scalar(&self, s: f64) -> CrowTensor {
+        self.map(|x| x - s)
+    }
+
+    // ── Additional element-wise math ────────────────────────────────────
+
+    pub fn sign(&self) -> CrowTensor {
+        self.map(|x| if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 })
+    }
+
+    pub fn floor(&self) -> CrowTensor {
+        self.map(|x| x.floor())
+    }
+
+    pub fn ceil(&self) -> CrowTensor {
+        self.map(|x| x.ceil())
+    }
+
+    pub fn round(&self) -> CrowTensor {
+        self.map(|x| x.round())
+    }
+
+    pub fn clip(&self, lo: f64, hi: f64) -> CrowTensor {
+        self.map(|x| x.max(lo).min(hi))
+    }
+
+    pub fn modulo(&self, other: &CrowTensor) -> CrowTensor {
+        self.zip_with(other, |a, b| a % b)
+    }
+
+    pub fn modulo_scalar(&self, s: f64) -> CrowTensor {
+        self.map(|x| x % s)
+    }
+
+    // ── Trigonometry ────────────────────────────────────────────────────
+
+    pub fn tan(&self) -> CrowTensor {
+        self.gpu_unary_or_cpu("tan", |x| x.tan())
+    }
+
+    pub fn asin(&self) -> CrowTensor {
+        self.map(|x| x.asin())
+    }
+
+    pub fn acos(&self) -> CrowTensor {
+        self.map(|x| x.acos())
+    }
+
+    pub fn atan(&self) -> CrowTensor {
+        self.map(|x| x.atan())
+    }
+
+    pub fn atan2(&self, other: &CrowTensor) -> CrowTensor {
+        self.zip_with(other, |a, b| a.atan2(b))
+    }
+
+    pub fn sinh(&self) -> CrowTensor {
+        self.map(|x| x.sinh())
+    }
+
+    pub fn cosh(&self) -> CrowTensor {
+        self.map(|x| x.cosh())
+    }
+
+    pub fn tanh(&self) -> CrowTensor {
+        self.map(|x| x.tanh())
+    }
 }
 
 

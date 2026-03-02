@@ -300,7 +300,8 @@ impl Transpiler {
             BinOp::And => 2,
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => 3,
             BinOp::Add | BinOp::Sub => 4,
-            BinOp::Mul | BinOp::Div | BinOp::Mod => 5,
+            BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::ElemMul | BinOp::ElemDiv => 5,
+            BinOp::Pow | BinOp::ElemPow => 6,
         }
     }
 
@@ -1577,6 +1578,10 @@ impl Transpiler {
                     BinOp::Mul => "*",
                     BinOp::Div => "/",
                     BinOp::Mod => "%",
+                    BinOp::Pow => "pow",
+                    BinOp::ElemMul => ".*",
+                    BinOp::ElemDiv => "./",
+                    BinOp::ElemPow => ".^",
                     BinOp::Eq => "==",
                     BinOp::Ne => "!=",
                     BinOp::Gt => ">",
@@ -1644,40 +1649,51 @@ impl Transpiler {
                     let r_is_numarray = matches!(&rt_inner, CrowType::NumArray(_));
                     if l_is_numarray && r_is_numarray {
                         // tensor op tensor
-                        let tensor_op = match op {
-                            BinOp::Add => "add",
-                            BinOp::Sub => "sub",
-                            BinOp::Mul => "mul",
-                            BinOp::Div => "div",
-                            BinOp::Eq => return format!("{} == {}", l, r),
-                            BinOp::Ne => return format!("{} != {}", l, r),
-                            _ => return format!("{} {} {}", l, op_str, r),
+                        return match op {
+                            BinOp::Add => format!("{}.add(&{})", l, r),
+                            BinOp::Sub => format!("{}.sub(&{})", l, r),
+                            BinOp::Mul => format!("{}.matmul(&{})", l, r),
+                            BinOp::Div => panic!("use ./ for element-wise tensor division"),
+                            BinOp::ElemMul => format!("{}.mul(&{})", l, r),
+                            BinOp::ElemDiv => format!("{}.div(&{})", l, r),
+                            BinOp::ElemPow => format!("{}.pow(&{})", l, r),
+                            BinOp::Eq => format!("{} == {}", l, r),
+                            BinOp::Ne => format!("{} != {}", l, r),
+                            _ => format!("{} {} {}", l, op_str, r),
                         };
-                        format!("{}.{}(&{})", l, tensor_op, r)
                     } else if l_is_numarray && matches!(&rt_inner, CrowType::Int | CrowType::Float) {
                         // tensor op scalar
-                        let scalar_op = match op {
-                            BinOp::Add => "add_scalar",
-                            BinOp::Sub => "sub_scalar",
-                            BinOp::Mul => "mul_scalar",
-                            BinOp::Div => "div_scalar",
-                            _ => return format!("{} {} {}", l, op_str, r),
+                        return match op {
+                            BinOp::Add => format!("{}.add_scalar({} as f64)", l, r),
+                            BinOp::Sub => format!("{}.sub_scalar({} as f64)", l, r),
+                            BinOp::Mul | BinOp::ElemMul => format!("{}.mul_scalar({} as f64)", l, r),
+                            BinOp::Div | BinOp::ElemDiv => format!("{}.mul_scalar(1.0 / ({} as f64))", l, r),
+                            BinOp::ElemPow => format!("{}.map(|x| x.powf({} as f64))", l, r),
+                            _ => format!("{} {} {}", l, op_str, r),
                         };
-                        format!("{}.{}({} as f64)", l, scalar_op, r)
                     } else if r_is_numarray && matches!(&lt_inner, CrowType::Int | CrowType::Float) {
                         // scalar op tensor
-                        let scalar_op = match op {
-                            BinOp::Add => "add_scalar",
-                            BinOp::Sub => return format!("({}).neg().add_scalar({} as f64)", r, l),
-                            BinOp::Mul => "mul_scalar",
-                            BinOp::Div => return format!("{{ let _t = &{}; CrowTensor::from_vec(_t.to_vec().iter().map(|&v| ({} as f64) / v).collect(), _t.shape().to_vec()) }}", r, l),
-                            _ => return format!("{} {} {}", l, op_str, r),
+                        return match op {
+                            BinOp::Add => format!("{}.add_scalar({} as f64)", r, l),
+                            BinOp::Sub => format!("({}).neg().add_scalar({} as f64)", r, l),
+                            BinOp::Mul | BinOp::ElemMul => format!("{}.mul_scalar({} as f64)", r, l),
+                            BinOp::Div | BinOp::ElemDiv => format!("{{ let _t = &{}; CrowTensor::from_vec(_t.to_vec().iter().map(|&v| ({} as f64) / v).collect(), _t.shape().to_vec()) }}", r, l),
+                            _ => format!("{} {} {}", l, op_str, r),
                         };
-                        format!("{}.{}({} as f64)", r, scalar_op, l)
                     } else {
                         if self.emitting_dual {
                             // In dual mode, CrowDual handles mixed-type ops via trait impls
+                            if matches!(op, BinOp::Pow) {
+                                return format!("({}).powf({})", l, r);
+                            }
                             format!("{} {} {}", l, op_str, r)
+                        } else if matches!(op, BinOp::Pow) {
+                            // Scalar power
+                            if lt_inner == CrowType::Float || rt_inner == CrowType::Float {
+                                format!("(({}) as f64).powf(({}) as f64)", l, r)
+                            } else {
+                                format!("({}).pow(({}) as u32)", l, r)
+                            }
                         } else {
                             match (&lt_inner, &rt_inner) {
                                 (CrowType::Int, CrowType::Float) => format!("({}) as f64 {} {}", l, op_str, r),
@@ -1901,19 +1917,7 @@ impl Transpiler {
                             _ => arg_strs[0].clone(),
                         };
                     }
-                    if name == "pow" && arg_strs.len() == 2 {
-                        if self.emitting_dual {
-                            // In dual mode, use CrowDual::powf for dual-dual or powi_const for constant exponent
-                            return format!("({}).powf({})", arg_strs[0], arg_strs[1]);
-                        }
-                        let t1 = self.ctx.infer_expr(&args[0]);
-                        let t2 = self.ctx.infer_expr(&args[1]);
-                        return if t1 == CrowType::Float || t2 == CrowType::Float {
-                            format!("(({}) as f64).powf(({}) as f64)", arg_strs[0], arg_strs[1])
-                        } else {
-                            format!("({}).pow(({}) as u32)", arg_strs[0], arg_strs[1])
-                        };
-                    }
+                    // pow removed — use ^ operator instead
                     if name == "min" && arg_strs.len() == 2 {
                         let t1 = self.ctx.infer_expr(&args[0]);
                         let t2 = self.ctx.infer_expr(&args[1]);
@@ -2309,6 +2313,28 @@ impl Transpiler {
                                 "sin" => format!("{}.sin()", arg_strs[0]),
                                 "cos" => format!("{}.cos()", arg_strs[0]),
                                 "abs" => format!("{}.abs()", arg_strs[0]),
+                                "sign" => format!("{}.sign()", arg_strs[0]),
+                                "floor" => format!("{}.floor()", arg_strs[0]),
+                                "ceil" => format!("{}.ceil()", arg_strs[0]),
+                                "round" => format!("{}.round()", arg_strs[0]),
+                                "clip" => format!("{}.clip({} as f64, {} as f64)", arg_strs[0], arg_strs[1], arg_strs[2]),
+                                "mod" => {
+                                    let rhs_type = self.ctx.infer_expr(&args[1]);
+                                    if matches!(rhs_type, CrowType::NumArray(_)) {
+                                        format!("{}.modulo(&{})", arg_strs[0], arg_strs[1])
+                                    } else {
+                                        format!("{}.modulo_scalar({} as f64)", arg_strs[0], arg_strs[1])
+                                    }
+                                }
+                                // Trigonometry
+                                "tan" => format!("{}.tan()", arg_strs[0]),
+                                "asin" => format!("{}.asin()", arg_strs[0]),
+                                "acos" => format!("{}.acos()", arg_strs[0]),
+                                "atan" => format!("{}.atan()", arg_strs[0]),
+                                "atan2" => format!("{}.atan2(&{})", arg_strs[0], arg_strs[1]),
+                                "sinh" => format!("{}.sinh()", arg_strs[0]),
+                                "cosh" => format!("{}.cosh()", arg_strs[0]),
+                                "tanh" => format!("{}.tanh()", arg_strs[0]),
                                 // Reductions (return scalars)
                                 "sum" => format!("{}.sum()", arg_strs[0]),
                                 "mean" => format!("{}.mean()", arg_strs[0]),
@@ -2322,7 +2348,7 @@ impl Transpiler {
                                 "flatten" => format!("{}.flatten()", arg_strs[0]),
                                 "transpose" => format!("{}.transpose()", arg_strs[0]),
                                 // Linear algebra
-                                "matmul" => format!("{}.matmul(&{})", arg_strs[0], arg_strs[1]),
+                                // matmul removed — use * operator instead
                                 "solve" => format!("{}.solve(&{})", arg_strs[0], arg_strs[1]),
                                 "inv" => format!("{}.inv()", arg_strs[0]),
                                 "det" => format!("{}.det()", arg_strs[0]),
@@ -3715,5 +3741,85 @@ mod tests {
     fn test_numarray_device_transpile() {
         let rust = transpile("use math\nx = math.ones[3]\ny = x.device\n");
         assert!(rust.contains("is_gpu()"), "should emit device check\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_sign_transpile() {
+        let rust = transpile("use math\nx = math.sign[math.ones[3]]\n");
+        assert!(rust.contains(".sign()"), "should emit .sign()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_floor_tensor_transpile() {
+        let rust = transpile("use math\nx = math.floor[math.ones[3]]\n");
+        assert!(rust.contains(".floor()"), "should emit .floor()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_clip_transpile() {
+        let rust = transpile("use math\nx = math.clip[math.ones[3], 0, 1]\n");
+        assert!(rust.contains(".clip("), "should emit .clip()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_mod_transpile() {
+        let rust = transpile("use math\nx = math.mod[math.ones[3], 2]\n");
+        assert!(rust.contains("modulo_scalar"), "should emit modulo_scalar for scalar arg\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_tan_transpile() {
+        let rust = transpile("use math\nx = math.tan[math.ones[3]]\n");
+        assert!(rust.contains(".tan()"), "should emit .tan()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_tanh_transpile() {
+        let rust = transpile("use math\nx = math.tanh[math.ones[3]]\n");
+        assert!(rust.contains(".tanh()"), "should emit .tanh()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_atan2_transpile() {
+        let rust = transpile("use math\nx = math.atan2[math.ones[3], math.ones[3]]\n");
+        assert!(rust.contains(".atan2("), "should emit .atan2()\n{}", rust);
+    }
+
+    // ===== Operator tests: ^, .*, ./, .^ =====
+
+    #[test]
+    fn test_pow_int_transpile() {
+        let rust = transpile("x = 2 ^ 10\n");
+        assert!(rust.contains(".pow("), "should use .pow()\n{}", rust);
+    }
+
+    #[test]
+    fn test_pow_float_transpile() {
+        let rust = transpile("x = 2.0 ^ 3.0\n");
+        assert!(rust.contains(".powf("), "should use .powf()\n{}", rust);
+    }
+
+    #[test]
+    fn test_elem_mul_transpile() {
+        let rust = transpile("use math\nx = math.ones[3] .* math.ones[3]\n");
+        assert!(rust.contains(".mul("), "should use .mul()\n{}", rust);
+    }
+
+    #[test]
+    fn test_elem_div_transpile() {
+        let rust = transpile("use math\nx = math.ones[3] ./ math.ones[3]\n");
+        assert!(rust.contains(".div("), "should use .div()\n{}", rust);
+    }
+
+    #[test]
+    fn test_elem_pow_transpile() {
+        let rust = transpile("use math\nx = math.ones[3] .^ math.ones[3]\n");
+        assert!(rust.contains(".pow("), "should use .pow()\n{}", rust);
+    }
+
+    #[test]
+    fn test_tensor_mul_is_matmul_transpile() {
+        let rust = transpile("use math\nx = math.eye[2] * math.eye[2]\n");
+        assert!(rust.contains(".matmul("), "* on tensors should emit .matmul()\n{}", rust);
     }
 }
