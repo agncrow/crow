@@ -709,7 +709,7 @@ fn rust_type_to_crow(rust_type: &str) -> String {
         "f64" | "f64_" => "float".to_string(),
         "bool" => "bool".to_string(),
         "String" | "&str" | "str" => "string".to_string(),
-        s if s.starts_with("Vec<") => "list".to_string(),
+        s if s.starts_with("Vec<") => "array".to_string(),
         s if s.starts_with("HashMap<") => "map".to_string(),
         s if s.contains("CrowResult") => "result".to_string(),
         other => other.to_string(),
@@ -1356,7 +1356,7 @@ fn parse_crowfile() -> CrowfileConfig {
                 }
             });
 
-            // parse deps: ['math' = '1.0', 'http' = '2.3']
+            // parse deps: [math = '1.0', http = '2.3']
             let deps = interpreter.get_var("deps").map(|val| {
                 if let value::Value::Map(map) = &val.value {
                     map.iter().filter_map(|(name, v)| {

@@ -1,4 +1,4 @@
---- sum builtin: sum a list of numbers ---
+--- sum builtin: sum an array of numbers ---
 
 nums = [1, 2, 3, 4, 5]
 total = sum[nums]

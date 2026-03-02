@@ -1,6 +1,6 @@
 --- spectral-norm benchmark ---
---- tests: nested loops, math, list operations, functions ---
---- NOTE: simplified since Crow lacks list mutation ---
+--- tests: nested loops, math, array operations, functions ---
+--- NOTE: simplified since Crow lacks array mutation ---
 --- computes the spectral norm approximation ---
 
 --- A[i,j] = 1 / ((i+j)(i+j+1)/2 + i + 1) ---
@@ -19,7 +19,7 @@ fn approx_sqrt[n]
     return guess
 
 --- multiply vector v by matrix A, return sum of result ---
---- since we can't mutate lists, we compute the dot product directly ---
+--- since we can't mutate arrays, we compute the dot product directly ---
 fn multiply_Av_sum[n]
     total = 0.0
     i = 0

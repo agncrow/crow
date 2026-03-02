@@ -98,7 +98,7 @@ impl Transpiler {
         }
     }
 
-    /// Check if a list of statements contains any parallel waves (2+ independent stmts).
+    /// Check if an array of statements contains any parallel waves (2+ independent stmts).
     fn has_parallel_waves(stmts: &[Stmt]) -> bool {
         let waves = group_into_waves(stmts);
         waves.iter().any(|w| w.len() > 1)
@@ -222,7 +222,7 @@ impl Transpiler {
     fn type_uses_map(ty: &CrowType) -> bool {
         match ty {
             CrowType::Map(_) => true,
-            CrowType::List(inner) | CrowType::Result(inner) => Self::type_uses_map(inner),
+            CrowType::Array(inner) | CrowType::Result(inner) => Self::type_uses_map(inner),
             _ => false,
         }
     }
@@ -250,7 +250,7 @@ impl Transpiler {
     fn type_uses_result(ty: &CrowType) -> bool {
         match ty {
             CrowType::Result(_) => true,
-            CrowType::List(inner) => Self::type_uses_result(inner),
+            CrowType::Array(inner) => Self::type_uses_result(inner),
             _ => false,
         }
     }
@@ -260,7 +260,7 @@ impl Transpiler {
         match ty {
             CrowType::Json => true,
             CrowType::Result(inner) => Self::type_uses_json(inner),
-            CrowType::List(inner) => Self::type_uses_json(inner),
+            CrowType::Array(inner) => Self::type_uses_json(inner),
             _ => false,
         }
     }
@@ -276,7 +276,7 @@ impl Transpiler {
         false
     }
 
-    /// Collect all variable names that are reassigned (assigned more than once) in a list of statements.
+    /// Collect all variable names that are reassigned (assigned more than once) in a sequence of statements.
     fn collect_reassigned_vars(stmts: &[Stmt], seen: &mut std::collections::HashSet<String>, mutated: &mut std::collections::HashSet<String>) {
         for stmt in stmts {
             match stmt {
@@ -590,7 +590,7 @@ impl Transpiler {
         self.emit_line("    if parts.len() > 1 {");
         self.emit_line("        let rest: Vec<&str> = parts[1].split(\" but the index is \").collect();");
         self.emit_line("        if rest.len() > 1 {");
-        self.emit_line("            format!(\"index {} is out of range (list has {} items)\", rest[1], rest[0])");
+        self.emit_line("            format!(\"index {} is out of range (array has {} items)\", rest[1], rest[0])");
         self.emit_line("        } else { format!(\"index out of range\") }");
         self.emit_line("    } else { format!(\"index out of range\") }");
         self.emit_line("} else if msg.contains(\"divide by zero\") || msg.contains(\"division by zero\") {");
@@ -649,7 +649,7 @@ impl Transpiler {
         let sig = self.ctx.functions.get(name).unwrap().clone();
         let ref_set = self.by_ref_params.get(name).cloned().unwrap_or_default();
 
-        // Build param list (use &StructName for by-ref params)
+        // Build param array (use &StructName for by-ref params)
         let params: Vec<String> = sig.params.iter()
             .map(|(pname, ptype)| {
                 if ref_set.contains(pname) {
@@ -1044,7 +1044,7 @@ impl Transpiler {
                 // Determine element type for closure pattern
                 let iter_type = self.ctx.infer_expr(iter);
                 let elem_type = match &iter_type {
-                    CrowType::List(inner) => *inner.clone(),
+                    CrowType::Array(inner) => *inner.clone(),
                     _ => CrowType::Unknown,
                 };
                 let is_copy = matches!(elem_type, CrowType::Int | CrowType::Float | CrowType::Bool);
@@ -1097,7 +1097,12 @@ impl Transpiler {
             Stmt::FieldAssign { object, field, value } => {
                 let obj_str = self.expr_to_string(object);
                 let val_str = self.expr_to_string(value);
-                self.emit_line(&format!("{}.{} = {};", obj_str, field, val_str));
+                let obj_type = self.ctx.infer_expr(object);
+                if matches!(obj_type, CrowType::Map(_)) {
+                    self.emit_line(&format!("{}.insert(\"{}\".to_string(), {});", obj_str, field, val_str));
+                } else {
+                    self.emit_line(&format!("{}.{} = {};", obj_str, field, val_str));
+                }
             }
             Stmt::IndexAssign { object, index, value } => {
                 let obj_str = self.expr_to_string(object);
@@ -1648,7 +1653,7 @@ impl Transpiler {
                             CrowType::Float => "\"float\"".to_string(),
                             CrowType::Str => "\"str\"".to_string(),
                             CrowType::Bool => "\"bool\"".to_string(),
-                            CrowType::List(_) => "\"list\"".to_string(),
+                            CrowType::Array(_) => "\"array\"".to_string(),
                             CrowType::Map(_) => "\"map\"".to_string(),
                             CrowType::Fn(_, _) => "\"fn\"".to_string(),
                             CrowType::Void => "\"none\"".to_string(),
@@ -1731,8 +1736,8 @@ impl Transpiler {
                         name.to_string()
                     };
                     match inner_type {
-                        CrowType::List(_) => {
-                            // List indexing with negative index support
+                        CrowType::Array(_) => {
+                            // Array indexing with negative index support
                             let idx = &arg_strs[0];
                             return format!("{}[{{ let _i = {}; if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }} }}]", base_name, idx, base_name);
                         }
@@ -1798,7 +1803,7 @@ impl Transpiler {
                 let callee_type = self.ctx.infer_expr(callee);
                 let callee_str = self.expr_to_string(callee);
                 match &callee_type {
-                    CrowType::List(_) => {
+                    CrowType::Array(_) => {
                         let idx = &arg_strs[0];
                         format!("{}[{{ let _i = {}; if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }} }}]", callee_str, idx, callee_str)
                     }
@@ -1831,7 +1836,7 @@ impl Transpiler {
                 // Map Crow's .len to Rust's .len()
                 if field == "len" {
                     let obj_type = self.ctx.infer_expr(object);
-                    if matches!(obj_type, CrowType::List(_) | CrowType::Str) {
+                    if matches!(obj_type, CrowType::Array(_) | CrowType::Str) {
                         return format!("{}.len() as i64", obj);
                     }
                 }
@@ -1858,13 +1863,18 @@ impl Transpiler {
                         };
                     }
                 }
+                // Map dot access: map.key → map["key"].clone()
+                let obj_type = self.ctx.infer_expr(object);
+                if matches!(obj_type, CrowType::Map(_)) {
+                    return format!("{}[\"{}\"].clone()", obj, field);
+                }
                 // Check if this field is OptBoxStruct — if so, the caller
                 // will handle unwrapping when it's used as a function argument.
                 // Here we just emit the raw field access.
                 format!("{}.{}", obj, field)
             }
-            Expr::List(items) => {
-                // Check if this is a list of functions — need explicit fn pointer cast
+            Expr::Array(items) => {
+                // Check if this is an array of functions — need explicit fn pointer cast
                 let inner_type = if !items.is_empty() {
                     let mut t = CrowType::Unknown;
                     for item in items {
@@ -1979,7 +1989,7 @@ impl Transpiler {
         // Determine element type of the iterator for the closure pattern
         let iter_type = self.ctx.infer_expr(iter);
         let elem_type = match &iter_type {
-            CrowType::List(inner) => *inner.clone(),
+            CrowType::Array(inner) => *inner.clone(),
             _ => CrowType::Unknown,
         };
         let is_copy = matches!(elem_type, CrowType::Int | CrowType::Float | CrowType::Bool);
@@ -1991,7 +2001,7 @@ impl Transpiler {
             format!("|{}|", var)
         };
 
-        // Check for filter pattern: for x in list \n if cond \n x
+        // Check for filter pattern: for x in array \n if cond \n x
         if Self::is_filter_pattern(body) {
             if let Some((cond, val_expr)) = Self::extract_filter_parts(body) {
                 // Save state for closure body
@@ -2111,7 +2121,7 @@ impl Transpiler {
                             // Use {:?} for collection/struct types since they don't impl Display
                             let expr_type = self.ctx.infer_expr(expr);
                             match expr_type {
-                                CrowType::List(_) | CrowType::Map(_) | CrowType::Struct(_) => fmt_str.push_str("{:?}"),
+                                CrowType::Array(_) | CrowType::Map(_) | CrowType::Struct(_) => fmt_str.push_str("{:?}"),
                                 _ => fmt_str.push_str("{}"),
                             }
                             args.push(rust_expr);
@@ -2203,7 +2213,7 @@ impl Transpiler {
                     CrowType::Result(inner) => (inner.as_ref().clone(), true),
                     other => (other.clone(), false),
                 };
-                let debug = matches!(inner, CrowType::List(_) | CrowType::Map(_) | CrowType::Struct(_));
+                let debug = matches!(inner, CrowType::Array(_) | CrowType::Map(_) | CrowType::Struct(_));
                 let jk = if matches!(inner, CrowType::Json) {
                     if is_result { 2 } else { 1 }  // 2=Result<Json>, 1=Json
                 } else { 0 };
@@ -2232,7 +2242,7 @@ impl Transpiler {
                     CrowType::Result(inner) => (inner.as_ref().clone(), true),
                     other => (other.clone(), false),
                 };
-                let debug = matches!(inner, CrowType::List(_) | CrowType::Map(_) | CrowType::Struct(_));
+                let debug = matches!(inner, CrowType::Array(_) | CrowType::Map(_) | CrowType::Struct(_));
                 let jk = if matches!(inner, CrowType::Json) {
                     if is_result { 2 } else { 1 }
                 } else { 0 };
@@ -2692,7 +2702,7 @@ mod tests {
     #[test]
     fn test_var_list_transpile() {
         let rust = transpile("x = [1, 2, 3]\n");
-        assert!(rust.contains("Vec"), "list should use Vec\n{}", rust);
+        assert!(rust.contains("Vec"), "array should use Vec\n{}", rust);
     }
 
     #[test]
@@ -2871,9 +2881,9 @@ mod tests {
     }
 
     #[test]
-    fn test_type_builtin_list_transpile() {
+    fn test_type_builtin_array_transpile() {
         let rust = transpile("x = type[[1, 2]]\n");
-        assert!(rust.contains("\"list\""), "type[[1,2]] should produce 'list'\n{}", rust);
+        assert!(rust.contains("\"array\""), "type[[1,2]] should produce 'array'\n{}", rust);
     }
 
     #[test]

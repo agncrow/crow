@@ -1,0 +1,3 @@
+pick_op[] = <fn square>
+pick_op[a] = <fn square>
+pick_op[hello] = <fn square>

@@ -252,7 +252,7 @@ fn collect_callees_from_expr(expr: &Expr, callees: &mut BTreeSet<String>) {
         }
         Expr::UnaryOp { expr: e, .. } => collect_callees_from_expr(e, callees),
         Expr::FieldAccess { object, .. } => collect_callees_from_expr(object, callees),
-        Expr::List(items) => { for i in items { collect_callees_from_expr(i, callees); } }
+        Expr::Array(items) => { for i in items { collect_callees_from_expr(i, callees); } }
         Expr::Map(pairs) => {
             for (k, v) in pairs {
                 collect_callees_from_expr(k, callees);
@@ -355,7 +355,7 @@ fn collect_reads_from_expr(expr: &Expr, reads: &mut BTreeSet<String>) {
             for a in args { collect_reads_from_expr(a, reads); }
         }
         Expr::FieldAccess { object, .. } => collect_reads_from_expr(object, reads),
-        Expr::List(items) => { for i in items { collect_reads_from_expr(i, reads); } }
+        Expr::Array(items) => { for i in items { collect_reads_from_expr(i, reads); } }
         Expr::Map(pairs) => {
             for (k, v) in pairs {
                 collect_reads_from_expr(k, reads);
@@ -529,7 +529,7 @@ fn collect_undefined_in_expr(
         Expr::FieldAccess { object, .. } => {
             collect_undefined_in_expr(func, object, defined, line, issues);
         }
-        Expr::List(items) => {
+        Expr::Array(items) => {
             for item in items { collect_undefined_in_expr(func, item, defined, line, issues); }
         }
         Expr::Map(entries) => {
@@ -616,27 +616,27 @@ fn boundary_values(ty: &CrowType) -> Option<Vec<CrowValue>> {
             CrowValue::ok(Value::Bool(true)),
             CrowValue::ok(Value::Bool(false)),
         ]),
-        CrowType::List(inner) => {
+        CrowType::Array(inner) => {
             match inner.as_ref() {
                 CrowType::Int => Some(vec![
-                    CrowValue::ok(Value::List(vec![])),
-                    CrowValue::ok(Value::List(vec![CrowValue::ok(Value::Int(0))])),
-                    CrowValue::ok(Value::List(vec![
+                    CrowValue::ok(Value::Array(vec![])),
+                    CrowValue::ok(Value::Array(vec![CrowValue::ok(Value::Int(0))])),
+                    CrowValue::ok(Value::Array(vec![
                         CrowValue::ok(Value::Int(1)),
                         CrowValue::ok(Value::Int(2)),
                         CrowValue::ok(Value::Int(3)),
                     ])),
-                    CrowValue::ok(Value::List(vec![CrowValue::ok(Value::Int(1))])),
-                    CrowValue::ok(Value::List(vec![
+                    CrowValue::ok(Value::Array(vec![CrowValue::ok(Value::Int(1))])),
+                    CrowValue::ok(Value::Array(vec![
                         CrowValue::ok(Value::Int(-1)),
                         CrowValue::ok(Value::Int(0)),
                         CrowValue::ok(Value::Int(1)),
                     ])),
                 ]),
                 CrowType::Str => Some(vec![
-                    CrowValue::ok(Value::List(vec![])),
-                    CrowValue::ok(Value::List(vec![CrowValue::ok(Value::Str(String::new()))])),
-                    CrowValue::ok(Value::List(vec![
+                    CrowValue::ok(Value::Array(vec![])),
+                    CrowValue::ok(Value::Array(vec![CrowValue::ok(Value::Str(String::new()))])),
+                    CrowValue::ok(Value::Array(vec![
                         CrowValue::ok(Value::Str("a".into())),
                         CrowValue::ok(Value::Str("b".into())),
                     ])),
@@ -800,8 +800,8 @@ fn value_to_expr(val: &CrowValue) -> Expr {
         Value::Float(f) => Expr::Float(*f),
         Value::Str(s) => Expr::Str(s.clone()),
         Value::Bool(b) => Expr::Bool(*b),
-        Value::List(items) => {
-            Expr::List(items.iter().map(|v| value_to_expr(v)).collect())
+        Value::Array(items) => {
+            Expr::Array(items.iter().map(|v| value_to_expr(v)).collect())
         }
         _ => Expr::Str(format!("{}", val)),
     }
@@ -1094,7 +1094,7 @@ mod tests {
     }
 
     #[test]
-    fn test_edge_case_empty_list_crash() {
+    fn test_edge_case_empty_array_crash() {
         let src = "fn first[items]\n    return items[0]\nnums = [1, 2]\nresult = first[nums]\n";
         let (stmts, ctx) = parse_and_infer(src);
         let pure = find_pure_functions(&ctx);

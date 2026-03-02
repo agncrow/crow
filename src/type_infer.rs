@@ -9,7 +9,7 @@ pub enum CrowType {
     Float,
     Bool,
     Str,
-    List(Box<CrowType>),
+    Array(Box<CrowType>),
     Map(Box<CrowType>),
     Struct(String),
     /// Recursive/optional struct field: Option<Box<StructName>>
@@ -31,7 +31,7 @@ impl CrowType {
             CrowType::Float => "f64".into(),
             CrowType::Bool => "bool".into(),
             CrowType::Str => "String".into(),
-            CrowType::List(inner) => format!("Vec<{}>", inner.to_rust_type()),
+            CrowType::Array(inner) => format!("Vec<{}>", inner.to_rust_type()),
             CrowType::Map(inner) => format!("std::collections::BTreeMap<String, {}>", inner.to_rust_type()),
             CrowType::Struct(name) => name.clone(),
             CrowType::OptBoxStruct(name) => format!("Option<Box<{}>>", name),
@@ -54,7 +54,7 @@ impl CrowType {
             CrowType::Float => "0.0_f64".into(),
             CrowType::Bool => "false".into(),
             CrowType::Str => "String::new()".into(),
-            CrowType::List(inner) => format!("Vec::<{}>::new()", inner.to_rust_type()),
+            CrowType::Array(inner) => format!("Vec::<{}>::new()", inner.to_rust_type()),
             CrowType::Map(inner) => format!("std::collections::BTreeMap::<String, {}>::new()", inner.to_rust_type()),
             CrowType::Struct(name) => format!("unsafe {{ std::mem::zeroed::<{}>() }}", name),
             CrowType::OptBoxStruct(_) => "None".into(),
@@ -73,7 +73,7 @@ impl CrowType {
             CrowType::Float => "float".into(),
             CrowType::Bool => "bool".into(),
             CrowType::Str => "str".into(),
-            CrowType::List(inner) => format!("list[{}]", inner.crow_name()),
+            CrowType::Array(inner) => format!("array[{}]", inner.crow_name()),
             CrowType::Map(inner) => format!("map[{}]", inner.crow_name()),
             CrowType::Struct(name) => name.clone(),
             CrowType::OptBoxStruct(name) => name.clone(),
@@ -96,7 +96,7 @@ impl CrowType {
             (CrowType::Unknown, _) | (_, CrowType::Unknown) => true,
             (CrowType::Void, _) | (_, CrowType::Void) => true,
             (CrowType::Int, CrowType::Float) | (CrowType::Float, CrowType::Int) => true,
-            (CrowType::List(a), CrowType::List(b)) => a.compatible(b),
+            (CrowType::Array(a), CrowType::Array(b)) => a.compatible(b),
             (CrowType::Map(a), CrowType::Map(b)) => a.compatible(b),
             (CrowType::Result(a), CrowType::Result(b)) => a.compatible(b),
             (CrowType::Int, CrowType::Struct(_)) | (CrowType::Struct(_), CrowType::Int) => true, // OptBoxStruct
@@ -111,7 +111,7 @@ impl CrowType {
         match (self, other) {
             (CrowType::Unknown, t) | (t, CrowType::Unknown) => t.clone(),
             (CrowType::Int, CrowType::Float) | (CrowType::Float, CrowType::Int) => CrowType::Float,
-            (CrowType::List(a), CrowType::List(b)) => CrowType::List(Box::new(a.unify(b))),
+            (CrowType::Array(a), CrowType::Array(b)) => CrowType::Array(Box::new(a.unify(b))),
             (CrowType::Map(a), CrowType::Map(b)) => CrowType::Map(Box::new(a.unify(b))),
             (CrowType::Void, t) | (t, CrowType::Void) => t.clone(),
             // Int + Struct => OptBoxStruct (recursive struct with sentinel)
@@ -321,7 +321,7 @@ impl TypeContext {
                 for s in body { self.collect_call_types_stmt(s); }
 
                 // After scanning body, propagate any updated Fn-typed param types back.
-                // This handles `f[result, list[i]]` where `f` is a known function param.
+                // This handles `f[result, array[i]]` where `f` is a known function param.
                 if let Some(sig) = self.functions.get(name).cloned() {
                     let mut new_params = sig.params.clone();
                     for (i, (pname, _pty)) in sig.params.iter().enumerate() {
@@ -350,7 +350,7 @@ impl TypeContext {
                 self.collect_call_types_expr(iter);
                 // Infer loop variable type from iterator
                 let iter_type = self.infer_expr(iter);
-                if let CrowType::List(inner) = &iter_type {
+                if let CrowType::Array(inner) = &iter_type {
                     self.vars.insert(var.clone(), *inner.clone());
                 }
                 for s in body { self.collect_call_types_stmt(s); }
@@ -445,7 +445,7 @@ impl TypeContext {
                     }
 
                     // Is it a variable holding a function? (not a declared function or struct)
-                    // Only update Fn type — don't override concrete types like List/Map.
+                    // Only update Fn type — don't override concrete types like Array/Map.
                     // For function params with Unknown type, skip — [] is ambiguous (call vs index)
                     // and the call site will provide the actual type.
                     // For params already known to be Fn, allow refinement of arg types.
@@ -464,7 +464,7 @@ impl TypeContext {
                                 let fn_type = CrowType::Fn(arg_types, Box::new(CrowType::Unknown));
                                 self.vars.insert(name.clone(), fn_type);
                             }
-                            _ => {} // List, Map, param with Unknown — [] means indexing
+                            _ => {} // Array, Map, param with Unknown — [] means indexing
                         }
                     }
                 }
@@ -514,7 +514,7 @@ impl TypeContext {
             }
             Expr::UnaryOp { expr: e, .. } => self.collect_call_types_expr(e),
             Expr::FieldAccess { object, .. } => self.collect_call_types_expr(object),
-            Expr::List(items) => {
+            Expr::Array(items) => {
                 for i in items { self.collect_call_types_expr(i); }
             }
             Expr::Map(pairs) => {
@@ -527,7 +527,7 @@ impl TypeContext {
                 self.collect_call_types_expr(iter);
                 // Infer loop variable type from iterator
                 let iter_type = self.infer_expr(iter);
-                if let CrowType::List(inner) = &iter_type {
+                if let CrowType::Array(inner) = &iter_type {
                     self.vars.insert(var.clone(), *inner.clone());
                 }
                 for s in body { self.collect_call_types_stmt(s); }
@@ -656,7 +656,7 @@ impl TypeContext {
             }
             Stmt::For { var, iter, body } => {
                 let iter_type = self.infer_expr(iter);
-                if let CrowType::List(inner) = &iter_type {
+                if let CrowType::Array(inner) = &iter_type {
                     self.vars.insert(var.clone(), *inner.clone());
                 }
                 for s in body { self.infer_stmt(s); }
@@ -714,7 +714,7 @@ impl TypeContext {
             "type" => CrowType::Str,
             "error" => CrowType::Result(Box::new(CrowType::Str)),
             "map" => CrowType::Map(Box::new(CrowType::Unknown)),
-            "range" => CrowType::List(Box::new(CrowType::Int)),
+            "range" => CrowType::Array(Box::new(CrowType::Int)),
             // Math builtins
             "abs" => {
                 if let Some(arg) = args.first() {
@@ -741,7 +741,7 @@ impl TypeContext {
             }
             // String builtins
             "trim" | "upper" | "lower" | "replace" | "join" | "repeat" | "pad" => CrowType::Str,
-            "split" => CrowType::List(Box::new(CrowType::Str)),
+            "split" => CrowType::Array(Box::new(CrowType::Str)),
             "starts" | "ends" | "contains" => CrowType::Bool,
             // Conversion builtins — fallible when parsing from string
             "int" => {
@@ -767,19 +767,19 @@ impl TypeContext {
             "str" => CrowType::Str,
             // Immutable collection builtins (return same type as first arg)
             "push" => {
-                // push[list, val] returns List with element type from val
+                // push[array, val] returns Array with element type from val
                 if let Some(arg) = args.first() {
-                    let list_type = self.infer_expr(arg);
+                    let arr_type = self.infer_expr(arg);
                     if args.len() == 2 {
                         let val_type = self.infer_expr(&args[1]);
-                        let existing_inner = if let CrowType::List(inner) = &list_type {
+                        let existing_inner = if let CrowType::Array(inner) = &arr_type {
                             *inner.clone()
                         } else {
                             CrowType::Unknown
                         };
-                        return CrowType::List(Box::new(existing_inner.unify(&val_type)));
+                        return CrowType::Array(Box::new(existing_inner.unify(&val_type)));
                     }
-                    return list_type;
+                    return arr_type;
                 }
                 CrowType::Unknown
             }
@@ -813,16 +813,16 @@ impl TypeContext {
                 CrowType::Unknown
             }
             // Map builtins
-            "keys" => CrowType::List(Box::new(CrowType::Str)),
+            "keys" => CrowType::Array(Box::new(CrowType::Str)),
             "has" => CrowType::Bool,
             "values" => {
                 if let Some(arg) = args.first() {
                     let map_type = self.infer_expr(arg);
                     if let CrowType::Map(inner) = map_type {
-                        return CrowType::List(inner);
+                        return CrowType::Array(inner);
                     }
                 }
-                CrowType::List(Box::new(CrowType::Unknown))
+                CrowType::Array(Box::new(CrowType::Unknown))
             }
             "slice" => {
                 if let Some(arg) = args.first() {
@@ -834,7 +834,7 @@ impl TypeContext {
             }
             "len" => CrowType::Int,
             // CLI / IO
-            "args" => CrowType::List(Box::new(CrowType::Str)),
+            "args" => CrowType::Array(Box::new(CrowType::Str)),
             "input" => CrowType::Result(Box::new(CrowType::Str)),
             // File I/O
             "read" => CrowType::Result(Box::new(CrowType::Str)),
@@ -851,11 +851,11 @@ impl TypeContext {
             "json" => CrowType::Result(Box::new(CrowType::Json)),
             "encode" => CrowType::Result(Box::new(CrowType::Str)),
             _ => {
-                // Check variable type: could be a function call, list/map indexing, etc.
+                // Check variable type: could be a function call, array/map indexing, etc.
                 if let Some(var_type) = self.vars.get(name) {
                     match var_type {
                         CrowType::Fn(_, ret) => return *ret.clone(),
-                        CrowType::List(inner) => return *inner.clone(),
+                        CrowType::Array(inner) => return *inner.clone(),
                         CrowType::Map(inner) => return *inner.clone(),
                         CrowType::Str => return CrowType::Str,
                         _ => {}
@@ -939,10 +939,10 @@ impl TypeContext {
                         }
                     }
                 }
-                // List/Map/Json indexing or indirect function call
+                // Array/Map/Json indexing or indirect function call
                 let callee_type = self.infer_expr(callee);
                 match callee_type {
-                    CrowType::List(inner) => *inner,
+                    CrowType::Array(inner) => *inner,
                     CrowType::Map(inner) => *inner,
                     CrowType::Json => CrowType::Json,
                     CrowType::Fn(_, ret) => *ret,
@@ -955,7 +955,7 @@ impl TypeContext {
                 match field.as_str() {
                     "ok" => return CrowType::Bool,
                     "reason" | "kind" => return CrowType::Str,
-                    "trace" => return CrowType::List(Box::new(CrowType::Str)),
+                    "trace" => return CrowType::Array(Box::new(CrowType::Str)),
                     _ => {}
                 }
                 if let CrowType::Struct(name) = obj_type {
@@ -981,15 +981,15 @@ impl TypeContext {
                 }
                 CrowType::Unknown
             }
-            Expr::List(items) => {
+            Expr::Array(items) => {
                 if items.is_empty() {
-                    CrowType::List(Box::new(CrowType::Unknown))
+                    CrowType::Array(Box::new(CrowType::Unknown))
                 } else {
                     let mut inner = CrowType::Unknown;
                     for item in items {
                         inner = inner.unify(&self.infer_expr(item));
                     }
-                    CrowType::List(Box::new(inner))
+                    CrowType::Array(Box::new(inner))
                 }
             }
             Expr::Map(pairs) => {
@@ -1007,7 +1007,7 @@ impl TypeContext {
                 // Determine element type from iterator
                 let iter_type = self.infer_expr(iter);
                 let _elem_type = match &iter_type {
-                    CrowType::List(inner) => *inner.clone(),
+                    CrowType::Array(inner) => *inner.clone(),
                     _ => CrowType::Unknown,
                 };
 
@@ -1028,7 +1028,7 @@ impl TypeContext {
                     last_type
                 };
 
-                CrowType::List(Box::new(result_elem))
+                CrowType::Array(Box::new(result_elem))
             }
         }
     }

@@ -516,7 +516,7 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Ident(name))
             }
-            Token::LBracket => self.parse_list_or_map(),
+            Token::LBracket => self.parse_array_or_map(),
             Token::LParen => {
                 self.advance(); // skip '('
                 let expr = self.parse_expr()?;
@@ -531,26 +531,36 @@ impl Parser {
         }
     }
 
-    fn parse_list_or_map(&mut self) -> Result<Expr, String> {
+    /// Convert bare ident to string key for maps: [name = 'crow'] → key is Expr::Str("name")
+    fn ident_to_map_key(&self, expr: Expr) -> Expr {
+        match expr {
+            Expr::Ident(name) => Expr::Str(name),
+            other => other,
+        }
+    }
+
+    fn parse_array_or_map(&mut self) -> Result<Expr, String> {
         self.advance(); // skip '['
 
         // empty list
         if self.check(&Token::RBracket) {
             self.advance();
-            return Ok(Expr::List(vec![]));
+            return Ok(Expr::Array(vec![]));
         }
 
         // parse first element
         let first = self.parse_expr()?;
 
-        // check if it's a map: ['key' = value, ...]
+        // check if it's a map: [key = value, ...] (bare-name) or ['key' = value, ...]
         if self.check(&Token::Assign) {
             self.advance();
+            let key = self.ident_to_map_key(first);
             let val = self.parse_expr()?;
-            let mut pairs = vec![(first, val)];
+            let mut pairs = vec![(key, val)];
             while self.check(&Token::Comma) {
                 self.advance();
-                let key = self.parse_expr()?;
+                let raw_key = self.parse_expr()?;
+                let key = self.ident_to_map_key(raw_key);
                 self.expect(&Token::Assign)?;
                 let val = self.parse_expr()?;
                 pairs.push((key, val));
@@ -565,7 +575,7 @@ impl Parser {
                 items.push(self.parse_expr()?);
             }
             self.expect(&Token::RBracket)?;
-            Ok(Expr::List(items))
+            Ok(Expr::Array(items))
         }
     }
 

@@ -1,0 +1,3 @@
+greet[] = hello, 
+greet[a] = hello, a
+greet[hello] = hello, hello

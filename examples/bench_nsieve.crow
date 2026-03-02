@@ -1,6 +1,6 @@
 --- nsieve benchmark ---
---- tests: list creation, while loops ---
---- ISSUE FOUND: No list/map mutation by index ---
+--- tests: array creation, while loops ---
+--- ISSUE FOUND: No array/map mutation by index ---
 --- Workaround: trial division instead of sieve ---
 
 fn is_prime[n]

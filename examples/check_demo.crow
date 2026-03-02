@@ -1,0 +1,51 @@
+--- Demo for crow check - automatic verification ---
+--- Run: crow check examples/check_demo.crow ---
+
+--- Pure function - edge cases will be generated ---
+fn double[x]
+  return x * 2
+
+--- Pure function that crashes on empty array ---
+fn first[items]
+  return items[0]
+
+--- Pure function with unused variable ---
+fn add[a, b]
+  temp = 42
+  return a + b
+
+--- Pure function with unreachable code ---
+fn abs[x]
+  if x lt 0
+    return -x
+  return x
+  log['this never runs']
+
+--- Impure function - will be skipped for edge cases ---
+fn greet[name]
+  log['hello {name}']
+
+--- Pure function with multiple params ---
+fn clamp[val, lo, hi]
+  if val lt lo
+    return lo
+  if val gt hi
+    return hi
+  return val
+
+--- Pure array function ---
+fn total[nums]
+  result = 0
+  for n in nums
+    result = result + n
+  return result
+
+--- Call the functions so type inference can determine param types ---
+x = double[5]
+nums = [1, 2, 3]
+y = first[nums]
+z = add[1, 2]
+w = abs[-3]
+clamp[5, 0, 10]
+t = total[nums]
+

@@ -51,7 +51,7 @@ nums = push[nums, 4]
 nums = push[nums, 5]
 log[nums]
 
---- pop (immutable, returns new list without last element) ---
+--- pop (immutable, returns new array without last element) ---
 nums = pop[nums]
 log[nums]
 
@@ -82,7 +82,7 @@ log[len['hello']]
 
 --- Map Operations ---
 log['=== MAP OPS ===']
-m = ['name' = 'crow', 'age' = '3']
+m = [name = 'crow', age = '3']
 log[keys[m]]
 log[values[m]]
 log[has[m, 'name']]

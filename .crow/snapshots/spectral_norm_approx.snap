@@ -1,0 +1,4 @@
+spectral_norm_approx[0] = 0
+spectral_norm_approx[1] = 1
+spectral_norm_approx[-1] = 0
+spectral_norm_approx[-9223372036854775808] = 0

@@ -1,0 +1,5 @@
+is_prime[0] = false
+is_prime[1] = false
+is_prime[-1] = false
+is_prime[9223372036854775807] = false
+is_prime[-9223372036854775808] = false

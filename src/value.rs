@@ -87,7 +87,7 @@ pub enum Value {
     Float(f64),
     Str(String),
     Bool(bool),
-    List(Vec<CrowValue>),
+    Array(Vec<CrowValue>),
     Map(BTreeMap<String, CrowValue>),
     Fn(FnValue),
     StructDef(StructDef),
@@ -137,7 +137,7 @@ impl Value {
             Value::Float(_) => "float",
             Value::Str(_) => "string",
             Value::Bool(_) => "bool",
-            Value::List(_) => "list",
+            Value::Array(_) => "array",
             Value::Map(_) => "map",
             Value::Fn(_) => "fn",
             Value::StructDef(_) => "struct",
@@ -165,7 +165,7 @@ impl fmt::Display for Value {
             Value::Float(n) => write!(f, "{}", n),
             Value::Str(s) => write!(f, "{}", s),
             Value::Bool(b) => write!(f, "{}", b),
-            Value::List(items) => {
+            Value::Array(items) => {
                 write!(f, "[")?;
                 for (i, item) in items.iter().enumerate() {
                     if i > 0 {
@@ -181,7 +181,7 @@ impl fmt::Display for Value {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "'{}' = ", k)?;
+                    write!(f, "{} = ", k)?;
                     v.value.fmt_repr(f)?;
                 }
                 write!(f, "]")
