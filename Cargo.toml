@@ -1,5 +1,6 @@
 [workspace]
 members = [".", "crow_runtime"]
+exclude = [".crow_build"]
 resolver = "3"
 
 [package]

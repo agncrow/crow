@@ -627,12 +627,16 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
 
     // Write Cargo.toml
     let project_name = entry.replace(".crow", "").replace('/', "_");
-    let mut dep_list = Vec::new();
+    let mut dep_list: Vec<String> = Vec::new();
     if transpiler.needs_rayon {
-        dep_list.push("rayon = \"1.10\"");
+        dep_list.push("rayon = \"1.10\"".to_string());
     }
     if transpiler.needs_serde_json {
-        dep_list.push("serde_json = \"1\"");
+        dep_list.push("serde_json = \"1\"".to_string());
+    }
+    if transpiler.needs_crow_runtime {
+        let runtime_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_runtime");
+        dep_list.push(format!("crow_runtime = {{ path = \"{}\" }}", runtime_path));
     }
     let deps = if dep_list.is_empty() {
         String::new()
@@ -640,7 +644,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         format!("\n[dependencies]\n{}\n", dep_list.join("\n"))
     };
     let cargo_toml = format!(
-        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{}\n[profile.release]\nopt-level = 3\nlto = true\n",
+        "[workspace]\n\n[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{}\n[profile.release]\nopt-level = 3\nlto = true\n",
         project_name, deps
     );
     std::fs::write(build_dir.join("Cargo.toml"), &cargo_toml).unwrap_or_else(|e| {

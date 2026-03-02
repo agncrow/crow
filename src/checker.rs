@@ -644,6 +644,27 @@ fn boundary_values(ty: &CrowType) -> Option<Vec<CrowValue>> {
                 _ => None, // unsupported inner type
             }
         }
+        CrowType::NumArray(inner) => {
+            // Same boundary values as Array but for numeric arrays
+            match inner.as_ref() {
+                CrowType::Int | CrowType::Float => Some(vec![
+                    CrowValue::ok(Value::Array(vec![])),
+                    CrowValue::ok(Value::Array(vec![CrowValue::ok(Value::Int(0))])),
+                    CrowValue::ok(Value::Array(vec![
+                        CrowValue::ok(Value::Int(1)),
+                        CrowValue::ok(Value::Int(2)),
+                        CrowValue::ok(Value::Int(3)),
+                    ])),
+                    CrowValue::ok(Value::Array(vec![CrowValue::ok(Value::Int(1))])),
+                    CrowValue::ok(Value::Array(vec![
+                        CrowValue::ok(Value::Int(-1)),
+                        CrowValue::ok(Value::Int(0)),
+                        CrowValue::ok(Value::Int(1)),
+                    ])),
+                ]),
+                _ => None,
+            }
+        }
         _ => None, // map, struct, etc. — skip
     }
 }
