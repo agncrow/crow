@@ -161,7 +161,13 @@ impl<'a> Validator<'a> {
                 self.validate_expr(index);
                 self.validate_expr(value);
             }
-            Stmt::Use { .. } => {} // modules handled by expand_module_imports
+            Stmt::Use { path } => {
+                // Built-in modules register their name as a defined variable
+                if path == "math" {
+                    self.defined_vars.insert("math".to_string());
+                }
+                // Other modules handled by expand_module_imports
+            }
             Stmt::Resource { .. } => {}
             Stmt::Break | Stmt::Continue => {}
         }

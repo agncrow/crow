@@ -429,6 +429,9 @@ impl Transpiler {
         for stmt in stmts {
             if let Stmt::Use { path } = stmt {
                 let module_name = path.rsplit('/').next().unwrap_or(path).to_string();
+                if module_name == "math" {
+                    self.needs_crow_runtime = true;
+                }
                 self.modules.insert(module_name);
             }
         }
@@ -1180,6 +1183,10 @@ impl Transpiler {
     /// We just need to record the module name so FieldAccess can resolve module.var.
     fn emit_use(&mut self, path: &str) {
         let module_name = path.rsplit('/').next().unwrap_or(path).to_string();
+        if module_name == "math" {
+            self.needs_crow_runtime = true;
+            // No code emitted — math module calls are handled inline in expr_to_string
+        }
         self.modules.insert(module_name);
     }
 
@@ -1874,6 +1881,61 @@ impl Transpiler {
                         _ => {
                             // Function pointer call or unknown: name(args)
                             return format!("{}({})", name, arg_strs.join(", "));
+                        }
+                    }
+                }
+
+                // Built-in math module: math.func[args] → CrowTensor code
+                if let Expr::FieldAccess { object, field } = callee.as_ref() {
+                    if let Expr::Ident(mod_name) = object.as_ref() {
+                        if mod_name == "math" {
+                            self.needs_crow_runtime = true;
+                            let result = match field.as_str() {
+                                // Tensor creation (all args are shape dims)
+                                "zeros" => format!("CrowTensor::zeros(vec![{}])", arg_strs.iter().map(|a| format!("{} as usize", a)).collect::<Vec<_>>().join(", ")),
+                                "ones" => format!("CrowTensor::ones(vec![{}])", arg_strs.iter().map(|a| format!("{} as usize", a)).collect::<Vec<_>>().join(", ")),
+                                "rand" => format!("CrowTensor::rand(vec![{}])", arg_strs.iter().map(|a| format!("{} as usize", a)).collect::<Vec<_>>().join(", ")),
+                                "randn" => format!("CrowTensor::randn(vec![{}])", arg_strs.iter().map(|a| format!("{} as usize", a)).collect::<Vec<_>>().join(", ")),
+                                "eye" => format!("CrowTensor::eye({} as usize)", arg_strs[0]),
+                                "linspace" => format!("CrowTensor::linspace({} as f64, {} as f64, {} as usize)", arg_strs[0], arg_strs[1], arg_strs[2]),
+                                "arange" => format!("CrowTensor::arange({} as f64, {} as f64, {} as f64)", arg_strs[0], arg_strs[1], arg_strs[2]),
+                                "full" => {
+                                    let shape_args: Vec<String> = arg_strs[..arg_strs.len()-1].iter().map(|a| format!("{} as usize", a)).collect();
+                                    format!("CrowTensor::full(vec![{}], {} as f64)", shape_args.join(", "), arg_strs.last().unwrap())
+                                }
+                                "diag" => format!("CrowTensor::diag(&{})", arg_strs[0]),
+                                "tensor" => format!("{{ let _arr = {}; CrowTensor::from_vec(_arr.iter().map(|v| *v as f64).collect(), vec![_arr.len()]) }}", arg_strs[0]),
+                                // Element-wise math
+                                "exp" => format!("{}.exp()", arg_strs[0]),
+                                "log" => format!("{}.log()", arg_strs[0]),
+                                "sqrt" => format!("{}.sqrt()", arg_strs[0]),
+                                "sin" => format!("{}.sin()", arg_strs[0]),
+                                "cos" => format!("{}.cos()", arg_strs[0]),
+                                "abs" => format!("{}.abs()", arg_strs[0]),
+                                // Reductions (return scalars)
+                                "sum" => format!("{}.sum()", arg_strs[0]),
+                                "mean" => format!("{}.mean()", arg_strs[0]),
+                                "min" => format!("{}.min()", arg_strs[0]),
+                                "max" => format!("{}.max()", arg_strs[0]),
+                                // Shape ops
+                                "reshape" => {
+                                    let shape_args: Vec<String> = arg_strs[1..].iter().map(|a| format!("{} as usize", a)).collect();
+                                    format!("{}.reshape(vec![{}])", arg_strs[0], shape_args.join(", "))
+                                }
+                                "flatten" => format!("{}.flatten()", arg_strs[0]),
+                                "transpose" => format!("{}.transpose()", arg_strs[0]),
+                                // Linear algebra
+                                "matmul" => format!("{}.matmul(&{})", arg_strs[0], arg_strs[1]),
+                                "solve" => format!("{}.solve(&{})", arg_strs[0], arg_strs[1]),
+                                "inv" => format!("{}.inv()", arg_strs[0]),
+                                "det" => format!("{}.det()", arg_strs[0]),
+                                "svd" => format!("{{ let (_u, _s, _vt) = {}.svd_decomp(); vec![_u, _s, _vt] }}", arg_strs[0]),
+                                "qr" => format!("{{ let (_q, _r) = {}.qr_decomp(); vec![_q, _r] }}", arg_strs[0]),
+                                "cholesky" => format!("{}.cholesky_decomp()", arg_strs[0]),
+                                "eigen" => format!("{{ let (_re, _im) = {}.eigen_decomp(); vec![_re, _im] }}", arg_strs[0]),
+                                _ => format!("/* unknown math.{} */", field),
+                            };
+                            return result;
                         }
                     }
                 }
