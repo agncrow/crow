@@ -1033,6 +1033,14 @@ impl TypeContext {
                             lt_inner.unify(&rt_inner)
                         }
                     }
+                    BinOp::Sub | BinOp::Div => {
+                        // scalar - tensor, tensor - scalar, etc. → NumArray
+                        if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
+                            CrowType::NumArray(Box::new(CrowType::Float))
+                        } else {
+                            lt_inner.unify(&rt_inner)
+                        }
+                    }
                     _ => lt_inner.unify(&rt_inner),
                 };
                 // If either operand was CrowResult, wrap the result type
