@@ -2,97 +2,97 @@ use math
 use math.stats
 
 --- tensor creation ---
-a = math.zeros[2, 3]
+a = zeros[2, 3]
 log[a]
 
-b = math.ones[2, 3]
+b = ones[2, 3]
 log[b]
 
-c = math.eye[3]
+c = eye[3]
 log[c]
 
-d = math.linspace[0, 1, 5]
+d = linspace[0, 1, 5]
 log[d]
 
-e = math.arange[0, 5, 1]
+e = arange[0, 5, 1]
 log[e]
 
-f = math.full[2, 2, 7.0]
+f = full[2, 2, 7.0]
 log[f]
 
 --- element-wise math ---
-g = math.exp[d]
+g = exp[d]
 log[g]
 
-h = math.sqrt[b]
+h = sqrt[b]
 log[h]
 
 --- reductions ---
-log[math.sum[b]]
-log[math.mean[b]]
-log[math.min[d]]
-log[math.max[d]]
-log[math.prod[math.linspace[1, 4, 4]]]
-log[math.argmax[d]]
-log[math.argmin[d]]
+log[sum[b]]
+log[mean[b]]
+log[min[d]]
+log[max[d]]
+log[prod[linspace[1, 4, 4]]]
+log[argmax[d]]
+log[argmin[d]]
 
 --- sorting and selection ---
-log[math.argsort[d]]
-log[math.topk[d, 3]]
-log[math.unique[math.linspace[1, 3, 5]]]
+log[argsort[d]]
+log[topk[d, 3]]
+log[unique[linspace[1, 3, 5]]]
 
 --- cumulative ops ---
-log[math.cumsum[math.linspace[1, 4, 4]]]
-log[math.cumprod[math.linspace[1, 4, 4]]]
+log[cumsum[linspace[1, 4, 4]]]
+log[cumprod[linspace[1, 4, 4]]]
 
 --- combining ops ---
-log[math.concat[math.linspace[1, 3, 3], math.linspace[4, 5, 2]]]
-log[math.stack[[math.linspace[1, 3, 3], math.linspace[4, 6, 3]]]]
+log[concat[linspace[1, 3, 3], linspace[4, 5, 2]]]
+log[stack[[linspace[1, 3, 3], linspace[4, 6, 3]]]]
 
 --- broadcasting ---
-p = math.reshape[math.linspace[1, 3, 3], 3, 1]
-q = math.reshape[math.linspace[10, 40, 4], 1, 4]
+p = reshape[linspace[1, 3, 3], 3, 1]
+q = reshape[linspace[10, 40, 4], 1, 4]
 log[p + q]
 
 --- advanced indexing ---
-data = math.linspace[10, 50, 5]
-idx = math.linspace[0, 2, 3]
+data = linspace[10, 50, 5]
+idx = linspace[0, 2, 3]
 log[data[idx]]
 
 --- shape ops ---
-i = math.reshape[b, 3, 2]
+i = reshape[b, 3, 2]
 log[i]
 
-j = math.flatten[c]
+j = flatten[c]
 log[j]
 
-k = math.transpose[c]
+k = transpose[c]
 log[k]
 
 --- linear algebra ---
-m1 = math.eye[2]
-m2 = math.full[2, 2, 2.0]
+m1 = eye[2]
+m2 = full[2, 2, 2.0]
 log[m1 * m2]
-log[math.det[m1]]
-log[math.inv[m1]]
+log[det[m1]]
+log[inv[m1]]
 
 --- norms ---
-log[math.norm[math.linspace[3, 4, 2]]]
-log[math.norm[math.linspace[1, 3, 3], 1]]
+log[norm[linspace[3, 4, 2]]]
+log[norm[linspace[1, 3, 3], 1]]
 
 --- qr decomposition ---
-qr = math.qr[c]
+qr = qr[c]
 log[qr]
 
 --- diag ---
-v = math.diag[c]
+v = diag[c]
 log[v]
 
 --- constants ---
-log[math.pi]
-log[math.e]
-log[math.inf]
-log[math.nan]
+log[pi]
+log[e]
+log[inf]
+log[nan]
 
 --- properties ---
 log[b.shape]
@@ -102,63 +102,63 @@ log[b.grad]
 log[b.len]
 
 --- random and distributions ---
-math.seed[42]
-log[math.normal[0, 1, 3]]
-log[math.uniform[2, 5, 4]]
-log[math.poisson[3.5, 5]]
-log[math.bernoulli[0.5, 6]]
-log[math.shuffle[math.linspace[1, 5, 5]]]
-log[math.choice[math.linspace[1, 10, 10], 3]]
-log[math.permutation[5]]
+seed[42]
+log[normal[0, 1, 3]]
+log[uniform[2, 5, 4]]
+log[poisson[3.5, 5]]
+log[bernoulli[0.5, 6]]
+log[shuffle[linspace[1, 5, 5]]]
+log[choice[linspace[1, 10, 10], 3]]
+log[permutation[5]]
 
 --- signal processing ---
-f = math.fft[math.linspace[1, 4, 4]]
+f = fft[linspace[1, 4, 4]]
 log[f]
-log[math.ifft[f[0], f[1]]]
-log[math.conv[math.linspace[1, 3, 3], math.linspace[1, 2, 2]]]
-log[math.hamming[5]]
-log[math.hanning[5]]
+log[ifft[f[0], f[1]]]
+log[conv[linspace[1, 3, 3], linspace[1, 2, 2]]]
+log[hamming[5]]
+log[hanning[5]]
 
 --- special functions ---
-log[math.gamma[math.linspace[1, 4, 4]]]
-log[math.erf[math.linspace[0, 2, 3]]]
-log[math.bessel[math.linspace[0, 3, 4], 0]]
-log[math.factorial[math.linspace[0, 5, 6]]]
-log[math.choose[math.linspace[5, 5, 3], math.linspace[0, 2, 3]]]
+log[gamma[linspace[1, 4, 4]]]
+log[erf[linspace[0, 2, 3]]]
+log[bessel[linspace[0, 3, 4], 0]]
+log[factorial[linspace[0, 5, 6]]]
+log[choose[linspace[5, 5, 3], linspace[0, 2, 3]]]
 
 --- complex numbers ---
-c = math.complex[3, 4]
-log[math.real[c]]
-log[math.imag[c]]
-log[math.magnitude[c]]
-log[math.phase[c]]
-log[math.conjugate[c]]
+c = complex[3, 4]
+log[real[c]]
+log[imag[c]]
+log[magnitude[c]]
+log[phase[c]]
+log[conjugate[c]]
 
 --- sparse arrays ---
-s = math.sparse[math.eye[3]]
+s = sparse[eye[3]]
 log[s]
 log[type[s]]
-s2 = math.sparse[[0, 1, 2], [0, 1, 2], [5, 6, 7], [3, 3]]
+s2 = sparse[[0, 1, 2], [0, 1, 2], [5, 6, 7], [3, 3]]
 r = s * [1, 2, 3]
 log[r]
 s3 = s + s2
 log[s3]
-d = math.dense[s3]
+d = dense[s3]
 log[d]
-x = math.solve[s2, [10, 12, 14]]
+x = solve[s2, [10, 12, 14]]
 log[x]
 
 --- statistics ---
-data = math.linspace[1, 10, 10]
-log['median:', math.median[data]]
-log['std:', math.std[data]]
-log['var:', math.var[data]]
-log['p50:', math.percentile[data, 50]]
-log['zscore:', math.zscore[data]]
-data2 = math.linspace[2, 20, 10]
-log['corr:', math.corr[data, data2]]
-log['cov:', math.cov[data, data2]]
-result = math.ttest[data, data2]
+data = linspace[1, 10, 10]
+log['median:', median[data]]
+log['std:', std[data]]
+log['var:', var[data]]
+log['p50:', percentile[data, 50]]
+log['zscore:', zscore[data]]
+data2 = linspace[2, 20, 10]
+log['corr:', corr[data, data2]]
+log['cov:', cov[data, data2]]
+result = ttest[data, data2]
 log['ttest:', result]
 
 --- distributed computing ---

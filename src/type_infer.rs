@@ -178,6 +178,8 @@ pub struct TypeContext {
     /// Param names of the function currently being body-scanned (to avoid
     /// incorrectly inferring [] indexing as a function call on params).
     current_fn_params: Vec<String>,
+    /// Module registry for generic type dispatch
+    pub registry: crate::modules::ModuleRegistry,
 }
 
 impl TypeContext {
@@ -188,6 +190,7 @@ impl TypeContext {
             structs: BTreeMap::new(),
             cpu_count: None,
             current_fn_params: Vec::new(),
+            registry: crate::modules::ModuleRegistry::new(),
         }
     }
 
@@ -207,6 +210,21 @@ impl TypeContext {
                         return_type: CrowType::Unknown,
                         body: body.clone(),
                     });
+                }
+                Stmt::Use { path } => {
+                    if path == "math" {
+                        if !self.registry.is_loaded("math") {
+                            self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
+                        }
+                    }
+                    if path == "math.stats" {
+                        if !self.registry.is_loaded("math") {
+                            self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
+                        }
+                        if !self.registry.is_loaded("stats") {
+                            self.registry.load(std::sync::Arc::new(crate::modules::stats::StatsModule));
+                        }
+                    }
                 }
                 Stmt::Resource { kind, count } => {
                     if kind == "cpu" {
@@ -733,6 +751,24 @@ impl TypeContext {
         if let Some(sig) = self.functions.get(name) {
             return sig.return_type.clone();
         }
+        // Module function dispatch (overlapping builtins: check arg type)
+        let is_overlapping = matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max");
+        if is_overlapping && self.registry.has_function(name) {
+            let arg_types: Vec<CrowType> = args.iter().map(|a| self.infer_expr(a)).collect();
+            let has_numarray = arg_types.iter().any(|t| matches!(t, CrowType::NumArray(_)));
+            if has_numarray {
+                if let Some(t) = self.registry.type_of(name, args.len()) {
+                    return t;
+                }
+            }
+        }
+        // Non-overlapping module functions
+        if !is_overlapping && self.registry.has_function(name) {
+            if let Some(t) = self.registry.type_of(name, args.len()) {
+                return t;
+            }
+        }
+
         // Builtins (check before vars to prevent builtins from being shadowed by Fn inference)
         match name {
             "log" | "cpu" | "gpu" | "assert" => CrowType::Void,
@@ -740,7 +776,7 @@ impl TypeContext {
             "error" => CrowType::Result(Box::new(CrowType::Str)),
             "map" => CrowType::Map(Box::new(CrowType::Unknown)),
             "range" => CrowType::Array(Box::new(CrowType::Int)),
-            // Math builtins
+            // Math builtins (scalar)
             "abs" => {
                 if let Some(arg) = args.first() {
                     let t = self.infer_expr(arg);
@@ -923,6 +959,10 @@ impl TypeContext {
             Expr::Bool(_) => CrowType::Bool,
             Expr::Str(_) => CrowType::Str,
             Expr::Ident(name) => {
+                // Module constants: pi, e, inf, nan
+                if self.registry.has_constant(name) {
+                    return CrowType::Float;
+                }
                 // Check local vars first
                 if let Some(ty) = self.vars.get(name) {
                     return ty.clone();
@@ -1013,69 +1053,6 @@ impl TypeContext {
                     }
                     return base;
                 }
-                // Built-in math module: math.func[args]
-                if let Expr::FieldAccess { object, field } = callee.as_ref() {
-                    if let Expr::Ident(mod_name) = object.as_ref() {
-                        if mod_name == "math" {
-                            return match field.as_str() {
-                                // Tensor creation → NumArray(Float)
-                                "zeros" | "ones" | "eye" | "rand" | "randn" | "linspace"
-                                | "arange" | "full" | "diag" | "tensor" => CrowType::NumArray(Box::new(CrowType::Float)),
-                                // Element-wise → NumArray(Float)
-                                "exp" | "log" | "sqrt" | "sin" | "cos" | "abs"
-                                | "sign" | "floor" | "ceil" | "round" | "clip" | "mod"
-                                | "tan" | "asin" | "acos" | "atan" | "atan2"
-                                | "sinh" | "cosh" | "tanh" => CrowType::NumArray(Box::new(CrowType::Float)),
-                                // Shape ops → NumArray(Float)
-                                "reshape" | "flatten" | "transpose" => CrowType::NumArray(Box::new(CrowType::Float)),
-                                // Linalg returning tensor
-                                // matmul removed — use * operator instead
-                                "solve" | "inv" | "cholesky" => CrowType::NumArray(Box::new(CrowType::Float)),
-                                // Linalg returning scalar
-                                "det" | "norm" => CrowType::Float,
-                                // Reductions: scalar if no axis, NumArray if axis given
-                                "sum" | "mean" | "min" | "max" | "prod" => {
-                                    if args.len() >= 2 {
-                                        CrowType::NumArray(Box::new(CrowType::Float))
-                                    } else {
-                                        CrowType::Float
-                                    }
-                                }
-                                "argmax" | "argmin" => CrowType::Int,
-                                // Cumulative ops (return NumArray)
-                                "cumsum" | "cumprod" => CrowType::NumArray(Box::new(CrowType::Float)),
-                                // Combining ops (return NumArray)
-                                "concat" | "stack" => CrowType::NumArray(Box::new(CrowType::Float)),
-                                // Sorting & selection (return NumArray)
-                                "argsort" | "topk" | "unique" | "where" => CrowType::NumArray(Box::new(CrowType::Float)),
-                                // Decompositions returning arrays of tensors
-                                "svd" | "qr" | "eigen" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
-                                // Random & Distributions
-                                "seed" => CrowType::Void,
-                                "normal" | "uniform" | "poisson" | "bernoulli"
-                                | "shuffle" | "choice" | "permutation" => CrowType::NumArray(Box::new(CrowType::Float)),
-                                // Signal processing
-                                "fft" | "fft2" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
-                                "ifft" | "conv" | "conv2d" | "hamming" | "hanning" => CrowType::NumArray(Box::new(CrowType::Float)),
-                                // Special functions
-                                "gamma" | "erf" | "factorial" | "bessel" | "choose"
-                                | "magnitude" | "phase" => CrowType::NumArray(Box::new(CrowType::Float)),
-                                // Complex (returns [real, imag] pair)
-                                "complex" | "conjugate" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
-                                // Complex extraction (returns single tensor)
-                                "real" | "imag" => CrowType::NumArray(Box::new(CrowType::Float)),
-                                // Sparse arrays
-                                "sparse" => CrowType::Sparse,
-                                "dense" => CrowType::NumArray(Box::new(CrowType::Float)),
-                                // Stats sub-module
-                                "median" | "std" | "var" | "percentile" | "corr" | "cov" => CrowType::Float,
-                                "zscore" => CrowType::NumArray(Box::new(CrowType::Float)),
-                                "ttest" => CrowType::Map(Box::new(CrowType::Float)),
-                                _ => CrowType::Unknown,
-                            };
-                        }
-                    }
-                }
                 // Module call: module.func[args] or module.Struct[args]
                 if let Expr::FieldAccess { object, field } = callee.as_ref() {
                     if let Expr::Ident(_mod_name) = object.as_ref() {
@@ -1111,15 +1088,6 @@ impl TypeContext {
                 }
             }
             Expr::FieldAccess { object, field } => {
-                // Math module constants: math.pi, math.e, math.inf, math.nan
-                if let Expr::Ident(mod_name) = object.as_ref() {
-                    if mod_name == "math" {
-                        match field.as_str() {
-                            "pi" | "e" | "inf" | "nan" => return CrowType::Float,
-                            _ => {}
-                        }
-                    }
-                }
                 let obj_type = self.infer_expr(object);
                 // Error-value metadata fields
                 match field.as_str() {

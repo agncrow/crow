@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use rayon::prelude::*;
 
 use crow_runtime::tensor::CrowTensor;
-use crow_runtime::sparse::CrowSparse;
+
 
 use crate::ast::*;
 use crate::lexer::Lexer;
@@ -125,7 +125,7 @@ pub struct Interpreter {
     current_function: String,
     current_file: String,
     cancelled: Option<Arc<AtomicBool>>,
-    stats_loaded: bool,
+    registry: crate::modules::ModuleRegistry,
 }
 
 impl Interpreter {
@@ -141,7 +141,7 @@ impl Interpreter {
             current_function: String::new(),
             current_file: String::new(),
             cancelled: None,
-            stats_loaded: false,
+            registry: crate::modules::ModuleRegistry::new(),
         }
     }
 
@@ -319,27 +319,18 @@ impl Interpreter {
     }
 
     fn load_module(&mut self, module_path: &str) -> Result<(), String> {
-        // Built-in module: math
+        // Built-in module: math — load via module registry
         if module_path == "math" {
-            let mut bindings = BTreeMap::new();
-            bindings.insert("pi".to_string(), CrowValue::ok(Value::Float(std::f64::consts::PI)));
-            bindings.insert("e".to_string(), CrowValue::ok(Value::Float(std::f64::consts::E)));
-            bindings.insert("inf".to_string(), CrowValue::ok(Value::Float(f64::INFINITY)));
-            bindings.insert("nan".to_string(), CrowValue::ok(Value::Float(f64::NAN)));
-            let module_val = CrowValue::ok(Value::Module(ModuleValue {
-                name: "math".to_string(),
-                bindings,
-            }));
-            self.env.set("math", module_val);
+            self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
             return Ok(());
         }
-        // Built-in sub-module: math.stats — extends the math namespace with stats functions
+        // Built-in sub-module: math.stats — load via module registry
         if module_path == "math.stats" {
             // Ensure math module is loaded first
-            if self.env.get("math").is_none() {
+            if !self.registry.is_loaded("math") {
                 self.load_module("math")?;
             }
-            self.stats_loaded = true;
+            self.registry.load(std::sync::Arc::new(crate::modules::stats::StatsModule));
             return Ok(());
         }
 
@@ -939,7 +930,13 @@ impl Interpreter {
             Expr::Ident(name) => {
                 match self.env.get(name) {
                     Some(val) => Ok(val.clone()),
-                    None => Err(format!("undefined variable '{}'", name)),
+                    None => {
+                        // Check module constants (pi, e, inf, nan)
+                        if let Some(val) = self.registry.get_constant(name) {
+                            return Ok(val);
+                        }
+                        Err(format!("undefined variable '{}'", name))
+                    }
                 }
             }
             Expr::BinOp { left, op, right } => {
@@ -1022,25 +1019,36 @@ impl Interpreter {
         callee: &Expr,
         args: &[Expr],
     ) -> Result<CrowValue, String> {
-        // Check for built-in module calls: math.func[args]
-        if let Expr::FieldAccess { object, field } = callee {
-            if let Expr::Ident(mod_name) = object.as_ref() {
-                if mod_name == "math" {
-                    // Verify math module has been imported
-                    if self.env.get("math").is_none() {
-                        return Err("module 'math' not imported (add 'use math' at the top)".to_string());
-                    }
-                    let arg_vals: Vec<CrowValue> = args
-                        .iter()
-                        .map(|a| self.eval_expr(a))
-                        .collect::<Result<_, _>>()?;
-                    return self.call_math_builtin(field, &arg_vals);
-                }
-            }
-        }
-
-        // Check for builtins first (before evaluating callee as a variable)
+        // Check for builtins and module functions
         if let Expr::Ident(name) = callee {
+            // Overlapping builtins: abs, sqrt, floor, ceil, round, min, max
+            // These work on both scalars (core builtin) and tensors (module).
+            // We need to evaluate args first to check types.
+            let is_overlapping = matches!(name.as_str(), "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max");
+
+            if is_overlapping {
+                let arg_vals: Vec<CrowValue> = args
+                    .iter()
+                    .map(|a| self.eval_expr(a))
+                    .collect::<Result<_, _>>()?;
+                // If any arg is NumArray, route to module
+                let has_numarray = arg_vals.iter().any(|a| matches!(&a.value, Value::NumArray(_)));
+                if has_numarray && self.registry.has_function(name) {
+                    return self.registry.call(name, &arg_vals);
+                }
+                return self.call_builtin(name, &arg_vals);
+            }
+
+            // Non-overlapping module functions take priority
+            if self.registry.has_function(name) {
+                let arg_vals: Vec<CrowValue> = args
+                    .iter()
+                    .map(|a| self.eval_expr(a))
+                    .collect::<Result<_, _>>()?;
+                return self.registry.call(name, &arg_vals);
+            }
+
+            // Core builtins
             if self.is_builtin(name) {
                 let arg_vals: Vec<CrowValue> = args
                     .iter()
@@ -1330,661 +1338,6 @@ impl Interpreter {
         )
     }
 
-    fn call_math_builtin(
-        &mut self,
-        name: &str,
-        args: &[CrowValue],
-    ) -> Result<CrowValue, String> {
-        // Auto-propagation: if any argument is an error-value, return the first error.
-        for a in args {
-            if !a.ok {
-                return Ok(a.clone());
-            }
-        }
-
-        // Helper: extract f64 from Int or Float
-        let to_f64 = |v: &CrowValue| -> Result<f64, String> {
-            match &v.value {
-                Value::Int(n) => Ok(*n as f64),
-                Value::Float(f) => Ok(*f),
-                _ => Err(format!("math.{}: expected number, got {:?}", name, v.value)),
-            }
-        };
-        let to_usize = |v: &CrowValue| -> Result<usize, String> {
-            match &v.value {
-                Value::Int(n) if *n >= 0 => Ok(*n as usize),
-                Value::Int(n) => Err(format!("math.{}: expected non-negative integer, got {}", name, n)),
-                Value::Float(f) => Ok(*f as usize),
-                _ => Err(format!("math.{}: expected integer, got {:?}", name, v.value)),
-            }
-        };
-        let to_tensor = |v: &CrowValue| -> Result<CrowTensor, String> {
-            match &v.value {
-                Value::NumArray(t) => Ok(t.clone()),
-                _ => Err(format!("math.{}: expected numarray, got {:?}", name, v.value)),
-            }
-        };
-        let shape_from_args = |args: &[CrowValue]| -> Result<Vec<usize>, String> {
-            args.iter().map(|a| match &a.value {
-                Value::Int(n) if *n >= 0 => Ok(*n as usize),
-                Value::Int(n) => Err(format!("math.{}: expected non-negative integer for shape, got {}", name, n)),
-                Value::Float(f) => Ok(*f as usize),
-                _ => Err(format!("math.{}: expected integer for shape, got {:?}", name, a.value)),
-            }).collect()
-        };
-
-        match name {
-            // Tensor creation
-            "zeros" => {
-                let shape = shape_from_args(args)?;
-                Ok(CrowValue::ok(Value::NumArray(CrowTensor::zeros(shape))))
-            }
-            "ones" => {
-                let shape = shape_from_args(args)?;
-                Ok(CrowValue::ok(Value::NumArray(CrowTensor::ones(shape))))
-            }
-            "eye" => {
-                if args.len() != 1 { return Err(format!("math.eye: expected 1 argument, got {}", args.len())); }
-                let n = to_usize(&args[0])?;
-                Ok(CrowValue::ok(Value::NumArray(CrowTensor::eye(n))))
-            }
-            "rand" => {
-                let shape = shape_from_args(args)?;
-                Ok(CrowValue::ok(Value::NumArray(CrowTensor::rand(shape))))
-            }
-            "randn" => {
-                let shape = shape_from_args(args)?;
-                Ok(CrowValue::ok(Value::NumArray(CrowTensor::randn(shape))))
-            }
-            "linspace" => {
-                if args.len() != 3 { return Err(format!("math.linspace: expected 3 arguments (start, stop, n), got {}", args.len())); }
-                let start = to_f64(&args[0])?;
-                let stop = to_f64(&args[1])?;
-                let n = to_usize(&args[2])?;
-                Ok(CrowValue::ok(Value::NumArray(CrowTensor::linspace(start, stop, n))))
-            }
-            "arange" => {
-                if args.len() != 3 { return Err(format!("math.arange: expected 3 arguments (start, stop, step), got {}", args.len())); }
-                let start = to_f64(&args[0])?;
-                let stop = to_f64(&args[1])?;
-                let step = to_f64(&args[2])?;
-                Ok(CrowValue::ok(Value::NumArray(CrowTensor::arange(start, stop, step))))
-            }
-            "full" => {
-                if args.len() < 2 { return Err(format!("math.full: expected at least 2 arguments (dims..., value), got {}", args.len())); }
-                let value = to_f64(args.last().unwrap())?;
-                let shape = shape_from_args(&args[..args.len()-1])?;
-                Ok(CrowValue::ok(Value::NumArray(CrowTensor::full(shape, value))))
-            }
-            "diag" => {
-                if args.len() != 1 { return Err(format!("math.diag: expected 1 argument, got {}", args.len())); }
-                let t = to_tensor(&args[0])?;
-                Ok(CrowValue::ok(Value::NumArray(CrowTensor::diag(&t))))
-            }
-            "tensor" => {
-                // math.tensor[array] — convert a Crow array of numbers to a NumArray
-                if args.len() != 1 { return Err(format!("math.tensor: expected 1 argument, got {}", args.len())); }
-                match &args[0].value {
-                    Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(t.clone()))),
-                    Value::Array(arr) => {
-                        let data: Result<Vec<f64>, String> = arr.iter().map(|v| match &v.value {
-                            Value::Int(n) => Ok(*n as f64),
-                            Value::Float(f) => Ok(*f),
-                            _ => Err(format!("math.tensor: array elements must be numbers")),
-                        }).collect();
-                        Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data?, vec![arr.len()]))))
-                    }
-                    _ => Err(format!("math.tensor: expected array, got {:?}", args[0].value)),
-                }
-            }
-
-            // Element-wise math
-            "exp" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.exp()))) }
-            "log" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.log()))) }
-            "sqrt" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.sqrt()))) }
-            "sin" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.sin()))) }
-            "cos" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.cos()))) }
-            "abs" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.abs()))) }
-            "sign" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.sign()))) }
-            "floor" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.floor()))) }
-            "ceil" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.ceil()))) }
-            "round" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.round()))) }
-            "clip" => {
-                if args.len() != 3 { return Err(format!("math.clip: expected 3 arguments (tensor, lo, hi), got {}", args.len())); }
-                let t = to_tensor(&args[0])?;
-                let lo = to_f64(&args[1])?;
-                let hi = to_f64(&args[2])?;
-                Ok(CrowValue::ok(Value::NumArray(t.clip(lo, hi))))
-            }
-            "mod" => {
-                if args.len() != 2 { return Err(format!("math.mod: expected 2 arguments, got {}", args.len())); }
-                let a = to_tensor(&args[0])?;
-                match &args[1].value {
-                    Value::NumArray(b) => Ok(CrowValue::ok(Value::NumArray(a.modulo(b)))),
-                    Value::Int(n) => Ok(CrowValue::ok(Value::NumArray(a.modulo_scalar(*n as f64)))),
-                    Value::Float(f) => Ok(CrowValue::ok(Value::NumArray(a.modulo_scalar(*f)))),
-                    _ => Err("math.mod: second argument must be a number or tensor".to_string()),
-                }
-            }
-
-            // Trigonometry
-            "tan" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.tan()))) }
-            "asin" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.asin()))) }
-            "acos" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.acos()))) }
-            "atan" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.atan()))) }
-            "atan2" => {
-                if args.len() != 2 { return Err(format!("math.atan2: expected 2 arguments, got {}", args.len())); }
-                let y = to_tensor(&args[0])?;
-                let x = to_tensor(&args[1])?;
-                Ok(CrowValue::ok(Value::NumArray(y.atan2(&x))))
-            }
-            "sinh" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.sinh()))) }
-            "cosh" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.cosh()))) }
-            "tanh" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.tanh()))) }
-
-            // Reductions (return scalars, or tensor if axis given)
-            "sum" => {
-                let t = to_tensor(&args[0])?;
-                if args.len() >= 2 {
-                    let axis = to_f64(&args[1])? as usize;
-                    Ok(CrowValue::ok(Value::NumArray(t.sum_axis(axis))))
-                } else {
-                    Ok(CrowValue::ok(Value::Float(t.sum())))
-                }
-            }
-            "mean" => {
-                let t = to_tensor(&args[0])?;
-                if args.len() >= 2 {
-                    let axis = to_f64(&args[1])? as usize;
-                    Ok(CrowValue::ok(Value::NumArray(t.mean_axis(axis))))
-                } else {
-                    Ok(CrowValue::ok(Value::Float(t.mean())))
-                }
-            }
-            "min" => {
-                let t = to_tensor(&args[0])?;
-                if args.len() >= 2 {
-                    let axis = to_f64(&args[1])? as usize;
-                    Ok(CrowValue::ok(Value::NumArray(t.min_axis(axis))))
-                } else {
-                    Ok(CrowValue::ok(Value::Float(t.min())))
-                }
-            }
-            "max" => {
-                let t = to_tensor(&args[0])?;
-                if args.len() >= 2 {
-                    let axis = to_f64(&args[1])? as usize;
-                    Ok(CrowValue::ok(Value::NumArray(t.max_axis(axis))))
-                } else {
-                    Ok(CrowValue::ok(Value::Float(t.max())))
-                }
-            }
-            "prod" => {
-                let t = to_tensor(&args[0])?;
-                if args.len() >= 2 {
-                    let axis = to_f64(&args[1])? as usize;
-                    Ok(CrowValue::ok(Value::NumArray(t.prod_axis(axis))))
-                } else {
-                    Ok(CrowValue::ok(Value::Float(t.prod())))
-                }
-            }
-            "argmax" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::Int(t.argmax() as i64))) }
-            "argmin" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::Int(t.argmin() as i64))) }
-
-            // Cumulative ops
-            "cumsum" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.cumsum()))) }
-            "cumprod" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.cumprod()))) }
-
-            // Combining ops
-            "concat" => {
-                if args.len() < 2 { return Err("math.concat: expected at least 2 arguments (a, b, [axis])".into()); }
-                let a = to_tensor(&args[0])?;
-                let b = to_tensor(&args[1])?;
-                let axis = if args.len() >= 3 { to_f64(&args[2])? as usize } else { 0 };
-                Ok(CrowValue::ok(Value::NumArray(a.concat(&b, axis))))
-            }
-            "stack" => {
-                if args.len() < 1 { return Err("math.stack: expected at least 1 argument (array of tensors, [axis])".into()); }
-                match args[0].unwrap_or_propagate()? {
-                    Value::Array(items) => {
-                        let tensors: Result<Vec<CrowTensor>, String> = items.iter().map(|item| {
-                            match &item.value {
-                                Value::NumArray(t) => Ok(t.clone()),
-                                _ => Err("math.stack: all elements must be tensors".into()),
-                            }
-                        }).collect();
-                        let tensors = tensors?;
-                        let axis = if args.len() >= 2 { to_f64(&args[1])? as usize } else { 0 };
-                        Ok(CrowValue::ok(Value::NumArray(CrowTensor::stack(&tensors, axis))))
-                    }
-                    _ => Err("math.stack: first argument must be an array of tensors".into()),
-                }
-            }
-
-            // Sorting & selection
-            "argsort" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.argsort()))) }
-            "topk" => {
-                if args.len() < 2 { return Err("math.topk: expected 2 arguments (tensor, k)".into()); }
-                let t = to_tensor(&args[0])?;
-                let k = to_f64(&args[1])? as usize;
-                Ok(CrowValue::ok(Value::NumArray(t.topk(k))))
-            }
-            "unique" => { let t = to_tensor(&args[0])?; Ok(CrowValue::ok(Value::NumArray(t.unique()))) }
-            "where" => {
-                if args.len() < 3 { return Err("math.where: expected 3 arguments (cond, a, b)".into()); }
-                let cond = to_tensor(&args[0])?;
-                let a = to_tensor(&args[1])?;
-                let b = to_tensor(&args[2])?;
-                Ok(CrowValue::ok(Value::NumArray(cond.where_cond(&a, &b))))
-            }
-
-            // Shape ops
-            "reshape" => {
-                if args.len() < 2 { return Err(format!("math.reshape: expected at least 2 arguments (tensor, dims...), got {}", args.len())); }
-                let t = to_tensor(&args[0])?;
-                let new_shape = shape_from_args(&args[1..])?;
-                Ok(CrowValue::ok(Value::NumArray(t.reshape(new_shape))))
-            }
-            "flatten" => {
-                if args.len() != 1 { return Err(format!("math.flatten: expected 1 argument, got {}", args.len())); }
-                let t = to_tensor(&args[0])?;
-                Ok(CrowValue::ok(Value::NumArray(t.flatten())))
-            }
-            "transpose" => {
-                if args.len() != 1 { return Err(format!("math.transpose: expected 1 argument, got {}", args.len())); }
-                let t = to_tensor(&args[0])?;
-                Ok(CrowValue::ok(Value::NumArray(t.transpose())))
-            }
-
-            // Linear algebra
-            // matmul removed — use * operator instead
-            "solve" => {
-                if args.len() != 2 { return Err(format!("math.solve: expected 2 arguments, got {}", args.len())); }
-                // Support sparse first argument
-                if let Value::Sparse(s) = &args[0].value {
-                    let b = to_tensor(&args[1])?;
-                    Ok(CrowValue::ok(Value::NumArray(s.solve(&b))))
-                } else {
-                    let a = to_tensor(&args[0])?;
-                    let b = to_tensor(&args[1])?;
-                    Ok(CrowValue::ok(Value::NumArray(a.solve(&b))))
-                }
-            }
-            "inv" => {
-                if args.len() != 1 { return Err(format!("math.inv: expected 1 argument, got {}", args.len())); }
-                let a = to_tensor(&args[0])?;
-                Ok(CrowValue::ok(Value::NumArray(a.inv())))
-            }
-            "det" => {
-                if args.len() != 1 { return Err(format!("math.det: expected 1 argument, got {}", args.len())); }
-                let a = to_tensor(&args[0])?;
-                Ok(CrowValue::ok(Value::Float(a.det())))
-            }
-            "svd" => {
-                if args.len() != 1 { return Err(format!("math.svd: expected 1 argument, got {}", args.len())); }
-                let a = to_tensor(&args[0])?;
-                let (u, s, vt) = a.svd_decomp();
-                let result = vec![
-                    CrowValue::ok(Value::NumArray(u)),
-                    CrowValue::ok(Value::NumArray(s)),
-                    CrowValue::ok(Value::NumArray(vt)),
-                ];
-                Ok(CrowValue::ok(Value::Array(result)))
-            }
-            "qr" => {
-                if args.len() != 1 { return Err(format!("math.qr: expected 1 argument, got {}", args.len())); }
-                let a = to_tensor(&args[0])?;
-                let (q, r) = a.qr_decomp();
-                let result = vec![
-                    CrowValue::ok(Value::Array(vec![
-                        CrowValue::ok(Value::NumArray(q)),
-                        CrowValue::ok(Value::NumArray(r)),
-                    ])),
-                ];
-                Ok(result.into_iter().next().unwrap())
-            }
-            "cholesky" => {
-                if args.len() != 1 { return Err(format!("math.cholesky: expected 1 argument, got {}", args.len())); }
-                let a = to_tensor(&args[0])?;
-                Ok(CrowValue::ok(Value::NumArray(a.cholesky_decomp())))
-            }
-            "eigen" => {
-                if args.len() != 1 { return Err(format!("math.eigen: expected 1 argument, got {}", args.len())); }
-                let a = to_tensor(&args[0])?;
-                let (real, imag) = a.eigen_decomp();
-                let result = vec![
-                    CrowValue::ok(Value::NumArray(real)),
-                    CrowValue::ok(Value::NumArray(imag)),
-                ];
-                Ok(CrowValue::ok(Value::Array(result)))
-            }
-            "norm" => {
-                if args.is_empty() || args.len() > 2 { return Err(format!("math.norm: expected 1-2 arguments, got {}", args.len())); }
-                let t = to_tensor(&args[0])?;
-                let p = if args.len() == 2 {
-                    match &args[1].value {
-                        Value::Int(i) => *i as f64,
-                        Value::Float(f) => *f,
-                        _ => return Err("math.norm: p must be a number".into()),
-                    }
-                } else {
-                    2.0
-                };
-                Ok(CrowValue::ok(Value::Float(t.norm(p))))
-            }
-
-            // Random & Distributions
-            "seed" => {
-                if args.len() != 1 { return Err(format!("math.seed: expected 1 argument, got {}", args.len())); }
-                let n = match &args[0].value {
-                    Value::Int(i) => *i as u64,
-                    Value::Float(f) => *f as u64,
-                    _ => return Err("math.seed: expected integer".into()),
-                };
-                crow_runtime::rng::set_seed(n);
-                Ok(CrowValue::done())
-            }
-            "normal" => {
-                if args.len() < 2 { return Err(format!("math.normal: expected at least 2 arguments (mean, std, dims...), got {}", args.len())); }
-                let mean = to_f64(&args[0])?;
-                let std = to_f64(&args[1])?;
-                let shape = shape_from_args(&args[2..])?;
-                let shape = if shape.is_empty() { vec![1] } else { shape };
-                Ok(CrowValue::ok(Value::NumArray(CrowTensor::normal(shape, mean, std))))
-            }
-            "uniform" => {
-                if args.len() < 2 { return Err(format!("math.uniform: expected at least 2 arguments (low, high, dims...), got {}", args.len())); }
-                let low = to_f64(&args[0])?;
-                let high = to_f64(&args[1])?;
-                let shape = shape_from_args(&args[2..])?;
-                let shape = if shape.is_empty() { vec![1] } else { shape };
-                Ok(CrowValue::ok(Value::NumArray(CrowTensor::rand_range(shape, low, high))))
-            }
-            "poisson" => {
-                if args.len() < 1 { return Err(format!("math.poisson: expected at least 1 argument (lambda, dims...), got {}", args.len())); }
-                let lambda = to_f64(&args[0])?;
-                let shape = shape_from_args(&args[1..])?;
-                let shape = if shape.is_empty() { vec![1] } else { shape };
-                Ok(CrowValue::ok(Value::NumArray(CrowTensor::poisson(shape, lambda))))
-            }
-            "bernoulli" => {
-                if args.len() < 1 { return Err(format!("math.bernoulli: expected at least 1 argument (p, dims...), got {}", args.len())); }
-                let p = to_f64(&args[0])?;
-                let shape = shape_from_args(&args[1..])?;
-                let shape = if shape.is_empty() { vec![1] } else { shape };
-                Ok(CrowValue::ok(Value::NumArray(CrowTensor::bernoulli(shape, p))))
-            }
-            "shuffle" => {
-                if args.len() != 1 { return Err(format!("math.shuffle: expected 1 argument, got {}", args.len())); }
-                let t = to_tensor(&args[0])?;
-                Ok(CrowValue::ok(Value::NumArray(t.shuffle())))
-            }
-            "choice" => {
-                if args.len() != 2 { return Err(format!("math.choice: expected 2 arguments (tensor, n), got {}", args.len())); }
-                let t = to_tensor(&args[0])?;
-                let n = to_usize(&args[1])?;
-                Ok(CrowValue::ok(Value::NumArray(t.choice(n))))
-            }
-            "permutation" => {
-                if args.len() != 1 { return Err(format!("math.permutation: expected 1 argument, got {}", args.len())); }
-                let n = to_usize(&args[0])?;
-                Ok(CrowValue::ok(Value::NumArray(CrowTensor::permutation(n))))
-            }
-
-            // ── Signal Processing ──
-            "fft" => {
-                if args.len() != 1 { return Err(format!("math.fft: expected 1 argument, got {}", args.len())); }
-                let t = to_tensor(&args[0])?;
-                let (real, imag) = t.fft();
-                let result = vec![
-                    CrowValue::ok(Value::NumArray(real)),
-                    CrowValue::ok(Value::NumArray(imag)),
-                ];
-                Ok(CrowValue::ok(Value::Array(result)))
-            }
-            "ifft" => {
-                if args.len() != 2 { return Err(format!("math.ifft: expected 2 arguments (real, imag), got {}", args.len())); }
-                let real = to_tensor(&args[0])?;
-                let imag = to_tensor(&args[1])?;
-                Ok(CrowValue::ok(Value::NumArray(CrowTensor::ifft(&real, &imag))))
-            }
-            "fft2" => {
-                if args.len() != 1 { return Err(format!("math.fft2: expected 1 argument, got {}", args.len())); }
-                let t = to_tensor(&args[0])?;
-                let (real, imag) = t.fft2();
-                let result = vec![
-                    CrowValue::ok(Value::NumArray(real)),
-                    CrowValue::ok(Value::NumArray(imag)),
-                ];
-                Ok(CrowValue::ok(Value::Array(result)))
-            }
-            "conv" => {
-                if args.len() != 2 { return Err(format!("math.conv: expected 2 arguments, got {}", args.len())); }
-                let a = to_tensor(&args[0])?;
-                let b = to_tensor(&args[1])?;
-                Ok(CrowValue::ok(Value::NumArray(a.conv(&b))))
-            }
-            "conv2d" => {
-                if args.len() != 2 { return Err(format!("math.conv2d: expected 2 arguments, got {}", args.len())); }
-                let a = to_tensor(&args[0])?;
-                let b = to_tensor(&args[1])?;
-                Ok(CrowValue::ok(Value::NumArray(a.conv2d(&b))))
-            }
-            "hamming" => {
-                if args.len() != 1 { return Err(format!("math.hamming: expected 1 argument, got {}", args.len())); }
-                let n = to_usize(&args[0])?;
-                Ok(CrowValue::ok(Value::NumArray(CrowTensor::hamming(n))))
-            }
-            "hanning" => {
-                if args.len() != 1 { return Err(format!("math.hanning: expected 1 argument, got {}", args.len())); }
-                let n = to_usize(&args[0])?;
-                Ok(CrowValue::ok(Value::NumArray(CrowTensor::hanning(n))))
-            }
-
-            // ── Layer 5: Special Functions & Complex Numbers ──────────
-            "gamma" => {
-                if args.len() != 1 { return Err(format!("math.gamma: expected 1 argument, got {}", args.len())); }
-                let t = to_tensor(&args[0])?;
-                Ok(CrowValue::ok(Value::NumArray(t.gamma())))
-            }
-            "erf" => {
-                if args.len() != 1 { return Err(format!("math.erf: expected 1 argument, got {}", args.len())); }
-                let t = to_tensor(&args[0])?;
-                Ok(CrowValue::ok(Value::NumArray(t.erf())))
-            }
-            "bessel" => {
-                if args.len() != 2 { return Err(format!("math.bessel: expected 2 arguments (x, n), got {}", args.len())); }
-                let t = to_tensor(&args[0])?;
-                let n = to_f64(&args[1])? as i64;
-                Ok(CrowValue::ok(Value::NumArray(t.bessel(n))))
-            }
-            "factorial" => {
-                if args.len() != 1 { return Err(format!("math.factorial: expected 1 argument, got {}", args.len())); }
-                let t = to_tensor(&args[0])?;
-                Ok(CrowValue::ok(Value::NumArray(t.factorial())))
-            }
-            "choose" => {
-                if args.len() != 2 { return Err(format!("math.choose: expected 2 arguments (n, k), got {}", args.len())); }
-                let n = to_tensor(&args[0])?;
-                let k = to_tensor(&args[1])?;
-                Ok(CrowValue::ok(Value::NumArray(n.choose(&k))))
-            }
-            "complex" => {
-                if args.len() != 2 { return Err(format!("math.complex: expected 2 arguments (re, im), got {}", args.len())); }
-                let re = to_f64(&args[0])?;
-                let im = to_f64(&args[1])?;
-                let (r, i) = CrowTensor::complex(re, im);
-                Ok(CrowValue::ok(Value::Array(vec![
-                    CrowValue::ok(Value::NumArray(r)),
-                    CrowValue::ok(Value::NumArray(i)),
-                ])))
-            }
-            "real" => {
-                if args.len() != 1 { return Err(format!("math.real: expected 1 argument, got {}", args.len())); }
-                match &args[0].value {
-                    Value::Array(arr) if arr.len() == 2 => Ok(arr[0].clone()),
-                    _ => Err("math.real: expected complex value [real, imag]".to_string()),
-                }
-            }
-            "imag" => {
-                if args.len() != 1 { return Err(format!("math.imag: expected 1 argument, got {}", args.len())); }
-                match &args[0].value {
-                    Value::Array(arr) if arr.len() == 2 => Ok(arr[1].clone()),
-                    _ => Err("math.imag: expected complex value [real, imag]".to_string()),
-                }
-            }
-            "magnitude" => {
-                if args.len() != 1 { return Err(format!("math.magnitude: expected 1 argument, got {}", args.len())); }
-                match &args[0].value {
-                    Value::Array(arr) if arr.len() == 2 => {
-                        let re = to_tensor(&arr[0])?;
-                        let im = to_tensor(&arr[1])?;
-                        Ok(CrowValue::ok(Value::NumArray(CrowTensor::magnitude(&re, &im))))
-                    }
-                    _ => Err("math.magnitude: expected complex value [real, imag]".to_string()),
-                }
-            }
-            "phase" => {
-                if args.len() != 1 { return Err(format!("math.phase: expected 1 argument, got {}", args.len())); }
-                match &args[0].value {
-                    Value::Array(arr) if arr.len() == 2 => {
-                        let re = to_tensor(&arr[0])?;
-                        let im = to_tensor(&arr[1])?;
-                        Ok(CrowValue::ok(Value::NumArray(CrowTensor::phase(&re, &im))))
-                    }
-                    _ => Err("math.phase: expected complex value [real, imag]".to_string()),
-                }
-            }
-            "conjugate" => {
-                if args.len() != 1 { return Err(format!("math.conjugate: expected 1 argument, got {}", args.len())); }
-                match &args[0].value {
-                    Value::Array(arr) if arr.len() == 2 => {
-                        let re = to_tensor(&arr[0])?;
-                        let im = to_tensor(&arr[1])?;
-                        let (cr, ci) = CrowTensor::conjugate(&re, &im);
-                        Ok(CrowValue::ok(Value::Array(vec![
-                            CrowValue::ok(Value::NumArray(cr)),
-                            CrowValue::ok(Value::NumArray(ci)),
-                        ])))
-                    }
-                    _ => Err("math.conjugate: expected complex value [real, imag]".to_string()),
-                }
-            }
-
-            // Sparse arrays
-            "sparse" => {
-                if args.len() == 1 {
-                    // math.sparse[dense_array] — dense to sparse
-                    let t = to_tensor(&args[0])?;
-                    Ok(CrowValue::ok(Value::Sparse(CrowSparse::from_dense(&t))))
-                } else if args.len() == 4 {
-                    // math.sparse[rows, cols, vals, shape]
-                    // rows, cols, vals are arrays; shape is [nrows, ncols]
-                    let rows_t = to_tensor(&args[0])?;
-                    let cols_t = to_tensor(&args[1])?;
-                    let vals_t = to_tensor(&args[2])?;
-                    let shape_t = to_tensor(&args[3])?;
-                    let rows: Vec<usize> = rows_t.to_vec().iter().map(|v| *v as usize).collect();
-                    let cols: Vec<usize> = cols_t.to_vec().iter().map(|v| *v as usize).collect();
-                    let vals = vals_t.to_vec();
-                    let shape_data = shape_t.to_vec();
-                    if shape_data.len() != 2 {
-                        return Err("math.sparse: shape must have 2 elements [nrows, ncols]".into());
-                    }
-                    let nrows = shape_data[0] as usize;
-                    let ncols = shape_data[1] as usize;
-                    Ok(CrowValue::ok(Value::Sparse(CrowSparse::from_coo(&rows, &cols, &vals, nrows, ncols))))
-                } else {
-                    Err(format!("math.sparse: expected 1 or 4 arguments, got {}", args.len()))
-                }
-            }
-            "dense" => {
-                if args.len() != 1 { return Err(format!("math.dense: expected 1 argument, got {}", args.len())); }
-                match &args[0].value {
-                    Value::Sparse(s) => Ok(CrowValue::ok(Value::NumArray(s.to_dense()))),
-                    Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(t.clone()))),
-                    _ => Err(format!("math.dense: expected sparse or numarray, got {}", args[0].value.type_name())),
-                }
-            }
-
-            // ===== Stats sub-module (requires `use math.stats`) =====
-            "median" | "std" | "var" | "percentile" | "zscore" | "corr" | "cov" | "ttest" => {
-                if !self.stats_loaded {
-                    return Err(format!("math.{}: requires 'use math.stats'", name));
-                }
-                match name {
-                    "median" => {
-                        if args.len() != 1 { return Err("math.median[] takes 1 argument".into()); }
-                        match &args[0].value {
-                            Value::NumArray(t) => Ok(CrowValue::ok(Value::Float(crow_runtime::stats::median(t)))),
-                            _ => Err("math.median[] requires a numarray".into()),
-                        }
-                    }
-                    "std" => {
-                        if args.len() != 1 { return Err("math.std[] takes 1 argument".into()); }
-                        match &args[0].value {
-                            Value::NumArray(t) => Ok(CrowValue::ok(Value::Float(crow_runtime::stats::std(t)))),
-                            _ => Err("math.std[] requires a numarray".into()),
-                        }
-                    }
-                    "var" => {
-                        if args.len() != 1 { return Err("math.var[] takes 1 argument".into()); }
-                        match &args[0].value {
-                            Value::NumArray(t) => Ok(CrowValue::ok(Value::Float(crow_runtime::stats::var(t)))),
-                            _ => Err("math.var[] requires a numarray".into()),
-                        }
-                    }
-                    "percentile" => {
-                        if args.len() != 2 { return Err("math.percentile[] takes 2 arguments".into()); }
-                        match &args[0].value {
-                            Value::NumArray(t) => {
-                                let p = to_f64(&args[1])?;
-                                Ok(CrowValue::ok(Value::Float(crow_runtime::stats::percentile(t, p))))
-                            }
-                            _ => Err("math.percentile[] requires a numarray and a number".into()),
-                        }
-                    }
-                    "zscore" => {
-                        if args.len() != 1 { return Err("math.zscore[] takes 1 argument".into()); }
-                        match &args[0].value {
-                            Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(crow_runtime::stats::zscore(t)))),
-                            _ => Err("math.zscore[] requires a numarray".into()),
-                        }
-                    }
-                    "corr" => {
-                        if args.len() != 2 { return Err("math.corr[] takes 2 arguments".into()); }
-                        match (&args[0].value, &args[1].value) {
-                            (Value::NumArray(x), Value::NumArray(y)) => Ok(CrowValue::ok(Value::Float(crow_runtime::stats::corr(x, y)))),
-                            _ => Err("math.corr[] requires two numarrays".into()),
-                        }
-                    }
-                    "cov" => {
-                        if args.len() != 2 { return Err("math.cov[] takes 2 arguments".into()); }
-                        match (&args[0].value, &args[1].value) {
-                            (Value::NumArray(x), Value::NumArray(y)) => Ok(CrowValue::ok(Value::Float(crow_runtime::stats::cov(x, y)))),
-                            _ => Err("math.cov[] requires two numarrays".into()),
-                        }
-                    }
-                    "ttest" => {
-                        if args.len() != 2 { return Err("math.ttest[] takes 2 arguments".into()); }
-                        match (&args[0].value, &args[1].value) {
-                            (Value::NumArray(x), Value::NumArray(y)) => {
-                                let (t, p) = crow_runtime::stats::ttest(x, y);
-                                let mut map = BTreeMap::new();
-                                map.insert("t".to_string(), CrowValue::ok(Value::Float(t)));
-                                map.insert("p".to_string(), CrowValue::ok(Value::Float(p)));
-                                Ok(CrowValue::ok(Value::Map(map)))
-                            }
-                            _ => Err("math.ttest[] requires two numarrays".into()),
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            }
-
-            _ => Err(format!("math.{}: unknown math function", name)),
-        }
-    }
 
     fn call_builtin(
         &mut self,
@@ -4557,7 +3910,7 @@ mod tests {
 
     #[test]
     fn test_math_zeros() {
-        let val = get_var("use math\nx = math.zeros[2, 3]\n", "x");
+        let val = get_var("use math\nx = zeros[2, 3]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[2, 3]);
             assert!(t.to_vec().iter().all(|&v| v == 0.0));
@@ -4566,7 +3919,7 @@ mod tests {
 
     #[test]
     fn test_math_ones() {
-        let val = get_var("use math\nx = math.ones[2, 3]\n", "x");
+        let val = get_var("use math\nx = ones[2, 3]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[2, 3]);
             assert!(t.to_vec().iter().all(|&v| v == 1.0));
@@ -4575,7 +3928,7 @@ mod tests {
 
     #[test]
     fn test_math_eye() {
-        let val = get_var("use math\nx = math.eye[3]\n", "x");
+        let val = get_var("use math\nx = eye[3]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[3, 3]);
             let d = t.to_vec();
@@ -4585,7 +3938,7 @@ mod tests {
 
     #[test]
     fn test_math_linspace() {
-        let val = get_var("use math\nx = math.linspace[0, 1, 5]\n", "x");
+        let val = get_var("use math\nx = linspace[0, 1, 5]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[5]);
             let d = t.to_vec();
@@ -4596,7 +3949,7 @@ mod tests {
 
     #[test]
     fn test_math_arange() {
-        let val = get_var("use math\nx = math.arange[0, 5, 1]\n", "x");
+        let val = get_var("use math\nx = arange[0, 5, 1]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[5]);
             let d = t.to_vec();
@@ -4606,7 +3959,7 @@ mod tests {
 
     #[test]
     fn test_math_full() {
-        let val = get_var("use math\nx = math.full[2, 2, 7]\n", "x");
+        let val = get_var("use math\nx = full[2, 2, 7]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[2, 2]);
             assert!(t.to_vec().iter().all(|&v| v == 7.0));
@@ -4615,7 +3968,7 @@ mod tests {
 
     #[test]
     fn test_math_exp() {
-        let val = get_var("use math\nx = math.exp[[1, 2]]\n", "x");
+        let val = get_var("use math\nx = exp[[1, 2]]\n", "x");
         if let Value::NumArray(t) = &val.value {
             let d = t.to_vec();
             assert!((d[0] - 1.0_f64.exp()).abs() < 1e-10);
@@ -4625,7 +3978,7 @@ mod tests {
 
     #[test]
     fn test_math_sqrt() {
-        let val = get_var("use math\nx = math.sqrt[[4, 9, 16]]\n", "x");
+        let val = get_var("use math\nx = sqrt[[4, 9, 16]]\n", "x");
         if let Value::NumArray(t) = &val.value {
             let d = t.to_vec();
             assert!((d[0] - 2.0).abs() < 1e-10);
@@ -4636,21 +3989,21 @@ mod tests {
 
     #[test]
     fn test_math_sum() {
-        let val = get_var("use math\nx = math.sum[[1, 2, 3]]\n", "x");
+        let val = get_var("use math\nx = sum[[1, 2, 3]]\n", "x");
         if let Value::Float(f) = val.value { assert!((f - 6.0).abs() < 1e-10); }
         else { panic!("expected Float"); }
     }
 
     #[test]
     fn test_math_mean() {
-        let val = get_var("use math\nx = math.mean[[2, 4, 6]]\n", "x");
+        let val = get_var("use math\nx = mean[[2, 4, 6]]\n", "x");
         if let Value::Float(f) = val.value { assert!((f - 4.0).abs() < 1e-10); }
         else { panic!("expected Float"); }
     }
 
     #[test]
     fn test_math_reshape() {
-        let val = get_var("use math\nx = math.reshape[math.ones[6], 2, 3]\n", "x");
+        let val = get_var("use math\nx = reshape[ones[6], 2, 3]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[2, 3]);
         } else { panic!("expected NumArray"); }
@@ -4658,7 +4011,7 @@ mod tests {
 
     #[test]
     fn test_math_transpose() {
-        let val = get_var("use math\nm = math.ones[2, 3]\nx = math.transpose[m]\n", "x");
+        let val = get_var("use math\nm = ones[2, 3]\nx = transpose[m]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[3, 2]);
         } else { panic!("expected NumArray"); }
@@ -4667,7 +4020,7 @@ mod tests {
     #[test]
     fn test_math_matmul() {
         // matmul removed — use * operator instead
-        let val = get_var("use math\na = math.eye[2]\nb = math.full[2, 2, 3]\nx = a * b\n", "x");
+        let val = get_var("use math\na = eye[2]\nb = full[2, 2, 3]\nx = a * b\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[2, 2]);
             assert!(t.to_vec().iter().all(|&v| (v - 3.0).abs() < 1e-10));
@@ -4676,28 +4029,28 @@ mod tests {
 
     #[test]
     fn test_math_det() {
-        let val = get_var("use math\na = math.eye[3]\nx = math.det[a]\n", "x");
+        let val = get_var("use math\na = eye[3]\nx = det[a]\n", "x");
         if let Value::Float(f) = val.value { assert!((f - 1.0).abs() < 1e-10); }
         else { panic!("expected Float"); }
     }
 
     #[test]
     fn test_math_norm_l2() {
-        let val = get_var("use math\nx = math.norm[math.linspace[3, 4, 2]]\n", "x");
+        let val = get_var("use math\nx = norm[linspace[3, 4, 2]]\n", "x");
         if let Value::Float(f) = val.value { assert!((f - 5.0).abs() < 1e-10); }
         else { panic!("expected Float, got {:?}", val.value); }
     }
 
     #[test]
     fn test_math_norm_l1() {
-        let val = get_var("use math\nx = math.norm[math.linspace[1, 3, 3], 1]\n", "x");
+        let val = get_var("use math\nx = norm[linspace[1, 3, 3], 1]\n", "x");
         if let Value::Float(f) = val.value { assert!((f - 6.0).abs() < 1e-10); }
         else { panic!("expected Float, got {:?}", val.value); }
     }
 
     #[test]
     fn test_math_inv() {
-        let val = get_var("use math\na = math.eye[2]\nx = math.inv[a]\n", "x");
+        let val = get_var("use math\na = eye[2]\nx = inv[a]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[2, 2]);
             let d = t.to_vec();
@@ -4708,7 +4061,7 @@ mod tests {
 
     #[test]
     fn test_math_diag() {
-        let val = get_var("use math\na = math.eye[3]\nx = math.diag[a]\n", "x");
+        let val = get_var("use math\na = eye[3]\nx = diag[a]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), &[1.0, 1.0, 1.0]);
         } else { panic!("expected NumArray"); }
@@ -4717,17 +4070,17 @@ mod tests {
     #[test]
     fn test_math_no_import_error() {
         let result = std::panic::catch_unwind(|| {
-            get_var("x = math.zeros[3]\n", "x");
+            get_var("x = zeros[3]\n", "x");
         });
         assert!(result.is_err() || {
-            let val = get_var("x = math.zeros[3]\n", "x");
+            let val = get_var("x = zeros[3]\n", "x");
             !val.ok
         });
     }
 
     #[test]
     fn test_math_pi() {
-        let val = get_var("use math\nx = math.pi\n", "x");
+        let val = get_var("use math\nx = pi\n", "x");
         if let Value::Float(f) = val.value {
             assert!((f - std::f64::consts::PI).abs() < 1e-15);
         } else { panic!("expected Float, got {:?}", val.value); }
@@ -4735,7 +4088,7 @@ mod tests {
 
     #[test]
     fn test_math_e() {
-        let val = get_var("use math\nx = math.e\n", "x");
+        let val = get_var("use math\nx = e\n", "x");
         if let Value::Float(f) = val.value {
             assert!((f - std::f64::consts::E).abs() < 1e-15);
         } else { panic!("expected Float, got {:?}", val.value); }
@@ -4743,7 +4096,7 @@ mod tests {
 
     #[test]
     fn test_math_inf() {
-        let val = get_var("use math\nx = math.inf\n", "x");
+        let val = get_var("use math\nx = inf\n", "x");
         if let Value::Float(f) = val.value {
             assert!(f.is_infinite() && f > 0.0);
         } else { panic!("expected Float, got {:?}", val.value); }
@@ -4751,7 +4104,7 @@ mod tests {
 
     #[test]
     fn test_math_nan() {
-        let val = get_var("use math\nx = math.nan\n", "x");
+        let val = get_var("use math\nx = nan\n", "x");
         if let Value::Float(f) = val.value {
             assert!(f.is_nan());
         } else { panic!("expected Float, got {:?}", val.value); }
@@ -4759,7 +4112,7 @@ mod tests {
 
     #[test]
     fn test_math_sign() {
-        let val = get_var("use math\nx = math.sign[math.linspace[-2, 2, 5]]\n", "x");
+        let val = get_var("use math\nx = sign[linspace[-2, 2, 5]]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), &[-1.0, -1.0, 0.0, 1.0, 1.0]);
         } else { panic!("expected NumArray"); }
@@ -4767,7 +4120,7 @@ mod tests {
 
     #[test]
     fn test_math_floor_tensor() {
-        let val = get_var("use math\nx = math.floor[math.linspace[0.5, 2.5, 3]]\n", "x");
+        let val = get_var("use math\nx = floor[linspace[0.5, 2.5, 3]]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), &[0.0, 1.0, 2.0]);
         } else { panic!("expected NumArray"); }
@@ -4775,7 +4128,7 @@ mod tests {
 
     #[test]
     fn test_math_ceil_tensor() {
-        let val = get_var("use math\nx = math.ceil[math.linspace[0.5, 2.5, 3]]\n", "x");
+        let val = get_var("use math\nx = ceil[linspace[0.5, 2.5, 3]]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), &[1.0, 2.0, 3.0]);
         } else { panic!("expected NumArray"); }
@@ -4783,7 +4136,7 @@ mod tests {
 
     #[test]
     fn test_math_round_tensor() {
-        let val = get_var("use math\nx = math.round[math.linspace[0.4, 2.6, 3]]\n", "x");
+        let val = get_var("use math\nx = round[linspace[0.4, 2.6, 3]]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), &[0.0, 2.0, 3.0]);
         } else { panic!("expected NumArray"); }
@@ -4791,7 +4144,7 @@ mod tests {
 
     #[test]
     fn test_math_clip() {
-        let val = get_var("use math\nx = math.clip[math.linspace[-2, 2, 5], -1, 1]\n", "x");
+        let val = get_var("use math\nx = clip[linspace[-2, 2, 5], -1, 1]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), &[-1.0, -1.0, 0.0, 1.0, 1.0]);
         } else { panic!("expected NumArray"); }
@@ -4799,7 +4152,7 @@ mod tests {
 
     #[test]
     fn test_math_mod_scalar() {
-        let val = get_var("use math\nx = math.mod[math.linspace[1, 5, 5], 2]\n", "x");
+        let val = get_var("use math\nx = mod[linspace[1, 5, 5], 2]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), &[1.0, 0.0, 1.0, 0.0, 1.0]);
         } else { panic!("expected NumArray"); }
@@ -4807,7 +4160,7 @@ mod tests {
 
     #[test]
     fn test_math_tan() {
-        let val = get_var("use math\nx = math.tan[math.zeros[3]]\n", "x");
+        let val = get_var("use math\nx = tan[zeros[3]]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), &[0.0, 0.0, 0.0]);
         } else { panic!("expected NumArray"); }
@@ -4815,7 +4168,7 @@ mod tests {
 
     #[test]
     fn test_math_asin() {
-        let val = get_var("use math\nx = math.asin[math.zeros[3]]\n", "x");
+        let val = get_var("use math\nx = asin[zeros[3]]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), &[0.0, 0.0, 0.0]);
         } else { panic!("expected NumArray"); }
@@ -4823,7 +4176,7 @@ mod tests {
 
     #[test]
     fn test_math_tanh() {
-        let val = get_var("use math\nx = math.tanh[math.zeros[3]]\n", "x");
+        let val = get_var("use math\nx = tanh[zeros[3]]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), &[0.0, 0.0, 0.0]);
         } else { panic!("expected NumArray"); }
@@ -4891,7 +4244,7 @@ mod tests {
 
     #[test]
     fn test_tensor_mul_is_matmul() {
-        let val = get_var("use math\na = math.eye[2]\nb = math.full[2, 2, 3]\nx = a * b\n", "x");
+        let val = get_var("use math\na = eye[2]\nb = full[2, 2, 3]\nx = a * b\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[2, 2]);
             assert!(t.to_vec().iter().all(|&v| (v - 3.0).abs() < 1e-10));
@@ -4914,27 +4267,27 @@ mod tests {
 
     #[test]
     fn test_math_prod() {
-        let val = get_var("use math\nx = math.prod[math.tensor[[2, 3, 4]]]\n", "x");
+        let val = get_var("use math\nx = prod[tensor[[2, 3, 4]]]\n", "x");
         if let Value::Float(f) = val.value { assert!((f - 24.0).abs() < 1e-10); }
         else { panic!("expected Float"); }
     }
 
     #[test]
     fn test_math_argmax() {
-        let val = get_var("use math\nx = math.argmax[math.tensor[[1, 5, 3]]]\n", "x");
+        let val = get_var("use math\nx = argmax[tensor[[1, 5, 3]]]\n", "x");
         assert!(matches!(val.value, Value::Int(1)));
     }
 
     #[test]
     fn test_math_argmin() {
-        let val = get_var("use math\nx = math.argmin[math.tensor[[3, 1, 4]]]\n", "x");
+        let val = get_var("use math\nx = argmin[tensor[[3, 1, 4]]]\n", "x");
         assert!(matches!(val.value, Value::Int(1)));
     }
 
     #[test]
     fn test_math_sum_axis() {
         // [[1,2,3],[4,5,6]] → sum axis 0 → [5,7,9]
-        let val = get_var("use math\na = math.reshape[math.linspace[1, 6, 6], 2, 3]\nx = math.sum[a, 0]\n", "x");
+        let val = get_var("use math\na = reshape[linspace[1, 6, 6], 2, 3]\nx = sum[a, 0]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[3]);
             assert_eq!(t.to_vec(), &[5.0, 7.0, 9.0]);
@@ -4943,7 +4296,7 @@ mod tests {
 
     #[test]
     fn test_math_max_axis() {
-        let val = get_var("use math\na = math.reshape[math.linspace[1, 6, 6], 2, 3]\nx = math.max[a, 0]\n", "x");
+        let val = get_var("use math\na = reshape[linspace[1, 6, 6], 2, 3]\nx = max[a, 0]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[3]);
             assert_eq!(t.to_vec(), &[4.0, 5.0, 6.0]);
@@ -4952,7 +4305,7 @@ mod tests {
 
     #[test]
     fn test_math_prod_axis() {
-        let val = get_var("use math\na = math.reshape[math.linspace[1, 4, 4], 2, 2]\nx = math.prod[a, 0]\n", "x");
+        let val = get_var("use math\na = reshape[linspace[1, 4, 4], 2, 2]\nx = prod[a, 0]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[2]);
             assert_eq!(t.to_vec(), &[3.0, 8.0]);
@@ -4963,7 +4316,7 @@ mod tests {
 
     #[test]
     fn test_math_argsort() {
-        let val = get_var("use math\nx = math.argsort[math.tensor[[3, 1, 4, 1, 5]]]\n", "x");
+        let val = get_var("use math\nx = argsort[tensor[[3, 1, 4, 1, 5]]]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), vec![1.0, 3.0, 0.0, 2.0, 4.0]);
         } else { panic!("expected NumArray"); }
@@ -4971,7 +4324,7 @@ mod tests {
 
     #[test]
     fn test_math_topk() {
-        let val = get_var("use math\nx = math.topk[math.tensor[[3, 1, 4, 1, 5]], 2]\n", "x");
+        let val = get_var("use math\nx = topk[tensor[[3, 1, 4, 1, 5]], 2]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), vec![5.0, 4.0]);
         } else { panic!("expected NumArray"); }
@@ -4979,7 +4332,7 @@ mod tests {
 
     #[test]
     fn test_math_unique() {
-        let val = get_var("use math\nx = math.unique[math.tensor[[3, 1, 4, 1, 3]]]\n", "x");
+        let val = get_var("use math\nx = unique[tensor[[3, 1, 4, 1, 3]]]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), vec![1.0, 3.0, 4.0]);
         } else { panic!("expected NumArray"); }
@@ -4987,7 +4340,7 @@ mod tests {
 
     #[test]
     fn test_math_where() {
-        let val = get_var("use math\ncond = math.tensor[[1, 0, 1]]\na = math.tensor[[10, 20, 30]]\nb = math.tensor[[100, 200, 300]]\nx = math.where[cond, a, b]\n", "x");
+        let val = get_var("use math\ncond = tensor[[1, 0, 1]]\na = tensor[[10, 20, 30]]\nb = tensor[[100, 200, 300]]\nx = where[cond, a, b]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), vec![10.0, 200.0, 30.0]);
         } else { panic!("expected NumArray"); }
@@ -4997,7 +4350,7 @@ mod tests {
 
     #[test]
     fn test_math_cumsum() {
-        let val = get_var("use math\nx = math.cumsum[math.tensor[[1, 2, 3, 4]]]\n", "x");
+        let val = get_var("use math\nx = cumsum[tensor[[1, 2, 3, 4]]]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), vec![1.0, 3.0, 6.0, 10.0]);
         } else { panic!("expected NumArray"); }
@@ -5005,7 +4358,7 @@ mod tests {
 
     #[test]
     fn test_math_cumprod() {
-        let val = get_var("use math\nx = math.cumprod[math.tensor[[1, 2, 3, 4]]]\n", "x");
+        let val = get_var("use math\nx = cumprod[tensor[[1, 2, 3, 4]]]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), vec![1.0, 2.0, 6.0, 24.0]);
         } else { panic!("expected NumArray"); }
@@ -5015,7 +4368,7 @@ mod tests {
 
     #[test]
     fn test_math_concat() {
-        let val = get_var("use math\na = math.tensor[[1, 2, 3]]\nb = math.tensor[[4, 5]]\nx = math.concat[a, b]\n", "x");
+        let val = get_var("use math\na = tensor[[1, 2, 3]]\nb = tensor[[4, 5]]\nx = concat[a, b]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), vec![1.0, 2.0, 3.0, 4.0, 5.0]);
         } else { panic!("expected NumArray"); }
@@ -5023,7 +4376,7 @@ mod tests {
 
     #[test]
     fn test_math_stack() {
-        let val = get_var("use math\na = math.tensor[[1, 2, 3]]\nb = math.tensor[[4, 5, 6]]\nx = math.stack[[a, b]]\n", "x");
+        let val = get_var("use math\na = tensor[[1, 2, 3]]\nb = tensor[[4, 5, 6]]\nx = stack[[a, b]]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[2, 3]);
             assert_eq!(t.to_vec(), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
@@ -5035,7 +4388,7 @@ mod tests {
 
     #[test]
     fn test_broadcast_add() {
-        let val = get_var("use math\na = math.reshape[math.linspace[1, 3, 3], 3, 1]\nb = math.reshape[math.linspace[10, 40, 4], 1, 4]\nx = a + b\n", "x");
+        let val = get_var("use math\na = reshape[linspace[1, 3, 3], 3, 1]\nb = reshape[linspace[10, 40, 4], 1, 4]\nx = a + b\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[3, 4]);
             assert_eq!(t.to_vec(), vec![11.0, 21.0, 31.0, 41.0, 12.0, 22.0, 32.0, 42.0, 13.0, 23.0, 33.0, 43.0]);
@@ -5044,7 +4397,7 @@ mod tests {
 
     #[test]
     fn test_broadcast_elem_mul() {
-        let val = get_var("use math\na = math.reshape[math.linspace[1, 3, 3], 3, 1]\nb = math.reshape[math.linspace[1, 2, 2], 1, 2]\nx = a .* b\n", "x");
+        let val = get_var("use math\na = reshape[linspace[1, 3, 3], 3, 1]\nb = reshape[linspace[1, 2, 2], 1, 2]\nx = a .* b\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.shape(), &[3, 2]);
             assert_eq!(t.to_vec(), vec![1.0, 2.0, 2.0, 4.0, 3.0, 6.0]);
@@ -5055,7 +4408,7 @@ mod tests {
 
     #[test]
     fn test_gather_by_tensor() {
-        let val = get_var("use math\na = math.linspace[10, 50, 5]\nidx = math.linspace[0, 2, 3]\nx = a[idx]\n", "x");
+        let val = get_var("use math\na = linspace[10, 50, 5]\nidx = linspace[0, 2, 3]\nx = a[idx]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), vec![10.0, 20.0, 30.0]);
         } else { panic!("expected NumArray"); }
@@ -5063,7 +4416,7 @@ mod tests {
 
     #[test]
     fn test_gather_repeated() {
-        let val = get_var("use math\na = math.linspace[10, 30, 3]\nidx = math.linspace[0, 0, 3]\nx = a[idx]\n", "x");
+        let val = get_var("use math\na = linspace[10, 30, 3]\nidx = linspace[0, 0, 3]\nx = a[idx]\n", "x");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), vec![10.0, 10.0, 10.0]);
         } else { panic!("expected NumArray"); }
@@ -5077,28 +4430,28 @@ mod tests {
 
     #[test]
     fn test_numarray_dtype() {
-        let val = get_var("use math\nx = math.ones[3]\ny = x.dtype\n", "y");
+        let val = get_var("use math\nx = ones[3]\ny = x.dtype\n", "y");
         if let Value::Str(s) = &val.value { assert_eq!(s, "float"); }
         else { panic!("expected Str, got {:?}", val.value); }
     }
 
     #[test]
     fn test_numarray_device() {
-        let val = get_var("use math\nx = math.ones[3]\ny = x.device\n", "y");
+        let val = get_var("use math\nx = ones[3]\ny = x.device\n", "y");
         if let Value::Str(s) = &val.value { assert_eq!(s, "cpu"); }
         else { panic!("expected Str, got {:?}", val.value); }
     }
 
     #[test]
     fn test_numarray_grad() {
-        let val = get_var("use math\nx = math.ones[3]\ny = x.grad\n", "y");
+        let val = get_var("use math\nx = ones[3]\ny = x.grad\n", "y");
         if let Value::Str(s) = &val.value { assert_eq!(s, "none"); }
         else { panic!("expected Str, got {:?}", val.value); }
     }
 
     #[test]
     fn test_numarray_shape_property() {
-        let val = get_var("use math\nx = math.ones[2, 3]\ny = x.shape\n", "y");
+        let val = get_var("use math\nx = ones[2, 3]\ny = x.shape\n", "y");
         if let Value::Array(items) = &val.value {
             assert_eq!(items.len(), 2);
             if let Value::Int(n) = items[0].value { assert_eq!(n, 2); } else { panic!("expected Int"); }
@@ -5231,16 +4584,16 @@ mod tests {
 
     #[test]
     fn test_math_seed_reproducibility() {
-        let val = get_var("use math\nmath.seed[42]\na = math.rand[3]\nmath.seed[42]\nb = math.rand[3]\nr = math.sum[a] - math.sum[b]\n", "r");
+        let val = get_var("use math\nseed[42]\na = uniform[0, 1, 3]\nseed[42]\nb = uniform[0, 1, 3]\nr = sum[a] - sum[b]\n", "r");
         match val.value {
-            Value::Float(v) => assert!((v).abs() < 1e-15, "same seed should give same rand, diff={}", v),
+            Value::Float(v) => assert!((v).abs() < 1e-15, "same seed should give same uniform, diff={}", v),
             _ => panic!("expected float"),
         }
     }
 
     #[test]
     fn test_math_normal_interp() {
-        let val = get_var("use math\nmath.seed[7]\nx = math.normal[0, 1, 4]\n", "x");
+        let val = get_var("use math\nseed[7]\nx = normal[0, 1, 4]\n", "x");
         match &val.value {
             Value::NumArray(t) => assert_eq!(t.to_vec().len(), 4),
             _ => panic!("expected numarray"),
@@ -5249,7 +4602,7 @@ mod tests {
 
     #[test]
     fn test_math_uniform_interp() {
-        let val = get_var("use math\nmath.seed[7]\nx = math.uniform[2, 5, 3]\n", "x");
+        let val = get_var("use math\nseed[7]\nx = uniform[2, 5, 3]\n", "x");
         match &val.value {
             Value::NumArray(t) => {
                 assert_eq!(t.to_vec().len(), 3);
@@ -5263,7 +4616,7 @@ mod tests {
 
     #[test]
     fn test_math_permutation_interp() {
-        let val = get_var("use math\nmath.seed[1]\nx = math.permutation[5]\n", "x");
+        let val = get_var("use math\nseed[1]\nx = permutation[5]\n", "x");
         match &val.value {
             Value::NumArray(t) => {
                 assert_eq!(t.to_vec().len(), 5);
@@ -5280,7 +4633,7 @@ mod tests {
     #[test]
     fn test_math_fft_interp() {
         // FFT of [1,1,1,1] → DC=4, rest=0
-        let val = get_var("use math\nx = math.fft[math.ones[4]]\n", "x");
+        let val = get_var("use math\nx = fft[ones[4]]\n", "x");
         match &val.value {
             Value::Array(arr) => {
                 assert_eq!(arr.len(), 2, "fft should return [real, imag]");
@@ -5297,7 +4650,7 @@ mod tests {
     #[test]
     fn test_math_ifft_interp() {
         // FFT then IFFT should recover original
-        let val = get_var("use math\na = math.linspace[1, 4, 4]\nf = math.fft[a]\nx = math.ifft[f[0], f[1]]\n", "x");
+        let val = get_var("use math\na = linspace[1, 4, 4]\nf = fft[a]\nx = ifft[f[0], f[1]]\n", "x");
         match &val.value {
             Value::NumArray(t) => {
                 let v = t.to_vec();
@@ -5313,7 +4666,7 @@ mod tests {
     #[test]
     fn test_math_conv_interp() {
         // [1,2,3] * [1,1] = [1,3,5,3]
-        let val = get_var("use math\na = math.linspace[1, 3, 3]\nb = math.linspace[1, 1, 2]\nx = math.conv[a, b]\n", "x");
+        let val = get_var("use math\na = linspace[1, 3, 3]\nb = linspace[1, 1, 2]\nx = conv[a, b]\n", "x");
         match &val.value {
             Value::NumArray(t) => {
                 let v = t.to_vec();
@@ -5329,7 +4682,7 @@ mod tests {
 
     #[test]
     fn test_math_hamming_interp() {
-        let val = get_var("use math\nx = math.hamming[5]\n", "x");
+        let val = get_var("use math\nx = hamming[5]\n", "x");
         match &val.value {
             Value::NumArray(t) => {
                 let v = t.to_vec();
@@ -5342,7 +4695,7 @@ mod tests {
 
     #[test]
     fn test_math_hanning_interp() {
-        let val = get_var("use math\nx = math.hanning[5]\n", "x");
+        let val = get_var("use math\nx = hanning[5]\n", "x");
         match &val.value {
             Value::NumArray(t) => {
                 let v = t.to_vec();
@@ -5358,7 +4711,7 @@ mod tests {
 
     #[test]
     fn test_math_gamma_interp() {
-        let val = get_var("use math\nx = math.gamma[math.linspace[1, 4, 4]]\n", "x");
+        let val = get_var("use math\nx = gamma[linspace[1, 4, 4]]\n", "x");
         match &val.value {
             Value::NumArray(t) => {
                 let v = t.to_vec();
@@ -5371,7 +4724,7 @@ mod tests {
 
     #[test]
     fn test_math_erf_interp() {
-        let val = get_var("use math\nx = math.erf[math.linspace[1, 1, 1]]\n", "x");
+        let val = get_var("use math\nx = erf[linspace[1, 1, 1]]\n", "x");
         match &val.value {
             Value::NumArray(t) => {
                 assert!((t.to_vec()[0] - 0.8427).abs() < 1e-3, "erf(1) ≈ 0.8427");
@@ -5382,7 +4735,7 @@ mod tests {
 
     #[test]
     fn test_math_factorial_interp() {
-        let val = get_var("use math\nx = math.factorial[math.linspace[0, 5, 6]]\n", "x");
+        let val = get_var("use math\nx = factorial[linspace[0, 5, 6]]\n", "x");
         match &val.value {
             Value::NumArray(t) => {
                 let v = t.to_vec();
@@ -5395,7 +4748,7 @@ mod tests {
 
     #[test]
     fn test_math_choose_interp() {
-        let val = get_var("use math\nx = math.choose[math.linspace[5, 5, 1], math.linspace[2, 2, 1]]\n", "x");
+        let val = get_var("use math\nx = choose[linspace[5, 5, 1], linspace[2, 2, 1]]\n", "x");
         match &val.value {
             Value::NumArray(t) => {
                 assert!((t.to_vec()[0] - 10.0).abs() < 1e-6, "C(5,2) = 10");
@@ -5406,7 +4759,7 @@ mod tests {
 
     #[test]
     fn test_math_complex_interp() {
-        let val = get_var("use math\nc = math.complex[3, 4]\n", "c");
+        let val = get_var("use math\nc = complex[3, 4]\n", "c");
         match &val.value {
             Value::Array(arr) => {
                 assert_eq!(arr.len(), 2);
@@ -5423,7 +4776,7 @@ mod tests {
 
     #[test]
     fn test_math_magnitude_interp() {
-        let val = get_var("use math\nc = math.complex[3, 4]\nm = math.magnitude[c]\n", "m");
+        let val = get_var("use math\nc = complex[3, 4]\nm = magnitude[c]\n", "m");
         match &val.value {
             Value::NumArray(t) => {
                 assert!((t.to_vec()[0] - 5.0).abs() < 1e-10, "|3+4i| = 5");
@@ -5434,7 +4787,7 @@ mod tests {
 
     #[test]
     fn test_math_conjugate_interp() {
-        let val = get_var("use math\nc = math.complex[3, 4]\ncc = math.conjugate[c]\n", "cc");
+        let val = get_var("use math\nc = complex[3, 4]\ncc = conjugate[c]\n", "cc");
         match &val.value {
             Value::Array(arr) => {
                 assert_eq!(arr.len(), 2);
@@ -5453,7 +4806,7 @@ mod tests {
 
     #[test]
     fn test_math_sparse_from_dense() {
-        let val = get_var("use math\ns = math.sparse[math.eye[3]]\n", "s");
+        let val = get_var("use math\ns = sparse[eye[3]]\n", "s");
         if let Value::Sparse(s) = &val.value {
             assert_eq!(s.nnz(), 3);
             assert_eq!(s.shape(), (3, 3));
@@ -5462,7 +4815,7 @@ mod tests {
 
     #[test]
     fn test_math_sparse_from_coo() {
-        let val = get_var("use math\ns = math.sparse[[0, 1, 2], [0, 1, 2], [5, 6, 7], [3, 3]]\n", "s");
+        let val = get_var("use math\ns = sparse[[0, 1, 2], [0, 1, 2], [5, 6, 7], [3, 3]]\n", "s");
         if let Value::Sparse(s) = &val.value {
             assert_eq!(s.nnz(), 3);
             assert_eq!(s.shape(), (3, 3));
@@ -5471,7 +4824,7 @@ mod tests {
 
     #[test]
     fn test_math_dense_from_sparse() {
-        let val = get_var("use math\ns = math.sparse[math.eye[2]]\nd = math.dense[s]\n", "d");
+        let val = get_var("use math\ns = sparse[eye[2]]\nd = dense[s]\n", "d");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), vec![1.0, 0.0, 0.0, 1.0]);
         } else { panic!("expected NumArray, got {:?}", val.value); }
@@ -5479,7 +4832,7 @@ mod tests {
 
     #[test]
     fn test_sparse_matmul() {
-        let val = get_var("use math\ns = math.sparse[math.eye[3]]\nv = [1, 2, 3]\nr = s * v\n", "r");
+        let val = get_var("use math\ns = sparse[eye[3]]\nv = [1, 2, 3]\nr = s * v\n", "r");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), vec![1.0, 2.0, 3.0]);
         } else { panic!("expected NumArray, got {:?}", val.value); }
@@ -5487,7 +4840,7 @@ mod tests {
 
     #[test]
     fn test_sparse_add() {
-        let val = get_var("use math\na = math.sparse[math.eye[2]]\nb = math.sparse[math.eye[2]]\nc = a + b\nd = math.dense[c]\n", "d");
+        let val = get_var("use math\na = sparse[eye[2]]\nb = sparse[eye[2]]\nc = a + b\nd = dense[c]\n", "d");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec(), vec![2.0, 0.0, 0.0, 2.0]);
         } else { panic!("expected NumArray, got {:?}", val.value); }
@@ -5495,7 +4848,7 @@ mod tests {
 
     #[test]
     fn test_sparse_solve() {
-        let val = get_var("use math\ns = math.sparse[[0, 1], [0, 1], [2, 3], [2, 2]]\nx = math.solve[s, [4, 9]]\n", "x");
+        let val = get_var("use math\ns = sparse[[0, 1], [0, 1], [2, 3], [2, 2]]\nx = solve[s, [4, 9]]\n", "x");
         if let Value::NumArray(t) = &val.value {
             let v = t.to_vec();
             assert!((v[0] - 2.0).abs() < 1e-10);
@@ -5505,7 +4858,7 @@ mod tests {
 
     #[test]
     fn test_sparse_type() {
-        let val = get_var("use math\ns = math.sparse[math.eye[2]]\nt = type[s]\n", "t");
+        let val = get_var("use math\ns = sparse[eye[2]]\nt = type[s]\n", "t");
         assert_eq!(format!("{}", val.value), "sparse");
     }
 
@@ -5513,7 +4866,7 @@ mod tests {
 
     #[test]
     fn test_stats_median() {
-        let val = get_var("use math\nuse math.stats\nx = math.median[math.linspace[1, 5, 5]]\n", "x");
+        let val = get_var("use math\nuse math.stats\nx = median[linspace[1, 5, 5]]\n", "x");
         if let Value::Float(f) = &val.value {
             assert!((*f - 3.0).abs() < 1e-10);
         } else { panic!("expected Float, got {:?}", val.value); }
@@ -5521,7 +4874,7 @@ mod tests {
 
     #[test]
     fn test_stats_std() {
-        let val = get_var("use math\nuse math.stats\nx = math.std[math.linspace[1, 5, 5]]\n", "x");
+        let val = get_var("use math\nuse math.stats\nx = std[linspace[1, 5, 5]]\n", "x");
         if let Value::Float(f) = &val.value {
             assert!(*f > 0.0);
         } else { panic!("expected Float, got {:?}", val.value); }
@@ -5529,7 +4882,7 @@ mod tests {
 
     #[test]
     fn test_stats_var() {
-        let val = get_var("use math\nuse math.stats\nx = math.var[math.linspace[1, 5, 5]]\n", "x");
+        let val = get_var("use math\nuse math.stats\nx = var[linspace[1, 5, 5]]\n", "x");
         if let Value::Float(f) = &val.value {
             assert!(*f > 0.0);
         } else { panic!("expected Float, got {:?}", val.value); }
@@ -5537,7 +4890,7 @@ mod tests {
 
     #[test]
     fn test_stats_percentile() {
-        let val = get_var("use math\nuse math.stats\nx = math.percentile[math.linspace[1, 5, 5], 50]\n", "x");
+        let val = get_var("use math\nuse math.stats\nx = percentile[linspace[1, 5, 5], 50]\n", "x");
         if let Value::Float(f) = &val.value {
             assert!((*f - 3.0).abs() < 1e-10);
         } else { panic!("expected Float, got {:?}", val.value); }
@@ -5545,7 +4898,7 @@ mod tests {
 
     #[test]
     fn test_stats_zscore() {
-        let val = get_var("use math\nuse math.stats\nz = math.zscore[math.linspace[1, 5, 5]]\n", "z");
+        let val = get_var("use math\nuse math.stats\nz = zscore[linspace[1, 5, 5]]\n", "z");
         if let Value::NumArray(t) = &val.value {
             assert_eq!(t.to_vec().len(), 5);
             // Mean of zscore should be ~0
@@ -5556,7 +4909,7 @@ mod tests {
 
     #[test]
     fn test_stats_corr() {
-        let val = get_var("use math\nuse math.stats\nc = math.corr[math.linspace[1, 5, 5], math.linspace[2, 10, 5]]\n", "c");
+        let val = get_var("use math\nuse math.stats\nc = corr[linspace[1, 5, 5], linspace[2, 10, 5]]\n", "c");
         if let Value::Float(f) = &val.value {
             assert!((*f - 1.0).abs() < 1e-10);
         } else { panic!("expected Float, got {:?}", val.value); }
@@ -5564,7 +4917,7 @@ mod tests {
 
     #[test]
     fn test_stats_cov() {
-        let val = get_var("use math\nuse math.stats\nc = math.cov[math.linspace[1, 5, 5], math.linspace[2, 10, 5]]\n", "c");
+        let val = get_var("use math\nuse math.stats\nc = cov[linspace[1, 5, 5], linspace[2, 10, 5]]\n", "c");
         if let Value::Float(f) = &val.value {
             assert!(*f > 0.0);
         } else { panic!("expected Float, got {:?}", val.value); }
@@ -5572,7 +4925,7 @@ mod tests {
 
     #[test]
     fn test_stats_ttest() {
-        let val = get_var("use math\nuse math.stats\nr = math.ttest[math.linspace[1, 5, 5], math.linspace[10, 50, 5]]\n", "r");
+        let val = get_var("use math\nuse math.stats\nr = ttest[linspace[1, 5, 5], linspace[10, 50, 5]]\n", "r");
         if let Value::Map(m) = &val.value {
             assert!(m.contains_key("t"));
             assert!(m.contains_key("p"));
@@ -5583,7 +4936,7 @@ mod tests {
     fn test_stats_requires_import() {
         // Without `use math.stats`, stats functions should fail
         let result = std::panic::catch_unwind(|| {
-            get_var("use math\nx = math.median[math.linspace[1, 5, 5]]\n", "x")
+            get_var("use math\nx = median[linspace[1, 5, 5]]\n", "x")
         });
         assert!(result.is_err() || {
             // It might return an error value instead of panicking

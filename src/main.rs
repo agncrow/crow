@@ -9,6 +9,7 @@ mod transpiler;
 mod type_infer;
 mod validator;
 mod formatter;
+mod modules;
 mod value;
 
 use interpreter::Interpreter;
