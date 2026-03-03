@@ -572,8 +572,16 @@ impl Transpiler {
                     if !self.registry.is_loaded("math") {
                         self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
                     }
-                    if !self.registry.is_loaded("stats") {
+                    if !self.registry.is_loaded("math.stats") {
                         self.registry.load(std::sync::Arc::new(crate::modules::stats::StatsModule));
+                    }
+                }
+                if path == "math.nn" {
+                    if !self.registry.is_loaded("math") {
+                        self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
+                    }
+                    if !self.registry.is_loaded("math.nn") {
+                        self.registry.load(std::sync::Arc::new(crate::modules::nn::NnModule));
                     }
                 }
                 self.modules.insert(module_name);
@@ -1582,6 +1590,13 @@ impl Transpiler {
                 self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
             }
             self.registry.load(std::sync::Arc::new(crate::modules::stats::StatsModule));
+            self.modules.insert("math".to_string());
+        }
+        if path == "math.nn" {
+            if !self.registry.is_loaded("math") {
+                self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
+            }
+            self.registry.load(std::sync::Arc::new(crate::modules::nn::NnModule));
             self.modules.insert("math".to_string());
         }
         self.modules.insert(module_name);

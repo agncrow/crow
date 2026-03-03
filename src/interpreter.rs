@@ -333,6 +333,14 @@ impl Interpreter {
             self.registry.load(std::sync::Arc::new(crate::modules::stats::StatsModule));
             return Ok(());
         }
+        // Built-in sub-module: math.nn — load via module registry
+        if module_path == "math.nn" {
+            if !self.registry.is_loaded("math") {
+                self.load_module("math")?;
+            }
+            self.registry.load(std::sync::Arc::new(crate::modules::nn::NnModule));
+            return Ok(());
+        }
 
         let file_path = self.resolve_module_file(module_path)?;
 

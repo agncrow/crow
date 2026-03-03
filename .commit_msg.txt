@@ -1,12 +1,8 @@
-Fix transpiler validator for module functions + optimize tensor reductions
+Add math.nn module: relu, sigmoid, softmax, gelu, mse, crossentropy, bce, linear
 
-- Validator: register module function/constant names on "use math" so
-  transpiler build no longer reports "undefined function" errors
-- Added fn_names()/const_names() to ModuleRegistry
-- Added module function check in validate_call() (skip arg validation
-  for module functions — handled at runtime/transpile time)
-- Tensor reductions: replaced to_vec().iter() with direct slice
-  iteration using 4-accumulator chunked loops for SIMD auto-vectorization
-- sum/mean 4.5x faster, now matching NumPy performance
-- min/max 1.8x faster
-- Fixed bench_math.crow variable reuse to avoid type-change errors
+- crow_runtime/src/nn.rs: runtime implementations with 20 unit tests
+- src/modules/nn.rs: CrowModule impl (NnModule)
+- Registered in interpreter, transpiler, and type_infer for use math.nn
+- examples/nn_test.crow: end-to-end test with interpreter-transpiler parity
+- docs/language-spec.md: documented nn sub-module
+- Fixed stats module is_loaded check (stats -> math.stats)

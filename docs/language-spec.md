@@ -983,6 +983,53 @@ log[result.t]                   --- t-statistic ---
 log[result.p]                   --- p-value ---
 ```
 
+#### Neural Networks (sub-module: `math.nn`)
+
+Import with `use math.nn`. Functions become top-level after import.
+
+**Activations:**
+
+| Function | Description |
+|---|---|
+| `relu[x]` | Rectified linear unit: max(0, x) element-wise (NumArray) |
+| `sigmoid[x]` | Sigmoid: 1/(1+exp(-x)) element-wise (NumArray) |
+| `softmax[x]` | Softmax: exp(x)/sum(exp(x)) with numerical stability (NumArray) |
+| `gelu[x]` | Gaussian error linear unit element-wise (NumArray) |
+
+**Loss functions:**
+
+| Function | Description |
+|---|---|
+| `mse[pred, target]` | Mean squared error (Float) |
+| `crossentropy[logits, targets]` | Cross-entropy loss with log-sum-exp stability (Float) |
+| `bce[pred, target]` | Binary cross-entropy with clamping (Float) |
+
+**Layers:**
+
+| Function | Description |
+|---|---|
+| `linear[x, w, b]` | Linear layer: x @ w + b (NumArray) |
+
+```
+use math
+use math.nn
+
+x = linspace[-2, 2, 5]
+log[relu[x]]              --- [0, 0, 0, 1, 2] ---
+log[sigmoid[x]]           --- [0.119..., 0.269..., 0.5, 0.731..., 0.881...] ---
+log[softmax[x]]           --- probabilities summing to 1 ---
+
+pred = linspace[0.1, 0.9, 3]
+target = linspace[0, 1, 3]
+log[mse[pred, target]]    --- 0.00667 ---
+
+input = reshape[linspace[1, 4, 4], 2, 2]
+w = eye[2]
+b = ones[2]
+log[linear[input, w, b]]  --- input + bias ---
+```
+
+
 #### Constants
 
 | Constant | Description |

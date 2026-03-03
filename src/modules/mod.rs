@@ -1,4 +1,5 @@
 pub mod math;
+pub mod nn;
 pub mod stats;
 
 use std::collections::HashMap;
