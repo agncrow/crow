@@ -1,0 +1,50 @@
+use math
+use math.nn
+
+--- activations ---
+x = linspace[-2, 2, 5]
+log['input:']
+log[x]
+
+log['relu:']
+log[relu[x]]
+
+log['sigmoid:']
+log[sigmoid[x]]
+
+log['softmax:']
+log[softmax[x]]
+
+log['gelu:']
+log[gelu[x]]
+
+--- loss functions ---
+pred = linspace[0.1, 0.9, 3]
+target = linspace[0, 1, 3]
+
+log['mse:']
+log[mse[pred, target]]
+
+log['bce:']
+log[bce[pred, target]]
+
+--- cross entropy ---
+logits = linspace[-1, 2, 4]
+targets = linspace[2, 2, 1]
+log['crossentropy:']
+log[crossentropy[logits, targets]]
+
+--- linear layer ---
+input = reshape[linspace[1, 4, 4], 2, 2]
+weights = eye[2]
+bias = ones[2]
+log['linear:']
+log[linear[input, weights, bias]]
+
+--- simple forward pass ---
+h = relu[linear[input, weights, bias]]
+log['relu after linear:']
+log[h]
+
+log['done']
+
