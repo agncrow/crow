@@ -48,6 +48,8 @@ pub struct Transpiler {
     grad_functions: std::collections::HashSet<String>,
     /// Flag: when true, we are emitting a dual-mode version of a function
     emitting_dual: bool,
+    /// Module registry for generic module dispatch
+    registry: crate::modules::ModuleRegistry,
 }
 
 impl Transpiler {
@@ -76,6 +78,7 @@ impl Transpiler {
             needs_grad: false,
             grad_functions: std::collections::HashSet::new(),
             emitting_dual: false,
+            registry: crate::modules::ModuleRegistry::new(),
         }
     }
 
@@ -556,8 +559,22 @@ impl Transpiler {
         for stmt in stmts {
             if let Stmt::Use { path } = stmt {
                 let module_name = path.rsplit('/').next().unwrap_or(path).to_string();
-                if module_name == "math" {
+                if module_name == "math" || path.starts_with("math.") {
                     self.needs_crow_runtime = true;
+                }
+                // Load modules into registry early
+                if path == "math" {
+                    if !self.registry.is_loaded("math") {
+                        self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
+                    }
+                }
+                if path == "math.stats" {
+                    if !self.registry.is_loaded("math") {
+                        self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
+                    }
+                    if !self.registry.is_loaded("stats") {
+                        self.registry.load(std::sync::Arc::new(crate::modules::stats::StatsModule));
+                    }
                 }
                 self.modules.insert(module_name);
             }
@@ -1555,9 +1572,16 @@ impl Transpiler {
         let module_name = path.rsplit('/').next().unwrap_or(path).to_string();
         if module_name == "math" || path.starts_with("math.") {
             self.needs_crow_runtime = true;
-            // No code emitted — math module calls are handled inline in expr_to_string
+        }
+        // Load modules into registry
+        if path == "math" {
+            self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
         }
         if path == "math.stats" {
+            if !self.registry.is_loaded("math") {
+                self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
+            }
+            self.registry.load(std::sync::Arc::new(crate::modules::stats::StatsModule));
             self.modules.insert("math".to_string());
         }
         self.modules.insert(module_name);
@@ -1593,6 +1617,16 @@ impl Transpiler {
             Expr::Bool(b) => format!("{}", b),
             Expr::Str(s) => self.string_to_rust(s),
             Expr::Ident(name) => {
+                // Module constants: pi, e, inf, nan
+                if self.registry.has_constant(name) {
+                    return match name.as_str() {
+                        "pi" => "std::f64::consts::PI".to_string(),
+                        "e" => "std::f64::consts::E".to_string(),
+                        "inf" => "f64::INFINITY".to_string(),
+                        "nan" => "f64::NAN".to_string(),
+                        _ => name.clone(),
+                    };
+                }
                 // If this ident refers to a user-defined function (used as a value),
                 // apply the same renaming to avoid Rust collisions
                 if self.ctx.functions.contains_key(name) {
@@ -1939,7 +1973,25 @@ impl Transpiler {
                         }
                     }
 
-                    // --- Math builtins ---
+                    // --- Module function dispatch ---
+                    // Overlapping builtins: check if any arg is NumArray → route to module
+                    let is_overlapping = matches!(name.as_str(), "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max");
+                    if is_overlapping && self.registry.has_function(name) {
+                        let arg_types: Vec<_> = args.iter().map(|a| self.ctx.infer_expr(a)).collect();
+                        let has_numarray = arg_types.iter().any(|t| matches!(t, CrowType::NumArray(_)));
+                        if has_numarray {
+                            self.needs_crow_runtime = true;
+                            return self.registry.emit_rust(name, &arg_strs, &arg_types).unwrap_or_else(|e| format!("/* {} */", e));
+                        }
+                    }
+                    // Non-overlapping module functions: route to registry
+                    if !is_overlapping && self.registry.has_function(name) {
+                        let arg_types: Vec<_> = args.iter().map(|a| self.ctx.infer_expr(a)).collect();
+                        self.needs_crow_runtime = true;
+                        return self.registry.emit_rust(name, &arg_strs, &arg_types).unwrap_or_else(|e| format!("/* {} */", e));
+                    }
+
+                    // --- Math builtins (scalar) ---
                     if name == "abs" && arg_strs.len() == 1 {
                         // In dual mode, CrowDual has .abs()
                         return format!("({}).abs()", arg_strs[0]);
@@ -2360,171 +2412,6 @@ impl Transpiler {
                     }
                 }
 
-                // Built-in math module: math.func[args] → CrowTensor code
-                if let Expr::FieldAccess { object, field } = callee.as_ref() {
-                    if let Expr::Ident(mod_name) = object.as_ref() {
-                        if mod_name == "math" {
-                            self.needs_crow_runtime = true;
-                            let result = match field.as_str() {
-                                // Tensor creation (all args are shape dims)
-                                "zeros" => format!("CrowTensor::zeros(vec![{}])", arg_strs.iter().map(|a| format!("{} as usize", a)).collect::<Vec<_>>().join(", ")),
-                                "ones" => format!("CrowTensor::ones(vec![{}])", arg_strs.iter().map(|a| format!("{} as usize", a)).collect::<Vec<_>>().join(", ")),
-                                "rand" => format!("CrowTensor::rand(vec![{}])", arg_strs.iter().map(|a| format!("{} as usize", a)).collect::<Vec<_>>().join(", ")),
-                                "randn" => format!("CrowTensor::randn(vec![{}])", arg_strs.iter().map(|a| format!("{} as usize", a)).collect::<Vec<_>>().join(", ")),
-                                "eye" => format!("CrowTensor::eye({} as usize)", arg_strs[0]),
-                                "linspace" => format!("CrowTensor::linspace({} as f64, {} as f64, {} as usize)", arg_strs[0], arg_strs[1], arg_strs[2]),
-                                "arange" => format!("CrowTensor::arange({} as f64, {} as f64, {} as f64)", arg_strs[0], arg_strs[1], arg_strs[2]),
-                                "full" => {
-                                    let shape_args: Vec<String> = arg_strs[..arg_strs.len()-1].iter().map(|a| format!("{} as usize", a)).collect();
-                                    format!("CrowTensor::full(vec![{}], {} as f64)", shape_args.join(", "), arg_strs.last().unwrap())
-                                }
-                                "diag" => format!("CrowTensor::diag(&{})", arg_strs[0]),
-                                "tensor" => format!("{{ let _arr = {}; CrowTensor::from_vec(_arr.iter().map(|v| *v as f64).collect(), vec![_arr.len()]) }}", arg_strs[0]),
-                                // Element-wise math
-                                "exp" => format!("{}.exp()", arg_strs[0]),
-                                "log" => format!("{}.log()", arg_strs[0]),
-                                "sqrt" => format!("{}.sqrt()", arg_strs[0]),
-                                "sin" => format!("{}.sin()", arg_strs[0]),
-                                "cos" => format!("{}.cos()", arg_strs[0]),
-                                "abs" => format!("{}.abs()", arg_strs[0]),
-                                "sign" => format!("{}.sign()", arg_strs[0]),
-                                "floor" => format!("{}.floor()", arg_strs[0]),
-                                "ceil" => format!("{}.ceil()", arg_strs[0]),
-                                "round" => format!("{}.round()", arg_strs[0]),
-                                "clip" => format!("{}.clip({} as f64, {} as f64)", arg_strs[0], arg_strs[1], arg_strs[2]),
-                                "mod" => {
-                                    let rhs_type = self.ctx.infer_expr(&args[1]);
-                                    if matches!(rhs_type, CrowType::NumArray(_)) {
-                                        format!("{}.modulo(&{})", arg_strs[0], arg_strs[1])
-                                    } else {
-                                        format!("{}.modulo_scalar({} as f64)", arg_strs[0], arg_strs[1])
-                                    }
-                                }
-                                // Trigonometry
-                                "tan" => format!("{}.tan()", arg_strs[0]),
-                                "asin" => format!("{}.asin()", arg_strs[0]),
-                                "acos" => format!("{}.acos()", arg_strs[0]),
-                                "atan" => format!("{}.atan()", arg_strs[0]),
-                                "atan2" => format!("{}.atan2(&{})", arg_strs[0], arg_strs[1]),
-                                "sinh" => format!("{}.sinh()", arg_strs[0]),
-                                "cosh" => format!("{}.cosh()", arg_strs[0]),
-                                "tanh" => format!("{}.tanh()", arg_strs[0]),
-                                // Reductions (return scalar or tensor if axis given)
-                                "sum" if arg_strs.len() >= 2 => format!("{}.sum_axis({} as usize)", arg_strs[0], arg_strs[1]),
-                                "sum" => format!("{}.sum()", arg_strs[0]),
-                                "mean" if arg_strs.len() >= 2 => format!("{}.mean_axis({} as usize)", arg_strs[0], arg_strs[1]),
-                                "mean" => format!("{}.mean()", arg_strs[0]),
-                                "min" if arg_strs.len() >= 2 => format!("{}.min_axis({} as usize)", arg_strs[0], arg_strs[1]),
-                                "min" => format!("{}.min()", arg_strs[0]),
-                                "max" if arg_strs.len() >= 2 => format!("{}.max_axis({} as usize)", arg_strs[0], arg_strs[1]),
-                                "max" => format!("{}.max()", arg_strs[0]),
-                                "prod" if arg_strs.len() >= 2 => format!("{}.prod_axis({} as usize)", arg_strs[0], arg_strs[1]),
-                                "prod" => format!("{}.prod()", arg_strs[0]),
-                                "argmax" => format!("{}.argmax() as i64", arg_strs[0]),
-                                "argmin" => format!("{}.argmin() as i64", arg_strs[0]),
-                                // Cumulative ops
-                                "cumsum" => format!("{}.cumsum()", arg_strs[0]),
-                                "cumprod" => format!("{}.cumprod()", arg_strs[0]),
-                                // Combining ops
-                                "concat" if arg_strs.len() >= 3 => format!("{}.concat(&{}, {} as usize)", arg_strs[0], arg_strs[1], arg_strs[2]),
-                                "concat" => format!("{}.concat(&{}, 0)", arg_strs[0], arg_strs[1]),
-                                "stack" if arg_strs.len() >= 2 => format!("CrowTensor::stack(&{}, {} as usize)", arg_strs[0], arg_strs[1]),
-                                "stack" => format!("CrowTensor::stack(&{}, 0)", arg_strs[0]),
-                                // Sorting & selection
-                                "argsort" => format!("{}.argsort()", arg_strs[0]),
-                                "topk" => format!("{}.topk({} as usize)", arg_strs[0], arg_strs[1]),
-                                "unique" => format!("{}.unique()", arg_strs[0]),
-                                "where" => format!("{}.where_cond(&{}, &{})", arg_strs[0], arg_strs[1], arg_strs[2]),
-                                // Shape ops
-                                "reshape" => {
-                                    let shape_args: Vec<String> = arg_strs[1..].iter().map(|a| format!("{} as usize", a)).collect();
-                                    format!("{}.reshape(vec![{}])", arg_strs[0], shape_args.join(", "))
-                                }
-                                "flatten" => format!("{}.flatten()", arg_strs[0]),
-                                "transpose" => format!("{}.transpose()", arg_strs[0]),
-                                // Linear algebra
-                                // matmul removed — use * operator instead
-                                "solve" => format!("{}.solve(&{})", arg_strs[0], arg_strs[1]),
-                                "inv" => format!("{}.inv()", arg_strs[0]),
-                                "det" => format!("{}.det()", arg_strs[0]),
-                                "svd" => format!("{{ let (_u, _s, _vt) = {}.svd_decomp(); vec![_u, _s, _vt] }}", arg_strs[0]),
-                                "qr" => format!("{{ let (_q, _r) = {}.qr_decomp(); vec![_q, _r] }}", arg_strs[0]),
-                                "cholesky" => format!("{}.cholesky_decomp()", arg_strs[0]),
-                                "eigen" => format!("{{ let (_re, _im) = {}.eigen_decomp(); vec![_re, _im] }}", arg_strs[0]),
-                                // Norms
-                                "norm" if arg_strs.len() >= 2 => format!("{}.norm({} as f64)", arg_strs[0], arg_strs[1]),
-                                "norm" => format!("{}.norm(2.0)", arg_strs[0]),
-                                // Random & Distributions
-                                "seed" => format!("crow_runtime::rng::set_seed({} as u64)", arg_strs[0]),
-                                "normal" => {
-                                    let mean = &arg_strs[0];
-                                    let std = &arg_strs[1];
-                                    let shape_args: Vec<String> = arg_strs[2..].iter().map(|a| format!("{} as usize", a)).collect();
-                                    let shape = if shape_args.is_empty() { "1usize".to_string() } else { shape_args.join(", ") };
-                                    format!("CrowTensor::normal(vec![{}], {} as f64, {} as f64)", shape, mean, std)
-                                }
-                                "uniform" => {
-                                    let low = &arg_strs[0];
-                                    let high = &arg_strs[1];
-                                    let shape_args: Vec<String> = arg_strs[2..].iter().map(|a| format!("{} as usize", a)).collect();
-                                    let shape = if shape_args.is_empty() { "1usize".to_string() } else { shape_args.join(", ") };
-                                    format!("CrowTensor::rand_range(vec![{}], {} as f64, {} as f64)", shape, low, high)
-                                }
-                                "poisson" => {
-                                    let lambda = &arg_strs[0];
-                                    let shape_args: Vec<String> = arg_strs[1..].iter().map(|a| format!("{} as usize", a)).collect();
-                                    let shape = if shape_args.is_empty() { "1usize".to_string() } else { shape_args.join(", ") };
-                                    format!("CrowTensor::poisson(vec![{}], {} as f64)", shape, lambda)
-                                }
-                                "bernoulli" => {
-                                    let p = &arg_strs[0];
-                                    let shape_args: Vec<String> = arg_strs[1..].iter().map(|a| format!("{} as usize", a)).collect();
-                                    let shape = if shape_args.is_empty() { "1usize".to_string() } else { shape_args.join(", ") };
-                                    format!("CrowTensor::bernoulli(vec![{}], {} as f64)", shape, p)
-                                }
-                                "shuffle" => format!("{}.shuffle()", arg_strs[0]),
-                                "choice" => format!("{}.choice({} as usize)", arg_strs[0], arg_strs[1]),
-                                "permutation" => format!("CrowTensor::permutation({} as usize)", arg_strs[0]),
-                                // Signal processing
-                                "fft" => format!("{{ let (_re, _im) = {}.fft(); vec![_re, _im] }}", arg_strs[0]),
-                                "ifft" => format!("CrowTensor::ifft(&{}, &{})", arg_strs[0], arg_strs[1]),
-                                "fft2" => format!("{{ let (_re, _im) = {}.fft2(); vec![_re, _im] }}", arg_strs[0]),
-                                "conv" => format!("{}.conv(&{})", arg_strs[0], arg_strs[1]),
-                                "conv2d" => format!("{}.conv2d(&{})", arg_strs[0], arg_strs[1]),
-                                "hamming" => format!("CrowTensor::hamming({} as usize)", arg_strs[0]),
-                                "hanning" => format!("CrowTensor::hanning({} as usize)", arg_strs[0]),
-                                // Layer 5: Special Functions & Complex Numbers
-                                "gamma" => format!("{}.gamma()", arg_strs[0]),
-                                "erf" => format!("{}.erf()", arg_strs[0]),
-                                "bessel" => format!("{}.bessel({} as i64)", arg_strs[0], arg_strs[1]),
-                                "factorial" => format!("{}.factorial()", arg_strs[0]),
-                                "choose" => format!("{}.choose(&{})", arg_strs[0], arg_strs[1]),
-                                "complex" => format!("{{ let (_re, _im) = CrowTensor::complex({} as f64, {} as f64); vec![_re, _im] }}", arg_strs[0], arg_strs[1]),
-                                "real" => format!("{}[0].clone()", arg_strs[0]),
-                                "imag" => format!("{}[1].clone()", arg_strs[0]),
-                                "magnitude" => format!("CrowTensor::magnitude(&{}[0], &{}[1])", arg_strs[0], arg_strs[0]),
-                                "phase" => format!("CrowTensor::phase(&{}[0], &{}[1])", arg_strs[0], arg_strs[0]),
-                                "conjugate" => format!("{{ let (_re, _im) = CrowTensor::conjugate(&{}[0], &{}[1]); vec![_re, _im] }}", arg_strs[0], arg_strs[0]),
-                                // Sparse arrays
-                                "sparse" if arg_strs.len() == 1 => format!("CrowSparse::from_dense(&{})", arg_strs[0]),
-                                "sparse" if arg_strs.len() == 4 => format!("{{ let _rows: Vec<usize> = {}.to_vec().iter().map(|v| *v as usize).collect(); let _cols: Vec<usize> = {}.to_vec().iter().map(|v| *v as usize).collect(); let _vals = {}.to_vec(); let _shape = {}.to_vec(); CrowSparse::from_coo(&_rows, &_cols, &_vals, _shape[0] as usize, _shape[1] as usize) }}", arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[3]),
-                                "sparse" => format!("/* math.sparse: unexpected arg count */"),
-                                "dense" => format!("{}.to_dense()", arg_strs[0]),
-                                // Stats sub-module
-                                "median" => format!("crow_runtime::stats::median(&{})", arg_strs[0]),
-                                "std" => format!("crow_runtime::stats::std(&{})", arg_strs[0]),
-                                "var" => format!("crow_runtime::stats::var(&{})", arg_strs[0]),
-                                "percentile" => format!("crow_runtime::stats::percentile(&{}, {} as f64)", arg_strs[0], arg_strs[1]),
-                                "zscore" => format!("crow_runtime::stats::zscore(&{})", arg_strs[0]),
-                                "corr" => format!("crow_runtime::stats::corr(&{}, &{})", arg_strs[0], arg_strs[1]),
-                                "cov" => format!("crow_runtime::stats::cov(&{}, &{})", arg_strs[0], arg_strs[1]),
-                                "ttest" => format!("{{ let (_t, _p) = crow_runtime::stats::ttest(&{}, &{}); let mut _m = std::collections::BTreeMap::new(); _m.insert(\"t\".to_string(), _t); _m.insert(\"p\".to_string(), _p); _m }}", arg_strs[0], arg_strs[1]),
-                                _ => format!("/* unknown math.{} */", field),
-                            };
-                            return result;
-                        }
-                    }
-                }
 
                 // Module function/struct call: module.func[args] or module.Struct[args]
                 if let Expr::FieldAccess { object, field } = callee.as_ref() {
@@ -2606,18 +2493,6 @@ impl Transpiler {
                 }
             }
             Expr::FieldAccess { object, field } => {
-                // Math module constants: math.pi, math.e, math.inf, math.nan
-                if let Expr::Ident(mod_name) = object.as_ref() {
-                    if mod_name == "math" {
-                        match field.as_str() {
-                            "pi" => return "std::f64::consts::PI".to_string(),
-                            "e" => return "std::f64::consts::E".to_string(),
-                            "inf" => return "f64::INFINITY".to_string(),
-                            "nan" => return "f64::NAN".to_string(),
-                            _ => {}
-                        }
-                    }
-                }
                 // Module variable access: module.var → module_var
                 if let Expr::Ident(mod_name) = object.as_ref() {
                     if self.modules.contains(mod_name) {
@@ -3909,79 +3784,79 @@ mod tests {
 
     #[test]
     fn test_math_pi_transpile() {
-        let rust = transpile("use math\nx = math.pi\n");
+        let rust = transpile("use math\nx = pi\n");
         assert!(rust.contains("std::f64::consts::PI"), "should emit PI constant\n{}", rust);
     }
 
     #[test]
     fn test_math_e_transpile() {
-        let rust = transpile("use math\nx = math.e\n");
+        let rust = transpile("use math\nx = e\n");
         assert!(rust.contains("std::f64::consts::E"), "should emit E constant\n{}", rust);
     }
 
     #[test]
     fn test_math_inf_transpile() {
-        let rust = transpile("use math\nx = math.inf\n");
+        let rust = transpile("use math\nx = inf\n");
         assert!(rust.contains("f64::INFINITY"), "should emit INFINITY\n{}", rust);
     }
 
     #[test]
     fn test_math_nan_transpile() {
-        let rust = transpile("use math\nx = math.nan\n");
+        let rust = transpile("use math\nx = nan\n");
         assert!(rust.contains("f64::NAN"), "should emit NAN\n{}", rust);
     }
 
     #[test]
     fn test_numarray_dtype_transpile() {
-        let rust = transpile("use math\nx = math.ones[3]\ny = x.dtype\n");
+        let rust = transpile("use math\nx = ones[3]\ny = x.dtype\n");
         assert!(rust.contains("\"float\""), "should emit dtype as float string\n{}", rust);
     }
 
     #[test]
     fn test_numarray_device_transpile() {
-        let rust = transpile("use math\nx = math.ones[3]\ny = x.device\n");
+        let rust = transpile("use math\nx = ones[3]\ny = x.device\n");
         assert!(rust.contains("is_gpu()"), "should emit device check\n{}", rust);
     }
 
     #[test]
     fn test_math_sign_transpile() {
-        let rust = transpile("use math\nx = math.sign[math.ones[3]]\n");
+        let rust = transpile("use math\nx = sign[ones[3]]\n");
         assert!(rust.contains(".sign()"), "should emit .sign()\n{}", rust);
     }
 
     #[test]
     fn test_math_floor_tensor_transpile() {
-        let rust = transpile("use math\nx = math.floor[math.ones[3]]\n");
+        let rust = transpile("use math\nx = floor[ones[3]]\n");
         assert!(rust.contains(".floor()"), "should emit .floor()\n{}", rust);
     }
 
     #[test]
     fn test_math_clip_transpile() {
-        let rust = transpile("use math\nx = math.clip[math.ones[3], 0, 1]\n");
+        let rust = transpile("use math\nx = clip[ones[3], 0, 1]\n");
         assert!(rust.contains(".clip("), "should emit .clip()\n{}", rust);
     }
 
     #[test]
     fn test_math_mod_transpile() {
-        let rust = transpile("use math\nx = math.mod[math.ones[3], 2]\n");
+        let rust = transpile("use math\nx = mod[ones[3], 2]\n");
         assert!(rust.contains("modulo_scalar"), "should emit modulo_scalar for scalar arg\n{}", rust);
     }
 
     #[test]
     fn test_math_tan_transpile() {
-        let rust = transpile("use math\nx = math.tan[math.ones[3]]\n");
+        let rust = transpile("use math\nx = tan[ones[3]]\n");
         assert!(rust.contains(".tan()"), "should emit .tan()\n{}", rust);
     }
 
     #[test]
     fn test_math_tanh_transpile() {
-        let rust = transpile("use math\nx = math.tanh[math.ones[3]]\n");
+        let rust = transpile("use math\nx = tanh[ones[3]]\n");
         assert!(rust.contains(".tanh()"), "should emit .tanh()\n{}", rust);
     }
 
     #[test]
     fn test_math_atan2_transpile() {
-        let rust = transpile("use math\nx = math.atan2[math.ones[3], math.ones[3]]\n");
+        let rust = transpile("use math\nx = atan2[ones[3], ones[3]]\n");
         assert!(rust.contains(".atan2("), "should emit .atan2()\n{}", rust);
     }
 
@@ -4001,25 +3876,25 @@ mod tests {
 
     #[test]
     fn test_elem_mul_transpile() {
-        let rust = transpile("use math\nx = math.ones[3] .* math.ones[3]\n");
+        let rust = transpile("use math\nx = ones[3] .* ones[3]\n");
         assert!(rust.contains(".mul("), "should use .mul()\n{}", rust);
     }
 
     #[test]
     fn test_elem_div_transpile() {
-        let rust = transpile("use math\nx = math.ones[3] ./ math.ones[3]\n");
+        let rust = transpile("use math\nx = ones[3] ./ ones[3]\n");
         assert!(rust.contains(".div("), "should use .div()\n{}", rust);
     }
 
     #[test]
     fn test_elem_pow_transpile() {
-        let rust = transpile("use math\nx = math.ones[3] .^ math.ones[3]\n");
+        let rust = transpile("use math\nx = ones[3] .^ ones[3]\n");
         assert!(rust.contains(".pow("), "should use .pow()\n{}", rust);
     }
 
     #[test]
     fn test_tensor_mul_is_matmul_transpile() {
-        let rust = transpile("use math\nx = math.eye[2] * math.eye[2]\n");
+        let rust = transpile("use math\nx = eye[2] * eye[2]\n");
         assert!(rust.contains(".matmul("), "* on tensors should emit .matmul()\n{}", rust);
     }
 
@@ -4027,37 +3902,37 @@ mod tests {
 
     #[test]
     fn test_math_prod_transpile() {
-        let rust = transpile("use math\nx = math.prod[math.ones[3]]\n");
+        let rust = transpile("use math\nx = prod[ones[3]]\n");
         assert!(rust.contains(".prod()"), "should emit .prod()\n{}", rust);
     }
 
     #[test]
     fn test_math_argmax_transpile() {
-        let rust = transpile("use math\nx = math.argmax[math.ones[3]]\n");
+        let rust = transpile("use math\nx = argmax[ones[3]]\n");
         assert!(rust.contains(".argmax()"), "should emit .argmax()\n{}", rust);
     }
 
     #[test]
     fn test_math_argmin_transpile() {
-        let rust = transpile("use math\nx = math.argmin[math.ones[3]]\n");
+        let rust = transpile("use math\nx = argmin[ones[3]]\n");
         assert!(rust.contains(".argmin()"), "should emit .argmin()\n{}", rust);
     }
 
     #[test]
     fn test_math_sum_axis_transpile() {
-        let rust = transpile("use math\nx = math.sum[math.ones[2, 3], 0]\n");
+        let rust = transpile("use math\nx = sum[ones[2, 3], 0]\n");
         assert!(rust.contains(".sum_axis("), "should emit .sum_axis()\n{}", rust);
     }
 
     #[test]
     fn test_math_max_axis_transpile() {
-        let rust = transpile("use math\nx = math.max[math.ones[2, 3], 1]\n");
+        let rust = transpile("use math\nx = max[ones[2, 3], 1]\n");
         assert!(rust.contains(".max_axis("), "should emit .max_axis()\n{}", rust);
     }
 
     #[test]
     fn test_math_prod_axis_transpile() {
-        let rust = transpile("use math\nx = math.prod[math.ones[2, 3], 0]\n");
+        let rust = transpile("use math\nx = prod[ones[2, 3], 0]\n");
         assert!(rust.contains(".prod_axis("), "should emit .prod_axis()\n{}", rust);
     }
 
@@ -4065,25 +3940,25 @@ mod tests {
 
     #[test]
     fn test_math_argsort_transpile() {
-        let rust = transpile("use math\nx = math.argsort[math.ones[5]]\n");
+        let rust = transpile("use math\nx = argsort[ones[5]]\n");
         assert!(rust.contains(".argsort()"), "should emit .argsort()\n{}", rust);
     }
 
     #[test]
     fn test_math_topk_transpile() {
-        let rust = transpile("use math\nx = math.topk[math.ones[5], 3]\n");
+        let rust = transpile("use math\nx = topk[ones[5], 3]\n");
         assert!(rust.contains(".topk("), "should emit .topk()\n{}", rust);
     }
 
     #[test]
     fn test_math_unique_transpile() {
-        let rust = transpile("use math\nx = math.unique[math.ones[5]]\n");
+        let rust = transpile("use math\nx = unique[ones[5]]\n");
         assert!(rust.contains(".unique()"), "should emit .unique()\n{}", rust);
     }
 
     #[test]
     fn test_math_where_transpile() {
-        let rust = transpile("use math\nx = math.where[math.ones[3], math.ones[3], math.zeros[3]]\n");
+        let rust = transpile("use math\nx = where[ones[3], ones[3], zeros[3]]\n");
         assert!(rust.contains(".where_cond("), "should emit .where_cond()\n{}", rust);
     }
 
@@ -4091,13 +3966,13 @@ mod tests {
 
     #[test]
     fn test_math_cumsum_transpile() {
-        let rust = transpile("use math\nx = math.cumsum[math.ones[5]]\n");
+        let rust = transpile("use math\nx = cumsum[ones[5]]\n");
         assert!(rust.contains(".cumsum()"), "should emit .cumsum()\n{}", rust);
     }
 
     #[test]
     fn test_math_cumprod_transpile() {
-        let rust = transpile("use math\nx = math.cumprod[math.ones[5]]\n");
+        let rust = transpile("use math\nx = cumprod[ones[5]]\n");
         assert!(rust.contains(".cumprod()"), "should emit .cumprod()\n{}", rust);
     }
 
@@ -4105,13 +3980,13 @@ mod tests {
 
     #[test]
     fn test_math_concat_transpile() {
-        let rust = transpile("use math\nx = math.concat[math.ones[3], math.ones[2]]\n");
+        let rust = transpile("use math\nx = concat[ones[3], ones[2]]\n");
         assert!(rust.contains(".concat("), "should emit .concat()\n{}", rust);
     }
 
     #[test]
     fn test_math_stack_transpile() {
-        let rust = transpile("use math\nx = math.stack[[math.ones[3], math.ones[3]]]\n");
+        let rust = transpile("use math\nx = stack[[ones[3], ones[3]]]\n");
         assert!(rust.contains("CrowTensor::stack("), "should emit CrowTensor::stack()\n{}", rust);
     }
 
@@ -4119,13 +3994,13 @@ mod tests {
 
     #[test]
     fn test_broadcast_add_transpile() {
-        let rust = transpile("use math\na = math.reshape[math.ones[3], 3, 1]\nb = math.reshape[math.ones[4], 1, 4]\nx = a + b\n");
+        let rust = transpile("use math\na = reshape[ones[3], 3, 1]\nb = reshape[ones[4], 1, 4]\nx = a + b\n");
         assert!(rust.contains(".add("), "should emit .add() for broadcast\n{}", rust);
     }
 
     #[test]
     fn test_broadcast_elem_mul_transpile() {
-        let rust = transpile("use math\na = math.reshape[math.ones[6], 3, 1]\nb = math.reshape[math.ones[2], 1, 2]\nx = a .* b\n");
+        let rust = transpile("use math\na = reshape[ones[6], 3, 1]\nb = reshape[ones[2], 1, 2]\nx = a .* b\n");
         assert!(rust.contains(".mul("), "should emit .mul() for broadcast elem mul\n{}", rust);
     }
 
@@ -4133,7 +4008,7 @@ mod tests {
 
     #[test]
     fn test_gather_transpile() {
-        let rust = transpile("use math\na = math.linspace[10, 50, 5]\nidx = math.linspace[0, 2, 3]\nx = a[idx]\n");
+        let rust = transpile("use math\na = linspace[10, 50, 5]\nidx = linspace[0, 2, 3]\nx = a[idx]\n");
         assert!(rust.contains(".gather("), "should emit .gather() for tensor indexing by tensor\n{}", rust);
     }
 
@@ -4141,13 +4016,13 @@ mod tests {
 
     #[test]
     fn test_norm_l2_transpile() {
-        let rust = transpile("use math\nx = math.norm[math.ones[3]]\n");
+        let rust = transpile("use math\nx = norm[ones[3]]\n");
         assert!(rust.contains(".norm(2.0)"), "should emit .norm(2.0) for L2 norm\n{}", rust);
     }
 
     #[test]
     fn test_norm_lp_transpile() {
-        let rust = transpile("use math\nx = math.norm[math.ones[3], 1]\n");
+        let rust = transpile("use math\nx = norm[ones[3], 1]\n");
         assert!(rust.contains(".norm("), "should emit .norm() for Lp norm\n{}", rust);
     }
 
@@ -4155,49 +4030,49 @@ mod tests {
 
     #[test]
     fn test_math_seed_transpile() {
-        let rust = transpile("use math\nmath.seed[42]\n");
+        let rust = transpile("use math\nseed[42]\n");
         assert!(rust.contains("set_seed(42"), "should emit set_seed\n{}", rust);
     }
 
     #[test]
     fn test_math_normal_transpile() {
-        let rust = transpile("use math\nx = math.normal[0, 1, 3, 4]\n");
+        let rust = transpile("use math\nx = normal[0, 1, 3, 4]\n");
         assert!(rust.contains("CrowTensor::normal("), "should emit CrowTensor::normal\n{}", rust);
     }
 
     #[test]
     fn test_math_uniform_transpile() {
-        let rust = transpile("use math\nx = math.uniform[2, 5, 6]\n");
+        let rust = transpile("use math\nx = uniform[2, 5, 6]\n");
         assert!(rust.contains("CrowTensor::rand_range("), "should emit CrowTensor::rand_range\n{}", rust);
     }
 
     #[test]
     fn test_math_poisson_transpile() {
-        let rust = transpile("use math\nx = math.poisson[3.5, 4]\n");
+        let rust = transpile("use math\nx = poisson[3.5, 4]\n");
         assert!(rust.contains("CrowTensor::poisson("), "should emit CrowTensor::poisson\n{}", rust);
     }
 
     #[test]
     fn test_math_bernoulli_transpile() {
-        let rust = transpile("use math\nx = math.bernoulli[0.5, 8]\n");
+        let rust = transpile("use math\nx = bernoulli[0.5, 8]\n");
         assert!(rust.contains("CrowTensor::bernoulli("), "should emit CrowTensor::bernoulli\n{}", rust);
     }
 
     #[test]
     fn test_math_shuffle_transpile() {
-        let rust = transpile("use math\nx = math.shuffle[math.ones[5]]\n");
+        let rust = transpile("use math\nx = shuffle[ones[5]]\n");
         assert!(rust.contains(".shuffle()"), "should emit .shuffle()\n{}", rust);
     }
 
     #[test]
     fn test_math_choice_transpile() {
-        let rust = transpile("use math\nx = math.choice[math.ones[5], 3]\n");
+        let rust = transpile("use math\nx = choice[ones[5], 3]\n");
         assert!(rust.contains(".choice("), "should emit .choice()\n{}", rust);
     }
 
     #[test]
     fn test_math_permutation_transpile() {
-        let rust = transpile("use math\nx = math.permutation[5]\n");
+        let rust = transpile("use math\nx = permutation[5]\n");
         assert!(rust.contains("CrowTensor::permutation("), "should emit CrowTensor::permutation\n{}", rust);
     }
 
@@ -4205,43 +4080,43 @@ mod tests {
 
     #[test]
     fn test_math_fft_transpile() {
-        let rust = transpile("use math\nx = math.fft[math.ones[4]]\n");
+        let rust = transpile("use math\nx = fft[ones[4]]\n");
         assert!(rust.contains(".fft()"), "should emit .fft()\n{}", rust);
     }
 
     #[test]
     fn test_math_ifft_transpile() {
-        let rust = transpile("use math\nx = math.ifft[math.ones[4], math.zeros[4]]\n");
+        let rust = transpile("use math\nx = ifft[ones[4], zeros[4]]\n");
         assert!(rust.contains("CrowTensor::ifft("), "should emit CrowTensor::ifft\n{}", rust);
     }
 
     #[test]
     fn test_math_fft2_transpile() {
-        let rust = transpile("use math\nx = math.fft2[math.ones[4]]\n");
+        let rust = transpile("use math\nx = fft2[ones[4]]\n");
         assert!(rust.contains(".fft2()"), "should emit .fft2()\n{}", rust);
     }
 
     #[test]
     fn test_math_conv_transpile() {
-        let rust = transpile("use math\nx = math.conv[math.ones[3], math.ones[2]]\n");
+        let rust = transpile("use math\nx = conv[ones[3], ones[2]]\n");
         assert!(rust.contains(".conv("), "should emit .conv()\n{}", rust);
     }
 
     #[test]
     fn test_math_conv2d_transpile() {
-        let rust = transpile("use math\nx = math.conv2d[math.ones[4], math.ones[4]]\n");
+        let rust = transpile("use math\nx = conv2d[ones[4], ones[4]]\n");
         assert!(rust.contains(".conv2d("), "should emit .conv2d()\n{}", rust);
     }
 
     #[test]
     fn test_math_hamming_transpile() {
-        let rust = transpile("use math\nx = math.hamming[5]\n");
+        let rust = transpile("use math\nx = hamming[5]\n");
         assert!(rust.contains("CrowTensor::hamming("), "should emit CrowTensor::hamming\n{}", rust);
     }
 
     #[test]
     fn test_math_hanning_transpile() {
-        let rust = transpile("use math\nx = math.hanning[5]\n");
+        let rust = transpile("use math\nx = hanning[5]\n");
         assert!(rust.contains("CrowTensor::hanning("), "should emit CrowTensor::hanning\n{}", rust);
     }
 
@@ -4249,49 +4124,49 @@ mod tests {
 
     #[test]
     fn test_math_gamma_transpile() {
-        let rust = transpile("use math\nx = math.gamma[math.ones[3]]\n");
+        let rust = transpile("use math\nx = gamma[ones[3]]\n");
         assert!(rust.contains(".gamma()"), "should emit .gamma()\n{}", rust);
     }
 
     #[test]
     fn test_math_erf_transpile() {
-        let rust = transpile("use math\nx = math.erf[math.ones[3]]\n");
+        let rust = transpile("use math\nx = erf[ones[3]]\n");
         assert!(rust.contains(".erf()"), "should emit .erf()\n{}", rust);
     }
 
     #[test]
     fn test_math_bessel_transpile() {
-        let rust = transpile("use math\nx = math.bessel[math.ones[3], 0]\n");
+        let rust = transpile("use math\nx = bessel[ones[3], 0]\n");
         assert!(rust.contains(".bessel("), "should emit .bessel()\n{}", rust);
     }
 
     #[test]
     fn test_math_factorial_transpile() {
-        let rust = transpile("use math\nx = math.factorial[math.ones[3]]\n");
+        let rust = transpile("use math\nx = factorial[ones[3]]\n");
         assert!(rust.contains(".factorial()"), "should emit .factorial()\n{}", rust);
     }
 
     #[test]
     fn test_math_choose_transpile() {
-        let rust = transpile("use math\nx = math.choose[math.ones[3], math.ones[3]]\n");
+        let rust = transpile("use math\nx = choose[ones[3], ones[3]]\n");
         assert!(rust.contains(".choose("), "should emit .choose()\n{}", rust);
     }
 
     #[test]
     fn test_math_complex_transpile() {
-        let rust = transpile("use math\nc = math.complex[3, 4]\n");
+        let rust = transpile("use math\nc = complex[3, 4]\n");
         assert!(rust.contains("CrowTensor::complex("), "should emit CrowTensor::complex\n{}", rust);
     }
 
     #[test]
     fn test_math_magnitude_transpile() {
-        let rust = transpile("use math\nc = math.complex[3, 4]\nm = math.magnitude[c]\n");
+        let rust = transpile("use math\nc = complex[3, 4]\nm = magnitude[c]\n");
         assert!(rust.contains("CrowTensor::magnitude("), "should emit CrowTensor::magnitude\n{}", rust);
     }
 
     #[test]
     fn test_math_conjugate_transpile() {
-        let rust = transpile("use math\nc = math.complex[3, 4]\ncc = math.conjugate[c]\n");
+        let rust = transpile("use math\nc = complex[3, 4]\ncc = conjugate[c]\n");
         assert!(rust.contains("CrowTensor::conjugate("), "should emit CrowTensor::conjugate\n{}", rust);
     }
 
@@ -4299,49 +4174,49 @@ mod tests {
 
     #[test]
     fn test_math_sparse_from_dense_transpile() {
-        let rust = transpile("use math\ns = math.sparse[math.eye[3]]\n");
+        let rust = transpile("use math\ns = sparse[eye[3]]\n");
         assert!(rust.contains("CrowSparse::from_dense("), "should emit CrowSparse::from_dense\n{}", rust);
     }
 
     #[test]
     fn test_math_sparse_from_coo_transpile() {
-        let rust = transpile("use math\ns = math.sparse[[0, 1], [0, 1], [5, 6], [2, 2]]\n");
+        let rust = transpile("use math\ns = sparse[[0, 1], [0, 1], [5, 6], [2, 2]]\n");
         assert!(rust.contains("CrowSparse::from_coo("), "should emit CrowSparse::from_coo\n{}", rust);
     }
 
     #[test]
     fn test_math_dense_transpile() {
-        let rust = transpile("use math\ns = math.sparse[math.eye[2]]\nd = math.dense[s]\n");
+        let rust = transpile("use math\ns = sparse[eye[2]]\nd = dense[s]\n");
         assert!(rust.contains(".to_dense()"), "should emit .to_dense()\n{}", rust);
     }
 
     #[test]
     fn test_sparse_matmul_transpile() {
-        let rust = transpile("use math\ns = math.sparse[math.eye[2]]\nv = [1, 2]\nr = s * v\n");
+        let rust = transpile("use math\ns = sparse[eye[2]]\nv = [1, 2]\nr = s * v\n");
         assert!(rust.contains(".matmul_dense("), "should emit .matmul_dense()\n{}", rust);
     }
 
     #[test]
     fn test_sparse_add_transpile() {
-        let rust = transpile("use math\na = math.sparse[math.eye[2]]\nb = math.sparse[math.eye[2]]\nc = a + b\n");
+        let rust = transpile("use math\na = sparse[eye[2]]\nb = sparse[eye[2]]\nc = a + b\n");
         assert!(rust.contains(".add("), "should emit .add() for sparse+sparse\n{}", rust);
     }
 
     #[test]
     fn test_sparse_solve_transpile() {
-        let rust = transpile("use math\ns = math.sparse[math.eye[2]]\nx = math.solve[s, [1, 2]]\n");
+        let rust = transpile("use math\ns = sparse[eye[2]]\nx = solve[s, [1, 2]]\n");
         assert!(rust.contains(".solve("), "should emit .solve() for sparse solve\n{}", rust);
     }
 
     #[test]
     fn test_sparse_type_transpile() {
-        let rust = transpile("use math\ns = math.sparse[math.eye[2]]\nt = type[s]\n");
+        let rust = transpile("use math\ns = sparse[eye[2]]\nt = type[s]\n");
         assert!(rust.contains("\"sparse\""), "should emit 'sparse' for type[]\n{}", rust);
     }
 
     #[test]
     fn test_sparse_import_transpile() {
-        let rust = transpile("use math\ns = math.sparse[math.eye[2]]\n");
+        let rust = transpile("use math\ns = sparse[eye[2]]\n");
         assert!(rust.contains("use crow_runtime::sparse::CrowSparse"), "should import CrowSparse\n{}", rust);
     }
 
@@ -4349,49 +4224,49 @@ mod tests {
 
     #[test]
     fn test_stats_median_transpile() {
-        let rust = transpile("use math\nuse math.stats\nx = math.median[math.ones[5]]\n");
+        let rust = transpile("use math\nuse math.stats\nx = median[ones[5]]\n");
         assert!(rust.contains("crow_runtime::stats::median("), "should emit stats::median\n{}", rust);
     }
 
     #[test]
     fn test_stats_std_transpile() {
-        let rust = transpile("use math\nuse math.stats\nx = math.std[math.ones[5]]\n");
+        let rust = transpile("use math\nuse math.stats\nx = std[ones[5]]\n");
         assert!(rust.contains("crow_runtime::stats::std("), "should emit stats::std\n{}", rust);
     }
 
     #[test]
     fn test_stats_var_transpile() {
-        let rust = transpile("use math\nuse math.stats\nx = math.var[math.ones[5]]\n");
+        let rust = transpile("use math\nuse math.stats\nx = var[ones[5]]\n");
         assert!(rust.contains("crow_runtime::stats::var("), "should emit stats::var\n{}", rust);
     }
 
     #[test]
     fn test_stats_percentile_transpile() {
-        let rust = transpile("use math\nuse math.stats\nx = math.percentile[math.ones[5], 50]\n");
+        let rust = transpile("use math\nuse math.stats\nx = percentile[ones[5], 50]\n");
         assert!(rust.contains("crow_runtime::stats::percentile("), "should emit stats::percentile\n{}", rust);
     }
 
     #[test]
     fn test_stats_zscore_transpile() {
-        let rust = transpile("use math\nuse math.stats\nz = math.zscore[math.ones[5]]\n");
+        let rust = transpile("use math\nuse math.stats\nz = zscore[ones[5]]\n");
         assert!(rust.contains("crow_runtime::stats::zscore("), "should emit stats::zscore\n{}", rust);
     }
 
     #[test]
     fn test_stats_corr_transpile() {
-        let rust = transpile("use math\nuse math.stats\nc = math.corr[math.ones[5], math.ones[5]]\n");
+        let rust = transpile("use math\nuse math.stats\nc = corr[ones[5], ones[5]]\n");
         assert!(rust.contains("crow_runtime::stats::corr("), "should emit stats::corr\n{}", rust);
     }
 
     #[test]
     fn test_stats_cov_transpile() {
-        let rust = transpile("use math\nuse math.stats\nc = math.cov[math.ones[5], math.ones[5]]\n");
+        let rust = transpile("use math\nuse math.stats\nc = cov[ones[5], ones[5]]\n");
         assert!(rust.contains("crow_runtime::stats::cov("), "should emit stats::cov\n{}", rust);
     }
 
     #[test]
     fn test_stats_ttest_transpile() {
-        let rust = transpile("use math\nuse math.stats\nr = math.ttest[math.ones[5], math.ones[5]]\n");
+        let rust = transpile("use math\nuse math.stats\nr = ttest[ones[5], ones[5]]\n");
         assert!(rust.contains("crow_runtime::stats::ttest("), "should emit stats::ttest\n{}", rust);
     }
 }

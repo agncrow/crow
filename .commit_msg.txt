@@ -1,15 +1,13 @@
-Implement math.stats sub-module
+Modular module system: CrowModule trait + registry-based dispatch
 
-First sub-module of math: use math.stats adds statistics functions
-to the math namespace.
-
-Functions: median, std, var, percentile, zscore, corr, cov, ttest
-
-- Parser: support dot-path imports (use math.stats)
-- Runtime: crow_runtime/src/stats.rs with full implementations
-  including regularized incomplete beta for t-test p-values
-- Interpreter: load_module handles math.stats, call_math_builtin dispatches
-- Transpiler: emit_use handles math.stats, inline Rust emission
-- Type inference: type rules for all 8 stats functions
-- 497 tests passing (29 new: 12 runtime, 9 interpreter, 8 transpiler)
-- Interpreter-transpiler parity confirmed
+- Created CrowModule trait (Send + Sync) in src/modules/mod.rs
+- Created ModuleRegistry with Arc<dyn CrowModule> for Clone compatibility
+- Moved math builtins to src/modules/math.rs (MathModule)
+- Moved stats builtins to src/modules/stats.rs (StatsModule)
+- Updated interpreter.rs: deleted ~650-line call_math_builtin, added registry dispatch
+- Updated transpiler.rs: removed math FieldAccess blocks, added registry dispatch
+- Updated type_infer.rs: removed math type blocks, added registry dispatch
+- Removed math. prefix: all functions are bare after use math (zeros[3] not math.zeros[3])
+- Overlapping builtins (abs, sqrt, floor, ceil, round, min, max) disambiguated by arg type
+- Updated docs/language-spec.md and examples/math_test.crow
+- All 497 tests pass

@@ -613,13 +613,13 @@ For tensors (numeric arrays), operators follow MATLAB/Julia semantics:
 
 ```
 use math
-W = math.eye[2]
-x = math.ones[2, 1]
+W = eye[2]
+x = ones[2, 1]
 y = W * x                   --- matmul ---
-a = math.ones[3] .* math.full[3, 2]   --- element-wise multiply ---
-b = math.ones[3] ./ math.full[3, 2]   --- element-wise divide ---
-c = math.full[3, 2] .^ 3    --- element-wise power ---
-d = math.ones[3] * 2        --- scalar multiply ---
+a = ones[3] .* full[3, 2]   --- element-wise multiply ---
+b = ones[3] ./ full[3, 2]   --- element-wise divide ---
+c = full[3, 2] .^ 3    --- element-wise power ---
+d = ones[3] * 2        --- scalar multiply ---
 ```
 
 Scalar-array operations broadcast the scalar:
@@ -727,66 +727,66 @@ use myapp/utils
 
 ### Accessing
 
-Access module functions with `.`
+After `use`, all module functions become top-level — no prefix needed.
 
 ```
 use math
 
-result = math.sqrt[16]    --- 4 ---
+result = sqrt[16]    --- 4 ---
+x = zeros[3, 3]     --- 3x3 tensor of zeros ---
 ```
 
 ### Built-in Module: `math`
 
-The `math` module is built in — no file needed. It provides tensor creation, element-wise operations, reductions, shape operations, and linear algebra.
+The `math` module is built in — no file needed. It provides tensor creation, element-wise operations, reductions, shape operations, and linear algebra. After `use math`, all functions are called directly (e.g. `zeros[3]`, not `math.zeros[3]`).
 
 #### Tensor Creation
 
 | Function | Description |
 |---|---|
-| `math.zeros[d1, d2, ...]` | Tensor of zeros with given shape |
-| `math.ones[d1, d2, ...]` | Tensor of ones with given shape |
-| `math.full[d1, d2, ..., value]` | Tensor filled with `value` (last arg) |
-| `math.eye[n]` | n×n identity matrix |
-| `math.diag[tensor]` | Extract diagonal from a 2D tensor |
-| `math.linspace[start, end, n]` | `n` evenly spaced values from `start` to `end` |
-| `math.arange[start, end, step]` | Values from `start` to `end` by `step` |
-| `math.rand[d1, d2, ...]` | Uniform random values in [0, 1) |
-| `math.randn[d1, d2, ...]` | Normal random values (mean=0, std=1) |
-| `math.tensor[array]` | Convert an array to a tensor |
+| `zeros[d1, d2, ...]` | Tensor of zeros with given shape |
+| `ones[d1, d2, ...]` | Tensor of ones with given shape |
+| `full[d1, d2, ..., value]` | Tensor filled with `value` (last arg) |
+| `eye[n]` | n×n identity matrix |
+| `diag[tensor]` | Extract diagonal from a 2D tensor |
+| `linspace[start, end, n]` | `n` evenly spaced values from `start` to `end` |
+| `arange[start, end, step]` | Values from `start` to `end` by `step` |
+| `randn[d1, d2, ...]` | Normal random values (mean=0, std=1) |
+| `tensor[array]` | Convert an array to a tensor |
 
 #### Element-wise Operations
 
 | Function | Description |
 |---|---|
-| `math.exp[t]` | Element-wise exponential |
-| `math.log[t]` | Element-wise natural log |
-| `math.sqrt[t]` | Element-wise square root |
-| `math.sin[t]` | Element-wise sine |
-| `math.cos[t]` | Element-wise cosine |
-| `math.abs[t]` | Element-wise absolute value |
+| `exp[t]` | Element-wise exponential |
+| `ln[t]` | Element-wise natural log |
+| `sqrt[t]` | Element-wise square root |
+| `sin[t]` | Element-wise sine |
+| `cos[t]` | Element-wise cosine |
+| `abs[t]` | Element-wise absolute value |
 
 #### Reductions
 
 | Function | Returns |
 |---|---|
-| `math.sum[t]` | Sum of all elements (float) |
-| `math.mean[t]` | Mean of all elements (float) |
-| `math.min[t]` | Minimum element (float) |
-| `math.max[t]` | Maximum element (float) |
-| `math.prod[t]` | Product of all elements (float) |
-| `math.argmax[t]` | Index of maximum element (int) |
-| `math.argmin[t]` | Index of minimum element (int) |
+| `sum[t]` | Sum of all elements (float) |
+| `mean[t]` | Mean of all elements (float) |
+| `min[t]` | Minimum element (float) |
+| `max[t]` | Maximum element (float) |
+| `prod[t]` | Product of all elements (float) |
+| `argmax[t]` | Index of maximum element (int) |
+| `argmin[t]` | Index of minimum element (int) |
 
-All reductions except `argmax`/`argmin` accept an optional axis parameter: `math.sum[t, axis]` reduces along that axis and returns a tensor instead of a scalar.
+All reductions except `argmax`/`argmin` accept an optional axis parameter: `sum[t, axis]` reduces along that axis and returns a tensor instead of a scalar.
 
 #### Sorting & Selection
 
 | Function | Returns |
 |---|---|
-| `math.argsort[t]` | Indices that would sort the tensor (NumArray) |
-| `math.topk[t, k]` | Top k largest values, sorted descending (NumArray) |
-| `math.unique[t]` | Unique values, sorted (NumArray) |
-| `math.where[cond, a, b]` | Element-wise: a where cond≠0, else b (NumArray) |
+| `argsort[t]` | Indices that would sort the tensor (NumArray) |
+| `topk[t, k]` | Top k largest values, sorted descending (NumArray) |
+| `unique[t]` | Unique values, sorted (NumArray) |
+| `where[cond, a, b]` | Element-wise: a where cond≠0, else b (NumArray) |
 
 Note: `sort[t]` is a core builtin (not in the math module) that works on both arrays and tensors.
 
@@ -794,17 +794,17 @@ Note: `sort[t]` is a core builtin (not in the math module) that works on both ar
 
 | Function | Returns |
 |---|---|
-| `math.cumsum[t]` | Cumulative sum (NumArray, same shape) |
-| `math.cumprod[t]` | Cumulative product (NumArray, same shape) |
+| `cumsum[t]` | Cumulative sum (NumArray, same shape) |
+| `cumprod[t]` | Cumulative product (NumArray, same shape) |
 
 #### Combining Ops
 
 | Function | Returns |
 |---|---|
-| `math.concat[a, b]` | Concatenate two tensors along axis 0 (NumArray) |
-| `math.concat[a, b, axis]` | Concatenate two tensors along given axis (NumArray) |
-| `math.stack[tensors]` | Stack array of tensors along new axis 0 (NumArray) |
-| `math.stack[tensors, axis]` | Stack array of tensors along new axis (NumArray) |
+| `concat[a, b]` | Concatenate two tensors along axis 0 (NumArray) |
+| `concat[a, b, axis]` | Concatenate two tensors along given axis (NumArray) |
+| `stack[tensors]` | Stack array of tensors along new axis 0 (NumArray) |
+| `stack[tensors, axis]` | Stack array of tensors along new axis (NumArray) |
 
 Note: `slice[t, start, end]` is a core builtin (not in the math module) that works on arrays, tensors, and strings.
 
@@ -817,8 +817,8 @@ Element-wise operations on tensors with different shapes automatically broadcast
 
 ```
 use math
-a = math.reshape[math.linspace[1, 3, 3], 3, 1]   --- shape [3, 1] ---
-b = math.reshape[math.linspace[10, 40, 4], 1, 4]  --- shape [1, 4] ---
+a = reshape[linspace[1, 3, 3], 3, 1]   --- shape [3, 1] ---
+b = reshape[linspace[10, 40, 4], 1, 4]  --- shape [1, 4] ---
 c = a + b                                          --- shape [3, 4] ---
 ```
 
@@ -831,8 +831,8 @@ Incompatible shapes (e.g. `[3] + [4]`) produce a runtime error.
 Tensors can be indexed with another tensor to gather elements by index:
 
 ```
-a = math.linspace[10, 50, 5]
-indices = math.linspace[0, 2, 3]
+a = linspace[10, 50, 5]
+indices = linspace[0, 2, 3]
 y = a[indices]                    --- gathers elements at indices 0, 1, 2 ---
 ```
 
@@ -842,61 +842,61 @@ Negative indices are supported (wrap around from the end). The result tensor has
 
 | Function | Description |
 |---|---|
-| `math.reshape[t, d1, d2, ...]` | Reshape to new dimensions |
-| `math.flatten[t]` | Flatten to 1D |
-| `math.transpose[t]` | Transpose (swap last two axes) |
+| `reshape[t, d1, d2, ...]` | Reshape to new dimensions |
+| `flatten[t]` | Flatten to 1D |
+| `transpose[t]` | Transpose (swap last two axes) |
 
 #### Linear Algebra
 
 | Function | Description |
 |---|---|
 | `a * b` | Matrix multiplication (use `*` operator) |
-| `math.solve[a, b]` | Solve linear system Ax = b |
-| `math.inv[a]` | Matrix inverse |
-| `math.det[a]` | Determinant (returns float) |
-| `math.svd[a]` | SVD → returns [U, S, Vt] |
-| `math.qr[a]` | QR decomposition → returns [Q, R] |
-| `math.cholesky[a]` | Cholesky (L*L^T) for symmetric positive-definite |
-| `math.eigen[a]` | Eigenvalues → returns [real, imag] |
-| `math.norm[x]` | L2 (Euclidean) norm (returns float) |
-| `math.norm[x, p]` | Lp norm (p=1 for L1, math.inf for L∞) |
+| `solve[a, b]` | Solve linear system Ax = b |
+| `inv[a]` | Matrix inverse |
+| `det[a]` | Determinant (returns float) |
+| `svd[a]` | SVD → returns [U, S, Vt] |
+| `qr[a]` | QR decomposition → returns [Q, R] |
+| `cholesky[a]` | Cholesky (L*L^T) for symmetric positive-definite |
+| `eigen[a]` | Eigenvalues → returns [real, imag] |
+| `norm[x]` | L2 (Euclidean) norm (returns float) |
+| `norm[x, p]` | Lp norm (p=1 for L1, inf for L∞) |
 
 #### Random & Distributions
 
 | Function | Description |
 |---|---|
-| `math.seed[n]` | Set global RNG seed for reproducibility |
-| `math.rand[d1, d2, ...]` | Uniform random in [0, 1) |
-| `math.randn[d1, d2, ...]` | Standard normal (mean=0, std=1) |
-| `math.normal[mean, std, d1, d2, ...]` | Normal with custom mean/std |
-| `math.uniform[low, high, d1, d2, ...]` | Uniform in [low, high) |
-| `math.poisson[lambda, d1, d2, ...]` | Poisson distribution |
-| `math.bernoulli[p, d1, d2, ...]` | Bernoulli (0.0 or 1.0) |
-| `math.shuffle[x]` | Random permutation of tensor elements |
-| `math.choice[x, n]` | Random sample of n elements (no replacement) |
-| `math.permutation[n]` | Random permutation of 0..n |
+| `seed[n]` | Set global RNG seed for reproducibility |
+| `rand[d1, d2, ...]` | Uniform random in [0, 1) |
+| `randn[d1, d2, ...]` | Standard normal (mean=0, std=1) |
+| `normal[mean, std, d1, d2, ...]` | Normal with custom mean/std |
+| `uniform[low, high, d1, d2, ...]` | Uniform in [low, high) |
+| `poisson[lambda, d1, d2, ...]` | Poisson distribution |
+| `bernoulli[p, d1, d2, ...]` | Bernoulli (0.0 or 1.0) |
+| `shuffle[x]` | Random permutation of tensor elements |
+| `choice[x, n]` | Random sample of n elements (no replacement) |
+| `permutation[n]` | Random permutation of 0..n |
 
 #### Signal Processing
 
 | Function | Description |
 |---|---|
-| `math.fft[x]` | 1D FFT → returns [real, imag] tensors |
-| `math.ifft[real, imag]` | Inverse 1D FFT → returns real tensor |
-| `math.fft2[m]` | 2D FFT → returns [real, imag] tensors |
-| `math.conv[a, b]` | 1D convolution (full), length = len(a)+len(b)-1 |
-| `math.conv2d[a, b]` | 2D convolution (full) |
-| `math.hamming[n]` | Hamming window of length n |
-| `math.hanning[n]` | Hanning (Hann) window of length n |
+| `fft[x]` | 1D FFT → returns [real, imag] tensors |
+| `ifft[real, imag]` | Inverse 1D FFT → returns real tensor |
+| `fft2[m]` | 2D FFT → returns [real, imag] tensors |
+| `conv[a, b]` | 1D convolution (full), length = len(a)+len(b)-1 |
+| `conv2d[a, b]` | 2D convolution (full) |
+| `hamming[n]` | Hamming window of length n |
+| `hanning[n]` | Hanning (Hann) window of length n |
 
 #### Special Functions
 
 | Function | Description |
 |---|---|
-| `math.gamma[x]` | Gamma function Γ(x), element-wise |
-| `math.erf[x]` | Error function erf(x), element-wise |
-| `math.bessel[x, n]` | Bessel function J_n(x), element-wise |
-| `math.factorial[x]` | Factorial x! = Γ(x+1), element-wise |
-| `math.choose[n, k]` | Binomial coefficient C(n,k), element-wise |
+| `gamma[x]` | Gamma function Γ(x), element-wise |
+| `erf[x]` | Error function erf(x), element-wise |
+| `bessel[x, n]` | Bessel function J_n(x), element-wise |
+| `factorial[x]` | Factorial x! = Γ(x+1), element-wise |
+| `choose[n, k]` | Binomial coefficient C(n,k), element-wise |
 
 #### Complex Numbers
 
@@ -904,12 +904,12 @@ Complex values are represented as `[real_tensor, imag_tensor]` pairs.
 
 | Function | Description |
 |---|---|
-| `math.complex[re, im]` | Create complex value → [real, imag] |
-| `math.real[c]` | Extract real part tensor |
-| `math.imag[c]` | Extract imaginary part tensor |
-| `math.magnitude[c]` | Magnitude \|c\| = sqrt(re² + im²) |
-| `math.phase[c]` | Phase angle = atan2(im, re) |
-| `math.conjugate[c]` | Complex conjugate → [re, -im] |
+| `complex[re, im]` | Create complex value → [real, imag] |
+| `real[c]` | Extract real part tensor |
+| `imag[c]` | Extract imaginary part tensor |
+| `magnitude[c]` | Magnitude \|c\| = sqrt(re² + im²) |
+| `phase[c]` | Phase angle = atan2(im, re) |
+| `conjugate[c]` | Complex conjugate → [re, -im] |
 
 #### Sparse Arrays
 
@@ -917,22 +917,22 @@ Sparse matrices store only non-zero entries, using CSR (Compressed Sparse Row) f
 
 | Function | Description |
 |---|---|
-| `math.sparse[dense_array]` | Convert dense 2D array to sparse |
-| `math.sparse[rows, cols, vals, shape]` | Create sparse from COO triplets (row indices, column indices, values, [nrows, ncols]) |
-| `math.dense[s]` | Convert sparse matrix back to dense array |
+| `sparse[dense_array]` | Convert dense 2D array to sparse |
+| `sparse[rows, cols, vals, shape]` | Create sparse from COO triplets (row indices, column indices, values, [nrows, ncols]) |
+| `dense[s]` | Convert sparse matrix back to dense array |
 | `s * v` | Sparse × dense matmul (vector or matrix) |
 | `s + s2` | Sparse + sparse addition |
-| `math.solve[s, b]` | Solve sparse linear system s·x = b |
+| `solve[s, b]` | Solve sparse linear system s·x = b |
 
 ```
 use math
 
 --- dense to sparse ---
-s = math.sparse[math.eye[3]]
+s = sparse[eye[3]]
 log[s]                              --- sparse[3x3, nnz=3] ---
 
 --- COO creation ---
-s2 = math.sparse[[0, 1, 2], [0, 1, 2], [5, 6, 7], [3, 3]]
+s2 = sparse[[0, 1, 2], [0, 1, 2], [5, 6, 7], [3, 3]]
 
 --- sparse matmul ---
 r = s * [1, 2, 3]
@@ -941,44 +941,44 @@ r = s * [1, 2, 3]
 s3 = s + s2
 
 --- back to dense ---
-d = math.dense[s3]
+d = dense[s3]
 
 --- sparse solve ---
-x = math.solve[s2, [10, 12, 14]]
+x = solve[s2, [10, 12, 14]]
 ```
 
 #### Statistics (sub-module: `math.stats`)
 
-Import with `use math.stats`. Functions are accessed via the `math` namespace.
+Import with `use math.stats`. Functions become top-level after import.
 
 | Function | Description |
 |---|---|
-| `math.median[x]` | Median of a 1D array |
-| `math.std[x]` | Population standard deviation |
-| `math.var[x]` | Population variance |
-| `math.percentile[x, p]` | p-th percentile (0-100) with linear interpolation |
-| `math.zscore[x]` | Z-score normalization: (x - mean) / std → returns array |
-| `math.corr[x, y]` | Pearson correlation coefficient between two arrays |
-| `math.cov[x, y]` | Population covariance between two arrays |
-| `math.ttest[x, y]` | Welch's two-sample t-test → returns map with `t` and `p` |
+| `median[x]` | Median of a 1D array |
+| `std[x]` | Population standard deviation |
+| `var[x]` | Population variance |
+| `percentile[x, p]` | p-th percentile (0-100) with linear interpolation |
+| `zscore[x]` | Z-score normalization: (x - mean) / std → returns array |
+| `corr[x, y]` | Pearson correlation coefficient between two arrays |
+| `cov[x, y]` | Population covariance between two arrays |
+| `ttest[x, y]` | Welch's two-sample t-test → returns map with `t` and `p` |
 
 ```
 use math
 use math.stats
 
-x = math.linspace[1, 10, 10]
-log[math.median[x]]            --- 5.5 ---
-log[math.std[x]]               --- 2.872... ---
-log[math.var[x]]               --- 8.25 ---
-log[math.percentile[x, 25]]    --- 3.25 ---
+x = linspace[1, 10, 10]
+log[median[x]]            --- 5.5 ---
+log[std[x]]               --- 2.872... ---
+log[var[x]]               --- 8.25 ---
+log[percentile[x, 25]]    --- 3.25 ---
 
-z = math.zscore[x]             --- mean=0, std=1 ---
+z = zscore[x]             --- mean=0, std=1 ---
 
-y = math.linspace[2, 20, 10]
-log[math.corr[x, y]]           --- 1.0 (perfect correlation) ---
-log[math.cov[x, y]]            --- 16.5 ---
+y = linspace[2, 20, 10]
+log[corr[x, y]]           --- 1.0 (perfect correlation) ---
+log[cov[x, y]]            --- 16.5 ---
 
-result = math.ttest[x, y]
+result = ttest[x, y]
 log[result.t]                   --- t-statistic ---
 log[result.p]                   --- p-value ---
 ```
@@ -987,10 +987,10 @@ log[result.p]                   --- p-value ---
 
 | Constant | Description |
 |---|---|
-| `math.pi` | π = 3.14159... |
-| `math.e` | Euler's number e = 2.71828... |
-| `math.inf` | Positive infinity |
-| `math.nan` | Not a number |
+| `pi` | π = 3.14159... |
+| `e` | Euler's number e = 2.71828... |
+| `inf` | Positive infinity |
+| `nan` | Not a number |
 
 #### Properties
 
@@ -1005,13 +1005,13 @@ log[result.p]                   --- p-value ---
 ```
 use math
 
-a = math.zeros[3, 3]
-b = math.eye[3]
+a = zeros[3, 3]
+b = eye[3]
 c = a * b
-d = math.det[b]           --- 1.0 ---
+d = det[b]           --- 1.0 ---
 
 --- constants ---
-log[math.pi]               --- 3.141592653589793 ---
+log[pi]               --- 3.141592653589793 ---
 
 --- properties ---
 log[a.shape]               --- [3, 3] ---
