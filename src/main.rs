@@ -33,6 +33,7 @@ fn main() {
         "install" => cmd_install(),
         "fmt" => cmd_fmt(),
         "build" => cmd_build(),
+        "launch" => cmd_launch(),
         "check" => {
             for a in args.iter().skip(2) {
                 if a.starts_with('-') && a != "--verbose" {
@@ -99,6 +100,7 @@ fn print_usage() {
     eprintln!("  crow fmt               format project (uses crowfile)");
     eprintln!("  crow fmt file.crow     format a specific file");
     eprintln!("  crow fmt --check       check formatting without changing files");
+    eprintln!("  crow launch 4 file.crow  build + run on 4 distributed processes");
     eprintln!("  crow check --verbose   verbose output with purity and snapshot details");
     eprintln!("  crow -v                show version");
 }
@@ -988,6 +990,77 @@ fn cmd_build() {
         println!("build ok -> ./{}", binary_name);
     } else {
         println!("build ok -> {}", binary.display());
+    }
+}
+
+fn cmd_launch() {
+    let args: Vec<String> = std::env::args().collect();
+    // crow launch <n> <file.crow>
+    // crow launch <n>  (uses crowfile)
+    if args.len() < 3 {
+        eprintln!("usage: crow launch <num_processes> [file.crow]");
+        process::exit(1);
+    }
+
+    let n: usize = args[2].parse().unwrap_or_else(|_| {
+        eprintln!("error: '{}' is not a valid number of processes", args[2]);
+        process::exit(1);
+    });
+
+    if n < 1 {
+        eprintln!("error: need at least 1 process");
+        process::exit(1);
+    }
+
+    let entry = if args.len() > 3 {
+        args[3].clone()
+    } else if std::path::Path::new("crowfile").exists() {
+        let config = parse_crowfile();
+        config.entry
+    } else {
+        eprintln!("usage: crow launch <num_processes> <file.crow>");
+        process::exit(1);
+    };
+
+    // Build the binary
+    let binary = transpile_and_compile(&entry, true, None, true);
+
+    let master_addr = "127.0.0.1";
+    let master_port = 29500u16;
+
+    // Spawn n processes with distributed env vars
+    let mut children = Vec::new();
+    for rank in 0..n {
+        let child = std::process::Command::new(&binary)
+            .env("CROW_RANK", rank.to_string())
+            .env("CROW_WORLD_SIZE", n.to_string())
+            .env("CROW_MASTER_ADDR", master_addr)
+            .env("CROW_MASTER_PORT", master_port.to_string())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+            .unwrap_or_else(|e| {
+                eprintln!("error spawning rank {}: {}", rank, e);
+                process::exit(1);
+            });
+        children.push(child);
+    }
+
+    // Wait for all processes
+    let mut any_failed = false;
+    for (rank, mut child) in children.into_iter().enumerate() {
+        let status = child.wait().unwrap_or_else(|e| {
+            eprintln!("error waiting for rank {}: {}", rank, e);
+            process::exit(1);
+        });
+        if !status.success() {
+            eprintln!("rank {} exited with status {}", rank, status.code().unwrap_or(-1));
+            any_failed = true;
+        }
+    }
+
+    if any_failed {
+        process::exit(1);
     }
 }
 

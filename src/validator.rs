@@ -32,7 +32,7 @@ const BUILTINS: &[&str] = &[
     // Error
     "error",
     // Resource
-    "cpu", "gpu",
+    "cpu", "gpu", "nodes",
     // Autograd
     "grad",
 ];
@@ -358,6 +358,7 @@ impl<'a> Validator<'a> {
             "error" => argc >= 1 && argc <= 2,
             "cpu" => argc == 1,
             "gpu" => argc <= 1,
+            "nodes" => argc == 1,
             "grad" => argc == 1,
             _ => true,
         };

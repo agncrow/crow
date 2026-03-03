@@ -20,6 +20,8 @@ pub struct Transpiler {
     pub needs_serde_json: bool,
     /// Whether the transpiled code needs crow_runtime for CrowTensor
     pub needs_crow_runtime: bool,
+    /// Whether the transpiled code uses distributed computing (nodes[])
+    pub needs_distributed: bool,
     /// Map of function name -> set of param names that should be passed by reference
     by_ref_params: std::collections::BTreeMap<String, std::collections::HashSet<String>>,
     /// By-ref params in the current function being emitted
@@ -60,6 +62,7 @@ impl Transpiler {
             needs_rayon: false,
             needs_serde_json: false,
             needs_crow_runtime: false,
+            needs_distributed: false,
             by_ref_params: std::collections::BTreeMap::new(),
             current_ref_params: std::collections::HashSet::new(),
             modules: std::collections::HashSet::new(),
@@ -151,6 +154,27 @@ impl Transpiler {
             return kind == "gpu";
         }
         false
+    }
+
+    /// Check if a statement is a nodes[n] call. Returns the count if so.
+    fn extract_nodes_call(stmt: &Stmt) -> Option<i64> {
+        if let Stmt::ExprStmt(Expr::Call { callee, args }) = stmt {
+            if let Expr::Ident(name) = callee.as_ref() {
+                if name == "nodes" && args.len() == 1 {
+                    if let Expr::Int(n) = &args[0] {
+                        return Some(*n);
+                    }
+                }
+            }
+        }
+        if let Stmt::Resource { kind, count } = stmt {
+            if kind == "nodes" {
+                if let Expr::Int(n) = count {
+                    return Some(*n);
+                }
+            }
+        }
+        None
     }
 
     /// Recursively scan expressions for grad[func_name] calls and collect function names.
@@ -738,6 +762,9 @@ impl Transpiler {
         self.indent += 1;
         self.emit_panic_hook();
         self.emit_stmts_parallel(&main_stmts);
+        if self.needs_distributed {
+            self.emit_line("crow_runtime::distributed::finalize();");
+        }
         self.indent -= 1;
         self.emit_line("}");
 
@@ -1354,6 +1381,13 @@ impl Transpiler {
                     self.emit_line("crow_runtime::gpu::set_gpu_enabled(true);");
                     return;
                 }
+                // Check if this is a nodes[n] call
+                if let Some(n) = Self::extract_nodes_call(stmt) {
+                    self.needs_crow_runtime = true;
+                    self.needs_distributed = true;
+                    self.emit_line(&format!("crow_runtime::distributed::init({});", n));
+                    return;
+                }
                 if let Stmt::ExprStmt(e) = stmt {
                     let expr_str = self.expr_to_string(e);
                     self.emit_line(&format!("{};", expr_str));
@@ -1499,6 +1533,12 @@ impl Transpiler {
                 } else if kind == "gpu" {
                     self.needs_crow_runtime = true;
                     self.emit_line("crow_runtime::gpu::set_gpu_enabled(true);");
+                } else if kind == "nodes" {
+                    if let Expr::Int(n) = count {
+                        self.needs_crow_runtime = true;
+                        self.needs_distributed = true;
+                        self.emit_line(&format!("crow_runtime::distributed::init({});", n));
+                    }
                 }
             }
             Stmt::Line(n) => {
@@ -1794,7 +1834,7 @@ impl Transpiler {
                 // --- Auto-propagation: detect CrowResult args ---
                 if !self.unwrap_result_args {
                     let skip_propagation = callee_name.as_ref()
-                        .map(|n| matches!(n.as_str(), "log" | "assert" | "cpu" | "gpu" | "type" | "error"))
+                        .map(|n| matches!(n.as_str(), "log" | "assert" | "cpu" | "gpu" | "nodes" | "type" | "error"))
                         .unwrap_or(true);
                     if !skip_propagation {
                         let result_arg_indices: Vec<usize> = args.iter().enumerate()
@@ -3784,6 +3824,36 @@ mod tests {
             args: vec![Expr::Int(4)],
         });
         assert!(!Transpiler::is_gpu_call(&stmt3));
+    }
+
+    // ===== nodes (distributed) transpiler tests =====
+
+    #[test]
+    fn test_nodes_call_transpile() {
+        let rust = transpile("nodes[4]\n");
+        assert!(rust.contains("distributed::init(4)"), "nodes[] should emit distributed::init\n{}", rust);
+        assert!(rust.contains("distributed::finalize()"), "nodes[] should emit distributed::finalize\n{}", rust);
+    }
+
+    #[test]
+    fn test_extract_nodes_call() {
+        // ExprStmt path
+        let stmt = Stmt::ExprStmt(Expr::Call {
+            callee: Box::new(Expr::Ident("nodes".to_string())),
+            args: vec![Expr::Int(4)],
+        });
+        assert_eq!(Transpiler::extract_nodes_call(&stmt), Some(4));
+
+        // Resource path
+        let stmt2 = Stmt::Resource { kind: "nodes".to_string(), count: Expr::Int(8) };
+        assert_eq!(Transpiler::extract_nodes_call(&stmt2), Some(8));
+
+        // Not a nodes call
+        let stmt3 = Stmt::ExprStmt(Expr::Call {
+            callee: Box::new(Expr::Ident("gpu".to_string())),
+            args: vec![],
+        });
+        assert_eq!(Transpiler::extract_nodes_call(&stmt3), None);
     }
 
     // ===== grad transpiler tests =====

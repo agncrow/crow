@@ -1,11 +1,12 @@
-Complete Layer 6: Sparse Arrays
+Complete Layer 9: Distributed Computing
 
-- Add sprs v0.11.4 dependency for CSR sparse matrix support
-- Create crow_runtime/src/sparse.rs with CrowSparse type
-- Add Value::Sparse variant to interpreter
-- Wire up math.sparse[], math.dense[], sparse *, sparse +, math.solve[sparse, b]
-- Wire up transpiler and type inference for CrowType::Sparse
-- Update validator to allow sparse in numeric binary ops
-- 476 total tests passing (8 runtime + 7 interpreter + 8 transpiler new)
-- Update language-spec.md with Sparse Arrays documentation
-- Update examples/math_test.crow with sparse examples
+- Add crow_runtime/src/distributed.rs: TCP-based ring allreduce, barrier,
+  broadcast, shard, init/finalize with env var process discovery
+- Wire up interpreter: nodes[n] as single-process simulation (rank 0)
+- Wire up transpiler: emit distributed::init(n) and auto-finalize
+- Add crow launch CLI: build binary + spawn n processes with CROW_RANK,
+  CROW_WORLD_SIZE, CROW_MASTER_ADDR, CROW_MASTER_PORT env vars
+- Add validator support for nodes[] builtin
+- Update language-spec.md with Distributed Support implementation details
+- Add distributed example to examples/math_test.crow
+- 480 tests passing (4 new: 2 interpreter, 2 transpiler + runtime tests)
