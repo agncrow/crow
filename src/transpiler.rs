@@ -2417,6 +2417,14 @@ impl Transpiler {
                                 "shuffle" => format!("{}.shuffle()", arg_strs[0]),
                                 "choice" => format!("{}.choice({} as usize)", arg_strs[0], arg_strs[1]),
                                 "permutation" => format!("CrowTensor::permutation({} as usize)", arg_strs[0]),
+                                // Signal processing
+                                "fft" => format!("{{ let (_re, _im) = {}.fft(); vec![_re, _im] }}", arg_strs[0]),
+                                "ifft" => format!("CrowTensor::ifft(&{}, &{})", arg_strs[0], arg_strs[1]),
+                                "fft2" => format!("{{ let (_re, _im) = {}.fft2(); vec![_re, _im] }}", arg_strs[0]),
+                                "conv" => format!("{}.conv(&{})", arg_strs[0], arg_strs[1]),
+                                "conv2d" => format!("{}.conv2d(&{})", arg_strs[0], arg_strs[1]),
+                                "hamming" => format!("CrowTensor::hamming({} as usize)", arg_strs[0]),
+                                "hanning" => format!("CrowTensor::hanning({} as usize)", arg_strs[0]),
                                 _ => format!("/* unknown math.{} */", field),
                             };
                             return result;
@@ -4067,5 +4075,49 @@ mod tests {
     fn test_math_permutation_transpile() {
         let rust = transpile("use math\nx = math.permutation[5]\n");
         assert!(rust.contains("CrowTensor::permutation("), "should emit CrowTensor::permutation\n{}", rust);
+    }
+
+    // ===== Layer 4: Signal Processing =====
+
+    #[test]
+    fn test_math_fft_transpile() {
+        let rust = transpile("use math\nx = math.fft[math.ones[4]]\n");
+        assert!(rust.contains(".fft()"), "should emit .fft()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_ifft_transpile() {
+        let rust = transpile("use math\nx = math.ifft[math.ones[4], math.zeros[4]]\n");
+        assert!(rust.contains("CrowTensor::ifft("), "should emit CrowTensor::ifft\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_fft2_transpile() {
+        let rust = transpile("use math\nx = math.fft2[math.ones[4]]\n");
+        assert!(rust.contains(".fft2()"), "should emit .fft2()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_conv_transpile() {
+        let rust = transpile("use math\nx = math.conv[math.ones[3], math.ones[2]]\n");
+        assert!(rust.contains(".conv("), "should emit .conv()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_conv2d_transpile() {
+        let rust = transpile("use math\nx = math.conv2d[math.ones[4], math.ones[4]]\n");
+        assert!(rust.contains(".conv2d("), "should emit .conv2d()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_hamming_transpile() {
+        let rust = transpile("use math\nx = math.hamming[5]\n");
+        assert!(rust.contains("CrowTensor::hamming("), "should emit CrowTensor::hamming\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_hanning_transpile() {
+        let rust = transpile("use math\nx = math.hanning[5]\n");
+        assert!(rust.contains("CrowTensor::hanning("), "should emit CrowTensor::hanning\n{}", rust);
     }
 }

@@ -1702,6 +1702,56 @@ impl Interpreter {
                 Ok(CrowValue::ok(Value::NumArray(CrowTensor::permutation(n))))
             }
 
+            // ── Signal Processing ──
+            "fft" => {
+                if args.len() != 1 { return Err(format!("math.fft: expected 1 argument, got {}", args.len())); }
+                let t = to_tensor(&args[0])?;
+                let (real, imag) = t.fft();
+                let result = vec![
+                    CrowValue::ok(Value::NumArray(real)),
+                    CrowValue::ok(Value::NumArray(imag)),
+                ];
+                Ok(CrowValue::ok(Value::Array(result)))
+            }
+            "ifft" => {
+                if args.len() != 2 { return Err(format!("math.ifft: expected 2 arguments (real, imag), got {}", args.len())); }
+                let real = to_tensor(&args[0])?;
+                let imag = to_tensor(&args[1])?;
+                Ok(CrowValue::ok(Value::NumArray(CrowTensor::ifft(&real, &imag))))
+            }
+            "fft2" => {
+                if args.len() != 1 { return Err(format!("math.fft2: expected 1 argument, got {}", args.len())); }
+                let t = to_tensor(&args[0])?;
+                let (real, imag) = t.fft2();
+                let result = vec![
+                    CrowValue::ok(Value::NumArray(real)),
+                    CrowValue::ok(Value::NumArray(imag)),
+                ];
+                Ok(CrowValue::ok(Value::Array(result)))
+            }
+            "conv" => {
+                if args.len() != 2 { return Err(format!("math.conv: expected 2 arguments, got {}", args.len())); }
+                let a = to_tensor(&args[0])?;
+                let b = to_tensor(&args[1])?;
+                Ok(CrowValue::ok(Value::NumArray(a.conv(&b))))
+            }
+            "conv2d" => {
+                if args.len() != 2 { return Err(format!("math.conv2d: expected 2 arguments, got {}", args.len())); }
+                let a = to_tensor(&args[0])?;
+                let b = to_tensor(&args[1])?;
+                Ok(CrowValue::ok(Value::NumArray(a.conv2d(&b))))
+            }
+            "hamming" => {
+                if args.len() != 1 { return Err(format!("math.hamming: expected 1 argument, got {}", args.len())); }
+                let n = to_usize(&args[0])?;
+                Ok(CrowValue::ok(Value::NumArray(CrowTensor::hamming(n))))
+            }
+            "hanning" => {
+                if args.len() != 1 { return Err(format!("math.hanning: expected 1 argument, got {}", args.len())); }
+                let n = to_usize(&args[0])?;
+                Ok(CrowValue::ok(Value::NumArray(CrowTensor::hanning(n))))
+            }
+
             _ => Err(format!("math.{}: unknown math function", name)),
         }
     }
@@ -4947,6 +4997,85 @@ mod tests {
                 assert_eq!(v, vec![0.0, 1.0, 2.0, 3.0, 4.0]);
             }
             _ => panic!("expected numarray"),
+        }
+    }
+
+    // ===== Layer 4: Signal Processing =====
+
+    #[test]
+    fn test_math_fft_interp() {
+        // FFT of [1,1,1,1] → DC=4, rest=0
+        let val = get_var("use math\nx = math.fft[math.ones[4]]\n", "x");
+        match &val.value {
+            Value::Array(arr) => {
+                assert_eq!(arr.len(), 2, "fft should return [real, imag]");
+                if let Value::NumArray(real) = &arr[0].value {
+                    let v = real.to_vec();
+                    assert!((v[0] - 4.0).abs() < 1e-10, "DC should be 4");
+                    assert!((v[1]).abs() < 1e-10, "non-DC should be 0");
+                } else { panic!("expected numarray for real part"); }
+            }
+            _ => panic!("expected array from fft"),
+        }
+    }
+
+    #[test]
+    fn test_math_ifft_interp() {
+        // FFT then IFFT should recover original
+        let val = get_var("use math\na = math.linspace[1, 4, 4]\nf = math.fft[a]\nx = math.ifft[f[0], f[1]]\n", "x");
+        match &val.value {
+            Value::NumArray(t) => {
+                let v = t.to_vec();
+                assert_eq!(v.len(), 4);
+                for (i, expected) in [1.0, 2.0, 3.0, 4.0].iter().enumerate() {
+                    assert!((v[i] - expected).abs() < 1e-10, "ifft[{}] should be {}, got {}", i, expected, v[i]);
+                }
+            }
+            _ => panic!("expected numarray from ifft"),
+        }
+    }
+
+    #[test]
+    fn test_math_conv_interp() {
+        // [1,2,3] * [1,1] = [1,3,5,3]
+        let val = get_var("use math\na = math.linspace[1, 3, 3]\nb = math.linspace[1, 1, 2]\nx = math.conv[a, b]\n", "x");
+        match &val.value {
+            Value::NumArray(t) => {
+                let v = t.to_vec();
+                assert_eq!(v.len(), 4);
+                assert!((v[0] - 1.0).abs() < 1e-10);
+                assert!((v[1] - 3.0).abs() < 1e-10);
+                assert!((v[2] - 5.0).abs() < 1e-10);
+                assert!((v[3] - 3.0).abs() < 1e-10);
+            }
+            _ => panic!("expected numarray from conv"),
+        }
+    }
+
+    #[test]
+    fn test_math_hamming_interp() {
+        let val = get_var("use math\nx = math.hamming[5]\n", "x");
+        match &val.value {
+            Value::NumArray(t) => {
+                let v = t.to_vec();
+                assert_eq!(v.len(), 5);
+                assert!((v[0] - 0.08).abs() < 1e-10, "hamming endpoint should be 0.08");
+            }
+            _ => panic!("expected numarray from hamming"),
+        }
+    }
+
+    #[test]
+    fn test_math_hanning_interp() {
+        let val = get_var("use math\nx = math.hanning[5]\n", "x");
+        match &val.value {
+            Value::NumArray(t) => {
+                let v = t.to_vec();
+                assert_eq!(v.len(), 5);
+                assert!((v[0]).abs() < 1e-10, "hanning endpoint should be 0");
+                assert!((v[2] - 1.0).abs() < 1e-10, "hanning center should be 1");
+            }
+            _ => panic!("expected numarray from hanning"),
         }
     }
 }
