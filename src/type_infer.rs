@@ -1067,6 +1067,10 @@ impl TypeContext {
                                 // Sparse arrays
                                 "sparse" => CrowType::Sparse,
                                 "dense" => CrowType::NumArray(Box::new(CrowType::Float)),
+                                // Stats sub-module
+                                "median" | "std" | "var" | "percentile" | "corr" | "cov" => CrowType::Float,
+                                "zscore" => CrowType::NumArray(Box::new(CrowType::Float)),
+                                "ttest" => CrowType::Map(Box::new(CrowType::Float)),
                                 _ => CrowType::Unknown,
                             };
                         }

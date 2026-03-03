@@ -1,12 +1,15 @@
-Complete Layer 9: Distributed Computing
+Implement math.stats sub-module
 
-- Add crow_runtime/src/distributed.rs: TCP-based ring allreduce, barrier,
-  broadcast, shard, init/finalize with env var process discovery
-- Wire up interpreter: nodes[n] as single-process simulation (rank 0)
-- Wire up transpiler: emit distributed::init(n) and auto-finalize
-- Add crow launch CLI: build binary + spawn n processes with CROW_RANK,
-  CROW_WORLD_SIZE, CROW_MASTER_ADDR, CROW_MASTER_PORT env vars
-- Add validator support for nodes[] builtin
-- Update language-spec.md with Distributed Support implementation details
-- Add distributed example to examples/math_test.crow
-- 480 tests passing (4 new: 2 interpreter, 2 transpiler + runtime tests)
+First sub-module of math: use math.stats adds statistics functions
+to the math namespace.
+
+Functions: median, std, var, percentile, zscore, corr, cov, ttest
+
+- Parser: support dot-path imports (use math.stats)
+- Runtime: crow_runtime/src/stats.rs with full implementations
+  including regularized incomplete beta for t-test p-values
+- Interpreter: load_module handles math.stats, call_math_builtin dispatches
+- Transpiler: emit_use handles math.stats, inline Rust emission
+- Type inference: type rules for all 8 stats functions
+- 497 tests passing (29 new: 12 runtime, 9 interpreter, 8 transpiler)
+- Interpreter-transpiler parity confirmed

@@ -947,6 +947,42 @@ d = math.dense[s3]
 x = math.solve[s2, [10, 12, 14]]
 ```
 
+#### Statistics (sub-module: `math.stats`)
+
+Import with `use math.stats`. Functions are accessed via the `math` namespace.
+
+| Function | Description |
+|---|---|
+| `math.median[x]` | Median of a 1D array |
+| `math.std[x]` | Population standard deviation |
+| `math.var[x]` | Population variance |
+| `math.percentile[x, p]` | p-th percentile (0-100) with linear interpolation |
+| `math.zscore[x]` | Z-score normalization: (x - mean) / std → returns array |
+| `math.corr[x, y]` | Pearson correlation coefficient between two arrays |
+| `math.cov[x, y]` | Population covariance between two arrays |
+| `math.ttest[x, y]` | Welch's two-sample t-test → returns map with `t` and `p` |
+
+```
+use math
+use math.stats
+
+x = math.linspace[1, 10, 10]
+log[math.median[x]]            --- 5.5 ---
+log[math.std[x]]               --- 2.872... ---
+log[math.var[x]]               --- 8.25 ---
+log[math.percentile[x, 25]]    --- 3.25 ---
+
+z = math.zscore[x]             --- mean=0, std=1 ---
+
+y = math.linspace[2, 20, 10]
+log[math.corr[x, y]]           --- 1.0 (perfect correlation) ---
+log[math.cov[x, y]]            --- 16.5 ---
+
+result = math.ttest[x, y]
+log[result.t]                   --- t-statistic ---
+log[result.p]                   --- p-value ---
+```
+
 #### Constants
 
 | Constant | Description |

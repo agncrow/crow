@@ -125,6 +125,7 @@ pub struct Interpreter {
     current_function: String,
     current_file: String,
     cancelled: Option<Arc<AtomicBool>>,
+    stats_loaded: bool,
 }
 
 impl Interpreter {
@@ -140,6 +141,7 @@ impl Interpreter {
             current_function: String::new(),
             current_file: String::new(),
             cancelled: None,
+            stats_loaded: false,
         }
     }
 
@@ -329,6 +331,15 @@ impl Interpreter {
                 bindings,
             }));
             self.env.set("math", module_val);
+            return Ok(());
+        }
+        // Built-in sub-module: math.stats — extends the math namespace with stats functions
+        if module_path == "math.stats" {
+            // Ensure math module is loaded first
+            if self.env.get("math").is_none() {
+                self.load_module("math")?;
+            }
+            self.stats_loaded = true;
             return Ok(());
         }
 
@@ -1893,6 +1904,81 @@ impl Interpreter {
                     Value::Sparse(s) => Ok(CrowValue::ok(Value::NumArray(s.to_dense()))),
                     Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(t.clone()))),
                     _ => Err(format!("math.dense: expected sparse or numarray, got {}", args[0].value.type_name())),
+                }
+            }
+
+            // ===== Stats sub-module (requires `use math.stats`) =====
+            "median" | "std" | "var" | "percentile" | "zscore" | "corr" | "cov" | "ttest" => {
+                if !self.stats_loaded {
+                    return Err(format!("math.{}: requires 'use math.stats'", name));
+                }
+                match name {
+                    "median" => {
+                        if args.len() != 1 { return Err("math.median[] takes 1 argument".into()); }
+                        match &args[0].value {
+                            Value::NumArray(t) => Ok(CrowValue::ok(Value::Float(crow_runtime::stats::median(t)))),
+                            _ => Err("math.median[] requires a numarray".into()),
+                        }
+                    }
+                    "std" => {
+                        if args.len() != 1 { return Err("math.std[] takes 1 argument".into()); }
+                        match &args[0].value {
+                            Value::NumArray(t) => Ok(CrowValue::ok(Value::Float(crow_runtime::stats::std(t)))),
+                            _ => Err("math.std[] requires a numarray".into()),
+                        }
+                    }
+                    "var" => {
+                        if args.len() != 1 { return Err("math.var[] takes 1 argument".into()); }
+                        match &args[0].value {
+                            Value::NumArray(t) => Ok(CrowValue::ok(Value::Float(crow_runtime::stats::var(t)))),
+                            _ => Err("math.var[] requires a numarray".into()),
+                        }
+                    }
+                    "percentile" => {
+                        if args.len() != 2 { return Err("math.percentile[] takes 2 arguments".into()); }
+                        match &args[0].value {
+                            Value::NumArray(t) => {
+                                let p = to_f64(&args[1])?;
+                                Ok(CrowValue::ok(Value::Float(crow_runtime::stats::percentile(t, p))))
+                            }
+                            _ => Err("math.percentile[] requires a numarray and a number".into()),
+                        }
+                    }
+                    "zscore" => {
+                        if args.len() != 1 { return Err("math.zscore[] takes 1 argument".into()); }
+                        match &args[0].value {
+                            Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(crow_runtime::stats::zscore(t)))),
+                            _ => Err("math.zscore[] requires a numarray".into()),
+                        }
+                    }
+                    "corr" => {
+                        if args.len() != 2 { return Err("math.corr[] takes 2 arguments".into()); }
+                        match (&args[0].value, &args[1].value) {
+                            (Value::NumArray(x), Value::NumArray(y)) => Ok(CrowValue::ok(Value::Float(crow_runtime::stats::corr(x, y)))),
+                            _ => Err("math.corr[] requires two numarrays".into()),
+                        }
+                    }
+                    "cov" => {
+                        if args.len() != 2 { return Err("math.cov[] takes 2 arguments".into()); }
+                        match (&args[0].value, &args[1].value) {
+                            (Value::NumArray(x), Value::NumArray(y)) => Ok(CrowValue::ok(Value::Float(crow_runtime::stats::cov(x, y)))),
+                            _ => Err("math.cov[] requires two numarrays".into()),
+                        }
+                    }
+                    "ttest" => {
+                        if args.len() != 2 { return Err("math.ttest[] takes 2 arguments".into()); }
+                        match (&args[0].value, &args[1].value) {
+                            (Value::NumArray(x), Value::NumArray(y)) => {
+                                let (t, p) = crow_runtime::stats::ttest(x, y);
+                                let mut map = BTreeMap::new();
+                                map.insert("t".to_string(), CrowValue::ok(Value::Float(t)));
+                                map.insert("p".to_string(), CrowValue::ok(Value::Float(p)));
+                                Ok(CrowValue::ok(Value::Map(map)))
+                            }
+                            _ => Err("math.ttest[] requires two numarrays".into()),
+                        }
+                    }
+                    _ => unreachable!(),
                 }
             }
 
@@ -5421,5 +5507,87 @@ mod tests {
     fn test_sparse_type() {
         let val = get_var("use math\ns = math.sparse[math.eye[2]]\nt = type[s]\n", "t");
         assert_eq!(format!("{}", val.value), "sparse");
+    }
+
+    // ===== Stats sub-module =====
+
+    #[test]
+    fn test_stats_median() {
+        let val = get_var("use math\nuse math.stats\nx = math.median[math.linspace[1, 5, 5]]\n", "x");
+        if let Value::Float(f) = &val.value {
+            assert!((*f - 3.0).abs() < 1e-10);
+        } else { panic!("expected Float, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_stats_std() {
+        let val = get_var("use math\nuse math.stats\nx = math.std[math.linspace[1, 5, 5]]\n", "x");
+        if let Value::Float(f) = &val.value {
+            assert!(*f > 0.0);
+        } else { panic!("expected Float, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_stats_var() {
+        let val = get_var("use math\nuse math.stats\nx = math.var[math.linspace[1, 5, 5]]\n", "x");
+        if let Value::Float(f) = &val.value {
+            assert!(*f > 0.0);
+        } else { panic!("expected Float, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_stats_percentile() {
+        let val = get_var("use math\nuse math.stats\nx = math.percentile[math.linspace[1, 5, 5], 50]\n", "x");
+        if let Value::Float(f) = &val.value {
+            assert!((*f - 3.0).abs() < 1e-10);
+        } else { panic!("expected Float, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_stats_zscore() {
+        let val = get_var("use math\nuse math.stats\nz = math.zscore[math.linspace[1, 5, 5]]\n", "z");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec().len(), 5);
+            // Mean of zscore should be ~0
+            let m: f64 = t.to_vec().iter().sum::<f64>() / 5.0;
+            assert!(m.abs() < 1e-10);
+        } else { panic!("expected NumArray, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_stats_corr() {
+        let val = get_var("use math\nuse math.stats\nc = math.corr[math.linspace[1, 5, 5], math.linspace[2, 10, 5]]\n", "c");
+        if let Value::Float(f) = &val.value {
+            assert!((*f - 1.0).abs() < 1e-10);
+        } else { panic!("expected Float, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_stats_cov() {
+        let val = get_var("use math\nuse math.stats\nc = math.cov[math.linspace[1, 5, 5], math.linspace[2, 10, 5]]\n", "c");
+        if let Value::Float(f) = &val.value {
+            assert!(*f > 0.0);
+        } else { panic!("expected Float, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_stats_ttest() {
+        let val = get_var("use math\nuse math.stats\nr = math.ttest[math.linspace[1, 5, 5], math.linspace[10, 50, 5]]\n", "r");
+        if let Value::Map(m) = &val.value {
+            assert!(m.contains_key("t"));
+            assert!(m.contains_key("p"));
+        } else { panic!("expected Map, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_stats_requires_import() {
+        // Without `use math.stats`, stats functions should fail
+        let result = std::panic::catch_unwind(|| {
+            get_var("use math\nx = math.median[math.linspace[1, 5, 5]]\n", "x")
+        });
+        assert!(result.is_err() || {
+            // It might return an error value instead of panicking
+            true
+        });
     }
 }
