@@ -1303,14 +1303,34 @@ Uses forward-mode AD with dual numbers. Each number carries a value and a deriva
 
 ### Distributed Support
 
-`nodes[n]` specifies distributed training across multiple machines. The compiler handles data sharding, gradient synchronization, and communication automatically — no explicit `allreduce`, `broadcast`, `scatter`, or `gather` calls.
+`nodes[n]` specifies distributed computing across multiple processes. The compiler handles process coordination, and the `crow launch` CLI command spawns and manages all processes.
 
 ```
-nodes[4]                 --- 4 machines ---
-nodes[4, gpu = 2]        --- 4 machines, 2 GPUs each ---
+nodes[4]                 --- 4 processes ---
 ```
 
-The user writes the same training loop. The compiler inserts the right communication pattern. Same philosophy as `gpu` — specify intent, compiler decides how.
+#### Implementation
+
+When `nodes[n]` is called, the runtime initializes distributed mode using TCP-based networking:
+
+1. **Process discovery**: Each process reads `CROW_RANK`, `CROW_WORLD_SIZE`, `CROW_MASTER_ADDR`, and `CROW_MASTER_PORT` from environment variables.
+2. **Ring topology**: Processes form a ring — each connects to the next rank via TCP.
+3. **Available operations**: `allreduce_mean` (ring allreduce), `broadcast`, `barrier`, `shard` (split data by rank).
+4. **Finalize**: The transpiler auto-inserts `finalize()` at end of main to clean up connections.
+
+In interpreter mode, `nodes[n]` always simulates single-process (rank 0) — no TCP connections are made.
+
+#### CLI: crow launch
+
+```
+crow launch <n> <file.crow>
+```
+
+Builds the binary via `crow build`, then spawns `n` processes with the correct environment variables. All processes run on `127.0.0.1` with base port `29500`. Output from all ranks is interleaved to stdout/stderr.
+
+```
+crow launch 4 train.crow     --- build + run on 4 processes ---
+```
 
 #### Backend Detection
 

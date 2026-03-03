@@ -118,6 +118,7 @@ pub struct Interpreter {
     env: Env,
     cpu_count: Option<usize>,
     gpu_count: Option<usize>,
+    nodes_count: Option<usize>,
     source_dir: PathBuf,
     module_paths: Vec<PathBuf>,
     current_line: usize,
@@ -132,6 +133,7 @@ impl Interpreter {
             env: Env::new(),
             cpu_count: None,
             gpu_count: None,
+            nodes_count: None,
             source_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             module_paths: vec![],
             current_line: 0,
@@ -504,6 +506,15 @@ impl Interpreter {
                     if let Expr::Int(n) = count {
                         if *n >= 1 {
                             self.cpu_count = Some(*n as usize);
+                        }
+                    }
+                } else if kind == "nodes" {
+                    if let Expr::Int(n) = count {
+                        if *n >= 1 {
+                            self.nodes_count = Some(*n as usize);
+                            // In interpreter mode, simulate single-process (rank 0)
+                            // Use init(1) to avoid TCP connections
+                            crow_runtime::distributed::init(1);
                         }
                     }
                 }
@@ -1292,7 +1303,7 @@ impl Interpreter {
     }
 
     fn is_builtin(&self, name: &str) -> bool {
-        matches!(name, "log" | "map" | "cpu" | "gpu" | "range"
+        matches!(name, "log" | "map" | "cpu" | "gpu" | "nodes" | "range"
             | "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max"
             | "split" | "trim" | "replace" | "upper" | "lower" | "starts" | "ends" | "join"
             | "repeat" | "pad"
@@ -1994,6 +2005,24 @@ impl Interpreter {
                         Ok(CrowValue::done())
                     }
                     _ => Err("gpu[] requires an integer argument".to_string()),
+                }
+            }
+            "nodes" => {
+                if args.len() != 1 {
+                    return Err("nodes[] takes 1 argument".to_string());
+                }
+                match args[0].unwrap_or_propagate()? {
+                    Value::Int(n) => {
+                        if *n < 1 {
+                            return Err("nodes[] requires a positive integer".to_string());
+                        }
+                        self.nodes_count = Some(*n as usize);
+                        // In interpreter mode, simulate single-process (rank 0)
+                        // Use init(1) to avoid TCP connections
+                        crow_runtime::distributed::init(1);
+                        Ok(CrowValue::done())
+                    }
+                    _ => Err("nodes[] requires an integer argument".to_string()),
                 }
             }
             "range" => {
@@ -5015,6 +5044,28 @@ mod tests {
         }).unwrap();
         assert!(crow_runtime::gpu::is_gpu_enabled());
         crow_runtime::gpu::set_gpu_enabled(false);
+    }
+
+    // ===== §nodes: Distributed computing =====
+
+    #[test]
+    fn test_nodes_call() {
+        // nodes[2] should initialize distributed mode (single-process simulation)
+        run_program("nodes[2]\n");
+        // In interpreter mode, rank is always 0 and world_size is set
+        assert!(crow_runtime::distributed::is_distributed());
+        // Reset
+        // Note: can't fully reset OnceLock, but the flag is set
+    }
+
+    #[test]
+    fn test_nodes_resource_stmt() {
+        let mut interp = Interpreter::new();
+        interp.exec_stmt(&Stmt::Resource {
+            kind: "nodes".to_string(),
+            count: Expr::Int(4),
+        }).unwrap();
+        assert!(crow_runtime::distributed::is_distributed());
     }
 
     // ===== §grad: Automatic differentiation =====

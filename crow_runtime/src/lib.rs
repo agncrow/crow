@@ -1,3 +1,4 @@
+pub mod distributed;
 pub mod gpu;
 pub mod linalg;
 pub mod pool;

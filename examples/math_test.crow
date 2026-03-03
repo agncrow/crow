@@ -146,3 +146,7 @@ d = math.dense[s3]
 log[d]
 x = math.solve[s2, [10, 12, 14]]
 log[x]
+
+--- distributed computing ---
+nodes[1]
+log['distributed initialized']
