@@ -1612,6 +1612,10 @@ impl Transpiler {
             self.registry.load(std::sync::Arc::new(crate::modules::nn::NnModule));
             self.modules.insert("math".to_string());
         }
+        if path == "io" {
+            self.needs_crow_runtime = true;
+            self.registry.load(std::sync::Arc::new(crate::modules::io::IoModule));
+        }
         self.modules.insert(module_name);
     }
 
@@ -2396,10 +2400,13 @@ impl Transpiler {
                             let cast = if matches!(inner.as_ref(), CrowType::Int) { " as i64" } else { "" };
                             return format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.get_flat(_idx){} }}", idx, base_name, base_name, cast);
                         }
-                        CrowType::Array(_) => {
+                        CrowType::Array(inner) => {
                             // Array indexing with negative index support
                             let idx = &arg_strs[0];
-                            return format!("{}[{{ let _i = {}; if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }} }}]", base_name, idx, base_name);
+                            // Clone for non-Copy types (Map, Array, Str, etc.)
+                            let needs_clone = !matches!(inner.as_ref(), CrowType::Int | CrowType::Float | CrowType::Bool);
+                            let suffix = if needs_clone { ".clone()" } else { "" };
+                            return format!("{}[{{ let _i = {}; if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }} }}]{}", base_name, idx, base_name, suffix);
                         }
                         CrowType::Str => {
                             // String indexing with negative index support
@@ -2853,7 +2860,11 @@ impl Transpiler {
                             let rust_expr = self.expr_to_string(expr);
                             // Use {:?} for collection/struct types since they don't impl Display
                             let expr_type = self.ctx.infer_expr(expr);
-                            match expr_type {
+                            let inner_type = match &expr_type {
+                                CrowType::Result(inner) => inner.as_ref().clone(),
+                                other => other.clone(),
+                            };
+                            match inner_type {
                                 CrowType::Array(_) | CrowType::Map(_) | CrowType::Struct(_) => fmt_str.push_str("{:?}"),
                                 _ => fmt_str.push_str("{}"),
                             }

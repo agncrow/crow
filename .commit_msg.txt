@@ -1,11 +1,16 @@
-Fix 3 transpiler bugs for ML example + add end-to-end ml_demo.crow
+Implement io module: csv and lines functions
 
-Bug fixes:
-- emit_dual_function: emit body sequentially (CrowDual incompatible with rayon::join f64 types)
-- emit_parallel_wave: skip parallelization for Fn-typed assignments (closures cant coerce to fn pointers in rayon::join)
-- type_infer: Sub/Div with NumArray now returns NumArray (was falling through to unify which returned Int)
+Add io module with two functions:
+- csv[path]: parse CSV file into array of maps (column headers as keys)
+- lines[path]: read file as array of line strings
 
-ML example (examples/ml_demo.crow):
-- Part 1: Linear regression with grad autograd (1000 steps, converges to w=2.0 b=0.5)
-- Part 2: XOR 2-layer MLP with manual backprop (10000 steps, learns XOR pattern)
-- Both interpreter and transpiler produce correct results
+Both return error-values on failure. Basic file I/O (read/write) already
+exists as builtins - io module adds only structured parsing (rule 17).
+
+Also fix array indexing in transpiler to add .clone() for non-Copy element
+types (Map, Array, Str), and add Result-type unwrapping in type inference
+for variable indexing.
+
+Files: crow_runtime/src/io.rs, src/modules/io.rs, examples/io_test.crow
+Updated: interpreter.rs, transpiler.rs, type_infer.rs, validator.rs,
+         docs/language-spec.md

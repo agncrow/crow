@@ -1066,6 +1066,37 @@ log[a.dtype]               --- float ---
 log[a.device]              --- cpu ---
 ```
 
+### io Module
+
+Import with `use io`. Provides structured file parsing beyond the built-in `read[path]` and `write[path, content]`.
+
+| Function | Description |
+|----------|-------------|
+| `csv[path]` | Parse CSV file into array of maps (error-value on failure) |
+| `lines[path]` | Read file as array of lines (error-value on failure) |
+
+**Note:** Basic file I/O (`read[path]`, `write[path, content]`) are builtins available without any import. The io module adds structured parsing only.
+
+```
+use io
+
+write['/tmp/data.csv', 'name,age\nalice,30\nbob,25\n']
+
+rows = csv['/tmp/data.csv']
+log[len[rows]]         --- 2 ---
+log[rows[0].name]      --- alice ---
+log[rows[0].age]       --- 30 ---
+
+ls = lines['/tmp/data.txt']
+log[len[ls]]           --- number of lines ---
+log[ls[0]]             --- first line ---
+
+--- error handling ---
+bad = csv['/tmp/missing.csv']
+log[bad.ok]            --- false ---
+log[bad.reason]        --- error message ---
+```
+
 ### File Structure
 
 Each file is a module. The file path is the module path.

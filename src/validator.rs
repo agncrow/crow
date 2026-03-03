@@ -167,8 +167,10 @@ impl<'a> Validator<'a> {
                 // Built-in modules: register all their function and constant names
                 // so validate_call doesn't flag them as undefined.
                 // The registry was already populated during type inference (Pass 1).
-                if path == "math" || path == "math.stats" {
-                    self.defined_vars.insert("math".to_string());
+                if path == "math" || path == "math.stats" || path == "math.nn" || path == "io" {
+                    if path == "math" || path.starts_with("math.") {
+                        self.defined_vars.insert("math".to_string());
+                    }
                     for name in self.ctx.registry.fn_names() {
                         self.defined_vars.insert(name.to_string());
                     }

@@ -233,6 +233,11 @@ impl TypeContext {
                             self.registry.load(std::sync::Arc::new(crate::modules::nn::NnModule));
                         }
                     }
+                    if path == "io" {
+                        if !self.registry.is_loaded("io") {
+                            self.registry.load(std::sync::Arc::new(crate::modules::io::IoModule));
+                        }
+                    }
                 }
                 Stmt::Resource { kind, count } => {
                     if kind == "cpu" {
@@ -945,7 +950,12 @@ impl TypeContext {
             _ => {
                 // Check variable type: could be a function call, array/map indexing, etc.
                 if let Some(var_type) = self.vars.get(name) {
-                    match var_type {
+                    // Unwrap Result for indexing purposes
+                    let unwrapped = match var_type {
+                        CrowType::Result(inner) => inner.as_ref(),
+                        other => other,
+                    };
+                    match unwrapped {
                         CrowType::Fn(_, ret) => return *ret.clone(),
                         CrowType::Array(inner) => return *inner.clone(),
                         CrowType::NumArray(inner) => return *inner.clone(),
@@ -1041,7 +1051,6 @@ impl TypeContext {
                             lt_inner.unify(&rt_inner)
                         }
                     }
-                    _ => lt_inner.unify(&rt_inner),
                 };
                 // If either operand was CrowResult, wrap the result type
                 if has_result {
