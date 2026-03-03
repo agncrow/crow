@@ -6,6 +6,44 @@ use rand_distr::{Distribution, StandardNormal};
 use crate::gpu::{self, GpuBuffer, GpuContext};
 use crate::rng;
 
+/// Chunked sum with 4 accumulators for SIMD auto-vectorization.
+#[inline]
+fn chunked_sum(data: &[f64]) -> f64 {
+    let chunks = data.chunks_exact(4);
+    let remainder = chunks.remainder();
+    let mut acc = [0.0f64; 4];
+    for chunk in chunks {
+        acc[0] += chunk[0];
+        acc[1] += chunk[1];
+        acc[2] += chunk[2];
+        acc[3] += chunk[3];
+    }
+    let mut total = acc[0] + acc[1] + acc[2] + acc[3];
+    for &v in remainder {
+        total += v;
+    }
+    total
+}
+
+/// Chunked reduction with 4 accumulators for SIMD auto-vectorization.
+#[inline]
+fn chunked_reduce(data: &[f64], init: f64, f: impl Fn(f64, f64) -> f64) -> f64 {
+    let chunks = data.chunks_exact(4);
+    let remainder = chunks.remainder();
+    let mut acc = [init; 4];
+    for chunk in chunks {
+        acc[0] = f(acc[0], chunk[0]);
+        acc[1] = f(acc[1], chunk[1]);
+        acc[2] = f(acc[2], chunk[2]);
+        acc[3] = f(acc[3], chunk[3]);
+    }
+    let mut result = f(f(acc[0], acc[1]), f(acc[2], acc[3]));
+    for &v in remainder {
+        result = f(result, v);
+    }
+    result
+}
+
 /// Storage backend for tensor data.
 #[derive(Debug)]
 pub enum TensorStorage {
@@ -748,6 +786,42 @@ impl CrowTensor {
 // ── Reductions ──────────────────────────────────────────────────────────
 
 impl CrowTensor {
+    /// Iterate over all elements without allocating.
+    /// For contiguous tensors, iterates directly over the data slice.
+    /// For non-contiguous or GPU tensors, falls back to `to_vec()`.
+    #[inline]
+    fn reduce<F>(&self, init: f64, f: F) -> f64
+    where F: Fn(f64, f64) -> f64 {
+        if self.is_gpu() {
+            let v = self.to_cpu().to_vec();
+            return v.iter().copied().fold(init, &f);
+        }
+        let cpu = self.cpu_data();
+        if self.is_contiguous() {
+            let slice = &cpu[self.offset..self.offset + self.len()];
+            slice.iter().copied().fold(init, f)
+        } else {
+            // Non-contiguous: iterate via index calculation (no alloc)
+            let n = self.len();
+            let ndim = self.shape.len();
+            let mut acc = init;
+            let mut idx = vec![0usize; ndim];
+            for _ in 0..n {
+                let offset: usize = idx.iter().zip(self.strides.iter()).map(|(i, s)| i * s).sum::<usize>() + self.offset;
+                acc = f(acc, cpu[offset]);
+                // Increment index (row-major order)
+                for d in (0..ndim).rev() {
+                    idx[d] += 1;
+                    if idx[d] < self.shape[d] {
+                        break;
+                    }
+                    idx[d] = 0;
+                }
+            }
+            acc
+        }
+    }
+
     /// Sum all elements.
     pub fn sum(&self) -> f64 {
         if let Some(buf) = self.gpu_buffer() {
@@ -755,7 +829,17 @@ impl CrowTensor {
                 return gpu::gpu_sum(ctx, buf);
             }
         }
-        self.to_vec().iter().sum()
+        if self.is_gpu() {
+            return self.to_cpu().sum();
+        }
+        let cpu = self.cpu_data();
+        if self.is_contiguous() {
+            // Use chunked summation for better auto-vectorization
+            let slice = &cpu[self.offset..self.offset + self.len()];
+            chunked_sum(slice)
+        } else {
+            self.reduce(0.0, |a, b| a + b)
+        }
     }
 
     /// Mean of all elements.
@@ -769,23 +853,35 @@ impl CrowTensor {
 
     /// Maximum element.
     pub fn max(&self) -> f64 {
-        self.to_vec()
-            .iter()
-            .copied()
-            .fold(f64::NEG_INFINITY, f64::max)
+        if self.is_gpu() {
+            return self.to_cpu().max();
+        }
+        let cpu = self.cpu_data();
+        if self.is_contiguous() {
+            let slice = &cpu[self.offset..self.offset + self.len()];
+            chunked_reduce(slice, f64::NEG_INFINITY, |a, b| a.max(b))
+        } else {
+            self.reduce(f64::NEG_INFINITY, f64::max)
+        }
     }
 
     /// Minimum element.
     pub fn min(&self) -> f64 {
-        self.to_vec()
-            .iter()
-            .copied()
-            .fold(f64::INFINITY, f64::min)
+        if self.is_gpu() {
+            return self.to_cpu().min();
+        }
+        let cpu = self.cpu_data();
+        if self.is_contiguous() {
+            let slice = &cpu[self.offset..self.offset + self.len()];
+            chunked_reduce(slice, f64::INFINITY, |a, b| a.min(b))
+        } else {
+            self.reduce(f64::INFINITY, f64::min)
+        }
     }
 
     /// Product of all elements.
     pub fn prod(&self) -> f64 {
-        self.to_vec().iter().copied().fold(1.0, |a, b| a * b)
+        self.reduce(1.0, |a, b| a * b)
     }
 
     /// Index of maximum element (flat index).

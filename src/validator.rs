@@ -164,9 +164,17 @@ impl<'a> Validator<'a> {
                 self.validate_expr(value);
             }
             Stmt::Use { path } => {
-                // Built-in modules register their name as a defined variable
-                if path == "math" {
+                // Built-in modules: register all their function and constant names
+                // so validate_call doesn't flag them as undefined.
+                // The registry was already populated during type inference (Pass 1).
+                if path == "math" || path == "math.stats" {
                     self.defined_vars.insert("math".to_string());
+                    for name in self.ctx.registry.fn_names() {
+                        self.defined_vars.insert(name.to_string());
+                    }
+                    for name in self.ctx.registry.const_names() {
+                        self.defined_vars.insert(name.to_string());
+                    }
                 }
                 // Other modules handled by expand_module_imports
             }
@@ -259,6 +267,11 @@ impl<'a> Validator<'a> {
 
     fn validate_call(&mut self, name: &str, args: &[Expr]) {
         let argc = args.len();
+
+        // Module function? Accept — modules validate args at runtime/transpile time.
+        if self.ctx.registry.has_function(name) {
+            return;
+        }
 
         // Known builtin? Check arg count
         if BUILTINS.contains(&name) {
