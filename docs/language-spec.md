@@ -888,6 +888,29 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | `math.hamming[n]` | Hamming window of length n |
 | `math.hanning[n]` | Hanning (Hann) window of length n |
 
+#### Special Functions
+
+| Function | Description |
+|---|---|
+| `math.gamma[x]` | Gamma function Γ(x), element-wise |
+| `math.erf[x]` | Error function erf(x), element-wise |
+| `math.bessel[x, n]` | Bessel function J_n(x), element-wise |
+| `math.factorial[x]` | Factorial x! = Γ(x+1), element-wise |
+| `math.choose[n, k]` | Binomial coefficient C(n,k), element-wise |
+
+#### Complex Numbers
+
+Complex values are represented as `[real_tensor, imag_tensor]` pairs.
+
+| Function | Description |
+|---|---|
+| `math.complex[re, im]` | Create complex value → [real, imag] |
+| `math.real[c]` | Extract real part tensor |
+| `math.imag[c]` | Extract imaginary part tensor |
+| `math.magnitude[c]` | Magnitude \|c\| = sqrt(re² + im²) |
+| `math.phase[c]` | Phase angle = atan2(im, re) |
+| `math.conjugate[c]` | Complex conjugate → [re, -im] |
+
 #### Constants
 
 | Constant | Description |

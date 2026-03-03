@@ -1039,6 +1039,13 @@ impl TypeContext {
                                 // Signal processing
                                 "fft" | "fft2" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
                                 "ifft" | "conv" | "conv2d" | "hamming" | "hanning" => CrowType::NumArray(Box::new(CrowType::Float)),
+                                // Special functions
+                                "gamma" | "erf" | "factorial" | "bessel" | "choose"
+                                | "magnitude" | "phase" => CrowType::NumArray(Box::new(CrowType::Float)),
+                                // Complex (returns [real, imag] pair)
+                                "complex" | "conjugate" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
+                                // Complex extraction (returns single tensor)
+                                "real" | "imag" => CrowType::NumArray(Box::new(CrowType::Float)),
                                 _ => CrowType::Unknown,
                             };
                         }

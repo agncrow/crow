@@ -2425,6 +2425,18 @@ impl Transpiler {
                                 "conv2d" => format!("{}.conv2d(&{})", arg_strs[0], arg_strs[1]),
                                 "hamming" => format!("CrowTensor::hamming({} as usize)", arg_strs[0]),
                                 "hanning" => format!("CrowTensor::hanning({} as usize)", arg_strs[0]),
+                                // Layer 5: Special Functions & Complex Numbers
+                                "gamma" => format!("{}.gamma()", arg_strs[0]),
+                                "erf" => format!("{}.erf()", arg_strs[0]),
+                                "bessel" => format!("{}.bessel({} as i64)", arg_strs[0], arg_strs[1]),
+                                "factorial" => format!("{}.factorial()", arg_strs[0]),
+                                "choose" => format!("{}.choose(&{})", arg_strs[0], arg_strs[1]),
+                                "complex" => format!("{{ let (_re, _im) = CrowTensor::complex({} as f64, {} as f64); vec![_re, _im] }}", arg_strs[0], arg_strs[1]),
+                                "real" => format!("{}[0].clone()", arg_strs[0]),
+                                "imag" => format!("{}[1].clone()", arg_strs[0]),
+                                "magnitude" => format!("CrowTensor::magnitude(&{}[0], &{}[1])", arg_strs[0], arg_strs[0]),
+                                "phase" => format!("CrowTensor::phase(&{}[0], &{}[1])", arg_strs[0], arg_strs[0]),
+                                "conjugate" => format!("{{ let (_re, _im) = CrowTensor::conjugate(&{}[0], &{}[1]); vec![_re, _im] }}", arg_strs[0], arg_strs[0]),
                                 _ => format!("/* unknown math.{} */", field),
                             };
                             return result;
@@ -4119,5 +4131,55 @@ mod tests {
     fn test_math_hanning_transpile() {
         let rust = transpile("use math\nx = math.hanning[5]\n");
         assert!(rust.contains("CrowTensor::hanning("), "should emit CrowTensor::hanning\n{}", rust);
+    }
+
+    // ===== Layer 5: Special Functions & Complex Numbers =====
+
+    #[test]
+    fn test_math_gamma_transpile() {
+        let rust = transpile("use math\nx = math.gamma[math.ones[3]]\n");
+        assert!(rust.contains(".gamma()"), "should emit .gamma()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_erf_transpile() {
+        let rust = transpile("use math\nx = math.erf[math.ones[3]]\n");
+        assert!(rust.contains(".erf()"), "should emit .erf()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_bessel_transpile() {
+        let rust = transpile("use math\nx = math.bessel[math.ones[3], 0]\n");
+        assert!(rust.contains(".bessel("), "should emit .bessel()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_factorial_transpile() {
+        let rust = transpile("use math\nx = math.factorial[math.ones[3]]\n");
+        assert!(rust.contains(".factorial()"), "should emit .factorial()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_choose_transpile() {
+        let rust = transpile("use math\nx = math.choose[math.ones[3], math.ones[3]]\n");
+        assert!(rust.contains(".choose("), "should emit .choose()\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_complex_transpile() {
+        let rust = transpile("use math\nc = math.complex[3, 4]\n");
+        assert!(rust.contains("CrowTensor::complex("), "should emit CrowTensor::complex\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_magnitude_transpile() {
+        let rust = transpile("use math\nc = math.complex[3, 4]\nm = math.magnitude[c]\n");
+        assert!(rust.contains("CrowTensor::magnitude("), "should emit CrowTensor::magnitude\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_conjugate_transpile() {
+        let rust = transpile("use math\nc = math.complex[3, 4]\ncc = math.conjugate[c]\n");
+        assert!(rust.contains("CrowTensor::conjugate("), "should emit CrowTensor::conjugate\n{}", rust);
     }
 }
