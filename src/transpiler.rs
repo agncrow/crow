@@ -1090,7 +1090,11 @@ impl Transpiler {
                 body[last_idx] = Stmt::Return(Some(e.clone()));
             }
         }
-        self.emit_stmts_parallel(&body);
+        // Dual functions must be emitted sequentially — CrowDual types
+        // are incompatible with the f64 type annotations in rayon::join
+        for stmt in &body {
+            self.emit_stmt(stmt);
+        }
 
         // Restore state
         self.emitting_dual = false;
@@ -1185,6 +1189,15 @@ impl Transpiler {
         }
 
         if assigns.is_empty() {
+            return;
+        }
+
+        // Fn-typed values (grad closures) can't be parallelized —
+        // closures don't coerce to fn pointers in rayon::join's generic return
+        if assigns.iter().any(|(_, _, ty)| matches!(ty, CrowType::Fn(_, _))) {
+            for &i in wave {
+                self.emit_stmt(&stmts[i]);
+            }
             return;
         }
 

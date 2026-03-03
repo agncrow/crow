@@ -1,8 +1,11 @@
-Add math.nn module: relu, sigmoid, softmax, gelu, mse, crossentropy, bce, linear
+Fix 3 transpiler bugs for ML example + add end-to-end ml_demo.crow
 
-- crow_runtime/src/nn.rs: runtime implementations with 20 unit tests
-- src/modules/nn.rs: CrowModule impl (NnModule)
-- Registered in interpreter, transpiler, and type_infer for use math.nn
-- examples/nn_test.crow: end-to-end test with interpreter-transpiler parity
-- docs/language-spec.md: documented nn sub-module
-- Fixed stats module is_loaded check (stats -> math.stats)
+Bug fixes:
+- emit_dual_function: emit body sequentially (CrowDual incompatible with rayon::join f64 types)
+- emit_parallel_wave: skip parallelization for Fn-typed assignments (closures cant coerce to fn pointers in rayon::join)
+- type_infer: Sub/Div with NumArray now returns NumArray (was falling through to unify which returned Int)
+
+ML example (examples/ml_demo.crow):
+- Part 1: Linear regression with grad autograd (1000 steps, converges to w=2.0 b=0.5)
+- Part 2: XOR 2-layer MLP with manual backprop (10000 steps, learns XOR pattern)
+- Both interpreter and transpiler produce correct results
