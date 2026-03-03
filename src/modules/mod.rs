@@ -125,5 +125,15 @@ impl ModuleRegistry {
     pub fn is_loaded(&self, module_name: &str) -> bool {
         self.modules.iter().any(|m| m.name() == module_name)
     }
+
+    /// All registered function names.
+    pub fn fn_names(&self) -> Vec<&str> {
+        self.fn_map.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// All registered constant names.
+    pub fn const_names(&self) -> Vec<&str> {
+        self.const_map.keys().map(|s| s.as_str()).collect()
+    }
 }
 
