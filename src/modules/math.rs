@@ -39,6 +39,8 @@ const MATH_FUNCTIONS: &[&str] = &[
     "complex", "real", "imag", "magnitude", "phase", "conjugate",
     // Sparse
     "sparse", "dense", "nnz", "spmv",
+    // I/O
+    "load",
 ];
 
 impl CrowModule for MathModule {
@@ -655,6 +657,22 @@ fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String
             }
         }
 
+        // I/O: load numeric CSV directly to tensor
+        "load" => {
+            if args.len() != 1 { return Err(format!("load: expected 1 argument (path), got {}", args.len())); }
+            let path = match &args[0].value {
+                Value::Str(s) => s.as_str(),
+                _ => return Err("load: expected string path".into()),
+            };
+            match crow_runtime::io::load_csv_numeric(path) {
+                Ok((data, nrows, ncols)) => {
+                    let t = CrowTensor::from_vec(data, vec![nrows, ncols]);
+                    Ok(CrowValue::ok(Value::NumArray(t)))
+                }
+                Err(e) => Ok(CrowValue::error(&e, "load")),
+            }
+        }
+
         _ => Err(format!("{}: unknown math function", name)),
     }
 }
@@ -813,6 +831,8 @@ fn emit_math_rust_continued(name: &str, arg_strs: &[String]) -> Result<String, S
         "dense" => format!("{}.to_dense()", arg_strs[0]),
         "nnz" => format!("{}.nnz() as i64", arg_strs[0]),
         "spmv" => format!("{}.matmul_dense(&{})", arg_strs[0], arg_strs[1]),
+        // I/O
+        "load" => format!("{{ match crow_runtime::io::load_csv_numeric(&{}) {{ Ok((data, nrows, ncols)) => CrowResult {{ value: CrowTensor::from_vec(data, vec![nrows, ncols]), ok: true, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(e) => CrowResult {{ value: CrowTensor::zeros(vec![0]), ok: false, reason: e, kind: \"load\".to_string(), trace: vec![] }} }} }}", arg_strs[0]),
         _ => return Err(format!("{}: unknown math function for transpiler", name)),
     };
     Ok(result)
@@ -872,6 +892,8 @@ fn math_type_of(name: &str, arg_count: usize) -> CrowType {
         "dense" => CrowType::NumArray(Box::new(CrowType::Float)),
         "nnz" => CrowType::Int,
         "spmv" => CrowType::NumArray(Box::new(CrowType::Float)),
+        // I/O
+        "load" => CrowType::Result(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
         _ => CrowType::Unknown,
     }
 }

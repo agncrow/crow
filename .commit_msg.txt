@@ -1,16 +1,22 @@
-Implement io module: csv and lines functions
+Implement load[] for fast numeric CSV loading
 
-Add io module with two functions:
-- csv[path]: parse CSV file into array of maps (column headers as keys)
-- lines[path]: read file as array of line strings
+Add load[path] to math module — reads CSV directly into CrowTensor,
+skipping intermediate string/map allocations. Benchmarks on 1GB CSV:
+- Crow load[] (interpreter): 2.732s
+- Crow load[] (transpiled):  2.818s  
+- Polars:                    2.928s
+- NumPy loadtxt:             4.427s
+- Pandas read_csv:           4.492s
 
-Both return error-values on failure. Basic file I/O (read/write) already
-exists as builtins - io module adds only structured parsing (rule 17).
+Also fix Result(NumArray) property access in transpiler and type
+inference — .shape/.dtype/.device/.grad now work on Result-wrapped
+tensors.
 
-Also fix array indexing in transpiler to add .clone() for non-Copy element
-types (Map, Array, Str), and add Result-type unwrapping in type inference
-for variable indexing.
-
-Files: crow_runtime/src/io.rs, src/modules/io.rs, examples/io_test.crow
-Updated: interpreter.rs, transpiler.rs, type_infer.rs, validator.rs,
-         docs/language-spec.md
+Files changed:
+- crow_runtime/src/io.rs: add load_csv_numeric() + 10 unit tests
+- src/modules/math.rs: add load to interpreter, transpiler, type_of
+- src/transpiler.rs: handle Result(NumArray) in property emission
+- src/type_infer.rs: handle Result(NumArray) in property type inference
+- docs/language-spec.md: add Data Loading section
+- examples/load_test.crow: example exercising load[]
+- benchmarks/: gen_csv.py, bench_csv.py, bench_csv.crow

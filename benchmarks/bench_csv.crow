@@ -1,0 +1,7 @@
+--- CSV benchmark: load 1GB CSV directly to tensor ---
+use math
+
+data = load['/tmp/bench_1gb.csv']
+log['shape: {data.shape}']
+log['sum: {sum[data]}']
+
