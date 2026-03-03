@@ -212,10 +212,12 @@ impl Parser {
     fn parse_use(&mut self) -> Result<Stmt, String> {
         self.advance(); // skip 'use'
         let mut path = self.expect_ident()?;
-        while self.check(&Token::Slash) {
+        // Support both slash paths (use myapp/utils) and dot paths (use math.stats)
+        while self.check(&Token::Slash) || self.check(&Token::Dot) {
+            let sep = if self.check(&Token::Dot) { '.' } else { '/' };
             self.advance();
             let next = self.expect_ident()?;
-            path.push('/');
+            path.push(sep);
             path.push_str(&next);
         }
         Ok(Stmt::Use { path })

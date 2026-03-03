@@ -1,4 +1,5 @@
 use math
+use math.stats
 
 --- tensor creation ---
 a = math.zeros[2, 3]
@@ -146,6 +147,19 @@ d = math.dense[s3]
 log[d]
 x = math.solve[s2, [10, 12, 14]]
 log[x]
+
+--- statistics ---
+data = math.linspace[1, 10, 10]
+log['median:', math.median[data]]
+log['std:', math.std[data]]
+log['var:', math.var[data]]
+log['p50:', math.percentile[data, 50]]
+log['zscore:', math.zscore[data]]
+data2 = math.linspace[2, 20, 10]
+log['corr:', math.corr[data, data2]]
+log['cov:', math.cov[data, data2]]
+result = math.ttest[data, data2]
+log['ttest:', result]
 
 --- distributed computing ---
 nodes[1]

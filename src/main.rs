@@ -1486,7 +1486,7 @@ fn expand_module_imports(
     for stmt in stmts {
         if let ast::Stmt::Use { path } = stmt {
             // Built-in modules: skip file lookup
-            if path == "math" {
+            if path == "math" || path.starts_with("math.") {
                 expanded.push(stmt.clone());
                 continue;
             }

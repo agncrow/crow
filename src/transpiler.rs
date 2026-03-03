@@ -1553,9 +1553,12 @@ impl Transpiler {
     /// We just need to record the module name so FieldAccess can resolve module.var.
     fn emit_use(&mut self, path: &str) {
         let module_name = path.rsplit('/').next().unwrap_or(path).to_string();
-        if module_name == "math" {
+        if module_name == "math" || path.starts_with("math.") {
             self.needs_crow_runtime = true;
             // No code emitted — math module calls are handled inline in expr_to_string
+        }
+        if path == "math.stats" {
+            self.modules.insert("math".to_string());
         }
         self.modules.insert(module_name);
     }
@@ -2507,6 +2510,15 @@ impl Transpiler {
                                 "sparse" if arg_strs.len() == 4 => format!("{{ let _rows: Vec<usize> = {}.to_vec().iter().map(|v| *v as usize).collect(); let _cols: Vec<usize> = {}.to_vec().iter().map(|v| *v as usize).collect(); let _vals = {}.to_vec(); let _shape = {}.to_vec(); CrowSparse::from_coo(&_rows, &_cols, &_vals, _shape[0] as usize, _shape[1] as usize) }}", arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[3]),
                                 "sparse" => format!("/* math.sparse: unexpected arg count */"),
                                 "dense" => format!("{}.to_dense()", arg_strs[0]),
+                                // Stats sub-module
+                                "median" => format!("crow_runtime::stats::median(&{})", arg_strs[0]),
+                                "std" => format!("crow_runtime::stats::std(&{})", arg_strs[0]),
+                                "var" => format!("crow_runtime::stats::var(&{})", arg_strs[0]),
+                                "percentile" => format!("crow_runtime::stats::percentile(&{}, {} as f64)", arg_strs[0], arg_strs[1]),
+                                "zscore" => format!("crow_runtime::stats::zscore(&{})", arg_strs[0]),
+                                "corr" => format!("crow_runtime::stats::corr(&{}, &{})", arg_strs[0], arg_strs[1]),
+                                "cov" => format!("crow_runtime::stats::cov(&{}, &{})", arg_strs[0], arg_strs[1]),
+                                "ttest" => format!("{{ let (_t, _p) = crow_runtime::stats::ttest(&{}, &{}); let mut _m = std::collections::BTreeMap::new(); _m.insert(\"t\".to_string(), _t); _m.insert(\"p\".to_string(), _p); _m }}", arg_strs[0], arg_strs[1]),
                                 _ => format!("/* unknown math.{} */", field),
                             };
                             return result;
@@ -4331,5 +4343,55 @@ mod tests {
     fn test_sparse_import_transpile() {
         let rust = transpile("use math\ns = math.sparse[math.eye[2]]\n");
         assert!(rust.contains("use crow_runtime::sparse::CrowSparse"), "should import CrowSparse\n{}", rust);
+    }
+
+    // ===== Stats sub-module =====
+
+    #[test]
+    fn test_stats_median_transpile() {
+        let rust = transpile("use math\nuse math.stats\nx = math.median[math.ones[5]]\n");
+        assert!(rust.contains("crow_runtime::stats::median("), "should emit stats::median\n{}", rust);
+    }
+
+    #[test]
+    fn test_stats_std_transpile() {
+        let rust = transpile("use math\nuse math.stats\nx = math.std[math.ones[5]]\n");
+        assert!(rust.contains("crow_runtime::stats::std("), "should emit stats::std\n{}", rust);
+    }
+
+    #[test]
+    fn test_stats_var_transpile() {
+        let rust = transpile("use math\nuse math.stats\nx = math.var[math.ones[5]]\n");
+        assert!(rust.contains("crow_runtime::stats::var("), "should emit stats::var\n{}", rust);
+    }
+
+    #[test]
+    fn test_stats_percentile_transpile() {
+        let rust = transpile("use math\nuse math.stats\nx = math.percentile[math.ones[5], 50]\n");
+        assert!(rust.contains("crow_runtime::stats::percentile("), "should emit stats::percentile\n{}", rust);
+    }
+
+    #[test]
+    fn test_stats_zscore_transpile() {
+        let rust = transpile("use math\nuse math.stats\nz = math.zscore[math.ones[5]]\n");
+        assert!(rust.contains("crow_runtime::stats::zscore("), "should emit stats::zscore\n{}", rust);
+    }
+
+    #[test]
+    fn test_stats_corr_transpile() {
+        let rust = transpile("use math\nuse math.stats\nc = math.corr[math.ones[5], math.ones[5]]\n");
+        assert!(rust.contains("crow_runtime::stats::corr("), "should emit stats::corr\n{}", rust);
+    }
+
+    #[test]
+    fn test_stats_cov_transpile() {
+        let rust = transpile("use math\nuse math.stats\nc = math.cov[math.ones[5], math.ones[5]]\n");
+        assert!(rust.contains("crow_runtime::stats::cov("), "should emit stats::cov\n{}", rust);
+    }
+
+    #[test]
+    fn test_stats_ttest_transpile() {
+        let rust = transpile("use math\nuse math.stats\nr = math.ttest[math.ones[5], math.ones[5]]\n");
+        assert!(rust.contains("crow_runtime::stats::ttest("), "should emit stats::ttest\n{}", rust);
     }
 }
