@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use rayon::prelude::*;
 
 use crow_runtime::tensor::CrowTensor;
+use crow_runtime::sparse::CrowSparse;
 
 use crate::ast::*;
 use crate::lexer::Lexer;
@@ -1577,9 +1578,15 @@ impl Interpreter {
             // matmul removed — use * operator instead
             "solve" => {
                 if args.len() != 2 { return Err(format!("math.solve: expected 2 arguments, got {}", args.len())); }
-                let a = to_tensor(&args[0])?;
-                let b = to_tensor(&args[1])?;
-                Ok(CrowValue::ok(Value::NumArray(a.solve(&b))))
+                // Support sparse first argument
+                if let Value::Sparse(s) = &args[0].value {
+                    let b = to_tensor(&args[1])?;
+                    Ok(CrowValue::ok(Value::NumArray(s.solve(&b))))
+                } else {
+                    let a = to_tensor(&args[0])?;
+                    let b = to_tensor(&args[1])?;
+                    Ok(CrowValue::ok(Value::NumArray(a.solve(&b))))
+                }
             }
             "inv" => {
                 if args.len() != 1 { return Err(format!("math.inv: expected 1 argument, got {}", args.len())); }
@@ -1842,6 +1849,42 @@ impl Interpreter {
                 }
             }
 
+            // Sparse arrays
+            "sparse" => {
+                if args.len() == 1 {
+                    // math.sparse[dense_array] — dense to sparse
+                    let t = to_tensor(&args[0])?;
+                    Ok(CrowValue::ok(Value::Sparse(CrowSparse::from_dense(&t))))
+                } else if args.len() == 4 {
+                    // math.sparse[rows, cols, vals, shape]
+                    // rows, cols, vals are arrays; shape is [nrows, ncols]
+                    let rows_t = to_tensor(&args[0])?;
+                    let cols_t = to_tensor(&args[1])?;
+                    let vals_t = to_tensor(&args[2])?;
+                    let shape_t = to_tensor(&args[3])?;
+                    let rows: Vec<usize> = rows_t.to_vec().iter().map(|v| *v as usize).collect();
+                    let cols: Vec<usize> = cols_t.to_vec().iter().map(|v| *v as usize).collect();
+                    let vals = vals_t.to_vec();
+                    let shape_data = shape_t.to_vec();
+                    if shape_data.len() != 2 {
+                        return Err("math.sparse: shape must have 2 elements [nrows, ncols]".into());
+                    }
+                    let nrows = shape_data[0] as usize;
+                    let ncols = shape_data[1] as usize;
+                    Ok(CrowValue::ok(Value::Sparse(CrowSparse::from_coo(&rows, &cols, &vals, nrows, ncols))))
+                } else {
+                    Err(format!("math.sparse: expected 1 or 4 arguments, got {}", args.len()))
+                }
+            }
+            "dense" => {
+                if args.len() != 1 { return Err(format!("math.dense: expected 1 argument, got {}", args.len())); }
+                match &args[0].value {
+                    Value::Sparse(s) => Ok(CrowValue::ok(Value::NumArray(s.to_dense()))),
+                    Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(t.clone()))),
+                    _ => Err(format!("math.dense: expected sparse or numarray, got {}", args[0].value.type_name())),
+                }
+            }
+
             _ => Err(format!("math.{}: unknown math function", name)),
         }
     }
@@ -1888,6 +1931,7 @@ impl Interpreter {
                         Value::Str(_) => "str".to_string(),
                         Value::Bool(_) => "bool".to_string(),
                         Value::Array(_) | Value::NumArray(_) => "array".to_string(),
+                        Value::Sparse(_) => "sparse".to_string(),
                         Value::Map(_) => "map".to_string(),
                         Value::Fn(_) => "fn".to_string(),
                         Value::StructDef(sd) => sd.name.clone(),
@@ -2815,6 +2859,8 @@ impl Interpreter {
                 (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.add_scalar(*b)))),
                 (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.add_scalar(*a as f64)))),
                 (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.add_scalar(*a)))),
+                // sparse + sparse
+                (Value::Sparse(a), Value::Sparse(b)) => Ok(CrowValue::ok(Value::Sparse(a.add(b)))),
                 (Value::Str(_), Value::Str(_)) => Err("cannot use '+' with strings — use string interpolation instead".to_string()),
                 _ => Err("cannot add these types".to_string()),
             },
@@ -2853,6 +2899,8 @@ impl Interpreter {
                 (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(*b)))),
                 (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.mul_scalar(*a as f64)))),
                 (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.mul_scalar(*a)))),
+                // sparse * dense → matmul
+                (Value::Sparse(s), Value::NumArray(t)) => Ok(CrowValue::ok(Value::NumArray(s.matmul_dense(t)))),
                 _ => Err("cannot multiply these types".to_string()),
             },
             BinOp::Div => match (l, r) {
@@ -5262,5 +5310,65 @@ mod tests {
             }
             _ => panic!("expected array from conjugate"),
         }
+    }
+
+    // ===== Sparse Arrays =====
+
+    #[test]
+    fn test_math_sparse_from_dense() {
+        let val = get_var("use math\ns = math.sparse[math.eye[3]]\n", "s");
+        if let Value::Sparse(s) = &val.value {
+            assert_eq!(s.nnz(), 3);
+            assert_eq!(s.shape(), (3, 3));
+        } else { panic!("expected Sparse, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_math_sparse_from_coo() {
+        let val = get_var("use math\ns = math.sparse[[0, 1, 2], [0, 1, 2], [5, 6, 7], [3, 3]]\n", "s");
+        if let Value::Sparse(s) = &val.value {
+            assert_eq!(s.nnz(), 3);
+            assert_eq!(s.shape(), (3, 3));
+        } else { panic!("expected Sparse, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_math_dense_from_sparse() {
+        let val = get_var("use math\ns = math.sparse[math.eye[2]]\nd = math.dense[s]\n", "d");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), vec![1.0, 0.0, 0.0, 1.0]);
+        } else { panic!("expected NumArray, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_sparse_matmul() {
+        let val = get_var("use math\ns = math.sparse[math.eye[3]]\nv = [1, 2, 3]\nr = s * v\n", "r");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), vec![1.0, 2.0, 3.0]);
+        } else { panic!("expected NumArray, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_sparse_add() {
+        let val = get_var("use math\na = math.sparse[math.eye[2]]\nb = math.sparse[math.eye[2]]\nc = a + b\nd = math.dense[c]\n", "d");
+        if let Value::NumArray(t) = &val.value {
+            assert_eq!(t.to_vec(), vec![2.0, 0.0, 0.0, 2.0]);
+        } else { panic!("expected NumArray, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_sparse_solve() {
+        let val = get_var("use math\ns = math.sparse[[0, 1], [0, 1], [2, 3], [2, 2]]\nx = math.solve[s, [4, 9]]\n", "x");
+        if let Value::NumArray(t) = &val.value {
+            let v = t.to_vec();
+            assert!((v[0] - 2.0).abs() < 1e-10);
+            assert!((v[1] - 3.0).abs() < 1e-10);
+        } else { panic!("expected NumArray, got {:?}", val.value); }
+    }
+
+    #[test]
+    fn test_sparse_type() {
+        let val = get_var("use math\ns = math.sparse[math.eye[2]]\nt = type[s]\n", "t");
+        assert_eq!(format!("{}", val.value), "sparse");
     }
 }

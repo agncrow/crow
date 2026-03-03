@@ -22,6 +22,8 @@ pub enum CrowType {
     Json,
     /// Numeric array backed by CrowTensor (f64 internally). Inner type tracks original element type.
     NumArray(Box<CrowType>),
+    /// Sparse matrix backed by CrowSparse (CSR format).
+    Sparse,
     Void,
     Unknown,
 }
@@ -44,6 +46,7 @@ impl CrowType {
             CrowType::Result(inner) => format!("CrowResult<{}>", inner.to_rust_type()),
             CrowType::Json => "serde_json::Value".into(),
             CrowType::NumArray(_) => "crow_runtime::tensor::CrowTensor".into(),
+            CrowType::Sparse => "crow_runtime::sparse::CrowSparse".into(),
             CrowType::Void => "()".into(),
             CrowType::Unknown => "String".into(),
         }
@@ -65,6 +68,7 @@ impl CrowType {
             CrowType::Result(inner) => format!("CrowResult {{ ok: false, value: {}, reason: String::new(), kind: String::new(), trace: vec![] }}", inner.default_rust_value()),
             CrowType::Json => "serde_json::Value::Null".into(),
             CrowType::NumArray(_) => "crow_runtime::tensor::CrowTensor::zeros(vec![0])".into(),
+            CrowType::Sparse => "CrowSparse::from_coo(&[], &[], &[], 0, 0)".into(),
             CrowType::Void => "()".into(),
             CrowType::Unknown => "String::new()".into(),
         }
@@ -79,6 +83,7 @@ impl CrowType {
             CrowType::Str => "str".into(),
             CrowType::Array(inner) => format!("array[{}]", inner.crow_name()),
             CrowType::NumArray(_) => "array".into(),
+            CrowType::Sparse => "sparse".into(),
             CrowType::Map(inner) => format!("map[{}]", inner.crow_name()),
             CrowType::Struct(name) => name.clone(),
             CrowType::OptBoxStruct(name) => name.clone(),
@@ -960,8 +965,21 @@ impl TypeContext {
                         }
                     }
                     BinOp::Mul => {
+                        // sparse * dense → NumArray (matmul result)
+                        if matches!(&lt_inner, CrowType::Sparse) && matches!(&rt_inner, CrowType::NumArray(_)) {
+                            CrowType::NumArray(Box::new(CrowType::Float))
                         // * on tensor-tensor is matmul (returns NumArray)
-                        if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
+                        } else if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
+                            CrowType::NumArray(Box::new(CrowType::Float))
+                        } else {
+                            lt_inner.unify(&rt_inner)
+                        }
+                    }
+                    BinOp::Add => {
+                        // sparse + sparse → Sparse
+                        if matches!(&lt_inner, CrowType::Sparse) && matches!(&rt_inner, CrowType::Sparse) {
+                            CrowType::Sparse
+                        } else if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
                             CrowType::NumArray(Box::new(CrowType::Float))
                         } else {
                             lt_inner.unify(&rt_inner)
@@ -1046,6 +1064,9 @@ impl TypeContext {
                                 "complex" | "conjugate" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
                                 // Complex extraction (returns single tensor)
                                 "real" | "imag" => CrowType::NumArray(Box::new(CrowType::Float)),
+                                // Sparse arrays
+                                "sparse" => CrowType::Sparse,
+                                "dense" => CrowType::NumArray(Box::new(CrowType::Float)),
                                 _ => CrowType::Unknown,
                             };
                         }

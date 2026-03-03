@@ -361,6 +361,16 @@ impl Transpiler {
         }
     }
 
+    /// Check if a CrowType contains Sparse anywhere.
+    fn type_uses_sparse(ty: &CrowType) -> bool {
+        match ty {
+            CrowType::Sparse => true,
+            CrowType::Result(inner) => Self::type_uses_sparse(inner),
+            CrowType::Array(inner) => Self::type_uses_sparse(inner),
+            _ => false,
+        }
+    }
+
     /// Check if a CrowType contains Json anywhere.
     fn type_uses_json(ty: &CrowType) -> bool {
         match ty {
@@ -581,6 +591,11 @@ impl Transpiler {
         }
         if self.needs_crow_runtime {
             self.emit_line("use crow_runtime::tensor::CrowTensor;");
+        }
+        // Import CrowSparse if any variable uses Sparse type
+        let needs_sparse = self.ctx.vars.values().any(|ty| Self::type_uses_sparse(ty));
+        if needs_sparse {
+            self.emit_line("use crow_runtime::sparse::CrowSparse;");
         }
         self.emit_line("");
 
@@ -1644,6 +1659,15 @@ impl Transpiler {
                     result
                 } else {
                     // No CrowResult operands — simple arithmetic
+                    // Sparse binary ops
+                    let l_is_sparse = matches!(&lt_inner, CrowType::Sparse);
+                    let r_is_sparse = matches!(&rt_inner, CrowType::Sparse);
+                    if l_is_sparse && r_is_sparse && matches!(op, BinOp::Add) {
+                        return format!("{}.add(&{})", l, r);
+                    }
+                    if l_is_sparse && matches!(&rt_inner, CrowType::NumArray(_)) && matches!(op, BinOp::Mul) {
+                        return format!("{}.matmul_dense(&{})", l, r);
+                    }
                     // NumArray element-wise ops
                     let l_is_numarray = matches!(&lt_inner, CrowType::NumArray(_));
                     let r_is_numarray = matches!(&rt_inner, CrowType::NumArray(_));
@@ -2154,6 +2178,7 @@ impl Transpiler {
                             CrowType::Str => "\"str\"".to_string(),
                             CrowType::Bool => "\"bool\"".to_string(),
                             CrowType::Array(_) | CrowType::NumArray(_) => "\"array\"".to_string(),
+                            CrowType::Sparse => "\"sparse\"".to_string(),
                             CrowType::Map(_) => "\"map\"".to_string(),
                             CrowType::Fn(_, _) => "\"fn\"".to_string(),
                             CrowType::Void => "\"none\"".to_string(),
@@ -2437,6 +2462,11 @@ impl Transpiler {
                                 "magnitude" => format!("CrowTensor::magnitude(&{}[0], &{}[1])", arg_strs[0], arg_strs[0]),
                                 "phase" => format!("CrowTensor::phase(&{}[0], &{}[1])", arg_strs[0], arg_strs[0]),
                                 "conjugate" => format!("{{ let (_re, _im) = CrowTensor::conjugate(&{}[0], &{}[1]); vec![_re, _im] }}", arg_strs[0], arg_strs[0]),
+                                // Sparse arrays
+                                "sparse" if arg_strs.len() == 1 => format!("CrowSparse::from_dense(&{})", arg_strs[0]),
+                                "sparse" if arg_strs.len() == 4 => format!("{{ let _rows: Vec<usize> = {}.to_vec().iter().map(|v| *v as usize).collect(); let _cols: Vec<usize> = {}.to_vec().iter().map(|v| *v as usize).collect(); let _vals = {}.to_vec(); let _shape = {}.to_vec(); CrowSparse::from_coo(&_rows, &_cols, &_vals, _shape[0] as usize, _shape[1] as usize) }}", arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[3]),
+                                "sparse" => format!("/* math.sparse: unexpected arg count */"),
+                                "dense" => format!("{}.to_dense()", arg_strs[0]),
                                 _ => format!("/* unknown math.{} */", field),
                             };
                             return result;
@@ -4181,5 +4211,55 @@ mod tests {
     fn test_math_conjugate_transpile() {
         let rust = transpile("use math\nc = math.complex[3, 4]\ncc = math.conjugate[c]\n");
         assert!(rust.contains("CrowTensor::conjugate("), "should emit CrowTensor::conjugate\n{}", rust);
+    }
+
+    // ===== Sparse Arrays =====
+
+    #[test]
+    fn test_math_sparse_from_dense_transpile() {
+        let rust = transpile("use math\ns = math.sparse[math.eye[3]]\n");
+        assert!(rust.contains("CrowSparse::from_dense("), "should emit CrowSparse::from_dense\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_sparse_from_coo_transpile() {
+        let rust = transpile("use math\ns = math.sparse[[0, 1], [0, 1], [5, 6], [2, 2]]\n");
+        assert!(rust.contains("CrowSparse::from_coo("), "should emit CrowSparse::from_coo\n{}", rust);
+    }
+
+    #[test]
+    fn test_math_dense_transpile() {
+        let rust = transpile("use math\ns = math.sparse[math.eye[2]]\nd = math.dense[s]\n");
+        assert!(rust.contains(".to_dense()"), "should emit .to_dense()\n{}", rust);
+    }
+
+    #[test]
+    fn test_sparse_matmul_transpile() {
+        let rust = transpile("use math\ns = math.sparse[math.eye[2]]\nv = [1, 2]\nr = s * v\n");
+        assert!(rust.contains(".matmul_dense("), "should emit .matmul_dense()\n{}", rust);
+    }
+
+    #[test]
+    fn test_sparse_add_transpile() {
+        let rust = transpile("use math\na = math.sparse[math.eye[2]]\nb = math.sparse[math.eye[2]]\nc = a + b\n");
+        assert!(rust.contains(".add("), "should emit .add() for sparse+sparse\n{}", rust);
+    }
+
+    #[test]
+    fn test_sparse_solve_transpile() {
+        let rust = transpile("use math\ns = math.sparse[math.eye[2]]\nx = math.solve[s, [1, 2]]\n");
+        assert!(rust.contains(".solve("), "should emit .solve() for sparse solve\n{}", rust);
+    }
+
+    #[test]
+    fn test_sparse_type_transpile() {
+        let rust = transpile("use math\ns = math.sparse[math.eye[2]]\nt = type[s]\n");
+        assert!(rust.contains("\"sparse\""), "should emit 'sparse' for type[]\n{}", rust);
+    }
+
+    #[test]
+    fn test_sparse_import_transpile() {
+        let rust = transpile("use math\ns = math.sparse[math.eye[2]]\n");
+        assert!(rust.contains("use crow_runtime::sparse::CrowSparse"), "should import CrowSparse\n{}", rust);
     }
 }

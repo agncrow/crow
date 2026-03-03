@@ -911,6 +911,42 @@ Complex values are represented as `[real_tensor, imag_tensor]` pairs.
 | `math.phase[c]` | Phase angle = atan2(im, re) |
 | `math.conjugate[c]` | Complex conjugate → [re, -im] |
 
+#### Sparse Arrays
+
+Sparse matrices store only non-zero entries, using CSR (Compressed Sparse Row) format internally. They use the same operators as dense arrays — the runtime dispatches to sparse-optimized algorithms automatically.
+
+| Function | Description |
+|---|---|
+| `math.sparse[dense_array]` | Convert dense 2D array to sparse |
+| `math.sparse[rows, cols, vals, shape]` | Create sparse from COO triplets (row indices, column indices, values, [nrows, ncols]) |
+| `math.dense[s]` | Convert sparse matrix back to dense array |
+| `s * v` | Sparse × dense matmul (vector or matrix) |
+| `s + s2` | Sparse + sparse addition |
+| `math.solve[s, b]` | Solve sparse linear system s·x = b |
+
+```
+use math
+
+--- dense to sparse ---
+s = math.sparse[math.eye[3]]
+log[s]                              --- sparse[3x3, nnz=3] ---
+
+--- COO creation ---
+s2 = math.sparse[[0, 1, 2], [0, 1, 2], [5, 6, 7], [3, 3]]
+
+--- sparse matmul ---
+r = s * [1, 2, 3]
+
+--- sparse add ---
+s3 = s + s2
+
+--- back to dense ---
+d = math.dense[s3]
+
+--- sparse solve ---
+x = math.solve[s2, [10, 12, 14]]
+```
+
 #### Constants
 
 | Constant | Description |

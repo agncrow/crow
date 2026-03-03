@@ -1,0 +1,11 @@
+Complete Layer 6: Sparse Arrays
+
+- Add sprs v0.11.4 dependency for CSR sparse matrix support
+- Create crow_runtime/src/sparse.rs with CrowSparse type
+- Add Value::Sparse variant to interpreter
+- Wire up math.sparse[], math.dense[], sparse *, sparse +, math.solve[sparse, b]
+- Wire up transpiler and type inference for CrowType::Sparse
+- Update validator to allow sparse in numeric binary ops
+- 476 total tests passing (8 runtime + 7 interpreter + 8 transpiler new)
+- Update language-spec.md with Sparse Arrays documentation
+- Update examples/math_test.crow with sparse examples

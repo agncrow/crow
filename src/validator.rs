@@ -385,9 +385,9 @@ impl<'a> Validator<'a> {
                     self.error("cannot use '+' with strings — use string interpolation instead".to_string());
                     return;
                 }
-                // Numeric ops: both must be numeric (including NumArray)
-                let lt_num = matches!(lt, CrowType::Int | CrowType::Float | CrowType::NumArray(_));
-                let rt_num = matches!(rt, CrowType::Int | CrowType::Float | CrowType::NumArray(_));
+                // Numeric ops: both must be numeric (including NumArray and Sparse)
+                let lt_num = matches!(lt, CrowType::Int | CrowType::Float | CrowType::NumArray(_) | CrowType::Sparse);
+                let rt_num = matches!(rt, CrowType::Int | CrowType::Float | CrowType::NumArray(_) | CrowType::Sparse);
                 if !lt_num || !rt_num {
                     let op_str = match op {
                         BinOp::Add => "+", BinOp::Sub => "-", BinOp::Mul => "*",
