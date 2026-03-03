@@ -57,6 +57,49 @@ pub fn parse_csv_string(content: &str) -> Result<Vec<BTreeMap<String, String>>, 
     Ok(rows)
 }
 
+/// Fast numeric CSV loader — parses CSV directly into a flat Vec<f64>.
+/// Returns (data, nrows, ncols). Skips the header row.
+/// All values must be parseable as f64.
+pub fn load_csv_numeric(path: &str) -> Result<(Vec<f64>, usize, usize), String> {
+    use std::io::{BufRead, BufReader};
+    use std::fs::File;
+
+    let file = File::open(path).map_err(|e| format!("load: {}", e))?;
+    let reader = BufReader::with_capacity(8 * 1024 * 1024, file); // 8MB buffer
+    let mut lines = reader.lines();
+
+    // Read header to determine column count
+    let header = lines.next()
+        .ok_or_else(|| "load: empty file".to_string())?
+        .map_err(|e| format!("load: {}", e))?;
+    let ncols = header.split(',').count();
+    if ncols == 0 {
+        return Err("load: no columns found".to_string());
+    }
+
+    // Pre-allocate with estimate (assume ~100 bytes per row for 10 numeric cols)
+    let file_size = std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0);
+    let est_rows = file_size / (ncols * 12); // rough estimate
+    let mut data = Vec::with_capacity(est_rows * ncols);
+    let mut nrows = 0;
+
+    for line_result in lines {
+        let line = line_result.map_err(|e| format!("load: {}", e))?;
+        let line = line.trim();
+        if line.is_empty() { continue; }
+
+        for (i, field) in line.split(',').enumerate() {
+            if i >= ncols { break; }
+            let val: f64 = field.trim().parse()
+                .map_err(|_| format!("load: cannot parse '{}' as number at row {}, col {}", field.trim(), nrows + 1, i))?;
+            data.push(val);
+        }
+        nrows += 1;
+    }
+
+    Ok((data, nrows, ncols))
+}
+
 /// Read lines from a file, returning them as a Vec<String>.
 pub fn read_lines(path: &str) -> Result<Vec<String>, String> {
     let content = std::fs::read_to_string(path)
@@ -149,6 +192,101 @@ mod tests {
         let p = temp_file("lines.txt", "line1\nline2\nline3");
         let lines = read_lines(p.to_str().unwrap()).unwrap();
         assert_eq!(lines, vec!["line1", "line2", "line3"]);
+        std::fs::remove_file(p).ok();
+    }
+
+    // ===== load_csv_numeric tests =====
+
+    #[test]
+    fn test_load_csv_numeric_basic() {
+        let p = temp_file("numeric.csv", "a,b,c\n1.0,2.0,3.0\n4.0,5.0,6.0\n");
+        let (data, nrows, ncols) = load_csv_numeric(p.to_str().unwrap()).unwrap();
+        assert_eq!(nrows, 2);
+        assert_eq!(ncols, 3);
+        assert_eq!(data, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        std::fs::remove_file(p).ok();
+    }
+
+    #[test]
+    fn test_load_csv_numeric_integers() {
+        let p = temp_file("ints.csv", "x,y\n10,20\n30,40\n");
+        let (data, nrows, ncols) = load_csv_numeric(p.to_str().unwrap()).unwrap();
+        assert_eq!(nrows, 2);
+        assert_eq!(ncols, 2);
+        assert_eq!(data, vec![10.0, 20.0, 30.0, 40.0]);
+        std::fs::remove_file(p).ok();
+    }
+
+    #[test]
+    fn test_load_csv_numeric_single_row() {
+        let p = temp_file("single.csv", "a,b\n7.5,8.5\n");
+        let (data, nrows, ncols) = load_csv_numeric(p.to_str().unwrap()).unwrap();
+        assert_eq!(nrows, 1);
+        assert_eq!(ncols, 2);
+        assert_eq!(data, vec![7.5, 8.5]);
+        std::fs::remove_file(p).ok();
+    }
+
+    #[test]
+    fn test_load_csv_numeric_single_column() {
+        let p = temp_file("onecol.csv", "val\n1\n2\n3\n");
+        let (data, nrows, ncols) = load_csv_numeric(p.to_str().unwrap()).unwrap();
+        assert_eq!(nrows, 3);
+        assert_eq!(ncols, 1);
+        assert_eq!(data, vec![1.0, 2.0, 3.0]);
+        std::fs::remove_file(p).ok();
+    }
+
+    #[test]
+    fn test_load_csv_numeric_empty_file() {
+        let p = temp_file("empty.csv", "");
+        let result = load_csv_numeric(p.to_str().unwrap());
+        assert!(result.is_err());
+        std::fs::remove_file(p).ok();
+    }
+
+    #[test]
+    fn test_load_csv_numeric_header_only() {
+        let p = temp_file("headeronly.csv", "a,b,c\n");
+        let (data, nrows, ncols) = load_csv_numeric(p.to_str().unwrap()).unwrap();
+        assert_eq!(nrows, 0);
+        assert_eq!(ncols, 3);
+        assert!(data.is_empty());
+        std::fs::remove_file(p).ok();
+    }
+
+    #[test]
+    fn test_load_csv_numeric_bad_value() {
+        let p = temp_file("bad.csv", "a,b\n1.0,hello\n");
+        let result = load_csv_numeric(p.to_str().unwrap());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cannot parse"));
+        std::fs::remove_file(p).ok();
+    }
+
+    #[test]
+    fn test_load_csv_numeric_not_found() {
+        let result = load_csv_numeric("/tmp/crow_io_test_nonexistent_99999.csv");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_csv_numeric_negative_values() {
+        let p = temp_file("neg.csv", "x,y\n-1.5,2.5\n3.0,-4.0\n");
+        let (data, nrows, ncols) = load_csv_numeric(p.to_str().unwrap()).unwrap();
+        assert_eq!(nrows, 2);
+        assert_eq!(ncols, 2);
+        assert_eq!(data, vec![-1.5, 2.5, 3.0, -4.0]);
+        std::fs::remove_file(p).ok();
+    }
+
+    #[test]
+    fn test_load_csv_numeric_whitespace() {
+        let p = temp_file("ws.csv", "a , b\n 1.0 , 2.0 \n 3.0 , 4.0 \n");
+        let (data, nrows, ncols) = load_csv_numeric(p.to_str().unwrap()).unwrap();
+        assert_eq!(nrows, 2);
+        assert_eq!(ncols, 2);
+        assert_eq!(data, vec![1.0, 2.0, 3.0, 4.0]);
         std::fs::remove_file(p).ok();
     }
 }

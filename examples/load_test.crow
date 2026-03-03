@@ -1,0 +1,17 @@
+--- test load[] function: fast numeric CSV loading ---
+use math
+
+--- create a test CSV file ---
+write['/tmp/crow_load_test.csv', 'a,b,c\n1.0,2.0,3.0\n4.0,5.0,6.0\n7.0,8.0,9.0\n']
+
+--- load it as a tensor ---
+data = load['/tmp/crow_load_test.csv']
+log[data.shape]    --- [3, 3] ---
+log[sum[data]]     --- 45 ---
+log[data]
+
+--- error handling ---
+bad = load['/tmp/nonexistent_file.csv']
+log[bad.ok]        --- false ---
+log[bad.reason]    --- error message ---
+

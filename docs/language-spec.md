@@ -947,6 +947,22 @@ d = dense[s3]
 x = solve[s2, [10, 12, 14]]
 ```
 
+#### Data Loading
+
+| Function | Description |
+|---|---|
+| `load[path]` | Load numeric CSV file directly into a 2D tensor (error-value on failure) |
+
+`load[path]` reads a CSV file with a header row and parses all values as floats into a 2D tensor (rows × columns). This is much faster than `csv[path]` (io module) for numeric data because it avoids creating intermediate string maps.
+
+```
+use math
+
+data = load['data.csv']
+log[data.shape]        --- [1000, 10] ---
+log[sum[data]]         --- total of all values ---
+```
+
 #### Statistics (sub-module: `math.stats`)
 
 Import with `use math.stats`. Functions become top-level after import.

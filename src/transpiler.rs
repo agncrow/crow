@@ -2569,11 +2569,17 @@ impl Transpiler {
                 // NumArray properties: .shape, .dtype, .device, .grad
                 {
                     let obj_type = self.ctx.infer_expr(object);
-                    if matches!(obj_type, CrowType::NumArray(_)) {
+                    let is_result_numarray = matches!(&obj_type, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::NumArray(_)));
+                    if matches!(obj_type, CrowType::NumArray(_)) || is_result_numarray {
+                        let tensor_expr = if is_result_numarray {
+                            format!("{}.value.clone()", obj)
+                        } else {
+                            obj.clone()
+                        };
                         match field.as_str() {
-                            "shape" => return format!("{}.shape().iter().map(|&s| s as i64).collect::<Vec<i64>>()", obj),
+                            "shape" => return format!("{}.shape().iter().map(|&s| s as i64).collect::<Vec<i64>>()", tensor_expr),
                             "dtype" => return "\"float\".to_string()".to_string(),
-                            "device" => return format!("if {}.is_gpu() {{ \"gpu\".to_string() }} else {{ \"cpu\".to_string() }}", obj),
+                            "device" => return format!("if {}.is_gpu() {{ \"gpu\".to_string() }} else {{ \"cpu\".to_string() }}", tensor_expr),
                             "grad" => return "\"none\".to_string()".to_string(),
                             _ => {}
                         }

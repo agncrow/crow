@@ -1121,8 +1121,10 @@ impl TypeContext {
                     "trace" => return CrowType::Array(Box::new(CrowType::Str)),
                     _ => {}
                 }
-                // NumArray properties
-                if matches!(obj_type, CrowType::NumArray(_)) {
+                // NumArray properties (also handle Result(NumArray))
+                let is_numarray = matches!(obj_type, CrowType::NumArray(_))
+                    || matches!(&obj_type, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::NumArray(_)));
+                if is_numarray {
                     match field.as_str() {
                         "shape" => return CrowType::Array(Box::new(CrowType::Int)),
                         "dtype" | "device" | "grad" => return CrowType::Str,

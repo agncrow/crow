@@ -34,3 +34,8 @@ examples/module_test
 # Generated scripts
 gen_type_infer.py
 _tmp_test_error_line
+
+
+*.csv
+*.txt
+*.json
