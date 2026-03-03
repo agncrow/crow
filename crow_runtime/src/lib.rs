@@ -1,5 +1,6 @@
 pub mod distributed;
 pub mod gpu;
+pub mod io;
 pub mod linalg;
 pub mod nn;
 pub mod pool;

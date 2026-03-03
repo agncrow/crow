@@ -341,6 +341,11 @@ impl Interpreter {
             self.registry.load(std::sync::Arc::new(crate::modules::nn::NnModule));
             return Ok(());
         }
+        // Built-in module: io — file I/O
+        if module_path == "io" {
+            self.registry.load(std::sync::Arc::new(crate::modules::io::IoModule));
+            return Ok(());
+        }
 
         let file_path = self.resolve_module_file(module_path)?;
 
