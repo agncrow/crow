@@ -1752,6 +1752,96 @@ impl Interpreter {
                 Ok(CrowValue::ok(Value::NumArray(CrowTensor::hanning(n))))
             }
 
+            // ── Layer 5: Special Functions & Complex Numbers ──────────
+            "gamma" => {
+                if args.len() != 1 { return Err(format!("math.gamma: expected 1 argument, got {}", args.len())); }
+                let t = to_tensor(&args[0])?;
+                Ok(CrowValue::ok(Value::NumArray(t.gamma())))
+            }
+            "erf" => {
+                if args.len() != 1 { return Err(format!("math.erf: expected 1 argument, got {}", args.len())); }
+                let t = to_tensor(&args[0])?;
+                Ok(CrowValue::ok(Value::NumArray(t.erf())))
+            }
+            "bessel" => {
+                if args.len() != 2 { return Err(format!("math.bessel: expected 2 arguments (x, n), got {}", args.len())); }
+                let t = to_tensor(&args[0])?;
+                let n = to_f64(&args[1])? as i64;
+                Ok(CrowValue::ok(Value::NumArray(t.bessel(n))))
+            }
+            "factorial" => {
+                if args.len() != 1 { return Err(format!("math.factorial: expected 1 argument, got {}", args.len())); }
+                let t = to_tensor(&args[0])?;
+                Ok(CrowValue::ok(Value::NumArray(t.factorial())))
+            }
+            "choose" => {
+                if args.len() != 2 { return Err(format!("math.choose: expected 2 arguments (n, k), got {}", args.len())); }
+                let n = to_tensor(&args[0])?;
+                let k = to_tensor(&args[1])?;
+                Ok(CrowValue::ok(Value::NumArray(n.choose(&k))))
+            }
+            "complex" => {
+                if args.len() != 2 { return Err(format!("math.complex: expected 2 arguments (re, im), got {}", args.len())); }
+                let re = to_f64(&args[0])?;
+                let im = to_f64(&args[1])?;
+                let (r, i) = CrowTensor::complex(re, im);
+                Ok(CrowValue::ok(Value::Array(vec![
+                    CrowValue::ok(Value::NumArray(r)),
+                    CrowValue::ok(Value::NumArray(i)),
+                ])))
+            }
+            "real" => {
+                if args.len() != 1 { return Err(format!("math.real: expected 1 argument, got {}", args.len())); }
+                match &args[0].value {
+                    Value::Array(arr) if arr.len() == 2 => Ok(arr[0].clone()),
+                    _ => Err("math.real: expected complex value [real, imag]".to_string()),
+                }
+            }
+            "imag" => {
+                if args.len() != 1 { return Err(format!("math.imag: expected 1 argument, got {}", args.len())); }
+                match &args[0].value {
+                    Value::Array(arr) if arr.len() == 2 => Ok(arr[1].clone()),
+                    _ => Err("math.imag: expected complex value [real, imag]".to_string()),
+                }
+            }
+            "magnitude" => {
+                if args.len() != 1 { return Err(format!("math.magnitude: expected 1 argument, got {}", args.len())); }
+                match &args[0].value {
+                    Value::Array(arr) if arr.len() == 2 => {
+                        let re = to_tensor(&arr[0])?;
+                        let im = to_tensor(&arr[1])?;
+                        Ok(CrowValue::ok(Value::NumArray(CrowTensor::magnitude(&re, &im))))
+                    }
+                    _ => Err("math.magnitude: expected complex value [real, imag]".to_string()),
+                }
+            }
+            "phase" => {
+                if args.len() != 1 { return Err(format!("math.phase: expected 1 argument, got {}", args.len())); }
+                match &args[0].value {
+                    Value::Array(arr) if arr.len() == 2 => {
+                        let re = to_tensor(&arr[0])?;
+                        let im = to_tensor(&arr[1])?;
+                        Ok(CrowValue::ok(Value::NumArray(CrowTensor::phase(&re, &im))))
+                    }
+                    _ => Err("math.phase: expected complex value [real, imag]".to_string()),
+                }
+            }
+            "conjugate" => {
+                if args.len() != 1 { return Err(format!("math.conjugate: expected 1 argument, got {}", args.len())); }
+                match &args[0].value {
+                    Value::Array(arr) if arr.len() == 2 => {
+                        let re = to_tensor(&arr[0])?;
+                        let im = to_tensor(&arr[1])?;
+                        let (cr, ci) = CrowTensor::conjugate(&re, &im);
+                        Ok(CrowValue::ok(Value::Array(vec![
+                            CrowValue::ok(Value::NumArray(cr)),
+                            CrowValue::ok(Value::NumArray(ci)),
+                        ])))
+                    }
+                    _ => Err("math.conjugate: expected complex value [real, imag]".to_string()),
+                }
+            }
+
             _ => Err(format!("math.{}: unknown math function", name)),
         }
     }
@@ -5076,6 +5166,101 @@ mod tests {
                 assert!((v[2] - 1.0).abs() < 1e-10, "hanning center should be 1");
             }
             _ => panic!("expected numarray from hanning"),
+        }
+    }
+
+    // ===== Layer 5: Special Functions & Complex Numbers =====
+
+    #[test]
+    fn test_math_gamma_interp() {
+        let val = get_var("use math\nx = math.gamma[math.linspace[1, 4, 4]]\n", "x");
+        match &val.value {
+            Value::NumArray(t) => {
+                let v = t.to_vec();
+                assert!((v[0] - 1.0).abs() < 1e-8, "Γ(1) = 1");
+                assert!((v[3] - 6.0).abs() < 1e-6, "Γ(4) = 6");
+            }
+            _ => panic!("expected numarray from gamma"),
+        }
+    }
+
+    #[test]
+    fn test_math_erf_interp() {
+        let val = get_var("use math\nx = math.erf[math.linspace[1, 1, 1]]\n", "x");
+        match &val.value {
+            Value::NumArray(t) => {
+                assert!((t.to_vec()[0] - 0.8427).abs() < 1e-3, "erf(1) ≈ 0.8427");
+            }
+            _ => panic!("expected numarray from erf"),
+        }
+    }
+
+    #[test]
+    fn test_math_factorial_interp() {
+        let val = get_var("use math\nx = math.factorial[math.linspace[0, 5, 6]]\n", "x");
+        match &val.value {
+            Value::NumArray(t) => {
+                let v = t.to_vec();
+                assert!((v[0] - 1.0).abs() < 1e-8, "0! = 1");
+                assert!((v[5] - 120.0).abs() < 1e-5, "5! = 120");
+            }
+            _ => panic!("expected numarray from factorial"),
+        }
+    }
+
+    #[test]
+    fn test_math_choose_interp() {
+        let val = get_var("use math\nx = math.choose[math.linspace[5, 5, 1], math.linspace[2, 2, 1]]\n", "x");
+        match &val.value {
+            Value::NumArray(t) => {
+                assert!((t.to_vec()[0] - 10.0).abs() < 1e-6, "C(5,2) = 10");
+            }
+            _ => panic!("expected numarray from choose"),
+        }
+    }
+
+    #[test]
+    fn test_math_complex_interp() {
+        let val = get_var("use math\nc = math.complex[3, 4]\n", "c");
+        match &val.value {
+            Value::Array(arr) => {
+                assert_eq!(arr.len(), 2);
+                if let Value::NumArray(re) = &arr[0].value {
+                    assert!((re.to_vec()[0] - 3.0).abs() < 1e-10);
+                } else { panic!("expected numarray for real part"); }
+                if let Value::NumArray(im) = &arr[1].value {
+                    assert!((im.to_vec()[0] - 4.0).abs() < 1e-10);
+                } else { panic!("expected numarray for imag part"); }
+            }
+            _ => panic!("expected array from complex"),
+        }
+    }
+
+    #[test]
+    fn test_math_magnitude_interp() {
+        let val = get_var("use math\nc = math.complex[3, 4]\nm = math.magnitude[c]\n", "m");
+        match &val.value {
+            Value::NumArray(t) => {
+                assert!((t.to_vec()[0] - 5.0).abs() < 1e-10, "|3+4i| = 5");
+            }
+            _ => panic!("expected numarray from magnitude"),
+        }
+    }
+
+    #[test]
+    fn test_math_conjugate_interp() {
+        let val = get_var("use math\nc = math.complex[3, 4]\ncc = math.conjugate[c]\n", "cc");
+        match &val.value {
+            Value::Array(arr) => {
+                assert_eq!(arr.len(), 2);
+                if let Value::NumArray(re) = &arr[0].value {
+                    assert!((re.to_vec()[0] - 3.0).abs() < 1e-10);
+                } else { panic!("expected numarray for real part"); }
+                if let Value::NumArray(im) = &arr[1].value {
+                    assert!((im.to_vec()[0] - (-4.0)).abs() < 1e-10, "conjugate should negate imag");
+                } else { panic!("expected numarray for imag part"); }
+            }
+            _ => panic!("expected array from conjugate"),
         }
     }
 }
