@@ -1036,6 +1036,9 @@ impl TypeContext {
                                 "seed" => CrowType::Void,
                                 "normal" | "uniform" | "poisson" | "bernoulli"
                                 | "shuffle" | "choice" | "permutation" => CrowType::NumArray(Box::new(CrowType::Float)),
+                                // Signal processing
+                                "fft" | "fft2" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
+                                "ifft" | "conv" | "conv2d" | "hamming" | "hanning" => CrowType::NumArray(Box::new(CrowType::Float)),
                                 _ => CrowType::Unknown,
                             };
                         }

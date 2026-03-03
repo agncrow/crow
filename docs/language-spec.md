@@ -876,6 +876,18 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | `math.choice[x, n]` | Random sample of n elements (no replacement) |
 | `math.permutation[n]` | Random permutation of 0..n |
 
+#### Signal Processing
+
+| Function | Description |
+|---|---|
+| `math.fft[x]` | 1D FFT → returns [real, imag] tensors |
+| `math.ifft[real, imag]` | Inverse 1D FFT → returns real tensor |
+| `math.fft2[m]` | 2D FFT → returns [real, imag] tensors |
+| `math.conv[a, b]` | 1D convolution (full), length = len(a)+len(b)-1 |
+| `math.conv2d[a, b]` | 2D convolution (full) |
+| `math.hamming[n]` | Hamming window of length n |
+| `math.hanning[n]` | Hanning (Hann) window of length n |
+
 #### Constants
 
 | Constant | Description |

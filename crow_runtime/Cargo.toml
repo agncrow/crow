@@ -9,5 +9,6 @@ faer = "0.24.0"
 pollster = "0.4.0"
 rand = "0.10.0"
 rand_distr = "0.6.0"
+rustfft = "6.4.1"
 wgpu = "28.0.0"
 
