@@ -132,3 +132,17 @@ log[math.imag[c]]
 log[math.magnitude[c]]
 log[math.phase[c]]
 log[math.conjugate[c]]
+
+--- sparse arrays ---
+s = math.sparse[math.eye[3]]
+log[s]
+log[type[s]]
+s2 = math.sparse[[0, 1, 2], [0, 1, 2], [5, 6, 7], [3, 3]]
+r = s * [1, 2, 3]
+log[r]
+s3 = s + s2
+log[s3]
+d = math.dense[s3]
+log[d]
+x = math.solve[s2, [10, 12, 14]]
+log[x]
