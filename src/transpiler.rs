@@ -54,6 +54,8 @@ pub struct Transpiler {
     emitting_dual: bool,
     /// Module registry for generic module dispatch
     registry: crate::modules::ModuleRegistry,
+    /// Function names that are used as web route handlers (need CrowRequest param + CrowResponse return)
+    web_handlers: std::collections::HashSet<String>,
 }
 
 impl Transpiler {
@@ -85,6 +87,7 @@ impl Transpiler {
             grad_functions: std::collections::HashSet::new(),
             emitting_dual: false,
             registry: crate::modules::ModuleRegistry::new(),
+            web_handlers: std::collections::HashSet::new(),
         }
     }
 
@@ -252,6 +255,53 @@ impl Transpiler {
             }
         }
         out
+    }
+
+    /// Scan statements for route[] calls and collect the handler function names.
+    fn scan_web_handlers(stmts: &[Stmt], out: &mut std::collections::HashSet<String>) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Assign { value, .. } => Self::collect_web_handlers_expr(value, out),
+                Stmt::ExprStmt(e) => Self::collect_web_handlers_expr(e, out),
+                Stmt::If { condition, then_body, else_body, .. } => {
+                    Self::collect_web_handlers_expr(condition, out);
+                    Self::scan_web_handlers(then_body, out);
+                    if let Some(eb) = else_body { Self::scan_web_handlers(eb, out); }
+                }
+                Stmt::While { condition, body, .. } => {
+                    Self::collect_web_handlers_expr(condition, out);
+                    Self::scan_web_handlers(body, out);
+                }
+                Stmt::For { body, .. } => Self::scan_web_handlers(body, out),
+                Stmt::FnDecl { body, .. } => Self::scan_web_handlers(body, out),
+                _ => {}
+            }
+        }
+    }
+
+    /// Collect handler function names from route[app, path, handler] call expressions.
+    fn collect_web_handlers_expr(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+        match expr {
+            Expr::Call { callee, args } => {
+                if let Expr::Ident(name) = callee.as_ref() {
+                    if name == "route" && args.len() >= 3 {
+                        // Third arg is the handler — could be Ident (named fn) or Lambda
+                        if let Expr::Ident(handler_name) = &args[2] {
+                            out.insert(handler_name.clone());
+                        }
+                    }
+                }
+                // Recurse into subexpressions
+                Self::collect_web_handlers_expr(callee, out);
+                for a in args { Self::collect_web_handlers_expr(a, out); }
+            }
+            Expr::BinOp { left, right, .. } => {
+                Self::collect_web_handlers_expr(left, out);
+                Self::collect_web_handlers_expr(right, out);
+            }
+            Expr::FieldAccess { object, .. } => Self::collect_web_handlers_expr(object, out),
+            _ => {}
+        }
     }
 
     /// Compute which function parameters should be passed by reference.
@@ -568,6 +618,20 @@ impl Transpiler {
                 if module_name == "math" || path.starts_with("math.") {
                     self.needs_crow_runtime = true;
                 }
+                // Detect web modules early so imports/async main can be emitted
+                if path == "web" || path.starts_with("web.") {
+                    self.needs_crow_web = true;
+                    if path == "web" {
+                        self.web_features.insert("http".to_string());
+                    } else {
+                        let sub = &path[4..];
+                        let feature = match sub {
+                            "static" => "static_files",
+                            other => other,
+                        };
+                        self.web_features.insert(feature.to_string());
+                    }
+                }
                 // Load modules into registry early
                 if path == "math" {
                     if !self.registry.is_loaded("math") {
@@ -631,6 +695,21 @@ impl Transpiler {
             }
         }
 
+        // Pre-scan: find web handler functions (passed to route[])
+        Self::scan_web_handlers(stmts, &mut self.web_handlers);
+        for sig in self.ctx.functions.values() {
+            Self::scan_web_handlers(&sig.body, &mut self.web_handlers);
+        }
+        // Update handler function signatures: param = CrowRequest, return = CrowResponse
+        for handler_name in self.web_handlers.clone() {
+            if let Some(sig) = self.ctx.functions.get_mut(&handler_name) {
+                if let Some((_, ptype)) = sig.params.first_mut() {
+                    *ptype = CrowType::WebRequest;
+                }
+                sig.return_type = CrowType::WebResponse;
+            }
+        }
+
         // Compute which params should be passed by reference
         self.compute_by_ref_params();
 
@@ -656,6 +735,18 @@ impl Transpiler {
         let needs_sparse = self.ctx.vars.values().any(|ty| Self::type_uses_sparse(ty));
         if needs_sparse {
             self.emit_line("use crow_runtime::sparse::CrowSparse;");
+        }
+        // Import crow_web types if web modules are used
+        if self.needs_crow_web {
+            self.emit_line("use crow_web::server::CrowApp;");
+            self.emit_line("use crow_web::core::{CrowRequest, CrowResponse};");
+            self.emit_line("use std::sync::Arc;");
+            if self.web_features.contains("db") {
+                self.emit_line("use crow_web::db::CrowSqlite;");
+            }
+            if self.web_features.contains("auth") {
+                self.emit_line("use crow_web::auth::CrowJwt;");
+            }
         }
         self.emit_line("");
 
@@ -794,7 +885,12 @@ impl Transpiler {
             .collect();
 
         // Emit main function with automatic parallelism
-        self.emit_line("fn main() {");
+        if self.needs_crow_web {
+            self.emit_line("#[tokio::main]");
+            self.emit_line("async fn main() {");
+        } else {
+            self.emit_line("fn main() {");
+        }
         self.indent += 1;
         self.emit_panic_hook();
         self.emit_stmts_parallel(&main_stmts);
@@ -2472,6 +2568,71 @@ impl Transpiler {
                         return format!("CrowResult {{ ok: true, value: serde_json::to_string(&{}).unwrap_or_default(), reason: String::new(), kind: String::new(), trace: vec![] }}", arg_strs[0]);
                     }
 
+                    // --- Web builtins ---
+                    if name == "route" && self.needs_crow_web {
+                        if arg_strs.len() == 3 {
+                            // route[app, path, handler] → app.route(path, Arc::new(handler))
+                            return format!("{}.route({}, Arc::new({}))", arg_strs[0], arg_strs[1], arg_strs[2]);
+                        }
+                        if arg_strs.len() == 4 {
+                            // route[app, path, method, handler] → app.route_method(path, method, Arc::new(handler))
+                            return format!("{}.route_method({}, {}, Arc::new({}))", arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[3]);
+                        }
+                    }
+                    if name == "serve" && self.needs_crow_web && arg_strs.len() == 2 {
+                        // serve[app, port] → app.serve(port as u16).await.unwrap()
+                        return format!("{}.serve({} as u16).await.unwrap()", arg_strs[0], arg_strs[1]);
+                    }
+                    if name == "respond" && self.needs_crow_web && arg_strs.len() == 2 {
+                        // respond[status, body] → CrowResponse::respond(status as u16, body)
+                        return format!("CrowResponse::respond({} as u16, {})", arg_strs[0], arg_strs[1]);
+                    }
+                    if name == "redirect" && self.needs_crow_web && arg_strs.len() == 1 {
+                        return format!("CrowResponse::redirect({})", arg_strs[0]);
+                    }
+                    if name == "html" && self.needs_crow_web && arg_strs.len() == 1 {
+                        return format!("CrowResponse::html({})", arg_strs[0]);
+                    }
+                    if name == "text" && self.needs_crow_web && arg_strs.len() == 1 {
+                        return format!("CrowResponse::text({})", arg_strs[0]);
+                    }
+                    // json[] with a Map argument in web context → CrowResponse::json()
+                    if name == "json" && self.needs_crow_web && arg_strs.len() == 1 {
+                        let arg_type = self.ctx.infer_expr(&args[0]);
+                        if matches!(arg_type, CrowType::Map(_)) {
+                            self.needs_serde_json = true;
+                            // Convert BTreeMap to serde_json::Value then wrap in CrowResponse
+                            return format!("CrowResponse::json(serde_json::to_value(&{}).unwrap())", arg_strs[0]);
+                        }
+                    }
+                    // Web.db builtins
+                    if name == "sqlite" && self.needs_crow_web && arg_strs.len() == 1 {
+                        return format!("CrowSqlite::open({})", arg_strs[0]);
+                    }
+                    if name == "exec" && self.needs_crow_web && arg_strs.len() >= 2 {
+                        if arg_strs.len() == 2 {
+                            return format!("{}.execute({}, &[])", arg_strs[0], arg_strs[1]);
+                        } else {
+                            let params: Vec<String> = arg_strs[2..].to_vec();
+                            return format!("{}.execute({}, &[{}])", arg_strs[0], arg_strs[1], params.join(", "));
+                        }
+                    }
+                    if name == "query" && self.needs_crow_web && arg_strs.len() >= 2 {
+                        if arg_strs.len() == 2 {
+                            return format!("{}.query({}, &[])", arg_strs[0], arg_strs[1]);
+                        } else {
+                            let params: Vec<String> = arg_strs[2..].to_vec();
+                            return format!("{}.query({}, &[{}])", arg_strs[0], arg_strs[1], params.join(", "));
+                        }
+                    }
+                    // Web.auth builtins
+                    if name == "sign" && self.needs_crow_web && arg_strs.len() == 2 {
+                        return format!("CrowJwt::sign({}, {})", arg_strs[0], arg_strs[1]);
+                    }
+                    if name == "verify" && self.needs_crow_web && arg_strs.len() == 2 {
+                        return format!("CrowJwt::verify({}, {})", arg_strs[0], arg_strs[1]);
+                    }
+
                     // Struct constructor
                     if self.ctx.structs.contains_key(name) {
                         let sig = self.ctx.structs.get(name).unwrap().clone();
@@ -2582,6 +2743,10 @@ impl Transpiler {
                 // Module function/struct call: module.func[args] or module.Struct[args]
                 if let Expr::FieldAccess { object, field } = callee.as_ref() {
                     if let Expr::Ident(mod_name) = object.as_ref() {
+                        // web.new[] → CrowApp::new()
+                        if mod_name == "web" && field == "new" && self.needs_crow_web {
+                            return "CrowApp::new()".to_string();
+                        }
                         let prefixed = format!("{}_{}", mod_name, field);
                         // Module struct constructor
                         if self.ctx.structs.contains_key(&prefixed) {
@@ -4560,5 +4725,81 @@ mod tests {
         let rust = transpile("x = env['PORT', 3000]\n");
         assert!(rust.contains("std::env::var("), "should emit std::env::var\n{}", rust);
         assert!(rust.contains("unwrap_or_else"), "should emit unwrap_or_else for 2-arg env\n{}", rust);
+    }
+
+    // ===== Web transpiler tests =====
+
+    #[test]
+    fn test_web_new_transpile() {
+        let rust = transpile("use web\napp = web.new[]\n");
+        assert!(rust.contains("CrowApp::new()"), "should emit CrowApp::new()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_imports() {
+        let rust = transpile("use web\napp = web.new[]\n");
+        assert!(rust.contains("use crow_web::server::CrowApp;"), "should import CrowApp\n{}", rust);
+        assert!(rust.contains("use crow_web::core::{CrowRequest, CrowResponse};"), "should import CrowRequest/CrowResponse\n{}", rust);
+        assert!(rust.contains("use std::sync::Arc;"), "should import Arc\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_async_main() {
+        let rust = transpile("use web\napp = web.new[]\n");
+        assert!(rust.contains("#[tokio::main]"), "should emit #[tokio::main]\n{}", rust);
+        assert!(rust.contains("async fn main()"), "should emit async fn main\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_route_transpile() {
+        let rust = transpile("use web\nfn handler[req]\n    return text['hello']\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+        assert!(rust.contains(".route("), "should emit .route()\n{}", rust);
+        assert!(rust.contains("Arc::new("), "should wrap handler in Arc\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_serve_transpile() {
+        let rust = transpile("use web\napp = web.new[]\nserve[app, 3000]\n");
+        assert!(rust.contains(".serve("), "should emit .serve()\n{}", rust);
+        assert!(rust.contains(".await"), "should emit .await\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_text_response() {
+        let rust = transpile("use web\nfn handler[req]\n    return text['hello']\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+        assert!(rust.contains("CrowResponse::text("), "should emit CrowResponse::text()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_html_response() {
+        let rust = transpile("use web\nfn handler[req]\n    return html['<h1>hi</h1>']\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+        assert!(rust.contains("CrowResponse::html("), "should emit CrowResponse::html()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_redirect_response() {
+        let rust = transpile("use web\nfn handler[req]\n    return redirect['/home']\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+        assert!(rust.contains("CrowResponse::redirect("), "should emit CrowResponse::redirect()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_respond_response() {
+        let rust = transpile("use web\nfn handler[req]\n    return respond[404, 'not found']\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+        assert!(rust.contains("CrowResponse::respond("), "should emit CrowResponse::respond()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_handler_types() {
+        let rust = transpile("use web\nfn handler[req]\n    return text['hello']\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+        // Handler should have CrowRequest param and CrowResponse return
+        assert!(rust.contains("crow_web::core::CrowRequest"), "handler param should be CrowRequest\n{}", rust);
+        assert!(rust.contains("crow_web::core::CrowResponse"), "handler return should be CrowResponse\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_no_async_without_web() {
+        let rust = transpile("x = 1 + 2\n");
+        assert!(!rust.contains("async fn main"), "should NOT emit async main without web\n{}", rust);
+        assert!(!rust.contains("#[tokio::main]"), "should NOT emit tokio::main without web\n{}", rust);
     }
 }

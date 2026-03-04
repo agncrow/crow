@@ -725,6 +725,10 @@ This is possible because the transpiler sees the entire component at compile tim
 #### `web.router` — Client-Side Routing
 
 Import: `use web.router`
+Compiles to: WASM (browser-side)
+Status: **Deferred** — requires `web.view` WASM target to be functional first.
+
+Client-side URL routing. Intercepts browser navigation and swaps components without a full page reload. Equivalent to React Router, Vue Router, or Leptos Router.
 
 ```
 use web.view
@@ -737,9 +741,37 @@ routes[{
 }]
 ```
 
+**How it works:**
+
+1. `routes[]` registers a mapping from URL patterns to view functions.
+2. On initial page load, the router matches the current URL and renders the corresponding view.
+3. On link clicks, the router intercepts navigation via the History API (`pushState`), matches the new URL, and swaps the rendered component — no server round-trip.
+4. Route params (`:id`) are extracted and passed to the view function as arguments.
+
+**API:**
+
+| Function | Description |
+|----------|-------------|
+| `routes[map]` | Register route table — keys are URL patterns, values are view functions |
+| `navigate[path]` | Programmatic navigation (push new URL, render matching view) |
+| `back[]` | Go back in browser history |
+
+**Rust implementation plan:**
+
+- Uses `web_sys::window().history()` for History API access.
+- Listens to `popstate` events for back/forward navigation.
+- Route matching uses a simple trie or linear scan with `:param` extraction.
+- Integrates with `web.view` — calls the matched view function to produce a VNode tree, then diffs and patches the DOM.
+
+**Dependencies:** `web.view` (for rendering), `wasm-bindgen`, `web-sys` (for browser APIs).
+
 #### `web.store` — State Management
 
 Import: `use web.store`
+Compiles to: WASM (browser-side)
+Status: **Deferred** — requires `web.view` WASM target to be functional first.
+
+Reactive state container. When a value changes, all views that depend on it automatically re-render. Equivalent to Solid.js signals, Leptos signals, or Vue's `reactive()`.
 
 ```
 use web.store
@@ -752,6 +784,55 @@ state = store[{
 --- Reactive updates ---
 state.count = state.count + 1    --- triggers re-render of dependent views ---
 ```
+
+**How it works:**
+
+1. `store[]` creates a reactive state object. Each field becomes a signal.
+2. The transpiler tracks which view expressions read which state fields (dependency tracking at compile time).
+3. When a field is assigned, the runtime notifies only the DOM nodes that depend on that field — fine-grained reactivity, not full re-render.
+4. This is possible because the transpiler sees the entire component at compile time and generates targeted update code.
+
+**API:**
+
+| Function | Description |
+|----------|-------------|
+| `store[map]` | Create reactive state container with initial values |
+| `computed[fn]` | Derived value that auto-updates when dependencies change |
+| `watch[fn]` | Run a side effect whenever its dependencies change |
+
+**Example — derived state:**
+
+```
+use web.store
+
+state = store[{items, [], filter, 'all'}]
+
+visible = computed[fn[]
+  if state.filter eq 'all'
+    state.items
+  else
+    select[state.items, fn[item] item.status eq state.filter]
+]
+```
+
+**Rust implementation plan:**
+
+- Each signal is an `Rc<RefCell<T>>` with a subscriber list.
+- `computed` creates a derived signal that re-evaluates when upstream signals change.
+- `watch` registers a callback on the signal's subscriber list.
+- The transpiler generates the dependency graph at compile time — no runtime tracking overhead.
+
+**Dependencies:** `web.view` (for DOM integration), `wasm-bindgen`.
+
+#### Design Note: `web.router` and `web.store` are deferred
+
+These modules only make sense inside a WASM frontend. They require:
+
+1. `web.view` compiling to `wasm32-unknown-unknown` via `wasm-bindgen`.
+2. A reactive runtime that connects signals to DOM nodes.
+3. Browser API access (`web-sys`) for History API, event listeners, etc.
+
+This is equivalent to building Leptos or Yew from scratch — a significant multi-month effort. The server-side modules (`web`, `web.db`, `web.auth`, etc.) deliver value now and are the current priority. These client-side modules will be implemented when the frontend compilation pipeline is in place.
 
 ---
 
@@ -801,16 +882,20 @@ cors[app, {origin, '*', methods, ['GET', 'POST']}]
 
 ## Rendering Modes
 
+**Status: Deferred** — depends on `web.view`, `web.router`, and `web.store` WASM compilation.
+
 The same Crow source code can be compiled with different strategies:
 
-| Mode | Command | What happens |
-|------|---------|-------------|
-| **SPA** | `crow build --spa` | Full WASM app, client-side routing |
-| **SSR** | `crow build --ssr` | Server renders HTML, WASM hydrates on client |
-| **LiveView** | `crow build --live` | Server renders + WebSocket diffs, minimal client JS |
-| **Static** | `crow build --static` | Pre-renders all pages to HTML at build time |
+| Mode | Command | What happens | Dependencies |
+|------|---------|-------------|--------------|
+| **SPA** | `crow build --spa` | Full WASM app, client-side routing | `web.view`, `web.router`, `web.store` |
+| **SSR** | `crow build --ssr` | Server renders HTML, WASM hydrates on client | `web.view`, `web.router`, `web` |
+| **LiveView** | `crow build --live` | Server renders + WebSocket diffs, minimal client JS | `web.live` (✅ implemented) |
+| **Static** | `crow build --static` | Pre-renders all pages to HTML at build time | `web.view`, `web.template` |
 
 The user doesn't change code — just the build flag.
+
+**Current state:** `--live` is the closest to working — `web.live` already has the LCS diff engine and WebSocket push. The other three modes require the WASM frontend pipeline (`wasm-bindgen`, `wasm32-unknown-unknown` target, browser DOM access) which is not yet implemented. See the Design Note under `web.router` and `web.store` for details.
 
 ---
 

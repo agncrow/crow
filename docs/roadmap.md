@@ -78,19 +78,27 @@ Currently Crow has basic I/O (`read`, `write`, `args`, `input`, `env`, `time`, `
 
 > **See [docs/web-framework.md](web-framework.md) for the full design document.**
 
-#### HTTP server
-- [ ] **`serve[port]`** — start HTTP server on port.
-- [ ] **`route[method, path, handler]`** — register route handler. Handler receives request map, returns response map.
-- [ ] **Request/response model** — request: `{method, path, headers, body, query}`. Response: `{status, body, headers}`.
-- [ ] **Static files** — `static[path]` to serve a directory.
+#### Rust crate (`crow_web`) — ✅ Done
+All 17 server-side modules implemented with 119 tests passing:
+- [x] `web` (server), `web.client`, `web.ws`, `web.sse`, `web.cors`, `web.static`, `web.upload`, `web.rate`
+- [x] `web.auth`, `web.session`, `web.template`, `web.db`, `web.mail`, `web.cache`, `web.queue`
+- [x] `web.docs` (OpenAPI + Swagger UI), `web.live` (LCS diff + WS push), `web.view` (VNode diff + JS module gen)
+- [x] Transpiler wiring — `use web.X` → feature flags in generated Cargo.toml
 
-#### Database
-- [ ] **`connect[url]`** — connect to database (SQLite, PostgreSQL). Returns connection handle.
-- [ ] **`query[conn, sql, params]`** — execute SQL query → array of maps (rows). Error-value on failure.
-- [ ] **`execute[conn, sql, params]`** — execute SQL statement (INSERT, UPDATE, DELETE) → `{rows_affected}`.
+#### Transpiler codegen — remaining
+- [ ] **Web builtins codegen** — transpiler emits Rust code for `web.new[]`, `route[]`, `serve[]`, `json[]`, `cors[]`, etc.
+- [ ] **Interpreter support** — `web.*` builtins work in `crow run -i` mode.
 
-#### WebSocket
-- [ ] **`ws[url, handler]`** — WebSocket client/server support.
+#### Client-side WASM — deferred
+These require building a full WASM frontend pipeline (`wasm-bindgen`, `web-sys`, reactive runtime). Multi-month effort, deferred until server-side modules are fully usable from Crow source code.
+- [ ] **`web.router`** — Client-side URL routing (History API, route matching, component swapping).
+- [ ] **`web.store`** — Reactive state management (signals, computed values, fine-grained DOM updates).
+- [ ] **Build modes** — `crow build --spa`, `--ssr`, `--live`, `--static` (see Rendering Modes in web-framework.md).
+
+#### Response formats — remaining
+- [ ] **`msgpack[value]`** — MessagePack binary response via `rmp-serde`.
+- [ ] **`arrow[frame]`** — Arrow IPC response for DataFrames/tensors.
+- [ ] **`stream[fn]`** — Streaming/chunked response.
 
 ### P5 — GPU runtime (weeks)
 
@@ -132,7 +140,7 @@ Currently Crow has basic I/O (`read`, `write`, `args`, `input`, `env`, `time`, `
 | Python | 10/10 | 8/10 | 9/10 | 10/10 | 9/10 |
 | Go | 9/10 | 9/10 | 7/10 | 8/10 | 8/10 |
 | JavaScript/Node | 7/10 | 10/10 | 8/10 | 10/10 | 9/10 |
-| **Crow** | 3/10 | 0/10 | 0/10 | 1/10 | 2/10 |
+| **Crow** | 3/10 | 1/10 | 1/10 | 1/10 | 2/10 |
 
-Completing P0–P1 would bring the data science rating to **7/10**. Completing P3 (general-purpose) would bring the fullstack rating from 2/10 to **5/10**. P4 (web/DB) would bring it to **7/10**. P5–P7 are what separate a usable tool from a production ecosystem.
+The Rust crate (`crow_web`) is implemented with 17 modules and 119 tests, but the transpiler doesn't yet emit Rust code for web builtins — so Crow source code can't use them yet. Web/DB ratings will jump to **6-7/10** once transpiler codegen is wired up. Completing P3 (general-purpose) would bring the fullstack rating to **5/10**. P5–P7 are what separate a usable tool from a production ecosystem.
 
