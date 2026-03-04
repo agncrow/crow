@@ -76,6 +76,8 @@ Currently Crow has basic I/O (`read`, `write`, `args`, `input`, `env`, `time`, `
 
 ### P4 — Fullstack / web (weeks)
 
+> **See [docs/web-framework.md](web-framework.md) for the full design document.**
+
 #### HTTP server
 - [ ] **`serve[port]`** — start HTTP server on port.
 - [ ] **`route[method, path, handler]`** — register route handler. Handler receives request map, returns response map.

@@ -2168,15 +2168,27 @@ impl Interpreter {
                 }
             }
             "env" => {
-                if args.len() != 1 { return Err("env[] takes exactly 1 argument".into()); }
+                if args.is_empty() || args.len() > 2 { return Err("env[] takes 1 or 2 arguments".into()); }
                 match args[0].unwrap_or_propagate()? {
                     Value::Str(name) => {
                         match std::env::var(name) {
                             Ok(val) => Ok(CrowValue::ok(Value::Str(val))),
-                            Err(_) => Ok(CrowValue::ok(Value::Str(String::new()))),
+                            Err(_) => {
+                                if args.len() == 2 {
+                                    // env[key, default] — return default
+                                    Ok(args[1].clone())
+                                } else {
+                                    // env[key] — return error-value
+                                    Ok(CrowValue::error_with_kind(
+                                        &format!("environment variable '{}' not set", name),
+                                        "env",
+                                        &self.trace_entry(),
+                                    ))
+                                }
+                            }
                         }
                     }
-                    _ => Err("env[] requires a string".into()),
+                    _ => Err("env[] requires a string key".into()),
                 }
             }
             "exit" => {
@@ -5347,5 +5359,40 @@ mod tests {
     fn test_fs_rm_nonexistent() {
         let val = get_var("x = rm['/tmp/no_such_file_crow_test_xyz']\n", "x");
         assert!(!val.ok, "rm on nonexistent path should return error-value");
+    }
+
+    // ===== env builtin =====
+
+    #[test]
+    fn test_env_existing_var() {
+        unsafe { std::env::set_var("CROW_TEST_ENV_VAR", "hello123"); }
+        let val = get_var("x = env['CROW_TEST_ENV_VAR']\n", "x");
+        assert!(val.ok, "env[] on existing var should succeed");
+        assert_eq!(format!("{}", val.value), "hello123");
+        unsafe { std::env::remove_var("CROW_TEST_ENV_VAR"); }
+    }
+
+    #[test]
+    fn test_env_missing_var_no_default() {
+        unsafe { std::env::remove_var("CROW_TEST_NONEXISTENT_XYZ"); }
+        let val = get_var("x = env['CROW_TEST_NONEXISTENT_XYZ']\n", "x");
+        assert!(!val.ok, "env[] on missing var without default should return error-value");
+    }
+
+    #[test]
+    fn test_env_missing_var_with_default() {
+        unsafe { std::env::remove_var("CROW_TEST_NONEXISTENT_XYZ"); }
+        let val = get_var("x = env['CROW_TEST_NONEXISTENT_XYZ', 3000]\n", "x");
+        assert!(val.ok, "env[] with default should succeed");
+        assert_eq!(format!("{}", val.value), "3000");
+    }
+
+    #[test]
+    fn test_env_existing_var_ignores_default() {
+        unsafe { std::env::set_var("CROW_TEST_ENV_PORT", "8080"); }
+        let val = get_var("x = env['CROW_TEST_ENV_PORT', 3000]\n", "x");
+        assert!(val.ok);
+        assert_eq!(format!("{}", val.value), "8080");
+        unsafe { std::env::remove_var("CROW_TEST_ENV_PORT"); }
     }
 }

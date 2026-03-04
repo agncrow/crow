@@ -2330,8 +2330,12 @@ impl Transpiler {
                             _ => format!("std::thread::sleep(std::time::Duration::from_secs_f64({}))", arg_strs[0]),
                         };
                     }
-                    if name == "env" && arg_strs.len() == 1 {
-                        return format!("std::env::var({}).unwrap_or_default()", arg_strs[0]);
+                    if name == "env" {
+                        if arg_strs.len() == 2 {
+                            return format!("std::env::var({}).unwrap_or_else(|_| {}.to_string())", arg_strs[0], arg_strs[1]);
+                        } else if arg_strs.len() == 1 {
+                            return format!("std::env::var({}).unwrap_or_default()", arg_strs[0]);
+                        }
                     }
                     if name == "exit" {
                         if arg_strs.is_empty() {
@@ -4517,5 +4521,21 @@ mod tests {
     fn test_fs_cp_transpile() {
         let rust = transpile("cp['a.txt', 'b.txt']\n");
         assert!(rust.contains("std::fs::copy("), "should emit fs::copy for cp\n{}", rust);
+    }
+
+    // ===== env builtin =====
+
+    #[test]
+    fn test_env_one_arg_transpile() {
+        let rust = transpile("x = env['PORT']\n");
+        assert!(rust.contains("std::env::var("), "should emit std::env::var\n{}", rust);
+        assert!(rust.contains("unwrap_or_default()"), "should emit unwrap_or_default for 1-arg env\n{}", rust);
+    }
+
+    #[test]
+    fn test_env_two_arg_transpile() {
+        let rust = transpile("x = env['PORT', 3000]\n");
+        assert!(rust.contains("std::env::var("), "should emit std::env::var\n{}", rust);
+        assert!(rust.contains("unwrap_or_else"), "should emit unwrap_or_else for 2-arg env\n{}", rust);
     }
 }

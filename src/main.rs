@@ -18,7 +18,43 @@ use parser::Parser;
 use std::process;
 use std::collections::HashMap;
 
+/// Load `.env` file from the current directory if it exists.
+/// Each line should be `KEY=VALUE`. Lines starting with `#` are comments.
+/// Empty lines and lines without `=` are skipped.
+fn load_dotenv() {
+    let path = std::path::Path::new(".env");
+    if !path.exists() {
+        return;
+    }
+    if let Ok(contents) = std::fs::read_to_string(path) {
+        for line in contents.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            if let Some(pos) = trimmed.find('=') {
+                let key = trimmed[..pos].trim();
+                let val = trimmed[pos + 1..].trim();
+                // Strip surrounding quotes if present
+                let val = if (val.starts_with('\'') && val.ends_with('\''))
+                    || (val.starts_with('"') && val.ends_with('"'))
+                {
+                    &val[1..val.len() - 1]
+                } else {
+                    val
+                };
+                // Only set if not already set (real env vars take priority)
+                if std::env::var(key).is_err() {
+                    // SAFETY: load_dotenv runs once at startup before any threads are spawned.
+                    unsafe { std::env::set_var(key, val); }
+                }
+            }
+        }
+    }
+}
+
 fn main() {
+    load_dotenv();
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
