@@ -108,6 +108,68 @@ impl CrowDocs {
     }
 }
 
+impl CrowDocs {
+    /// Return the Swagger UI HTML page that loads the OpenAPI spec from `spec_path`.
+    pub fn swagger_html(spec_path: &str) -> String {
+        format!(
+            r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>API Docs</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    SwaggerUIBundle({{ url: '{}', dom_id: '#swagger-ui' }});
+  </script>
+</body>
+</html>"#,
+            spec_path
+        )
+    }
+
+    /// Build an Axum router that serves Swagger UI at `ui_path` and the
+    /// OpenAPI JSON spec at `ui_path`/openapi.json.
+    pub fn into_router(self, ui_path: &str) -> axum::Router {
+        let spec_json = self.to_openapi_json().to_string();
+        let spec_path = format!("{}/openapi.json", ui_path.trim_end_matches('/'));
+        let html = Self::swagger_html(&spec_path);
+
+        let ui_route = axum::Router::new()
+            .route(
+                ui_path,
+                axum::routing::get({
+                    let html = html.clone();
+                    move || {
+                        let html = html.clone();
+                        async move {
+                            axum::response::Html(html)
+                        }
+                    }
+                }),
+            )
+            .route(
+                &spec_path,
+                axum::routing::get({
+                    let spec_json = spec_json.clone();
+                    move || {
+                        let spec_json = spec_json.clone();
+                        async move {
+                            (
+                                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                                spec_json,
+                            )
+                        }
+                    }
+                }),
+            );
+        ui_route
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,6 +219,38 @@ mod tests {
         let params = &spec["paths"]["/users/{id}"]["get"]["parameters"];
         assert_eq!(params[0]["name"], "id");
         assert_eq!(params[0]["in"], "path");
+    }
+
+    #[test]
+    fn test_swagger_html_contains_spec_url() {
+        let html = CrowDocs::swagger_html("/api/openapi.json");
+        assert!(html.contains("swagger-ui"));
+        assert!(html.contains("/api/openapi.json"));
+        assert!(html.contains("SwaggerUIBundle"));
+    }
+
+    #[test]
+    fn test_openapi_multiple_methods_same_path() {
+        let mut docs = CrowDocs::new("API", "1.0");
+        docs.add(CrowEndpoint {
+            path: "/items".to_string(),
+            method: "GET".to_string(),
+            summary: "List".to_string(),
+            description: "".to_string(),
+            params: vec![],
+            response_type: "array".to_string(),
+        });
+        docs.add(CrowEndpoint {
+            path: "/items".to_string(),
+            method: "POST".to_string(),
+            summary: "Create".to_string(),
+            description: "".to_string(),
+            params: vec![],
+            response_type: "object".to_string(),
+        });
+        let spec = docs.to_openapi_json();
+        assert!(spec["paths"]["/items"]["get"].is_object());
+        assert!(spec["paths"]["/items"]["post"].is_object());
     }
 }
 
