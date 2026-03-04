@@ -1,0 +1,5 @@
+use io
+rows = csv['/tmp/bench_mixed_1gb.csv']
+log[len[rows]]
+log[rows[0]]
+

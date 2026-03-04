@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 pub struct StatsModule;
 
 const STATS_FUNCTIONS: &[&str] = &[
-    "median", "std", "var", "percentile", "zscore", "corr", "cov", "ttest",
+    "median", "std", "var", "percentile", "zscore", "corr", "cov", "ttest", "linreg",
 ];
 
 impl CrowModule for StatsModule {
@@ -105,6 +105,20 @@ fn call_stats(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
                 _ => Err("ttest: expected two numarrays".into()),
             }
         }
+        "linreg" => {
+            if args.len() != 2 { return Err("linreg: expected 2 arguments (x, y)".into()); }
+            match (&args[0].value, &args[1].value) {
+                (Value::NumArray(x), Value::NumArray(y)) => {
+                    let (slope, intercept, r2) = crow_runtime::stats::linreg(x, y);
+                    let mut map = BTreeMap::new();
+                    map.insert("slope".to_string(), CrowValue::ok(Value::Float(slope)));
+                    map.insert("intercept".to_string(), CrowValue::ok(Value::Float(intercept)));
+                    map.insert("r2".to_string(), CrowValue::ok(Value::Float(r2)));
+                    Ok(CrowValue::ok(Value::Map(map)))
+                }
+                _ => Err("linreg: expected two numarrays".into()),
+            }
+        }
         _ => Err(format!("{}: unknown stats function", name)),
     }
 }
@@ -119,6 +133,7 @@ fn emit_stats_rust(name: &str, arg_strs: &[String]) -> Result<String, String> {
         "corr" => format!("crow_runtime::stats::corr(&{}, &{})", arg_strs[0], arg_strs[1]),
         "cov" => format!("crow_runtime::stats::cov(&{}, &{})", arg_strs[0], arg_strs[1]),
         "ttest" => format!("{{ let (_t, _p) = crow_runtime::stats::ttest(&{}, &{}); let mut _m = std::collections::BTreeMap::new(); _m.insert(\"t\".to_string(), _t); _m.insert(\"p\".to_string(), _p); _m }}", arg_strs[0], arg_strs[1]),
+        "linreg" => format!("{{ let (_s, _i, _r) = crow_runtime::stats::linreg(&{}, &{}); let mut _m = std::collections::BTreeMap::new(); _m.insert(\"slope\".to_string(), _s); _m.insert(\"intercept\".to_string(), _i); _m.insert(\"r2\".to_string(), _r); _m }}", arg_strs[0], arg_strs[1]),
         _ => return Err(format!("{}: unknown stats function for transpiler", name)),
     };
     Ok(result)
@@ -128,8 +143,79 @@ fn stats_type_of(name: &str) -> CrowType {
     match name {
         "median" | "std" | "var" | "percentile" | "corr" | "cov" => CrowType::Float,
         "zscore" => CrowType::NumArray(Box::new(CrowType::Float)),
-        "ttest" => CrowType::Map(Box::new(CrowType::Float)),
+        "ttest" | "linreg" => CrowType::Map(Box::new(CrowType::Float)),
         _ => CrowType::Unknown,
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::value::{CrowValue, Value};
+    use crow_runtime::tensor::CrowTensor;
+
+    fn tensor_1d(data: Vec<f64>) -> CrowValue {
+        let len = data.len();
+        CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len])))
+    }
+
+    fn unwrap_map(r: Result<CrowValue, String>) -> BTreeMap<String, CrowValue> {
+        let cv = r.expect("call_stats failed");
+        assert!(cv.ok, "CrowValue is error: {}", cv.reason);
+        match cv.value {
+            Value::Map(m) => m,
+            other => panic!("expected Map, got {:?}", other),
+        }
+    }
+
+    fn unwrap_float(r: Result<CrowValue, String>) -> f64 {
+        let cv = r.expect("call_stats failed");
+        assert!(cv.ok, "CrowValue is error: {}", cv.reason);
+        match cv.value {
+            Value::Float(f) => f,
+            other => panic!("expected Float, got {:?}", other),
+        }
+    }
+
+    fn approx_eq(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-6
+    }
+
+    fn map_float(m: &BTreeMap<String, CrowValue>, key: &str) -> f64 {
+        match &m[key].value {
+            Value::Float(f) => *f,
+            other => panic!("expected Float for key '{}', got {:?}", key, other),
+        }
+    }
+
+    #[test]
+    fn test_linreg_dispatch() {
+        let x = tensor_1d(vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+        let y = tensor_1d(vec![3.0, 5.0, 7.0, 9.0, 11.0]); // y = 2x + 1
+        let m = unwrap_map(call_stats("linreg", &[x, y]));
+        assert!(approx_eq(map_float(&m, "slope"), 2.0));
+        assert!(approx_eq(map_float(&m, "intercept"), 1.0));
+        assert!(approx_eq(map_float(&m, "r2"), 1.0));
+    }
+
+    #[test]
+    fn test_linreg_wrong_args() {
+        let x = tensor_1d(vec![1.0, 2.0]);
+        assert!(call_stats("linreg", &[x]).is_err());
+    }
+
+    #[test]
+    fn test_median_dispatch() {
+        let x = tensor_1d(vec![3.0, 1.0, 2.0]);
+        let v = unwrap_float(call_stats("median", &[x]));
+        assert!(approx_eq(v, 2.0));
+    }
+
+    #[test]
+    fn test_ttest_dispatch() {
+        let x = tensor_1d(vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+        let y = tensor_1d(vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+        let m = unwrap_map(call_stats("ttest", &[x, y]));
+        assert!(approx_eq(map_float(&m, "t"), 0.0));
+    }
+}

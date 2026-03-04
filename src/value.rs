@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
+use crow_runtime::frame::CrowFrame;
 use crow_runtime::tensor::CrowTensor;
 use crow_runtime::sparse::CrowSparse;
 
@@ -98,6 +99,7 @@ pub enum Value {
     StructInstance(StructInstance),
     Module(ModuleValue),
     Sparse(CrowSparse), // sparse matrix (CSR format)
+    Frame(CrowFrame), // column-oriented data frame
     Dual(f64, f64), // dual number for autograd: (real, derivative)
     GradFn(FnValue), // gradient function wrapping a user function
     Done, // represents no value (from 'done' status)
@@ -152,6 +154,7 @@ impl Value {
             Value::StructInstance(_) => "struct_instance",
             Value::Module(_) => "module",
             Value::Sparse(_) => "sparse",
+            Value::Frame(_) => "frame",
             Value::Dual(_, _) => "float", // Dual appears as float to user
             Value::GradFn(_) => "fn",
             Value::Done => "done",
@@ -233,6 +236,7 @@ impl fmt::Display for Value {
                 write!(f, "]")
             }
             Value::Sparse(s) => write!(f, "{}", s),
+            Value::Frame(frame) => write!(f, "{}", frame),
             Value::GradFn(func) => write!(f, "<grad {}>", func.name),
             Value::Module(m) => write!(f, "<module {}>", m.name),
             Value::Dual(real, _) => {

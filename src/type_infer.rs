@@ -24,6 +24,10 @@ pub enum CrowType {
     NumArray(Box<CrowType>),
     /// Sparse matrix backed by CrowSparse (CSR format).
     Sparse,
+    /// Column-oriented data frame.
+    Frame,
+    /// A single typed column from a frame (CrowColumn wrapper).
+    FrameCol,
     Void,
     Unknown,
 }
@@ -47,6 +51,8 @@ impl CrowType {
             CrowType::Json => "serde_json::Value".into(),
             CrowType::NumArray(_) => "crow_runtime::tensor::CrowTensor".into(),
             CrowType::Sparse => "crow_runtime::sparse::CrowSparse".into(),
+            CrowType::Frame => "crow_runtime::frame::CrowFrame".into(),
+            CrowType::FrameCol => "crow_runtime::frame::CrowColumn".into(),
             CrowType::Void => "()".into(),
             CrowType::Unknown => "String".into(),
         }
@@ -69,6 +75,8 @@ impl CrowType {
             CrowType::Json => "serde_json::Value::Null".into(),
             CrowType::NumArray(_) => "crow_runtime::tensor::CrowTensor::zeros(vec![0])".into(),
             CrowType::Sparse => "CrowSparse::from_coo(&[], &[], &[], 0, 0)".into(),
+            CrowType::Frame => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])".into(),
+            CrowType::FrameCol => "crow_runtime::frame::CrowColumn { data: std::sync::Arc::new(crow_runtime::frame::Column::Int(vec![])), valid: std::sync::Arc::new(vec![]) }".into(),
             CrowType::Void => "()".into(),
             CrowType::Unknown => "String::new()".into(),
         }
@@ -84,6 +92,8 @@ impl CrowType {
             CrowType::Array(inner) => format!("array[{}]", inner.crow_name()),
             CrowType::NumArray(_) => "array".into(),
             CrowType::Sparse => "sparse".into(),
+            CrowType::Frame => "frame".into(),
+            CrowType::FrameCol => "column".into(),
             CrowType::Map(inner) => format!("map[{}]", inner.crow_name()),
             CrowType::Struct(name) => name.clone(),
             CrowType::OptBoxStruct(name) => name.clone(),
@@ -236,6 +246,11 @@ impl TypeContext {
                     if path == "io" {
                         if !self.registry.is_loaded("io") {
                             self.registry.load(std::sync::Arc::new(crate::modules::io::IoModule));
+                        }
+                    }
+                    if path == "frame" {
+                        if !self.registry.is_loaded("frame") {
+                            self.registry.load(std::sync::Arc::new(crate::modules::frame::FrameModule));
                         }
                     }
                 }
@@ -961,6 +976,7 @@ impl TypeContext {
                         CrowType::NumArray(inner) => return *inner.clone(),
                         CrowType::Map(inner) => return *inner.clone(),
                         CrowType::Str => return CrowType::Str,
+                        CrowType::FrameCol => return CrowType::Str, // col[i] → string
                         _ => {}
                     }
                 }
@@ -1000,9 +1016,18 @@ impl TypeContext {
                 // Unwrap to get inner types for determining result type
                 let lt_inner = if let CrowType::Result(inner) = &lt { *inner.clone() } else { lt };
                 let rt_inner = if let CrowType::Result(inner) = &rt { *inner.clone() } else { rt };
+                // Check if either side is a frame column (FrameCol or legacy Array(Str))
+                let is_frame_col = |t: &CrowType| matches!(t, CrowType::FrameCol) || matches!(t, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Str));
                 let result_type = match op {
                     BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt
-                    | BinOp::Gte | BinOp::Lte | BinOp::And | BinOp::Or => CrowType::Bool,
+                    | BinOp::Gte | BinOp::Lte | BinOp::And | BinOp::Or => {
+                        // FrameCol compared to scalar → Array(Bool)
+                        if is_frame_col(&lt_inner) || is_frame_col(&rt_inner) {
+                            CrowType::Array(Box::new(CrowType::Bool))
+                        } else {
+                            CrowType::Bool
+                        }
+                    }
                     BinOp::Mod => CrowType::Int,
                     BinOp::Pow => {
                         // ^ returns Float if either operand is Float, else Int
@@ -1023,8 +1048,13 @@ impl TypeContext {
                         }
                     }
                     BinOp::Mul => {
+                        // Frame column arithmetic with scalar → FrameCol
+                        if is_frame_col(&lt_inner) && matches!(&rt_inner, CrowType::Int | CrowType::Float) {
+                            CrowType::FrameCol
+                        } else if is_frame_col(&rt_inner) && matches!(&lt_inner, CrowType::Int | CrowType::Float) {
+                            CrowType::FrameCol
                         // sparse * dense → NumArray (matmul result)
-                        if matches!(&lt_inner, CrowType::Sparse) && matches!(&rt_inner, CrowType::NumArray(_)) {
+                        } else if matches!(&lt_inner, CrowType::Sparse) && matches!(&rt_inner, CrowType::NumArray(_)) {
                             CrowType::NumArray(Box::new(CrowType::Float))
                         // * on tensor-tensor is matmul (returns NumArray)
                         } else if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
@@ -1034,8 +1064,12 @@ impl TypeContext {
                         }
                     }
                     BinOp::Add => {
+                        // Frame column arithmetic → FrameCol
+                        if (is_frame_col(&lt_inner) && matches!(&rt_inner, CrowType::Int | CrowType::Float))
+                            || (is_frame_col(&rt_inner) && matches!(&lt_inner, CrowType::Int | CrowType::Float)) {
+                            CrowType::FrameCol
                         // sparse + sparse → Sparse
-                        if matches!(&lt_inner, CrowType::Sparse) && matches!(&rt_inner, CrowType::Sparse) {
+                        } else if matches!(&lt_inner, CrowType::Sparse) && matches!(&rt_inner, CrowType::Sparse) {
                             CrowType::Sparse
                         } else if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
                             CrowType::NumArray(Box::new(CrowType::Float))
@@ -1044,8 +1078,12 @@ impl TypeContext {
                         }
                     }
                     BinOp::Sub | BinOp::Div => {
+                        // Frame column arithmetic → FrameCol
+                        if (is_frame_col(&lt_inner) && matches!(&rt_inner, CrowType::Int | CrowType::Float))
+                            || (is_frame_col(&rt_inner) && matches!(&lt_inner, CrowType::Int | CrowType::Float)) {
+                            CrowType::FrameCol
                         // scalar - tensor, tensor - scalar, etc. → NumArray
-                        if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
+                        } else if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
                             CrowType::NumArray(Box::new(CrowType::Float))
                         } else {
                             lt_inner.unify(&rt_inner)
@@ -1106,6 +1144,7 @@ impl TypeContext {
                         }
                         *inner
                     }
+                    CrowType::FrameCol => CrowType::Str, // col[i] → string
                     CrowType::Map(inner) => *inner,
                     CrowType::Json => CrowType::Json,
                     CrowType::Fn(_, ret) => *ret,
@@ -1114,6 +1153,20 @@ impl TypeContext {
             }
             Expr::FieldAccess { object, field } => {
                 let obj_type = self.infer_expr(object);
+                // .ok on FrameCol or Array(Str) → Array(Bool) (validity bitmap)
+                if field == "ok" {
+                    if matches!(&obj_type, CrowType::FrameCol)
+                        || matches!(&obj_type, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Str)) {
+                        return CrowType::Array(Box::new(CrowType::Bool));
+                    }
+                }
+                // DateTime properties on strings → Int
+                if matches!(&obj_type, CrowType::Str) {
+                    match field.as_str() {
+                        "year" | "month" | "day" | "hour" | "minute" | "second" | "offset" => return CrowType::Int,
+                        _ => {}
+                    }
+                }
                 // Error-value metadata fields
                 match field.as_str() {
                     "ok" => return CrowType::Bool,
@@ -1130,6 +1183,23 @@ impl TypeContext {
                         "dtype" | "device" | "grad" => return CrowType::Str,
                         "len" => return CrowType::Int,
                         _ => {}
+                    }
+                }
+                // Frame properties
+                let is_frame = matches!(obj_type, CrowType::Frame)
+                    || matches!(&obj_type, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Frame));
+                if is_frame {
+                    match field.as_str() {
+                        "shape" => return CrowType::Array(Box::new(CrowType::Int)),
+                        "columns" | "dtypes" => return CrowType::Array(Box::new(CrowType::Str)),
+                        _ => return CrowType::FrameCol, // column access by name → typed column
+                    }
+                }
+                // FrameCol properties
+                if matches!(obj_type, CrowType::FrameCol) {
+                    match field.as_str() {
+                        "ok" => return CrowType::Array(Box::new(CrowType::Bool)),
+                        _ => return CrowType::Unknown,
                     }
                 }
                 if let CrowType::Struct(name) = obj_type {

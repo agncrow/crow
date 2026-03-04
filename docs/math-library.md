@@ -992,3 +992,63 @@ Crow's biggest weakness. Python's ecosystem took 15 years to build.
 Crow ties with JAX on design quality. Crow wins on simplicity and scaling. JAX wins on ecosystem and proven performance. PyTorch wins only on ecosystem — its developer experience is mediocre.
 
 Crow's math library design is best-in-class. The language-level directives (`gpu[]`, `nodes[n]`, `grad[f]`, map arithmetic) are cleaner than anything else. But design is cheap — execution is everything. The gap between this document and a working system that can train a real model is enormous.
+
+## Implementation Status: Function Coverage Rating
+
+Honest assessment of what's actually implemented and working, compared to mature languages.
+
+**Function count:** ~160 functions/features across 13 categories (math, linalg, stats, signal, special, complex, sparse, NN, frames, autograd, distributions, I/O, shape ops).
+
+### Category-by-Category
+
+| Category | Crow | NumPy/SciPy | Julia | R | MATLAB |
+|----------|------|-------------|-------|---|--------|
+| Tensor creation | ★★★★ | ★★★★★ | ★★★★★ | ★★★★ | ★★★★★ |
+| Element-wise ops | ★★★★ | ★★★★★ | ★★★★★ | ★★★★★ | ★★★★★ |
+| Reductions | ★★★★ | ★★★★★ | ★★★★★ | ★★★★★ | ★★★★★ |
+| Linear algebra | ★★★★½ | ★★★★★ | ★★★★★ | ★★★ | ★★★★★ |
+| Statistics | ★★★½ | ★★★★★ | ★★★★★ | ★★★★★ | ★★★★ |
+| Signal processing | ★★★ | ★★★★★ | ★★★★ | ★★ | ★★★★★ |
+| Special functions | ★★★ | ★★★★★ | ★★★★★ | ★★★★ | ★★★★★ |
+| Random/distributions | ★★★½ | ★★★★★ | ★★★★★ | ★★★★★ | ★★★★ |
+| Sparse | ★★★ | ★★★★★ | ★★★★★ | ★★★ | ★★★★★ |
+| Complex numbers | ★★★ | ★★★★★ | ★★★★★ | ★★★★ | ★★★★★ |
+| DataFrames | ★★★★ | ★★★★★ (pandas) | ★★★★ (DataFrames.jl) | ★★★★★ | ★★ |
+| Autograd | ★★★★ | ★★★★★ (JAX) | ★★★★★ | ★ | ★ |
+| GPU | ★★ | ★★★★★ (CuPy) | ★★★★ | ★★ | ★★★★ |
+| NN layers | ★★★ | ★★★★★ (PyTorch) | ★★★★ (Flux) | ★★ | ★★★ |
+| Syntax ergonomics | ★★★★★ | ★★★ | ★★★★ | ★★★ | ★★★★ |
+
+### Strengths
+
+- **Syntax**: `W * x + b` for matmul, `.^` for element-wise power, `sort[x]` as universal builtin — cleaner than all competitors.
+- **Operator design**: MATLAB/Julia-style `*` vs `.*` is the right convention for data science.
+- **Error handling**: Automatic `.ok`/`.reason` propagation — no silent NaN poisoning (NumPy), no exceptions (Julia).
+- **Parallel by default**: `for` loops auto-parallelize via rayon. No threading boilerplate.
+- **Linear algebra**: 13 operations (solve, inv, det, svd, qr, cholesky, eigen, norm, dot, pinv, lstsq, triu, tril) — competitive with R, approaching MATLAB's core set.
+- **DataFrames**: Full frame module with load, save, select, filter, sort, group, join, stack, head, tail, fill, unique, rename, stats, datetime, tz — 16 operations covering the core data science workflow.
+- **Distributions**: 8 distributions (normal, uniform, poisson, bernoulli, gamma, beta, exponential + randn) cover ~90% of practical use cases.
+
+### Weaknesses
+
+- **Statistics depth**: 9 functions vs SciPy's ~200. Missing distribution fitting, ANOVA, chi-square, KS test.
+- **Signal processing**: Good start (FFT, conv, windows) but no STFT, spectrogram, filter design.
+- **GPU**: Directive exists (`gpu[n]`) but runtime GPU execution is not yet proven at scale.
+- **Ecosystem**: No package manager, no community packages, no pretrained models.
+
+### Overall
+
+| Language | Breadth | Depth | Ergonomics | Overall |
+|----------|---------|-------|------------|---------|
+| Python (NumPy+SciPy+pandas) | 10/10 | 10/10 | 6/10 | 9/10 |
+| Julia | 9/10 | 9/10 | 8/10 | 9/10 |
+| MATLAB | 9/10 | 10/10 | 7/10 | 8/10 |
+| R | 8/10 | 9/10 (stats) | 5/10 | 7/10 |
+| **Crow** | 6/10 | 5/10 | 9/10 | 6/10 |
+
+### Remaining Gaps (Priority Order)
+
+1. **`rank`, `cond`** — the last two common linalg functions missing
+2. **Distribution fitting** — `fit[data, 'normal']` → returns parameters
+3. **More stats tests** — chi-square, ANOVA, KS test
+4. **Signal depth** — STFT, spectrogram, filter design

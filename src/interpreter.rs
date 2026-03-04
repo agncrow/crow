@@ -346,6 +346,11 @@ impl Interpreter {
             self.registry.load(std::sync::Arc::new(crate::modules::io::IoModule));
             return Ok(());
         }
+        // Built-in module: frame — column-oriented data frames
+        if module_path == "frame" {
+            self.registry.load(std::sync::Arc::new(crate::modules::frame::FrameModule));
+            return Ok(());
+        }
 
         let file_path = self.resolve_module_file(module_path)?;
 
@@ -931,6 +936,52 @@ impl Interpreter {
 
     // --- Expression evaluation ---
 
+    /// Evaluate an expression in "bare-name" mode: if an identifier is not
+    /// a defined variable or constant, return it as a string literal instead
+    /// of raising an error.  Used for frame-module calls where column names
+    /// are passed as bare identifiers (e.g. `sort[df, age]`).
+    fn eval_expr_bare_names(&mut self, expr: &Expr) -> Result<CrowValue, String> {
+        match expr {
+            Expr::Ident(name) => {
+                // Try variable lookup first
+                if let Some(val) = self.env.get(name) {
+                    return Ok(val.clone());
+                }
+                // Try module constants (pi, e, inf, nan)
+                if let Some(val) = self.registry.get_constant(name) {
+                    return Ok(val);
+                }
+                // Bare name → string literal (column name)
+                Ok(CrowValue::ok(Value::Str(name.clone())))
+            }
+            Expr::Array(items) => {
+                // Recursively evaluate each element in bare-name mode
+                let vals: Vec<CrowValue> = items
+                    .iter()
+                    .map(|e| self.eval_expr_bare_names(e))
+                    .collect::<Result<_, _>>()?;
+                // If all elements are numeric, create NumArray
+                let all_numeric = !vals.is_empty() && vals.iter().all(|v| {
+                    v.ok && matches!(v.value, Value::Int(_) | Value::Float(_))
+                });
+                if all_numeric {
+                    let data: Vec<f64> = vals.iter().map(|v| match &v.value {
+                        Value::Int(n) => *n as f64,
+                        Value::Float(f) => *f,
+                        _ => 0.0,
+                    }).collect();
+                    Ok(CrowValue::ok(Value::NumArray(
+                        crow_runtime::tensor::CrowTensor::from_vec(data, vec![vals.len()])
+                    )))
+                } else {
+                    Ok(CrowValue::ok(Value::Array(vals)))
+                }
+            }
+            // All other expressions: delegate to normal eval
+            _ => self.eval_expr(expr),
+        }
+    }
+
     fn eval_expr(&mut self, expr: &Expr) -> Result<CrowValue, String> {
         match expr {
             Expr::Int(n) => Ok(CrowValue::ok(Value::Int(*n))),
@@ -1054,10 +1105,19 @@ impl Interpreter {
 
             // Non-overlapping module functions take priority
             if self.registry.has_function(name) {
-                let arg_vals: Vec<CrowValue> = args
-                    .iter()
-                    .map(|a| self.eval_expr(a))
-                    .collect::<Result<_, _>>()?;
+                // Frame module functions use bare-name evaluation so
+                // unresolved identifiers become column-name strings.
+                let is_frame = self.registry.module_name_for(name)
+                    .map_or(false, |m| m == "frame");
+                let arg_vals: Vec<CrowValue> = if is_frame {
+                    args.iter()
+                        .map(|a| self.eval_expr_bare_names(a))
+                        .collect::<Result<_, _>>()?
+                } else {
+                    args.iter()
+                        .map(|a| self.eval_expr(a))
+                        .collect::<Result<_, _>>()?
+                };
                 return self.registry.call(name, &arg_vals);
             }
 
@@ -1402,6 +1462,7 @@ impl Interpreter {
                         Value::Module(m) => format!("module:{}", m.name),
                         Value::Dual(_, _) => "float".to_string(),
                         Value::GradFn(_) => "fn".to_string(),
+                        Value::Frame(_) => "frame".to_string(),
                         Value::Done => "none".to_string(),
                     }
                 };
@@ -2343,6 +2404,11 @@ impl Interpreter {
                 // sparse + sparse
                 (Value::Sparse(a), Value::Sparse(b)) => Ok(CrowValue::ok(Value::Sparse(a.add(b)))),
                 (Value::Str(_), Value::Str(_)) => Err("cannot use '+' with strings — use string interpolation instead".to_string()),
+                // Vectorized: Array + scalar
+                (Value::Array(items), scalar @ (Value::Int(_) | Value::Float(_))) |
+                (scalar @ (Value::Int(_) | Value::Float(_)), Value::Array(items)) => {
+                    Self::array_scalar_arithmetic(items, scalar, |a, b| a + b)
+                }
                 _ => Err("cannot add these types".to_string()),
             },
             BinOp::Sub => match (l, r) {
@@ -2361,6 +2427,13 @@ impl Interpreter {
                 (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.add_scalar(-*b)))),
                 (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.neg().add_scalar(*a as f64)))),
                 (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.neg().add_scalar(*a)))),
+                // Vectorized: Array - scalar
+                (Value::Array(items), scalar @ (Value::Int(_) | Value::Float(_))) => {
+                    Self::array_scalar_arithmetic(items, scalar, |a, b| a - b)
+                }
+                (scalar @ (Value::Int(_) | Value::Float(_)), Value::Array(items)) => {
+                    Self::array_scalar_arithmetic(items, scalar, |a, b| b - a)
+                }
                 _ => Err("cannot subtract these types".to_string()),
             },
             BinOp::Mul => match (l, r) {
@@ -2382,6 +2455,11 @@ impl Interpreter {
                 (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.mul_scalar(*a)))),
                 // sparse * dense → matmul
                 (Value::Sparse(s), Value::NumArray(t)) => Ok(CrowValue::ok(Value::NumArray(s.matmul_dense(t)))),
+                // Vectorized: Array * scalar
+                (Value::Array(items), scalar @ (Value::Int(_) | Value::Float(_))) |
+                (scalar @ (Value::Int(_) | Value::Float(_)), Value::Array(items)) => {
+                    Self::array_scalar_arithmetic(items, scalar, |a, b| a * b)
+                }
                 _ => Err("cannot multiply these types".to_string()),
             },
             BinOp::Div => match (l, r) {
@@ -2422,6 +2500,13 @@ impl Interpreter {
                 (Value::Float(a), Value::NumArray(b)) => {
                     let scalar_tensor = CrowTensor::full(b.shape().to_vec(), *a);
                     Ok(CrowValue::ok(Value::NumArray(scalar_tensor.div(b))))
+                }
+                // Vectorized: Array / scalar
+                (Value::Array(items), scalar @ (Value::Int(_) | Value::Float(_))) => {
+                    Self::array_scalar_arithmetic(items, scalar, |a, b| a / b)
+                }
+                (scalar @ (Value::Int(_) | Value::Float(_)), Value::Array(items)) => {
+                    Self::array_scalar_arithmetic(items, scalar, |a, b| b / a)
                 }
                 _ => Err("cannot divide these types".to_string()),
             },
@@ -2543,8 +2628,53 @@ impl Interpreter {
             (Value::Int(a), Value::Dual(b, _)) => {
                 Ok(CrowValue::ok(Value::Bool(cmp(*a as f64, *b))))
             }
+            // Vectorized: Array compared to scalar → boolean array
+            (Value::Array(items), scalar @ (Value::Int(_) | Value::Float(_))) => {
+                let results: Vec<CrowValue> = items.iter().map(|item| {
+                    if item.is_error() {
+                        CrowValue::ok(Value::Bool(false))
+                    } else {
+                        let val = match (&item.value, scalar) {
+                            (Value::Int(a), Value::Int(b)) => cmp(*a as f64, *b as f64),
+                            (Value::Float(a), Value::Float(b)) => cmp(*a, *b),
+                            (Value::Int(a), Value::Float(b)) => cmp(*a as f64, *b),
+                            (Value::Float(a), Value::Int(b)) => cmp(*a, *b as f64),
+                            _ => false,
+                        };
+                        CrowValue::ok(Value::Bool(val))
+                    }
+                }).collect();
+                Ok(CrowValue::ok(Value::Array(results)))
+            }
             _ => Err("cannot compare these types".to_string()),
         }
+    }
+
+    /// Apply a scalar arithmetic operation element-wise to an Array of CrowValues.
+    /// Error elements are propagated (preserved as errors).
+    fn array_scalar_arithmetic(
+        items: &[CrowValue],
+        scalar: &Value,
+        op: fn(f64, f64) -> f64,
+    ) -> Result<CrowValue, String> {
+        let scalar_f = match scalar {
+            Value::Int(n) => *n as f64,
+            Value::Float(f) => *f,
+            _ => return Err("non-numeric scalar in array arithmetic".to_string()),
+        };
+        let results: Vec<CrowValue> = items.iter().map(|item| {
+            if item.is_error() {
+                item.clone()
+            } else {
+                let val = match &item.value {
+                    Value::Int(a) => op(*a as f64, scalar_f),
+                    Value::Float(a) => op(*a, scalar_f),
+                    _ => return CrowValue::error("non-numeric value in array", "type"),
+                };
+                CrowValue::ok(Value::Float(val))
+            }
+        }).collect();
+        Ok(CrowValue::ok(Value::Array(results)))
     }
 
     fn eval_unaryop(
@@ -2582,6 +2712,15 @@ impl Interpreter {
         // special fields: .ok, .reason, .kind, .trace — always work, even on errors
         match field {
             "ok" => {
+                // If the outer CrowValue is ok and holds an Array, map .ok over each element
+                if obj.ok {
+                    if let Value::Array(items) = &obj.value {
+                        let bools: Vec<CrowValue> = items.iter()
+                            .map(|item| CrowValue::ok(Value::Bool(item.ok)))
+                            .collect();
+                        return Ok(CrowValue::ok(Value::Array(bools)));
+                    }
+                }
                 return Ok(CrowValue::ok(Value::Bool(obj.ok)));
             }
             "reason" => {
@@ -2620,6 +2759,19 @@ impl Interpreter {
             }
         }
 
+        // DateTime properties on strings: .year, .month, .day, .hour, .minute, .second, .offset
+        if let Value::Str(s) = &obj.value {
+            match field {
+                "year" | "month" | "day" | "hour" | "minute" | "second" | "offset" => {
+                    if let Some(val) = crow_runtime::frame::datetime_field(s, field) {
+                        return Ok(CrowValue::ok(Value::Int(val)));
+                    }
+                    return Err(format!("'{}' is not a valid datetime string", s));
+                }
+                _ => {}
+            }
+        }
+
         // NumArray properties: .shape, .dtype, .device, .grad
         if let Value::NumArray(t) = &obj.value {
             match field {
@@ -2641,6 +2793,58 @@ impl Interpreter {
                     return Ok(CrowValue::ok(Value::Str("none".to_string())));
                 }
                 _ => return Err(format!("numarray has no property '{}'", field)),
+            }
+        }
+
+        // Frame properties: .shape, .columns, .dtypes, .column_name
+        if let Value::Frame(frame) = &obj.value {
+            match field {
+                "shape" => {
+                    let shape = vec![
+                        CrowValue::ok(Value::Int(frame.nrows() as i64)),
+                        CrowValue::ok(Value::Int(frame.ncols() as i64)),
+                    ];
+                    return Ok(CrowValue::ok(Value::Array(shape)));
+                }
+                "columns" => {
+                    let cols: Vec<CrowValue> = frame.columns.iter()
+                        .map(|c| CrowValue::ok(Value::Str(c.clone())))
+                        .collect();
+                    return Ok(CrowValue::ok(Value::Array(cols)));
+                }
+                "dtypes" => {
+                    let dtypes: Vec<CrowValue> = frame.dtypes().iter()
+                        .map(|d| CrowValue::ok(Value::Str(d.to_string())))
+                        .collect();
+                    return Ok(CrowValue::ok(Value::Array(dtypes)));
+                }
+                _ => {
+                    // Try column access by name: df.age returns the column as an array
+                    if let Some(idx) = frame.col_index(field) {
+                        let col = &frame.data[idx];
+                        let validity = &frame.validity[idx];
+                        let nrows = frame.nrows();
+                        let mut vals: Vec<CrowValue> = Vec::with_capacity(nrows);
+                        for i in 0..nrows {
+                            if !validity[i] {
+                                vals.push(CrowValue::error("nan", "missing"));
+                            } else {
+                                let v = match col.as_ref() {
+                                    crow_runtime::frame::Column::Int(v) => Value::Int(v[i]),
+                                    crow_runtime::frame::Column::Float(v) => Value::Float(v[i]),
+                                    crow_runtime::frame::Column::Str(v) => Value::Str(v[i].clone()),
+                                    crow_runtime::frame::Column::Bool(v) => Value::Bool(v[i]),
+                                    crow_runtime::frame::Column::DateTime(millis, offsets) => {
+                                        Value::Str(crow_runtime::frame::format_datetime(millis[i], offsets[i]))
+                                    }
+                                };
+                                vals.push(CrowValue::ok(v));
+                            }
+                        }
+                        return Ok(CrowValue::ok(Value::Array(vals)));
+                    }
+                    return Err(format!("frame has no property or column '{}'", field));
+                }
             }
         }
 
@@ -4594,27 +4798,27 @@ mod tests {
     }
 
     // ===== Layer 3: Random & Distributions =====
+    // All seed-dependent tests in a single function to avoid global RNG state
+    // races (tests share the process-wide GLOBAL_RNG mutex). Same pattern as
+    // distributed.rs::test_distributed_all.
 
     #[test]
-    fn test_math_seed_reproducibility() {
+    fn test_math_random_all() {
+        // --- seed reproducibility ---
         let val = get_var("use math\nseed[42]\na = uniform[0, 1, 3]\nseed[42]\nb = uniform[0, 1, 3]\nr = sum[a] - sum[b]\n", "r");
         match val.value {
             Value::Float(v) => assert!((v).abs() < 1e-15, "same seed should give same uniform, diff={}", v),
             _ => panic!("expected float"),
         }
-    }
 
-    #[test]
-    fn test_math_normal_interp() {
+        // --- normal distribution ---
         let val = get_var("use math\nseed[7]\nx = normal[0, 1, 4]\n", "x");
         match &val.value {
             Value::NumArray(t) => assert_eq!(t.to_vec().len(), 4),
             _ => panic!("expected numarray"),
         }
-    }
 
-    #[test]
-    fn test_math_uniform_interp() {
+        // --- uniform distribution ---
         let val = get_var("use math\nseed[7]\nx = uniform[2, 5, 3]\n", "x");
         match &val.value {
             Value::NumArray(t) => {
@@ -4625,10 +4829,8 @@ mod tests {
             }
             _ => panic!("expected numarray"),
         }
-    }
 
-    #[test]
-    fn test_math_permutation_interp() {
+        // --- permutation ---
         let val = get_var("use math\nseed[1]\nx = permutation[5]\n", "x");
         match &val.value {
             Value::NumArray(t) => {
@@ -4639,6 +4841,9 @@ mod tests {
             }
             _ => panic!("expected numarray"),
         }
+
+        // Clear global seed so we don't pollute other tests
+        crow_runtime::rng::clear_seed();
     }
 
     // ===== Layer 4: Signal Processing =====

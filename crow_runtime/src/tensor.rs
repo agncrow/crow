@@ -418,6 +418,33 @@ impl CrowTensor {
         Self::from_vec(data, shape).maybe_to_gpu()
     }
 
+    /// Create a tensor with Gamma-distributed random values.
+    pub fn gamma_dist(shape: Vec<usize>, alpha: f64, beta: f64) -> Self {
+        use rand_distr::Gamma;
+        let dist: Gamma<f64> = Gamma::new(alpha, beta).expect("gamma_dist: alpha and beta must be > 0");
+        let n = Self::numel(&shape);
+        let data = rng::gen_random_vec(n, |r| dist.sample(r));
+        Self::from_vec(data, shape).maybe_to_gpu()
+    }
+
+    /// Create a tensor with Beta-distributed random values.
+    pub fn beta_dist(shape: Vec<usize>, alpha: f64, beta: f64) -> Self {
+        use rand_distr::Beta;
+        let dist: Beta<f64> = Beta::new(alpha, beta).expect("beta_dist: alpha and beta must be > 0");
+        let n = Self::numel(&shape);
+        let data = rng::gen_random_vec(n, |r| dist.sample(r));
+        Self::from_vec(data, shape).maybe_to_gpu()
+    }
+
+    /// Create a tensor with Exponential-distributed random values.
+    pub fn exponential(shape: Vec<usize>, lambda: f64) -> Self {
+        use rand_distr::Exp;
+        let dist: Exp<f64> = Exp::new(lambda).expect("exponential: lambda must be > 0");
+        let n = Self::numel(&shape);
+        let data = rng::gen_random_vec(n, |r| dist.sample(r));
+        Self::from_vec(data, shape).maybe_to_gpu()
+    }
+
     /// Shuffle tensor elements randomly (returns new tensor).
     pub fn shuffle(&self) -> Self {
         use rand::seq::SliceRandom;
@@ -672,6 +699,14 @@ impl CrowTensor {
 
     pub fn log(&self) -> CrowTensor {
         self.gpu_unary_or_cpu("log", |x| x.ln())
+    }
+
+    pub fn log2(&self) -> CrowTensor {
+        self.map(|x| x.log2())
+    }
+
+    pub fn log10(&self) -> CrowTensor {
+        self.map(|x| x.log10())
     }
 
     pub fn sqrt(&self) -> CrowTensor {
@@ -1929,6 +1964,75 @@ mod tests {
         let mut vals = p.to_vec();
         vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
         assert_eq!(vals, vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+        crate::rng::clear_seed();
+    }
+
+    // ── log2 / log10 ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_log2() {
+        let t = CrowTensor::from_vec(vec![1.0, 2.0, 4.0, 8.0], vec![4]);
+        let r = t.log2();
+        let v = r.to_vec();
+        assert!((v[0] - 0.0).abs() < 1e-12);
+        assert!((v[1] - 1.0).abs() < 1e-12);
+        assert!((v[2] - 2.0).abs() < 1e-12);
+        assert!((v[3] - 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_log10() {
+        let t = CrowTensor::from_vec(vec![1.0, 10.0, 100.0, 1000.0], vec![4]);
+        let r = t.log10();
+        let v = r.to_vec();
+        assert!((v[0] - 0.0).abs() < 1e-12);
+        assert!((v[1] - 1.0).abs() < 1e-12);
+        assert!((v[2] - 2.0).abs() < 1e-12);
+        assert!((v[3] - 3.0).abs() < 1e-12);
+    }
+
+    // ── gamma_dist ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_gamma_dist_shape_and_positive() {
+        crate::rng::set_seed(42);
+        let t = CrowTensor::gamma_dist(vec![100], 2.0, 1.0);
+        assert_eq!(t.shape, vec![100]);
+        // Gamma(alpha, beta) values should all be positive
+        assert!(t.to_vec().iter().all(|&x| x > 0.0));
+        crate::rng::clear_seed();
+    }
+
+    // ── beta_dist ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_beta_dist_shape_and_range() {
+        crate::rng::set_seed(42);
+        let t = CrowTensor::beta_dist(vec![100], 2.0, 5.0);
+        assert_eq!(t.shape, vec![100]);
+        // Beta values should be in (0, 1)
+        assert!(t.to_vec().iter().all(|&x| x > 0.0 && x < 1.0));
+        crate::rng::clear_seed();
+    }
+
+    // ── exponential ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_exponential_shape_and_positive() {
+        crate::rng::set_seed(42);
+        let t = CrowTensor::exponential(vec![100], 1.5);
+        assert_eq!(t.shape, vec![100]);
+        // Exponential values should all be positive
+        assert!(t.to_vec().iter().all(|&x| x > 0.0));
+        crate::rng::clear_seed();
+    }
+
+    #[test]
+    fn test_exponential_2d() {
+        crate::rng::set_seed(42);
+        let t = CrowTensor::exponential(vec![3, 4], 1.0);
+        assert_eq!(t.shape, vec![3, 4]);
+        assert_eq!(t.to_vec().len(), 12);
         crate::rng::clear_seed();
     }
 }

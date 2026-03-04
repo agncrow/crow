@@ -632,7 +632,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     let project_name = entry.replace(".crow", "").replace('/', "_");
     let mut dep_list: Vec<String> = Vec::new();
     if transpiler.needs_rayon {
-        dep_list.push("rayon = \"1.10\"".to_string());
+        dep_list.push("rayon = \"1.11\"".to_string());
     }
     if transpiler.needs_serde_json {
         dep_list.push("serde_json = \"1\"".to_string());

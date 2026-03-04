@@ -159,6 +159,72 @@ impl CrowTensor {
         }
     }
 
+    /// Vector dot product (inner product). Both tensors must be 1D with same length.
+    /// Returns a scalar (sum of element-wise products).
+    pub fn dot(&self, other: &CrowTensor) -> f64 {
+        let a = self.to_vec();
+        let b = other.to_vec();
+        assert_eq!(a.len(), b.len(), "dot: vectors must have same length ({} vs {})", a.len(), b.len());
+        a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+    }
+
+    /// Moore-Penrose pseudo-inverse via SVD: A⁺ = V * diag(1/σᵢ) * Uᵀ.
+    /// Works for any m×n matrix.
+    pub fn pinv(&self) -> CrowTensor {
+        let (u, s, vt) = self.svd_decomp();
+        let s_data = s.to_vec();
+        let tol = s_data[0] * (self.shape()[0].max(self.shape()[1]) as f64) * f64::EPSILON;
+        // S_inv: k×k diagonal with 1/σᵢ (or 0 if below tolerance)
+        let k = s_data.len();
+        let mut s_inv_data = vec![0.0; k * k];
+        for i in 0..k {
+            if s_data[i] > tol {
+                s_inv_data[i * k + i] = 1.0 / s_data[i];
+            }
+        }
+        let s_inv = CrowTensor::from_vec(s_inv_data, vec![k, k]);
+        // pinv = Vᵀᵀ * S_inv * Uᵀ = V * S_inv * Uᵀ
+        let v = vt.transpose();
+        let ut = u.transpose();
+        v.matmul(&s_inv).matmul(&ut)
+    }
+
+    /// Least-squares solve: find x that minimizes ||Ax - b||².
+    /// Uses pseudo-inverse: x = pinv(A) * b.
+    pub fn lstsq(&self, b: &CrowTensor) -> CrowTensor {
+        self.pinv().matmul(b)
+    }
+
+    /// Extract upper triangular part of a matrix. Elements below the main diagonal are set to 0.
+    pub fn triu(&self) -> CrowTensor {
+        let shape = self.shape();
+        assert_eq!(shape.len(), 2, "triu: expected 2D tensor");
+        let (rows, cols) = (shape[0], shape[1]);
+        let data = self.to_vec();
+        let mut result = vec![0.0; rows * cols];
+        for i in 0..rows {
+            for j in i..cols {
+                result[i * cols + j] = data[i * cols + j];
+            }
+        }
+        CrowTensor::from_vec(result, vec![rows, cols])
+    }
+
+    /// Extract lower triangular part of a matrix. Elements above the main diagonal are set to 0.
+    pub fn tril(&self) -> CrowTensor {
+        let shape = self.shape();
+        assert_eq!(shape.len(), 2, "tril: expected 2D tensor");
+        let (rows, cols) = (shape[0], shape[1]);
+        let data = self.to_vec();
+        let mut result = vec![0.0; rows * cols];
+        for i in 0..rows {
+            for j in 0..=i.min(cols - 1) {
+                result[i * cols + j] = data[i * cols + j];
+            }
+        }
+        CrowTensor::from_vec(result, vec![rows, cols])
+    }
+
     /// Eigendecomposition of a square matrix.
     /// Returns (eigenvalues_real, eigenvalues_imag).
     /// For symmetric matrices, imaginary parts will be zero.
@@ -367,5 +433,111 @@ mod tests {
         // Frobenius norm of [[1,2],[3,4]] = sqrt(1+4+9+16) = sqrt(30)
         let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
         approx_eq(a.norm(2.0), 30.0_f64.sqrt(), 1e-12);
+    }
+
+    // ── dot ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_dot_basic() {
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
+        let b = CrowTensor::from_vec(vec![4.0, 5.0, 6.0], vec![3]);
+        // 1*4 + 2*5 + 3*6 = 32
+        approx_eq(a.dot(&b), 32.0, 1e-12);
+    }
+
+    #[test]
+    fn test_dot_orthogonal() {
+        let a = CrowTensor::from_vec(vec![1.0, 0.0], vec![2]);
+        let b = CrowTensor::from_vec(vec![0.0, 1.0], vec![2]);
+        approx_eq(a.dot(&b), 0.0, 1e-12);
+    }
+
+    #[test]
+    #[should_panic(expected = "dot: vectors must have same length")]
+    fn test_dot_length_mismatch() {
+        let a = CrowTensor::from_vec(vec![1.0, 2.0], vec![2]);
+        let b = CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
+        a.dot(&b);
+    }
+
+    // ── pinv ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_pinv_square() {
+        // pinv of invertible matrix ≈ inv
+        let a = CrowTensor::from_vec(vec![4.0, 7.0, 2.0, 6.0], vec![2, 2]);
+        let a_pinv = a.pinv();
+        let a_inv = a.inv();
+        tensor_approx_eq(&a_pinv, &a_inv, 1e-10);
+    }
+
+    #[test]
+    fn test_pinv_rectangular() {
+        // A * pinv(A) * A ≈ A for any matrix
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
+        let ap = a.pinv();
+        let result = a.matmul(&ap).matmul(&a);
+        tensor_approx_eq(&result, &a, 1e-10);
+    }
+
+    // ── lstsq ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_lstsq_exact() {
+        // Exact system: [[1,0],[0,1]] * x = [[3],[5]] → x = [[3],[5]]
+        let a = CrowTensor::eye(2);
+        let b = CrowTensor::from_vec(vec![3.0, 5.0], vec![2, 1]);
+        let x = a.lstsq(&b);
+        tensor_approx_eq(&x, &b, 1e-10);
+    }
+
+    #[test]
+    fn test_lstsq_overdetermined() {
+        // y = 2x: points (1,2), (2,4), (3,6)
+        // A = [[1,1],[2,1],[3,1]], b = [[2],[4],[6]]
+        let a = CrowTensor::from_vec(vec![1.0, 1.0, 2.0, 1.0, 3.0, 1.0], vec![3, 2]);
+        let b = CrowTensor::from_vec(vec![2.0, 4.0, 6.0], vec![3, 1]);
+        let x = a.lstsq(&b);
+        let xv = x.to_vec();
+        approx_eq(xv[0], 2.0, 1e-10); // slope
+        approx_eq(xv[1], 0.0, 1e-10); // intercept
+    }
+
+    // ── triu / tril ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_triu() {
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], vec![3, 3]);
+        let u = a.triu();
+        let expected = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 0.0, 5.0, 6.0, 0.0, 0.0, 9.0], vec![3, 3]);
+        tensor_approx_eq(&u, &expected, 1e-12);
+    }
+
+    #[test]
+    fn test_tril() {
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], vec![3, 3]);
+        let l = a.tril();
+        let expected = CrowTensor::from_vec(vec![1.0, 0.0, 0.0, 4.0, 5.0, 0.0, 7.0, 8.0, 9.0], vec![3, 3]);
+        tensor_approx_eq(&l, &expected, 1e-12);
+    }
+
+    #[test]
+    fn test_triu_tril_sum_equals_original_plus_diag() {
+        // triu(A) + tril(A) = A + diag(A) (diagonal counted twice)
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let u = a.triu();
+        let l = a.tril();
+        let sum = u.add(&l);
+        // A + diag = [[1,2],[3,4]] + [[1,0],[0,4]] = [[2,2],[3,8]]
+        let expected = CrowTensor::from_vec(vec![2.0, 2.0, 3.0, 8.0], vec![2, 2]);
+        tensor_approx_eq(&sum, &expected, 1e-12);
+    }
+
+    #[test]
+    fn test_triu_rectangular() {
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
+        let u = a.triu();
+        let expected = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 0.0, 5.0, 6.0], vec![2, 3]);
+        tensor_approx_eq(&u, &expected, 1e-12);
     }
 }

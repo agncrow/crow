@@ -584,6 +584,11 @@ impl Transpiler {
                         self.registry.load(std::sync::Arc::new(crate::modules::nn::NnModule));
                     }
                 }
+                if path == "frame" {
+                    if !self.registry.is_loaded("frame") {
+                        self.registry.load(std::sync::Arc::new(crate::modules::frame::FrameModule));
+                    }
+                }
                 self.modules.insert(module_name);
             }
         }
@@ -1594,27 +1599,39 @@ impl Transpiler {
         if module_name == "math" || path.starts_with("math.") {
             self.needs_crow_runtime = true;
         }
-        // Load modules into registry
-        if path == "math" {
+        // Load modules into registry (with is_loaded guards to avoid overwriting fn_map entries)
+        if path == "math" && !self.registry.is_loaded("math") {
             self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
         }
         if path == "math.stats" {
             if !self.registry.is_loaded("math") {
                 self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
             }
-            self.registry.load(std::sync::Arc::new(crate::modules::stats::StatsModule));
+            if !self.registry.is_loaded("math.stats") {
+                self.registry.load(std::sync::Arc::new(crate::modules::stats::StatsModule));
+            }
             self.modules.insert("math".to_string());
         }
         if path == "math.nn" {
             if !self.registry.is_loaded("math") {
                 self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
             }
-            self.registry.load(std::sync::Arc::new(crate::modules::nn::NnModule));
+            if !self.registry.is_loaded("math.nn") {
+                self.registry.load(std::sync::Arc::new(crate::modules::nn::NnModule));
+            }
             self.modules.insert("math".to_string());
         }
         if path == "io" {
             self.needs_crow_runtime = true;
-            self.registry.load(std::sync::Arc::new(crate::modules::io::IoModule));
+            if !self.registry.is_loaded("io") {
+                self.registry.load(std::sync::Arc::new(crate::modules::io::IoModule));
+            }
+        }
+        if path == "frame" {
+            self.needs_crow_runtime = true;
+            if !self.registry.is_loaded("frame") {
+                self.registry.load(std::sync::Arc::new(crate::modules::frame::FrameModule));
+            }
         }
         self.modules.insert(module_name);
     }
@@ -1624,6 +1641,33 @@ impl Transpiler {
             Pattern::Literal(e) => self.expr_to_string(e),
             Pattern::Range(a, b) => format!("{}..={}", self.expr_to_string(a), self.expr_to_string(b)),
             Pattern::Wildcard => "_".to_string(),
+        }
+    }
+
+    /// Convert an expression to Rust code in "bare-name" mode:
+    /// Identifiers that are not known variables or constants become string
+    /// literals (used for frame column names like `sort[df, age]`).
+    /// Arrays are recursively handled.
+    fn expr_to_string_bare_name(&mut self, expr: &Expr) -> String {
+        match expr {
+            Expr::Ident(name) => {
+                // If it's a known variable, constant, or function, use normally
+                if self.ctx.vars.contains_key(name)
+                    || self.registry.has_constant(name)
+                    || self.ctx.functions.contains_key(name)
+                {
+                    return self.expr_to_string(expr);
+                }
+                // Bare name → string literal
+                format!("\"{}\".to_string()", name)
+            }
+            Expr::Array(items) => {
+                let elems: Vec<String> = items.iter()
+                    .map(|e| self.expr_to_string_bare_name(e))
+                    .collect();
+                format!("vec![{}]", elems.join(", "))
+            }
+            _ => self.expr_to_string(expr),
         }
     }
 
@@ -1813,6 +1857,31 @@ impl Transpiler {
                             BinOp::Div | BinOp::ElemDiv => format!("{{ let _t = &{}; CrowTensor::from_vec(_t.to_vec().iter().map(|&v| ({} as f64) / v).collect(), _t.shape().to_vec()) }}", r, l),
                             _ => format!("{} {} {}", l, op_str, r),
                         };
+                    // Frame column (FrameCol or legacy Array(Str)) ops with scalar
+                    } else if (matches!(&lt_inner, CrowType::FrameCol) || matches!(&lt_inner, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Str)))
+                        && matches!(&rt_inner, CrowType::Int | CrowType::Float) {
+                        // column op scalar — use native typed operations
+                        let is_comparison = matches!(op, BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte | BinOp::Eq | BinOp::Ne);
+                        if is_comparison {
+                            let cmp_name = match op {
+                                BinOp::Gt => "gt", BinOp::Lt => "lt", BinOp::Gte => "gte",
+                                BinOp::Lte => "lte", BinOp::Eq => "eq", BinOp::Ne => "ne",
+                                _ => unreachable!(),
+                            };
+                            if matches!(&lt_inner, CrowType::FrameCol) {
+                                return format!("{}.compare({} as f64, \"{}\")", l, r, cmp_name);
+                            }
+                            return format!("crow_runtime::frame::col_compare(&{}, {} as f64, \"{}\")", l, r, cmp_name);
+                        }
+                        let arith_name = match op {
+                            BinOp::Add => "add", BinOp::Sub => "sub",
+                            BinOp::Mul => "mul", BinOp::Div => "div",
+                            _ => return format!("{} {} {}", l, op_str, r),
+                        };
+                        if matches!(&lt_inner, CrowType::FrameCol) {
+                            return format!("{}.arithmetic({} as f64, \"{}\")", l, r, arith_name);
+                        }
+                        return format!("crow_runtime::frame::col_arithmetic(&{}, {} as f64, \"{}\")", l, r, arith_name);
                     } else {
                         if self.emitting_dual {
                             // In dual mode, CrowDual handles mixed-type ops via trait impls
@@ -2020,7 +2089,13 @@ impl Transpiler {
                     if !is_overlapping && self.registry.has_function(name) {
                         let arg_types: Vec<_> = args.iter().map(|a| self.ctx.infer_expr(a)).collect();
                         self.needs_crow_runtime = true;
-                        return self.registry.emit_rust(name, &arg_strs, &arg_types).unwrap_or_else(|e| format!("/* {} */", e));
+                        // Frame module: rebuild arg_strs with bare-name conversion
+                        let final_arg_strs = if self.registry.module_name_for(name).map_or(false, |m| m == "frame") {
+                            args.iter().map(|a| self.expr_to_string_bare_name(a)).collect::<Vec<_>>()
+                        } else {
+                            arg_strs.clone()
+                        };
+                        return self.registry.emit_rust(name, &final_arg_strs, &arg_types).unwrap_or_else(|e| format!("/* {} */", e));
                     }
 
                     // --- Math builtins (scalar) ---
@@ -2413,6 +2488,11 @@ impl Transpiler {
                             let idx = &arg_strs[0];
                             return format!("{{ let _s: Vec<char> = {}.chars().collect(); let _i = {}; let _idx = if _i < 0 {{ (_s.len() as i64 + _i) as usize }} else {{ _i as usize }}; _s[_idx].to_string() }}", base_name, idx);
                         }
+                        CrowType::FrameCol => {
+                            // CrowColumn indexing: col[i] → col.get_str(i)
+                            let idx = &arg_strs[0];
+                            return format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.get_str(_idx) }}", idx, base_name, base_name);
+                        }
                         CrowType::Map(_) => {
                             // Map lookup: map[key] → map[&key]
                             return format!("{}[&{}].clone()", base_name, arg_strs.join(", "));
@@ -2503,6 +2583,10 @@ impl Transpiler {
                         let idx = &arg_strs[0];
                         format!("{{ let _s: Vec<char> = {}.chars().collect(); let _i = {}; let _idx = if _i < 0 {{ (_s.len() as i64 + _i) as usize }} else {{ _i as usize }}; _s[_idx].to_string() }}", callee_str, idx)
                     }
+                    CrowType::FrameCol => {
+                        let idx = &arg_strs[0];
+                        format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.get_str(_idx) }}", idx, callee_str, callee_str)
+                    }
                     CrowType::Map(_) => format!("{}[&{}].clone()", callee_str, arg_strs.join(", ")),
                     CrowType::Json => {
                         let arg_type = self.ctx.infer_expr(&args[0]);
@@ -2539,7 +2623,7 @@ impl Transpiler {
                 // Map Crow's .len to Rust's .len()
                 if field == "len" {
                     let obj_type = self.ctx.infer_expr(object);
-                    if matches!(obj_type, CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Str) {
+                    if matches!(obj_type, CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Str | CrowType::FrameCol) {
                         return format!("{}.len() as i64", obj);
                     }
                 }
@@ -2555,6 +2639,12 @@ impl Transpiler {
                             return format!("{}.trace.clone()", obj);
                         }
                         return format!("{}.{}.clone()", obj, field);
+                    } else if field == "ok" && matches!(&obj_type, CrowType::FrameCol) {
+                        // .ok on a CrowColumn → validity bitmap (native)
+                        return format!("{}.ok()", obj);
+                    } else if field == "ok" && matches!(&obj_type, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Str)) {
+                        // .ok on a legacy Vec<String> frame column → validity bitmap
+                        return format!("crow_runtime::frame::col_ok(&{})", obj);
                     } else if !matches!(obj_type, CrowType::Struct(_)) {
                         // Raw type — return synthetic defaults
                         return match field.as_str() {
@@ -2564,6 +2654,13 @@ impl Transpiler {
                             "trace" => "Vec::<String>::new()".to_string(),
                             _ => unreachable!(),
                         };
+                    }
+                }
+                // DateTime properties on strings: .year, .month, .day, .hour, .minute, .second, .offset
+                if matches!(field.as_str(), "year" | "month" | "day" | "hour" | "minute" | "second" | "offset") {
+                    let obj_type = self.ctx.infer_expr(object);
+                    if matches!(obj_type, CrowType::Str) {
+                        return format!("crow_runtime::frame::datetime_field(&{}, \"{}\").unwrap_or(0)", obj, field);
                     }
                 }
                 // NumArray properties: .shape, .dtype, .device, .grad
@@ -2582,6 +2679,29 @@ impl Transpiler {
                             "device" => return format!("if {}.is_gpu() {{ \"gpu\".to_string() }} else {{ \"cpu\".to_string() }}", tensor_expr),
                             "grad" => return "\"none\".to_string()".to_string(),
                             _ => {}
+                        }
+                    }
+                }
+                // Frame properties: .shape, .columns, .dtypes, .column_name
+                {
+                    let obj_type = self.ctx.infer_expr(object);
+                    if matches!(obj_type, CrowType::Frame) || matches!(&obj_type, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Frame)) {
+                        let frame_expr = if matches!(&obj_type, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Frame)) {
+                            format!("{}.value.clone()", obj)
+                        } else {
+                            obj.clone()
+                        };
+                        match field.as_str() {
+                            "shape" => return format!("vec![{f}.nrows() as i64, {f}.ncols() as i64]", f = frame_expr),
+                            "columns" => return format!("{}.columns.iter().map(|c: &String| c.clone()).collect::<Vec<String>>()", frame_expr),
+                            "dtypes" => return format!("{}.dtypes().iter().map(|d: &&str| d.to_string()).collect::<Vec<String>>()", frame_expr),
+                            _ => {
+                                // Column access by name: df.age → native CrowColumn
+                                return format!(
+                                    "{}.col_native(\"{}\").unwrap_or_else(|| panic!(\"column '{}' not found\"))",
+                                    frame_expr, field, field
+                                );
+                            }
                         }
                     }
                 }
@@ -2871,10 +2991,19 @@ impl Transpiler {
                                 other => other.clone(),
                             };
                             match inner_type {
-                                CrowType::Array(_) | CrowType::Map(_) | CrowType::Struct(_) => fmt_str.push_str("{:?}"),
-                                _ => fmt_str.push_str("{}"),
+                                CrowType::FrameCol => {
+                                    fmt_str.push_str("{:?}");
+                                    args.push(format!("{}.to_strings()", rust_expr));
+                                }
+                                CrowType::Array(_) | CrowType::Map(_) | CrowType::Struct(_) => {
+                                    fmt_str.push_str("{:?}");
+                                    args.push(rust_expr);
+                                }
+                                _ => {
+                                    fmt_str.push_str("{}");
+                                    args.push(rust_expr);
+                                }
                             }
-                            args.push(rust_expr);
                         } else {
                             // Fallback: use raw text
                             fmt_str.push_str("{}");
@@ -2963,7 +3092,8 @@ impl Transpiler {
                     CrowType::Result(inner) => (inner.as_ref().clone(), true),
                     other => (other.clone(), false),
                 };
-                let debug = matches!(inner, CrowType::Array(_) | CrowType::Map(_) | CrowType::Struct(_));
+                let is_col = matches!(inner, CrowType::FrameCol);
+                let debug = matches!(inner, CrowType::Array(_) | CrowType::Map(_) | CrowType::Struct(_)) || is_col;
                 let jk = if matches!(inner, CrowType::Json) {
                     if is_result { 2 } else { 1 }  // 2=Result<Json>, 1=Json
                 } else { 0 };
@@ -2971,6 +3101,14 @@ impl Transpiler {
             } else {
                 (false, 0)
             };
+            // FrameCol → convert to strings before display
+            if let Some(expr) = orig_exprs.first() {
+                let ty = self.ctx.infer_expr(expr);
+                let inner = match &ty { CrowType::Result(i) => i.as_ref().clone(), o => o.clone() };
+                if matches!(inner, CrowType::FrameCol) {
+                    return format!("println!(\"{{:?}}\", {}.to_strings())", arg);
+                }
+            }
             return if needs_debug {
                 format!("println!(\"{{:?}}\", {})", arg)
             } else if json_kind == 2 {
@@ -2986,26 +3124,29 @@ impl Transpiler {
         let mut fmt_parts = Vec::new();
         let mut fmt_args = Vec::new();
         for (i, arg) in args.iter().enumerate() {
-            let (needs_debug, json_kind) = if i < orig_exprs.len() {
+            let (needs_debug, json_kind, is_col) = if i < orig_exprs.len() {
                 let ty = self.ctx.infer_expr(&orig_exprs[i]);
                 let (inner, is_result) = match &ty {
                     CrowType::Result(inner) => (inner.as_ref().clone(), true),
                     other => (other.clone(), false),
                 };
-                let debug = matches!(inner, CrowType::Array(_) | CrowType::Map(_) | CrowType::Struct(_));
+                let is_col = matches!(inner, CrowType::FrameCol);
+                let debug = matches!(inner, CrowType::Array(_) | CrowType::Map(_) | CrowType::Struct(_)) || is_col;
                 let jk = if matches!(inner, CrowType::Json) {
                     if is_result { 2 } else { 1 }
                 } else { 0 };
-                (debug, jk)
+                (debug, jk, is_col)
             } else {
-                (false, 0)
+                (false, 0, false)
             };
             if needs_debug {
                 fmt_parts.push("{:?}".to_string());
             } else {
                 fmt_parts.push("{}".to_string());
             }
-            if json_kind == 2 {
+            if is_col {
+                fmt_args.push(format!("{}.to_strings()", arg));
+            } else if json_kind == 2 {
                 fmt_args.push(format!("crow_json_display(&{}.value)", arg));
             } else if json_kind == 1 {
                 fmt_args.push(format!("crow_json_display(&{})", arg));

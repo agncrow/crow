@@ -1,0 +1,125 @@
+--- Frame module benchmark ---
+--- Compare with benchmarks/bench_frame.py ---
+
+use frame
+
+path = '/tmp/bench_mixed_1gb.csv'
+
+--- 1. Load (timed via wall clock, rayon breaks inline timing) ---
+log['=== Load CSV ===']
+df = load[path]
+log['shape: {df.shape}']
+
+--- 2. Select ---
+log['=== Select 3 columns ===']
+t0 = time[]
+i = 0
+while i lt 10
+    sub = select[df, [name, age, salary]]
+    i = i + 1
+t1 = time[]
+log['select x10: {t1 - t0}s']
+
+--- 3. Head ---
+log['=== Head 1000 ===']
+t0 = time[]
+i = 0
+while i lt 100
+    h = head[df, 1000]
+    i = i + 1
+t1 = time[]
+log['head x100: {t1 - t0}s']
+
+--- 4. Sort ---
+log['=== Sort by salary ===']
+t0 = time[]
+i = 0
+while i lt 1
+    sorted = sort[df, salary]
+    i = i + 1
+t1 = time[]
+log['sort: {t1 - t0}s']
+
+--- 6. Group ---
+log['=== Group by dept, mean salary ===']
+t0 = time[]
+i = 0
+while i lt 1
+    g = group[df, dept, [salary, mean]]
+    i = i + 1
+t1 = time[]
+log['group: {t1 - t0}s']
+
+--- 7. Join ---
+log['=== Join (inner, self-join on dept) ===']
+t0 = time[]
+i = 0
+while i lt 1
+    dept_df = group[df, dept, [salary, mean]]
+    joined = join[df, dept_df, dept]
+    i = i + 1
+t1 = time[]
+log['join: {t1 - t0}s']
+
+--- 8. Rename ---
+log['=== Rename column ===']
+t0 = time[]
+i = 0
+while i lt 10
+    r = rename[df, salary, pay]
+    i = i + 1
+t1 = time[]
+log['rename x10: {t1 - t0}s']
+
+--- 8. Fill ---
+log['=== Fill missing ===']
+t0 = time[]
+i = 0
+while i lt 10
+    f = fill[df, age, 0]
+    i = i + 1
+t1 = time[]
+log['fill x10: {t1 - t0}s']
+
+--- 9. Unique ---
+log['=== Unique dept ===']
+t0 = time[]
+i = 0
+while i lt 100
+    u = unique[df, dept]
+    i = i + 1
+t1 = time[]
+log['unique x100: {t1 - t0}s']
+
+--- 10. Stats ---
+log['=== Stats ===']
+t0 = time[]
+i = 0
+while i lt 1
+    s = stats[df]
+    i = i + 1
+t1 = time[]
+log['stats: {t1 - t0}s']
+
+--- 11. Stack ---
+log['=== Stack (self + head 1M) ===']
+h1m = head[df, 1000000]
+t0 = time[]
+i = 0
+while i lt 1
+    stacked = stack[df, h1m]
+    i = i + 1
+t1 = time[]
+log['stack: {t1 - t0}s']
+
+--- 12. Save ---
+log['=== Save to CSV ===']
+t0 = time[]
+i = 0
+while i lt 1
+    save[df, '/tmp/bench_crow_save.csv']
+    i = i + 1
+t1 = time[]
+log['save: {t1 - t0}s']
+
+log['=== Done ===']
