@@ -28,6 +28,14 @@ pub enum CrowType {
     Frame,
     /// A single typed column from a frame (CrowColumn wrapper).
     FrameCol,
+    /// Web application (crow_web::server::CrowApp).
+    WebApp,
+    /// Web HTTP response (crow_web::core::CrowResponse).
+    WebResponse,
+    /// Web HTTP request (crow_web::core::CrowRequest).
+    WebRequest,
+    /// SQLite database handle (crow_web::db::CrowSqlite).
+    WebDb,
     Void,
     Unknown,
 }
@@ -53,6 +61,10 @@ impl CrowType {
             CrowType::Sparse => "crow_runtime::sparse::CrowSparse".into(),
             CrowType::Frame => "crow_runtime::frame::CrowFrame".into(),
             CrowType::FrameCol => "crow_runtime::frame::CrowColumn".into(),
+            CrowType::WebApp => "crow_web::server::CrowApp".into(),
+            CrowType::WebResponse => "crow_web::core::CrowResponse".into(),
+            CrowType::WebRequest => "crow_web::core::CrowRequest".into(),
+            CrowType::WebDb => "crow_web::db::CrowSqlite".into(),
             CrowType::Void => "()".into(),
             CrowType::Unknown => "String".into(),
         }
@@ -77,6 +89,10 @@ impl CrowType {
             CrowType::Sparse => "CrowSparse::from_coo(&[], &[], &[], 0, 0)".into(),
             CrowType::Frame => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])".into(),
             CrowType::FrameCol => "crow_runtime::frame::CrowColumn { data: std::sync::Arc::new(crow_runtime::frame::Column::Int(vec![])), valid: std::sync::Arc::new(vec![]) }".into(),
+            CrowType::WebApp => "crow_web::server::CrowApp::new()".into(),
+            CrowType::WebResponse => "crow_web::core::CrowResponse::default()".into(),
+            CrowType::WebRequest => "crow_web::core::CrowRequest::new()".into(),
+            CrowType::WebDb => "panic!(\"no default db\")".into(),
             CrowType::Void => "()".into(),
             CrowType::Unknown => "String::new()".into(),
         }
@@ -103,6 +119,10 @@ impl CrowType {
             }
             CrowType::Result(inner) => format!("result[{}]", inner.crow_name()),
             CrowType::Json => "json".into(),
+            CrowType::WebApp => "web.app".into(),
+            CrowType::WebResponse => "web.response".into(),
+            CrowType::WebRequest => "web.request".into(),
+            CrowType::WebDb => "web.db".into(),
             CrowType::Void => "void".into(),
             CrowType::Unknown => "unknown".into(),
         }
@@ -951,6 +971,20 @@ impl TypeContext {
             // JSON builtins
             "json" => CrowType::Result(Box::new(CrowType::Json)),
             "encode" => CrowType::Result(Box::new(CrowType::Str)),
+            // Web builtins (available when `use web` is active)
+            "route" => CrowType::WebApp,
+            "serve" => CrowType::Void,
+            "respond" => CrowType::WebResponse,
+            "redirect" => CrowType::WebResponse,
+            "html" => CrowType::WebResponse,
+            "text" => CrowType::WebResponse,
+            // Web.db builtins
+            "sqlite" => CrowType::WebDb,
+            "exec" => CrowType::Void,
+            "query" => CrowType::Array(Box::new(CrowType::Json)),
+            // Web.auth builtins
+            "sign" => CrowType::Str,
+            "verify" => CrowType::Json,
             // Autograd
             "grad" => {
                 // grad[f] returns a function with the same arity as f, but all params are Float
@@ -1126,6 +1160,10 @@ impl TypeContext {
                 // Module call: module.func[args] or module.Struct[args]
                 if let Expr::FieldAccess { object, field } = callee.as_ref() {
                     if let Expr::Ident(_mod_name) = object.as_ref() {
+                        // web.new[] → WebApp
+                        if _mod_name == "web" && field == "new" {
+                            return CrowType::WebApp;
+                        }
                         let prefixed = format!("{}_{}", _mod_name, field);
                         // Module struct constructor
                         if self.structs.contains_key(&prefixed) {
