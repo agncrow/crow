@@ -25,6 +25,8 @@ const BUILTINS: &[&str] = &[
     "args", "input",
     // File I/O
     "read", "write",
+    // File system
+    "exists", "mkdir", "ls", "rm", "mv", "cp",
     // System
     "rand", "time", "sleep", "env", "exit",
     // JSON
@@ -385,6 +387,12 @@ impl<'a> Validator<'a> {
             "input" => argc <= 1,
             "read" => argc == 1,
             "write" => argc == 2,
+            "exists" => argc == 1,
+            "mkdir" => argc == 1,
+            "ls" => argc == 1,
+            "rm" => argc == 1,
+            "mv" => argc == 2,
+            "cp" => argc == 2,
             "rand" => argc <= 2,
             "time" => argc == 0,
             "sleep" => argc == 1,

@@ -45,13 +45,13 @@ What's done, what's remaining, and in what order.
 
 Currently Crow has basic I/O (`read`, `write`, `args`, `input`, `env`, `time`, `sleep`, `exit`, `json`, `encode`) but lacks standard library features expected of a general-purpose language.
 
-#### File system
-- [ ] **`exists[path]`** — check if file or directory exists (returns bool).
-- [ ] **`mkdir[path]`** — create directory (and parents). Error-value on failure.
-- [ ] **`ls[path]`** — list directory contents → array of strings.
-- [ ] **`delete[path]`** — remove file or empty directory. Error-value on failure.
-- [ ] **`rename[old, new]`** — rename/move file or directory.
-- [ ] **`copy[src, dst]`** — copy file.
+#### File system ✅
+- [x] **`exists[path]`** — check if file or directory exists (returns bool).
+- [x] **`mkdir[path]`** — create directory (and parents). Error-value on failure.
+- [x] **`ls[path]`** — list directory entries as sorted array of strings. Error-value on failure.
+- [x] **`rm[path]`** — remove file or directory (recursive). Error-value on failure.
+- [x] **`mv[src, dst]`** — move/rename file or directory. Error-value on failure.
+- [x] **`cp[src, dst]`** — copy file. Error-value on failure.
 
 #### Networking / HTTP client
 - [ ] **`fetch[url]`** — HTTP GET → `{status, body, headers}`. Error-value on failure.

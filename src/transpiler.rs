@@ -2410,6 +2410,30 @@ impl Transpiler {
                         let trace = self.trace_format_expr();
                         return format!("match std::fs::write(&*{}, &*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![] }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}] }} }}", arg_strs[0], arg_strs[1], trace);
                     }
+                    // --- File system builtins ---
+                    if name == "exists" && arg_strs.len() == 1 {
+                        return format!("std::path::Path::new(&*{}).exists()", arg_strs[0]);
+                    }
+                    if name == "mkdir" && arg_strs.len() == 1 {
+                        let trace = self.trace_format_expr();
+                        return format!("match std::fs::create_dir_all(&*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![] }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}] }} }}", arg_strs[0], trace);
+                    }
+                    if name == "ls" && arg_strs.len() == 1 {
+                        let trace = self.trace_format_expr();
+                        return format!("match std::fs::read_dir(&*{}) {{ Ok(entries) => {{ let mut names: Vec<String> = entries.filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string())).collect(); names.sort(); CrowResult {{ ok: true, value: names, reason: String::new(), kind: String::new(), trace: vec![] }} }}, Err(e) => CrowResult {{ ok: false, value: Vec::<String>::new(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}] }} }}", arg_strs[0], trace);
+                    }
+                    if name == "rm" && arg_strs.len() == 1 {
+                        let trace = self.trace_format_expr();
+                        return format!("{{ let _p = std::path::Path::new(&*{}); let _r = if _p.is_dir() {{ std::fs::remove_dir_all(_p) }} else {{ std::fs::remove_file(_p) }}; match _r {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![] }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}] }} }} }}", arg_strs[0], trace);
+                    }
+                    if name == "mv" && arg_strs.len() == 2 {
+                        let trace = self.trace_format_expr();
+                        return format!("match std::fs::rename(&*{}, &*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![] }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}] }} }}", arg_strs[0], arg_strs[1], trace);
+                    }
+                    if name == "cp" && arg_strs.len() == 2 {
+                        let trace = self.trace_format_expr();
+                        return format!("match std::fs::copy(&*{}, &*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![] }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}] }} }}", arg_strs[0], arg_strs[1], trace);
+                    }
                     // --- JSON builtins ---
                     if name == "json" && arg_strs.len() == 1 {
                         self.needs_serde_json = true;
@@ -4454,5 +4478,44 @@ mod tests {
     fn test_stats_ttest_transpile() {
         let rust = transpile("use math\nuse math.stats\nr = ttest[ones[5], ones[5]]\n");
         assert!(rust.contains("crow_runtime::stats::ttest("), "should emit stats::ttest\n{}", rust);
+    }
+
+    // ===== File System Builtins =====
+
+    #[test]
+    fn test_fs_exists_transpile() {
+        let rust = transpile("e = exists['foo.txt']\n");
+        assert!(rust.contains("std::path::Path::new("), "should emit Path::new for exists\n{}", rust);
+        assert!(rust.contains(".exists()"), "should emit .exists()\n{}", rust);
+    }
+
+    #[test]
+    fn test_fs_mkdir_transpile() {
+        let rust = transpile("mkdir['dir']\n");
+        assert!(rust.contains("std::fs::create_dir_all("), "should emit create_dir_all for mkdir\n{}", rust);
+    }
+
+    #[test]
+    fn test_fs_ls_transpile() {
+        let rust = transpile("f = ls['.']\n");
+        assert!(rust.contains("std::fs::read_dir("), "should emit read_dir for ls\n{}", rust);
+    }
+
+    #[test]
+    fn test_fs_rm_transpile() {
+        let rust = transpile("rm['file.txt']\n");
+        assert!(rust.contains("remove_dir_all") || rust.contains("remove_file"), "should emit remove for rm\n{}", rust);
+    }
+
+    #[test]
+    fn test_fs_mv_transpile() {
+        let rust = transpile("mv['a.txt', 'b.txt']\n");
+        assert!(rust.contains("std::fs::rename("), "should emit fs::rename for mv\n{}", rust);
+    }
+
+    #[test]
+    fn test_fs_cp_transpile() {
+        let rust = transpile("cp['a.txt', 'b.txt']\n");
+        assert!(rust.contains("std::fs::copy("), "should emit fs::copy for cp\n{}", rust);
     }
 }
