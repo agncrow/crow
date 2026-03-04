@@ -8,16 +8,18 @@ What's done, what's remaining, and in what order.
 |------|---------|
 | Core language | Lexer, parser, AST, interpreter, transpiler, checker, formatter, REPL |
 | Type system | Dynamic with inference — int, float, str, bool, array, map, tensor, frame, function, error |
-| Modules | `math`, `math.stats`, `math.nn`, `io`, `frame` |
+| Modules | `math`, `math.stats`, `math.nn`, `io`, `frame`, `web` (17 sub-modules) |
 | Math (~100 functions) | Creation (9), element-wise (12), trig (7), hyperbolic (3), reductions (9), sorting/selection (6), shape (3), linalg (13), random (12), signal (7), special (5), complex (6), sparse (3) |
 | Statistics (9) | median, std, var, percentile, zscore, corr, cov, ttest, linreg |
 | Neural networks (8) | relu, sigmoid, softmax, gelu, mse, crossentropy, bce, linear |
 | DataFrames (16+) | load, save, select, filter, sort, group, join, stack, head, tail, fill, unique, rename, stats, datetime, tz |
+| General-purpose (P3) | regex (find, matches, sub), date/time (now, date, elapsed), shell, hashing (sha256/sha512/md5) |
+| Web framework (P4) | 17 modules: server, client, db, auth, cors, session, template, cache, rate, upload, sse, ws, live, static, mail, queue, docs — all with transpiler codegen + interpreter support |
 | Autograd | `grad[f]` functional transformation |
 | Parallel execution | Auto-parallel `for` loops (rayon), statement-level parallelism via dependency analysis |
 | CLI | `crow run`, `crow build`, `crow fmt`, `crow check`, `crow init`, `crow install`, REPL |
-| Tests | 603 unit tests |
-| Documentation | language-spec.md, math-library.md, feature-map.md, frame-module.md, usage.md, comparison.md, automatic-verification.md |
+| Tests | 676 unit tests |
+| Documentation | language-spec.md, web-framework.md, math-library.md, feature-map.md, frame-module.md, usage.md, comparison.md, automatic-verification.md |
 
 ## Remaining Work
 
@@ -139,7 +141,22 @@ These require building a full WASM frontend pipeline (`wasm-bindgen`, `web-sys`,
 | Python | 10/10 | 8/10 | 9/10 | 10/10 | 9/10 |
 | Go | 9/10 | 9/10 | 7/10 | 8/10 | 8/10 |
 | JavaScript/Node | 7/10 | 10/10 | 8/10 | 10/10 | 9/10 |
-| **Crow** | 3/10 | 1/10 | 1/10 | 1/10 | 5/10 |
+| **Crow** | 4/10 | 6/10 | 5/10 | 1/10 | 4/10 |
 
-P3 and P4 are complete. P3 added regex, date/time, shell, and hashing (interpreter + transpiler). P4 wired up all 17 web modules with transpiler codegen, validator rules, and interpreter mock support (676 tests passing). P5–P7 are what separate a usable tool from a production ecosystem.
+### Rating Rationale
+
+**Data science (6/10):** Crow has a genuinely strong math foundation — ~100 tensor/linalg/stats/signal functions, auto-parallel for loops, autograd, DataFrames, and GPU support. Breadth is 6/10 because it covers the core operations well but lacks the long tail (no plotting, no optimization solvers, no advanced ML beyond basic NN layers). Depth is 5/10 because individual areas work but lack the edge-case handling and decades of battle-testing that NumPy/SciPy have. Ergonomics is 9/10 — the syntax is genuinely cleaner than Python+NumPy for common operations.
+
+**General-purpose (4/10):**
+- **Stdlib (4/10):** P3 added regex, date/time, shell, hashing, and file I/O. That covers the basics, but there's no JSON parsing builtin, no env vars, no networking beyond HTTP, no concurrency primitives beyond auto-parallel, no logging framework, no argument parsing. Compare to Python's 200+ stdlib modules or Go's 150+.
+- **Web (6/10):** This jumped significantly with P4. Crow now has 17 web modules covering server, routing, responses, database, auth, CORS, sessions, templates, caching, rate limiting, file uploads, SSE, WebSocket, LiveView, static files, email, background queues, and API docs — all expressible from Crow source with transpiler codegen. That's comparable feature coverage to Express.js or Flask. It's 6/10 (not higher) because: the codegen emits Rust but end-to-end app testing is limited, there's no ORM, no migrations, no middleware composition, and the WASM client-side story is deferred.
+- **DB (5/10):** SQLite works end-to-end (open, exec, query). JWT auth is integrated. That covers simple apps. Missing: PostgreSQL/MySQL drivers, connection pooling, migrations, ORM, transactions.
+- **Ecosystem (1/10):** No real package registry, no community packages, no third-party libraries. `crow install` exists as a command but there's nothing to install. This is the single biggest gap.
+
+**What moves the needle:**
+- Ecosystem → 5/10 would require a working registry + 20-30 community packages
+- Web → 8/10 would require end-to-end app testing, ORM, and the WASM frontend
+- Stdlib → 6/10 would require JSON, env, argument parsing, logging, and a few more utilities
+
+P0–P4 are complete. P5 (GPU verification), P6 (distributed verification), and P7 (ecosystem) are what separate Crow from a production-ready tool.
 

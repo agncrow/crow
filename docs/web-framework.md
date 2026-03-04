@@ -1078,14 +1078,14 @@ Protobuf requires schema files (`.proto`) and code generation — this violates 
 
 ## Implementation Phases
 
-| Phase | Modules | Effort | What it unlocks |
+| Phase | Modules | Status | What it unlocks |
 |-------|---------|--------|----------------|
-| **Phase 1** | core, web, web.client | 2 weeks | API servers, HTTP requests |
-| **Phase 2** | web.db, web.docs | 2 weeks | Data apps, auto documentation |
-| **Phase 3** | web.ws ✅, web.live | 2 weeks | Real-time apps without JS |
-| **Phase 4** | web.view, web.router, web.store | 4 weeks | Full frontend in Crow (WASM) |
-| **Phase 5** | web.auth, web.session, web.cors, web.static | 2 weeks | Production-ready middleware |
-| **Phase 6** | web.sse, web.mail, web.cache, web.queue, web.rate, web.upload | 3 weeks | Enterprise features |
+| **Phase 1** | core, web, web.client | ✅ Complete | API servers, HTTP requests |
+| **Phase 2** | web.db, web.docs | ✅ Complete | Data apps, auto documentation |
+| **Phase 3** | web.ws, web.live | ✅ Complete | Real-time apps without JS |
+| **Phase 4** | web.view, web.router, web.store | ⏳ Deferred | Full frontend in Crow (WASM) |
+| **Phase 5** | web.auth, web.session, web.cors, web.static | ✅ Complete | Production-ready middleware |
+| **Phase 6** | web.sse, web.mail, web.cache, web.queue, web.rate, web.upload | ✅ Complete | Enterprise features |
 
 ### Transpiler Codegen Status
 
@@ -1125,11 +1125,13 @@ All server-side web modules have transpiler codegen (Crow → Rust), validator r
 | Database | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ |
 | Auto API docs | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ |
 | LiveView | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ |
-| WASM frontend | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| Reactive components | ❌ | ❌ | ✅ | ❌ | ✅ | ✅ | ✅ |
-| SSR + hydration | ❌ | ❌ | ✅ | ❌ | ✅ | ✅ | ✅ |
+| WASM frontend | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ⏳ deferred |
+| Reactive components | ❌ | ❌ | ✅ | ❌ | ✅ | ✅ | ⏳ deferred |
+| SSR + hydration | ❌ | ❌ | ✅ | ❌ | ✅ | ✅ | ⏳ deferred |
 | Data science native | ❌ | ❌ | ❌ | ⚠️ | ❌ | ❌ | ✅ |
-| ML response formats (msgpack, arrow) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Streaming inference | ❌ | ❌ | ❌ | ⚠️ | ❌ | ❌ | ✅ |
+| ML response formats (msgpack, arrow) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ Rust crate only |
+| Streaming inference | ❌ | ❌ | ❌ | ⚠️ | ❌ | ❌ | ⚠️ Rust crate only |
 | Compiled performance | ❌ | ❌ | ⚠️ | ❌ | ❌ | ✅ | ✅ |
 | True modularity | ❌ | ❌ | ❌ | ⚠️ | ⚠️ | ✅ | ✅ |
+
+**Note:** ✅ = implemented with transpiler codegen (usable from Crow source). ⚠️ = implemented in Rust crate but no Crow codegen yet. ⏳ = designed but deferred.
