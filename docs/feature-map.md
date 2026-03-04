@@ -40,7 +40,7 @@ Quick-reference lookup table. **Source of truth:** `docs/language-spec.md`.
 | `read[p]` `write[p, c]` `args[]` `input[]` `input[prompt]` | I/O |
 | `exists[p]` `mkdir[p]` `ls[p]` `rm[p]` `mv[s, d]` `cp[s, d]` | File System |
 | `json[s]` `encode[v]` | JSON |
-| `rand[...]` `time[]` `sleep[ms]` `env[name]` `exit[]` `exit[code]` | System |
+| `rand[...]` `time[]` `sleep[ms]` `env[name]` `env[name, default]` `exit[]` `exit[code]` | System |
 
 ## `use math` — Core Math Module
 
@@ -137,6 +137,7 @@ Frame → tensor: `tensor[df]` or `tensor[df, [col1, col2]]`
 | Structs | `struct Name [fields]` | Language syntax |
 | String interpolation | `'{expr}'` | Language syntax |
 | Pipe chaining | `x then f` | Operator |
+| `.env` auto-loading | `crow run` / `crow build` | Automatic |
 
 ## NOT Implemented (by design — see Design Notes in spec)
 

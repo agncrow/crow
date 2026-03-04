@@ -423,7 +423,8 @@ log[s]                     --- [1,2,3] ---
 | `rand[min, max]` | Random int between min and max (inclusive) |
 | `time[]` | Current unix timestamp as float (seconds) |
 | `sleep[ms]` | Sleep for ms milliseconds (int) or seconds (float) |
-| `env[name]` | Get environment variable (empty string if not set) |
+| `env[name]` | Get environment variable (error-value if not set) |
+| `env[name, default]` | Get environment variable, return default if not set |
 | `exit[]` | Exit with code 0 |
 | `exit[code]` | Exit with given code |
 
@@ -1197,6 +1198,7 @@ These builtins can fail and return an error-value:
 | `rm[path]` | Path doesn't exist or can't be removed |
 | `mv[src, dst]` | Source doesn't exist or move fails |
 | `cp[src, dst]` | Source doesn't exist or copy fails |
+| `env[name]` | Environment variable not set (no default provided) |
 | `input[]` / `input[prompt]` | Stdin read fails |
 | `int[string]` | String can't be parsed as integer |
 | `float[string]` | String can't be parsed as float |
@@ -1573,6 +1575,8 @@ crow fmt --check            --- check if formatting needed (exit 1 if not) ---
 ```
 
 `crow build` transpiles `.crow` source files to Rust and compiles to a native binary. `crow run` builds and then executes the binary.
+
+**`.env` auto-loading:** Both `crow run` and `crow build` automatically load a `.env` file from the current directory if it exists. Each line should be `KEY=VALUE`. Lines starting with `#` are comments. Quoted values (`'...'` or `"..."`) are unquoted. Real environment variables take priority over `.env` values — the file only sets variables that aren't already set.
 
 `crow fmt` auto-formats Crow source files. Formatting rules:
 - 2-space indentation (normalizes tabs, 4-space, or mixed indentation)

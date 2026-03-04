@@ -396,7 +396,7 @@ impl<'a> Validator<'a> {
             "rand" => argc <= 2,
             "time" => argc == 0,
             "sleep" => argc == 1,
-            "env" => argc == 1,
+            "env" => argc == 1 || argc == 2,
             "exit" => argc <= 1,
             "json" | "encode" => argc == 1,
             "error" => argc >= 1 && argc <= 2,
