@@ -1,0 +1,106 @@
+--- Benchmark for frame gaps 1-5 ---
+--- Compare with benchmarks/bench_gaps.py ---
+
+use math
+use frame
+
+path = '/tmp/bench_datetime.csv'
+log['Loading {path}...']
+df = load[path]
+log['shape: {df.shape}']
+
+--- Gap 1: DateTime properties ---
+log['']
+log['=== Gap 1: DateTime properties ===']
+col = df.ts
+t0 = time[]
+i = 0
+while i lt 100
+    y = col[0].year
+    m = col[0].month
+    d = col[0].day
+    h = col[0].hour
+    i = i + 1
+t1 = time[]
+log['datetime props x100: {t1 - t0}s']
+log['sample: year={col[0].year} month={col[0].month} day={col[0].day} hour={col[0].hour}']
+
+--- Gap 2: Vectorized comparison ---
+log['']
+log['=== Gap 2: Vectorized comparison ===']
+ages = df.age
+mask = ages gt 50
+t0 = time[]
+i = 0
+while i lt 10
+    mask = ages gt 50
+    i = i + 1
+t1 = time[]
+log['age gt 50 x10: {t1 - t0}s']
+
+--- count trues ---
+n_true = 0
+j = 0
+while j lt len[mask]
+    if mask[j] eq true
+        n_true = n_true + 1
+    j = j + 1000
+t2 = time[]
+log['matches (sampled every 1000th): {n_true}']
+
+--- Gap 3: Column arithmetic ---
+log['']
+log['=== Gap 3: Column arithmetic ===']
+salaries = df.salary
+t0 = time[]
+i = 0
+while i lt 10
+    raised = salaries * 1.1
+    i = i + 1
+t1 = time[]
+log['salary * 1.1 x10: {t1 - t0}s']
+
+t0 = time[]
+i = 0
+while i lt 10
+    bonus = salaries + 5000
+    i = i + 1
+t1 = time[]
+log['salary + 5000 x10: {t1 - t0}s']
+
+t0 = time[]
+i = 0
+while i lt 10
+    halved = salaries / 2
+    i = i + 1
+t1 = time[]
+log['salary / 2 x10: {t1 - t0}s']
+
+--- Gap 4: Frame to Tensor ---
+log['']
+log['=== Gap 4: Frame to Tensor ===']
+tn = tensor[df, ['age', 'salary', 'score']]
+t0 = time[]
+i = 0
+while i lt 10
+    tn = tensor[df, ['age', 'salary', 'score']]
+    i = i + 1
+t1 = time[]
+log['tensor[df, 3cols] x10: {t1 - t0}s']
+log['tensor shape: {tn.shape}']
+
+--- Gap 5: Validity bitmap (.ok) ---
+log['']
+log['=== Gap 5: Validity bitmap ===']
+ages = df.age
+t0 = time[]
+i = 0
+while i lt 10
+    valid = ages.ok
+    i = i + 1
+t1 = time[]
+log['ages.ok x10: {t1 - t0}s']
+
+log['']
+log['=== Done ===']
+

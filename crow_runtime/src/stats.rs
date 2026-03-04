@@ -94,6 +94,34 @@ pub fn cov(x: &CrowTensor, y: &CrowTensor) -> f64 {
     sum / n as f64
 }
 
+/// Simple linear regression: y = slope * x + intercept.
+/// Returns (slope, intercept, r_squared).
+pub fn linreg(x: &CrowTensor, y: &CrowTensor) -> (f64, f64, f64) {
+    let xd = x.to_vec();
+    let yd = y.to_vec();
+    let n = xd.len() as f64;
+    if xd.len() < 2 || yd.len() != xd.len() {
+        return (f64::NAN, f64::NAN, f64::NAN);
+    }
+    let mx = x.mean();
+    let my = y.mean();
+    let ss_xy: f64 = xd.iter().zip(yd.iter()).map(|(xi, yi)| (xi - mx) * (yi - my)).sum();
+    let ss_xx: f64 = xd.iter().map(|xi| (xi - mx) * (xi - mx)).sum();
+    if ss_xx == 0.0 {
+        return (f64::NAN, my, f64::NAN);
+    }
+    let slope = ss_xy / ss_xx;
+    let intercept = my - slope * mx;
+    // R² = 1 - SS_res / SS_tot
+    let ss_res: f64 = xd.iter().zip(yd.iter()).map(|(xi, yi)| {
+        let pred = slope * xi + intercept;
+        (yi - pred) * (yi - pred)
+    }).sum();
+    let ss_tot: f64 = yd.iter().map(|yi| (yi - my) * (yi - my)).sum();
+    let r2 = if ss_tot == 0.0 { 1.0 } else { 1.0 - ss_res / ss_tot };
+    (slope, intercept, r2)
+}
+
 /// Two-sample Welch's t-test. Returns (t_statistic, p_value).
 /// Uses the approximation for the two-tailed p-value from the t-distribution.
 pub fn ttest(x: &CrowTensor, y: &CrowTensor) -> (f64, f64) {
@@ -307,6 +335,48 @@ mod tests {
     fn test_median_single() {
         let t = tensor(&[42.0]);
         assert!((median(&t) - 42.0).abs() < 1e-10);
+    }
+
+    // ── linreg ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_linreg_perfect() {
+        // y = 2x + 1, perfect fit
+        let x = tensor(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let y = tensor(&[3.0, 5.0, 7.0, 9.0, 11.0]);
+        let (slope, intercept, r2) = linreg(&x, &y);
+        assert!((slope - 2.0).abs() < 1e-10);
+        assert!((intercept - 1.0).abs() < 1e-10);
+        assert!((r2 - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_linreg_negative_slope() {
+        // y = -3x + 10
+        let x = tensor(&[1.0, 2.0, 3.0, 4.0]);
+        let y = tensor(&[7.0, 4.0, 1.0, -2.0]);
+        let (slope, intercept, r2) = linreg(&x, &y);
+        assert!((slope - (-3.0)).abs() < 1e-10);
+        assert!((intercept - 10.0).abs() < 1e-10);
+        assert!((r2 - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_linreg_noisy() {
+        // Noisy data, R² should be < 1 but > 0
+        let x = tensor(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let y = tensor(&[2.1, 3.9, 6.2, 7.8, 10.1]);
+        let (slope, _intercept, r2) = linreg(&x, &y);
+        assert!(slope > 1.5 && slope < 2.5, "slope should be ~2, got {}", slope);
+        assert!(r2 > 0.95 && r2 <= 1.0, "r2 should be high, got {}", r2);
+    }
+
+    #[test]
+    fn test_linreg_too_few_points() {
+        let x = tensor(&[1.0]);
+        let y = tensor(&[2.0]);
+        let (slope, _intercept, _r2) = linreg(&x, &y);
+        assert!(slope.is_nan());
     }
 }
 

@@ -167,7 +167,7 @@ impl<'a> Validator<'a> {
                 // Built-in modules: register all their function and constant names
                 // so validate_call doesn't flag them as undefined.
                 // The registry was already populated during type inference (Pass 1).
-                if path == "math" || path == "math.stats" || path == "math.nn" || path == "io" {
+                if path == "math" || path == "math.stats" || path == "math.nn" || path == "io" || path == "frame" {
                     if path == "math" || path.starts_with("math.") {
                         self.defined_vars.insert("math".to_string());
                     }
@@ -182,6 +182,18 @@ impl<'a> Validator<'a> {
             }
             Stmt::Resource { .. } => {}
             Stmt::Break | Stmt::Continue => {}
+        }
+    }
+
+    /// Validate an expression in bare-name mode: identifiers that aren't
+    /// defined variables or builtins are allowed (they become column name strings).
+    fn validate_expr_bare_names(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Ident(_) => {} // bare name is OK
+            Expr::Array(items) => {
+                for item in items { self.validate_expr_bare_names(item); }
+            }
+            _ => self.validate_expr(expr),
         }
     }
 
@@ -204,7 +216,16 @@ impl<'a> Validator<'a> {
                 self.validate_expr(e);
             }
             Expr::Call { callee, args } => {
-                for a in args { self.validate_expr(a); }
+                // Frame module functions allow bare-name identifiers as column
+                // references — skip normal undefined-variable validation for those.
+                let is_frame_fn = if let Expr::Ident(name) = callee.as_ref() {
+                    self.ctx.registry.module_name_for(name).map_or(false, |m| m == "frame")
+                } else { false };
+                if is_frame_fn {
+                    for a in args { self.validate_expr_bare_names(a); }
+                } else {
+                    for a in args { self.validate_expr(a); }
+                }
                 match callee.as_ref() {
                     Expr::Ident(name) => {
                         self.validate_call(name, args);
@@ -401,9 +422,11 @@ impl<'a> Validator<'a> {
                     self.error("cannot use '+' with strings — use string interpolation instead".to_string());
                     return;
                 }
-                // Numeric ops: both must be numeric (including NumArray and Sparse)
-                let lt_num = matches!(lt, CrowType::Int | CrowType::Float | CrowType::NumArray(_) | CrowType::Sparse);
-                let rt_num = matches!(rt, CrowType::Int | CrowType::Float | CrowType::NumArray(_) | CrowType::Sparse);
+                // Numeric ops: both must be numeric (including NumArray, Sparse, FrameCol, and legacy Array(Str))
+                let is_num_like = |t: &CrowType| matches!(t, CrowType::Int | CrowType::Float | CrowType::NumArray(_) | CrowType::Sparse | CrowType::FrameCol)
+                    || matches!(t, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Str));
+                let lt_num = is_num_like(&lt);
+                let rt_num = is_num_like(&rt);
                 if !lt_num || !rt_num {
                     let op_str = match op {
                         BinOp::Add => "+", BinOp::Sub => "-", BinOp::Mul => "*",

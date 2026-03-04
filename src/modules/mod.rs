@@ -1,3 +1,4 @@
+pub mod frame;
 pub mod io;
 pub mod math;
 pub mod nn;
@@ -136,6 +137,12 @@ impl ModuleRegistry {
     /// All registered constant names.
     pub fn const_names(&self) -> Vec<&str> {
         self.const_map.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Return the module name that owns a given function, if any.
+    pub fn module_name_for(&self, fn_name: &str) -> Option<&str> {
+        let idx = self.fn_map.get(fn_name)?;
+        Some(self.modules[*idx].name())
     }
 }
 

@@ -760,10 +760,26 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 |---|---|
 | `exp[t]` | Element-wise exponential |
 | `ln[t]` | Element-wise natural log |
+| `log2[t]` | Element-wise base-2 logarithm |
+| `log10[t]` | Element-wise base-10 logarithm |
 | `sqrt[t]` | Element-wise square root |
+| `abs[t]` | Element-wise absolute value |
+| `sign[t]` | Element-wise sign (-1, 0, or 1) |
+| `floor[t]` | Element-wise floor |
+| `ceil[t]` | Element-wise ceiling |
+| `round[t]` | Element-wise round to nearest |
+| `clip[t, lo, hi]` | Clamp values to [lo, hi] |
+| `mod[t, divisor]` | Element-wise modulo |
 | `sin[t]` | Element-wise sine |
 | `cos[t]` | Element-wise cosine |
-| `abs[t]` | Element-wise absolute value |
+| `tan[t]` | Element-wise tangent |
+| `asin[t]` | Element-wise arcsine |
+| `acos[t]` | Element-wise arccosine |
+| `atan[t]` | Element-wise arctangent |
+| `atan2[y, x]` | Element-wise two-argument arctangent |
+| `sinh[t]` | Element-wise hyperbolic sine |
+| `cosh[t]` | Element-wise hyperbolic cosine |
+| `tanh[t]` | Element-wise hyperbolic tangent |
 
 #### Reductions
 
@@ -860,6 +876,11 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | `eigen[a]` | Eigenvalues → returns [real, imag] |
 | `norm[x]` | L2 (Euclidean) norm (returns float) |
 | `norm[x, p]` | Lp norm (p=1 for L1, inf for L∞) |
+| `dot[a, b]` | Vector dot product (inner product, returns float) |
+| `pinv[a]` | Moore-Penrose pseudo-inverse |
+| `lstsq[a, b]` | Least-squares solve: minimize ‖Ax − b‖² |
+| `triu[a]` | Upper triangular part of matrix |
+| `tril[a]` | Lower triangular part of matrix |
 
 #### Random & Distributions
 
@@ -872,6 +893,9 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | `uniform[low, high, d1, d2, ...]` | Uniform in [low, high) |
 | `poisson[lambda, d1, d2, ...]` | Poisson distribution |
 | `bernoulli[p, d1, d2, ...]` | Bernoulli (0.0 or 1.0) |
+| `gamma_dist[alpha, beta, d1, ...]` | Gamma distribution |
+| `beta_dist[alpha, beta, d1, ...]` | Beta distribution |
+| `exponential[lambda, d1, ...]` | Exponential distribution |
 | `shuffle[x]` | Random permutation of tensor elements |
 | `choice[x, n]` | Random sample of n elements (no replacement) |
 | `permutation[n]` | Random permutation of 0..n |
@@ -977,6 +1001,7 @@ Import with `use math.stats`. Functions become top-level after import.
 | `corr[x, y]` | Pearson correlation coefficient between two arrays |
 | `cov[x, y]` | Population covariance between two arrays |
 | `ttest[x, y]` | Welch's two-sample t-test → returns map with `t` and `p` |
+| `linreg[x, y]` | Simple linear regression → returns map with `slope`, `intercept`, `r2` |
 
 ```
 use math
@@ -1939,7 +1964,7 @@ for x in nums
 
 Including `sum` but not `min[arr]`/`max[arr]` created an inconsistency — all three are the same pattern (reduce an array to a single value). Rather than adding more, we removed `sum` to keep core honest: if you can write it with a loop, write it with a loop.
 
-**What to use instead:** Loops for now. A future `math` library will provide `sum`, `min`, `max`, `product`, and other array reductions.
+**What to use instead:** `use math` provides `sum`, `min`, `max`, `prod`, and other tensor/array reductions (see §10). For plain arrays without `use math`, use a loop.
 
 ## Design Note: No Ternary Expression
 
