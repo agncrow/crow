@@ -13,7 +13,7 @@ use crate::value::{CrowValue, Value};
 // --- Impure builtins ---
 const IMPURE_BUILTINS: &[&str] = &[
     "read", "write", "log", "input", "rand", "time", "sleep", "env", "exit",
-    "args",
+    "args", "exists", "mkdir", "ls", "rm", "mv", "cp",
 ];
 
 /// All builtin function names (reused from validator for undefined-variable detection).
@@ -28,6 +28,7 @@ const BUILTINS: &[&str] = &[
     "keys", "values", "has", "set", "del",
     "args", "input",
     "read", "write",
+    "exists", "mkdir", "ls", "rm", "mv", "cp",
     "rand", "time", "sleep", "env", "exit",
     "json", "encode",
     "error",

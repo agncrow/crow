@@ -383,6 +383,12 @@ type[error['x']]  --- 'error' ---
 |----------|-------------|
 | `read[path]` | Read file contents (error-value on failure) |
 | `write[path, content]` | Write string to file (error-value on failure) |
+| `exists[path]` | Check if file/directory exists (returns bool) |
+| `mkdir[path]` | Create directory (and parents). Error-value on failure |
+| `ls[path]` | List directory entries as sorted array of strings. Error-value on failure |
+| `rm[path]` | Remove file or directory (recursive). Error-value on failure |
+| `mv[src, dst]` | Move/rename file or directory. Error-value on failure |
+| `cp[src, dst]` | Copy file. Error-value on failure |
 | `args[]` | CLI arguments as array of strings |
 | `input[]` | Read a line from stdin (error-value on failure) |
 | `input[prompt]` | Print prompt, then read a line (error-value on failure) |
@@ -1186,6 +1192,11 @@ These builtins can fail and return an error-value:
 |---------|---------------|
 | `read[path]` | File doesn't exist or can't be read |
 | `write[path, content]` | File can't be written |
+| `mkdir[path]` | Directory can't be created |
+| `ls[path]` | Path doesn't exist or can't be read |
+| `rm[path]` | Path doesn't exist or can't be removed |
+| `mv[src, dst]` | Source doesn't exist or move fails |
+| `cp[src, dst]` | Source doesn't exist or copy fails |
 | `input[]` / `input[prompt]` | Stdin read fails |
 | `int[string]` | String can't be parsed as integer |
 | `float[string]` | String can't be parsed as float |

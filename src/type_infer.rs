@@ -933,6 +933,13 @@ impl TypeContext {
             // File I/O
             "read" => CrowType::Result(Box::new(CrowType::Str)),
             "write" => CrowType::Result(Box::new(CrowType::Str)),
+            // File system builtins
+            "exists" => CrowType::Bool,
+            "mkdir" => CrowType::Result(Box::new(CrowType::Str)),
+            "ls" => CrowType::Result(Box::new(CrowType::Array(Box::new(CrowType::Str)))),
+            "rm" => CrowType::Result(Box::new(CrowType::Str)),
+            "mv" => CrowType::Result(Box::new(CrowType::Str)),
+            "cp" => CrowType::Result(Box::new(CrowType::Str)),
             // System builtins
             "rand" => {
                 if args.is_empty() { CrowType::Float } else { CrowType::Int }

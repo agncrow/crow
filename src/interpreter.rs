@@ -1401,7 +1401,7 @@ impl Interpreter {
             | "repeat" | "pad"
             | "int" | "float" | "str"
             | "push" | "pop" | "sort" | "reverse" | "append" | "contains" | "slice"
-            | "read" | "write" | "len"
+            | "read" | "write" | "exists" | "mkdir" | "ls" | "rm" | "mv" | "cp" | "len"
             | "keys" | "values" | "has" | "set" | "del"
             | "args" | "input"
             | "assert" | "error"
@@ -2214,6 +2214,96 @@ impl Interpreter {
                         }
                     }
                     _ => Err("write[] requires a string path and string content".into()),
+                }
+            }
+            // --- File system builtins ---
+            "exists" => {
+                if args.len() != 1 { return Err("exists[] takes exactly 1 argument".into()); }
+                match args[0].unwrap_or_propagate()? {
+                    Value::Str(path) => Ok(CrowValue::ok(Value::Bool(std::path::Path::new(path).exists()))),
+                    _ => Err("exists[] requires a string path".into()),
+                }
+            }
+            "mkdir" => {
+                if args.len() != 1 { return Err("mkdir[] takes exactly 1 argument".into()); }
+                match args[0].unwrap_or_propagate()? {
+                    Value::Str(path) => {
+                        match std::fs::create_dir_all(path) {
+                            Ok(_) => Ok(CrowValue::done()),
+                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot mkdir '{}': {}", path, e), "io", &self.trace_entry())),
+                        }
+                    }
+                    _ => Err("mkdir[] requires a string path".into()),
+                }
+            }
+            "ls" => {
+                if args.len() != 1 { return Err("ls[] takes exactly 1 argument".into()); }
+                match args[0].unwrap_or_propagate()? {
+                    Value::Str(path) => {
+                        match std::fs::read_dir(path) {
+                            Ok(entries) => {
+                                let mut names: Vec<CrowValue> = Vec::new();
+                                for entry in entries {
+                                    match entry {
+                                        Ok(e) => names.push(CrowValue::ok(Value::Str(e.file_name().to_string_lossy().to_string()))),
+                                        Err(e) => return Ok(CrowValue::error_with_kind(&format!("ls '{}': {}", path, e), "io", &self.trace_entry())),
+                                    }
+                                }
+                                names.sort_by(|a, b| {
+                                    if let (Value::Str(sa), Value::Str(sb)) = (&a.value, &b.value) {
+                                        sa.cmp(sb)
+                                    } else {
+                                        std::cmp::Ordering::Equal
+                                    }
+                                });
+                                Ok(CrowValue::ok(Value::Array(names)))
+                            }
+                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot ls '{}': {}", path, e), "io", &self.trace_entry())),
+                        }
+                    }
+                    _ => Err("ls[] requires a string path".into()),
+                }
+            }
+            "rm" => {
+                if args.len() != 1 { return Err("rm[] takes exactly 1 argument".into()); }
+                match args[0].unwrap_or_propagate()? {
+                    Value::Str(path) => {
+                        let p = std::path::Path::new(path);
+                        let result = if p.is_dir() {
+                            std::fs::remove_dir_all(p)
+                        } else {
+                            std::fs::remove_file(p)
+                        };
+                        match result {
+                            Ok(_) => Ok(CrowValue::done()),
+                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot rm '{}': {}", path, e), "io", &self.trace_entry())),
+                        }
+                    }
+                    _ => Err("rm[] requires a string path".into()),
+                }
+            }
+            "mv" => {
+                if args.len() != 2 { return Err("mv[] takes exactly 2 arguments".into()); }
+                match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
+                    (Value::Str(src), Value::Str(dst)) => {
+                        match std::fs::rename(src, dst) {
+                            Ok(_) => Ok(CrowValue::done()),
+                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot mv '{}' to '{}': {}", src, dst, e), "io", &self.trace_entry())),
+                        }
+                    }
+                    _ => Err("mv[] requires two string paths".into()),
+                }
+            }
+            "cp" => {
+                if args.len() != 2 { return Err("cp[] takes exactly 2 arguments".into()); }
+                match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
+                    (Value::Str(src), Value::Str(dst)) => {
+                        match std::fs::copy(src, dst) {
+                            Ok(_) => Ok(CrowValue::done()),
+                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot cp '{}' to '{}': {}", src, dst, e), "io", &self.trace_entry())),
+                        }
+                    }
+                    _ => Err("cp[] requires two string paths".into()),
                 }
             }
             // --- JSON builtins ---
@@ -5160,5 +5250,102 @@ mod tests {
             // It might return an error value instead of panicking
             true
         });
+    }
+
+    // ===== File System Builtins =====
+
+    #[test]
+    fn test_fs_exists() {
+        // Cargo.toml always exists in the project root
+        let val = get_var("x = exists['Cargo.toml']\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+        // Non-existent file
+        let val2 = get_var("x = exists['no_such_file_xyz.txt']\n", "x");
+        assert!(matches!(val2.value, Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_fs_mkdir_ls_rm() {
+        let dir = format!("/tmp/crow_test_fs_{}", std::process::id());
+        let src = format!(
+            "mkdir['{d}']\nwrite['{d}/hello.txt', 'hi']\nfiles = ls['{d}']\ne = exists['{d}/hello.txt']\nrm['{d}']\ne2 = exists['{d}']\n",
+            d = dir
+        );
+        let mut lexer = crate::lexer::Lexer::new(&src);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let mut interp = Interpreter::new();
+        interp.run(&stmts).unwrap();
+
+        // ls should return array with 'hello.txt'
+        let files = interp.env.get("files").unwrap().clone();
+        if let Value::Array(arr) = &files.value {
+            assert_eq!(arr.len(), 1);
+            assert!(matches!(&arr[0].value, Value::Str(s) if s == "hello.txt"));
+        } else {
+            panic!("expected array from ls, got {:?}", files.value);
+        }
+        // exists should have been true before rm
+        let e = interp.env.get("e").unwrap().clone();
+        assert!(matches!(e.value, Value::Bool(true)));
+        // exists should be false after rm
+        let e2 = interp.env.get("e2").unwrap().clone();
+        assert!(matches!(e2.value, Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_fs_mv() {
+        let base = format!("/tmp/crow_test_mv_{}", std::process::id());
+        let src = format!(
+            "mkdir['{b}']\nwrite['{b}/a.txt', 'data']\nmv['{b}/a.txt', '{b}/b.txt']\ne1 = exists['{b}/a.txt']\ne2 = exists['{b}/b.txt']\nrm['{b}']\n",
+            b = base
+        );
+        let mut lexer = crate::lexer::Lexer::new(&src);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let mut interp = Interpreter::new();
+        interp.run(&stmts).unwrap();
+
+        let e1 = interp.env.get("e1").unwrap().clone();
+        assert!(matches!(e1.value, Value::Bool(false)), "source should not exist after mv");
+        let e2 = interp.env.get("e2").unwrap().clone();
+        assert!(matches!(e2.value, Value::Bool(true)), "destination should exist after mv");
+    }
+
+    #[test]
+    fn test_fs_cp() {
+        let base = format!("/tmp/crow_test_cp_{}", std::process::id());
+        let src = format!(
+            "mkdir['{b}']\nwrite['{b}/orig.txt', 'hello']\ncp['{b}/orig.txt', '{b}/copy.txt']\ne1 = exists['{b}/orig.txt']\ne2 = exists['{b}/copy.txt']\nc = read['{b}/copy.txt']\nrm['{b}']\n",
+            b = base
+        );
+        let mut lexer = crate::lexer::Lexer::new(&src);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let mut interp = Interpreter::new();
+        interp.run(&stmts).unwrap();
+
+        let e1 = interp.env.get("e1").unwrap().clone();
+        assert!(matches!(e1.value, Value::Bool(true)), "original should still exist after cp");
+        let e2 = interp.env.get("e2").unwrap().clone();
+        assert!(matches!(e2.value, Value::Bool(true)), "copy should exist after cp");
+        let c = interp.env.get("c").unwrap().clone();
+        assert!(matches!(&c.value, Value::Str(s) if s == "hello"), "copy content should match");
+    }
+
+    #[test]
+    fn test_fs_mkdir_error_propagation() {
+        // mkdir returns error-value on failure, not panic
+        let val = get_var("x = mkdir['/root/no_permission_dir_xyz']\n", "x");
+        assert!(!val.ok, "mkdir on inaccessible path should return error-value");
+    }
+
+    #[test]
+    fn test_fs_rm_nonexistent() {
+        let val = get_var("x = rm['/tmp/no_such_file_crow_test_xyz']\n", "x");
+        assert!(!val.ok, "rm on nonexistent path should return error-value");
     }
 }

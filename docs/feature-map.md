@@ -38,6 +38,7 @@ Quick-reference lookup table. **Source of truth:** `docs/language-spec.md`.
 | `starts[s, p]` `ends[s, p]` `join[a, s]` `repeat[s, n]` `pad[s, n]` `reverse[s]` | Strings |
 | `int[v]` `float[v]` `str[v]` `type[v]` | Conversion |
 | `read[p]` `write[p, c]` `args[]` `input[]` `input[prompt]` | I/O |
+| `exists[p]` `mkdir[p]` `ls[p]` `rm[p]` `mv[s, d]` `cp[s, d]` | File System |
 | `json[s]` `encode[v]` | JSON |
 | `rand[...]` `time[]` `sleep[ms]` `env[name]` `exit[]` `exit[code]` | System |
 
