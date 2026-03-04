@@ -48,6 +48,10 @@ const BUILTINS: &[&str] = &[
     // Web
     "route", "serve", "respond", "redirect", "html", "text",
     "sqlite", "exec", "query", "sign", "verify",
+    // Web P4 modules
+    "cors", "sessions", "templates", "render", "cache", "limit",
+    "uploads", "sse", "ws", "connect", "send", "recv", "close",
+    "live", "static_dir", "smtp",
 ];
 
 pub struct Validator<'a> {
@@ -435,6 +439,23 @@ impl<'a> Validator<'a> {
             "sqlite" => argc == 1,
             "exec" | "query" => argc >= 2,
             "sign" | "verify" => argc == 2,
+            // Web P4 modules
+            "cors" => argc == 1 || argc == 2,   // cors[app] or cors[app, origins_list]
+            "sessions" => argc == 0,              // sessions[]
+            "templates" => argc == 1,             // templates[glob]
+            "render" => argc == 3,                // render[t, name, data]
+            "cache" => argc == 1 || argc == 2,    // cache[max] or cache[max, ttl]
+            "limit" => argc == 2,                 // limit[max, window]
+            "uploads" => argc == 1,               // uploads[req]
+            "sse" => argc == 3,                   // sse[app, path, handler]
+            "ws" => argc == 3,                    // ws[app, path, handler]
+            "connect" => argc == 1,               // connect[url]
+            "send" => argc == 2,                  // send[sock, msg] or send[sender, data]
+            "recv" => argc == 1,                  // recv[sock]
+            "close" => argc == 1,                 // close[sock]
+            "live" => argc == 3,                  // live[app, path, handler]
+            "static_dir" => argc == 3,            // static_dir[app, url_path, dir_path]
+            "smtp" => argc == 4,                  // smtp[host, port, user, pass]
             _ => true,
         };
         if !valid {

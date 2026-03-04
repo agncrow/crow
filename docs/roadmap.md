@@ -72,7 +72,7 @@ Provided by `web.client` module (`use web.client`): `get[url]`, `post[url, body]
 #### Hashing ✅
 - [x] **`hash[s, 'sha256']`** — compute hash digest → hex string. Supports sha256, sha512, md5.
 
-### P4 — Fullstack / web (weeks)
+### P4 — Fullstack / web ✅
 
 > **See [docs/web-framework.md](web-framework.md) for the full design document.**
 
@@ -83,9 +83,10 @@ All 17 server-side modules implemented with 119 tests passing:
 - [x] `web.docs` (OpenAPI + Swagger UI), `web.live` (LCS diff + WS push), `web.view` (VNode diff + JS module gen)
 - [x] Transpiler wiring — `use web.X` → feature flags in generated Cargo.toml
 
-#### Transpiler codegen — remaining
-- [ ] **Web builtins codegen** — transpiler emits Rust code for `web.new[]`, `route[]`, `serve[]`, `json[]`, `cors[]`, etc.
-- [ ] **Interpreter support** — `web.*` builtins work in `crow run -i` mode.
+#### Transpiler codegen — ✅ Done
+- [x] **Web builtins codegen** — transpiler emits Rust code for all web builtins (cors, sessions, templates, render, cache, limit, uploads, sse, ws, connect, send, recv, close, live, static_dir, smtp, web.queue, web.docs).
+- [x] **Interpreter support** — all `web.*` builtins work in `crow run -i` mode with mock implementations.
+- [x] **Unit tests** — 21 transpiler tests + 12 interpreter tests for P4 codegen.
 
 #### Client-side WASM — deferred
 These require building a full WASM frontend pipeline (`wasm-bindgen`, `web-sys`, reactive runtime). Multi-month effort, deferred until server-side modules are fully usable from Crow source code.
@@ -140,5 +141,5 @@ These require building a full WASM frontend pipeline (`wasm-bindgen`, `web-sys`,
 | JavaScript/Node | 7/10 | 10/10 | 8/10 | 10/10 | 9/10 |
 | **Crow** | 3/10 | 1/10 | 1/10 | 1/10 | 5/10 |
 
-P3 is complete — regex, date/time, shell, and hashing are implemented (interpreter + transpiler, 640 tests). The Rust crate (`crow_web`) is implemented with 17 modules and 119 tests, but the transpiler doesn't yet emit Rust code for all web builtins. Web/DB ratings will jump to **6-7/10** once transpiler codegen is wired up. P5–P7 are what separate a usable tool from a production ecosystem.
+P3 and P4 are complete. P3 added regex, date/time, shell, and hashing (interpreter + transpiler). P4 wired up all 17 web modules with transpiler codegen, validator rules, and interpreter mock support (676 tests passing). P5–P7 are what separate a usable tool from a production ecosystem.
 
