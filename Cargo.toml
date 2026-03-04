@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crow_runtime"]
+members = [".", "crow_runtime", "crow_web"]
 exclude = [".crow_build"]
 resolver = "3"
 
