@@ -41,9 +41,9 @@ What's done, what's remaining, and in what order.
 - [ ] **Spectrogram**: `spectrogram[signal, window_size]` → 2D magnitude tensor.
 - [ ] **Filter design**: `lowpass`, `highpass`, `bandpass` — basic IIR/FIR filters.
 
-### P3 — General-purpose language (days–weeks)
+### P3 — General-purpose language ✅
 
-Currently Crow has basic I/O (`read`, `write`, `args`, `input`, `env`, `time`, `sleep`, `exit`, `json`, `encode`) but lacks standard library features expected of a general-purpose language.
+Crow now has regex, date/time, shell, and hashing builtins in addition to file system and HTTP client.
 
 #### File system ✅
 - [x] **`exists[path]`** — check if file or directory exists (returns bool).
@@ -53,26 +53,24 @@ Currently Crow has basic I/O (`read`, `write`, `args`, `input`, `env`, `time`, `
 - [x] **`mv[src, dst]`** — move/rename file or directory. Error-value on failure.
 - [x] **`cp[src, dst]`** — copy file. Error-value on failure.
 
-#### Networking / HTTP client
-- [ ] **`fetch[url]`** — HTTP GET → `{status, body, headers}`. Error-value on failure.
-- [ ] **`fetch[url, method, body, headers]`** — full HTTP request (POST, PUT, DELETE, etc.).
+#### Networking / HTTP client ✅
+Provided by `web.client` module (`use web.client`): `get[url]`, `post[url, body]`, `put[url, body]`, `del[url]` — all return `{status, body, headers, ok, json}`. No separate `fetch` builtin needed (Design Note: one way to do things).
 
-#### Regex
-- [ ] **`match[s, pattern]`** — regex match → `{ok, groups}` or error-value.
-- [ ] **`matches[s, pattern]`** — does string match pattern? (returns bool).
-- [ ] **`sub[s, pattern, replacement]`** — regex substitution.
+#### Regex ✅
+- [x] **`find[s, pattern]`** — regex match → `{ok, groups}` map. (`match` is a reserved keyword, so the builtin is named `find`.)
+- [x] **`matches[s, pattern]`** — does string match pattern? (returns bool).
+- [x] **`sub[s, pattern, replacement]`** — regex substitution.
 
-#### Date/time
-- [ ] **`now[]`** — current datetime struct with `.year`, `.month`, `.day`, `.hour`, `.minute`, `.second`.
-- [ ] **`date[y, m, d]`** — construct date.
-- [ ] **`elapsed[start, end]`** — duration between two timestamps.
-- [ ] **`format[dt, pattern]`** — format datetime to string.
+#### Date/time ✅
+- [x] **`now[]`** — current datetime map with `year`, `month`, `day`, `hour`, `minute`, `second`, `timestamp`.
+- [x] **`date[y, m, d]`** — construct date map with `year`, `month`, `day`, `timestamp`.
+- [x] **`elapsed[start, end]`** — duration between two date maps → `{seconds, minutes, hours, days}`.
 
-#### Process / shell
-- [ ] **`shell[cmd]`** — run shell command → `{status, stdout, stderr}`. Error-value on failure.
+#### Process / shell ✅
+- [x] **`shell[cmd]`** — run shell command → `{status, stdout, stderr}`. stdout/stderr are trimmed.
 
-#### Hashing
-- [ ] **`hash[s, 'sha256']`** — compute hash digest → hex string. Support sha256, sha512, md5.
+#### Hashing ✅
+- [x] **`hash[s, 'sha256']`** — compute hash digest → hex string. Supports sha256, sha512, md5.
 
 ### P4 — Fullstack / web (weeks)
 
@@ -140,7 +138,7 @@ These require building a full WASM frontend pipeline (`wasm-bindgen`, `web-sys`,
 | Python | 10/10 | 8/10 | 9/10 | 10/10 | 9/10 |
 | Go | 9/10 | 9/10 | 7/10 | 8/10 | 8/10 |
 | JavaScript/Node | 7/10 | 10/10 | 8/10 | 10/10 | 9/10 |
-| **Crow** | 3/10 | 1/10 | 1/10 | 1/10 | 2/10 |
+| **Crow** | 3/10 | 1/10 | 1/10 | 1/10 | 5/10 |
 
-The Rust crate (`crow_web`) is implemented with 17 modules and 119 tests, but the transpiler doesn't yet emit Rust code for web builtins — so Crow source code can't use them yet. Web/DB ratings will jump to **6-7/10** once transpiler codegen is wired up. Completing P3 (general-purpose) would bring the fullstack rating to **5/10**. P5–P7 are what separate a usable tool from a production ecosystem.
+P3 is complete — regex, date/time, shell, and hashing are implemented (interpreter + transpiler, 640 tests). The Rust crate (`crow_web`) is implemented with 17 modules and 119 tests, but the transpiler doesn't yet emit Rust code for all web builtins. Web/DB ratings will jump to **6-7/10** once transpiler codegen is wired up. P5–P7 are what separate a usable tool from a production ecosystem.
 

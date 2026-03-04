@@ -33,6 +33,14 @@ const BUILTINS: &[&str] = &[
     "json", "encode",
     // Error
     "error",
+    // Shell
+    "shell",
+    // Hashing
+    "hash",
+    // Regex
+    "find", "matches", "sub",
+    // Date/time
+    "now", "date", "elapsed",
     // Resource
     "cpu", "gpu", "nodes",
     // Autograd
@@ -411,6 +419,14 @@ impl<'a> Validator<'a> {
             "gpu" => argc <= 1,
             "nodes" => argc == 1,
             "grad" => argc == 1,
+            // Shell / Hash / Regex / Date
+            "shell" => argc == 1,
+            "hash" => argc == 2,
+            "find" | "matches" => argc == 2,
+            "sub" => argc == 3,
+            "now" => argc == 0,
+            "date" => argc == 3,
+            "elapsed" => argc == 2,
             // Web
             "route" => argc == 3 || argc == 4,
             "serve" => argc == 2,

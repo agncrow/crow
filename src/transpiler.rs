@@ -46,6 +46,12 @@ pub struct Transpiler {
     pub needs_crow_web: bool,
     /// Which crow_web features are needed (e.g. "auth", "session", "db")
     pub web_features: std::collections::BTreeSet<String>,
+    /// Whether the transpiled code uses regex
+    pub needs_regex: bool,
+    /// Whether the transpiled code uses sha2/md5 hashing
+    pub needs_sha2: bool,
+    /// Whether the transpiled code uses chrono (date/time)
+    pub needs_chrono: bool,
     /// Whether the transpiled code uses grad[] (needs CrowDual struct)
     pub needs_grad: bool,
     /// Set of function names that are passed to grad[] and need dual-mode versions
@@ -81,6 +87,9 @@ impl Transpiler {
             current_function_name: String::new(),
             source_file: String::new(),
             binop_counter: 0,
+            needs_regex: false,
+            needs_sha2: false,
+            needs_chrono: false,
             needs_crow_web: false,
             web_features: std::collections::BTreeSet::new(),
             needs_grad: false,
@@ -2566,6 +2575,41 @@ impl Transpiler {
                     if name == "encode" && arg_strs.len() == 1 {
                         self.needs_serde_json = true;
                         return format!("CrowResult {{ ok: true, value: serde_json::to_string(&{}).unwrap_or_default(), reason: String::new(), kind: String::new(), trace: vec![] }}", arg_strs[0]);
+                    }
+
+                    // --- Shell builtin ---
+                    if name == "shell" && arg_strs.len() == 1 {
+                        return format!("{{ let _cmd = &*{}; match std::process::Command::new(\"sh\").arg(\"-c\").arg(_cmd).output() {{ Ok(out) => {{ let mut _m = std::collections::BTreeMap::new(); _m.insert(\"status\".to_string(), out.status.code().unwrap_or(-1) as i64); _m.insert(\"stdout\".to_string(), String::from_utf8_lossy(&out.stdout).trim_end().to_string()); _m.insert(\"stderr\".to_string(), String::from_utf8_lossy(&out.stderr).trim_end().to_string()); _m }}, Err(e) => panic!(\"shell failed: {{}}\", e) }} }}", arg_strs[0]);
+                    }
+                    // --- Hashing builtin ---
+                    if name == "hash" && arg_strs.len() == 2 {
+                        self.needs_sha2 = true;
+                        return format!("{{ let _s = &*{}; let _algo = &*{}; match _algo {{ \"sha256\" => {{ use sha2::Digest; format!(\"{{:x}}\", sha2::Sha256::digest(_s.as_bytes())) }}, \"sha512\" => {{ use sha2::Digest; format!(\"{{:x}}\", sha2::Sha512::digest(_s.as_bytes())) }}, \"md5\" => {{ use md5::Digest; format!(\"{{:x}}\", md5::Md5::digest(_s.as_bytes())) }}, _ => panic!(\"unsupported hash algorithm '{{}}'\", _algo) }} }}", arg_strs[0], arg_strs[1]);
+                    }
+                    // --- Regex builtins ---
+                    if name == "matches" && arg_strs.len() == 2 {
+                        self.needs_regex = true;
+                        return format!("regex::Regex::new(&*{}).unwrap().is_match(&*{})", arg_strs[1], arg_strs[0]);
+                    }
+                    if name == "find" && arg_strs.len() == 2 {
+                        self.needs_regex = true;
+                        return format!("{{ let _re = regex::Regex::new(&*{}).unwrap(); let _s = &*{}; if let Some(_caps) = _re.captures(&_s) {{ let mut _m = std::collections::BTreeMap::new(); _m.insert(\"ok\".to_string(), true); let _groups: Vec<String> = _caps.iter().map(|m| m.map_or(String::new(), |m| m.as_str().to_string())).collect(); _m.insert(\"groups\".to_string(), _groups); _m }} else {{ let mut _m = std::collections::BTreeMap::new(); _m.insert(\"ok\".to_string(), false); _m.insert(\"groups\".to_string(), Vec::<String>::new()); _m }} }}", arg_strs[1], arg_strs[0]);
+                    }
+                    if name == "sub" && arg_strs.len() == 3 {
+                        self.needs_regex = true;
+                        return format!("regex::Regex::new(&*{}).unwrap().replace_all(&*{}, &*{}).to_string()", arg_strs[1], arg_strs[0], arg_strs[2]);
+                    }
+                    // --- Date/time builtins ---
+                    if name == "now" && arg_strs.is_empty() {
+                        self.needs_chrono = true;
+                        return format!("{{ let _now = chrono::Local::now(); let mut _m = std::collections::BTreeMap::new(); _m.insert(\"year\".to_string(), _now.format(\"%Y\").to_string().parse::<i64>().unwrap()); _m.insert(\"month\".to_string(), _now.format(\"%m\").to_string().parse::<i64>().unwrap()); _m.insert(\"day\".to_string(), _now.format(\"%d\").to_string().parse::<i64>().unwrap()); _m.insert(\"hour\".to_string(), _now.format(\"%H\").to_string().parse::<i64>().unwrap()); _m.insert(\"minute\".to_string(), _now.format(\"%M\").to_string().parse::<i64>().unwrap()); _m.insert(\"second\".to_string(), _now.format(\"%S\").to_string().parse::<i64>().unwrap()); _m.insert(\"timestamp\".to_string(), _now.timestamp()); _m }}");
+                    }
+                    if name == "date" && arg_strs.len() == 3 {
+                        self.needs_chrono = true;
+                        return format!("{{ let _y = {} as i32; let _m = {} as u32; let _d = {} as u32; let _dt = chrono::NaiveDate::from_ymd_opt(_y, _m, _d).expect(\"invalid date\"); let mut _map = std::collections::BTreeMap::new(); _map.insert(\"year\".to_string(), _y as i64); _map.insert(\"month\".to_string(), _m as i64); _map.insert(\"day\".to_string(), _d as i64); _map.insert(\"timestamp\".to_string(), _dt.and_hms_opt(0,0,0).unwrap().and_utc().timestamp()); _map }}", arg_strs[0], arg_strs[1], arg_strs[2]);
+                    }
+                    if name == "elapsed" && arg_strs.len() == 2 {
+                        return format!("{{ let _t1 = {}.get(\"timestamp\").copied().unwrap_or(0i64); let _t2 = {}.get(\"timestamp\").copied().unwrap_or(0i64); let _diff = _t2 - _t1; let mut _m = std::collections::BTreeMap::new(); _m.insert(\"seconds\".to_string(), _diff); _m.insert(\"minutes\".to_string(), _diff as f64 / 60.0); _m.insert(\"hours\".to_string(), _diff as f64 / 3600.0); _m.insert(\"days\".to_string(), _diff as f64 / 86400.0); _m }}", arg_strs[0], arg_strs[1]);
                     }
 
                     // --- Web builtins ---

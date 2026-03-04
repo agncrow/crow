@@ -1408,6 +1408,9 @@ impl Interpreter {
             | "rand" | "time" | "sleep" | "env" | "exit"
             | "json" | "encode"
             | "type" | "grad"
+            | "shell" | "hash"
+            | "find" | "matches" | "sub"
+            | "now" | "date" | "elapsed"
         )
     }
 
@@ -2338,6 +2341,179 @@ impl Interpreter {
                     Ok(v) => Ok(CrowValue::ok(Value::Str(v.to_string()))),
                     Err(e) => Ok(CrowValue::error(&e, &self.trace_entry())),
                 }
+            }
+            // --- Shell builtin ---
+            "shell" => {
+                if args.len() != 1 { return Err("shell[] takes exactly 1 argument".into()); }
+                match args[0].unwrap_or_propagate()? {
+                    Value::Str(cmd) => {
+                        match std::process::Command::new("sh").arg("-c").arg(cmd).output() {
+                            Ok(output) => {
+                                let mut map = std::collections::BTreeMap::new();
+                                map.insert("status".to_string(), CrowValue::ok(Value::Int(output.status.code().unwrap_or(-1) as i64)));
+                                map.insert("stdout".to_string(), CrowValue::ok(Value::Str(String::from_utf8_lossy(&output.stdout).trim_end().to_string())));
+                                map.insert("stderr".to_string(), CrowValue::ok(Value::Str(String::from_utf8_lossy(&output.stderr).trim_end().to_string())));
+                                Ok(CrowValue::ok(Value::Map(map)))
+                            }
+                            Err(e) => Ok(CrowValue::error_with_kind(&format!("shell failed: {}", e), "shell", &self.trace_entry())),
+                        }
+                    }
+                    _ => Err("shell[] requires a string command".into()),
+                }
+            }
+            // --- Hashing builtin ---
+            "hash" => {
+                if args.len() != 2 { return Err("hash[] takes exactly 2 arguments (string, algorithm)".into()); }
+                let s = match args[0].unwrap_or_propagate()? {
+                    Value::Str(s) => s.clone(),
+                    _ => return Err("hash[] first argument must be a string".into()),
+                };
+                let algo = match args[1].unwrap_or_propagate()? {
+                    Value::Str(a) => a.clone(),
+                    _ => return Err("hash[] second argument must be a string algorithm".into()),
+                };
+                let hex = match algo.as_str() {
+                    "sha256" => {
+                        use sha2::Digest;
+                        let result = sha2::Sha256::digest(s.as_bytes());
+                        format!("{:x}", result)
+                    }
+                    "sha512" => {
+                        use sha2::Digest;
+                        let result = sha2::Sha512::digest(s.as_bytes());
+                        format!("{:x}", result)
+                    }
+                    "md5" => {
+                        use md5::Digest;
+                        let result = md5::Md5::digest(s.as_bytes());
+                        format!("{:x}", result)
+                    }
+                    _ => return Ok(CrowValue::error_with_kind(&format!("unsupported hash algorithm '{}' (use sha256, sha512, or md5)", algo), "hash", &self.trace_entry())),
+                };
+                Ok(CrowValue::ok(Value::Str(hex)))
+            }
+            // --- Regex builtins ---
+            "find" => {
+                if args.len() != 2 { return Err("find[] takes exactly 2 arguments (string, pattern)".into()); }
+                let s = match args[0].unwrap_or_propagate()? {
+                    Value::Str(s) => s.clone(),
+                    _ => return Err("find[] first argument must be a string".into()),
+                };
+                let pattern = match args[1].unwrap_or_propagate()? {
+                    Value::Str(p) => p.clone(),
+                    _ => return Err("find[] second argument must be a string pattern".into()),
+                };
+                match regex::Regex::new(&pattern) {
+                    Ok(re) => {
+                        if let Some(caps) = re.captures(&s) {
+                            let groups: Vec<CrowValue> = caps.iter()
+                                .map(|m| match m {
+                                    Some(m) => CrowValue::ok(Value::Str(m.as_str().to_string())),
+                                    None => CrowValue::ok(Value::Str(String::new())),
+                                })
+                                .collect();
+                            let mut map = std::collections::BTreeMap::new();
+                            map.insert("ok".to_string(), CrowValue::ok(Value::Bool(true)));
+                            map.insert("groups".to_string(), CrowValue::ok(Value::Array(groups)));
+                            Ok(CrowValue::ok(Value::Map(map)))
+                        } else {
+                            let mut map = std::collections::BTreeMap::new();
+                            map.insert("ok".to_string(), CrowValue::ok(Value::Bool(false)));
+                            map.insert("groups".to_string(), CrowValue::ok(Value::Array(vec![])));
+                            Ok(CrowValue::ok(Value::Map(map)))
+                        }
+                    }
+                    Err(e) => Ok(CrowValue::error_with_kind(&format!("invalid regex: {}", e), "regex", &self.trace_entry())),
+                }
+            }
+            "matches" => {
+                if args.len() != 2 { return Err("matches[] takes exactly 2 arguments (string, pattern)".into()); }
+                let s = match args[0].unwrap_or_propagate()? {
+                    Value::Str(s) => s.clone(),
+                    _ => return Err("matches[] first argument must be a string".into()),
+                };
+                let pattern = match args[1].unwrap_or_propagate()? {
+                    Value::Str(p) => p.clone(),
+                    _ => return Err("matches[] second argument must be a string pattern".into()),
+                };
+                match regex::Regex::new(&pattern) {
+                    Ok(re) => Ok(CrowValue::ok(Value::Bool(re.is_match(&s)))),
+                    Err(e) => Ok(CrowValue::error_with_kind(&format!("invalid regex: {}", e), "regex", &self.trace_entry())),
+                }
+            }
+            "sub" => {
+                if args.len() != 3 { return Err("sub[] takes exactly 3 arguments (string, pattern, replacement)".into()); }
+                let s = match args[0].unwrap_or_propagate()? {
+                    Value::Str(s) => s.clone(),
+                    _ => return Err("sub[] first argument must be a string".into()),
+                };
+                let pattern = match args[1].unwrap_or_propagate()? {
+                    Value::Str(p) => p.clone(),
+                    _ => return Err("sub[] second argument must be a string pattern".into()),
+                };
+                let replacement = match args[2].unwrap_or_propagate()? {
+                    Value::Str(r) => r.clone(),
+                    _ => return Err("sub[] third argument must be a string replacement".into()),
+                };
+                match regex::Regex::new(&pattern) {
+                    Ok(re) => Ok(CrowValue::ok(Value::Str(re.replace_all(&s, replacement.as_str()).to_string()))),
+                    Err(e) => Ok(CrowValue::error_with_kind(&format!("invalid regex: {}", e), "regex", &self.trace_entry())),
+                }
+            }
+            // --- Date/time builtins ---
+            "now" => {
+                if !args.is_empty() { return Err("now[] takes no arguments".into()); }
+                let now = chrono::Local::now();
+                let mut map = std::collections::BTreeMap::new();
+                map.insert("year".to_string(), CrowValue::ok(Value::Int(now.format("%Y").to_string().parse::<i64>().unwrap())));
+                map.insert("month".to_string(), CrowValue::ok(Value::Int(now.format("%m").to_string().parse::<i64>().unwrap())));
+                map.insert("day".to_string(), CrowValue::ok(Value::Int(now.format("%d").to_string().parse::<i64>().unwrap())));
+                map.insert("hour".to_string(), CrowValue::ok(Value::Int(now.format("%H").to_string().parse::<i64>().unwrap())));
+                map.insert("minute".to_string(), CrowValue::ok(Value::Int(now.format("%M").to_string().parse::<i64>().unwrap())));
+                map.insert("second".to_string(), CrowValue::ok(Value::Int(now.format("%S").to_string().parse::<i64>().unwrap())));
+                map.insert("timestamp".to_string(), CrowValue::ok(Value::Int(now.timestamp())));
+                Ok(CrowValue::ok(Value::Map(map)))
+            }
+            "date" => {
+                if args.len() != 3 { return Err("date[] takes exactly 3 arguments (year, month, day)".into()); }
+                let y = match args[0].unwrap_or_propagate()? { Value::Int(n) => *n as i32, _ => return Err("date[] year must be int".into()) };
+                let m = match args[1].unwrap_or_propagate()? { Value::Int(n) => *n as u32, _ => return Err("date[] month must be int".into()) };
+                let d = match args[2].unwrap_or_propagate()? { Value::Int(n) => *n as u32, _ => return Err("date[] day must be int".into()) };
+                match chrono::NaiveDate::from_ymd_opt(y, m, d) {
+                    Some(dt) => {
+                        let mut map = std::collections::BTreeMap::new();
+                        map.insert("year".to_string(), CrowValue::ok(Value::Int(y as i64)));
+                        map.insert("month".to_string(), CrowValue::ok(Value::Int(m as i64)));
+                        map.insert("day".to_string(), CrowValue::ok(Value::Int(d as i64)));
+                        map.insert("timestamp".to_string(), CrowValue::ok(Value::Int(dt.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())));
+                        Ok(CrowValue::ok(Value::Map(map)))
+                    }
+                    None => Ok(CrowValue::error_with_kind(&format!("invalid date: {}-{}-{}", y, m, d), "date", &self.trace_entry())),
+                }
+            }
+            "elapsed" => {
+                if args.len() != 2 { return Err("elapsed[] takes exactly 2 arguments (start, end)".into()); }
+                let t1 = match args[0].unwrap_or_propagate()? {
+                    Value::Map(m) => match m.get("timestamp") {
+                        Some(v) => match &v.value { Value::Int(n) => *n, _ => return Err("elapsed[] start must have numeric timestamp".into()) },
+                        None => return Err("elapsed[] start must have a 'timestamp' field".into()),
+                    },
+                    _ => return Err("elapsed[] arguments must be date/time maps".into()),
+                };
+                let t2 = match args[1].unwrap_or_propagate()? {
+                    Value::Map(m) => match m.get("timestamp") {
+                        Some(v) => match &v.value { Value::Int(n) => *n, _ => return Err("elapsed[] end must have numeric timestamp".into()) },
+                        None => return Err("elapsed[] end must have a 'timestamp' field".into()),
+                    },
+                    _ => return Err("elapsed[] arguments must be date/time maps".into()),
+                };
+                let diff = t2 - t1;
+                let mut map = std::collections::BTreeMap::new();
+                map.insert("seconds".to_string(), CrowValue::ok(Value::Int(diff)));
+                map.insert("minutes".to_string(), CrowValue::ok(Value::Float(diff as f64 / 60.0)));
+                map.insert("hours".to_string(), CrowValue::ok(Value::Float(diff as f64 / 3600.0)));
+                map.insert("days".to_string(), CrowValue::ok(Value::Float(diff as f64 / 86400.0)));
+                Ok(CrowValue::ok(Value::Map(map)))
             }
             "assert" => {
                 if args.is_empty() || args.len() > 2 {
@@ -5394,5 +5570,107 @@ mod tests {
         assert!(val.ok);
         assert_eq!(format!("{}", val.value), "8080");
         unsafe { std::env::remove_var("CROW_TEST_ENV_PORT"); }
+    }
+
+    // --- P3: Shell ---
+    #[test]
+    fn test_shell_builtin() {
+        let val = run_program("x = shell['echo hello']\nlog[x.stdout]");
+        assert!(val.ok);
+    }
+
+    #[test]
+    fn test_shell_status() {
+        let val = get_var("r = shell['true']", "r");
+        match &val.value {
+            Value::Map(m) => {
+                let status = m.get("status").unwrap();
+                assert_eq!(format!("{}", status.value), "0");
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    // --- P3: Hashing ---
+    #[test]
+    fn test_hash_sha256() {
+        let val = get_var("h = hash['hello', 'sha256']", "h");
+        assert_eq!(format!("{}", val.value), "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+    }
+
+    #[test]
+    fn test_hash_md5() {
+        let val = get_var("h = hash['hello', 'md5']", "h");
+        assert_eq!(format!("{}", val.value), "5d41402abc4b2a76b9719d911017c592");
+    }
+
+    // --- P3: Regex ---
+    #[test]
+    fn test_matches_true() {
+        let val = get_var("r = matches['hello', '[a-z]+']", "r");
+        assert_eq!(format!("{}", val.value), "true");
+    }
+
+    #[test]
+    fn test_matches_false() {
+        let val = get_var("r = matches['hello', '[0-9]+']", "r");
+        assert_eq!(format!("{}", val.value), "false");
+    }
+
+    #[test]
+    fn test_find_ok() {
+        let val = get_var("m = find['abc123', '([a-z]+)([0-9]+)']", "m");
+        match &val.value {
+            Value::Map(m) => {
+                let ok = m.get("ok").unwrap();
+                assert_eq!(format!("{}", ok.value), "true");
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn test_sub_regex() {
+        let val = get_var("r = sub['hello world', 'world', 'crow']", "r");
+        assert_eq!(format!("{}", val.value), "hello crow");
+    }
+
+    // --- P3: Date/Time ---
+    #[test]
+    fn test_now_has_year() {
+        let val = get_var("t = now[]", "t");
+        match &val.value {
+            Value::Map(m) => {
+                assert!(m.contains_key("year"));
+                assert!(m.contains_key("timestamp"));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn test_date_builtin() {
+        let val = get_var("d = date[2024, 1, 15]", "d");
+        match &val.value {
+            Value::Map(m) => {
+                let year = m.get("year").unwrap();
+                assert_eq!(format!("{}", year.value), "2024");
+                let month = m.get("month").unwrap();
+                assert_eq!(format!("{}", month.value), "1");
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn test_elapsed_builtin() {
+        let val = get_var("d1 = date[2024, 1, 15]\nd2 = date[2024, 1, 16]\ne = elapsed[d1, d2]", "e");
+        match &val.value {
+            Value::Map(m) => {
+                let secs = m.get("seconds").unwrap();
+                assert_eq!(format!("{}", secs.value), "86400");
+            }
+            _ => panic!("expected map"),
+        }
     }
 }
