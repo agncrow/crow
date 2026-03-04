@@ -9,10 +9,25 @@ Crow is a simple, expressive programming language that compiles to native code v
 ```bash
 git clone https://github.com/your-repo/crow.git
 cd crow
+```
+
+**Build** (compile in release mode, binary stays in the project):
+
+```bash
+cargo build --release
+```
+
+Binary output: `target/release/crow`
+
+**Install** (copy binary to Cargo bin directory, available globally):
+
+```bash
 cargo install --path .
 ```
 
-This installs the `crow` binary to `~/.cargo/bin/`. Make sure it's in your `PATH`.
+Binary installed to: `~/.cargo/bin/crow`
+
+Make sure `~/.cargo/bin/` is in your `PATH`.
 
 ### Verify Installation
 

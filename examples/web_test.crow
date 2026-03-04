@@ -1,0 +1,30 @@
+--- Web framework integration test ---
+--- Tests: web.new[], route[], serve[], text[], html[], redirect[], respond[] ---
+
+use web
+
+--- Define route handlers ---
+
+fn home[req]
+    return text['hello from crow web']
+
+fn about[req]
+    return html['<h1>about</h1><p>crow web framework</p>']
+
+fn not_here[req]
+    return redirect['/']
+
+fn error_page[req]
+    return respond[404, 'page not found']
+
+--- Build the app ---
+app = web.new[]
+app = route[app, '/', home]
+app = route[app, '/about', about]
+app = route[app, '/redirect', not_here]
+app = route[app, '/error', error_page]
+
+--- Start the server ---
+log['starting server on port 3000']
+serve[app, 3000]
+

@@ -37,6 +37,9 @@ const BUILTINS: &[&str] = &[
     "cpu", "gpu", "nodes",
     // Autograd
     "grad",
+    // Web
+    "route", "serve", "respond", "redirect", "html", "text",
+    "sqlite", "exec", "query", "sign", "verify",
 ];
 
 pub struct Validator<'a> {
@@ -179,6 +182,10 @@ impl<'a> Validator<'a> {
                     for name in self.ctx.registry.const_names() {
                         self.defined_vars.insert(name.to_string());
                     }
+                }
+                // Web modules: register 'web' as a known variable (for web.new[] etc.)
+                if path == "web" || path.starts_with("web.") {
+                    self.defined_vars.insert("web".to_string());
                 }
                 // Other modules handled by expand_module_imports
             }
@@ -404,6 +411,14 @@ impl<'a> Validator<'a> {
             "gpu" => argc <= 1,
             "nodes" => argc == 1,
             "grad" => argc == 1,
+            // Web
+            "route" => argc == 3 || argc == 4,
+            "serve" => argc == 2,
+            "respond" => argc == 2,
+            "redirect" | "html" | "text" => argc == 1,
+            "sqlite" => argc == 1,
+            "exec" | "query" => argc >= 2,
+            "sign" | "verify" => argc == 2,
             _ => true,
         };
         if !valid {
