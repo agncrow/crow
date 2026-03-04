@@ -67,6 +67,120 @@ crow_web/
 | **Client** | `web.view`, `web.router`, `web.store` | WASM in browser |
 | **Docs** | `web.docs` | Static JSON + HTML (embedded in server binary) |
 
+### Rust Backend Libraries
+
+| Module | Rust Crate | Why |
+|--------|-----------|-----|
+| `web` (server) | **axum** (on hyper + tokio) | #1 Rust web framework. Routing, extractors, middleware, WebSocket, SSE built-in. Made by the tokio team. |
+| `web.client` | **reqwest** (on hyper + tokio) | #1 Rust HTTP client. Async mode shares tokio runtime with server. Blocking mode works standalone without tokio. |
+| `web.ws` | **axum** (built-in) | `axum::extract::ws` — no extra dependency. |
+| `web.db` | **rusqlite** + **tokio-postgres** | Feature-gated: SQLite or PostgreSQL. |
+| `web.auth` | **jsonwebtoken** | JWT creation/verification. |
+| `web.template` | **tera** | Jinja2-style templates. |
+| `web.mail` | **lettre** | SMTP email. |
+| `web.cache` | **moka** + **redis** | In-memory (moka) or distributed (redis). |
+| `web.upload` | **axum** (built-in) | `axum::extract::Multipart`. |
+| `web.cors` | **tower-http** | `tower-http::cors` middleware. |
+| `web.static` | **tower-http** | `tower-http::services::ServeDir`. |
+| `web.rate` | Pure Rust | Token bucket algorithm, no external crate. |
+| `web.sse` | **axum** (built-in) | `axum::response::Sse`. |
+| `web.queue` | Pure Rust | Custom thread pool. |
+| Response: JSON | **serde_json** | Already a dependency. |
+| Response: MessagePack | **rmp-serde** | Drop-in serde integration, very stable. |
+| Response: Arrow IPC | **arrow** (Apache) | Production-grade. Used by DataFusion, Polars. |
+
+**Design decision:** axum and reqwest both build on hyper and share the tokio async runtime. When a Crow program uses both `web` (server) and `web.client` (client), they share one runtime — no wasted threads. When `web.client` is used alone (no server), reqwest's blocking mode runs without tokio.
+
+### Library Evaluation
+
+Why these libraries were chosen over alternatives:
+
+| Library | Type | Async | Needs tokio | Stability | Performance | Notes |
+|---------|------|-------|-------------|-----------|-------------|-------|
+| **hyper** | Server/Client (low-level) | Yes | Yes | Extremely stable | Fastest HTTP in Rust | Foundation — axum and reqwest are built on it |
+| **axum** | Server framework (on hyper) | Yes | Yes | Very stable | Same as hyper | Made by tokio team. #1 Rust web framework. Routing, extractors, middleware, WS, SSE built-in |
+| **ureq** | Client only | **No** | No | Stable | Fine for simple use | ❌ Rejected — blocking-only, one thread per request, doesn't share runtime with server |
+| **reqwest** | Client (on hyper) | Yes | Yes (or blocking) | Very stable | Same as hyper | ✅ Chosen — async shares tokio with server, blocking mode works standalone |
+| **actix-web** | Server framework | Yes | Own runtime | Very stable | Excellent | ❌ Rejected — uses own runtime instead of tokio, can't share with reqwest |
+| **warp** | Server framework | Yes | Yes | Stable (maintenance mode) | Good | ❌ Rejected — less active than axum, filter-based API is less intuitive |
+
+### Server Capability Coverage (axum)
+
+Every `web` module requirement mapped to axum support:
+
+| Design Doc Requirement | axum Support | How |
+|------------------------|-------------|-----|
+| `web.new[]` — create app | ✅ | `Router::new()` |
+| `route[app, path, handler]` — GET route | ✅ | `.route("/path", get(handler))` |
+| `route[app, path, method, handler]` — any method | ✅ | `.route("/path", post(handler))` etc. |
+| `serve[app, port]` — start server | ✅ | `axum::serve()` with tokio |
+| `json[value]` — JSON response | ✅ | `Json(value)` |
+| `html[string]` — HTML response | ✅ | `Html(string)` |
+| `text[string]` — plain text | ✅ | Returns `String` |
+| `respond[status, body]` — custom status | ✅ | `(StatusCode, body)` tuple |
+| `redirect[url]` — redirect | ✅ | `Redirect::to(url)` |
+| `msgpack[value]` — MessagePack | ✅ | Custom extractor + `rmp-serde` |
+| `arrow[frame]` — Arrow IPC | ✅ | Custom extractor + `arrow` crate |
+| `bytes[data]` — raw binary | ✅ | `axum::body::Bytes` |
+| `stream[fn]` — streaming response | ✅ | `axum::body::Body::from_stream()` |
+| Route params `/users/:id` | ✅ | `Path(id)` extractor |
+| Query params `?page=1` | ✅ | `Query(params)` extractor |
+| Request headers | ✅ | `HeaderMap` extractor |
+| Request JSON body | ✅ | `Json<T>` extractor |
+| WebSocket (`web.ws`) | ✅ | `axum::extract::ws` built-in |
+| Static files (`web.static`) | ✅ | `tower-http::services::ServeDir` |
+| CORS (`web.cors`) | ✅ | `tower-http::cors` |
+| SSE (`web.sse`) | ✅ | `axum::response::Sse` built-in |
+| File uploads (`web.upload`) | ✅ | `axum::extract::Multipart` built-in |
+| Middleware (auth, rate limit) | ✅ | tower middleware stack |
+| LiveView (WebSocket diffs) | ✅ | WS is the transport — diff logic is ours |
+
+### Client Capability Coverage (reqwest) — ✅ Implemented
+
+Every `web.client` requirement mapped to reqwest support:
+
+| Design Doc Requirement | Status | Implementation |
+|------------------------|--------|----------------|
+| `get[url]` — GET request | ✅ Implemented | `client::get(url, None)` → `reqwest::blocking::Client::get(url).send()` |
+| `get[url, headers]` — GET with headers | ✅ Implemented | `client::get(url, Some(&headers))` → `.header(k, v)` per entry |
+| `post[url, body]` — POST with JSON | ✅ Implemented | `client::post(url, body, None)` → `.post(url).json(&body).send()` |
+| `post[url, body, headers]` — POST with headers | ✅ Implemented | `client::post(url, body, Some(&headers))` |
+| `put[url, body]` — PUT | ✅ Implemented | `client::put(url, body, None)` → `.put(url).json(&body).send()` |
+| `put[url, body, headers]` — PUT with headers | ✅ Implemented | `client::put(url, body, Some(&headers))` |
+| `del[url]` — DELETE | ✅ Implemented | `client::del(url, None)` → `.delete(url).send()` |
+| `del[url, headers]` — DELETE with headers | ✅ Implemented | `client::del(url, Some(&headers))` |
+| Response `.status` | ✅ Implemented | `CrowClientResponse.status` (u16, 0 on error) |
+| Response `.body` | ✅ Implemented | `CrowClientResponse.body` (String, error message on failure) |
+| Response `.json` | ✅ Implemented | `CrowClientResponse.json()` → `Option<serde_json::Value>` |
+| Response `.headers` | ✅ Implemented | `CrowClientResponse.headers` (HashMap, lowercase keys) |
+| Response `.ok` (2xx check) | ✅ Implemented | `CrowClientResponse.ok()` → bool |
+| Works without tokio (standalone) | ✅ Implemented | `reqwest::blocking` mode, `client` feature independent of `http` |
+| Works with tokio (alongside server) | ✅ Compatible | Both features can be enabled together (36 tests pass) |
+| Error handling (no panics) | ✅ Implemented | Failed requests return `status: 0`, error in `.body` |
+
+### Module Independence — What Needs Separate Crates
+
+| Module | Covered by axum+reqwest? | Separate Crate Needed | Notes |
+|--------|--------------------------|----------------------|-------|
+| `web` (server) | ✅ axum | — | — |
+| `web.client` | ✅ reqwest | — | — |
+| `web.ws` | ✅ axum built-in | — | — |
+| `web.sse` | ✅ axum built-in | — | — |
+| `web.upload` | ✅ axum built-in | — | — |
+| `web.cors` | ✅ tower-http | — | — |
+| `web.static` | ✅ tower-http | — | — |
+| `web.rate` | ✅ tower middleware | — | Pure Rust token bucket |
+| `web.db` | ❌ | `rusqlite`, `tokio-postgres` | Not an HTTP concern |
+| `web.docs` | ❌ | Transpiler + `serde_json` | Generation is compile-time, serving via axum |
+| `web.live` | Partial (WS transport) | Custom diff engine | Diff/patch logic is ours |
+| `web.view` | ❌ | WASM target | Different compilation target entirely |
+| `web.auth` | ❌ | `jsonwebtoken` | JWT logic, axum middleware carries it |
+| `web.session` | ❌ | Pure Rust | Cookie-based, axum extracts cookies |
+| `web.template` | ❌ | `tera` | Rendering engine, axum serves output |
+| `web.mail` | ❌ | `lettre` | Not HTTP at all |
+| `web.cache` | ❌ | `moka`, `redis` | Not HTTP at all |
+| `web.queue` | ❌ | Pure Rust thread pool | Not HTTP at all |
+
 ---
 
 ## Module Catalog
@@ -140,11 +254,17 @@ serve[app, env['PORT', 3000]]
 | `text[string]` | Return plain text response |
 | `respond[status, body]` | Return response with status code |
 | `redirect[url]` | Return redirect response |
+| `msgpack[value]` | Return MessagePack binary response |
+| `arrow[frame]` | Return Arrow IPC response (DataFrames/tensors) |
+| `bytes[data]` | Return raw binary response |
+| `stream[fn]` | Return streaming/chunked response |
 
 #### `web.client` — HTTP Client
 
 Import: `use web.client`
-Rust backend: `ureq` (synchronous, minimal, no async runtime needed)
+Rust backend: `reqwest` (blocking mode via `reqwest::blocking`)
+Feature flag: `client` (independent of `http` — no tokio required)
+Rust module: `crow_web::client`
 
 ```
 use web.client
@@ -152,7 +272,9 @@ use web.client
 --- Simple GET ---
 res = get['https://api.example.com/users']
 log[res.status]       --- 200 ---
+log[res.ok]           --- true ---
 users = res.json      --- parsed JSON ---
+log[res.body]         --- raw string ---
 
 --- POST with JSON body ---
 res = post['https://api.example.com/users', {name, 'alice', age, 30}]
@@ -165,6 +287,7 @@ res = del['https://api.example.com/users/1']
 
 --- With headers ---
 res = get['https://api.example.com/data', {authorization, 'Bearer token123'}]
+res = post['https://api.example.com/data', {key, 'value'}, {authorization, 'Bearer token123'}]
 ```
 
 **API:**
@@ -172,26 +295,73 @@ res = get['https://api.example.com/data', {authorization, 'Bearer token123'}]
 | Function | Description |
 |----------|-------------|
 | `get[url]` | GET request |
-| `get[url, headers]` | GET with headers |
+| `get[url, headers]` | GET with custom headers |
 | `post[url, body]` | POST with JSON body |
-| `post[url, body, headers]` | POST with headers |
+| `post[url, body, headers]` | POST with JSON body and custom headers |
 | `put[url, body]` | PUT with JSON body |
+| `put[url, body, headers]` | PUT with JSON body and custom headers |
 | `del[url]` | DELETE request |
+| `del[url, headers]` | DELETE with custom headers |
 
-**Response object:**
+**Response object (`CrowClientResponse`):**
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `.status` | int | HTTP status code |
-| `.body` | str | Raw response body |
-| `.json` | map/array | Parsed JSON (error-value if not JSON) |
-| `.headers` | map | Response headers |
+| `.status` | int (u16) | HTTP status code (0 if request failed) |
+| `.body` | str (String) | Raw response body (error message if request failed) |
+| `.json` | map/array (Option&lt;Value&gt;) | Parsed JSON, None if body is not valid JSON |
+| `.headers` | map (HashMap&lt;String, String&gt;) | Response headers (lowercase keys) |
 | `.ok` | bool | true if status 200-299 |
 
-#### `web.ws` — WebSocket
+**Error handling:** If a request fails (network error, DNS failure, timeout, etc.), the response has `status: 0` and the error message in `.body`. No panics, no Result types — Crow code can simply check `res.ok` or `res.status`.
+
+**Rust usage:**
+
+```rust
+use crow_web::client::{get, post, put, del, CrowClientResponse};
+use std::collections::HashMap;
+
+// Simple GET
+let resp = get("https://api.example.com/users", None);
+assert!(resp.ok());
+let users = resp.json(); // Option<serde_json::Value>
+
+// POST with JSON body
+let resp = post(
+    "https://api.example.com/users",
+    serde_json::json!({"name": "alice", "age": 30}),
+    None,
+);
+
+// GET with headers
+let mut headers = HashMap::new();
+headers.insert("authorization".to_string(), "Bearer token123".to_string());
+let resp = get("https://api.example.com/data", Some(&headers));
+
+// PUT
+let resp = put(
+    "https://api.example.com/users/1",
+    serde_json::json!({"name": "bob"}),
+    None,
+);
+
+// DELETE
+let resp = del("https://api.example.com/users/1", None);
+```
+
+**Implementation details:**
+- Uses `reqwest::blocking::Client` — works standalone without tokio
+- Each function creates a new client (connection pooling handled by reqwest internally)
+- JSON bodies are serialized via `serde_json::Value`
+- Headers are passed as `Option<&HashMap<String, String>>`
+- The `client` feature is independent of `http` (server) — they can be used together or separately
+
+#### `web.ws` — WebSocket — ✅ Implemented
 
 Import: `use web.ws`
-Rust backend: `tungstenite` (standalone, no tokio dependency for client)
+Feature flag: `ws` (client-only) or `http,ws` (client + server)
+Rust backend: `tungstenite` (blocking client), `axum::extract::ws` (server)
+Module: `crow_web::ws`
 
 **Client mode (standalone, no server needed):**
 
@@ -223,13 +393,87 @@ serve[app, env['PORT', 3000]]
 
 **API:**
 
+| Function | Rust function | Description |
+|----------|--------------|-------------|
+| `connect[url]` | `ws::connect(url) -> CrowWebSocket` | Connect to WebSocket server. Check `.ok()` for success. |
+| `send[sock, message]` | `sock.send(msg)` | Send text message (no-op on failed socket) |
+| `recv[sock]` | `sock.recv() -> Option<String>` | Receive message (blocks). Returns `None` on close/error. |
+| `close[sock]` | `sock.close()` | Close connection gracefully |
+| `ws[app, path, handler]` | `app.ws_route(path, handler)` | Register WebSocket handler on server (requires `http` feature) |
+
+**Error handling:** If `connect` fails (network error, bad URL), `.ok()` returns `false` and all operations (`send`, `recv`, `close`) are safe no-ops. No panics, no `Result` unwrapping.
+
+**Rust usage:**
+
+```rust
+// Client
+use crow_web::ws;
+let sock = ws::connect("ws://localhost:8080/echo");
+if sock.ok() {
+    sock.send("hello");
+    if let Some(reply) = sock.recv() {
+        println!("{reply}");
+    }
+    sock.close();
+}
+
+// Server (with http feature)
+use crow_web::ws::{CrowWsHandler, CrowWsSender};
+let app = CrowApp::new().ws_route("/echo", Arc::new(|sender: CrowWsSender, msg: String| {
+    sender.send(&format!("echo: {msg}"));
+}));
+```
+
+**Implementation details:**
+- Client uses `tungstenite` (blocking) — works without tokio, suitable for scripts
+- Server uses `axum::extract::ws` (async) — shares tokio runtime with HTTP server
+- `CrowWebSocket` wraps socket in `Mutex` for thread-safe access
+- `CrowWsSender` uses `mpsc::unbounded_channel` for async message passing
+
+#### `web.sse` — Server-Sent Events — ✅ Implemented
+
+Import: `use web.sse`
+Feature flag: `sse` (enables `axum`, `tokio`, `tokio-stream`, `futures-util`)
+
 | Function | Description |
 |----------|-------------|
-| `connect[url]` | Connect to WebSocket server (error-value on failure) |
-| `send[sock, message]` | Send text message |
-| `recv[sock]` | Receive message (blocks until message arrives) |
-| `close[sock]` | Close connection |
-| `ws[app, path, handler]` | Register WebSocket handler on server |
+| `sse[app, path, handler]` | Register SSE endpoint — handler receives a sender |
+| `send[sender, data]` | Push a data-only event |
+| `event[sender, name, data]` | Push a named event (`event: name\ndata: data`) |
+
+**Crow syntax:**
+
+```
+use web
+use web.sse
+
+app = web.new[]
+sse[app, '/events', fn[sender]
+  send[sender, 'hello']
+  event[sender, 'update', 'new data']
+]
+serve[app, 3000]
+```
+
+**Rust API:**
+
+```rust
+use crow_web::sse::{CrowSseSender, CrowSseHandler};
+use crow_web::server::app::CrowApp;
+use std::sync::Arc;
+
+let app = CrowApp::new().sse_route("/events", Arc::new(|sender: CrowSseSender| {
+    sender.send("hello");
+    sender.event("update", "new data");
+}));
+```
+
+**Implementation details:**
+- Uses `axum::response::Sse` with `tokio-stream::wrappers::ReceiverStream`
+- Handler runs in `spawn_blocking` — can call `sender.send()` freely (uses `blocking_send`)
+- Channel capacity: 256 events (backpressure if client is slow)
+- Keep-alive enabled by default
+- Feature-gated behind `sse` — independent of `http` but both can be used together
 
 #### `web.db` — Database
 
@@ -546,7 +790,7 @@ cors[app, {origin, '*', methods, ['GET', 'POST']}]
 
 | Module | Import | Description | Rust Backend |
 |--------|--------|-------------|-------------|
-| `web.sse` | `use web.sse` | Server-sent events | Pure Rust |
+| `web.sse` | `use web.sse` | Server-sent events — ✅ Implemented | `axum::response::Sse` + `tokio-stream` |
 | `web.mail` | `use web.mail` | Send email | `lettre` |
 | `web.cache` | `use web.cache` | In-memory + Redis caching | `moka` + `redis` |
 | `web.queue` | `use web.queue` | Background job processing | Custom thread pool |
@@ -649,6 +893,102 @@ serve[app, env['PORT', 3000]]
 
 No GIL. No serialization boundary. No Python-to-Go rewrite. Same language, compiled to Rust speed.
 
+### Response Formats for ML/Data Science
+
+JSON is universal but slow for large data. Crow supports multiple wire formats optimized for different use cases:
+
+| Format | Function | Use Case | Why |
+|--------|----------|----------|-----|
+| **JSON** | `json[value]` | API responses, small data | Universal, human-readable. Slow for large tensors. |
+| **MessagePack** | `msgpack[value]` | API responses, medium data | Binary JSON — 2-5x smaller, 10x faster to parse than JSON. |
+| **Arrow IPC** | `arrow[frame]` | DataFrame/tensor transfer | Zero-copy columnar format — no serialization overhead. |
+| **Raw bytes** | `bytes[data]` | Model weights, binary blobs | Zero format overhead — just send the bytes. |
+| **Streaming** | `stream[fn]` | Batch inference, large results | Stream results as computed, don't buffer in memory. |
+
+#### Performance comparison
+
+| Scenario | JSON | MessagePack | Arrow IPC |
+|----------|------|-------------|-----------|
+| 10KB API response | ~0.1ms | ~0.02ms | overkill |
+| 1MB tensor | ~50ms | ~10ms | ~1ms |
+| 10MB DataFrame | ~500ms | ~100ms | ~5ms |
+| 100MB dataset | ~5s | ~1s | ~50ms |
+
+Arrow IPC is the standout for data science: Python (pandas/polars), R, Julia, and Spark can all read it with **zero deserialization** — just memory-map the bytes.
+
+#### Rust crate backends
+
+| Format | Rust Crate | Maturity | Notes |
+|--------|-----------|----------|-------|
+| JSON | `serde_json` | Very stable | Already a dependency |
+| MessagePack | `rmp-serde` | Very stable | Drop-in serde integration |
+| Arrow IPC | `arrow` (Apache) | Very stable, production-grade | Used by DataFusion, Polars |
+| Protobuf | `prost` | Very stable | Schema-defined, smallest wire size |
+| CBOR | `ciborium` | Stable | Self-describing binary, good for IoT/embedded ML |
+| Streaming | Built into axum | Native | Chunked transfer encoding |
+| Raw bytes | No crate needed | — | Just `Vec<u8>` |
+
+#### Example — same model, multiple formats
+
+```
+use web
+use math.nn
+
+model = load['model.crow']
+app = web.new[]
+
+--- JSON (small, human-readable) ---
+route[app, '/predict', 'POST', fn[req]
+  result = model[tensor[req.json.data]]
+  json[{prediction, result}]
+]
+
+--- MessagePack (fast, binary — 10x faster than JSON) ---
+route[app, '/predict/fast', 'POST', fn[req]
+  result = model[tensor[req.json.data]]
+  msgpack[{prediction, result}]
+]
+
+--- Arrow IPC (zero-copy DataFrame response) ---
+route[app, '/data', fn[req]
+  df = query[db, 'SELECT * FROM metrics']
+  arrow[df]
+]
+
+--- Streaming batch inference ---
+route[app, '/batch', 'POST', fn[req]
+  stream[fn[send]
+    for batch in chunks[req.json.data, 100]
+      pred = model[tensor[batch]]
+      send[pred]
+  ]
+]
+
+--- Raw model weights download ---
+route[app, '/model/weights', fn[req]
+  bytes[read['model.bin']]
+]
+
+serve[app, env['PORT', 3000]]
+```
+
+The client picks the format based on the endpoint or `Accept` header. Same model, different wire formats for different performance needs.
+
+#### When to use which format
+
+| You need... | Use |
+|-------------|-----|
+| Browser-friendly API | `json` |
+| Fast API for Python/Go/Rust clients | `msgpack` |
+| Transfer DataFrames to pandas/polars | `arrow` |
+| Download model weights or files | `bytes` |
+| Predict on millions of rows | `stream` |
+| Real-time training progress | SSE (`web.sse`) |
+
+#### Design Note: No Protobuf or CBOR builtins
+
+Protobuf requires schema files (`.proto`) and code generation — this violates Crow's "zero boilerplate" principle. CBOR is niche. Both can be supported via packages (`crow install protobuf`, `crow install cbor`) if needed, but they are not core response types. MessagePack covers the "fast binary" use case without schemas, and Arrow IPC covers the "zero-copy data science" use case. Two formats, two use cases, no overlap.
+
 ---
 
 ## Implementation Phases
@@ -657,7 +997,7 @@ No GIL. No serialization boundary. No Python-to-Go rewrite. Same language, compi
 |-------|---------|--------|----------------|
 | **Phase 1** | core, web, web.client | 2 weeks | API servers, HTTP requests |
 | **Phase 2** | web.db, web.docs | 2 weeks | Data apps, auto documentation |
-| **Phase 3** | web.ws, web.live | 2 weeks | Real-time apps without JS |
+| **Phase 3** | web.ws ✅, web.live | 2 weeks | Real-time apps without JS |
 | **Phase 4** | web.view, web.router, web.store | 4 weeks | Full frontend in Crow (WASM) |
 | **Phase 5** | web.auth, web.session, web.cors, web.static | 2 weeks | Production-ready middleware |
 | **Phase 6** | web.sse, web.mail, web.cache, web.queue, web.rate, web.upload | 3 weeks | Enterprise features |
@@ -678,5 +1018,7 @@ No GIL. No serialization boundary. No Python-to-Go rewrite. Same language, compi
 | Reactive components | ❌ | ❌ | ✅ | ❌ | ✅ | ✅ | ✅ |
 | SSR + hydration | ❌ | ❌ | ✅ | ❌ | ✅ | ✅ | ✅ |
 | Data science native | ❌ | ❌ | ❌ | ⚠️ | ❌ | ❌ | ✅ |
+| ML response formats (msgpack, arrow) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Streaming inference | ❌ | ❌ | ❌ | ⚠️ | ❌ | ❌ | ✅ |
 | Compiled performance | ❌ | ❌ | ⚠️ | ❌ | ❌ | ✅ | ✅ |
 | True modularity | ❌ | ❌ | ❌ | ⚠️ | ⚠️ | ✅ | ✅ |

@@ -1,0 +1,70 @@
+//! crow_web — Crow's modular web framework.
+//!
+//! One crate with Cargo feature flags per module.
+//! `use web.X` in Crow source triggers the transpiler to enable only
+//! the `X` feature — minimal binary, minimal compile time.
+//!
+//! ## Architecture
+//!
+//! - `core` — shared types (Request, Response, Headers, Status). Always available.
+//! - Feature-gated modules are added as they are implemented.
+//!
+//! ## Module dependency rules
+//!
+//! - Every module depends on `core`.
+//! - No module depends on any other module.
+
+pub mod core;
+
+#[cfg(feature = "http")]
+pub mod server;
+
+#[cfg(feature = "client")]
+pub mod client;
+
+#[cfg(feature = "ws")]
+pub mod ws;
+
+#[cfg(feature = "sse")]
+pub mod sse;
+
+#[cfg(feature = "cors")]
+pub mod cors;
+
+#[cfg(feature = "static_files")]
+pub mod static_files;
+
+#[cfg(feature = "upload")]
+pub mod upload;
+
+#[cfg(feature = "rate")]
+pub mod rate;
+
+#[cfg(feature = "auth")]
+pub mod auth;
+
+#[cfg(feature = "session")]
+pub mod session;
+
+#[cfg(feature = "template")]
+pub mod template;
+
+#[cfg(feature = "db")]
+pub mod db;
+
+#[cfg(feature = "mail")]
+pub mod mail;
+
+#[cfg(feature = "cache")]
+pub mod cache;
+
+#[cfg(feature = "queue")]
+pub mod queue;
+
+#[cfg(feature = "docs")]
+pub mod docs;
+
+#[cfg(feature = "live")]
+pub mod live;
+
+pub mod view;
