@@ -756,6 +756,33 @@ impl Transpiler {
             if self.web_features.contains("auth") {
                 self.emit_line("use crow_web::auth::CrowJwt;");
             }
+            if self.web_features.contains("cors") {
+                self.emit_line("use crow_web::cors::CrowCors;");
+            }
+            if self.web_features.contains("session") {
+                self.emit_line("use crow_web::session::CrowSessionStore;");
+            }
+            if self.web_features.contains("template") {
+                self.emit_line("use crow_web::template::CrowTemplates;");
+            }
+            if self.web_features.contains("cache") {
+                self.emit_line("use crow_web::cache::CrowCache;");
+            }
+            if self.web_features.contains("queue") {
+                self.emit_line("use crow_web::queue::CrowQueue;");
+            }
+            if self.web_features.contains("rate") {
+                self.emit_line("use crow_web::rate::CrowRateLimiter;");
+            }
+            if self.web_features.contains("mail") {
+                self.emit_line("use crow_web::mail::CrowMailer;");
+            }
+            if self.web_features.contains("ws") {
+                self.emit_line("use crow_web::ws;");
+            }
+            if self.web_features.contains("sse") {
+                self.emit_line("use crow_web::sse;");
+            }
         }
         self.emit_line("");
 
@@ -2677,6 +2704,109 @@ impl Transpiler {
                         return format!("CrowJwt::verify({}, {})", arg_strs[0], arg_strs[1]);
                     }
 
+                    // --- Web P4 builtins ---
+
+                    // cors[app] → app.cors_permissive()
+                    // cors[app, origins] → app.cors(CrowCors::origins(origins))
+                    if name == "cors" && self.needs_crow_web {
+                        if arg_strs.len() == 1 {
+                            return format!("{}.cors_permissive()", arg_strs[0]);
+                        }
+                        if arg_strs.len() == 2 {
+                            return format!("{}.cors(CrowCors::origins({}))", arg_strs[0], arg_strs[1]);
+                        }
+                    }
+
+                    // sessions[] → CrowSessionStore::new()
+                    if name == "sessions" && self.needs_crow_web && arg_strs.is_empty() {
+                        return "CrowSessionStore::new()".to_string();
+                    }
+
+                    // templates[glob] → CrowTemplates::from_glob(glob).unwrap()
+                    if name == "templates" && self.needs_crow_web && arg_strs.len() == 1 {
+                        return format!("CrowTemplates::from_glob({}).unwrap()", arg_strs[0]);
+                    }
+
+                    // render[t, name, data] → t.render(name, serde_json::to_value(&data).unwrap()).unwrap()
+                    if name == "render" && self.needs_crow_web && arg_strs.len() == 3 {
+                        self.needs_serde_json = true;
+                        return format!("{}.render({}, serde_json::to_value(&{}).unwrap()).unwrap()", arg_strs[0], arg_strs[1], arg_strs[2]);
+                    }
+
+                    // cache[max] → CrowCache::new(max as u64)
+                    // cache[max, ttl] → CrowCache::with_ttl(max as u64, ttl as u64)
+                    if name == "cache" && self.needs_crow_web {
+                        if arg_strs.len() == 1 {
+                            return format!("CrowCache::new({} as u64)", arg_strs[0]);
+                        }
+                        if arg_strs.len() == 2 {
+                            return format!("CrowCache::with_ttl({} as u64, {} as u64)", arg_strs[0], arg_strs[1]);
+                        }
+                    }
+
+                    // limit[max, window] → CrowRateLimiter::new(max as u64, window as u64)
+                    if name == "limit" && self.needs_crow_web && arg_strs.len() == 2 {
+                        return format!("CrowRateLimiter::new({} as u64, {} as u64)", arg_strs[0], arg_strs[1]);
+                    }
+
+                    // push[queue, fn] → queue.push(fn)
+                    if name == "push" && self.needs_crow_web && arg_strs.len() == 2 {
+                        return format!("{}.push({})", arg_strs[0], arg_strs[1]);
+                    }
+
+                    // uploads[req] → req.uploads().await
+                    if name == "uploads" && self.needs_crow_web && arg_strs.len() == 1 {
+                        return format!("{}.uploads().await", arg_strs[0]);
+                    }
+
+                    // sse[app, path, handler] → app.sse_route(path, Arc::new(handler))
+                    if name == "sse" && self.needs_crow_web && arg_strs.len() == 3 {
+                        return format!("{}.sse_route(&{}, Arc::new({}))", arg_strs[0], arg_strs[1], arg_strs[2]);
+                    }
+
+                    // ws[app, path, handler] → app.ws_route(path, Arc::new(handler))
+                    if name == "ws" && self.needs_crow_web && arg_strs.len() == 3 {
+                        return format!("{}.ws_route(&{}, Arc::new({}))", arg_strs[0], arg_strs[1], arg_strs[2]);
+                    }
+
+                    // connect[url] → ws::connect(url)
+                    if name == "connect" && self.needs_crow_web && arg_strs.len() == 1 {
+                        return format!("ws::connect(&{})", arg_strs[0]);
+                    }
+
+                    // send[sock, msg] → sock.send(&msg)
+                    if name == "send" && self.needs_crow_web && arg_strs.len() == 2 {
+                        return format!("{}.send(&{})", arg_strs[0], arg_strs[1]);
+                    }
+
+                    // recv[sock] → sock.recv().unwrap_or_default()
+                    if name == "recv" && self.needs_crow_web && arg_strs.len() == 1 {
+                        return format!("{}.recv().unwrap_or_default()", arg_strs[0]);
+                    }
+
+                    // close[sock] → sock.close()
+                    if name == "close" && self.needs_crow_web && arg_strs.len() == 1 {
+                        return format!("{}.close()", arg_strs[0]);
+                    }
+
+                    // live[app, path, handler] → (complex LiveView setup)
+                    if name == "live" && self.needs_crow_web && arg_strs.len() == 3 {
+                        return format!(
+                            "{{ let lv = crow_web::live::CrowLiveView::new(\"/_ws{}\", crow_web::live::CrowLiveState::new(), {}); let lr = lv.into_router(&{}); {}.merge(lr) }}",
+                            arg_strs[1], arg_strs[2], arg_strs[1], arg_strs[0]
+                        );
+                    }
+
+                    // static_dir[app, url_path, dir_path] → app.static_dir(url_path, dir_path)
+                    if name == "static_dir" && self.needs_crow_web && arg_strs.len() == 3 {
+                        return format!("{}.static_dir(&{}, &{})", arg_strs[0], arg_strs[1], arg_strs[2]);
+                    }
+
+                    // smtp[host, port, user, pass] → CrowMailer::new(host, port, user, pass).unwrap()
+                    if name == "smtp" && self.needs_crow_web && arg_strs.len() == 4 {
+                        return format!("CrowMailer::new(&{}, {} as u16, &{}, &{}).unwrap()", arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[3]);
+                    }
+
                     // Struct constructor
                     if self.ctx.structs.contains_key(name) {
                         let sig = self.ctx.structs.get(name).unwrap().clone();
@@ -2790,6 +2920,16 @@ impl Transpiler {
                         // web.new[] → CrowApp::new()
                         if mod_name == "web" && field == "new" && self.needs_crow_web {
                             return "CrowApp::new()".to_string();
+                        }
+                        // web.docs[title, version] → CrowDocs::new(title, version)
+                        if mod_name == "web" && field == "docs" && self.needs_crow_web {
+                            if arg_strs.len() == 2 {
+                                return format!("crow_web::docs::CrowDocs::new(&{}, &{})", arg_strs[0], arg_strs[1]);
+                            }
+                        }
+                        // web.queue[n] → CrowQueue::new(n)
+                        if mod_name == "web" && field == "queue" && self.needs_crow_web && arg_strs.len() == 1 {
+                            return format!("CrowQueue::new({} as usize)", arg_strs[0]);
                         }
                         let prefixed = format!("{}_{}", mod_name, field);
                         // Module struct constructor
@@ -4845,5 +4985,135 @@ mod tests {
         let rust = transpile("x = 1 + 2\n");
         assert!(!rust.contains("async fn main"), "should NOT emit async main without web\n{}", rust);
         assert!(!rust.contains("#[tokio::main]"), "should NOT emit tokio::main without web\n{}", rust);
+    }
+
+    // --- P4: Web module codegen tests ---
+
+    #[test]
+    fn test_web_cors_permissive() {
+        let rust = transpile("use web\nuse web.cors\napp = web.new[]\napp = cors[app]\n");
+        assert!(rust.contains(".cors_permissive()"), "should emit cors_permissive()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_cors_with_origins() {
+        let rust = transpile("use web\nuse web.cors\napp = web.new[]\norigins = ['http://localhost']\napp = cors[app, origins]\n");
+        assert!(rust.contains(".cors(CrowCors::origins("), "should emit cors with origins\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_cors_import() {
+        let rust = transpile("use web\nuse web.cors\napp = web.new[]\napp = cors[app]\n");
+        assert!(rust.contains("use crow_web::cors::CrowCors;"), "should import CrowCors\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_sessions() {
+        let rust = transpile("use web\nuse web.session\nstore = sessions[]\n");
+        assert!(rust.contains("CrowSessionStore::new()"), "should emit CrowSessionStore::new()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_sessions_import() {
+        let rust = transpile("use web\nuse web.session\nstore = sessions[]\n");
+        assert!(rust.contains("use crow_web::session::CrowSessionStore;"), "should import CrowSessionStore\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_templates() {
+        let rust = transpile("use web\nuse web.template\nt = templates['./templates/**/*']\n");
+        assert!(rust.contains("CrowTemplates::from_glob("), "should emit CrowTemplates::from_glob()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_render() {
+        let rust = transpile("use web\nuse web.template\nt = templates['./t/**/*']\nfn handler[req]\n    data = [name = 'crow']\n    return html[render[t, 'index', data]]\napp = web.new[]\napp = route[app, '/', handler]\n");
+        assert!(rust.contains(".render("), "should emit .render()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_cache() {
+        let rust = transpile("use web\nuse web.cache\nc = cache[100]\n");
+        assert!(rust.contains("CrowCache::new(100"), "should emit CrowCache::new()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_cache_with_ttl() {
+        let rust = transpile("use web\nuse web.cache\nc = cache[100, 60]\n");
+        assert!(rust.contains("CrowCache::with_ttl("), "should emit CrowCache::with_ttl()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_limit() {
+        let rust = transpile("use web\nuse web.rate\nlimiter = limit[100, 60]\n");
+        assert!(rust.contains("CrowRateLimiter::new("), "should emit CrowRateLimiter::new()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_limit_import() {
+        let rust = transpile("use web\nuse web.rate\nlimiter = limit[100, 60]\n");
+        assert!(rust.contains("use crow_web::rate::CrowRateLimiter;"), "should import CrowRateLimiter\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_sse() {
+        let rust = transpile("use web\nuse web.sse\nfn events[req]\n    return text['data']\napp = web.new[]\napp = sse[app, '/events', events]\n");
+        assert!(rust.contains(".sse_route("), "should emit .sse_route()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_ws() {
+        let rust = transpile("use web\nuse web.ws\nfn handler[req]\n    return text['ok']\napp = web.new[]\napp = ws[app, '/ws', handler]\n");
+        assert!(rust.contains(".ws_route("), "should emit .ws_route()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_static_dir() {
+        let rust = transpile("use web\nuse web.static\napp = web.new[]\napp = static_dir[app, '/assets', './public']\n");
+        assert!(rust.contains(".static_dir("), "should emit .static_dir()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_smtp() {
+        let rust = transpile("use web\nuse web.mail\nmailer = smtp['smtp.example.com', 587, 'user', 'pass']\n");
+        assert!(rust.contains("CrowMailer::new("), "should emit CrowMailer::new()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_smtp_import() {
+        let rust = transpile("use web\nuse web.mail\nmailer = smtp['smtp.example.com', 587, 'user', 'pass']\n");
+        assert!(rust.contains("use crow_web::mail::CrowMailer;"), "should import CrowMailer\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_connect() {
+        let rust = transpile("use web\nuse web.ws\nurl = 'ws://localhost:3000'\nsock = connect[url]\n");
+        assert!(rust.contains("ws::connect("), "should emit ws::connect()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_send_recv_close() {
+        let rust = transpile("use web\nuse web.ws\nurl = 'ws://localhost:3000'\nsock = connect[url]\nsend[sock, 'hi']\nmsg = recv[sock]\nclose[sock]\n");
+        assert!(rust.contains(".send("), "should emit .send()\n{}", rust);
+        assert!(rust.contains(".recv()"), "should emit .recv()\n{}", rust);
+        assert!(rust.contains(".close()"), "should emit .close()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_queue() {
+        let rust = transpile("use web\nuse web.queue\nfn job[req]\n    return text['done']\nq = web.queue[4]\n");
+        assert!(rust.contains("CrowQueue::new("), "should emit CrowQueue::new()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_docs() {
+        let rust = transpile("use web\nuse web.docs\nd = web.docs['My API', '1.0']\n");
+        assert!(rust.contains("crow_web::docs::CrowDocs::new("), "should emit CrowDocs::new()\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_uploads() {
+        let rust = transpile("use web\nuse web.upload\nfn handler[req]\n    files = uploads[req]\n    return text['ok']\napp = web.new[]\napp = route[app, '/upload', handler]\n");
+        assert!(rust.contains(".uploads()"), "should emit .uploads()\n{}", rust);
     }
 }

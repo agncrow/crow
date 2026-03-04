@@ -1206,6 +1206,146 @@ log[bad.ok]            --- false ---
 log[bad.reason]        --- error message ---
 ```
 
+### Built-in Module: web
+
+Import sub-modules with `use web.X`. Each sub-module enables only its feature — minimal binary, minimal compile time. See `docs/web-framework.md` for full architecture details.
+
+#### Core (Server)
+
+```
+use web
+
+app = web.new[]
+route[app, '/hello', handler]
+serve[app, 3000]
+```
+
+| Function | Description |
+|---|---|
+| `web.new[]` | Create a new web application |
+| `route[app, path, handler]` | Add a route with a handler function |
+| `serve[app, port]` | Start the server on the given port |
+
+#### Responses
+
+| Function | Description |
+|---|---|
+| `text[s]` | Plain text response |
+| `html[s]` | HTML response |
+| `json[map]` | JSON response from a map |
+| `respond[status, body]` | Response with custom status code |
+| `redirect[url]` | HTTP redirect response |
+
+#### Database (`use web.db`)
+
+| Function | Description |
+|---|---|
+| `sqlite[path]` | Open a SQLite database |
+| `exec[db, sql]` | Execute a SQL statement (returns affected row count) |
+| `query[db, sql]` | Query and return array of maps |
+
+#### Auth (`use web.auth`)
+
+| Function | Description |
+|---|---|
+| `sign[claims, secret]` | Sign a JWT from a claims map |
+| `verify[token, secret]` | Verify a JWT and return claims map |
+
+#### CORS (`use web.cors`)
+
+| Function | Description |
+|---|---|
+| `cors[app]` | Apply permissive CORS (allow all origins) |
+| `cors[app, origins]` | Apply CORS with specific allowed origins |
+
+#### Sessions (`use web.session`)
+
+| Function | Description |
+|---|---|
+| `sessions[]` | Create an in-memory session store |
+
+#### Templates (`use web.template`)
+
+| Function | Description |
+|---|---|
+| `templates[glob]` | Load templates matching a glob pattern |
+| `render[templates, name, data]` | Render a template with data |
+
+#### Cache (`use web.cache`)
+
+| Function | Description |
+|---|---|
+| `cache[max]` | Create an LRU cache with max entries |
+| `cache[max, ttl]` | Create an LRU cache with max entries and TTL in seconds |
+
+#### Rate Limiting (`use web.rate`)
+
+| Function | Description |
+|---|---|
+| `limit[max, window]` | Create a rate limiter (max requests per window seconds) |
+
+#### File Uploads (`use web.upload`)
+
+| Function | Description |
+|---|---|
+| `uploads[req]` | Extract uploaded files from a request |
+
+#### SSE (`use web.sse`)
+
+| Function | Description |
+|---|---|
+| `sse[app, path, handler]` | Add a Server-Sent Events endpoint |
+
+#### WebSocket (`use web.ws`)
+
+| Function | Description |
+|---|---|
+| `ws[app, path, handler]` | Add a WebSocket endpoint |
+| `connect[url]` | Connect to a WebSocket server |
+| `send[sock, msg]` | Send a message on a WebSocket |
+| `recv[sock]` | Receive a message from a WebSocket |
+| `close[sock]` | Close a WebSocket connection |
+
+#### LiveView (`use web.live`)
+
+| Function | Description |
+|---|---|
+| `live[app, path, handler]` | Add a LiveView endpoint (server-rendered with live updates) |
+
+#### Static Files (`use web.static`)
+
+| Function | Description |
+|---|---|
+| `static_dir[app, url_path, dir_path]` | Serve static files from a directory |
+
+#### Mail (`use web.mail`)
+
+| Function | Description |
+|---|---|
+| `smtp[host, port, user, pass]` | Create an SMTP mailer |
+
+#### Queue (`use web.queue`)
+
+| Function | Description |
+|---|---|
+| `web.queue[n]` | Create a background task queue with n workers |
+| `push[queue, fn]` | Push a task onto the queue |
+
+#### API Docs (`use web.docs`)
+
+| Function | Description |
+|---|---|
+| `web.docs[title, version]` | Generate OpenAPI docs with Swagger UI |
+
+#### Client (`use web.client`)
+
+| Function | Description |
+|---|---|
+| `get[url]` | HTTP GET request |
+| `post[url, body]` | HTTP POST request |
+| `put[url, body]` | HTTP PUT request |
+| `del[url]` | HTTP DELETE request |
+
 ### File Structure
 
 Each file is a module. The file path is the module path.

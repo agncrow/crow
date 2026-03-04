@@ -1411,6 +1411,10 @@ impl Interpreter {
             | "shell" | "hash"
             | "find" | "matches" | "sub"
             | "now" | "date" | "elapsed"
+            // Web P4 builtins
+            | "cors" | "sessions" | "templates" | "render" | "cache" | "limit"
+            | "uploads" | "sse" | "ws" | "connect" | "send" | "recv" | "close"
+            | "live" | "static_dir" | "smtp"
         )
     }
 
@@ -2515,6 +2519,118 @@ impl Interpreter {
                 map.insert("days".to_string(), CrowValue::ok(Value::Float(diff as f64 / 86400.0)));
                 Ok(CrowValue::ok(Value::Map(map)))
             }
+
+            // --- Web P4 builtins (interpreter mock implementations) ---
+
+            "cors" => {
+                // cors[app] or cors[app, origins] → returns app unchanged (mock)
+                if args.is_empty() { return Err("cors[] requires at least 1 argument".into()); }
+                Ok(args[0].clone())
+            }
+            "sessions" => {
+                // sessions[] → returns empty session store map
+                let map = std::collections::BTreeMap::new();
+                Ok(CrowValue::ok(Value::Map(map)))
+            }
+            "templates" => {
+                // templates[glob] → returns a stub template engine map
+                if args.len() != 1 { return Err("templates[] takes 1 argument".into()); }
+                let mut map = std::collections::BTreeMap::new();
+                let glob_str = match args[0].unwrap_or_propagate()? {
+                    Value::Str(s) => s.clone(),
+                    _ => "".to_string(),
+                };
+                map.insert("glob".to_string(), CrowValue::ok(Value::Str(glob_str)));
+                Ok(CrowValue::ok(Value::Map(map)))
+            }
+            "render" => {
+                // render[t, name, data] → returns rendered string (stub: just the name)
+                if args.len() != 3 { return Err("render[] takes 3 arguments (templates, name, data)".into()); }
+                let name = match args[1].unwrap_or_propagate()? {
+                    Value::Str(s) => s.clone(),
+                    _ => return Err("render[] name must be a string".into()),
+                };
+                Ok(CrowValue::ok(Value::Str(format!("[rendered: {}]", name))))
+            }
+            "cache" => {
+                // cache[max] or cache[max, ttl] → returns empty cache map
+                if args.is_empty() { return Err("cache[] requires at least 1 argument".into()); }
+                let map = std::collections::BTreeMap::new();
+                Ok(CrowValue::ok(Value::Map(map)))
+            }
+            "limit" => {
+                // limit[max, window] → returns rate limiter stub map
+                if args.len() != 2 { return Err("limit[] takes 2 arguments (max, window)".into()); }
+                let mut map = std::collections::BTreeMap::new();
+                map.insert("max".to_string(), args[0].clone());
+                map.insert("window".to_string(), args[1].clone());
+                Ok(CrowValue::ok(Value::Map(map)))
+            }
+            "uploads" => {
+                // uploads[req] → returns empty array (mock)
+                if args.len() != 1 { return Err("uploads[] takes 1 argument".into()); }
+                Ok(CrowValue::ok(Value::Array(vec![])))
+            }
+            "sse" => {
+                // sse[app, path, handler] → returns app unchanged (mock)
+                if args.len() != 3 { return Err("sse[] takes 3 arguments".into()); }
+                Ok(args[0].clone())
+            }
+            "ws" => {
+                // ws[app, path, handler] → returns app unchanged (mock)
+                if args.len() != 3 { return Err("ws[] takes 3 arguments".into()); }
+                Ok(args[0].clone())
+            }
+            "connect" => {
+                // connect[url] → returns mock WebSocket map
+                if args.len() != 1 { return Err("connect[] takes 1 argument".into()); }
+                let url = match args[0].unwrap_or_propagate()? {
+                    Value::Str(s) => s.clone(),
+                    _ => return Err("connect[] url must be a string".into()),
+                };
+                let mut map = std::collections::BTreeMap::new();
+                map.insert("url".to_string(), CrowValue::ok(Value::Str(url)));
+                map.insert("ok".to_string(), CrowValue::ok(Value::Bool(false)));
+                Ok(CrowValue::ok(Value::Map(map)))
+            }
+            "send" => {
+                // send[sock, msg] → returns true (mock)
+                if args.len() != 2 { return Err("send[] takes 2 arguments".into()); }
+                Ok(CrowValue::ok(Value::Bool(true)))
+            }
+            "recv" => {
+                // recv[sock] → returns empty string (mock)
+                if args.len() != 1 { return Err("recv[] takes 1 argument".into()); }
+                Ok(CrowValue::ok(Value::Str("".to_string())))
+            }
+            "close" => {
+                // close[sock] → returns true (mock)
+                if args.len() != 1 { return Err("close[] takes 1 argument".into()); }
+                Ok(CrowValue::ok(Value::Bool(true)))
+            }
+            "live" => {
+                // live[app, path, handler] → returns app unchanged (mock)
+                if args.len() != 3 { return Err("live[] takes 3 arguments".into()); }
+                Ok(args[0].clone())
+            }
+            "static_dir" => {
+                // static_dir[app, url_path, dir_path] → returns app unchanged (mock)
+                if args.len() != 3 { return Err("static_dir[] takes 3 arguments".into()); }
+                Ok(args[0].clone())
+            }
+            "smtp" => {
+                // smtp[host, port, user, pass] → returns mock mailer map
+                if args.len() != 4 { return Err("smtp[] takes 4 arguments".into()); }
+                let mut map = std::collections::BTreeMap::new();
+                let host = match args[0].unwrap_or_propagate()? {
+                    Value::Str(s) => s.clone(),
+                    _ => return Err("smtp[] host must be a string".into()),
+                };
+                map.insert("host".to_string(), CrowValue::ok(Value::Str(host)));
+                map.insert("ok".to_string(), CrowValue::ok(Value::Bool(true)));
+                Ok(CrowValue::ok(Value::Map(map)))
+            }
+
             "assert" => {
                 if args.is_empty() || args.len() > 2 {
                     return Err("assert[] takes 1 or 2 arguments".to_string());
@@ -5669,6 +5785,131 @@ mod tests {
             Value::Map(m) => {
                 let secs = m.get("seconds").unwrap();
                 assert_eq!(format!("{}", secs.value), "86400");
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    // --- P4: Web builtin interpreter mock tests ---
+
+    #[test]
+    fn test_cors_builtin() {
+        let val = get_var("app = []\napp = cors[app]", "app");
+        assert!(matches!(&val.value, Value::Array(_)));
+    }
+
+    #[test]
+    fn test_sessions_builtin() {
+        let val = get_var("store = sessions[]", "store");
+        assert!(matches!(&val.value, Value::Map(_)));
+    }
+
+    #[test]
+    fn test_templates_builtin() {
+        let val = get_var("t = templates['./templates/**/*']", "t");
+        match &val.value {
+            Value::Map(m) => {
+                let glob = m.get("glob").unwrap();
+                assert_eq!(format!("{}", glob.value), "./templates/**/*");
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn test_render_builtin() {
+        let val = get_var("t = templates['./t/**/*']\ndata = [name = 'crow']\nresult = render[t, 'index', data]", "result");
+        match &val.value {
+            Value::Str(s) => assert!(s.contains("rendered"), "should contain 'rendered': {}", s),
+            _ => panic!("expected string"),
+        }
+    }
+
+    #[test]
+    fn test_cache_builtin() {
+        let val = get_var("c = cache[100]", "c");
+        assert!(matches!(&val.value, Value::Map(_)));
+    }
+
+    #[test]
+    fn test_cache_with_ttl_builtin() {
+        let val = get_var("c = cache[100, 60]", "c");
+        assert!(matches!(&val.value, Value::Map(_)));
+    }
+
+    #[test]
+    fn test_limit_builtin() {
+        let val = get_var("limiter = limit[100, 60]", "limiter");
+        match &val.value {
+            Value::Map(m) => {
+                assert!(m.contains_key("max"));
+                assert!(m.contains_key("window"));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn test_uploads_builtin() {
+        let val = get_var("req = []\nfiles = uploads[req]", "files");
+        assert!(matches!(&val.value, Value::Array(_)));
+    }
+
+    #[test]
+    fn test_sse_builtin() {
+        let val = get_var("fn handler[req]\n    return 'data'\napp = []\napp = sse[app, '/events', handler]", "app");
+        assert!(matches!(&val.value, Value::Array(_)));
+    }
+
+    #[test]
+    fn test_ws_builtin() {
+        let val = get_var("fn handler[req]\n    return 'ok'\napp = []\napp = ws[app, '/ws', handler]", "app");
+        assert!(matches!(&val.value, Value::Array(_)));
+    }
+
+    #[test]
+    fn test_connect_builtin() {
+        let val = get_var("sock = connect['ws://localhost:3000']", "sock");
+        match &val.value {
+            Value::Map(m) => {
+                let url = m.get("url").unwrap();
+                assert_eq!(format!("{}", url.value), "ws://localhost:3000");
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn test_send_recv_close_builtins() {
+        let val = get_var("sock = connect['ws://localhost:3000']\nresult = send[sock, 'hi']", "result");
+        assert!(matches!(&val.value, Value::Bool(true)));
+
+        let val = get_var("sock = connect['ws://localhost:3000']\nmsg = recv[sock]", "msg");
+        assert!(matches!(&val.value, Value::Str(_)));
+
+        let val = get_var("sock = connect['ws://localhost:3000']\nresult = close[sock]", "result");
+        assert!(matches!(&val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_live_builtin() {
+        let val = get_var("fn handler[req]\n    return 'ok'\napp = []\napp = live[app, '/live', handler]", "app");
+        assert!(matches!(&val.value, Value::Array(_)));
+    }
+
+    #[test]
+    fn test_static_dir_builtin() {
+        let val = get_var("app = []\napp = static_dir[app, '/assets', './public']", "app");
+        assert!(matches!(&val.value, Value::Array(_)));
+    }
+
+    #[test]
+    fn test_smtp_builtin() {
+        let val = get_var("mailer = smtp['smtp.example.com', 587, 'user', 'pass']", "mailer");
+        match &val.value {
+            Value::Map(m) => {
+                assert!(m.contains_key("host"));
+                assert!(m.contains_key("ok"));
             }
             _ => panic!("expected map"),
         }

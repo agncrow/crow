@@ -1087,6 +1087,32 @@ Protobuf requires schema files (`.proto`) and code generation — this violates 
 | **Phase 5** | web.auth, web.session, web.cors, web.static | 2 weeks | Production-ready middleware |
 | **Phase 6** | web.sse, web.mail, web.cache, web.queue, web.rate, web.upload | 3 weeks | Enterprise features |
 
+### Transpiler Codegen Status
+
+All server-side web modules have transpiler codegen (Crow → Rust), validator rules, and interpreter mock support:
+
+| Module | Crow Syntax | Transpiler | Interpreter |
+|--------|------------|------------|-------------|
+| `web` (core) | `web.new[]`, `route[]`, `serve[]` | ✅ | ✅ |
+| `web.client` | `get[]`, `post[]`, `put[]`, `del[]` | ✅ | ✅ |
+| `web.db` | `sqlite[]`, `exec[]`, `query[]` | ✅ | ✅ |
+| `web.auth` | `sign[]`, `verify[]` | ✅ | ✅ |
+| `web.cors` | `cors[app]`, `cors[app, origins]` | ✅ | ✅ |
+| `web.session` | `sessions[]` | ✅ | ✅ |
+| `web.template` | `templates[glob]`, `render[t, name, data]` | ✅ | ✅ |
+| `web.cache` | `cache[max]`, `cache[max, ttl]` | ✅ | ✅ |
+| `web.rate` | `limit[max, window]` | ✅ | ✅ |
+| `web.upload` | `uploads[req]` | ✅ | ✅ |
+| `web.sse` | `sse[app, path, handler]` | ✅ | ✅ |
+| `web.ws` | `ws[app, path, handler]`, `connect[]`, `send[]`, `recv[]`, `close[]` | ✅ | ✅ |
+| `web.live` | `live[app, path, handler]` | ✅ | ✅ |
+| `web.static` | `static_dir[app, url_path, dir_path]` | ✅ | ✅ |
+| `web.mail` | `smtp[host, port, user, pass]` | ✅ | ✅ |
+| `web.queue` | `web.queue[n]`, `push[queue, fn]` | ✅ | ✅ |
+| `web.docs` | `web.docs[title, version]` | ✅ | ✅ |
+
+**Deferred:** `web.view`, `web.router`, `web.store` (WASM client-side compilation).
+
 ---
 
 ## Competitive Position
