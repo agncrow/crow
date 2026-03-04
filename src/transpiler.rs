@@ -2571,12 +2571,12 @@ impl Transpiler {
                     // --- Web builtins ---
                     if name == "route" && self.needs_crow_web {
                         if arg_strs.len() == 3 {
-                            // route[app, path, handler] → app.route(path, Arc::new(handler))
-                            return format!("{}.route({}, Arc::new({}))", arg_strs[0], arg_strs[1], arg_strs[2]);
+                            // route[app, path, handler] → app.route(&path, Arc::new(handler))
+                            return format!("{}.route(&{}, Arc::new({}))", arg_strs[0], arg_strs[1], arg_strs[2]);
                         }
                         if arg_strs.len() == 4 {
-                            // route[app, path, method, handler] → app.route_method(path, method, Arc::new(handler))
-                            return format!("{}.route_method({}, {}, Arc::new({}))", arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[3]);
+                            // route[app, path, method, handler] → app.route_method(&path, method, Arc::new(handler))
+                            return format!("{}.route_method(&{}, {}, Arc::new({}))", arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[3]);
                         }
                     }
                     if name == "serve" && self.needs_crow_web && arg_strs.len() == 2 {
