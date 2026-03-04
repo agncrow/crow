@@ -677,6 +677,16 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         let runtime_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_runtime");
         dep_list.push(format!("crow_runtime = {{ path = \"{}\" }}", runtime_path));
     }
+    if transpiler.needs_regex {
+        dep_list.push("regex = \"1\"".to_string());
+    }
+    if transpiler.needs_sha2 {
+        dep_list.push("sha2 = \"0.10\"".to_string());
+        dep_list.push("md-5 = \"0.10\"".to_string());
+    }
+    if transpiler.needs_chrono {
+        dep_list.push("chrono = \"0.4\"".to_string());
+    }
     if transpiler.needs_crow_web {
         let web_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_web");
         let features: Vec<&str> = transpiler.web_features.iter().map(|s| s.as_str()).collect();

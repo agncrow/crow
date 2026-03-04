@@ -428,6 +428,67 @@ log[s]                     --- [1,2,3] ---
 | `exit[]` | Exit with code 0 |
 | `exit[code]` | Exit with given code |
 
+#### Shell
+
+| Function | Description |
+|----------|-------------|
+| `shell[cmd]` | Run a shell command, returns map with `status`, `stdout`, `stderr` |
+
+```
+r = shell['echo hello']
+log[r.stdout]    --- 'hello' ---
+log[r.status]    --- 0 ---
+```
+
+#### Hashing
+
+| Function | Description |
+|----------|-------------|
+| `hash[s, algo]` | Hash string with algorithm. Supported: `'sha256'`, `'sha512'`, `'md5'` |
+
+```
+h = hash['hello', 'sha256']
+log[h]    --- '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824' ---
+```
+
+#### Regex
+
+| Function | Description |
+|----------|-------------|
+| `matches[s, pattern]` | Check if string matches regex pattern (returns bool) |
+| `find[s, pattern]` | Find first match with capture groups. Returns map with `ok` (bool) and `groups` (array) |
+| `sub[s, pattern, replacement]` | Replace all regex matches with replacement string |
+
+```
+matches['hello', '[a-z]+']       --- true ---
+
+m = find['2024-01-15', '([0-9]+)-([0-9]+)-([0-9]+)']
+log[m.ok]        --- true ---
+log[m.groups]    --- ['2024-01-15', '2024', '01', '15'] ---
+
+sub['hello world', 'world', 'crow']  --- 'hello crow' ---
+```
+
+#### Date/Time
+
+| Function | Description |
+|----------|-------------|
+| `now[]` | Current date/time as map with `year`, `month`, `day`, `hour`, `minute`, `second`, `timestamp` |
+| `date[y, m, d]` | Create date map with `year`, `month`, `day`, `timestamp` |
+| `elapsed[start, end]` | Time difference between two date maps. Returns map with `seconds`, `minutes`, `hours`, `days` |
+
+```
+t = now[]
+log[t.year]        --- 2026 ---
+log[t.timestamp]   --- unix timestamp ---
+
+d1 = date[2024, 1, 15]
+d2 = date[2024, 1, 16]
+e = elapsed[d1, d2]
+log[e.seconds]     --- 86400 ---
+log[e.days]        --- 1 ---
+```
+
 ## 4. Control Flow
 
 ### if / else
