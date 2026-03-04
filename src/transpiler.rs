@@ -42,6 +42,10 @@ pub struct Transpiler {
     source_file: String,
     /// Counter for generating unique variable names in BinOp propagation
     binop_counter: usize,
+    /// Whether the transpiled code uses crow_web (any web.* module)
+    pub needs_crow_web: bool,
+    /// Which crow_web features are needed (e.g. "auth", "session", "db")
+    pub web_features: std::collections::BTreeSet<String>,
     /// Whether the transpiled code uses grad[] (needs CrowDual struct)
     pub needs_grad: bool,
     /// Set of function names that are passed to grad[] and need dual-mode versions
@@ -75,6 +79,8 @@ impl Transpiler {
             current_function_name: String::new(),
             source_file: String::new(),
             binop_counter: 0,
+            needs_crow_web: false,
+            web_features: std::collections::BTreeSet::new(),
             needs_grad: false,
             grad_functions: std::collections::HashSet::new(),
             emitting_dual: false,
@@ -1632,6 +1638,23 @@ impl Transpiler {
             if !self.registry.is_loaded("frame") {
                 self.registry.load(std::sync::Arc::new(crate::modules::frame::FrameModule));
             }
+        }
+        // Handle web.* modules → crow_web crate with feature flags
+        if path.starts_with("web.") {
+            self.needs_crow_web = true;
+            let sub = &path[4..]; // e.g. "auth", "session", "db"
+            // Map Crow module names to crow_web feature names
+            let feature = match sub {
+                "static" => "static_files",
+                other => other,
+            };
+            self.web_features.insert(feature.to_string());
+            self.modules.insert("web".to_string());
+        } else if path == "web" {
+            // `use web` alone → the http server module
+            self.needs_crow_web = true;
+            self.web_features.insert("http".to_string());
+            self.modules.insert("web".to_string());
         }
         self.modules.insert(module_name);
     }

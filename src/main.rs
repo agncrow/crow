@@ -677,6 +677,17 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         let runtime_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_runtime");
         dep_list.push(format!("crow_runtime = {{ path = \"{}\" }}", runtime_path));
     }
+    if transpiler.needs_crow_web {
+        let web_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_web");
+        let features: Vec<&str> = transpiler.web_features.iter().map(|s| s.as_str()).collect();
+        let features_str = features.join("\", \"");
+        dep_list.push(format!(
+            "crow_web = {{ path = \"{}\", features = [\"{}\"] }}",
+            web_path, features_str
+        ));
+        // crow_web needs tokio for async runtime
+        dep_list.push("tokio = { version = \"1\", features = [\"full\"] }".to_string());
+    }
     let deps = if dep_list.is_empty() {
         String::new()
     } else {

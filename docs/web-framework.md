@@ -170,16 +170,16 @@ Every `web.client` requirement mapped to reqwest support:
 | `web.cors` | ✅ tower-http | — | — |
 | `web.static` | ✅ tower-http | — | — |
 | `web.rate` | ✅ tower middleware | — | Pure Rust token bucket |
-| `web.db` | ❌ | `rusqlite`, `tokio-postgres` | Not an HTTP concern |
-| `web.docs` | ❌ | Transpiler + `serde_json` | Generation is compile-time, serving via axum |
-| `web.live` | Partial (WS transport) | Custom diff engine | Diff/patch logic is ours |
-| `web.view` | ❌ | WASM target | Different compilation target entirely |
-| `web.auth` | ❌ | `jsonwebtoken` | JWT logic, axum middleware carries it |
-| `web.session` | ❌ | Pure Rust | Cookie-based, axum extracts cookies |
-| `web.template` | ❌ | `tera` | Rendering engine, axum serves output |
-| `web.mail` | ❌ | `lettre` | Not HTTP at all |
-| `web.cache` | ❌ | `moka`, `redis` | Not HTTP at all |
-| `web.queue` | ❌ | Pure Rust thread pool | Not HTTP at all |
+| `web.db` | ✅ | `rusqlite`, `tokio-postgres` | Not an HTTP concern |
+| `web.docs` | ✅ | Transpiler + `serde_json` | Generation is compile-time, serving via axum |
+| `web.live` | ✅ | Custom diff engine | Diff/patch logic is ours |
+| `web.view` | ✅ | WASM target | Different compilation target entirely |
+| `web.auth` | ✅ | `jsonwebtoken` | JWT logic, axum middleware carries it |
+| `web.session` | ✅ | Pure Rust | Cookie-based, axum extracts cookies |
+| `web.template` | ✅ | `tera` | Rendering engine, axum serves output |
+| `web.mail` | ✅ | `lettre` | Not HTTP at all |
+| `web.cache` | ✅ | `moka`, `redis` | Not HTTP at all |
+| `web.queue` | ✅ | Pure Rust thread pool | Not HTTP at all |
 
 ---
 
