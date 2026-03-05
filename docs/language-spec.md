@@ -1003,6 +1003,11 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | `conv2d[a, b]` | 2D convolution (full) |
 | `hamming[n]` | Hamming window of length n |
 | `hanning[n]` | Hanning (Hann) window of length n |
+| `stft[x, window_size, hop_size]` | Short-Time Fourier Transform → [real, imag] 2D tensors [frames × window_size] |
+| `spectrogram[x, window_size, hop_size]` | Power spectrogram (magnitude² of STFT) → 2D tensor |
+| `lowpass[x, cutoff_hz, sample_rate]` | FFT-based lowpass filter |
+| `highpass[x, cutoff_hz, sample_rate]` | FFT-based highpass filter |
+| `bandpass[x, low_hz, high_hz, sample_rate]` | FFT-based bandpass filter |
 
 #### Special Functions
 
@@ -1094,6 +1099,10 @@ Import with `use math.stats`. Functions become top-level after import.
 | `cov[x, y]` | Population covariance between two arrays |
 | `ttest[x, y]` | Welch's two-sample t-test → returns map with `t` and `p` |
 | `linreg[x, y]` | Simple linear regression → returns map with `slope`, `intercept`, `r2` |
+| `chisq[observed, expected]` | Chi-square goodness-of-fit test → map with `chi2`, `p` |
+| `anova[g1, g2, ...]` | One-way ANOVA → map with `f`, `p` |
+| `kstest[data, dist_name]` | Kolmogorov-Smirnov test → map with `d`, `p`. Distributions: `"normal"`, `"uniform"` |
+| `fit[data, dist_name]` | Distribution fitting (MLE) → map of parameters. Distributions: `"normal"` → `{mu, sigma}`, `"exponential"` → `{lambda}`, `"uniform"` → `{a, b}`, `"poisson"` → `{lambda}` |
 
 ```
 use math

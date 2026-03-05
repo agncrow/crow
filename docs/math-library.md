@@ -997,7 +997,7 @@ Crow's math library design is best-in-class. The language-level directives (`gpu
 
 Honest assessment of what's actually implemented and working, compared to mature languages.
 
-**Function count:** ~160 functions/features across 13 categories (math, linalg, stats, signal, special, complex, sparse, NN, frames, autograd, distributions, I/O, shape ops).
+**Function count:** ~170 functions/features across 13 categories (math, linalg, stats, signal, special, complex, sparse, NN, frames, autograd, distributions, I/O, shape ops).
 
 ### Category-by-Category
 
@@ -1007,8 +1007,8 @@ Honest assessment of what's actually implemented and working, compared to mature
 | Element-wise ops | ★★★★ | ★★★★★ | ★★★★★ | ★★★★★ | ★★★★★ |
 | Reductions | ★★★★ | ★★★★★ | ★★★★★ | ★★★★★ | ★★★★★ |
 | Linear algebra | ★★★★½ | ★★★★★ | ★★★★★ | ★★★ | ★★★★★ |
-| Statistics | ★★★½ | ★★★★★ | ★★★★★ | ★★★★★ | ★★★★ |
-| Signal processing | ★★★ | ★★★★★ | ★★★★ | ★★ | ★★★★★ |
+| Statistics | ★★★★ | ★★★★★ | ★★★★★ | ★★★★★ | ★★★★ |
+| Signal processing | ★★★★ | ★★★★★ | ★★★★ | ★★ | ★★★★★ |
 | Special functions | ★★★ | ★★★★★ | ★★★★★ | ★★★★ | ★★★★★ |
 | Random/distributions | ★★★½ | ★★★★★ | ★★★★★ | ★★★★★ | ★★★★ |
 | Sparse | ★★★ | ★★★★★ | ★★★★★ | ★★★ | ★★★★★ |
@@ -1031,8 +1031,8 @@ Honest assessment of what's actually implemented and working, compared to mature
 
 ### Weaknesses
 
-- **Statistics depth**: 9 functions vs SciPy's ~200. Missing distribution fitting, ANOVA, chi-square, KS test.
-- **Signal processing**: Good start (FFT, conv, windows) but no STFT, spectrogram, filter design.
+- **Statistics depth**: 13 functions vs SciPy's ~200. Core tests covered (chi-square, ANOVA, KS, distribution fitting) but many specialized tests still missing.
+- **Signal processing**: Good coverage (FFT, conv, windows, STFT, spectrogram, lowpass/highpass/bandpass) but no adaptive filters, no wavelet transforms.
 - **GPU**: Directive exists (`gpu[n]`) but runtime GPU execution is not yet proven at scale.
 - **Ecosystem**: No package manager, no community packages, no pretrained models.
 
@@ -1048,7 +1048,9 @@ Honest assessment of what's actually implemented and working, compared to mature
 
 ### Remaining Gaps (Priority Order)
 
-1. **`rank`, `cond`** — the last two common linalg functions missing
-2. **Distribution fitting** — `fit[data, 'normal']` → returns parameters
-3. **More stats tests** — chi-square, ANOVA, KS test
-4. **Signal depth** — STFT, spectrogram, filter design
+1. ~~**`rank`, `cond`**~~ ✅ Implemented via SVD
+2. ~~**Distribution fitting**~~ ✅ `fit[data, 'normal']` → `{mu, sigma}` (normal, exponential, uniform, poisson)
+3. ~~**More stats tests**~~ ✅ chi-square, ANOVA, KS test
+4. ~~**Signal depth**~~ ✅ STFT, spectrogram, lowpass/highpass/bandpass filters
+5. **Optimization** — `minimize`, `root`, `curve_fit` (not yet implemented)
+6. **Advanced ML** — beyond basic NN layers (not yet implemented)

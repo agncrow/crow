@@ -7,6 +7,7 @@ pub struct StatsModule;
 
 const STATS_FUNCTIONS: &[&str] = &[
     "median", "std", "var", "percentile", "zscore", "corr", "cov", "ttest", "linreg",
+    "chisq", "anova", "kstest", "fit",
 ];
 
 impl CrowModule for StatsModule {
@@ -119,6 +120,61 @@ fn call_stats(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
                 _ => Err("linreg: expected two numarrays".into()),
             }
         }
+        "chisq" => {
+            if args.len() != 2 { return Err("chisq: expected 2 arguments (observed, expected)".into()); }
+            match (&args[0].value, &args[1].value) {
+                (Value::NumArray(obs), Value::NumArray(exp)) => {
+                    let (chi2, p) = crow_runtime::stats::chisq(obs, exp);
+                    let mut map = BTreeMap::new();
+                    map.insert("chi2".to_string(), CrowValue::ok(Value::Float(chi2)));
+                    map.insert("p".to_string(), CrowValue::ok(Value::Float(p)));
+                    Ok(CrowValue::ok(Value::Map(map)))
+                }
+                _ => Err("chisq: expected two numarrays".into()),
+            }
+        }
+        "anova" => {
+            if args.len() < 2 { return Err("anova: expected at least 2 arguments (groups)".into()); }
+            let groups: Result<Vec<&crow_runtime::tensor::CrowTensor>, String> = args.iter().map(|a| {
+                match &a.value {
+                    Value::NumArray(t) => Ok(t),
+                    _ => Err("anova: all arguments must be numarrays".into()),
+                }
+            }).collect();
+            let groups = groups?;
+            let (f, p) = crow_runtime::stats::anova(&groups);
+            let mut map = BTreeMap::new();
+            map.insert("f".to_string(), CrowValue::ok(Value::Float(f)));
+            map.insert("p".to_string(), CrowValue::ok(Value::Float(p)));
+            Ok(CrowValue::ok(Value::Map(map)))
+        }
+        "kstest" => {
+            if args.len() != 2 { return Err("kstest: expected 2 arguments (data, distribution_name)".into()); }
+            match (&args[0].value, &args[1].value) {
+                (Value::NumArray(data), Value::Str(dist)) => {
+                    let (d, p) = crow_runtime::stats::kstest(data, dist);
+                    let mut map = BTreeMap::new();
+                    map.insert("d".to_string(), CrowValue::ok(Value::Float(d)));
+                    map.insert("p".to_string(), CrowValue::ok(Value::Float(p)));
+                    Ok(CrowValue::ok(Value::Map(map)))
+                }
+                _ => Err("kstest: expected (numarray, string)".into()),
+            }
+        }
+        "fit" => {
+            if args.len() != 2 { return Err("fit: expected 2 arguments (data, distribution_name)".into()); }
+            match (&args[0].value, &args[1].value) {
+                (Value::NumArray(data), Value::Str(dist)) => {
+                    let params = crow_runtime::stats::fit(data, dist);
+                    let mut map = BTreeMap::new();
+                    for (key, val) in params {
+                        map.insert(key, CrowValue::ok(Value::Float(val)));
+                    }
+                    Ok(CrowValue::ok(Value::Map(map)))
+                }
+                _ => Err("fit: expected (numarray, string)".into()),
+            }
+        }
         _ => Err(format!("{}: unknown stats function", name)),
     }
 }
@@ -134,6 +190,13 @@ fn emit_stats_rust(name: &str, arg_strs: &[String]) -> Result<String, String> {
         "cov" => format!("crow_runtime::stats::cov(&{}, &{})", arg_strs[0], arg_strs[1]),
         "ttest" => format!("{{ let (_t, _p) = crow_runtime::stats::ttest(&{}, &{}); let mut _m = std::collections::BTreeMap::new(); _m.insert(\"t\".to_string(), _t); _m.insert(\"p\".to_string(), _p); _m }}", arg_strs[0], arg_strs[1]),
         "linreg" => format!("{{ let (_s, _i, _r) = crow_runtime::stats::linreg(&{}, &{}); let mut _m = std::collections::BTreeMap::new(); _m.insert(\"slope\".to_string(), _s); _m.insert(\"intercept\".to_string(), _i); _m.insert(\"r2\".to_string(), _r); _m }}", arg_strs[0], arg_strs[1]),
+        "chisq" => format!("{{ let (_c, _p) = crow_runtime::stats::chisq(&{}, &{}); let mut _m = std::collections::BTreeMap::new(); _m.insert(\"chi2\".to_string(), _c); _m.insert(\"p\".to_string(), _p); _m }}", arg_strs[0], arg_strs[1]),
+        "anova" => {
+            let refs: Vec<String> = arg_strs.iter().map(|a| format!("&{}", a)).collect();
+            format!("{{ let (_f, _p) = crow_runtime::stats::anova(&[{}]); let mut _m = std::collections::BTreeMap::new(); _m.insert(\"f\".to_string(), _f); _m.insert(\"p\".to_string(), _p); _m }}", refs.join(", "))
+        }
+        "kstest" => format!("{{ let (_d, _p) = crow_runtime::stats::kstest(&{}, &{}); let mut _m = std::collections::BTreeMap::new(); _m.insert(\"d\".to_string(), _d); _m.insert(\"p\".to_string(), _p); _m }}", arg_strs[0], arg_strs[1]),
+        "fit" => format!("{{ let _params = crow_runtime::stats::fit(&{}, &{}); let mut _m = std::collections::BTreeMap::new(); for (_k, _v) in _params {{ _m.insert(_k, _v); }} _m }}", arg_strs[0], arg_strs[1]),
         _ => return Err(format!("{}: unknown stats function for transpiler", name)),
     };
     Ok(result)
@@ -143,7 +206,7 @@ fn stats_type_of(name: &str) -> CrowType {
     match name {
         "median" | "std" | "var" | "percentile" | "corr" | "cov" => CrowType::Float,
         "zscore" => CrowType::NumArray(Box::new(CrowType::Float)),
-        "ttest" | "linreg" => CrowType::Map(Box::new(CrowType::Float)),
+        "ttest" | "linreg" | "chisq" | "anova" | "kstest" | "fit" => CrowType::Map(Box::new(CrowType::Float)),
         _ => CrowType::Unknown,
     }
 }

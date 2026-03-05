@@ -234,6 +234,231 @@ fn ln_gamma(x: f64) -> f64 {
     0.5 * (2.0 * std::f64::consts::PI).ln() + (t.ln() * (x + 0.5)) - t + a.ln()
 }
 
+/// Chi-square goodness-of-fit test. Returns (chi2, p_value).
+/// `observed` and `expected` must be 1D tensors of the same length.
+pub fn chisq(observed: &CrowTensor, expected: &CrowTensor) -> (f64, f64) {
+    let obs = observed.to_vec();
+    let exp = expected.to_vec();
+    let n = obs.len();
+    if n == 0 || exp.len() != n {
+        return (f64::NAN, f64::NAN);
+    }
+    let chi2: f64 = obs.iter().zip(exp.iter())
+        .map(|(o, e)| if *e == 0.0 { 0.0 } else { (o - e) * (o - e) / e })
+        .sum();
+    let df = (n - 1) as f64;
+    let p = 1.0 - chi2_cdf(chi2, df);
+    (chi2, p)
+}
+
+/// One-way ANOVA. Takes a slice of group tensors. Returns (f_statistic, p_value).
+pub fn anova(groups: &[&CrowTensor]) -> (f64, f64) {
+    let k = groups.len();
+    if k < 2 {
+        return (f64::NAN, f64::NAN);
+    }
+    let group_data: Vec<Vec<f64>> = groups.iter().map(|g| g.to_vec()).collect();
+    let n_total: usize = group_data.iter().map(|g| g.len()).sum();
+    if n_total <= k {
+        return (f64::NAN, f64::NAN);
+    }
+    let grand_mean: f64 = group_data.iter().flat_map(|g| g.iter()).sum::<f64>() / n_total as f64;
+
+    // Between-group sum of squares
+    let ss_between: f64 = group_data.iter()
+        .map(|g| {
+            let ni = g.len() as f64;
+            let gi_mean = g.iter().sum::<f64>() / ni;
+            ni * (gi_mean - grand_mean) * (gi_mean - grand_mean)
+        })
+        .sum();
+
+    // Within-group sum of squares
+    let ss_within: f64 = group_data.iter()
+        .map(|g| {
+            let gi_mean = g.iter().sum::<f64>() / g.len() as f64;
+            g.iter().map(|x| (x - gi_mean) * (x - gi_mean)).sum::<f64>()
+        })
+        .sum();
+
+    let df_between = (k - 1) as f64;
+    let df_within = (n_total - k) as f64;
+    if df_within <= 0.0 || ss_within == 0.0 {
+        return (f64::INFINITY, 0.0);
+    }
+    let ms_between = ss_between / df_between;
+    let ms_within = ss_within / df_within;
+    let f = ms_between / ms_within;
+    let p = 1.0 - f_cdf(f, df_between, df_within);
+    (f, p)
+}
+
+/// Kolmogorov-Smirnov test against a reference distribution.
+/// Currently supports "normal" (standard normal) and "uniform" [0,1].
+/// Returns (d_statistic, p_value).
+pub fn kstest(data: &CrowTensor, dist: &str) -> (f64, f64) {
+    let mut sorted = data.to_vec();
+    let n = sorted.len();
+    if n == 0 {
+        return (f64::NAN, f64::NAN);
+    }
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Standardize if testing against normal
+    let (mean, std_dev) = if dist == "normal" {
+        let m = sorted.iter().sum::<f64>() / n as f64;
+        let v = sorted.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / n as f64;
+        (m, v.sqrt())
+    } else {
+        (0.0, 1.0)
+    };
+
+    let cdf_fn = |x: f64| -> f64 {
+        match dist {
+            "normal" => {
+                let z = if std_dev > 0.0 { (x - mean) / std_dev } else { 0.0 };
+                0.5 * (1.0 + erf_approx(z / std::f64::consts::SQRT_2))
+            }
+            "uniform" => x.clamp(0.0, 1.0),
+            _ => 0.5, // fallback
+        }
+    };
+
+    let mut d_max = 0.0_f64;
+    for (i, &x) in sorted.iter().enumerate() {
+        let f_x = cdf_fn(x);
+        let d1 = ((i + 1) as f64 / n as f64 - f_x).abs();
+        let d2 = (f_x - i as f64 / n as f64).abs();
+        d_max = d_max.max(d1).max(d2);
+    }
+
+    // Approximate p-value (Kolmogorov's asymptotic formula)
+    let sqrt_n = (n as f64).sqrt();
+    let lambda = (sqrt_n + 0.12 + 0.11 / sqrt_n) * d_max;
+    let p = ks_pvalue(lambda);
+    (d_max, p)
+}
+
+/// Fit a distribution to data. Returns parameter map.
+/// Supported distributions: "normal" → (mu, sigma), "exponential" → (lambda),
+/// "uniform" → (a, b), "poisson" → (lambda).
+pub fn fit(data: &CrowTensor, dist: &str) -> Vec<(String, f64)> {
+    let d = data.to_vec();
+    let n = d.len();
+    if n == 0 {
+        return vec![];
+    }
+    match dist {
+        "normal" => {
+            let mu = d.iter().sum::<f64>() / n as f64;
+            let sigma = (d.iter().map(|x| (x - mu) * (x - mu)).sum::<f64>() / n as f64).sqrt();
+            vec![("mu".into(), mu), ("sigma".into(), sigma)]
+        }
+        "exponential" => {
+            let mean = d.iter().sum::<f64>() / n as f64;
+            let lambda = if mean > 0.0 { 1.0 / mean } else { f64::NAN };
+            vec![("lambda".into(), lambda)]
+        }
+        "uniform" => {
+            let a = d.iter().cloned().fold(f64::INFINITY, f64::min);
+            let b = d.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            vec![("a".into(), a), ("b".into(), b)]
+        }
+        "poisson" => {
+            let lambda = d.iter().sum::<f64>() / n as f64;
+            vec![("lambda".into(), lambda)]
+        }
+        _ => vec![],
+    }
+}
+
+// ── Helper functions ────────────────────────────────────────────────────
+
+/// Approximate error function using Abramowitz & Stegun formula 7.1.26.
+fn erf_approx(x: f64) -> f64 {
+    let sign = if x >= 0.0 { 1.0 } else { -1.0 };
+    let x = x.abs();
+    let t = 1.0 / (1.0 + 0.3275911 * x);
+    let poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+    sign * (1.0 - poly * (-x * x).exp())
+}
+
+/// Chi-square CDF via the regularized lower incomplete gamma function.
+/// P(X ≤ x) = γ(k/2, x/2) / Γ(k/2) where k = degrees of freedom.
+fn chi2_cdf(x: f64, df: f64) -> f64 {
+    if x <= 0.0 { return 0.0; }
+    lower_regularized_gamma(df / 2.0, x / 2.0)
+}
+
+/// F-distribution CDF via the regularized incomplete beta function.
+fn f_cdf(x: f64, d1: f64, d2: f64) -> f64 {
+    if x <= 0.0 { return 0.0; }
+    let z = d1 * x / (d1 * x + d2);
+    regularized_incomplete_beta(z, d1 / 2.0, d2 / 2.0)
+}
+
+/// KS test p-value from Kolmogorov's distribution (approximation).
+fn ks_pvalue(lambda: f64) -> f64 {
+    if lambda <= 0.0 { return 1.0; }
+    let mut sum = 0.0;
+    for j in 1..=100 {
+        let j = j as f64;
+        let sign = if j as i64 % 2 == 0 { -1.0 } else { 1.0 };
+        let term = sign * (-2.0 * j * j * lambda * lambda).exp();
+        sum += term;
+        if term.abs() < 1e-15 { break; }
+    }
+    (2.0 * sum).clamp(0.0, 1.0)
+}
+
+/// Lower regularized incomplete gamma function P(a, x) = γ(a, x) / Γ(a).
+/// Uses series expansion for small x, continued fraction for large x.
+fn lower_regularized_gamma(a: f64, x: f64) -> f64 {
+    if x <= 0.0 { return 0.0; }
+    if x < a + 1.0 {
+        // Series expansion
+        gamma_series(a, x)
+    } else {
+        // Continued fraction
+        1.0 - gamma_cf(a, x)
+    }
+}
+
+/// Series expansion for lower regularized incomplete gamma.
+fn gamma_series(a: f64, x: f64) -> f64 {
+    let ln_gamma_a = ln_gamma(a);
+    let mut sum = 1.0 / a;
+    let mut term = 1.0 / a;
+    for n in 1..200 {
+        term *= x / (a + n as f64);
+        sum += term;
+        if term.abs() < sum.abs() * 1e-14 { break; }
+    }
+    sum * (-x + a * x.ln() - ln_gamma_a).exp()
+}
+
+/// Continued fraction for upper regularized incomplete gamma.
+fn gamma_cf(a: f64, x: f64) -> f64 {
+    let ln_gamma_a = ln_gamma(a);
+    let mut b = x + 1.0 - a;
+    let mut c = 1.0 / 1e-30;
+    let mut d = 1.0 / b;
+    let mut h = d;
+    for i in 1..200 {
+        let an = -(i as f64) * (i as f64 - a);
+        b += 2.0;
+        d = an * d + b;
+        if d.abs() < 1e-30 { d = 1e-30; }
+        c = b + an / c;
+        if c.abs() < 1e-30 { c = 1e-30; }
+        d = 1.0 / d;
+        let del = d * c;
+        h *= del;
+        if (del - 1.0).abs() < 1e-14 { break; }
+    }
+    (-x + a * x.ln() - ln_gamma_a).exp() * h
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,6 +602,88 @@ mod tests {
         let y = tensor(&[2.0]);
         let (slope, _intercept, _r2) = linreg(&x, &y);
         assert!(slope.is_nan());
+    }
+
+    // ── chisq ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_chisq_perfect_match() {
+        let obs = tensor(&[10.0, 20.0, 30.0]);
+        let exp = tensor(&[10.0, 20.0, 30.0]);
+        let (chi2, p) = chisq(&obs, &exp);
+        assert!((chi2 - 0.0).abs() < 1e-10);
+        assert!((p - 1.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn test_chisq_different() {
+        let obs = tensor(&[50.0, 30.0, 20.0]);
+        let exp = tensor(&[33.3, 33.3, 33.4]);
+        let (chi2, p) = chisq(&obs, &exp);
+        assert!(chi2 > 5.0, "chi2 should be large, got {}", chi2);
+        assert!(p < 0.1, "p should be small, got {}", p);
+    }
+
+    // ── anova ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_anova_same_groups() {
+        let g1 = tensor(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let g2 = tensor(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let (f, p) = anova(&[&g1, &g2]);
+        assert!(f.abs() < 1e-10, "F should be ~0, got {}", f);
+        assert!(p > 0.9, "p should be ~1, got {}", p);
+    }
+
+    #[test]
+    fn test_anova_different_groups() {
+        let g1 = tensor(&[1.0, 2.0, 3.0]);
+        let g2 = tensor(&[10.0, 11.0, 12.0]);
+        let g3 = tensor(&[20.0, 21.0, 22.0]);
+        let (f, p) = anova(&[&g1, &g2, &g3]);
+        assert!(f > 10.0, "F should be large, got {}", f);
+        assert!(p < 0.01, "p should be small, got {}", p);
+    }
+
+    // ── kstest ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_kstest_uniform() {
+        // Data that is close to uniform [0,1]
+        let data = tensor(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]);
+        let (d, p) = kstest(&data, "uniform");
+        assert!(d < 0.2, "d should be small for uniform data, got {}", d);
+        assert!(p > 0.05, "p should be large for uniform data, got {}", p);
+    }
+
+    // ── fit ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_fit_normal() {
+        // Data with known mean=5, sigma≈1
+        let data = tensor(&[4.0, 4.5, 5.0, 5.5, 6.0]);
+        let params = fit(&data, "normal");
+        assert_eq!(params.len(), 2);
+        assert!((params[0].1 - 5.0).abs() < 1e-10, "mu should be 5.0");
+        assert!(params[1].1 > 0.0, "sigma should be positive");
+    }
+
+    #[test]
+    fn test_fit_uniform() {
+        let data = tensor(&[1.0, 3.0, 5.0, 7.0, 9.0]);
+        let params = fit(&data, "uniform");
+        assert_eq!(params.len(), 2);
+        assert!((params[0].1 - 1.0).abs() < 1e-10, "a should be 1.0");
+        assert!((params[1].1 - 9.0).abs() < 1e-10, "b should be 9.0");
+    }
+
+    #[test]
+    fn test_fit_exponential() {
+        let data = tensor(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let params = fit(&data, "exponential");
+        assert_eq!(params.len(), 1);
+        // mean=3, so lambda=1/3
+        assert!((params[0].1 - 1.0 / 3.0).abs() < 1e-10);
     }
 }
 

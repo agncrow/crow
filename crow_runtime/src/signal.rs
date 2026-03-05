@@ -136,6 +136,114 @@ impl CrowTensor {
             .collect();
         CrowTensor::from_vec(data, vec![n])
     }
+
+    /// Short-Time Fourier Transform (STFT).
+    /// `window_size`: length of each FFT frame.
+    /// `hop_size`: step between frames.
+    /// Returns (real_2d, imag_2d) tensors with shape [num_frames, window_size].
+    pub fn stft(&self, window_size: usize, hop_size: usize) -> (CrowTensor, CrowTensor) {
+        assert!(self.shape().len() == 1, "stft: expected 1D tensor");
+        assert!(window_size > 0 && hop_size > 0, "stft: window_size and hop_size must be > 0");
+        let data = self.to_vec();
+        let n = data.len();
+        let window = CrowTensor::hanning(window_size);
+        let w = window.to_vec();
+
+        let mut real_out = Vec::new();
+        let mut imag_out = Vec::new();
+        let mut num_frames = 0usize;
+
+        let mut planner = FftPlanner::new();
+        let fft = planner.plan_fft_forward(window_size);
+
+        let mut pos = 0;
+        while pos + window_size <= n {
+            // Apply window
+            let mut buffer: Vec<Complex<f64>> = (0..window_size)
+                .map(|i| Complex::new(data[pos + i] * w[i], 0.0))
+                .collect();
+            fft.process(&mut buffer);
+            real_out.extend(buffer.iter().map(|c| c.re));
+            imag_out.extend(buffer.iter().map(|c| c.im));
+            num_frames += 1;
+            pos += hop_size;
+        }
+
+        if num_frames == 0 {
+            return (
+                CrowTensor::from_vec(vec![], vec![0, window_size]),
+                CrowTensor::from_vec(vec![], vec![0, window_size]),
+            );
+        }
+
+        (
+            CrowTensor::from_vec(real_out, vec![num_frames, window_size]),
+            CrowTensor::from_vec(imag_out, vec![num_frames, window_size]),
+        )
+    }
+
+    /// Spectrogram: magnitude-squared of STFT.
+    /// Returns a 2D tensor [num_frames, window_size] of power values.
+    pub fn spectrogram(&self, window_size: usize, hop_size: usize) -> CrowTensor {
+        let (real, imag) = self.stft(window_size, hop_size);
+        let r = real.to_vec();
+        let im = imag.to_vec();
+        let power: Vec<f64> = r.iter().zip(im.iter())
+            .map(|(re, im)| re * re + im * im)
+            .collect();
+        CrowTensor::from_vec(power, real.shape().to_vec())
+    }
+
+    /// Lowpass filter using FFT. Zeroes frequencies above `cutoff_hz`.
+    /// `sample_rate` is in Hz.
+    pub fn lowpass(&self, cutoff_hz: f64, sample_rate: f64) -> CrowTensor {
+        self.freq_filter(sample_rate, |freq| freq.abs() <= cutoff_hz)
+    }
+
+    /// Highpass filter using FFT. Zeroes frequencies below `cutoff_hz`.
+    /// `sample_rate` is in Hz.
+    pub fn highpass(&self, cutoff_hz: f64, sample_rate: f64) -> CrowTensor {
+        self.freq_filter(sample_rate, |freq| freq.abs() >= cutoff_hz)
+    }
+
+    /// Bandpass filter using FFT. Keeps frequencies between `low_hz` and `high_hz`.
+    /// `sample_rate` is in Hz.
+    pub fn bandpass(&self, low_hz: f64, high_hz: f64, sample_rate: f64) -> CrowTensor {
+        self.freq_filter(sample_rate, |freq| {
+            let f = freq.abs();
+            f >= low_hz && f <= high_hz
+        })
+    }
+
+    /// Internal: Apply a frequency-domain filter via FFT → mask → IFFT.
+    fn freq_filter<F: Fn(f64) -> bool>(&self, sample_rate: f64, keep: F) -> CrowTensor {
+        assert!(self.shape().len() == 1, "filter: expected 1D tensor");
+        let n = self.shape()[0];
+        let data = self.to_vec();
+        let mut buffer: Vec<Complex<f64>> = data.iter().map(|&v| Complex::new(v, 0.0)).collect();
+
+        let mut planner = FftPlanner::new();
+        let fft_fwd = planner.plan_fft_forward(n);
+        fft_fwd.process(&mut buffer);
+
+        // Zero out frequencies that don't pass the filter
+        let freq_resolution = sample_rate / n as f64;
+        for i in 0..n {
+            let freq = if i <= n / 2 {
+                i as f64 * freq_resolution
+            } else {
+                (i as f64 - n as f64) * freq_resolution
+            };
+            if !keep(freq) {
+                buffer[i] = Complex::new(0.0, 0.0);
+            }
+        }
+
+        let fft_inv = planner.plan_fft_inverse(n);
+        fft_inv.process(&mut buffer);
+        let result: Vec<f64> = buffer.iter().map(|c| c.re / n as f64).collect();
+        CrowTensor::from_vec(result, vec![n])
+    }
 }
 
 #[cfg(test)]
@@ -238,6 +346,100 @@ mod tests {
         for i in 0..4 {
             approx_eq(v[i], v[7 - i], 1e-10);
         }
+    }
+
+    // ── stft ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_stft_shape() {
+        // 16 samples, window=4, hop=2 → (16-4)/2 + 1 = 7 frames
+        let x = CrowTensor::from_vec(vec![1.0; 16], vec![16]);
+        let (real, imag) = x.stft(4, 2);
+        assert_eq!(real.shape()[0], 7); // num_frames
+        assert_eq!(real.shape()[1], 4); // window_size
+        assert_eq!(imag.shape(), real.shape());
+    }
+
+    #[test]
+    fn test_stft_dc_signal() {
+        // Constant signal → each frame's DC component should be non-zero
+        let x = CrowTensor::from_vec(vec![1.0; 8], vec![8]);
+        let (real, _imag) = x.stft(4, 2);
+        let r = real.to_vec();
+        // First element of each frame (DC) should be positive
+        for frame in 0..real.shape()[0] {
+            assert!(r[frame * 4] > 0.0, "DC component should be positive");
+        }
+    }
+
+    // ── spectrogram ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_spectrogram_shape() {
+        let x = CrowTensor::from_vec(vec![1.0; 16], vec![16]);
+        let spec = x.spectrogram(4, 2);
+        assert_eq!(spec.shape()[0], 7);
+        assert_eq!(spec.shape()[1], 4);
+    }
+
+    #[test]
+    fn test_spectrogram_nonnegative() {
+        let x = CrowTensor::from_vec(vec![1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0], vec![8]);
+        let spec = x.spectrogram(4, 2);
+        for v in spec.to_vec() {
+            assert!(v >= 0.0, "spectrogram values must be non-negative, got {}", v);
+        }
+    }
+
+    // ── lowpass / highpass / bandpass ─────────────────────────────────
+
+    #[test]
+    fn test_lowpass_dc_preserved() {
+        // Pure DC signal should pass through lowpass unchanged
+        let x = CrowTensor::from_vec(vec![5.0; 8], vec![8]);
+        let filtered = x.lowpass(100.0, 1000.0);
+        for v in filtered.to_vec() {
+            approx_eq(v, 5.0, 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_highpass_removes_dc() {
+        // Pure DC signal should be zeroed by highpass
+        let x = CrowTensor::from_vec(vec![5.0; 8], vec![8]);
+        let filtered = x.highpass(1.0, 1000.0);
+        for v in filtered.to_vec() {
+            approx_eq(v, 0.0, 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_bandpass_preserves_in_band() {
+        // Generate a pure tone at 100 Hz, sample rate 1000 Hz
+        let n = 64;
+        let sr = 1000.0;
+        let freq = 100.0;
+        let data: Vec<f64> = (0..n).map(|i| (2.0 * PI * freq * i as f64 / sr).sin()).collect();
+        let x = CrowTensor::from_vec(data.clone(), vec![n]);
+        let filtered = x.bandpass(50.0, 150.0, sr);
+        // Energy should be mostly preserved
+        let orig_energy: f64 = data.iter().map(|v| v * v).sum();
+        let filt_energy: f64 = filtered.to_vec().iter().map(|v| v * v).sum();
+        assert!(filt_energy > 0.9 * orig_energy, "in-band signal should be preserved, got ratio {}", filt_energy / orig_energy);
+    }
+
+    #[test]
+    fn test_bandpass_removes_out_of_band() {
+        // Generate a pure tone at 400 Hz, bandpass 50-150 Hz should remove it
+        let n = 64;
+        let sr = 1000.0;
+        let freq = 400.0;
+        let data: Vec<f64> = (0..n).map(|i| (2.0 * PI * freq * i as f64 / sr).sin()).collect();
+        let orig_energy: f64 = data.iter().map(|v| v * v).sum();
+        let x = CrowTensor::from_vec(data, vec![n]);
+        let filtered = x.bandpass(50.0, 150.0, sr);
+        let filt_energy: f64 = filtered.to_vec().iter().map(|v| v * v).sum();
+        assert!(filt_energy < 0.1 * orig_energy, "out-of-band signal should be mostly removed, got ratio {}", filt_energy / orig_energy);
     }
 }
 
