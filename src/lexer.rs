@@ -405,7 +405,6 @@ impl Lexer {
             "for" => Token::For,
             "in" => Token::In,
             "while" => Token::While,
-            "match" => Token::Match,
             "struct" => Token::Struct,
             "use" => Token::Use,
             "break" => Token::Break,

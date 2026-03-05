@@ -481,7 +481,6 @@ impl Interpreter {
             Stmt::While { condition, body } => {
                 self.exec_while(condition, body)
             }
-            Stmt::Match { value, arms } => self.exec_match(value, arms),
             Stmt::StructDecl { name, fields } => {
                 let sd = CrowValue::ok(Value::StructDef(StructDef {
                     name: name.clone(),
@@ -842,67 +841,6 @@ impl Interpreter {
             if should_break { break; }
         }
         Ok(Signal::None)
-    }
-
-    fn exec_match(
-        &mut self,
-        value: &Expr,
-        arms: &[MatchArm],
-    ) -> Result<Signal, String> {
-        let val = self.eval_expr(value)?;
-        for arm in arms {
-            if self.pattern_matches(&arm.pattern, &val)? {
-                self.env.push_scope();
-                for stmt in &arm.body {
-                    match self.exec_stmt(stmt)? {
-                        Signal::Return(v) => {
-                            self.env.pop_scope();
-                            return Ok(Signal::Return(v));
-                        }
-                        Signal::Break => {
-                            self.env.pop_scope();
-                            return Ok(Signal::Break);
-                        }
-                        Signal::Continue => {
-                            self.env.pop_scope();
-                            return Ok(Signal::Continue);
-                        }
-                        Signal::Value(_) | Signal::None => {}
-                    }
-                }
-                self.env.pop_scope();
-                return Ok(Signal::None);
-            }
-        }
-        Ok(Signal::None)
-    }
-
-    fn pattern_matches(
-        &mut self,
-        pattern: &Pattern,
-        value: &CrowValue,
-    ) -> Result<bool, String> {
-        match pattern {
-            Pattern::Wildcard => Ok(true),
-            Pattern::Literal(expr) => {
-                let pat_val = self.eval_expr(expr)?;
-                Ok(self.values_equal(&pat_val, value))
-            }
-            Pattern::Range(start, end) => {
-                let start_val = self.eval_expr(start)?;
-                let end_val = self.eval_expr(end)?;
-                match (
-                    start_val.unwrap_or_propagate()?,
-                    value.unwrap_or_propagate()?,
-                    end_val.unwrap_or_propagate()?,
-                ) {
-                    (Value::Int(s), Value::Int(v), Value::Int(e)) => {
-                        Ok(*v >= *s && *v <= *e)
-                    }
-                    _ => Ok(false),
-                }
-            }
-        }
     }
 
     fn is_truthy(&self, val: &CrowValue) -> bool {

@@ -1962,7 +1962,7 @@ crow install
 crow run
 ```
 
-**Registry packages** (version strings like `'1.0'`) are resolved via a central index hosted on GitHub. The registry maps package names to git repositories and available versions. When installing, Crow fetches the index, finds the repo URL, and clones it at the matching git tag (`v1.0`, `v2.3`, etc.). If the exact tag is not found, the latest commit is used with a warning.
+**Registry packages** (version strings like `'1.0'`) are resolved via a central index hosted on GitHub. The registry is a git repository containing an `index.json` that maps package names to git repositories and available versions. When installing, Crow clones the registry repo locally, reads the index, finds the package repo URL, and clones it at the matching git tag (`v1.0`, `v2.3`, etc.). If the exact tag is not found, the latest commit is used with a warning.
 
 **Git dependencies** are cloned directly from the URL. **Local path dependencies** are symlinked.
 
@@ -1970,13 +1970,30 @@ Installed modules are imported with `use`.
 
 #### Registry
 
-The default registry index is hosted at `crow-lang/registry` on GitHub. Override it with the `CROW_REGISTRY` environment variable:
+The default registry is the git repo at `https://github.com/vsriram/registry.git`. On first `crow install`, the registry is cloned to `~/.crow/registry/`. On subsequent runs, it is updated via `git pull`.
+
+Override the registry repo with the `CROW_REGISTRY` environment variable:
 
 ```bash
-CROW_REGISTRY=https://example.com/index.json crow install
+CROW_REGISTRY=https://github.com/myorg/my-registry.git crow install
 ```
 
-The index is cached locally at `~/.crow/registry/index.json` and refreshed on each `crow install`.
+#### Registry Format
+
+The registry repo must contain an `index.json` at its root:
+
+```json
+{
+  "packages": {
+    "mylib": {
+      "repo": "https://github.com/user/crow-mylib",
+      "versions": ["0.1", "0.2", "1.0"]
+    }
+  }
+}
+```
+
+Each package entry has a `repo` (git URL) and `versions` (list of available version strings). Version strings correspond to git tags prefixed with `v` (e.g., version `1.0` maps to tag `v1.0`).
 
 ## 14. Type System
 

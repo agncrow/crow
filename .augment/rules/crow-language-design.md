@@ -23,6 +23,10 @@ Crow is a minimalist programming language for data science with automatic verifi
 14. Prefer established crates. Use well-maintained Rust crates for non-trivial functionality. Don't hand-roll what a battle-tested library already solves.
 15. No stubs, no partial delivery. A feature is not complete until every planned backend, variant, and code path is fully implemented and tested. Stub implementations that return "not yet implemented" errors are not acceptable for features marked as done. If a feature was designed with N backends, all N backends must work before it can be called complete.
 
+## Syntax Uniformity
+
+19. No frontend/backend syntax split. UI code and server code must use identical Crow syntax. If a `.crow` file uses `use ui`, every line in that file must still be valid Crow — no DSL, no special syntax, no Rust type names leaking through. The transpiler maps Crow-idiomatic calls to the appropriate Rust backend methods. Example: `state.get['key', 0]` (Crow) → `state.get_i64("key", 0)` (Rust). The user never writes `get_i64`.
+
 ## Documentation Rules
 
 16. `docs/language-spec.md` is the source of truth. Read it before designing. Search it before claiming something is missing. Update it after implementing. Document rejected features as Design Notes in it.

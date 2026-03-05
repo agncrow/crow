@@ -221,10 +221,6 @@ fn collect_callees_from_stmt(stmt: &Stmt, callees: &mut BTreeSet<String>) {
             collect_callees_from_expr(condition, callees);
             collect_callees_from_stmts(body, callees);
         }
-        Stmt::Match { value, arms } => {
-            collect_callees_from_expr(value, callees);
-            for arm in arms { collect_callees_from_stmts(&arm.body, callees); }
-        }
         Stmt::FieldAssign { object, value, .. } => {
             collect_callees_from_expr(object, callees);
             collect_callees_from_expr(value, callees);
@@ -319,10 +315,6 @@ fn collect_reads_from_stmt(stmt: &Stmt, reads: &mut BTreeSet<String>) {
         Stmt::While { condition, body } => {
             collect_reads_from_expr(condition, reads);
             collect_reads_from_stmts(body, reads);
-        }
-        Stmt::Match { value, arms } => {
-            collect_reads_from_expr(value, reads);
-            for arm in arms { collect_reads_from_stmts(&arm.body, reads); }
         }
         Stmt::FieldAssign { object, value, .. } => {
             collect_reads_from_expr(object, reads);

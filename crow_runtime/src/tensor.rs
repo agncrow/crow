@@ -180,10 +180,21 @@ impl CrowTensor {
     }
 
     /// Get the GPU buffer, if tensor is on GPU.
-    fn gpu_buffer(&self) -> Option<&GpuBuffer> {
+    pub fn gpu_buffer(&self) -> Option<&GpuBuffer> {
         match self.data.as_ref() {
             TensorStorage::Gpu(buf) => Some(buf),
             _ => None,
+        }
+    }
+
+    /// Create a CrowTensor from a GpuBuffer with a given shape.
+    pub fn from_gpu_with_shape(buf: GpuBuffer, shape: Vec<usize>) -> CrowTensor {
+        let strides = Self::row_major_strides(&shape);
+        CrowTensor {
+            data: Arc::new(TensorStorage::Gpu(buf)),
+            shape,
+            strides,
+            offset: 0,
         }
     }
 
