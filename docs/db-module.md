@@ -124,8 +124,8 @@ SQL parameters are passed as `serde_json::Value` arrays — the Crow interpreter
 | Backend | Status | Notes |
 |---|---|---|
 | SQLite | ✅ Done | Full support: query, exec, insert, transact, migrate |
-| PostgreSQL | 🔲 Planned | Crate wired, backend stub present |
-| ClickHouse | 🔲 Planned | Crate wired, backend stub present |
+| PostgreSQL | ✅ Done | `tokio-postgres` + `deadpool-postgres`. Connection pooling, parameterized queries ($1/$2), transactions, bulk insert, migrations. Tested against PostgreSQL on port 5432. |
+| ClickHouse | ✅ Done | `klickhouse` native TCP protocol (port 9000). Streaming block-based queries, columnar-to-frame conversion, bulk insert. Transactions correctly refused (OLAP engine). Parameterized queries not supported (use string interpolation). Tested against ClickHouse on port 9000. |
 
 ### Interpreter
 
