@@ -675,7 +675,11 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     }
     if transpiler.needs_crow_runtime {
         let runtime_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_runtime");
-        dep_list.push(format!("crow_runtime = {{ path = \"{}\" }}", runtime_path));
+        if transpiler.web_features.contains("arrow_ipc") {
+            dep_list.push(format!("crow_runtime = {{ path = \"{}\", features = [\"arrow\"] }}", runtime_path));
+        } else {
+            dep_list.push(format!("crow_runtime = {{ path = \"{}\" }}", runtime_path));
+        }
     }
     if transpiler.needs_regex {
         dep_list.push("regex = \"1\"".to_string());
@@ -697,6 +701,14 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         ));
         // crow_web needs tokio for async runtime
         dep_list.push("tokio = { version = \"1\", features = [\"full\"] }".to_string());
+        // msgpack[] needs rmp-serde in the generated project
+        if transpiler.web_features.contains("msgpack") {
+            dep_list.push("rmp-serde = \"1\"".to_string());
+        }
+        // stream[] needs tokio-stream in the generated project
+        if transpiler.web_features.contains("stream") {
+            dep_list.push("tokio-stream = \"0.1\"".to_string());
+        }
     }
     if transpiler.needs_crow_db {
         let db_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_db");

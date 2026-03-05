@@ -54,6 +54,9 @@ pub async fn request_from_axum(req: Request) -> CrowRequest {
 }
 
 /// Convert a `CrowResponse` into an axum `Response`.
+///
+/// If the response has a `binary_body`, that takes priority over the text `body`.
+/// This is used by `msgpack[]`, `arrow[]`, and `bytes[]` responses.
 pub fn response_to_axum(crow_resp: CrowResponse) -> Response {
     let mut builder = Builder::new().status(
         StatusCode::from_u16(crow_resp.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
@@ -68,8 +71,15 @@ pub fn response_to_axum(crow_resp: CrowResponse) -> Response {
         builder = builder.header(header::CONTENT_TYPE, "text/plain");
     }
 
+    // Prefer binary_body if present (msgpack, arrow, bytes responses)
+    let body = if let Some(bytes) = crow_resp.binary_body {
+        Body::from(bytes)
+    } else {
+        Body::from(crow_resp.body)
+    };
+
     builder
-        .body(Body::from(crow_resp.body))
+        .body(body)
         .unwrap_or_else(|_| {
             (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()
         })

@@ -1259,6 +1259,10 @@ serve[app, 3000]
 | `json[map]` | JSON response from a map |
 | `respond[status, body]` | Response with custom status code |
 | `redirect[url]` | HTTP redirect response |
+| `msgpack[value]` | MessagePack binary response (requires `rmp-serde`) |
+| `arrow[frame]` | Arrow IPC binary response for DataFrames |
+| `bytes[data]` | Raw binary response (`application/octet-stream`) |
+| `stream[handler_fn]` | Streaming/chunked response via channel |
 
 #### Auth (`use web.auth`)
 

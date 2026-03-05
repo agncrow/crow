@@ -8,24 +8,39 @@ use std::collections::HashMap;
 ///   json[{message, 'hello'}]
 /// ]
 /// ```
+///
+/// Supports both text and binary bodies. Binary body takes priority
+/// when converting to an axum response (used by `msgpack[]`, `arrow[]`).
 #[derive(Debug, Clone)]
 pub struct CrowResponse {
     /// HTTP status code (e.g. 200, 404, 500)
     pub status: u16,
     /// Response headers
     pub headers: HashMap<String, String>,
-    /// Response body
+    /// Text response body (used by json, html, text, respond)
     pub body: String,
+    /// Binary response body (used by msgpack, arrow, bytes)
+    /// When Some, takes priority over `body` in response_to_axum.
+    pub binary_body: Option<Vec<u8>>,
 }
 
 impl CrowResponse {
-    /// Create a response with the given status and body.
+    /// Create a response with the given status and text body.
     pub fn new(status: u16, body: impl Into<String>) -> Self {
         Self {
             status,
             headers: HashMap::new(),
             body: body.into(),
+            binary_body: None,
         }
+    }
+
+    /// Create a response with the given status and binary body.
+    pub fn binary(status: u16, bytes: Vec<u8>, content_type: impl Into<String>) -> Self {
+        let mut resp = Self::new(status, "");
+        resp.binary_body = Some(bytes);
+        resp.headers.insert("content-type".to_string(), content_type.into());
+        resp
     }
 
     /// JSON response (status 200, content-type: application/json).
@@ -38,6 +53,18 @@ impl CrowResponse {
             "application/json".to_string(),
         );
         resp
+    }
+
+    /// MessagePack binary response (status 200, content-type: application/msgpack).
+    /// Serializes the value to MessagePack format using rmp-serde.
+    pub fn msgpack(bytes: Vec<u8>) -> Self {
+        Self::binary(200, bytes, "application/msgpack")
+    }
+
+    /// Arrow IPC binary response (status 200, content-type: application/vnd.apache.arrow.stream).
+    /// Takes pre-serialized Arrow IPC bytes.
+    pub fn arrow_ipc(bytes: Vec<u8>) -> Self {
+        Self::binary(200, bytes, "application/vnd.apache.arrow.stream")
     }
 
     /// HTML response (status 200, content-type: text/html).
@@ -141,6 +168,30 @@ mod tests {
     fn test_response_with_header() {
         let resp = CrowResponse::text("ok").with_header("x-custom", "value");
         assert_eq!(resp.headers.get("x-custom").unwrap(), "value");
+    }
+
+    #[test]
+    fn test_response_binary() {
+        let resp = CrowResponse::binary(200, vec![1, 2, 3], "application/octet-stream");
+        assert_eq!(resp.status, 200);
+        assert_eq!(resp.binary_body.as_ref().unwrap(), &[1, 2, 3]);
+        assert_eq!(resp.headers.get("content-type").unwrap(), "application/octet-stream");
+    }
+
+    #[test]
+    fn test_response_msgpack() {
+        let resp = CrowResponse::msgpack(vec![0x93, 0x01, 0x02, 0x03]);
+        assert_eq!(resp.status, 200);
+        assert_eq!(resp.headers.get("content-type").unwrap(), "application/msgpack");
+        assert!(resp.binary_body.is_some());
+    }
+
+    #[test]
+    fn test_response_arrow_ipc() {
+        let resp = CrowResponse::arrow_ipc(vec![0x41, 0x52, 0x52, 0x4F, 0x57]);
+        assert_eq!(resp.status, 200);
+        assert_eq!(resp.headers.get("content-type").unwrap(), "application/vnd.apache.arrow.stream");
+        assert!(resp.binary_body.is_some());
     }
 }
 

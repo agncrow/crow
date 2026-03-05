@@ -21,6 +21,8 @@ lettre = { version = "0.11.19", default-features = false, features = ["builder",
 moka = { version = "0.12.14", features = ["future"], optional = true }
 redis = { version = "1.0.4", features = ["tokio-comp"], optional = true }
 uuid = { version = "1.21.0", features = ["v4"], optional = true }
+rmp-serde = { version = "1.3.1", optional = true }
+arrow = { version = "58.0.0", features = ["ipc"], optional = true }
 
 [features]
 default = []
@@ -42,6 +44,9 @@ queue = ["dep:tokio"]
 docs = ["dep:axum", "dep:tokio"]
 live = ["dep:axum", "dep:tokio", "dep:tokio-stream", "dep:futures-util"]
 view = []
+msgpack = ["dep:rmp-serde"]
+arrow_ipc = ["dep:arrow"]
+stream = ["dep:tokio-stream", "dep:futures-util", "dep:axum", "dep:tokio"]
 
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }

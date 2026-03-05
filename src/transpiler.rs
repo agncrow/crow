@@ -2704,6 +2704,47 @@ impl Transpiler {
                             return format!("CrowResponse::json(serde_json::to_value(&{}).unwrap())", arg_strs[0]);
                         }
                     }
+                    // msgpack[value] → CrowResponse::msgpack(rmp_serde::to_vec(&serde_json::to_value(&val).unwrap()).unwrap())
+                    if name == "msgpack" && self.needs_crow_web && arg_strs.len() == 1 {
+                        self.needs_serde_json = true;
+                        self.web_features.insert("msgpack".to_string());
+                        return format!(
+                            "CrowResponse::msgpack(rmp_serde::to_vec(&serde_json::to_value(&{}).unwrap()).unwrap())",
+                            arg_strs[0]
+                        );
+                    }
+                    // arrow[frame] → CrowResponse::arrow_ipc(crow_runtime::frame::to_arrow_ipc(&frame))
+                    if name == "arrow" && self.needs_crow_web && arg_strs.len() == 1 {
+                        self.web_features.insert("arrow_ipc".to_string());
+                        self.needs_crow_runtime = true;
+                        return format!(
+                            "CrowResponse::arrow_ipc(crow_runtime::frame::to_arrow_ipc(&{}))",
+                            arg_strs[0]
+                        );
+                    }
+                    // bytes[data] → CrowResponse::binary(200, data, "application/octet-stream")
+                    if name == "bytes" && self.needs_crow_web && arg_strs.len() == 1 {
+                        return format!(
+                            "CrowResponse::binary(200, {}.into_bytes(), \"application/octet-stream\")",
+                            arg_strs[0]
+                        );
+                    }
+                    // stream[fn[send] ...] → streaming response using channel + Body::from_stream
+                    if name == "stream" && self.needs_crow_web && arg_strs.len() == 1 {
+                        self.web_features.insert("stream".to_string());
+                        // The arg is a closure fn[send] ... — we emit channel-based streaming
+                        return format!(
+                            "{{ let (tx, rx) = tokio::sync::mpsc::channel::<Result<String, std::io::Error>>(256); \
+                            tokio::spawn(async move {{ \
+                            let send = |data: String| {{ let tx = tx.clone(); tokio::task::block_in_place(|| {{ tx.blocking_send(Ok(data)).ok(); }}); }}; \
+                            ({})(&send); \
+                            }}); \
+                            let stream = tokio_stream::wrappers::ReceiverStream::new(rx); \
+                            let body = axum::body::Body::from_stream(stream); \
+                            CrowResponse {{ status: 200, headers: std::collections::HashMap::from([(\"content-type\".to_string(), \"application/octet-stream\".to_string())]), body: String::new(), binary_body: None }} }}",
+                            arg_strs[0]
+                        );
+                    }
                     // --- db module builtins (top-level `use db`) ---
                     if name == "connect" && self.needs_crow_db && !self.needs_crow_web {
                         // connect[url] or connect[url, pool_size]
@@ -5276,5 +5317,35 @@ mod tests {
     fn test_db_insert() {
         let rust = transpile("use db\nconn = connect['sqlite://test.db']\ndf = query[conn, 'SELECT * FROM t']\ninsert[conn, 'backup', df]\n");
         assert!(rust.contains(".insert("), "should emit .insert()\n{}", rust);
+    }
+
+    // --- P4: Response format codegen tests ---
+
+    #[test]
+    fn test_web_msgpack_response() {
+        let rust = transpile("use web\nfn handler[req]\n    m = map[]\n    return msgpack[m]\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+        assert!(rust.contains("CrowResponse::msgpack("), "should emit CrowResponse::msgpack()\n{}", rust);
+        assert!(rust.contains("rmp_serde::to_vec"), "should use rmp_serde\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_arrow_response() {
+        let rust = transpile("use web\nuse frame\nfn handler[req]\n    f = load['data.csv']\n    return arrow[f]\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+        assert!(rust.contains("CrowResponse::arrow_ipc("), "should emit CrowResponse::arrow_ipc()\n{}", rust);
+        assert!(rust.contains("to_arrow_ipc"), "should use to_arrow_ipc\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_bytes_response() {
+        let rust = transpile("use web\nfn handler[req]\n    return bytes['binary data']\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+        assert!(rust.contains("CrowResponse::binary("), "should emit CrowResponse::binary()\n{}", rust);
+        assert!(rust.contains("application/octet-stream"), "should set octet-stream content-type\n{}", rust);
+    }
+
+    #[test]
+    fn test_web_stream_response() {
+        let rust = transpile("use web\nfn sender[send]\n    send['chunk1']\n\nfn handler[req]\n    return stream[sender]\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+        assert!(rust.contains("mpsc::channel"), "should use mpsc channel for streaming\n{}", rust);
+        assert!(rust.contains("Body::from_stream"), "should use Body::from_stream\n{}", rust);
     }
 }
