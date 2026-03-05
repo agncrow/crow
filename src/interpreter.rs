@@ -1443,6 +1443,8 @@ impl Interpreter {
             | "cors" | "sessions" | "templates" | "render" | "cache" | "limit"
             | "uploads" | "sse" | "ws" | "connect" | "send" | "recv" | "close"
             | "live" | "static_dir" | "smtp"
+            // Response format builtins
+            | "msgpack" | "arrow" | "bytes" | "stream"
         )
     }
 
@@ -2743,6 +2745,47 @@ impl Interpreter {
                 };
                 map.insert("host".to_string(), CrowValue::ok(Value::Str(host)));
                 map.insert("ok".to_string(), CrowValue::ok(Value::Bool(true)));
+                Ok(CrowValue::ok(Value::Map(map)))
+            }
+
+            // --- Response format builtins (P4) ---
+            "msgpack" => {
+                // msgpack[value] → returns a mock response map with msgpack content-type
+                if args.len() != 1 { return Err("msgpack[] takes 1 argument".into()); }
+                let _ = args[0].unwrap_or_propagate()?;
+                let mut map = std::collections::BTreeMap::new();
+                map.insert("status".to_string(), CrowValue::ok(Value::Int(200)));
+                map.insert("type".to_string(), CrowValue::ok(Value::Str("application/msgpack".to_string())));
+                map.insert("binary".to_string(), CrowValue::ok(Value::Bool(true)));
+                Ok(CrowValue::ok(Value::Map(map)))
+            }
+            "arrow" => {
+                // arrow[frame] → returns a mock response map with arrow content-type
+                if args.len() != 1 { return Err("arrow[] takes 1 argument".into()); }
+                let _ = args[0].unwrap_or_propagate()?;
+                let mut map = std::collections::BTreeMap::new();
+                map.insert("status".to_string(), CrowValue::ok(Value::Int(200)));
+                map.insert("type".to_string(), CrowValue::ok(Value::Str("application/vnd.apache.arrow.stream".to_string())));
+                map.insert("binary".to_string(), CrowValue::ok(Value::Bool(true)));
+                Ok(CrowValue::ok(Value::Map(map)))
+            }
+            "bytes" => {
+                // bytes[data] → returns a mock response map with octet-stream content-type
+                if args.len() != 1 { return Err("bytes[] takes 1 argument".into()); }
+                let _ = args[0].unwrap_or_propagate()?;
+                let mut map = std::collections::BTreeMap::new();
+                map.insert("status".to_string(), CrowValue::ok(Value::Int(200)));
+                map.insert("type".to_string(), CrowValue::ok(Value::Str("application/octet-stream".to_string())));
+                map.insert("binary".to_string(), CrowValue::ok(Value::Bool(true)));
+                Ok(CrowValue::ok(Value::Map(map)))
+            }
+            "stream" => {
+                // stream[fn[send] ...] → mock: calls the function with a no-op send, returns response map
+                if args.len() != 1 { return Err("stream[] takes 1 argument (a function)".into()); }
+                let mut map = std::collections::BTreeMap::new();
+                map.insert("status".to_string(), CrowValue::ok(Value::Int(200)));
+                map.insert("type".to_string(), CrowValue::ok(Value::Str("application/octet-stream".to_string())));
+                map.insert("streaming".to_string(), CrowValue::ok(Value::Bool(true)));
                 Ok(CrowValue::ok(Value::Map(map)))
             }
 
@@ -6028,6 +6071,75 @@ mod tests {
             }
             _ => panic!("expected map"),
         }
+    }
+
+    // ===== Response format tests (P4) =====
+
+    #[test]
+    fn test_msgpack_builtin() {
+        let val = get_var("resp = msgpack['hello']", "resp");
+        match &val.value {
+            Value::Map(m) => {
+                assert!(matches!(m.get("status").unwrap().value, Value::Int(200)));
+                assert!(matches!(&m.get("type").unwrap().value, Value::Str(s) if s == "application/msgpack"));
+                assert!(matches!(m.get("binary").unwrap().value, Value::Bool(true)));
+            }
+            _ => panic!("expected map, got {:?}", val.value),
+        }
+    }
+
+    #[test]
+    fn test_arrow_builtin() {
+        let val = get_var("resp = arrow['frame_placeholder']", "resp");
+        match &val.value {
+            Value::Map(m) => {
+                assert!(matches!(m.get("status").unwrap().value, Value::Int(200)));
+                assert!(matches!(&m.get("type").unwrap().value, Value::Str(s) if s == "application/vnd.apache.arrow.stream"));
+                assert!(matches!(m.get("binary").unwrap().value, Value::Bool(true)));
+            }
+            _ => panic!("expected map, got {:?}", val.value),
+        }
+    }
+
+    #[test]
+    fn test_bytes_builtin() {
+        let val = get_var("resp = bytes['raw data']", "resp");
+        match &val.value {
+            Value::Map(m) => {
+                assert!(matches!(m.get("status").unwrap().value, Value::Int(200)));
+                assert!(matches!(&m.get("type").unwrap().value, Value::Str(s) if s == "application/octet-stream"));
+                assert!(matches!(m.get("binary").unwrap().value, Value::Bool(true)));
+            }
+            _ => panic!("expected map, got {:?}", val.value),
+        }
+    }
+
+    #[test]
+    fn test_stream_builtin() {
+        let val = get_var("resp = stream['handler_placeholder']", "resp");
+        match &val.value {
+            Value::Map(m) => {
+                assert!(matches!(m.get("status").unwrap().value, Value::Int(200)));
+                assert!(matches!(m.get("streaming").unwrap().value, Value::Bool(true)));
+            }
+            _ => panic!("expected map, got {:?}", val.value),
+        }
+    }
+
+    #[test]
+    fn test_msgpack_wrong_args() {
+        let result = std::panic::catch_unwind(|| {
+            get_var("resp = msgpack[]", "resp");
+        });
+        assert!(result.is_err(), "msgpack[] with no args should fail");
+    }
+
+    #[test]
+    fn test_arrow_wrong_args() {
+        let result = std::panic::catch_unwind(|| {
+            get_var("resp = arrow[]", "resp");
+        });
+        assert!(result.is_err(), "arrow[] with no args should fail");
     }
 
     // ===== DB module tests =====

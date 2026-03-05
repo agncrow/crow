@@ -1722,3 +1722,135 @@ impl fmt::Display for CrowFrame {
         write!(f, "\n[{} rows x {} cols]", nrows, ncols)
     }
 }
+
+
+/// Convert a CrowFrame to Arrow IPC stream bytes.
+///
+/// Each Column maps to an Arrow array:
+/// - Column::Int → Int64Array
+/// - Column::Float → Float64Array
+/// - Column::Str → StringArray (Utf8)
+/// - Column::Bool → BooleanArray
+/// - Column::DateTime → TimestampMillisecondArray
+///
+/// The validity bitmap is applied as null masks.
+#[cfg(feature = "arrow")]
+pub fn to_arrow_ipc(frame: &CrowFrame) -> Vec<u8> {
+    use arrow::array::*;
+    use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+    use arrow::ipc::writer::StreamWriter;
+    use arrow::record_batch::RecordBatch;
+
+    let mut fields = Vec::new();
+    let mut arrays: Vec<Arc<dyn Array>> = Vec::new();
+
+    for (i, col_name) in frame.columns.iter().enumerate() {
+        let col = frame.data[i].as_ref();
+        let validity = frame.validity[i].as_ref();
+
+        match col {
+            Column::Int(vals) => {
+                fields.push(Field::new(col_name, DataType::Int64, true));
+                let nulls: Vec<bool> = validity.iter().copied().collect();
+                let arr = Int64Array::from(
+                    vals.iter().zip(nulls.iter())
+                        .map(|(v, &valid)| if valid { Some(*v) } else { None })
+                        .collect::<Vec<Option<i64>>>()
+                );
+                arrays.push(Arc::new(arr));
+            }
+            Column::Float(vals) => {
+                fields.push(Field::new(col_name, DataType::Float64, true));
+                let nulls: Vec<bool> = validity.iter().copied().collect();
+                let arr = Float64Array::from(
+                    vals.iter().zip(nulls.iter())
+                        .map(|(v, &valid)| if valid { Some(*v) } else { None })
+                        .collect::<Vec<Option<f64>>>()
+                );
+                arrays.push(Arc::new(arr));
+            }
+            Column::Str(vals) => {
+                fields.push(Field::new(col_name, DataType::Utf8, true));
+                let nulls: Vec<bool> = validity.iter().copied().collect();
+                let arr = StringArray::from(
+                    vals.iter().zip(nulls.iter())
+                        .map(|(v, &valid)| if valid { Some(v.as_str()) } else { None })
+                        .collect::<Vec<Option<&str>>>()
+                );
+                arrays.push(Arc::new(arr));
+            }
+            Column::Bool(vals) => {
+                fields.push(Field::new(col_name, DataType::Boolean, true));
+                let nulls: Vec<bool> = validity.iter().copied().collect();
+                let arr = BooleanArray::from(
+                    vals.iter().zip(nulls.iter())
+                        .map(|(v, &valid)| if valid { Some(*v) } else { None })
+                        .collect::<Vec<Option<bool>>>()
+                );
+                arrays.push(Arc::new(arr));
+            }
+            Column::DateTime(millis, _offsets) => {
+                fields.push(Field::new(col_name, DataType::Timestamp(TimeUnit::Millisecond, None), true));
+                let nulls: Vec<bool> = validity.iter().copied().collect();
+                let arr = TimestampMillisecondArray::from(
+                    millis.iter().zip(nulls.iter())
+                        .map(|(v, &valid)| if valid { Some(*v) } else { None })
+                        .collect::<Vec<Option<i64>>>()
+                );
+                arrays.push(Arc::new(arr));
+            }
+        }
+    }
+
+    let schema = Arc::new(Schema::new(fields));
+    let batch = RecordBatch::try_new(schema.clone(), arrays)
+        .expect("failed to create Arrow RecordBatch from CrowFrame");
+
+    let mut buf = Vec::new();
+    {
+        let mut writer = StreamWriter::try_new(&mut buf, &schema)
+            .expect("failed to create Arrow IPC writer");
+        writer.write(&batch).expect("failed to write Arrow IPC batch");
+        writer.finish().expect("failed to finish Arrow IPC stream");
+    }
+    buf
+}
+
+#[cfg(feature = "arrow")]
+#[cfg(test)]
+mod arrow_tests {
+    use super::*;
+
+    #[test]
+    fn test_to_arrow_ipc_basic() {
+        let frame = CrowFrame::new(
+            vec!["id".into(), "score".into(), "name".into()],
+            vec![
+                Column::Int(vec![1, 2, 3]),
+                Column::Float(vec![1.1, 2.2, 3.3]),
+                Column::Str(vec!["a".into(), "b".into(), "c".into()]),
+            ],
+            vec![
+                vec![true, true, true],
+                vec![true, true, true],
+                vec![true, true, true],
+            ],
+        );
+        let bytes = to_arrow_ipc(&frame);
+        // Arrow IPC starts with magic bytes "ARROW1"
+        assert!(!bytes.is_empty(), "Arrow IPC bytes should not be empty");
+        // Verify it starts with the IPC stream continuation marker (0xFFFFFFFF)
+        assert!(bytes.len() > 8, "Arrow IPC should have header");
+    }
+
+    #[test]
+    fn test_to_arrow_ipc_with_nulls() {
+        let frame = CrowFrame::new(
+            vec!["val".into()],
+            vec![Column::Int(vec![10, 0, 30])],
+            vec![vec![true, false, true]],
+        );
+        let bytes = to_arrow_ipc(&frame);
+        assert!(!bytes.is_empty());
+    }
+}

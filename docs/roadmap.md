@@ -18,7 +18,7 @@ What's done, what's remaining, and in what order.
 | Autograd | `grad[f]` functional transformation |
 | Parallel execution | Auto-parallel `for` loops (rayon), statement-level parallelism via dependency analysis |
 | CLI | `crow run`, `crow build`, `crow fmt`, `crow check`, `crow init`, `crow install`, REPL |
-| Tests | 692 unit tests |
+| Tests | 702 unit tests |
 | Documentation | language-spec.md, web-framework.md, math-library.md, feature-map.md, frame-module.md, usage.md, comparison.md, automatic-verification.md |
 
 ## Remaining Work
@@ -90,16 +90,20 @@ All 17 server-side modules implemented with 119 tests passing:
 - [x] **Interpreter support** — all `web.*` builtins work in `crow run -i` mode with mock implementations.
 - [x] **Unit tests** — 21 transpiler tests + 12 interpreter tests for P4 codegen.
 
+#### Response formats ✅
+- [x] **Binary body support** — `CrowResponse` extended with `binary_body: Option<Vec<u8>>` for binary responses; Axum converter prioritizes binary body over string body.
+- [x] **`msgpack[value]`** — MessagePack binary response via `rmp-serde`. Transpiler emits `CrowResponse::msgpack(rmp_serde::to_vec(...))`. Feature-gated (`msgpack` feature in crow_web).
+- [x] **`arrow[frame]`** — Arrow IPC response for DataFrames. `crow_runtime::frame::to_arrow_ipc()` converts `CrowFrame` → Arrow `RecordBatch` → IPC stream bytes. Feature-gated (`arrow` feature in crow_runtime, `arrow_ipc` feature in crow_web).
+- [x] **`bytes[data]`** — Raw binary response with `application/octet-stream` content type.
+- [x] **`stream[fn]`** — Streaming/chunked response via `tokio::sync::mpsc` channel + `axum::body::Body::from_stream`. Feature-gated (`stream` feature in crow_web).
+- [x] **Interpreter mocks** — All four builtins (`msgpack`, `arrow`, `bytes`, `stream`) work in `crow run -i` mode.
+- [x] **Tests** — 10 new tests (4 transpiler codegen + 4 interpreter + 2 arrow IPC unit tests). Total: 702 tests passing.
+
 #### Client-side WASM — deferred
 These require building a full WASM frontend pipeline (`wasm-bindgen`, `web-sys`, reactive runtime). Multi-month effort, deferred until server-side modules are fully usable from Crow source code.
 - [ ] **`web.router`** — Client-side URL routing (History API, route matching, component swapping).
 - [ ] **`web.store`** — Reactive state management (signals, computed values, fine-grained DOM updates).
 - [ ] **Build modes** — `crow build --spa`, `--ssr`, `--live`, `--static` (see Rendering Modes in web-framework.md).
-
-#### Response formats — remaining
-- [ ] **`msgpack[value]`** — MessagePack binary response via `rmp-serde`.
-- [ ] **`arrow[frame]`** — Arrow IPC response for DataFrames/tensors.
-- [ ] **`stream[fn]`** — Streaming/chunked response.
 
 ### P4.5 — Database module ✅
 
@@ -164,7 +168,7 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. All three backen
 
 **General-purpose (4/10):**
 - **Stdlib (4/10):** P3 added regex, date/time, shell, hashing, and file I/O. That covers the basics, but there's no JSON parsing builtin, no env vars, no networking beyond HTTP, no concurrency primitives beyond auto-parallel, no logging framework, no argument parsing. Compare to Python's 200+ stdlib modules or Go's 150+.
-- **Web (6/10):** This jumped significantly with P4. Crow now has 17 web modules covering server, routing, responses, database, auth, CORS, sessions, templates, caching, rate limiting, file uploads, SSE, WebSocket, LiveView, static files, email, background queues, and API docs — all expressible from Crow source with transpiler codegen. That's comparable feature coverage to Express.js or Flask. It's 6/10 (not higher) because: the codegen emits Rust but end-to-end app testing is limited, there's no ORM, no migrations, no middleware composition, and the WASM client-side story is deferred.
+- **Web (7/10):** P4 provides 17 web modules plus binary/streaming response formats (msgpack, arrow, bytes, stream). Comparable to Express.js/Flask for server-side coverage. 7/10 because: no ORM (by design), no middleware composition, WASM client-side deferred, and end-to-end app testing is limited.
 - **DB (8/10):** Top-level `db` module with connection pooling, parameterized queries, transactions, bulk insert, and forward-only migrations. All three backends (SQLite, PostgreSQL, ClickHouse) fully implemented and live-tested. No ORM (by design — Crow uses raw SQL). 8/10 because the core DB story is complete across OLTP and OLAP engines; missing only advanced features like connection-level event listeners or prepared statement caching.
 - **Ecosystem (1/10):** No real package registry, no community packages, no third-party libraries. `crow install` exists as a command but there's nothing to install. This is the single biggest gap.
 

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+arrow = { version = "58.0.0", features = ["ipc"], optional = true }
 bytemuck = { version = "1.25.0", features = ["derive"] }
 faer = "0.24.0"
 itoa = "1.0.17"
@@ -15,4 +16,7 @@ rustfft = "6.4.1"
 ryu = "1.0.23"
 sprs = "0.11.4"
 wgpu = "28.0.0"
+
+[features]
+arrow = ["dep:arrow"]
 
