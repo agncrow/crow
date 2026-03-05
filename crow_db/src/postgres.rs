@@ -22,39 +22,14 @@ impl CrowPostgresDb {
     pub fn connect(url: &str, pool_size: usize) -> Result<Self, String> {
         let rt = Runtime::new().map_err(|e| format!("failed to create tokio runtime: {}", e))?;
 
-        // Parse the URL into a tokio-postgres config to extract components
-        let pg_config: tokio_postgres::Config = url.parse()
-            .map_err(|e: tokio_postgres::Error| format!("invalid postgres URL: {}", e))?;
-
         let mut cfg = Config::new();
-
-        // Extract connection parameters from parsed config
-        if let Some(hosts) = pg_config.get_hosts().first() {
-            match hosts {
-                tokio_postgres::config::Host::Tcp(h) => cfg.host = Some(h.clone()),
-                #[cfg(unix)]
-                tokio_postgres::config::Host::Unix(p) => cfg.host = Some(p.to_string_lossy().to_string()),
-            }
-        }
-        if let Some(port) = pg_config.get_ports().first() {
-            cfg.port = Some(*port);
-        }
-        if let Some(user) = pg_config.get_user() {
-            cfg.user = Some(user.to_string());
-        }
-        if let Some(password) = pg_config.get_password() {
-            cfg.password = Some(String::from_utf8_lossy(password).to_string());
-        }
-        if let Some(dbname) = pg_config.get_dbname() {
-            cfg.dbname = Some(dbname.to_string());
-        }
-
+        cfg.url = Some(url.to_string());
         cfg.manager = Some(ManagerConfig {
             recycling_method: RecyclingMethod::Fast,
         });
         cfg.pool = Some(deadpool_postgres::PoolConfig::new(pool_size));
 
-        let pool = cfg.create_pool(None, NoTls)
+        let pool = cfg.create_pool(Some(deadpool_postgres::Runtime::Tokio1), NoTls)
             .map_err(|e| format!("failed to create postgres pool: {}", e))?;
 
         // Test the connection
@@ -71,13 +46,20 @@ impl CrowPostgresDb {
 }
 
 /// Convert serde_json params to tokio-postgres parameter references.
+/// Numbers are sent as text to avoid INT4/INT8 type mismatches — Postgres
+/// will coerce text to the column type automatically when using untyped params.
 fn json_to_pg_params(params: &[serde_json::Value]) -> Vec<Box<dyn tokio_postgres::types::ToSql + Sync>> {
     params.iter().map(|v| -> Box<dyn tokio_postgres::types::ToSql + Sync> {
         match v {
             serde_json::Value::String(s) => Box::new(s.clone()),
             serde_json::Value::Number(n) => {
+                // Use i32 for small ints, i64 for large, f64 for floats
                 if let Some(i) = n.as_i64() {
-                    Box::new(i)
+                    if i >= i32::MIN as i64 && i <= i32::MAX as i64 {
+                        Box::new(i as i32)
+                    } else {
+                        Box::new(i)
+                    }
                 } else {
                     Box::new(n.as_f64().unwrap_or(0.0))
                 }
