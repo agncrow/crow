@@ -9,8 +9,8 @@ What's done, what's remaining, and in what order.
 | Core language | Lexer, parser, AST, interpreter, transpiler, checker, formatter, REPL |
 | Type system | Dynamic with inference — int, float, str, bool, array, map, tensor, frame, function, error |
 | Modules | `math`, `math.stats`, `math.nn`, `io`, `frame`, `web` (17 sub-modules), `db` (SQLite, PostgreSQL, ClickHouse) |
-| Math (~100 functions) | Creation (9), element-wise (12), trig (7), hyperbolic (3), reductions (9), sorting/selection (6), shape (3), linalg (13), random (12), signal (7), special (5), complex (6), sparse (3) |
-| Statistics (9) | median, std, var, percentile, zscore, corr, cov, ttest, linreg |
+| Math (~107 functions) | Creation (9), element-wise (12), trig (7), hyperbolic (3), reductions (9), sorting/selection (6), shape (3), linalg (15), random (12), signal (12), special (5), complex (6), sparse (3) |
+| Statistics (13) | median, std, var, percentile, zscore, corr, cov, ttest, linreg, chisq, anova, kstest, fit |
 | Neural networks (8) | relu, sigmoid, softmax, gelu, mse, crossentropy, bce, linear |
 | DataFrames (16+) | load, save, select, filter, sort, group, join, stack, head, tail, fill, unique, rename, stats, datetime, tz |
 | General-purpose (P3) | regex (find, matches, sub), date/time (now, date, elapsed), shell, hashing (sha256/sha512/md5) |
@@ -18,7 +18,7 @@ What's done, what's remaining, and in what order.
 | Autograd | `grad[f]` functional transformation |
 | Parallel execution | Auto-parallel `for` loops (rayon), statement-level parallelism via dependency analysis |
 | CLI | `crow run`, `crow build`, `crow fmt`, `crow check`, `crow init`, `crow install`, REPL |
-| Tests | 702 unit tests |
+| Tests | 989 unit tests |
 | Documentation | language-spec.md, web-framework.md, math-library.md, feature-map.md, frame-module.md, usage.md, comparison.md, automatic-verification.md |
 
 ## Remaining Work
@@ -28,20 +28,20 @@ What's done, what's remaining, and in what order.
 - [x] **Fix flaky test**: Combined 4 seed-dependent interpreter tests into one `test_math_random_all` to avoid global RNG state races (same pattern as `distributed.rs::test_distributed_all`). Added `clear_seed()` cleanup.
 - [x] **Spec cleanup**: Updated Design Note "No sum, min[arr], max[arr] in Core" — replaced stale "A future math library will provide..." with reference to `use math` reductions.
 
-### P1 — Math/Stats completeness (days)
+### P1 — Math/Stats completeness ✅
 
-- [ ] **`rank`**: Matrix rank via SVD — last common linalg gap.
-- [ ] **`cond`**: Condition number — last common linalg gap.
-- [ ] **Chi-square test**: `chisq[observed, expected]` → `{chi2, p}`.
-- [ ] **ANOVA**: `anova[group1, group2, ...]` → `{f, p}`.
-- [ ] **KS test**: `kstest[data, 'normal']` → `{d, p}`.
-- [ ] **Distribution fitting**: `fit[data, 'normal']` → `{mu, sigma}` (or appropriate params for each distribution).
+- [x] **`rank`**: Matrix rank via SVD (counts singular values above tolerance).
+- [x] **`cond`**: Condition number (ratio of largest to smallest singular value).
+- [x] **Chi-square test**: `chisq[observed, expected]` → `{chi2, p}`.
+- [x] **ANOVA**: `anova[group1, group2, ...]` → `{f, p}`.
+- [x] **KS test**: `kstest[data, 'normal']` → `{d, p}`.
+- [x] **Distribution fitting**: `fit[data, 'normal']` → `{mu, sigma}` (or appropriate params for each distribution).
 
-### P2 — Signal processing depth (days–weeks)
+### P2 — Signal processing depth ✅
 
-- [ ] **STFT**: Short-time Fourier transform — `stft[signal, window_size]`.
-- [ ] **Spectrogram**: `spectrogram[signal, window_size]` → 2D magnitude tensor.
-- [ ] **Filter design**: `lowpass`, `highpass`, `bandpass` — basic IIR/FIR filters.
+- [x] **STFT**: Short-time Fourier transform — `stft[signal, window_size, hop_size]` → [real, imag] 2D tensors.
+- [x] **Spectrogram**: `spectrogram[signal, window_size, hop_size]` → 2D power tensor.
+- [x] **Filter design**: `lowpass[x, cutoff, sr]`, `highpass[x, cutoff, sr]`, `bandpass[x, low, high, sr]` — FFT-based frequency-domain filters.
 
 ### P3 — General-purpose language ✅
 
@@ -151,7 +151,7 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. All three backen
 | Julia | 9/10 | 9/10 | 8/10 | 9/10 |
 | MATLAB | 9/10 | 10/10 | 7/10 | 8/10 |
 | R | 8/10 | 9/10 (stats) | 5/10 | 7/10 |
-| **Crow** | 6/10 | 5/10 | 9/10 | 6/10 |
+| **Crow** | 7/10 | 6/10 | 9/10 | 7/10 |
 
 ### As a general-purpose / fullstack language
 
@@ -164,7 +164,7 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. All three backen
 
 ### Rating Rationale
 
-**Data science (6/10):** Crow has a genuinely strong math foundation — ~100 tensor/linalg/stats/signal functions, auto-parallel for loops, autograd, DataFrames, and GPU support. Breadth is 6/10 because it covers the core operations well but lacks the long tail (no plotting, no optimization solvers, no advanced ML beyond basic NN layers). Depth is 5/10 because individual areas work but lack the edge-case handling and decades of battle-testing that NumPy/SciPy have. Ergonomics is 9/10 — the syntax is genuinely cleaner than Python+NumPy for common operations.
+**Data science (7/10):** Crow has a strong math foundation — ~107 tensor/linalg/stats/signal functions, auto-parallel for loops, autograd, DataFrames, and GPU support. P1 added statistical tests (chi-square, ANOVA, KS, distribution fitting) and linalg completeness (rank, cond). P2 added STFT, spectrogram, and frequency-domain filters (lowpass, highpass, bandpass). Breadth is 7/10 — covers core operations plus statistical testing and signal processing. Depth is 6/10 — individual areas are solid with proper implementations (regularized gamma/beta functions, SVD-based rank, FFT-based filtering). Ergonomics is 9/10 — the syntax is genuinely cleaner than Python+NumPy for common operations.
 
 **General-purpose (4/10):**
 - **Stdlib (4/10):** P3 added regex, date/time, shell, hashing, and file I/O. That covers the basics, but there's no JSON parsing builtin, no env vars, no networking beyond HTTP, no concurrency primitives beyond auto-parallel, no logging framework, no argument parsing. Compare to Python's 200+ stdlib modules or Go's 150+.

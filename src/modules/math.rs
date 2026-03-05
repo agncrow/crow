@@ -29,13 +29,14 @@ const MATH_FUNCTIONS: &[&str] = &[
     "reshape", "flatten", "transpose",
     // Linear algebra
     "solve", "inv", "det", "norm", "svd", "qr", "cholesky", "eigen",
-    "dot", "pinv", "lstsq", "triu", "tril",
+    "dot", "pinv", "lstsq", "triu", "tril", "rank", "cond",
     // Random & distributions
     "seed", "normal", "uniform", "poisson", "bernoulli",
     "gamma_dist", "beta_dist", "exponential",
     "shuffle", "choice", "permutation",
     // Signal processing
     "fft", "fft2", "ifft", "conv", "conv2d", "hamming", "hanning",
+    "stft", "spectrogram", "lowpass", "highpass", "bandpass",
     // Special functions
     "gamma", "erf", "bessel", "factorial", "choose",
     // Complex numbers
@@ -95,6 +96,14 @@ fn to_usize(v: &CrowValue, fname: &str) -> Result<usize, String> {
         Value::Int(n) => Err(format!("{}: expected non-negative integer, got {}", fname, n)),
         Value::Float(f) => Ok(*f as usize),
         _ => Err(format!("{}: expected integer, got {:?}", fname, v.value)),
+    }
+}
+
+fn to_float(v: &CrowValue, fname: &str) -> Result<f64, String> {
+    match &v.value {
+        Value::Float(f) => Ok(*f),
+        Value::Int(n) => Ok(*n as f64),
+        _ => Err(format!("{}: expected number, got {:?}", fname, v.value)),
     }
 }
 
@@ -445,6 +454,16 @@ fn call_math_linalg(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
             let a = to_tensor(&args[0], name)?;
             Ok(CrowValue::ok(Value::NumArray(a.tril())))
         }
+        "rank" => {
+            if args.len() != 1 { return Err(format!("rank: expected 1 argument, got {}", args.len())); }
+            let a = to_tensor(&args[0], name)?;
+            Ok(CrowValue::ok(Value::Int(a.rank() as i64)))
+        }
+        "cond" => {
+            if args.len() != 1 { return Err(format!("cond: expected 1 argument, got {}", args.len())); }
+            let a = to_tensor(&args[0], name)?;
+            Ok(CrowValue::ok(Value::Float(a.cond())))
+        }
 
         _ => call_math_random(name, args),
     }
@@ -583,6 +602,46 @@ fn call_math_signal(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
             if args.len() != 1 { return Err(format!("hanning: expected 1 argument, got {}", args.len())); }
             let n = to_usize(&args[0], name)?;
             Ok(CrowValue::ok(Value::NumArray(CrowTensor::hanning(n))))
+        }
+        "stft" => {
+            if args.len() != 3 { return Err(format!("stft: expected 3 arguments (signal, window_size, hop_size), got {}", args.len())); }
+            let t = to_tensor(&args[0], name)?;
+            let win = to_usize(&args[1], name)?;
+            let hop = to_usize(&args[2], name)?;
+            let (real, imag) = t.stft(win, hop);
+            Ok(CrowValue::ok(Value::Array(vec![
+                CrowValue::ok(Value::NumArray(real)),
+                CrowValue::ok(Value::NumArray(imag)),
+            ])))
+        }
+        "spectrogram" => {
+            if args.len() != 3 { return Err(format!("spectrogram: expected 3 arguments (signal, window_size, hop_size), got {}", args.len())); }
+            let t = to_tensor(&args[0], name)?;
+            let win = to_usize(&args[1], name)?;
+            let hop = to_usize(&args[2], name)?;
+            Ok(CrowValue::ok(Value::NumArray(t.spectrogram(win, hop))))
+        }
+        "lowpass" => {
+            if args.len() != 3 { return Err(format!("lowpass: expected 3 arguments (signal, cutoff_hz, sample_rate), got {}", args.len())); }
+            let t = to_tensor(&args[0], name)?;
+            let cutoff = to_float(&args[1], name)?;
+            let sr = to_float(&args[2], name)?;
+            Ok(CrowValue::ok(Value::NumArray(t.lowpass(cutoff, sr))))
+        }
+        "highpass" => {
+            if args.len() != 3 { return Err(format!("highpass: expected 3 arguments (signal, cutoff_hz, sample_rate), got {}", args.len())); }
+            let t = to_tensor(&args[0], name)?;
+            let cutoff = to_float(&args[1], name)?;
+            let sr = to_float(&args[2], name)?;
+            Ok(CrowValue::ok(Value::NumArray(t.highpass(cutoff, sr))))
+        }
+        "bandpass" => {
+            if args.len() != 4 { return Err(format!("bandpass: expected 4 arguments (signal, low_hz, high_hz, sample_rate), got {}", args.len())); }
+            let t = to_tensor(&args[0], name)?;
+            let low = to_float(&args[1], name)?;
+            let high = to_float(&args[2], name)?;
+            let sr = to_float(&args[3], name)?;
+            Ok(CrowValue::ok(Value::NumArray(t.bandpass(low, high, sr))))
         }
         _ => call_math_special(name, args),
     }
@@ -858,6 +917,8 @@ fn emit_math_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Re
         "lstsq" => format!("{}.lstsq(&{})", arg_strs[0], arg_strs[1]),
         "triu" => format!("{}.triu()", arg_strs[0]),
         "tril" => format!("{}.tril()", arg_strs[0]),
+        "rank" => format!("{}.rank() as i64", arg_strs[0]),
+        "cond" => format!("{}.cond()", arg_strs[0]),
         _ => return emit_math_rust_continued(name, arg_strs),
     };
     Ok(result)
@@ -924,6 +985,11 @@ fn emit_math_rust_continued(name: &str, arg_strs: &[String]) -> Result<String, S
         "conv2d" => format!("{}.conv2d(&{})", arg_strs[0], arg_strs[1]),
         "hamming" => format!("CrowTensor::hamming({} as usize)", arg_strs[0]),
         "hanning" => format!("CrowTensor::hanning({} as usize)", arg_strs[0]),
+        "stft" => format!("{{ let (_re, _im) = {}.stft({} as usize, {} as usize); vec![_re, _im] }}", arg_strs[0], arg_strs[1], arg_strs[2]),
+        "spectrogram" => format!("{}.spectrogram({} as usize, {} as usize)", arg_strs[0], arg_strs[1], arg_strs[2]),
+        "lowpass" => format!("{}.lowpass({}, {})", arg_strs[0], arg_strs[1], arg_strs[2]),
+        "highpass" => format!("{}.highpass({}, {})", arg_strs[0], arg_strs[1], arg_strs[2]),
+        "bandpass" => format!("{}.bandpass({}, {}, {})", arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[3]),
         // Special functions
         "gamma" => format!("{}.gamma()", arg_strs[0]),
         "erf" => format!("{}.erf()", arg_strs[0]),
@@ -968,7 +1034,8 @@ fn math_type_of(name: &str, arg_count: usize) -> CrowType {
         // Linalg returning tensor
         "solve" | "inv" | "cholesky" | "pinv" | "lstsq" | "triu" | "tril" => CrowType::NumArray(Box::new(CrowType::Float)),
         // Linalg returning scalar
-        "det" | "norm" | "dot" => CrowType::Float,
+        "det" | "norm" | "dot" | "cond" => CrowType::Float,
+        "rank" => CrowType::Int,
         // Reductions: scalar if no axis, NumArray if axis given
         "sum" | "mean" | "min" | "max" | "prod" => {
             if arg_count >= 2 {
@@ -992,8 +1059,9 @@ fn math_type_of(name: &str, arg_count: usize) -> CrowType {
         | "gamma_dist" | "beta_dist" | "exponential"
         | "shuffle" | "choice" | "permutation" => CrowType::NumArray(Box::new(CrowType::Float)),
         // Signal processing
-        "fft" | "fft2" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
-        "ifft" | "conv" | "conv2d" | "hamming" | "hanning" => CrowType::NumArray(Box::new(CrowType::Float)),
+        "fft" | "fft2" | "stft" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
+        "ifft" | "conv" | "conv2d" | "hamming" | "hanning"
+        | "spectrogram" | "lowpass" | "highpass" | "bandpass" => CrowType::NumArray(Box::new(CrowType::Float)),
         // Special functions
         "gamma" | "erf" | "factorial" | "bessel" | "choose"
         | "magnitude" | "phase" => CrowType::NumArray(Box::new(CrowType::Float)),

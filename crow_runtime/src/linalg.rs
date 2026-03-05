@@ -225,6 +225,34 @@ impl CrowTensor {
         CrowTensor::from_vec(result, vec![rows, cols])
     }
 
+    /// Matrix rank via SVD. Counts singular values above a tolerance threshold.
+    pub fn rank(&self) -> usize {
+        let (_, s, _) = self.svd_decomp();
+        let s_data = s.to_vec();
+        if s_data.is_empty() {
+            return 0;
+        }
+        let tol = s_data[0] * (self.shape()[0].max(self.shape()[1]) as f64) * f64::EPSILON;
+        s_data.iter().filter(|&&v| v > tol).count()
+    }
+
+    /// Condition number of a matrix (ratio of largest to smallest singular value).
+    /// Uses the 2-norm by default. Returns f64::INFINITY for singular matrices.
+    pub fn cond(&self) -> f64 {
+        let (_, s, _) = self.svd_decomp();
+        let s_data = s.to_vec();
+        if s_data.is_empty() {
+            return f64::NAN;
+        }
+        let s_max = s_data[0];
+        let s_min = s_data[s_data.len() - 1];
+        if s_min == 0.0 {
+            f64::INFINITY
+        } else {
+            s_max / s_min
+        }
+    }
+
     /// Eigendecomposition of a square matrix.
     /// Returns (eigenvalues_real, eigenvalues_imag).
     /// For symmetric matrices, imaginary parts will be zero.
@@ -531,6 +559,54 @@ mod tests {
         // A + diag = [[1,2],[3,4]] + [[1,0],[0,4]] = [[2,2],[3,8]]
         let expected = CrowTensor::from_vec(vec![2.0, 2.0, 3.0, 8.0], vec![2, 2]);
         tensor_approx_eq(&sum, &expected, 1e-12);
+    }
+
+    // ── rank ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_rank_full() {
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        assert_eq!(a.rank(), 2);
+    }
+
+    #[test]
+    fn test_rank_deficient() {
+        // Rank-1: rows are linearly dependent
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 2.0, 4.0], vec![2, 2]);
+        assert_eq!(a.rank(), 1);
+    }
+
+    #[test]
+    fn test_rank_identity() {
+        let a = CrowTensor::eye(4);
+        assert_eq!(a.rank(), 4);
+    }
+
+    #[test]
+    fn test_rank_rectangular() {
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
+        assert_eq!(a.rank(), 2);
+    }
+
+    // ── cond ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_cond_identity() {
+        let a = CrowTensor::eye(3);
+        approx_eq(a.cond(), 1.0, 1e-10);
+    }
+
+    #[test]
+    fn test_cond_singular() {
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 2.0, 4.0], vec![2, 2]);
+        assert!(a.cond().is_infinite());
+    }
+
+    #[test]
+    fn test_cond_well_conditioned() {
+        // [[2,0],[0,1]] → σ_max=2, σ_min=1, cond=2
+        let a = CrowTensor::from_vec(vec![2.0, 0.0, 0.0, 1.0], vec![2, 2]);
+        approx_eq(a.cond(), 2.0, 1e-10);
     }
 
     #[test]
