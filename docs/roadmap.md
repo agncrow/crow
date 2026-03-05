@@ -103,9 +103,9 @@ These require building a full WASM frontend pipeline (`wasm-bindgen`, `web-sys`,
 
 ### P4.5 — Database module ✅
 
-Top-level `db` module (`use db`) with separate `crow_db` crate. SQLite backend fully implemented. PostgreSQL and ClickHouse backends wired but not yet implemented.
+Top-level `db` module (`use db`) with separate `crow_db` crate. All three backends (SQLite, PostgreSQL, ClickHouse) fully implemented and live-tested.
 
-- [x] **`connect[url, pool_size?]`** — Unified connection with URL-scheme dispatch (sqlite://, postgres://, http:// for ClickHouse). Automatic connection pooling.
+- [x] **`connect[url, pool_size?]`** — Unified connection with URL-scheme dispatch (sqlite://, postgres://, clickhouse://). Automatic connection pooling.
 - [x] **`query[conn, sql]`** — Returns a frame (not array of maps).
 - [x] **`exec[conn, sql, params?]`** — DDL/DML execution, returns affected row count. Params are an array of bind values.
 - [x] **`insert[conn, table, frame]`** — Bulk insert using backend-specific fast paths.
@@ -156,7 +156,7 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. SQLite backend f
 | Python | 10/10 | 8/10 | 9/10 | 10/10 | 9/10 |
 | Go | 9/10 | 9/10 | 7/10 | 8/10 | 8/10 |
 | JavaScript/Node | 7/10 | 10/10 | 8/10 | 10/10 | 9/10 |
-| **Crow** | 4/10 | 6/10 | 5/10 | 1/10 | 4/10 |
+| **Crow** | 4/10 | 6/10 | 8/10 | 1/10 | 5/10 |
 
 ### Rating Rationale
 
@@ -165,7 +165,7 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. SQLite backend f
 **General-purpose (4/10):**
 - **Stdlib (4/10):** P3 added regex, date/time, shell, hashing, and file I/O. That covers the basics, but there's no JSON parsing builtin, no env vars, no networking beyond HTTP, no concurrency primitives beyond auto-parallel, no logging framework, no argument parsing. Compare to Python's 200+ stdlib modules or Go's 150+.
 - **Web (6/10):** This jumped significantly with P4. Crow now has 17 web modules covering server, routing, responses, database, auth, CORS, sessions, templates, caching, rate limiting, file uploads, SSE, WebSocket, LiveView, static files, email, background queues, and API docs — all expressible from Crow source with transpiler codegen. That's comparable feature coverage to Express.js or Flask. It's 6/10 (not higher) because: the codegen emits Rust but end-to-end app testing is limited, there's no ORM, no migrations, no middleware composition, and the WASM client-side story is deferred.
-- **DB (6/10):** Top-level `db` module with connection pooling, parameterized queries, transactions, bulk insert, and forward-only migrations. SQLite fully implemented. PostgreSQL and ClickHouse backends wired but not yet implemented. No ORM (by design — Crow uses raw SQL).
+- **DB (8/10):** Top-level `db` module with connection pooling, parameterized queries, transactions, bulk insert, and forward-only migrations. All three backends (SQLite, PostgreSQL, ClickHouse) fully implemented and live-tested. No ORM (by design — Crow uses raw SQL). 8/10 because the core DB story is complete across OLTP and OLAP engines; missing only advanced features like connection-level event listeners or prepared statement caching.
 - **Ecosystem (1/10):** No real package registry, no community packages, no third-party libraries. `crow install` exists as a command but there's nothing to install. This is the single biggest gap.
 
 **What moves the needle:**
