@@ -1,0 +1,28 @@
+--- Counter: live UI example ---
+--- Demonstrates use ui, element functions, and live[app, path, render, handle] ---
+
+use web
+use ui
+
+--- Render function: state -> VNode tree ---
+fn render[state]
+    count = state.get['count', 0]
+    return div[
+        h1['Count: {count}'],
+        button[[click = 'inc'], '+'],
+        button[[click = 'dec'], '-']
+    ]
+
+--- Event handler: mutate state based on event ---
+fn handle[state, event, value]
+    count = state.get['count', 0]
+    if event eq 'inc'
+        state.set['count', count + 1]
+    else if event eq 'dec'
+        state.set['count', count - 1]
+
+--- Build and serve ---
+app = web.new[]
+app = live[app, '/counter', render, handle]
+serve[app, 3000]
+

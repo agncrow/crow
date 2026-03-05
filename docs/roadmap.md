@@ -18,8 +18,8 @@ What's done, what's remaining, and in what order.
 | Autograd | `grad[f]` functional transformation |
 | Parallel execution | Auto-parallel `for` loops (rayon), statement-level parallelism via dependency analysis |
 | CLI | `crow run`, `crow build`, `crow fmt`, `crow check`, `crow init`, `crow install`, REPL |
-| Tests | 989 unit tests |
-| Documentation | language-spec.md, web-framework.md, math-library.md, feature-map.md, frame-module.md, usage.md, comparison.md, automatic-verification.md |
+| Tests | 998 unit tests (+ 3 GPU benchmarks) |
+| Documentation | language-spec.md, web-framework.md, ui-framework.md, math-library.md, feature-map.md, frame-module.md, usage.md, comparison.md, automatic-verification.md |
 
 ## Remaining Work
 
@@ -59,7 +59,7 @@ Crow now has regex, date/time, shell, and hashing builtins in addition to file s
 Provided by `web.client` module (`use web.client`): `get[url]`, `post[url, body]`, `put[url, body]`, `del[url]` — all return `{status, body, headers, ok, json}`. No separate `fetch` builtin needed (Design Note: one way to do things).
 
 #### Regex ✅
-- [x] **`find[s, pattern]`** — regex match → `{ok, groups}` map. (`match` is a reserved keyword, so the builtin is named `find`.)
+- [x] **`find[s, pattern]`** — regex match → `{ok, groups}` map.
 - [x] **`matches[s, pattern]`** — does string match pattern? (returns bool).
 - [x] **`sub[s, pattern, replacement]`** — regex substitution.
 
@@ -99,11 +99,66 @@ All 17 server-side modules implemented with 119 tests passing:
 - [x] **Interpreter mocks** — All four builtins (`msgpack`, `arrow`, `bytes`, `stream`) work in `crow run -i` mode.
 - [x] **Tests** — 10 new tests (4 transpiler codegen + 4 interpreter + 2 arrow IPC unit tests). Total: 702 tests passing.
 
-#### Client-side WASM — deferred
-These require building a full WASM frontend pipeline (`wasm-bindgen`, `web-sys`, reactive runtime). Multi-month effort, deferred until server-side modules are fully usable from Crow source code.
-- [ ] **`web.router`** — Client-side URL routing (History API, route matching, component swapping).
-- [ ] **`web.store`** — Reactive state management (signals, computed values, fine-grained DOM updates).
-- [ ] **Build modes** — `crow build --spa`, `--ssr`, `--live`, `--static` (see Rendering Modes in web-framework.md).
+#### Client-side WASM — rejected
+Rejected in favor of the Crow UI framework (see below). Building a WASM frontend pipeline would require `wasm-bindgen`, `web-sys`, and a reactive runtime — essentially building React/Svelte from scratch. The UI framework approach achieves the same goal (one-language full-stack) with pure Crow libraries and server-rendered HTML.
+
+#### P8 — UI Framework — in progress
+
+> **See [docs/ui-framework.md](ui-framework.md) for the full design document.**
+
+Full-stack web applications written entirely in Crow. Server-rendered LiveView pattern: mutable state on the server, HTML diffs over WebSocket, tiny JS runtime on the client. No React, no npm, no node_modules.
+
+##### Phase 1: Counter Works (foundation)
+
+Goal: `live[app, '/', fn[state] div[h1['Count: {state.count}'], button[click = fn[] state.count = state.count + 1, '+']]]` runs in a browser.
+
+- [ ] **VNode builder API** — `crow_web::view`: element functions (`vnode_el`, `vnode_text`) that build `CrowVNode` trees with attributes and event handler IDs
+- [ ] **Upgrade live module** — `crow_web::live`: replace LCS string diff with `CrowVNode::diff` tree patching, add event registry (handler ID → closure map), per-connection mutable state
+- [ ] **JS runtime v1** — `crow_web::live`: WebSocket + DOM patching (morphdom or custom) + event delegation + reconnect (~100 lines JS)
+- [ ] **Transpiler codegen** — `src/transpiler.rs`: `div[class = 'x']` → `CrowVNode::el("div", ...)`, `button[click = fn[], '+']` → VNode + event registration, `use ui` module detection
+- [ ] **Interpreter support** — `src/interpreter.rs`: UI element functions work in `crow run -i` mode (render to HTML string)
+- [ ] **Counter example** — `examples/counter.crow`: working end-to-end in browser with click events
+
+##### Phase 2: Forms Work (interaction)
+
+- [ ] **`ui.input` element** — text, email, password, number inputs with value binding
+- [ ] **`input` / `change` events** — send value on keystroke / blur
+- [ ] **`form` + `submit`** — form submission handler
+- [ ] **`select` element** — dropdown with `change` handler
+- [ ] **Debounce** — `debounce = ms` option on input events (client-side)
+- [ ] **Conditional / list rendering** — verify `if`/`for` in Crow produce correct VNode trees
+
+##### Phase 3: Multi-Page App (routing + layout)
+
+- [ ] **Multiple `live` routes** — several routes on one `web` app
+- [ ] **URL parameters** — route params (`:id`), query params (`?q=foo`)
+- [ ] **Live navigation** — `redirect['/path']`, `<a>` links without full page reload
+- [ ] **Layout functions** — Crow functions wrapping route content
+- [ ] **`title[]`, `meta[]`** — per-route head management
+- [ ] **CSS** — `static_dir` for stylesheets (already exists)
+
+##### Phase 4: Real App Features
+
+- [ ] **Sessions** — `session.set/get/clear`, signed cookies
+- [ ] **Auth** — `auth = true` on routes, redirect to login
+- [ ] **Channels** — `channel.join/send/broadcast`, `on_channel` handler (server push)
+- [ ] **Flash messages** — `flash[state, msg, timeout]`
+- [ ] **Loading states** — `loading[state, fn[]]`
+- [ ] **Keyboard events** — `keydown`, modifier keys
+- [ ] **File upload** — binary over WebSocket
+- [ ] **Downloads** — `download[content, filename, type]`
+- [ ] **Table features** — sorting, filtering, row click
+- [ ] **Modals, pagination, accessibility**
+- [ ] **Error boundaries** — `on_error`, `state.error`
+
+##### Phase 5: Developer Experience
+
+- [ ] **`live.test`** — mount route in test, simulate events, assert HTML
+- [ ] **`crow dev`** — hot reload server, error overlay
+- [ ] **Dev tools** — state inspector, event log (JS panel in browser)
+- [ ] **`live.screenshot`** — OS WebView rendering, pixel diff for visual regression
+- [ ] **Chart engine** — `chart.live`, custom Canvas renderer, hooks
+- [ ] **Component gallery** — `crow dev --gallery`
 
 ### P4.5 — Database module ✅
 
@@ -120,11 +175,13 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. All three backen
 - [x] **Transpiler codegen** — `use db` → `needs_crow_db` flag, `crow_db` in generated `Cargo.toml`, Rust codegen for all builtins.
 - [x] **Tests** — 9 crow_db unit tests + 8 interpreter tests + 8 transpiler tests + integration example.
 
-### P5 — GPU runtime (weeks)
+### P5 — GPU runtime ✅
 
-- [ ] **GPU execution verification**: `gpu[n]` directive exists but actual wgpu execution is unproven. Need to verify tensor ops actually dispatch to GPU.
-- [ ] **GPU benchmarks**: Compare GPU vs CPU for common operations (matmul, conv2d, element-wise) at various sizes.
-- [ ] **GPU memory management**: Verify tensor transfers, memory limits, out-of-memory handling.
+- [x] **GPU matmul shader**: WGSL compute shader for matrix multiplication. `matmul` auto-dispatches to GPU when both tensors are on GPU, falls back to CPU (faer) otherwise.
+- [x] **GPU parallel reduction**: Real tree-based parallel reduction shader for `sum`. Uses workgroup shared memory with 256-element workgroups. Falls back to CPU for small inputs (<1024 elements).
+- [x] **GPU execution verification**: All GPU ops tested end-to-end (upload → compute → download): matmul, sum, all unary ops (neg/abs/exp/log/sqrt/sin/cos), all binary ops (add/sub/mul/div), scalar ops.
+- [x] **GPU benchmarks**: `cargo test -p crow_runtime bench_gpu -- --nocapture --ignored` runs matmul, elementwise, and reduction benchmarks at multiple sizes.
+- [x] **GPU memory management**: `gpu_memory_info()` queries device limits, `gpu_try_alloc()` checks max_buffer_size before allocation for graceful OOM handling.
 
 ### P6 — Distributed runtime (weeks)
 
@@ -151,7 +208,7 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. All three backen
 | Julia | 9/10 | 9/10 | 8/10 | 9/10 |
 | MATLAB | 9/10 | 10/10 | 7/10 | 8/10 |
 | R | 8/10 | 9/10 (stats) | 5/10 | 7/10 |
-| **Crow** | 7/10 | 6/10 | 9/10 | 7/10 |
+| **Crow** | 7/10 | 7/10 | 9/10 | 7/10 |
 
 ### As a general-purpose / fullstack language
 
@@ -160,22 +217,22 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. All three backen
 | Python | 10/10 | 8/10 | 9/10 | 10/10 | 9/10 |
 | Go | 9/10 | 9/10 | 7/10 | 8/10 | 8/10 |
 | JavaScript/Node | 7/10 | 10/10 | 8/10 | 10/10 | 9/10 |
-| **Crow** | 4/10 | 6/10 | 8/10 | 1/10 | 5/10 |
+| **Crow** | 7/10 | 7/10 | 8/10 | 1/10 | 6/10 |
 
 ### Rating Rationale
 
-**Data science (7/10):** Crow has a strong math foundation — ~107 tensor/linalg/stats/signal functions, auto-parallel for loops, autograd, DataFrames, and GPU support. P1 added statistical tests (chi-square, ANOVA, KS, distribution fitting) and linalg completeness (rank, cond). P2 added STFT, spectrogram, and frequency-domain filters (lowpass, highpass, bandpass). Breadth is 7/10 — covers core operations plus statistical testing and signal processing. Depth is 6/10 — individual areas are solid with proper implementations (regularized gamma/beta functions, SVD-based rank, FFT-based filtering). Ergonomics is 9/10 — the syntax is genuinely cleaner than Python+NumPy for common operations.
+**Data science (7/10):** Crow has a strong math foundation — ~107 tensor/linalg/stats/signal functions, auto-parallel for loops, autograd, DataFrames, and GPU support. P1 added statistical tests (chi-square, ANOVA, KS, distribution fitting) and linalg completeness (rank, cond). P2 added STFT, spectrogram, and frequency-domain filters (lowpass, highpass, bandpass). P5 verified GPU execution end-to-end with matmul, parallel reduction, and element-wise shaders. Breadth is 7/10 — covers core operations plus statistical testing and signal processing. Depth is 7/10 — individual areas are solid with proper implementations (regularized gamma/beta functions, SVD-based rank, FFT-based filtering, verified GPU dispatch with memory management). Ergonomics is 9/10 — the syntax is genuinely cleaner than Python+NumPy for common operations.
 
-**General-purpose (4/10):**
-- **Stdlib (4/10):** P3 added regex, date/time, shell, hashing, and file I/O. That covers the basics, but there's no JSON parsing builtin, no env vars, no networking beyond HTTP, no concurrency primitives beyond auto-parallel, no logging framework, no argument parsing. Compare to Python's 200+ stdlib modules or Go's 150+.
-- **Web (7/10):** P4 provides 17 web modules plus binary/streaming response formats (msgpack, arrow, bytes, stream). Comparable to Express.js/Flask for server-side coverage. 7/10 because: no ORM (by design), no middleware composition, WASM client-side deferred, and end-to-end app testing is limited.
+**General-purpose (6/10):**
+- **Stdlib (7/10):** JSON (`json[str]`, `encode[value]`), env vars (`env[name]`, `env[name, default]` + `.env` auto-loading), CLI args (`args[]`), logging (`log[]`), file I/O (`read`, `write`, `exists`, `mkdir`, `ls`, `rm`, `mv`, `cp`), regex (`find`, `matches`, `sub`), date/time (`now`, `date`, `elapsed`), shell (`shell[cmd]`), hashing (`hash[data, algo]`), input (`input[]`). Covers the practical needs for scripting and application development. Still below Python's 200+ modules — missing HTTP client as builtin, process management, and some niche utilities.
+- **Web (7/10):** P4 provides 17 web modules plus binary/streaming response formats (msgpack, arrow, bytes, stream). Comparable to Express.js/Flask for server-side coverage. 7/10 because: no ORM (by design), no middleware composition, and end-to-end app testing is limited. P8 (UI Framework) will add full-stack frontend generation via pure Crow libraries — no WASM needed.
 - **DB (8/10):** Top-level `db` module with connection pooling, parameterized queries, transactions, bulk insert, and forward-only migrations. All three backends (SQLite, PostgreSQL, ClickHouse) fully implemented and live-tested. No ORM (by design — Crow uses raw SQL). 8/10 because the core DB story is complete across OLTP and OLAP engines; missing only advanced features like connection-level event listeners or prepared statement caching.
 - **Ecosystem (1/10):** No real package registry, no community packages, no third-party libraries. `crow install` exists as a command but there's nothing to install. This is the single biggest gap.
 
 **What moves the needle:**
 - Ecosystem → 5/10 would require a working registry + 20-30 community packages
-- Web → 8/10 would require end-to-end app testing, ORM, and the WASM frontend
-- Stdlib → 6/10 would require JSON, env, argument parsing, logging, and a few more utilities
+- Web → 8/10 would require end-to-end app testing and the UI framework (P8)
+- Stdlib → 8/10 would require HTTP client builtin, process management, and a few more utilities
 
-P0–P4 are complete. P5 (GPU verification), P6 (distributed verification), and P7 (ecosystem) are what separate Crow from a production-ready tool.
+P0–P5 are complete. P6 (distributed verification), P7 (ecosystem), and P8 (UI framework) are what separate Crow from a production-ready tool.
 

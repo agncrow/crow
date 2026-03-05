@@ -88,7 +88,6 @@ impl Parser {
             Token::If => self.parse_if(),
             Token::For => self.parse_for_stmt(),
             Token::While => self.parse_while(),
-            Token::Match => self.parse_match(),
             Token::Struct => self.parse_struct(),
             Token::Use => self.parse_use(),
             _ => self.parse_assign_or_expr(),
@@ -160,44 +159,6 @@ impl Parser {
         self.skip_newlines();
         let body = self.parse_block()?;
         Ok(Stmt::While { condition, body })
-    }
-
-    fn parse_match(&mut self) -> Result<Stmt, String> {
-        self.advance(); // skip 'match'
-        let value = self.parse_expr()?;
-        self.skip_newlines();
-        self.expect(&Token::Indent)?;
-        let mut arms = Vec::new();
-        loop {
-            self.skip_newlines();
-            if self.check(&Token::Dedent) || self.is_at_end() {
-                break;
-            }
-            let pattern = self.parse_pattern()?;
-            self.skip_newlines();
-            let body = self.parse_block()?;
-            arms.push(MatchArm { pattern, body });
-            self.skip_newlines();
-        }
-        if self.check(&Token::Dedent) {
-            self.advance();
-        }
-        Ok(Stmt::Match { value, arms })
-    }
-
-    fn parse_pattern(&mut self) -> Result<Pattern, String> {
-        if self.check(&Token::Underscore) {
-            self.advance();
-            return Ok(Pattern::Wildcard);
-        }
-        let expr = self.parse_primary()?;
-        if self.check(&Token::DotDot) {
-            self.advance();
-            let end = self.parse_primary()?;
-            Ok(Pattern::Range(expr, end))
-        } else {
-            Ok(Pattern::Literal(expr))
-        }
     }
 
     fn parse_struct(&mut self) -> Result<Stmt, String> {

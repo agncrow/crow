@@ -1,17 +1,30 @@
 //! `web.live` module — LiveView: server-rendered HTML with real-time updates.
 //!
+//! Two modes:
+//! - **VNode mode**: separate render + handle functions, VNode tree diffing
+//! - **Legacy mode**: single handler returning HTML string
+//!
 //! ```text
 //! use web
-//! use web.live
 //!
 //! app = web.new[]
-//! live[app, '/counter', fn[state]
-//!   state.count = state.count + 1
-//!   '<div>Count: {state.count}</div>'
-//! ]
+//!
+//! fn render[state]
+//!     count = state.count
+//!     return div[h1['Count: {count}'], button[click = 'inc', '+'], button[click = 'dec', '-']]
+//!
+//! fn handle[state, event]
+//!     if event eq 'inc'
+//!         state.count = state.count + 1
+//!     if event eq 'dec'
+//!         state.count = state.count - 1
+//!
+//! live[app, '/', render, handle]
+//! serve[app, 8080]
 //! ```
 
 use std::collections::HashMap;
+use crate::view::CrowVNode;
 
 /// Server-side component state.
 #[derive(Debug, Clone)]
@@ -36,6 +49,26 @@ impl CrowLiveState {
     pub fn set(&mut self, key: &str, value: serde_json::Value) {
         self.data.insert(key.to_string(), value);
     }
+
+    /// Get an i64 from state, with default.
+    pub fn get_i64(&self, key: &str, default: i64) -> i64 {
+        self.data.get(key).and_then(|v| v.as_i64()).unwrap_or(default)
+    }
+
+    /// Get a string from state, with default.
+    pub fn get_str(&self, key: &str, default: &str) -> String {
+        self.data.get(key).and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_else(|| default.to_string())
+    }
+
+    /// Get an f64 from state, with default.
+    pub fn get_f64(&self, key: &str, default: f64) -> f64 {
+        self.data.get(key).and_then(|v| v.as_f64()).unwrap_or(default)
+    }
+
+    /// Get a bool from state, with default.
+    pub fn get_bool(&self, key: &str, default: bool) -> bool {
+        self.data.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
+    }
 }
 
 impl Default for CrowLiveState {
@@ -44,130 +77,280 @@ impl Default for CrowLiveState {
     }
 }
 
-/// A diff representing changes to HTML content.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct CrowDiff {
-    /// Target element selector.
-    pub target: String,
-    /// New HTML content.
-    pub html: String,
-    /// Type: "replace", "append", "prepend"
-    pub action: String,
-}
-
-/// Diff two HTML strings using a line-level LCS algorithm.
-/// Produces targeted diffs: unchanged lines are skipped, changed regions
-/// produce "replace" diffs, and insertions/deletions produce "append"/"remove" diffs.
-pub fn diff_html(old: &str, new: &str) -> Vec<CrowDiff> {
-    if old == new {
-        return vec![];
-    }
-
-    let old_lines: Vec<&str> = old.lines().collect();
-    let new_lines: Vec<&str> = new.lines().collect();
-
-    // Build LCS table
-    let n = old_lines.len();
-    let m = new_lines.len();
-    let mut table = vec![vec![0u32; m + 1]; n + 1];
-    for i in (0..n).rev() {
-        for j in (0..m).rev() {
-            if old_lines[i] == new_lines[j] {
-                table[i][j] = table[i + 1][j + 1] + 1;
-            } else {
-                table[i][j] = std::cmp::max(table[i + 1][j], table[i][j + 1]);
-            }
-        }
-    }
-
-    // Walk the table to emit diffs
-    let mut diffs = Vec::new();
-    let mut i = 0;
-    let mut j = 0;
-    while i < n || j < m {
-        if i < n && j < m && old_lines[i] == new_lines[j] {
-            // Lines match, skip
-            i += 1;
-            j += 1;
-        } else if j < m && (i >= n || table[i][j + 1] >= table[if i + 1 <= n { i + 1 } else { i }][j]) {
-            // Insertion in new
-            diffs.push(CrowDiff {
-                target: format!("line:{}", j),
-                html: new_lines[j].to_string(),
-                action: "append".to_string(),
-            });
-            j += 1;
-        } else if i < n {
-            // Deletion from old
-            diffs.push(CrowDiff {
-                target: format!("line:{}", i),
-                html: String::new(),
-                action: "remove".to_string(),
-            });
-            i += 1;
-        }
-    }
-
-    // If lines are the same count but content differs and LCS produced nothing useful,
-    // fall back to a single replace
-    if diffs.is_empty() && old != new {
-        diffs.push(CrowDiff {
-            target: "body".to_string(),
-            html: new.to_string(),
-            action: "replace".to_string(),
-        });
-    }
-
-    diffs
-}
-
-/// Generate the LiveView client-side JavaScript.
-pub fn client_js(ws_path: &str) -> String {
-    format!(
-        r#"<script>
+/// Generate the LiveView client-side JavaScript runtime.
+/// Handles WebSocket connection, DOM patching via VPatch, and event delegation.
+pub fn live_js(ws_path: &str) -> String {
+    format!(r#"<script>
 (function() {{
-    const ws = new WebSocket(location.origin.replace('http','ws') + '{}');
-    ws.onmessage = function(e) {{
-        const diffs = JSON.parse(e.data);
-        diffs.forEach(function(d) {{
-            const el = document.querySelector(d.target);
-            if (el) {{
-                if (d.action === 'replace') el.innerHTML = d.html;
-                else if (d.action === 'append') el.innerHTML += d.html;
-                else if (d.action === 'prepend') el.innerHTML = d.html + el.innerHTML;
-            }}
-        }});
+  var ws, reconDelay = 100;
+
+  function connect() {{
+    ws = new WebSocket(location.origin.replace('http','ws') + '{ws_path}');
+    ws.onopen = function() {{ reconDelay = 100; }};
+    ws.onclose = function() {{
+      setTimeout(connect, Math.min(reconDelay, 5000));
+      reconDelay *= 2;
     }};
-    document.addEventListener('click', function(e) {{
-        if (e.target.dataset.event) {{
-            ws.send(JSON.stringify({{event: e.target.dataset.event}}));
+    ws.onmessage = function(e) {{
+      var msg = JSON.parse(e.data);
+      if (msg.type === 'html') {{
+        // Full HTML replacement mode
+        var root = document.getElementById('crow-root');
+        if (root) {{
+          var tmp = document.createElement('div');
+          tmp.innerHTML = msg.html;
+          morphChildren(root, tmp);
         }}
-    }});
+      }} else if (msg.type === 'patches') {{
+        // VPatch mode
+        msg.patches.forEach(function(p) {{ applyPatch(p); }});
+      }}
+    }};
+  }}
+
+  // Minimal DOM morphing: update root's children to match source's children
+  function morphChildren(target, source) {{
+    // Simple approach: replace innerHTML but preserve focus
+    var focused = document.activeElement;
+    var focusId = focused ? focused.getAttribute('data-crow-id') : null;
+    target.innerHTML = source.innerHTML;
+    if (focusId) {{
+      var el = target.querySelector('[data-crow-id="' + focusId + '"]');
+      if (el) el.focus();
+    }}
+  }}
+
+  // Navigate to a DOM node by path (array of child indices)
+  function nodeAt(path) {{
+    var node = document.getElementById('crow-root');
+    for (var i = 0; node && i < path.length; i++) {{
+      node = node.childNodes[path[i]];
+    }}
+    return node;
+  }}
+
+  // Apply a single VPatch operation
+  function applyPatch(p) {{
+    var node = nodeAt(p.path);
+    if (!node) return;
+    switch (p.op) {{
+      case 'SetText':
+        node.textContent = p.text;
+        break;
+      case 'SetAttrs':
+        // Remove old attrs, set new ones
+        while (node.attributes.length > 0) node.removeAttribute(node.attributes[0].name);
+        for (var k in p.attrs) node.setAttribute(k, p.attrs[k]);
+        break;
+      case 'Replace':
+        var tmp = document.createElement('div');
+        tmp.innerHTML = p.html;
+        node.parentNode.replaceChild(tmp.firstChild, node);
+        break;
+      case 'InsertChild':
+        var tmp2 = document.createElement('div');
+        tmp2.innerHTML = p.html;
+        var ref = node.childNodes[p.index];
+        if (ref) node.insertBefore(tmp2.firstChild, ref);
+        else node.appendChild(tmp2.firstChild);
+        break;
+      case 'RemoveChild':
+        var child = node.childNodes[p.index];
+        if (child) node.removeChild(child);
+        break;
+    }}
+  }}
+
+  // Event delegation: click
+  document.addEventListener('click', function(e) {{
+    var t = e.target;
+    while (t && t !== document) {{
+      var ev = t.getAttribute('data-crow-click');
+      if (ev) {{
+        e.preventDefault();
+        ws.send(JSON.stringify({{event: ev}}));
+        return;
+      }}
+      t = t.parentElement;
+    }}
+  }});
+
+  // Event delegation: input
+  document.addEventListener('input', function(e) {{
+    var ev = e.target.getAttribute('data-crow-input');
+    if (ev) {{
+      ws.send(JSON.stringify({{event: ev, value: e.target.value}}));
+    }}
+  }});
+
+  // Event delegation: submit
+  document.addEventListener('submit', function(e) {{
+    var ev = e.target.getAttribute('data-crow-submit');
+    if (ev) {{
+      e.preventDefault();
+      var data = {{}};
+      new FormData(e.target).forEach(function(v, k) {{ data[k] = v; }});
+      ws.send(JSON.stringify({{event: ev, form: data}}));
+    }}
+  }});
+
+  connect();
 }})();
-</script>"#,
-        ws_path
+</script>"#, ws_path = ws_path)
+}
+
+/// Generate a full HTML page shell wrapping the initial content.
+fn page_shell(body_html: &str, js: &str) -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crow App</title>
+<style>*{{box-sizing:border-box}}body{{font-family:system-ui,sans-serif;margin:0;padding:1rem}}</style>
+</head>
+<body>
+<div id="crow-root">{}</div>
+{}
+</body>
+</html>"#,
+        body_html, js
     )
 }
 
-/// A LiveView endpoint that manages server-side state and pushes HTML diffs
-/// to connected clients over WebSocket.
-pub struct CrowLiveView<F>
+
+/// A LiveView endpoint with separate render and handle functions.
+///
+/// - `R`: render function `Fn(&CrowLiveState) -> CrowVNode`
+/// - `H`: event handler `Fn(&mut CrowLiveState, &str, Option<&str>)` (event, optional value)
+pub struct CrowLiveView<R, H>
 where
-    F: Fn(&mut CrowLiveState, &str) -> String + Send + Sync + 'static,
+    R: Fn(&CrowLiveState) -> CrowVNode + Send + Sync + 'static,
+    H: Fn(&mut CrowLiveState, &str, Option<&str>) + Send + Sync + 'static,
 {
-    /// Initial state factory.
     pub initial_state: CrowLiveState,
-    /// Render function: takes mutable state + event name, returns HTML.
-    pub handler: F,
-    /// WebSocket path (for client JS).
+    pub render: R,
+    pub handle: H,
     pub ws_path: String,
 }
 
-impl<F> CrowLiveView<F>
+impl<R, H> CrowLiveView<R, H>
+where
+    R: Fn(&CrowLiveState) -> CrowVNode + Send + Sync + Clone + 'static,
+    H: Fn(&mut CrowLiveState, &str, Option<&str>) + Send + Sync + Clone + 'static,
+{
+    pub fn new(ws_path: &str, initial: CrowLiveState, render: R, handle: H) -> Self {
+        Self {
+            initial_state: initial,
+            render,
+            handle,
+            ws_path: ws_path.to_string(),
+        }
+    }
+
+    /// Build an Axum router with:
+    /// - GET `page_path` → initial HTML page with embedded JS
+    /// - WS  `ws_path`   → event loop: receive events, mutate state, send diffs
+    pub fn into_router(self, page_path: &str) -> axum::Router {
+        let ws_path = self.ws_path.clone();
+        let render = std::sync::Arc::new(self.render);
+        let handle = std::sync::Arc::new(self.handle);
+        let init_state = std::sync::Arc::new(self.initial_state);
+
+        // GET page: render initial HTML wrapped in page shell
+        let r1 = render.clone();
+        let s1 = init_state.clone();
+        let ws_p = ws_path.clone();
+        let page_route = axum::routing::get(move || {
+            let r1 = r1.clone();
+            let s1 = s1.clone();
+            let ws_p = ws_p.clone();
+            async move {
+                let state = (*s1).clone();
+                let vnode = (r1)(&state);
+                let body_html = vnode.to_html();
+                let js = live_js(&ws_p);
+                axum::response::Html(page_shell(&body_html, &js))
+            }
+        });
+
+        // WS: event loop with VNode diffing
+        let r2 = render.clone();
+        let h2 = handle.clone();
+        let s2 = init_state.clone();
+        let ws_route = axum::routing::get(move |ws: axum::extract::WebSocketUpgrade| {
+            let r2 = r2.clone();
+            let h2 = h2.clone();
+            let s2 = s2.clone();
+            async move {
+                ws.on_upgrade(move |mut socket| async move {
+                    use axum::extract::ws::Message;
+                    let mut state = (*s2).clone();
+                    let mut last_vnode = (r2)(&state);
+
+                    while let Some(Ok(msg)) = futures_util::StreamExt::next(&mut socket).await {
+                        if let Message::Text(text) = msg {
+                            // Parse event from client
+                            let (event, value) = if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                                let ev = v["event"].as_str().unwrap_or("unknown").to_string();
+                                let val = v["value"].as_str().map(|s| s.to_string());
+                                (ev, val)
+                            } else {
+                                (text.to_string(), None)
+                            };
+
+                            // Handle event (mutates state)
+                            (h2)(&mut state, &event, value.as_deref());
+
+                            // Re-render and diff
+                            let new_vnode = (r2)(&state);
+                            let patches = CrowVNode::diff(&last_vnode, &new_vnode);
+
+                            if !patches.is_empty() {
+                                // Send full HTML for now (simpler, works with morphdom)
+                                let new_html = new_vnode.to_html();
+                                let payload = serde_json::json!({
+                                    "type": "html",
+                                    "html": new_html
+                                });
+                                last_vnode = new_vnode;
+                                if futures_util::SinkExt::send(
+                                    &mut socket,
+                                    Message::Text(payload.to_string().into()),
+                                ).await.is_err() {
+                                    break;
+                                }
+                            } else {
+                                last_vnode = new_vnode;
+                            }
+                        }
+                    }
+                })
+            }
+        });
+
+        axum::Router::new()
+            .route(page_path, page_route)
+            .route(&ws_path, ws_route)
+    }
+}
+
+/// Legacy LiveView with a single combined handler returning HTML string.
+/// Kept for backward compatibility with existing transpiler output.
+pub struct CrowLiveViewLegacy<F>
+where
+    F: Fn(&mut CrowLiveState, &str) -> String + Send + Sync + 'static,
+{
+    pub initial_state: CrowLiveState,
+    pub handler: F,
+    pub ws_path: String,
+}
+
+impl<F> CrowLiveViewLegacy<F>
 where
     F: Fn(&mut CrowLiveState, &str) -> String + Send + Sync + Clone + 'static,
 {
-    /// Create a new LiveView.
     pub fn new(ws_path: &str, initial: CrowLiveState, handler: F) -> Self {
         Self {
             initial_state: initial,
@@ -176,15 +359,11 @@ where
         }
     }
 
-    /// Build an Axum router with:
-    /// - GET `page_path` → initial HTML + client JS
-    /// - WS  `ws_path`   → event loop that pushes diffs
     pub fn into_router(self, page_path: &str) -> axum::Router {
         let ws_path = self.ws_path.clone();
         let handler = std::sync::Arc::new(self.handler);
         let init_state = std::sync::Arc::new(self.initial_state);
 
-        // Initial page render
         let h = handler.clone();
         let s = init_state.clone();
         let ws_p = ws_path.clone();
@@ -195,12 +374,11 @@ where
             async move {
                 let mut state = (*s).clone();
                 let html = (h)(&mut state, "init");
-                let js = client_js(&ws_p);
-                axum::response::Html(format!("{}{}", html, js))
+                let js = live_js(&ws_p);
+                axum::response::Html(page_shell(&html, &js))
             }
         });
 
-        // WebSocket handler
         let h2 = handler.clone();
         let s2 = init_state.clone();
         let ws_route = axum::routing::get(move |ws: axum::extract::WebSocketUpgrade| {
@@ -221,18 +399,16 @@ where
                             };
 
                             let new_html = (h2)(&mut state, &event);
-                            let diffs = diff_html(&last_html, &new_html);
-                            last_html = new_html;
-
-                            if !diffs.is_empty() {
-                                let payload = serde_json::to_string(&diffs).unwrap_or_default();
+                            if new_html != last_html {
+                                let payload = serde_json::json!({
+                                    "type": "html",
+                                    "html": new_html
+                                });
+                                last_html = new_html;
                                 if futures_util::SinkExt::send(
                                     &mut socket,
-                                    Message::Text(payload.into()),
-                                )
-                                .await
-                                .is_err()
-                                {
+                                    Message::Text(payload.to_string().into()),
+                                ).await.is_err() {
                                     break;
                                 }
                             }
@@ -260,49 +436,19 @@ mod tests {
     }
 
     #[test]
-    fn test_diff_same_html() {
-        let diffs = diff_html("<div>hello</div>", "<div>hello</div>");
-        assert!(diffs.is_empty());
+    fn test_live_state_get_i64() {
+        let mut state = CrowLiveState::new();
+        state.set("count", serde_json::json!(42));
+        assert_eq!(state.get_i64("count", 0), 42);
+        assert_eq!(state.get_i64("missing", 99), 99);
     }
 
     #[test]
-    fn test_diff_changed_single_line() {
-        let diffs = diff_html("<div>old</div>", "<div>new</div>");
-        // LCS on single-line strings: remove old line, append new line
-        assert!(!diffs.is_empty());
-        // Should have both a remove and an append
-        let has_remove = diffs.iter().any(|d| d.action == "remove");
-        let has_append = diffs.iter().any(|d| d.action == "append" && d.html == "<div>new</div>");
-        assert!(has_remove || has_append || diffs[0].action == "replace");
-    }
-
-    #[test]
-    fn test_diff_multiline_insertion() {
-        let old = "<ul>\n<li>a</li>\n</ul>";
-        let new = "<ul>\n<li>a</li>\n<li>b</li>\n</ul>";
-        let diffs = diff_html(old, new);
-        assert!(!diffs.is_empty());
-        // Should detect the inserted <li>b</li> line
-        let appended: Vec<_> = diffs.iter().filter(|d| d.action == "append").collect();
-        assert!(!appended.is_empty());
-        assert!(appended.iter().any(|d| d.html.contains("<li>b</li>")));
-    }
-
-    #[test]
-    fn test_diff_multiline_deletion() {
-        let old = "<ul>\n<li>a</li>\n<li>b</li>\n</ul>";
-        let new = "<ul>\n<li>a</li>\n</ul>";
-        let diffs = diff_html(old, new);
-        assert!(!diffs.is_empty());
-        let removed: Vec<_> = diffs.iter().filter(|d| d.action == "remove").collect();
-        assert!(!removed.is_empty());
-    }
-
-    #[test]
-    fn test_client_js() {
-        let js = client_js("/ws/live");
-        assert!(js.contains("WebSocket"));
-        assert!(js.contains("/ws/live"));
+    fn test_live_state_get_str() {
+        let mut state = CrowLiveState::new();
+        state.set("name", serde_json::json!("crow"));
+        assert_eq!(state.get_str("name", ""), "crow");
+        assert_eq!(state.get_str("missing", "default"), "default");
     }
 
     #[test]
@@ -310,5 +456,73 @@ mod tests {
         let state = CrowLiveState::default();
         assert!(state.data.is_empty());
     }
-}
 
+    #[test]
+    fn test_live_js_contains_websocket() {
+        let js = live_js("/ws/live");
+        assert!(js.contains("WebSocket"));
+        assert!(js.contains("/ws/live"));
+        assert!(js.contains("data-crow-click"));
+        assert!(js.contains("data-crow-input"));
+        assert!(js.contains("data-crow-submit"));
+        assert!(js.contains("crow-root"));
+        assert!(js.contains("reconnect") || js.contains("reconDelay"));
+    }
+
+    #[test]
+    fn test_page_shell() {
+        let shell = page_shell("<h1>Hello</h1>", "<script>alert(1)</script>");
+        assert!(shell.contains("<!DOCTYPE html>"));
+        assert!(shell.contains("crow-root"));
+        assert!(shell.contains("<h1>Hello</h1>"));
+        assert!(shell.contains("<script>alert(1)</script>"));
+    }
+
+    #[test]
+    fn test_vnode_render_handle_pattern() {
+        // Simulate the render/handle pattern
+        let mut state = CrowLiveState::new();
+        state.set("count", serde_json::json!(0));
+
+        // Render function
+        let render = |s: &CrowLiveState| -> CrowVNode {
+            let count = s.get_i64("count", 0);
+            CrowVNode::div(vec![
+                CrowVNode::h1(vec![CrowVNode::text(&format!("Count: {}", count))]),
+                CrowVNode::button(vec![CrowVNode::text("+")]).on_click("inc"),
+                CrowVNode::button(vec![CrowVNode::text("-")]).on_click("dec"),
+            ])
+        };
+
+        // Handle function
+        let handle = |s: &mut CrowLiveState, event: &str, _value: Option<&str>| {
+            let count = s.get_i64("count", 0);
+            match event {
+                "inc" => s.set("count", serde_json::json!(count + 1)),
+                "dec" => s.set("count", serde_json::json!(count - 1)),
+                _ => {}
+            }
+        };
+
+        // Initial render
+        let vnode1 = render(&state);
+        let html1 = vnode1.to_html();
+        assert!(html1.contains("Count: 0"));
+
+        // Handle inc
+        handle(&mut state, "inc", None);
+        let vnode2 = render(&state);
+        let html2 = vnode2.to_html();
+        assert!(html2.contains("Count: 1"));
+
+        // Diff should show changes
+        let patches = CrowVNode::diff(&vnode1, &vnode2);
+        assert!(!patches.is_empty());
+
+        // Handle dec twice
+        handle(&mut state, "dec", None);
+        handle(&mut state, "dec", None);
+        let vnode3 = render(&state);
+        assert!(vnode3.to_html().contains("Count: -1"));
+    }
+}

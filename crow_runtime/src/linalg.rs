@@ -44,14 +44,32 @@ fn mat_to_tensor(m: &Mat<f64>) -> CrowTensor {
 
 impl CrowTensor {
     /// Matrix multiplication: self (m×k) * other (k×n) → (m×n).
+    /// Dispatches to GPU if both tensors are on GPU, otherwise uses CPU (faer).
     pub fn matmul(&self, other: &CrowTensor) -> CrowTensor {
+        let shape_a = self.shape();
+        let shape_b = other.shape();
+        assert_eq!(shape_a.len(), 2, "linalg: expected 2D tensor, got {}D", shape_a.len());
+        assert_eq!(shape_b.len(), 2, "linalg: expected 2D tensor, got {}D", shape_b.len());
+        assert_eq!(
+            shape_a[1], shape_b[0],
+            "matmul: incompatible shapes [{},{}] × [{},{}]",
+            shape_a[0], shape_a[1], shape_b[0], shape_b[1]
+        );
+
+        // GPU path: if both tensors are on GPU, use the GPU matmul shader
+        if let (Some(a_buf), Some(b_buf)) = (self.gpu_buffer(), other.gpu_buffer()) {
+            if let Some(ctx) = crate::gpu::GpuContext::get() {
+                let m = shape_a[0] as u32;
+                let k = shape_a[1] as u32;
+                let n = shape_b[1] as u32;
+                let out_buf = crate::gpu::gpu_matmul(ctx, a_buf, b_buf, m, k, n);
+                return CrowTensor::from_gpu_with_shape(out_buf, vec![m as usize, n as usize]);
+            }
+        }
+
+        // CPU path: use faer
         let a = tensor_to_mat(self);
         let b = tensor_to_mat(other);
-        assert_eq!(
-            a.ncols(), b.nrows(),
-            "matmul: incompatible shapes [{},{}] × [{},{}]",
-            a.nrows(), a.ncols(), b.nrows(), b.ncols()
-        );
         let c = &a * &b;
         mat_to_tensor(&c)
     }

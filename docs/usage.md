@@ -130,10 +130,12 @@ use math
 log[math.double[5]]
 ```
 
+The default registry is the git repo at `https://github.com/vsriram/registry.git`. It is cloned to `~/.crow/registry/` on first install and updated via `git pull` on subsequent runs.
+
 To use a custom registry, set the `CROW_REGISTRY` environment variable:
 
 ```bash
-CROW_REGISTRY=https://example.com/index.json crow install
+CROW_REGISTRY=https://github.com/myorg/my-registry.git crow install
 ```
 
 ## Language Basics
@@ -303,18 +305,6 @@ fn fly[bird]
 
 b = Bird['crow', 50]
 fly[b]
-```
-
-### Pattern Matching
-
-```
-match value
-    0
-        log['zero']
-    1..10
-        log['small']
-    _
-        log['other']
 ```
 
 ### Modules

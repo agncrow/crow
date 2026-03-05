@@ -105,7 +105,7 @@ pub fn stmt_writes(stmt: &Stmt) -> HashSet<String> {
 pub fn is_barrier(stmt: &Stmt) -> bool {
     matches!(stmt,
         Stmt::If { .. } | Stmt::For { .. } | Stmt::While { .. } |
-        Stmt::Match { .. } | Stmt::Return(_) | Stmt::Use { .. } |
+        Stmt::Return(_) | Stmt::Use { .. } |
         Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::Resource { .. } |
         Stmt::FieldAssign { .. } | Stmt::IndexAssign { .. } |
         Stmt::ExprStmt(_)

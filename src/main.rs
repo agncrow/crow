@@ -462,7 +462,7 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result
 
 // --- Package Registry ---
 
-const DEFAULT_REGISTRY_URL: &str = "https://raw.githubusercontent.com/vsriram/registry/main/index.json";
+const DEFAULT_REGISTRY_REPO: &str = "https://github.com/vsriram/registry.git";
 
 #[derive(serde::Deserialize, Debug)]
 struct RegistryIndex {
@@ -475,59 +475,61 @@ struct RegistryPackage {
     versions: Vec<String>,
 }
 
-fn get_registry_url() -> String {
-    std::env::var("CROW_REGISTRY").unwrap_or_else(|_| DEFAULT_REGISTRY_URL.to_string())
+fn get_registry_repo() -> String {
+    std::env::var("CROW_REGISTRY").unwrap_or_else(|_| DEFAULT_REGISTRY_REPO.to_string())
 }
 
-fn registry_cache_path() -> std::path::PathBuf {
+fn registry_cache_dir() -> std::path::PathBuf {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".to_string());
-    std::path::PathBuf::from(home).join(".crow").join("registry").join("index.json")
+    std::path::PathBuf::from(home).join(".crow").join("registry")
 }
 
 fn fetch_registry_index() -> Option<RegistryIndex> {
-    let cache_path = registry_cache_path();
-    let url = get_registry_url();
+    let cache_dir = registry_cache_dir();
+    let index_path = cache_dir.join("index.json");
+    let repo_url = get_registry_repo();
 
-    // Try fetching fresh index with curl
-    let output = std::process::Command::new("curl")
-        .args(["-sfL", "--max-time", "10", &url])
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => {
-            let json = String::from_utf8_lossy(&out.stdout);
-            // Cache it
-            if let Some(parent) = cache_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
+    if cache_dir.join(".git").exists() {
+        // Registry already cloned — pull latest
+        let status = std::process::Command::new("git")
+            .args(["pull", "--quiet", "--ff-only"])
+            .current_dir(&cache_dir)
+            .stderr(std::process::Stdio::null())
+            .status();
+        if let Ok(s) = status {
+            if !s.success() {
+                eprintln!("warning: failed to update registry, using cached");
             }
-            let _ = std::fs::write(&cache_path, &*json);
+        }
+    } else {
+        // Fresh clone
+        let _ = std::fs::create_dir_all(cache_dir.parent().unwrap_or(std::path::Path::new(".")));
+        let status = std::process::Command::new("git")
+            .args(["clone", "--quiet", "--depth", "1", &repo_url, &cache_dir.to_string_lossy()])
+            .status();
+        match status {
+            Ok(s) if s.success() => {}
+            _ => {
+                eprintln!("warning: failed to clone registry from {}", repo_url);
+            }
+        }
+    }
+
+    // Read index.json from the cloned/cached repo
+    if index_path.exists() {
+        if let Ok(json) = std::fs::read_to_string(&index_path) {
             match serde_json::from_str(&json) {
                 Ok(index) => return Some(index),
                 Err(e) => {
-                    eprintln!("warning: failed to parse registry index: {}", e);
+                    eprintln!("warning: failed to parse registry index.json: {}", e);
                 }
-            }
-        }
-        _ => {
-            eprintln!("warning: failed to fetch registry from {}", url);
-        }
-    }
-
-    // Fall back to cached index
-    if cache_path.exists() {
-        if let Ok(json) = std::fs::read_to_string(&cache_path) {
-            match serde_json::from_str(&json) {
-                Ok(index) => {
-                    eprintln!("  using cached registry index");
-                    return Some(index);
-                }
-                Err(_) => {}
             }
         }
     }
 
+    eprintln!("error: no registry index found at {}", index_path.display());
     None
 }
 

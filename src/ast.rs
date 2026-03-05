@@ -41,11 +41,6 @@ pub enum Stmt {
         condition: Expr,
         body: Vec<Stmt>,
     },
-    /// Match statement: match expr arms
-    Match {
-        value: Expr,
-        arms: Vec<MatchArm>,
-    },
     /// Struct declaration: struct Name [fields]
     StructDecl {
         name: String,
@@ -78,22 +73,6 @@ pub enum Stmt {
     Continue,
     /// Line marker for error reporting (not a real statement)
     Line(usize),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MatchArm {
-    pub pattern: Pattern,
-    pub body: Vec<Stmt>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Pattern {
-    /// Literal value
-    Literal(Expr),
-    /// Range: start..end
-    Range(Expr, Expr),
-    /// Wildcard: _
-    Wildcard,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

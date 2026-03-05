@@ -66,6 +66,8 @@ pub struct Transpiler {
     registry: crate::modules::ModuleRegistry,
     /// Function names that are used as web route handlers (need CrowRequest param + CrowResponse return)
     web_handlers: std::collections::HashSet<String>,
+    /// Whether the transpiled code uses `use ui` (live view element functions)
+    pub needs_ui: bool,
 }
 
 impl Transpiler {
@@ -103,6 +105,7 @@ impl Transpiler {
             emitting_dual: false,
             registry: crate::modules::ModuleRegistry::new(),
             web_handlers: std::collections::HashSet::new(),
+            needs_ui: false,
         }
     }
 
@@ -522,12 +525,6 @@ impl Transpiler {
                     }
                     Self::collect_reassigned_vars(body, seen, mutated);
                 }
-                Stmt::Match { arms, .. } => {
-                    for arm in arms {
-                        Self::collect_reassigned_vars(&arm.body, seen, mutated);
-                    }
-                }
-
                 // Field assignment and index assignment mutate the root variable
                 Stmt::FieldAssign { object, .. } | Stmt::IndexAssign { object, .. } => {
                     if let Some(var_name) = Self::extract_root_var(object) {
@@ -566,12 +563,6 @@ impl Transpiler {
                 Stmt::While { body, .. } | Stmt::For { body, .. } => {
                     Self::collect_loop_assigned_vars(body, assigned);
                 }
-                Stmt::Match { arms, .. } => {
-                    for arm in arms {
-                        Self::collect_loop_assigned_vars(&arm.body, assigned);
-                    }
-                }
-
                 _ => {}
             }
         }
@@ -652,6 +643,12 @@ impl Transpiler {
                         };
                         self.web_features.insert(feature.to_string());
                     }
+                }
+                // Detect `use ui` early for imports
+                if path == "ui" {
+                    self.needs_ui = true;
+                    self.needs_crow_web = true;
+                    self.web_features.insert("live".to_string());
                 }
                 // Load modules into registry early
                 if path == "math" {
@@ -794,6 +791,10 @@ impl Transpiler {
             }
             if self.web_features.contains("sse") {
                 self.emit_line("use crow_web::sse;");
+            }
+            if self.needs_ui {
+                self.emit_line("use crow_web::view::CrowVNode;");
+                self.emit_line("use crow_web::live::{CrowLiveView, CrowLiveState};");
             }
         }
         // Import crow_db types if db module is used
@@ -1678,21 +1679,6 @@ impl Transpiler {
                 }
                 self.declared = saved;
             }
-            Stmt::Match { value, arms } => {
-                let val_str = self.expr_to_string(value);
-                self.emit_line(&format!("match {} {{", val_str));
-                self.indent += 1;
-                for arm in arms {
-                    let pattern = self.pattern_to_string(&arm.pattern);
-                    self.emit_line(&format!("{} => {{", pattern));
-                    self.indent += 1;
-                    for s in &arm.body { self.emit_stmt(s); }
-                    self.indent -= 1;
-                    self.emit_line("}");
-                }
-                self.indent -= 1;
-                self.emit_line("}");
-            }
             Stmt::FieldAssign { object, field, value } => {
                 let obj_str = self.expr_to_string(object);
                 let val_str = self.expr_to_string(value);
@@ -1803,6 +1789,12 @@ impl Transpiler {
             self.needs_crow_web = true;
             self.web_features.insert("http".to_string());
             self.modules.insert("web".to_string());
+        } else if path == "ui" {
+            // `use ui` → enable live view element functions (div, span, h1, button, etc.)
+            self.needs_ui = true;
+            self.needs_crow_web = true;
+            self.web_features.insert("live".to_string());
+            self.modules.insert("ui".to_string());
         } else if path == "db" {
             self.needs_crow_db = true;
             self.db_features.insert("sqlite".to_string());
@@ -1817,14 +1809,6 @@ impl Transpiler {
             .map(|p| format!("serde_json::json!({})", p))
             .collect::<Vec<_>>()
             .join(", ")
-    }
-
-    fn pattern_to_string(&mut self, pattern: &Pattern) -> String {
-        match pattern {
-            Pattern::Literal(e) => self.expr_to_string(e),
-            Pattern::Range(a, b) => format!("{}..={}", self.expr_to_string(a), self.expr_to_string(b)),
-            Pattern::Wildcard => "_".to_string(),
-        }
     }
 
     /// Convert an expression to Rust code in "bare-name" mode:
@@ -2667,6 +2651,83 @@ impl Transpiler {
                         return format!("{{ let _t1 = {}.get(\"timestamp\").copied().unwrap_or(0i64); let _t2 = {}.get(\"timestamp\").copied().unwrap_or(0i64); let _diff = _t2 - _t1; let mut _m = std::collections::BTreeMap::new(); _m.insert(\"seconds\".to_string(), _diff); _m.insert(\"minutes\".to_string(), _diff as f64 / 60.0); _m.insert(\"hours\".to_string(), _diff as f64 / 3600.0); _m.insert(\"days\".to_string(), _diff as f64 / 86400.0); _m }}", arg_strs[0], arg_strs[1]);
                     }
 
+                    // --- UI element builtins (use ui) ---
+                    if self.needs_ui {
+                        // HTML element names → CrowVNode builder calls
+                        const HTML_ELEMENTS: &[&str] = &[
+                            "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6",
+                            "button", "ul", "ol", "li", "form", "a", "nav",
+                            "header", "footer", "section", "table", "tr", "td", "th",
+                            "thead", "tbody", "select", "option", "textarea", "label",
+                            "pre", "code",
+                        ];
+                        // Void elements (no children)
+                        const VOID_ELEMENTS: &[&str] = &["input", "img"];
+
+                        let is_html_el = HTML_ELEMENTS.contains(&name.as_str());
+                        let is_void_el = VOID_ELEMENTS.contains(&name.as_str());
+
+                        if is_html_el || is_void_el {
+                            // Rust method name: "main" → "main_el" (keyword conflict)
+                            let rust_name = if name == "main" { "main_el" } else { name.as_str() };
+
+                            // Separate first Map arg (attrs) from children
+                            let (attr_pairs, child_args): (Vec<(&Expr, &Expr)>, Vec<&Expr>) =
+                                if !args.is_empty() {
+                                    if let Expr::Map(pairs) = &args[0] {
+                                        let attrs: Vec<(&Expr, &Expr)> = pairs.iter().map(|(k, v)| (k, v)).collect();
+                                        let children: Vec<&Expr> = args[1..].iter().collect();
+                                        (attrs, children)
+                                    } else {
+                                        (vec![], args.iter().collect())
+                                    }
+                                } else {
+                                    (vec![], vec![])
+                                };
+
+                            // Build children as CrowVNode expressions
+                            let child_strs: Vec<String> = child_args.iter().map(|child| {
+                                match child {
+                                    Expr::Str(_) => {
+                                        // String literal → CrowVNode::text(...)
+                                        let s_str = self.expr_to_string(child);
+                                        format!("CrowVNode::text(&{})", s_str)
+                                    }
+                                    _ => {
+                                        // Assume it's already a CrowVNode expression
+                                        self.expr_to_string(child)
+                                    }
+                                }
+                            }).collect();
+
+                            // Build the element call
+                            let base = if is_void_el {
+                                format!("CrowVNode::{}()", rust_name)
+                            } else {
+                                format!("CrowVNode::{}(vec![{}])", rust_name, child_strs.join(", "))
+                            };
+
+                            // Chain .attr() and .on_*() calls from the Map
+                            let mut result = base;
+                            for (k, v) in &attr_pairs {
+                                let key_str = match k {
+                                    Expr::Ident(s) => s.clone(),
+                                    Expr::Str(s) => s.clone(),
+                                    _ => self.expr_to_string(k),
+                                };
+                                let val_str = self.expr_to_string(v);
+                                match key_str.as_str() {
+                                    "click" => result = format!("{}.on_click(&{})", result, val_str),
+                                    "input" => result = format!("{}.on_input(&{})", result, val_str),
+                                    "submit" => result = format!("{}.on_submit(&{})", result, val_str),
+                                    _ => result = format!("{}.attr(&{}, &{})", result, self.expr_to_string(k), val_str),
+                                }
+                            }
+
+                            return result;
+                        }
+                    }
+
                     // --- Web builtins ---
                     if name == "route" && self.needs_crow_web {
                         if arg_strs.len() == 3 {
@@ -2894,10 +2955,17 @@ impl Transpiler {
                         return format!("{}.close()", arg_strs[0]);
                     }
 
-                    // live[app, path, handler] → (complex LiveView setup)
+                    // live[app, path, render, handle] → CrowLiveView with separate render/handle
+                    if name == "live" && self.needs_crow_web && arg_strs.len() == 4 {
+                        return format!(
+                            "{{ let _lv = CrowLiveView::new(\"/_ws{}\", CrowLiveState::new(), {}, {}); let _lr = _lv.into_router(&{}); {}.merge(_lr) }}",
+                            arg_strs[1], arg_strs[2], arg_strs[3], arg_strs[1], arg_strs[0]
+                        );
+                    }
+                    // live[app, path, handler] → legacy LiveView (single handler)
                     if name == "live" && self.needs_crow_web && arg_strs.len() == 3 {
                         return format!(
-                            "{{ let lv = crow_web::live::CrowLiveView::new(\"/_ws{}\", crow_web::live::CrowLiveState::new(), {}); let lr = lv.into_router(&{}); {}.merge(lr) }}",
+                            "{{ let _lv = crow_web::live::CrowLiveViewLegacy::new(\"/_ws{}\", CrowLiveState::new(), {}); let _lr = _lv.into_router(&{}); {}.merge(_lr) }}",
                             arg_strs[1], arg_strs[2], arg_strs[1], arg_strs[0]
                         );
                     }
@@ -3066,6 +3134,37 @@ impl Transpiler {
                                 _ => {}
                             }
                         }
+                        // ui.input[...] → CrowVNode::input().attr(...)
+                        if mod_name == "ui" && field == "input" && self.needs_ui {
+                            let (attr_pairs, _child_args): (Vec<(&Expr, &Expr)>, Vec<&Expr>) =
+                                if !args.is_empty() {
+                                    if let Expr::Map(pairs) = &args[0] {
+                                        let attrs: Vec<(&Expr, &Expr)> = pairs.iter().map(|(k, v)| (k, v)).collect();
+                                        let children: Vec<&Expr> = args[1..].iter().collect();
+                                        (attrs, children)
+                                    } else {
+                                        (vec![], args.iter().collect())
+                                    }
+                                } else {
+                                    (vec![], vec![])
+                                };
+                            let mut result = "CrowVNode::input()".to_string();
+                            for (k, v) in &attr_pairs {
+                                let key_str = match k {
+                                    Expr::Ident(s) => s.clone(),
+                                    Expr::Str(s) => s.clone(),
+                                    _ => self.expr_to_string(k),
+                                };
+                                let val_str = self.expr_to_string(v);
+                                match key_str.as_str() {
+                                    "click" => result = format!("{}.on_click(&{})", result, val_str),
+                                    "input" => result = format!("{}.on_input(&{})", result, val_str),
+                                    "submit" => result = format!("{}.on_submit(&{})", result, val_str),
+                                    _ => result = format!("{}.attr(&{}, &{})", result, self.expr_to_string(k), val_str),
+                                }
+                            }
+                            return result;
+                        }
                         // web.new[] → CrowApp::new()
                         if mod_name == "web" && field == "new" && self.needs_crow_web {
                             return "CrowApp::new()".to_string();
@@ -3104,6 +3203,21 @@ impl Transpiler {
                         // Module function call
                         if self.ctx.functions.contains_key(&prefixed) {
                             return format!("{}({})", prefixed, arg_strs.join(", "));
+                        }
+                    }
+
+                    // state.get['key', default] → state.get_i64/get_str/get_f64/get_bool
+                    // based on the inferred type of the default value (2nd arg).
+                    // This hides Rust type names from Crow users.
+                    if field == "get" && args.len() == 2 && self.needs_ui {
+                        let obj_str = self.expr_to_string(object);
+                        let default_type = self.ctx.infer_expr(&args[1]);
+                        match default_type {
+                            CrowType::Int => return format!("{}.get_i64(&{}, {})", obj_str, arg_strs[0], arg_strs[1]),
+                            CrowType::Float => return format!("{}.get_f64(&{}, {})", obj_str, arg_strs[0], arg_strs[1]),
+                            CrowType::Str => return format!("{}.get_str(&{}, &{})", obj_str, arg_strs[0], arg_strs[1]),
+                            CrowType::Bool => return format!("{}.get_bool(&{}, {})", obj_str, arg_strs[0], arg_strs[1]),
+                            _ => {} // fall through to generic handling
                         }
                     }
                 }
@@ -5347,5 +5461,76 @@ mod tests {
         let rust = transpile("use web\nfn sender[send]\n    send['chunk1']\n\nfn handler[req]\n    return stream[sender]\n\napp = web.new[]\napp = route[app, '/', handler]\n");
         assert!(rust.contains("mpsc::channel"), "should use mpsc channel for streaming\n{}", rust);
         assert!(rust.contains("Body::from_stream"), "should use Body::from_stream\n{}", rust);
+    }
+
+    // --- UI / LiveView transpiler tests ---
+
+    #[test]
+    fn test_ui_imports() {
+        let rust = transpile("use web\nuse ui\napp = web.new[]\n");
+        assert!(rust.contains("use crow_web::view::CrowVNode;"), "should import CrowVNode\n{}", rust);
+        assert!(rust.contains("use crow_web::live::{CrowLiveView, CrowLiveState};"), "should import CrowLiveView/CrowLiveState\n{}", rust);
+    }
+
+    #[test]
+    fn test_ui_div_text() {
+        let rust = transpile("use web\nuse ui\nx = div[h1['hello']]\n");
+        assert!(rust.contains("CrowVNode::div(vec![CrowVNode::h1(vec![CrowVNode::text("), "should emit CrowVNode::div with h1 child\n{}", rust);
+    }
+
+    #[test]
+    fn test_ui_button_click() {
+        let rust = transpile("use web\nuse ui\nx = button[[click = 'inc'], '+']\n");
+        assert!(rust.contains("CrowVNode::button(vec![CrowVNode::text("), "should emit CrowVNode::button\n{}", rust);
+        assert!(rust.contains(".on_click("), "should emit .on_click()\n{}", rust);
+    }
+
+    #[test]
+    fn test_ui_input_via_module() {
+        let rust = transpile("use web\nuse ui\nx = ui.input[[type = 'text', input = 'change']]\n");
+        assert!(rust.contains("CrowVNode::input()"), "should emit CrowVNode::input()\n{}", rust);
+        assert!(rust.contains(".attr("), "should emit .attr() for type\n{}", rust);
+        assert!(rust.contains(".on_input("), "should emit .on_input()\n{}", rust);
+    }
+
+    #[test]
+    fn test_ui_live_4arg() {
+        let rust = transpile("use web\nuse ui\nfn render[s]\n    return div[h1['hi']]\n\nfn handle[s, e, v]\n    log[e]\n\napp = web.new[]\napp = live[app, '/counter', render, handle]\n");
+        assert!(rust.contains("CrowLiveView::new("), "should emit CrowLiveView::new\n{}", rust);
+        assert!(rust.contains("CrowLiveState::new()"), "should emit CrowLiveState::new()\n{}", rust);
+        assert!(rust.contains("into_router("), "should emit into_router\n{}", rust);
+    }
+
+    #[test]
+    fn test_ui_nested_elements() {
+        let rust = transpile("use web\nuse ui\nx = div[span['a'], p['b']]\n");
+        assert!(rust.contains("CrowVNode::div(vec![CrowVNode::span("), "should emit nested elements\n{}", rust);
+        assert!(rust.contains("CrowVNode::p(vec![CrowVNode::text("), "should emit p element\n{}", rust);
+    }
+
+    #[test]
+    fn test_ui_attr_class() {
+        let rust = transpile("use web\nuse ui\nx = div[[class = 'container'], h1['title']]\n");
+        assert!(rust.contains(".attr("), "should emit .attr() for class\n{}", rust);
+        assert!(rust.contains("container"), "should contain class value\n{}", rust);
+    }
+
+    #[test]
+    fn test_ui_state_get_int() {
+        let rust = transpile("use web\nuse ui\nfn render[state]\n    count = state.get['count', 0]\n    return div[h1['{count}']]\n");
+        assert!(rust.contains(".get_i64("), "state.get with int default should map to get_i64\n{}", rust);
+        assert!(!rust.contains("get_i64["), "should not contain Crow syntax in output\n{}", rust);
+    }
+
+    #[test]
+    fn test_ui_state_get_str() {
+        let rust = transpile("use web\nuse ui\nfn render[state]\n    name = state.get['name', '']\n    return div[h1['{name}']]\n");
+        assert!(rust.contains(".get_str("), "state.get with str default should map to get_str\n{}", rust);
+    }
+
+    #[test]
+    fn test_ui_state_get_bool() {
+        let rust = transpile("use web\nuse ui\nfn render[state]\n    active = state.get['active', false]\n    return div[h1['{active}']]\n");
+        assert!(rust.contains(".get_bool("), "state.get with bool default should map to get_bool\n{}", rust);
     }
 }

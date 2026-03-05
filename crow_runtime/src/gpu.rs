@@ -421,18 +421,266 @@ fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
 }
 
 
-/// GPU sum reduction — downloads to CPU for final reduction.
-/// For large tensors, does partial GPU reduction then CPU finish.
+/// GPU matrix multiplication: A (m×k) * B (k×n) → C (m×n).
+/// Buffers are row-major flat arrays.
+pub fn gpu_matmul(
+    ctx: &GpuContext,
+    a: &GpuBuffer,
+    b: &GpuBuffer,
+    m: u32,
+    k: u32,
+    n: u32,
+) -> GpuBuffer {
+    assert_eq!(a.len, (m * k) as usize, "gpu_matmul: A size mismatch");
+    assert_eq!(b.len, (k * n) as usize, "gpu_matmul: B size mismatch");
+
+    let output = GpuBuffer::zeros(ctx, (m * n) as usize);
+
+    // Uniform buffer for dimensions
+    use wgpu::util::DeviceExt;
+    let dims = [m, k, n, 0u32]; // pad to 16 bytes
+    let dim_buf = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("matmul_dims"),
+        contents: bytemuck::cast_slice(&dims),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    let shader_src = r#"
+struct Dims {
+    m: u32,
+    k: u32,
+    n: u32,
+    _pad: u32,
+}
+
+@group(0) @binding(0) var<storage, read> a: array<f32>;
+@group(0) @binding(1) var<storage, read> b: array<f32>;
+@group(0) @binding(2) var<storage, read_write> out: array<f32>;
+@group(0) @binding(3) var<uniform> dims: Dims;
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let row = gid.x;
+    let col = gid.y;
+    if row >= dims.m || col >= dims.n {
+        return;
+    }
+    var sum: f32 = 0.0;
+    for (var i: u32 = 0u; i < dims.k; i = i + 1u) {
+        sum = sum + a[row * dims.k + i] * b[i * dims.n + col];
+    }
+    out[row * dims.n + col] = sum;
+}
+"#;
+
+    let module = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("matmul_shader"),
+        source: wgpu::ShaderSource::Wgsl(shader_src.into()),
+    });
+
+    let bind_group_layout = ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[
+            storage_entry(0, true),
+            storage_entry(1, true),
+            storage_entry(2, false),
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    let pipeline_layout = ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[&bind_group_layout],
+        ..Default::default()
+    });
+
+    let pipeline = ctx.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: Some(&pipeline_layout),
+        module: &module,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+
+    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: a.buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: b.buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: output.buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 3, resource: dim_buf.as_entire_binding() },
+        ],
+    });
+
+    let wg_x = (m + 15) / 16;
+    let wg_y = (n + 15) / 16;
+    let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(wg_x, wg_y, 1);
+    }
+    ctx.queue.submit(Some(encoder.finish()));
+
+    output
+}
+
+/// GPU parallel sum reduction.
+/// Uses a tree-reduction shader for large inputs, falls back to CPU for small ones.
 pub fn gpu_sum(ctx: &GpuContext, input: &GpuBuffer) -> f64 {
-    // For now, download and sum on CPU. A full GPU reduction tree
-    // is an optimization we can add later when profiling shows need.
-    let data = input.to_f64(ctx);
-    data.iter().sum()
+    // For small buffers, CPU reduction is faster (avoids shader compilation overhead)
+    if input.len <= 1024 {
+        let data = input.to_f64(ctx);
+        return data.iter().sum();
+    }
+
+    // Tree reduction: each workgroup reduces 256 elements → 1 partial sum
+    let mut current = gpu_reduce_step(ctx, input);
+    while current.len > 1 {
+        current = gpu_reduce_step(ctx, &current);
+    }
+    let result = current.to_f64(ctx);
+    result[0]
+}
+
+/// One step of parallel reduction: input[N] → output[ceil(N/256)]
+fn gpu_reduce_step(ctx: &GpuContext, input: &GpuBuffer) -> GpuBuffer {
+    let workgroup_size = 256u32;
+    let n = input.len as u32;
+    let num_workgroups = (n + workgroup_size - 1) / workgroup_size;
+    let output = GpuBuffer::zeros(ctx, num_workgroups as usize);
+
+    let shader_src = format!(
+        r#"
+@group(0) @binding(0) var<storage, read> input: array<f32>;
+@group(0) @binding(1) var<storage, read_write> output: array<f32>;
+
+var<workgroup> wg_data: array<f32, {workgroup_size}>;
+
+@compute @workgroup_size({workgroup_size})
+fn main(
+    @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(workgroup_id) wid: vec3<u32>,
+) {{
+    let global_id = wid.x * {workgroup_size}u + lid.x;
+    let n = arrayLength(&input);
+
+    // Load into workgroup memory
+    if global_id < n {{
+        wg_data[lid.x] = input[global_id];
+    }} else {{
+        wg_data[lid.x] = 0.0;
+    }}
+    workgroupBarrier();
+
+    // Tree reduction in workgroup memory
+    var stride = {workgroup_size}u / 2u;
+    loop {{
+        if stride == 0u {{
+            break;
+        }}
+        if lid.x < stride {{
+            wg_data[lid.x] = wg_data[lid.x] + wg_data[lid.x + stride];
+        }}
+        workgroupBarrier();
+        stride = stride / 2u;
+    }}
+
+    // First thread writes result
+    if lid.x == 0u {{
+        output[wid.x] = wg_data[0];
+    }}
+}}
+"#
+    );
+
+    let module = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("reduce_shader"),
+        source: wgpu::ShaderSource::Wgsl(shader_src.into()),
+    });
+
+    let bind_group_layout = ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[storage_entry(0, true), storage_entry(1, false)],
+    });
+
+    let pipeline_layout = ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[&bind_group_layout],
+        ..Default::default()
+    });
+
+    let pipeline = ctx.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: Some(&pipeline_layout),
+        module: &module,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+
+    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: input.buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: output.buffer.as_entire_binding() },
+        ],
+    });
+
+    let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(num_workgroups, 1, 1);
+    }
+    ctx.queue.submit(Some(encoder.finish()));
+
+    output
 }
 
 /// Check if GPU is available.
 pub fn gpu_available() -> bool {
     GpuContext::get().is_some()
+}
+
+/// Query GPU memory info. Returns (used_bytes_estimate, max_buffer_size).
+/// `used_bytes_estimate` is approximate — wgpu doesn't expose exact VRAM usage.
+pub fn gpu_memory_info(ctx: &GpuContext) -> (u64, u64) {
+    let limits = ctx.device.limits();
+    let max_buffer = limits.max_buffer_size;
+    // wgpu doesn't expose current VRAM usage; return 0 as estimate
+    (0, max_buffer)
+}
+
+/// Try to allocate a GPU buffer, returning None if allocation fails (OOM).
+pub fn gpu_try_alloc(ctx: &GpuContext, len: usize) -> Option<GpuBuffer> {
+    let byte_size = (len * std::mem::size_of::<f32>()) as u64;
+    let limits = ctx.device.limits();
+    if byte_size > limits.max_buffer_size {
+        return None; // Would exceed max buffer size
+    }
+    // Attempt allocation — wgpu will panic on true OOM, so we check limits first
+    Some(GpuBuffer::zeros(ctx, len))
 }
 
 #[cfg(test)]
@@ -518,10 +766,212 @@ mod tests {
     }
 
     #[test]
-    fn test_gpu_sum() {
+    fn test_gpu_sum_small() {
         let Some(ctx) = skip_if_no_gpu() else { return };
         let a = GpuBuffer::from_f64(ctx, &[1.0, 2.0, 3.0, 4.0]);
         let s = gpu_sum(ctx, &a);
         assert!((s - 10.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_gpu_sum_large() {
+        let Some(ctx) = skip_if_no_gpu() else { return };
+        // Test with >1024 elements to exercise the GPU reduction shader
+        let n = 4096;
+        let data: Vec<f64> = (1..=n).map(|i| i as f64).collect();
+        let expected: f64 = (n * (n + 1) / 2) as f64;
+        let buf = GpuBuffer::from_f64(ctx, &data);
+        let s = gpu_sum(ctx, &buf);
+        // f32 precision: relative error
+        let rel_err = (s - expected).abs() / expected;
+        assert!(rel_err < 1e-3, "gpu_sum large: expected {expected}, got {s}, rel_err {rel_err}");
+    }
+
+    #[test]
+    fn test_gpu_matmul_2x2() {
+        let Some(ctx) = skip_if_no_gpu() else { return };
+        // [[1,2],[3,4]] * [[5,6],[7,8]] = [[19,22],[43,50]]
+        let a = GpuBuffer::from_f64(ctx, &[1.0, 2.0, 3.0, 4.0]);
+        let b = GpuBuffer::from_f64(ctx, &[5.0, 6.0, 7.0, 8.0]);
+        let c = gpu_matmul(ctx, &a, &b, 2, 2, 2);
+        let result = c.to_f64(ctx);
+        let expected = [19.0, 22.0, 43.0, 50.0];
+        for (got, exp) in result.iter().zip(expected.iter()) {
+            assert!((got - exp).abs() < 1e-3, "matmul 2x2: got {got}, expected {exp}");
+        }
+    }
+
+    #[test]
+    fn test_gpu_matmul_rect() {
+        let Some(ctx) = skip_if_no_gpu() else { return };
+        // (2×3) * (3×2) = (2×2)
+        // [[1,2,3],[4,5,6]] * [[7,8],[9,10],[11,12]] = [[58,64],[139,154]]
+        let a = GpuBuffer::from_f64(ctx, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        let b = GpuBuffer::from_f64(ctx, &[7.0, 8.0, 9.0, 10.0, 11.0, 12.0]);
+        let c = gpu_matmul(ctx, &a, &b, 2, 3, 2);
+        let result = c.to_f64(ctx);
+        let expected = [58.0, 64.0, 139.0, 154.0];
+        for (got, exp) in result.iter().zip(expected.iter()) {
+            assert!((got - exp).abs() < 1e-2, "matmul rect: got {got}, expected {exp}");
+        }
+    }
+
+    #[test]
+    fn test_gpu_matmul_identity() {
+        let Some(ctx) = skip_if_no_gpu() else { return };
+        // A * I = A
+        let a = GpuBuffer::from_f64(ctx, &[1.0, 2.0, 3.0, 4.0]);
+        let eye = GpuBuffer::from_f64(ctx, &[1.0, 0.0, 0.0, 1.0]);
+        let c = gpu_matmul(ctx, &a, &eye, 2, 2, 2);
+        let result = c.to_f64(ctx);
+        for (got, exp) in result.iter().zip([1.0, 2.0, 3.0, 4.0].iter()) {
+            assert!((got - exp).abs() < 1e-5, "matmul identity: got {got}, expected {exp}");
+        }
+    }
+
+    #[test]
+    fn test_gpu_memory_info() {
+        let Some(ctx) = skip_if_no_gpu() else { return };
+        let (_used, max_buf) = gpu_memory_info(ctx);
+        assert!(max_buf > 0, "max_buffer_size should be > 0");
+    }
+
+    #[test]
+    fn test_gpu_try_alloc_small() {
+        let Some(ctx) = skip_if_no_gpu() else { return };
+        let buf = gpu_try_alloc(ctx, 1024);
+        assert!(buf.is_some(), "should be able to allocate 1024 f32s");
+    }
+
+    #[test]
+    fn test_gpu_try_alloc_too_large() {
+        let Some(ctx) = skip_if_no_gpu() else { return };
+        // Try to allocate more than max_buffer_size
+        let (_used, max_buf) = gpu_memory_info(ctx);
+        let too_large = (max_buf / 4) as usize + 1; // +1 element beyond max
+        let buf = gpu_try_alloc(ctx, too_large);
+        assert!(buf.is_none(), "should fail to allocate beyond max_buffer_size");
+    }
+
+    #[test]
+    fn test_gpu_all_unary_ops() {
+        let Some(ctx) = skip_if_no_gpu() else { return };
+        let data = [1.0_f64, 2.0, 0.5, 0.25];
+        let buf = GpuBuffer::from_f64(ctx, &data);
+
+        // Test all unary ops produce reasonable results
+        for op in &["neg", "abs", "exp", "log", "sqrt", "sin", "cos"] {
+            let result = gpu_elementwise_unary(ctx, &buf, op);
+            let out = result.to_f64(ctx);
+            assert_eq!(out.len(), 4, "unary op {op} should preserve length");
+            for v in &out {
+                assert!(v.is_finite(), "unary op {op} produced non-finite: {v}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_gpu_all_binary_ops() {
+        let Some(ctx) = skip_if_no_gpu() else { return };
+        let a = GpuBuffer::from_f64(ctx, &[10.0, 20.0, 30.0, 40.0]);
+        let b = GpuBuffer::from_f64(ctx, &[2.0, 4.0, 5.0, 8.0]);
+
+        for op in &["add", "sub", "mul", "div"] {
+            let result = gpu_elementwise_binary(ctx, &a, &b, op);
+            let out = result.to_f64(ctx);
+            assert_eq!(out.len(), 4, "binary op {op} should preserve length");
+            for v in &out {
+                assert!(v.is_finite(), "binary op {op} produced non-finite: {v}");
+            }
+        }
+    }
+
+    // ── Benchmarks ────────────────────────────────────────────────────────
+    // These tests measure GPU vs CPU performance and print results.
+    // Run with: cargo test -p crow_runtime bench_gpu -- --nocapture --ignored
+
+    #[test]
+    #[ignore] // Run manually: cargo test bench_gpu_matmul -- --nocapture --ignored
+    fn bench_gpu_matmul_vs_cpu() {
+        use std::time::Instant;
+        let Some(ctx) = skip_if_no_gpu() else {
+            println!("No GPU available, skipping benchmark");
+            return;
+        };
+
+        for &size in &[64, 128, 256, 512] {
+            let n = size;
+            let data_a: Vec<f64> = (0..n*n).map(|i| (i as f64) * 0.001).collect();
+            let data_b: Vec<f64> = (0..n*n).map(|i| (i as f64) * 0.002).collect();
+
+            // GPU timing (includes upload + compute + download)
+            let t0 = Instant::now();
+            let a_gpu = GpuBuffer::from_f64(ctx, &data_a);
+            let b_gpu = GpuBuffer::from_f64(ctx, &data_b);
+            let c_gpu = gpu_matmul(ctx, &a_gpu, &b_gpu, n as u32, n as u32, n as u32);
+            let _result_gpu = c_gpu.to_f64(ctx);
+            let gpu_time = t0.elapsed();
+
+            // CPU timing (faer)
+            let t0 = Instant::now();
+            let a_t = crate::tensor::CrowTensor::from_vec(data_a.clone(), vec![n, n]);
+            let b_t = crate::tensor::CrowTensor::from_vec(data_b.clone(), vec![n, n]);
+            let _c_t = a_t.matmul(&b_t);
+            let cpu_time = t0.elapsed();
+
+            let speedup = cpu_time.as_secs_f64() / gpu_time.as_secs_f64();
+            println!("matmul {n}x{n}: GPU={gpu_time:.2?}, CPU={cpu_time:.2?}, speedup={speedup:.2}x");
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_gpu_elementwise_vs_cpu() {
+        use std::time::Instant;
+        let Some(ctx) = skip_if_no_gpu() else { return };
+
+        for &size in &[10_000, 100_000, 1_000_000] {
+            let data: Vec<f64> = (0..size).map(|i| (i as f64) * 0.001).collect();
+
+            // GPU: upload + exp + download
+            let t0 = Instant::now();
+            let buf = GpuBuffer::from_f64(ctx, &data);
+            let out = gpu_elementwise_unary(ctx, &buf, "exp");
+            let _result = out.to_f64(ctx);
+            let gpu_time = t0.elapsed();
+
+            // CPU: exp
+            let t0 = Instant::now();
+            let _cpu_result: Vec<f64> = data.iter().map(|x| x.exp()).collect();
+            let cpu_time = t0.elapsed();
+
+            let speedup = cpu_time.as_secs_f64() / gpu_time.as_secs_f64();
+            println!("exp[{size}]: GPU={gpu_time:.2?}, CPU={cpu_time:.2?}, speedup={speedup:.2}x");
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_gpu_reduction_vs_cpu() {
+        use std::time::Instant;
+        let Some(ctx) = skip_if_no_gpu() else { return };
+
+        for &size in &[10_000, 100_000, 1_000_000] {
+            let data: Vec<f64> = (0..size).map(|i| (i as f64) * 0.001).collect();
+
+            // GPU sum
+            let t0 = Instant::now();
+            let buf = GpuBuffer::from_f64(ctx, &data);
+            let _gpu_sum = gpu_sum(ctx, &buf);
+            let gpu_time = t0.elapsed();
+
+            // CPU sum
+            let t0 = Instant::now();
+            let _cpu_sum: f64 = data.iter().sum();
+            let cpu_time = t0.elapsed();
+
+            let speedup = cpu_time.as_secs_f64() / gpu_time.as_secs_f64();
+            println!("sum[{size}]: GPU={gpu_time:.2?}, CPU={cpu_time:.2?}, speedup={speedup:.2}x");
+        }
     }
 }

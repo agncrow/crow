@@ -444,12 +444,6 @@ impl TypeContext {
                 self.collect_call_types_expr(condition);
                 for s in body { self.collect_call_types_stmt(s); }
             }
-            Stmt::Match { value, arms } => {
-                self.collect_call_types_expr(value);
-                for arm in arms {
-                    for s in &arm.body { self.collect_call_types_stmt(s); }
-                }
-            }
             Stmt::FieldAssign { object, value, .. } => {
                 self.collect_call_types_expr(object);
                 self.collect_call_types_expr(value);

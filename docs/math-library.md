@@ -956,13 +956,13 @@ Scaling the same training code:
 |---|---|---|
 | Julia | ★★★★★ | JIT-compiled, LLVM, as fast as C |
 | Mojo | ★★★★½ | MLIR, designed for speed, early but promising |
-| **Crow** | ★★★★ | Transpiles to Rust, faer for CPU math (faster than OpenBLAS), wgpu for GPU — unproven at scale |
+| **Crow** | ★★★★ | Transpiles to Rust, faer for CPU math (faster than OpenBLAS), wgpu for GPU — verified with matmul, reduction, element-wise shaders |
 | JAX | ★★★★ | XLA compiler, very fast for compiled workloads |
 | PyTorch | ★★★½ | C++ backend is fast, Python overhead on control flow |
 | MATLAB | ★★★ | BLAS is fast, everything else is slow |
 | R | ★½ | Slow unless calling C |
 
-Crow gets ★★★★ not ★★★★★ because it's unproven. The design should produce fast code (Rust output, BLAS, GPU dispatch), but nobody has benchmarked it yet.
+Crow gets ★★★★ not ★★★★★ because it's young. The design produces fast code (Rust output, faer BLAS, GPU dispatch via wgpu). GPU matmul, parallel reduction, and element-wise ops are verified end-to-end with benchmarks.
 
 ### Ecosystem
 
@@ -1015,7 +1015,7 @@ Honest assessment of what's actually implemented and working, compared to mature
 | Complex numbers | ★★★ | ★★★★★ | ★★★★★ | ★★★★ | ★★★★★ |
 | DataFrames | ★★★★ | ★★★★★ (pandas) | ★★★★ (DataFrames.jl) | ★★★★★ | ★★ |
 | Autograd | ★★★★ | ★★★★★ (JAX) | ★★★★★ | ★ | ★ |
-| GPU | ★★ | ★★★★★ (CuPy) | ★★★★ | ★★ | ★★★★ |
+| GPU | ★★★ | ★★★★★ (CuPy) | ★★★★ | ★★ | ★★★★ |
 | NN layers | ★★★ | ★★★★★ (PyTorch) | ★★★★ (Flux) | ★★ | ★★★ |
 | Syntax ergonomics | ★★★★★ | ★★★ | ★★★★ | ★★★ | ★★★★ |
 
@@ -1033,7 +1033,7 @@ Honest assessment of what's actually implemented and working, compared to mature
 
 - **Statistics depth**: 13 functions vs SciPy's ~200. Core tests covered (chi-square, ANOVA, KS, distribution fitting) but many specialized tests still missing.
 - **Signal processing**: Good coverage (FFT, conv, windows, STFT, spectrogram, lowpass/highpass/bandpass) but no adaptive filters, no wavelet transforms.
-- **GPU**: Directive exists (`gpu[n]`) but runtime GPU execution is not yet proven at scale.
+- **GPU**: Directive works (`gpu[n]`) with verified WGSL shaders for matmul, parallel reduction (sum), and all element-wise ops. Benchmarks available. Memory management with OOM detection. Still ★★★ not ★★★★★ — missing conv2d kernel, multi-GPU coordination, and large-scale production benchmarks.
 - **Ecosystem**: No package manager, no community packages, no pretrained models.
 
 ### Overall

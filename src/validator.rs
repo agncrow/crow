@@ -162,12 +162,6 @@ impl<'a> Validator<'a> {
                 self.validate_expr(condition);
                 for s in body { self.validate_stmt(s); }
             }
-            Stmt::Match { value, arms } => {
-                self.validate_expr(value);
-                for arm in arms {
-                    for s in &arm.body { self.validate_stmt(s); }
-                }
-            }
             Stmt::StructDecl { name, .. } => {
                 self.defined_vars.insert(name.clone());
             }
