@@ -698,6 +698,16 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         // crow_web needs tokio for async runtime
         dep_list.push("tokio = { version = \"1\", features = [\"full\"] }".to_string());
     }
+    if transpiler.needs_crow_db {
+        let db_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_db");
+        let features: Vec<&str> = transpiler.db_features.iter().map(|s| s.as_str()).collect();
+        let features_str = features.join("\", \"");
+        dep_list.push(format!(
+            "crow_db = {{ path = \"{}\", features = [\"{}\"] }}",
+            db_path, features_str
+        ));
+        dep_list.push("serde_json = \"1\"".to_string());
+    }
     let deps = if dep_list.is_empty() {
         String::new()
     } else {

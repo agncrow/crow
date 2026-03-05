@@ -1,0 +1,27 @@
+[package]
+name = "crow_db"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+crow_runtime = { path = "../crow_runtime" }
+serde_json = "1"
+
+# SQLite backend
+rusqlite = { version = "0.38.0", features = ["bundled"], optional = true }
+
+# PostgreSQL backend
+tokio-postgres = { version = "0.7.16", optional = true }
+deadpool-postgres = { version = "0.14", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
+
+# ClickHouse backend
+klickhouse = { version = "0.13", optional = true }
+tokio-stream = { version = "0.1", optional = true }
+
+[features]
+default = []
+sqlite = ["dep:rusqlite"]
+postgres = ["dep:tokio-postgres", "dep:deadpool-postgres", "dep:tokio"]
+clickhouse = ["dep:klickhouse", "dep:tokio", "dep:tokio-stream"]
+

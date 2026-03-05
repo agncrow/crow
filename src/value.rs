@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crow_runtime::frame::CrowFrame;
 use crow_runtime::tensor::CrowTensor;
 use crow_runtime::sparse::CrowSparse;
+use crow_db::DbHandle;
 
 /// Every value in Crow carries error metadata: ok, reason, kind, trace.
 /// Values auto-unwrap — you use them directly.
@@ -100,6 +101,7 @@ pub enum Value {
     Module(ModuleValue),
     Sparse(CrowSparse), // sparse matrix (CSR format)
     Frame(CrowFrame), // column-oriented data frame
+    DbConn(DbHandle), // database connection handle
     Dual(f64, f64), // dual number for autograd: (real, derivative)
     GradFn(FnValue), // gradient function wrapping a user function
     Done, // represents no value (from 'done' status)
@@ -155,6 +157,7 @@ impl Value {
             Value::Module(_) => "module",
             Value::Sparse(_) => "sparse",
             Value::Frame(_) => "frame",
+            Value::DbConn(_) => "db",
             Value::Dual(_, _) => "float", // Dual appears as float to user
             Value::GradFn(_) => "fn",
             Value::Done => "done",
@@ -237,6 +240,7 @@ impl fmt::Display for Value {
             }
             Value::Sparse(s) => write!(f, "{}", s),
             Value::Frame(frame) => write!(f, "{}", frame),
+            Value::DbConn(h) => write!(f, "<db:{}>", h.backend_name()),
             Value::GradFn(func) => write!(f, "<grad {}>", func.name),
             Value::Module(m) => write!(f, "<module {}>", m.name),
             Value::Dual(real, _) => {

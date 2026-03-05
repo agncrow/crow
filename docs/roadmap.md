@@ -8,7 +8,7 @@ What's done, what's remaining, and in what order.
 |------|---------|
 | Core language | Lexer, parser, AST, interpreter, transpiler, checker, formatter, REPL |
 | Type system | Dynamic with inference — int, float, str, bool, array, map, tensor, frame, function, error |
-| Modules | `math`, `math.stats`, `math.nn`, `io`, `frame`, `web` (17 sub-modules) |
+| Modules | `math`, `math.stats`, `math.nn`, `io`, `frame`, `web` (17 sub-modules), `db` (SQLite, PostgreSQL, ClickHouse) |
 | Math (~100 functions) | Creation (9), element-wise (12), trig (7), hyperbolic (3), reductions (9), sorting/selection (6), shape (3), linalg (13), random (12), signal (7), special (5), complex (6), sparse (3) |
 | Statistics (9) | median, std, var, percentile, zscore, corr, cov, ttest, linreg |
 | Neural networks (8) | relu, sigmoid, softmax, gelu, mse, crossentropy, bce, linear |
@@ -18,7 +18,7 @@ What's done, what's remaining, and in what order.
 | Autograd | `grad[f]` functional transformation |
 | Parallel execution | Auto-parallel `for` loops (rayon), statement-level parallelism via dependency analysis |
 | CLI | `crow run`, `crow build`, `crow fmt`, `crow check`, `crow init`, `crow install`, REPL |
-| Tests | 676 unit tests |
+| Tests | 692 unit tests |
 | Documentation | language-spec.md, web-framework.md, math-library.md, feature-map.md, frame-module.md, usage.md, comparison.md, automatic-verification.md |
 
 ## Remaining Work
@@ -101,6 +101,21 @@ These require building a full WASM frontend pipeline (`wasm-bindgen`, `web-sys`,
 - [ ] **`arrow[frame]`** — Arrow IPC response for DataFrames/tensors.
 - [ ] **`stream[fn]`** — Streaming/chunked response.
 
+### P4.5 — Database module ✅
+
+Top-level `db` module (`use db`) with separate `crow_db` crate. SQLite backend fully implemented. PostgreSQL and ClickHouse backends wired but not yet implemented.
+
+- [x] **`connect[url, pool_size?]`** — Unified connection with URL-scheme dispatch (sqlite://, postgres://, http:// for ClickHouse). Automatic connection pooling.
+- [x] **`query[conn, sql]`** — Returns a frame (not array of maps).
+- [x] **`exec[conn, sql, params?]`** — DDL/DML execution, returns affected row count. Params are an array of bind values.
+- [x] **`insert[conn, table, frame]`** — Bulk insert using backend-specific fast paths.
+- [x] **`transact[conn, fn]`** — Named function executes inside a transaction with auto commit/rollback.
+- [x] **`migrate[conn, dir]`** — Forward-only SQL migrations with `_crow_migrations` tracking table.
+- [x] **Conflict resolution** — Language-level disambiguation for `module.fn[]` when multiple modules export the same name.
+- [x] **Interpreter support** — All 6 builtins work in `crow run -i` mode.
+- [x] **Transpiler codegen** — `use db` → `needs_crow_db` flag, `crow_db` in generated `Cargo.toml`, Rust codegen for all builtins.
+- [x] **Tests** — 9 crow_db unit tests + 8 interpreter tests + 8 transpiler tests + integration example.
+
 ### P5 — GPU runtime (weeks)
 
 - [ ] **GPU execution verification**: `gpu[n]` directive exists but actual wgpu execution is unproven. Need to verify tensor ops actually dispatch to GPU.
@@ -150,7 +165,7 @@ These require building a full WASM frontend pipeline (`wasm-bindgen`, `web-sys`,
 **General-purpose (4/10):**
 - **Stdlib (4/10):** P3 added regex, date/time, shell, hashing, and file I/O. That covers the basics, but there's no JSON parsing builtin, no env vars, no networking beyond HTTP, no concurrency primitives beyond auto-parallel, no logging framework, no argument parsing. Compare to Python's 200+ stdlib modules or Go's 150+.
 - **Web (6/10):** This jumped significantly with P4. Crow now has 17 web modules covering server, routing, responses, database, auth, CORS, sessions, templates, caching, rate limiting, file uploads, SSE, WebSocket, LiveView, static files, email, background queues, and API docs — all expressible from Crow source with transpiler codegen. That's comparable feature coverage to Express.js or Flask. It's 6/10 (not higher) because: the codegen emits Rust but end-to-end app testing is limited, there's no ORM, no migrations, no middleware composition, and the WASM client-side story is deferred.
-- **DB (5/10):** SQLite works end-to-end (open, exec, query). JWT auth is integrated. That covers simple apps. Missing: PostgreSQL/MySQL drivers, connection pooling, migrations, ORM, transactions.
+- **DB (6/10):** Top-level `db` module with connection pooling, parameterized queries, transactions, bulk insert, and forward-only migrations. SQLite fully implemented. PostgreSQL and ClickHouse backends wired but not yet implemented. No ORM (by design — Crow uses raw SQL).
 - **Ecosystem (1/10):** No real package registry, no community packages, no third-party libraries. `crow install` exists as a command but there's nothing to install. This is the single biggest gap.
 
 **What moves the needle:**

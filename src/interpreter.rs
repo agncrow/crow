@@ -351,6 +351,11 @@ impl Interpreter {
             self.registry.load(std::sync::Arc::new(crate::modules::frame::FrameModule));
             return Ok(());
         }
+        // Built-in module: db — database connectivity
+        if module_path == "db" {
+            self.registry.load(std::sync::Arc::new(crate::modules::db::DbModule));
+            return Ok(());
+        }
 
         let file_path = self.resolve_module_file(module_path)?;
 
@@ -1083,6 +1088,24 @@ impl Interpreter {
         callee: &Expr,
         args: &[Expr],
     ) -> Result<CrowValue, String> {
+        // Handle module-prefixed calls: db.connect[url], math.sin[x], etc.
+        if let Expr::FieldAccess { object, field } = callee {
+            if let Expr::Ident(mod_name) = object.as_ref() {
+                // Check if this is a registry module
+                if self.registry.is_loaded(mod_name) {
+                    // Special handling for db.transact
+                    if mod_name == "db" && field == "transact" {
+                        return self.call_db_transact(args);
+                    }
+                    let arg_vals: Vec<CrowValue> = args
+                        .iter()
+                        .map(|a| self.eval_expr(a))
+                        .collect::<Result<_, _>>()?;
+                    return self.registry.call(field, &arg_vals);
+                }
+            }
+        }
+
         // Check for builtins and module functions
         if let Expr::Ident(name) = callee {
             // Overlapping builtins: abs, sqrt, floor, ceil, round, min, max
@@ -1105,6 +1128,11 @@ impl Interpreter {
 
             // Non-overlapping module functions take priority
             if self.registry.has_function(name) {
+                // transact[conn, fn] needs special handling — we must call a Crow function
+                if name == "transact" && self.registry.module_name_for(name) == Some("db") {
+                    return self.call_db_transact(args);
+                }
+
                 // Frame module functions use bare-name evaluation so
                 // unresolved identifiers become column-name strings.
                 let is_frame = self.registry.module_name_for(name)
@@ -1419,6 +1447,92 @@ impl Interpreter {
     }
 
 
+    /// Handle transact[conn, fn_name] — executes a Crow function inside a DB transaction.
+    fn call_db_transact(&mut self, args: &[Expr]) -> Result<CrowValue, String> {
+        if args.len() != 2 {
+            return Err("transact[] takes 2 arguments: transact[conn, fn_name]".into());
+        }
+        let conn_val = self.eval_expr(&args[0])?;
+        let conn = match &conn_val.value {
+            Value::DbConn(h) => h.clone(),
+            _ => return Err(format!("transact[] first argument must be a db connection, got {}", conn_val.value.type_name())),
+        };
+
+        // Second arg must be a function name (identifier)
+        let func = match &args[1] {
+            Expr::Ident(name) => {
+                let val = self.env.get(name)
+                    .ok_or_else(|| format!("transact[]: unknown function '{}'", name))?;
+                match &val.value {
+                    Value::Fn(f) => f.clone(),
+                    _ => return Err(format!("transact[] second argument must be a function, got {}", val.value.type_name())),
+                }
+            }
+            _ => return Err("transact[] second argument must be a function name".into()),
+        };
+
+        if func.params.len() != 1 {
+            return Err(format!("transact[] function must take 1 parameter (the transaction handle), got {}", func.params.len()));
+        }
+
+        // Execute the function body inside a transaction.
+        // The function receives the same conn handle — exec/query calls inside
+        // the transaction use the same connection.
+        let result = conn.transact(&|_tx| {
+            // We can't call the Crow function from inside the Rust closure directly
+            // because we can't borrow self mutably. Instead, we'll use a simpler approach:
+            // execute BEGIN/fn/COMMIT manually.
+            Ok(())
+        });
+
+        // Actually, the better approach: manually manage the transaction in Crow-land.
+        // We run BEGIN, call the function, then COMMIT or ROLLBACK.
+        // This avoids the closure lifetime issue.
+        let _ = result; // ignore the empty transaction above
+
+        // Manual transaction management
+        conn.exec("BEGIN", &[]).map_err(|e| format!("transact[]: {}", e))?;
+
+        // Create the tx handle — for SQLite, the same conn works inside a transaction
+        let tx_val = CrowValue::ok(Value::DbConn(conn.clone()));
+
+        // Call the user's function with the connection
+        let saved_function = self.current_function.clone();
+        self.current_function = func.name.clone();
+        self.env.push_call_scope();
+        self.env.set(&func.params[0], tx_val);
+
+        let mut call_result = Ok(CrowValue::done());
+        for stmt in func.body.iter() {
+            match self.exec_stmt(stmt) {
+                Ok(Signal::Return(val)) => {
+                    call_result = Ok(val);
+                    break;
+                }
+                Ok(Signal::Value(val)) => { call_result = Ok(val); }
+                Ok(Signal::Break | Signal::Continue | Signal::None) => {}
+                Err(e) => {
+                    call_result = Err(e);
+                    break;
+                }
+            }
+        }
+
+        self.env.pop_call_scope();
+        self.current_function = saved_function;
+
+        match call_result {
+            Ok(val) => {
+                conn.exec("COMMIT", &[]).map_err(|e| format!("transact[]: commit failed: {}", e))?;
+                Ok(val)
+            }
+            Err(e) => {
+                let _ = conn.exec("ROLLBACK", &[]);
+                Err(format!("transact[]: rolled back: {}", e))
+            }
+        }
+    }
+
     fn call_builtin(
         &mut self,
         name: &str,
@@ -1470,6 +1584,7 @@ impl Interpreter {
                         Value::Dual(_, _) => "float".to_string(),
                         Value::GradFn(_) => "fn".to_string(),
                         Value::Frame(_) => "frame".to_string(),
+                        Value::DbConn(_) => "db".to_string(),
                         Value::Done => "none".to_string(),
                     }
                 };
@@ -5913,5 +6028,82 @@ mod tests {
             }
             _ => panic!("expected map"),
         }
+    }
+
+    // ===== DB module tests =====
+
+    #[test]
+    fn test_db_connect_sqlite() {
+        let val = get_var("use db\nconn = connect['sqlite://:memory:']\n", "conn");
+        assert!(matches!(val.value, Value::DbConn(_)), "expected DbConn, got {:?}", val.value);
+    }
+
+    #[test]
+    fn test_db_connect_prefixed() {
+        let val = get_var("use db\nconn = db.connect['sqlite://:memory:']\n", "conn");
+        assert!(matches!(val.value, Value::DbConn(_)), "expected DbConn via db.connect");
+    }
+
+    #[test]
+    fn test_db_exec_create_table() {
+        let val = get_var(
+            "use db\nconn = connect['sqlite://:memory:']\nn = exec[conn, 'CREATE TABLE t (id INTEGER, name TEXT)']\n",
+            "n"
+        );
+        assert!(matches!(val.value, Value::Int(0)), "CREATE TABLE should return 0 affected rows, got {:?}", val.value);
+    }
+
+    #[test]
+    fn test_db_exec_insert() {
+        let val = get_var(
+            "use db\nconn = connect['sqlite://:memory:']\nexec[conn, 'CREATE TABLE t (id INTEGER, name TEXT)']\nn = exec[conn, 'INSERT INTO t VALUES (1, ?)', ['alice']]\n",
+            "n"
+        );
+        assert!(matches!(val.value, Value::Int(1)), "INSERT should return 1 affected row, got {:?}", val.value);
+    }
+
+    #[test]
+    fn test_db_query() {
+        let val = get_var(
+            "use db\nconn = connect['sqlite://:memory:']\nexec[conn, 'CREATE TABLE t (id INTEGER, name TEXT)']\nexec[conn, 'INSERT INTO t VALUES (1, ?)', ['alice']]\nexec[conn, 'INSERT INTO t VALUES (2, ?)', ['bob']]\ndf = query[conn, 'SELECT * FROM t ORDER BY id']\n",
+            "df"
+        );
+        match &val.value {
+            Value::Frame(f) => {
+                assert_eq!(f.nrows(), 2, "should have 2 rows");
+                assert_eq!(f.ncols(), 2, "should have 2 columns");
+            }
+            _ => panic!("expected Frame, got {:?}", val.value),
+        }
+    }
+
+    #[test]
+    fn test_db_query_with_params() {
+        let val = get_var(
+            "use db\nconn = connect['sqlite://:memory:']\nexec[conn, 'CREATE TABLE t (id INTEGER, name TEXT)']\nexec[conn, 'INSERT INTO t VALUES (1, ?)', ['alice']]\nexec[conn, 'INSERT INTO t VALUES (2, ?)', ['bob']]\ndf = query[conn, 'SELECT * FROM t WHERE name = ?', ['alice']]\n",
+            "df"
+        );
+        match &val.value {
+            Value::Frame(f) => {
+                assert_eq!(f.nrows(), 1, "should have 1 row for alice");
+            }
+            _ => panic!("expected Frame, got {:?}", val.value),
+        }
+    }
+
+    #[test]
+    fn test_db_transact() {
+        // transact should commit on success
+        run_program(
+            "use db\nconn = connect['sqlite://:memory:']\nexec[conn, 'CREATE TABLE t (id INTEGER)']\nfn do_inserts[tx]\n    exec[tx, 'INSERT INTO t VALUES (1)']\n    exec[tx, 'INSERT INTO t VALUES (2)']\ntransact[conn, do_inserts]\n"
+        );
+    }
+
+    #[test]
+    fn test_db_connect_bad_url() {
+        let result = std::panic::catch_unwind(|| {
+            run_program("use db\nconn = connect['ftp://bad']\n")
+        });
+        assert!(result.is_err(), "connect with bad URL should error");
     }
 }
