@@ -804,6 +804,30 @@ result = sqrt[16]    --- 4 ---
 x = zeros[3, 3]     --- 3x3 tensor of zeros ---
 ```
 
+### Conflict Resolution
+
+When two imported modules export the same function name, bare calls are ambiguous. Crow throws an error and requires the module prefix to disambiguate.
+
+```
+use db
+use web
+
+--- ERROR: ambiguous — use db.connect or web.connect ---
+conn = connect['postgres://...']
+
+--- Correct: use module prefix ---
+db_conn = db.connect['postgres://user:pass@host/mydb']
+ws_conn = web.connect['ws://localhost/ws']
+
+--- No conflict: only one module exports exec ---
+exec[db_conn, 'SELECT 1']
+```
+
+Rules:
+- If only one module exports a name, bare calls work.
+- If multiple modules export the same name, bare calls error with a list of qualified alternatives.
+- Module-prefixed calls (`module.fn[args]`) always work regardless of conflicts.
+
 ### Built-in Module: `math`
 
 The `math` module is built in — no file needed. It provides tensor creation, element-wise operations, reductions, shape operations, and linear algebra. After `use math`, all functions are called directly (e.g. `zeros[3]`, not `math.zeros[3]`).
@@ -1236,14 +1260,6 @@ serve[app, 3000]
 | `respond[status, body]` | Response with custom status code |
 | `redirect[url]` | HTTP redirect response |
 
-#### Database (`use web.db`)
-
-| Function | Description |
-|---|---|
-| `sqlite[path]` | Open a SQLite database |
-| `exec[db, sql]` | Execute a SQL statement (returns affected row count) |
-| `query[db, sql]` | Query and return array of maps |
-
 #### Auth (`use web.auth`)
 
 | Function | Description |
@@ -1346,6 +1362,117 @@ serve[app, 3000]
 | `put[url, body]` | HTTP PUT request |
 | `del[url]` | HTTP DELETE request |
 
+### Built-in Module: db
+
+The `db` module provides database connectivity. Import with `use db`. Supports SQLite, PostgreSQL, and ClickHouse via URL-scheme dispatch. See `docs/db-module.md` for full architecture details.
+
+#### Connection
+
+```
+use db
+
+--- SQLite ---
+conn = connect['sqlite://data.db']
+
+--- PostgreSQL (default pool: 10 connections) ---
+conn = connect['postgres://user:pass@host/mydb']
+
+--- ClickHouse ---
+conn = connect['http://localhost:8123/default']
+
+--- Custom pool size ---
+conn = connect['postgres://user:pass@host/mydb', 20]
+```
+
+| Function | Description |
+|---|---|
+| `connect[url]` | Open a database connection (pool) with default pool size |
+| `connect[url, pool_size]` | Open a database connection (pool) with custom pool size |
+
+Note: `connect` is also exported by `web.ws`. If both `use db` and `use web` are active, bare `connect[...]` is ambiguous — use `db.connect[...]` or `web.connect[...]`.
+
+#### Query & Execute
+
+| Function | Description |
+|---|---|
+| `query[conn, sql]` | Execute a SELECT and return results as a frame |
+| `exec[conn, sql]` | Execute DDL/DML (CREATE, INSERT, UPDATE, DELETE), return affected row count |
+| `exec[conn, sql, params]` | Execute parameterized DDL/DML with an array of bind values |
+
+```
+use db
+conn = connect['postgres://user:pass@host/mydb']
+
+--- Query returns a frame ---
+users = query[conn, 'SELECT * FROM users']
+log[len[users]]
+filtered = filter[users, age gt 25]
+
+--- Execute returns affected row count ---
+exec[conn, 'CREATE TABLE users (id INT, name TEXT)']
+n = exec[conn, 'DELETE FROM users WHERE age < ?', [18]]
+log[n]
+```
+
+#### Bulk Insert
+
+| Function | Description |
+|---|---|
+| `insert[conn, table, frame]` | Bulk insert a frame into a table using native fast paths |
+
+Uses backend-specific protocols for maximum performance:
+- **PostgreSQL:** COPY protocol
+- **ClickHouse:** Native RowBinary
+- **SQLite:** Batched prepared statements in a transaction
+
+```
+use db
+conn = connect['http://localhost:8123/default']
+insert[conn, 'events', events_frame]
+```
+
+#### Transactions
+
+| Function | Description |
+|---|---|
+| `transact[conn, fn]` | Execute a named function inside a transaction (auto commit/rollback) |
+
+Checks out one connection from the pool, passes it to the function, commits on success, rolls back on error. No `begin`/`commit`/`rollback` builtins — one way to do transactions.
+
+```
+use db
+conn = connect['postgres://user:pass@host/mydb']
+
+fn transfer[t]
+  exec[t, 'UPDATE accounts SET balance = balance - 100 WHERE id = 1']
+  exec[t, 'UPDATE accounts SET balance = balance + 100 WHERE id = 2']
+
+transact[conn, transfer]
+```
+
+#### Migrations
+
+| Function | Description |
+|---|---|
+| `migrate[conn, dir]` | Run forward-only SQL migrations from a directory |
+
+Reads `.sql` files sorted by filename, executes new ones in order, tracks applied migrations in `_crow_migrations` table. Returns count of newly applied migrations.
+
+```
+use db
+conn = connect['postgres://user:pass@host/mydb']
+n = migrate[conn, 'migrations/']
+log['{n} migrations applied']
+```
+
+#### Pool Defaults
+
+| Backend | Default Pool Size | Notes |
+|---|---|---|
+| SQLite | 1 | File-based, concurrent writes lock |
+| PostgreSQL | 10 | Standard for web/data apps |
+| ClickHouse | 10 | Native protocol |
+
 ### File Structure
 
 Each file is a module. The file path is the module path.
@@ -1404,6 +1531,12 @@ These builtins can fail and return an error-value:
 | `int[string]` | String can't be parsed as integer |
 | `float[string]` | String can't be parsed as float |
 | `json[string]` | String is not valid JSON, or value is `null` |
+| `connect[url]` | Database connection fails (bad URL, server unreachable) |
+| `query[conn, sql]` | SQL syntax error or query execution fails |
+| `exec[conn, sql]` | SQL syntax error or execution fails |
+| `insert[conn, table, frame]` | Bulk insert fails (schema mismatch, connection error) |
+| `transact[conn, fn]` | Transaction fails (rolled back on error) |
+| `migrate[conn, dir]` | Migration fails (bad SQL, directory not found) |
 
 Non-fallible conversions (e.g. `int[3.14]`, `int[true]`) return raw values with `ok: true`.
 

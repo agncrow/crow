@@ -42,6 +42,10 @@ pub struct Transpiler {
     source_file: String,
     /// Counter for generating unique variable names in BinOp propagation
     binop_counter: usize,
+    /// Whether the transpiled code uses crow_db (use db)
+    pub needs_crow_db: bool,
+    /// Which crow_db features are needed (e.g. "sqlite", "postgres", "clickhouse")
+    pub db_features: std::collections::BTreeSet<String>,
     /// Whether the transpiled code uses crow_web (any web.* module)
     pub needs_crow_web: bool,
     /// Which crow_web features are needed (e.g. "auth", "session", "db")
@@ -90,6 +94,8 @@ impl Transpiler {
             needs_regex: false,
             needs_sha2: false,
             needs_chrono: false,
+            needs_crow_db: false,
+            db_features: std::collections::BTreeSet::new(),
             needs_crow_web: false,
             web_features: std::collections::BTreeSet::new(),
             needs_grad: false,
@@ -627,6 +633,12 @@ impl Transpiler {
                 if module_name == "math" || path.starts_with("math.") {
                     self.needs_crow_runtime = true;
                 }
+                // Detect db module early
+                if path == "db" {
+                    self.needs_crow_db = true;
+                    // Default to sqlite feature; URL-based dispatch adds others at runtime
+                    self.db_features.insert("sqlite".to_string());
+                }
                 // Detect web modules early so imports/async main can be emitted
                 if path == "web" || path.starts_with("web.") {
                     self.needs_crow_web = true;
@@ -783,6 +795,10 @@ impl Transpiler {
             if self.web_features.contains("sse") {
                 self.emit_line("use crow_web::sse;");
             }
+        }
+        // Import crow_db types if db module is used
+        if self.needs_crow_db {
+            self.emit_line("use crow_db::DbHandle;");
         }
         self.emit_line("");
 
@@ -1787,8 +1803,20 @@ impl Transpiler {
             self.needs_crow_web = true;
             self.web_features.insert("http".to_string());
             self.modules.insert("web".to_string());
+        } else if path == "db" {
+            self.needs_crow_db = true;
+            self.db_features.insert("sqlite".to_string());
+            self.modules.insert("db".to_string());
         }
         self.modules.insert(module_name);
+    }
+
+    /// Convert Crow SQL params to serde_json::Value for crow_db calls.
+    fn crow_params_to_json(params: &[String]) -> String {
+        params.iter()
+            .map(|p| format!("serde_json::json!({})", p))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     fn pattern_to_string(&mut self, pattern: &Pattern) -> String {
@@ -2676,7 +2704,43 @@ impl Transpiler {
                             return format!("CrowResponse::json(serde_json::to_value(&{}).unwrap())", arg_strs[0]);
                         }
                     }
-                    // Web.db builtins
+                    // --- db module builtins (top-level `use db`) ---
+                    if name == "connect" && self.needs_crow_db && !self.needs_crow_web {
+                        // connect[url] or connect[url, pool_size]
+                        if arg_strs.len() == 1 {
+                            return format!("crow_db::connect(&{}, None).unwrap()", arg_strs[0]);
+                        } else if arg_strs.len() == 2 {
+                            return format!("crow_db::connect(&{}, Some({} as usize)).unwrap()", arg_strs[0], arg_strs[1]);
+                        }
+                    }
+                    if name == "query" && self.needs_crow_db && arg_strs.len() >= 2 {
+                        if arg_strs.len() == 2 {
+                            return format!("{}.query(&{}, &[]).unwrap()", arg_strs[0], arg_strs[1]);
+                        } else {
+                            let params = Self::crow_params_to_json(&arg_strs[2..]);
+                            return format!("{}.query(&{}, &[{}]).unwrap()", arg_strs[0], arg_strs[1], params);
+                        }
+                    }
+                    if name == "exec" && self.needs_crow_db && arg_strs.len() >= 2 {
+                        if arg_strs.len() == 2 {
+                            return format!("{}.exec(&{}, &[]).unwrap()", arg_strs[0], arg_strs[1]);
+                        } else {
+                            let params = Self::crow_params_to_json(&arg_strs[2..]);
+                            return format!("{}.exec(&{}, &[{}]).unwrap()", arg_strs[0], arg_strs[1], params);
+                        }
+                    }
+                    if name == "insert" && self.needs_crow_db && arg_strs.len() == 3 {
+                        return format!("{}.insert(&{}, &{}).unwrap()", arg_strs[0], arg_strs[1], arg_strs[2]);
+                    }
+                    if name == "migrate" && self.needs_crow_db && arg_strs.len() == 2 {
+                        return format!("{}.migrate(&{}).unwrap()", arg_strs[0], arg_strs[1]);
+                    }
+                    if name == "transact" && self.needs_crow_db && arg_strs.len() == 2 {
+                        // transact[conn, fn] → conn.transact(&|tx| { fn(tx); Ok(()) })
+                        return format!("{}.transact(&|_tx| {{ {}(_tx.into()); Ok(()) }}).unwrap()", arg_strs[0], arg_strs[1]);
+                    }
+
+                    // Web.db builtins (legacy web.db module)
                     if name == "sqlite" && self.needs_crow_web && arg_strs.len() == 1 {
                         return format!("CrowSqlite::open({})", arg_strs[0]);
                     }
@@ -2917,6 +2981,50 @@ impl Transpiler {
                 // Module function/struct call: module.func[args] or module.Struct[args]
                 if let Expr::FieldAccess { object, field } = callee.as_ref() {
                     if let Expr::Ident(mod_name) = object.as_ref() {
+                        // db.connect[url] → crow_db::connect(url, None)
+                        if mod_name == "db" && self.needs_crow_db {
+                            match field.as_str() {
+                                "connect" => {
+                                    if arg_strs.len() == 1 {
+                                        return format!("crow_db::connect(&{}, None).unwrap()", arg_strs[0]);
+                                    } else if arg_strs.len() == 2 {
+                                        return format!("crow_db::connect(&{}, Some({} as usize)).unwrap()", arg_strs[0], arg_strs[1]);
+                                    }
+                                }
+                                "query" => {
+                                    if arg_strs.len() == 2 {
+                                        return format!("{}.query(&{}, &[]).unwrap()", arg_strs[0], arg_strs[1]);
+                                    } else if arg_strs.len() >= 3 {
+                                        let params = Self::crow_params_to_json(&arg_strs[2..]);
+                                        return format!("{}.query(&{}, &[{}]).unwrap()", arg_strs[0], arg_strs[1], params);
+                                    }
+                                }
+                                "exec" => {
+                                    if arg_strs.len() == 2 {
+                                        return format!("{}.exec(&{}, &[]).unwrap()", arg_strs[0], arg_strs[1]);
+                                    } else if arg_strs.len() >= 3 {
+                                        let params = Self::crow_params_to_json(&arg_strs[2..]);
+                                        return format!("{}.exec(&{}, &[{}]).unwrap()", arg_strs[0], arg_strs[1], params);
+                                    }
+                                }
+                                "insert" => {
+                                    if arg_strs.len() == 3 {
+                                        return format!("{}.insert(&{}, &{}).unwrap()", arg_strs[0], arg_strs[1], arg_strs[2]);
+                                    }
+                                }
+                                "migrate" => {
+                                    if arg_strs.len() == 2 {
+                                        return format!("{}.migrate(&{}).unwrap()", arg_strs[0], arg_strs[1]);
+                                    }
+                                }
+                                "transact" => {
+                                    if arg_strs.len() == 2 {
+                                        return format!("{}.transact(&|_tx| {{ {}(_tx.into()); Ok(()) }}).unwrap()", arg_strs[0], arg_strs[1]);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
                         // web.new[] → CrowApp::new()
                         if mod_name == "web" && field == "new" && self.needs_crow_web {
                             return "CrowApp::new()".to_string();
@@ -5115,5 +5223,58 @@ mod tests {
     fn test_web_uploads() {
         let rust = transpile("use web\nuse web.upload\nfn handler[req]\n    files = uploads[req]\n    return text['ok']\napp = web.new[]\napp = route[app, '/upload', handler]\n");
         assert!(rust.contains(".uploads()"), "should emit .uploads()\n{}", rust);
+    }
+
+    // --- DB module codegen tests ---
+
+    #[test]
+    fn test_db_connect() {
+        let rust = transpile("use db\nconn = connect['sqlite://test.db']\n");
+        assert!(rust.contains("crow_db::connect("), "should emit crow_db::connect()\n{}", rust);
+        assert!(rust.contains("None"), "should pass None for default pool\n{}", rust);
+    }
+
+    #[test]
+    fn test_db_connect_pool_size() {
+        let rust = transpile("use db\nconn = connect['sqlite://test.db', 5]\n");
+        assert!(rust.contains("crow_db::connect("), "should emit crow_db::connect()\n{}", rust);
+        assert!(rust.contains("Some(5"), "should pass Some(5) for pool size\n{}", rust);
+    }
+
+    #[test]
+    fn test_db_connect_prefixed() {
+        let rust = transpile("use db\nconn = db.connect['sqlite://test.db']\n");
+        assert!(rust.contains("crow_db::connect("), "should emit crow_db::connect() for db.connect\n{}", rust);
+    }
+
+    #[test]
+    fn test_db_exec() {
+        let rust = transpile("use db\nconn = connect['sqlite://test.db']\nexec[conn, 'CREATE TABLE t [id INT]']\n");
+        assert!(rust.contains(".exec("), "should emit .exec()\n{}", rust);
+        assert!(rust.contains(".unwrap()"), "should unwrap result\n{}", rust);
+    }
+
+    #[test]
+    fn test_db_query() {
+        let rust = transpile("use db\nconn = connect['sqlite://test.db']\ndf = query[conn, 'SELECT * FROM t']\n");
+        assert!(rust.contains(".query("), "should emit .query()\n{}", rust);
+    }
+
+    #[test]
+    fn test_db_migrate() {
+        let rust = transpile("use db\nconn = connect['sqlite://test.db']\nn = migrate[conn, 'migrations/']\n");
+        assert!(rust.contains(".migrate("), "should emit .migrate()\n{}", rust);
+    }
+
+    #[test]
+    fn test_db_import() {
+        let rust = transpile("use db\nconn = connect['sqlite://test.db']\n");
+        assert!(rust.contains("use crow_db::DbHandle;"), "should import DbHandle\n{}", rust);
+    }
+
+    #[test]
+    fn test_db_insert() {
+        let rust = transpile("use db\nconn = connect['sqlite://test.db']\ndf = query[conn, 'SELECT * FROM t']\ninsert[conn, 'backup', df]\n");
+        assert!(rust.contains(".insert("), "should emit .insert()\n{}", rust);
     }
 }

@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crow_runtime", "crow_web"]
+members = [".", "crow_runtime", "crow_web", "crow_db"]
 exclude = [".crow_build"]
 resolver = "3"
 
@@ -19,3 +19,4 @@ regex = "1.12.3"
 sha2 = "0.10.9"
 md-5 = "0.10.6"
 chrono = "0.4.44"
+crow_db = { version = "0.1.0", path = "crow_db", features = ["sqlite"] }
