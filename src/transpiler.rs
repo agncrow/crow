@@ -3066,12 +3066,20 @@ impl Transpiler {
                         return format!("{}.close()", arg_strs[0]);
                     }
 
-                    // page[path, render, handle] → implicit app: merge LiveView into __crow_app
-                    if name == "page" && self.needs_crow_web && arg_strs.len() == 3 {
-                        return format!(
-                            "{{ let _ws_path = format!(\"/_ws{{}}\", {}); let _lv = CrowLiveView::new(&_ws_path, CrowLiveState::new(), {}, {}); let _lr = _lv.into_router(&{}); __crow_app = __crow_app.merge(_lr); }}",
-                            arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[0]
-                        );
+                    // page[path, render, handle] or page[path, render] → implicit app: merge LiveView into __crow_app
+                    if name == "page" && self.needs_crow_web && (arg_strs.len() == 2 || arg_strs.len() == 3) {
+                        if arg_strs.len() == 3 {
+                            return format!(
+                                "{{ let _ws_path = format!(\"/_ws{{}}\", {}); let _lv = CrowLiveView::new(&_ws_path, CrowLiveState::new(), {}, {}); let _lr = _lv.into_router(&{}); __crow_app = __crow_app.merge(_lr); }}",
+                                arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[0]
+                            );
+                        } else {
+                            // page[path, render] — no handle function, use a no-op handler
+                            return format!(
+                                "{{ let _ws_path = format!(\"/_ws{{}}\", {}); let _lv = CrowLiveView::new(&_ws_path, CrowLiveState::new(), {}, |_: &mut CrowLiveState, _: &str, _: &str| {{}}); let _lr = _lv.into_router(&{}); __crow_app = __crow_app.merge(_lr); }}",
+                                arg_strs[0], arg_strs[1], arg_strs[0]
+                            );
+                        }
                     }
 
                     // static_dir[app, url_path, dir_path] → app.static_dir(url_path, dir_path)
@@ -3082,6 +3090,24 @@ impl Transpiler {
                     // smtp[host, port, user, pass] → CrowMailer::new(host, port, user, pass).unwrap()
                     if name == "smtp" && self.needs_crow_web && arg_strs.len() == 4 {
                         return format!("CrowMailer::new(&{}, {} as u16, &{}, &{}).unwrap()", arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[3]);
+                    }
+
+                    // --- UI reactive builtins ---
+                    // fetch[url] → placeholder: one-time HTTP GET returning empty map
+                    if name == "fetch" && arg_strs.len() == 1 {
+                        return format!("/* fetch({}) */ std::collections::BTreeMap::<String, serde_json::Value>::new()", arg_strs[0]);
+                    }
+                    // poll[url, seconds] → placeholder: repeating HTTP GET returning empty map
+                    if name == "poll" && arg_strs.len() == 2 {
+                        return format!("/* poll({}, {}s) */ std::collections::BTreeMap::<String, serde_json::Value>::new()", arg_strs[0], arg_strs[1]);
+                    }
+                    // field[label, var] → placeholder: renders labeled input with two-way binding
+                    if name == "field" && self.needs_ui && arg_strs.len() == 2 {
+                        return format!("CrowVNode::el(\"div\", std::collections::BTreeMap::new(), vec![CrowVNode::el(\"label\", std::collections::BTreeMap::new(), vec![CrowVNode::text(&{})]), CrowVNode::el(\"input\", std::collections::BTreeMap::new(), vec![])])", arg_strs[0]);
+                    }
+                    // today[] → chrono::Local::now().format("%Y-%m-%d").to_string()
+                    if name == "today" && arg_strs.is_empty() {
+                        return "chrono::Local::now().format(\"%Y-%m-%d\").to_string()".to_string();
                     }
 
                     // Struct constructor

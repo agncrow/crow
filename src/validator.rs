@@ -52,6 +52,8 @@ const BUILTINS: &[&str] = &[
     "cors", "sessions", "templates", "render", "cache", "limit",
     "uploads", "sse", "ws", "connect", "send", "recv", "close",
     "page", "static_dir", "smtp",
+    // UI reactive builtins
+    "fetch", "poll", "field", "today",
 ];
 
 pub struct Validator<'a> {
@@ -461,9 +463,14 @@ impl<'a> Validator<'a> {
             "send" => argc == 2,                  // send[sock, msg] or send[sender, data]
             "recv" => argc == 1,                  // recv[sock]
             "close" => argc == 1,                 // close[sock]
-            "page" => argc == 3,                  // page[path, render, handle]
+            "page" => argc == 2 || argc == 3,      // page[path, render] or page[path, render, handle]
             "static_dir" => argc == 3,            // static_dir[app, url_path, dir_path]
             "smtp" => argc == 4,                  // smtp[host, port, user, pass]
+            // UI reactive builtins
+            "fetch" => argc == 1,                 // fetch[url]
+            "poll" => argc == 2,                  // poll[url, seconds]
+            "field" => argc == 2,                 // field[label, var]
+            "today" => argc == 0,                 // today[]
             _ => true,
         };
         if !valid {

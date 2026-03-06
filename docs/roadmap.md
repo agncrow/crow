@@ -108,33 +108,37 @@ Rejected in favor of the Crow UI framework (see below). Building a WASM frontend
 
 > **See [docs/ui-framework.md](ui-framework.md) for the full design document.**
 
-Full-stack web applications written entirely in Crow. Server-rendered LiveView pattern: mutable state on the server, HTML diffs over WebSocket, tiny JS runtime on the client. No React, no npm, no node_modules.
+Full-stack web applications written entirely in Crow. Declarative reactive pattern: `page[path, render, handle]` with `serve[port]`, reactive data loading (`fetch`, `poll`), two-way binding (`field`, `select`), and `table[frame]` auto-rendering. No React, no npm, no node_modules.
 
-##### Phase 1: Counter Works (foundation)
+##### Phase 1: Counter Works (foundation) ✅
 
-Goal: `page['/', render, handle]` with `serve[3000]` runs a LiveView counter in a browser. No explicit app variable needed.
+Goal: `page['/', render, handle]` with `serve[3000]` runs a LiveView counter in a browser.
 
-- [ ] **VNode builder API** — `crow_web::view`: element functions (`vnode_el`, `vnode_text`) that build `CrowVNode` trees with attributes and event handler IDs
-- [ ] **Upgrade live module** — `crow_web::live`: replace LCS string diff with `CrowVNode::diff` tree patching, add event registry (handler ID → closure map), per-connection mutable state
-- [ ] **JS runtime v1** — `crow_web::live`: WebSocket + DOM patching (morphdom or custom) + event delegation + reconnect (~100 lines JS)
-- [ ] **Transpiler codegen** — `src/transpiler.rs`: `div[class = 'x']` → `CrowVNode::el("div", ...)`, `button[click = fn[], '+']` → VNode + event registration, `use ui` module detection
-- [ ] **Interpreter support** — `src/interpreter.rs`: UI element functions work in `crow run -i` mode (render to HTML string)
-- [ ] **Counter example** — `examples/counter.crow`: working end-to-end in browser with click events
+- [x] **VNode builder API** — `crow_web::view`: `CrowVNode` trees with attributes and event handler IDs
+- [x] **Live module** — `crow_web::live`: VNode tree diffing, event registry, per-connection mutable state
+- [x] **JS runtime v1** — WebSocket + DOM patching + event delegation via `data-crow-*` attributes
+- [x] **Transpiler codegen** — `div[h1['hello']]` → `CrowVNode::el("div", ...)`, `use ui` detection
+- [x] **`page[]` / `serve[]` API** — implicit app, `serve[port]` deferred to end of main
+- [x] **`state.get` / `state.set`** — type-inferred: `state.get['count', 0]` → `get_i64()`
+- [x] **`use web, ui`** — comma-separated multi-import syntax
+- [x] **Counter example** — `examples/counter.crow`
 
-##### Phase 2: Forms Work (interaction)
+##### Phase 2: Reactive Data & Two-Way Binding (current)
 
-- [ ] **`ui.input` element** — text, email, password, number inputs with value binding
-- [ ] **`input` / `change` events** — send value on keystroke / blur
-- [ ] **`form` + `submit`** — form submission handler
-- [ ] **`select` element** — dropdown with `change` handler
-- [ ] **Debounce** — `debounce = ms` option on input events (client-side)
-- [ ] **Conditional / list rendering** — verify `if`/`for` in Crow produce correct VNode trees
+Goal: `fetch[url]`, `poll[url, seconds]`, `field[label, var]`, `select[options, var]`, `table[frame]` — the reactive glue layer.
+
+- [ ] **`fetch[url]`** — one-time reactive HTTP GET, returns frame or map
+- [ ] **`poll[url, seconds]`** — repeating reactive HTTP GET, updates variable on each tick
+- [ ] **`field[label, var]`** — two-way bound labeled input (reads + writes variable)
+- [ ] **`select[options, var]`** — two-way bound dropdown
+- [ ] **`table[frame]`** — auto-render table from frame schema (headers + rows)
+- [ ] **`today[]`** — returns today's date
+- [ ] **Validator/interpreter/transpiler** — register all new builtins
 
 ##### Phase 3: Multi-Page App (routing + layout)
 
-- [ ] **Multiple `live` routes** — several routes on one `web` app
+- [ ] **Multiple `page` routes** — several routes on one app
 - [ ] **URL parameters** — route params (`:id`), query params (`?q=foo`)
-- [ ] **Live navigation** — `redirect['/path']`, `<a>` links without full page reload
 - [ ] **Layout functions** — Crow functions wrapping route content
 - [ ] **`title[]`, `meta[]`** — per-route head management
 - [ ] **CSS** — `static_dir` for stylesheets (already exists)
@@ -143,24 +147,17 @@ Goal: `page['/', render, handle]` with `serve[3000]` runs a LiveView counter in 
 
 - [ ] **Sessions** — `session.set/get/clear`, signed cookies
 - [ ] **Auth** — `auth = true` on routes, redirect to login
-- [ ] **Channels** — `channel.join/send/broadcast`, `on_channel` handler (server push)
-- [ ] **Flash messages** — `flash[state, msg, timeout]`
-- [ ] **Loading states** — `loading[state, fn[]]`
-- [ ] **Keyboard events** — `keydown`, modifier keys
-- [ ] **File upload** — binary over WebSocket
-- [ ] **Downloads** — `download[content, filename, type]`
+- [ ] **Channels** — `channel.join/send/broadcast`, server push
+- [ ] **Debounce** — `debounce = ms` option on input events
+- [ ] **Loading states, keyboard events, file upload**
 - [ ] **Table features** — sorting, filtering, row click
 - [ ] **Modals, pagination, accessibility**
-- [ ] **Error boundaries** — `on_error`, `state.error`
 
 ##### Phase 5: Developer Experience
 
-- [ ] **`live.test`** — mount route in test, simulate events, assert HTML
 - [ ] **`crow dev`** — hot reload server, error overlay
-- [ ] **Dev tools** — state inspector, event log (JS panel in browser)
-- [ ] **`live.screenshot`** — OS WebView rendering, pixel diff for visual regression
 - [ ] **Chart engine** — `chart.live`, custom Canvas renderer, hooks
-- [ ] **Component gallery** — `crow dev --gallery`
+- [ ] **Dev tools** — state inspector, event log
 
 ### P4.5 — Database module ✅
 

@@ -1383,6 +1383,8 @@ impl Interpreter {
             | "live" | "static_dir" | "smtp"
             // Response format builtins
             | "msgpack" | "arrow" | "bytes" | "stream"
+            // UI reactive builtins
+            | "serve" | "page" | "fetch" | "poll" | "field" | "today"
         )
     }
 
@@ -2725,6 +2727,37 @@ impl Interpreter {
                 map.insert("type".to_string(), CrowValue::ok(Value::Str("application/octet-stream".to_string())));
                 map.insert("streaming".to_string(), CrowValue::ok(Value::Bool(true)));
                 Ok(CrowValue::ok(Value::Map(map)))
+            }
+
+            // --- UI reactive builtins (mocks for interpreter) ---
+            "serve" => {
+                // serve[port] → mock: no-op in interpreter
+                Ok(CrowValue::done())
+            }
+            "page" => {
+                // page[path, render] or page[path, render, handle] → mock: no-op in interpreter
+                Ok(CrowValue::done())
+            }
+            "fetch" => {
+                // fetch[url] → mock: returns empty map
+                if args.len() != 1 { return Err("fetch[] takes 1 argument".into()); }
+                Ok(CrowValue::ok(Value::Map(std::collections::BTreeMap::new())))
+            }
+            "poll" => {
+                // poll[url, seconds] → mock: returns empty map
+                if args.len() != 2 { return Err("poll[] takes 2 arguments".into()); }
+                Ok(CrowValue::ok(Value::Map(std::collections::BTreeMap::new())))
+            }
+            "field" => {
+                // field[label, var] → mock: returns nil (UI element)
+                if args.len() != 2 { return Err("field[] takes 2 arguments".into()); }
+                Ok(CrowValue::done())
+            }
+            "today" => {
+                // today[] → returns today's date as string YYYY-MM-DD
+                if !args.is_empty() { return Err("today[] takes 0 arguments".into()); }
+                let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                Ok(CrowValue::ok(Value::Str(today)))
             }
 
             "assert" => {
