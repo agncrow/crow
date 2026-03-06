@@ -68,10 +68,12 @@ pub struct Transpiler {
     web_handlers: std::collections::HashSet<String>,
     /// Whether the transpiled code uses `use ui` (live view element functions)
     pub needs_ui: bool,
-    /// Function names used as live[] render callbacks (need &CrowLiveState param, CrowVNode return)
+    /// Function names used as live[]/page[] render callbacks (need &CrowLiveState param, CrowVNode return)
     live_render_fns: std::collections::HashSet<String>,
-    /// Function names used as live[] handle callbacks (need &mut CrowLiveState, &str, Option<&str> params)
+    /// Function names used as live[]/page[] handle callbacks (need &mut CrowLiveState, &str, Option<&str> params)
     live_handle_fns: std::collections::HashSet<String>,
+    /// Whether the code uses page[] (implicit app pattern — no user-visible app variable)
+    has_page_routes: bool,
 }
 
 impl Transpiler {
@@ -112,6 +114,7 @@ impl Transpiler {
             needs_ui: false,
             live_render_fns: std::collections::HashSet::new(),
             live_handle_fns: std::collections::HashSet::new(),
+            has_page_routes: false,
         }
     }
 
@@ -328,52 +331,53 @@ impl Transpiler {
         }
     }
 
-    /// Scan statements for live[app, path, render, handle] calls and collect
-    /// render/handle function names for signature overriding.
-    fn scan_live_callbacks(stmts: &[Stmt], render_fns: &mut std::collections::HashSet<String>, handle_fns: &mut std::collections::HashSet<String>) {
+    /// Scan statements for page[path, render, handle] calls
+    /// and collect render/handle function names for signature overriding.
+    fn scan_live_callbacks(stmts: &[Stmt], render_fns: &mut std::collections::HashSet<String>, handle_fns: &mut std::collections::HashSet<String>, has_page: &mut bool) {
         for stmt in stmts {
             match stmt {
-                Stmt::Assign { value, .. } => Self::collect_live_callbacks_expr(value, render_fns, handle_fns),
-                Stmt::ExprStmt(e) => Self::collect_live_callbacks_expr(e, render_fns, handle_fns),
+                Stmt::Assign { value, .. } => Self::collect_live_callbacks_expr(value, render_fns, handle_fns, has_page),
+                Stmt::ExprStmt(e) => Self::collect_live_callbacks_expr(e, render_fns, handle_fns, has_page),
                 Stmt::If { condition, then_body, else_body, .. } => {
-                    Self::collect_live_callbacks_expr(condition, render_fns, handle_fns);
-                    Self::scan_live_callbacks(then_body, render_fns, handle_fns);
-                    if let Some(eb) = else_body { Self::scan_live_callbacks(eb, render_fns, handle_fns); }
+                    Self::collect_live_callbacks_expr(condition, render_fns, handle_fns, has_page);
+                    Self::scan_live_callbacks(then_body, render_fns, handle_fns, has_page);
+                    if let Some(eb) = else_body { Self::scan_live_callbacks(eb, render_fns, handle_fns, has_page); }
                 }
                 Stmt::While { condition, body, .. } => {
-                    Self::collect_live_callbacks_expr(condition, render_fns, handle_fns);
-                    Self::scan_live_callbacks(body, render_fns, handle_fns);
+                    Self::collect_live_callbacks_expr(condition, render_fns, handle_fns, has_page);
+                    Self::scan_live_callbacks(body, render_fns, handle_fns, has_page);
                 }
-                Stmt::For { body, .. } => Self::scan_live_callbacks(body, render_fns, handle_fns),
-                Stmt::FnDecl { body, .. } => Self::scan_live_callbacks(body, render_fns, handle_fns),
+                Stmt::For { body, .. } => Self::scan_live_callbacks(body, render_fns, handle_fns, has_page),
+                Stmt::FnDecl { body, .. } => Self::scan_live_callbacks(body, render_fns, handle_fns, has_page),
                 _ => {}
             }
         }
     }
 
-    /// Collect render/handle function names from live[app, path, render, handle] call expressions.
-    fn collect_live_callbacks_expr(expr: &Expr, render_fns: &mut std::collections::HashSet<String>, handle_fns: &mut std::collections::HashSet<String>) {
+    /// Collect render/handle function names from page[path, render, handle] call expressions.
+    fn collect_live_callbacks_expr(expr: &Expr, render_fns: &mut std::collections::HashSet<String>, handle_fns: &mut std::collections::HashSet<String>, has_page: &mut bool) {
         match expr {
             Expr::Call { callee, args } => {
                 if let Expr::Ident(name) = callee.as_ref() {
-                    if name == "live" && args.len() == 4 {
-                        // live[app, path, render, handle]
-                        if let Expr::Ident(render_name) = &args[2] {
+                    if name == "page" && args.len() == 3 {
+                        // page[path, render, handle]
+                        *has_page = true;
+                        if let Expr::Ident(render_name) = &args[1] {
                             render_fns.insert(render_name.clone());
                         }
-                        if let Expr::Ident(handle_name) = &args[3] {
+                        if let Expr::Ident(handle_name) = &args[2] {
                             handle_fns.insert(handle_name.clone());
                         }
                     }
                 }
-                Self::collect_live_callbacks_expr(callee, render_fns, handle_fns);
-                for a in args { Self::collect_live_callbacks_expr(a, render_fns, handle_fns); }
+                Self::collect_live_callbacks_expr(callee, render_fns, handle_fns, has_page);
+                for a in args { Self::collect_live_callbacks_expr(a, render_fns, handle_fns, has_page); }
             }
             Expr::BinOp { left, right, .. } => {
-                Self::collect_live_callbacks_expr(left, render_fns, handle_fns);
-                Self::collect_live_callbacks_expr(right, render_fns, handle_fns);
+                Self::collect_live_callbacks_expr(left, render_fns, handle_fns, has_page);
+                Self::collect_live_callbacks_expr(right, render_fns, handle_fns, has_page);
             }
-            Expr::FieldAccess { object, .. } => Self::collect_live_callbacks_expr(object, render_fns, handle_fns),
+            Expr::FieldAccess { object, .. } => Self::collect_live_callbacks_expr(object, render_fns, handle_fns, has_page),
             _ => {}
         }
     }
@@ -784,12 +788,14 @@ impl Transpiler {
             }
         }
 
-        // Pre-scan: find live[] render/handle callback functions
+        // Pre-scan: find live[]/page[] render/handle callback functions
         if self.needs_ui {
-            Self::scan_live_callbacks(stmts, &mut self.live_render_fns, &mut self.live_handle_fns);
+            let mut has_page = false;
+            Self::scan_live_callbacks(stmts, &mut self.live_render_fns, &mut self.live_handle_fns, &mut has_page);
             for sig in self.ctx.functions.values() {
-                Self::scan_live_callbacks(&sig.body, &mut self.live_render_fns, &mut self.live_handle_fns);
+                Self::scan_live_callbacks(&sig.body, &mut self.live_render_fns, &mut self.live_handle_fns, &mut has_page);
             }
+            self.has_page_routes = has_page;
         }
 
         // Compute which params should be passed by reference
@@ -1010,7 +1016,19 @@ impl Transpiler {
         }
         self.indent += 1;
         self.emit_panic_hook();
-        self.emit_stmts_parallel(&main_stmts);
+        // If page[] routes are used, create implicit app at start of main
+        if self.has_page_routes {
+            self.emit_line("let mut __crow_app = CrowApp::new();");
+            // Separate serve[] calls from other statements — serve must come last
+            // (after all page[] routes are registered)
+            let (serve_stmts, other_stmts): (Vec<_>, Vec<_>) = main_stmts.iter().cloned().partition(|s| {
+                matches!(s, Stmt::ExprStmt(Expr::Call { callee, .. }) if matches!(callee.as_ref(), Expr::Ident(name) if name == "serve"))
+            });
+            self.emit_stmts_parallel(&other_stmts);
+            self.emit_stmts_parallel(&serve_stmts);
+        } else {
+            self.emit_stmts_parallel(&main_stmts);
+        }
         if self.needs_distributed {
             self.emit_line("crow_runtime::distributed::finalize();");
         }
@@ -2832,9 +2850,9 @@ impl Transpiler {
                             return format!("{}.route_method(&{}, {}, Arc::new({}))", arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[3]);
                         }
                     }
-                    if name == "serve" && self.needs_crow_web && arg_strs.len() == 2 {
-                        // serve[app, port] → app.serve(port as u16).await.unwrap()
-                        return format!("{}.serve({} as u16).await.unwrap()", arg_strs[0], arg_strs[1]);
+                    if name == "serve" && self.needs_crow_web && arg_strs.len() == 1 {
+                        // serve[port] → implicit app: __crow_app.serve(port as u16).await.unwrap()
+                        return format!("__crow_app.serve({} as u16).await.unwrap()", arg_strs[0]);
                     }
                     if name == "respond" && self.needs_crow_web && arg_strs.len() == 2 {
                         // respond[status, body] → CrowResponse::respond(status as u16, body)
@@ -3048,18 +3066,11 @@ impl Transpiler {
                         return format!("{}.close()", arg_strs[0]);
                     }
 
-                    // live[app, path, render, handle] → CrowLiveView with separate render/handle
-                    if name == "live" && self.needs_crow_web && arg_strs.len() == 4 {
+                    // page[path, render, handle] → implicit app: merge LiveView into __crow_app
+                    if name == "page" && self.needs_crow_web && arg_strs.len() == 3 {
                         return format!(
-                            "{{ let _ws_path = format!(\"/_ws{{}}\", {}); let _lv = CrowLiveView::new(&_ws_path, CrowLiveState::new(), {}, {}); let _lr = _lv.into_router(&{}); {}.merge(_lr) }}",
-                            arg_strs[1], arg_strs[2], arg_strs[3], arg_strs[1], arg_strs[0]
-                        );
-                    }
-                    // live[app, path, handler] → legacy LiveView (single handler)
-                    if name == "live" && self.needs_crow_web && arg_strs.len() == 3 {
-                        return format!(
-                            "{{ let _ws_path = format!(\"/_ws{{}}\", {}); let _lv = crow_web::live::CrowLiveViewLegacy::new(&_ws_path, CrowLiveState::new(), {}); let _lr = _lv.into_router(&{}); {}.merge(_lr) }}",
-                            arg_strs[1], arg_strs[2], arg_strs[1], arg_strs[0]
+                            "{{ let _ws_path = format!(\"/_ws{{}}\", {}); let _lv = CrowLiveView::new(&_ws_path, CrowLiveState::new(), {}, {}); let _lr = _lv.into_router(&{}); __crow_app = __crow_app.merge(_lr); }}",
+                            arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[0]
                         );
                     }
 
@@ -5306,8 +5317,8 @@ mod tests {
 
     #[test]
     fn test_web_serve_transpile() {
-        let rust = transpile("use web\napp = web.new[]\nserve[app, 3000]\n");
-        assert!(rust.contains(".serve("), "should emit .serve()\n{}", rust);
+        let rust = transpile("use web\nuse ui\nfn render[s]\n    return div[h1['hi']]\n\nfn handle[s, e, v]\n    log[e]\n\nserve[3000]\npage['/', render, handle]\n");
+        assert!(rust.contains("__crow_app.serve("), "should emit __crow_app.serve()\n{}", rust);
         assert!(rust.contains(".await"), "should emit .await\n{}", rust);
     }
 
@@ -5594,11 +5605,12 @@ mod tests {
     }
 
     #[test]
-    fn test_ui_live_4arg() {
-        let rust = transpile("use web\nuse ui\nfn render[s]\n    return div[h1['hi']]\n\nfn handle[s, e, v]\n    log[e]\n\napp = web.new[]\napp = live[app, '/counter', render, handle]\n");
+    fn test_ui_page_3arg() {
+        let rust = transpile("use web\nuse ui\nfn render[s]\n    return div[h1['hi']]\n\nfn handle[s, e, v]\n    log[e]\n\nserve[3000]\npage['/counter', render, handle]\n");
         assert!(rust.contains("CrowLiveView::new("), "should emit CrowLiveView::new\n{}", rust);
         assert!(rust.contains("CrowLiveState::new()"), "should emit CrowLiveState::new()\n{}", rust);
         assert!(rust.contains("into_router("), "should emit into_router\n{}", rust);
+        assert!(rust.contains("__crow_app = __crow_app.merge("), "should merge into implicit app\n{}", rust);
     }
 
     #[test]

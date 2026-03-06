@@ -51,7 +51,7 @@ const BUILTINS: &[&str] = &[
     // Web P4 modules
     "cors", "sessions", "templates", "render", "cache", "limit",
     "uploads", "sse", "ws", "connect", "send", "recv", "close",
-    "live", "static_dir", "smtp",
+    "page", "static_dir", "smtp",
 ];
 
 pub struct Validator<'a> {
@@ -441,7 +441,7 @@ impl<'a> Validator<'a> {
             "elapsed" => argc == 2,
             // Web
             "route" => argc == 3 || argc == 4,
-            "serve" => argc == 2,
+            "serve" => argc == 1,                // serve[port]
             "respond" => argc == 2,
             "redirect" | "html" | "text" => argc == 1,
             "sqlite" => argc == 1,
@@ -461,7 +461,7 @@ impl<'a> Validator<'a> {
             "send" => argc == 2,                  // send[sock, msg] or send[sender, data]
             "recv" => argc == 1,                  // recv[sock]
             "close" => argc == 1,                 // close[sock]
-            "live" => argc == 3 || argc == 4,      // live[app, path, handler] or live[app, path, render, handle]
+            "page" => argc == 3,                  // page[path, render, handle]
             "static_dir" => argc == 3,            // static_dir[app, url_path, dir_path]
             "smtp" => argc == 4,                  // smtp[host, port, user, pass]
             _ => true,

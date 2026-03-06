@@ -132,7 +132,7 @@ fn print_usage() {
     eprintln!("usage:");
     eprintln!("  crow                   start interactive REPL");
     eprintln!("  crow new myapp         create new project");
-    eprintln!("  crow new myapp --web   create web project (pages, serve)");
+    eprintln!("  crow new myapp --web   create web project (views, serve)");
     eprintln!("  crow new myapp --ml    create ML project (jobs, lib)");
     eprintln!("  crow new myapp --db    create DB project (schema, migrate)");
     eprintln!("  crow install           install deps from crowfile into crow_modules/");
@@ -388,14 +388,14 @@ fn cmd_new() {
 
     // main.crow
     if has_web {
-        write_file(&project_dir.join("main.crow"), "use web\nuse ui\nuse pages.home\n\napp = web.new[]\napp = live[app, '/', home_render, home_handle]\nserve[app, 3000]\n");
+        write_file(&project_dir.join("main.crow"), "use web, ui\nuse views.home\n\nserve[3000]\npage['/', home_render, home_handle]\n");
     } else {
         write_file(&project_dir.join("main.crow"), &format!("log['hello, {}']\n", short_name));
     }
 
-    // --web: add pages/home.crow
+    // --web: add views/home.crow
     if has_web {
-        write_file(&project_dir.join("pages/home.crow"),
+        write_file(&project_dir.join("views/home.crow"),
             "--- home page ---\nuse ui\n\nfn render[state]\n    message = state.get['message', 'welcome to crow']\n    return div[\n        h1['{message}']\n    ]\n\nfn handle[state, event, value]\n    log[event]\n");
     }
 
@@ -433,7 +433,7 @@ fn cmd_new() {
     let mut files: Vec<String> = Vec::new();
     files.push("  crowfile".to_string());
     files.push("  main.crow".to_string());
-    if has_web { files.push("  pages/home.crow".to_string()); }
+    if has_web { files.push("  views/home.crow".to_string()); }
     if has_ml {
         files.push("  jobs/train.crow".to_string());
         files.push("  lib/model.crow".to_string());

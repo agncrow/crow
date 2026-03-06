@@ -17,8 +17,8 @@ impl Parser {
         while !self.is_at_end() {
             let line = self.current_line();
             stmts.push(Stmt::Line(line));
-            let stmt = self.parse_stmt()?;
-            stmts.push(stmt);
+            let parsed = self.parse_stmt()?;
+            stmts.extend(parsed);
             self.skip_newlines();
         }
         Ok(stmts)
@@ -79,18 +79,18 @@ impl Parser {
 
     // --- Statement parsing ---
 
-    fn parse_stmt(&mut self) -> Result<Stmt, String> {
+    fn parse_stmt(&mut self) -> Result<Vec<Stmt>, String> {
         match self.peek().clone() {
-            Token::Fn => self.parse_fn_decl(),
-            Token::Return => self.parse_return(),
-            Token::Break => { self.advance(); Ok(Stmt::Break) }
-            Token::Continue => { self.advance(); Ok(Stmt::Continue) }
-            Token::If => self.parse_if(),
-            Token::For => self.parse_for_stmt(),
-            Token::While => self.parse_while(),
-            Token::Struct => self.parse_struct(),
+            Token::Fn => self.parse_fn_decl().map(|s| vec![s]),
+            Token::Return => self.parse_return().map(|s| vec![s]),
+            Token::Break => { self.advance(); Ok(vec![Stmt::Break]) }
+            Token::Continue => { self.advance(); Ok(vec![Stmt::Continue]) }
+            Token::If => self.parse_if().map(|s| vec![s]),
+            Token::For => self.parse_for_stmt().map(|s| vec![s]),
+            Token::While => self.parse_while().map(|s| vec![s]),
+            Token::Struct => self.parse_struct().map(|s| vec![s]),
             Token::Use => self.parse_use(),
-            _ => self.parse_assign_or_expr(),
+            _ => self.parse_assign_or_expr().map(|s| vec![s]),
         }
     }
 
@@ -170,8 +170,22 @@ impl Parser {
         Ok(Stmt::StructDecl { name, fields })
     }
 
-    fn parse_use(&mut self) -> Result<Stmt, String> {
+    fn parse_use(&mut self) -> Result<Vec<Stmt>, String> {
         self.advance(); // skip 'use'
+        let mut stmts = Vec::new();
+        // Parse first module path
+        let path = self.parse_use_path()?;
+        stmts.push(Stmt::Use { path });
+        // Support comma-separated: use web, ui, views.home
+        while self.check(&Token::Comma) {
+            self.advance();
+            let path = self.parse_use_path()?;
+            stmts.push(Stmt::Use { path });
+        }
+        Ok(stmts)
+    }
+
+    fn parse_use_path(&mut self) -> Result<String, String> {
         let mut path = self.expect_ident()?;
         // Support both slash paths (use myapp/utils) and dot paths (use math.stats)
         while self.check(&Token::Slash) || self.check(&Token::Dot) {
@@ -181,7 +195,7 @@ impl Parser {
             path.push(sep);
             path.push_str(&next);
         }
-        Ok(Stmt::Use { path })
+        Ok(path)
     }
 
     fn parse_assign_or_expr(&mut self) -> Result<Stmt, String> {
@@ -279,8 +293,8 @@ impl Parser {
             }
             let line = self.current_line();
             stmts.push(Stmt::Line(line));
-            let stmt = self.parse_stmt()?;
-            stmts.push(stmt);
+            let parsed = self.parse_stmt()?;
+            stmts.extend(parsed);
             self.skip_newlines();
         }
         if self.check(&Token::Dedent) {
