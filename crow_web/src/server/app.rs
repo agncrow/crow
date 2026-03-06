@@ -64,9 +64,21 @@ impl CrowApp {
     /// Start the server (`serve[app, port]` in Crow).
     pub async fn serve(self, port: u16) -> Result<(), Box<dyn std::error::Error>> {
         let addr = format!("0.0.0.0:{}", port);
-        let listener = tokio::net::TcpListener::bind(&addr).await?;
+        let listener = match tokio::net::TcpListener::bind(&addr).await {
+            Ok(l) => l,
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                eprintln!("error: port {} is already in use", port);
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("error: cannot start server on port {}: {}", port, e);
+                std::process::exit(1);
+            }
+        };
+        // Add a default welcome fallback so new projects don't show a blank page
+        let router = self.router.fallback(default_welcome_handler);
         println!("crow server listening on http://{}", addr);
-        axum::serve(listener, self.router).await?;
+        axum::serve(listener, router).await?;
         Ok(())
     }
 
@@ -158,6 +170,14 @@ impl CrowApp {
         crate::template::CrowTemplates::from_glob(glob)
     }
 
+    /// Merge an external axum Router into this app.
+    /// Used by `live[]` to combine LiveView routers with the app.
+    pub fn merge(self, other: Router) -> Self {
+        Self {
+            router: self.router.merge(other),
+        }
+    }
+
     /// Get the inner router (for testing or advanced composition).
     pub fn into_router(self) -> Router {
         self.router
@@ -233,6 +253,35 @@ fn make_axum_handler(
         })
     }
 }
+
+/// Default welcome page shown when no routes match.
+/// Gives new projects a friendly landing page instead of a blank screen.
+async fn default_welcome_handler() -> axum::response::Html<&'static str> {
+    axum::response::Html(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Welcome to Crow</title>
+<style>
+  body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #0a0a0a; color: #e0e0e0; }
+  .card { text-align: center; max-width: 480px; padding: 2rem; }
+  h1 { font-size: 2.5rem; margin-bottom: 0.5rem; }
+  .crow { font-size: 4rem; }
+  p { color: #888; line-height: 1.6; }
+  code { background: #1a1a2e; padding: 2px 8px; border-radius: 4px; font-size: 0.9em; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="crow">&#x1F426;</div>
+  <h1>Welcome to Crow</h1>
+  <p>Your server is running. Add routes with <code>live[app, '/', render, handle]</code> or <code>route[app, '/', handler]</code>.</p>
+</div>
+</body>
+</html>"#)
+}
+
 
 #[cfg(test)]
 mod tests {

@@ -68,6 +68,10 @@ pub struct Transpiler {
     web_handlers: std::collections::HashSet<String>,
     /// Whether the transpiled code uses `use ui` (live view element functions)
     pub needs_ui: bool,
+    /// Function names used as live[] render callbacks (need &CrowLiveState param, CrowVNode return)
+    live_render_fns: std::collections::HashSet<String>,
+    /// Function names used as live[] handle callbacks (need &mut CrowLiveState, &str, Option<&str> params)
+    live_handle_fns: std::collections::HashSet<String>,
 }
 
 impl Transpiler {
@@ -106,6 +110,8 @@ impl Transpiler {
             registry: crate::modules::ModuleRegistry::new(),
             web_handlers: std::collections::HashSet::new(),
             needs_ui: false,
+            live_render_fns: std::collections::HashSet::new(),
+            live_handle_fns: std::collections::HashSet::new(),
         }
     }
 
@@ -318,6 +324,56 @@ impl Transpiler {
                 Self::collect_web_handlers_expr(right, out);
             }
             Expr::FieldAccess { object, .. } => Self::collect_web_handlers_expr(object, out),
+            _ => {}
+        }
+    }
+
+    /// Scan statements for live[app, path, render, handle] calls and collect
+    /// render/handle function names for signature overriding.
+    fn scan_live_callbacks(stmts: &[Stmt], render_fns: &mut std::collections::HashSet<String>, handle_fns: &mut std::collections::HashSet<String>) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Assign { value, .. } => Self::collect_live_callbacks_expr(value, render_fns, handle_fns),
+                Stmt::ExprStmt(e) => Self::collect_live_callbacks_expr(e, render_fns, handle_fns),
+                Stmt::If { condition, then_body, else_body, .. } => {
+                    Self::collect_live_callbacks_expr(condition, render_fns, handle_fns);
+                    Self::scan_live_callbacks(then_body, render_fns, handle_fns);
+                    if let Some(eb) = else_body { Self::scan_live_callbacks(eb, render_fns, handle_fns); }
+                }
+                Stmt::While { condition, body, .. } => {
+                    Self::collect_live_callbacks_expr(condition, render_fns, handle_fns);
+                    Self::scan_live_callbacks(body, render_fns, handle_fns);
+                }
+                Stmt::For { body, .. } => Self::scan_live_callbacks(body, render_fns, handle_fns),
+                Stmt::FnDecl { body, .. } => Self::scan_live_callbacks(body, render_fns, handle_fns),
+                _ => {}
+            }
+        }
+    }
+
+    /// Collect render/handle function names from live[app, path, render, handle] call expressions.
+    fn collect_live_callbacks_expr(expr: &Expr, render_fns: &mut std::collections::HashSet<String>, handle_fns: &mut std::collections::HashSet<String>) {
+        match expr {
+            Expr::Call { callee, args } => {
+                if let Expr::Ident(name) = callee.as_ref() {
+                    if name == "live" && args.len() == 4 {
+                        // live[app, path, render, handle]
+                        if let Expr::Ident(render_name) = &args[2] {
+                            render_fns.insert(render_name.clone());
+                        }
+                        if let Expr::Ident(handle_name) = &args[3] {
+                            handle_fns.insert(handle_name.clone());
+                        }
+                    }
+                }
+                Self::collect_live_callbacks_expr(callee, render_fns, handle_fns);
+                for a in args { Self::collect_live_callbacks_expr(a, render_fns, handle_fns); }
+            }
+            Expr::BinOp { left, right, .. } => {
+                Self::collect_live_callbacks_expr(left, render_fns, handle_fns);
+                Self::collect_live_callbacks_expr(right, render_fns, handle_fns);
+            }
+            Expr::FieldAccess { object, .. } => Self::collect_live_callbacks_expr(object, render_fns, handle_fns),
             _ => {}
         }
     }
@@ -728,6 +784,14 @@ impl Transpiler {
             }
         }
 
+        // Pre-scan: find live[] render/handle callback functions
+        if self.needs_ui {
+            Self::scan_live_callbacks(stmts, &mut self.live_render_fns, &mut self.live_handle_fns);
+            for sig in self.ctx.functions.values() {
+                Self::scan_live_callbacks(&sig.body, &mut self.live_render_fns, &mut self.live_handle_fns);
+            }
+        }
+
         // Compute which params should be passed by reference
         self.compute_by_ref_params();
 
@@ -1031,20 +1095,47 @@ impl Transpiler {
         let sig = self.ctx.functions.get(name).unwrap().clone();
         let ref_set = self.by_ref_params.get(name).cloned().unwrap_or_default();
 
-        // Build param array (use &StructName for by-ref params)
-        let params: Vec<String> = sig.params.iter()
-            .map(|(pname, ptype)| {
-                if ref_set.contains(pname) {
-                    format!("{}: &{}", pname, ptype.to_rust_type())
-                } else {
-                    format!("{}: {}", pname, ptype.to_rust_type())
-                }
-            })
-            .collect();
+        let is_live_render = self.live_render_fns.contains(name);
+        let is_live_handle = self.live_handle_fns.contains(name);
 
-        let ret_str = match &sig.return_type {
-            CrowType::Void => String::new(),
-            t => format!(" -> {}", t.to_rust_type()),
+        // Build param array — override for live render/handle callbacks
+        let params: Vec<String> = if is_live_render {
+            // render(state: &CrowLiveState) -> CrowVNode
+            sig.params.iter().enumerate().map(|(i, (pname, _))| {
+                if i == 0 { format!("{}: &CrowLiveState", pname) }
+                else { format!("{}: String", pname) }
+            }).collect()
+        } else if is_live_handle {
+            // handle(state: &mut CrowLiveState, event: &str, value: Option<&str>)
+            sig.params.iter().enumerate().map(|(i, (pname, _))| {
+                match i {
+                    0 => format!("{}: &mut CrowLiveState", pname),
+                    1 => format!("{}: &str", pname),
+                    2 => format!("{}: Option<&str>", pname),
+                    _ => format!("{}: String", pname),
+                }
+            }).collect()
+        } else {
+            sig.params.iter()
+                .map(|(pname, ptype)| {
+                    if ref_set.contains(pname) {
+                        format!("{}: &{}", pname, ptype.to_rust_type())
+                    } else {
+                        format!("{}: {}", pname, ptype.to_rust_type())
+                    }
+                })
+                .collect()
+        };
+
+        let ret_str = if is_live_render {
+            " -> CrowVNode".to_string()
+        } else if is_live_handle {
+            String::new() // void
+        } else {
+            match &sig.return_type {
+                CrowType::Void => String::new(),
+                t => format!(" -> {}", t.to_rust_type()),
+            }
         };
 
         let rust_name = Self::rust_fn_name(name);
@@ -1483,8 +1574,10 @@ impl Transpiler {
                         }
                     }
                     let kw = if self.mutated_vars.contains(name) { "let mut" } else { "let" };
-                    if self.emitting_dual {
-                        // In dual mode, let Rust infer the type (CrowDual)
+                    let in_live_callback = self.live_render_fns.contains(&self.current_function_name)
+                        || self.live_handle_fns.contains(&self.current_function_name);
+                    if self.emitting_dual || in_live_callback {
+                        // In dual/live mode, let Rust infer the type
                         self.emit_line(&format!("{} {} = {};", kw, name, expr_str));
                     } else {
                         self.emit_line(&format!("{} {}: {} = {};", kw, name, ty.to_rust_type(), expr_str));
@@ -2958,14 +3051,14 @@ impl Transpiler {
                     // live[app, path, render, handle] → CrowLiveView with separate render/handle
                     if name == "live" && self.needs_crow_web && arg_strs.len() == 4 {
                         return format!(
-                            "{{ let _lv = CrowLiveView::new(\"/_ws{}\", CrowLiveState::new(), {}, {}); let _lr = _lv.into_router(&{}); {}.merge(_lr) }}",
+                            "{{ let _ws_path = format!(\"/_ws{{}}\", {}); let _lv = CrowLiveView::new(&_ws_path, CrowLiveState::new(), {}, {}); let _lr = _lv.into_router(&{}); {}.merge(_lr) }}",
                             arg_strs[1], arg_strs[2], arg_strs[3], arg_strs[1], arg_strs[0]
                         );
                     }
                     // live[app, path, handler] → legacy LiveView (single handler)
                     if name == "live" && self.needs_crow_web && arg_strs.len() == 3 {
                         return format!(
-                            "{{ let _lv = crow_web::live::CrowLiveViewLegacy::new(\"/_ws{}\", CrowLiveState::new(), {}); let _lr = _lv.into_router(&{}); {}.merge(_lr) }}",
+                            "{{ let _ws_path = format!(\"/_ws{{}}\", {}); let _lv = crow_web::live::CrowLiveViewLegacy::new(&_ws_path, CrowLiveState::new(), {}); let _lr = _lv.into_router(&{}); {}.merge(_lr) }}",
                             arg_strs[1], arg_strs[2], arg_strs[1], arg_strs[0]
                         );
                     }
@@ -3219,6 +3312,13 @@ impl Transpiler {
                             CrowType::Bool => return format!("{}.get_bool(&{}, {})", obj_str, arg_strs[0], arg_strs[1]),
                             _ => {} // fall through to generic handling
                         }
+                    }
+
+                    // state.set['key', value] → state.set("key", serde_json::json!(value))
+                    if field == "set" && args.len() == 2 && self.needs_ui {
+                        self.needs_serde_json = true;
+                        let obj_str = self.expr_to_string(object);
+                        return format!("{}.set(&{}, serde_json::json!({}))", obj_str, arg_strs[0], arg_strs[1]);
                     }
                 }
 
