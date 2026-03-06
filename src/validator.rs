@@ -193,6 +193,20 @@ impl<'a> Validator<'a> {
                 if path == "web" || path.starts_with("web.") {
                     self.defined_vars.insert("web".to_string());
                 }
+                // `use ui` → register all HTML element functions as known
+                if path == "ui" {
+                    const HTML_ELEMENTS: &[&str] = &[
+                        "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6",
+                        "button", "ul", "ol", "li", "form", "a", "nav",
+                        "header", "footer", "section", "table", "tr", "td", "th",
+                        "thead", "tbody", "select", "option", "textarea", "label",
+                        "pre", "code", "img",
+                    ];
+                    for &el in HTML_ELEMENTS {
+                        self.defined_vars.insert(el.to_string());
+                    }
+                    self.defined_vars.insert("ui".to_string());
+                }
                 // Other modules handled by expand_module_imports
             }
             Stmt::Resource { .. } => {}
@@ -447,7 +461,7 @@ impl<'a> Validator<'a> {
             "send" => argc == 2,                  // send[sock, msg] or send[sender, data]
             "recv" => argc == 1,                  // recv[sock]
             "close" => argc == 1,                 // close[sock]
-            "live" => argc == 3,                  // live[app, path, handler]
+            "live" => argc == 3 || argc == 4,      // live[app, path, handler] or live[app, path, render, handle]
             "static_dir" => argc == 3,            // static_dir[app, url_path, dir_path]
             "smtp" => argc == 4,                  // smtp[host, port, user, pass]
             _ => true,

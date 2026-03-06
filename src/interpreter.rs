@@ -2664,8 +2664,8 @@ impl Interpreter {
                 Ok(CrowValue::ok(Value::Bool(true)))
             }
             "live" => {
-                // live[app, path, handler] → returns app unchanged (mock)
-                if args.len() != 3 { return Err("live[] takes 3 arguments".into()); }
+                // live[app, path, handler] or live[app, path, render, handle] → returns app unchanged (mock)
+                if args.len() != 3 && args.len() != 4 { return Err("live[] takes 3 or 4 arguments".into()); }
                 Ok(args[0].clone())
             }
             "static_dir" => {

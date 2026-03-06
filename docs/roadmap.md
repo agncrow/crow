@@ -17,7 +17,9 @@ What's done, what's remaining, and in what order.
 | Web framework (P4) | 17 modules: server, client, db, auth, cors, session, template, cache, rate, upload, sse, ws, live, static, mail, queue, docs — all with transpiler codegen + interpreter support |
 | Autograd | `grad[f]` functional transformation |
 | Parallel execution | Auto-parallel `for` loops (rayon), statement-level parallelism via dependency analysis |
-| CLI | `crow run`, `crow build`, `crow fmt`, `crow check`, `crow init`, `crow install`, REPL |
+| CLI | `crow run`, `crow build`, `crow fmt`, `crow check`, `crow new`, `crow install`, REPL |
+| Project structure | `crow new` scaffolding (--web, --ml, --db), `crow run <job>`, convention-based pages/jobs/layout/db, dot-path imports (`use pages.home`) |
+| DX | Default welcome page for empty web apps, friendly error messages (e.g. "port 3000 is already in use") |
 | Tests | 998 unit tests (+ 3 GPU benchmarks) |
 | Documentation | language-spec.md, web-framework.md, ui-framework.md, math-library.md, feature-map.md, frame-module.md, usage.md, comparison.md, automatic-verification.md |
 

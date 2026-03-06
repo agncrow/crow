@@ -187,7 +187,7 @@ Crow is intentionally minimal: lists, maps, structs. No tuples, no enums, no set
 |----------|-------|--------|
 | Rust | `cargo` — best-in-class. Build, test, publish, bench. | 9 |
 | Go | `go run`, `go build`, `go mod`. Excellent built-in. | 8 |
-| **Crow** | `crow run`, `crow build`, `crow init`, `crow install`, REPL. All-in-one. | **8** |
+| **Crow** | `crow run`, `crow build`, `crow new`, `crow install`, REPL. All-in-one. | **8** |
 | Swift | Xcode, SPM. Good but Apple-centric. | 7 |
 | Python | `pip`, `venv`, `poetry`, `conda` — fragmented. | 5 |
 | JS | `npm`/`yarn`/`pnpm`/`bun`. `package.json` + lockfile chaos. | 4 |

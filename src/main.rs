@@ -66,7 +66,7 @@ fn main() {
         "-v" => {
             println!("(o.o) crow {}", env!("CARGO_PKG_VERSION"));
         }
-        "init" => cmd_init(),
+        "new" => cmd_new(),
         "install" => cmd_install(),
         "fmt" => cmd_fmt(),
         "build" => cmd_build(),
@@ -100,9 +100,15 @@ fn main() {
                     cmd_run_interpreted();
                 }
             } else if args.len() > 2 {
-                // crow run file.crow arg1 arg2 ... -> transpile + compile + run
-                let extra_args = args[3..].to_vec();
-                cmd_run_file(&args[2], &extra_args);
+                let target = &args[2];
+                if target.ends_with(".crow") || target.ends_with(".crowc") {
+                    // crow run file.crow arg1 arg2 ... -> transpile + compile + run
+                    let extra_args = args[3..].to_vec();
+                    cmd_run_file(target, &extra_args);
+                } else {
+                    // crow run <job_name> -> look up in crowfile [jobs]
+                    cmd_run_job(target);
+                }
             } else {
                 // crow run (uses crowfile) -> transpile + compile + run
                 cmd_run(&[]);
@@ -125,12 +131,16 @@ fn main() {
 fn print_usage() {
     eprintln!("usage:");
     eprintln!("  crow                   start interactive REPL");
-    eprintln!("  crow init              create new project with crowfile");
+    eprintln!("  crow new myapp         create new project");
+    eprintln!("  crow new myapp --web   create web project (pages, serve)");
+    eprintln!("  crow new myapp --ml    create ML project (jobs, lib)");
+    eprintln!("  crow new myapp --db    create DB project (schema, migrate)");
     eprintln!("  crow install           install deps from crowfile into crow_modules/");
     eprintln!("  crow build             transpile to rust and compile to native binary");
     eprintln!("  crow build file.crow   transpile a specific file");
-    eprintln!("  crow run               transpile + compile + run (uses crowfile)");
+    eprintln!("  crow run               transpile + compile + run main.crow");
     eprintln!("  crow run file.crow     transpile + compile + run a specific file");
+    eprintln!("  crow run train         run a named job from crowfile");
     eprintln!("  crow run -i file.crow  run with interpreter (slow, for debugging)");
     eprintln!("  crow check             auto-verify project (uses crowfile)");
     eprintln!("  crow check file.crow   auto-verify a specific file");
@@ -326,36 +336,116 @@ fn repl_eval(interpreter: &mut Interpreter, source: &str, accumulated: &mut Vec<
     }
 }
 
-fn cmd_init() {
-    // create crowfile and main.crow
-    if std::path::Path::new("crowfile").exists() {
-        eprintln!("crowfile already exists");
+fn cmd_new() {
+    let args: Vec<String> = std::env::args().collect();
+
+    // crow new <name> [--web] [--ml] [--db]
+    let name = args.iter().skip(2).find(|a| !a.starts_with('-'));
+    let name = match name {
+        Some(n) => n.clone(),
+        None => {
+            eprintln!("usage: crow new <name> [--web] [--ml] [--db]");
+            process::exit(1);
+        }
+    };
+
+    let has_web = args.iter().any(|a| a == "--web");
+    let has_ml = args.iter().any(|a| a == "--ml");
+    let has_db = args.iter().any(|a| a == "--db");
+
+    let project_dir = std::path::PathBuf::from(&name);
+    let short_name = project_dir.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| name.clone());
+    if project_dir.exists() {
+        eprintln!("directory '{}' already exists", name);
         process::exit(1);
     }
 
-    let dir_name = std::env::current_dir()
-        .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-        .unwrap_or_else(|| "my-project".to_string());
+    // Helper to write a file, creating parent dirs
+    let write_file = |path: &std::path::Path, content: &str| {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap_or_else(|e| {
+                eprintln!("error creating directory: {}", e);
+                process::exit(1);
+            });
+        }
+        std::fs::write(path, content).unwrap_or_else(|e| {
+            eprintln!("error writing {}: {}", path.display(), e);
+            process::exit(1);
+        });
+    };
 
-    let crowfile = format!(
-        "name = '{}'\nentry = 'main.crow'\n",
-        dir_name
-    );
-
-    std::fs::write("crowfile", crowfile).unwrap_or_else(|e| {
-        eprintln!("error writing crowfile: {}", e);
+    // Create project directory
+    std::fs::create_dir_all(&project_dir).unwrap_or_else(|e| {
+        eprintln!("error creating directory '{}': {}", name, e);
         process::exit(1);
     });
 
-    if !std::path::Path::new("main.crow").exists() {
-        std::fs::write("main.crow", "log['hello, crow']\n").unwrap_or_else(|e| {
-            eprintln!("error writing main.crow: {}", e);
-            process::exit(1);
-        });
+    // Build crowfile
+    let mut crowfile = format!("name = '{}'\n", short_name);
+    let mut jobs_section = Vec::new();
+
+    // main.crow
+    if has_web {
+        write_file(&project_dir.join("main.crow"), "use web\nuse ui\nuse pages.home\n\napp = web.new[]\napp = live[app, '/', home_render, home_handle]\nserve[app, 3000]\n");
+    } else {
+        write_file(&project_dir.join("main.crow"), &format!("log['hello, {}']\n", short_name));
     }
 
-    println!("initialized crow project '{}'", dir_name);
+    // --web: add pages/home.crow
+    if has_web {
+        write_file(&project_dir.join("pages/home.crow"),
+            "--- home page ---\nuse ui\n\nfn render[state]\n    message = state.get['message', 'welcome to crow']\n    return div[\n        h1['{message}']\n    ]\n\nfn handle[state, event, value]\n    log[event]\n");
+    }
+
+    // --ml: add jobs/train.crow and lib/model.crow
+    if has_ml {
+        write_file(&project_dir.join("jobs/train.crow"),
+            "use lib.model\n\nlog['training started']\ntrain[]\nlog['training complete']\n");
+        write_file(&project_dir.join("lib/model.crow"),
+            "fn train[]\n  log['model training...']\n");
+        jobs_section.push(("train".to_string(), "jobs/train.crow".to_string()));
+    }
+
+    // --db: add db/schema.crow and jobs/migrate.crow
+    if has_db {
+        write_file(&project_dir.join("db/schema.crow"),
+            "use db\n\ntable users\n  name, str\n  email, str\n");
+        write_file(&project_dir.join("jobs/migrate.crow"),
+            "use db\n\nlog['running migrations']\n");
+        jobs_section.push(("migrate".to_string(), "jobs/migrate.crow".to_string()));
+    }
+
+    // Add [jobs] section to crowfile if needed
+    if !jobs_section.is_empty() {
+        crowfile.push_str("\njobs = [");
+        let entries: Vec<String> = jobs_section.iter()
+            .map(|(k, v)| format!("{} = '{}'", k, v))
+            .collect();
+        crowfile.push_str(&entries.join(", "));
+        crowfile.push_str("]\n");
+    }
+
+    write_file(&project_dir.join("crowfile"), &crowfile);
+
+    println!("created project '{}'", short_name);
+    let mut files: Vec<String> = Vec::new();
+    files.push("  crowfile".to_string());
+    files.push("  main.crow".to_string());
+    if has_web { files.push("  pages/home.crow".to_string()); }
+    if has_ml {
+        files.push("  jobs/train.crow".to_string());
+        files.push("  lib/model.crow".to_string());
+    }
+    if has_db {
+        files.push("  db/schema.crow".to_string());
+        files.push("  jobs/migrate.crow".to_string());
+    }
+    for f in &files {
+        println!("{}", f);
+    }
+    println!("\ncd {} && crow run", name);
 }
 
 fn cmd_install() {
@@ -745,15 +835,15 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     };
 
     let existing_source = std::fs::read_to_string(&main_rs_path).unwrap_or_default();
-    if existing_source == rust_source && binary_path.exists() {
-        return binary_path;
-    }
+    let source_changed = existing_source != rust_source;
 
-    // Write transpiled Rust source
-    std::fs::write(&main_rs_path, &rust_source).unwrap_or_else(|e| {
-        eprintln!("error writing main.rs: {}", e);
-        process::exit(1);
-    });
+    // Write transpiled Rust source (always, so cargo can detect dep changes)
+    if source_changed {
+        std::fs::write(&main_rs_path, &rust_source).unwrap_or_else(|e| {
+            eprintln!("error writing main.rs: {}", e);
+            process::exit(1);
+        });
+    }
 
     // Compile with cargo (suppress output for quiet mode, but capture errors)
     let mut cmd = std::process::Command::new("cargo");
@@ -1151,6 +1241,7 @@ struct CrowfileConfig {
     cpu: Option<usize>,
     gpu: Option<usize>,
     deps: Vec<(String, String)>,  // (name, version)
+    jobs: Vec<(String, String)>,  // (job_name, file_path)
 }
 
 /// Run a binary, forwarding its exit code and passing extra args.
@@ -1370,6 +1461,31 @@ fn cmd_run_file(filename: &str, extra_args: &[String]) {
     run_binary(&binary, extra_args);
 }
 
+fn cmd_run_job(job_name: &str) {
+    let config = parse_crowfile();
+    let job_file = config.jobs.iter()
+        .find(|(name, _)| name == job_name)
+        .map(|(_, path)| path.clone());
+
+    match job_file {
+        Some(path) => {
+            let binary = transpile_and_compile(&path, true, config.cpu, false);
+            run_binary(&binary, &[]);
+        }
+        None => {
+            eprintln!("unknown job '{}'. available jobs:", job_name);
+            if config.jobs.is_empty() {
+                eprintln!("  (none — add [jobs] section to crowfile)");
+            } else {
+                for (name, path) in &config.jobs {
+                    eprintln!("  {} → {}", name, path);
+                }
+            }
+            process::exit(1);
+        }
+    }
+}
+
 fn cmd_run_interpreted() {
     let config = parse_crowfile();
 
@@ -1472,7 +1588,7 @@ fn parse_crowfile() -> CrowfileConfig {
     let crowfile_source = match std::fs::read_to_string("crowfile") {
         Ok(s) => s,
         Err(_) => {
-            eprintln!("no crowfile found. run 'crow init' first");
+            eprintln!("no crowfile found. run 'crow new <name>' first");
             process::exit(1);
         }
     };
@@ -1493,10 +1609,7 @@ fn parse_crowfile() -> CrowfileConfig {
                         process::exit(1);
                     }
                 },
-                None => {
-                    eprintln!("crowfile: missing 'entry'");
-                    process::exit(1);
-                }
+                None => "main.crow".to_string(),
             };
 
             let cpu = interpreter.get_var("cpu").and_then(|val| {
@@ -1530,7 +1643,22 @@ fn parse_crowfile() -> CrowfileConfig {
                 }
             }).unwrap_or_default();
 
-            CrowfileConfig { entry, cpu, gpu, deps }
+            // parse [jobs] section: jobs = [train = 'jobs/train.crow', ...]
+            let jobs = interpreter.get_var("jobs").map(|val| {
+                if let value::Value::Map(map) = &val.value {
+                    map.iter().filter_map(|(name, v)| {
+                        if let value::Value::Str(path) = &v.value {
+                            Some((name.clone(), path.clone()))
+                        } else {
+                            None
+                        }
+                    }).collect::<Vec<_>>()
+                } else {
+                    vec![]
+                }
+            }).unwrap_or_default();
+
+            CrowfileConfig { entry, cpu, gpu, deps, jobs }
         }
         Err(e) => {
             eprintln!("error in crowfile: {}", e);
@@ -1573,7 +1701,12 @@ fn expand_module_imports(
                 continue;
             }
 
-            let module_name = path.rsplit('/').next().unwrap_or(path).to_string();
+            // Convert dot-separated path to file path (pages.home → pages/home)
+            let file_rel = path.replace('.', "/");
+            let module_name = path.rsplit('.').next()
+                .and_then(|s| if s.is_empty() { None } else { Some(s) })
+                .unwrap_or(path)
+                .to_string();
 
             // Circular import detection
             if visited.contains(path) {
@@ -1584,9 +1717,9 @@ fn expand_module_imports(
 
             // Try to find the module file
             let candidates = vec![
-                source_dir.join(format!("{}.crow", path)),
-                source_dir.join(format!("crow_modules/{}.crow", path)),
-                source_dir.join(format!("crow_modules/{}/main.crow", path)),
+                source_dir.join(format!("{}.crow", file_rel)),
+                source_dir.join(format!("crow_modules/{}.crow", file_rel)),
+                source_dir.join(format!("crow_modules/{}/main.crow", file_rel)),
             ];
             let file_path = candidates.iter().find(|p| p.exists());
             let file_path = match file_path {

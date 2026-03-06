@@ -23,6 +23,6 @@ fn handle[state, event, value]
 
 --- Build and serve ---
 app = web.new[]
-app = live[app, '/counter', render, handle]
+app = live[app, '/', render, handle]
 serve[app, 3000]
 

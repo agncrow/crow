@@ -790,8 +790,10 @@ Use `use` to import a module. The entire module is imported — no selective imp
 
 ```
 use math
-use myapp/utils
+use pages.home
 ```
+
+Dot-separated paths map to directories: `use pages.home` loads `pages/home.crow` and prefixes its exports with `home_` (the last segment). This is how you import page files, library modules, etc.
 
 ### Accessing
 
@@ -1247,16 +1249,23 @@ Import sub-modules with `use web.X`. Each sub-module enables only its feature �
 
 ```
 use web
+use ui
+use pages.home
 
 app = web.new[]
-route[app, '/hello', handler]
+app = live[app, '/', home_render, home_handle]
 serve[app, 3000]
 ```
+
+If no routes are registered, `serve[]` shows a default welcome page so the user always sees something.
+
+If the port is already in use, the server prints a friendly error: `error: port 3000 is already in use`.
 
 | Function | Description |
 |---|---|
 | `web.new[]` | Create a new web application |
 | `route[app, path, handler]` | Add a route with a handler function |
+| `live[app, path, render, handle]` | Add a LiveView route with render/handle functions |
 | `serve[app, port]` | Start the server on the given port |
 
 #### Responses
@@ -1872,6 +1881,107 @@ The language specifies *intent*. The toolchain handles *implementation*.
 
 ## 13. Project Configuration
 
+### Project Structure
+
+A Crow program can be a single file or a full project. No restructuring is needed as a project grows.
+
+#### Single File (No Project)
+
+Any `.crow` file is a valid program:
+
+```
+crow run hello.crow
+```
+
+#### Project Structure
+
+A project is a directory with a `crowfile` at the root. Create one with `crow new`:
+
+```
+crow new myapp
+```
+
+Full project structure (all optional except `crowfile` and `main.crow`):
+
+```
+myapp/
+  crowfile                    --- project identity + config
+  main.crow                   --- default entry point (crow run)
+
+  jobs/                       --- batch tasks (crow run <name>)
+    train.crow                --- crow run train
+    migrate.crow              --- crow run migrate
+    sync.crow                 --- crow run sync
+
+  pages/                      --- web pages (imported and wired in main.crow)
+    home.crow                 --- use pages.home → live[app, '/', ...]
+    dashboard.crow            --- use pages.dashboard → live[app, '/dashboard', ...]
+    accounts.crow             --- /accounts
+
+  components/                 --- reusable UI functions
+    nav.crow
+    chart.crow
+
+  layout.crow                 --- shared UI wrapper for all pages
+
+  lib/                        --- shared code (organized however you want)
+    accounts.crow
+    ml/
+      features.crow
+      model.crow
+
+  db/
+    schema.crow               --- source of truth for tables
+
+  tests/                      --- integration tests
+    accounts_test.crow
+
+  config/                     --- configuration files
+  models/                     --- trained model artifacts
+  data/                       --- data files
+```
+
+#### Conventions
+
+| Folder/File | Purpose | Auto-discovered? |
+|---|---|---|
+| `crowfile` | Project identity, entry points, deps | Required for projects |
+| `main.crow` | Default entry point. `crow run` runs this | Yes — convention |
+| `pages/` | Web pages. Import with `use pages.X`, wire with `live[]` | Explicit |
+| `layout.crow` | Shared UI wrapper for all pages | **Yes** — auto-applied |
+| `db/schema.crow` | Table definitions, auto-migrations | **Yes** — auto-discovered |
+| `jobs/` | Batch tasks. `crow run <name>` | **Yes** — listed in crowfile |
+| `tests/` | Integration tests. `crow test` | **Yes** — auto-discovered |
+| `lib/` | Your code, any organization | No — import with `use` |
+| `components/` | Reusable UI functions | No — import with `use` |
+| `config/` | Configuration files | No — import with `use` |
+
+Only three magic folders: `pages/`, `db/`, `tests/`. Plus `layout.crow` and `main.crow` by convention. Everything else is just files you import.
+
+#### Entry Points
+
+`main.crow` is the long-running entry point (e.g., web server). `jobs/` contains batch tasks that run and exit.
+
+```
+crow run              --- runs main.crow (long-running)
+crow run train        --- runs jobs/train.crow (batch, exits)
+crow run migrate      --- runs jobs/migrate.crow (batch, exits)
+```
+
+Rule: **`main.crow` is the thing that stays running. Everything else runs and exits.**
+
+#### Growth Path
+
+| Stage | What you have |
+|---|---|
+| Day 1 | `hello.crow` — one file, no project |
+| Week 1 | `crow new myapp` — `crowfile` + `main.crow` |
+| Week 2 | Add `pages/`, `lib/` — split code out |
+| Month 1 | Add `db/schema.crow`, `jobs/train.crow` |
+| Month 6 | Full project — multiple entry points, lib files, pages, components |
+
+No restructuring at any step. You just add files.
+
 ### crowfile
 
 Every Crow project has a `crowfile` at the root. It uses Crow syntax.
@@ -1879,13 +1989,19 @@ Every Crow project has a `crowfile` at the root. It uses Crow syntax.
 ```
 --- crowfile ---
 
-name = 'my-project'
-entry = 'main.crow'
+name = 'myapp'
 cpu = 4
 gpu = 'all'
 
 deps = [math = '1.0', http = '2.3']
+
+[jobs]
+train = 'jobs/train.crow'
+migrate = 'jobs/migrate.crow'
+sync = 'jobs/sync.crow'
 ```
+
+No need to list `main.crow` — it is the default entry point by convention.
 
 Dependencies can be:
 
@@ -1901,24 +2017,31 @@ Crow source files use the `.crow` extension.
 
 ```
 main.crow
-myapp/utils.crow
-myapp/worker.crow
+lib/accounts.crow
+pages/dashboard.crow
+jobs/train.crow
 ```
 
 ### CLI
 
 ```
 crow                        --- start interactive REPL ---
-crow init                   --- create new project with crowfile ---
+crow new myapp              --- create new project (crowfile + main.crow) ---
+crow new myapp --web        --- create web project (+ pages/home.crow) ---
+crow new myapp --ml         --- create ML project (+ jobs/train.crow, lib/model.crow) ---
+crow new myapp --db         --- create DB project (+ db/schema.crow, jobs/migrate.crow) ---
+crow new myapp --web --ml --db  --- all capabilities ---
 crow install                --- install deps from crowfile into crow_modules/ ---
 crow build                  --- transpile to Rust and compile to native binary ---
 crow build file.crow        --- transpile a specific file ---
-crow run                    --- transpile + compile + run (uses crowfile) ---
+crow run                    --- transpile + compile + run main.crow ---
 crow run file.crow          --- transpile + compile + run a specific file ---
+crow run train              --- run a named job from crowfile [jobs] ---
 crow run -i file.crow       --- run with interpreter (for debugging) ---
 crow fmt                    --- format project (uses crowfile) ---
 crow fmt file.crow          --- format a specific file ---
 crow fmt --check            --- check if formatting needed (exit 1 if not) ---
+crow test                   --- run all verify statements + tests/ folder ---
 ```
 
 `crow build` transpiles `.crow` source files to Rust and compiles to a native binary. `crow run` builds and then executes the binary.
@@ -1956,7 +2079,8 @@ Multi-line blocks (functions, if, for, while, struct) are entered by typing the 
 `crow install` reads deps from the `crowfile` and installs them into `crow_modules/`.
 
 ```bash
-crow init
+crow new myapp
+cd myapp
 --- edit crowfile to add deps ---
 crow install
 crow run
@@ -2404,7 +2528,8 @@ All core language features have interpreter–transpiler parity. The following i
 | Functions in collections type inference | ✅ Resolved | `arr[i]` and `map[k]` return correct element types in `infer_call_base` |
 | Automatic statement-level parallelism | ✅ Resolved | Independent assignments grouped into `rayon::join` waves via dependency analysis |
 | REPL (`crow` with no args) | ✅ Resolved | Interactive interpreter REPL |
-| `crow init` | ✅ Resolved | Project scaffolding creates `crowfile` and `main.crow` |
+| `crow new` | ✅ Resolved | Project scaffolding with --web, --ml, --db flags; replaces `crow init` |
+| `crow run <job>` | ✅ Resolved | Named jobs from crowfile [jobs] section |
 | `crow install` | ✅ Resolved | Package manager with registry, git, and local path support |
 
 ## Design Note: Map Arithmetic Requires All-Numeric Leaves

@@ -81,24 +81,54 @@ crow build hello.crow
 ./hello          # run the compiled binary directly
 ```
 
-### `crow init`
+### `crow new <name>`
 
-Create a new Crow project with a `crowfile` and `main.crow`.
+Create a new Crow project. Generates a `crowfile` and `main.crow` with working starter code.
 
 ```bash
-mkdir myproject
-cd myproject
-crow init
+crow new myapp
+cd myapp
 crow run
 ```
+
+Add flags to include specific capabilities:
+
+```bash
+crow new myapp --web            # adds pages/home.crow, wires live[] route in main.crow
+crow new myapp --ml             # adds jobs/train.crow, lib/model.crow
+crow new myapp --db             # adds db/schema.crow, jobs/migrate.crow
+crow new myapp --web --ml --db  # all of the above
+```
+
+Every generated file has real working code — `crow run` works immediately after `crow new`.
 
 ### `crow run` (no file)
 
-Run the project defined by the `crowfile` in the current directory.
+Run the project defined by the `crowfile` in the current directory. Runs `main.crow` by default.
 
 ```bash
 crow run
 ```
+
+### `crow run <job>`
+
+Run a named job defined in the `crowfile`'s `[jobs]` section.
+
+```
+--- crowfile ---
+name = 'myapp'
+
+[jobs]
+train = 'jobs/train.crow'
+migrate = 'jobs/migrate.crow'
+```
+
+```bash
+crow run train        # runs jobs/train.crow
+crow run migrate      # runs jobs/migrate.crow
+```
+
+Jobs are batch tasks — they run and exit. `main.crow` is the long-running entry point (e.g., web server).
 
 ### `crow install`
 
@@ -107,7 +137,6 @@ Install dependencies listed in the `crowfile` into `crow_modules/`.
 ```
 --- crowfile ---
 name = 'myapp'
-entry = 'main.crow'
 deps = ['math' = '1.0', 'utils' = 'https://github.com/user/crow-utils']
 ```
 
@@ -137,6 +166,79 @@ To use a custom registry, set the `CROW_REGISTRY` environment variable:
 ```bash
 CROW_REGISTRY=https://github.com/myorg/my-registry.git crow install
 ```
+
+## Project Structure
+
+A Crow program can be a single file or a full project directory. You never need to restructure as the project grows — just add files.
+
+### Single File
+
+Any `.crow` file is a valid program:
+
+```
+--- hello.crow ---
+log['hello, world']
+```
+
+```bash
+crow run hello.crow
+```
+
+### Full Project
+
+Use `crow new` to create a project:
+
+```bash
+crow new finch --web --ml --db
+```
+
+```
+finch/
+  crowfile                    # project config + job definitions
+  main.crow                   # default entry point (crow run)
+
+  jobs/                       # batch tasks (crow run <name>)
+    train.crow                # crow run train
+    migrate.crow              # crow run migrate
+
+  pages/                      # web pages — imported and wired in main.crow
+    home.crow                 # use pages.home → live[app, '/', ...]
+    dashboard.crow            # use pages.dashboard → live[app, '/dashboard', ...]
+
+  components/                 # reusable UI functions
+    nav.crow
+
+  layout.crow                 # shared UI wrapper for all pages
+
+  lib/                        # your code — organized however you want
+    accounts.crow
+    ml/
+      features.crow
+      model.crow
+
+  db/
+    schema.crow               # table definitions (auto-discovered)
+
+  tests/                      # integration tests (crow test)
+    accounts_test.crow
+```
+
+### Conventions
+
+| Folder/File | What it does | Magic? |
+|---|---|---|
+| `main.crow` | Default entry point. `crow run` runs this | Convention |
+| `pages/` | Web pages. Import with `use pages.home` and wire with `live[]` | Explicit |
+| `layout.crow` | Wraps all pages in shared UI | Auto-applied |
+| `db/schema.crow` | Table definitions | Auto-discovered |
+| `jobs/` | Batch tasks. `crow run train` | Listed in crowfile |
+| `tests/` | Integration tests. `crow test` | Auto-discovered |
+| `lib/` | Shared code | Just files — import with `use` |
+| `components/` | UI functions | Just files — import with `use` |
+
+Rule: **`main.crow` stays running (web server). Jobs run and exit (training, migrations).**
+
+The user is free to organize code however they want — the conventions are shortcuts, not requirements. You can define routes manually, write SQL directly, or put code anywhere and import it with `use`.
 
 ## Language Basics
 

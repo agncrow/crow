@@ -8,6 +8,7 @@ pub struct Lexer {
     indent_stack: Vec<usize>,
     pending_tokens: Vec<SpannedToken>,
     at_line_start: bool,
+    bracket_depth: usize,
 }
 
 impl Lexer {
@@ -20,6 +21,7 @@ impl Lexer {
             indent_stack: vec![0],
             pending_tokens: Vec::new(),
             at_line_start: true,
+            bracket_depth: 0,
         }
     }
 
@@ -44,9 +46,19 @@ impl Lexer {
 
             let ch = self.source[self.pos];
 
-            // handle line start indentation
+            // handle line start indentation (suppressed inside brackets)
             if self.at_line_start {
-                self.handle_indentation(&mut tokens)?;
+                if self.bracket_depth == 0 {
+                    self.handle_indentation(&mut tokens)?;
+                } else {
+                    // Inside brackets: skip leading whitespace, don't emit indent/dedent
+                    while self.pos < self.source.len()
+                        && (self.source[self.pos] == ' ' || self.source[self.pos] == '\t')
+                    {
+                        self.pos += 1;
+                        self.col += 1;
+                    }
+                }
                 self.at_line_start = false;
                 continue;
             }
@@ -57,9 +69,11 @@ impl Lexer {
                 continue;
             }
 
-            // newline
+            // newline (suppressed inside brackets)
             if ch == '\n' {
-                tokens.push(self.make_token(Token::Newline));
+                if self.bracket_depth == 0 {
+                    tokens.push(self.make_token(Token::Newline));
+                }
                 self.advance();
                 self.line += 1;
                 self.col = 1;
@@ -138,8 +152,16 @@ impl Lexer {
                 '=' => Token::Assign,
                 ',' => Token::Comma,
                 '.' => Token::Dot,
-                '[' => Token::LBracket,
-                ']' => Token::RBracket,
+                '[' => {
+                    self.bracket_depth += 1;
+                    Token::LBracket
+                }
+                ']' => {
+                    if self.bracket_depth > 0 {
+                        self.bracket_depth -= 1;
+                    }
+                    Token::RBracket
+                }
                 '(' => Token::LParen,
                 ')' => Token::RParen,
                 _ => {
