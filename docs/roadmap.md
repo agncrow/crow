@@ -18,7 +18,7 @@ What's done, what's remaining, and in what order.
 | Autograd | `grad[f]` functional transformation |
 | Parallel execution | Auto-parallel `for` loops (rayon), statement-level parallelism via dependency analysis |
 | CLI | `crow run`, `crow build`, `crow fmt`, `crow check`, `crow new`, `crow install`, REPL |
-| Project structure | `crow new` scaffolding (--web, --ml, --db), `crow run <job>`, convention-based pages/jobs/layout/db, dot-path imports (`use pages.home`) |
+| Project structure | `crow new` scaffolding (--web, --ml, --db), `crow run <job>`, convention-based views/jobs/layout/db, dot-path imports (`use views.home`), multi-import (`use web, ui`) |
 | DX | Default welcome page for empty web apps, friendly error messages (e.g. "port 3000 is already in use") |
 | Tests | 998 unit tests (+ 3 GPU benchmarks) |
 | Documentation | language-spec.md, web-framework.md, ui-framework.md, math-library.md, feature-map.md, frame-module.md, usage.md, comparison.md, automatic-verification.md |
@@ -112,7 +112,7 @@ Full-stack web applications written entirely in Crow. Server-rendered LiveView p
 
 ##### Phase 1: Counter Works (foundation)
 
-Goal: `live[app, '/', fn[state] div[h1['Count: {state.count}'], button[click = fn[] state.count = state.count + 1, '+']]]` runs in a browser.
+Goal: `page['/', render, handle]` with `serve[3000]` runs a LiveView counter in a browser. No explicit app variable needed.
 
 - [ ] **VNode builder API** — `crow_web::view`: element functions (`vnode_el`, `vnode_text`) that build `CrowVNode` trees with attributes and event handler IDs
 - [ ] **Upgrade live module** — `crow_web::live`: replace LCS string diff with `CrowVNode::diff` tree patching, add event registry (handler ID → closure map), per-connection mutable state

@@ -94,7 +94,7 @@ crow run
 Add flags to include specific capabilities:
 
 ```bash
-crow new myapp --web            # adds pages/home.crow, wires live[] route in main.crow
+crow new myapp --web            # adds views/home.crow, wires page[] route in main.crow
 crow new myapp --ml             # adds jobs/train.crow, lib/model.crow
 crow new myapp --db             # adds db/schema.crow, jobs/migrate.crow
 crow new myapp --web --ml --db  # all of the above
@@ -201,9 +201,9 @@ finch/
     train.crow                # crow run train
     migrate.crow              # crow run migrate
 
-  pages/                      # web pages — imported and wired in main.crow
-    home.crow                 # use pages.home → live[app, '/', ...]
-    dashboard.crow            # use pages.dashboard → live[app, '/dashboard', ...]
+  views/                      # web views — imported and wired in main.crow
+    home.crow                 # use views.home → page['/', home_render, home_handle]
+    dashboard.crow            # use views.dashboard → page['/dashboard', ...]
 
   components/                 # reusable UI functions
     nav.crow
@@ -228,7 +228,7 @@ finch/
 | Folder/File | What it does | Magic? |
 |---|---|---|
 | `main.crow` | Default entry point. `crow run` runs this | Convention |
-| `pages/` | Web pages. Import with `use pages.home` and wire with `live[]` | Explicit |
+| `views/` | Web views. Import with `use views.home` and wire with `page[]` | Explicit |
 | `layout.crow` | Wraps all pages in shared UI | Auto-applied |
 | `db/schema.crow` | Table definitions | Auto-discovered |
 | `jobs/` | Batch tasks. `crow run train` | Listed in crowfile |
