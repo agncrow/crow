@@ -24,12 +24,9 @@ Built on top of Crow's `web` module using `live` routes. Inspired by Phoenix Liv
 A `live` route is a function that receives mutable `state` and produces HTML using element functions. After `use ui`, all element functions are available directly — no `ui.` prefix needed (except `ui.input`, which conflicts with the built-in `input`). Event handlers mutate state directly. After each event, the runtime re-renders and sends the diff to the browser.
 
 ```
-use web
-use ui
+use web, ui
 
-app = web.new[]
-
-live[app, '/', fn[state]
+live['/', fn[state]
   state.count = state.count or 0
 
   div[]
@@ -38,7 +35,7 @@ live[app, '/', fn[state]
     button[click = fn[] state.count = state.count - 1, '-']
 ]
 
-serve[app, 8080]
+serve[8080]
 ```
 
 That's it. No init function. No update function. No message strings. No model struct with all fields copied on every change. One function, mutable state, direct event handlers. API routes and UI routes live on the same server.
@@ -68,7 +65,7 @@ fn handle_search[state, val]
   state.query = val
   state.results = query[state.conn, 'SELECT * FROM items WHERE name LIKE \'%{val}%\'']
 
-live[app, '/', fn[state]
+live['/', fn[state]
   button[click = handle_save, 'Save']
   ui.input[input = handle_search, type = 'text']
 ]
@@ -86,7 +83,7 @@ Event handler types:
 For periodic updates (live data, polling), pass `interval` to the `live` route:
 
 ```
-live[app, '/dashboard', fn[state]
+live['/dashboard', fn[state]
   state.data = query[db, 'SELECT * FROM metrics ORDER BY ts DESC LIMIT 10']
 
   div[]
@@ -102,7 +99,7 @@ The runtime re-calls the handler every 5 seconds, re-renders, and sends the diff
 Side effects happen directly in event handlers or in the handler body. Crow runs on the server — blocking is fine.
 
 ```
-live[app, '/', fn[state]
+live['/', fn[state]
   state.data = state.data or []
 
   button[click = fn[]
@@ -153,7 +150,7 @@ The server holds state in memory per connection. Each WebSocket connection = one
 Element functions produce HTML via indentation nesting. No closing tags, no JSX.
 
 ```
-live[app, '/', fn[state]
+live['/', fn[state]
   div[class = 'app']
     header[]
       h1['My App']
@@ -201,7 +198,7 @@ Event attributes: `click`, `input`, `change`, `submit`, `focus`, `blur`.
 Use `if` — it's just Crow.
 
 ```
-live[app, '/', fn[state]
+live['/', fn[state]
   div[]
     if state.loading
       p['Loading...']
@@ -217,7 +214,7 @@ live[app, '/', fn[state]
 Use `for` — it's just Crow.
 
 ```
-live[app, '/', fn[state]
+live['/', fn[state]
   ul[]
     for item in state.items
       li['{item.name}: {item.price}']
@@ -240,7 +237,7 @@ fn stat_row[state]
     card['Open Positions', len[state.positions]]
     card['Win Rate', '{state.win_rate}%']
 
-live[app, '/', fn[state]
+live['/', fn[state]
   div[]
     stat_row[state]
     table[state.positions]
@@ -256,7 +253,7 @@ All state lives in a mutable `state` object on the server. No client-side state,
 For persistence across reconnects, store state in the database:
 
 ```
-live[app, '/', fn[state]
+live['/', fn[state]
   button[click = fn[]
     exec[db, 'INSERT INTO saved_state ...']
     state.saved = true
@@ -275,8 +272,7 @@ Crow does not generate CSS. Use a static CSS file served via `web.static`:
 ```
 use web
 
-app = web.new[]
-static_dir[app, '/css', 'static/css']
+static_dir['/css', 'static/css']
 ```
 
 Or use inline styles via the `style` attribute:
@@ -292,12 +288,9 @@ A `style` Crow package may be added later for utility classes, but CSS is not a 
 Each page is a separate `live` route. No client-side router, no page state in the model.
 
 ```
-use web
-use ui
+use web, ui
 
-app = web.new[]
-
-live[app, '/', fn[state]
+live['/', fn[state]
   div[]
     nav[]
       a[href = '/', 'Home']
@@ -305,7 +298,7 @@ live[app, '/', fn[state]
     h1['Welcome']
 ]
 
-live[app, '/about', fn[state]
+live['/about', fn[state]
   div[]
     nav[]
       a[href = '/', 'Home']
@@ -313,7 +306,7 @@ live[app, '/about', fn[state]
     h1['About']
 ]
 
-serve[app, 8080]
+serve[8080]
 ```
 
 Each route has its own state. Navigation is standard links. The `web` module already handles routing — no need to reinvent it inside state.
@@ -323,7 +316,7 @@ Each route has its own state. Navigation is standard links. The `web` module alr
 Form state lives in `state`. Input handlers update fields directly. Submit triggers validation.
 
 ```
-live[app, '/login', fn[state]
+live['/login', fn[state]
   state.email = state.email or ''
   state.password = state.password or ''
   state.error = state.error or ''
@@ -348,7 +341,7 @@ live[app, '/login', fn[state]
 Errors are just state. If an HTTP request fails, put the error in state. The view renders it.
 
 ```
-live[app, '/', fn[state]
+live['/', fn[state]
   button[click = fn[]
     result = get['https://api.example.com/data']
     if result.ok
@@ -379,10 +372,8 @@ Each WebSocket connection has its own `state`. Authentication adds a `session` t
 use web
 use ui
 
-app = web.new[secret = 'my-secret-key']
-
 --- login page (no auth required) ---
-live[app, '/login', fn[state]
+live['/login', fn[state]
   state.email = state.email or ''
   state.password = state.password or ''
   state.error = state.error or ''
@@ -404,7 +395,7 @@ live[app, '/login', fn[state]
 ]
 
 --- protected page ---
-live[app, '/', fn[state], auth = true]
+live['/', fn[state], auth = true]
   if not session.get['user_id']
     redirect['/login']
   state.user = session.get['user_name']
@@ -417,7 +408,7 @@ live[app, '/', fn[state], auth = true]
 ```
 
 Key API:
-- `web.new[secret = key]` — enables signed session cookies
+- `secret[key]` — enables signed session cookies (called before `serve[]`)
 - `session.set[key, value]` — store a value in the session
 - `session.get[key]` — retrieve a value from the session
 - `session.clear[]` — destroy the session (logout)
@@ -430,7 +421,7 @@ Dynamic route segments and query parameters. Route params use `:name` syntax.
 
 ```
 --- route parameters ---
-live[app, '/trade/:id', fn[state, params]
+live['/trade/:id', fn[state, params]
   state.trade = query[db, 'SELECT * FROM trades WHERE id = {params.id}']
   h1['Trade {params.id}']
   p['Symbol: {state.trade.symbol}']
@@ -438,7 +429,7 @@ live[app, '/trade/:id', fn[state, params]
 ]
 
 --- query parameters ---
-live[app, '/search', fn[state, params]
+live['/search', fn[state, params]
   state.query = params.q or ''
   state.results = query[db, 'SELECT * FROM items WHERE name LIKE \'%{state.query}%\'']
   ui.input[input = fn[val] state.query = val, value = state.query, placeholder = 'Search']
@@ -447,7 +438,7 @@ live[app, '/search', fn[state, params]
 --- accessed via /search?q=hello ---
 
 --- multiple route params ---
-live[app, '/user/:user_id/trade/:trade_id', fn[state, params]
+live['/user/:user_id/trade/:trade_id', fn[state, params]
   state.user = query[db, 'SELECT * FROM users WHERE id = {params.user_id}']
   state.trade = query[db, 'SELECT * FROM trades WHERE id = {params.trade_id}']
   h1['{state.user.name} — Trade {params.trade_id}']
@@ -463,8 +454,6 @@ Wrap multiple routes in a shared layout. No copy-paste of `nav_bar[]` into every
 ```
 use web
 use ui
-
-app = web.new[]
 
 fn app_layout[state, content]
   div[class = 'app']
@@ -482,14 +471,14 @@ fn app_layout[state, content]
       p['Built with Crow']
 
 --- each route uses the layout ---
-live[app, '/', fn[state]
+live['/', fn[state]
   app_layout[state, fn[]
     h1['Dashboard']
     chart.live[state.ohlcv, height = 400]
   ]
 ]
 
-live[app, '/positions', fn[state]
+live['/positions', fn[state]
   app_layout[state, fn[]
     h1['Positions']
     table[state.positions]
@@ -527,7 +516,7 @@ button[click = fn[] save[state], debounce = 500, 'Save']
 File uploads use `ui.input[type = 'file']`. The file is sent to the server via WebSocket as binary data. The handler receives file metadata.
 
 ```
-live[app, '/upload', fn[state]
+live['/upload', fn[state]
   state.file = state.file or nil
   state.error = state.error or ''
 
@@ -572,7 +561,7 @@ ui.input[type = 'text', keydown = fn[key]
 ]
 
 --- global keyboard shortcuts ---
-live[app, '/', fn[state]
+live['/', fn[state]
   keydown = fn[key, mods]
     if key eq 's' and mods.ctrl
       save[state]
@@ -595,7 +584,7 @@ Global `keydown`/`keyup` in the handler body applies to the whole page. On a spe
 Slow operations (DB queries, API calls) need visual feedback. The `loading` helper shows a loading indicator while a function runs.
 
 ```
-live[app, '/', fn[state]
+live['/', fn[state]
   button[click = fn[]
     state.loading = true
     state.data = query[db, 'SELECT * FROM big_table']
@@ -627,7 +616,7 @@ This sets `state.loading = true`, sends an intermediate render, runs the functio
 Set the page title, favicon, and meta tags per route.
 
 ```
-live[app, '/', fn[state]
+live['/', fn[state]
   title['Dashboard — Trading App']
   meta[name = 'description', content = 'Real-time trading dashboard']
 
@@ -635,7 +624,7 @@ live[app, '/', fn[state]
     h1['Dashboard']
 ]
 
-live[app, '/positions', fn[state]
+live['/positions', fn[state]
   title['Positions — Trading App']
 
   div[]
@@ -680,35 +669,34 @@ route[app, '/api/action', fn[req] ...], method = 'POST'
 ```
 
 **Session security:**
-- Session cookies are signed with `web.new[secret = key]`
+- Session cookies are signed with `secret[key]` (called before `serve[]`)
 - `httponly`, `secure`, `samesite = 'strict'` flags set by default
-- Session expiry: `web.new[secret = key, session_max_age = 86400]` (seconds)
+- Session expiry: `secret[key, session_max_age = 86400]` (seconds)
 
 **Content Security Policy:**
 
 Set CSP headers to restrict what the browser can load:
 ```
-app = web.new[secret = key, csp = 'default-src \'self\'']
+csp['default-src \'self\'']
 ```
 
 ## Packages
 
 ### `ui` — core package
 
-Provides: `live[app, path, handler]`, `div`, `button`, `ui.input`, etc.
+Provides: `live[path, handler]`, `div`, `button`, `ui.input`, etc.
 
 Also provides the JS runtime that gets embedded in the initial HTML page.
 
 ```
---- live[app, path, handler] ---
---- mounts a live route on a web app ---
+--- live[path, handler] ---
+--- mounts a live route (implicit app) ---
 --- manages WebSocket connections per session ---
 
-app = web.new[]
-live[app, '/', fn[state]
+live['/', fn[state]
   h1['Hello']
 ]
-serve[app, 8080]
+serve[8080]
 ```
 
 ### `chart` — two-tier chart system
@@ -718,7 +706,7 @@ serve[app, 8080]
 Pure functions that take data, return SVG strings. No JavaScript. Used for static views, thumbnails, reports, monitoring dashboards that auto-refresh.
 
 ```
-live[app, '/dashboard', fn[state]
+live['/dashboard', fn[state]
   div[]
     chart.candle[state.ohlcv, width = 800, height = 400]
     chart.volume[state.ohlcv, width = 800, height = 100]
@@ -749,7 +737,7 @@ For trading dashboards and interactive analysis. Full client-side interactivity:
 `chart.live` is a **hook** — it bridges server-managed data to a client-side interactive widget. The server owns the data; the client owns the rendering and visual interactions.
 
 ```
-live[app, '/trading', fn[state]
+live['/trading', fn[state]
   state.symbol = state.symbol or 'AAPL'
   state.timeframe = state.timeframe or '1m'
   state.ohlcv = query[conn, 'SELECT * FROM ohlcv WHERE symbol = \'{state.symbol}\' AND tf = \'{state.timeframe}\' ORDER BY time']
@@ -851,7 +839,7 @@ Crow builds its own interactive chart engine from scratch. No klinecharts, no li
 Modals are state-driven. Show/hide is controlled by a state field. No special component needed.
 
 ```
-live[app, '/', fn[state]
+live['/', fn[state]
   state.modal = state.modal or nil
 
   div[]
@@ -894,7 +882,7 @@ fn confirm_modal[state, title, message, on_confirm]
 Temporary messages that auto-dismiss. The server sets the message; the client-side runtime removes it after a timeout.
 
 ```
-live[app, '/', fn[state]
+live['/', fn[state]
   button[click = fn[]
     exec[db, 'INSERT INTO items ...']
     flash[state, 'Item saved successfully', 3000]
@@ -916,7 +904,7 @@ The runtime sends a timed re-render to clear the flash. The developer doesn't ma
 Server-side pagination for large datasets. The developer controls page size and current page in state.
 
 ```
-live[app, '/items', fn[state]
+live['/items', fn[state]
   state.page = state.page or 1
   state.per_page = 20
   state.total = query[db, 'SELECT count[] FROM items'].0.count
@@ -1011,8 +999,8 @@ The client-side JS runtime handles reconnection automatically:
 
 Configuration:
 ```
-app = web.new[secret = key, ws_grace_period = 30000]
---- state is kept for 30 seconds after disconnect (default) ---
+secret[key]
+--- state is kept for 30 seconds after disconnect (default: 30000ms) ---
 ```
 
 ### Downloads and Export
@@ -1020,7 +1008,7 @@ app = web.new[secret = key, ws_grace_period = 30000]
 Generate files on the server and trigger browser download.
 
 ```
-live[app, '/reports', fn[state]
+live['/reports', fn[state]
   state.data = query[db, 'SELECT * FROM trades']
 
   button[click = fn[]
@@ -1092,7 +1080,7 @@ The error banner is only shown in development (`crow dev`). In production (`crow
 **Custom error handling:** Override the default with `on_error`:
 
 ```
-live[app, '/', fn[state]
+live['/', fn[state]
   state.data = query[db, 'SELECT * FROM trades']
   table[state.data]
 , on_error = fn[err]
@@ -1106,7 +1094,7 @@ live[app, '/', fn[state]
 **Error in event handlers:** If a click/input handler crashes, the error is caught, the state is not mutated, and the error is available in `state.error`:
 
 ```
-live[app, '/', fn[state]
+live['/', fn[state]
   button[click = fn[]
     --- this might crash ---
     state.data = query[db, 'SELECT * FROM missing_table']
@@ -1126,7 +1114,7 @@ The runtime automatically sets `state.error` when an event handler throws. The n
 Theming is CSS-driven. The framework provides a `theme` state field and a `data-theme` attribute on the root element.
 
 ```
-live[app, '/', fn[state]
+live['/', fn[state]
   state.theme = state.theme or 'dark'
 
   div[data_theme = state.theme, class = 'app']
@@ -1278,7 +1266,6 @@ use db
 use chart
 
 conn = connect['postgres://user:pass@host/finch']
-app = web.new[]
 
 --- Reusable views ---
 fn nav_bar[]
@@ -1308,7 +1295,7 @@ fn stat_row[state]
     card['Win Rate', '{rate}%']
 
 --- Dashboard page (interactive chart) ---
-live[app, '/', fn[state]
+live['/', fn[state]
   state.symbol = state.symbol or 'AAPL'
   state.timeframe = state.timeframe or '1m'
   state.ohlcv = query[conn, 'SELECT * FROM ohlcv WHERE symbol = \'{state.symbol}\' AND tf = \'{state.timeframe}\' ORDER BY time']
@@ -1337,7 +1324,7 @@ live[app, '/', fn[state]
 , interval = 1000]
 
 --- Positions page (static table, no chart) ---
-live[app, '/positions', fn[state]
+live['/positions', fn[state]
   state.positions = query[conn, 'SELECT * FROM positions']
 
   div[class = 'app']
@@ -1348,7 +1335,7 @@ live[app, '/positions', fn[state]
 , interval = 5000]
 
 --- Leaderboard page (static SVG chart) ---
-live[app, '/leaderboard', fn[state]
+live['/leaderboard', fn[state]
   state.leaders = query[conn, 'SELECT * FROM leaderboard ORDER BY pnl DESC LIMIT 20']
 
   div[class = 'app']
@@ -1362,7 +1349,7 @@ live[app, '/leaderboard', fn[state]
 --- API endpoint on the same server ---
 route[app, '/api/positions', fn[req] json[query[conn, 'SELECT * FROM positions']]]
 
-serve[app, 8080]
+serve[8080]
 ```
 
 One file. One language. One server. No React. No npm. No webpack. No node_modules. API and UI on the same app. Interactive charts where needed (`chart.live`), static SVG where sufficient (`chart.bar`).
@@ -1423,10 +1410,7 @@ Production settings via environment variables or a config file:
 
 ```
 --- in app.crow ---
-app = web.new[
-  secret = env['SECRET_KEY']
-  port = int[env['PORT'] or '8080']
-]
+secret[env['SECRET_KEY']]
 
 conn = connect[env['DATABASE_URL']]
 ```
@@ -1454,7 +1438,7 @@ Tab 2: WebSocket #2 → state instance B
 **Shared state via session:** If both tabs need to see the same data, use the session (shared across tabs via cookie) or the database:
 
 ```
-live[app, '/', fn[state]
+live['/', fn[state]
   --- read from session (shared across tabs) ---
   state.theme = session.get['theme'] or 'dark'
 
@@ -1469,7 +1453,7 @@ live[app, '/', fn[state]
 **Cross-tab sync:** For real-time sync between tabs (e.g., changing symbol in Tab 1 updates Tab 2), use `channel`:
 
 ```
-live[app, '/', fn[state]
+live['/', fn[state]
   state.symbol = state.symbol or 'AAPL'
 
   --- subscribe to a channel ---
@@ -1497,7 +1481,7 @@ live[app, '/', fn[state]
 
 ```
 --- in the live handler: subscribe to updates ---
-live[app, '/dashboard', fn[state]
+live['/dashboard', fn[state]
   channel.join[state, 'trades:{state.user_id}']
   state.positions = query[db, 'SELECT * FROM positions WHERE user_id = {state.user_id}']
   table[state.positions]
@@ -1691,8 +1675,6 @@ use web
 use ui
 use chart
 
-app = web.new[]
-
 fn nav_bar[]
   nav[]
     a[href = '/', 'Dashboard']
@@ -1703,7 +1685,7 @@ fn card[title, value]
     h3[title]
     p[class = 'value', str[value]]
 
-live[app, '/', fn[state]
+live['/', fn[state]
   state.symbol = state.symbol or 'AAPL'
   state.count = state.count or 0
   div[class = 'app']
@@ -1956,7 +1938,7 @@ These features are not required for the initial release but are documented here 
 Show who else is viewing the same page. Built on top of `channel`:
 
 ```
-live[app, '/dashboard', fn[state]
+live['/dashboard', fn[state]
   channel.join[state, 'presence:dashboard']
   state.viewers = channel.presence['presence:dashboard']
 
@@ -1975,7 +1957,7 @@ live[app, '/dashboard', fn[state]
 Reorder lists, move items between columns (Kanban boards). Implemented as a hook (like `chart.live`) because drag interactions are 60fps client-side:
 
 ```
-live[app, '/board', fn[state]
+live['/board', fn[state]
   state.columns = [
     [name = 'Todo', items = ['Task 1', 'Task 2']]
     [name = 'Done', items = ['Task 3']]
@@ -2009,7 +1991,7 @@ div[class = 'card', animate = 'fade']
   p['This fades in when added, fades out when removed']
 
 --- page transitions ---
-live[app, '/', fn[state]
+live['/', fn[state]
   ...
 , transition = 'slide']
 ```
@@ -2064,7 +2046,7 @@ p[i18n.d[state, now[]]]     --- formats date per locale ---
 Load content on demand as the user scrolls. Built on a hook for scroll detection:
 
 ```
-live[app, '/feed', fn[state]
+live['/feed', fn[state]
   state.page = state.page or 1
   state.items = query[db, 'SELECT * FROM posts LIMIT 20 OFFSET {(state.page - 1) * 20}']
 
@@ -2092,7 +2074,7 @@ The `scroll.bottom` hook fires a client-side event when the element enters the v
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Design | In progress | `web.live` pattern with mutable state, hooks, two-tier charts |
-| `ui` package | Not started | `live[app, path, handler]`, DOM elements, JS runtime |
+| `ui` package | Not started | `live[path, handler]`, DOM elements, JS runtime |
 | `chart` package (SVG) | Not started | `chart.candle`, `chart.line`, etc. — server-rendered SVG |
 | `chart` package (live) | Not started | `chart.live` — custom Canvas/JS interactive chart engine |
 | Chart engine | Not started | Custom-built Canvas renderer (zoom, pan, crosshair, indicators) |

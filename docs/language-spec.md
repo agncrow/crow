@@ -786,14 +786,17 @@ nums = nums then sort then reverse then slice[0, 3]
 
 ### Importing
 
-Use `use` to import a module. The entire module is imported — no selective imports.
+Use `use` to import a module. The entire module is imported — no selective imports. Multiple modules can be imported on a single line with commas.
 
 ```
 use math
-use pages.home
+use views.home
+use web, ui
 ```
 
-Dot-separated paths map to directories: `use pages.home` loads `pages/home.crow` and prefixes its exports with `home_` (the last segment). This is how you import page files, library modules, etc.
+Dot-separated paths map to directories: `use views.home` loads `views/home.crow` and prefixes its exports with `home_` (the last segment). This is how you import view files, library modules, etc.
+
+Comma-separated imports expand at parse time: `use web, ui` is equivalent to writing `use web` and `use ui` on separate lines.
 
 ### Accessing
 
@@ -1248,14 +1251,14 @@ Import sub-modules with `use web.X`. Each sub-module enables only its feature �
 #### Core (Server)
 
 ```
-use web
-use ui
-use pages.home
+use web, ui
+use views.home
 
-app = web.new[]
-app = live[app, '/', home_render, home_handle]
-serve[app, 3000]
+serve[3000]
+page['/', home_render, home_handle]
 ```
+
+The transpiler manages the application instance implicitly — no `app` variable needed. `page[]` registers a LiveView route with a render function and event handler. `serve[port]` starts the server. The order in source doesn't matter: the transpiler always emits `serve[]` after all routes are registered.
 
 If no routes are registered, `serve[]` shows a default welcome page so the user always sees something.
 
@@ -1263,10 +1266,9 @@ If the port is already in use, the server prints a friendly error: `error: port 
 
 | Function | Description |
 |---|---|
-| `web.new[]` | Create a new web application |
+| `serve[port]` | Start the server on the given port (implicit app) |
+| `page[path, render, handle]` | Add a LiveView page with render/handle functions |
 | `route[app, path, handler]` | Add a route with a handler function |
-| `live[app, path, render, handle]` | Add a LiveView route with render/handle functions |
-| `serve[app, port]` | Start the server on the given port |
 
 #### Responses
 
@@ -1344,11 +1346,11 @@ If the port is already in use, the server prints a friendly error: `error: port 
 | `recv[sock]` | Receive a message from a WebSocket |
 | `close[sock]` | Close a WebSocket connection |
 
-#### LiveView (`use web.live`)
+#### LiveView / Pages
 
 | Function | Description |
 |---|---|
-| `live[app, path, handler]` | Add a LiveView endpoint (server-rendered with live updates) |
+| `page[path, render_fn, handle_fn]` | Add a LiveView page (server-rendered with live updates via WebSocket) |
 
 #### Static Files (`use web.static`)
 
@@ -1913,9 +1915,9 @@ myapp/
     migrate.crow              --- crow run migrate
     sync.crow                 --- crow run sync
 
-  pages/                      --- web pages (imported and wired in main.crow)
-    home.crow                 --- use pages.home → live[app, '/', ...]
-    dashboard.crow            --- use pages.dashboard → live[app, '/dashboard', ...]
+  views/                       --- web views (imported and wired in main.crow)
+    home.crow                 --- use views.home → page['/', home_render, home_handle]
+    dashboard.crow            --- use views.dashboard → page['/dashboard', ...]
     accounts.crow             --- /accounts
 
   components/                 --- reusable UI functions
@@ -1947,7 +1949,7 @@ myapp/
 |---|---|---|
 | `crowfile` | Project identity, entry points, deps | Required for projects |
 | `main.crow` | Default entry point. `crow run` runs this | Yes — convention |
-| `pages/` | Web pages. Import with `use pages.X`, wire with `live[]` | Explicit |
+| `views/` | Web views. Import with `use views.X`, wire with `page[]` | Explicit |
 | `layout.crow` | Shared UI wrapper for all pages | **Yes** — auto-applied |
 | `db/schema.crow` | Table definitions, auto-migrations | **Yes** — auto-discovered |
 | `jobs/` | Batch tasks. `crow run <name>` | **Yes** — listed in crowfile |
@@ -1956,7 +1958,7 @@ myapp/
 | `components/` | Reusable UI functions | No — import with `use` |
 | `config/` | Configuration files | No — import with `use` |
 
-Only three magic folders: `pages/`, `db/`, `tests/`. Plus `layout.crow` and `main.crow` by convention. Everything else is just files you import.
+Only three magic folders: `views/`, `db/`, `tests/`. Plus `layout.crow` and `main.crow` by convention. Everything else is just files you import.
 
 #### Entry Points
 
@@ -1976,7 +1978,7 @@ Rule: **`main.crow` is the thing that stays running. Everything else runs and ex
 |---|---|
 | Day 1 | `hello.crow` — one file, no project |
 | Week 1 | `crow new myapp` — `crowfile` + `main.crow` |
-| Week 2 | Add `pages/`, `lib/` — split code out |
+| Week 2 | Add `views/`, `lib/` — split code out |
 | Month 1 | Add `db/schema.crow`, `jobs/train.crow` |
 | Month 6 | Full project — multiple entry points, lib files, pages, components |
 
@@ -2018,7 +2020,7 @@ Crow source files use the `.crow` extension.
 ```
 main.crow
 lib/accounts.crow
-pages/dashboard.crow
+views/dashboard.crow
 jobs/train.crow
 ```
 
@@ -2027,7 +2029,7 @@ jobs/train.crow
 ```
 crow                        --- start interactive REPL ---
 crow new myapp              --- create new project (crowfile + main.crow) ---
-crow new myapp --web        --- create web project (+ pages/home.crow) ---
+crow new myapp --web        --- create web project (+ views/home.crow) ---
 crow new myapp --ml         --- create ML project (+ jobs/train.crow, lib/model.crow) ---
 crow new myapp --db         --- create DB project (+ db/schema.crow, jobs/migrate.crow) ---
 crow new myapp --web --ml --db  --- all capabilities ---

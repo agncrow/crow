@@ -110,10 +110,10 @@ Every `web` module requirement mapped to axum support:
 
 | Design Doc Requirement | axum Support | How |
 |------------------------|-------------|-----|
-| `web.new[]` — create app | ✅ | `Router::new()` |
+| `serve[port]` — start server | ✅ | `axum::serve()` with tokio (implicit app) |
+| `page[path, render, handle]` — LiveView route | ✅ | Implicit app + `CrowLiveView::new()` |
 | `route[app, path, handler]` — GET route | ✅ | `.route("/path", get(handler))` |
 | `route[app, path, method, handler]` — any method | ✅ | `.route("/path", post(handler))` etc. |
-| `serve[app, port]` — start server | ✅ | `axum::serve()` with tokio |
 | `json[value]` — JSON response | ✅ | `Json(value)` |
 | `html[string]` — HTML response | ✅ | `Html(string)` |
 | `text[string]` — plain text | ✅ | Returns `String` |
@@ -217,38 +217,23 @@ fn handle[req]
   log[req.path]           --- '/users/42' ---
 
 ```
-use web
+use web, ui
+use views.home
 
-app = web.new[]
-
-route[app, '/', fn[req]
-  html['<h1>Hello World</h1>']
-]
-
-route[app, '/users', 'GET', fn[req]
-  json[{users, ['alice', 'bob']}]
-]
-
-route[app, '/users', 'POST', fn[req]
-  name = req.json.name
-  json[{created, name}]
-]
-
-route[app, '/users/:id', 'GET', fn[req]
-  json[{id, req.params.id}]
-]
-
-serve[app, env['PORT', 3000]]
+serve[3000]
+page['/', home_render, home_handle]
 ```
+
+The transpiler manages the application instance implicitly — no `app` variable needed. `page[]` registers a LiveView route. `serve[port]` starts the server. The order in source doesn't matter: the transpiler always emits `serve[]` after all routes are registered.
 
 **API:**
 
 | Function | Description |
 |----------|-------------|
-| `web.new[]` | Create app instance |
-| `route[app, path, handler]` | Add GET route |
+| `serve[port]` | Start server on given port (implicit app) |
+| `page[path, render_fn, handle_fn]` | Add a LiveView page route |
+| `route[app, path, handler]` | Add GET route (explicit app threading) |
 | `route[app, path, method, handler]` | Add route with specific method |
-| `serve[app, port]` | Start server |
 | `json[value]` | Return JSON response |
 | `html[string]` | Return HTML response |
 | `text[string]` | Return plain text response |
@@ -381,14 +366,12 @@ close[sock]
 use web
 use web.ws
 
-app = web.new[]
-
 ws[app, '/chat', fn[sock, msg]
   log['received: {msg}']
   send[sock, 'echo: {msg}']
 ]
 
-serve[app, env['PORT', 3000]]
+serve[env['PORT', 3000]]
 ```
 
 **API:**
@@ -447,12 +430,11 @@ Feature flag: `sse` (enables `axum`, `tokio`, `tokio-stream`, `futures-util`)
 use web
 use web.sse
 
-app = web.new[]
 sse[app, '/events', fn[sender]
   send[sender, 'hello']
   event[sender, 'update', 'new data']
 ]
-serve[app, 3000]
+serve[3000]
 ```
 
 **Rust API:**
@@ -528,8 +510,6 @@ Generates: OpenAPI 3.0 spec + Swagger UI
 use web
 use web.docs
 
-app = web.new[]
-
 route[app, '/users', 'GET', fn[req]
   json[{users, ['alice', 'bob']}]
 ]
@@ -541,7 +521,7 @@ route[app, '/users', 'POST', fn[req]
 ]
 
 docs[app, '/docs']    --- Swagger UI at /docs ---
-serve[app, env['PORT', 3000]]
+serve[env['PORT', 3000]]
 ```
 
 **How it works — compile-time, not runtime:**
@@ -602,9 +582,7 @@ Browser ←——WebSocket——→ Server
 use web
 use web.live
 
-app = web.new[]
-
-live[app, '/counter', fn[state]
+live['/counter', fn[state]
   state.count = state.count or 0
 
   h1['Count: {state.count}']
@@ -613,7 +591,7 @@ live[app, '/counter', fn[state]
   , '+1']
 ]
 
-serve[app, env['PORT', 3000]]
+serve[env['PORT', 3000]]
 ```
 
 **Example — Real-time dashboard:**
@@ -623,10 +601,9 @@ use web
 use web.live
 use web.db
 
-app = web.new[]
 db = open[env['DATABASE_URL', 'sqlite://metrics.db']]
 
-live[app, '/dashboard', fn[state]
+live['/dashboard', fn[state]
   state.metrics = query[db, 'SELECT * FROM metrics ORDER BY ts DESC LIMIT 10']
 
   h1['Live Metrics']
@@ -640,7 +617,7 @@ live[app, '/dashboard', fn[state]
         td[m.value]
 , {interval, 1000}]   --- auto-refresh every 1s ---
 
-serve[app, env['PORT', 3000]]
+serve[env['PORT', 3000]]
 ```
 
 **Comparison with Phoenix LiveView:**
@@ -658,8 +635,8 @@ serve[app, env['PORT', 3000]]
 
 | Function | Description |
 |----------|-------------|
-| `live[app, path, handler]` | Register LiveView component |
-| `live[app, path, handler, opts]` | With options (e.g., `{interval, 1000}` for auto-refresh) |
+| `live[path, handler]` | Register LiveView component (implicit app) |
+| `live[path, handler, opts]` | With options (e.g., `{interval, 1000}` for auto-refresh) |
 
 ---
 
@@ -863,8 +840,7 @@ if not claims.ok
 use web
 use web.cors
 
-app = web.new[]
-cors[app, {origin, '*', methods, ['GET', 'POST']}]
+cors[{origin, '*', methods, ['GET', 'POST']}]
 ```
 
 ### Tier 3 — Advanced
@@ -943,13 +919,12 @@ use web
 use web.db
 
 db = open[env['DATABASE_URL']]
-app = web.new[]
 
-route[app, '/users', fn[req]
+route['/users', fn[req]
   json[query[db, 'SELECT * FROM users']]
 ]
 
-serve[app, env['PORT', 3000]]
+serve[env['PORT', 3000]]
 ```
 
 No imports needed. No dotenv library. The runtime loads `.env` automatically.
@@ -967,13 +942,12 @@ use web
 
 model = load['model.crow']
 
-app = web.new[]
-route[app, '/predict', 'POST', fn[req]
+route['/predict', 'POST', fn[req]
   input = tensor[req.json.data]
   output = model[input]
   json[{prediction, output}]
 ]
-serve[app, env['PORT', 3000]]
+serve[env['PORT', 3000]]
 ```
 
 No GIL. No serialization boundary. No Python-to-Go rewrite. Same language, compiled to Rust speed.
@@ -1020,28 +994,27 @@ use web
 use math.nn
 
 model = load['model.crow']
-app = web.new[]
 
 --- JSON (small, human-readable) ---
-route[app, '/predict', 'POST', fn[req]
+route['/predict', 'POST', fn[req]
   result = model[tensor[req.json.data]]
   json[{prediction, result}]
 ]
 
 --- MessagePack (fast, binary — 10x faster than JSON) ---
-route[app, '/predict/fast', 'POST', fn[req]
+route['/predict/fast', 'POST', fn[req]
   result = model[tensor[req.json.data]]
   msgpack[{prediction, result}]
 ]
 
 --- Arrow IPC (zero-copy DataFrame response) ---
-route[app, '/data', fn[req]
+route['/data', fn[req]
   df = query[db, 'SELECT * FROM metrics']
   arrow[df]
 ]
 
 --- Streaming batch inference ---
-route[app, '/batch', 'POST', fn[req]
+route['/batch', 'POST', fn[req]
   stream[fn[send]
     for batch in chunks[req.json.data, 100]
       pred = model[tensor[batch]]
@@ -1050,11 +1023,11 @@ route[app, '/batch', 'POST', fn[req]
 ]
 
 --- Raw model weights download ---
-route[app, '/model/weights', fn[req]
+route['/model/weights', fn[req]
   bytes[read['model.bin']]
 ]
 
-serve[app, env['PORT', 3000]]
+serve[env['PORT', 3000]]
 ```
 
 The client picks the format based on the endpoint or `Accept` header. Same model, different wire formats for different performance needs.
@@ -1093,7 +1066,7 @@ All server-side web modules have transpiler codegen (Crow → Rust), validator r
 
 | Module | Crow Syntax | Transpiler | Interpreter |
 |--------|------------|------------|-------------|
-| `web` (core) | `web.new[]`, `route[]`, `serve[]` | ✅ | ✅ |
+| `web` (core) | `serve[]`, `route[]`, `page[]` | ✅ | ✅ |
 | `web.client` | `get[]`, `post[]`, `put[]`, `del[]` | ✅ | ✅ |
 | `web.db` | `sqlite[]`, `exec[]`, `query[]` | ✅ | ✅ |
 | `web.auth` | `sign[]`, `verify[]` | ✅ | ✅ |
@@ -1105,7 +1078,7 @@ All server-side web modules have transpiler codegen (Crow → Rust), validator r
 | `web.upload` | `uploads[req]` | ✅ | ✅ |
 | `web.sse` | `sse[app, path, handler]` | ✅ | ✅ |
 | `web.ws` | `ws[app, path, handler]`, `connect[]`, `send[]`, `recv[]`, `close[]` | ✅ | ✅ |
-| `web.live` | `live[app, path, handler]` | ✅ | ✅ |
+| `web.live` | `live[path, handler]` | ✅ | ✅ |
 | `web.static` | `static_dir[app, url_path, dir_path]` | ✅ | ✅ |
 | `web.mail` | `smtp[host, port, user, pass]` | ✅ | ✅ |
 | `web.queue` | `web.queue[n]`, `push[queue, fn]` | ✅ | ✅ |
