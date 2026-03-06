@@ -1,8 +1,7 @@
 --- Counter: live UI example ---
---- Demonstrates use ui, element functions, and live[app, path, render, handle] ---
+--- Demonstrates serve[], page[], and ui element functions ---
 
-use web
-use ui
+use web, ui
 
 --- Render function: state -> VNode tree ---
 fn render[state]
@@ -21,8 +20,7 @@ fn handle[state, event, value]
     else if event eq 'dec'
         state.set['count', count - 1]
 
---- Build and serve ---
-app = web.new[]
-app = live[app, '/', render, handle]
-serve[app, 3000]
+--- Serve ---
+serve[3000]
+page['/', render, handle]
 
