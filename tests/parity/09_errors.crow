@@ -17,3 +17,20 @@ log[ok.ok]
 log[ok]
 v = int['21']
 log[v + v]
+--- errors in conditions: propagate out of functions ---
+fn check[s]
+    n = int[s]
+    if n gt 5
+        return 'big'
+    return 'small'
+c1 = check['abc']
+log[c1.ok]
+log[c1.reason]
+c2 = check['9']
+log[c2]
+c3 = check['3']
+log[c3]
+--- the guard idiom: .ok is always branchable ---
+bad2 = int['zzz']
+if not bad2.ok
+    log['guarded: {bad2.reason}']

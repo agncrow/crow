@@ -668,6 +668,43 @@ impl TypeContext {
         }
     }
 
+    /// Does any if/while condition in this body infer to a Result type?
+    /// (Such conditions can propagate errors out of the function.)
+    fn body_has_result_condition(&self, stmts: &[Stmt]) -> bool {
+        for s in stmts {
+            match s {
+                Stmt::If { condition, then_body, else_body } => {
+                    if matches!(self.infer_expr(condition), CrowType::Result(_)) {
+                        return true;
+                    }
+                    if self.body_has_result_condition(then_body) {
+                        return true;
+                    }
+                    if let Some(eb) = else_body {
+                        if self.body_has_result_condition(eb) {
+                            return true;
+                        }
+                    }
+                }
+                Stmt::While { condition, body } => {
+                    if matches!(self.infer_expr(condition), CrowType::Result(_)) {
+                        return true;
+                    }
+                    if self.body_has_result_condition(body) {
+                        return true;
+                    }
+                }
+                Stmt::For { body, .. } => {
+                    if self.body_has_result_condition(body) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// Infer a function's return type from its body.
     fn infer_function_body(&mut self, name: &str, body: &[Stmt]) {
         // Temporarily add param types as vars so body inference works
@@ -685,8 +722,15 @@ impl TypeContext {
 
         // Find return type
         let ret = self.find_return_type(body);
+        // A fallible condition can propagate an error out of the function
+        // (spec §11: Errors in Conditions) — the return type widens to Result
+        let has_fallible_condition = self.body_has_result_condition(body);
         if let Some(sig) = self.functions.get_mut(name) {
             sig.return_type = sig.return_type.unify(&ret);
+            if has_fallible_condition && !matches!(sig.return_type, CrowType::Result(_)) {
+                let inner = std::mem::replace(&mut sig.return_type, CrowType::Unknown);
+                sig.return_type = CrowType::Result(Box::new(inner));
+            }
         }
 
         self.vars = saved_vars;
@@ -1237,6 +1281,15 @@ impl TypeContext {
             }
             Expr::FieldAccess { object, field } => {
                 let obj_type = self.infer_expr(object);
+                // Json object field access stays Json (dynamic values)
+                {
+                    let inner = match &obj_type { CrowType::Result(i) => i.as_ref().clone(), o => o.clone() };
+                    if matches!(inner, CrowType::Json)
+                        && !matches!(field.as_str(), "ok" | "reason" | "kind" | "trace")
+                    {
+                        return CrowType::Json;
+                    }
+                }
                 // .ok on FrameCol or Array(Str) → Array(Bool) (validity bitmap)
                 if field == "ok" {
                     if matches!(&obj_type, CrowType::FrameCol)

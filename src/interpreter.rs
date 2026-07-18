@@ -472,6 +472,15 @@ impl Interpreter {
                         )));
                     }
                 }
+                // A variable that has held a float is a float (spec: int/float
+                // reassignment) — matches the transpiler, which unifies the
+                // variable's type to float for its whole scope
+                let val = match (self.env.get(name).map(|e| &e.value), &val.value) {
+                    (Some(Value::Float(_)), Value::Int(n)) => {
+                        CrowValue::ok(Value::Float(*n as f64))
+                    }
+                    _ => val,
+                };
                 if !self.env.update(name, val.clone()) {
                     self.env.set(name, val);
                 }
@@ -782,6 +791,20 @@ impl Interpreter {
 
     // --- Control flow ---
 
+    /// A condition evaluated to an error-value: no branch can be taken.
+    /// Inside a function → the function returns the error (auto-propagation,
+    /// trace appended). At top level → runtime error with the error's reason.
+    fn refuse_error_branch(&mut self, mut err: CrowValue) -> Result<Signal, String> {
+        if !self.env.saved_stacks.is_empty() {
+            err.trace.push(self.trace_entry());
+            return Ok(Signal::Return(err));
+        }
+        Err(format!(
+            "cannot branch on an error value — {}",
+            err.reason
+        ))
+    }
+
     fn exec_if(
         &mut self,
         condition: &Expr,
@@ -789,6 +812,12 @@ impl Interpreter {
         else_body: &Option<Vec<Stmt>>,
     ) -> Result<Signal, String> {
         let cond = self.eval_expr(condition)?;
+        // An error has no truth value — no branch can be taken (spec §11:
+        // Errors in Conditions). Inside a function the error propagates to
+        // the caller; at top level the program halts with the reason.
+        if cond.is_error() {
+            return self.refuse_error_branch(cond);
+        }
         if self.is_truthy(&cond) {
             self.env.push_scope();
             let mut last_signal = Signal::None;
@@ -991,6 +1020,9 @@ impl Interpreter {
                 return Err("execution cancelled".to_string());
             }
             let cond = self.eval_expr(condition)?;
+            if cond.is_error() {
+                return self.refuse_error_branch(cond);
+            }
             if !self.is_truthy(&cond) {
                 break;
             }
@@ -3690,6 +3722,12 @@ impl Interpreter {
         let mut i = 0;
 
         while i < chars.len() {
+            // Escaped braces from the lexer: \{ and \} are literal characters
+            if chars[i] == '\\' && i + 1 < chars.len() && (chars[i + 1] == '{' || chars[i + 1] == '}') {
+                result.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
             if chars[i] == '{' {
                 // find matching }
                 let start = i + 1;
@@ -6579,6 +6617,62 @@ mod tests {
     fn test_implicit_return_last_expression() {
         // Regression: implicit return is desugared in the parser for both modes
         let val = get_var("fn add[a, b]\n    a + b\nr = add[3, 4]\n", "r");
+        assert!(matches!(val.value, Value::Int(7)));
+    }
+
+    // ===== Errors in conditions + batch semantics (#2) =====
+
+    #[test]
+    fn test_error_condition_halts_at_top_level() {
+        let result = std::panic::catch_unwind(|| {
+            run_program("age = int['abc']\nif age gte 18\n    log['adult']\n")
+        });
+        assert!(result.is_err(), "branching on an error at top level should halt");
+    }
+
+    #[test]
+    fn test_error_condition_propagates_out_of_function() {
+        let val = get_var(
+            "fn check[s]\n    n = int[s]\n    if n gt 5\n        return 'big'\n    return 'small'\nr = check['abc']\nok = r.ok\n",
+            "ok",
+        );
+        assert!(matches!(val.value, Value::Bool(false)));
+        let val = get_var(
+            "fn check[s]\n    n = int[s]\n    if n gt 5\n        return 'big'\n    return 'small'\nr = check['9']\n",
+            "r",
+        );
+        assert!(matches!(&val.value, Value::Str(s) if s == "big"));
+    }
+
+    #[test]
+    fn test_error_condition_in_while_refused() {
+        let result = std::panic::catch_unwind(|| {
+            run_program("n = int['x']\nwhile n gt 0\n    n = n - 1\n")
+        });
+        assert!(result.is_err(), "while on an error condition should refuse");
+    }
+
+    #[test]
+    fn test_ok_check_always_branchable() {
+        let val = get_var("bad = int['zzz']\nmsg = ''\nif not bad.ok\n    msg = 'guarded'\n", "msg");
+        assert!(matches!(&val.value, Value::Str(s) if s == "guarded"));
+    }
+
+    #[test]
+    fn test_float_var_stays_float_on_int_assignment() {
+        let val = get_var("v = 2.5\nv = 1\n", "v");
+        assert!(matches!(val.value, Value::Float(f) if f == 1.0));
+    }
+
+    #[test]
+    fn test_brace_escape_literal() {
+        let val = get_var("s = 'a \\{b\\} c'\n", "s");
+        assert!(matches!(&val.value, Value::Str(s) if s == "a {b} c"));
+    }
+
+    #[test]
+    fn test_json_object_literal_via_escapes() {
+        let val = get_var("j = json['\\{\"n\": 7\\}']\nx = j.n\n", "x");
         assert!(matches!(val.value, Value::Int(7)));
     }
 

@@ -336,6 +336,10 @@ impl Lexer {
                         Some('t') => { s.push('\t'); self.advance(); }
                         Some('\\') => { s.push('\\'); self.advance(); }
                         Some('\'') => { s.push('\''); self.advance(); }
+                        // Escaped braces: kept as \{ \} in the raw string so
+                        // interpolation treats them as literal characters
+                        Some('{') => { s.push('\\'); s.push('{'); self.advance(); }
+                        Some('}') => { s.push('\\'); s.push('}'); self.advance(); }
                         Some(ch) => {
                             return Err(format!(
                                 "unknown escape sequence '\\{}' at line {}, col {}",
