@@ -137,7 +137,7 @@ Install dependencies listed in the `crowfile` into `crow_modules/`.
 ```
 --- crowfile ---
 name = 'myapp'
-deps = ['math' = '1.0', 'utils' = 'https://github.com/user/crow-utils']
+deps = map[math = '1.0', utils = 'https://github.com/user/crow-utils']
 ```
 
 ```bash

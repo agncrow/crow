@@ -25,6 +25,8 @@ What's done, what's remaining, and in what order.
 
 ## Remaining Work
 
+> **Design review fixes:** [docs/design-review.md](design-review.md) tracks the July 2026 review pushbacks (frame DSL uniformity, semantics gaps, early-exit, LLM pack, syntax taxes, parity architecture). Being fixed in that order.
+
 ### P0 — Quick fixes (hours) ✅
 
 - [x] **Fix flaky test**: Combined 4 seed-dependent interpreter tests into one `test_math_random_all` to avoid global RNG state races (same pattern as `distributed.rs::test_distributed_all`). Added `clear_seed()` cleanup.
@@ -123,19 +125,21 @@ Goal: `page['/', render, handle]` with `serve[3000]` runs a LiveView counter in 
 - [x] **`use web, ui`** — comma-separated multi-import syntax
 - [x] **Counter example** — `examples/counter.crow`
 
-##### Phase 2: Reactive Data & Two-Way Binding (current)
+##### Phase 2: Reactive Data & Two-Way Binding ✅
 
 Goal: `fetch[url]`, `poll[url, seconds]`, `field[label, var]`, `select[options, var]`, `table[frame]` — the reactive glue layer.
 
-- [ ] **`fetch[url]`** — one-time reactive HTTP GET, returns frame or map
-- [ ] **`poll[url, seconds]`** — repeating reactive HTTP GET, updates variable on each tick
-- [ ] **`field[label, var]`** — two-way bound labeled input (reads + writes variable)
-- [ ] **`select[options, var]`** — two-way bound dropdown
-- [ ] **`table[frame]`** — auto-render table from frame schema (headers + rows)
-- [ ] **`today[]`** — returns today's date
-- [ ] **Validator/interpreter/transpiler** — register all new builtins
+- [x] **`fetch[url]`** — one-time reactive HTTP GET, registered on `CrowLiveState`, executed on page load and WS connect
+- [x] **`poll[url, seconds]`** — repeating reactive HTTP GET with per-source interval tracking via `tokio::select!`
+- [x] **`field[label, var]`** — two-way bound labeled input (`data-crow-input="__field:key"`)
+- [x] **`select[options, var]`** — two-way bound dropdown (`data-crow-change="__select:key"`)
+- [x] **`table[frame]`** — auto-render table from headers + rows via `CrowVNode::table_from_data`
+- [x] **`today[]`** — returns today's date via `chrono::Local`
+- [x] **Validator/interpreter/transpiler** — all builtins registered with correct signatures
+- [x] **JS runtime** — `morphChildren` preserves input focus and values during re-render
+- [x] **VNode constructors** — all HTML elements in transpiler have matching `CrowVNode` methods
 
-##### Phase 3: Multi-Page App (routing + layout)
+##### Phase 3: Multi-Page App (routing + layout) — next
 
 - [ ] **Multiple `page` routes** — several routes on one app
 - [ ] **URL parameters** — route params (`:id`), query params (`?q=foo`)

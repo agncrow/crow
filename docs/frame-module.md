@@ -38,20 +38,30 @@ df.columns  --- ['name', 'age', 'city', 'salary', 'score'] ---
 
 ## Vectorized Column Expressions for Filtering
 
-`filter[df, df.age > 50]` where `df.age > 50` returns a boolean array. Vectorized — operates on whole columns at once, no per-row allocation.
+`filter[df, df.age gt 50]` where `df.age gt 50` returns a boolean array. Vectorized — operates on whole columns at once, no per-row allocation.
 
 ```crow
 use frame
 df = load['people.csv']
 
 --- filter rows where age > 50 ---
-old = filter[df, df.age > 50]
+old = filter[df, df.age gt 50]
+
+--- string equality ---
+alices = filter[df, df.name eq 'alice']
 
 --- compound conditions ---
-rich_old = filter[df, df.age > 50 and df.salary > 100000]
+rich_old = filter[df, df.age gt 50 and df.salary gt 100000]
+
+--- negation ---
+others = filter[df, not (df.name eq 'alice')]
 ```
 
-Requires implementing comparison operators (`>`, `<`, `==`, `and`, `or`) on arrays returning boolean arrays.
+Mask semantics (implemented in both interpreter and transpiler):
+- `eq ne gt lt gte lte` on a column vs a scalar → boolean array, element-wise
+- `and` / `or` on two boolean arrays → boolean array, element-wise
+- `not` on a boolean array → boolean array, element-wise
+- Missing values compare as `false` (excluded by the filter)
 
 ---
 
@@ -81,46 +91,55 @@ Not duplicates — different use cases. `tensor[df]` errors on string columns to
 
 Replaces `math.load` and `io.csv[]` — `load` is the single CSV entry point.
 
-Column names are bare (no quotes) — like bare-name maps. For column names
-with spaces, hyphens, dots, or other special characters, use quoted strings:
+**Column references: strings for names, expressions for computation.**
+Naming a column is a string (`sort[df, 'age']`). Computing on a column is a
+normal Crow expression over `df.col` (`filter[df, df.age gt 50]`). Every line
+is plain Crow — no special evaluation rules inside frame calls.
 
 ```crow
-sort[df, age]                --- bare name (common case) ---
-sort[df, 'first name']       --- quoted (spaces) ---
-select[df, ['col-1', age]]   --- mix: quoted + bare ---
+sort[df, 'age']                    --- name a column: string ---
+sort[df, 'first name']             --- spaces, hyphens — no escape hatch needed ---
+select[df, ['name', 'age']]        --- list of names: strings ---
+filter[df, df.age gt 50]           --- compute on a column: expression ---
+
+col = 'age'
+sorted = sort[df, col]             --- dynamic column names just work ---
 ```
 
-Bare names work for any valid identifier (letters, digits, underscores).
-Quoted strings are the escape hatch for everything else. This is one
-mechanism — strings for column names — with syntactic sugar for the
-common case.
+> **Design Note (July 2026):** Bare-name column references (`sort[df, age]`)
+> were removed. The rule "an identifier that isn't a defined variable becomes a
+> string" made meaning scope-dependent — adding a local variable named `age`
+> silently changed `sort[df, age]` from a column reference to a value — and the
+> interpreter and transpiler resolved the ambiguity differently, breaking
+> parity. Strings are one mechanism with no sugar, per design rule 19 (no DSL:
+> every line is valid Crow).
 
 | Function | Description | Example |
 |----------|-------------|---------|
 | load | Load CSV → frame | `df = load['data.csv']` |
 | save | Write frame → CSV | `save[df, 'out.csv']` |
-| select | Pick columns | `sub = select[df, [age, salary]]` |
-| filter | Filter rows | `old = filter[df, df.age > 50]` |
-| sort | Sort by column | `s = sort[df, age]` |
-| group | Group and aggregate | `g = group[df, dept, [salary, mean], [age, max]]` |
-| join | Combine frames on key | `m = join[df1, df2, id]` |
+| select | Pick columns | `sub = select[df, ['age', 'salary']]` |
+| filter | Filter rows | `old = filter[df, df.age gt 50]` |
+| sort | Sort by column | `s = sort[df, 'age']` |
+| group | Group and aggregate | `g = group[df, 'dept', ['salary', 'mean'], ['age', 'max']]` |
+| join | Combine frames on key | `m = join[df1, df2, 'id']` |
 | stack | Stack frames vertically | `all = stack[df1, df2]` |
 | head | First N rows | `top = head[df, 5]` |
 | tail | Last N rows | `bottom = tail[df, 5]` |
-| fill | Fill missing values | `clean = fill[df, age, 0]` |
+| fill | Fill missing values | `clean = fill[df, 'age', 0]` |
 | unique | Unique values in column | `vals = unique[df.age]` |
-| rename | Rename column | `df2 = rename[df, salary, pay]` |
+| rename | Rename column | `df2 = rename[df, 'salary', 'pay']` |
 | stats | Summary statistics | `stats[df]` |
 | datetime | Construct datetime | `d = datetime['2024-01-15']` |
 | tz | Convert timezone | `utc = tz[d, '+09:00']` |
 
-- `sort` defaults ascending. `sort[df, age, desc]` for descending.
-- `group` takes pairs of `[column, agg]` — single scan, multiple aggregations.
-- `join` defaults inner. `join[df1, df2, id, left]` for left/right/outer.
+- `sort` defaults ascending. `sort[df, 'age', desc = true]` for descending.
+- `group` takes pairs of `['column', 'agg']` — single scan, multiple aggregations.
+- `join` defaults inner. `join[df1, df2, 'id', 'left']` for left/right/outer.
 
 Plus properties: `.shape`, `.columns`, `.dtypes`
 
-Plus conversion: `tensor[df]` or `tensor[df, [age, salary]]`
+Plus conversion: `tensor[df]` or `tensor[df, ['age', 'salary']]`
 
 ---
 
@@ -217,28 +236,28 @@ log[df.name]       --- ['alice', 'bob', error, 'carol'] ---
 --- missing values ---
 log[df.age.ok]             --- [true, false, true, true] ---
 log[count[not df.age.ok]]  --- 1 ---
-clean = fill[df, age, 0]
+clean = fill[df, 'age', 0]
 
 --- column arithmetic ---
 log[df.salary * 1.1]       --- [55000, 82500, nan, 99000] ---
 
 --- filter ---
-rich = filter[df, df.salary > 60000]
+rich = filter[df, df.salary gt 60000]
 
 --- select ---
-sub = select[df, [age, salary]]
+sub = select[df, ['age', 'salary']]
 
 --- sort ---
-sorted = sort[df, age]
-sorted_desc = sort[df, age, desc]
+sorted = sort[df, 'age']
+sorted_desc = sort[df, 'age', desc = true]
 
 --- group (single scan, multi-agg) ---
-g = group[df, name, [salary, mean], [age, max]]
+g = group[df, 'name', ['salary', 'mean'], ['age', 'max']]
 
 --- join ---
 deps = load['departments.csv']
-merged = join[df, deps, name]
-merged2 = join[df, deps, name, left]
+merged = join[df, deps, 'name']
+merged2 = join[df, deps, 'name', 'left']
 
 --- stack ---
 df3 = load['more_people.csv']
@@ -248,7 +267,7 @@ all = stack[df, df3]
 log[unique[df.name]]   --- ['alice', 'bob', 'carol'] ---
 
 --- rename ---
-df2 = rename[df, salary, pay]
+df2 = rename[df, 'salary', 'pay']
 
 --- stats ---
 stats[df]
@@ -260,5 +279,5 @@ top = head[df, 5]
 save[df, 'out.csv']
 
 --- convert to tensor ---
-t = tensor[df, [age, salary]]
+t = tensor[df, ['age', 'salary']]
 ```

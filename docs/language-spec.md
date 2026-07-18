@@ -37,7 +37,7 @@ The built-in types are:
 | str    | `'hello'`, `'crow'`  |
 | bool   | `true`, `false`      |
 | array  | `[1, 2, 3]`, `[[1, 2], [3, 4]]` |
-| map    | `[name = 'crow', age = 3]` |
+| map    | `map[home = 78701, office = 78702]` |
 
 Arrays are homogeneous — all elements must be the same type. Use maps for mixed-type named data.
 
@@ -91,13 +91,13 @@ a, b = b, a
 
 ### Scope
 
-Variables are scoped to the block they are defined in. Inner blocks can access outer variables.
+Variables are scoped to the block they are defined in. Inner blocks can access outer variables — but **function boundaries are opaque**: module variables are not visible inside functions (see Function Scope, §3).
 
 ```
 x = 10
 if true
     y = 20
-    log[x]    --- 10 — accessible ---
+    log[x]    --- 10 — accessible: blocks see outer variables ---
 
 log[y]        --- error — y is not in scope ---
 ```
@@ -145,7 +145,7 @@ fn safe_div[a, b]
 
 ### Named Arguments with Defaults
 
-Parameters with `= value` are named arguments with default values. Named arguments must come after all positional arguments.
+Parameters with `= value` are named arguments with default values. Named arguments must come after all positional arguments. Default values must be literals (`int`, `float`, `str`, `bool`) — expressions are not allowed, so evaluation order and scope never come into question.
 
 ```
 fn train[data, lr = 0.01, epochs = 100]
@@ -167,6 +167,8 @@ Named arguments are required for axis parameters in math operations:
 s = sum[x, axis = 0]              --- sum along axis 0 ---
 mx = max[x, axis = 1]             --- max along axis 1 ---
 ```
+
+Named arguments are resolved at compile time (a lowering pass rewrites them to positional form before execution), so they work only when the callee is a directly named function, struct, builtin with named parameters, or ui element. A function received as a value (`fn apply[f, x]` calling `f[...]`) must be called with positional arguments.
 
 ### Calling
 
@@ -230,18 +232,56 @@ Out-of-bounds indices are a runtime error.
 Maps use bare names as keys. Access with dot notation or string key.
 
 ```
-person = [name = 'crow', age = 3]
-person.name              --- 'crow' ---
-person['name']           --- 'crow' (string key also works) ---
+zips = map[home = 78701, office = 78702]
+zips.home                --- 78701 ---
+zips['home']             --- 78701 (string key also works) ---
 ```
 
 Bare-name keys are stored as strings internally. Use quoted string keys when the key is dynamic or contains special characters:
 
 ```
-data = ['content-type' = 'json']
-key = 'name'
-person[key]              --- dynamic lookup ---
+headers = map['content-type' = 'json']
+key = 'home'
+zips[key]                --- dynamic lookup ---
 ```
+
+### Function Scope
+
+A function sees its parameters, its own locals, and the program's vocabulary — other functions, structs, and builtin constants (`pi`, `e`). **Module variables are invisible inside functions.** The only way data enters a function is through its parameters; the only way it leaves is through its return value.
+
+```
+count = 5
+
+fn build[]
+    return 2 + 3          --- ok: self-contained ---
+
+fn scaled[n]
+    count = n * 2         --- ok: a fresh LOCAL named count —
+    return count          ---     unrelated to the module variable ---
+
+fn bad[x]
+    return x + count      --- error: module variables are not visible
+                          --- inside functions — pass 'count' as a parameter ---
+
+count = 6                 --- ok: top-level code mutates top-level state freely ---
+log[scaled[count]]        --- 12: pass it in ---
+```
+
+Because module variables were never visible, a local reusing a module name shadows nothing — it is simply a new binding. There are no `global` declarations and no scope-resolution rules to learn: inside a function, every name is a parameter, a local, or a function/struct/constant.
+
+**Exception — `use ui` reactive state:** in a ui program, top-level assignments become managed reactive state, and render/handler functions access them through the state machinery (the transpiler rewrites them to `state.get`/`state.set`). That is the sanctioned mutable-state channel — owned by the runtime and synchronized, like LiveView assigns.
+
+#### Design Note: No Ambient Mutability
+
+**What was considered:** letting functions read (and possibly write) module variables, as in Python (`global` keyword), Julia, Go, or Lua.
+
+**Why it was rejected:**
+
+1. **Same reason closures were rejected.** Reading ambient state is capture — a hidden data dependency that makes a function's behavior depend on things not in its signature. Purity detection, auto-testing (`crow check`), and refactoring all rely on parameters telling the whole story.
+2. **Parallel-by-default requires it.** The wave scheduler orders statements by the reads and writes it can see at each call site. An ambient read inside a function is invisible to it, so `a = f[]` and `x = 2` would race whenever `f` secretly read `x`. Immutability-by-construction is the only zero-cost fix; the alternatives are interprocedural analysis or locks.
+3. **The permissive languages document the damage.** Python's `global`/`UnboundLocalError` is its most-asked scoping question; Julia re-fought its scope rules for two years; JavaScript needed strict mode to stop accidental globals. The concurrency-serious languages — Rust (no unsynchronized mutable statics), Erlang/Elixir (no shared mutable state at all) — sit exactly where Crow now sits.
+
+**What to use instead:** parameters in, return values out. For shared mutable state across events, use the explicit managed channels: ui `state`, the database, files.
 
 ### First-Class Functions
 
@@ -277,14 +317,95 @@ result = map[items, fn[x] x * 2]    --- no anonymous functions ---
 
 This follows Crow's "one way to do things" principle — there is exactly one way to define a function.
 
-### Empty Containers
+### Map Construction
 
-`[]` is always an empty array. Use `map[]` for an empty map.
+Maps are created with the `map[...]` constructor — a variadic call with named arguments. `[]` is always an empty array.
 
 ```
-items = []               --- empty array ---
-data = map[]             --- empty map ---
+items = []                               --- empty array ---
+data = map[]                             --- empty map ---
+counts = map[crow = 3, raven = 7]        --- map with entries ---
+headers = map['content-type' = 'json']   --- quoted keys for special characters ---
 ```
+
+`map[key = value, ...]` desugars to a chain of `set[]` calls — it is ordinary Crow, not special syntax. For fully dynamic keys, build with `set[]`:
+
+```
+m = map[]
+m = set[m, key_var, value]
+```
+
+**Maps are homogeneous: every value must have the same type.** Int and float
+unify (like arrays). Mixed named data belongs in a struct — and since the value
+type can be *any* type, including structs, the two compose:
+
+```
+struct Address [street, city, zip]
+
+addresses = map[
+    home = Address['12 Oak St', 'Austin', 78701],
+    office = Address['500 Main St', 'Austin', 78702]
+]
+
+addresses.home.city                       --- 'Austin' ---
+addresses = set[addresses, 'work', Address['9 Elm Rd', 'Dallas', 75001]]
+
+for label in keys[addresses]
+    a = addresses[label]
+    log['{label}: {a.street}, {a.city}']
+```
+
+Mixed field types live inside the struct; dynamic keys live in the map. Adding
+a value of a different type is an error in both modes:
+
+```
+m = map[a = 1]
+m = set[m, 'b', 'x']
+--- error: map values must all be the same type — this map holds int values,
+--- cannot add str (use a struct for mixed named data) ---
+```
+
+#### Design Note: Maps Are Dictionaries, Not Records
+
+**What was considered:** heterogeneous maps (`map[name = 'crow', age = 3]`) —
+mixed value types per key, as in Python dicts or Elixir maps.
+
+**Why it was rejected:** sort the use cases by whether keys are known at
+compile time and whether values are mixed:
+
+| | Homogeneous values | Mixed values |
+|---|---|---|
+| Keys known in code | map or struct — both fine | an anonymous struct in disguise |
+| Keys are runtime data | counts, caches, headers — the true map uses | open-schema JSON — the `Json` type |
+
+The genuinely map-shaped uses (dynamic keys) are naturally homogeneous; the
+mixed-value uses have static keys — if every key gets its own type, the keys
+are code, and a struct gives them typo-checking and native compiled speed.
+The one dynamic-and-mixed case, open JSON, already has the `Json` type.
+
+Every statically typed language lands here (Go's `map[K]V` vs `struct`, Rust's
+`HashMap` vs `struct`); every dynamic language that conflated them grew record
+types anyway (Python dataclasses, Ruby's `Data.define`, Elixir structs), and
+Julia's `Dict{String, Any}` shows the performance cliff heterogeneous maps
+cost a compiled language. Crow makes the idiom the rule: **heterogeneity gets
+its shape from structs; keys get their freedom from maps; compose them.**
+
+#### Design Note: No Map Literals
+
+**What was removed:** the bare map literal `[name = 'crow']`, which shared the
+array's delimiters and was distinguished only by the `=` inside.
+
+**Why:** one bracket form with two meanings created a cascade of special cases —
+the empty map needed the special form `map[]`, named arguments were ambiguous
+against map literals inside call brackets, and UI attribute maps forced double
+brackets (`button[[click = inc], '+']`). With the constructor: bare `[...]`
+always means an array, `name = value` inside call brackets always means a named
+argument, and `map[]` is just the zero-argument case of the one map constructor.
+The grammar has one rule per position. Precedent: Go writes `map[string]int{...}`,
+Julia uses `Dict(...)`, Python's `dict(k=v)` is this exact form.
+
+Writing the old literal produces a helpful error:
+`map literals were removed — write map[key = value, ...] instead`.
 
 ### Built-in Functions
 
@@ -400,7 +521,7 @@ type[error['x']]  --- 'error' ---
 | `json[str]` | Parse JSON string into a Crow value (error-value on failure) |
 | `encode[value]` | Encode a Crow value as a JSON string |
 
-JSON type mapping: objects → maps, arrays → arrays, strings → str, numbers → int/float, booleans → bool, `null` → error-value. JSON `null` maps to an error-value with `ok: false` and `reason: 'null'`, which auto-propagates through the error-value system (§11).
+JSON type mapping: objects → maps, arrays → arrays, strings → str, numbers → int/float, booleans → bool, `null` → error-value. Parsed JSON is dynamic data — the map homogeneity rule applies to maps you construct, not to values parsed from JSON (open-schema data is exactly what `json[]` is for). JSON `null` maps to an error-value with `ok: false` and `reason: 'null'`, which auto-propagates through the error-value system (§11).
 
 ```
 items = json['[1, 2, 3]']
@@ -1244,6 +1365,71 @@ log[bad.ok]            --- false ---
 log[bad.reason]        --- error message ---
 ```
 
+### Built-in Module: frame
+
+Import with `use frame`. Column-oriented DataFrames for tabular data. See `docs/frame-module.md` for design details.
+
+**Column references: strings for names, expressions for computation.** Naming a column is a string; computing on a column is a normal Crow expression over `df.col`. Every line is plain Crow — there is no special evaluation inside frame calls.
+
+| Function | Description |
+|---|---|
+| `load[path]` | Load CSV → frame (error-value on failure) |
+| `save[frame, path]` | Write frame → CSV |
+| `select[frame, cols]` | Pick columns: `select[df, ['name', 'age']]` |
+| `filter[frame, mask]` | Keep rows where mask is true: `filter[df, df.age gt 50]` |
+| `sort[frame, col]` | Sort ascending: `sort[df, 'age']`. Descending: `sort[df, 'age', desc = true]` |
+| `group[frame, col, aggs...]` | Group + aggregate: `group[df, 'dept', ['salary', 'mean'], ['age', 'max']]` |
+| `join[f1, f2, key]` | Join on key column: `join[df1, df2, 'id']`. Type: `join[df1, df2, 'id', 'left']` |
+| `stack[f1, f2]` | Stack frames vertically |
+| `head[frame, n]` / `tail[frame, n]` | First/last n rows (returns a frame) |
+| `fill[frame, col, value]` | Fill missing values in a column |
+| `unique[col]` | Unique values in a column |
+| `rename[frame, old, new]` | Rename a column: `rename[df, 'salary', 'pay']` |
+| `stats[frame]` | Summary statistics |
+| `datetime[s]` | Parse ISO 8601 datetime |
+| `tz[d, offset]` | Convert timezone: `tz[d, '+09:00']` |
+
+Properties: `.shape`, `.columns`, `.dtypes`. Column access: `df.age`. `len[df]` returns the row count. Aggregation names for `group`: `'sum'`, `'mean'`, `'min'`, `'max'`, `'count'`.
+
+#### Boolean Masks
+
+Filtering uses ordinary Crow expressions that evaluate to boolean arrays. These operations are vectorized (element-wise):
+
+- `eq ne gt lt gte lte` — column vs scalar → boolean array
+- `and` / `or` — two boolean arrays → boolean array
+- `not` — boolean array → boolean array
+
+```
+use frame
+df = load['people.csv']
+
+old = filter[df, df.age gt 50]
+alices = filter[df, df.name eq 'alice']
+rich_old = filter[df, df.age gt 50 and df.salary gt 100000]
+others = filter[df, not (df.name eq 'alice')]
+```
+
+Missing values compare as `false` — they are excluded by any filter.
+
+Dynamic column names need no special syntax — a string variable works everywhere a column name does:
+
+```
+col = 'age'
+sorted = sort[df, col]
+```
+
+#### Design Note: No Bare-Name Column References
+
+**What was considered (and originally shipped):** Bare identifiers as column names — `sort[df, age]`, `group[df, dept, [salary, mean]]` — where an identifier that isn't a defined variable is treated as a column-name string.
+
+**Why it was removed:**
+
+1. **Scope-dependent meaning.** Adding a local variable named `age` silently changed `sort[df, age]` from a column reference into a value argument. Code broke at a distance with no error.
+2. **Interpreter–transpiler divergence.** The interpreter preferred the variable when one existed; the transpiler force-converted certain argument positions to strings regardless. The same program meant different things in the two modes, violating the parity rule.
+3. **Violates rule 19 (no DSL).** A second evaluation rule inside frame calls means a line of Crow can't be read without knowing which builtin it appears in.
+
+**What to use instead:** Strings for column names, expressions for computation — as specified above. One mechanism, no sugar, dynamic columns free.
+
 ### Built-in Module: web
 
 Import sub-modules with `use web.X`. Each sub-module enables only its feature — minimal binary, minimal compile time. See `docs/web-framework.md` for full architecture details.
@@ -1995,7 +2181,7 @@ name = 'myapp'
 cpu = 4
 gpu = 'all'
 
-deps = [math = '1.0', http = '2.3']
+deps = map[math = '1.0', http = '2.3']
 
 [jobs]
 train = 'jobs/train.crow'
@@ -2043,8 +2229,10 @@ crow run -i file.crow       --- run with interpreter (for debugging) ---
 crow fmt                    --- format project (uses crowfile) ---
 crow fmt file.crow          --- format a specific file ---
 crow fmt --check            --- check if formatting needed (exit 1 if not) ---
-crow test                   --- run all verify statements + tests/ folder ---
+crow test --parity          --- run tests/parity/ in both modes and diff output ---
 ```
+
+`crow test --parity` is the interpreter–transpiler parity harness: every `tests/parity/*.crow` file runs in both execution modes and any difference in output (or exit status) is a failure. This enforces rule 11 (parity) mechanically. (A fuller `crow test` that runs `tests/` and verify statements is planned; only `--parity` is implemented today.)
 
 `crow build` transpiles `.crow` source files to Rust and compiles to a native binary. `crow run` builds and then executes the binary.
 
@@ -2551,20 +2739,21 @@ Three options were evaluated:
 
 ```
 --- works: all leaves are numeric ---
-model = [w = [1, 2, 3], b = [4, 5, 6]]
+model = map[w = [1, 2, 3], b = [4, 5, 6]]
 result = 2 * model
-
---- compile error: non-numeric leaf ---
-config = [lr = 0.01, name = 'adam']
-result = 2 * config
---- error: cannot multiply map with non-numeric value at key 'name' (str) ---
 ```
 
-**What to use instead:** Keep weights and config in separate maps.
+Since maps are homogeneous (Design Note: Maps Are Dictionaries, Not Records),
+a map mixing numeric weights with string config can no longer be constructed
+at all — the question resolves at the type level.
+
+**What to use instead:** Weights in a map (all tensors), config in a struct.
 
 ```
-weights = [w = rand[784, 128], b = zeros[128]]
-config = [lr = 0.01, name = 'adam']
+struct Config [lr, optimizer]
+
+weights = map[w = rand[784, 128], b = zeros[128]]
+config = Config[0.01, 'adam']
 
 g = dloss[weights, x, y]
 weights = weights - config.lr * g
@@ -2614,8 +2803,9 @@ squared = x .^ 2             --- element-wise power ---
 zeros[3, 4]                  --- 3x4 of zeros ---
 rand[2, 3]                   --- 2x3 random ---
 
---- mixed types → use a map ---
-[name = 'alice', age = 25]   --- map (heterogeneous, named) ---
+--- mixed named data → use a struct ---
+struct User [name, age]
+User['alice', 25]            --- named, mixed-type fields ---
 
 --- error ---
 [1, 'hello', true]           --- error: mixed types ---
@@ -2624,7 +2814,7 @@ rand[2, 3]                   --- 2x3 random ---
 **Why:** Python has both `list` and `numpy.array` — the "two type problem." You constantly convert between them. MATLAB, Julia, and R have one array type and it works. For data science, columns are homogeneous arrays. For tabular data, a DataFrame is a map of arrays — which is exactly what Crow's bare-name maps provide:
 
 ```
-df = [
+df = map[
   name = ['alice', 'bob'],
   age = [25, 30],
   salary = [50000, 60000]
@@ -2634,6 +2824,6 @@ mean[df.salary]              --- works because arrays support math ---
 df.salary * 1.1              --- element-wise, no wrapper needed ---
 ```
 
-**Mixed-type data uses maps, not arrays.** `[id = 1, name = 'alice', active = true]` is a map with named fields and dot access. This is clearer than a mixed-type list anyway — fields are named and self-documenting.
+**Mixed-type data uses structs, not arrays.** `struct User [id, name, active]` then `User[1, 'alice', true]` gives named, typed fields with dot access. This is clearer than a mixed-type list anyway — fields are named and self-documenting. (Maps are homogeneous — see Design Note: Maps Are Dictionaries, Not Records.)
 
 **What this eliminates:** `tensor` keyword, `list` vs `tensor` confusion, `tensor[[1,2,3]]` wrapper syntax, mixed-type arrays.
