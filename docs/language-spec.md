@@ -212,6 +212,26 @@ m[1][2]                       --- 6 ---
 --- creation by shape ---
 z = zeros[3, 4]               --- 3x4 of zeros ---
 r = rand[2, 3]                --- 2x3 random ---
+
+--- growing (immutable: returns a new tensor) ---
+m2 = push[m, [7, 8, 9]]       --- append one row (shape-checked) ---
+c = concat[m, m2, 0]          --- concatenate along an axis ---
+
+--- errors: shape and type are the tensor's contract ---
+push[m, [1, 2]]               --- error: row length 2 vs rows of length 3 ---
+push[m, 'x']                  --- error: arrays are homogeneous ---
+[[1, 2], [3]]                 --- error: all inner arrays must be the same length ---
+```
+
+Iterating a 2-D array yields its rows; comparisons with a scalar broadcast to a boolean mask:
+
+```
+totals = for row in m
+    sum[row]                  --- per-row sums ---
+
+x = [1, 2, 3, 4]
+mask = x gt 2                 --- [false, false, true, true] ---
+big = (x gt 1) and (x lt 4)   --- masks combine element-wise ---
 ```
 
 ### String Access
@@ -480,7 +500,8 @@ type[error['x']]  --- 'error' ---
 | `len[x]` | Length of array, string, or map |
 | `push[arr, value]` | Return new array with value appended |
 | `pop[arr]` | Return new array without last element |
-| `append[arr, other]` | Return new array with other's elements added |
+| `concat[a, b]` | Return new array merging two arrays |
+| `concat[a, b, axis]` | Concatenate two tensors along an axis |
 | `sort[arr]` | Return new sorted array |
 | `reverse[arr]` | Return new reversed array |
 | `contains[arr, value]` | Check if array contains value |
@@ -1035,10 +1056,10 @@ Note: `sort[t]` is a core builtin (not in the math module) that works on both ar
 
 | Function | Returns |
 |---|---|
-| `concat[a, b]` | Concatenate two tensors along axis 0 (NumArray) |
-| `concat[a, b, axis]` | Concatenate two tensors along given axis (NumArray) |
-| `stack[tensors]` | Stack array of tensors along new axis 0 (NumArray) |
-| `stack[tensors, axis]` | Stack array of tensors along new axis (NumArray) |
+| `stack[tensors]` | Stack tensors along new axis 0 (NumArray) |
+| `stack[tensors, axis]` | Stack tensors along new axis (NumArray) |
+
+Note: `concat[a, b, axis]` is a core builtin (not in the math module) — one merge operation for all arrays and tensors. It replaced the former `append`.
 
 Note: `slice[t, start, end]` is a core builtin (not in the math module) that works on arrays, tensors, and strings.
 
@@ -2811,18 +2832,9 @@ User['alice', 25]            --- named, mixed-type fields ---
 [1, 'hello', true]           --- error: mixed types ---
 ```
 
-**Why:** Python has both `list` and `numpy.array` — the "two type problem." You constantly convert between them. MATLAB, Julia, and R have one array type and it works. For data science, columns are homogeneous arrays. For tabular data, a DataFrame is a map of arrays — which is exactly what Crow's bare-name maps provide:
+**Why:** Python has both `list` and `numpy.array` — the "two type problem." You constantly convert between them. MATLAB, Julia, and R have one array type and it works. For data science, columns are homogeneous arrays. For tabular data, use a **frame** (`use frame`) — the dedicated type with named, per-column-typed columns, missing-value tracking, and relational operations.
 
-```
-df = map[
-  name = ['alice', 'bob'],
-  age = [25, 30],
-  salary = [50000, 60000]
-]
-
-mean[df.salary]              --- works because arrays support math ---
-df.salary * 1.1              --- element-wise, no wrapper needed ---
-```
+**Tensors vs frames:** a tensor is positional numbers (one dtype, axes interchangeable — matmul, transpose, reductions); a frame is named observations (typed columns, filter/sort/group/join). An all-numeric frame and a matrix can hold the same grid, but intent picks the type — convert deliberately with `tensor[df]`. Neither grows the other's features: no named axes on tensors, no linear algebra on frames.
 
 **Mixed-type data uses structs, not arrays.** `struct User [id, name, active]` then `User[1, 'alice', true]` gives named, typed fields with dot access. This is clearer than a mixed-type list anyway — fields are named and self-documenting. (Maps are homogeneous — see Design Note: Maps Are Dictionaries, Not Records.)
 

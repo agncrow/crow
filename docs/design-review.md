@@ -164,7 +164,7 @@ Spec §14 claims "the transpiler infers concrete types from each call site, effe
 
 - [ ] Monomorphize user functions per call-site signature in the transpiler (parity file: generic helper at int/str/array types)
 
-### F3 — "Unified arrays": 2-D literals are not tensors (MAJOR)
+### F3 — ✅ FIXED (July 2026): 2-D literals build real tensors
 
 ```
 use math
@@ -173,10 +173,14 @@ log[sum[m]]     --- interpreter: "sum: expected numarray, got Array(...)"
                 --- compiled: no method `sum` on Vec<CrowTensor>
 ```
 
-Nested numeric literals become an *array of 1-D tensors*, not a 2-D tensor — so reductions, matmul, transpose, and every math-module function fail on the spec's own "2x3 array" literal form; users must launder through `reshape`. Related seam: `[1, 2, 3] gt 2` fails in both modes while frame columns broadcast comparisons. The "internally tensors, transparently" claim needs to be made true: all-numeric nested literals should build one shaped tensor, and tensors need comparison broadcasting.
+Nested numeric literals became an *array of 1-D tensors*, not a 2-D tensor — so reductions, matmul, transpose failed on the spec's own literal form. **Fixed:**
 
-- [ ] Nested all-numeric literals → single shaped CrowTensor (both modes)
-- [ ] Comparison broadcasting on tensors (subsumes the NumArray item in #2)
+- [x] Nested all-numeric literals → single shaped CrowTensor in both modes (rank tracked in inference as nested `NumArray` inner types); ragged rows error ("all inner arrays must be the same length"); `m[0]` is a row tensor, `for row in m` iterates rows, negative row indexing works.
+- [x] Comparison broadcasting on tensors: `x gt 2` → boolean mask in both modes, composing with the existing `and`/`or`/`not` mask machinery (retires the NumArray-asymmetry item in #2).
+- [x] Growth contract: `push[m, row]` appends along axis 0 with strict shape/type errors (no NumPy flatten-guessing, no MATLAB auto-grow, no R recycling, no promotion — survey in the spec's multidimensional-arrays section); tensor mutation stays immutable-rebuild (the JAX model).
+- [x] **`append` removed; `concat` is core** — one merge operation for all arrays and tensors (`concat[a, b, axis?]`), replacing the core/math `append`/`concat` duplication Vijay spotted. `stack` accepts tensors (array-of-tensor literals now auto-build one).
+- [x] Spec: growth/mask examples, "Tensors vs frames" boundary paragraph, and the stale "a DataFrame is a map of arrays" line replaced with a pointer to `frame`. Parity file `15_tensors.crow`; 767 tests, 15 parity files green.
+- Example-rot addendum: `numarray_test.crow` fails at HEAD too (`a * b` on 1-D tensors predates `*`-is-matmul) — added to the cleanup-pass list.
 
 ### F4 — Error-values in conditionals: modes disagree (confirmed, already queued in #2)
 
