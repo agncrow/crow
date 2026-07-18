@@ -20,5 +20,5 @@ fn count_primes[n]
         i = i + 1
     return count
 
-log['primes below 100000: {count_primes[100000]}']
+log['primes below 100000: `count_primes[100000]`']
 

@@ -5,16 +5,16 @@ items = [1, 2, 3, 4, 5]
 
 --- this runs in parallel ---
 for x in items
-    log['{x}']
+    log['`x`']
 
 --- for-as-expression also runs in parallel ---
 doubled = for x in items
     x * 2
-log['doubled: {doubled}']
+log['doubled: `doubled`']
 
 --- sequential fallback: body mutates outer variable ---
 total = 0
 for x in items
     total = total + x
-log['total: {total}']
+log['total: `total`']
 

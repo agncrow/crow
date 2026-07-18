@@ -2316,6 +2316,12 @@ impl Interpreter {
             "concat" => {
                 if args.len() < 2 || args.len() > 3 { return Err("concat[] takes 2-3 arguments (a, b[, axis])".into()); }
                 match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
+                    (Value::Str(a), Value::Str(b)) => {
+                        if args.len() == 3 {
+                            return Err("concat: axis applies to tensors only".into());
+                        }
+                        Ok(CrowValue::ok(Value::Str(format!("{}{}", a, b))))
+                    }
                     (Value::Array(items), Value::Array(other)) => {
                         if args.len() == 3 {
                             return Err("concat: axis applies to tensors only".into());
@@ -3745,29 +3751,43 @@ impl Interpreter {
         let mut i = 0;
 
         while i < chars.len() {
-            // Escaped braces from the lexer: \{ and \} are literal characters
-            if chars[i] == '\\' && i + 1 < chars.len() && (chars[i + 1] == '{' || chars[i + 1] == '}') {
-                result.push(chars[i + 1]);
+            // Escaped backtick from the lexer: \` is a literal character
+            if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '`' {
+                result.push('`');
                 i += 2;
                 continue;
             }
-            if chars[i] == '{' {
-                // find matching }
+            if chars[i] == '`' {
+                // Interpolation span: scan to the closing backtick, skipping
+                // over string literals inside the expression (quote-aware)
                 let start = i + 1;
-                let mut depth = 1;
                 i += 1;
-                while i < chars.len() && depth > 0 {
-                    if chars[i] == '{' {
-                        depth += 1;
-                    } else if chars[i] == '}' {
-                        depth -= 1;
+                let mut in_str = false;
+                while i < chars.len() {
+                    let c = chars[i];
+                    if in_str {
+                        if c == '\\' && i + 1 < chars.len() {
+                            i += 2;
+                            continue;
+                        }
+                        if c == '\'' {
+                            in_str = false;
+                        }
+                    } else if c == '\'' {
+                        in_str = true;
+                    } else if c == '`' {
+                        break;
                     }
-                    if depth > 0 {
-                        i += 1;
-                    }
+                    i += 1;
+                }
+                if i >= chars.len() {
+                    return Err("unterminated interpolation — close it with ` or write \\` for a literal backtick".to_string());
                 }
                 let expr_str: String = chars[start..i].iter().collect();
-                i += 1; // skip closing }
+                if expr_str.trim().is_empty() {
+                    return Err("empty interpolation — backticks must contain an expression".to_string());
+                }
+                i += 1; // skip closing `
 
                 // parse and evaluate the expression
                 let mut lexer = crate::lexer::Lexer::new(&expr_str);
@@ -3865,13 +3885,13 @@ mod tests {
 
     #[test]
     fn test_string_interpolation() {
-        let val = get_var("name = 'crow'\nx = 'hello, {name}'\n", "x");
+        let val = get_var("name = 'crow'\nx = 'hello, `name`'\n", "x");
         assert_eq!(format!("{}", val.value), "hello, crow");
     }
 
     #[test]
     fn test_string_interpolation_expr() {
-        let val = get_var("x = '1 + 2 = {1 + 2}'\n", "x");
+        let val = get_var("x = '1 + 2 = `1 + 2`'\n", "x");
         assert_eq!(format!("{}", val.value), "1 + 2 = 3");
     }
 
@@ -6643,6 +6663,42 @@ mod tests {
         assert!(matches!(val.value, Value::Int(7)));
     }
 
+    // ===== Backtick interpolation =====
+
+    #[test]
+    fn test_backtick_escaped_literal() {
+        let val = get_var("s = 'code: \\`x\\`'\n", "s");
+        assert!(matches!(&val.value, Value::Str(s) if s == "code: `x`"));
+    }
+
+    #[test]
+    fn test_backtick_unterminated_errors() {
+        let result = std::panic::catch_unwind(|| {
+            run_program("s = 'hello `name'\nlog[s]\n")
+        });
+        assert!(result.is_err(), "unterminated interpolation should error");
+    }
+
+    #[test]
+    fn test_backtick_nested_string_args() {
+        // Inside interpolation you are still inside the string: quotes escaped
+        let val = get_var("s = 'up: `upper[\\'hi\\']`'\n", "s");
+        assert!(matches!(&val.value, Value::Str(s) if s == "up: HI"));
+    }
+
+    #[test]
+    fn test_regex_quantifier_braces_now_safe() {
+        // Regression: '{4}' used to be silently interpolated, corrupting patterns
+        let val = get_var("m = matches['2024', '[0-9]{4}']\n", "m");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_concat_strings() {
+        let val = get_var("x = concat['ab', 'cd']\n", "x");
+        assert!(matches!(&val.value, Value::Str(s) if s == "abcd"));
+    }
+
     // ===== fmt builtin =====
 
     #[test]
@@ -6716,14 +6772,14 @@ mod tests {
     }
 
     #[test]
-    fn test_brace_escape_literal() {
-        let val = get_var("s = 'a \\{b\\} c'\n", "s");
+    fn test_braces_are_inert_literals() {
+        let val = get_var("s = 'a {b} c'\n", "s");
         assert!(matches!(&val.value, Value::Str(s) if s == "a {b} c"));
     }
 
     #[test]
-    fn test_json_object_literal_via_escapes() {
-        let val = get_var("j = json['\\{\"n\": 7\\}']\nx = j.n\n", "x");
+    fn test_json_object_literal_raw() {
+        let val = get_var("j = json['{\"n\": 7}']\nx = j.n\n", "x");
         assert!(matches!(val.value, Value::Int(7)));
     }
 

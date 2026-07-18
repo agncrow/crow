@@ -547,7 +547,7 @@ impl<'a> Validator<'a> {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
                 // String + is not allowed — use interpolation instead
                 if matches!(op, BinOp::Add) && (matches!(lt, CrowType::Str) || matches!(rt, CrowType::Str)) {
-                    self.error("cannot use '+' with strings — use string interpolation instead".to_string());
+                    self.error("cannot use '+' with strings — interpolate to combine ('`a` `b`'), or collect parts and join[parts, sep] to build".to_string());
                     return;
                 }
                 // Numeric ops: both must be numeric (including NumArray, Sparse, FrameCol, and legacy Array(Str))
@@ -644,7 +644,7 @@ mod tests {
     fn test_string_concat_rejected() {
         let result = validate_source("x = 'hello' + ' world'\n");
         assert!(result.is_err(), "string + should be rejected");
-        assert!(result.unwrap_err().contains("interpolation"), "should suggest interpolation");
+        assert!(result.unwrap_err().contains("join"), "should suggest interpolation and join");
     }
 
     #[test]

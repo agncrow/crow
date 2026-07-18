@@ -2,9 +2,9 @@
 
 nums = [1, 2, 3, 4, 5]
 total = sum[nums]
-log['sum of ints: {total}']
+log['sum of ints: `total`']
 
 floats = [1.5, 2.5, 3.0]
 ftotal = sum[floats]
-log['sum of floats: {ftotal}']
+log['sum of floats: `ftotal`']
 

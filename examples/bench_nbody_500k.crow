@@ -38,6 +38,6 @@ while step_num lt 500000
     body = step_body[body, acc.x, acc.y, dt]
     step_num = step_num + 1
 
-log['after 500000 steps: x={body.x} y={body.y}']
+log['after 500000 steps: x=`body.x` y=`body.y`']
 log['nbody 500000 steps complete']
 

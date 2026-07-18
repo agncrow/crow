@@ -23,7 +23,7 @@ fn abs[x]
 
 --- Impure function - will be skipped for edge cases ---
 fn greet[name]
-  log['hello {name}']
+  log['hello `name`']
 
 --- Pure function with multiple params ---
 fn clamp[val, lo, hi]

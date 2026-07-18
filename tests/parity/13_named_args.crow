@@ -10,7 +10,7 @@ log[train[2, 0.25, 3]]
 log[train[2, lr = 0.25, epochs = 2]]
 log[train[2, epochs = 2, lr = 0.25]]
 fn greet[name, punct = '!']
-    return 'hi {name}{punct}'
+    return 'hi `name``punct`'
 log[greet['crow']]
 log[greet['crow', punct = '?']]
 --- map constructor: variadic named args ---

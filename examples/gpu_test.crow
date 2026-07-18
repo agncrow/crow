@@ -10,22 +10,22 @@ b = math.ones[3]
 
 --- Element-wise ops dispatch to GPU shaders when on GPU ---
 c = a + b
-log['ones: {c}']
+log['ones: `c`']
 
 d = math.linspace[0, 1, 5]
-log['linspace: {d}']
+log['linspace: `d`']
 
 --- Scalar ops ---
 e = c * 2
-log['scaled: {e}']
+log['scaled: `e`']
 
 --- Reductions ---
 s = math.sum[e]
-log['sum: {s}']
+log['sum: `s`']
 
 --- Math ops ---
 f = math.exp[b]
-log['exp ones: {f}']
+log['exp ones: `f`']
 
 log['gpu test done']
 

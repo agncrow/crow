@@ -30,9 +30,9 @@ while i lt 1000
   b = b - lr * g[1]
   i = i + 1
 
-log['w = {w} (target: 2.0)']
-log['b = {b} (target: 0.5)']
-log['loss = {mse_loss[w, b]}']
+log['w = `w` (target: 2.0)']
+log['b = `b` (target: 0.5)']
+log['loss = `mse_loss[w, b]`']
 log['']
 
 --- ===================================================== ---
@@ -81,7 +81,7 @@ while i lt 10000
   b2 = b2 - lr * db2
 
   if i % 2000 eq 0
-    log['  step {i}: loss = {loss}']
+    log['  step `i`: loss = `loss`']
 
   i = i + 1
 
@@ -93,5 +93,5 @@ pred = sigmoid[z2]
 log['']
 log['predictions (target [0, 1, 1, 0]):']
 log[pred]
-log['final loss: {mse[pred, y]}']
+log['final loss: `mse[pred, y]`']
 

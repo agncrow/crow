@@ -755,7 +755,7 @@ for i in range[1000]
   w = w - 0.01 * g_w
   b = b - 0.01 * g_b
 
-log['w = {w}, b = {b}']
+log['w = `w`, b = `b`']
 ```
 
 ### Neural Network (2-Layer, From Scratch)
@@ -797,7 +797,7 @@ for epoch in range[10]
     g = dloss[w, batch.x, batch.y]
     w = w - 0.001 * g                     --- map arithmetic ---
     total = total + loss[w, batch.x, batch.y]
-  log['epoch {epoch} loss = {total / len[batches]}']
+  log['epoch `epoch` loss = `total / len[batches]`']
 ```
 
 ### GPU Training

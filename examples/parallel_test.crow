@@ -25,10 +25,10 @@ cpu[1]
 log['--- sequential (cpu[1]) ---']
 results_seq = for limit in tasks
     primes = count_primes[limit]
-    log['  primes up to {limit}: {primes}']
+    log['  primes up to `limit`: `primes`']
     primes
 
-log['sequential results: {results_seq}']
+log['sequential results: `results_seq`']
 log['']
 
 --- run parallel: 8 threads ---
@@ -36,8 +36,8 @@ cpu[8]
 log['--- parallel (cpu[8]) ---']
 results_par = for limit in tasks
     primes = count_primes[limit]
-    log['  primes up to {limit}: {primes}']
+    log['  primes up to `limit`: `primes`']
     primes
 
-log['parallel results: {results_par}']
+log['parallel results: `results_par`']
 

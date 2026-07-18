@@ -16,7 +16,7 @@ max_depth = 15
 
 stretch_depth = max_depth + 1
 stretch_tree = make_tree[stretch_depth]
-log['stretch tree of depth {stretch_depth} check: {check_tree[stretch_tree]}']
+log['stretch tree of depth `stretch_depth` check: `check_tree[stretch_tree]`']
 
 long_lived_tree = make_tree[max_depth]
 
@@ -34,8 +34,8 @@ while depth lte max_depth
         check_sum = check_sum + check_tree[make_tree[depth]]
         j = j + 1
 
-    log['{iterations} trees of depth {depth} check: {check_sum}']
+    log['`iterations` trees of depth `depth` check: `check_sum`']
     depth = depth + 2
 
-log['long lived tree of depth {max_depth} check: {check_tree[long_lived_tree]}']
+log['long lived tree of depth `max_depth` check: `check_tree[long_lived_tree]`']
 

@@ -6,7 +6,7 @@ fn fib[n]
         return n
     return fib[n - 1] + fib[n - 2]
 
-log['fib[10] = {fib[10]}']
-log['fib[20] = {fib[20]}']
-log['fib[30] = {fib[30]}']
+log['fib[10] = `fib[10]`']
+log['fib[20] = `fib[20]`']
+log['fib[30] = `fib[30]`']
 

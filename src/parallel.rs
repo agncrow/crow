@@ -10,16 +10,29 @@ pub fn str_interpolation_reads(s: &str) -> HashSet<String> {
     let chars: Vec<char> = s.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        if chars[i] == '{' {
+        // Escaped backtick: literal, not interpolation
+        if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '`' {
+            i += 2;
+            continue;
+        }
+        if chars[i] == '`' {
+            // Interpolation span: scan to closing backtick, quote-aware
             let start = i + 1;
-            let mut depth = 1;
             i += 1;
-            while i < chars.len() && depth > 0 {
-                if chars[i] == '{' { depth += 1; }
-                else if chars[i] == '}' { depth -= 1; }
-                if depth > 0 { i += 1; }
+            let mut in_str = false;
+            while i < chars.len() {
+                let c = chars[i];
+                if in_str {
+                    if c == '\\' && i + 1 < chars.len() { i += 2; continue; }
+                    if c == '\'' { in_str = false; }
+                } else if c == '\'' {
+                    in_str = true;
+                } else if c == '`' {
+                    break;
+                }
+                i += 1;
             }
-            let expr_str: String = chars[start..i].iter().collect();
+            let expr_str: String = chars[start..i.min(chars.len())].iter().collect();
             i += 1;
             // parse the interpolation expression and extract reads
             if let Ok(tokens) = crate::lexer::Lexer::new(&expr_str).tokenize() {

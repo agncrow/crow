@@ -157,6 +157,7 @@ fn print_usage() {
     eprintln!("  crow fmt               format project (uses crowfile)");
     eprintln!("  crow fmt file.crow     format a specific file");
     eprintln!("  crow fmt --check       check formatting without changing files");
+    eprintln!("  crow fmt --fix-interpolation  migrate {{expr}} strings to `expr`");
     eprintln!("  crow launch 4 file.crow  build + run on 4 distributed processes");
     eprintln!("  crow test --parity     run tests/parity/ in both modes, diff output");
     eprintln!("  crow check --verbose   verbose output with purity and snapshot details");
@@ -1170,6 +1171,7 @@ fn extract_between<'a>(text: &'a str, start_marker: &str, end_marker: &str) -> O
 fn cmd_fmt() {
     let args: Vec<String> = std::env::args().collect();
     let check_mode = args.iter().any(|a| a == "--check");
+    let fix_interpolation = args.iter().any(|a| a == "--fix-interpolation");
 
     // Collect files to format
     let files: Vec<String> = args.iter().skip(2)
@@ -1201,6 +1203,12 @@ fn cmd_fmt() {
             }
         };
 
+        let original = source.clone();
+        let source = if fix_interpolation {
+            formatter::migrate_interpolation(&source)
+        } else {
+            source
+        };
         let formatted = match formatter::format_source(&source) {
             Ok(f) => f,
             Err(e) => {
@@ -1209,7 +1217,7 @@ fn cmd_fmt() {
             }
         };
 
-        if formatted == source {
+        if formatted == original {
             if !check_mode {
                 println!("  {} (no changes)", file);
             }

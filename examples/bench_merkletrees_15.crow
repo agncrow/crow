@@ -25,7 +25,7 @@ fn count_nodes[node]
 
 log['building merkle tree depth 15...']
 tree15 = build_tree[15, 1]
-log['root hash: {tree15.hash}']
-log['nodes: {count_nodes[tree15]}']
+log['root hash: `tree15.hash`']
+log['nodes: `count_nodes[tree15]`']
 log['merkletrees depth 15 complete']
 

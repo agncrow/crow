@@ -29,7 +29,7 @@ log[young]
 
 --- Exec returns affected row count ---
 n = exec[conn, 'UPDATE users SET age = age + 1 WHERE name = ?', ['alice']]
-log['updated {n} row(s)']
+log['updated `n` row(s)']
 assert[n eq 1, 'should update 1 row']
 
 --- Verify update ---

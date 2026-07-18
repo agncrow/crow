@@ -75,7 +75,7 @@ fn home_render[state]
 
             --- Flash messages ---
             if len[flash_msg] gt 0
-                div[flash_msg, class = 'flash {flash_type}'],
+                div[flash_msg, class = 'flash `flash_type`'],
 
             --- Cards row ---
             div[
@@ -146,7 +146,7 @@ fn home_render[state]
                 h3['Dynamic List (from state)'],
                 ul[
                     for i in range[count]
-                        li['Item {i + 1}']
+                        li['Item `i + 1`']
                 ],
                 class = 'dynamic-list'
             ],
@@ -214,17 +214,17 @@ fn forms_render[state]
             if submitted
                 div[
                     h3['Submitted Data'],
-                    p['Name: {name}'],
-                    p['Email: {email}'],
-                    p['Role: {role}'],
+                    p['Name: `name`'],
+                    p['Email: `email`'],
+                    p['Role: `role`'],
                     class = 'form-preview'
                 ]
             else
                 div[
                     h3['Live Preview'],
-                    p['Name: {name}'],
-                    p['Email: {email}'],
-                    p['Role: {role}'],
+                    p['Name: `name`'],
+                    p['Email: `email`'],
+                    p['Role: `role`'],
                     class = 'form-preview'
                 ]
         ],
@@ -301,7 +301,7 @@ fn data_render[state]
             if len[selected] gt 0
                 div[
                     h3['Selected'],
-                    p['You selected: {selected}'],
+                    p['You selected: `selected`'],
                     class = 'selection'
                 ],
 
@@ -309,7 +309,7 @@ fn data_render[state]
             paginate[state, len[items], 3],
 
             --- Sorting info ---
-            p['Sorted by: {sort_col}', class = 'info']
+            p['Sorted by: `sort_col`', class = 'info']
         ],
         footer[p['Built with Crow']],
         class = 'app'

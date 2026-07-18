@@ -33,4 +33,4 @@ log[c3]
 --- the guard idiom: .ok is always branchable ---
 bad2 = int['zzz']
 if not bad2.ok
-    log['guarded: {bad2.reason}']
+    log['guarded: `bad2.reason`']

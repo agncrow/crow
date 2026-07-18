@@ -34,9 +34,9 @@ fn render[]
     return div[
         h1['Trading Dashboard'],
         div[
-            div['P&L: {pnl}'],
-            div['Trades: {count}'],
-            div['Positions: {len[positions]}'],
+            div['P&L: `pnl`'],
+            div['Trades: `count`'],
+            div['Positions: `len[positions]`'],
             class = 'stats'
         ],
         div[
