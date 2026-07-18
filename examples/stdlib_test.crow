@@ -67,7 +67,7 @@ log[data]
 --- append (immutable) ---
 a = [1, 2]
 b = [3, 4]
-a = append[a, b]
+a = concat[a, b]
 log[a]
 
 --- slice ---

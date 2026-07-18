@@ -22,7 +22,7 @@ const MATH_FUNCTIONS: &[&str] = &[
     // Cumulative
     "cumsum", "cumprod",
     // Combining
-    "concat", "stack",
+    "stack",
     // Sorting & selection
     "argsort", "topk", "unique", "where",
     // Shape ops
@@ -295,13 +295,6 @@ fn call_math_reductions(name: &str, args: &[CrowValue]) -> Result<CrowValue, Str
 fn call_math_ops(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
     match name {
         // Combining ops
-        "concat" => {
-            if args.len() < 2 { return Err("concat: expected at least 2 arguments (a, b, [axis])".into()); }
-            let a = to_tensor(&args[0], name)?;
-            let b = to_tensor(&args[1], name)?;
-            let axis = if args.len() >= 3 { to_f64(&args[2], name)? as usize } else { 0 };
-            Ok(CrowValue::ok(Value::NumArray(a.concat(&b, axis))))
-        }
         "stack" => {
             if args.is_empty() { return Err("stack: expected at least 1 argument (array of tensors, [axis])".into()); }
             match args[0].unwrap_or_propagate()? {
@@ -313,6 +306,13 @@ fn call_math_ops(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
                         }
                     }).collect();
                     let tensors = tensors?;
+                    let axis = if args.len() >= 2 { to_f64(&args[1], name)? as usize } else { 0 };
+                    Ok(CrowValue::ok(Value::NumArray(CrowTensor::stack(&tensors, axis))))
+                }
+                // Array-of-tensor literals auto-build a stacked tensor now;
+                // accept it and restack along the requested axis
+                Value::NumArray(t) => {
+                    let tensors = t.rows();
                     let axis = if args.len() >= 2 { to_f64(&args[1], name)? as usize } else { 0 };
                     Ok(CrowValue::ok(Value::NumArray(CrowTensor::stack(&tensors, axis))))
                 }
@@ -885,11 +885,16 @@ fn emit_math_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Re
         // Cumulative
         "cumsum" => format!("{}.cumsum()", arg_strs[0]),
         "cumprod" => format!("{}.cumprod()", arg_strs[0]),
-        // Combining
-        "concat" if arg_strs.len() >= 3 => format!("{}.concat(&{}, {} as usize)", arg_strs[0], arg_strs[1], arg_strs[2]),
-        "concat" => format!("{}.concat(&{}, 0)", arg_strs[0], arg_strs[1]),
-        "stack" if arg_strs.len() >= 2 => format!("CrowTensor::stack(&{}, {} as usize)", arg_strs[0], arg_strs[1]),
-        "stack" => format!("CrowTensor::stack(&{}, 0)", arg_strs[0]),
+        // Combining. Array-of-tensor literals now build a stacked tensor,
+        // so stack accepts either a Vec of tensors or a tensor (restack rows).
+        "stack" => {
+            let axis = if arg_strs.len() >= 2 { format!("{} as usize", arg_strs[1]) } else { "0".to_string() };
+            if matches!(arg_types.first(), Some(CrowType::NumArray(_))) {
+                format!("CrowTensor::stack(&{}.rows(), {})", arg_strs[0], axis)
+            } else {
+                format!("CrowTensor::stack(&{}, {})", arg_strs[0], axis)
+            }
+        }
         // Sorting & selection
         "argsort" => format!("{}.argsort()", arg_strs[0]),
         "topk" => format!("{}.topk({} as usize)", arg_strs[0], arg_strs[1]),
@@ -1439,12 +1444,6 @@ mod tests {
     }
 
     // ===== Combining & Sorting =====
-
-    #[test]
-    fn test_concat() {
-        let t = unwrap_tensor(call_math("concat", &[tensor_1d(vec![1.0, 2.0]), tensor_1d(vec![3.0, 4.0])]));
-        assert_tensor_eq(&t, &[1.0, 2.0, 3.0, 4.0]);
-    }
 
     #[test]
     fn test_argsort() {

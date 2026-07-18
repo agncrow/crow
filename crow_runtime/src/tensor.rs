@@ -1144,6 +1144,79 @@ impl CrowTensor {
     // ── Combining Ops ──────────────────────────────────────────────────
 
     /// Concatenate two tensors along an axis.
+    /// Index along axis 0 of a rank>=2 tensor, yielding a rank-1-lower tensor
+    /// (the "element" of a matrix is a row). Negative-index handling is the
+    /// caller's job.
+    pub fn index0(&self, i: usize) -> CrowTensor {
+        assert!(self.ndim() >= 2, "index0 requires rank >= 2");
+        assert!(i < self.shape[0], "row index {} out of bounds (rows: {})", i, self.shape[0]);
+        let inner_shape: Vec<usize> = self.shape[1..].to_vec();
+        let chunk = Self::numel(&inner_shape);
+        let data = self.to_vec();
+        Self::from_vec(data[i * chunk..(i + 1) * chunk].to_vec(), inner_shape)
+    }
+
+    /// Split along axis 0 into element tensors (rows for rank 2).
+    pub fn rows(&self) -> Vec<CrowTensor> {
+        if self.ndim() <= 1 {
+            return self.to_vec().into_iter().map(Self::scalar).collect();
+        }
+        (0..self.shape[0]).map(|i| self.index0(i)).collect()
+    }
+
+    /// push[t, x] on a rank-1 tensor: append one element.
+    pub fn push_scalar(&self, v: f64) -> Result<CrowTensor, String> {
+        if self.ndim() != 1 {
+            return Err(format!(
+                "shape mismatch — cannot push a scalar onto a rank-{} tensor (push a row instead)",
+                self.ndim()
+            ));
+        }
+        let mut data = self.to_vec();
+        data.push(v);
+        let n = data.len();
+        Ok(Self::from_vec(data, vec![n]))
+    }
+
+    /// push[m, row] on a rank-N tensor: append one element along axis 0.
+    /// The row's shape must equal the tensor's inner shape.
+    pub fn push_row(&self, row: &CrowTensor) -> Result<CrowTensor, String> {
+        if self.ndim() < 2 {
+            return Err("shape mismatch — cannot push a row onto a rank-1 tensor (push a scalar, or use stack)".to_string());
+        }
+        let inner: Vec<usize> = self.shape[1..].to_vec();
+        if row.shape() != inner.as_slice() {
+            return Err(format!(
+                "shape mismatch — cannot append a row of length {} to a tensor with rows of length {}",
+                row.len(),
+                Self::numel(&inner)
+            ));
+        }
+        let mut data = self.to_vec();
+        data.extend_from_slice(&row.to_vec());
+        let mut new_shape = self.shape.clone();
+        new_shape[0] += 1;
+        Ok(Self::from_vec(data, new_shape))
+    }
+
+    /// Build a rank-(N+1) tensor from equally shaped element tensors.
+    /// Errors on ragged shapes ("all inner arrays must be the same length").
+    pub fn from_elements(items: &[CrowTensor]) -> Result<CrowTensor, String> {
+        let first_shape = items.first().map(|t| t.shape().to_vec()).unwrap_or_default();
+        for t in items {
+            if t.shape() != first_shape.as_slice() {
+                return Err("all inner arrays must be the same length".to_string());
+            }
+        }
+        let mut data = Vec::with_capacity(items.len() * Self::numel(&first_shape));
+        for t in items {
+            data.extend_from_slice(&t.to_vec());
+        }
+        let mut shape = vec![items.len()];
+        shape.extend_from_slice(&first_shape);
+        Ok(Self::from_vec(data, shape))
+    }
+
     pub fn concat(&self, other: &CrowTensor, axis: usize) -> CrowTensor {
         assert_eq!(self.ndim(), other.ndim(), "concat: tensors must have same number of dimensions");
         assert!(axis < self.ndim(), "concat: axis {} out of range", axis);

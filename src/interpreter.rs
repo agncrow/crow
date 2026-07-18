@@ -887,15 +887,22 @@ impl Interpreter {
         let items = match &iter_val.value {
             Value::Array(items) => items.clone(),
             Value::NumArray(tensor) => {
-                tensor.to_vec().into_iter()
-                    .map(|v| {
-                        if v == (v as i64) as f64 && v.is_finite() {
-                            CrowValue::ok(Value::Int(v as i64))
-                        } else {
-                            CrowValue::ok(Value::Float(v))
-                        }
-                    })
-                    .collect()
+                if tensor.ndim() >= 2 {
+                    // Iterating a matrix yields its rows
+                    tensor.rows().into_iter()
+                        .map(|t| CrowValue::ok(Value::NumArray(t)))
+                        .collect()
+                } else {
+                    tensor.to_vec().into_iter()
+                        .map(|v| {
+                            if v == (v as i64) as f64 && v.is_finite() {
+                                CrowValue::ok(Value::Int(v as i64))
+                            } else {
+                                CrowValue::ok(Value::Float(v))
+                            }
+                        })
+                        .collect()
+                }
             }
             _ => return Err("for loop requires an array".to_string()),
         };
@@ -1109,10 +1116,22 @@ impl Interpreter {
                         _ => unreachable!(),
                     }).collect();
                     let len = data.len();
-                    Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))))
-                } else {
-                    Ok(CrowValue::ok(Value::Array(vals)))
+                    return Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))));
                 }
+                // Nested numeric literal: [[1, 2], [3, 4]] — all elements are
+                // tensors of equal shape → one shaped tensor (spec: unified arrays)
+                let all_tensors = !vals.is_empty() && vals.iter().all(|v| {
+                    v.ok && matches!(v.value, Value::NumArray(_))
+                });
+                if all_tensors {
+                    let tensors: Vec<CrowTensor> = vals.iter().map(|v| match &v.value {
+                        Value::NumArray(t) => t.clone(),
+                        _ => unreachable!(),
+                    }).collect();
+                    let stacked = CrowTensor::from_elements(&tensors)?;
+                    return Ok(CrowValue::ok(Value::NumArray(stacked)));
+                }
+                Ok(CrowValue::ok(Value::Array(vals)))
             }
             Expr::Map(pairs) => {
                 let mut map = BTreeMap::new();
@@ -1410,6 +1429,18 @@ impl Interpreter {
                 match index_val {
                     Value::Int(idx) => {
                         let idx = *idx;
+                        // Rank >= 2: the element at [i] is a row (rank-1-lower tensor)
+                        if tensor.ndim() >= 2 {
+                            let rows = tensor.shape()[0] as i64;
+                            let resolved = if idx < 0 { rows + idx } else { idx };
+                            if resolved < 0 || resolved >= rows {
+                                return Err(format!(
+                                    "index {} out of bounds for tensor with {} rows",
+                                    idx, rows
+                                ));
+                            }
+                            return Ok(CrowValue::ok(Value::NumArray(tensor.index0(resolved as usize))));
+                        }
                         let len = tensor.len() as i64;
                         let resolved = if idx < 0 { len + idx } else { idx };
                         if resolved < 0 || resolved >= len {
@@ -1488,7 +1519,7 @@ impl Interpreter {
             | "split" | "trim" | "replace" | "upper" | "lower" | "starts" | "ends" | "join"
             | "repeat" | "pad"
             | "int" | "float" | "str"
-            | "push" | "pop" | "sort" | "reverse" | "append" | "contains" | "slice"
+            | "push" | "pop" | "sort" | "reverse" | "append" | "concat" | "contains" | "slice"
             | "read" | "write" | "exists" | "mkdir" | "ls" | "rm" | "mv" | "cp" | "len"
             | "keys" | "values" | "has" | "set" | "del"
             | "args" | "input"
@@ -2138,15 +2169,17 @@ impl Interpreter {
                         Ok(CrowValue::ok(Value::Array(new_items)))
                     }
                     Value::NumArray(t) => {
-                        let new_elem = match args[1].unwrap_or_propagate()? {
-                            Value::Int(n) => *n as f64,
-                            Value::Float(f) => *f,
-                            _ => return Err("push[] on numeric array requires a number".into()),
-                        };
-                        let mut data = t.to_vec();
-                        data.push(new_elem);
-                        let len = data.len();
-                        Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))))
+                        // The element of a rank-N tensor is a rank-(N-1) slice:
+                        // scalar for 1-D, row for 2-D. Shape and type checked.
+                        match args[1].unwrap_or_propagate()? {
+                            Value::Int(n) => Ok(CrowValue::ok(Value::NumArray(t.push_scalar(*n as f64)?))),
+                            Value::Float(f) => Ok(CrowValue::ok(Value::NumArray(t.push_scalar(*f)?))),
+                            Value::NumArray(row) => Ok(CrowValue::ok(Value::NumArray(t.push_row(row)?))),
+                            other => Err(format!(
+                                "arrays are homogeneous — cannot add {} to a numeric array",
+                                other.type_name()
+                            )),
+                        }
                     }
                     _ => Err("push[] requires an array".into()),
                 }
@@ -2220,20 +2253,32 @@ impl Interpreter {
                 }
             }
             "append" => {
-                if args.len() != 2 { return Err("append[] takes exactly 2 arguments".into()); }
+                Err("append was removed — use concat[a, b] (one merge operation, see language-spec.md)".into())
+            }
+            // concat is the single collection-merge operation: plain arrays
+            // (axis 0 implied) and tensors (optional axis). Replaces append
+            // and the former math-module concat.
+            "concat" => {
+                if args.len() < 2 || args.len() > 3 { return Err("concat[] takes 2-3 arguments (a, b[, axis])".into()); }
                 match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
                     (Value::Array(items), Value::Array(other)) => {
+                        if args.len() == 3 {
+                            return Err("concat: axis applies to tensors only".into());
+                        }
                         let mut new_items = items.clone();
                         new_items.extend(other.clone());
                         Ok(CrowValue::ok(Value::Array(new_items)))
                     }
                     (Value::NumArray(a), Value::NumArray(b)) => {
-                        let mut data = a.to_vec();
-                        data.extend(b.to_vec());
-                        let len = data.len();
-                        Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))))
+                        let axis = if args.len() == 3 {
+                            match args[2].unwrap_or_propagate()? {
+                                Value::Int(n) => *n as usize,
+                                _ => return Err("concat: axis must be an int".into()),
+                            }
+                        } else { 0 };
+                        Ok(CrowValue::ok(Value::NumArray(a.concat(b, axis))))
                     }
-                    _ => Err("append[] requires two arrays".into()),
+                    _ => Err("concat[] requires two arrays of the same kind".into()),
                 }
             }
             "set" => {
@@ -3256,6 +3301,20 @@ impl Interpreter {
         match (&left.value, &right.value) {
             (Value::Array(items), r) if is_scalar(r) => Ok(broadcast(items, right)),
             (l, Value::Array(items)) if is_scalar(l) => Ok(broadcast(items, left)),
+            // Tensor vs numeric scalar → element-wise mask (like gt/lt)
+            (Value::NumArray(t), Value::Int(_) | Value::Float(_))
+            | (Value::Int(_) | Value::Float(_), Value::NumArray(t)) => {
+                let s = match (&left.value, &right.value) {
+                    (_, Value::Int(n)) | (Value::Int(n), _) => *n as f64,
+                    (_, Value::Float(f)) | (Value::Float(f), _) => *f,
+                    _ => unreachable!(),
+                };
+                let results: Vec<CrowValue> = t.to_vec().iter().map(|&v| {
+                    let eq = v == s;
+                    CrowValue::ok(Value::Bool(if negate { !eq } else { eq }))
+                }).collect();
+                Ok(CrowValue::ok(Value::Array(results)))
+            }
             _ => {
                 let eq = self.values_equal(left, right);
                 Ok(CrowValue::ok(Value::Bool(if negate { !eq } else { eq })))
@@ -3338,6 +3397,35 @@ impl Interpreter {
             }
             (Value::Int(a), Value::Dual(b, _)) => {
                 Ok(CrowValue::ok(Value::Bool(cmp(*a as f64, *b))))
+            }
+            // Vectorized: tensor compared to scalar → boolean mask array
+            (Value::NumArray(t), Value::Int(b)) => {
+                let s = *b as f64;
+                let results: Vec<CrowValue> = t.to_vec().iter()
+                    .map(|&v| CrowValue::ok(Value::Bool(cmp(v, s))))
+                    .collect();
+                Ok(CrowValue::ok(Value::Array(results)))
+            }
+            (Value::NumArray(t), Value::Float(b)) => {
+                let s = *b;
+                let results: Vec<CrowValue> = t.to_vec().iter()
+                    .map(|&v| CrowValue::ok(Value::Bool(cmp(v, s))))
+                    .collect();
+                Ok(CrowValue::ok(Value::Array(results)))
+            }
+            (Value::Int(a), Value::NumArray(t)) => {
+                let s = *a as f64;
+                let results: Vec<CrowValue> = t.to_vec().iter()
+                    .map(|&v| CrowValue::ok(Value::Bool(cmp(s, v))))
+                    .collect();
+                Ok(CrowValue::ok(Value::Array(results)))
+            }
+            (Value::Float(a), Value::NumArray(t)) => {
+                let s = *a;
+                let results: Vec<CrowValue> = t.to_vec().iter()
+                    .map(|&v| CrowValue::ok(Value::Bool(cmp(s, v))))
+                    .collect();
+                Ok(CrowValue::ok(Value::Array(results)))
             }
             // Vectorized: Array compared to scalar → boolean array
             (Value::Array(items), scalar @ (Value::Int(_) | Value::Float(_))) => {
@@ -4376,8 +4464,19 @@ mod tests {
 
     #[test]
     fn test_append() {
-        let val = get_var("x = append[[1, 2], [3, 4]]\n", "x");
+        // Regression: append was removed in favor of concat
+        let result = std::panic::catch_unwind(|| {
+            run_program("x = append[[1, 2], [3, 4]]\n")
+        });
+        assert!(result.is_err(), "append should error with removal message");
+    }
+
+    #[test]
+    fn test_concat_core() {
+        let val = get_var("x = concat[[1, 2], [3, 4]]\n", "x");
         assert_eq!(format!("{}", val.value), "[1, 2, 3, 4]");
+        let val = get_var("x = concat[['a'], ['b']]\n", "x");
+        assert_eq!(format!("{}", val.value), "['a', 'b']");
     }
 
     #[test]
@@ -6481,6 +6580,62 @@ mod tests {
         // Regression: implicit return is desugared in the parser for both modes
         let val = get_var("fn add[a, b]\n    a + b\nr = add[3, 4]\n", "r");
         assert!(matches!(val.value, Value::Int(7)));
+    }
+
+    // ===== 2-D tensors from literals (F3) =====
+
+    #[test]
+    fn test_nested_literal_builds_shaped_tensor() {
+        let val = get_var("m = [[1, 2], [3, 4]]\n", "m");
+        match &val.value {
+            Value::NumArray(t) => assert_eq!(t.shape(), &[2, 2]),
+            other => panic!("expected 2-D tensor, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_ragged_literal_errors() {
+        let result = std::panic::catch_unwind(|| {
+            run_program("m = [[1, 2], [3]]\n")
+        });
+        assert!(result.is_err(), "ragged rows should error");
+    }
+
+    #[test]
+    fn test_tensor_row_indexing_and_iteration() {
+        let val = get_var("m = [[1, 2], [3, 4]]\nr = m[1]\n", "r");
+        match &val.value {
+            Value::NumArray(t) => assert_eq!(t.to_vec(), vec![3.0, 4.0]),
+            other => panic!("expected row tensor, got {:?}", other),
+        }
+        let val = get_var("m = [[1, 2], [3, 4]]\nx = m[1][0]\n", "x");
+        assert!(matches!(val.value, Value::Int(3)));
+    }
+
+    #[test]
+    fn test_tensor_push_row_and_errors() {
+        let val = get_var("m = [[1, 2], [3, 4]]\nm2 = push[m, [5, 6]]\nn = len[m2]\n", "n");
+        assert!(matches!(val.value, Value::Int(6)), "3x2 tensor has 6 elements");
+        // wrong row length
+        let r = std::panic::catch_unwind(|| run_program("m = [[1, 2], [3, 4]]\nm2 = push[m, [5, 6, 7]]\n"));
+        assert!(r.is_err(), "wrong row length should error");
+        // wrong type
+        let r = std::panic::catch_unwind(|| run_program("m = [1, 2]\nm2 = push[m, 'x']\n"));
+        assert!(r.is_err(), "pushing str onto numeric array should error");
+    }
+
+    #[test]
+    fn test_tensor_comparison_masks() {
+        let val = get_var("x = [1, 2, 3, 4]\nm = x gt 2\n", "m");
+        assert_bool_array(&val, &[false, false, true, true]);
+        let val = get_var("x = [1, 2, 3]\nm = x eq 2\n", "m");
+        assert_bool_array(&val, &[false, true, false]);
+    }
+
+    #[test]
+    fn test_concat_tensor_axis() {
+        let val = get_var("use math\nm = [[1, 2], [3, 4]]\nc = concat[m, m, 1]\nn = len[c]\n", "n");
+        assert!(matches!(val.value, Value::Int(8)), "2x4 tensor has 8 elements");
     }
 
     // ===== Function scope: module variables are invisible (F1) =====
