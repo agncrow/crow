@@ -194,6 +194,13 @@ Nested numeric literals became an *array of 1-D tensors*, not a 2-D tensor — s
 
 Minor tensions noted, not blocking: the Unified-Arrays note's "a DataFrame is a map of arrays" now conflicts with `Frame` being its own type (two ways); `select` is exported by both `ui` and `frame` and the conflict rules make `dashboard.crow`'s bare `select[...]` ambiguous in principle.
 
+### String story — resolved by design (July 2026)
+
+The syntax re-review identified strings as the weakest remaining area. Resolved in two parts:
+
+- [x] **`fmt` builtin** — value formatting via named arguments (`decimals`, `commas`, `width`, `align`, `fill`, `percent`), implemented once in the display kernel and used by both modes; `pad` absorbed (`fmt[s, width = n]`); named-formatter idiom (`money[x]`) blessed as the per-project answer to Python's `{:,.2f}` compactness. Design Note "No Format Mini-Language". Parity file `16_fmt.crow`; 780 tests, 16 parity files green. Known v1 gap: no locale (separators hardcoded); extensible via future named args.
+- [ ] **Backtick interpolation migration** — DECIDED, not yet implemented: `` `expr` `` (paired backticks, markdown-style) replaces `{expr}`; strings otherwise inert (JSON/regex/prose raw, deletes the `\{` escapes and today's silent `{4}` regex-quantifier corruption); `` \` `` escapes a literal backtick; string building = collect + `join` (+ `concat` extended to strings); no `+`. Full design lineage recorded through the sessions: `{}` → `\[expr]` → bare `` `name `` → bare `` `path `` → paired `` `expr` `` (each step user-driven; the paired form restores full expressions with zero special rules). Implementation: lexer/interpolators both modes, `crow fmt` auto-migration, examples/docs/corpus sweep, `+`-error message teaching collect+join.
+
 ## Not pushbacks, but the adoption gap (post-fix priorities)
 
 1. Editor support (LSP + syntax highlighting) — adoption blocker #1

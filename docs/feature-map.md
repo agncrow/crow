@@ -35,7 +35,7 @@ Quick-reference lookup table. **Source of truth:** `docs/language-spec.md`.
 | `sort[a]` `reverse[a]` `contains[a, v]` `slice[a, s, e]` | Array ops |
 | `keys[m]` `values[m]` `has[m, k]` `set[m, k, v]` `del[m, k]` | Map ops |
 | `split[s, d]` `trim[s]` `replace[s, o, n]` `upper[s]` `lower[s]` | Strings |
-| `starts[s, p]` `ends[s, p]` `join[a, s]` `repeat[s, n]` `pad[s, n]` `reverse[s]` | Strings |
+| `starts[s, p]` `ends[s, p]` `join[a, s]` `repeat[s, n]` `fmt[x, ...]` `reverse[s]` | Strings |
 | `int[v]` `float[v]` `str[v]` `type[v]` | Conversion |
 | `read[p]` `write[p, c]` `args[]` `input[]` `input[prompt]` | I/O |
 | `exists[p]` `mkdir[p]` `ls[p]` `rm[p]` `mv[s, d]` `cp[s, d]` | File System |
