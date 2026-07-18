@@ -900,7 +900,7 @@ impl TypeContext {
                 CrowType::Int
             }
             // String builtins
-            "trim" | "upper" | "lower" | "replace" | "join" | "repeat" | "pad" => CrowType::Str,
+            "trim" | "upper" | "lower" | "replace" | "join" | "repeat" | "fmt" => CrowType::Str,
             "split" => CrowType::Array(Box::new(CrowType::Str)),
             "starts" | "ends" | "contains" => CrowType::Bool,
             // Conversion builtins — fallible when parsing from string
