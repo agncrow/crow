@@ -31,7 +31,7 @@ Quick-reference lookup table. **Source of truth:** `docs/language-spec.md`.
 | `abs[n]` `sqrt[n]` `floor[n]` `ceil[n]` `round[n]` | Math |
 | `min[a, b]` `max[a, b]` | Math |
 | `len[x]` | Collections |
-| `push[a, v]` `pop[a]` `append[a, b]` | Array ops |
+| `push[a, v]` `pop[a]` `concat[a, b]` | Array ops |
 | `sort[a]` `reverse[a]` `contains[a, v]` `slice[a, s, e]` | Array ops |
 | `keys[m]` `values[m]` `has[m, k]` `set[m, k, v]` `del[m, k]` | Map ops |
 | `split[s, d]` `trim[s]` `replace[s, o, n]` `upper[s]` `lower[s]` | Strings |
