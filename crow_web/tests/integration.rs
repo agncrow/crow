@@ -703,7 +703,7 @@ mod static_server {
 
 #[cfg(feature = "live")]
 mod live_integration {
-    use crow_web::live::{CrowLiveState, diff_html, client_js};
+    use crow_web::live::{CrowLiveState, live_js};
 
     #[test]
     fn live_state_get_set_overwrite() {
@@ -718,25 +718,23 @@ mod live_integration {
     }
 
     #[test]
-    fn diff_html_complex_changes() {
-        let old = "<html>\n<body>\n<h1>Title</h1>\n<p>Old content</p>\n</body>\n</html>";
-        let new = "<html>\n<body>\n<h1>Title</h1>\n<p>New content</p>\n<footer>End</footer>\n</body>\n</html>";
-        let diffs = diff_html(old, new);
-        assert!(!diffs.is_empty(), "Should detect changes");
+    fn live_state_register_fetch_poll() {
+        let mut state = CrowLiveState::new();
+        state.register_fetch("data", "http://localhost/api/data");
+        state.register_poll("prices", "http://localhost/api/prices", 5);
+        assert_eq!(state.sources.len(), 2);
+        assert!(state.sources[0].interval_secs.is_none());
+        assert_eq!(state.sources[1].interval_secs, Some(5));
     }
 
     #[test]
-    fn diff_html_identical_returns_empty() {
-        let html = "<div><span>hello</span></div>";
-        assert!(diff_html(html, html).is_empty());
-    }
-
-    #[test]
-    fn client_js_contains_websocket_setup() {
-        let js = client_js("/ws/counter");
+    fn live_js_contains_websocket_setup() {
+        let js = live_js("/ws/counter");
         assert!(js.contains("WebSocket"));
         assert!(js.contains("/ws/counter"));
-        assert!(js.contains("dataset.event"));
+        assert!(js.contains("data-crow-click"));
+        assert!(js.contains("data-crow-input"));
+        assert!(js.contains("data-crow-change"));
         assert!(js.contains("onmessage"));
     }
 }
@@ -820,6 +818,84 @@ mod view_integration {
         let patches = CrowVNode::diff(&old, &new);
         assert_eq!(patches.len(), 1);
         assert!(matches!(&patches[0], VPatch::Replace { .. }));
+    }
+
+    #[test]
+    fn vnode_h4_h5_h6_constructors() {
+        assert_eq!(CrowVNode::h4(vec![CrowVNode::text("h4")]).to_html(), "<h4>h4</h4>");
+        assert_eq!(CrowVNode::h5(vec![CrowVNode::text("h5")]).to_html(), "<h5>h5</h5>");
+        assert_eq!(CrowVNode::h6(vec![CrowVNode::text("h6")]).to_html(), "<h6>h6</h6>");
+    }
+
+    #[test]
+    fn vnode_ol_pre_code_constructors() {
+        assert_eq!(CrowVNode::ol(vec![CrowVNode::li(vec![CrowVNode::text("item")])]).to_html(), "<ol><li>item</li></ol>");
+        assert_eq!(CrowVNode::pre(vec![CrowVNode::text("preformatted")]).to_html(), "<pre>preformatted</pre>");
+        assert_eq!(CrowVNode::code(vec![CrowVNode::text("x = 1")]).to_html(), "<code>x = 1</code>");
+    }
+
+    #[test]
+    fn field_two_way_binding_html() {
+        let field = CrowVNode::field("Price", "price", "42");
+        let html = field.to_html();
+        assert!(html.contains("class=\"crow-field\""));
+        assert!(html.contains("<label>Price</label>"));
+        assert!(html.contains("data-crow-input=\"__field:price\""));
+        assert!(html.contains("value=\"42\""));
+    }
+
+    #[test]
+    fn select_input_two_way_binding_html() {
+        let options = vec!["all".to_string(), "long".to_string(), "short".to_string()];
+        let sel = CrowVNode::select_input(&options, "filter", "long");
+        let html = sel.to_html();
+        assert!(html.contains("data-crow-change=\"__select:filter\""));
+        assert!(html.contains("selected=\"selected\""));
+        assert!(html.contains(">long</option>"));
+    }
+
+    #[test]
+    fn table_from_data_renders_complete_table() {
+        let headers = vec!["Symbol".to_string(), "Price".to_string()];
+        let rows = vec![
+            vec!["AAPL".to_string(), "150".to_string()],
+            vec!["GOOG".to_string(), "2800".to_string()],
+        ];
+        let table = CrowVNode::table_from_data(&headers, &rows);
+        let html = table.to_html();
+        assert!(html.contains("<thead>"));
+        assert!(html.contains("<th>Symbol</th>"));
+        assert!(html.contains("<td>AAPL</td>"));
+        assert!(html.contains("<td>2800</td>"));
+    }
+
+    #[test]
+    fn reactive_render_cycle_with_field() {
+        use crow_web::live::CrowLiveState;
+
+        let mut state = CrowLiveState::new();
+        state.set("name", serde_json::json!("Alice"));
+
+        // Render with current state
+        let render = |s: &CrowLiveState| -> CrowVNode {
+            let name = s.get_str("name", "");
+            CrowVNode::div(vec![
+                CrowVNode::field("Name", "name", &name),
+                CrowVNode::p(vec![CrowVNode::text(&format!("Hello, {}", name))]),
+            ])
+        };
+
+        let v1 = render(&state);
+        assert!(v1.to_html().contains("Hello, Alice"));
+
+        // Simulate __field:name event
+        state.set("name", serde_json::json!("Bob"));
+        let v2 = render(&state);
+        assert!(v2.to_html().contains("Hello, Bob"));
+
+        // Diff should detect changes
+        let patches = CrowVNode::diff(&v1, &v2);
+        assert!(!patches.is_empty());
     }
 }
 

@@ -233,6 +233,100 @@ impl CrowColumn {
         }
     }
 
+    /// Native vectorized string comparison — compare column values against a string scalar.
+    pub fn compare_str(&self, scalar: &str, op: &str) -> Vec<bool> {
+        let n = self.len();
+        let mut result = vec![false; n];
+        match self.data.as_ref() {
+            Column::Str(v) => {
+                for i in 0..n {
+                    if !self.valid[i] { continue; }
+                    result[i] = match op {
+                        "eq" => v[i] == scalar,
+                        "ne" => v[i] != scalar,
+                        "gt" => v[i].as_str() > scalar,
+                        "lt" => v[i].as_str() < scalar,
+                        "gte" => v[i].as_str() >= scalar,
+                        "lte" => v[i].as_str() <= scalar,
+                        _ => false,
+                    };
+                }
+            }
+            Column::Int(v) => {
+                // Try parsing scalar as i64 for comparison
+                if let Ok(s) = scalar.parse::<i64>() {
+                    for i in 0..n {
+                        if !self.valid[i] { continue; }
+                        result[i] = match op {
+                            "eq" => v[i] == s,
+                            "ne" => v[i] != s,
+                            _ => false,
+                        };
+                    }
+                }
+            }
+            _ => {} // Other types: no string comparison
+        }
+        result
+    }
+
+    /// Sum of numeric column values (skips nulls). Returns 0.0 for non-numeric or empty columns.
+    pub fn sum(&self) -> f64 {
+        let n = self.len();
+        let mut total = 0.0;
+        match self.data.as_ref() {
+            Column::Int(v) => {
+                for i in 0..n {
+                    if self.valid[i] { total += v[i] as f64; }
+                }
+            }
+            Column::Float(v) => {
+                for i in 0..n {
+                    if self.valid[i] && !v[i].is_nan() { total += v[i]; }
+                }
+            }
+            _ => {}
+        }
+        total
+    }
+
+    /// Return unique non-null values as a Vec<String>.
+    pub fn unique(&self) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        let n = self.len();
+        match self.data.as_ref() {
+            Column::Str(v) => {
+                for i in 0..n {
+                    if !self.valid[i] { continue; }
+                    if seen.insert(v[i].clone()) {
+                        result.push(v[i].clone());
+                    }
+                }
+            }
+            Column::Int(v) => {
+                for i in 0..n {
+                    if !self.valid[i] { continue; }
+                    let s = v[i].to_string();
+                    if seen.insert(s.clone()) {
+                        result.push(s);
+                    }
+                }
+            }
+            Column::Float(v) => {
+                for i in 0..n {
+                    if !self.valid[i] || v[i].is_nan() { continue; }
+                    let s = v[i].to_string();
+                    if seen.insert(s.clone()) {
+                        result.push(s);
+                    }
+                }
+            }
+            _ => {}
+        }
+        result
+    }
+
     /// Validity bitmap — true for each non-missing value.
     pub fn ok(&self) -> Vec<bool> {
         self.valid.as_ref().clone()

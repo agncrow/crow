@@ -136,8 +136,12 @@ impl CrowVNode {
     pub fn h1(children: Vec<CrowVNode>) -> Self { Self::tag("h1", children) }
     pub fn h2(children: Vec<CrowVNode>) -> Self { Self::tag("h2", children) }
     pub fn h3(children: Vec<CrowVNode>) -> Self { Self::tag("h3", children) }
+    pub fn h4(children: Vec<CrowVNode>) -> Self { Self::tag("h4", children) }
+    pub fn h5(children: Vec<CrowVNode>) -> Self { Self::tag("h5", children) }
+    pub fn h6(children: Vec<CrowVNode>) -> Self { Self::tag("h6", children) }
     pub fn button(children: Vec<CrowVNode>) -> Self { Self::tag("button", children) }
     pub fn ul(children: Vec<CrowVNode>) -> Self { Self::tag("ul", children) }
+    pub fn ol(children: Vec<CrowVNode>) -> Self { Self::tag("ol", children) }
     pub fn li(children: Vec<CrowVNode>) -> Self { Self::tag("li", children) }
     pub fn form(children: Vec<CrowVNode>) -> Self { Self::tag("form", children) }
     pub fn input() -> Self { Self::el("input", HashMap::new(), vec![]) }
@@ -158,6 +162,8 @@ impl CrowVNode {
     pub fn option(children: Vec<CrowVNode>) -> Self { Self::tag("option", children) }
     pub fn textarea(children: Vec<CrowVNode>) -> Self { Self::tag("textarea", children) }
     pub fn label(children: Vec<CrowVNode>) -> Self { Self::tag("label", children) }
+    pub fn pre(children: Vec<CrowVNode>) -> Self { Self::tag("pre", children) }
+    pub fn code(children: Vec<CrowVNode>) -> Self { Self::tag("code", children) }
 
     /// Render to HTML string.
     pub fn to_html(&self) -> String {
@@ -178,6 +184,70 @@ impl CrowVNode {
                 format!("<{}{}>{}</{}>", tag, attr_str, children_html, tag)
             }
         }
+    }
+
+    /// Build a `<table>` from headers and rows.
+    ///
+    /// ```text
+    /// table[frame]  →  table_from_data(headers, rows)
+    /// ```
+    pub fn table_from_data(headers: &[String], rows: &[Vec<String>]) -> Self {
+        let header_cells: Vec<CrowVNode> = headers.iter()
+            .map(|h| CrowVNode::th(vec![CrowVNode::text(h)]))
+            .collect();
+        let body_rows: Vec<CrowVNode> = rows.iter()
+            .map(|row| {
+                let cells: Vec<CrowVNode> = row.iter()
+                    .map(|c| CrowVNode::td(vec![CrowVNode::text(c)]))
+                    .collect();
+                CrowVNode::tr(cells)
+            })
+            .collect();
+        CrowVNode::table(vec![
+            CrowVNode::thead(vec![CrowVNode::tr(header_cells)]),
+            CrowVNode::tbody(body_rows),
+        ])
+    }
+
+    /// Build a labeled `<input>` with two-way binding.
+    ///
+    /// ```text
+    /// field['Min Vol', f.min_vol]  →  field(label, key, current_value)
+    /// ```
+    ///
+    /// Renders: `<div class="crow-field"><label>Label</label><input data-crow-input="__field:key" value="..."></div>`
+    pub fn field(label: &str, key: &str, current_value: &str) -> Self {
+        CrowVNode::div(vec![
+            CrowVNode::label(vec![CrowVNode::text(label)]),
+            CrowVNode::input()
+                .attr("type", "text")
+                .attr("value", current_value)
+                .attr("data-crow-input", &format!("__field:{}", key)),
+        ]).attr("class", "crow-field")
+    }
+
+    /// Build a `<select>` dropdown with two-way binding.
+    ///
+    /// ```text
+    /// select[options, pb_filter]  →  select_input(options, key, current_value)
+    /// ```
+    ///
+    /// Renders: `<div class="crow-select"><select data-crow-change="__select:key"><option>...</option></select></div>`
+    pub fn select_input(options: &[String], key: &str, current_value: &str) -> Self {
+        let option_nodes: Vec<CrowVNode> = options.iter()
+            .map(|opt| {
+                let mut node = CrowVNode::option(vec![CrowVNode::text(opt)])
+                    .attr("value", opt);
+                if opt == current_value {
+                    node = node.attr("selected", "selected");
+                }
+                node
+            })
+            .collect();
+        CrowVNode::div(vec![
+            CrowVNode::select(option_nodes)
+                .attr("data-crow-change", &format!("__select:{}", key)),
+        ]).attr("class", "crow-select")
     }
 
     /// Diff two VNode trees. Returns a list of patches to transform `old` into `new`.
@@ -448,6 +518,62 @@ mod tests {
         assert!(html.contains("<h1>Count: 0</h1>"));
         assert!(html.contains("data-crow-click=\"inc\""));
         assert!(html.contains("data-crow-click=\"dec\""));
+    }
+
+    #[test]
+    fn test_table_from_data() {
+        let headers = vec!["Name".to_string(), "Age".to_string()];
+        let rows = vec![
+            vec!["Alice".to_string(), "30".to_string()],
+            vec!["Bob".to_string(), "25".to_string()],
+        ];
+        let table = CrowVNode::table_from_data(&headers, &rows);
+        let html = table.to_html();
+        assert!(html.contains("<table>"));
+        assert!(html.contains("<thead>"));
+        assert!(html.contains("<tbody>"));
+        assert!(html.contains("<th>Name</th>"));
+        assert!(html.contains("<th>Age</th>"));
+        assert!(html.contains("<td>Alice</td>"));
+        assert!(html.contains("<td>30</td>"));
+        assert!(html.contains("<td>Bob</td>"));
+        assert!(html.contains("<td>25</td>"));
+    }
+
+    #[test]
+    fn test_table_from_data_empty() {
+        let headers = vec!["Col".to_string()];
+        let rows: Vec<Vec<String>> = vec![];
+        let table = CrowVNode::table_from_data(&headers, &rows);
+        let html = table.to_html();
+        assert!(html.contains("<th>Col</th>"));
+        assert!(html.contains("<tbody></tbody>"));
+    }
+
+    #[test]
+    fn test_field() {
+        let field = CrowVNode::field("Min Vol", "min_vol", "100");
+        let html = field.to_html();
+        assert!(html.contains("class=\"crow-field\""));
+        assert!(html.contains("<label>Min Vol</label>"));
+        assert!(html.contains("data-crow-input=\"__field:min_vol\""));
+        assert!(html.contains("value=\"100\""));
+        assert!(html.contains("type=\"text\""));
+    }
+
+    #[test]
+    fn test_select_input() {
+        let options = vec!["all".to_string(), "long".to_string(), "short".to_string()];
+        let sel = CrowVNode::select_input(&options, "pb_filter", "long");
+        let html = sel.to_html();
+        assert!(html.contains("class=\"crow-select\""));
+        assert!(html.contains("data-crow-change=\"__select:pb_filter\""));
+        assert!(html.contains("<option"));
+        assert!(html.contains("selected=\"selected\""));
+        // The selected option should be "long"
+        assert!(html.contains(">long</option>"));
+        assert!(html.contains(">all</option>"));
+        assert!(html.contains(">short</option>"));
     }
 }
 
