@@ -2844,8 +2844,20 @@ impl Transpiler {
                     if name == "repeat" && arg_strs.len() == 2 {
                         return format!("({}).repeat(({}) as usize)", arg_strs[0], arg_strs[1]);
                     }
-                    if name == "pad" && arg_strs.len() == 2 {
-                        return format!("format!(\"{{:<width$}}\", {}, width = ({}) as usize)", arg_strs[0], arg_strs[1]);
+                    if name == "fmt" && arg_strs.len() == 7 {
+                        self.needs_crow_runtime = true;
+                        let ty = self.ctx.infer_expr(&args[0]);
+                        let inner = match &ty { CrowType::Result(i) => i.as_ref().clone(), o => o.clone() };
+                        if matches!(inner, CrowType::Str) {
+                            return format!(
+                                "crow_runtime::display::crow_fmt_str(&{}, {}, {}, &{}, &{}, {})",
+                                arg_strs[0], arg_strs[1], arg_strs[3], arg_strs[4], arg_strs[5], arg_strs[6]
+                            );
+                        }
+                        return format!(
+                            "crow_runtime::display::crow_fmt_f64(({}) as f64, {}, {}, {}, &{}, &{}, {})",
+                            arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[3], arg_strs[4], arg_strs[5], arg_strs[6]
+                        );
                     }
                     // --- Conversion builtins ---
                     if name == "int" && arg_strs.len() == 1 {
@@ -6333,6 +6345,14 @@ mod tests {
         // Regression: compiled find[] previously emitted an uncompilable mixed-type map
         let rust = transpile("m = find['abc', '[a-z]+']\nlog[m.ok]\n");
         assert!(rust.contains("CrowFindResult"), "find should use the synthetic struct\n{}", rust);
+    }
+
+    #[test]
+    fn test_fmt_emits_kernel_call() {
+        let rust = transpile("x = fmt[1234.5, decimals = 2, commas = true]\nlog[x]\n");
+        assert!(rust.contains("crow_fmt_f64"), "fmt should call the display kernel\n{}", rust);
+        let rust = transpile("x = fmt['hi', width = 4]\nlog[x]\n");
+        assert!(rust.contains("crow_fmt_str"), "string fmt should call the str kernel\n{}", rust);
     }
 
     #[test]

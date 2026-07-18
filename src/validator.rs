@@ -13,7 +13,7 @@ const BUILTINS: &[&str] = &[
     "abs", "sqrt", "floor", "ceil", "round", "min", "max",
     // String
     "split", "trim", "replace", "upper", "lower", "join", "starts", "ends",
-    "repeat", "pad",
+    "repeat", "pad", "fmt",
     // Conversion
     "int", "float", "str",
     // Collections
@@ -370,6 +370,10 @@ impl<'a> Validator<'a> {
             return;
         }
 
+        if name == "pad" {
+            self.error("pad was removed — use fmt[s, width = n]".to_string());
+            return;
+        }
         if name == "append" {
             self.error("append was removed — use concat[a, b] (one merge operation)".to_string());
             return;
@@ -452,7 +456,8 @@ impl<'a> Validator<'a> {
             "len" => argc == 1,
             "contains" => argc == 2,
             "slice" => argc == 3,
-            "repeat" | "pad" => argc == 2,
+            "repeat" => argc == 2,
+            "fmt" => argc == 7,
             "push" | "append" => argc == 2,
             "pop" | "sort" | "reverse" => argc == 1,
             "range" => argc >= 1 && argc <= 3,

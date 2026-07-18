@@ -1549,7 +1549,7 @@ impl Interpreter {
         matches!(name, "log" | "map" | "cpu" | "gpu" | "nodes" | "range"
             | "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max"
             | "split" | "trim" | "replace" | "upper" | "lower" | "starts" | "ends" | "join"
-            | "repeat" | "pad"
+            | "repeat" | "pad" | "fmt"
             | "int" | "float" | "str"
             | "push" | "pop" | "sort" | "reverse" | "append" | "concat" | "contains" | "slice"
             | "read" | "write" | "exists" | "mkdir" | "ls" | "rm" | "mv" | "cp" | "len"
@@ -2015,13 +2015,36 @@ impl Interpreter {
                 }
             }
             "pad" => {
-                if args.len() != 2 { return Err("pad[] takes exactly 2 arguments".into()); }
-                match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                    (Value::Str(s), Value::Int(n)) => {
-                        if *n < 0 { return Err("pad[] width cannot be negative".into()); }
-                        Ok(CrowValue::ok(Value::Str(format!("{:<width$}", s, width = *n as usize))))
+                Err("pad was removed — use fmt[s, width = n]".into())
+            }
+            // fmt: value formatting via the shared display kernel. The lowering
+            // pass guarantees exactly 7 positional args (sentinel defaults).
+            "fmt" => {
+                if args.len() != 7 { return Err("fmt[] takes a value plus named arguments (decimals, commas, width, align, fill, percent)".into()); }
+                let decimals = match &args[1].value { Value::Int(n) => *n, _ => return Err("fmt: decimals must be an int".into()) };
+                let commas = matches!(&args[2].value, Value::Bool(true));
+                let width = match &args[3].value { Value::Int(n) => *n, _ => return Err("fmt: width must be an int".into()) };
+                let align = match &args[4].value { Value::Str(s) => s.clone(), _ => return Err("fmt: align must be a string".into()) };
+                if !align.is_empty() && align != "left" && align != "right" {
+                    return Err(format!("fmt: align must be 'left' or 'right', got '{}'", align));
+                }
+                let fill = match &args[5].value { Value::Str(s) => s.clone(), _ => return Err("fmt: fill must be a string".into()) };
+                let percent = matches!(&args[6].value, Value::Bool(true));
+                match args[0].unwrap_or_propagate()? {
+                    Value::Int(n) => Ok(CrowValue::ok(Value::Str(
+                        crow_runtime::display::crow_fmt_f64(*n as f64, decimals, commas, width, &align, &fill, percent),
+                    ))),
+                    Value::Float(f) => Ok(CrowValue::ok(Value::Str(
+                        crow_runtime::display::crow_fmt_f64(*f, decimals, commas, width, &align, &fill, percent),
+                    ))),
+                    Value::Str(s) => {
+                        if decimals >= 0 { return Err("fmt: decimals applies to numbers, not strings".into()); }
+                        if percent { return Err("fmt: percent applies to numbers, not strings".into()); }
+                        Ok(CrowValue::ok(Value::Str(
+                            crow_runtime::display::crow_fmt_str(s, -1, width, &align, &fill, false),
+                        )))
                     }
-                    _ => Err("pad[] requires a string and an int".into()),
+                    other => Err(format!("fmt: cannot format {}", other.type_name())),
                 }
             }
             // --- Conversion builtins ---
@@ -4417,15 +4440,15 @@ mod tests {
     }
 
     #[test]
-    fn test_pad() {
-        let val = get_var("x = pad['hi', 5]\n", "x");
-        assert_eq!(format!("{}", val.value), "hi   ");
+    fn test_fmt_width_replaces_pad() {
+        let val = get_var("x = fmt['ab', width = 5]\n", "x");
+        assert!(matches!(&val.value, Value::Str(s) if s == "ab   "));
     }
 
     #[test]
-    fn test_pad_shorter() {
-        let val = get_var("x = pad['hello', 3]\n", "x");
-        assert_eq!(format!("{}", val.value), "hello");
+    fn test_fmt_width_shorter_than_string() {
+        let val = get_var("x = fmt['hello', width = 3]\n", "x");
+        assert!(matches!(&val.value, Value::Str(s) if s == "hello"));
     }
 
     #[test]
@@ -6618,6 +6641,34 @@ mod tests {
         // Regression: implicit return is desugared in the parser for both modes
         let val = get_var("fn add[a, b]\n    a + b\nr = add[3, 4]\n", "r");
         assert!(matches!(val.value, Value::Int(7)));
+    }
+
+    // ===== fmt builtin =====
+
+    #[test]
+    fn test_fmt_basics() {
+        let val = get_var("x = fmt[1234.567, decimals = 2, commas = true]\n", "x");
+        assert!(matches!(&val.value, Value::Str(s) if s == "1,234.57"));
+        let val = get_var("x = fmt[0.5, percent = true, decimals = 0]\n", "x");
+        assert!(matches!(&val.value, Value::Str(s) if s == "50%"));
+        let val = get_var("x = fmt['hi', width = 4]\n", "x");
+        assert!(matches!(&val.value, Value::Str(s) if s == "hi  "));
+    }
+
+    #[test]
+    fn test_fmt_decimals_on_string_errors() {
+        let result = std::panic::catch_unwind(|| {
+            run_program("x = fmt['hi', decimals = 2]\n")
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pad_removed() {
+        let result = std::panic::catch_unwind(|| {
+            run_program("x = pad['hi', 5]\n")
+        });
+        assert!(result.is_err(), "pad should error with removal message");
     }
 
     // ===== Errors in conditions + batch semantics (#2) =====

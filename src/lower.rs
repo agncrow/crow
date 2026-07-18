@@ -198,6 +198,24 @@ impl Lowerer {
 
                 match callee_name.as_deref() {
                     Some("map") => self.lower_map_call(args)?,
+                    // fmt has a full named signature with sentinel defaults
+                    // (decimals < 0 / width 0 / align '' mean "unset") so both
+                    // modes always receive exactly 7 positional args
+                    Some("fmt") if !self.fns.contains_key("fmt") => {
+                        let params: Vec<String> = ["value", "decimals", "commas", "width", "align", "fill", "percent"]
+                            .iter().map(|s| s.to_string()).collect();
+                        let defaults: Vec<Option<Expr>> = vec![
+                            None,
+                            Some(Expr::Int(-1)),
+                            Some(Expr::Bool(false)),
+                            Some(Expr::Int(0)),
+                            Some(Expr::Str(String::new())),
+                            Some(Expr::Str(" ".to_string())),
+                            Some(Expr::Bool(false)),
+                        ];
+                        let resolved = self.resolve_args("fmt", &params, &defaults, args)?;
+                        Expr::Call { callee: Box::new(callee), args: resolved }
+                    }
                     Some(name) if self.fns.contains_key(name) => {
                         let sig = self.fns.get(name).unwrap().clone();
                         let resolved = self.resolve_args(name, &sig.params, &sig.defaults, args)?;
