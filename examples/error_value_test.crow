@@ -3,49 +3,49 @@
 
 --- Non-fallible: raw int ---
 x = 5
-log['raw int ok: {x.ok}']
-log['raw int reason: {x.reason}']
-log['raw int kind: {x.kind}']
+log['raw int ok: `x.ok`']
+log['raw int reason: `x.reason`']
+log['raw int kind: `x.kind`']
 
 --- Fallible: int from string (success) ---
 good = int['42']
-log['int good ok: {good.ok}']
-log['int good value: {good}']
+log['int good ok: `good.ok`']
+log['int good value: `good`']
 
 --- Fallible: int from string (failure) ---
 bad = int['hello']
-log['int bad ok: {bad.ok}']
-log['int bad reason: {bad.reason}']
-log['int bad kind: {bad.kind}']
-log['int bad trace: {bad.trace}']
+log['int bad ok: `bad.ok`']
+log['int bad reason: `bad.reason`']
+log['int bad kind: `bad.kind`']
+log['int bad trace: `bad.trace`']
 
 --- Fallible: float from string (success) ---
 fgood = float['3.14']
-log['float good ok: {fgood.ok}']
-log['float good value: {fgood}']
+log['float good ok: `fgood.ok`']
+log['float good value: `fgood`']
 
 --- Fallible: float from string (failure) ---
 fbad = float['nope']
-log['float bad ok: {fbad.ok}']
-log['float bad reason: {fbad.reason}']
-log['float bad kind: {fbad.kind}']
+log['float bad ok: `fbad.ok`']
+log['float bad reason: `fbad.reason`']
+log['float bad kind: `fbad.kind`']
 
 --- Auto-unwrap in arithmetic ---
 val = int['10']
 doubled = val + val
-log['auto-unwrap arithmetic: {doubled}']
+log['auto-unwrap arithmetic: `doubled`']
 
 --- Non-fallible int conversion (no CrowResult) ---
 y = 3.14
 z = int[y]
-log['int from float: {z}']
+log['int from float: `z`']
 
 --- Explicit error check pattern ---
 result = int['maybe']
 if not result.ok
-    log['error handled: {result.reason}']
+    log['error handled: `result.reason`']
 else
-    log['success: {result}']
+    log['success: `result`']
 
 --- User-created error ---
 fn validate[age]
@@ -54,12 +54,12 @@ fn validate[age]
     return age
 
 r1 = validate[25]
-log['valid age ok: {r1.ok}']
+log['valid age ok: `r1.ok`']
 
 r2 = validate[-5]
-log['invalid age ok: {r2.ok}']
-log['invalid age reason: {r2.reason}']
-log['invalid age kind: {r2.kind}']
+log['invalid age ok: `r2.ok`']
+log['invalid age reason: `r2.reason`']
+log['invalid age kind: `r2.kind`']
 
 --- Auto-propagation with trace ---
 fn double[n]
@@ -67,8 +67,8 @@ fn double[n]
 
 e = int['bad']
 p = double[e]
-log['propagated ok: {p.ok}']
-log['propagated reason: {p.reason}']
-log['propagated trace: {p.trace}']
+log['propagated ok: `p.ok`']
+log['propagated reason: `p.reason`']
+log['propagated trace: `p.trace`']
 
 log['all error-value tests passed']

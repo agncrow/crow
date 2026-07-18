@@ -22,5 +22,5 @@ log['running 8 prime-counting tasks on 8 threads...']
 results = for limit in tasks
     count_primes[limit]
 
-log['results: {results}']
+log['results: `results`']
 

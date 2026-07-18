@@ -28,6 +28,6 @@ fn spectral_norm_approx[n]
         i = i + 1
     return approx_sqrt[sum_sq]
 
-log['spectral norm n=500: {spectral_norm_approx[500]}']
+log['spectral norm n=500: `spectral_norm_approx[500]`']
 log['spectral-norm n=500 complete']
 

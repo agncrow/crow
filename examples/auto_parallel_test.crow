@@ -32,11 +32,11 @@ sum_cd = c + d
 --- this depends on both sums ---
 total = sum_ab + sum_cd
 
-log['a (primes to 15000): {a}']
-log['b (primes to 12000): {b}']
-log['c (primes to 18000): {c}']
-log['d (primes to 10000): {d}']
-log['a + b: {sum_ab}']
-log['c + d: {sum_cd}']
-log['total: {total}']
+log['a (primes to 15000): `a`']
+log['b (primes to 12000): `b`']
+log['c (primes to 18000): `c`']
+log['d (primes to 10000): `d`']
+log['a + b: `sum_ab`']
+log['c + d: `sum_cd`']
+log['total: `total`']
 

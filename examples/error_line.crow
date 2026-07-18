@@ -3,22 +3,22 @@
 
 --- int parse error ---
 x = int['hello']
-log['int error status: {x.status}']
-log['int error reason: {x.reason}']
-log['int error line: {x.line}']
+log['int error status: `x.status`']
+log['int error reason: `x.reason`']
+log['int error line: `x.line`']
 
 --- file read error ---
 content = read['nonexistent_file.txt']
-log['read error status: {content.status}']
-log['read error reason: {content.reason}']
-log['read error line: {content.line}']
+log['read error status: `content.status`']
+log['read error reason: `content.reason`']
+log['read error line: `content.line`']
 
 --- successful values have line 0 ---
 y = int['42']
-log['ok status: {y.status}']
-log['ok line: {y.line}']
+log['ok status: `y.status`']
+log['ok line: `y.line`']
 
 --- raw values also have line 0 ---
 z = 5
-log['raw line: {z.line}']
+log['raw line: `z.line`']
 

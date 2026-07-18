@@ -36,7 +36,7 @@ fn dec[]
 
 fn render[]
     return div[
-        h1['Count: {count}'],
+        h1['Count: `count`'],
         button['+', click = inc],
         button['-', click = dec]
     ]
@@ -286,7 +286,7 @@ items = []
 fn render[]
     ul[
         for item in items
-            li['{item.name}: {item.price}']
+            li['`item.name`: `item.price`']
     ]
 ```
 
@@ -306,7 +306,7 @@ fn stat_row[positions, total_pnl, win_rate]
     div[
         card['Total P&L', total_pnl],
         card['Open Positions', len[positions]],
-        card['Win Rate', '{win_rate}%'],
+        card['Win Rate', '`win_rate`%'],
         class = 'stats'
     ]
 
@@ -456,7 +456,7 @@ password = ''
 error = ''
 
 fn do_login[]
-    user = query[db, 'SELECT * FROM users WHERE email = \'{email}\'']
+    user = query[db, 'SELECT * FROM users WHERE email = \'`email`\'']
     if user and verify[user.password_hash, password]
         session.set['user_id', user.id]
         session.set['user_name', user.name]
@@ -481,7 +481,7 @@ fn do_logout[]
 fn home_render[]
     user = session.get['user_name']
     return div[
-        h1['Welcome, {user}'],
+        h1['Welcome, `user`'],
         button['Log out', click = do_logout]
     ]
 
@@ -509,13 +509,13 @@ trade_id = ''
 
 fn trade_init[params]
     trade_id = params.id
-    trade = query[db, 'SELECT * FROM trades WHERE id = {params.id}']
+    trade = query[db, 'SELECT * FROM trades WHERE id = `params.id`']
 
 fn trade_render[]
     return div[
-        h1['Trade {trade_id}'],
-        p['Symbol: {trade.symbol}'],
-        p['P&L: {trade.pnl}']
+        h1['Trade `trade_id`'],
+        p['Symbol: `trade.symbol`'],
+        p['P&L: `trade.pnl`']
     ]
 
 page['/trade/:id', trade_render, init = trade_init]
@@ -526,7 +526,7 @@ results = frame[]
 
 fn search_init[params]
     q = params.q or ''
-    results = query[db, 'SELECT * FROM items WHERE name LIKE \'%{q}%\'']
+    results = query[db, 'SELECT * FROM items WHERE name LIKE \'%`q`%\'']
 
 fn search_render[]
     return div[
@@ -544,12 +544,12 @@ trade_id = ''
 
 fn user_trade_init[params]
     trade_id = params.trade_id
-    user = query[db, 'SELECT * FROM users WHERE id = {params.user_id}']
-    trade = query[db, 'SELECT * FROM trades WHERE id = {params.trade_id}']
+    user = query[db, 'SELECT * FROM users WHERE id = `params.user_id`']
+    trade = query[db, 'SELECT * FROM trades WHERE id = `params.trade_id`']
 
 fn user_trade_render[]
     return div[
-        h1['{user.name} — Trade {trade_id}']
+        h1['`user.name` — Trade `trade_id`']
     ]
 
 page['/user/:user_id/trade/:trade_id', user_trade_render, init = user_trade_init]
@@ -641,7 +641,7 @@ fn file_selected[value]
 
 fn upload[]
     if file
-        write['/uploads/{file.name}', file.data]
+        write['/uploads/`file.name`', file.data]
         uploaded = true
     else
         error = 'No file selected'
@@ -652,7 +652,7 @@ fn render[]
         if len[error] gt 0
             p[error, class = 'error'],
         if uploaded
-            p['Uploaded {file.name}', class = 'success'],
+            p['Uploaded `file.name`', class = 'success'],
         button['Upload', click = upload]
     ]
 
@@ -680,7 +680,7 @@ results = frame[]
 
 fn search_key[value]
     if value eq 'Enter'
-        results = query[db, 'SELECT * FROM items WHERE name = \'{q}\'']
+        results = query[db, 'SELECT * FROM items WHERE name = \'`q`\'']
 
 --- keydown on a specific element ---
 ui.input[type = 'text', keydown = search_key]
@@ -871,9 +871,9 @@ For trading dashboards and interactive analysis. Full client-side interactivity:
 ```
 symbol = 'AAPL'
 tf = '1m'
-ohlcv = poll['/api/ohlcv?symbol={symbol}&tf={tf}', 1]
-trades = poll['/api/trades?symbol={symbol}', 5]
-support = fetch['/api/levels?symbol={symbol}&type=support']
+ohlcv = poll['/api/ohlcv?symbol=`symbol`&tf=`tf`', 1]
+trades = poll['/api/trades?symbol=`symbol`', 5]
+support = fetch['/api/levels?symbol=`symbol`&type=support']
 
 fn render[]
     return div[
@@ -983,7 +983,7 @@ fn show_confirm[]
     modal = 'confirm'
 
 fn confirm_delete[]
-    exec[db, 'DELETE FROM items WHERE id = {selected_id}']
+    exec[db, 'DELETE FROM items WHERE id = `selected_id`']
     modal = ''
 
 fn cancel[]
@@ -1048,7 +1048,7 @@ fn render[]
     return div[
         button['Save', click = save],
         if len[flash_msg] gt 0
-            div[flash_msg, class = 'flash {flash_type}']
+            div[flash_msg, class = 'flash `flash_type`']
     ]
 
 page['/', render]
@@ -1071,7 +1071,7 @@ items = frame[]
 
 fn load_page[]
     total = query[db, 'SELECT count[] FROM items'].0.count
-    items = query[db, 'SELECT * FROM items ORDER BY id LIMIT {per_page} OFFSET {[pg - 1] * per_page}']
+    items = query[db, 'SELECT * FROM items ORDER BY id LIMIT `per_page` OFFSET `[pg - 1] * per_page`']
 
 fn render[]
     return div[
@@ -1102,7 +1102,7 @@ fn pagination_bar[pg, total, per_page]
     pages = ceil[total / per_page]
     return div[
         button['‹', click = prev_page],
-        span['Page {pg} of {pages}'],
+        span['Page `pg` of `pages`'],
         button['›', click = next_page],
         class = 'pagination'
     ]
@@ -1137,11 +1137,11 @@ Sorting and row click are handled by named functions:
 
 ```
 fn sort_col[value]
-    items = query[db, 'SELECT * FROM items ORDER BY {value}']
+    items = query[db, 'SELECT * FROM items ORDER BY `value`']
 
 fn select_row[value]
     selected = value
-    redirect['/trade/{value.id}']
+    redirect['/trade/`value.id`']
 ```
 
 Table options:
@@ -1506,17 +1506,17 @@ fn stat_row[positions, symbol]
         card['Symbol', symbol],
         card['Total P&L', total],
         card['Positions', len[positions]],
-        card['Win Rate', '{rate}%'],
+        card['Win Rate', '`rate`%'],
         class = 'stats'
     ]
 
 --- Dashboard page (interactive chart) ---
 symbol = 'AAPL'
 tf = '1m'
-ohlcv = poll['/api/ohlcv?symbol={symbol}&tf={tf}', 1]
-positions = poll['/api/positions?symbol={symbol}', 5]
-trades = poll['/api/trades?symbol={symbol}', 5]
-support = fetch['/api/levels?symbol={symbol}&type=support']
+ohlcv = poll['/api/ohlcv?symbol=`symbol`&tf=`tf`', 1]
+positions = poll['/api/positions?symbol=`symbol`', 5]
+trades = poll['/api/trades?symbol=`symbol`', 5]
+support = fetch['/api/levels?symbol=`symbol`&type=support']
 
 fn dash_render[]
     return div[
@@ -1711,12 +1711,12 @@ page['/', render, on_channel = on_channel]
 --- in the page: subscribe to updates ---
 user_id = 0
 positions = frame[]
-channel.join['trades:{user_id}']
+channel.join['trades:`user_id`']
 
 fn on_channel[msg]
     if msg.type eq 'trade_filled'
-        positions = query[db, 'SELECT * FROM positions WHERE user_id = {user_id}']
-        flash['Order filled: {msg.symbol} x {msg.qty}', 5000]
+        positions = query[db, 'SELECT * FROM positions WHERE user_id = `user_id`']
+        flash['Order filled: `msg.symbol` x `msg.qty`', 5000]
 
 fn dash_render[]
     return table[positions]
@@ -1727,7 +1727,7 @@ page['/dashboard', dash_render, on_channel = on_channel]
 fn execute_api[req]
     result = execute_trade[req.body]
     --- push update to the user's dashboard ---
-    channel.send['trades:{req.body.user_id}', [
+    channel.send['trades:`req.body.user_id`', [
         type = 'trade_filled',
         symbol = req.body.symbol,
         qty = req.body.qty
@@ -1929,7 +1929,7 @@ fn render[]
         nav_bar[],
         card['Symbol', symbol],
         button['+', click = increment],
-        p['Count: {count}'],
+        p['Count: `count`'],
         class = 'app'
     ]
 
@@ -2297,12 +2297,12 @@ items = frame[]
 pg = 1
 
 fn load_page[]
-    items = query[db, 'SELECT * FROM posts LIMIT 20 OFFSET {[pg - 1] * 20}']
+    items = query[db, 'SELECT * FROM posts LIMIT 20 OFFSET `[pg - 1] * 20`']
 
 fn on_hook[event]
     if event.hook eq 'scroll.bottom'
         pg = pg + 1
-        new_items = query[db, 'SELECT * FROM posts LIMIT 20 OFFSET {[pg - 1] * 20}']
+        new_items = query[db, 'SELECT * FROM posts LIMIT 20 OFFSET `[pg - 1] * 20`']
         items = items + new_items
 
 fn render[]
@@ -2367,12 +2367,12 @@ fn render[]
         ],
         div[
             div[
-                h2['Scanner ({len[apply_filters[positions, f]]} results)'],
+                h2['Scanner (`len[apply_filters[positions, f]]` results)'],
                 scanner[positions],
                 class = 'scanner'
             ],
             div[
-                h2['Open Positions ({len[positions]})'],
+                h2['Open Positions (`len[positions]`)'],
                 table[positions],
                 class = 'positions'
             ],

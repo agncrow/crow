@@ -60,28 +60,42 @@ Strings support escape sequences with backslash:
 | `\t` | Tab |
 | `\\` | Literal backslash |
 | `\'` | Literal single quote |
-| `\{` | Literal open brace (not interpolation) |
-| `\}` | Literal close brace |
+| `` \` `` | Literal backtick (not interpolation) |
 
 ```
 log['line1\nline2']
 log['col1\tcol2']
 log['it\'s here']
-log['literal \{braces\}']          --- prints: literal {braces} ---
-j = json['\{"a": 1\}']             --- JSON object literals via escaped braces ---
+log['a \`code span\` in prose']    --- prints: a `code span` in prose ---
 ```
 
 Comments and string literals accept any Unicode text. Identifiers are ASCII — a deliberate restriction that keeps the grammar and tooling simple.
 
 ### String Interpolation
 
-Strings support inline expressions using `{}`.
+Backticks delimit an expression inside a string — like a markdown code span. Everything else in a string is inert text:
 
 ```
 name = 'crow'
-greeting = 'hello, {name}'
-result = '1 + 2 = {1 + 2}'
+greeting = 'hello, `name`'
+result = '1 + 2 = `1 + 2`'
+li['`item.name` — qty `item.qty`']
+log['best: `max[scores]`']
+cfg = json['`"a": 1, "hosts": ["x"]`']   --- braces and brackets: plain text ---
+m = matches[s, '[a-z]`2,4`']             --- regex: fully raw ---
 ```
+
+Rules:
+- `` `expr` `` evaluates any Crow expression and splices its value.
+- Inside an interpolation you are still inside the string — quotes stay escaped: `'up: `upper[\'hi\']`'`.
+- An unterminated or empty backtick span is an error (never silent).
+- For repeated formatting, name it: `fn money[x]` + `'P&L: `money[pnl]`'` (see Formatting).
+
+#### Design Note: Strings Are Inert; Backticks Delimit Code
+
+**What was considered:** brace interpolation `{expr}` (the original design), `\[expr]` (Swift-style escape activation), bare `` `name `` (marker without terminator).
+
+**Why paired backticks won:** any *bare* delimiter collides with real text — `{}` silently corrupted regex quantifiers (`'[0-9]{4}'` interpolated the `{4}`), bare `[]` would have destroyed regex character classes and `[INFO]`-style prose, and bare `` `name `` could not delimit (`` `names ``? `` `name.csv ``?) or express `a + b`. Pairing the marker gives full expressions, zero termination rules, and one form. Strings become inert by default — JSON, regex, CSS, and prose need no escapes — and interpolation is explicitly activated, unshifted, with the one notation everyone already reads as "this is code". The design lineage (braces → escape-activation → bare marker → paired) is preserved in docs/design-review.md.
 
 ### Multiple Assignment
 
@@ -143,7 +157,7 @@ fn add[a, b]
     a + b                    --- implicit return ---
 
 fn greet[name]
-    log['hello, {name}']
+    log['hello, `name`']
 
 fn safe_div[a, b]
     if b eq 0
@@ -380,7 +394,7 @@ addresses = set[addresses, 'work', Address['9 Elm Rd', 'Dallas', 75001]]
 
 for label in keys[addresses]
     a = addresses[label]
-    log['{label}: {a.street}, {a.city}']
+    log['`label`: `a.street`, `a.city`']
 ```
 
 Mixed field types live inside the struct; dynamic keys live in the map. Adding
@@ -511,7 +525,7 @@ fmt['alice', width = 8]                      --- 'alice   ' ---
 fn money[x]
     return fmt[x, decimals = 2, commas = true]
 
-log['P&L: {money[pnl]}']
+log['P&L: `money[pnl]`']
 ```
 
 `decimals`/`percent` on a string is an error. `fmt` replaces the removed `pad` builtin (`pad[s, n]` → `fmt[s, width = n]`).
@@ -824,7 +838,7 @@ Structs have no methods. Pass structs to regular functions.
 struct Bird [name, speed]
 
 fn fly[bird]
-    log['{bird.name} flies at {bird.speed}mph']
+    log['`bird.name` flies at `bird.speed`mph']
 
 b = Bird['crow', 50]
 fly[b]
@@ -1742,7 +1756,7 @@ Reads `.sql` files sorted by filename, executes new ones in order, tracks applie
 use db
 conn = connect['postgres://user:pass@host/mydb']
 n = migrate[conn, 'migrations/']
-log['{n} migrations applied']
+log['`n` migrations applied']
 ```
 
 #### Pool Defaults
@@ -1853,9 +1867,9 @@ Check `.ok` only when you want to handle errors yourself.
 content = read['file.txt']
 
 if not content.ok
-    log['failed: {content.reason}']
-    log['kind: {content.kind}']
-    log['trace: {content.trace}']
+    log['failed: `content.reason`']
+    log['kind: `content.kind`']
+    log['trace: `content.trace`']
 else
     log[content]
 ```
@@ -1884,7 +1898,7 @@ The metadata fields `.ok`, `.reason`, `.kind`, `.trace` never propagate — they
 ```
 age = int[input['age: ']]
 if not age.ok
-    log['invalid: {age.reason}']
+    log['invalid: `age.reason`']
 else if age gte 18
     log['adult']
 ```
@@ -2550,20 +2564,20 @@ Crow intentionally omits `enumerate` and `zip` builtins.
 Numbered output:
 ```
 for i in range[len[players]]
-    log['{i + 1}. {players[i]}']
+    log['`i + 1`. `players[i]`']
 ```
 
 Find index of something:
 ```
 for i in range[len[scores]]
     if scores[i] eq max[scores]
-        log['best at index {i}']
+        log['best at index `i`']
 ```
 
 Combine parallel arrays (instead of zip):
 ```
 for i in range[len[names]]
-    log['{names[i]}: {scores[i]}']
+    log['`names[i]`: `scores[i]`']
 ```
 
 Dot product (instead of zip + map):
@@ -2672,13 +2686,13 @@ Crow does not allow `+` to concatenate strings. String interpolation is the only
 
 **What was considered:** `'hello' + ' world'` producing `'hello world'`.
 
-**Why it was rejected:** String interpolation (`'hello {name}'`) already handles every string-combining use case. Adding `+` as a second way violates "one way to do things" and creates style debates about when to use which form.
+**Why it was rejected:** `+` is numeric. For combining pieces, interpolation (`` 'hello `name`' ``) shows the result's shape; for building from many pieces, collect parts and `join[parts, sep]` — the O(n) idiom every `+`-language teaches as best practice anyway; for a rare pairwise merge, `concat[a, b]` works on strings. Adding `+` as a fourth way violates "one way to do things".
 
 **What to use instead:**
 
 ```
-greeting = 'hello {name}'
-full = '{first} {last}'
+greeting = 'hello `name`'
+full = '`first` `last`'
 ```
 
 ## Design Note: No Destructuring
@@ -2808,7 +2822,7 @@ log[y.reason]           --- original reason preserved ---
 ```
 x = int[input[]]
 if not x.ok
-    log['invalid: {x.reason}']
+    log['invalid: `x.reason`']
     x = 0
 ```
 

@@ -101,7 +101,7 @@ fn double[x]              --- pure: just arithmetic
   return x * 2
 
 fn fetch_user[id]         --- impure: calls read[]
-  data = read['users/{id}.json']
+  data = read['users/`id`.json']
   return json[data]
 
 fn process[items]         --- pure: only calls pure functions

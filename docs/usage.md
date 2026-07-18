@@ -277,8 +277,8 @@ Use `{}` inside strings to embed expressions:
 
 ```
 name = 'crow'
-log['hello, {name}']
-log['1 + 2 = {1 + 2}']
+log['hello, `name`']
+log['1 + 2 = `1 + 2`']
 ```
 
 ### Functions
@@ -287,7 +287,7 @@ Functions are declared with `fn` and called with `[]`:
 
 ```
 fn greet[name]
-    log['hello, {name}']
+    log['hello, `name`']
 
 fn add[a, b]
     return a + b
@@ -403,7 +403,7 @@ Pass structs to functions:
 struct Bird [name, speed]
 
 fn fly[bird]
-    log['{bird.name} flies at {bird.speed}mph']
+    log['`bird.name` flies at `bird.speed`mph']
 
 b = Bird['crow', 50]
 fly[b]
@@ -476,12 +476,12 @@ tasks = [15000, 12000, 18000, 10000]
 cpu[1]
 seq = for limit in tasks
     count_primes[limit]
-log['sequential: {seq}']
+log['sequential: `seq`']
 
 cpu[8]
 par = for limit in tasks
     count_primes[limit]
-log['parallel: {par}']
+log['parallel: `par`']
 ```
 
 ### Error Handling
@@ -500,7 +500,7 @@ Check `.status` when you want explicit error handling:
 ```
 content = read['file.txt']
 if content.status eq 'error'
-    log['failed: {content.reason}']
+    log['failed: `content.reason`']
 else
     log[content.result]
 ```
@@ -546,9 +546,9 @@ fn fib[n]
         return n
     return fib[n - 1] + fib[n - 2]
 
-log['fib[10] = {fib[10]}']
-log['fib[20] = {fib[20]}']
-log['fib[30] = {fib[30]}']
+log['fib[10] = `fib[10]`']
+log['fib[20] = `fib[20]`']
+log['fib[30] = `fib[30]`']
 ```
 
 ### Hello World

@@ -204,3 +204,50 @@ mod tests {
     }
 }
 
+
+/// One-time migration: convert legacy {expr} interpolation to `expr` inside
+/// string literals (and \{ \} escapes to plain braces). Used by
+/// `crow fmt --fix-interpolation`. Character-exact outside strings.
+pub fn migrate_interpolation(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let chars: Vec<char> = source.chars().collect();
+    let mut i = 0;
+    let mut in_str = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if !in_str {
+            if c == '\'' {
+                in_str = true;
+            }
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        // inside a string literal
+        if c == '\\' && i + 1 < chars.len() {
+            let nxt = chars[i + 1];
+            if nxt == '{' || nxt == '}' {
+                out.push(nxt); // \{ -> literal brace
+            } else {
+                out.push(c);
+                out.push(nxt);
+            }
+            i += 2;
+            continue;
+        }
+        if c == '\'' {
+            in_str = false;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if c == '{' || c == '}' {
+            out.push('`');
+            i += 1;
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}

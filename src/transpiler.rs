@@ -2953,6 +2953,9 @@ impl Transpiler {
                     if name == "concat" && (arg_strs.len() == 2 || arg_strs.len() == 3) {
                         let ty = self.ctx.infer_expr(&args[0]);
                         let ty = if let CrowType::Result(i) = ty { *i } else { ty };
+                        if matches!(ty, CrowType::Str) {
+                            return format!("format!(\"{{}}{{}}\", {}, {})", arg_strs[0], arg_strs[1]);
+                        }
                         if matches!(ty, CrowType::NumArray(_)) {
                             self.needs_crow_runtime = true;
                             let axis = if arg_strs.len() == 3 {
@@ -4257,26 +4260,39 @@ impl Transpiler {
         let mut i = 0;
 
         while i < chars.len() {
-            // Escaped braces from the lexer: \{ and \} are literal characters
-            // (doubled for Rust's format! syntax)
-            if chars[i] == '\\' && i + 1 < chars.len() && (chars[i + 1] == '{' || chars[i + 1] == '}') {
-                fmt_str.push(chars[i + 1]);
-                fmt_str.push(chars[i + 1]);
+            // Escaped backtick from the lexer: \` is a literal character
+            if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '`' {
+                fmt_str.push('`');
                 i += 2;
                 continue;
             }
-            if chars[i] == '{' {
-                // Find matching closing brace (handle nesting)
-                let start = i + 1;
-                let mut depth = 1;
+            // Literal braces are inert characters now — double them for format!
+            if chars[i] == '{' || chars[i] == '}' {
+                fmt_str.push(chars[i]);
+                fmt_str.push(chars[i]);
                 i += 1;
-                while i < chars.len() && depth > 0 {
-                    if chars[i] == '{' { depth += 1; }
-                    else if chars[i] == '}' { depth -= 1; }
-                    if depth > 0 { i += 1; }
+                continue;
+            }
+            if chars[i] == '`' {
+                // Interpolation span: scan to the closing backtick, skipping
+                // string literals inside the expression (quote-aware)
+                let start = i + 1;
+                i += 1;
+                let mut in_str = false;
+                while i < chars.len() {
+                    let c = chars[i];
+                    if in_str {
+                        if c == '\\' && i + 1 < chars.len() { i += 2; continue; }
+                        if c == '\'' { in_str = false; }
+                    } else if c == '\'' {
+                        in_str = true;
+                    } else if c == '`' {
+                        break;
+                    }
+                    i += 1;
                 }
                 let expr_str: String = chars[start..i].iter().collect();
-                i += 1; // skip closing }
+                i += 1; // skip closing `
 
                 // Parse the expression as Crow code and transpile to Rust
                 let mut lexer = crate::lexer::Lexer::new(&expr_str);

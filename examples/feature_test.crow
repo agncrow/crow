@@ -2,19 +2,19 @@
 
 --- 1. Multiple assignment ---
 x, y = 10, 20
-log['multi assign: x={x} y={y}']
+log['multi assign: x=`x` y=`y`']
 
 --- 2. Swap ---
 a, b = 1, 2
-log['before swap: a={a} b={b}']
+log['before swap: a=`a` b=`b`']
 a, b = b, a
-log['after swap: a={a} b={b}']
+log['after swap: a=`a` b=`b`']
 
 --- 3. Triple swap ---
 p, q, r = 100, 200, 300
-log['before triple: p={p} q={q} r={r}']
+log['before triple: p=`p` q=`q` r=`r`']
 p, q, r = r, p, q
-log['after triple: p={p} q={q} r={r}']
+log['after triple: p=`p` q=`q` r=`r`']
 
 --- 4. Scope enforcement: if block vars don't leak ---
 outer = 'visible'

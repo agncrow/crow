@@ -15,6 +15,6 @@ fn money[x]
     return fmt[x, decimals = 2, commas = true]
 fn pct[x]
     return fmt[x, percent = true, decimals = 1]
-log['P&L: {money[pnl]} ({pct[0.042]})']
+log['P&L: `money[pnl]` (`pct[0.042]`)']
 --- positional works too (decimals is the first named slot) ---
 log[fmt[pnl, 1]]

@@ -49,13 +49,13 @@ fn spectral_norm_approx[n]
     return approx_sqrt[sum_sq]
 
 --- run benchmarks ---
-log['a_element[0,0] = {a_element[0, 0]}']
-log['a_element[1,0] = {a_element[1, 0]}']
-log['a_element[0,1] = {a_element[0, 1]}']
-log['a_element[2,3] = {a_element[2, 3]}']
+log['a_element[0,0] = `a_element[0, 0]`']
+log['a_element[1,0] = `a_element[1, 0]`']
+log['a_element[0,1] = `a_element[0, 1]`']
+log['a_element[2,3] = `a_element[2, 3]`']
 
-log['spectral norm approx n=10: {spectral_norm_approx[10]}']
-log['spectral norm approx n=50: {spectral_norm_approx[50]}']
-log['spectral norm approx n=100: {spectral_norm_approx[100]}']
+log['spectral norm approx n=10: `spectral_norm_approx[10]`']
+log['spectral norm approx n=50: `spectral_norm_approx[50]`']
+log['spectral norm approx n=100: `spectral_norm_approx[100]`']
 log['spectral-norm benchmark complete']
 

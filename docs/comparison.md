@@ -128,7 +128,7 @@ except ValueError as e:
 --- Crow ---
 bad = int['hello']
 if not bad.ok
-    log['error: {bad.reason}']
+    log['error: `bad.reason`']
 ```
 
 | Language | Model | Rating |

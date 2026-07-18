@@ -2,51 +2,51 @@
 
 --- Shell ---
 result = shell['echo hello']
-log['shell stdout: {result.stdout}']
+log['shell stdout: `result.stdout`']
 assert[result.status eq 0, 'shell exit status should be 0']
 assert[result.stdout eq 'hello', 'shell stdout should be hello']
 
 --- Hashing ---
 h = hash['hello', 'sha256']
-log['sha256: {h}']
+log['sha256: `h`']
 assert[h eq '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824', 'sha256 mismatch']
 
 h2 = hash['hello', 'md5']
-log['md5: {h2}']
+log['md5: `h2`']
 assert[h2 eq '5d41402abc4b2a76b9719d911017c592', 'md5 mismatch']
 
 --- Regex ---
 ok = matches['hello world', 'hello']
-log['matches: {ok}']
+log['matches: `ok`']
 assert[ok, 'should match']
 
 no = matches['hello', '[0-9]+']
 assert[no eq false, 'should not match digits']
 
 m = find['2024-01-15', '([0-9]+)-([0-9]+)-([0-9]+)']
-log['find: {m}']
+log['find: `m`']
 assert[m.ok, 'should match date pattern']
 assert[len[m.groups] eq 4, 'should have 4 groups']
 
 replaced = sub['hello world', 'world', 'crow']
-log['sub: {replaced}']
+log['sub: `replaced`']
 assert[replaced eq 'hello crow', 'sub should replace']
 
 --- Date/time ---
 t = now[]
-log['now: {t}']
+log['now: `t`']
 assert[t.year gte 2024, 'year should be >= 2024']
 assert[t.timestamp gt 0, 'timestamp should be positive']
 
 d = date[2024, 1, 15]
-log['date: {d}']
+log['date: `d`']
 assert[d.year eq 2024, 'year mismatch']
 assert[d.month eq 1, 'month mismatch']
 assert[d.day eq 15, 'day mismatch']
 
 d2 = date[2024, 1, 16]
 e = elapsed[d, d2]
-log['elapsed: {e}']
+log['elapsed: `e`']
 assert[e.seconds eq 86400, 'elapsed should be 86400 seconds']
 
 log['all P3 tests passed']
