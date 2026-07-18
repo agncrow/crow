@@ -17,7 +17,7 @@ const BUILTINS: &[&str] = &[
     // Conversion
     "int", "float", "str",
     // Collections
-    "len", "contains", "slice", "push", "pop", "sort", "reverse", "append",
+    "len", "contains", "slice", "push", "pop", "sort", "reverse", "append", "concat",
     "range", "map",
     // Map
     "keys", "values", "has", "set", "del",
@@ -367,6 +367,11 @@ impl<'a> Validator<'a> {
 
         // Module function? Accept — modules validate args at runtime/transpile time.
         if self.ctx.registry.has_function(name) {
+            return;
+        }
+
+        if name == "append" {
+            self.error("append was removed — use concat[a, b] (one merge operation)".to_string());
             return;
         }
 

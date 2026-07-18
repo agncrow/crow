@@ -2072,8 +2072,10 @@ impl Transpiler {
 
                 // For NumArray, convert to Vec<f64> first, then iterate
                 let actual_iter_str = if is_numarray {
-                    let inner_is_int = matches!(elem_type, CrowType::Int);
-                    if inner_is_int {
+                    if matches!(elem_type, CrowType::NumArray(_)) {
+                        // Rank >= 2: iterate rows as tensors
+                        format!("{}.rows()", iter_str)
+                    } else if matches!(elem_type, CrowType::Int) {
                         format!("{}.to_vec().iter().map(|&v| v as i64).collect::<Vec<i64>>()", iter_str)
                     } else {
                         format!("{}.to_vec()", iter_str)
@@ -2424,10 +2426,17 @@ impl Transpiler {
                             BinOp::Mul | BinOp::ElemMul => format!("{}.mul_scalar({} as f64)", l, r),
                             BinOp::Div | BinOp::ElemDiv => format!("{}.mul_scalar(1.0 / ({} as f64))", l, r),
                             BinOp::ElemPow => format!("{}.map(|x| x.powf({} as f64))", l, r),
+                            // Comparisons broadcast to boolean masks
+                            BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte | BinOp::Eq | BinOp::Ne => {
+                                format!("{{ let _s = {} as f64; {}.to_vec().iter().map(|&_v| _v {} _s).collect::<Vec<bool>>() }}", r, l, op_str)
+                            }
                             _ => format!("{} {} {}", l, op_str, r),
                         };
                     } else if r_is_numarray && matches!(&lt_inner, CrowType::Int | CrowType::Float) {
                         // scalar op tensor
+                        if matches!(op, BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte | BinOp::Eq | BinOp::Ne) {
+                            return format!("{{ let _s = {} as f64; {}.to_vec().iter().map(|&_v| _s {} _v).collect::<Vec<bool>>() }}", l, r, op_str);
+                        }
                         return match op {
                             BinOp::Add => format!("{}.add_scalar({} as f64)", r, l),
                             BinOp::Sub => format!("({}).neg().add_scalar({} as f64)", r, l),
@@ -2435,6 +2444,25 @@ impl Transpiler {
                             BinOp::Div | BinOp::ElemDiv => format!("{{ let _t = &{}; crow_runtime::tensor::CrowTensor::from_vec(_t.to_vec().iter().map(|&v| ({} as f64) / v).collect(), _t.shape().to_vec()) }}", r, l),
                             _ => format!("{} {} {}", l, op_str, r),
                         };
+                    // Tensor vs scalar comparisons broadcast to boolean masks
+                    } else if matches!(op, BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte | BinOp::Eq | BinOp::Ne)
+                        && matches!(&lt_inner, CrowType::NumArray(_))
+                        && matches!(&rt_inner, CrowType::Int | CrowType::Float) {
+                        let rust_op = match op {
+                            BinOp::Gt => ">", BinOp::Lt => "<", BinOp::Gte => ">=",
+                            BinOp::Lte => "<=", BinOp::Eq => "==", BinOp::Ne => "!=",
+                            _ => unreachable!(),
+                        };
+                        return format!("{{ let _s = {} as f64; {}.to_vec().iter().map(|&_v| _v {} _s).collect::<Vec<bool>>() }}", r, l, rust_op);
+                    } else if matches!(op, BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte | BinOp::Eq | BinOp::Ne)
+                        && matches!(&rt_inner, CrowType::NumArray(_))
+                        && matches!(&lt_inner, CrowType::Int | CrowType::Float) {
+                        let rust_op = match op {
+                            BinOp::Gt => ">", BinOp::Lt => "<", BinOp::Gte => ">=",
+                            BinOp::Lte => "<=", BinOp::Eq => "==", BinOp::Ne => "!=",
+                            _ => unreachable!(),
+                        };
+                        return format!("{{ let _s = {} as f64; {}.to_vec().iter().map(|&_v| _s {} _v).collect::<Vec<bool>>() }}", l, r, rust_op);
                     // Boolean masks: and/or combine element-wise
                     } else if matches!(op, BinOp::And | BinOp::Or)
                         && matches!(&lt_inner, CrowType::Array(i) if matches!(i.as_ref(), CrowType::Bool))
@@ -2860,7 +2888,13 @@ impl Transpiler {
                     if name == "push" && arg_strs.len() == 2 {
                         let ty = self.ctx.infer_expr(&args[0]);
                         if matches!(ty, CrowType::NumArray(_)) {
-                            return format!("{{ let mut tmp = {}.to_vec(); tmp.push({} as f64); crow_runtime::tensor::CrowTensor::from_vec(tmp, vec![{}.len() + 1]) }}", arg_strs[0], arg_strs[1], arg_strs[0]);
+                            let arg1_ty = self.ctx.infer_expr(&args[1]);
+                            let arg1_inner = match &arg1_ty { CrowType::Result(i) => i.as_ref().clone(), o => o.clone() };
+                            if matches!(arg1_inner, CrowType::NumArray(_)) {
+                                // push[m, row]: append along axis 0, shape-checked
+                                return format!("{}.push_row(&{}).unwrap_or_else(|e| panic!(\"{{}}\", e))", arg_strs[0], arg_strs[1]);
+                            }
+                            return format!("{}.push_scalar({} as f64).unwrap_or_else(|e| panic!(\"{{}}\", e))", arg_strs[0], arg_strs[1]);
                         }
                         return format!("{{ let mut tmp = {}.clone(); tmp.push({}); tmp }}", arg_strs[0], arg_strs[1]);
                     }
@@ -2886,10 +2920,19 @@ impl Transpiler {
                             _ => format!("{{ let mut tmp = {}.clone(); tmp.reverse(); tmp }}", arg_strs[0]),
                         };
                     }
-                    if name == "append" && arg_strs.len() == 2 {
+                    // concat: the single collection-merge operation (replaces
+                    // append and the former math-module concat)
+                    if name == "concat" && (arg_strs.len() == 2 || arg_strs.len() == 3) {
                         let ty = self.ctx.infer_expr(&args[0]);
+                        let ty = if let CrowType::Result(i) = ty { *i } else { ty };
                         if matches!(ty, CrowType::NumArray(_)) {
-                            return format!("{{ let mut tmp = {}.to_vec(); tmp.extend({}.to_vec()); crow_runtime::tensor::CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", arg_strs[0], arg_strs[1]);
+                            self.needs_crow_runtime = true;
+                            let axis = if arg_strs.len() == 3 {
+                                format!("{} as usize", arg_strs[2])
+                            } else {
+                                "0".to_string()
+                            };
+                            return format!("{}.concat(&{}, {})", arg_strs[0], arg_strs[1], axis);
                         }
                         return format!("{{ let mut tmp = {}.clone(); tmp.extend({}.iter().cloned()); tmp }}", arg_strs[0], arg_strs[1]);
                     }
@@ -3534,6 +3577,11 @@ impl Transpiler {
                                 let idx = &arg_strs[0];
                                 return format!("{}.gather(&{})", base_name, idx);
                             }
+                            // Rank >= 2: the element at [i] is a row tensor
+                            if matches!(inner.as_ref(), CrowType::NumArray(_)) {
+                                let idx = &arg_strs[0];
+                                return format!("{{ let _i = {}; let _rows = {}.shape()[0] as i64; let _idx = if _i < 0 {{ (_rows + _i) as usize }} else {{ _i as usize }}; {}.index0(_idx) }}", idx, base_name, base_name);
+                            }
                             // CrowTensor indexing with negative index support
                             let idx = &arg_strs[0];
                             let cast = if matches!(inner.as_ref(), CrowType::Int) { " as i64" } else { "" };
@@ -3750,6 +3798,10 @@ impl Transpiler {
                         if matches!(idx_type, CrowType::NumArray(_)) {
                             let idx = &arg_strs[0];
                             format!("{}.gather(&{})", callee_str, idx)
+                        } else if matches!(inner.as_ref(), CrowType::NumArray(_)) {
+                            // Rank >= 2: element at [i] is a row tensor
+                            let idx = &arg_strs[0];
+                            format!("{{ let _i = {}; let _rows = {}.shape()[0] as i64; let _idx = if _i < 0 {{ (_rows + _i) as usize }} else {{ _i as usize }}; {}.index0(_idx) }}", idx, callee_str, callee_str)
                         } else {
                             let idx = &arg_strs[0];
                             let cast = if matches!(inner.as_ref(), CrowType::Int) { " as i64" } else { "" };
@@ -3922,6 +3974,18 @@ impl Transpiler {
                         return format!("crow_runtime::tensor::CrowTensor::from_vec(vec![{}], vec![{}])", vals.join(", "), n);
                     }
                 }
+                // Nested numeric literals build one shaped tensor: [[1,2],[3,4]]
+                // → rank-2 CrowTensor (spec: unified arrays)
+                if matches!(inner_type, CrowType::NumArray(_)) && !items.is_empty() {
+                    let elems: Vec<String> = items.iter()
+                        .map(|i| self.expr_to_string(i))
+                        .collect();
+                    self.needs_crow_runtime = true;
+                    return format!(
+                        "crow_runtime::tensor::CrowTensor::from_elements(&[{}]).unwrap_or_else(|e| panic!(\"{{}}\", e))",
+                        elems.join(", ")
+                    );
+                }
                 let vals: Vec<String> = if let CrowType::Fn(_, _) = &inner_type {
                     // Cast each item to fn pointer type to avoid Rust's distinct fn item types
                     let fn_type = inner_type.to_rust_type();
@@ -4033,10 +4097,11 @@ impl Transpiler {
         };
         let is_copy = matches!(elem_type, CrowType::Int | CrowType::Float | CrowType::Bool);
 
-        // For NumArray, convert to Vec first
+        // For NumArray, convert to Vec first (rows for rank >= 2)
         let iter_str = if is_numarray {
-            let inner_is_int = matches!(elem_type, CrowType::Int);
-            if inner_is_int {
+            if matches!(elem_type, CrowType::NumArray(_)) {
+                format!("{}.rows()", iter_str)
+            } else if matches!(elem_type, CrowType::Int) {
                 format!("{}.to_vec().iter().map(|&v| v as i64).collect::<Vec<i64>>()", iter_str)
             } else {
                 format!("{}.to_vec()", iter_str)

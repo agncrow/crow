@@ -12,7 +12,7 @@ log[reverse[nums]]
 log[contains[nums, 2]]
 log[contains[nums, 99]]
 log[slice[[10, 20, 30, 40], 1, 3]]
-log[append[[1, 2], [3, 4]]]
+log[concat[[1, 2], [3, 4]]]
 names = ['b', 'a', 'c']
 log[sort[names]]
 nums[0] = 99

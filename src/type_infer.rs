@@ -898,13 +898,17 @@ impl TypeContext {
                         if matches!(&arr_type, CrowType::NumArray(_)) && matches!(unified, CrowType::Int | CrowType::Float) {
                             return CrowType::NumArray(Box::new(unified));
                         }
+                        // push[m, row] on a rank-2 tensor keeps the tensor type
+                        if matches!(&arr_type, CrowType::NumArray(_)) && matches!(val_type, CrowType::NumArray(_)) {
+                            return arr_type;
+                        }
                         return CrowType::Array(Box::new(unified));
                     }
                     return arr_type;
                 }
                 CrowType::Unknown
             }
-            "pop" | "sort" | "reverse" | "append" => {
+            "pop" | "sort" | "reverse" | "concat" => {
                 if let Some(arg) = args.first() {
                     return self.infer_expr(arg);
                 }
@@ -1081,8 +1085,14 @@ impl TypeContext {
                         // Boolean-mask semantics: comparisons on frame columns and
                         // logical ops on boolean arrays are element-wise → Array(Bool)
                         let is_bool_mask = |t: &CrowType| matches!(t, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Bool));
+                        // Tensor vs scalar comparisons broadcast to masks too
+                        let tensor_vs_scalar = (matches!(lt_inner, CrowType::NumArray(_))
+                            && matches!(rt_inner, CrowType::Int | CrowType::Float))
+                            || (matches!(rt_inner, CrowType::NumArray(_))
+                                && matches!(lt_inner, CrowType::Int | CrowType::Float));
                         if is_frame_col(&lt_inner) || is_frame_col(&rt_inner)
                             || is_bool_mask(&lt_inner) || is_bool_mask(&rt_inner)
+                            || tensor_vs_scalar
                         {
                             CrowType::Array(Box::new(CrowType::Bool))
                         } else {
@@ -1307,8 +1317,12 @@ impl TypeContext {
                     for item in items {
                         inner = inner.unify(&self.infer_expr(item));
                     }
-                    // All-numeric array literals become NumArray (backed by CrowTensor)
+                    // All-numeric array literals become NumArray (backed by CrowTensor).
+                    // Nested numeric literals build higher-rank tensors: the inner
+                    // type of a rank-2 tensor is the rank-1 row tensor.
                     if matches!(inner, CrowType::Int | CrowType::Float) {
+                        CrowType::NumArray(Box::new(inner))
+                    } else if matches!(inner, CrowType::NumArray(_)) {
                         CrowType::NumArray(Box::new(inner))
                     } else {
                         CrowType::Array(Box::new(inner))
