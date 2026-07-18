@@ -26,10 +26,31 @@
 use std::collections::HashMap;
 use crate::view::CrowVNode;
 
+/// Internal action type for the WebSocket event loop.
+enum LiveAction {
+    /// A WebSocket message arrived from the client.
+    Message(axum::extract::ws::Message),
+    /// A poll timer fired — time to re-fetch data sources.
+    PollTick,
+}
+
+/// A data source that fetches from a URL — one-time or periodic.
+#[derive(Debug, Clone)]
+pub struct DataSource {
+    /// URL to fetch from.
+    pub url: String,
+    /// State key to store the result under.
+    pub key: String,
+    /// If Some, poll every N seconds. If None, fetch once on mount.
+    pub interval_secs: Option<u64>,
+}
+
 /// Server-side component state.
 #[derive(Debug, Clone)]
 pub struct CrowLiveState {
     pub data: HashMap<String, serde_json::Value>,
+    /// Registered data sources (fetch/poll).
+    pub sources: Vec<DataSource>,
 }
 
 impl CrowLiveState {
@@ -37,6 +58,7 @@ impl CrowLiveState {
     pub fn new() -> Self {
         Self {
             data: HashMap::new(),
+            sources: Vec::new(),
         }
     }
 
@@ -68,6 +90,24 @@ impl CrowLiveState {
     /// Get a bool from state, with default.
     pub fn get_bool(&self, key: &str, default: bool) -> bool {
         self.data.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
+    }
+
+    /// Register a one-time fetch: `fetch[url]` → stores result under `key`.
+    pub fn register_fetch(&mut self, key: &str, url: &str) {
+        self.sources.push(DataSource {
+            url: url.to_string(),
+            key: key.to_string(),
+            interval_secs: None,
+        });
+    }
+
+    /// Register a polling fetch: `poll[url, secs]` → stores result under `key`, refetches every `secs`.
+    pub fn register_poll(&mut self, key: &str, url: &str, interval_secs: u64) {
+        self.sources.push(DataSource {
+            url: url.to_string(),
+            key: key.to_string(),
+            interval_secs: Some(interval_secs),
+        });
     }
 }
 
@@ -110,14 +150,26 @@ pub fn live_js(ws_path: &str) -> String {
 
   // Minimal DOM morphing: update root's children to match source's children
   function morphChildren(target, source) {{
-    // Simple approach: replace innerHTML but preserve focus
+    // Save focus and input values before replacing
     var focused = document.activeElement;
-    var focusId = focused ? focused.getAttribute('data-crow-id') : null;
+    var focusId = focused ? (focused.getAttribute('data-crow-input') || focused.getAttribute('data-crow-change') || focused.getAttribute('data-crow-id')) : null;
+    var savedInputs = {{}};
+    target.querySelectorAll('[data-crow-input],[data-crow-change]').forEach(function(el) {{
+      var key = el.getAttribute('data-crow-input') || el.getAttribute('data-crow-change');
+      if (key) savedInputs[key] = {{ value: el.value, start: el.selectionStart, end: el.selectionEnd }};
+    }});
     target.innerHTML = source.innerHTML;
-    if (focusId) {{
-      var el = target.querySelector('[data-crow-id="' + focusId + '"]');
-      if (el) el.focus();
-    }}
+    // Restore input values and focus
+    target.querySelectorAll('[data-crow-input],[data-crow-change]').forEach(function(el) {{
+      var key = el.getAttribute('data-crow-input') || el.getAttribute('data-crow-change');
+      if (key && savedInputs[key]) {{
+        el.value = savedInputs[key].value;
+        if (key === focusId) {{
+          el.focus();
+          try {{ el.setSelectionRange(savedInputs[key].start, savedInputs[key].end); }} catch(e) {{}}
+        }}
+      }}
+    }});
   }}
 
   // Navigate to a DOM node by path (array of child indices)
@@ -178,6 +230,14 @@ pub fn live_js(ws_path: &str) -> String {
   // Event delegation: input
   document.addEventListener('input', function(e) {{
     var ev = e.target.getAttribute('data-crow-input');
+    if (ev) {{
+      ws.send(JSON.stringify({{event: ev, value: e.target.value}}));
+    }}
+  }});
+
+  // Event delegation: change (select dropdowns)
+  document.addEventListener('change', function(e) {{
+    var ev = e.target.getAttribute('data-crow-change');
     if (ev) {{
       ws.send(JSON.stringify({{event: ev, value: e.target.value}}));
     }}
@@ -267,7 +327,15 @@ where
             let s1 = s1.clone();
             let ws_p = ws_p.clone();
             async move {
-                let state = (*s1).clone();
+                let mut state = (*s1).clone();
+                // Execute initial fetches so first paint has data
+                for source in &state.sources.clone() {
+                    if let Ok(resp) = reqwest::get(&source.url).await {
+                        if let Ok(json) = resp.json::<serde_json::Value>().await {
+                            state.set(&source.key, json);
+                        }
+                    }
+                }
                 let vnode = (r1)(&state);
                 let body_html = vnode.to_html();
                 let js = live_js(&ws_p);
@@ -275,7 +343,7 @@ where
             }
         });
 
-        // WS: event loop with VNode diffing
+        // WS: event loop with VNode diffing + reactive polling
         let r2 = render.clone();
         let h2 = handle.clone();
         let s2 = init_state.clone();
@@ -287,28 +355,115 @@ where
                 ws.on_upgrade(move |mut socket| async move {
                     use axum::extract::ws::Message;
                     let mut state = (*s2).clone();
+
+                    // Execute initial fetches for all registered data sources
+                    for source in &state.sources.clone() {
+                        if let Ok(resp) = reqwest::get(&source.url).await {
+                            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                                state.set(&source.key, json);
+                            }
+                        }
+                    }
+
                     let mut last_vnode = (r2)(&state);
 
-                    while let Some(Ok(msg)) = futures_util::StreamExt::next(&mut socket).await {
-                        if let Message::Text(text) = msg {
-                            // Parse event from client
-                            let (event, value) = if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                                let ev = v["event"].as_str().unwrap_or("unknown").to_string();
-                                let val = v["value"].as_str().map(|s| s.to_string());
-                                (ev, val)
-                            } else {
-                                (text.to_string(), None)
-                            };
+                    // Build poll intervals — collect sources that have interval_secs
+                    let poll_sources: Vec<DataSource> = state.sources.iter()
+                        .filter(|s| s.interval_secs.is_some())
+                        .cloned()
+                        .collect();
 
-                            // Handle event (mutates state)
-                            (h2)(&mut state, &event, value.as_deref());
+                    // Create a merged poll interval (tick at shortest interval)
+                    let tick_secs = poll_sources.iter()
+                        .filter_map(|s| s.interval_secs)
+                        .min();
 
+                    let mut tick_stream = tick_secs.map(|secs| {
+                        tokio_stream::wrappers::IntervalStream::new(
+                            tokio::time::interval(std::time::Duration::from_secs(secs))
+                        )
+                    });
+
+                    // Track elapsed ticks per source for per-source intervals
+                    let mut tick_count: u64 = 0;
+                    let base_secs = tick_secs.unwrap_or(1);
+
+                    loop {
+                        // Use tokio::select! to handle both WS messages and poll ticks
+                        let action = if let Some(ref mut ticker) = tick_stream {
+                            tokio::select! {
+                                msg = futures_util::StreamExt::next(&mut socket) => {
+                                    match msg {
+                                        Some(Ok(m)) => LiveAction::Message(m),
+                                        _ => break,
+                                    }
+                                }
+                                _ = futures_util::StreamExt::next(ticker) => {
+                                    LiveAction::PollTick
+                                }
+                            }
+                        } else {
+                            match futures_util::StreamExt::next(&mut socket).await {
+                                Some(Ok(m)) => LiveAction::Message(m),
+                                _ => break,
+                            }
+                        };
+
+                        let mut state_changed = false;
+
+                        match action {
+                            LiveAction::Message(Message::Text(text)) => {
+                                // Parse event from client
+                                let (event, value) = if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                                    let ev = v["event"].as_str().unwrap_or("unknown").to_string();
+                                    let val = v["value"].as_str().map(|s| s.to_string());
+                                    (ev, val)
+                                } else {
+                                    (text.to_string(), None)
+                                };
+
+                                // Two-way binding: __field:key or __select:key
+                                if let Some(key) = event.strip_prefix("__field:") {
+                                    if let Some(val) = &value {
+                                        state.set(key, serde_json::json!(val));
+                                    }
+                                    state_changed = true;
+                                } else if let Some(key) = event.strip_prefix("__select:") {
+                                    if let Some(val) = &value {
+                                        state.set(key, serde_json::json!(val));
+                                    }
+                                    state_changed = true;
+                                } else {
+                                    // Regular event → call user handle function
+                                    (h2)(&mut state, &event, value.as_deref());
+                                    state_changed = true;
+                                }
+                            }
+                            LiveAction::PollTick => {
+                                tick_count += 1;
+                                let elapsed_secs = tick_count * base_secs;
+                                // Re-fetch only sources whose interval has elapsed
+                                for source in &poll_sources {
+                                    let interval = source.interval_secs.unwrap_or(base_secs);
+                                    if elapsed_secs % interval == 0 {
+                                        if let Ok(resp) = reqwest::get(&source.url).await {
+                                            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                                                state.set(&source.key, json);
+                                                state_changed = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+
+                        if state_changed {
                             // Re-render and diff
                             let new_vnode = (r2)(&state);
                             let patches = CrowVNode::diff(&last_vnode, &new_vnode);
 
                             if !patches.is_empty() {
-                                // Send full HTML for now (simpler, works with morphdom)
                                 let new_html = new_vnode.to_html();
                                 let payload = serde_json::json!({
                                     "type": "html",
@@ -524,5 +679,30 @@ mod tests {
         handle(&mut state, "dec", None);
         let vnode3 = render(&state);
         assert!(vnode3.to_html().contains("Count: -1"));
+    }
+
+    #[test]
+    fn test_live_state_register_fetch() {
+        let mut state = CrowLiveState::new();
+        state.register_fetch("positions", "http://localhost:8000/api/positions");
+        assert_eq!(state.sources.len(), 1);
+        assert_eq!(state.sources[0].key, "positions");
+        assert_eq!(state.sources[0].url, "http://localhost:8000/api/positions");
+        assert!(state.sources[0].interval_secs.is_none());
+    }
+
+    #[test]
+    fn test_live_state_register_poll() {
+        let mut state = CrowLiveState::new();
+        state.register_poll("prices", "http://localhost:8000/api/prices", 5);
+        assert_eq!(state.sources.len(), 1);
+        assert_eq!(state.sources[0].key, "prices");
+        assert_eq!(state.sources[0].interval_secs, Some(5));
+    }
+
+    #[test]
+    fn test_live_js_contains_change_handler() {
+        let js = live_js("/ws/live");
+        assert!(js.contains("data-crow-change"));
     }
 }
