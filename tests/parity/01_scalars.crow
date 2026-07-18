@@ -17,3 +17,9 @@ log['1 + 2 = {1 + 2}']
 log['tab\there']
 log['it\'s fine']
 log[(2 + 3) * 4]
+--- int/float reassignment: a variable that has held a float is a float ---
+v = 10
+v = 2.5
+v = 1
+log[v]
+log[v / 2]

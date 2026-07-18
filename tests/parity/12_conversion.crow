@@ -1,5 +1,5 @@
 --- conversion, json, regex, hashing ---
---- NOTE: json object literals need braces which interpolation intercepts, no escape yet (see docs/design-review.md) ---
+--- json object literals via escaped braces ---
 log[int[3.99]]
 log[float[3]]
 log[str[42]]
@@ -7,6 +7,10 @@ log[int['7'] + 1]
 j = json['[10, 20, 30]']
 log[j[0]]
 log[j]
+o = json['\{"name": "crow", "count": 3\}']
+log[o.name]
+log[o.count]
+log['literal \{braces\}']
 log[encode[[1, 2, 3]]]
 log[matches['hello', '[a-z]+']]
 log[matches['hello', '[0-9]+']]

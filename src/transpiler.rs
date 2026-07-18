@@ -1894,6 +1894,11 @@ impl Transpiler {
                         if !existing_ty.compatible(&new_ty) {
                             panic!("error: cannot reassign '{}' from {} to {} — variable type cannot change", name, existing_ty.crow_name(), new_ty.crow_name());
                         }
+                        // int/float rule: a float variable stays float — coerce int values
+                        if matches!(existing_ty, CrowType::Float) && matches!(new_ty, CrowType::Int) {
+                            self.emit_line(&format!("{} = ({}) as f64;", name, expr_str));
+                            return;
+                        }
                     }
                     self.emit_line(&format!("{} = {};", name, expr_str));
                 } else {
@@ -1903,6 +1908,15 @@ impl Transpiler {
                     if format!("{:?}", ty).contains("Unknown") {
                         if let Some(resolved) = self.ctx.vars.get(name) {
                             ty = resolved.clone();
+                        }
+                    }
+                    // int/float rule: a variable ever assigned a float is a float
+                    // for its whole scope — declare from the unified type
+                    let mut expr_str = expr_str.clone();
+                    if matches!(ty, CrowType::Int) {
+                        if matches!(self.ctx.vars.get(name), Some(CrowType::Float)) {
+                            ty = CrowType::Float;
+                            expr_str = format!("({}) as f64", expr_str);
                         }
                     }
                     let kw = if self.mutated_vars.contains(name) { "let mut" } else { "let" };
@@ -2018,6 +2032,7 @@ impl Transpiler {
             }
             Stmt::If { condition, then_body, else_body } => {
                 let cond_str = self.expr_to_string(condition);
+                let cond_str = self.guard_condition(condition, cond_str);
                 self.emit_line(&format!("if {} {{", cond_str));
                 self.indent += 1;
                 let saved = self.declared.clone();
@@ -2041,6 +2056,7 @@ impl Transpiler {
                     self.emit_line("loop {");
                 } else {
                     let cond_str = self.expr_to_string(condition);
+                    let cond_str = self.guard_condition(condition, cond_str);
                     self.emit_line(&format!("while {} {{", cond_str));
                 }
                 self.indent += 1;
@@ -3853,6 +3869,21 @@ impl Transpiler {
                     }
                 }
                 let obj = self.expr_to_string(object);
+                // Json object field access: j.a → j["a"] (Null if missing)
+                {
+                    let obj_type = self.ctx.infer_expr(object);
+                    let obj_inner = match &obj_type { CrowType::Result(i) => i.as_ref().clone(), o => o.clone() };
+                    if matches!(obj_inner, CrowType::Json)
+                        && !matches!(field.as_str(), "ok" | "reason" | "kind" | "trace")
+                    {
+                        let obj = if matches!(obj_type, CrowType::Result(_)) {
+                            format!("{}.value", obj)
+                        } else {
+                            obj.clone()
+                        };
+                        return format!("{}.get(\"{}\").cloned().unwrap_or(serde_json::Value::Null)", obj, field);
+                    }
+                }
                 // Map Crow's .len to Rust's .len()
                 if field == "len" {
                     let obj_type = self.ctx.infer_expr(object);
@@ -4214,6 +4245,14 @@ impl Transpiler {
         let mut i = 0;
 
         while i < chars.len() {
+            // Escaped braces from the lexer: \{ and \} are literal characters
+            // (doubled for Rust's format! syntax)
+            if chars[i] == '\\' && i + 1 < chars.len() && (chars[i + 1] == '{' || chars[i + 1] == '}') {
+                fmt_str.push(chars[i + 1]);
+                fmt_str.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
             if chars[i] == '{' {
                 // Find matching closing brace (handle nesting)
                 let start = i + 1;
@@ -4282,7 +4321,10 @@ impl Transpiler {
         }
 
         if args.is_empty() {
-            format!("\"{}\".to_string()", fmt_str)
+            // No interpolation → plain literal: un-double the escaped braces
+            // (they are only doubled for format!'s syntax)
+            let raw = fmt_str.replace("{{", "{").replace("}}", "}");
+            format!("\"{}\".to_string()", raw)
         } else {
             format!("format!(\"{}\", {})", fmt_str, args.join(", "))
         }
@@ -4327,6 +4369,33 @@ impl Transpiler {
     }
 
     /// Emit a log[] call as println!()
+    /// A condition that infers to a Result cannot choose a branch on an
+    /// error (spec section 11: Errors in Conditions). Wrap it: ok -> the bool
+    /// value; error -> propagate out of the function, or halt at top level.
+    fn guard_condition(&mut self, condition: &Expr, cond_str: String) -> String {
+        let cond_ty = self.ctx.infer_expr(condition);
+        if !matches!(cond_ty, CrowType::Result(_)) {
+            return cond_str;
+        }
+        let on_error = if let Some(ret) = self.current_fn_return_type.clone() {
+            let inner_default = match &ret {
+                CrowType::Result(inner) => inner.default_rust_value(),
+                other => other.default_rust_value(),
+            };
+            let trace = self.trace_format_expr();
+            format!(
+                "return CrowResult {{ ok: false, value: {}, reason: _c.reason.clone(), kind: _c.kind.clone(), trace: {{ let mut _t = _c.trace.clone(); _t.push({}); _t }} }};",
+                inner_default, trace
+            )
+        } else {
+            "{ eprintln!(\"error: cannot branch on an error value — {}\", _c.reason); std::process::exit(1); }".to_string()
+        };
+        format!(
+            "{{ let _c = {}; if !_c.ok {{ {} }} _c.value }}",
+            cond_str, on_error
+        )
+    }
+
     /// Arrays whose element types the shared display kernel
     /// (crow_runtime::display::CrowDisplay) can format.
     fn kernel_displayable(ty: &CrowType) -> bool {
@@ -6264,6 +6333,22 @@ mod tests {
         // Regression: compiled find[] previously emitted an uncompilable mixed-type map
         let rust = transpile("m = find['abc', '[a-z]+']\nlog[m.ok]\n");
         assert!(rust.contains("CrowFindResult"), "find should use the synthetic struct\n{}", rust);
+    }
+
+    #[test]
+    fn test_fallible_condition_guarded_and_return_widened() {
+        // A fn with a fallible condition returns CrowResult and guards the branch
+        let rust = transpile("fn check[s]\n    n = int[s]\n    if n gt 5\n        return 'big'\n    return 'small'\nr = check['9']\nlog[r]\n");
+        assert!(rust.contains("if !_c.ok"), "condition should be guarded\n{}", rust);
+        assert!(rust.contains("-> CrowResult<String>"), "return type should widen to Result\n{}", rust);
+    }
+
+    #[test]
+    fn test_float_var_declared_unified() {
+        // int-then-float reassignment declares the variable as f64 and coerces
+        let rust = transpile("v = 10\nv = 2.5\nv = 1\nlog[v]\n");
+        assert!(rust.contains("let mut v: f64"), "v should be declared f64\n{}", rust);
+        assert!(rust.contains("as f64"), "int assignments should coerce\n{}", rust);
     }
 
     #[test]
