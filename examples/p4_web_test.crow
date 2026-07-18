@@ -14,7 +14,7 @@ t = templates['./templates/**/*']
 log['templates:', t]
 
 --- Render ---
-data = [name = 'crow']
+data = map[name = 'crow']
 result = render[t, 'index', data]
 log['render:', result]
 

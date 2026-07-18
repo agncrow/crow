@@ -82,7 +82,7 @@ log[len['hello']]
 
 --- Map Operations ---
 log['=== MAP OPS ===']
-m = [name = 'crow', age = '3']
+m = map[name = 'crow', age = '3']
 log[keys[m]]
 log[values[m]]
 log[has[m, 'name']]

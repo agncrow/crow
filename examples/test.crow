@@ -98,7 +98,7 @@ nums = [10, 20, 30]
 log['array: {nums}']
 
 --- Test: maps ---
-config = [host = 'localhost', port = 8080]
+config = map[host = 'localhost', port = '8080']
 log['config: {config}']
 
 --- Test: empty map ---
