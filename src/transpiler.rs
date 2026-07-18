@@ -52,6 +52,7 @@ pub struct Transpiler {
     pub web_features: std::collections::BTreeSet<String>,
     /// Whether the transpiled code uses regex
     pub needs_regex: bool,
+    needs_find_struct: bool,
     /// Whether the transpiled code uses sha2/md5 hashing
     pub needs_sha2: bool,
     /// Whether the transpiled code uses chrono (date/time)
@@ -74,6 +75,15 @@ pub struct Transpiler {
     live_handle_fns: std::collections::HashSet<String>,
     /// Whether the code uses page[] (implicit app pattern — no user-visible app variable)
     has_page_routes: bool,
+    /// Reactive variables: top-level assignments in UI files that become state-backed.
+    /// Maps var_name -> (type, default_value_as_rust_string)
+    reactive_vars: std::collections::BTreeMap<String, (CrowType, String)>,
+    /// Functions used as event handlers via function references (click = fn_name)
+    reactive_event_handlers: std::collections::HashSet<String>,
+    /// Render functions that use reactive variables (0-param render fns in page[])
+    reactive_render_fns: std::collections::HashSet<String>,
+    /// Data source variables from poll[]/fetch[] assignments (name → type is Frame)
+    data_source_vars: std::collections::HashSet<String>,
 }
 
 impl Transpiler {
@@ -100,6 +110,7 @@ impl Transpiler {
             source_file: String::new(),
             binop_counter: 0,
             needs_regex: false,
+            needs_find_struct: false,
             needs_sha2: false,
             needs_chrono: false,
             needs_crow_db: false,
@@ -115,6 +126,10 @@ impl Transpiler {
             live_render_fns: std::collections::HashSet::new(),
             live_handle_fns: std::collections::HashSet::new(),
             has_page_routes: false,
+            reactive_vars: std::collections::BTreeMap::new(),
+            reactive_event_handlers: std::collections::HashSet::new(),
+            reactive_render_fns: std::collections::HashSet::new(),
+            data_source_vars: std::collections::HashSet::new(),
         }
     }
 
@@ -359,14 +374,16 @@ impl Transpiler {
         match expr {
             Expr::Call { callee, args } => {
                 if let Expr::Ident(name) = callee.as_ref() {
-                    if name == "page" && args.len() == 3 {
-                        // page[path, render, handle]
+                    if name == "page" && (args.len() == 2 || args.len() == 3) {
+                        // page[path, render] or page[path, render, handle]
                         *has_page = true;
                         if let Expr::Ident(render_name) = &args[1] {
                             render_fns.insert(render_name.clone());
                         }
-                        if let Expr::Ident(handle_name) = &args[2] {
-                            handle_fns.insert(handle_name.clone());
+                        if args.len() == 3 {
+                            if let Expr::Ident(handle_name) = &args[2] {
+                                handle_fns.insert(handle_name.clone());
+                            }
                         }
                     }
                 }
@@ -379,6 +396,68 @@ impl Transpiler {
             }
             Expr::FieldAccess { object, .. } => Self::collect_live_callbacks_expr(object, render_fns, handle_fns, has_page),
             _ => {}
+        }
+    }
+
+    /// Scan an expression tree for event handler function references.
+    /// Looks for Map entries like `click = fn_name` where fn_name is a known function.
+    fn collect_event_handler_refs(expr: &Expr, known_fns: &std::collections::HashSet<String>, handlers: &mut std::collections::HashSet<String>) {
+        match expr {
+            Expr::Call { callee, args } => {
+                // Check first arg for Map with event keys
+                if let Some(first_arg) = args.first() {
+                    if let Expr::Map(pairs) = first_arg {
+                        for (k, v) in pairs {
+                            let key_str = match k {
+                                Expr::Ident(s) | Expr::Str(s) => s.clone(),
+                                _ => continue,
+                            };
+                            if matches!(key_str.as_str(), "click" | "input" | "submit") {
+                                if let Expr::Ident(fn_name) = v {
+                                    if known_fns.contains(fn_name) {
+                                        handlers.insert(fn_name.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Self::collect_event_handler_refs(callee, known_fns, handlers);
+                for a in args { Self::collect_event_handler_refs(a, known_fns, handlers); }
+            }
+            Expr::BinOp { left, right, .. } => {
+                Self::collect_event_handler_refs(left, known_fns, handlers);
+                Self::collect_event_handler_refs(right, known_fns, handlers);
+            }
+            Expr::FieldAccess { object, .. } => Self::collect_event_handler_refs(object, known_fns, handlers),
+            Expr::Array(items) => {
+                for item in items { Self::collect_event_handler_refs(item, known_fns, handlers); }
+            }
+            Expr::Map(pairs) => {
+                for (k, v) in pairs {
+                    Self::collect_event_handler_refs(k, known_fns, handlers);
+                    Self::collect_event_handler_refs(v, known_fns, handlers);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Scan statements for event handler references.
+    fn collect_event_handler_refs_stmts(stmts: &[Stmt], known_fns: &std::collections::HashSet<String>, handlers: &mut std::collections::HashSet<String>) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Assign { value, .. } => Self::collect_event_handler_refs(value, known_fns, handlers),
+                Stmt::ExprStmt(e) => Self::collect_event_handler_refs(e, known_fns, handlers),
+                Stmt::Return(Some(e)) => Self::collect_event_handler_refs(e, known_fns, handlers),
+                Stmt::If { condition, then_body, else_body, .. } => {
+                    Self::collect_event_handler_refs(condition, known_fns, handlers);
+                    Self::collect_event_handler_refs_stmts(then_body, known_fns, handlers);
+                    if let Some(eb) = else_body { Self::collect_event_handler_refs_stmts(eb, known_fns, handlers); }
+                }
+                Stmt::For { body, .. } => Self::collect_event_handler_refs_stmts(body, known_fns, handlers),
+                _ => {}
+            }
         }
     }
 
@@ -796,6 +875,50 @@ impl Transpiler {
                 Self::scan_live_callbacks(&sig.body, &mut self.live_render_fns, &mut self.live_handle_fns, &mut has_page);
             }
             self.has_page_routes = has_page;
+
+            // Detect reactive render functions (0-param render fns in page[])
+            for rname in self.live_render_fns.clone() {
+                if let Some(sig) = self.ctx.functions.get(&rname) {
+                    if sig.params.is_empty() {
+                        self.reactive_render_fns.insert(rname.clone());
+                    }
+                }
+            }
+
+            // Collect reactive variables: top-level assignments that aren't fetch/poll/serve
+            if !self.reactive_render_fns.is_empty() {
+                for stmt in stmts.iter() {
+                    if let Stmt::Assign { name, value } = stmt {
+                        // Skip fetch[] and poll[] — those are data sources, not reactive vars
+                        if let Expr::Call { callee, args } = value {
+                            if let Expr::Ident(fn_name) = callee.as_ref() {
+                                if (fn_name == "fetch" && args.len() == 1) || (fn_name == "poll" && args.len() == 2) {
+                                    self.data_source_vars.insert(name.clone());
+                                    continue;
+                                }
+                            }
+                        }
+                        let ty = self.ctx.infer_expr(value);
+                        let default_str = self.expr_to_string(value);
+                        self.reactive_vars.insert(name.clone(), (ty, default_str));
+                    }
+                }
+            }
+
+            // Scan reactive render function bodies for event handler references
+            if !self.reactive_render_fns.is_empty() {
+                let known_fns: std::collections::HashSet<String> = self.ctx.functions.keys().cloned().collect();
+                for rname in self.reactive_render_fns.clone() {
+                    if let Some(sig) = self.ctx.functions.get(&rname) {
+                        let body = sig.body.clone();
+                        Self::collect_event_handler_refs_stmts(&body, &known_fns, &mut self.reactive_event_handlers);
+                    }
+                }
+                // Event handlers are also live_handle_fns for signature purposes
+                for h in self.reactive_event_handlers.clone() {
+                    self.live_handle_fns.insert(h);
+                }
+            }
         }
 
         // Compute which params should be passed by reference
@@ -912,13 +1035,27 @@ impl Transpiler {
 
         // Emit JSON display helper if serde_json is used
         if self.needs_serde_json {
+            // Crow-style json display (matches interpreter: arrays with spaces,
+            // objects as [k = v], strings quoted inside containers only)
             self.emit_line("fn crow_json_display(v: &serde_json::Value) -> String {");
             self.indent += 1;
             self.emit_line("match v {");
             self.indent += 1;
             self.emit_line("serde_json::Value::String(s) => s.clone(),");
             self.emit_line("serde_json::Value::Null => \"null\".to_string(),");
+            self.emit_line("serde_json::Value::Array(items) => format!(\"[{}]\", items.iter().map(crow_json_repr).collect::<Vec<_>>().join(\", \")),");
+            self.emit_line("serde_json::Value::Object(m) => format!(\"[{}]\", m.iter().map(|(k, v)| format!(\"{} = {}\", k, crow_json_repr(v))).collect::<Vec<_>>().join(\", \")),");
             self.emit_line("other => other.to_string(),");
+            self.indent -= 1;
+            self.emit_line("}");
+            self.indent -= 1;
+            self.emit_line("}");
+            self.emit_line("fn crow_json_repr(v: &serde_json::Value) -> String {");
+            self.indent += 1;
+            self.emit_line("match v {");
+            self.indent += 1;
+            self.emit_line("serde_json::Value::String(s) => format!(\"'{}'\", s),");
+            self.emit_line("other => crow_json_display(other),");
             self.indent -= 1;
             self.emit_line("}");
             self.indent -= 1;
@@ -955,10 +1092,57 @@ impl Transpiler {
             self.emit_line("");
         }
 
-        // Emit struct definitions
+        // Emit struct definitions. CrowFindResult is synthetic (registered for
+        // the find[] builtin's return type) and is emitted after main, gated on
+        // actual use — its need isn't known until the body has been generated.
         let struct_names: Vec<String> = self.ctx.structs.keys().cloned().collect();
         for name in &struct_names {
-            self.emit_struct(name);
+            if name != "CrowFindResult" {
+                self.emit_struct(name);
+            }
+        }
+
+        // Emit __json_to_frame helper for data source variables (poll/fetch → CrowFrame)
+        if !self.data_source_vars.is_empty() {
+            self.needs_serde_json = true;
+            self.needs_crow_runtime = true;
+            self.emit_line("fn __json_to_frame(v: &serde_json::Value) -> crow_runtime::frame::CrowFrame {");
+            self.indent += 1;
+            self.emit_line("use crow_runtime::frame::{CrowFrame, Column};");
+            self.emit_line("use std::sync::Arc;");
+            self.emit_line("let arr = match v.as_array() { Some(a) => a, None => return CrowFrame::new(vec![], vec![], vec![]) };");
+            self.emit_line("if arr.is_empty() { return CrowFrame::new(vec![], vec![], vec![]); }");
+            self.emit_line("let cols: Vec<String> = arr[0].as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();");
+            self.emit_line("let nrows = arr.len();");
+            self.emit_line("let mut data: Vec<Column> = Vec::new();");
+            self.emit_line("let mut validity: Vec<Vec<bool>> = Vec::new();");
+            self.emit_line("for col_name in &cols {");
+            self.indent += 1;
+            self.emit_line("let vals: Vec<&serde_json::Value> = arr.iter().map(|row| row.get(col_name.as_str()).unwrap_or(&serde_json::Value::Null)).collect();");
+            self.emit_line("let valid: Vec<bool> = vals.iter().map(|v| !v.is_null()).collect();");
+            self.emit_line("let all_int = vals.iter().all(|v| v.is_i64() || v.is_null());");
+            self.emit_line("let all_float = vals.iter().all(|v| v.is_f64() || v.is_i64() || v.is_null());");
+            self.emit_line("let col = if all_int && vals.iter().any(|v| v.is_i64()) {");
+            self.indent += 1;
+            self.emit_line("Column::Int(vals.iter().map(|v| v.as_i64().unwrap_or(0)).collect())");
+            self.indent -= 1;
+            self.emit_line("} else if all_float && vals.iter().any(|v| v.is_f64() || v.is_i64()) {");
+            self.indent += 1;
+            self.emit_line("Column::Float(vals.iter().map(|v| v.as_f64().unwrap_or(0.0)).collect())");
+            self.indent -= 1;
+            self.emit_line("} else {");
+            self.indent += 1;
+            self.emit_line("Column::Str(vals.iter().map(|v| v.as_str().unwrap_or(\"\").to_string()).collect())");
+            self.indent -= 1;
+            self.emit_line("};");
+            self.emit_line("data.push(col);");
+            self.emit_line("validity.push(valid);");
+            self.indent -= 1;
+            self.emit_line("}");
+            self.emit_line("CrowFrame::new(cols, data, validity)");
+            self.indent -= 1;
+            self.emit_line("}");
+            self.emit_line("");
         }
 
         // Emit function definitions (skip uncalled module functions whose types couldn't be inferred)
@@ -982,6 +1166,25 @@ impl Transpiler {
             for name in &grad_fns {
                 self.emit_dual_function(name);
             }
+        }
+
+        // Generate __crow_handle dispatch function for reactive event handlers
+        if !self.reactive_event_handlers.is_empty() {
+            self.emit_line("fn __crow_handle(state: &mut CrowLiveState, event: &str, _value: Option<&str>) {");
+            self.indent += 1;
+            self.emit_line("match event {");
+            self.indent += 1;
+            let handlers: Vec<String> = self.reactive_event_handlers.iter().cloned().collect();
+            for h in &handlers {
+                let rust_name = Self::rust_fn_name(h);
+                self.emit_line(&format!("\"{}\" => {}(state),", h, rust_name));
+            }
+            self.emit_line("_ => {}");
+            self.indent -= 1;
+            self.emit_line("}");
+            self.indent -= 1;
+            self.emit_line("}");
+            self.emit_line("");
         }
 
         // Compute which top-level variables need `mut`
@@ -1016,15 +1219,33 @@ impl Transpiler {
         }
         self.indent += 1;
         self.emit_panic_hook();
-        // If page[] routes are used, create implicit app at start of main
+        // If page[] routes are used, create implicit app and reactive state at start of main
         if self.has_page_routes {
             self.emit_line("let mut __crow_app = CrowApp::new();");
+            self.emit_line("let mut __crow_state = CrowLiveState::new();");
+            // Register reactive variable defaults in state
+            if !self.reactive_vars.is_empty() {
+                self.needs_serde_json = true;
+                let reactive_vars = self.reactive_vars.clone();
+                for (vname, (_, default_str)) in &reactive_vars {
+                    self.emit_line(&format!("__crow_state.set(\"{}\", serde_json::json!({}));", vname, default_str));
+                }
+            }
             // Separate serve[] calls from other statements — serve must come last
             // (after all page[] routes are registered)
+            let reactive_var_names: std::collections::HashSet<String> = self.reactive_vars.keys().cloned().collect();
             let (serve_stmts, other_stmts): (Vec<_>, Vec<_>) = main_stmts.iter().cloned().partition(|s| {
                 matches!(s, Stmt::ExprStmt(Expr::Call { callee, .. }) if matches!(callee.as_ref(), Expr::Ident(name) if name == "serve"))
             });
-            self.emit_stmts_parallel(&other_stmts);
+            // Filter out reactive var assignments from other_stmts (already registered above)
+            let filtered_stmts: Vec<_> = other_stmts.into_iter().filter(|s| {
+                if let Stmt::Assign { name, .. } = s {
+                    !reactive_var_names.contains(name)
+                } else {
+                    true
+                }
+            }).collect();
+            self.emit_stmts_parallel(&filtered_stmts);
             self.emit_stmts_parallel(&serve_stmts);
         } else {
             self.emit_stmts_parallel(&main_stmts);
@@ -1034,6 +1255,15 @@ impl Transpiler {
         }
         self.indent -= 1;
         self.emit_line("}");
+
+        // Synthetic types used by builtin codegen. Emitted after main (item
+        // order is irrelevant in Rust) because the need is only known once
+        // the body has been generated.
+        if self.needs_find_struct {
+            self.emit_line("");
+            self.emit_line("#[derive(Clone, Debug)]");
+            self.emit_line("struct CrowFindResult { ok: bool, groups: Vec<String> }");
+        }
 
         self.output.clone()
     }
@@ -1115,9 +1345,17 @@ impl Transpiler {
 
         let is_live_render = self.live_render_fns.contains(name);
         let is_live_handle = self.live_handle_fns.contains(name);
+        let is_reactive_render = self.reactive_render_fns.contains(name);
+        let is_reactive_handler = self.reactive_event_handlers.contains(name);
 
         // Build param array — override for live render/handle callbacks
-        let params: Vec<String> = if is_live_render {
+        let params: Vec<String> = if is_reactive_render {
+            // Reactive render: inject state param (user wrote 0 params)
+            vec!["state: &CrowLiveState".to_string()]
+        } else if is_reactive_handler {
+            // Reactive handler: inject mut state param (user wrote 0 params)
+            vec!["state: &mut CrowLiveState".to_string()]
+        } else if is_live_render {
             // render(state: &CrowLiveState) -> CrowVNode
             sig.params.iter().enumerate().map(|(i, (pname, _))| {
                 if i == 0 { format!("{}: &CrowLiveState", pname) }
@@ -1188,6 +1426,36 @@ impl Transpiler {
             self.ctx.vars.insert(pname.clone(), ptype.clone());
         }
 
+        // Reactive preamble: inject state.get calls for all reactive variables
+        if is_reactive_render || is_reactive_handler {
+            let reactive_vars = self.reactive_vars.clone();
+            for (vname, (vtype, default_str)) in &reactive_vars {
+                let kw = if is_reactive_handler { "let mut" } else { "let" };
+                let getter = match vtype {
+                    CrowType::Int => format!("state.get_i64(\"{}\", {})", vname, default_str),
+                    CrowType::Float => format!("state.get_f64(\"{}\", {})", vname, default_str),
+                    CrowType::Str => format!("state.get_str(\"{}\", &{})", vname, default_str),
+                    CrowType::Bool => format!("state.get_bool(\"{}\", {})", vname, default_str),
+                    _ => format!("state.get_i64(\"{}\", {})", vname, default_str), // fallback
+                };
+                self.emit_line(&format!("{} {} = {};", kw, vname, getter));
+                self.declared.insert(vname.clone());
+                self.ctx.vars.insert(vname.clone(), vtype.clone());
+            }
+            // Data source preamble: inject JSON-to-CrowFrame conversion for poll/fetch vars
+            if is_reactive_render && !self.data_source_vars.is_empty() {
+                let ds_vars = self.data_source_vars.clone();
+                for vname in &ds_vars {
+                    self.emit_line(&format!(
+                        "let {} = __json_to_frame(state.get(\"{}\").unwrap_or(&serde_json::Value::Null));",
+                        vname, vname
+                    ));
+                    self.declared.insert(vname.clone());
+                    self.ctx.vars.insert(vname.clone(), CrowType::Frame);
+                }
+            }
+        }
+
         // For functions with non-void return type, convert last ExprStmt to Return
         // so it becomes a tail expression (no semicolon) in Rust
         let mut body = sig.body.clone();
@@ -1199,6 +1467,15 @@ impl Transpiler {
             }
         }
         self.emit_stmts_parallel(&body);
+
+        // Reactive epilogue: inject state.set calls for all reactive variables (handlers only)
+        if is_reactive_handler {
+            self.needs_serde_json = true;
+            let reactive_vars = self.reactive_vars.clone();
+            for (vname, _) in &reactive_vars {
+                self.emit_line(&format!("state.set(\"{}\", serde_json::json!({}));", vname, vname));
+            }
+        }
 
         self.declared = saved_declared;
         self.ctx.vars = saved_vars;
@@ -1434,11 +1711,28 @@ impl Transpiler {
             }
             match &stmts[i] {
                 Stmt::Assign { name, value } => {
-                    let expr_str = self.expr_to_string(value);
+                    // Intercept fetch/poll assignments — emit as state registration, not parallel
+                    if self.has_page_routes {
+                        if let Expr::Call { callee, args } = value {
+                            if let Expr::Ident(fn_name) = callee.as_ref() {
+                                if (fn_name == "fetch" && args.len() == 1) || (fn_name == "poll" && args.len() == 2) {
+                                    self.emit_stmt(&stmts[i]);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    let mut expr_str = self.expr_to_string(value);
                     let mut ty = self.ctx.infer_expr(value);
                     if format!("{:?}", ty).contains("Unknown") {
                         if let Some(resolved) = self.ctx.vars.get(name) {
                             ty = resolved.clone();
+                        }
+                    }
+                    // Clone Frame values in parallel closures to avoid moving
+                    if matches!(ty, CrowType::Frame) {
+                        if let Expr::Ident(_) = value {
+                            expr_str = format!("{}.clone()", expr_str);
                         }
                     }
                     assigns.push((name.clone(), expr_str, ty));
@@ -1572,6 +1866,26 @@ impl Transpiler {
     fn emit_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Assign { name, value } => {
+                // Intercept fetch/poll assignments → register on __crow_state
+                if self.has_page_routes {
+                    if let Expr::Call { callee, args } = value {
+                        if let Expr::Ident(fn_name) = callee.as_ref() {
+                            if fn_name == "fetch" && args.len() == 1 {
+                                let url_str = self.expr_to_string(&args[0]);
+                                self.emit_line(&format!("__crow_state.register_fetch(\"{}\", &{});", name, url_str));
+                                self.data_source_vars.insert(name.clone());
+                                return;
+                            }
+                            if fn_name == "poll" && args.len() == 2 {
+                                let url_str = self.expr_to_string(&args[0]);
+                                let secs_str = self.expr_to_string(&args[1]);
+                                self.emit_line(&format!("__crow_state.register_poll(\"{}\", &{}, {} as u64);", name, url_str, secs_str));
+                                self.data_source_vars.insert(name.clone());
+                                return;
+                            }
+                        }
+                    }
+                }
                 let expr_str = self.expr_to_string(value);
                 if self.declared.contains(name) {
                     // Check for type-changing reassignment
@@ -1810,6 +2124,15 @@ impl Transpiler {
                         let key_str = self.expr_to_string(index);
                         self.emit_line(&format!("{}.insert({}, {});", obj_str, key_str, val_str));
                     }
+                    CrowType::NumArray(_) => {
+                        // CrowTensor is immutable — rebuild with the element replaced
+                        let idx_str = self.expr_to_string(index);
+                        self.needs_crow_runtime = true;
+                        self.emit_line(&format!(
+                            "{{ let _i = {}; let mut _tmp = {}.to_vec(); let _idx = if _i < 0 {{ (_tmp.len() as i64 + _i) as usize }} else {{ _i as usize }}; _tmp[_idx] = {} as f64; {} = crow_runtime::tensor::CrowTensor::from_vec(_tmp, {}.shape().to_vec()); }}",
+                            idx_str, obj_str, val_str, obj_str, obj_str
+                        ));
+                    }
                     _ => {
                         let idx_str = self.expr_to_string(index);
                         self.emit_line(&format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}[_idx] = {}; }}", idx_str, obj_str, obj_str, val_str));
@@ -1922,35 +2245,10 @@ impl Transpiler {
             .join(", ")
     }
 
-    /// Convert an expression to Rust code in "bare-name" mode:
-    /// Identifiers that are not known variables or constants become string
-    /// literals (used for frame column names like `sort[df, age]`).
-    /// Arrays are recursively handled.
-    fn expr_to_string_bare_name(&mut self, expr: &Expr) -> String {
-        match expr {
-            Expr::Ident(name) => {
-                // If it's a known variable, constant, or function, use normally
-                if self.ctx.vars.contains_key(name)
-                    || self.registry.has_constant(name)
-                    || self.ctx.functions.contains_key(name)
-                {
-                    return self.expr_to_string(expr);
-                }
-                // Bare name → string literal
-                format!("\"{}\".to_string()", name)
-            }
-            Expr::Array(items) => {
-                let elems: Vec<String> = items.iter()
-                    .map(|e| self.expr_to_string_bare_name(e))
-                    .collect();
-                format!("vec![{}]", elems.join(", "))
-            }
-            _ => self.expr_to_string(expr),
-        }
-    }
-
     fn expr_to_string(&mut self, expr: &Expr) -> String {
         match expr {
+            // Lowering resolves all named arguments before codegen
+            Expr::Named { value, .. } => self.expr_to_string(value),
             Expr::Int(n) => {
                 if self.emitting_dual {
                     format!("CrowDual::from({}_i64)", n)
@@ -1971,8 +2269,10 @@ impl Transpiler {
             Expr::Bool(b) => format!("{}", b),
             Expr::Str(s) => self.string_to_rust(s),
             Expr::Ident(name) => {
-                // Module constants: pi, e, inf, nan
-                if self.registry.has_constant(name) {
+                // Module constants: pi, e, inf, nan.
+                // A user variable with the same name shadows the constant
+                // (matches interpreter scoping: environment first, then constants)
+                if self.registry.has_constant(name) && !self.ctx.vars.contains_key(name) {
                     return match name.as_str() {
                         "pi" => "std::f64::consts::PI".to_string(),
                         "e" => "std::f64::consts::E".to_string(),
@@ -2132,9 +2432,29 @@ impl Transpiler {
                             BinOp::Add => format!("{}.add_scalar({} as f64)", r, l),
                             BinOp::Sub => format!("({}).neg().add_scalar({} as f64)", r, l),
                             BinOp::Mul | BinOp::ElemMul => format!("{}.mul_scalar({} as f64)", r, l),
-                            BinOp::Div | BinOp::ElemDiv => format!("{{ let _t = &{}; CrowTensor::from_vec(_t.to_vec().iter().map(|&v| ({} as f64) / v).collect(), _t.shape().to_vec()) }}", r, l),
+                            BinOp::Div | BinOp::ElemDiv => format!("{{ let _t = &{}; crow_runtime::tensor::CrowTensor::from_vec(_t.to_vec().iter().map(|&v| ({} as f64) / v).collect(), _t.shape().to_vec()) }}", r, l),
                             _ => format!("{} {} {}", l, op_str, r),
                         };
+                    // Boolean masks: and/or combine element-wise
+                    } else if matches!(op, BinOp::And | BinOp::Or)
+                        && matches!(&lt_inner, CrowType::Array(i) if matches!(i.as_ref(), CrowType::Bool))
+                        && matches!(&rt_inner, CrowType::Array(i) if matches!(i.as_ref(), CrowType::Bool)) {
+                        return format!(
+                            "{}.iter().zip({}.iter()).map(|(_a, _b)| *_a {} *_b).collect::<Vec<bool>>()",
+                            l, r, op_str
+                        );
+                    // Frame column (FrameCol) compared with string scalar
+                    } else if matches!(&lt_inner, CrowType::FrameCol) && matches!(&rt_inner, CrowType::Str) {
+                        let is_comparison = matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte);
+                        if is_comparison {
+                            let cmp_name = match op {
+                                BinOp::Gt => "gt", BinOp::Lt => "lt", BinOp::Gte => "gte",
+                                BinOp::Lte => "lte", BinOp::Eq => "eq", BinOp::Ne => "ne",
+                                _ => unreachable!(),
+                            };
+                            return format!("{}.compare_str(&{}, \"{}\")", l, r, cmp_name);
+                        }
+                        return format!("{} {} {}", l, op_str, r);
                     // Frame column (FrameCol or legacy Array(Str)) ops with scalar
                     } else if (matches!(&lt_inner, CrowType::FrameCol) || matches!(&lt_inner, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Str)))
                         && matches!(&rt_inner, CrowType::Int | CrowType::Float) {
@@ -2196,7 +2516,18 @@ impl Transpiler {
                             format!("(-{})", inner)
                         }
                     }
-                    UnaryOp::Not => format!("(!{})", inner),
+                    UnaryOp::Not => {
+                        let ty = self.ctx.infer_expr(e);
+                        let ty = if let CrowType::Result(i) = ty { *i } else { ty };
+                        // Boolean masks negate element-wise
+                        if matches!(&ty, CrowType::Array(i) if matches!(i.as_ref(), CrowType::Bool)) {
+                            format!("{}.iter().map(|_b| !*_b).collect::<Vec<bool>>()", inner)
+                        } else {
+                            // Inner parens required: Rust's ! binds tighter than
+                            // comparisons, so `not (x eq 8)` must not become `!x == 8`
+                            format!("(!({}))", inner)
+                        }
+                    }
                 }
             }
             Expr::Call { callee, args } => {
@@ -2364,16 +2695,13 @@ impl Transpiler {
                         }
                     }
                     // Non-overlapping module functions: route to registry
-                    if !is_overlapping && self.registry.has_function(name) {
+                    // Skip frame `select` when in UI context with 2 args (it's a UI widget)
+                    let skip_frame_select = name == "select" && self.needs_ui && args.len() == 2
+                        && self.registry.module_name_for(name).map_or(false, |m| m == "frame");
+                    if !is_overlapping && !skip_frame_select && self.registry.has_function(name) {
                         let arg_types: Vec<_> = args.iter().map(|a| self.ctx.infer_expr(a)).collect();
                         self.needs_crow_runtime = true;
-                        // Frame module: rebuild arg_strs with bare-name conversion
-                        let final_arg_strs = if self.registry.module_name_for(name).map_or(false, |m| m == "frame") {
-                            args.iter().map(|a| self.expr_to_string_bare_name(a)).collect::<Vec<_>>()
-                        } else {
-                            arg_strs.clone()
-                        };
-                        return self.registry.emit_rust(name, &final_arg_strs, &arg_types).unwrap_or_else(|e| format!("/* {} */", e));
+                        return self.registry.emit_rust(name, &arg_strs, &arg_types).unwrap_or_else(|e| format!("/* {} */", e));
                     }
 
                     // --- Math builtins (scalar) ---
@@ -2505,6 +2833,10 @@ impl Transpiler {
                     }
                     // --- Collection builtins ---
                     if name == "len" && arg_strs.len() == 1 {
+                        let arg_type = self.ctx.infer_expr(&args[0]);
+                        if matches!(arg_type, CrowType::Frame) {
+                            return format!("({}).nrows() as i64", arg_strs[0]);
+                        }
                         return format!("({}).len() as i64", arg_strs[0]);
                     }
 
@@ -2528,28 +2860,28 @@ impl Transpiler {
                     if name == "push" && arg_strs.len() == 2 {
                         let ty = self.ctx.infer_expr(&args[0]);
                         if matches!(ty, CrowType::NumArray(_)) {
-                            return format!("{{ let mut tmp = {}.to_vec(); tmp.push({} as f64); CrowTensor::from_vec(tmp, vec![{}.len() + 1]) }}", arg_strs[0], arg_strs[1], arg_strs[0]);
+                            return format!("{{ let mut tmp = {}.to_vec(); tmp.push({} as f64); crow_runtime::tensor::CrowTensor::from_vec(tmp, vec![{}.len() + 1]) }}", arg_strs[0], arg_strs[1], arg_strs[0]);
                         }
                         return format!("{{ let mut tmp = {}.clone(); tmp.push({}); tmp }}", arg_strs[0], arg_strs[1]);
                     }
                     if name == "pop" && arg_strs.len() == 1 {
                         let ty = self.ctx.infer_expr(&args[0]);
                         if matches!(ty, CrowType::NumArray(_)) {
-                            return format!("{{ let mut tmp = {}.to_vec(); tmp.pop(); CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", arg_strs[0]);
+                            return format!("{{ let mut tmp = {}.to_vec(); tmp.pop(); crow_runtime::tensor::CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", arg_strs[0]);
                         }
                         return format!("{{ let mut tmp = {}.clone(); tmp.pop(); tmp }}", arg_strs[0]);
                     }
                     if name == "sort" {
                         let ty = self.ctx.infer_expr(&args[0]);
                         if matches!(ty, CrowType::NumArray(_)) {
-                            return format!("{{ let mut tmp = {}.to_vec(); tmp.sort_by(|a, b| a.partial_cmp(b).unwrap()); CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", arg_strs[0]);
+                            return format!("{{ let mut tmp = {}.to_vec(); tmp.sort_by(|a, b| a.partial_cmp(b).unwrap()); crow_runtime::tensor::CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", arg_strs[0]);
                         }
                         return format!("{{ let mut tmp = {}.clone(); tmp.sort(); tmp }}", arg_strs[0]);
                     }
                     if name == "reverse" && arg_strs.len() == 1 {
                         let ty = self.ctx.infer_expr(&args[0]);
                         return match ty {
-                            CrowType::NumArray(_) => format!("{{ let mut tmp = {}.to_vec(); tmp.reverse(); CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", arg_strs[0]),
+                            CrowType::NumArray(_) => format!("{{ let mut tmp = {}.to_vec(); tmp.reverse(); crow_runtime::tensor::CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", arg_strs[0]),
                             CrowType::Str => format!("({}).chars().rev().collect::<String>()", arg_strs[0]),
                             _ => format!("{{ let mut tmp = {}.clone(); tmp.reverse(); tmp }}", arg_strs[0]),
                         };
@@ -2557,7 +2889,7 @@ impl Transpiler {
                     if name == "append" && arg_strs.len() == 2 {
                         let ty = self.ctx.infer_expr(&args[0]);
                         if matches!(ty, CrowType::NumArray(_)) {
-                            return format!("{{ let mut tmp = {}.to_vec(); tmp.extend({}.to_vec()); CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", arg_strs[0], arg_strs[1]);
+                            return format!("{{ let mut tmp = {}.to_vec(); tmp.extend({}.to_vec()); crow_runtime::tensor::CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", arg_strs[0], arg_strs[1]);
                         }
                         return format!("{{ let mut tmp = {}.clone(); tmp.extend({}.iter().cloned()); tmp }}", arg_strs[0], arg_strs[1]);
                     }
@@ -2724,6 +3056,13 @@ impl Transpiler {
                     }
                     if name == "encode" && arg_strs.len() == 1 {
                         self.needs_serde_json = true;
+                        // Numeric arrays are CrowTensor (f64) — serialize whole
+                        // numbers as ints to match the interpreter's output
+                        let arg_ty = self.ctx.infer_expr(&args[0]);
+                        let arg_inner = match &arg_ty { CrowType::Result(i) => i.as_ref().clone(), o => o.clone() };
+                        if matches!(arg_inner, CrowType::NumArray(_)) {
+                            return format!("{{ let _vals: Vec<serde_json::Value> = {}.to_vec().iter().map(|&_f| if _f == (_f as i64) as f64 && _f.is_finite() {{ serde_json::json!(_f as i64) }} else {{ serde_json::json!(_f) }}).collect(); CrowResult {{ ok: true, value: serde_json::to_string(&_vals).unwrap_or_default(), reason: String::new(), kind: String::new(), trace: vec![] }} }}", arg_strs[0]);
+                        }
                         return format!("CrowResult {{ ok: true, value: serde_json::to_string(&{}).unwrap_or_default(), reason: String::new(), kind: String::new(), trace: vec![] }}", arg_strs[0]);
                     }
 
@@ -2743,7 +3082,8 @@ impl Transpiler {
                     }
                     if name == "find" && arg_strs.len() == 2 {
                         self.needs_regex = true;
-                        return format!("{{ let _re = regex::Regex::new(&*{}).unwrap(); let _s = &*{}; if let Some(_caps) = _re.captures(&_s) {{ let mut _m = std::collections::BTreeMap::new(); _m.insert(\"ok\".to_string(), true); let _groups: Vec<String> = _caps.iter().map(|m| m.map_or(String::new(), |m| m.as_str().to_string())).collect(); _m.insert(\"groups\".to_string(), _groups); _m }} else {{ let mut _m = std::collections::BTreeMap::new(); _m.insert(\"ok\".to_string(), false); _m.insert(\"groups\".to_string(), Vec::<String>::new()); _m }} }}", arg_strs[1], arg_strs[0]);
+                        self.needs_find_struct = true;
+                        return format!("{{ let _re = regex::Regex::new(&*{}).unwrap(); let _s = &*{}; if let Some(_caps) = _re.captures(&_s) {{ let _groups: Vec<String> = _caps.iter().map(|m| m.map_or(String::new(), |m| m.as_str().to_string())).collect(); CrowFindResult {{ ok: true, groups: _groups }} }} else {{ CrowFindResult {{ ok: false, groups: Vec::new() }} }} }}", arg_strs[1], arg_strs[0]);
                     }
                     if name == "sub" && arg_strs.len() == 3 {
                         self.needs_regex = true;
@@ -2768,8 +3108,8 @@ impl Transpiler {
                         const HTML_ELEMENTS: &[&str] = &[
                             "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6",
                             "button", "ul", "ol", "li", "form", "a", "nav",
-                            "header", "footer", "section", "table", "tr", "td", "th",
-                            "thead", "tbody", "select", "option", "textarea", "label",
+                            "header", "footer", "section", "tr", "td", "th",
+                            "thead", "tbody", "option", "textarea", "label",
                             "pre", "code",
                         ];
                         // Void elements (no children)
@@ -2826,12 +3166,18 @@ impl Transpiler {
                                     Expr::Str(s) => s.clone(),
                                     _ => self.expr_to_string(k),
                                 };
-                                let val_str = self.expr_to_string(v);
+                                // Check if value is a function reference for event handlers
+                                let is_fn_ref = matches!(v, Expr::Ident(fn_name) if self.reactive_event_handlers.contains(fn_name));
+                                let event_name = if is_fn_ref {
+                                    if let Expr::Ident(fn_name) = v { format!("\"{}\"", fn_name) } else { self.expr_to_string(v) }
+                                } else {
+                                    self.expr_to_string(v)
+                                };
                                 match key_str.as_str() {
-                                    "click" => result = format!("{}.on_click(&{})", result, val_str),
-                                    "input" => result = format!("{}.on_input(&{})", result, val_str),
-                                    "submit" => result = format!("{}.on_submit(&{})", result, val_str),
-                                    _ => result = format!("{}.attr(&{}, &{})", result, self.expr_to_string(k), val_str),
+                                    "click" => result = if is_fn_ref { format!("{}.on_click({})", result, event_name) } else { format!("{}.on_click(&{})", result, event_name) },
+                                    "input" => result = if is_fn_ref { format!("{}.on_input({})", result, event_name) } else { format!("{}.on_input(&{})", result, event_name) },
+                                    "submit" => result = if is_fn_ref { format!("{}.on_submit({})", result, event_name) } else { format!("{}.on_submit(&{})", result, event_name) },
+                                    _ => result = format!("{}.attr(&{}, &{})", result, self.expr_to_string(k), self.expr_to_string(v)),
                                 }
                             }
 
@@ -3070,13 +3416,19 @@ impl Transpiler {
                     if name == "page" && self.needs_crow_web && (arg_strs.len() == 2 || arg_strs.len() == 3) {
                         if arg_strs.len() == 3 {
                             return format!(
-                                "{{ let _ws_path = format!(\"/_ws{{}}\", {}); let _lv = CrowLiveView::new(&_ws_path, CrowLiveState::new(), {}, {}); let _lr = _lv.into_router(&{}); __crow_app = __crow_app.merge(_lr); }}",
+                                "{{ let _ws_path = format!(\"/_ws{{}}\", {}); let _lv = CrowLiveView::new(&_ws_path, __crow_state.clone(), {}, {}); let _lr = _lv.into_router(&{}); __crow_app = __crow_app.merge(_lr); }}",
                                 arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[0]
+                            );
+                        } else if !self.reactive_event_handlers.is_empty() {
+                            // page[path, render] with reactive handlers — auto-inject __crow_handle
+                            return format!(
+                                "{{ let _ws_path = format!(\"/_ws{{}}\", {}); let _lv = CrowLiveView::new(&_ws_path, __crow_state.clone(), {}, __crow_handle); let _lr = _lv.into_router(&{}); __crow_app = __crow_app.merge(_lr); }}",
+                                arg_strs[0], arg_strs[1], arg_strs[0]
                             );
                         } else {
                             // page[path, render] — no handle function, use a no-op handler
                             return format!(
-                                "{{ let _ws_path = format!(\"/_ws{{}}\", {}); let _lv = CrowLiveView::new(&_ws_path, CrowLiveState::new(), {}, |_: &mut CrowLiveState, _: &str, _: &str| {{}}); let _lr = _lv.into_router(&{}); __crow_app = __crow_app.merge(_lr); }}",
+                                "{{ let _ws_path = format!(\"/_ws{{}}\", {}); let _lv = CrowLiveView::new(&_ws_path, __crow_state.clone(), {}, |_: &mut CrowLiveState, _: &str, _: Option<&str>| {{}}); let _lr = _lv.into_router(&{}); __crow_app = __crow_app.merge(_lr); }}",
                                 arg_strs[0], arg_strs[1], arg_strs[0]
                             );
                         }
@@ -3093,20 +3445,43 @@ impl Transpiler {
                     }
 
                     // --- UI reactive builtins ---
-                    // fetch[url] → placeholder: one-time HTTP GET returning empty map
+                    // fetch[url] → register_fetch was handled at assignment level; expression fallback
                     if name == "fetch" && arg_strs.len() == 1 {
-                        return format!("/* fetch({}) */ std::collections::BTreeMap::<String, serde_json::Value>::new()", arg_strs[0]);
+                        return format!("{{ __crow_state.register_fetch(\"_anon\", &{}); serde_json::Value::Null }}", arg_strs[0]);
                     }
-                    // poll[url, seconds] → placeholder: repeating HTTP GET returning empty map
+                    // poll[url, seconds] → register_poll was handled at assignment level; expression fallback
                     if name == "poll" && arg_strs.len() == 2 {
-                        return format!("/* poll({}, {}s) */ std::collections::BTreeMap::<String, serde_json::Value>::new()", arg_strs[0], arg_strs[1]);
+                        return format!("{{ __crow_state.register_poll(\"_anon\", &{}, {} as u64); serde_json::Value::Null }}", arg_strs[0], arg_strs[1]);
                     }
-                    // field[label, var] → placeholder: renders labeled input with two-way binding
+                    // field[label, var] → CrowVNode::field(label, key, current_value)
                     if name == "field" && self.needs_ui && arg_strs.len() == 2 {
-                        return format!("CrowVNode::el(\"div\", std::collections::BTreeMap::new(), vec![CrowVNode::el(\"label\", std::collections::BTreeMap::new(), vec![CrowVNode::text(&{})]), CrowVNode::el(\"input\", std::collections::BTreeMap::new(), vec![])])", arg_strs[0]);
+                        // Extract the state key from the second argument
+                        let key = match &args[1] {
+                            Expr::Ident(vname) => vname.clone(),
+                            Expr::FieldAccess { field, .. } => field.clone(),
+                            _ => "unknown".to_string(),
+                        };
+                        return format!("CrowVNode::field(&{}, \"{}\", &format!(\"{{}}\", {}))", arg_strs[0], key, arg_strs[1]);
+                    }
+                    // select[options, var] → CrowVNode::select_input(options, key, current_value)
+                    if name == "select" && self.needs_ui && arg_strs.len() == 2 {
+                        let key = match &args[1] {
+                            Expr::Ident(vname) => vname.clone(),
+                            Expr::FieldAccess { field, .. } => field.clone(),
+                            _ => "unknown".to_string(),
+                        };
+                        return format!("CrowVNode::select_input(&{}, \"{}\", &format!(\"{{}}\", {}))", arg_strs[0], key, arg_strs[1]);
+                    }
+                    // table[frame] → CrowVNode::table_from_data from CrowFrame columns/rows
+                    if name == "table" && self.needs_ui && arg_strs.len() == 1 {
+                        return format!(
+                            "{{ let _f = &{}; let _headers: Vec<String> = _f.columns.clone(); let _rows: Vec<Vec<String>> = (0.._f.nrows()).map(|r| (0.._f.ncols()).map(|c| _f.data[c].fmt_cell(r, _f.validity[c][r])).collect()).collect(); CrowVNode::table_from_data(&_headers, &_rows) }}",
+                            arg_strs[0]
+                        );
                     }
                     // today[] → chrono::Local::now().format("%Y-%m-%d").to_string()
                     if name == "today" && arg_strs.is_empty() {
+                        self.needs_chrono = true;
                         return "chrono::Local::now().format(\"%Y-%m-%d\").to_string()".to_string();
                     }
 
@@ -3285,12 +3660,18 @@ impl Transpiler {
                                     Expr::Str(s) => s.clone(),
                                     _ => self.expr_to_string(k),
                                 };
-                                let val_str = self.expr_to_string(v);
+                                // Check if value is a function reference for event handlers
+                                let is_fn_ref = matches!(v, Expr::Ident(fn_name) if self.reactive_event_handlers.contains(fn_name));
+                                let event_name = if is_fn_ref {
+                                    if let Expr::Ident(fn_name) = v { format!("\"{}\"", fn_name) } else { self.expr_to_string(v) }
+                                } else {
+                                    self.expr_to_string(v)
+                                };
                                 match key_str.as_str() {
-                                    "click" => result = format!("{}.on_click(&{})", result, val_str),
-                                    "input" => result = format!("{}.on_input(&{})", result, val_str),
-                                    "submit" => result = format!("{}.on_submit(&{})", result, val_str),
-                                    _ => result = format!("{}.attr(&{}, &{})", result, self.expr_to_string(k), val_str),
+                                    "click" => result = if is_fn_ref { format!("{}.on_click({})", result, event_name) } else { format!("{}.on_click(&{})", result, event_name) },
+                                    "input" => result = if is_fn_ref { format!("{}.on_input({})", result, event_name) } else { format!("{}.on_input(&{})", result, event_name) },
+                                    "submit" => result = if is_fn_ref { format!("{}.on_submit({})", result, event_name) } else { format!("{}.on_submit(&{})", result, event_name) },
+                                    _ => result = format!("{}.attr(&{}, &{})", result, self.expr_to_string(k), self.expr_to_string(v)),
                                 }
                             }
                             return result;
@@ -3423,6 +3804,9 @@ impl Transpiler {
                 // Map Crow's .len to Rust's .len()
                 if field == "len" {
                     let obj_type = self.ctx.infer_expr(object);
+                    if matches!(obj_type, CrowType::Frame) {
+                        return format!("{}.nrows() as i64", obj);
+                    }
                     if matches!(obj_type, CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Str | CrowType::FrameCol) {
                         return format!("{}.len() as i64", obj);
                     }
@@ -3534,7 +3918,8 @@ impl Transpiler {
                             .map(|i| format!("{} as f64", self.expr_to_string(i)))
                             .collect();
                         let n = items.len();
-                        return format!("CrowTensor::from_vec(vec![{}], vec![{}])", vals.join(", "), n);
+                        self.needs_crow_runtime = true;
+                        return format!("crow_runtime::tensor::CrowTensor::from_vec(vec![{}], vec![{}])", vals.join(", "), n);
                     }
                 }
                 let vals: Vec<String> = if let CrowType::Fn(_, _) = &inner_type {
@@ -3877,6 +4262,20 @@ impl Transpiler {
     }
 
     /// Emit a log[] call as println!()
+    /// Arrays whose element types the shared display kernel
+    /// (crow_runtime::display::CrowDisplay) can format.
+    fn kernel_displayable(ty: &CrowType) -> bool {
+        match ty {
+            CrowType::Array(inner) => match inner.as_ref() {
+                CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Bool => true,
+                CrowType::NumArray(_) => true,
+                nested @ CrowType::Array(_) => Self::kernel_displayable(nested),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     fn emit_log_call(&mut self, args: &[String], orig_exprs: &[Expr]) -> String {
         if args.is_empty() {
             return "println!()".to_string();
@@ -3906,7 +4305,13 @@ impl Transpiler {
                 let ty = self.ctx.infer_expr(expr);
                 let inner = match &ty { CrowType::Result(i) => i.as_ref().clone(), o => o.clone() };
                 if matches!(inner, CrowType::FrameCol) {
-                    return format!("println!(\"{{:?}}\", {}.to_strings())", arg);
+                    return format!("{{ use crow_runtime::display::CrowDisplay as _; println!(\"{{}}\", {}.to_strings().crow_fmt()) }}", arg);
+                }
+                // Arrays print via the shared display kernel so output matches
+                // the interpreter exactly (strings single-quoted, etc.)
+                if Self::kernel_displayable(&inner) {
+                    self.needs_crow_runtime = true;
+                    return format!("{{ use crow_runtime::display::CrowDisplay as _; println!(\"{{}}\", ({}).crow_fmt()) }}", arg);
                 }
             }
             return if needs_debug {
@@ -3939,13 +4344,23 @@ impl Transpiler {
             } else {
                 (false, 0, false)
             };
-            if needs_debug {
+            // Shared display kernel for plain arrays (matches interpreter output)
+            let kernel = if i < orig_exprs.len() {
+                let ty = self.ctx.infer_expr(&orig_exprs[i]);
+                let inner = match &ty { CrowType::Result(t) => t.as_ref().clone(), o => o.clone() };
+                is_col || Self::kernel_displayable(&inner)
+            } else { false };
+            if needs_debug && !kernel {
                 fmt_parts.push("{:?}".to_string());
             } else {
                 fmt_parts.push("{}".to_string());
             }
             if is_col {
-                fmt_args.push(format!("{}.to_strings()", arg));
+                self.needs_crow_runtime = true;
+                fmt_args.push(format!("{{ use crow_runtime::display::CrowDisplay as _; {}.to_strings().crow_fmt() }}", arg));
+            } else if kernel {
+                self.needs_crow_runtime = true;
+                fmt_args.push(format!("{{ use crow_runtime::display::CrowDisplay as _; ({}).crow_fmt() }}", arg));
             } else if json_kind == 2 {
                 fmt_args.push(format!("crow_json_display(&{}.value)", arg));
             } else if json_kind == 1 {
@@ -4044,6 +4459,8 @@ mod tests {
         let tokens = lexer.tokenize().expect("lexer failed");
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().expect("parser failed");
+        // Same pipeline as the real build: lower named args before inference
+        let stmts = crate::lower::lower_program(&stmts).expect("lowering failed");
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
         let mut t = Transpiler::new(ctx);
@@ -5427,7 +5844,7 @@ mod tests {
 
     #[test]
     fn test_web_render() {
-        let rust = transpile("use web\nuse web.template\nt = templates['./t/**/*']\nfn handler[req]\n    data = [name = 'crow']\n    return html[render[t, 'index', data]]\napp = web.new[]\napp = route[app, '/', handler]\n");
+        let rust = transpile("use web\nuse web.template\nt = templates['./t/**/*']\nfn handler[req]\n    data = map[name = 'crow']\n    return html[render[t, 'index', data]]\napp = web.new[]\napp = route[app, '/', handler]\n");
         assert!(rust.contains(".render("), "should emit .render()\n{}", rust);
     }
 
@@ -5617,14 +6034,14 @@ mod tests {
 
     #[test]
     fn test_ui_button_click() {
-        let rust = transpile("use web\nuse ui\nx = button[[click = 'inc'], '+']\n");
+        let rust = transpile("use web\nuse ui\nx = button['+', click = 'inc']\n");
         assert!(rust.contains("CrowVNode::button(vec![CrowVNode::text("), "should emit CrowVNode::button\n{}", rust);
         assert!(rust.contains(".on_click("), "should emit .on_click()\n{}", rust);
     }
 
     #[test]
     fn test_ui_input_via_module() {
-        let rust = transpile("use web\nuse ui\nx = ui.input[[type = 'text', input = 'change']]\n");
+        let rust = transpile("use web\nuse ui\nx = ui.input[type = 'text', input = 'change']\n");
         assert!(rust.contains("CrowVNode::input()"), "should emit CrowVNode::input()\n{}", rust);
         assert!(rust.contains(".attr("), "should emit .attr() for type\n{}", rust);
         assert!(rust.contains(".on_input("), "should emit .on_input()\n{}", rust);
@@ -5634,9 +6051,18 @@ mod tests {
     fn test_ui_page_3arg() {
         let rust = transpile("use web\nuse ui\nfn render[s]\n    return div[h1['hi']]\n\nfn handle[s, e, v]\n    log[e]\n\nserve[3000]\npage['/counter', render, handle]\n");
         assert!(rust.contains("CrowLiveView::new("), "should emit CrowLiveView::new\n{}", rust);
-        assert!(rust.contains("CrowLiveState::new()"), "should emit CrowLiveState::new()\n{}", rust);
+        assert!(rust.contains("let mut __crow_state = CrowLiveState::new()"), "should init __crow_state\n{}", rust);
+        assert!(rust.contains("__crow_state.clone()"), "should pass __crow_state.clone() to LiveView\n{}", rust);
         assert!(rust.contains("into_router("), "should emit into_router\n{}", rust);
         assert!(rust.contains("__crow_app = __crow_app.merge("), "should merge into implicit app\n{}", rust);
+    }
+
+    #[test]
+    fn test_ui_page_2arg_noop_handler() {
+        let rust = transpile("use web\nuse ui\nfn render[s]\n    return div[h1['hi']]\n\nserve[3000]\npage['/dash', render]\n");
+        assert!(rust.contains("CrowLiveView::new("), "should emit CrowLiveView::new\n{}", rust);
+        assert!(rust.contains("Option<&str>"), "no-op handler should use Option<&str> for value param\n{}", rust);
+        assert!(rust.contains("__crow_state"), "should init __crow_state\n{}", rust);
     }
 
     #[test]
@@ -5648,7 +6074,7 @@ mod tests {
 
     #[test]
     fn test_ui_attr_class() {
-        let rust = transpile("use web\nuse ui\nx = div[[class = 'container'], h1['title']]\n");
+        let rust = transpile("use web\nuse ui\nx = div[h1['title'], class = 'container']\n");
         assert!(rust.contains(".attr("), "should emit .attr() for class\n{}", rust);
         assert!(rust.contains("container"), "should contain class value\n{}", rust);
     }
@@ -5670,5 +6096,115 @@ mod tests {
     fn test_ui_state_get_bool() {
         let rust = transpile("use web\nuse ui\nfn render[state]\n    active = state.get['active', false]\n    return div[h1['{active}']]\n");
         assert!(rust.contains(".get_bool("), "state.get with bool default should map to get_bool\n{}", rust);
+    }
+
+    #[test]
+    fn test_ui_fetch_assignment() {
+        let rust = transpile("use web\nuse ui\nfn render[s]\n    return div[h1['hi']]\n\ndata = fetch['/api/data']\nserve[3000]\npage['/', render]\n");
+        assert!(rust.contains("register_fetch(\"data\""), "fetch assignment should emit register_fetch\n{}", rust);
+        assert!(!rust.contains("let data"), "fetch should not create a local variable\n{}", rust);
+    }
+
+    #[test]
+    fn test_ui_poll_assignment() {
+        let rust = transpile("use web\nuse ui\nfn render[s]\n    return div[h1['hi']]\n\nprices = poll['/api/prices', 5]\nserve[3000]\npage['/', render]\n");
+        assert!(rust.contains("register_poll(\"prices\""), "poll assignment should emit register_poll\n{}", rust);
+        assert!(rust.contains("as u64"), "poll should pass interval as u64\n{}", rust);
+    }
+
+    #[test]
+    fn test_ui_field_codegen() {
+        let rust = transpile("use web\nuse ui\nfn render[s]\n    vol = s.get['vol', 0]\n    return div[field['Min Vol', vol]]\n");
+        assert!(rust.contains("CrowVNode::field("), "field should emit CrowVNode::field\n{}", rust);
+        assert!(rust.contains("\"vol\""), "field should extract key name\n{}", rust);
+    }
+
+    #[test]
+    fn test_ui_select_codegen() {
+        let rust = transpile("use web\nuse ui\nfn render[s]\n    opts = ['a', 'b']\n    val = s.get['choice', 'a']\n    return div[select[opts, val]]\n");
+        assert!(rust.contains("CrowVNode::select_input("), "select should emit CrowVNode::select_input\n{}", rust);
+        assert!(rust.contains("\"val\""), "select should extract key name\n{}", rust);
+    }
+
+    #[test]
+    fn test_reactive_counter() {
+        let rust = transpile("use web, ui\n\ncount = 0\n\nfn inc[]\n    count = count + 1\n\nfn dec[]\n    count = count - 1\n\nfn render[]\n    return div[\n        h1['Count: {count}'],\n        button['+', click = inc],\n        button['-', click = dec]\n    ]\n\nserve[3000]\npage['/', render]\n");
+        // Reactive render function should get state param injected
+        assert!(rust.contains("fn render(state: &CrowLiveState) -> CrowVNode"), "render should have injected state param\n{}", rust);
+        // Reactive handler functions should get mut state param injected
+        assert!(rust.contains("fn inc(state: &mut CrowLiveState)"), "inc should have injected mut state param\n{}", rust);
+        assert!(rust.contains("fn dec(state: &mut CrowLiveState)"), "dec should have injected mut state param\n{}", rust);
+        // State preamble: state.get_i64 for reactive vars
+        assert!(rust.contains("state.get_i64(\"count\""), "should inject state.get_i64 preamble\n{}", rust);
+        // State epilogue: state.set for reactive vars in handlers
+        assert!(rust.contains("state.set(\"count\""), "should inject state.set epilogue in handlers\n{}", rust);
+        // Dispatch function
+        assert!(rust.contains("fn __crow_handle(state: &mut CrowLiveState, event: &str, _value: Option<&str>)"), "should generate __crow_handle dispatch\n{}", rust);
+        assert!(rust.contains("\"inc\" => inc(state)"), "dispatch should route inc\n{}", rust);
+        assert!(rust.contains("\"dec\" => dec(state)"), "dispatch should route dec\n{}", rust);
+        // Event attributes should use string, not reference
+        assert!(rust.contains(".on_click(\"inc\")"), "click = inc should emit .on_click(\"inc\")\n{}", rust);
+        assert!(rust.contains(".on_click(\"dec\")"), "click = dec should emit .on_click(\"dec\")\n{}", rust);
+        // Main should register defaults
+        assert!(rust.contains("__crow_state.set(\"count\", serde_json::json!(0"), "should register count default in main\n{}", rust);
+        // page[] should auto-inject __crow_handle
+        assert!(rust.contains("__crow_handle"), "page should auto-inject __crow_handle\n{}", rust);
+    }
+
+    #[test]
+    fn test_reactive_vars_skipped_in_main() {
+        let rust = transpile("use web, ui\n\ncount = 0\n\nfn render[]\n    return div[h1['Count: {count}']]\n\nserve[3000]\npage['/', render]\n");
+        // count should NOT appear as a `let count` in main — it's registered via state.set
+        let main_section = rust.split("fn main()").nth(1).unwrap_or("");
+        assert!(!main_section.contains("let count"), "reactive var should not appear as local var in main\n{}", rust);
+    }
+
+    // ===== Boolean mask semantics (frame API: strings + expressions) =====
+
+    #[test]
+    fn test_mask_and_emits_elementwise_zip() {
+        let rust = transpile("use frame\ndf = load['d.csv']\nm = df.age gt 5 and df.age lt 30\n");
+        assert!(rust.contains(".zip("), "and on bool masks should zip element-wise\n{}", rust);
+    }
+
+    #[test]
+    fn test_mask_not_emits_elementwise_negation() {
+        let rust = transpile("use frame\ndf = load['d.csv']\nm = not (df.age gt 5)\n");
+        assert!(rust.contains("!*_b"), "not on bool mask should negate element-wise\n{}", rust);
+    }
+
+    #[test]
+    fn test_not_comparison_keeps_parens() {
+        // Regression: `not (x eq 8)` must not compile to `!x == 8` (Rust ! binds tighter)
+        let rust = transpile("x = 7\nif not (x eq 8)\n    log['ok']\n");
+        assert!(rust.contains("(!("), "not must parenthesize its operand\n{}", rust);
+    }
+
+    #[test]
+    fn test_implicit_return_gives_fn_return_type() {
+        // Regression: implicit last-expression return must produce a typed fn
+        let rust = transpile("fn add[a, b]\n    a + b\nr = add[3, 4]\nlog[r]\n");
+        assert!(rust.contains("-> i64"), "implicit return should type the function\n{}", rust);
+    }
+
+    #[test]
+    fn test_user_variable_shadows_module_constant() {
+        // Regression: `e = eye[2]` then `log[e]` must reference the variable, not Euler's e
+        let rust = transpile("use math\ne = eye[2]\nlog[e]\n");
+        assert!(!rust.contains("consts::E"), "user variable must shadow constant\n{}", rust);
+    }
+
+    #[test]
+    fn test_find_emits_struct_result() {
+        // Regression: compiled find[] previously emitted an uncompilable mixed-type map
+        let rust = transpile("m = find['abc', '[a-z]+']\nlog[m.ok]\n");
+        assert!(rust.contains("CrowFindResult"), "find should use the synthetic struct\n{}", rust);
+    }
+
+    #[test]
+    fn test_frame_column_args_are_plain_strings() {
+        // Regression: bare-name force conversion removed — quoted strings pass through
+        let rust = transpile("use frame\ndf = load['d.csv']\ns = sort[df, 'age', desc = true]\n");
+        assert!(rust.contains("\"age\""), "column name string should appear in codegen\n{}", rust);
     }
 }

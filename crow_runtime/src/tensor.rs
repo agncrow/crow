@@ -1248,18 +1248,26 @@ impl std::fmt::Display for CrowTensor {
             // Scalar
             return write!(f, "{}", data[0]);
         }
-        if self.ndim() == 1 {
-            write!(f, "[")?;
-            for (i, v) in data.iter().enumerate() {
-                if i > 0 {
-                    write!(f, ", ")?;
-                }
-                write!(f, "{v}")?;
+        // Nested brackets for any rank: [1, 2] / [[1, 2], [3, 4]] / ...
+        fn fmt_nested(data: &[f64], shape: &[usize]) -> String {
+            if shape.len() == 1 {
+                let parts: Vec<String> = data.iter().map(|v| v.to_string()).collect();
+                return format!("[{}]", parts.join(", "));
             }
-            return write!(f, "]");
+            let chunk: usize = shape[1..].iter().product();
+            let parts: Vec<String> = data
+                .chunks(chunk.max(1))
+                .map(|c| fmt_nested(c, &shape[1..]))
+                .collect();
+            format!("[{}]", parts.join(", "))
         }
-        // 2D+ — show as nested brackets
-        write!(f, "tensor({:?}, shape={:?})", data, self.shape)
+        write!(f, "{}", fmt_nested(&data, &self.shape))
+    }
+}
+
+impl crate::display::CrowDisplay for CrowTensor {
+    fn crow_repr(&self) -> String {
+        self.to_string()
     }
 }
 

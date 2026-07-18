@@ -1,0 +1,27 @@
+--- function scope: params and locals only; module variables invisible ---
+--- (spec Design Note: No Ambient Mutability) ---
+count = 5
+
+fn build[]
+    return 2 + 3
+
+fn scaled[n]
+    count = n * 2
+    return count
+
+fn compose[x]
+    return build[] + scaled[x]
+
+struct P [x, y]
+fn make_point[a]
+    return P[a, a * 2]
+
+log[build[]]
+log[scaled[3]]
+log[count]
+count = 6
+log[compose[2]]
+log[count]
+p = make_point[4]
+log[p.y]
+log[scaled[count]]

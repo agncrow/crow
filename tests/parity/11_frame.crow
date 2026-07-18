@@ -1,0 +1,18 @@
+--- frame module: masks, sort, group, select ---
+use frame
+df = load['examples/test_data.csv']
+log[df.shape]
+log[df.columns]
+log[len[df]]
+alice = filter[df, df.name eq 'Alice']
+log[len[alice]]
+older = filter[df, df.age gt 26 and df.salary gt 60000]
+log[len[older]]
+others = filter[df, not (df.name eq 'Alice')]
+log[len[others]]
+s = sort[df, 'age']
+log[s.shape]
+sub = select[df, ['name', 'age']]
+log[sub.columns]
+top = head[df, 2]
+log[len[top]]

@@ -1,0 +1,20 @@
+--- for-as-expression: map, filter, combined ---
+doubled = for x in [1, 2, 3]
+    x * 2
+log[doubled]
+evens = for x in [1, 2, 3, 4, 5]
+    if x % 2 eq 0
+        x
+log[evens]
+big10 = for x in [1, 2, 3, 4, 5]
+    if x gt 2
+        x * 10
+log[big10]
+total = 0
+for x in [1, 2, 3, 4]
+    total = total + x
+log[total]
+r = range[5]
+log[r]
+log[range[2, 5]]
+log[range[0, 10, 3]]

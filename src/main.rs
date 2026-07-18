@@ -2,6 +2,7 @@ mod ast;
 mod checker;
 mod interpreter;
 mod lexer;
+mod lower;
 mod parallel;
 mod parser;
 mod token;
@@ -91,6 +92,15 @@ fn main() {
                 });
             cmd_check(&filename, verbose);
         }
+        "test" => {
+            if args.iter().any(|a| a == "--parity") {
+                cmd_test_parity();
+            } else {
+                eprintln!("crow test: only --parity is implemented so far");
+                eprintln!("  crow test --parity   run tests/parity/*.crow in both modes and diff output");
+                process::exit(1);
+            }
+        }
         "run" => {
             // Check for -i flag (interpreter mode)
             if args.len() > 2 && args[2] == "-i" {
@@ -148,8 +158,98 @@ fn print_usage() {
     eprintln!("  crow fmt file.crow     format a specific file");
     eprintln!("  crow fmt --check       check formatting without changing files");
     eprintln!("  crow launch 4 file.crow  build + run on 4 distributed processes");
+    eprintln!("  crow test --parity     run tests/parity/ in both modes, diff output");
     eprintln!("  crow check --verbose   verbose output with purity and snapshot details");
     eprintln!("  crow -v                show version");
+}
+
+/// Run every tests/parity/*.crow file through both execution modes and diff
+/// their stdout. The transpiler and interpreter must agree on every program
+/// (design rule 11); this makes drift a test failure instead of a discipline.
+fn cmd_test_parity() {
+    let dir = std::path::Path::new("tests/parity");
+    if !dir.is_dir() {
+        eprintln!("error: no tests/parity/ directory found (run from the project root)");
+        process::exit(1);
+    }
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.extension().map_or(false, |x| x == "crow"))
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+    if files.is_empty() {
+        eprintln!("error: tests/parity/ contains no .crow files");
+        process::exit(1);
+    }
+
+    let exe = std::env::current_exe().unwrap_or_else(|e| {
+        eprintln!("error locating crow binary: {}", e);
+        process::exit(1);
+    });
+    let run_mode = |mode_args: &[&str], file: &std::path::Path| -> (bool, String, String) {
+        let out = std::process::Command::new(&exe)
+            .args(mode_args)
+            .arg(file)
+            .output();
+        match out {
+            Ok(o) => (
+                o.status.success(),
+                String::from_utf8_lossy(&o.stdout).to_string(),
+                String::from_utf8_lossy(&o.stderr).to_string(),
+            ),
+            Err(e) => (false, String::new(), format!("failed to spawn: {}", e)),
+        }
+    };
+
+    let start = std::time::Instant::now();
+    let mut failures = 0;
+    println!("parity: {} files, interpreter vs compiled\n", files.len());
+    for file in &files {
+        let name = file.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let (i_ok, i_out, i_err) = run_mode(&["run", "-i"], file);
+        let (t_ok, t_out, t_err) = run_mode(&["run"], file);
+
+        if i_ok && t_ok && i_out == t_out {
+            println!("  ok    {}", name);
+            continue;
+        }
+        failures += 1;
+        println!("  FAIL  {}", name);
+        if !i_ok {
+            let tail = i_err.lines().last().unwrap_or("(no stderr)");
+            println!("        interpreter exited with error: {}", tail);
+        }
+        if !t_ok {
+            let tail = t_err.lines().last().unwrap_or("(no stderr)");
+            println!("        compiled exited with error: {}", tail);
+        }
+        if i_ok && t_ok {
+            // First differing line
+            let i_lines: Vec<&str> = i_out.lines().collect();
+            let t_lines: Vec<&str> = t_out.lines().collect();
+            let max = i_lines.len().max(t_lines.len());
+            for n in 0..max {
+                let a = i_lines.get(n).copied().unwrap_or("<missing>");
+                let b = t_lines.get(n).copied().unwrap_or("<missing>");
+                if a != b {
+                    println!("        line {}: interpreter: {}", n + 1, a);
+                    println!("        line {}: compiled:    {}", n + 1, b);
+                    break;
+                }
+            }
+        }
+    }
+    let elapsed = start.elapsed().as_secs_f64();
+    println!();
+    if failures == 0 {
+        println!("✓ {} files match across both modes ({:.1}s)", files.len(), elapsed);
+    } else {
+        println!("✗ {} of {} files diverge between modes ({:.1}s)", failures, files.len(), elapsed);
+        process::exit(1);
+    }
 }
 
 fn cmd_repl() {
@@ -388,7 +488,7 @@ fn cmd_new() {
 
     // main.crow
     if has_web {
-        write_file(&project_dir.join("main.crow"), "use web, ui\nuse views.home\n\nserve[3000]\npage['/', home_render, home_handle]\n");
+        write_file(&project_dir.join("main.crow"), "use web, ui\nuse views.home\n\nserve[3000]\npage['/', home_render]\n");
     } else {
         write_file(&project_dir.join("main.crow"), &format!("log['hello, {}']\n", short_name));
     }
@@ -396,7 +496,7 @@ fn cmd_new() {
     // --web: add views/home.crow
     if has_web {
         write_file(&project_dir.join("views/home.crow"),
-            "--- home page ---\nuse ui\n\nfn render[state]\n    message = state.get['message', 'welcome to crow']\n    return div[\n        h1['{message}']\n    ]\n\nfn handle[state, event, value]\n    log[event]\n");
+            "--- home page ---\nuse ui\n\nmessage = 'welcome to crow'\n\nfn home_render[]\n    return div[\n        h1['{message}']\n    ]\n");
     }
 
     // --ml: add jobs/train.crow and lib/model.crow
@@ -725,6 +825,12 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         .unwrap_or(std::path::Path::new("."));
     let mut visited = std::collections::HashSet::new();
     let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
+
+    // Resolve named arguments to positional form (shared with the interpreter)
+    let stmts = lower::lower_program(&stmts).unwrap_or_else(|e| {
+        eprintln!("error: {}", e);
+        process::exit(1);
+    });
 
     // Run type inference
     let mut ctx = type_infer::TypeContext::new();
@@ -1755,10 +1861,11 @@ fn expand_module_imports(
             // Rewrite module declarations with prefixed names
             for mod_stmt in &mod_stmts {
                 match mod_stmt {
-                    ast::Stmt::FnDecl { name, params, body } => {
+                    ast::Stmt::FnDecl { name, params, defaults, body } => {
                         expanded.push(ast::Stmt::FnDecl {
                             name: format!("{}_{}", module_name, name),
                             params: params.clone(),
+                            defaults: defaults.clone(),
                             body: body.clone(),
                         });
                     }

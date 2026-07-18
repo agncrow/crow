@@ -1,0 +1,19 @@
+--- scalars: arithmetic, division, power, interpolation ---
+x = 10
+y = 3
+log[x + y]
+log[x - y]
+log[x * y]
+log[x / y]
+log[x % y]
+log[3 / 2]
+log[3 / 2.0]
+log[2 ^ 10]
+log[2 ^ 3 ^ 2]
+log[-5]
+name = 'crow'
+log['hello, {name}']
+log['1 + 2 = {1 + 2}']
+log['tab\there']
+log['it\'s fine']
+log[(2 + 3) * 4]

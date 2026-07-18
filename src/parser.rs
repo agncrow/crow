@@ -34,6 +34,14 @@ impl Parser {
         }
     }
 
+    fn peek_ahead(&self, n: usize) -> &Token {
+        if self.pos + n < self.tokens.len() {
+            &self.tokens[self.pos + n].token
+        } else {
+            &Token::Eof
+        }
+    }
+
     fn advance(&mut self) -> &Token {
         let tok = &self.tokens[self.pos].token;
         self.pos += 1;
@@ -98,11 +106,21 @@ impl Parser {
         self.advance(); // skip 'fn'
         let name = self.expect_ident()?;
         self.expect(&Token::LBracket)?;
-        let params = self.parse_param_list()?;
+        let (params, defaults) = self.parse_param_list()?;
         self.expect(&Token::RBracket)?;
         self.skip_newlines();
-        let body = self.parse_block()?;
-        Ok(Stmt::FnDecl { name, params, body })
+        let mut body = self.parse_block()?;
+        // Implicit return: the last expression statement in a function body is
+        // the return value. Desugar here so the interpreter, type inference,
+        // and transpiler all see the same explicit AST.
+        if let Some(last_expr_pos) = body.iter().rposition(|s| !matches!(s, Stmt::Line(_))) {
+            if matches!(body[last_expr_pos], Stmt::ExprStmt(_)) {
+                if let Stmt::ExprStmt(e) = body.remove(last_expr_pos) {
+                    body.insert(last_expr_pos, Stmt::Return(Some(e)));
+                }
+            }
+        }
+        Ok(Stmt::FnDecl { name, params, defaults, body })
     }
 
     fn parse_return(&mut self) -> Result<Stmt, String> {
@@ -165,7 +183,13 @@ impl Parser {
         self.advance(); // skip 'struct'
         let name = self.expect_ident()?;
         self.expect(&Token::LBracket)?;
-        let fields = self.parse_param_list()?;
+        let (fields, defaults) = self.parse_param_list()?;
+        if defaults.iter().any(|d| d.is_some()) {
+            return Err(format!(
+                "struct fields cannot have defaults at line {}",
+                self.current_line()
+            ));
+        }
         self.expect(&Token::RBracket)?;
         Ok(Stmt::StructDecl { name, fields })
     }
@@ -527,13 +551,6 @@ impl Parser {
         }
     }
 
-    /// Convert bare ident to string key for maps: [name = 'crow'] → key is Expr::Str("name")
-    fn ident_to_map_key(&self, expr: Expr) -> Expr {
-        match expr {
-            Expr::Ident(name) => Expr::Str(name),
-            other => other,
-        }
-    }
 
     fn parse_array_or_map(&mut self) -> Result<Expr, String> {
         self.advance(); // skip '['
@@ -547,32 +564,22 @@ impl Parser {
         // parse first element
         let first = self.parse_expr()?;
 
-        // check if it's a map: [key = value, ...] (bare-name) or ['key' = value, ...]
+        // Bare map literals were removed — bare [...] is always an array.
+        // Maps use the map[...] constructor (Design Note in language-spec.md).
         if self.check(&Token::Assign) {
-            self.advance();
-            let key = self.ident_to_map_key(first);
-            let val = self.parse_expr()?;
-            let mut pairs = vec![(key, val)];
-            while self.check(&Token::Comma) {
-                self.advance();
-                let raw_key = self.parse_expr()?;
-                let key = self.ident_to_map_key(raw_key);
-                self.expect(&Token::Assign)?;
-                let val = self.parse_expr()?;
-                pairs.push((key, val));
-            }
-            self.expect(&Token::RBracket)?;
-            Ok(Expr::Map(pairs))
-        } else {
-            // it's a list
-            let mut items = vec![first];
-            while self.check(&Token::Comma) {
-                self.advance();
-                items.push(self.parse_expr()?);
-            }
-            self.expect(&Token::RBracket)?;
-            Ok(Expr::Array(items))
+            return Err(format!(
+                "map literals were removed — write map[key = value, ...] instead of [key = value, ...] at line {}",
+                self.current_line()
+            ));
         }
+
+        let mut items = vec![first];
+        while self.check(&Token::Comma) {
+            self.advance();
+            items.push(self.parse_expr()?);
+        }
+        self.expect(&Token::RBracket)?;
+        Ok(Expr::Array(items))
     }
 
     // --- Helper parsers ---
@@ -591,25 +598,87 @@ impl Parser {
         }
     }
 
-    fn parse_param_list(&mut self) -> Result<Vec<String>, String> {
+    fn parse_param_list(&mut self) -> Result<(Vec<String>, Vec<Option<Expr>>), String> {
         let mut params = Vec::new();
+        let mut defaults = Vec::new();
         if !self.check(&Token::RBracket) {
-            params.push(self.expect_ident()?);
-            while self.check(&Token::Comma) {
+            loop {
+                let name = self.expect_ident()?;
+                let default = if self.check(&Token::Assign) {
+                    self.advance();
+                    Some(self.parse_default_literal()?)
+                } else {
+                    if defaults.last().map_or(false, |d: &Option<Expr>| d.is_some()) {
+                        return Err(format!(
+                            "parameter '{}' without a default cannot follow parameters with defaults at line {}",
+                            name, self.current_line()
+                        ));
+                    }
+                    None
+                };
+                params.push(name);
+                defaults.push(default);
+                if !self.check(&Token::Comma) {
+                    break;
+                }
                 self.advance();
-                params.push(self.expect_ident()?);
             }
         }
-        Ok(params)
+        Ok((params, defaults))
+    }
+
+    /// Default parameter values are restricted to literals (int, float, str,
+    /// bool, optionally negated numbers) so evaluation order and scope never
+    /// come into question.
+    fn parse_default_literal(&mut self) -> Result<Expr, String> {
+        let line = self.current_line();
+        let expr = self.parse_expr()?;
+        let is_literal = |e: &Expr| matches!(e, Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Bool(_));
+        let ok = match &expr {
+            e if is_literal(e) => true,
+            Expr::UnaryOp { expr: inner, .. } => matches!(inner.as_ref(), Expr::Int(_) | Expr::Float(_)),
+            _ => false,
+        };
+        if !ok {
+            return Err(format!(
+                "default values must be literals (int, float, str, bool) at line {}",
+                line
+            ));
+        }
+        Ok(expr)
     }
 
     fn parse_arg_list(&mut self) -> Result<Vec<Expr>, String> {
         let mut args = Vec::new();
+        let mut seen_named = false;
         if !self.check(&Token::RBracket) {
-            args.push(self.parse_expr()?);
-            while self.check(&Token::Comma) {
+            loop {
+                // Named argument: ident = expr, or 'quoted key' = expr for
+                // map[...] keys with special characters (lookahead for the '=')
+                let named_key = match (self.peek(), self.peek_ahead(1)) {
+                    (Token::Ident(name), Token::Assign) => Some(name.clone()),
+                    (Token::Str(s), Token::Assign) => Some(s.clone()),
+                    _ => None,
+                };
+                if let Some(name) = named_key {
+                    self.advance(); // key
+                    self.advance(); // =
+                    let value = self.parse_expr()?;
+                    args.push(Expr::Named { name, value: Box::new(value) });
+                    seen_named = true;
+                } else {
+                    if seen_named {
+                        return Err(format!(
+                            "positional argument cannot follow a named argument at line {}",
+                            self.current_line()
+                        ));
+                    }
+                    args.push(self.parse_expr()?);
+                }
+                if !self.check(&Token::Comma) {
+                    break;
+                }
                 self.advance();
-                args.push(self.parse_expr()?);
             }
         }
         Ok(args)

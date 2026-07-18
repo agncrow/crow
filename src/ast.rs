@@ -14,10 +14,13 @@ pub enum Stmt {
         names: Vec<String>,
         values: Vec<Expr>,
     },
-    /// Function declaration: fn name[params] body
+    /// Function declaration: fn name[params] body.
+    /// `defaults[i]` is the default literal for `params[i]` (named parameters
+    /// must come after all positional ones and must have defaults).
     FnDecl {
         name: String,
         params: Vec<String>,
+        defaults: Vec<Option<Expr>>,
         body: Vec<Stmt>,
     },
     /// Return statement: return expr
@@ -112,6 +115,13 @@ pub enum Expr {
     Array(Vec<Expr>),
     /// Map literal: [key = val, ...] (bare-name keys) or ['key' = val, ...]
     Map(Vec<(Expr, Expr)>),
+    /// Named argument at a call site: f[x, axis = 0].
+    /// Only valid inside call argument lists; the lowering pass resolves every
+    /// occurrence to a positional argument before execution or codegen.
+    Named {
+        name: String,
+        value: Box<Expr>,
+    },
     /// For expression (assigned to variable): for x in iter body
     ForExpr {
         var: String,

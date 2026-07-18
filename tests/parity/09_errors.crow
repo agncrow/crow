@@ -1,0 +1,19 @@
+--- error values: creation, fields, propagation, auto-unwrap ---
+good = int['42']
+log[good.ok]
+log[good]
+bad = int['hello']
+log[bad.ok]
+fn validate[age]
+    if age lt 0
+        return error['age cannot be negative', 'validation']
+    return age
+r = validate[-5]
+log[r.ok]
+log[r.reason]
+log[r.kind]
+ok = validate[30]
+log[ok.ok]
+log[ok]
+v = int['21']
+log[v + v]
