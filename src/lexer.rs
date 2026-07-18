@@ -283,28 +283,21 @@ impl Lexer {
         Ok(())
     }
 
+    /// Comments run from `---` to the end of the line — no closing delimiter,
+    /// so an unclosed comment can never swallow the next line into code
+    /// (spec Design Note "Comments End at the Newline"). The newline itself is
+    /// left for the main loop to tokenize.
     fn skip_comment(&mut self) -> Result<(), String> {
-        let start_line = self.line;
         // skip opening ---
         self.pos += 3;
         self.col += 3;
 
-        // find closing ---
         loop {
             if self.pos >= self.source.len() {
-                return Err(format!(
-                    "unterminated comment starting at line {}",
-                    start_line
-                ));
-            }
-            if self.check_str("---") {
-                self.pos += 3;
-                self.col += 3;
                 return Ok(());
             }
             if self.source[self.pos] == '\n' {
-                self.line += 1;
-                self.col = 0; // will be incremented
+                return Ok(());
             }
             self.pos += 1;
             self.col += 1;

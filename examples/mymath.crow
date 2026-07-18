@@ -1,13 +1,12 @@
---- math utility module ---
+--- math utility module
 
 fn double[x]
-    return x * 2
+  return x * 2
 
 fn square[x]
-    return x * x
+  return x * x
 
 fn add[a, b]
-    return a + b
+  return a + b
 
 pi = 3.14159
-

@@ -1,26 +1,25 @@
---- benchmark: parallel (8 threads) ---
+--- benchmark: parallel (8 threads)
 
 fn count_primes[limit]
-    count = 0
-    n = 2
-    while n lte limit
-        is_prime = true
-        d = 2
-        while d * d lte n
-            if n % d eq 0
-                is_prime = false
-            d = d + 1
-        if is_prime
-            count = count + 1
-        n = n + 1
-    return count
+  count = 0
+  n = 2
+  while n lte limit
+    is_prime = true
+    d = 2
+    while d * d lte n
+      if n % d eq 0
+        is_prime = false
+      d = d + 1
+    if is_prime
+      count = count + 1
+    n = n + 1
+  return count
 
 tasks = [15000, 12000, 18000, 10000, 20000, 8000, 16000, 14000]
 
 cpu[8]
 log['running 8 prime-counting tasks on 8 threads...']
 results = for limit in tasks
-    count_primes[limit]
+  count_primes[limit]
 
 log['results: `results`']
-

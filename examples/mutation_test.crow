@@ -22,4 +22,3 @@ log['map after:', m]
 assert[m['a'] eq 99, 'map index mutation failed']
 
 log['all mutation tests passed']
-

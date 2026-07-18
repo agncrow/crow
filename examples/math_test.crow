@@ -1,7 +1,7 @@
 use math
 use math.stats
 
---- tensor creation ---
+--- tensor creation
 a = zeros[2, 3]
 log[a]
 
@@ -20,14 +20,14 @@ log[e]
 f = full[2, 2, 7.0]
 log[f]
 
---- element-wise math ---
+--- element-wise math
 g = exp[d]
 log[g]
 
 h = sqrt[b]
 log[h]
 
---- reductions ---
+--- reductions
 log[sum[b]]
 log[mean[b]]
 log[min[d]]
@@ -36,30 +36,30 @@ log[prod[linspace[1, 4, 4]]]
 log[argmax[d]]
 log[argmin[d]]
 
---- sorting and selection ---
+--- sorting and selection
 log[argsort[d]]
 log[topk[d, 3]]
 log[unique[linspace[1, 3, 5]]]
 
---- cumulative ops ---
+--- cumulative ops
 log[cumsum[linspace[1, 4, 4]]]
 log[cumprod[linspace[1, 4, 4]]]
 
---- combining ops ---
+--- combining ops
 log[concat[linspace[1, 3, 3], linspace[4, 5, 2]]]
 log[stack[[linspace[1, 3, 3], linspace[4, 6, 3]]]]
 
---- broadcasting ---
+--- broadcasting
 p = reshape[linspace[1, 3, 3], 3, 1]
 q = reshape[linspace[10, 40, 4], 1, 4]
 log[p + q]
 
---- advanced indexing ---
+--- advanced indexing
 data = linspace[10, 50, 5]
 idx = linspace[0, 2, 3]
 log[data[idx]]
 
---- shape ops ---
+--- shape ops
 i = reshape[b, 3, 2]
 log[i]
 
@@ -69,39 +69,39 @@ log[j]
 k = transpose[c]
 log[k]
 
---- linear algebra ---
+--- linear algebra
 m1 = eye[2]
 m2 = full[2, 2, 2.0]
 log[m1 * m2]
 log[det[m1]]
 log[inv[m1]]
 
---- norms ---
+--- norms
 log[norm[linspace[3, 4, 2]]]
 log[norm[linspace[1, 3, 3], 1]]
 
---- qr decomposition ---
+--- qr decomposition
 qr = qr[c]
 log[qr]
 
---- diag ---
+--- diag
 v = diag[c]
 log[v]
 
---- constants ---
+--- constants
 log[pi]
 log[e]
 log[inf]
 log[nan]
 
---- properties ---
+--- properties
 log[b.shape]
 log[b.dtype]
 log[b.device]
 log[b.grad]
 log[b.len]
 
---- random and distributions ---
+--- random and distributions
 seed[42]
 log[normal[0, 1, 3]]
 log[uniform[2, 5, 4]]
@@ -111,7 +111,7 @@ log[shuffle[linspace[1, 5, 5]]]
 log[choice[linspace[1, 10, 10], 3]]
 log[permutation[5]]
 
---- signal processing ---
+--- signal processing
 f = fft[linspace[1, 4, 4]]
 log[f]
 log[ifft[f[0], f[1]]]
@@ -119,14 +119,14 @@ log[conv[linspace[1, 3, 3], linspace[1, 2, 2]]]
 log[hamming[5]]
 log[hanning[5]]
 
---- special functions ---
+--- special functions
 log[gamma[linspace[1, 4, 4]]]
 log[erf[linspace[0, 2, 3]]]
 log[bessel[linspace[0, 3, 4], 0]]
 log[factorial[linspace[0, 5, 6]]]
 log[choose[linspace[5, 5, 3], linspace[0, 2, 3]]]
 
---- complex numbers ---
+--- complex numbers
 c = complex[3, 4]
 log[real[c]]
 log[imag[c]]
@@ -134,7 +134,7 @@ log[magnitude[c]]
 log[phase[c]]
 log[conjugate[c]]
 
---- sparse arrays ---
+--- sparse arrays
 s = sparse[eye[3]]
 log[s]
 log[type[s]]
@@ -148,7 +148,7 @@ log[d]
 x = solve[s2, [10, 12, 14]]
 log[x]
 
---- statistics ---
+--- statistics
 data = linspace[1, 10, 10]
 log['median:', median[data]]
 log['std:', std[data]]
@@ -161,6 +161,6 @@ log['cov:', cov[data, data2]]
 result = ttest[data, data2]
 log['ttest:', result]
 
---- distributed computing ---
+--- distributed computing
 nodes[1]
 log['distributed initialized']

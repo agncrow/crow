@@ -1,30 +1,29 @@
---- JSON parsing and encoding test ---
+--- JSON parsing and encoding test
 
---- Parse a JSON array ---
+--- Parse a JSON array
 items = json['[1, 2, 3]']
 log[items[0]]
 log[items[1]]
 log[items[2]]
 
---- Parse a JSON string ---
+--- Parse a JSON string
 s = json['"hello"']
 log[s]
 
---- Parse JSON true/false ---
+--- Parse JSON true/false
 b = json['true']
 log[b]
 
---- Invalid JSON returns error-value ---
+--- Invalid JSON returns error-value
 bad = json['not json']
 log[bad.status]
 log[bad.reason]
 
---- Encode an array back to JSON ---
+--- Encode an array back to JSON
 encoded = encode[items]
 log[encoded]
 
---- JSON null becomes error-value ---
+--- JSON null becomes error-value
 n = json['null']
 log[n.status]
 log[n.reason]
-

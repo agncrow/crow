@@ -1,4 +1,4 @@
---- math module: tensors, linalg, reductions ---
+--- math module: tensors, linalg, reductions
 use math
 z = zeros[3]
 log[z]

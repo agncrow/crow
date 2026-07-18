@@ -1,20 +1,19 @@
---- parallel for loops ---
---- for loops use par_iter by default ---
+--- parallel for loops
+--- for loops use par_iter by default
 
 items = [1, 2, 3, 4, 5]
 
---- this runs in parallel ---
+--- this runs in parallel
 for x in items
-    log['`x`']
+  log['`x`']
 
---- for-as-expression also runs in parallel ---
+--- for-as-expression also runs in parallel
 doubled = for x in items
-    x * 2
+  x * 2
 log['doubled: `doubled`']
 
---- sequential fallback: body mutates outer variable ---
+--- sequential fallback: body mutates outer variable
 total = 0
 for x in items
-    total = total + x
+  total = total + x
 log['total: `total`']
-

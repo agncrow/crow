@@ -1,4 +1,4 @@
---- scalars: arithmetic, division, power, interpolation ---
+--- scalars: arithmetic, division, power, interpolation
 x = 10
 y = 3
 log[x + y]
@@ -17,7 +17,7 @@ log['1 + 2 = `1 + 2`']
 log['tab\there']
 log['it\'s fine']
 log[(2 + 3) * 4]
---- int/float reassignment: a variable that has held a float is a float ---
+--- int/float reassignment: a variable that has held a float is a float
 v = 10
 v = 2.5
 v = 1

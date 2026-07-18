@@ -1,17 +1,17 @@
---- functions: implicit return, early return, first-class, then ---
+--- functions: implicit return, early return, first-class, then
 fn add[a, b]
-    a + b
+  a + b
 fn safe_div[a, b]
-    if b eq 0
-        return -1
-    a / b
+  if b eq 0
+    return -1
+  a / b
 log[add[3, 4]]
 log[safe_div[10, 2]]
 log[safe_div[10, 0]]
 fn double[x]
-    return x * 2
+  return x * 2
 fn apply[f, x]
-    return f[x]
+  return f[x]
 log[apply[double, 5]]
 s = '  hi there  '
 log[s then trim]

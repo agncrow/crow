@@ -1,4 +1,4 @@
---- 2-D tensors from literals: unified arrays made real ---
+--- 2-D tensors from literals: unified arrays made real
 use math
 m = [[1, 2], [3, 4]]
 log[m]
@@ -14,16 +14,16 @@ r = m[0] + m[1]
 log[r]
 p = m * m
 log[p]
---- row iteration ---
+--- row iteration
 totals = for row in m
-    sum[row]
+  sum[row]
 log[totals]
---- comparison masks on tensors ---
+--- comparison masks on tensors
 x = [1, 2, 3, 4]
 log[x gt 2]
 log[x eq 3]
 log[(x gt 1) and (x lt 4)]
---- growing: push rows, concat, stack ---
+--- growing: push rows, concat, stack
 m2 = push[m, [5, 6]]
 log[m2.shape]
 log[m2[2]]

@@ -1,5 +1,5 @@
---- conversion, json, regex, hashing ---
---- json object literals via escaped braces ---
+--- conversion, json, regex, hashing
+--- json object literals via escaped braces
 log[int[3.99]]
 log[float[3]]
 log[str[42]]

@@ -1,56 +1,56 @@
---- DB module demo ---
---- Uses in-memory SQLite for testing ---
+--- DB module demo
+--- Uses in-memory SQLite for testing
 
 use db
 
---- Connect ---
+--- Connect
 conn = connect['sqlite://:memory:']
 log['connected to SQLite']
 
---- Create table ---
+--- Create table
 exec[conn, 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)']
 log['table created']
 
---- Insert rows ---
+--- Insert rows
 exec[conn, 'INSERT INTO users VALUES (1, ?, ?)', ['alice', 30]]
 exec[conn, 'INSERT INTO users VALUES (2, ?, ?)', ['bob', 25]]
 exec[conn, 'INSERT INTO users VALUES (3, ?, ?)', ['carol', 35]]
 log['3 rows inserted']
 
---- Query all ---
+--- Query all
 df = query[conn, 'SELECT * FROM users ORDER BY id']
 log['all users:']
 log[df]
 
---- Query with params ---
+--- Query with params
 young = query[conn, 'SELECT name FROM users WHERE age < 30']
 log['young users (age < 30):']
 log[young]
 
---- Exec returns affected row count ---
+--- Exec returns affected row count
 n = exec[conn, 'UPDATE users SET age = age + 1 WHERE name = ?', ['alice']]
 log['updated `n` row(s)']
 assert[n eq 1, 'should update 1 row']
 
---- Verify update ---
+--- Verify update
 alice = query[conn, 'SELECT age FROM users WHERE name = ?', ['alice']]
 log['alice after birthday:']
 log[alice]
 
---- Transaction: all-or-nothing ---
+--- Transaction: all-or-nothing
 fn transfer[tx]
-    exec[tx, 'UPDATE users SET age = age - 5 WHERE name = ?', ['bob']]
-    exec[tx, 'UPDATE users SET age = age + 5 WHERE name = ?', ['carol']]
+  exec[tx, 'UPDATE users SET age = age - 5 WHERE name = ?', ['bob']]
+  exec[tx, 'UPDATE users SET age = age + 5 WHERE name = ?', ['carol']]
 
 transact[conn, transfer]
 log['transaction committed']
 
---- Verify transaction ---
+--- Verify transaction
 final = query[conn, 'SELECT name, age FROM users ORDER BY id']
 log['after transaction:']
 log[final]
 
---- Module-prefixed syntax ---
+--- Module-prefixed syntax
 conn2 = db.connect['sqlite://:memory:']
 db.exec[conn2, 'CREATE TABLE t (x INTEGER)']
 db.exec[conn2, 'INSERT INTO t VALUES (42)']
@@ -59,4 +59,3 @@ log['db.prefixed result:']
 log[result]
 
 log['all db tests passed']
-

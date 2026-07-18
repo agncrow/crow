@@ -1,57 +1,56 @@
---- Trading Dashboard ---
+--- Trading Dashboard
 use web, ui, frame, math
 
---- Reactive data sources ---
+--- Reactive data sources
 positions = poll['/api/positions', 5]
 trades = poll['/api/trades', 5]
 playbooks = fetch['/api/playbooks']
 
---- Reactive UI state ---
+--- Reactive UI state
 filter_pb = 'all'
 min_vol = 0
 
---- Event handlers ---
+--- Event handlers
 fn clear_filter[]
-    filter_pb = 'all'
-    min_vol = 0
+  filter_pb = 'all'
+  min_vol = 0
 
---- Render ---
+--- Render
 fn render[]
-    today = filter[trades, trades.date eq today[]]
-    pnl = sum[today.pnl]
-    count = len[today]
+  today = filter[trades, trades.date eq today[]]
+  pnl = sum[today.pnl]
+  count = len[today]
 
-    filtered = positions
-    if filter_pb ne 'all'
-        filtered = filter[filtered, filtered.playbook_code eq filter_pb]
-    if min_vol gt 0
-        filtered = filter[filtered, filtered.vol gte min_vol]
-    filtered = sort[filtered, 'pnl', desc = true]
-    top = head[filtered, 50]
+  filtered = positions
+  if filter_pb ne 'all'
+    filtered = filter[filtered, filtered.playbook_code eq filter_pb]
+  if min_vol gt 0
+    filtered = filter[filtered, filtered.vol gte min_vol]
+  filtered = sort[filtered, 'pnl', desc = true]
+  top = head[filtered, 50]
 
-    by_playbook = group[today, 'playbook_code', ['pnl', 'sum'], ['pnl', 'count'], ['pnl', 'mean']]
+  by_playbook = group[today, 'playbook_code', ['pnl', 'sum'], ['pnl', 'count'], ['pnl', 'mean']]
 
-    return div[
-        h1['Trading Dashboard'],
-        div[
-            div['P&L: `pnl`'],
-            div['Trades: `count`'],
-            div['Positions: `len[positions]`'],
-            class = 'stats'
-        ],
-        div[
-            field['Min Volume', min_vol],
-            select[unique[positions.playbook_code], filter_pb],
-            class = 'controls'
-        ],
-        h2['Positions'],
-        table[top],
-        h2['P&L by Playbook'],
-        table[by_playbook],
-        button['Reset Filters', click = clear_filter],
-        class = 'dashboard'
-    ]
+  return div[
+    h1['Trading Dashboard'],
+    div[
+      div['P&L: `pnl`'],
+      div['Trades: `count`'],
+      div['Positions: `len[positions]`'],
+      class = 'stats'
+    ],
+    div[
+      field['Min Volume', min_vol],
+      select[unique[positions.playbook_code], filter_pb],
+      class = 'controls'
+    ],
+    h2['Positions'],
+    table[top],
+    h2['P&L by Playbook'],
+    table[by_playbook],
+    button['Reset Filters', click = clear_filter],
+    class = 'dashboard'
+  ]
 
 serve[3000]
 page['/', render]
-
