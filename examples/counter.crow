@@ -1,26 +1,23 @@
 --- Counter: live UI example ---
---- Demonstrates serve[], page[], and ui element functions ---
+--- Demonstrates reactive variables and function-reference events ---
 
 use web, ui
 
---- Render function: state -> VNode tree ---
-fn render[state]
-    count = state.get['count', 0]
+count = 0
+
+fn inc[]
+    count = count + 1
+
+fn dec[]
+    count = count - 1
+
+fn render[]
     return div[
         h1['Count: {count}'],
-        button[[click = 'inc'], '+'],
-        button[[click = 'dec'], '-']
+        button['+', click = inc],
+        button['-', click = dec]
     ]
 
---- Event handler: mutate state based on event ---
-fn handle[state, event, value]
-    count = state.get['count', 0]
-    if event eq 'inc'
-        state.set['count', count + 1]
-    else if event eq 'dec'
-        state.set['count', count - 1]
-
---- Serve ---
 serve[3000]
-page['/', render, handle]
+page['/', render]
 

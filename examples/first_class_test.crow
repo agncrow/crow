@@ -49,7 +49,7 @@ fn add[a, b]
 fn mul[a, b]
     return a * b
 
-ops_map = [add = add, mul = mul]
+ops_map = map[add = add, mul = mul]
 r1 = ops_map.add
 log['map add: {r1[3, 4]}']
 r2 = ops_map.mul

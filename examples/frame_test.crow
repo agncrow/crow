@@ -1,4 +1,4 @@
---- Frame module test (bare-name column references) ---
+--- Frame module test (string column references) ---
 
 use frame
 
@@ -9,27 +9,27 @@ log[df.shape]
 log[df.columns]
 log[df.dtypes]
 
---- Select columns (bare names) ---
-sub = select[df, [name, age]]
+--- Select columns ---
+sub = select[df, ['name', 'age']]
 log[sub]
 
 --- Head / tail ---
 top2 = head[df, 2]
 log[top2]
 
---- Sort (bare name) ---
-sorted = sort[df, age]
+--- Sort ---
+sorted = sort[df, 'age']
 log[sorted]
 
---- Rename (bare names) ---
-renamed = rename[df, salary, pay]
+--- Rename ---
+renamed = rename[df, 'salary', 'pay']
 log[renamed]
 
 --- Stats ---
 log[stats[df]]
 
---- Fill missing (bare name) ---
-filled = fill[df, age, 0]
+--- Fill missing ---
+filled = fill[df, 'age', 0]
 log[filled]
 
 --- Column access ---

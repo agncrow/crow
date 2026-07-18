@@ -1,0 +1,390 @@
+--- =============================================================== ---
+--- DESIGN SKETCH - Phase 3-5 UI framework target (NOT RUNNABLE)    ---
+--- Moved from examples/: uses planned features that do not exist   ---
+--- yet: chart module, table column options, paginate, flash,       ---
+--- frame row constructor, multi-page routing.                      ---
+--- Syntax follows current decisions: children first, named         ---
+--- attributes trailing, map[...] constructor.                      ---
+--- See docs/ui-framework.md and docs/roadmap.md P8.                ---
+--- =============================================================== ---
+
+use web, ui, chart, frame
+
+--- ============================================================ ---
+---                     REUSABLE COMPONENTS                      ---
+--- ============================================================ ---
+
+fn nav_link[label, path, current]
+    cls = ''
+    if path eq current
+        cls = 'active'
+    return a[label, href = path, class = cls]
+
+fn nav_bar[current]
+    return nav[
+        nav_link['Home', '/', current],
+        nav_link['Forms', '/forms', current],
+        nav_link['Data', '/data', current],
+        nav_link['Charts', '/charts', current],
+        class = 'nav'
+    ]
+
+fn card[title, value]
+    return div[
+        h3[title],
+        p[str[value], class = 'value'],
+        class = 'card'
+    ]
+
+fn section_title[title, subtitle]
+    return div[
+        h2[title],
+        p[subtitle, class = 'subtitle'],
+        class = 'section-header'
+    ]
+
+fn confirm_modal[show, title, message]
+    if show
+        return div[
+            div[
+                h3[title],
+                p[message],
+                div[
+                    button['Confirm', click = 'confirm_action'],
+                    button['Cancel', click = 'cancel_modal'],
+                    class = 'modal-actions'
+                ],
+                class = 'modal'
+            ],
+            class = 'modal-overlay'
+        ]
+
+--- ============================================================ ---
+---                   HOME PAGE: Layout + Text                   ---
+--- ============================================================ ---
+
+fn home_render[state]
+    count = state.get['count', 0]
+    show_modal = state.get['show_modal', false]
+    flash_msg = state.get['flash', '']
+    flash_type = state.get['flash_type', 'success']
+    return div[
+        nav_bar['/'],
+        main[
+            section_title['Crow UI Demo', 'All UI elements in one page'],
+
+            --- Flash messages ---
+            if len[flash_msg] gt 0
+                div[flash_msg, class = 'flash {flash_type}'],
+
+            --- Cards row ---
+            div[
+                card['Counter', count],
+                card['Framework', 'Crow'],
+                card['Pattern', 'LiveView'],
+                class = 'row'
+            ],
+
+            --- Text elements ---
+            section[
+                h1['Heading 1'],
+                h2['Heading 2'],
+                h3['Heading 3'],
+                h4['Heading 4'],
+                h5['Heading 5'],
+                h6['Heading 6'],
+                p['A paragraph of text demonstrating the p element.'],
+                pre[code['fn hello[]\n    log[\'hello world\']']],
+                class = 'text-demo'
+            ],
+
+            --- Buttons and events ---
+            div[
+                button['+ Increment', click = 'increment'],
+                button['- Decrement', click = 'decrement'],
+                button['Reset', click = 'reset'],
+                button['Flash Message', click = 'show_flash'],
+                button['Open Modal', click = 'open_modal'],
+                class = 'button-row'
+            ],
+
+            --- Lists ---
+            div[
+                div[
+                    h3['Ordered List'],
+                    ol[
+                        li['First item'],
+                        li['Second item'],
+                        li['Third item']
+                    ]
+                ],
+                div[
+                    h3['Unordered List'],
+                    ul[
+                        li['Alpha'],
+                        li['Beta'],
+                        li['Gamma']
+                    ]
+                ],
+                class = 'row'
+            ],
+
+            --- Conditional rendering ---
+            div[
+                h3['Conditional Rendering'],
+                if count gt 5
+                    p['Counter is above 5!', class = 'success']
+                else if count lt 0
+                    p['Counter is negative!', class = 'error']
+                else
+                    p['Counter is between 0 and 5'],
+                class = 'conditional'
+            ],
+
+            --- Dynamic list from state ---
+            div[
+                h3['Dynamic List (from state)'],
+                ul[
+                    for i in range[count]
+                        li['Item {i + 1}']
+                ],
+                class = 'dynamic-list'
+            ],
+
+            --- Modal ---
+            confirm_modal[show_modal, 'Confirm Action', 'Are you sure you want to proceed?']
+        ],
+        footer[p['Built with Crow']],
+        class = 'app'
+    ]
+
+fn home_handle[state, event, value]
+    count = state.get['count', 0]
+    if event eq 'increment'
+        state.set['count', count + 1]
+    else if event eq 'decrement'
+        state.set['count', count - 1]
+    else if event eq 'reset'
+        state.set['count', 0]
+    else if event eq 'show_flash'
+        flash[state, 'This is a flash message!', 3000]
+    else if event eq 'open_modal'
+        state.set['show_modal', true]
+    else if event eq 'confirm_action'
+        state.set['show_modal', false]
+        flash[state, 'Action confirmed!', 3000]
+    else if event eq 'cancel_modal'
+        state.set['show_modal', false]
+
+page['/', home_render, home_handle]
+
+--- ============================================================ ---
+---                  FORMS PAGE: Inputs + Binding                ---
+--- ============================================================ ---
+
+fn forms_render[state]
+    name = state.get['name', '']
+    email = state.get['email', '']
+    role = state.get['role', 'viewer']
+    bio = state.get['bio', '']
+    error = state.get['error', '']
+    submitted = state.get['submitted', false]
+    return div[
+        nav_bar['/forms'],
+        main[
+            section_title['Form Elements', 'Two-way binding, validation, and submit'],
+
+            --- Two-way bound fields ---
+            form[
+                field['Name', name],
+                field['Email', email],
+                select[['viewer', 'editor', 'admin'], role],
+
+                --- Error display ---
+                if len[error] gt 0
+                    p[error, class = 'error'],
+
+                --- Submit button ---
+                button['Submit', click = 'submit_form'],
+                button['Clear', click = 'clear_form'],
+                class = 'demo-form'
+            ],
+
+            --- Live preview of form values ---
+            if submitted
+                div[
+                    h3['Submitted Data'],
+                    p['Name: {name}'],
+                    p['Email: {email}'],
+                    p['Role: {role}'],
+                    class = 'form-preview'
+                ]
+            else
+                div[
+                    h3['Live Preview'],
+                    p['Name: {name}'],
+                    p['Email: {email}'],
+                    p['Role: {role}'],
+                    class = 'form-preview'
+                ]
+        ],
+        footer[p['Built with Crow']],
+        class = 'app'
+    ]
+
+fn forms_handle[state, event, value]
+    if event eq 'submit_form'
+        name = state.get['name', '']
+        email = state.get['email', '']
+        if len[name] eq 0
+            state.set['error', 'Name is required']
+        else if len[email] eq 0
+            state.set['error', 'Email is required']
+        else
+            state.set['error', '']
+            state.set['submitted', true]
+            flash[state, 'Form submitted successfully!', 3000]
+    else if event eq 'clear_form'
+        state.set['name', '']
+        state.set['email', '']
+        state.set['role', 'viewer']
+        state.set['bio', '']
+        state.set['error', '']
+        state.set['submitted', false]
+
+page['/forms', forms_render, forms_handle]
+
+--- ============================================================ ---
+---                DATA PAGE: Tables + Pagination                ---
+--- ============================================================ ---
+
+fn data_render[state]
+    pg = state.get['page', 1]
+    sort_col = state.get['sort_col', 'symbol']
+    selected = state.get['selected', '']
+    --- frame row constructor (planned): builds a frame from row maps ---
+    items = state.get['items', frame[
+        map[symbol = 'AAPL', qty = 100, entry = 150.25, pnl = 320.50],
+        map[symbol = 'GOOG', qty = 50, entry = 2800.00, pnl = -150.00],
+        map[symbol = 'MSFT', qty = 200, entry = 380.00, pnl = 540.00],
+        map[symbol = 'TSLA', qty = 75, entry = 220.00, pnl = -80.00],
+        map[symbol = 'AMZN', qty = 30, entry = 175.50, pnl = 210.00],
+        map[symbol = 'META', qty = 120, entry = 480.00, pnl = 95.00]
+    ]]
+    return div[
+        nav_bar['/data'],
+        main[
+            section_title['Data Display', 'Tables with sorting, row clicks, and pagination'],
+
+            --- Stats cards ---
+            div[
+                card['Positions', len[items]],
+                card['Total P&L', sum[items.pnl]],
+                card['Current Page', pg],
+                class = 'row'
+            ],
+
+            --- Table with column config + events (planned Phase 4 options) ---
+            h3['Positions Table (click headers to sort, rows to select)'],
+            table[items,
+                cols = [
+                    map[key = 'symbol', label = 'Symbol'],
+                    map[key = 'qty', label = 'Quantity'],
+                    map[key = 'entry', label = 'Entry Price'],
+                    map[key = 'pnl', label = 'P&L']
+                ],
+                sort = 'sort_table',
+                row_click = 'select_row'
+            ],
+
+            --- Selected row info ---
+            if len[selected] gt 0
+                div[
+                    h3['Selected'],
+                    p['You selected: {selected}'],
+                    class = 'selection'
+                ],
+
+            --- Pagination (planned) ---
+            paginate[state, len[items], 3],
+
+            --- Sorting info ---
+            p['Sorted by: {sort_col}', class = 'info']
+        ],
+        footer[p['Built with Crow']],
+        class = 'app'
+    ]
+
+fn data_handle[state, event, value]
+    if event eq 'sort_table'
+        state.set['sort_col', value]
+    else if event eq 'select_row'
+        state.set['selected', str[value]]
+
+page['/data', data_render, data_handle]
+
+--- ============================================================ ---
+---                 CHARTS PAGE: SVG + Live Charts               ---
+--- ============================================================ ---
+
+fn charts_render[state]
+    ohlcv = state.get['ohlcv', frame[
+        map[time = 1000, open = 150, high = 158, low = 148, close = 155, volume = 12000],
+        map[time = 1001, open = 155, high = 162, low = 153, close = 160, volume = 15000],
+        map[time = 1002, open = 160, high = 165, low = 157, close = 158, volume = 11000],
+        map[time = 1003, open = 158, high = 163, low = 155, close = 162, volume = 13000],
+        map[time = 1004, open = 162, high = 170, low = 160, close = 168, volume = 18000],
+        map[time = 1005, open = 168, high = 172, low = 164, close = 166, volume = 14000]
+    ]]
+    tf = state.get['timeframe', '1h']
+    return div[
+        nav_bar['/charts'],
+        main[
+            section_title['Charts', 'SVG charts and interactive live charts'],
+
+            --- Timeframe selector ---
+            div[
+                h3['Timeframe'],
+                select[['1m', '5m', '15m', '1h', '4h', '1d'], tf],
+                class = 'controls'
+            ],
+
+            --- Tier 1: Server-rendered SVG charts (planned chart module) ---
+            div[
+                h3['Candlestick Chart (SVG)'],
+                chart.candle[ohlcv, width = 800, height = 400],
+
+                h3['Volume Chart (SVG)'],
+                chart.volume[ohlcv, width = 800, height = 100],
+
+                h3['Line Chart (SVG)'],
+                chart.line[ohlcv.close, color = '#2196f3', width = 800, height = 200],
+                class = 'chart-section'
+            ],
+
+            --- Tier 2: Interactive live chart (planned) ---
+            div[
+                h3['Interactive Chart (Live)'],
+                chart.live[ohlcv, height = 400, timeframe = tf,
+                    chart.indicator['volume'],
+                    chart.indicator['macd_band']
+                ],
+                class = 'chart-section'
+            ]
+        ],
+        footer[p['Built with Crow']],
+        class = 'app'
+    ]
+
+fn charts_handle[state, event, value]
+    --- timeframe changes handled by two-way binding on select ---
+    --- no explicit events needed ---
+    state.get['timeframe', '1h']
+
+page['/charts', charts_render, charts_handle]
+
+--- ============================================================ ---
+---                         SERVER                               ---
+--- ============================================================ ---
+
+serve[3000]
