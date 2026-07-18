@@ -1,13 +1,13 @@
---- ===================================================== ---
---- End-to-End Machine Learning in Crow                    ---
---- ===================================================== ---
+--- =====================================================
+--- End-to-End Machine Learning in Crow
+--- =====================================================
 
 use math
 use math.nn
 
---- ===================================================== ---
---- Part 1: Linear Regression with Automatic Gradients     ---
---- ===================================================== ---
+--- =====================================================
+--- Part 1: Linear Regression with Automatic Gradients
+--- =====================================================
 log['=== Part 1: Linear Regression (autograd) ===']
 log['Learning y = 2x + 0.5 from 4 data points']
 
@@ -35,18 +35,18 @@ log['b = `b` (target: 0.5)']
 log['loss = `mse_loss[w, b]`']
 log['']
 
---- ===================================================== ---
---- Part 2: XOR Neural Network (manual backprop)           ---
---- 2-layer MLP: 2 inputs -> 4 hidden (sigmoid) -> 1 out  ---
---- ===================================================== ---
+--- =====================================================
+--- Part 2: XOR Neural Network (manual backprop)
+--- 2-layer MLP: 2 inputs -> 4 hidden (sigmoid) -> 1 out
+--- =====================================================
 log['=== Part 2: XOR Neural Network ===']
 log['2-layer MLP with sigmoid, trained with manual backprop']
 
---- training data: XOR truth table ---
+--- training data: XOR truth table
 x = reshape[[0, 0, 0, 1, 1, 0, 1, 1], 4, 2]
 y = reshape[[0, 1, 1, 0], 4, 1]
 
---- initialize weights (small random) ---
+--- initialize weights (small random)
 w1 = randn[2, 4] * 0.5
 b1 = zeros[4]
 w2 = randn[4, 1] * 0.5
@@ -57,14 +57,14 @@ sum_batch = ones[1, 4]
 
 i = 0
 while i lt 10000
-  --- forward pass ---
+  --- forward pass
   z1 = x * w1 + b1
   h = sigmoid[z1]
   z2 = h * w2 + b2
   pred = sigmoid[z2]
   loss = mse[pred, y]
 
-  --- backward pass (chain rule) ---
+  --- backward pass (chain rule)
   dpred = (pred - y) * 0.5
   dz2 = dpred .* pred .* (1 - pred)
   dw2 = transpose[h] * dz2
@@ -74,7 +74,7 @@ while i lt 10000
   dw1 = transpose[x] * dz1
   db1 = reshape[sum_batch * dz1, 4] * 0.25
 
-  --- gradient descent update ---
+  --- gradient descent update
   w1 = w1 - lr * dw1
   b1 = b1 - lr * db1
   w2 = w2 - lr * dw2
@@ -85,7 +85,7 @@ while i lt 10000
 
   i = i + 1
 
---- final predictions ---
+--- final predictions
 z1 = x * w1 + b1
 h = sigmoid[z1]
 z2 = h * w2 + b2
@@ -94,4 +94,3 @@ log['']
 log['predictions (target [0, 1, 1, 0]):']
 log[pred]
 log['final loss: `mse[pred, y]`']
-

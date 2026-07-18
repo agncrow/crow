@@ -1,14 +1,14 @@
---- Math library performance benchmark ---
---- Compare: crow run -i examples/bench_math.crow ---
----          crow build examples/bench_math.crow && ./bench_math ---
+--- Math library performance benchmark
+--- Compare: crow run -i examples/bench_math.crow
+---          crow build examples/bench_math.crow && ./bench_math
 
 use math
 
---- helper: run op n times, report average ---
+--- helper: run op n times, report average
 fn bench[label, n]
   log['`label`: n=`n`']
 
---- Tensor Creation ---
+--- Tensor Creation
 log['=== Tensor Creation ===']
 
 t0 = time[]
@@ -43,7 +43,7 @@ while i lt 100
 t1 = time[]
 log['randn[1000,1000] x100: `t1 - t0`s']
 
---- Element-wise Operations ---
+--- Element-wise Operations
 log['=== Element-wise Ops (1M elements) ===']
 a = randn[1000, 1000]
 
@@ -87,7 +87,7 @@ while i lt 10
 t1 = time[]
 log['mul x10: `t1 - t0`s']
 
---- Reductions ---
+--- Reductions
 log['=== Reductions (1M elements) ===']
 
 t0 = time[]
@@ -122,7 +122,7 @@ while i lt 100
 t1 = time[]
 log['max x100: `t1 - t0`s']
 
---- Matrix Multiply ---
+--- Matrix Multiply
 log['=== Matmul ===']
 
 m100 = randn[100, 100]
@@ -152,7 +152,7 @@ while i lt 3
 t1 = time[]
 log['matmul 1000x1000 x3: `t1 - t0`s']
 
---- Linear Algebra ---
+--- Linear Algebra
 log['=== Linalg ===']
 
 m200 = randn[200, 200]
@@ -199,4 +199,3 @@ t1 = time[]
 log['svd 200x200 x3: `t1 - t0`s']
 
 log['=== done ===']
-

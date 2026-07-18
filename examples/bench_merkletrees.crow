@@ -1,45 +1,45 @@
---- merkletrees benchmark ---
---- tests: recursion, structs, integer arithmetic ---
---- uses a simple numeric hash since Crow has no hash function ---
+--- merkletrees benchmark
+--- tests: recursion, structs, integer arithmetic
+--- uses a simple numeric hash since Crow has no hash function
 
 struct MerkleNode [hash, left, right]
 
---- simple integer hash: combine two values ---
+--- simple integer hash: combine two values
 fn hash_combine[a, b]
-    return (a * 31 + b) % 1000000007
+  return (a * 31 + b) % 1000000007
 
---- build a merkle tree of given depth with sequential leaf values ---
+--- build a merkle tree of given depth with sequential leaf values
 fn build_tree[depth, offset]
-    if depth eq 0
-        return MerkleNode[offset, 0, 0]
-    half = 1
-    i = 0
-    while i lt depth - 1
-        half = half * 2
-        i = i + 1
-    left = build_tree[depth - 1, offset]
-    right = build_tree[depth - 1, offset + half]
-    h = hash_combine[left.hash, right.hash]
-    return MerkleNode[h, left, right]
+  if depth eq 0
+    return MerkleNode[offset, 0, 0]
+  half = 1
+  i = 0
+  while i lt depth - 1
+    half = half * 2
+    i = i + 1
+  left = build_tree[depth - 1, offset]
+  right = build_tree[depth - 1, offset + half]
+  h = hash_combine[left.hash, right.hash]
+  return MerkleNode[h, left, right]
 
---- verify a merkle tree by recomputing hashes ---
+--- verify a merkle tree by recomputing hashes
 fn verify_tree[node, depth]
-    if depth eq 0
-        return true
-    expected = hash_combine[node.left.hash, node.right.hash]
-    if expected ne node.hash
-        return false
-    left_ok = verify_tree[node.left, depth - 1]
-    right_ok = verify_tree[node.right, depth - 1]
-    return left_ok and right_ok
+  if depth eq 0
+    return true
+  expected = hash_combine[node.left.hash, node.right.hash]
+  if expected ne node.hash
+    return false
+  left_ok = verify_tree[node.left, depth - 1]
+  right_ok = verify_tree[node.right, depth - 1]
+  return left_ok and right_ok
 
---- count nodes in tree ---
+--- count nodes in tree
 fn count_nodes[node]
-    if node.left eq 0
-        return 1
-    return 1 + count_nodes[node.left] + count_nodes[node.right]
+  if node.left eq 0
+    return 1
+  return 1 + count_nodes[node.left] + count_nodes[node.right]
 
---- run benchmark ---
+--- run benchmark
 log['building merkle tree depth 5...']
 tree5 = build_tree[5, 1]
 log['root hash: `tree5.hash`']
@@ -59,4 +59,3 @@ log['nodes: `count_nodes[tree10]`']
 log['verified: `verify_tree[tree10, 10]`']
 
 log['merkletrees benchmark complete']
-

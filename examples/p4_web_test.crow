@@ -1,56 +1,56 @@
---- P4 Web Modules Test ---
+--- P4 Web Modules Test
 
---- CORS ---
+--- CORS
 app = []
 app = cors[app]
 log['cors permissive:', app]
 
---- Sessions ---
+--- Sessions
 store = sessions[]
 log['sessions:', store]
 
---- Templates ---
+--- Templates
 t = templates['./templates/**/*']
 log['templates:', t]
 
---- Render ---
+--- Render
 data = map[name = 'crow']
 result = render[t, 'index', data]
 log['render:', result]
 
---- Cache ---
+--- Cache
 c = cache[100]
 log['cache:', c]
 
 c2 = cache[100, 60]
 log['cache with ttl:', c2]
 
---- Rate limiter ---
+--- Rate limiter
 limiter = limit[100, 60]
 log['limiter:', limiter]
 
---- Uploads ---
+--- Uploads
 req = []
 files = uploads[req]
 log['uploads:', files]
 
---- SSE ---
+--- SSE
 fn sse_handler[req]
-    return 'data'
+  return 'data'
 
 app2 = []
 app2 = sse[app2, '/events', sse_handler]
 log['sse app:', app2]
 
---- WebSocket ---
+--- WebSocket
 fn ws_handler[req]
-    return 'ok'
+  return 'ok'
 
 app3 = []
 app3 = ws[app3, '/ws', ws_handler]
 log['ws app:', app3]
 
---- WebSocket client ---
+--- WebSocket client
 sock = connect['ws://localhost:3000']
 log['connect:', sock]
 
@@ -63,22 +63,21 @@ log['recv:', msg]
 closed = close[sock]
 log['close:', closed]
 
---- LiveView ---
+--- LiveView
 fn live_handler[req]
-    return 'ok'
+  return 'ok'
 
 app4 = []
 app4 = live[app4, '/live', live_handler]
 log['live app:', app4]
 
---- Static files ---
+--- Static files
 app5 = []
 app5 = static_dir[app5, '/assets', './public']
 log['static_dir app:', app5]
 
---- SMTP ---
+--- SMTP
 mailer = smtp['smtp.example.com', 587, 'user', 'pass']
 log['smtp:', mailer]
 
 log['P4 Web Test Complete']
-

@@ -1,4 +1,4 @@
---- test module imports ---
+--- test module imports
 
 use mymath
 
@@ -6,4 +6,3 @@ log['double 5:', mymath.double[5]]
 log['square 4:', mymath.square[4]]
 log['add 3 7:', mymath.add[3, 7]]
 log['pi:', mymath.pi]
-

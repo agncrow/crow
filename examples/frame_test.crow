@@ -1,37 +1,37 @@
---- Frame module test (string column references) ---
+--- Frame module test (string column references)
 
 use frame
 
---- Load CSV ---
+--- Load CSV
 df = load['examples/test_data.csv']
 log[df]
 log[df.shape]
 log[df.columns]
 log[df.dtypes]
 
---- Select columns ---
+--- Select columns
 sub = select[df, ['name', 'age']]
 log[sub]
 
---- Head / tail ---
+--- Head / tail
 top2 = head[df, 2]
 log[top2]
 
---- Sort ---
+--- Sort
 sorted = sort[df, 'age']
 log[sorted]
 
---- Rename ---
+--- Rename
 renamed = rename[df, 'salary', 'pay']
 log[renamed]
 
---- Stats ---
+--- Stats
 log[stats[df]]
 
---- Fill missing ---
+--- Fill missing
 filled = fill[df, 'age', 0]
 log[filled]
 
---- Column access ---
+--- Column access
 ages = df.age
 log[ages]

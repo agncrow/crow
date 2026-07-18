@@ -1,4 +1,4 @@
---- string builtins and indexing ---
+--- string builtins and indexing
 s = '  hello world  '
 log[trim[s]]
 log[upper['crow']]

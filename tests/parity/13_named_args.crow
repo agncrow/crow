@@ -1,8 +1,8 @@
---- named arguments: defaults, by-name, by-position, map constructor ---
+--- named arguments: defaults, by-name, by-position, map constructor
 use math
 use frame
 fn train[data, lr = 0.5, epochs = 10]
-    data * lr * epochs
+  data * lr * epochs
 log[train[2]]
 log[train[2, lr = 0.25]]
 log[train[2, epochs = 3]]
@@ -10,11 +10,11 @@ log[train[2, 0.25, 3]]
 log[train[2, lr = 0.25, epochs = 2]]
 log[train[2, epochs = 2, lr = 0.25]]
 fn greet[name, punct = '!']
-    return 'hi `name``punct`'
+  return 'hi `name``punct`'
 log[greet['crow']]
 log[greet['crow', punct = '?']]
---- map constructor: variadic named args ---
---- maps are homogeneous: one value type per map ---
+--- map constructor: variadic named args
+--- maps are homogeneous: one value type per map
 person = map[name = 'crow', species = 'bird']
 log[person.name]
 log[person.species]
@@ -24,7 +24,7 @@ counts = map[a = 1, b = 2]
 log[counts.a + counts.b]
 empty = map[]
 log[len[empty]]
---- builtin named params ---
+--- builtin named params
 m = reshape[linspace[1, 4, 4], 2, 2]
 log[sum[m, axis = 0]]
 log[sum[m]]

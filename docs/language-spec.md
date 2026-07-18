@@ -1789,18 +1789,24 @@ result = utils.double[5]    --- 10 ---
 
 ## 10. Comments
 
-Comments start with `---` and end with `---`. Used for both single and multi-line.
+A comment starts with `---` and runs to the end of the line. There is no closing delimiter.
 
 ```
---- single line comment ---
+--- a comment line
 
-x = 5  --- inline comment ---
+x = 5  --- inline comment
 
----
-multi line
-comment
----
+--- multi-line commentary is just
+--- consecutive comment lines
 ```
+
+### Design Note: Comments End at the Newline
+
+**What was replaced:** paired `---`...`---` comments (open and close delimiters, spanning lines).
+
+**Why:** an unclosed paired comment silently swallowed the following line into code — the comment ran until it found the `---` that *opened* the next comment, and the remainder of that line executed. This failure mode produced real incidents during development (corrupted test files; one bug misdiagnosed as a Unicode issue). End-of-line comments make the failure *unrepresentable*: every line is locally, independently correct, and commenting out a line is just prepending `---`.
+
+**Migration:** old single-line comments (`--- text ---`) still parse — the trailing `---` is now inert text — and `crow fmt` strips these cosmetic closers. Old *block* comments with bare `---` fence lines are no longer supported; write one `---` per line.
 
 
 ## 11. Error Handling

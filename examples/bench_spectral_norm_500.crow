@@ -1,33 +1,32 @@
---- spectral-norm benchmark - n=500 (scalar approach) ---
---- website uses n=2000-8000 with numpy arrays ---
---- we use scalar dot product since Crow lacks array mutation/concat ---
+--- spectral-norm benchmark - n=500 (scalar approach)
+--- website uses n=2000-8000 with numpy arrays
+--- we use scalar dot product since Crow lacks array mutation/concat
 
 fn a_element[i, j]
-    return 1.0 / ((i + j) * (i + j + 1) / 2.0 + i + 1.0)
+  return 1.0 / ((i + j) * (i + j + 1) / 2.0 + i + 1.0)
 
 fn approx_sqrt[n]
-    if n lte 0.0
-        return 0.0
-    guess = n / 2.0
-    i = 0
-    while i lt 15
-        guess = (guess + n / guess) / 2.0
-        i = i + 1
-    return guess
+  if n lte 0.0
+    return 0.0
+  guess = n / 2.0
+  i = 0
+  while i lt 15
+    guess = (guess + n / guess) / 2.0
+    i = i + 1
+  return guess
 
 fn spectral_norm_approx[n]
-    sum_sq = 0.0
-    i = 0
-    while i lt n
-        row_sum = 0.0
-        j = 0
-        while j lt n
-            row_sum = row_sum + a_element[i, j]
-            j = j + 1
-        sum_sq = sum_sq + row_sum * row_sum
-        i = i + 1
-    return approx_sqrt[sum_sq]
+  sum_sq = 0.0
+  i = 0
+  while i lt n
+    row_sum = 0.0
+    j = 0
+    while j lt n
+      row_sum = row_sum + a_element[i, j]
+      j = j + 1
+    sum_sq = sum_sq + row_sum * row_sum
+    i = i + 1
+  return approx_sqrt[sum_sq]
 
 log['spectral norm n=500: `spectral_norm_approx[500]`']
 log['spectral-norm n=500 complete']
-

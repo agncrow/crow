@@ -1,19 +1,19 @@
---- if/else, while, break, continue ---
+--- if/else, while, break, continue
 x = 7
 if x gt 5
-    log['big']
+  log['big']
 else
-    log['small']
+  log['small']
 if x eq 7 and x lt 10
-    log['seven-ish']
+  log['seven-ish']
 if not (x eq 8)
-    log['not eight']
+  log['not eight']
 i = 0
 while i lt 10
-    i = i + 1
-    if i eq 3
-        continue
-    if i gt 5
-        break
-    log[i]
+  i = i + 1
+  if i eq 3
+    continue
+  if i gt 5
+    break
+  log[i]
 log[i]

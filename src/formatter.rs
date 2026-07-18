@@ -30,6 +30,12 @@ pub fn format_source(source: &str) -> Result<String, String> {
         consecutive_blanks = 0;
         started = true;
 
+        // Strip cosmetic trailing --- closers on comments (comments end at
+        // the newline; old paired closers are inert text)
+        let content = strip_comment_closer(content);
+        let content = content.as_str();
+        let trimmed = content.trim_start();
+
         // Calculate indent level from original whitespace
         let leading = leading_whitespace_len(line);
         let level = if indent_size > 0 { leading / indent_size } else { 0 };
@@ -150,7 +156,7 @@ mod tests {
     fn test_preserves_comments() {
         let input = "--- hello ---\nx = 1\n";
         let result = format_source(input).unwrap();
-        assert_eq!(result, "--- hello ---\nx = 1\n");
+        assert_eq!(result, "--- hello\nx = 1\n");
     }
 
     #[test]
@@ -176,9 +182,10 @@ mod tests {
 
     #[test]
     fn test_comment_preserved() {
+        // Legacy trailing closers are stripped (comments end at the newline)
         let input = "--- hello ---\nx = 1\n--- world ---\ny = 2\n";
         let result = format_source(input).unwrap();
-        assert_eq!(result, "--- hello ---\nx = 1\n--- world ---\ny = 2\n");
+        assert_eq!(result, "--- hello\nx = 1\n--- world\ny = 2\n");
     }
 
     #[test]
@@ -250,4 +257,43 @@ pub fn migrate_interpolation(source: &str) -> String {
         i += 1;
     }
     out
+}
+
+/// If the line contains a comment (`---` outside any string literal) and the
+/// comment's text ends with a legacy `---` closer, strip the closer.
+fn strip_comment_closer(line: &str) -> String {
+    // find first --- outside string literals
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    let mut in_str = false;
+    let mut comment_start: Option<usize> = None;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_str {
+            if c == '\\' && i + 1 < chars.len() { i += 2; continue; }
+            if c == '\'' { in_str = false; }
+            i += 1;
+            continue;
+        }
+        if c == '\'' { in_str = true; i += 1; continue; }
+        if c == '-' && i + 2 < chars.len() && chars[i + 1] == '-' && chars[i + 2] == '-' {
+            comment_start = Some(i);
+            break;
+        }
+        i += 1;
+    }
+    let Some(start) = comment_start else {
+        return line.to_string();
+    };
+    let text = &line[line.char_indices().nth(start).map(|(b, _)| b).unwrap_or(0)..];
+    let trimmed = text.trim_end();
+    // must have content between the opening --- and a trailing ---
+    if trimmed.len() > 6 && trimmed.ends_with("---") {
+        let inner = &trimmed[3..trimmed.len() - 3];
+        if !inner.trim().is_empty() {
+            let head = &line[..line.len() - text.len()];
+            return format!("{}{}", head, trimmed[..trimmed.len() - 3].trim_end());
+        }
+    }
+    line.to_string()
 }

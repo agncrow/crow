@@ -1,4 +1,4 @@
---- array builtins, indexing, immutability ---
+--- array builtins, indexing, immutability
 nums = [3, 1, 2]
 log[nums[0]]
 log[nums[-1]]

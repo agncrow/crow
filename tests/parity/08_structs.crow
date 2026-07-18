@@ -1,10 +1,10 @@
---- structs: pure data ---
+--- structs: pure data
 struct Bird [name, speed]
 b = Bird['crow', 50]
 log[b.name]
 log[b.speed]
 fn describe[bird]
-    return '`bird.name` flies at `bird.speed`mph'
+  return '`bird.name` flies at `bird.speed`mph'
 log[describe[b]]
 log[type[b]]
 log[type[42]]

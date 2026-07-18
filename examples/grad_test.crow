@@ -1,6 +1,6 @@
---- Automatic differentiation with grad ---
+--- Automatic differentiation with grad
 
---- f(x) = x^2, f'(x) = 2x ---
+--- f(x) = x^2, f'(x) = 2x
 fn f[x]
   x * x
 
@@ -8,31 +8,30 @@ df = grad[f]
 log[df[3]]
 log[df[5]]
 
---- g(x, y) = x^2 + y^2, gradient = [2x, 2y] ---
+--- g(x, y) = x^2 + y^2, gradient = [2x, 2y]
 fn g[x, y]
   x * x + y * y
 
 dg = grad[g]
 log[dg[3, 4]]
 
---- h(x) = x^3 + 2x, h'(x) = 3x^2 + 2 ---
+--- h(x) = x^3 + 2x, h'(x) = 3x^2 + 2
 fn h[x]
   x * x * x + 2 * x
 
 dh = grad[h]
 log[dh[2]]
 
---- p(x) = sqrt(x), p'(x) = 1/(2*sqrt(x)) ---
+--- p(x) = sqrt(x), p'(x) = 1/(2*sqrt(x))
 fn p[x]
   sqrt[x]
 
 dp = grad[p]
 log[dp[4]]
 
---- q(x) = abs(x), q'(x) = sign(x) ---
+--- q(x) = abs(x), q'(x) = sign(x)
 fn q[x]
   abs[x]
 
 dq = grad[q]
 log[dq[-3]]
-

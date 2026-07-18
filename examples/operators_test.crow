@@ -1,25 +1,25 @@
 use math
 
---- power operator ---
+--- power operator
 log[2 ^ 10]
 log[2.0 ^ 3.0]
 log[2 ^ 3 ^ 2]
 
---- element-wise multiply ---
+--- element-wise multiply
 a = math.linspace[2, 4, 3]
 b = math.linspace[5, 7, 3]
 log[a .* b]
 log[a .* 10]
 
---- element-wise divide ---
+--- element-wise divide
 c = math.linspace[10, 30, 3]
 d = math.linspace[2, 5, 3]
 log[c ./ d]
 
---- element-wise power ---
+--- element-wise power
 log[math.full[3, 2] .^ 3]
 
---- matmul via * ---
+--- matmul via *
 e = math.eye[2]
 f = math.full[2, 2, 3]
 log[e * f]

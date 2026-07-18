@@ -1,43 +1,42 @@
---- parallel benchmark ---
---- compares cpu[1] vs cpu[8] on heavy computation ---
+--- parallel benchmark
+--- compares cpu[1] vs cpu[8] on heavy computation
 
 fn count_primes[limit]
-    --- count primes up to limit using trial division ---
-    count = 0
-    n = 2
-    while n lte limit
-        is_prime = true
-        d = 2
-        while d * d lte n
-            if n % d eq 0
-                is_prime = false
-            d = d + 1
-        if is_prime
-            count = count + 1
-        n = n + 1
-    return count
+  --- count primes up to limit using trial division
+  count = 0
+  n = 2
+  while n lte limit
+    is_prime = true
+    d = 2
+    while d * d lte n
+      if n % d eq 0
+        is_prime = false
+      d = d + 1
+    if is_prime
+      count = count + 1
+    n = n + 1
+  return count
 
---- 8 independent heavy tasks ---
+--- 8 independent heavy tasks
 tasks = [15000, 12000, 18000, 10000, 20000, 8000, 16000, 14000]
 
---- run sequential: 1 thread ---
+--- run sequential: 1 thread
 cpu[1]
 log['--- sequential (cpu[1]) ---']
 results_seq = for limit in tasks
-    primes = count_primes[limit]
-    log['  primes up to `limit`: `primes`']
-    primes
+  primes = count_primes[limit]
+  log['  primes up to `limit`: `primes`']
+  primes
 
 log['sequential results: `results_seq`']
 log['']
 
---- run parallel: 8 threads ---
+--- run parallel: 8 threads
 cpu[8]
 log['--- parallel (cpu[8]) ---']
 results_par = for limit in tasks
-    primes = count_primes[limit]
-    log['  primes up to `limit`: `primes`']
-    primes
+  primes = count_primes[limit]
+  log['  primes up to `limit`: `primes`']
+  primes
 
 log['parallel results: `results_par`']
-

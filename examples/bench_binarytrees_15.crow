@@ -1,15 +1,15 @@
---- binarytrees benchmark - depth 15 (matches website input) ---
+--- binarytrees benchmark - depth 15 (matches website input)
 struct Tree [left, right]
 
 fn make_tree[depth]
-    if depth eq 0
-        return Tree[0, 0]
-    return Tree[make_tree[depth - 1], make_tree[depth - 1]]
+  if depth eq 0
+    return Tree[0, 0]
+  return Tree[make_tree[depth - 1], make_tree[depth - 1]]
 
 fn check_tree[tree]
-    if tree.left eq 0
-        return 1
-    return 1 + check_tree[tree.left] + check_tree[tree.right]
+  if tree.left eq 0
+    return 1
+  return 1 + check_tree[tree.left] + check_tree[tree.right]
 
 min_depth = 4
 max_depth = 15
@@ -22,20 +22,19 @@ long_lived_tree = make_tree[max_depth]
 
 depth = min_depth
 while depth lte max_depth
-    iterations = 1
-    i = 0
-    while i lt (max_depth - depth + min_depth)
-        iterations = iterations * 2
-        i = i + 1
+  iterations = 1
+  i = 0
+  while i lt (max_depth - depth + min_depth)
+    iterations = iterations * 2
+    i = i + 1
 
-    check_sum = 0
-    j = 0
-    while j lt iterations
-        check_sum = check_sum + check_tree[make_tree[depth]]
-        j = j + 1
+  check_sum = 0
+  j = 0
+  while j lt iterations
+    check_sum = check_sum + check_tree[make_tree[depth]]
+    j = j + 1
 
-    log['`iterations` trees of depth `depth` check: `check_sum`']
-    depth = depth + 2
+  log['`iterations` trees of depth `depth` check: `check_sum`']
+  depth = depth + 2
 
 log['long lived tree of depth `max_depth` check: `check_tree[long_lived_tree]`']
-

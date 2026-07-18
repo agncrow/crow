@@ -6663,6 +6663,22 @@ mod tests {
         assert!(matches!(val.value, Value::Int(7)));
     }
 
+    // ===== Comments end at the newline =====
+
+    #[test]
+    fn test_comment_without_closer_does_not_eat_next_line() {
+        // Regression: the old paired --- design silently swallowed the next
+        // line into code when a closer was missing
+        let val = get_var("--- NOTE: no closer here\nx = 42\n", "x");
+        assert!(matches!(val.value, Value::Int(42)));
+    }
+
+    #[test]
+    fn test_inline_comment_runs_to_end_of_line() {
+        let val = get_var("x = 5 --- everything here is comment --- even this\n", "x");
+        assert!(matches!(val.value, Value::Int(5)));
+    }
+
     // ===== Backtick interpolation =====
 
     #[test]

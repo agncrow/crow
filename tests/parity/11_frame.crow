@@ -1,4 +1,4 @@
---- frame module: masks, sort, group, select ---
+--- frame module: masks, sort, group, select
 use frame
 df = load['examples/test_data.csv']
 log[df.shape]

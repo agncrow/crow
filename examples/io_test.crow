@@ -1,18 +1,18 @@
---- io module test ---
+--- io module test
 use io
 
---- Write test files using builtins ---
+--- Write test files using builtins
 write['/tmp/crow_io_test.txt', 'hello crow\nline two\nline three']
 write['/tmp/crow_io_test.csv', 'name,age,city\nalice,30,nyc\nbob,25,sf\n']
 log['files written']
 
---- Read lines (io module) ---
+--- Read lines (io module)
 ls = lines['/tmp/crow_io_test.txt']
 log['line count: `len[ls]`']
 log['first line: `ls[0]`']
 log['second line: `ls[1]`']
 
---- Parse CSV (io module) ---
+--- Parse CSV (io module)
 rows = csv['/tmp/crow_io_test.csv']
 log['csv row count: `len[rows]`']
 first = rows[0]
@@ -20,8 +20,7 @@ log['first name: `first.name`']
 log['first age: `first.age`']
 log['first city: `first.city`']
 
---- CSV error handling ---
+--- CSV error handling
 bad = csv['/tmp/crow_io_nonexistent_12345.csv']
 log['bad ok: `bad.ok`']
 log['bad reason: `bad.reason`']
-
