@@ -24,6 +24,8 @@ x = 3.14        --- ok, int/float compatible ---
 x = 'hello'     --- error: cannot reassign from int to string ---
 ```
 
+**A variable that is ever assigned a float is a float for its whole scope.** Assigning an int to it stores the float value (`x = 1` above stores `1.0`). Note for interpreted mode: the widening applies from the first float assignment onward, so an int division performed *before* any float assignment may differ from compiled mode, where the variable is float from its declaration — don't depend on int division of variables that later hold floats.
+
 ### Types
 
 Crow is statically typed with full type inference — you never write type annotations, but every variable has a concrete type determined at compile time. The transpiler infers types from usage; if a type cannot be determined, the program is invalid.
@@ -58,12 +60,18 @@ Strings support escape sequences with backslash:
 | `\t` | Tab |
 | `\\` | Literal backslash |
 | `\'` | Literal single quote |
+| `\{` | Literal open brace (not interpolation) |
+| `\}` | Literal close brace |
 
 ```
 log['line1\nline2']
 log['col1\tcol2']
 log['it\'s here']
+log['literal \{braces\}']          --- prints: literal {braces} ---
+j = json['\{"a": 1\}']             --- JSON object literals via escaped braces ---
 ```
+
+Comments and string literals accept any Unicode text. Identifiers are ASCII — a deliberate restriction that keeps the grammar and tooling simple.
 
 ### String Interpolation
 
@@ -1811,6 +1819,43 @@ else
     log[content]
 ```
 
+### Errors in Conditions
+
+**An error has no truth value.** A comparison with an error-value operand does not produce true or false — it propagates the error, like every other operator. And a branch cannot be taken on an error: when an `if` or `while` condition evaluates to an error-value, the decision is refused —
+
+- **inside a function**: the function immediately returns the error to its caller (auto-propagation, trace appended) — the same rule as error arguments, applied to decisions
+- **at top level**: the program halts: `runtime error: line N: cannot branch on an error value — <reason>`
+
+```
+fn check[s]
+    n = int[s]
+    if n gt 5            --- if n is an error: check returns it here ---
+        return 'big'
+    return 'small'
+
+r = check['abc']
+log[r.ok]                --- false — the parse error propagated out ---
+log[r.reason]            --- cannot convert 'abc' to int ---
+```
+
+The metadata fields `.ok`, `.reason`, `.kind`, `.trace` never propagate — they are always readable, so the guard idiom is always available and is the one bridge from error-space back to decisions:
+
+```
+age = int[input['age: ']]
+if not age.ok
+    log['invalid: {age.reason}']
+else if age gte 18
+    log['adult']
+```
+
+Checking is optional: the happy path needs nothing, and unguarded errors fail loudly at the decision instead of silently taking a branch. (Frame masks are unrelated: missing cells excluded by `filter` are validity-bitmap missingness, not error-values.)
+
+#### Design Note: Errors Have No Truth Value
+
+**What was considered:** treating error-values as false in comparisons and conditions (SQL NULL / IEEE NaN style: `err gte 18` → false).
+
+**Why it was rejected:** fabricating an answer silently misclassifies data — bad input would always take the `else` branch (an unparseable age becomes a 'minor'). An error cannot be compared with a value; pretending otherwise is the Go zero-value bug with different spelling. Instead: **you can compute with an error, but you cannot decide with one.** Propagation is implicit through dataflow (like Odin's `or_return`, applied automatically); the refusal happens at the last moment that doesn't fabricate. A future `crow check` lint can flag unguarded fallible conditions statically.
+
 ### Creating Errors
 
 Use the `error[]` builtin to create custom error-values:
@@ -1911,6 +1956,8 @@ log[c]
 for x in items
     process[x]        --- each iteration runs in parallel ---
 ```
+
+Output order inside a parallel `for` is unspecified — `log[]` calls from different iterations may interleave in any order. When order matters, collect results with `for`-as-expression (results are always in input order) and log afterward.
 
 If the loop body mutates a variable from the outer scope, Crow automatically falls back to sequential execution for safety:
 

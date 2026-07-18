@@ -55,12 +55,12 @@ Spec–implementation drift discovered during the frame fix (July 2026):
 
 **Fix:** pick and document each in `language-spec.md`; add regression tests locking behavior in both modes.
 
-- [ ] Error-in-conditional specced + tested
-- [ ] int/float reassignment specced + tested
-- [ ] Parallel `log[]` ordering specced (define or document nondeterminism prominently)
+- [x] Error-in-conditional specced + tested (see F4/#2 batch below — "errors have no truth value")
+- [x] int/float reassignment specced + tested (float-for-scope rule, both modes)
+- [x] Parallel `log[]` ordering documented as unspecified (§12)
 - [x] **Named arguments: implemented** (July 2026). Parser accepts defaults in `fn` params (literals only) and `name = expr` at call sites; a single lowering pass (`src/lower.rs`) rewrites every call to positional form before inference/validation/execution — one implementation for both modes (kernel principle). Covers user functions (defaults filled), structs, builtins with named params (`axis` on reductions, `desc` on sort — reorder only, no filling), the variadic `map[...]` constructor (desugars to a `set[]` chain), and ui elements (named args become the attribute map). Limitation (documented): named args need a directly named callee — function-as-value calls are positional-only. `sort[df, 'col', desc = true]` migration done; parity file `13_named_args.crow` locks both modes.
-- [ ] NumArray comparison broadcasting decision
-- [ ] String display parity between modes
+- [x] NumArray comparison broadcasting (resolved in F3: tensor masks)
+- [x] String display parity between modes (resolved via the shared display kernel, pushback 6)
 
 ### 3. The early-exit gap (the self-inconsistency)
 
@@ -182,9 +182,15 @@ Nested numeric literals became an *array of 1-D tensors*, not a 2-D tensor — s
 - [x] Spec: growth/mask examples, "Tensors vs frames" boundary paragraph, and the stale "a DataFrame is a map of arrays" line replaced with a pointer to `frame`. Parity file `15_tensors.crow`; 767 tests, 15 parity files green.
 - Example-rot addendum: `numarray_test.crow` fails at HEAD too (`a * b` on 1-D tensors predates `*`-is-matmul) — added to the cleanup-pass list.
 
-### F4 — Error-values in conditionals: modes disagree (confirmed, already queued in #2)
+### F4 / #2 batch — ✅ FIXED (July 2026): the five-item semantics pass
 
-`if err_value gt 5` runs interpreted (falsy) but is a compile error ("expected bool but got result"). One semantics must win; recommend: comparisons auto-unwrap like arithmetic does, errors propagate.
+- [x] **Errors have no truth value** (design sharpened by Vijay: "an error cannot be compared with a value" — errors-are-falsy rejected as silent misclassification). Comparisons propagate; a branch on an error is refused: in-function → the function returns the error (trace appended); top level → halt with reason. `.ok`/metadata never propagate — the guard idiom is the one bridge. Both modes agree; fn return types widen to Result when conditions are fallible. Spec section + Design Note "Errors Have No Truth Value" (Odin/Go/Rust/SQL survey informed).
+- [x] **int/float**: a variable ever assigned a float is float for its whole scope — compiled declares from the unified type and coerces; interpreter coerces from the first float assignment on (residual interp-only edge documented). This also fixed a fresh discovery: compiled mode previously *rejected* int-then-float reassignment outright, despite the spec calling it compatible.
+- [x] **`\{` `\}` escapes**: JSON object literals are finally writable (`json['\{"a": 1\}']`); fixing this surfaced and closed another gap — Json *field access* (`j.a`) had never been implemented in compiled mode. Both modes agree.
+- [x] **Parallel `log[]` ordering**: documented as unspecified in §12 with the for-as-expression alternative.
+- [x] **Non-ASCII: re-diagnosed.** Comments and strings already accept any Unicode; the audit's em-dash failure was actually the `---` comment-pairing footgun (unclosed inline comment leaking into code) — more ammunition for the pushback-#5 comment-syntax decision. Spec now states the rule (Unicode in comments/strings, ASCII identifiers).
+
+776 tests, 15 parity files green. Corpus extended: error propagation through conditions (09), JSON objects + brace escapes (12), float unification (01).
 
 Minor tensions noted, not blocking: the Unified-Arrays note's "a DataFrame is a map of arrays" now conflicts with `Frame` being its own type (two ways); `select` is exported by both `ui` and `frame` and the conflict rules make `dashboard.crow`'s bare `select[...]` ambiguous in principle.
 
