@@ -1,0 +1,29 @@
+--- maps: literals, access, builtins ---
+--- maps are dictionaries: homogeneous values, dynamic keys ---
+--- mixed named data uses structs (Design Note: Maps Are Dictionaries, Not Records) ---
+person = map[name = 'crow', species = 'bird']
+log[person.name]
+log[person['name']]
+log[len[person]]
+log[keys[person]]
+log[has[person, 'name']]
+log[has[person, 'zzz']]
+p2 = set[person, 'name', 'raven']
+log[p2.name]
+log[person.name]
+p3 = del[p2, 'name']
+log[len[p3]]
+key = 'species'
+log[person[key]]
+--- map of structs: heterogeneity inside the struct, dynamic keys in the map ---
+struct Address [street, city, zip]
+addresses = map[
+    home = Address['12 Oak St', 'Austin', 78701],
+    office = Address['500 Main St', 'Austin', 78702]
+]
+log[addresses.home.city]
+addresses = set[addresses, 'work', Address['9 Elm Rd', 'Dallas', 75001]]
+log[len[addresses]]
+log[addresses['work'].zip]
+counts = map[a = 1, b = 2]
+log[counts.a + counts.b]

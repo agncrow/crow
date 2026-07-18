@@ -214,10 +214,23 @@ pub struct TypeContext {
 
 impl TypeContext {
     pub fn new() -> Self {
+        let mut structs = BTreeMap::new();
+        // Synthetic struct for the regex find[] builtin result — gives m.ok
+        // and m.groups concrete types in both modes (maps are homogeneous,
+        // so a bool + string-array result can't be a map in compiled code)
+        structs.insert(
+            "CrowFindResult".to_string(),
+            StructSig {
+                fields: vec![
+                    ("ok".to_string(), CrowType::Bool),
+                    ("groups".to_string(), CrowType::Array(Box::new(CrowType::Str))),
+                ],
+            },
+        );
         TypeContext {
             vars: BTreeMap::new(),
             functions: BTreeMap::new(),
-            structs: BTreeMap::new(),
+            structs,
             cpu_count: None,
             current_fn_params: Vec::new(),
             registry: crate::modules::ModuleRegistry::new(),
@@ -234,7 +247,7 @@ impl TypeContext {
                         fields: fields.iter().map(|f| (f.clone(), CrowType::Unknown)).collect(),
                     });
                 }
-                Stmt::FnDecl { name, params, body } => {
+                Stmt::FnDecl { name, params, body, .. } => {
                     self.functions.insert(name.clone(), FnSig {
                         params: params.iter().map(|p| (p.clone(), CrowType::Unknown)).collect(),
                         return_type: CrowType::Unknown,
@@ -941,6 +954,10 @@ impl TypeContext {
                 CrowType::Unknown
             }
             "len" => CrowType::Int,
+            // Regex
+            "matches" => CrowType::Bool,
+            "find" => CrowType::Struct("CrowFindResult".to_string()),
+            "sub" => CrowType::Str,
             // CLI / IO
             "args" => CrowType::Array(Box::new(CrowType::Str)),
             "input" => CrowType::Result(Box::new(CrowType::Str)),
@@ -979,6 +996,9 @@ impl TypeContext {
             // Web.auth builtins
             "sign" => CrowType::Str,
             "verify" => CrowType::Json,
+            // Reactive data sources (UI)
+            "poll" | "fetch" => CrowType::Frame,
+            "today" => CrowType::Str,
             // Autograd
             "grad" => {
                 // grad[f] returns a function with the same arity as f, but all params are Float
@@ -1027,6 +1047,8 @@ impl TypeContext {
             Expr::Float(_) => CrowType::Float,
             Expr::Bool(_) => CrowType::Bool,
             Expr::Str(_) => CrowType::Str,
+            // Lowering resolves named args before inference; type is the value's
+            Expr::Named { value, .. } => self.infer_expr(value),
             Expr::Ident(name) => {
                 // Module constants: pi, e, inf, nan
                 if self.registry.has_constant(name) {
@@ -1056,8 +1078,12 @@ impl TypeContext {
                 let result_type = match op {
                     BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt
                     | BinOp::Gte | BinOp::Lte | BinOp::And | BinOp::Or => {
-                        // FrameCol compared to scalar → Array(Bool)
-                        if is_frame_col(&lt_inner) || is_frame_col(&rt_inner) {
+                        // Boolean-mask semantics: comparisons on frame columns and
+                        // logical ops on boolean arrays are element-wise → Array(Bool)
+                        let is_bool_mask = |t: &CrowType| matches!(t, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Bool));
+                        if is_frame_col(&lt_inner) || is_frame_col(&rt_inner)
+                            || is_bool_mask(&lt_inner) || is_bool_mask(&rt_inner)
+                        {
                             CrowType::Array(Box::new(CrowType::Bool))
                         } else {
                             CrowType::Bool
@@ -1134,7 +1160,16 @@ impl TypeContext {
             }
             Expr::UnaryOp { op, expr: e } => {
                 match op {
-                    UnaryOp::Not => CrowType::Bool,
+                    UnaryOp::Not => {
+                        // not on a boolean mask negates element-wise → Array(Bool)
+                        let inner = self.infer_expr(e);
+                        let inner = if let CrowType::Result(i) = inner { *i } else { inner };
+                        if matches!(&inner, CrowType::Array(i) if matches!(i.as_ref(), CrowType::Bool)) {
+                            CrowType::Array(Box::new(CrowType::Bool))
+                        } else {
+                            CrowType::Bool
+                        }
+                    }
                     UnaryOp::Neg => self.infer_expr(e),
                 }
             }

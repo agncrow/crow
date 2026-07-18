@@ -22,6 +22,9 @@ struct Env {
     /// When a function is called, non-global scopes are saved here
     /// so the function can only see globals + its own scope.
     saved_stacks: Vec<Vec<HashMap<String, CrowValue>>>,
+    /// `use ui` programs keep module variables visible inside functions —
+    /// they are reactive state (see spec Design Note "No Ambient Mutability").
+    ui_mode: bool,
 }
 
 impl Env {
@@ -29,7 +32,23 @@ impl Env {
         Env {
             scopes: vec![HashMap::new()],
             saved_stacks: Vec::new(),
+            ui_mode: false,
         }
+    }
+
+    /// Values that stay visible inside functions: the program's vocabulary
+    /// (functions, structs, modules), not its mutable state.
+    fn is_ambient_value(v: &CrowValue) -> bool {
+        matches!(
+            v.value,
+            Value::Fn(_) | Value::GradFn(_) | Value::StructDef(_) | Value::Module(_)
+        )
+    }
+
+    /// True when name resolution is inside a function call frame, where
+    /// module variables are invisible (spec: Function Scope).
+    fn in_call(&self) -> bool {
+        !self.saved_stacks.is_empty() && !self.ui_mode
     }
 
     fn push_scope(&mut self) {
@@ -69,18 +88,40 @@ impl Env {
 
     fn get(&self, name: &str) -> Option<&CrowValue> {
         // search from innermost to outermost scope
-        for scope in self.scopes.iter().rev() {
+        let in_call = self.in_call();
+        for (i, scope) in self.scopes.iter().enumerate().rev() {
             if let Some(val) = scope.get(name) {
+                // Inside a function, the global scope only provides the
+                // program's vocabulary (fns, structs) — never module variables
+                if i == 0 && in_call && !Self::is_ambient_value(val) {
+                    return None;
+                }
                 return Some(val);
             }
         }
         None
     }
 
+    /// Check whether a name exists as a module variable (for error hints)
+    fn global_var_exists(&self, name: &str) -> bool {
+        self.scopes
+            .first()
+            .and_then(|s| s.get(name))
+            .map_or(false, |v| !Self::is_ambient_value(v))
+    }
+
     fn get_mut(&mut self, name: &str) -> Option<&mut CrowValue> {
-        for scope in self.scopes.iter_mut().rev() {
-            if let Some(val) = scope.get_mut(name) {
-                return Some(val);
+        let in_call = self.in_call();
+        for (i, scope) in self.scopes.iter_mut().enumerate().rev() {
+            if scope.contains_key(name) {
+                // Function frames can never mutate module variables
+                if i == 0 && in_call {
+                    let ambient = scope.get(name).map_or(false, Self::is_ambient_value);
+                    if !ambient {
+                        return None;
+                    }
+                }
+                return scope.get_mut(name);
             }
         }
         None
@@ -126,6 +167,7 @@ pub struct Interpreter {
     current_file: String,
     cancelled: Option<Arc<AtomicBool>>,
     registry: crate::modules::ModuleRegistry,
+    lowerer: crate::lower::Lowerer,
 }
 
 impl Interpreter {
@@ -142,6 +184,7 @@ impl Interpreter {
             current_file: String::new(),
             cancelled: None,
             registry: crate::modules::ModuleRegistry::new(),
+            lowerer: crate::lower::Lowerer::new(),
         }
     }
 
@@ -217,6 +260,11 @@ impl Interpreter {
     }
 
     pub fn run(&mut self, stmts: &[Stmt]) -> Result<CrowValue, String> {
+        // Resolve named arguments to positional form (single implementation
+        // shared with the transpiler pipeline — see src/lower.rs). The lowerer
+        // persists on the interpreter so REPL batches see earlier functions.
+        let lowered = self.lowerer.lower(stmts)?;
+        let stmts: &[Stmt] = &lowered;
         let waves = group_into_waves(stmts);
         let mut result = CrowValue::done();
 
@@ -319,6 +367,12 @@ impl Interpreter {
     }
 
     fn load_module(&mut self, module_path: &str) -> Result<(), String> {
+        // `use ui`: module variables are reactive state, so they stay visible
+        // inside render/handler functions (the documented function-scope
+        // exception — spec Design Note "No Ambient Mutability")
+        if module_path == "ui" {
+            self.env.ui_mode = true;
+        }
         // Built-in module: math — load via module registry
         if module_path == "math" {
             self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
@@ -447,7 +501,7 @@ impl Interpreter {
                 }
                 Ok(Signal::None)
             }
-            Stmt::FnDecl { name, params, body } => {
+            Stmt::FnDecl { name, params, body, .. } => {
                 let func = CrowValue::ok(Value::Fn(FnValue {
                     name: name.clone(),
                     params: params.clone(),
@@ -564,6 +618,43 @@ impl Interpreter {
     }
 
     /// Assign to a struct field, navigating nested field access chains
+    /// Coarse dynamic type key for map-homogeneity checks (comparison) and a
+    /// user-facing name (display). int/float unify (like arrays); structs are
+    /// distinct per name.
+    fn map_value_kind(v: &Value) -> (String, String) {
+        match v {
+            Value::Int(_) => ("number".to_string(), "int".to_string()),
+            Value::Float(_) | Value::Dual(_, _) => ("number".to_string(), "float".to_string()),
+            Value::Str(_) => ("str".to_string(), "str".to_string()),
+            Value::Bool(_) => ("bool".to_string(), "bool".to_string()),
+            Value::Array(_) | Value::NumArray(_) => ("array".to_string(), "array".to_string()),
+            Value::Map(_) => ("map".to_string(), "map".to_string()),
+            Value::StructInstance(si) => (format!("struct {}", si.name), format!("struct {}", si.name)),
+            Value::Fn(_) | Value::GradFn(_) => ("fn".to_string(), "fn".to_string()),
+            other => (other.type_name().to_string(), other.type_name().to_string()),
+        }
+    }
+
+    /// Maps are dictionaries: every value must have the same type
+    /// (spec Design Note "Maps Are Dictionaries, Not Records"). This is the
+    /// runtime check matching what the transpiler's typed maps always enforced.
+    fn check_map_homogeneous(
+        map: &std::collections::BTreeMap<String, CrowValue>,
+        new_val: &CrowValue,
+    ) -> Result<(), String> {
+        if let Some(existing) = map.values().next() {
+            let (have_key, have_name) = Self::map_value_kind(&existing.value);
+            let (add_key, add_name) = Self::map_value_kind(&new_val.value);
+            if have_key != add_key {
+                return Err(format!(
+                    "map values must all be the same type — this map holds {} values, cannot add {} (use a struct for mixed named data)",
+                    have_name, add_name
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn assign_field(val: &mut Value, object_expr: &Expr, field: &str, new_val: CrowValue) -> Result<(), String> {
         match object_expr {
             Expr::Ident(_) => {
@@ -578,6 +669,7 @@ impl Interpreter {
                         }
                     }
                     Value::Map(m) => {
+                        Self::check_map_homogeneous(m, &new_val)?;
                         m.insert(field.to_string(), new_val);
                         Ok(())
                     }
@@ -664,6 +756,7 @@ impl Interpreter {
                     }
                     Value::Map(map) => {
                         if let Value::Str(key) = &idx_val.value {
+                            Self::check_map_homogeneous(map, &new_val)?;
                             map.insert(key.clone(), new_val);
                             Ok(())
                         } else {
@@ -746,6 +839,38 @@ impl Interpreter {
         Ok(Signal::None)
     }
 
+    /// Collect every variable name the statements assign to (including nested
+    /// blocks). Used to decide whether a for-loop body mutates outer state.
+    fn collect_assigned_names(stmts: &[Stmt], out: &mut std::collections::HashSet<String>) {
+        for s in stmts {
+            match s {
+                Stmt::Assign { name, .. } => {
+                    out.insert(name.clone());
+                }
+                Stmt::MultiAssign { names, .. } => {
+                    for n in names {
+                        out.insert(n.clone());
+                    }
+                }
+                Stmt::FieldAssign { object, .. } | Stmt::IndexAssign { object, .. } => {
+                    if let Some(n) = Self::root_var_name(object) {
+                        out.insert(n);
+                    }
+                }
+                Stmt::If { then_body, else_body, .. } => {
+                    Self::collect_assigned_names(then_body, out);
+                    if let Some(eb) = else_body {
+                        Self::collect_assigned_names(eb, out);
+                    }
+                }
+                Stmt::While { body, .. } | Stmt::For { body, .. } => {
+                    Self::collect_assigned_names(body, out);
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn exec_for(
         &mut self,
         var: &str,
@@ -774,6 +899,44 @@ impl Interpreter {
             }
             _ => return Err("for loop requires an array".to_string()),
         };
+
+        // Sequential fallback (spec §12): if the body mutates a variable from
+        // the outer scope, run in order on the real environment so the
+        // mutations are kept. The parallel path clones the interpreter per
+        // iteration, which would silently discard them.
+        let mut assigned = std::collections::HashSet::new();
+        Self::collect_assigned_names(body, &mut assigned);
+        assigned.remove(var);
+        let mutates_outer = assigned.iter().any(|n| self.env.get(n).is_some());
+        if mutates_outer {
+            let mut results = Vec::with_capacity(items.len());
+            for item in &items {
+                self.env.push_scope();
+                self.env.set(var, item.clone());
+                let mut last_val = CrowValue::done();
+                let mut failed: Option<String> = None;
+                for stmt in body {
+                    match self.exec_stmt(stmt) {
+                        Ok(Signal::Return(_)) => {
+                            failed = Some("cannot return from inside a for loop".to_string());
+                            break;
+                        }
+                        Ok(Signal::Value(val)) => last_val = val,
+                        Ok(Signal::None | Signal::Break | Signal::Continue) => {}
+                        Err(e) => {
+                            failed = Some(e);
+                            break;
+                        }
+                    }
+                }
+                self.env.pop_scope();
+                if let Some(e) = failed {
+                    return Err(e);
+                }
+                results.push(last_val);
+            }
+            return Ok(results);
+        }
 
         let run_parallel = |items: &[CrowValue], interp: &Self, var: &str, body: &[Stmt]| -> Result<Vec<CrowValue>, String> {
             items
@@ -873,60 +1036,23 @@ impl Interpreter {
             (Value::Str(x), Value::Str(y)) => x == y,
             (Value::Bool(x), Value::Bool(y)) => x == y,
             (Value::NumArray(x), Value::NumArray(y)) => x.to_vec() == y.to_vec(),
+            (Value::Array(x), Value::Array(y)) => {
+                x.len() == y.len()
+                    && x.iter().zip(y.iter()).all(|(a, b)| self.values_equal(a, b))
+            }
             _ => false,
         }
     }
 
     // --- Expression evaluation ---
 
-    /// Evaluate an expression in "bare-name" mode: if an identifier is not
-    /// a defined variable or constant, return it as a string literal instead
-    /// of raising an error.  Used for frame-module calls where column names
-    /// are passed as bare identifiers (e.g. `sort[df, age]`).
-    fn eval_expr_bare_names(&mut self, expr: &Expr) -> Result<CrowValue, String> {
-        match expr {
-            Expr::Ident(name) => {
-                // Try variable lookup first
-                if let Some(val) = self.env.get(name) {
-                    return Ok(val.clone());
-                }
-                // Try module constants (pi, e, inf, nan)
-                if let Some(val) = self.registry.get_constant(name) {
-                    return Ok(val);
-                }
-                // Bare name → string literal (column name)
-                Ok(CrowValue::ok(Value::Str(name.clone())))
-            }
-            Expr::Array(items) => {
-                // Recursively evaluate each element in bare-name mode
-                let vals: Vec<CrowValue> = items
-                    .iter()
-                    .map(|e| self.eval_expr_bare_names(e))
-                    .collect::<Result<_, _>>()?;
-                // If all elements are numeric, create NumArray
-                let all_numeric = !vals.is_empty() && vals.iter().all(|v| {
-                    v.ok && matches!(v.value, Value::Int(_) | Value::Float(_))
-                });
-                if all_numeric {
-                    let data: Vec<f64> = vals.iter().map(|v| match &v.value {
-                        Value::Int(n) => *n as f64,
-                        Value::Float(f) => *f,
-                        _ => 0.0,
-                    }).collect();
-                    Ok(CrowValue::ok(Value::NumArray(
-                        crow_runtime::tensor::CrowTensor::from_vec(data, vec![vals.len()])
-                    )))
-                } else {
-                    Ok(CrowValue::ok(Value::Array(vals)))
-                }
-            }
-            // All other expressions: delegate to normal eval
-            _ => self.eval_expr(expr),
-        }
-    }
-
     fn eval_expr(&mut self, expr: &Expr) -> Result<CrowValue, String> {
         match expr {
+            // Lowering resolves all named arguments before execution
+            Expr::Named { name, .. } => Err(format!(
+                "named argument '{}' is not valid here",
+                name
+            )),
             Expr::Int(n) => Ok(CrowValue::ok(Value::Int(*n))),
             Expr::Float(n) => Ok(CrowValue::ok(Value::Float(*n))),
             Expr::Str(s) => {
@@ -941,6 +1067,12 @@ impl Interpreter {
                         // Check module constants (pi, e, inf, nan)
                         if let Some(val) = self.registry.get_constant(name) {
                             return Ok(val);
+                        }
+                        if self.env.global_var_exists(name) {
+                            return Err(format!(
+                                "module variables are not visible inside functions — pass '{}' as a parameter",
+                                name
+                            ));
                         }
                         Err(format!("undefined variable '{}'", name))
                     }
@@ -1071,19 +1203,9 @@ impl Interpreter {
                     return self.call_db_transact(args);
                 }
 
-                // Frame module functions use bare-name evaluation so
-                // unresolved identifiers become column-name strings.
-                let is_frame = self.registry.module_name_for(name)
-                    .map_or(false, |m| m == "frame");
-                let arg_vals: Vec<CrowValue> = if is_frame {
-                    args.iter()
-                        .map(|a| self.eval_expr_bare_names(a))
-                        .collect::<Result<_, _>>()?
-                } else {
-                    args.iter()
-                        .map(|a| self.eval_expr(a))
-                        .collect::<Result<_, _>>()?
-                };
+                let arg_vals: Vec<CrowValue> = args.iter()
+                    .map(|a| self.eval_expr(a))
+                    .collect::<Result<_, _>>()?;
                 return self.registry.call(name, &arg_vals);
             }
 
@@ -1879,7 +2001,8 @@ impl Interpreter {
                     Value::NumArray(t) => Ok(CrowValue::ok(Value::Int(t.len() as i64))),
                     Value::Str(s) => Ok(CrowValue::ok(Value::Int(s.len() as i64))),
                     Value::Map(m) => Ok(CrowValue::ok(Value::Int(m.len() as i64))),
-                    _ => Err("length[] requires an array, string, or map".into()),
+                    Value::Frame(f) => Ok(CrowValue::ok(Value::Int(f.nrows() as i64))),
+                    _ => Err("len[] requires an array, string, map, or frame".into()),
                 }
             }
 
@@ -2121,6 +2244,7 @@ impl Interpreter {
                             Value::Str(s) => s.clone(),
                             _ => return Err("set[] key must be a string".into()),
                         };
+                        Self::check_map_homogeneous(m, &args[2])?;
                         let mut new_map = m.clone();
                         new_map.insert(key_str, args[2].clone());
                         Ok(CrowValue::ok(Value::Map(new_map)))
@@ -3102,18 +3226,82 @@ impl Interpreter {
                 }
                 _ => Err(".^ requires tensors or tensor and scalar".to_string()),
             },
-            BinOp::Eq => Ok(CrowValue::ok(Value::Bool(self.values_equal(left, right)))),
-            BinOp::Ne => Ok(CrowValue::ok(Value::Bool(!self.values_equal(left, right)))),
+            BinOp::Eq => self.equality_values(left, right, false),
+            BinOp::Ne => self.equality_values(left, right, true),
             BinOp::Gt => self.compare_values(l, r, |a, b| a > b),
             BinOp::Lt => self.compare_values(l, r, |a, b| a < b),
             BinOp::Gte => self.compare_values(l, r, |a, b| a >= b),
             BinOp::Lte => self.compare_values(l, r, |a, b| a <= b),
-            BinOp::And => Ok(CrowValue::ok(Value::Bool(
-                self.is_truthy(left) && self.is_truthy(right),
-            ))),
-            BinOp::Or => Ok(CrowValue::ok(Value::Bool(
-                self.is_truthy(left) || self.is_truthy(right),
-            ))),
+            BinOp::And => self.logical_values(left, right, |a, b| a && b),
+            BinOp::Or => self.logical_values(left, right, |a, b| a || b),
+        }
+    }
+
+    /// eq/ne. Array vs scalar broadcasts element-wise into a boolean array
+    /// (mask semantics, matching gt/lt); everything else is whole-value equality.
+    fn equality_values(
+        &self,
+        left: &CrowValue,
+        right: &CrowValue,
+        negate: bool,
+    ) -> Result<CrowValue, String> {
+        let is_scalar = |v: &Value| matches!(v, Value::Int(_) | Value::Float(_) | Value::Str(_) | Value::Bool(_));
+        let broadcast = |items: &[CrowValue], scalar: &CrowValue| -> CrowValue {
+            let results: Vec<CrowValue> = items.iter().map(|item| {
+                let eq = !item.is_error() && self.values_equal(item, scalar);
+                CrowValue::ok(Value::Bool(if negate { !eq } else { eq }))
+            }).collect();
+            CrowValue::ok(Value::Array(results))
+        };
+        match (&left.value, &right.value) {
+            (Value::Array(items), r) if is_scalar(r) => Ok(broadcast(items, right)),
+            (l, Value::Array(items)) if is_scalar(l) => Ok(broadcast(items, left)),
+            _ => {
+                let eq = self.values_equal(left, right);
+                Ok(CrowValue::ok(Value::Bool(if negate { !eq } else { eq })))
+            }
+        }
+    }
+
+    /// and/or. Boolean arrays combine element-wise (mask semantics);
+    /// array vs scalar broadcasts; scalars short-circuit as before.
+    fn logical_values(
+        &self,
+        left: &CrowValue,
+        right: &CrowValue,
+        op: impl Fn(bool, bool) -> bool,
+    ) -> Result<CrowValue, String> {
+        match (&left.value, &right.value) {
+            (Value::Array(a), Value::Array(b)) => {
+                if a.len() != b.len() {
+                    return Err(format!(
+                        "boolean arrays have different lengths ({} vs {})",
+                        a.len(), b.len()
+                    ));
+                }
+                let results: Vec<CrowValue> = a.iter().zip(b.iter()).map(|(x, y)| {
+                    CrowValue::ok(Value::Bool(op(self.is_truthy(x), self.is_truthy(y))))
+                }).collect();
+                Ok(CrowValue::ok(Value::Array(results)))
+            }
+            (Value::Array(a), _) => {
+                let s = self.is_truthy(right);
+                let results: Vec<CrowValue> = a.iter().map(|x| {
+                    CrowValue::ok(Value::Bool(op(self.is_truthy(x), s)))
+                }).collect();
+                Ok(CrowValue::ok(Value::Array(results)))
+            }
+            (_, Value::Array(b)) => {
+                let s = self.is_truthy(left);
+                let results: Vec<CrowValue> = b.iter().map(|x| {
+                    CrowValue::ok(Value::Bool(op(s, self.is_truthy(x))))
+                }).collect();
+                Ok(CrowValue::ok(Value::Array(results)))
+            }
+            _ => Ok(CrowValue::ok(Value::Bool(op(
+                self.is_truthy(left),
+                self.is_truthy(right),
+            )))),
         }
     }
 
@@ -3219,9 +3407,16 @@ impl Interpreter {
                 Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(t.neg()))),
                 _ => Err("cannot negate this type".to_string()),
             },
-            UnaryOp::Not => {
-                Ok(CrowValue::ok(Value::Bool(!self.is_truthy(val))))
-            }
+            UnaryOp::Not => match v {
+                // Boolean arrays negate element-wise (mask semantics)
+                Value::Array(items) => {
+                    let results: Vec<CrowValue> = items.iter().map(|x| {
+                        CrowValue::ok(Value::Bool(!self.is_truthy(x)))
+                    }).collect();
+                    Ok(CrowValue::ok(Value::Array(results)))
+                }
+                _ => Ok(CrowValue::ok(Value::Bool(!self.is_truthy(val)))),
+            },
         }
     }
 
@@ -4225,43 +4420,43 @@ mod tests {
 
     #[test]
     fn test_map_creation() {
-        let val = get_var("x = [name = 'crow', age = 3]\n", "x");
+        let val = get_var("x = map[name = 'crow', kind = 'bird']\n", "x");
         assert!(matches!(val.value, Value::Map(_)));
     }
 
     #[test]
     fn test_map_creation_quoted_keys() {
-        let val = get_var("x = ['name' = 'crow', 'age' = 3]\n", "x");
+        let val = get_var("x = map['content-type' = 'json', 'x-id' = 'abc']\n", "x");
         assert!(matches!(val.value, Value::Map(_)));
     }
 
     #[test]
     fn test_map_access() {
-        let val = get_var("m = [name = 'crow']\nx = m['name']\n", "x");
+        let val = get_var("m = map[name = 'crow']\nx = m['name']\n", "x");
         assert_eq!(format!("{}", val.value), "crow");
     }
 
     #[test]
     fn test_map_dot_access() {
-        let val = get_var("m = [name = 'crow', age = 3]\nx = m.name\n", "x");
+        let val = get_var("m = map[name = 'crow', kind = 'bird']\nx = m.name\n", "x");
         assert_eq!(format!("{}", val.value), "crow");
     }
 
     #[test]
     fn test_map_dot_access_int() {
-        let val = get_var("m = [name = 'crow', age = 3]\nx = m.age\n", "x");
+        let val = get_var("m = map[a = 1, b = 3]\nx = m.b\n", "x");
         assert!(matches!(val.value, Value::Int(3)));
     }
 
     #[test]
     fn test_map_nested_dot_access() {
-        let val = get_var("m = [layer1 = [w = 10, b = 20]]\nx = m.layer1.b\n", "x");
+        let val = get_var("m = map[layer1 = map[w = 10, b = 20]]\nx = m.layer1.b\n", "x");
         assert!(matches!(val.value, Value::Int(20)));
     }
 
     #[test]
     fn test_map_dot_assign() {
-        let val = get_var("m = [x = 1]\nm.x = 42\nx = m.x\n", "x");
+        let val = get_var("m = map[x = 1]\nm.x = 42\nx = m.x\n", "x");
         assert!(matches!(val.value, Value::Int(42)));
     }
 
@@ -4273,7 +4468,7 @@ mod tests {
 
     #[test]
     fn test_keys() {
-        let val = get_var("m = [a = 1, b = 2]\nx = keys[m]\n", "x");
+        let val = get_var("m = map[a = 1, b = 2]\nx = keys[m]\n", "x");
         if let Value::Array(items) = &val.value {
             assert_eq!(items.len(), 2);
         } else {
@@ -4283,7 +4478,7 @@ mod tests {
 
     #[test]
     fn test_values() {
-        let val = get_var("m = [a = 1, b = 2]\nx = values[m]\n", "x");
+        let val = get_var("m = map[a = 1, b = 2]\nx = values[m]\n", "x");
         if let Value::Array(items) = &val.value {
             assert_eq!(items.len(), 2);
         } else {
@@ -4293,25 +4488,25 @@ mod tests {
 
     #[test]
     fn test_has() {
-        let val = get_var("m = [a = 1]\nx = has[m, 'a']\n", "x");
+        let val = get_var("m = map[a = 1]\nx = has[m, 'a']\n", "x");
         assert!(matches!(val.value, Value::Bool(true)));
     }
 
     #[test]
     fn test_has_false() {
-        let val = get_var("m = [a = 1]\nx = has[m, 'b']\n", "x");
+        let val = get_var("m = map[a = 1]\nx = has[m, 'b']\n", "x");
         assert!(matches!(val.value, Value::Bool(false)));
     }
 
     #[test]
     fn test_set() {
-        let val = get_var("m = [a = 1]\nm = set[m, 'b', 2]\nx = has[m, 'b']\n", "x");
+        let val = get_var("m = map[a = 1]\nm = set[m, 'b', 2]\nx = has[m, 'b']\n", "x");
         assert!(matches!(val.value, Value::Bool(true)));
     }
 
     #[test]
     fn test_del() {
-        let val = get_var("m = [a = 1, b = 2]\nm = del[m, 'a']\nx = has[m, 'a']\n", "x");
+        let val = get_var("m = map[a = 1, b = 2]\nm = del[m, 'a']\nx = has[m, 'a']\n", "x");
         assert!(matches!(val.value, Value::Bool(false)));
     }
 
@@ -4429,7 +4624,7 @@ mod tests {
 
     #[test]
     fn test_type_map() {
-        let val = get_var("x = type[[a = 1]]\n", "x");
+        let val = get_var("x = type[map[a = 1]]\n", "x");
         assert_eq!(format!("{}", val.value), "map");
     }
 
@@ -5947,7 +6142,7 @@ mod tests {
 
     #[test]
     fn test_render_builtin() {
-        let val = get_var("t = templates['./t/**/*']\ndata = [name = 'crow']\nresult = render[t, 'index', data]", "result");
+        let val = get_var("t = templates['./t/**/*']\ndata = map[name = 'crow']\nresult = render[t, 'index', data]", "result");
         match &val.value {
             Value::Str(s) => assert!(s.contains("rendered"), "should contain 'rendered': {}", s),
             _ => panic!("expected string"),
@@ -6188,5 +6383,217 @@ mod tests {
             run_program("use db\nconn = connect['ftp://bad']\n")
         });
         assert!(result.is_err(), "connect with bad URL should error");
+    }
+
+    // ===== Boolean mask semantics (frame API: strings + expressions) =====
+
+    fn assert_bool_array(val: &CrowValue, expected: &[bool]) {
+        match &val.value {
+            Value::Array(items) => {
+                let got: Vec<bool> = items.iter().map(|v| match v.value {
+                    Value::Bool(b) => b,
+                    _ => panic!("expected Bool element, got {:?}", v.value),
+                }).collect();
+                assert_eq!(got, expected);
+            }
+            other => panic!("expected Array, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_eq_broadcasts_over_string_array() {
+        let val = get_var("names = ['a', 'b', 'a']\nm = names eq 'a'\n", "m");
+        assert_bool_array(&val, &[true, false, true]);
+    }
+
+    #[test]
+    fn test_ne_broadcasts_over_string_array() {
+        let val = get_var("names = ['a', 'b', 'a']\nm = names ne 'a'\n", "m");
+        assert_bool_array(&val, &[false, true, false]);
+    }
+
+    #[test]
+    fn test_scalar_eq_unchanged() {
+        let val = get_var("x = 5 eq 5\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_array_array_eq_stays_whole_equality() {
+        let val = get_var("x = ['a', 'b'] eq ['a', 'b']\n", "x");
+        assert!(matches!(val.value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_and_combines_bool_arrays_elementwise() {
+        let val = get_var("m = [true, true, false] and [true, false, false]\n", "m");
+        assert_bool_array(&val, &[true, false, false]);
+    }
+
+    #[test]
+    fn test_or_combines_bool_arrays_elementwise() {
+        let val = get_var("m = [true, false, false] or [false, false, true]\n", "m");
+        assert_bool_array(&val, &[true, false, true]);
+    }
+
+    #[test]
+    fn test_not_negates_bool_array_elementwise() {
+        let val = get_var("m = not [true, false]\n", "m");
+        assert_bool_array(&val, &[false, true]);
+    }
+
+    #[test]
+    fn test_frame_filter_eq_mask() {
+        let val = get_var(
+            "use frame\ndf = load['examples/test_data.csv']\nr = filter[df, df.name eq 'Alice']\nn = len[r]\n",
+            "n",
+        );
+        assert!(matches!(val.value, Value::Int(1)));
+    }
+
+    #[test]
+    fn test_frame_filter_compound_mask() {
+        let val = get_var(
+            "use frame\ndf = load['examples/test_data.csv']\nr = filter[df, df.age gt 26 and df.salary gt 60000]\nn = len[r]\n",
+            "n",
+        );
+        assert!(matches!(val.value, Value::Int(1)));
+    }
+
+    #[test]
+    fn test_len_frame() {
+        let val = get_var(
+            "use frame\ndf = load['examples/test_data.csv']\nn = len[df]\n",
+            "n",
+        );
+        assert!(matches!(val.value, Value::Int(4)));
+    }
+
+    #[test]
+    fn test_for_loop_outer_mutation_runs_sequential() {
+        // Regression: parallel for silently discarded outer mutations (total stayed 0)
+        let val = get_var("total = 0\nfor x in [1, 2, 3, 4]\n    total = total + x\n", "total");
+        assert!(matches!(val.value, Value::Int(10)));
+    }
+
+    #[test]
+    fn test_implicit_return_last_expression() {
+        // Regression: implicit return is desugared in the parser for both modes
+        let val = get_var("fn add[a, b]\n    a + b\nr = add[3, 4]\n", "r");
+        assert!(matches!(val.value, Value::Int(7)));
+    }
+
+    // ===== Function scope: module variables are invisible (F1) =====
+
+    #[test]
+    fn test_fn_cannot_read_module_variable() {
+        let result = std::panic::catch_unwind(|| {
+            run_program("base = 10\nfn add_base[x]\n    return x + base\nr = add_base[5]\n")
+        });
+        assert!(result.is_err(), "module variable read inside fn should error");
+    }
+
+    #[test]
+    fn test_fn_cannot_mutate_module_variable() {
+        // The old silent-local bug: count must NOT silently stay 0 — the
+        // read of 'count' inside the function errors instead
+        let result = std::panic::catch_unwind(|| {
+            run_program("count = 0\nfn inc[]\n    count = count + 1\ninc[]\n")
+        });
+        assert!(result.is_err(), "module variable mutation inside fn should error");
+    }
+
+    #[test]
+    fn test_fn_local_may_reuse_module_name() {
+        // A local named like a module variable is a fresh, unrelated binding
+        let val = get_var(
+            "count = 5\nfn scaled[n]\n    count = n * 2\n    return count\nr = scaled[3]\n",
+            "r",
+        );
+        assert!(matches!(val.value, Value::Int(6)));
+        // and the module variable is untouched
+        let val2 = get_var(
+            "count = 5\nfn scaled[n]\n    count = n * 2\n    return count\nr = scaled[3]\n",
+            "count",
+        );
+        assert!(matches!(val2.value, Value::Int(5)));
+    }
+
+    #[test]
+    fn test_fn_can_call_other_functions_and_structs() {
+        let val = get_var(
+            "struct P [x]\nfn double[n]\n    return n * 2\nfn build[n]\n    return P[double[n]]\nr = build[4]\nv = r.x\n",
+            "v",
+        );
+        assert!(matches!(val.value, Value::Int(8)));
+    }
+
+    #[test]
+    fn test_fn_index_assign_module_var_blocked() {
+        let result = std::panic::catch_unwind(|| {
+            run_program("nums = [1, 2, 3]\nfn tweak[]\n    nums[0] = 99\ntweak[]\n")
+        });
+        assert!(result.is_err(), "index-assign to module variable inside fn should error");
+    }
+
+    // ===== Maps are dictionaries, structs are records =====
+
+    #[test]
+    fn test_map_heterogeneous_values_rejected() {
+        let result = std::panic::catch_unwind(|| {
+            run_program("m = map[name = 'crow', age = 3]\n")
+        });
+        assert!(result.is_err(), "mixed str/int map values should error");
+    }
+
+    #[test]
+    fn test_map_hetero_index_assign_rejected() {
+        let result = std::panic::catch_unwind(|| {
+            run_program("m = map[a = 1]\nm['b'] = 'x'\n")
+        });
+        assert!(result.is_err(), "adding str to int map via index assign should error");
+    }
+
+    #[test]
+    fn test_map_int_float_values_unify() {
+        let val = get_var("m = map[lr = 0.01, epochs = 100]\nx = m.epochs\n", "x");
+        assert!(matches!(val.value, Value::Int(100)));
+    }
+
+    #[test]
+    fn test_map_of_structs() {
+        let val = get_var(
+            "struct Address [street, city, zip]\naddresses = map[home = Address['12 Oak St', 'Austin', 78701], office = Address['500 Main St', 'Austin', 78702]]\nx = addresses.home.city\n",
+            "x",
+        );
+        assert!(matches!(&val.value, Value::Str(s) if s == "Austin"));
+    }
+
+    #[test]
+    fn test_map_of_structs_dynamic_key() {
+        let val = get_var(
+            "struct Address [street, city, zip]\naddresses = map[home = Address['12 Oak St', 'Austin', 78701]]\naddresses = set[addresses, 'work', Address['500 Main St', 'Dallas', 75001]]\nx = addresses['work'].city\n",
+            "x",
+        );
+        assert!(matches!(&val.value, Value::Str(s) if s == "Dallas"));
+    }
+
+    #[test]
+    fn test_map_literal_removed_helpful_error() {
+        // Regression: bare [k = v] must error with a pointer to map[...]
+        let mut lexer = crate::lexer::Lexer::new("m = [a = 1]\n");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let err = parser.parse().unwrap_err();
+        assert!(err.contains("map[key = value"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_frame_bare_column_name_is_undefined_variable() {
+        // Regression: bare-name column DSL removed — sort[df, age] must error
+        let result = std::panic::catch_unwind(|| {
+            run_program("use frame\ndf = load['examples/test_data.csv']\ns = sort[df, age]\n")
+        });
+        assert!(result.is_err(), "bare column name should be an undefined variable");
     }
 }

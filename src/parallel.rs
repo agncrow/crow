@@ -41,6 +41,7 @@ pub fn expr_reads(expr: &Expr) -> HashSet<String> {
     let mut reads = HashSet::new();
     match expr {
         Expr::Ident(name) => { reads.insert(name.clone()); }
+        Expr::Named { value, .. } => { reads.extend(expr_reads(value)); }
         Expr::Int(_) | Expr::Float(_) | Expr::Bool(_) => {}
         Expr::Str(s) => { reads.extend(str_interpolation_reads(s)); }
         Expr::BinOp { left, right, .. } => {

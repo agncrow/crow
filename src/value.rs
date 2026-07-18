@@ -197,23 +197,9 @@ impl fmt::Display for Value {
                 }
                 write!(f, "]")
             }
-            Value::NumArray(tensor) => {
-                // Display 1D numeric arrays like regular arrays
-                let data = tensor.to_vec();
-                write!(f, "[")?;
-                for (i, v) in data.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    // Display as int if it's a whole number
-                    if *v == (*v as i64) as f64 && v.is_finite() {
-                        write!(f, "{}", *v as i64)?;
-                    } else {
-                        write!(f, "{}", v)?;
-                    }
-                }
-                write!(f, "]")
-            }
+            // Delegate to the shared display kernel (crow_runtime::display) so
+            // interpreter and compiled output are identical, including nesting
+            Value::NumArray(tensor) => write!(f, "{}", tensor),
             Value::Map(map) => {
                 write!(f, "[")?;
                 for (i, (k, v)) in map.iter().enumerate() {

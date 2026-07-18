@@ -112,7 +112,10 @@ fn call_sort(args: &[CrowValue]) -> Result<CrowValue, String> {
     let frame = to_frame(&args[0], "sort")?;
     let col = to_str(&args[1], "sort")?;
     let desc = if args.len() == 3 {
-        to_str(&args[2], "sort")? == "desc"
+        match &args[2].value {
+            Value::Bool(b) => *b,
+            _ => return Err("sort: desc must be a bool — use sort[df, 'col', desc = true]".into()),
+        }
     } else { false };
     match frame.sort(col, desc) {
         Ok(f) => Ok(CrowValue::ok(Value::Frame(f))),
@@ -315,7 +318,8 @@ fn emit_frame_rust(name: &str, arg_strs: &[String], _arg_types: &[CrowType]) -> 
         "tail" => format!("{}.tail({} as usize)", arg_strs[0], arg_strs[1]),
         "sort" => {
             if arg_strs.len() == 3 {
-                format!("{}.sort(&{}, {} == \"desc\").unwrap_or_else(|e| panic!(\"sort: {{}}\", e))", arg_strs[0], arg_strs[1], arg_strs[2])
+                // desc is a bool (lowered from `desc = true`)
+                format!("{}.sort(&{}, {}).unwrap_or_else(|e| panic!(\"sort: {{}}\", e))", arg_strs[0], arg_strs[1], arg_strs[2])
             } else {
                 format!("{}.sort(&{}, false).unwrap_or_else(|e| panic!(\"sort: {{}}\", e))", arg_strs[0], arg_strs[1])
             }
@@ -337,10 +341,17 @@ fn emit_frame_rust(name: &str, arg_strs: &[String], _arg_types: &[CrowType]) -> 
             "{}.fill_column(&{}, &format!(\"{{}}\", {})).unwrap_or_else(|e| panic!(\"fill: {{}}\", e))",
             arg_strs[0], arg_strs[1], arg_strs[2]
         ),
-        "unique" => format!(
-            "{}.unique_col(&{}).unwrap_or_else(|e| panic!(\"unique: {{}}\", e))",
-            arg_strs[0], arg_strs[1]
-        ),
+        "unique" => {
+            if arg_strs.len() == 1 {
+                // unique[col] — col is already a CrowColumn, call .unique() directly
+                format!("{}.unique()", arg_strs[0])
+            } else {
+                format!(
+                    "{}.unique_col(&{}).unwrap_or_else(|e| panic!(\"unique: {{}}\", e))",
+                    arg_strs[0], arg_strs[1]
+                )
+            }
+        }
         "join" => {
             let jtype = if arg_strs.len() == 4 {
                 format!("&{}", arg_strs[3])

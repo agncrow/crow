@@ -61,6 +61,15 @@ pub struct Validator<'a> {
     errors: Vec<String>,
     /// Variables known to be defined at the current point
     defined_vars: BTreeSet<String>,
+    /// Top-level (module) variable names — invisible inside functions
+    /// (spec Design Note "No Ambient Mutability")
+    module_vars: BTreeSet<String>,
+    /// Nesting depth of function bodies currently being validated
+    fn_depth: usize,
+    /// `use ui` programs: top-level assignments are reactive state, which the
+    /// ui transpiler rewrites into state.get/state.set inside render/handler
+    /// functions — the documented exception to function-scope isolation.
+    ui_mode: bool,
     current_line: usize,
 }
 
@@ -70,6 +79,9 @@ impl<'a> Validator<'a> {
             ctx,
             errors: Vec::new(),
             defined_vars: BTreeSet::new(),
+            module_vars: BTreeSet::new(),
+            fn_depth: 0,
+            ui_mode: false,
             current_line: 0,
         }
     }
@@ -87,12 +99,24 @@ impl<'a> Validator<'a> {
             self.defined_vars.insert(name.clone());
         }
         // Pre-scan top-level assignments to populate defined_vars
-        // (the validator will also add them as it walks, but we need forward refs)
+        // (the validator will also add them as it walks, but we need forward refs).
+        // These are module variables — visible at top level, invisible in functions.
         for stmt in stmts {
             match stmt {
-                Stmt::Assign { name, .. } => { self.defined_vars.insert(name.clone()); }
+                Stmt::Assign { name, .. } => {
+                    self.defined_vars.insert(name.clone());
+                    self.module_vars.insert(name.clone());
+                }
                 Stmt::MultiAssign { names, .. } => {
-                    for n in names { self.defined_vars.insert(n.clone()); }
+                    for n in names {
+                        self.defined_vars.insert(n.clone());
+                        self.module_vars.insert(n.clone());
+                    }
+                }
+                Stmt::Use { path } => {
+                    if path == "ui" {
+                        self.ui_mode = true;
+                    }
                 }
                 _ => {}
             }
@@ -133,11 +157,21 @@ impl<'a> Validator<'a> {
                 for v in values { self.validate_expr(v); }
                 for n in names { self.defined_vars.insert(n.clone()); }
             }
-            Stmt::FnDecl { name, params, body } => {
+            Stmt::FnDecl { name, params, body, .. } => {
                 self.defined_vars.insert(name.clone());
                 let saved = self.defined_vars.clone();
+                // Function scope isolation: module variables are not visible
+                // inside functions — only params, locals, functions, structs,
+                // and builtins. (Exception: `use ui` reactive state.)
+                if !self.ui_mode {
+                    for mv in &self.module_vars {
+                        self.defined_vars.remove(mv);
+                    }
+                }
                 for p in params { self.defined_vars.insert(p.clone()); }
+                self.fn_depth += 1;
                 for s in body { self.validate_stmt(s); }
+                self.fn_depth -= 1;
                 self.defined_vars = saved;
                 // Re-add the function name itself
                 self.defined_vars.insert(name.clone());
@@ -216,26 +250,23 @@ impl<'a> Validator<'a> {
         }
     }
 
-    /// Validate an expression in bare-name mode: identifiers that aren't
-    /// defined variables or builtins are allowed (they become column name strings).
-    fn validate_expr_bare_names(&mut self, expr: &Expr) {
-        match expr {
-            Expr::Ident(_) => {} // bare name is OK
-            Expr::Array(items) => {
-                for item in items { self.validate_expr_bare_names(item); }
-            }
-            _ => self.validate_expr(expr),
-        }
-    }
-
     fn validate_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Int(_) | Expr::Float(_) | Expr::Bool(_) | Expr::Str(_) => {}
+            // Lowering resolves named args before validation; validate the value
+            Expr::Named { value, .. } => self.validate_expr(value),
             Expr::Ident(name) => {
                 if !self.defined_vars.contains(name)
                     && !BUILTINS.contains(&name.as_str())
                 {
-                    self.error(format!("undefined variable '{}'", name));
+                    if self.fn_depth > 0 && self.module_vars.contains(name) {
+                        self.error(format!(
+                            "module variables are not visible inside functions — pass '{}' as a parameter",
+                            name
+                        ));
+                    } else {
+                        self.error(format!("undefined variable '{}'", name));
+                    }
                 }
             }
             Expr::BinOp { left, op, right } => {
@@ -247,16 +278,7 @@ impl<'a> Validator<'a> {
                 self.validate_expr(e);
             }
             Expr::Call { callee, args } => {
-                // Frame module functions allow bare-name identifiers as column
-                // references — skip normal undefined-variable validation for those.
-                let is_frame_fn = if let Expr::Ident(name) = callee.as_ref() {
-                    self.ctx.registry.module_name_for(name).map_or(false, |m| m == "frame")
-                } else { false };
-                if is_frame_fn {
-                    for a in args { self.validate_expr_bare_names(a); }
-                } else {
-                    for a in args { self.validate_expr(a); }
-                }
+                for a in args { self.validate_expr(a); }
                 match callee.as_ref() {
                     Expr::Ident(name) => {
                         self.validate_call(name, args);
@@ -321,6 +343,27 @@ impl<'a> Validator<'a> {
 
     fn validate_call(&mut self, name: &str, args: &[Expr]) {
         let argc = args.len();
+
+        // Maps are dictionaries: set[] must not change the map's value type
+        // (spec Design Note "Maps Are Dictionaries, Not Records"). Checked here
+        // so compiled mode reports it in Crow terms instead of a Rust error.
+        if name == "set" && argc == 3 {
+            let map_ty = self.ctx.infer_expr(&args[0]);
+            let map_ty = if let CrowType::Result(i) = map_ty { *i } else { map_ty };
+            if let CrowType::Map(inner) = &map_ty {
+                let val_ty = self.ctx.infer_expr(&args[2]);
+                let val_ty = if let CrowType::Result(i) = val_ty { *i } else { val_ty };
+                if !matches!(inner.as_ref(), CrowType::Unknown)
+                    && !matches!(val_ty, CrowType::Unknown | CrowType::Void)
+                    && !inner.compatible(&val_ty)
+                {
+                    self.error(format!(
+                        "map values must all be the same type — this map holds {} values, cannot add {} (use a struct for mixed named data)",
+                        inner.crow_name(), val_ty.crow_name()
+                    ));
+                }
+            }
+        }
 
         // Module function? Accept — modules validate args at runtime/transpile time.
         if self.ctx.registry.has_function(name) {
@@ -535,6 +578,10 @@ mod tests {
         let tokens = lexer.tokenize().expect("lexer failed");
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().expect("parser failed");
+        // Same pipeline as the real build: lower named args before inference.
+        // Lowering errors (unknown/missing/duplicate arguments) surface as
+        // validation results, matching how the CLI reports them.
+        let stmts = crate::lower::lower_program(&stmts)?;
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
         let mut validator = Validator::new(&ctx);
@@ -572,7 +619,8 @@ mod tests {
     fn test_wrong_arg_count_user_fn() {
         let result = validate_source("fn add[a, b]\n  return a + b\ny = add[1]\n");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("expects 2 arguments, got 1"));
+        // Lowering reports missing arguments before the validator's arity check
+        assert!(result.unwrap_err().contains("missing argument 'b'"));
     }
 
     #[test]
@@ -600,7 +648,8 @@ mod tests {
     fn test_struct_wrong_arg_count() {
         let result = validate_source("struct Point[x, y]\np = Point[1]\n");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("has 2 fields, got 1"));
+        // Lowering reports missing arguments before the validator's arity check
+        assert!(result.unwrap_err().contains("missing argument 'y'"));
     }
 
     #[test]
@@ -619,5 +668,35 @@ mod tests {
     fn test_grad_wrong_arg_count() {
         let result = validate_source("fn f[x]\n  x * x\nfn g[x]\n  x + 1\ndf = grad[f, g]\n");
         assert!(result.is_err(), "grad should require exactly 1 arg");
+    }
+
+    #[test]
+    fn test_fn_module_var_read_rejected_with_hint() {
+        let result = validate_source("base = 10\nfn f[x]\n    return x + base\nr = f[1]\n");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("pass 'base' as a parameter"));
+    }
+
+    #[test]
+    fn test_fn_local_reusing_module_name_ok() {
+        let result = validate_source("count = 5\nfn f[n]\n    count = n * 2\n    return count\nr = f[3]\n");
+        assert!(result.is_ok(), "local reusing module name should validate: {:?}", result);
+    }
+
+    #[test]
+    fn test_map_hetero_set_rejected_at_compile_time() {
+        // Maps are dictionaries: set[] changing value type is a validation error
+        let result = validate_source("m = map[a = 1]\nm2 = set[m, 'b', 'x']\n");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("map values must all be the same type"));
+    }
+
+    #[test]
+    fn test_frame_bare_column_name_rejected() {
+        // Regression: bare-name column DSL removed — undefined idents in frame
+        // calls are normal undefined-variable errors now
+        let result = validate_source("use frame\ndf = load['d.csv']\ns = sort[df, age]\n");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("undefined variable 'age'"));
     }
 }

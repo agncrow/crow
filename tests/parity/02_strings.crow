@@ -1,0 +1,16 @@
+--- string builtins and indexing ---
+s = '  hello world  '
+log[trim[s]]
+log[upper['crow']]
+log[lower['CROW']]
+log[replace['aaa', 'a', 'b']]
+log[split['a,b,c', ',']]
+log[join[['x', 'y', 'z'], '-']]
+log[starts['hello', 'he']]
+log[ends['hello', 'lo']]
+log[repeat['ab', 3]]
+log[reverse['abc']]
+w = 'hello'
+log[w[0]]
+log[w[-1]]
+log[len[w]]
