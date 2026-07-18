@@ -480,8 +480,49 @@ Writing the old literal produces a helpful error:
 | `ends[s, suffix]` | Check if string ends with suffix |
 | `join[arr, sep]` | Join array elements into string |
 | `repeat[s, n]` | Repeat string `n` times |
-| `pad[s, n]` | Right-pad string to width `n` with spaces |
+| `fmt[x, ...]` | Format a value with named arguments (see Formatting) |
 | `reverse[s]` | Reverse a string |
+
+#### Formatting
+
+`fmt[value, ...]` formats numbers and strings using named arguments — plain Crow, no format mini-language:
+
+| Named argument | Meaning | Default |
+|---|---|---|
+| `decimals = n` | Fixed decimal places (numbers) | off |
+| `commas = true` | Thousands separators | false |
+| `width = n` | Minimum width (pads with `fill`) | off |
+| `align = 'left'/'right'` | Alignment within width | numbers right, strings left |
+| `fill = c` | Pad character | `' '` |
+| `percent = true` | Multiply by 100, append `%` (numbers) | false |
+
+```
+fmt[1234.567, decimals = 2]                  --- 1234.57 ---
+fmt[1234.567, decimals = 2, commas = true]   --- 1,234.57 ---
+fmt[0.123, percent = true, decimals = 1]     --- 12.3% ---
+fmt[42, width = 8]                           --- '      42' ---
+fmt[42, width = 5, fill = '0']               --- 00042 ---
+fmt['alice', width = 8]                      --- 'alice   ' ---
+```
+
+**Name your formats.** For repeated formats, define a function once and use it everywhere — shorter and clearer than any per-slot format code:
+
+```
+fn money[x]
+    return fmt[x, decimals = 2, commas = true]
+
+log['P&L: {money[pnl]}']
+```
+
+`decimals`/`percent` on a string is an error. `fmt` replaces the removed `pad` builtin (`pad[s, n]` → `fmt[s, width = n]`).
+
+##### Design Note: No Format Mini-Language
+
+**What was considered:** Python-style format specs inside interpolation (`{pnl:,.2f}`) or as spec strings (`fmt[x, '.2f']`).
+
+**Why rejected:** format codes are a second grammar — cryptic single-character commands with their own parser, embedded in strings. That violates the no-DSL rule and requires memorization; nobody writes `%-+8.2e` without a lookup. Named arguments are ordinary Crow: self-documenting, validated at compile time (unknown names and arity are lowering errors), and guessable without docs.
+
+**The trade:** one-off formatting is wordier than `{pnl:,.2f}`. The sanctioned recovery is the named formatter (`money[x]`), which is *shorter* than the Python spec at the call site, has a domain name, and keeps every money field in the project formatted identically — the consistency that per-slot codes never provide.
 
 #### Conversion
 
