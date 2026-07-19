@@ -1,5 +1,17 @@
 # Comments
 
-> **Not yet written.** The everyday material: variables, types, strings, comments, if/else.
+A comment runs from `---` to the end of the line. There is no closing
+delimiter, so an unclosed comment can never swallow code:
 
-For now, see [`language-spec.md`](../../language-spec.md) and the runnable programs in `examples/`.
+```crow
+--- this whole line is a comment
+x = 5    --- and this trails a statement
+log[x]
+```
+
+```text
+5
+```
+
+Multi-line commentary is just multiple `---` lines. That's the entire
+comment system.
