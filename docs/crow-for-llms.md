@@ -154,7 +154,7 @@ write the right column from the start.
 | `match/case` | `if / else` — no pattern matching or sum types |
 | `elif` | `else` then an indented `if` |
 | `import math` | `use math` |
-| `from pkg import x` | `use pkg` (then `pkg.x`) |
+| `from pkg import x` | `use pkg` (then `pkg.x`), or `use pkg as p` |
 | `print(x)` | `log[x]` |
 | `None` / `null` | no null — use an error-value, check `.ok` |
 | `True` / `False` | `true` / `false` (lowercase) |
@@ -227,7 +227,7 @@ count = 0
 fn inc[]
     count = count + 1
 
-fn render[]
+view render[]
     return div[
         h1['Count: `count`'],
         button['+', click = inc]
@@ -237,11 +237,33 @@ serve[3000]
 page['/', render]
 ```
 
-The transpiler manages the app instance — no `app` variable. `count` is a
-reactive variable (module-level under `use ui`); event handlers are passed by
-**name** (`click = inc`), never as lambdas.
+**UI trees are built in `view` blocks, not `fn`.** Inside a view the HTML
+element vocabulary (`div`, `p`, `a`, `form`, `button`…) is active with exact
+HTML names; outside views those are ordinary names you can use freely
+(`p = 0.95` is fine). The transpiler manages the app instance — no `app`
+variable. `count` is reactive state: only views and event handlers see it;
+handlers are passed by **name** (`click = inc`), never as lambdas.
 
 ---
+
+## Names are never ambiguous (reserved names)
+
+Crow rejects definitions that collide with names the language or an import
+owns — the error tells you the fix. Rules of thumb:
+
+- **Core builtin names are always taken**: don't name variables/params
+  `range`, `map`, `set`, `type`, `input`, `find`, `sort`, `log`, `error`…
+  (pick `rows`, `kind`, `raw`, `total` instead).
+- **`use math` takes math's names** in that file: `sum`, `mean`, `min`,
+  `max`, `std`, and the constants `pi`, `e`, `inf`, `nan`.
+- **Want the name anyway? Alias the import**: `use math as m` imports
+  qualified-only (Python `import x as y` semantics) — then `sum = 0` is
+  legal and math is reached as `m.sum[xs]`.
+- **User modules and packages are always qualified**: `use lib/scene as s`
+  → `s.mesh[...]`. Only the prefix is reserved.
+- **Fields are exempt**: `row.sum`, `account.type`, `df.mean` always work —
+  except `ok`/`reason`/`kind`/`trace`, which are error-metadata on every
+  value and can't be struct field names.
 
 ## Where to look for more
 

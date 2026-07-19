@@ -303,13 +303,37 @@ became a 40-year footgun. Our own cleanup month (ls, e = eye[2], fn sum) was the
 - **Import expander doesn't rewrite intra-module references** — a module fn can't construct
   the module's own struct (renamed out from under it). User modules only work flat.
 
-### Implementation order (agreed)
+### Implementation — ✅ ALL FIVE ITEMS SHIPPED (July 2026)
 
-1. Struct-arg inference bug (live parity break, independent)
-2. Module expander reference rewriting + qualified named args
-3. `view` blocks (parser keyword, both modes, vocabulary scoping, reactive narrowing,
-   fmt migration of render fns)
-4. Reservation enforcement (core + stdlib + constants + package prefixes + aliases),
-   shadow-aware error messages, `as` parsing
-5. Spec Design Note ("Names Are Never Ambiguous" + zones + targets), crow-for-llms update,
-   parity files, example sweep
+1. [x] **Struct-arg parity break** — by-ref struct params cloned in owned contexts
+   (array literals, struct fields, returns, assignments; `owned_expr_str`); plus the
+   root of the "expected N but got N" repro turned out to double: struct fields named
+   `ok`/`reason`/`kind`/`trace` were silently shadowed by error metadata in one mode —
+   both modes now reject them at declaration (first enforcement of this round).
+   Parity `21_struct_trees`.
+2. [x] **User modules real**: expander rewrites intra-module references (module fns can
+   use their own structs/helpers); lowerer resolves named args on qualified calls and
+   canonicalizes to the prefixed name; interpreter file path runs the same
+   expand→lower→validate pipeline as the compiled path. Parity `22_modules` (+ lib/ module).
+3. [x] **`view` blocks**: keyword + is_view through the whole pipeline; element
+   vocabulary active only inside views (`use ui` reserves nothing — `p = 0.95`,
+   `fn add[a, b]` legal in ui files); elements outside views teach; reactive-state
+   exemption narrowed to views + handlers in validator AND per-call-frame in the
+   interpreter; `crow fmt --fix-views` migrates; counter/dashboard/scaffold/fixtures
+   migrated.
+4. [x] **Reservation + `as`**: CORE_RESERVED split from the dispatch list (web/db names
+   are not core — `render` deliberately freed for views); bare stdlib imports reserve
+   exports + constants per file with registry attribution; prefixes/aliases reserved;
+   `use X as y` = qualified-only (Python semantics), contextual keyword, alias-aware
+   routing in all four resolution sites; bare calls to aliased modules error with the
+   qualified form. Both modes reject identical programs (interp now validates).
+   Fallout renames in examples were themselves reservation catches (`today`, `sub`,
+   `e`, `qr`, `input`). Parity `23_aliases`.
+5. [x] **Docs**: spec — View Blocks section, Aliased Imports section, narrowed
+   Function Scope exception, Design Note "Names Are Never Ambiguous" (tiers, zones,
+   fields exemption, the MATLAB argument, target-independence); crow-for-llms —
+   view example, reserved-names section, import-as row.
+
+End state: 803 tests, 23 parity files, every example builds, both modes share one
+enforcement pipeline. Deferred as agreed: 1.0 scoping decision (after dogfood app);
+`crow fmt --fix-collisions` (reserve for the first stdlib addition that needs it).

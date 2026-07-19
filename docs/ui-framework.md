@@ -34,7 +34,7 @@ fn inc[]
 fn dec[]
     count = count - 1
 
-fn render[]
+view render[]
     return div[
         h1['Count: `count`'],
         button['+', click = inc],
@@ -73,7 +73,7 @@ min_vol = 100000
 min_price = 2.0
 filter_pb = 'all'
 
-fn render[]
+view render[]
     return div[
         field['Min Vol', min_vol],
         field['Min $', min_price],
@@ -265,7 +265,7 @@ loading = false
 data = frame[]
 error = ''
 
-fn render[]
+view render[]
     div[
         if loading
             p['Loading...']
@@ -283,7 +283,7 @@ Use `for` — it's just Crow.
 ```
 items = []
 
-fn render[]
+view render[]
     ul[
         for item in items
             li['`item.name`: `item.price`']
@@ -312,7 +312,7 @@ fn stat_row[positions, total_pnl, win_rate]
 
 positions = poll['/api/positions', 5]
 
-fn render[]
+view render[]
     div[
         stat_row[positions, sum[positions.pnl], 65],
         table[positions]
@@ -362,13 +362,13 @@ Each page is a separate `page` route. No client-side router.
 ```
 use web, ui
 
-fn home_render[]
+view home_render[]
     div[
         nav[a['Home', href = '/'], a['About', href = '/about']],
         h1['Welcome']
     ]
 
-fn about_render[]
+view about_render[]
     div[
         nav[a['Home', href = '/'], a['About', href = '/about']],
         h1['About']
@@ -396,7 +396,7 @@ fn login[]
     else
         error = ''
 
-fn render[]
+view render[]
     form[
         field['Email', email],
         field['Password', password],
@@ -425,7 +425,7 @@ fn do_fetch[]
     else
         error = result.reason
 
-fn render[]
+view render[]
     return div[
         button['Fetch', click = do_fetch],
         if len[error] gt 0
@@ -464,7 +464,7 @@ fn do_login[]
     else
         error = 'Invalid credentials'
 
-fn login_render[]
+view login_render[]
     return form[
         field['Email', email],
         field['Password', password],
@@ -478,7 +478,7 @@ fn do_logout[]
     session.clear[]
     redirect['/login']
 
-fn home_render[]
+view home_render[]
     user = session.get['user_name']
     return div[
         h1['Welcome, `user`'],
@@ -511,7 +511,7 @@ fn trade_init[params]
     trade_id = params.id
     trade = query[db, 'SELECT * FROM trades WHERE id = `params.id`']
 
-fn trade_render[]
+view trade_render[]
     return div[
         h1['Trade `trade_id`'],
         p['Symbol: `trade.symbol`'],
@@ -528,7 +528,7 @@ fn search_init[params]
     q = params.q or ''
     results = query[db, 'SELECT * FROM items WHERE name LIKE \'%`q`%\'']
 
-fn search_render[]
+view search_render[]
     return div[
         field['Search', q],
         table[results]
@@ -547,7 +547,7 @@ fn user_trade_init[params]
     user = query[db, 'SELECT * FROM users WHERE id = `params.user_id`']
     trade = query[db, 'SELECT * FROM trades WHERE id = `params.trade_id`']
 
-fn user_trade_render[]
+view user_trade_render[]
     return div[
         h1['`user.name` — Trade `trade_id`']
     ]
@@ -586,7 +586,7 @@ fn app_layout[user, content]
 user = session.get['user_name']
 ohlcv = poll['/api/ohlcv', 5]
 
-fn dash_render[]
+view dash_render[]
     return app_layout[user, div[
         h1['Dashboard'],
         table[ohlcv]
@@ -594,7 +594,7 @@ fn dash_render[]
 
 positions = poll['/api/positions', 5]
 
-fn pos_render[]
+view pos_render[]
     return app_layout[user, div[
         h1['Positions'],
         table[positions]
@@ -646,7 +646,7 @@ fn upload[]
     else
         error = 'No file selected'
 
-fn render[]
+view render[]
     return form[
         ui.input[type = 'file', change = file_selected, accept = '.csv,.xlsx'],
         if len[error] gt 0
@@ -694,7 +694,7 @@ fn on_keydown[value]
     else if value eq 'Escape'
         modal = nil
 
-fn render[]
+view render[]
     return div[
         h1['Press Ctrl+S to save']
     ]
@@ -720,7 +720,7 @@ fn load[]
     data = query[db, 'SELECT * FROM big_table']
     loading = false
 
-fn render[]
+view render[]
     return div[
         button['Load Data', click = load],
         if loading
@@ -739,12 +739,12 @@ Since Crow is server-side and synchronous, the runtime sends an intermediate ren
 Set the page title, favicon, and meta tags per route.
 
 ```
-fn dash_render[]
+view dash_render[]
     title['Dashboard — Trading App']
     meta[name = 'description', content = 'Real-time trading dashboard']
     return div[h1['Dashboard']]
 
-fn pos_render[]
+view pos_render[]
     title['Positions — Trading App']
     return div[h1['Positions']]
 
@@ -820,7 +820,7 @@ Also provides the JS runtime that gets embedded in the initial HTML page.
 
 use web, ui
 
-fn render[]
+view render[]
     h1['Hello']
 
 serve[3000]
@@ -836,7 +836,7 @@ Pure functions that take data, return SVG strings. No JavaScript. Used for stati
 ```
 ohlcv = poll['/api/ohlcv', 5]
 
-fn chart_render[]
+view chart_render[]
     return div[
         chart.candle[ohlcv, width = 800, height = 400],
         chart.volume[ohlcv, width = 800, height = 100],
@@ -875,7 +875,7 @@ ohlcv = poll['/api/ohlcv?symbol=`symbol`&tf=`tf`', 1]
 trades = poll['/api/trades?symbol=`symbol`', 5]
 support = fetch['/api/levels?symbol=`symbol`&type=support']
 
-fn render[]
+view render[]
     return div[
         chart.live[ohlcv, height = 400, timeframe = tf,
             chart.indicator['volume'],
@@ -989,7 +989,7 @@ fn confirm_delete[]
 fn cancel[]
     modal = ''
 
-fn render[]
+view render[]
     return div[
         button['Delete', click = show_confirm],
         table[items],
@@ -1044,7 +1044,7 @@ fn save[]
     exec[db, 'INSERT INTO items ...']
     flash['Item saved successfully', 3000]
 
-fn render[]
+view render[]
     return div[
         button['Save', click = save],
         if len[flash_msg] gt 0
@@ -1073,7 +1073,7 @@ fn load_page[]
     total = query[db, 'SELECT count[] FROM items'].0.count
     items = query[db, 'SELECT * FROM items ORDER BY id LIMIT `per_page` OFFSET `[pg - 1] * per_page`']
 
-fn render[]
+view render[]
     return div[
         table[items, cols = ['id', 'name', 'price']],
         paginate[total, per_page]
@@ -1197,7 +1197,7 @@ fn export_json[]
     json_str = to_json[data]
     download[json_str, 'trades.json', type = 'application/json']
 
-fn render[]
+view render[]
     return div[
         button['Export CSV', click = export_csv],
         button['Export JSON', click = export_json],
@@ -1269,7 +1269,7 @@ The error banner is only shown in development (`crow dev`). In production (`crow
 **Custom error handling:** Override the default with an `error_render` function:
 
 ```
-fn error_page_render[]
+view error_page_render[]
     return div[
         h1['Something went wrong'],
         p['Please try refreshing the page.'],
@@ -1290,7 +1290,7 @@ fn load[]
     --- this might crash ---
     data = query[db, 'SELECT * FROM missing_table']
 
-fn render[]
+view render[]
     return div[
         button['Load', click = load],
         if len[error] gt 0
@@ -1317,7 +1317,7 @@ fn toggle_theme[]
     else
         theme = 'dark'
 
-fn render[]
+view render[]
     return div[data_theme = theme, class = 'app',
         button['Toggle Theme', click = toggle_theme],
         h1['Dashboard']
@@ -1518,7 +1518,7 @@ positions = poll['/api/positions?symbol=`symbol`', 5]
 trades = poll['/api/trades?symbol=`symbol`', 5]
 support = fetch['/api/levels?symbol=`symbol`&type=support']
 
-fn dash_render[]
+view dash_render[]
     return div[
         nav_bar[],
         div[
@@ -1542,7 +1542,7 @@ page['/', dash_render]
 --- Positions page (static table, no chart) ---
 all_positions = poll['/api/positions', 5]
 
-fn pos_render[]
+view pos_render[]
     return div[
         nav_bar[],
         div[
@@ -1558,7 +1558,7 @@ page['/positions', pos_render]
 --- Leaderboard page (static SVG chart) ---
 leaders = poll['/api/leaderboard', 30]
 
-fn lb_render[]
+view lb_render[]
     return div[
         nav_bar[],
         div[
@@ -1673,7 +1673,7 @@ selected_row = nil
 --- session is shared across tabs ---
 theme = session.get['theme', 'dark']
 
-fn render[]
+view render[]
     return div[table[positions]]
 
 page['/', render]
@@ -1691,7 +1691,7 @@ fn on_symbol_change[]
 fn on_channel[msg]
     symbol = msg.symbol
 
-fn render[]
+view render[]
     return div[
         select[['AAPL', 'GOOG', 'TSLA'], symbol]
     ]
@@ -1718,7 +1718,7 @@ fn on_channel[msg]
         positions = query[db, 'SELECT * FROM positions WHERE user_id = `user_id`']
         flash['Order filled: `msg.symbol` x `msg.qty`', 5000]
 
-fn dash_render[]
+view dash_render[]
     return table[positions]
 
 page['/dashboard', dash_render, on_channel = on_channel]
@@ -1924,7 +1924,7 @@ count = 0
 fn increment[]
     count = count + 1
 
-fn render[]
+view render[]
     return div[
         nav_bar[],
         card['Symbol', symbol],
@@ -2184,7 +2184,7 @@ Show who else is viewing the same page. Built on top of `channel`:
 channel.join['presence:dashboard']
 viewers = channel.presence['presence:dashboard']
 
-fn render[]
+view render[]
     return div[
         for v in viewers
             span[v.name, class = 'avatar'],
@@ -2212,7 +2212,7 @@ fn on_hook[event]
     if event.hook eq 'drag.sortable' and event.type eq 'reorder'
         columns = reorder[columns, event.from, event.to]
 
-fn render[]
+view render[]
     return div[
         for col in columns
             div[class = 'column', hook = 'drag.sortable', data_column = col.name,
@@ -2305,7 +2305,7 @@ fn on_hook[event]
         new_items = query[db, 'SELECT * FROM posts LIMIT 20 OFFSET `[pg - 1] * 20`']
         items = items + new_items
 
-fn render[]
+view render[]
     return div[
         for item in items
             div[item.title, class = 'post'],
@@ -2354,7 +2354,7 @@ fn performance[trades]
     table[summary]
 
 --- render function ---
-fn render[]
+view render[]
     div[
         h1['Trading Dashboard'],
         div[
