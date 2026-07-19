@@ -291,6 +291,37 @@ impl CrowColumn {
     }
 
     /// Return unique non-null values as a Vec<String>.
+    /// Numeric values as a tensor (invalid cells become 0.0) — the bridge
+    /// from named columns into tensor math (mean, element-wise ops, ...).
+    pub fn to_tensor(&self) -> crate::tensor::CrowTensor {
+        let n = self.len();
+        let mut data = Vec::with_capacity(n);
+        match self.data.as_ref() {
+            Column::Int(v) => {
+                for i in 0..n {
+                    data.push(if self.valid[i] { v[i] as f64 } else { 0.0 });
+                }
+            }
+            Column::Float(v) => {
+                for i in 0..n {
+                    data.push(if self.valid[i] { v[i] } else { 0.0 });
+                }
+            }
+            Column::Bool(v) => {
+                for i in 0..n {
+                    data.push(if self.valid[i] && v[i] { 1.0 } else { 0.0 });
+                }
+            }
+            _ => {
+                // Str / DateTime: no numeric interpretation
+                for _ in 0..n {
+                    data.push(0.0);
+                }
+            }
+        }
+        crate::tensor::CrowTensor::from_vec(data, vec![n])
+    }
+
     pub fn unique(&self) -> Vec<String> {
         let mut seen = std::collections::HashSet::new();
         let mut result = Vec::new();
