@@ -95,9 +95,12 @@ fn main() {
         "test" => {
             if args.iter().any(|a| a == "--parity") {
                 cmd_test_parity();
+            } else if args.iter().any(|a| a == "--book") {
+                cmd_test_book();
             } else {
-                eprintln!("crow test: only --parity is implemented so far");
+                eprintln!("crow test: pass --parity or --book");
                 eprintln!("  crow test --parity   run tests/parity/*.crow in both modes and diff output");
+                eprintln!("  crow test --book     execute every code block in docs/book/ (both modes)");
                 process::exit(1);
             }
         }
@@ -168,6 +171,186 @@ fn print_usage() {
 /// Run every tests/parity/*.crow file through both execution modes and diff
 /// their stdout. The transpiler and interpreter must agree on every program
 /// (design rule 11); this makes drift a test failure instead of a discipline.
+
+/// Execute every fenced `crow` code block in docs/book/src/*.md through both
+/// execution modes. The book can never rot: a block either runs (and the two
+/// modes must agree — and match a directly following ```text block, if any),
+/// builds (`crow,norun`), is expected to fail (`crow,error`), or is
+/// explicitly skipped (`crow,ignore`).
+fn cmd_test_book() {
+    let dir = std::path::Path::new("docs/book/src");
+    if !dir.is_dir() {
+        eprintln!("error: no docs/book/src/ directory found (run from the project root)");
+        process::exit(1);
+    }
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.extension().map_or(false, |x| x == "md"))
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+
+    #[derive(PartialEq)]
+    enum Mode { Run, NoRun, Error, Ignore }
+
+    struct Block {
+        file: String,
+        line: usize,
+        mode: Mode,
+        code: String,
+        expected: Option<String>,
+    }
+
+    // Extract fenced blocks (```crow[,flag]) and any directly following ```text block
+    let mut blocks: Vec<Block> = Vec::new();
+    for file in &files {
+        let name = file.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let src = std::fs::read_to_string(file).unwrap_or_default();
+        let lines: Vec<&str> = src.lines().collect();
+        let mut i = 0;
+        while i < lines.len() {
+            let l = lines[i].trim_start();
+            if l.starts_with("```crow") {
+                let info = l.trim_start_matches("```crow");
+                let mode = match info.trim_start_matches(',').trim() {
+                    "" => Mode::Run,
+                    "norun" => Mode::NoRun,
+                    "error" => Mode::Error,
+                    "ignore" => Mode::Ignore,
+                    other => {
+                        eprintln!("{}:{}: unknown crow block flag '{}'", name, i + 1, other);
+                        process::exit(1);
+                    }
+                };
+                let start = i + 1;
+                let mut code = String::new();
+                i += 1;
+                while i < lines.len() && !lines[i].trim_start().starts_with("```") {
+                    code.push_str(lines[i]);
+                    code.push('\n');
+                    i += 1;
+                }
+                i += 1; // closing fence
+                // A directly following ```text block is the expected output
+                let mut j = i;
+                while j < lines.len() && lines[j].trim().is_empty() {
+                    j += 1;
+                }
+                let mut expected = None;
+                if j < lines.len() && lines[j].trim_start().starts_with("```text") {
+                    let mut out = String::new();
+                    j += 1;
+                    while j < lines.len() && !lines[j].trim_start().starts_with("```") {
+                        out.push_str(lines[j]);
+                        out.push('\n');
+                        j += 1;
+                    }
+                    i = j + 1;
+                    expected = Some(out);
+                }
+                blocks.push(Block { file: name.clone(), line: start, mode, code, expected });
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    if blocks.is_empty() {
+        eprintln!("error: no ```crow blocks found under docs/book/src/");
+        process::exit(1);
+    }
+
+    let exe = std::env::current_exe().unwrap_or_else(|e| {
+        eprintln!("error locating crow binary: {}", e);
+        process::exit(1);
+    });
+    let tmp_dir = std::env::temp_dir().join("crow_book_test");
+    let _ = std::fs::create_dir_all(&tmp_dir);
+    let run_mode = |mode_args: &[&str], file: &std::path::Path| -> (bool, String, String) {
+        let out = std::process::Command::new(&exe).args(mode_args).arg(file).output();
+        match out {
+            Ok(o) => (
+                o.status.success(),
+                String::from_utf8_lossy(&o.stdout).to_string(),
+                String::from_utf8_lossy(&o.stderr).to_string(),
+            ),
+            Err(e) => (false, String::new(), format!("failed to spawn: {}", e)),
+        }
+    };
+
+    let start = std::time::Instant::now();
+    let total = blocks.iter().filter(|b| b.mode != Mode::Ignore).count();
+    println!("book: {} blocks across {} pages\n", total, files.len());
+    let mut failures = 0;
+    for b in &blocks {
+        let label = format!("{}:{}", b.file, b.line);
+        match b.mode {
+            Mode::Ignore => continue,
+            Mode::Run => {
+                let path = tmp_dir.join("block.crow");
+                let _ = std::fs::write(&path, &b.code);
+                let (i_ok, i_out, i_err) = run_mode(&["run", "-i"], &path);
+                let (t_ok, t_out, t_err) = run_mode(&["run"], &path);
+                if !i_ok || !t_ok {
+                    failures += 1;
+                    println!("  FAIL  {} (execution)", label);
+                    let tail = if !t_ok { t_err } else { i_err };
+                    println!("        {}", tail.lines().last().unwrap_or("(no stderr)"));
+                    continue;
+                }
+                if i_out != t_out {
+                    failures += 1;
+                    println!("  FAIL  {} (modes disagree)", label);
+                    continue;
+                }
+                if let Some(exp) = &b.expected {
+                    if t_out.trim_end() != exp.trim_end() {
+                        failures += 1;
+                        println!("  FAIL  {} (output != book text)", label);
+                        println!("        expected: {:?}", exp.trim_end());
+                        println!("        got:      {:?}", t_out.trim_end());
+                        continue;
+                    }
+                }
+                println!("  ok    {}", label);
+            }
+            Mode::NoRun => {
+                let path = tmp_dir.join("block.crow");
+                let _ = std::fs::write(&path, &b.code);
+                let (ok, _, err) = run_mode(&["build"], &path);
+                if ok {
+                    println!("  ok    {} (build only)", label);
+                } else {
+                    failures += 1;
+                    println!("  FAIL  {} (does not build)", label);
+                    println!("        {}", err.lines().last().unwrap_or("(no stderr)"));
+                }
+            }
+            Mode::Error => {
+                let path = tmp_dir.join("block.crow");
+                let _ = std::fs::write(&path, &b.code);
+                let (ok, _, _) = run_mode(&["build"], &path);
+                if !ok {
+                    println!("  ok    {} (fails as documented)", label);
+                } else {
+                    failures += 1;
+                    println!("  FAIL  {} (documented as an error, but builds)", label);
+                }
+            }
+        }
+    }
+    let elapsed = start.elapsed().as_secs_f32();
+    println!();
+    if failures == 0 {
+        println!("\u{2713} {} book blocks verified in both modes ({:.1}s)", total, elapsed);
+    } else {
+        println!("\u{2717} {} of {} book blocks fail ({:.1}s)", failures, total, elapsed);
+        process::exit(1);
+    }
+}
+
 fn cmd_test_parity() {
     let dir = std::path::Path::new("tests/parity");
     if !dir.is_dir() {
