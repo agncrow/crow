@@ -789,7 +789,7 @@ fn action_handler[req]
     --- process the action ---
     return json[map[ok = true]]
 
-route[app, '/api/action', action_handler, method = 'POST']
+route['/api/action', 'POST', action_handler]
 --- CSRF token validated automatically for POST/PUT/DELETE ---
 ```
 
@@ -1576,7 +1576,7 @@ page['/leaderboard', lb_render]
 fn positions_api[req]
     return json[query[conn, 'SELECT * FROM positions']]
 
-route[app, '/api/positions', positions_api]
+route['/api/positions', positions_api]
 
 serve[8080]
 ```
@@ -1734,7 +1734,7 @@ fn execute_api[req]
     ]]
     return json[result]
 
-route[app, '/api/execute', execute_api]
+route['/api/execute', execute_api]
 ```
 
 ### How channels work

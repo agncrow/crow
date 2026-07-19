@@ -1600,7 +1600,7 @@ If the port is already in use, the server prints a friendly error: `error: port 
 |---|---|
 | `serve[port]` | Start the server on the given port (implicit app) |
 | `page[path, render, handle]` | Add a LiveView page with render/handle functions |
-| `route[app, path, handler]` | Add a route with a handler function |
+| `route[path, handler]` | Add a route with a handler function (implicit app; `route[path, method, handler]` for other methods) |
 
 #### Responses
 
@@ -2853,7 +2853,7 @@ Crow intentionally has no inline error recovery syntax (e.g. `x = int['bad'] res
 
 **What was considered:** A keyword (`rescue`, `catch`, `alt`, `fail`, etc.) that silently replaces an error-value with a default, turning a 3-line check into a one-liner.
 
-**Why it was rejected:** Inline fallbacks hide errors. The program continues with a value that may be wrong, and the error's `.reason` and `.line` are silently discarded. This contradicts Crow's error philosophy — errors are values that propagate visibly, carrying context, until you consciously handle them.
+**Why it was rejected:** Inline fallbacks hide errors. The program continues with a value that may be wrong, and the error's `.reason` and `.trace` are silently discarded. This contradicts Crow's error philosophy — errors are values that propagate visibly, carrying context, until you consciously handle them.
 
 Crow's errors don't crash the program. They propagate safely through function calls and operators:
 

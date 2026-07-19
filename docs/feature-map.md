@@ -135,7 +135,7 @@ Frame → tensor: `tensor[df]` or `tensor[df, [col1, col2]]`
 | Parallel loops | `for x in items` | Automatic (rayon) |
 | Error values | `.ok` `.reason` `.kind` `.trace` | Every value |
 | Structs | `struct Name [fields]` | Language syntax |
-| String interpolation | `'{expr}'` | Language syntax |
+| String interpolation | `` 'text `expr`' `` (paired backticks) | Language syntax |
 | Pipe chaining | `x then f` | Operator |
 | `.env` auto-loading | `crow run` / `crow build` | Automatic |
 
