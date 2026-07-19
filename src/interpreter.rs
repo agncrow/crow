@@ -3876,6 +3876,9 @@ impl Interpreter {
                 let tokens = lexer.tokenize()?;
                 let mut parser = crate::parser::Parser::new(tokens);
                 let stmts = parser.parse()?;
+                // Lower named arguments so interpolated calls like
+                // `fmt[x, decimals = 2]` are handled the same as top-level code.
+                let stmts = crate::lower::lower_program(&stmts).unwrap_or(stmts);
 
                 if let Some(crate::ast::Stmt::ExprStmt(expr)) = stmts.iter().find(|s| !matches!(s, crate::ast::Stmt::Line(_))) {
                     let val = self.eval_expr(expr)?;

@@ -18,3 +18,6 @@ fn pct[x]
 log['P&L: `money[pnl]` (`pct[0.042]`)']
 --- positional works too (decimals is the first named slot)
 log[fmt[pnl, 1]]
+--- fmt with named args directly inside interpolation (must lower there too)
+log['total: `fmt[1234.567, decimals = 2, commas = true]`']
+log['pct: `fmt[0.042, percent = true, decimals = 1]`']

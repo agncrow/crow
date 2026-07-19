@@ -4579,6 +4579,10 @@ impl Transpiler {
                 if let Ok(tokens) = lexer.tokenize() {
                     let mut parser = crate::parser::Parser::new(tokens);
                     if let Ok(stmts) = parser.parse() {
+                        // Lower named arguments (fmt[x, decimals = 2], etc.) the
+                        // same way top-level code is lowered — otherwise
+                        // interpolated calls with named args aren't recognized.
+                        let stmts = crate::lower::lower_program(&stmts).unwrap_or(stmts);
                         if let Some(crate::ast::Stmt::ExprStmt(expr)) = stmts.iter().find(|s| !matches!(s, Stmt::Line(_))) {
                             let rust_expr = self.expr_to_string(expr);
                             // Use {:?} for collection/struct types since they don't impl Display

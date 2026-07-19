@@ -110,8 +110,30 @@ impl Lexer {
             // identifier or keyword
             if ch.is_ascii_alphabetic() || ch == '_' {
                 let tok = self.lex_ident();
+                // Python string prefix: f'...', r'...', b'... — a name abutting
+                // a quote is never valid Crow, and it's the LLM interpolation reflex.
+                if let Token::Ident(name) = &tok.token {
+                    if self.peek() == Some('\'')
+                        && matches!(name.as_str(), "f" | "r" | "b" | "rb" | "br" | "fr" | "rf")
+                    {
+                        return Err(format!(
+                            "'{}' string prefixes don't exist in Crow (line {}, col {}) — \
+                             strings interpolate by default with backticks: 'hello `name`'. \
+                             Drop the '{}' prefix.",
+                            name, tok.line, tok.col, name
+                        ));
+                    }
+                }
                 tokens.push(tok);
                 continue;
+            }
+
+            // Python-ism detection: characters and operator spellings that are
+            // never valid Crow but are common reflexes from Python/JS. Caught
+            // here so the message can teach the Crow form instead of a bare
+            // "unexpected character".
+            if let Some(msg) = self.python_ism_at(ch) {
+                return Err(msg);
             }
 
             // two-character tokens
@@ -204,6 +226,60 @@ impl Lexer {
 
     fn peek_at(&self, offset: usize) -> Option<char> {
         self.source.get(self.pos + offset).copied()
+    }
+
+    /// Recognize Python/JS syntax that has no Crow equivalent and return a
+    /// message teaching the Crow form. Returns None for characters that aren't
+    /// a known Python-ism (they fall through to normal lexing / the generic
+    /// "unexpected character" error).
+    fn python_ism_at(&self, ch: char) -> Option<String> {
+        let next = self.peek_at(1);
+        let at = format!("line {}, col {}", self.line, self.col);
+        let msg = match ch {
+            '"' => format!(
+                "Crow strings use single quotes: 'text', not \"text\" ({at}). \
+                 Nested quotes escape as \\'."
+            ),
+            ':' => format!(
+                "Crow has no ':' ({at}) — blocks are defined by indentation, \
+                 not colons. Declare functions with fn name[params] and start \
+                 the body on the next indented line."
+            ),
+            '+' | '-' | '*' | '/' | '%' if next == Some('=') => {
+                let op = ch;
+                format!(
+                    "Crow has no augmented assignment ('{op}=') ({at}) — write it \
+                     out: x = x {op} 1. (The transpiler still optimizes this to an \
+                     in-place update.)"
+                )
+            }
+            '=' if next == Some('=') => format!(
+                "Crow compares with the word 'eq', not '==' ({at}): a eq b."
+            ),
+            '!' if next == Some('=') => format!(
+                "Crow compares with the word 'ne', not '!=' ({at}): a ne b."
+            ),
+            '<' if next == Some('=') => format!(
+                "Crow uses the word 'lte', not '<=' ({at}): a lte b."
+            ),
+            '>' if next == Some('=') => format!(
+                "Crow uses the word 'gte', not '>=' ({at}): a gte b."
+            ),
+            '<' => format!("Crow uses the word 'lt', not '<' ({at}): a lt b."),
+            '>' => format!("Crow uses the word 'gt', not '>' ({at}): a gt b."),
+            '&' if next == Some('&') => {
+                format!("Crow uses the word 'and', not '&&' ({at}): a and b.")
+            }
+            '|' if next == Some('|') => {
+                format!("Crow uses the word 'or', not '||' ({at}): a or b.")
+            }
+            '!' => format!(
+                "Crow uses the word 'not', not '!' ({at}): not a. \
+                 (And 'ne' for inequality: a ne b.)"
+            ),
+            _ => return None,
+        };
+        Some(msg)
     }
 
     fn check_str(&self, s: &str) -> bool {
@@ -447,3 +523,52 @@ impl Lexer {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn err(src: &str) -> String {
+        Lexer::new(src).tokenize().err().unwrap_or_default()
+    }
+
+    #[test]
+    fn double_quote_teaches_single_quotes() {
+        assert!(err("x = \"hi\"").contains("single quotes"));
+    }
+
+    #[test]
+    fn augmented_assign_teaches_explicit_form() {
+        assert!(err("x += 1").contains("x = x + 1"));
+        assert!(err("x -= 1").contains("augmented assignment"));
+    }
+
+    #[test]
+    fn symbol_operators_teach_word_operators() {
+        assert!(err("a == b").contains("'eq'"));
+        assert!(err("a != b").contains("'ne'"));
+        assert!(err("a < b").contains("'lt'"));
+        assert!(err("a >= b").contains("'gte'"));
+        assert!(err("a && b").contains("'and'"));
+        assert!(err("a || b").contains("'or'"));
+        assert!(err("not a\nb = !c").contains("'not'"));
+    }
+
+    #[test]
+    fn colon_teaches_indentation() {
+        assert!(err("g = lambda x: x").contains("no ':'"));
+    }
+
+    #[test]
+    fn python_string_prefix_teaches_backticks() {
+        assert!(err("x = f'hi'").contains("backticks"));
+        assert!(err("x = r'raw'").contains("prefix"));
+    }
+
+    #[test]
+    fn ordinary_code_still_lexes() {
+        assert!(Lexer::new("x = 1 + 2\nlog[x]\n").tokenize().is_ok());
+        // an identifier that merely starts with f is fine
+        assert!(Lexer::new("factor = 3\n").tokenize().is_ok());
+    }
+}
