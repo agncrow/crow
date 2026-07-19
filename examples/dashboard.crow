@@ -17,9 +17,9 @@ fn clear_filter[]
 
 --- Render
 view render[]
-  today = filter[trades, trades.date eq today[]]
-  pnl = sum[today.pnl]
-  count = len[today]
+  todays = filter[trades, trades.date eq today[]]
+  pnl = sum[todays.pnl]
+  count = len[todays]
 
   filtered = positions
   if filter_pb ne 'all'
@@ -29,7 +29,7 @@ view render[]
   filtered = sort[filtered, 'pnl', desc = true]
   top = head[filtered, 50]
 
-  by_playbook = group[today, 'playbook_code', ['pnl', 'sum'], ['pnl', 'count'], ['pnl', 'mean']]
+  by_playbook = group[todays, 'playbook_code', ['pnl', 'sum'], ['pnl', 'count'], ['pnl', 'mean']]
 
   return div[
     h1['Trading Dashboard'],

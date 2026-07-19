@@ -226,6 +226,11 @@ pub struct TypeContext {
     /// Fns referenced as values inside view bodies or page[] registrations —
     /// event handlers, which share the reactive-state exemption with views
     pub view_handlers: std::collections::BTreeSet<String>,
+    /// Modules imported bare (no alias) — their exports are reserved and
+    /// callable bare in this file
+    pub bare_modules: std::collections::BTreeSet<String>,
+    /// alias → module path for `use X as y` imports (qualified-only)
+    pub module_aliases: BTreeMap<String, String>,
     /// fn name → [(signature, mangled clone name)] for specialized functions
     pub specializations: BTreeMap<String, Vec<(Vec<CrowType>, String)>>,
     pub structs: BTreeMap<String, StructSig>,
@@ -279,6 +284,8 @@ impl TypeContext {
             call_signatures: BTreeMap::new(),
             views: std::collections::BTreeSet::new(),
             view_handlers: std::collections::BTreeSet::new(),
+            bare_modules: std::collections::BTreeSet::new(),
+            module_aliases: BTreeMap::new(),
             specializations: BTreeMap::new(),
             structs,
             cpu_count: None,
@@ -307,7 +314,15 @@ impl TypeContext {
                         self.views.insert(name.clone());
                     }
                 }
-                Stmt::Use { path } => {
+                Stmt::Use { path, alias } => {
+                    match alias {
+                        Some(a) => {
+                            self.module_aliases.insert(a.clone(), path.clone());
+                        }
+                        None => {
+                            self.bare_modules.insert(path.clone());
+                        }
+                    }
                     if path == "math" {
                         if !self.registry.is_loaded("math") {
                             self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
@@ -1728,10 +1743,14 @@ impl TypeContext {
                         if _mod_name == "web" && field == "new" {
                             return CrowType::WebApp;
                         }
-                        // Registry-module prefixed call (math.zeros[...]):
-                        // same type as the bare call
-                        if matches!(_mod_name.as_str(), "math" | "io" | "frame" | "db")
-                            && self.registry.is_loaded(_mod_name)
+                        // Registry-module prefixed call (math.zeros[...],
+                        // or via alias: m.zeros after `use math as m`)
+                        let _real_mod = self
+                            .module_aliases
+                            .get(_mod_name.as_str())
+                            .cloned()
+                            .unwrap_or_else(|| _mod_name.to_string());
+                        if matches!(_real_mod.as_str(), "math" | "io" | "frame" | "db" | "math.stats" | "math.nn")
                             && self.registry.has_function(field)
                         {
                             if let Some(t) = self.registry.type_of(field, args.len()) {

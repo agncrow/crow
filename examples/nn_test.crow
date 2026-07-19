@@ -3,7 +3,7 @@ use math.nn
 
 --- activations
 x = linspace[-2, 2, 5]
-log['input:']
+log['inp:']
 log[x]
 
 log['relu:']
@@ -35,14 +35,14 @@ log['crossentropy:']
 log[crossentropy[logits, targets]]
 
 --- linear layer
-input = reshape[linspace[1, 4, 4], 2, 2]
+inp = reshape[linspace[1, 4, 4], 2, 2]
 weights = eye[2]
 bias = ones[2]
 log['linear:']
-log[linear[input, weights, bias]]
+log[linear[inp, weights, bias]]
 
 --- simple forward pass
-h = relu[linear[input, weights, bias]]
+h = relu[linear[inp, weights, bias]]
 log['relu after linear:']
 log[h]
 

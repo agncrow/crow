@@ -14,8 +14,8 @@ log[c]
 d = linspace[0, 1, 5]
 log[d]
 
-e = arange[0, 5, 1]
-log[e]
+em = arange[0, 5, 1]
+log[em]
 
 f = full[2, 2, 7.0]
 log[f]
@@ -81,8 +81,8 @@ log[norm[linspace[3, 4, 2]]]
 log[norm[linspace[1, 3, 3], 1]]
 
 --- qr decomposition
-qr = qr[c]
-log[qr]
+decomp = qr[c]
+log[decomp]
 
 --- diag
 v = diag[c]
@@ -90,7 +90,7 @@ log[v]
 
 --- constants
 log[pi]
-log[e]
+log[em]
 log[inf]
 log[nan]
 

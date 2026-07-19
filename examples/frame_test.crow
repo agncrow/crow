@@ -10,8 +10,8 @@ log[df.columns]
 log[df.dtypes]
 
 --- Select columns
-sub = select[df, ['name', 'age']]
-log[sub]
+subset = select[df, ['name', 'age']]
+log[subset]
 
 --- Head / tail
 top2 = head[df, 2]

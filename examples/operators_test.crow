@@ -20,6 +20,6 @@ log[c ./ d]
 log[math.full[3, 2] .^ 3]
 
 --- matmul via *
-e = math.eye[2]
+ident = math.eye[2]
 f = math.full[2, 2, 3]
-log[e * f]
+log[ident * f]
