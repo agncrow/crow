@@ -2572,7 +2572,12 @@ impl Interpreter {
                 Ok(CrowValue::ok(Value::Array(cli_args)))
             }
             "input" => {
-                if !args.is_empty() { return Err("input[] takes no arguments".into()); }
+                if args.len() > 1 { return Err("input[] takes at most one argument (a prompt)".into()); }
+                if let Some(p) = args.first() {
+                    print!("{}", p.value);
+                    use std::io::Write;
+                    let _ = std::io::stdout().flush();
+                }
                 let mut line = String::new();
                 match std::io::stdin().read_line(&mut line) {
                     Ok(_) => {

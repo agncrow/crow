@@ -3008,7 +3008,12 @@ impl Transpiler {
                     }
                     // --- Conversion builtins ---
                     if name == "int" && arg_strs.len() == 1 {
-                        let ty = self.ctx.infer_expr(&args[0]);
+                        // Dispatch on the inner type: the auto-propagation
+                        // wrapper hands this emission the unwrapped .value
+                        let ty = match self.ctx.infer_expr(&args[0]) {
+                            CrowType::Result(inner) => *inner,
+                            other => other,
+                        };
                         return match ty {
                             CrowType::Int => arg_strs[0].clone(),
                             CrowType::Float => format!("({}) as i64", arg_strs[0]),
@@ -3018,7 +3023,12 @@ impl Transpiler {
                         };
                     }
                     if name == "float" && arg_strs.len() == 1 {
-                        let ty = self.ctx.infer_expr(&args[0]);
+                        // Dispatch on the inner type: the auto-propagation
+                        // wrapper hands this emission the unwrapped .value
+                        let ty = match self.ctx.infer_expr(&args[0]) {
+                            CrowType::Result(inner) => *inner,
+                            other => other,
+                        };
                         return match ty {
                             CrowType::Float => arg_strs[0].clone(),
                             CrowType::Int => format!("({}) as f64", arg_strs[0]),
@@ -3028,7 +3038,12 @@ impl Transpiler {
                         };
                     }
                     if name == "str" && arg_strs.len() == 1 {
-                        let ty = self.ctx.infer_expr(&args[0]);
+                        // Dispatch on the inner type: the auto-propagation
+                        // wrapper hands this emission the unwrapped .value
+                        let ty = match self.ctx.infer_expr(&args[0]) {
+                            CrowType::Result(inner) => *inner,
+                            other => other,
+                        };
                         return match ty {
                             CrowType::Str => arg_strs[0].clone(),
                             _ => format!("format!(\"{{}}\", {})", arg_strs[0]),
