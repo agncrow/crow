@@ -10,13 +10,13 @@ fn add_ten[x]
 --- Error propagates through function chain
 bad = int['hello']
 result = double[bad]
-log['double status: `result.status`']
+log['double ok: `result.ok`']
 log['double reason: `result.reason`']
-log['double line: `result.line`']
+log['double kind: `result.kind`']
 
 --- Error propagates through multiple functions
 chained = add_ten[double[bad]]
-log['chained status: `chained.status`']
+log['chained ok: `chained.ok`']
 log['chained reason: `chained.reason`']
 
 --- Successful values work normally

@@ -1,4 +1,8 @@
 --- P4 Web Modules Test
+--- NOTE: interpreter-only smoke test of Phase 4 web builtins using stub
+--- app values ([]) and the removed live[] API. Not a compilable program;
+--- excluded from the build sweep. The current web API is page[]/serve[]/route[]
+--- (see docs/language-spec.md, examples/web_test.crow).
 
 --- CORS
 app = []

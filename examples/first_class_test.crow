@@ -56,11 +56,13 @@ r2 = ops_map.mul
 log['map mul: `r2[3, 4]`']
 
 --- 7. reduce pattern
-fn reduce[f, arr, start]
+--- (param named g, not f: type inference uses one flat namespace, and apply's
+--- f above is a one-argument fn)
+fn reduce[g, arr, start]
   result = start
   i = 0
   while i lt arr.len
-    result = f[result, arr[i]]
+    result = g[result, arr[i]]
     i = i + 1
   return result
 

@@ -36,6 +36,10 @@ pub enum CrowType {
     WebRequest,
     /// SQLite database handle (crow_web::db::CrowSqlite).
     WebDb,
+    /// Database connection handle (crow_db::DbHandle) — `use db` connect[].
+    DbHandle,
+    /// Database transaction handle (&dyn crow_db::DbTx) — transact[] callback param.
+    DbTx,
     Void,
     Unknown,
 }
@@ -65,6 +69,8 @@ impl CrowType {
             CrowType::WebResponse => "crow_web::core::CrowResponse".into(),
             CrowType::WebRequest => "crow_web::core::CrowRequest".into(),
             CrowType::WebDb => "crow_web::db::CrowSqlite".into(),
+            CrowType::DbHandle => "crow_db::DbHandle".into(),
+            CrowType::DbTx => "&dyn crow_db::DbTx".into(),
             CrowType::Void => "()".into(),
             CrowType::Unknown => "String".into(),
         }
@@ -93,6 +99,8 @@ impl CrowType {
             CrowType::WebResponse => "crow_web::core::CrowResponse::default()".into(),
             CrowType::WebRequest => "crow_web::core::CrowRequest::new()".into(),
             CrowType::WebDb => "panic!(\"no default db\")".into(),
+            CrowType::DbHandle => "panic!(\"no default db connection\")".into(),
+            CrowType::DbTx => "panic!(\"no default db transaction\")".into(),
             CrowType::Void => "()".into(),
             CrowType::Unknown => "String::new()".into(),
         }
@@ -123,6 +131,8 @@ impl CrowType {
             CrowType::WebResponse => "web.response".into(),
             CrowType::WebRequest => "web.request".into(),
             CrowType::WebDb => "web.db".into(),
+            CrowType::DbHandle => "db.conn".into(),
+            CrowType::DbTx => "db.tx".into(),
             CrowType::Void => "void".into(),
             CrowType::Unknown => "unknown".into(),
         }
@@ -139,6 +149,11 @@ impl CrowType {
             (CrowType::Array(a), CrowType::Array(b)) => a.compatible(b),
             (CrowType::Map(a), CrowType::Map(b)) => a.compatible(b),
             (CrowType::Result(a), CrowType::Result(b)) => a.compatible(b),
+            // Fn types: compatible when arity matches and every component is
+            // (Unknown params from a not-yet-typed fn are wildcards)
+            (CrowType::Fn(p1, r1), CrowType::Fn(p2, r2)) if p1.len() == p2.len() => {
+                p1.iter().zip(p2.iter()).all(|(a, b)| a.compatible(b)) && r1.compatible(r2)
+            }
             // NumArray is compatible with Array of numeric types
             (CrowType::NumArray(_), CrowType::Array(inner)) | (CrowType::Array(inner), CrowType::NumArray(_)) => {
                 matches!(inner.as_ref(), CrowType::Int | CrowType::Float | CrowType::Unknown)
@@ -223,6 +238,27 @@ impl TypeContext {
         // and m.groups concrete types in both modes (maps are homogeneous,
         // so a bool + string-array result can't be a map in compiled code)
         structs.insert(
+            "CrowShell".to_string(),
+            StructSig {
+                fields: vec![
+                    ("status".to_string(), CrowType::Int),
+                    ("stdout".to_string(), CrowType::Str),
+                    ("stderr".to_string(), CrowType::Str),
+                ],
+            },
+        );
+        structs.insert(
+            "CrowElapsed".to_string(),
+            StructSig {
+                fields: vec![
+                    ("seconds".to_string(), CrowType::Float),
+                    ("minutes".to_string(), CrowType::Float),
+                    ("hours".to_string(), CrowType::Float),
+                    ("days".to_string(), CrowType::Float),
+                ],
+            },
+        );
+        structs.insert(
             "CrowFindResult".to_string(),
             StructSig {
                 fields: vec![
@@ -292,6 +328,11 @@ impl TypeContext {
                             self.registry.load(std::sync::Arc::new(crate::modules::frame::FrameModule));
                         }
                     }
+                    if path == "db" {
+                        if !self.registry.is_loaded("db") {
+                            self.registry.load(std::sync::Arc::new(crate::modules::db::DbModule));
+                        }
+                    }
                 }
                 Stmt::Resource { kind, count } => {
                     if kind == "cpu" {
@@ -332,6 +373,15 @@ impl TypeContext {
         for stmt in stmts {
             self.infer_stmt(stmt);
         }
+
+        if std::env::var("CROW_DEBUG_TYPES").is_ok() {
+            for (n, t) in &self.vars {
+                eprintln!("VAR {} : {:?}", n, t);
+            }
+            for (n, sig) in &self.functions {
+                eprintln!("FN {} params={:?} ret={:?}", n, sig.params, sig.return_type);
+            }
+        }
     }
 
     /// Propagate types from indirect function calls back to original function declarations.
@@ -340,6 +390,31 @@ impl TypeContext {
         // Collect var -> function name mappings from assignments
         let mut var_to_fn: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
         self.collect_var_fn_assignments(stmts, &mut var_to_fn);
+
+        // See through maps of fns: ops = map[add = add] (lowered to a set[]
+        // chain) followed by r = ops.add makes r an alias of add
+        let mut map_fn_fields: std::collections::BTreeMap<(String, String), Vec<String>> =
+            std::collections::BTreeMap::new();
+        for stmt in stmts {
+            if let Stmt::Assign { name, value } = stmt {
+                let mut pairs = Vec::new();
+                Self::extract_set_chain_fns(value, self, &mut pairs);
+                for (key, fn_name) in pairs {
+                    map_fn_fields.entry((name.clone(), key)).or_default().push(fn_name);
+                }
+            }
+        }
+        for stmt in stmts {
+            if let Stmt::Assign { name, value } = stmt {
+                if let Expr::FieldAccess { object, field } = value {
+                    if let Expr::Ident(map_var) = object.as_ref() {
+                        if let Some(fns) = map_fn_fields.get(&(map_var.clone(), field.clone())) {
+                            var_to_fn.entry(name.clone()).or_default().extend(fns.clone());
+                        }
+                    }
+                }
+            }
+        }
 
         // For each variable that holds a function, if the variable has a Fn type
         // with concrete params, propagate those to the original function
@@ -358,6 +433,23 @@ impl TypeContext {
                             let target = self.functions.get_mut(fn_name).unwrap();
                             target.params = new_params;
                             target.return_type = new_ret;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Walk a set[] chain (the lowered map constructor) collecting
+    /// (key, fn-name) pairs for values that are named functions.
+    fn extract_set_chain_fns(e: &Expr, ctx: &TypeContext, out: &mut Vec<(String, String)>) {
+        if let Expr::Call { callee, args } = e {
+            if let Expr::Ident(name) = callee.as_ref() {
+                if name == "set" && args.len() == 3 {
+                    Self::extract_set_chain_fns(&args[0], ctx, out);
+                    if let (Expr::Str(key), Expr::Ident(fn_name)) = (&args[1], &args[2]) {
+                        if ctx.functions.contains_key(fn_name) {
+                            out.push((key.clone(), fn_name.clone()));
                         }
                     }
                 }
@@ -502,6 +594,18 @@ impl TypeContext {
                                     if let Some(p) = sig.params.first_mut() {
                                         p.1 = p.1.unify(&elem);
                                     }
+                                }
+                            }
+                        }
+                    }
+
+                    // db transact[conn, fn]: the callback's parameter is a
+                    // db connection handle
+                    if name == "transact" && args.len() == 2 {
+                        if let Expr::Ident(fn_name) = &args[1] {
+                            if let Some(sig) = self.functions.get_mut(fn_name) {
+                                if let Some(p) = sig.params.first_mut() {
+                                    p.1 = CrowType::DbTx;
                                 }
                             }
                         }
@@ -668,6 +772,39 @@ impl TypeContext {
                     }
                     _ => {}
                 }
+                // Iterating an array literal of named fns: calls through the
+                // loop variable type each fn's params (an uncalled fn would
+                // otherwise keep Unknown params and be skipped at emission)
+                if let Expr::Array(elems) = iter.as_ref() {
+                    let fn_names: Vec<String> = elems.iter()
+                        .filter_map(|e| match e {
+                            Expr::Ident(n) if self.functions.contains_key(n) => Some(n.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    if fn_names.len() == elems.len() && !fn_names.is_empty() {
+                        // Infer arg types outside the closure (borrow rules)
+                        let mut typed_calls: Vec<Vec<CrowType>> = Vec::new();
+                        let mut raw_calls: Vec<Vec<Expr>> = Vec::new();
+                        Self::find_calls_to_var(body, var, &mut |args| {
+                            raw_calls.push(args.to_vec());
+                        });
+                        for args in &raw_calls {
+                            typed_calls.push(args.iter().map(|a| self.infer_expr(a)).collect());
+                        }
+                        for fname in &fn_names {
+                            if let Some(sig) = self.functions.get_mut(fname) {
+                                for tys in &typed_calls {
+                                    if tys.len() == sig.params.len() {
+                                        for (p, t) in sig.params.iter_mut().zip(tys.iter()) {
+                                            p.1 = p.1.unify(t);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 for s in body { self.collect_call_types_stmt(s); }
             }
             Expr::Str(s) => {
@@ -675,6 +812,55 @@ impl TypeContext {
                 self.collect_call_types_in_string(s);
             }
             _ => {}
+        }
+    }
+
+    /// Walk statements and invoke f with the args of every call whose callee
+    /// is the given variable name.
+    fn find_calls_to_var(stmts: &[Stmt], var: &str, f: &mut dyn FnMut(&[Expr])) {
+        fn walk_expr(e: &Expr, var: &str, f: &mut dyn FnMut(&[Expr])) {
+            match e {
+                Expr::Call { callee, args } => {
+                    if let Expr::Ident(n) = callee.as_ref() {
+                        if n == var {
+                            f(args);
+                        }
+                    }
+                    walk_expr(callee, var, f);
+                    for a in args { walk_expr(a, var, f); }
+                }
+                Expr::BinOp { left, right, .. } => {
+                    walk_expr(left, var, f);
+                    walk_expr(right, var, f);
+                }
+                Expr::UnaryOp { expr, .. } => walk_expr(expr, var, f),
+                Expr::Array(items) => for i in items { walk_expr(i, var, f); },
+                Expr::FieldAccess { object, .. } => walk_expr(object, var, f),
+                _ => {}
+            }
+        }
+        for s in stmts {
+            match s {
+                Stmt::ExprStmt(e) | Stmt::Return(Some(e)) | Stmt::Assign { value: e, .. } => {
+                    walk_expr(e, var, f)
+                }
+                Stmt::If { condition, then_body, else_body } => {
+                    walk_expr(condition, var, f);
+                    Self::find_calls_to_var(then_body, var, f);
+                    if let Some(eb) = else_body {
+                        Self::find_calls_to_var(eb, var, f);
+                    }
+                }
+                Stmt::While { condition, body } => {
+                    walk_expr(condition, var, f);
+                    Self::find_calls_to_var(body, var, f);
+                }
+                Stmt::For { iter, body, .. } => {
+                    walk_expr(iter, var, f);
+                    Self::find_calls_to_var(body, var, f);
+                }
+                _ => {}
+            }
         }
     }
 
@@ -1162,6 +1348,9 @@ impl TypeContext {
                 CrowType::Unknown
             }
             "len" => CrowType::Int,
+            "shell" => CrowType::Struct("CrowShell".to_string()),
+            "now" | "date" => CrowType::Map(Box::new(CrowType::Int)),
+            "elapsed" => CrowType::Struct("CrowElapsed".to_string()),
             // Regex + search builtins
             "matches" => CrowType::Bool,
             "any" | "all" => CrowType::Bool,
@@ -1271,13 +1460,14 @@ impl TypeContext {
             // Lowering resolves named args before inference; type is the value's
             Expr::Named { value, .. } => self.infer_expr(value),
             Expr::Ident(name) => {
+                // User variables shadow module constants (matches codegen +
+                // interpreter scoping: environment first, then constants)
+                if let Some(ty) = self.vars.get(name) {
+                    return ty.clone();
+                }
                 // Module constants: pi, e, inf, nan
                 if self.registry.has_constant(name) {
                     return CrowType::Float;
-                }
-                // Check local vars first
-                if let Some(ty) = self.vars.get(name) {
-                    return ty.clone();
                 }
                 // Check if it's a known function name — return as CrowType::Fn
                 if let Some(sig) = self.functions.get(name) {
@@ -1420,6 +1610,16 @@ impl TypeContext {
                         if _mod_name == "web" && field == "new" {
                             return CrowType::WebApp;
                         }
+                        // Registry-module prefixed call (math.zeros[...]):
+                        // same type as the bare call
+                        if matches!(_mod_name.as_str(), "math" | "io" | "frame" | "db")
+                            && self.registry.is_loaded(_mod_name)
+                            && self.registry.has_function(field)
+                        {
+                            if let Some(t) = self.registry.type_of(field, args.len()) {
+                                return t;
+                            }
+                        }
                         let prefixed = format!("{}_{}", _mod_name, field);
                         // Module struct constructor
                         if self.structs.contains_key(&prefixed) {
@@ -1484,6 +1684,13 @@ impl TypeContext {
                     "trace" => return CrowType::Array(Box::new(CrowType::Str)),
                     _ => {}
                 }
+                // Map dot-access: m.key reads a value of the map's value type
+                {
+                    let inner = match &obj_type { CrowType::Result(i) => i.as_ref().clone(), o => o.clone() };
+                    if let CrowType::Map(v) = inner {
+                        return *v;
+                    }
+                }
                 // NumArray properties (also handle Result(NumArray))
                 let is_numarray = matches!(obj_type, CrowType::NumArray(_))
                     || matches!(&obj_type, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::NumArray(_)));
@@ -1512,9 +1719,10 @@ impl TypeContext {
                         _ => return CrowType::Unknown,
                     }
                 }
-                // Auto-unwrap: field access on Result(Struct) reads the value's field
+                // Auto-unwrap: field access on Result(Struct) reads the value's
+                // field; OptBoxStruct (recursive struct link) unwraps the box
                 let struct_obj = match &obj_type {
-                    CrowType::Struct(n) => Some(n.clone()),
+                    CrowType::Struct(n) | CrowType::OptBoxStruct(n) => Some(n.clone()),
                     CrowType::Result(inner) => match inner.as_ref() {
                         CrowType::Struct(n) => Some(n.clone()),
                         _ => None,
@@ -1575,7 +1783,7 @@ impl TypeContext {
                     CrowType::Map(Box::new(vtype))
                 }
             }
-            Expr::ForExpr { var: _, iter, body } => {
+            Expr::ForExpr { var, iter, body } => {
                 // Determine element type from iterator
                 let iter_type = self.infer_expr(iter);
                 let _elem_type = match &iter_type {
@@ -1583,24 +1791,36 @@ impl TypeContext {
                     _ => CrowType::Unknown,
                 };
 
-                // Try to find the return type from the body's last expression
-                let last_type = if let Some(last_stmt) = body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
-                    match last_stmt {
-                        Stmt::ExprStmt(e) => self.infer_expr(e),
+                // Infer the yield type from the body's last expression, with
+                // the loop variable bound — otherwise a body like f[10]
+                // (f = loop var holding a fn) infers Unknown. A trailing if
+                // (the filter pattern) yields from inside its branches.
+                fn body_yield_type(ctx: &TypeContext, body: &[Stmt]) -> CrowType {
+                    match body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
+                        Some(Stmt::ExprStmt(e)) => ctx.infer_expr(e),
+                        Some(Stmt::If { then_body, else_body, .. }) => {
+                            let t = body_yield_type(ctx, then_body);
+                            match else_body {
+                                Some(eb) => t.unify(&body_yield_type(ctx, eb)),
+                                None => t,
+                            }
+                        }
                         _ => CrowType::Unknown,
                     }
+                }
+                let last_type = if _elem_type != CrowType::Unknown {
+                    let mut sub = self.clone();
+                    sub.vars.insert(var.clone(), _elem_type.clone());
+                    body_yield_type(&sub, body)
                 } else {
-                    CrowType::Unknown
+                    body_yield_type(self, body)
                 };
 
-                // If the last expression is still unknown, try element type
-                let result_elem = if last_type == CrowType::Unknown {
-                    _elem_type
-                } else {
-                    last_type
-                };
-
-                CrowType::Array(Box::new(result_elem))
+                // If the body type is still unknown, leave it unknown — a
+                // later inference pass settles it. (Falling back to the
+                // element type is wrong whenever the body maps elements to a
+                // different type, e.g. calling fns held in the array.)
+                CrowType::Array(Box::new(last_type))
             }
         }
     }

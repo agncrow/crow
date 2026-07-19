@@ -2882,7 +2882,7 @@ impl Interpreter {
                 };
                 let diff = t2 - t1;
                 let mut map = std::collections::BTreeMap::new();
-                map.insert("seconds".to_string(), CrowValue::ok(Value::Int(diff)));
+                map.insert("seconds".to_string(), CrowValue::ok(Value::Float(diff as f64)));
                 map.insert("minutes".to_string(), CrowValue::ok(Value::Float(diff as f64 / 60.0)));
                 map.insert("hours".to_string(), CrowValue::ok(Value::Float(diff as f64 / 3600.0)));
                 map.insert("days".to_string(), CrowValue::ok(Value::Float(diff as f64 / 86400.0)));

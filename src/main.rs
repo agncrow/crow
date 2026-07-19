@@ -1817,7 +1817,7 @@ fn expand_module_imports(
 
             // Convert dot-separated path to file path (views.home → views/home)
             let file_rel = path.replace('.', "/");
-            let module_name = path.rsplit('.').next()
+            let module_name = path.rsplit(['.', '/']).next()
                 .and_then(|s| if s.is_empty() { None } else { Some(s) })
                 .unwrap_or(path)
                 .to_string();

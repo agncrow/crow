@@ -23,6 +23,6 @@ log[n + 8]
 
 --- works with error propagation ---
 bad = 'xyz' then int
-log[bad.status]
+log[bad.ok]
 log[bad.reason]
 
