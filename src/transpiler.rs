@@ -53,6 +53,9 @@ pub struct Transpiler {
     /// Whether the transpiled code uses regex
     pub needs_regex: bool,
     needs_find_struct: bool,
+    /// Top-level non-serializable handles (db connections) in ui programs:
+    /// emitted as static OnceLocks, not reactive state
+    static_handle_vars: std::collections::BTreeSet<String>,
     /// Module pinned by a prefixed call (frame.load) while its rebuilt bare
     /// form is emitted — resolves overlapping registry exports
     pinned_module: Option<String>,
@@ -118,6 +121,7 @@ impl Transpiler {
             needs_regex: false,
             needs_find_struct: false,
             pinned_module: None,
+            static_handle_vars: std::collections::BTreeSet::new(),
             needs_shell_struct: false,
             needs_elapsed_struct: false,
             needs_sha2: false,
@@ -915,6 +919,12 @@ impl Transpiler {
                             }
                         }
                         let ty = self.ctx.infer_expr(value);
+                        // A db connection is infrastructure, not UI state —
+                        // it becomes a process-wide static, never serialized
+                        if matches!(ty, CrowType::DbHandle) {
+                            self.static_handle_vars.insert(name.clone());
+                            continue;
+                        }
                         let default_str = self.expr_to_string(value);
                         self.reactive_vars.insert(name.clone(), (ty, default_str));
                     }
@@ -1260,6 +1270,20 @@ impl Transpiler {
             }
         }
 
+        // Process-wide statics for non-serializable handles (db connections
+        // in ui programs) — views and handlers read them via OnceLock
+        if !self.static_handle_vars.is_empty() {
+            let handle_names: Vec<String> = self.static_handle_vars.iter().cloned().collect();
+            for name in handle_names {
+                self.emit_line("#[allow(non_upper_case_globals)]");
+                self.emit_line(&format!(
+                    "static __crow_handle_{}: std::sync::OnceLock<crow_db::DbHandle> = std::sync::OnceLock::new();",
+                    name
+                ));
+            }
+            self.emit_line("");
+        }
+
         // Emit main function with automatic parallelism
         if self.needs_crow_web {
             self.emit_line("#[tokio::main]");
@@ -1556,7 +1580,15 @@ impl Transpiler {
                 }
             }
         }
-        self.emit_stmts_parallel(&body);
+        // Views render sequentially — they describe a tree; wave-parallelizing
+        // render statements risks moving shared reads into closures for no win
+        if is_component_view || is_live_render || is_reactive_render {
+            for stmt in &body {
+                self.emit_stmt(stmt);
+            }
+        } else {
+            self.emit_stmts_parallel(&body);
+        }
 
         // Reactive epilogue: inject state.set calls for all reactive variables (handlers only)
         if is_reactive_handler {
@@ -1976,6 +2008,14 @@ impl Transpiler {
                         }
                     }
                 }
+                if self.static_handle_vars.contains(name) {
+                    let expr_str = self.expr_to_string(value);
+                    self.emit_line(&format!(
+                        "let _ = __crow_handle_{}.set({});",
+                        name, expr_str
+                    ));
+                    return;
+                }
                 let expr_str = self.owned_expr_str(value);
                 if self.declared.contains(name) {
                     // Check for type-changing reassignment
@@ -2384,6 +2424,25 @@ impl Transpiler {
             if self.current_ref_params.contains(name) {
                 return format!("{}.clone()", s);
             }
+            // Value semantics: assigning/embedding a non-Copy VARIABLE clones —
+            // the source variable stays usable (a = b; use b)
+            if !self.ctx.functions.contains_key(name) && !self.static_handle_vars.contains(name) {
+                let ty = self.ctx.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
+                let non_copy = matches!(
+                    ty,
+                    CrowType::Str
+                        | CrowType::Array(_)
+                        | CrowType::NumArray(_)
+                        | CrowType::Map(_)
+                        | CrowType::Struct(_)
+                        | CrowType::Frame
+                        | CrowType::Json
+                        | CrowType::Result(_)
+                );
+                if non_copy {
+                    return format!("{}.clone()", s);
+                }
+            }
         }
         s
     }
@@ -2412,6 +2471,11 @@ impl Transpiler {
             Expr::Bool(b) => format!("{}", b),
             Expr::Str(s) => self.string_to_rust(s),
             Expr::Ident(name) => {
+                // Static handles (db connections in ui programs) read from
+                // their process-wide OnceLock
+                if self.static_handle_vars.contains(name) {
+                    return format!("__crow_handle_{}.get().unwrap().clone()", name);
+                }
                 // Module constants: pi, e, inf, nan.
                 // A user variable with the same name shadows the constant
                 // (matches interpreter scoping: environment first, then constants)
@@ -2779,7 +2843,17 @@ impl Transpiler {
                 // --- Auto-propagation: detect CrowResult args ---
                 if !self.unwrap_result_args {
                     let skip_propagation = callee_name.as_ref()
-                        .map(|n| matches!(n.as_str(), "log" | "assert" | "cpu" | "gpu" | "nodes" | "type" | "error"))
+                        .map(|n| {
+                            matches!(n.as_str(), "log" | "assert" | "cpu" | "gpu" | "nodes" | "type" | "error")
+                                // ui elements + table render what they're
+                                // given — a fallible arg renders its reason,
+                                // it doesn't wrap the tree in a Result
+                                || (self.needs_ui
+                                    && (n == "table"
+                                        || crate::lower::UI_ELEMENTS.contains(&n.as_str())))
+                                // len[] unwraps fallible frames itself
+                                || n == "len"
+                        })
                         .unwrap_or(true);
                     if !skip_propagation {
                         let result_arg_indices: Vec<usize> = args.iter().enumerate()
@@ -3069,6 +3143,14 @@ impl Transpiler {
                         let arg_type = self.ctx.infer_expr(&args[0]);
                         if matches!(arg_type, CrowType::Frame) {
                             return format!("({}).nrows() as i64", arg_strs[0]);
+                        }
+                        // Fallible values count their payload — an error
+                        // frame/array has 0 rows/items
+                        if let CrowType::Result(inner) = &arg_type {
+                            if matches!(inner.as_ref(), CrowType::Frame) {
+                                return format!("({}).value.nrows() as i64", arg_strs[0]);
+                            }
+                            return format!("(({}).value.len() as i64)", arg_strs[0]);
                         }
                         return format!("(({}).len() as i64)", arg_strs[0]);
                     }
@@ -3805,8 +3887,17 @@ impl Transpiler {
                         };
                         return format!("CrowVNode::select_input(&{}, \"{}\", &format!(\"{{}}\", {}))", arg_strs[0], key, arg_strs[1]);
                     }
-                    // table[frame] → CrowVNode::table_from_data from CrowFrame columns/rows
+                    // table[frame] → CrowVNode::table_from_data from CrowFrame columns/rows.
+                    // A fallible frame (query result) renders its reason on error —
+                    // a view renders what it's given.
                     if name == "table" && self.needs_ui && arg_strs.len() == 1 {
+                        let arg_ty = self.ctx.infer_expr(&args[0]);
+                        if matches!(arg_ty, CrowType::Result(_)) {
+                            return format!(
+                                "{{ let _fr = {}; if !_fr.ok {{ CrowVNode::text(&format!(\"error: {{}}\", _fr.reason)) }} else {{ let _f = &_fr.value; let _headers: Vec<String> = _f.columns.clone(); let _rows: Vec<Vec<String>> = (0.._f.nrows()).map(|r| (0.._f.ncols()).map(|c| _f.data[c].fmt_cell(r, _f.validity[c][r])).collect()).collect(); CrowVNode::table_from_data(&_headers, &_rows) }} }}",
+                                arg_strs[0]
+                            );
+                        }
                         return format!(
                             "{{ let _f = &{}; let _headers: Vec<String> = _f.columns.clone(); let _rows: Vec<Vec<String>> = (0.._f.nrows()).map(|r| (0.._f.ncols()).map(|c| _f.data[c].fmt_cell(r, _f.validity[c][r])).collect()).collect(); CrowVNode::table_from_data(&_headers, &_rows) }}",
                             arg_strs[0]
