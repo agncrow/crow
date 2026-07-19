@@ -1,0 +1,9 @@
+[book]
+title = "The Crow Programming Language"
+authors = ["Vijay Sriram"]
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "rust"
+git-repository-url = "https://github.com/vsriram/crow"
