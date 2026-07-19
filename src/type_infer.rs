@@ -1753,7 +1753,7 @@ impl TypeContext {
                         if matches!(_real_mod.as_str(), "math" | "io" | "frame" | "db" | "math.stats" | "math.nn")
                             && self.registry.has_function(field)
                         {
-                            if let Some(t) = self.registry.type_of(field, args.len()) {
+                            if let Some(t) = self.registry.type_of_in(&_real_mod, field, args.len()) {
                                 return t;
                             }
                         }

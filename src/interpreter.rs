@@ -1356,7 +1356,9 @@ impl Interpreter {
                         .iter()
                         .map(|a| self.eval_expr(a))
                         .collect::<Result<_, _>>()?;
-                    return self.registry.call(field, &arg_vals);
+                    // Module-scoped resolution: the prefix names the provider,
+                    // so overlapping exports (frame.load vs math.load) resolve
+                    return self.registry.call_in(mod_name, field, &arg_vals);
                 }
             }
         }

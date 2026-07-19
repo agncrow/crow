@@ -571,8 +571,21 @@ impl<'a> Validator<'a> {
         }
 
         // Module function? Accept only when its module was imported bare —
-        // an aliased import (use math as m) is qualified-only.
+        // an aliased import (use math as m) is qualified-only. And a name
+        // several loaded modules export is ambiguous bare (spec: Conflict
+        // Resolution) — the prefix picks.
         if self.ctx.registry.has_function(name) {
+            let providers = self.ctx.registry.providers_of(name);
+            if providers.len() > 1 {
+                let forms: Vec<String> = providers.iter().map(|m| format!("{}.{}[...]", m, name)).collect();
+                self.error(format!(
+                    "'{}' is ambiguous — provided by {}; use {}",
+                    name,
+                    providers.join(" and "),
+                    forms.join(" or ")
+                ));
+                return;
+            }
             if let Some(module) = self.ctx.registry.module_name_of(name) {
                 if self.ctx.bare_modules.contains(module) {
                     return;
