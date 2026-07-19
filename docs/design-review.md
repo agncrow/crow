@@ -203,7 +203,7 @@ The syntax re-review identified strings as the weakest remaining area. Resolved 
 
 ### Examples cleanup — ✅ DONE (July 2026): every example builds or is marked by design
 
-The overdue rot pass. End state: **every `examples/*.crow` compiles** except three marked-by-design files (`mymath.crow` — imported module; `check_demo.crow` — deliberate `crow check` fodder; `p4_web_test.crow` — interpreter-only Phase-4 stub using the removed `live[]`/app-passing API, header note added). 793 tests, **20 parity files** green.
+The overdue rot pass. End state: **every `examples/*.crow` compiles** except `mymath.crow`, which is a module imported by `module_test.crow` (not a standalone program — header note says so). `check_demo.crow` (deliberate `crow check` fodder) and `p4_web_test.crow` (interpreter-only Phase-4 stub on the removed `live[]`/app-passing API) were **deleted** rather than kept as excluded files. 793 tests, **20 parity files** green.
 
 Real compiler/inference bugs found and fixed by the sweep (each one a user-facing class, not just example rot):
 
