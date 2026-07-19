@@ -1,0 +1,45 @@
+--- call-site specialization: one function, many types
+fn first[arr]
+    return arr[0]
+
+log[first[[10, 20, 30]]]
+log[first[['x', 'y']]]
+
+--- transitive: outer generic forces inner generic
+fn head_pair[arr]
+    return first[arr]
+
+log[head_pair[[7, 8]]]
+log[head_pair[['a', 'b']]]
+
+--- the spec's section-14 example: same types, different predicates
+fn keep[items, f]
+    result = for x in items
+        if f[x]
+            x
+    return result
+
+fn is_even[x]
+    return x % 2 eq 0
+
+fn is_positive[x]
+    return x gt 0
+
+log[keep[[1, 2, 3, 4], is_even]]
+log[keep[[-1, 0, 3], is_positive]]
+
+--- recursion stays inside one clone
+fn count_down[n]
+    if n lte 0
+        return 0
+    return count_down[n - 1]
+
+log[count_down[5]]
+
+--- structs through generics
+struct P [x, y]
+fn get_x[p]
+    return p.x
+
+log[get_x[P[3, 4]]]
+log[first[[P[1, 2], P[5, 6]]].x]
