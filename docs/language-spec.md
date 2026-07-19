@@ -568,6 +568,9 @@ type[error['x']]  --- 'error' ---
 | `sort[arr]` | Return new sorted array |
 | `reverse[arr]` | Return new reversed array |
 | `contains[arr, value]` | Check if array contains value |
+| `any[arr, pred]` | True if any element passes the predicate (parallel, early exit) |
+| `all[arr, pred]` | True if every element passes (parallel, early exit) |
+| `find[arr, pred]` | First element passing the predicate; error-value if none |
 | `slice[arr, start, end]` | Extract subarray |
 
 #### Map Operations
@@ -785,7 +788,7 @@ while i lt 10
     total = total + i
 ```
 
-> **Design Note:** `break` and `continue` are only valid in `while` loops. `for` loops are parallel by default (§12), and `break`/`continue` are inherently sequential concepts. Using `break` in a parallel loop would silently force sequential execution — a hidden performance trap. Use `if` inside `for` to skip items, or use `while` when you need early exit.
+> **Design Note:** `break` and `continue` are only valid in `while` loops. `for` loops are parallel by default (§12), and `break`/`continue` are inherently sequential concepts. Using `break` in a parallel loop would silently force sequential execution — a hidden performance trap. Use `if` inside `for` to skip items, `any`/`all`/`find` for searches that should stop early (they early-exit *in parallel* — see the Search Builtins Design Note), or `while` for genuine sequential iteration.
 
 ## 6. Design Note: No Pattern Matching or Sum Types
 
@@ -2603,59 +2606,28 @@ for i in range[len[keys]]
 The pattern is always the same: iterate over indices with `range[len[arr]]`, access elements by index. One pattern, zero new concepts.
 
 
-## Design Note: No Reduce, Any, or All
+## Design Note: Search Builtins (any, all, find) — a Reversal
 
-Crow intentionally omits `reduce`, `any`, and `all` builtins.
+**Original position:** `any`/`all`/`reduce` were rejected ("the loop versions are the same length"), and `find` was rejected ("finding a position is straightforward with a loop").
 
-**Why they were rejected:**
+**Why it was reversed:** the recommended flag-loop replacement was worse than the thing it replaced, on three axes at once: it cannot stop early (always O(n)); mutating the flag variable triggers the automatic sequential fallback — the exact "hidden performance trap" the `break` rejection warns about; and it is more code. Worse, the *parallel early-exit* search (all cores scanning, all stopping at the first hit) is impossible to express in user code at all — parallel `for` cannot break, and `break`-able `while` cannot parallelize. That is the same "cannot be written cleanly without a builtin" test that justified `contains`, passed harder.
 
-1. **`reduce` is redundant.** Every common reduction already has a dedicated builtin: `sum[arr]` for addition, `join[arr, sep]` for string concatenation, `max[arr]` and `min[arr]` for extremes. The remaining cases are rare enough for a loop.
-
-2. **`any` and `all` need lambdas to be ergonomic.** In Python: `any(x > 90 for x in scores)`. In Rust: `scores.iter().any(|x| x > 90)`. Without lambdas, Crow would require defining a named function for every one-off predicate — no savings over the loop version.
-
-3. **The loop versions are the same length.** Defining a throwaway predicate function for `any[arr, pred]` takes 3 lines. The loop version also takes 3 lines but uses concepts Crow already has.
-
-**What to use instead:**
-
-Instead of `reduce` (product):
-```
-acc = 1
-for x in nums
-    acc = acc * x
-```
-
-Instead of `any` (is any score above 90?):
-```
-found = false
-for x in scores
-    if x gt 90
-        found = true
-```
-
-Instead of `all` (are all passwords long enough?):
-```
-valid = true
-for x in passwords
-    if len[x] lt 8
-        valid = false
-```
-
-## Design Note: No find/index Builtin
-
-Crow intentionally has no `find` or `index` builtin for locating the position of an element in an array or a substring in a string.
-
-**Why:** Finding a position is straightforward with a loop:
+**The design:** predicates are named functions (no lambdas — name the question):
 
 ```
-pos = -1
-for i in range[len[items]]
-    if items[i] eq target
-        pos = i
+fn over_90[x]
+    return x gt 90
+
+any[scores, over_90]      --- true if at least one passes ---
+all[scores, over_90]      --- true if every one passes ---
+hit = find[scores, over_90]   --- the first passing ELEMENT ---
+if not hit.ok                 --- error-value when nothing matches ---
+    log['none found']
 ```
 
-This is clear, explicit, and doesn't require a new builtin. Adding `find` would create a second way to accomplish the same task. Unlike `contains` — which genuinely can't be written cleanly without a builtin (Crow has no `break`, so a loop needs a flag variable and always runs to completion) — `find` maps directly to a simple loop pattern.
+`find` dispatches by argument types: `find[str, pattern]` is the regex builtin; `find[array, function]` is the search. Both modes agree; compiled mode runs searches in parallel with deterministic first-match semantics (rayon `find_first`).
 
-**What to use instead:** A `for` loop over `range[len[x]]` with an `if` check.
+**Division of labor:** operators and verbs eat most loops; `for` computes over everything that is left, in parallel; `any`/`all`/`find` ask the questions that deserve to stop early; `while` handles genuine sequential iteration. `reduce` stays rejected — the named reductions (`sum`, `min`, `max`, `prod`, `join`) cover it.
 
 ## Design Note: No Augmented Assignment
 

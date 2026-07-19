@@ -38,7 +38,7 @@ const BUILTINS: &[&str] = &[
     // Hashing
     "hash",
     // Regex
-    "find", "matches", "sub",
+    "find", "matches", "sub", "any", "all",
     // Date/time
     "now", "date", "elapsed",
     // Resource
@@ -489,7 +489,7 @@ impl<'a> Validator<'a> {
             // Shell / Hash / Regex / Date
             "shell" => argc == 1,
             "hash" => argc == 2,
-            "find" | "matches" => argc == 2,
+            "find" | "matches" | "any" | "all" => argc == 2,
             "sub" => argc == 3,
             "now" => argc == 0,
             "date" => argc == 3,

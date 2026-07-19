@@ -1560,7 +1560,7 @@ impl Interpreter {
             | "json" | "encode"
             | "type" | "grad"
             | "shell" | "hash"
-            | "find" | "matches" | "sub"
+            | "find" | "matches" | "sub" | "any" | "all"
             | "now" | "date" | "elapsed"
             // Web P4 builtins
             | "cors" | "sessions" | "templates" | "render" | "cache" | "limit"
@@ -1657,6 +1657,56 @@ impl Interpreter {
                 let _ = conn.exec("ROLLBACK", &[]);
                 Err(format!("transact[]: rolled back: {}", e))
             }
+        }
+    }
+
+    /// Call a Crow function value with evaluated arguments (used by builtins
+    /// that take function parameters: any/all/find, transact, grad).
+    fn call_fn_value(&mut self, func: &FnValue, args: Vec<CrowValue>) -> Result<CrowValue, String> {
+        if func.params.len() != args.len() {
+            return Err(format!(
+                "'{}' expects {} arguments, got {}",
+                func.name, func.params.len(), args.len()
+            ));
+        }
+        let saved_function = self.current_function.clone();
+        self.current_function = func.name.clone();
+        self.env.push_call_scope();
+        for (p, a) in func.params.iter().zip(args) {
+            self.env.set(p, a);
+        }
+        let mut result = Ok(CrowValue::done());
+        for stmt in func.body.iter() {
+            match self.exec_stmt(stmt) {
+                Ok(Signal::Return(val)) => { result = Ok(val); break; }
+                Ok(Signal::Value(val)) => { result = Ok(val); }
+                Ok(Signal::Break | Signal::Continue | Signal::None) => {}
+                Err(e) => { result = Err(e); break; }
+            }
+        }
+        self.env.pop_call_scope();
+        self.current_function = saved_function;
+        result
+    }
+
+    /// Elements of an array or tensor for the search builtins.
+    fn search_items(&self, v: &CrowValue, name: &str) -> Result<Vec<CrowValue>, String> {
+        match &v.value {
+            Value::Array(items) => Ok(items.clone()),
+            Value::NumArray(t) => {
+                if t.ndim() >= 2 {
+                    Ok(t.rows().into_iter().map(|r| CrowValue::ok(Value::NumArray(r))).collect())
+                } else {
+                    Ok(t.to_vec().into_iter().map(|f| {
+                        if f == (f as i64) as f64 && f.is_finite() {
+                            CrowValue::ok(Value::Int(f as i64))
+                        } else {
+                            CrowValue::ok(Value::Float(f))
+                        }
+                    }).collect())
+                }
+            }
+            other => Err(format!("{}[] requires an array, got {}", name, other.type_name())),
         }
     }
 
@@ -2684,8 +2734,40 @@ impl Interpreter {
                 Ok(CrowValue::ok(Value::Str(hex)))
             }
             // --- Regex builtins ---
+            "any" | "all" => {
+                if args.len() != 2 { return Err(format!("{}[] takes exactly 2 arguments (array, predicate)", name)); }
+                let func = match &args[1].value {
+                    Value::Fn(f) => f.clone(),
+                    other => return Err(format!("{}[] second argument must be a function, got {}", name, other.type_name())),
+                };
+                let items = self.search_items(&args[0], name)?;
+                let want = name == "any";
+                for item in items {
+                    let hit = self.call_fn_value(&func, vec![item])?;
+                    if self.is_truthy(&hit) == want {
+                        // any: found a match → true; all: found a failure → false
+                        return Ok(CrowValue::ok(Value::Bool(want)));
+                    }
+                }
+                Ok(CrowValue::ok(Value::Bool(!want)))
+            }
             "find" => {
-                if args.len() != 2 { return Err("find[] takes exactly 2 arguments (string, pattern)".into()); }
+                if args.len() != 2 { return Err("find[] takes exactly 2 arguments".into()); }
+                // Search dispatch: find[array, predicate] → first matching element
+                if matches!(&args[0].value, Value::Array(_) | Value::NumArray(_)) {
+                    let func = match &args[1].value {
+                        Value::Fn(f) => f.clone(),
+                        other => return Err(format!("find[] on an array takes a function, got {}", other.type_name())),
+                    };
+                    let items = self.search_items(&args[0], "find")?;
+                    for item in items {
+                        let hit = self.call_fn_value(&func, vec![item.clone()])?;
+                        if self.is_truthy(&hit) {
+                            return Ok(item);
+                        }
+                    }
+                    return Ok(CrowValue::error("no match", "find"));
+                }
                 let s = match args[0].unwrap_or_propagate()? {
                     Value::Str(s) => s.clone(),
                     _ => return Err("find[] first argument must be a string".into()),
@@ -6661,6 +6743,36 @@ mod tests {
         // Regression: implicit return is desugared in the parser for both modes
         let val = get_var("fn add[a, b]\n    a + b\nr = add[3, 4]\n", "r");
         assert!(matches!(val.value, Value::Int(7)));
+    }
+
+    // ===== Search builtins: any / all / find =====
+
+    #[test]
+    fn test_any_all() {
+        let src = "fn big[x]\n    return x gt 10\n";
+        let val = get_var(&format!("{}a = any[[1, 20, 3], big]\n", src), "a");
+        assert!(matches!(val.value, Value::Bool(true)));
+        let val = get_var(&format!("{}a = any[[1, 2, 3], big]\n", src), "a");
+        assert!(matches!(val.value, Value::Bool(false)));
+        let val = get_var(&format!("{}a = all[[11, 20, 30], big]\n", src), "a");
+        assert!(matches!(val.value, Value::Bool(true)));
+        let val = get_var(&format!("{}a = all[[11, 2, 30], big]\n", src), "a");
+        assert!(matches!(val.value, Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_find_element_and_miss() {
+        let src = "fn big[x]\n    return x gt 10\n";
+        let val = get_var(&format!("{}h = find[[1, 20, 3], big]\n", src), "h");
+        assert!(matches!(val.value, Value::Int(20)));
+        let val = get_var(&format!("{}h = find[[1, 2, 3], big]\nok = h.ok\n", src), "ok");
+        assert!(matches!(val.value, Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_find_regex_dispatch_unchanged() {
+        let val = get_var("m = find['ab12', '([0-9]+)']\nok = m.ok\n", "ok");
+        assert!(matches!(val.value, Value::Bool(true)));
     }
 
     // ===== Comments end at the newline =====
