@@ -493,6 +493,7 @@ impl Lexer {
 
         let token = match ident.as_str() {
             "fn" => Token::Fn,
+            "view" => Token::View,
             "return" => Token::Return,
             "if" => Token::If,
             "else" => Token::Else,

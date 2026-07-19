@@ -1178,7 +1178,9 @@ impl Transpiler {
                 || self.live_handle_fns.contains(name)
                 || self.reactive_render_fns.contains(name)
                 || self.reactive_event_handlers.contains(name)
-                || self.web_handlers.contains(name);
+                || self.web_handlers.contains(name)
+                || self.ctx.views.contains(name)
+                || self.ctx.view_handlers.contains(name);
             if has_unknown && !is_callback {
                 continue;
             }
@@ -6311,7 +6313,7 @@ mod tests {
 
     #[test]
     fn test_web_serve_transpile() {
-        let rust = transpile("use web\nuse ui\nfn render[s]\n    return div[h1['hi']]\n\nfn handle[s, e, v]\n    log[e]\n\nserve[3000]\npage['/', render, handle]\n");
+        let rust = transpile("use web\nuse ui\nview render[s]\n    return div[h1['hi']]\n\nfn handle[s, e, v]\n    log[e]\n\nserve[3000]\npage['/', render, handle]\n");
         assert!(rust.contains("__crow_app.serve("), "should emit __crow_app.serve()\n{}", rust);
         assert!(rust.contains(".await"), "should emit .await\n{}", rust);
     }
@@ -6585,14 +6587,14 @@ mod tests {
 
     #[test]
     fn test_ui_button_click() {
-        let rust = transpile("use web\nuse ui\nx = button['+', click = 'inc']\n");
+        let rust = transpile("use web\nuse ui\nview v[]\n    return button['+', click = 'inc']\n");
         assert!(rust.contains("CrowVNode::button(vec![CrowVNode::text("), "should emit CrowVNode::button\n{}", rust);
         assert!(rust.contains(".on_click("), "should emit .on_click()\n{}", rust);
     }
 
     #[test]
     fn test_ui_input_via_module() {
-        let rust = transpile("use web\nuse ui\nx = ui.input[type = 'text', input = 'change']\n");
+        let rust = transpile("use web\nuse ui\nview v[]\n    return ui.input[type = 'text', input = 'change']\n");
         assert!(rust.contains("CrowVNode::input()"), "should emit CrowVNode::input()\n{}", rust);
         assert!(rust.contains(".attr("), "should emit .attr() for type\n{}", rust);
         assert!(rust.contains(".on_input("), "should emit .on_input()\n{}", rust);
@@ -6600,7 +6602,7 @@ mod tests {
 
     #[test]
     fn test_ui_page_3arg() {
-        let rust = transpile("use web\nuse ui\nfn render[s]\n    return div[h1['hi']]\n\nfn handle[s, e, v]\n    log[e]\n\nserve[3000]\npage['/counter', render, handle]\n");
+        let rust = transpile("use web\nuse ui\nview render[s]\n    return div[h1['hi']]\n\nfn handle[s, e, v]\n    log[e]\n\nserve[3000]\npage['/counter', render, handle]\n");
         assert!(rust.contains("CrowLiveView::new("), "should emit CrowLiveView::new\n{}", rust);
         assert!(rust.contains("let mut __crow_state = CrowLiveState::new()"), "should init __crow_state\n{}", rust);
         assert!(rust.contains("__crow_state.clone()"), "should pass __crow_state.clone() to LiveView\n{}", rust);
@@ -6610,7 +6612,7 @@ mod tests {
 
     #[test]
     fn test_ui_page_2arg_noop_handler() {
-        let rust = transpile("use web\nuse ui\nfn render[s]\n    return div[h1['hi']]\n\nserve[3000]\npage['/dash', render]\n");
+        let rust = transpile("use web\nuse ui\nview render[s]\n    return div[h1['hi']]\n\nserve[3000]\npage['/dash', render]\n");
         assert!(rust.contains("CrowLiveView::new("), "should emit CrowLiveView::new\n{}", rust);
         assert!(rust.contains("Option<&str>"), "no-op handler should use Option<&str> for value param\n{}", rust);
         assert!(rust.contains("__crow_state"), "should init __crow_state\n{}", rust);
@@ -6625,61 +6627,61 @@ mod tests {
 
     #[test]
     fn test_ui_attr_class() {
-        let rust = transpile("use web\nuse ui\nx = div[h1['title'], class = 'container']\n");
+        let rust = transpile("use web\nuse ui\nview v[]\n    return div[h1['title'], class = 'container']\n");
         assert!(rust.contains(".attr("), "should emit .attr() for class\n{}", rust);
         assert!(rust.contains("container"), "should contain class value\n{}", rust);
     }
 
     #[test]
     fn test_ui_state_get_int() {
-        let rust = transpile("use web\nuse ui\nfn render[state]\n    count = state.get['count', 0]\n    return div[h1['{count}']]\nserve[3000]\npage['/', render]\n");
+        let rust = transpile("use web\nuse ui\nview render[state]\n    count = state.get['count', 0]\n    return div[h1['{count}']]\nserve[3000]\npage['/', render]\n");
         assert!(rust.contains(".get_i64("), "state.get with int default should map to get_i64\n{}", rust);
         assert!(!rust.contains("get_i64["), "should not contain Crow syntax in output\n{}", rust);
     }
 
     #[test]
     fn test_ui_state_get_str() {
-        let rust = transpile("use web\nuse ui\nfn render[state]\n    name = state.get['name', '']\n    return div[h1['{name}']]\nserve[3000]\npage['/', render]\n");
+        let rust = transpile("use web\nuse ui\nview render[state]\n    name = state.get['name', '']\n    return div[h1['{name}']]\nserve[3000]\npage['/', render]\n");
         assert!(rust.contains(".get_str("), "state.get with str default should map to get_str\n{}", rust);
     }
 
     #[test]
     fn test_ui_state_get_bool() {
-        let rust = transpile("use web\nuse ui\nfn render[state]\n    active = state.get['active', false]\n    return div[h1['{active}']]\nserve[3000]\npage['/', render]\n");
+        let rust = transpile("use web\nuse ui\nview render[state]\n    active = state.get['active', false]\n    return div[h1['{active}']]\nserve[3000]\npage['/', render]\n");
         assert!(rust.contains(".get_bool("), "state.get with bool default should map to get_bool\n{}", rust);
     }
 
     #[test]
     fn test_ui_fetch_assignment() {
-        let rust = transpile("use web\nuse ui\nfn render[s]\n    return div[h1['hi']]\n\ndata = fetch['/api/data']\nserve[3000]\npage['/', render]\n");
+        let rust = transpile("use web\nuse ui\nview render[s]\n    return div[h1['hi']]\n\ndata = fetch['/api/data']\nserve[3000]\npage['/', render]\n");
         assert!(rust.contains("register_fetch(\"data\""), "fetch assignment should emit register_fetch\n{}", rust);
         assert!(!rust.contains("let data"), "fetch should not create a local variable\n{}", rust);
     }
 
     #[test]
     fn test_ui_poll_assignment() {
-        let rust = transpile("use web\nuse ui\nfn render[s]\n    return div[h1['hi']]\n\nprices = poll['/api/prices', 5]\nserve[3000]\npage['/', render]\n");
+        let rust = transpile("use web\nuse ui\nview render[s]\n    return div[h1['hi']]\n\nprices = poll['/api/prices', 5]\nserve[3000]\npage['/', render]\n");
         assert!(rust.contains("register_poll(\"prices\""), "poll assignment should emit register_poll\n{}", rust);
         assert!(rust.contains("as u64"), "poll should pass interval as u64\n{}", rust);
     }
 
     #[test]
     fn test_ui_field_codegen() {
-        let rust = transpile("use web\nuse ui\nfn render[s]\n    vol = s.get['vol', 0]\n    return div[field['Min Vol', vol]]\nserve[3000]\npage['/', render]\n");
+        let rust = transpile("use web\nuse ui\nview render[s]\n    vol = s.get['vol', 0]\n    return div[field['Min Vol', vol]]\nserve[3000]\npage['/', render]\n");
         assert!(rust.contains("CrowVNode::field("), "field should emit CrowVNode::field\n{}", rust);
         assert!(rust.contains("\"vol\""), "field should extract key name\n{}", rust);
     }
 
     #[test]
     fn test_ui_select_codegen() {
-        let rust = transpile("use web\nuse ui\nfn render[s]\n    opts = ['a', 'b']\n    val = s.get['choice', 'a']\n    return div[select[opts, val]]\nserve[3000]\npage['/', render]\n");
+        let rust = transpile("use web\nuse ui\nview render[s]\n    opts = ['a', 'b']\n    val = s.get['choice', 'a']\n    return div[select[opts, val]]\nserve[3000]\npage['/', render]\n");
         assert!(rust.contains("CrowVNode::select_input("), "select should emit CrowVNode::select_input\n{}", rust);
         assert!(rust.contains("\"val\""), "select should extract key name\n{}", rust);
     }
 
     #[test]
     fn test_reactive_counter() {
-        let rust = transpile("use web, ui\n\ncount = 0\n\nfn inc[]\n    count = count + 1\n\nfn dec[]\n    count = count - 1\n\nfn render[]\n    return div[\n        h1['Count: {count}'],\n        button['+', click = inc],\n        button['-', click = dec]\n    ]\n\nserve[3000]\npage['/', render]\n");
+        let rust = transpile("use web, ui\n\ncount = 0\n\nfn inc[]\n    count = count + 1\n\nfn dec[]\n    count = count - 1\n\nview render[]\n    return div[\n        h1['Count: {count}'],\n        button['+', click = inc],\n        button['-', click = dec]\n    ]\n\nserve[3000]\npage['/', render]\n");
         // Reactive render function should get state param injected
         assert!(rust.contains("fn render(state: &CrowLiveState) -> CrowVNode"), "render should have injected state param\n{}", rust);
         // Reactive handler functions should get mut state param injected
@@ -6704,7 +6706,7 @@ mod tests {
 
     #[test]
     fn test_reactive_vars_skipped_in_main() {
-        let rust = transpile("use web, ui\n\ncount = 0\n\nfn render[]\n    return div[h1['Count: {count}']]\n\nserve[3000]\npage['/', render]\n");
+        let rust = transpile("use web, ui\n\ncount = 0\n\nview render[]\n    return div[h1['Count: {count}']]\n\nserve[3000]\npage['/', render]\n");
         // count should NOT appear as a `let count` in main — it's registered via state.set
         let main_section = rust.split("fn main()").nth(1).unwrap_or("");
         assert!(!main_section.contains("let count"), "reactive var should not appear as local var in main\n{}", rust);

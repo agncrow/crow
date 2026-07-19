@@ -16,7 +16,7 @@ fn clear_filter[]
   min_vol = 0
 
 --- Render
-fn render[]
+view render[]
   today = filter[trades, trades.date eq today[]]
   pnl = sum[today.pnl]
   count = len[today]

@@ -13,6 +13,7 @@ pub enum Token {
 
     // Keywords
     Fn,
+    View,
     Return,
     If,
     Else,
@@ -79,6 +80,7 @@ impl std::fmt::Display for Token {
             Token::False => write!(f, "false"),
             Token::Ident(s) => write!(f, "{}", s),
             Token::Fn => write!(f, "fn"),
+            Token::View => write!(f, "view"),
             Token::Return => write!(f, "return"),
             Token::If => write!(f, "if"),
             Token::Else => write!(f, "else"),

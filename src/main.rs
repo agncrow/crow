@@ -158,6 +158,7 @@ fn print_usage() {
     eprintln!("  crow fmt file.crow     format a specific file");
     eprintln!("  crow fmt --check       check formatting without changing files");
     eprintln!("  crow fmt --fix-interpolation  migrate {{expr}} strings to `expr`");
+    eprintln!("  crow fmt --fix-views      migrate ui-building fns to view declarations");
     eprintln!("  crow launch 4 file.crow  build + run on 4 distributed processes");
     eprintln!("  crow test --parity     run tests/parity/ in both modes, diff output");
     eprintln!("  crow check --verbose   verbose output with purity and snapshot details");
@@ -497,7 +498,7 @@ fn cmd_new() {
     // --web: add views/home.crow
     if has_web {
         write_file(&project_dir.join("views/home.crow"),
-            "--- home page ---\nuse ui\n\nmessage = 'welcome to crow'\n\nfn home_render[]\n    return div[\n        h1['{message}']\n    ]\n");
+            "--- home page ---\nuse ui\n\nmessage = 'welcome to crow'\n\nview home_render[]\n    return div[\n        h1['`message`']\n    ]\n");
     }
 
     // --ml: add jobs/train.crow and lib/model.crow
@@ -1172,6 +1173,7 @@ fn cmd_fmt() {
     let args: Vec<String> = std::env::args().collect();
     let check_mode = args.iter().any(|a| a == "--check");
     let fix_interpolation = args.iter().any(|a| a == "--fix-interpolation");
+    let fix_views = args.iter().any(|a| a == "--fix-views");
 
     // Collect files to format
     let files: Vec<String> = args.iter().skip(2)
@@ -1206,6 +1208,11 @@ fn cmd_fmt() {
         let original = source.clone();
         let source = if fix_interpolation {
             formatter::migrate_interpolation(&source)
+        } else {
+            source
+        };
+        let source = if fix_views {
+            formatter::migrate_views(&source)
         } else {
             source
         };
@@ -1893,7 +1900,7 @@ fn expand_module_imports(
             // Rewrite module declarations with prefixed names
             for mod_stmt in &mod_stmts {
                 match mod_stmt {
-                    ast::Stmt::FnDecl { name, params, defaults, body } => {
+                    ast::Stmt::FnDecl { name, params, defaults, body, is_view } => {
                         let mut body = body.clone();
                         // Params shadow module names inside the body
                         let shadowed: std::collections::HashSet<String> =
@@ -1906,6 +1913,7 @@ fn expand_module_imports(
                             params: params.clone(),
                             defaults: defaults.clone(),
                             body,
+                            is_view: *is_view,
                         });
                     }
                     ast::Stmt::StructDecl { name, fields } => {
