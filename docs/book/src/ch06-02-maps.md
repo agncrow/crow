@@ -1,5 +1,28 @@
 # Maps Are Dictionaries
 
-> **Not yet written.** Arrays that become tensors, maps that stay honest, structs for mixed records.
+A map is a lookup table: string keys, values of **one** type. Build one
+with the `map[...]` constructor; read with dot or bracket; `set` returns
+an updated copy:
 
-For now, see [`language-spec.md`](../../language-spec.md) and the runnable programs in `examples/`.
+```crow
+scores = map[alice = 10, bob = 7]
+log[scores.alice]
+log[scores['bob']]
+
+s2 = set[scores, 'carol', 9]
+log[s2]
+log[keys[s2]]
+log[has[scores, 'alice']]
+```
+
+```text
+10
+7
+[alice = 10, bob = 7, carol = 9]
+['alice', 'bob', 'carol']
+true
+```
+
+The one-type rule is enforced — a map of ints won't accept a string. If
+you're tempted to mix types under named keys, what you want is not a map.
+It's the next section.
