@@ -203,6 +203,10 @@ pub struct StructSig {
 pub struct TypeContext {
     pub vars: BTreeMap<String, CrowType>,
     pub functions: BTreeMap<String, FnSig>,
+    /// F2 monomorphization: distinct concrete call signatures per user fn
+    pub call_signatures: BTreeMap<String, Vec<Vec<CrowType>>>,
+    /// fn name → [(signature, mangled clone name)] for specialized functions
+    pub specializations: BTreeMap<String, Vec<(Vec<CrowType>, String)>>,
     pub structs: BTreeMap<String, StructSig>,
     pub cpu_count: Option<usize>,
     /// Param names of the function currently being body-scanned (to avoid
@@ -230,6 +234,8 @@ impl TypeContext {
         TypeContext {
             vars: BTreeMap::new(),
             functions: BTreeMap::new(),
+            call_signatures: BTreeMap::new(),
+            specializations: BTreeMap::new(),
             structs,
             cpu_count: None,
             current_fn_params: Vec::new(),
@@ -318,6 +324,9 @@ impl TypeContext {
             }
 
         }
+
+        // F2: monomorphize functions used at multiple type signatures
+        self.specialize_functions();
 
         // Pass 4: infer top-level variables
         for stmt in stmts {
@@ -502,17 +511,32 @@ impl TypeContext {
                     if self.functions.contains_key(name) {
                         let sig = self.functions.get(name).unwrap().clone();
                         let mut new_params = sig.params.clone();
+                        let mut normalized_sig: Vec<CrowType> = Vec::with_capacity(arg_types.len());
                         for (i, at) in arg_types.iter().enumerate() {
+                            // Normalize types for function params:
+                            // - OptBoxStruct -> Struct (transpiler unwraps before passing)
+                            // - Result<T> -> T (auto-propagation unwraps at call site)
+                            let normalized = match at {
+                                CrowType::OptBoxStruct(n) => CrowType::Struct(n.clone()),
+                                CrowType::Result(inner) => *inner.clone(),
+                                other => other.clone(),
+                            };
+                            normalized_sig.push(normalized.clone());
                             if i < new_params.len() {
-                                // Normalize types for function params:
-                                // - OptBoxStruct -> Struct (transpiler unwraps before passing)
-                                // - Result<T> -> T (auto-propagation unwraps at call site)
-                                let normalized = match at {
-                                    CrowType::OptBoxStruct(n) => CrowType::Struct(n.clone()),
-                                    CrowType::Result(inner) => *inner.clone(),
-                                    other => other.clone(),
-                                };
                                 new_params[i].1 = new_params[i].1.unify(&normalized);
+                            }
+                        }
+                        // F2: record this call's concrete signature for the
+                        // monomorphization pass (skip if anything is unknown)
+                        if normalized_sig.len() == sig.params.len()
+                            && normalized_sig.iter().all(Self::type_is_concrete)
+                        {
+                            let entry = self.call_signatures.entry(name.clone()).or_default();
+                            let dup = entry.iter().any(|existing| {
+                                existing.iter().zip(&normalized_sig).all(|(a, b)| a.compatible(b))
+                            });
+                            if !dup {
+                                entry.push(normalized_sig);
                             }
                         }
                         self.functions.get_mut(name).unwrap().params = new_params;
@@ -700,6 +724,92 @@ impl TypeContext {
         }
     }
 
+    /// A type is concrete if it contains no Unknown anywhere (used to decide
+    /// whether a call signature is usable for monomorphization).
+    fn type_is_concrete(t: &CrowType) -> bool {
+        !format!("{:?}", t).contains("Unknown")
+    }
+
+    /// The F2 monomorphization pass: functions called with multiple
+    /// incompatible signatures get one clone per signature group. Single-
+    /// signature functions are untouched. Runs to fixpoint so specialization
+    /// propagates through call chains.
+    fn specialize_functions(&mut self) {
+        for _round in 0..5 {
+            let mut new_clones: Vec<(String, Vec<CrowType>, String)> = Vec::new();
+            for (name, sigs) in self.call_signatures.clone() {
+                if sigs.len() < 2 || self.specializations.contains_key(&name) {
+                    continue;
+                }
+                // Don't specialize functions that are themselves clones
+                if name.contains("__") {
+                    continue;
+                }
+                let Some(base) = self.functions.get(&name).cloned() else { continue };
+                // v1 limitation: generic higher-order functions (fn-typed
+                // params) used at multiple types are not specialized — the
+                // predicate's types would need per-clone propagation
+                if sigs.iter().any(|sig| sig.iter().any(|t| matches!(t, CrowType::Fn(_, _)))) {
+                    continue;
+                }
+                for (idx, sig) in sigs.iter().enumerate() {
+                    let mangled = format!("{}__{}", name, idx + 1);
+                    let params: Vec<(String, CrowType)> = base
+                        .params
+                        .iter()
+                        .zip(sig.iter())
+                        .map(|((pname, _), ty)| (pname.clone(), ty.clone()))
+                        .collect();
+                    self.functions.insert(mangled.clone(), FnSig {
+                        params,
+                        return_type: CrowType::Unknown,
+                        body: base.body.clone(),
+                    });
+                    self.specializations.entry(name.clone()).or_default().push((sig.clone(), mangled.clone()));
+                    new_clones.push((name.clone(), sig.clone(), mangled));
+                }
+            }
+            if new_clones.is_empty() {
+                break;
+            }
+            // Infer each clone's body under its own parameter types; this also
+            // records the clone's callees' signatures (transitive propagation)
+            for (_, _, mangled) in &new_clones {
+                let body = self.functions.get(mangled).unwrap().body.clone();
+                // record callee signatures from the clone's body with params bound
+                let saved_vars = self.vars.clone();
+                if let Some(sig) = self.functions.get(mangled) {
+                    let bind: Vec<(String, CrowType)> = sig.params.clone();
+                    for (p, t) in bind {
+                        self.vars.insert(p, t);
+                    }
+                }
+                for stmt in &body {
+                    self.collect_call_types_stmt(stmt);
+                }
+                self.vars = saved_vars;
+                self.infer_function_body(mangled, &body);
+            }
+        }
+        // Settle: re-infer all clone bodies so transitive return types
+        // stabilize regardless of clone creation order
+        for _ in 0..2 {
+            let clone_names: Vec<String> = self
+                .specializations
+                .values()
+                .flat_map(|v| v.iter().map(|(_, m)| m.clone()))
+                .collect();
+            for mangled in clone_names {
+                if let Some(sig) = self.functions.get(&mangled) {
+                    let body = sig.body.clone();
+                    // reset the return type so stale unifications don't stick
+                    self.functions.get_mut(&mangled).unwrap().return_type = CrowType::Unknown;
+                    self.infer_function_body(&mangled, &body);
+                }
+            }
+        }
+    }
+
     /// Does any if/while condition in this body infer to a Result type?
     /// (Such conditions can propagate errors out of the function.)
     fn body_has_result_condition(&self, stmts: &[Stmt]) -> bool {
@@ -878,8 +988,26 @@ impl TypeContext {
         if self.structs.contains_key(name) {
             return CrowType::Struct(name.to_string());
         }
-        // User-defined function call
+        // User-defined function call (specialization-aware: a monomorphized
+        // callee's return type depends on this call's argument types)
         if let Some(sig) = self.functions.get(name) {
+            if let Some(clones) = self.specializations.get(name) {
+                let call_sig: Vec<CrowType> = args.iter()
+                    .map(|a| match self.infer_expr(a) {
+                        CrowType::Result(inner) => *inner,
+                        CrowType::OptBoxStruct(n) => CrowType::Struct(n),
+                        other => other,
+                    })
+                    .collect();
+                if let Some((_, mangled)) = clones.iter().find(|(csig, _)| {
+                    csig.len() == call_sig.len()
+                        && csig.iter().zip(&call_sig).all(|(a, b)| a.compatible(b))
+                }) {
+                    if let Some(clone_sig) = self.functions.get(mangled) {
+                        return clone_sig.return_type.clone();
+                    }
+                }
+            }
             return sig.return_type.clone();
         }
         // Module function dispatch (overlapping builtins: check arg type)

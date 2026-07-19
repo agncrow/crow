@@ -162,7 +162,7 @@ log[first[['a', 'b']]]    --- interpreter: a
 
 Spec §14 claims "the transpiler infers concrete types from each call site, effectively specializing the function for the types used… like C++ templates or Julia" — the basis for "no generics needed." The implementation *unifies* all call sites into a single signature, so any helper used at two types fails to compile. Either implement real monomorphization (clone the function per distinct argument-type signature — the call-site collection machinery half-exists) or walk the claim back in the spec. Recommend monomorphization: it's the honest version of the documented design.
 
-- [ ] Monomorphize user functions per call-site signature in the transpiler (parity file: generic helper at int/str/array types)
+- [x] **Monomorphized** (July 2026). Inference collects distinct concrete call signatures per function (compatibility-grouped, fixpoint for transitive chains); functions with multiple signatures get per-signature clones (`first__1`, `first__2`) with independently inferred bodies and returns; call sites route to the matching clone; single-signature functions are completely untouched (zero risk to existing code). Specialization-aware callee return resolution + a settling pass handle transitive chains regardless of clone order. Documented v1 limits: multi-signature functions can't be passed as values (loud error), and generic *higher-order* functions specialize across predicates but not across element types. Spec §14 updated from claim to description. Parity `18_generics.crow` (multi-type, transitive, recursive, structs); 793 tests, 18 parity files green.
 
 ### F3 — ✅ FIXED (July 2026): 2-D literals build real tensors
 

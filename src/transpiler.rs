@@ -1152,6 +1152,11 @@ impl Transpiler {
         // Emit function definitions (skip uncalled module functions whose types couldn't be inferred)
         let fn_names: Vec<String> = self.ctx.functions.keys().cloned().collect();
         for name in &fn_names {
+            // F2 monomorphization: the original of a specialized function is
+            // never emitted — its clones (name__1, name__2, ...) are
+            if self.ctx.specializations.contains_key(name) {
+                continue;
+            }
             // Check if this is a module-prefixed function with unresolved types
             let is_module_fn = self.modules.iter().any(|m| name.starts_with(&format!("{}_", m)));
             if is_module_fn {
@@ -2306,6 +2311,9 @@ impl Transpiler {
                 // If this ident refers to a user-defined function (used as a value),
                 // apply the same renaming to avoid Rust collisions
                 if self.ctx.functions.contains_key(name) {
+                    if self.ctx.specializations.contains_key(name) {
+                        panic!("error: '{}' is used at multiple type signatures and cannot be passed as a value — a function value has one type. Wrap it in a single-type function", name);
+                    }
                     Self::rust_fn_name(name)
                 } else {
                     name.clone()
@@ -3628,8 +3636,35 @@ impl Transpiler {
                         return format!("{} {{ {} }}", name, field_inits.join(", "));
                     }
 
-                    // Known function → direct call
+                    // Known function → direct call (routing to the matching
+                    // specialization when the function is monomorphized)
                     if self.ctx.functions.contains_key(name) {
+                        if let Some(clones) = self.ctx.specializations.get(name) {
+                            let call_sig: Vec<CrowType> = args.iter()
+                                .map(|a| {
+                                    let t = self.ctx.infer_expr(a);
+                                    match t {
+                                        CrowType::Result(inner) => *inner,
+                                        CrowType::OptBoxStruct(n) => CrowType::Struct(n),
+                                        other => other,
+                                    }
+                                })
+                                .collect();
+                            let target = clones.iter().find(|(sig, _)| {
+                                sig.len() == call_sig.len()
+                                    && sig.iter().zip(&call_sig).all(|(a, b)| a.compatible(b))
+                            });
+                            match target {
+                                Some((_, mangled)) => {
+                                    return format!("{}({})", Self::rust_fn_name(mangled), arg_strs.join(", "));
+                                }
+                                None => {
+                                    // fall back to the first clone (arg types unresolved)
+                                    let (_, mangled) = &clones[0];
+                                    return format!("{}({})", Self::rust_fn_name(mangled), arg_strs.join(", "));
+                                }
+                            }
+                        }
                         return format!("{}({})", Self::rust_fn_name(name), arg_strs.join(", "));
                     }
 
@@ -6489,6 +6524,22 @@ mod tests {
         // Regression: compiled find[] previously emitted an uncompilable mixed-type map
         let rust = transpile("m = find['abc', '[a-z]+']\nlog[m.ok]\n");
         assert!(rust.contains("CrowFindResult"), "find should use the synthetic struct\n{}", rust);
+    }
+
+    #[test]
+    fn test_monomorphization_clones_per_signature() {
+        // F2: a function used at two types compiles as two clones
+        let rust = transpile("fn first[arr]\n    return arr[0]\nlog[first[[1, 2]]]\nlog[first[['a', 'b']]]\n");
+        assert!(rust.contains("fn first__1"), "should emit first clone\n{}", rust);
+        assert!(rust.contains("fn first__2"), "should emit second clone\n{}", rust);
+        assert!(!rust.contains("fn first("), "original should not be emitted\n{}", rust);
+    }
+
+    #[test]
+    fn test_single_signature_functions_untouched() {
+        let rust = transpile("fn double[x]\n    return x * 2\nlog[double[5]]\nlog[double[7]]\n");
+        assert!(rust.contains("fn double("), "single-sig fn keeps its name\n{}", rust);
+        assert!(!rust.contains("double__"), "no clones for single signature\n{}", rust);
     }
 
     #[test]

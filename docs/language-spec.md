@@ -2475,7 +2475,17 @@ positives = filter[[-1, 0, 3], is_positive]    --- same types, different functio
 
 This works because `filter[[1, 2, 3, 4], is_even]` tells the transpiler that `items` is an array of ints and `f` is a function taking an int and returning a bool. No annotations needed — the call site *is* the type information.
 
-This means higher-order functions like `filter`, `map`, and `reduce` can be written as normal Crow functions. You don't need generics, and you don't need builtins — the type system handles it automatically.
+When one function is called with *different* type signatures, the transpiler **monomorphizes** it — generating one specialized native version per signature, invisibly:
+
+```
+fn first[arr]
+    return arr[0]
+
+log[first[[1, 2, 3]]]      --- compiles a tensor version ---
+log[first[['a', 'b']]]     --- compiles a string-array version ---
+```
+
+Specialization propagates through call chains and works with recursion and struct arguments. Two documented limits: a function used at multiple signatures cannot itself be passed *as a value* (a function value has one type — wrap it in a single-type function), and a generic function with *function-typed parameters* can be reused across predicates of the same element type but not across element types (specializing the predicate per clone is future work).
 
 ### Execution Modes
 
