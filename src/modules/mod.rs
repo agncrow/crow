@@ -44,7 +44,7 @@ pub struct ModuleRegistry {
     modules: Vec<Arc<dyn CrowModule>>,
     /// Maps function name → index into `modules` vec.
     /// Built when modules are loaded.
-    fn_map: HashMap<String, usize>,
+    fn_map: HashMap<String, Vec<usize>>,
     /// Maps constant name → index into `modules` vec.
     const_map: HashMap<String, usize>,
 }
@@ -71,7 +71,7 @@ impl ModuleRegistry {
     pub fn load(&mut self, module: Arc<dyn CrowModule>) {
         let idx = self.modules.len();
         for &fname in module.functions() {
-            self.fn_map.insert(fname.to_string(), idx);
+            self.fn_map.entry(fname.to_string()).or_default().push(idx);
         }
         for (cname, _) in module.constants() {
             self.const_map.insert(cname.to_string(), idx);
@@ -84,10 +84,47 @@ impl ModuleRegistry {
         self.fn_map.contains_key(name)
     }
 
+    /// All loaded modules providing this name — >1 means a bare call is
+    /// ambiguous (spec: Conflict Resolution).
+    pub fn providers_of(&self, name: &str) -> Vec<&str> {
+        self.fn_map
+            .get(name)
+            .map(|idxs| idxs.iter().map(|&i| self.modules[i].name()).collect())
+            .unwrap_or_default()
+    }
+
     /// Which loaded module provides this function (for reservation messages).
+    /// Returns the first provider when several do.
     pub fn module_name_of(&self, name: &str) -> Option<&str> {
-        let idx = self.fn_map.get(name)?;
+        let idx = self.fn_map.get(name)?.first()?;
         Some(self.modules[*idx].name())
+    }
+
+    /// Resolve a function within one specific module (prefixed calls).
+    fn idx_in(&self, module_name: &str, fname: &str) -> Option<usize> {
+        self.fn_map.get(fname)?.iter().copied().find(|&i| self.modules[i].name() == module_name)
+    }
+
+    /// Call a module function through its module prefix.
+    pub fn call_in(&self, module_name: &str, name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
+        let idx = self.idx_in(module_name, name).ok_or_else(|| {
+            format!("module '{}' has no function '{}'", module_name, name)
+        })?;
+        self.modules[idx].call(name, args)
+    }
+
+    /// Emit Rust for a function through its module prefix.
+    pub fn emit_rust_in(&self, module_name: &str, name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String> {
+        let idx = self.idx_in(module_name, name).ok_or_else(|| {
+            format!("module '{}' has no function '{}'", module_name, name)
+        })?;
+        self.modules[idx].emit_rust(name, arg_strs, arg_types)
+    }
+
+    /// Infer return type through a module prefix.
+    pub fn type_of_in(&self, module_name: &str, name: &str, arg_count: usize) -> Option<CrowType> {
+        let idx = self.idx_in(module_name, name)?;
+        Some(self.modules[idx].type_of(name, arg_count))
     }
 
     /// Check if a constant name belongs to any loaded module.
@@ -102,24 +139,49 @@ impl ModuleRegistry {
         module.constants().into_iter().find(|(n, _)| *n == name).map(|(_, v)| v)
     }
 
-    /// Call a module function (interpreter).
+    /// Bare-call ambiguity message, or None when the name is unique.
+    fn ambiguity(&self, name: &str) -> Option<String> {
+        let providers = self.providers_of(name);
+        if providers.len() > 1 {
+            let forms: Vec<String> = providers.iter().map(|m| format!("{}.{}[...]", m, name)).collect();
+            Some(format!(
+                "'{}' is ambiguous — provided by {}; use {}",
+                name,
+                providers.join(" and "),
+                forms.join(" or ")
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// Call a module function (interpreter, bare call).
     pub fn call(&self, name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
-        let idx = self.fn_map.get(name)
+        if let Some(msg) = self.ambiguity(name) {
+            return Err(msg);
+        }
+        let idx = self.fn_map.get(name).and_then(|v| v.first().copied())
             .ok_or_else(|| format!("unknown module function: {}", name))?;
-        self.modules[*idx].call(name, args)
+        self.modules[idx].call(name, args)
     }
 
-    /// Emit Rust for a module function (transpiler).
+    /// Emit Rust for a module function (transpiler, bare call).
     pub fn emit_rust(&self, name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String> {
-        let idx = self.fn_map.get(name)
+        if let Some(msg) = self.ambiguity(name) {
+            return Err(msg);
+        }
+        let idx = self.fn_map.get(name).and_then(|v| v.first().copied())
             .ok_or_else(|| format!("unknown module function: {}", name))?;
-        self.modules[*idx].emit_rust(name, arg_strs, arg_types)
+        self.modules[idx].emit_rust(name, arg_strs, arg_types)
     }
 
-    /// Infer return type of a module function (type inference).
+    /// Infer return type of a module function (bare call; None when ambiguous).
     pub fn type_of(&self, name: &str, arg_count: usize) -> Option<CrowType> {
-        let idx = self.fn_map.get(name)?;
-        Some(self.modules[*idx].type_of(name, arg_count))
+        let idxs = self.fn_map.get(name)?;
+        if idxs.len() > 1 {
+            return None;
+        }
+        Some(self.modules[*idxs.first()?].type_of(name, arg_count))
     }
 
     /// Get all constant (name, value) pairs from all loaded modules.
@@ -147,8 +209,9 @@ impl ModuleRegistry {
     }
 
     /// Return the module name that owns a given function, if any.
+    /// (First provider when several do — prefer providers_of for messages.)
     pub fn module_name_for(&self, fn_name: &str) -> Option<&str> {
-        let idx = self.fn_map.get(fn_name)?;
+        let idx = self.fn_map.get(fn_name)?.first()?;
         Some(self.modules[*idx].name())
     }
 }

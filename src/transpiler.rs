@@ -53,6 +53,9 @@ pub struct Transpiler {
     /// Whether the transpiled code uses regex
     pub needs_regex: bool,
     needs_find_struct: bool,
+    /// Module pinned by a prefixed call (frame.load) while its rebuilt bare
+    /// form is emitted — resolves overlapping registry exports
+    pinned_module: Option<String>,
     needs_shell_struct: bool,
     needs_elapsed_struct: bool,
     /// Whether the transpiled code uses sha2/md5 hashing
@@ -114,6 +117,7 @@ impl Transpiler {
             binop_counter: 0,
             needs_regex: false,
             needs_find_struct: false,
+            pinned_module: None,
             needs_shell_struct: false,
             needs_elapsed_struct: false,
             needs_sha2: false,
@@ -2882,7 +2886,11 @@ impl Transpiler {
                         let has_numarray = arg_types.iter().any(|t| matches!(t, CrowType::NumArray(_)));
                         if has_numarray {
                             self.needs_crow_runtime = true;
-                            return self.registry.emit_rust(name, &arg_strs, &arg_types).unwrap_or_else(|e| format!("/* {} */", e));
+                            let emitted = match &self.pinned_module {
+                                Some(m) => self.registry.emit_rust_in(m, name, &arg_strs, &arg_types),
+                                None => self.registry.emit_rust(name, &arg_strs, &arg_types),
+                            };
+                            return emitted.unwrap_or_else(|e| format!("/* {} */", e));
                         }
                     }
                     // Non-overlapping module functions: route to registry
@@ -2892,7 +2900,11 @@ impl Transpiler {
                     if !is_overlapping && !skip_frame_select && self.registry.has_function(name) {
                         let arg_types: Vec<_> = args.iter().map(|a| self.ctx.infer_expr(a)).collect();
                         self.needs_crow_runtime = true;
-                        return self.registry.emit_rust(name, &arg_strs, &arg_types).unwrap_or_else(|e| format!("/* {} */", e));
+                        let emitted = match &self.pinned_module {
+                            Some(m) => self.registry.emit_rust_in(m, name, &arg_strs, &arg_types),
+                            None => self.registry.emit_rust(name, &arg_strs, &arg_types),
+                        };
+                        return emitted.unwrap_or_else(|e| format!("/* {} */", e));
                     }
 
                     // --- Math builtins (scalar) ---
@@ -3283,7 +3295,7 @@ impl Transpiler {
                     }
                     if name == "rm" && arg_strs.len() == 1 {
                         let trace = self.trace_format_expr();
-                        return format!("{{ let _p = std::path::Path::new(&*{}); let _r = if _p.is_dir() {{ std::fs::remove_dir_all(_p) }} else {{ std::fs::remove_file(_p) }}; match _r {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![] }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}] }} }} }}", arg_strs[0], trace);
+                        return format!("{{ let _s = {}; let _p = std::path::Path::new(&*_s); let _r = if _p.is_dir() {{ std::fs::remove_dir_all(_p) }} else {{ std::fs::remove_file(_p) }}; match _r {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![] }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}] }} }} }}", arg_strs[0], trace);
                     }
                     if name == "mv" && arg_strs.len() == 2 {
                         let trace = self.trace_format_expr();
@@ -3946,7 +3958,11 @@ impl Transpiler {
                                 callee: Box::new(Expr::Ident(field.clone())),
                                 args: args.clone(),
                             };
-                            return self.expr_to_string(&bare);
+                            let saved_pin = self.pinned_module.take();
+                            self.pinned_module = Some(real_mod.clone());
+                            let out = self.expr_to_string(&bare);
+                            self.pinned_module = saved_pin;
+                            return out;
                         }
                         // db.connect[url] → crow_db::connect(url, None)
                         if mod_name == "db" && self.needs_crow_db {

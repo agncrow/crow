@@ -110,6 +110,25 @@ fn to_float(v: &CrowValue, fname: &str) -> Result<f64, String> {
 fn to_tensor(v: &CrowValue, fname: &str) -> Result<CrowTensor, String> {
     match &v.value {
         Value::NumArray(t) => Ok(t.clone()),
+        // All-numeric plain arrays coerce (frame columns arrive this way in
+        // the interpreter — compiled mode already accepts columns)
+        Value::Array(items) => {
+            let mut data = Vec::with_capacity(items.len());
+            for item in items {
+                match &item.value {
+                    Value::Int(n) => data.push(*n as f64),
+                    Value::Float(f) => data.push(*f),
+                    other => {
+                        return Err(format!(
+                            "{}: expected numeric array, got element {:?}",
+                            fname, other
+                        ))
+                    }
+                }
+            }
+            let n = data.len();
+            Ok(CrowTensor::from_vec(data, vec![n]))
+        }
         _ => Err(format!("{}: expected numarray, got {:?}", fname, v.value)),
     }
 }

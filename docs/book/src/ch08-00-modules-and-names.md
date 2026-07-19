@@ -1,5 +1,7 @@
 # Modules and Names
 
-> **Not yet written.** use, aliased imports, the reservation rule, and writing modules of your own.
-
-For now, see [`language-spec.md`](../../language-spec.md) and the runnable programs in `examples/`.
+Crow's module system is small — one keyword, `use` — but it sits on a rule
+most languages don't have: **a bare name means exactly one thing, and
+collisions are compile errors, never silent**. This chapter covers
+importing, aliasing, the reservation rule, and writing modules of your
+own.
