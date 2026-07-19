@@ -100,7 +100,8 @@ impl Parser {
             }
         }
         match self.peek().clone() {
-            Token::Fn => self.parse_fn_decl().map(|s| vec![s]),
+            Token::Fn => self.parse_fn_decl(false).map(|s| vec![s]),
+            Token::View => self.parse_fn_decl(true).map(|s| vec![s]),
             Token::Return => self.parse_return().map(|s| vec![s]),
             Token::Break => { self.advance(); Ok(vec![Stmt::Break]) }
             Token::Continue => { self.advance(); Ok(vec![Stmt::Continue]) }
@@ -113,8 +114,8 @@ impl Parser {
         }
     }
 
-    fn parse_fn_decl(&mut self) -> Result<Stmt, String> {
-        self.advance(); // skip 'fn'
+    fn parse_fn_decl(&mut self, is_view: bool) -> Result<Stmt, String> {
+        self.advance(); // skip 'fn' or 'view'
         let name = self.expect_ident()?;
         self.expect(&Token::LBracket)?;
         let (params, defaults) = self.parse_param_list()?;
@@ -131,7 +132,7 @@ impl Parser {
                 }
             }
         }
-        Ok(Stmt::FnDecl { name, params, defaults, body })
+        Ok(Stmt::FnDecl { name, params, defaults, body, is_view })
     }
 
     fn parse_return(&mut self) -> Result<Stmt, String> {

@@ -70,6 +70,8 @@ pub struct Validator<'a> {
     /// ui transpiler rewrites into state.get/state.set inside render/handler
     /// functions — the documented exception to function-scope isolation.
     ui_mode: bool,
+    /// Validating inside a `view` body — the element vocabulary is active
+    in_view: bool,
     current_line: usize,
 }
 
@@ -82,6 +84,7 @@ impl<'a> Validator<'a> {
             module_vars: BTreeSet::new(),
             fn_depth: 0,
             ui_mode: false,
+            in_view: false,
             current_line: 0,
         }
     }
@@ -157,21 +160,35 @@ impl<'a> Validator<'a> {
                 for v in values { self.validate_expr(v); }
                 for n in names { self.defined_vars.insert(n.clone()); }
             }
-            Stmt::FnDecl { name, params, body, .. } => {
+            Stmt::FnDecl { name, params, body, is_view, .. } => {
                 self.defined_vars.insert(name.clone());
                 let saved = self.defined_vars.clone();
                 // Function scope isolation: module variables are not visible
                 // inside functions — only params, locals, functions, structs,
-                // and builtins. (Exception: `use ui` reactive state.)
-                if !self.ui_mode {
+                // and builtins. Exception: views and event handlers see
+                // reactive state (`use ui` — the sanctioned channel).
+                let reactive_exempt = self.ui_mode
+                    && (*is_view
+                        || self.ctx.views.contains(name)
+                        || self.ctx.view_handlers.contains(name));
+                if !reactive_exempt {
                     for mv in &self.module_vars {
                         self.defined_vars.remove(mv);
+                    }
+                }
+                // Inside a view, the element vocabulary is defined
+                let saved_in_view = self.in_view;
+                if *is_view {
+                    self.in_view = true;
+                    for &el in crate::lower::UI_ELEMENTS {
+                        self.defined_vars.insert(el.to_string());
                     }
                 }
                 for p in params { self.defined_vars.insert(p.clone()); }
                 self.fn_depth += 1;
                 for s in body { self.validate_stmt(s); }
                 self.fn_depth -= 1;
+                self.in_view = saved_in_view;
                 self.defined_vars = saved;
                 // Re-add the function name itself
                 self.defined_vars.insert(name.clone());
@@ -240,18 +257,9 @@ impl<'a> Validator<'a> {
                 if path == "web" || path.starts_with("web.") {
                     self.defined_vars.insert("web".to_string());
                 }
-                // `use ui` → register all HTML element functions as known
+                // `use ui` reserves NOTHING at file level — the element
+                // vocabulary lives inside `view` blocks only
                 if path == "ui" {
-                    const HTML_ELEMENTS: &[&str] = &[
-                        "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6",
-                        "button", "ul", "ol", "li", "form", "a", "nav",
-                        "header", "footer", "section", "table", "tr", "td", "th",
-                        "thead", "tbody", "select", "option", "textarea", "label",
-                        "pre", "code", "img",
-                    ];
-                    for &el in HTML_ELEMENTS {
-                        self.defined_vars.insert(el.to_string());
-                    }
                     self.defined_vars.insert("ui".to_string());
                 }
                 // Other modules handled by expand_module_imports
@@ -392,6 +400,15 @@ impl<'a> Validator<'a> {
                     ));
                 }
             }
+        }
+
+        // ui elements exist only inside view blocks
+        if crate::lower::UI_ELEMENTS.contains(&name) && self.ui_mode && !self.in_view {
+            self.error(format!(
+                "ui element '{}' can only be used inside a view block — declare the builder with 'view name[params]' instead of 'fn'",
+                name
+            ));
+            return;
         }
 
         // Module function? Accept — modules validate args at runtime/transpile time.

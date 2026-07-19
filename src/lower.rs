@@ -23,7 +23,7 @@ use crate::ast::{Expr, Stmt};
 use std::collections::BTreeMap;
 
 /// HTML element constructors that accept trailing named attributes.
-const UI_ELEMENTS: &[&str] = &[
+pub const UI_ELEMENTS: &[&str] = &[
     "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6",
     "button", "ul", "ol", "li", "form", "a", "nav",
     "header", "footer", "section", "tr", "td", "th",
@@ -52,6 +52,8 @@ pub struct Lowerer {
     fns: BTreeMap<String, FnSig>,
     structs: BTreeMap<String, Vec<String>>,
     current_line: usize,
+    /// Lowering inside a `view` body — ui element named-args resolve here
+    in_view: bool,
 }
 
 pub fn lower_program(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
@@ -59,6 +61,7 @@ pub fn lower_program(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
         fns: BTreeMap::new(),
         structs: BTreeMap::new(),
         current_line: 0,
+            in_view: false,
     };
     l.collect_sigs(stmts);
     l.lower_stmts(stmts)
@@ -70,6 +73,7 @@ impl Lowerer {
             fns: BTreeMap::new(),
             structs: BTreeMap::new(),
             current_line: 0,
+            in_view: false,
         }
     }
 
@@ -84,7 +88,7 @@ impl Lowerer {
     fn collect_sigs(&mut self, stmts: &[Stmt]) {
         for s in stmts {
             match s {
-                Stmt::FnDecl { name, params, defaults, body } => {
+                Stmt::FnDecl { name, params, defaults, body, .. } => {
                     self.fns.insert(
                         name.clone(),
                         FnSig { params: params.clone(), defaults: defaults.clone() },
@@ -134,12 +138,20 @@ impl Lowerer {
                 names: names.clone(),
                 values: values.iter().map(|v| self.lower_expr(v)).collect::<Result<_, _>>()?,
             },
-            Stmt::FnDecl { name, params, defaults, body } => Stmt::FnDecl {
-                name: name.clone(),
-                params: params.clone(),
-                defaults: defaults.clone(),
-                body: self.lower_stmts(body)?,
-            },
+            Stmt::FnDecl { name, params, defaults, body, is_view } => {
+                // Element vocabulary is active only inside views
+                let saved = self.in_view;
+                self.in_view = *is_view;
+                let lowered = Stmt::FnDecl {
+                    name: name.clone(),
+                    params: params.clone(),
+                    defaults: defaults.clone(),
+                    body: self.lower_stmts(body)?,
+                    is_view: *is_view,
+                };
+                self.in_view = saved;
+                lowered
+            }
             Stmt::Return(e) => Stmt::Return(match e {
                 Some(e) => Some(self.lower_expr(e)?),
                 None => None,
@@ -254,7 +266,10 @@ impl Lowerer {
                         let resolved = self.resolve_args(name, &fields, &no_defaults, args)?;
                         Expr::Call { callee: Box::new(callee), args: resolved }
                     }
-                    _ if ui_name.as_deref().map_or(false, |n| UI_ELEMENTS.contains(&n)) && has_named => {
+                    _ if self.in_view
+                        && ui_name.as_deref().map_or(false, |n| UI_ELEMENTS.contains(&n))
+                        && has_named =>
+                    {
                         self.lower_ui_call(callee, args)
                     }
                     Some(name) if builtin_named_params(name).is_some() && has_named => {
@@ -562,9 +577,14 @@ mod tests {
 
     #[test]
     fn test_ui_named_attrs_become_attr_map() {
-        let stmts = lower_src("fn inc[]\n    1\nb = button['+', click = inc]\n").unwrap();
+        let stmts = lower_src("fn inc[]\n    1\nview v[]\n    b = button['+', click = inc]\n    return b\n").unwrap();
         assert!(!has_named(&stmts));
-        let value = stmts.iter().find_map(|s| match s {
+        // the assignment now lives inside the view body
+        let view_body = stmts.iter().find_map(|s| match s {
+            Stmt::FnDecl { name, body, is_view: true, .. } if name == "v" => Some(body.clone()),
+            _ => None,
+        }).unwrap();
+        let value = view_body.iter().find_map(|s| match s {
             Stmt::Assign { name, value } if name == "b" => Some(value.clone()),
             _ => None,
         }).unwrap();

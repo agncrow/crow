@@ -297,3 +297,91 @@ fn strip_comment_closer(line: &str) -> String {
     }
     line.to_string()
 }
+
+/// `crow fmt --fix-views`: rewrite `fn` to `view` for functions whose bodies
+/// build ui trees (call HTML elements). Textual, line-anchored — the parse
+/// identifies which declarations qualify, the edit touches only the keyword.
+pub fn migrate_views(source: &str) -> String {
+    use crate::ast::{Expr, Stmt};
+
+    fn body_uses_elements(stmts: &[Stmt]) -> bool {
+        fn expr_uses(e: &Expr) -> bool {
+            match e {
+                Expr::Call { callee, args } => {
+                    let is_el = matches!(callee.as_ref(), Expr::Ident(n) if crate::lower::UI_ELEMENTS.contains(&n.as_str()))
+                        || matches!(callee.as_ref(), Expr::FieldAccess { object, field }
+                            if matches!(object.as_ref(), Expr::Ident(m) if m == "ui")
+                                && crate::lower::UI_ELEMENTS.contains(&field.as_str()));
+                    is_el || expr_uses(callee) || args.iter().any(expr_uses)
+                }
+                Expr::BinOp { left, right, .. } => expr_uses(left) || expr_uses(right),
+                Expr::UnaryOp { expr, .. } => expr_uses(expr),
+                Expr::Array(items) => items.iter().any(expr_uses),
+                Expr::Map(pairs) => pairs.iter().any(|(_, v)| expr_uses(v)),
+                Expr::Named { value, .. } => expr_uses(value),
+                Expr::FieldAccess { object, .. } => expr_uses(object),
+                Expr::ForExpr { iter, body, .. } => expr_uses(iter) || body_uses_elements(body),
+                _ => false,
+            }
+        }
+        stmts.iter().any(|s| match s {
+            Stmt::Assign { value, .. } => expr_uses(value),
+            Stmt::Return(Some(e)) | Stmt::ExprStmt(e) => expr_uses(e),
+            Stmt::If { condition, then_body, else_body } => {
+                expr_uses(condition)
+                    || body_uses_elements(then_body)
+                    || else_body.as_ref().map_or(false, |b| body_uses_elements(b))
+            }
+            Stmt::For { iter, body, .. } => expr_uses(iter) || body_uses_elements(body),
+            Stmt::While { condition, body } => expr_uses(condition) || body_uses_elements(body),
+            _ => false,
+        })
+    }
+
+    let mut lexer = crate::lexer::Lexer::new(source);
+    let tokens = match lexer.tokenize() {
+        Ok(t) => t,
+        Err(_) => return source.to_string(),
+    };
+    let mut parser = crate::parser::Parser::new(tokens);
+    let stmts = match parser.parse() {
+        Ok(s) => s,
+        Err(_) => return source.to_string(),
+    };
+
+    // Names of plain fns that build ui trees
+    let mut names: Vec<String> = Vec::new();
+    for st in &stmts {
+        if let Stmt::FnDecl { name, body, is_view: false, .. } = st {
+            if body_uses_elements(body) {
+                names.push(name.clone());
+            }
+        }
+    }
+    if names.is_empty() {
+        return source.to_string();
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        let mut replaced = false;
+        for n in &names {
+            let pat = format!("fn {}[", n);
+            if trimmed.starts_with(&pat) {
+                let indent = &line[..line.len() - trimmed.len()];
+                out.push(format!("{}view {}", indent, &trimmed[3..]));
+                replaced = true;
+                break;
+            }
+        }
+        if !replaced {
+            out.push(line.to_string());
+        }
+    }
+    let mut result = out.join("\n");
+    if source.ends_with('\n') {
+        result.push('\n');
+    }
+    result
+}

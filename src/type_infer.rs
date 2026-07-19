@@ -220,6 +220,12 @@ pub struct TypeContext {
     pub functions: BTreeMap<String, FnSig>,
     /// F2 monomorphization: distinct concrete call signatures per user fn
     pub call_signatures: BTreeMap<String, Vec<Vec<CrowType>>>,
+    /// Names declared with `view` — UI-tree builders; the element vocabulary
+    /// is active only inside their bodies
+    pub views: std::collections::BTreeSet<String>,
+    /// Fns referenced as values inside view bodies or page[] registrations —
+    /// event handlers, which share the reactive-state exemption with views
+    pub view_handlers: std::collections::BTreeSet<String>,
     /// fn name → [(signature, mangled clone name)] for specialized functions
     pub specializations: BTreeMap<String, Vec<(Vec<CrowType>, String)>>,
     pub structs: BTreeMap<String, StructSig>,
@@ -271,6 +277,8 @@ impl TypeContext {
             vars: BTreeMap::new(),
             functions: BTreeMap::new(),
             call_signatures: BTreeMap::new(),
+            views: std::collections::BTreeSet::new(),
+            view_handlers: std::collections::BTreeSet::new(),
             specializations: BTreeMap::new(),
             structs,
             cpu_count: None,
@@ -289,12 +297,15 @@ impl TypeContext {
                         fields: fields.iter().map(|f| (f.clone(), CrowType::Unknown)).collect(),
                     });
                 }
-                Stmt::FnDecl { name, params, body, .. } => {
+                Stmt::FnDecl { name, params, body, is_view, .. } => {
                     self.functions.insert(name.clone(), FnSig {
                         params: params.iter().map(|p| (p.clone(), CrowType::Unknown)).collect(),
                         return_type: CrowType::Unknown,
                         body: body.clone(),
                     });
+                    if *is_view {
+                        self.views.insert(name.clone());
+                    }
                 }
                 Stmt::Use { path } => {
                     if path == "math" {
@@ -343,6 +354,33 @@ impl TypeContext {
                 }
                 _ => {}
             }
+        }
+
+        // Event handlers: fns referenced as bare values inside view bodies
+        // (click = inc — lowered into attr maps) or in page[] registration
+        // args. Generous by design: worst case a fn gains reactive-state
+        // visibility it didn't need.
+        {
+            let mut handlers = std::collections::BTreeSet::new();
+            for stmt in stmts {
+                if let Stmt::FnDecl { body, is_view: true, .. } = stmt {
+                    for st in body {
+                        Self::collect_fn_value_refs_stmt(st, &self.functions, &mut handlers);
+                    }
+                }
+                if let Stmt::ExprStmt(Expr::Call { callee, args }) = stmt {
+                    if matches!(callee.as_ref(), Expr::Ident(n) if n == "page") {
+                        for a in args.iter().skip(1) {
+                            if let Expr::Ident(n) = a {
+                                if self.functions.contains_key(n) {
+                                    handlers.insert(n.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            self.view_handlers = handlers;
         }
 
         // Pass 2+: iterate call-site scanning and function body inference
@@ -810,6 +848,86 @@ impl TypeContext {
             Expr::Str(s) => {
                 // Parse string interpolations to discover embedded call sites
                 self.collect_call_types_in_string(s);
+            }
+            _ => {}
+        }
+    }
+
+    /// Collect bare references to known fn names (Ident in value position —
+    /// not as a call's callee) inside view bodies: these are event handlers.
+    fn collect_fn_value_refs_stmt(
+        stmt: &Stmt,
+        fns: &BTreeMap<String, FnSig>,
+        out: &mut std::collections::BTreeSet<String>,
+    ) {
+        fn walk_expr(e: &Expr, fns: &BTreeMap<String, FnSig>, out: &mut std::collections::BTreeSet<String>) {
+            match e {
+                Expr::Ident(n) => {
+                    if fns.contains_key(n) {
+                        out.insert(n.clone());
+                    }
+                }
+                Expr::Call { callee, args } => {
+                    // The callee name itself is a call, not a value ref —
+                    // but nested exprs inside it still count
+                    if !matches!(callee.as_ref(), Expr::Ident(_)) {
+                        walk_expr(callee, fns, out);
+                    }
+                    for a in args {
+                        walk_expr(a, fns, out);
+                    }
+                }
+                Expr::Named { value, .. } => walk_expr(value, fns, out),
+                Expr::BinOp { left, right, .. } => {
+                    walk_expr(left, fns, out);
+                    walk_expr(right, fns, out);
+                }
+                Expr::UnaryOp { expr, .. } => walk_expr(expr, fns, out),
+                Expr::Array(items) => {
+                    for i in items {
+                        walk_expr(i, fns, out);
+                    }
+                }
+                Expr::Map(pairs) => {
+                    for (_, v) in pairs {
+                        walk_expr(v, fns, out);
+                    }
+                }
+                Expr::FieldAccess { object, .. } => walk_expr(object, fns, out),
+                Expr::ForExpr { iter, body, .. } => {
+                    walk_expr(iter, fns, out);
+                    for st in body {
+                        TypeContext::collect_fn_value_refs_stmt(st, fns, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        match stmt {
+            Stmt::Assign { value, .. } => walk_expr(value, fns, out),
+            Stmt::Return(Some(e)) | Stmt::ExprStmt(e) => walk_expr(e, fns, out),
+            Stmt::If { condition, then_body, else_body } => {
+                walk_expr(condition, fns, out);
+                for st in then_body {
+                    Self::collect_fn_value_refs_stmt(st, fns, out);
+                }
+                if let Some(eb) = else_body {
+                    for st in eb {
+                        Self::collect_fn_value_refs_stmt(st, fns, out);
+                    }
+                }
+            }
+            Stmt::For { iter, body, .. } => {
+                walk_expr(iter, fns, out);
+                for st in body {
+                    Self::collect_fn_value_refs_stmt(st, fns, out);
+                }
+            }
+            Stmt::While { condition, body } => {
+                walk_expr(condition, fns, out);
+                for st in body {
+                    Self::collect_fn_value_refs_stmt(st, fns, out);
+                }
             }
             _ => {}
         }

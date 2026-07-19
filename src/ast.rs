@@ -22,6 +22,9 @@ pub enum Stmt {
         params: Vec<String>,
         defaults: Vec<Option<Expr>>,
         body: Vec<Stmt>,
+        /// True for `view` declarations — UI-tree builders. Inside a view the
+        /// HTML element vocabulary is active; outside it doesn't exist.
+        is_view: bool,
     },
     /// Return statement: return expr
     Return(Option<Expr>),

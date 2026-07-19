@@ -25,6 +25,8 @@ struct Env {
     /// `use ui` programs keep module variables visible inside functions —
     /// they are reactive state (see spec Design Note "No Ambient Mutability").
     ui_mode: bool,
+    /// Per-call-frame reactive exemption (views + event handlers)
+    exempt_frames: Vec<bool>,
 }
 
 impl Env {
@@ -33,6 +35,7 @@ impl Env {
             scopes: vec![HashMap::new()],
             saved_stacks: Vec::new(),
             ui_mode: false,
+            exempt_frames: Vec::new(),
         }
     }
 
@@ -46,9 +49,10 @@ impl Env {
     }
 
     /// True when name resolution is inside a function call frame, where
-    /// module variables are invisible (spec: Function Scope).
+    /// module variables are invisible (spec: Function Scope). Views and event
+    /// handlers are exempt (reactive state — `use ui`'s sanctioned channel).
     fn in_call(&self) -> bool {
-        !self.saved_stacks.is_empty() && !self.ui_mode
+        !self.saved_stacks.is_empty() && !self.exempt_frames.last().copied().unwrap_or(false)
     }
 
     fn push_scope(&mut self) {
@@ -62,9 +66,10 @@ impl Env {
     /// Push an isolated function scope.
     /// Saves all non-global scopes and creates a fresh scope for the function.
     /// This prevents function-local variables from clobbering caller variables.
-    fn push_call_scope(&mut self) {
+    fn push_call_scope(&mut self, exempt: bool) {
         let saved: Vec<HashMap<String, CrowValue>> = self.scopes.drain(1..).collect();
         self.saved_stacks.push(saved);
+        self.exempt_frames.push(exempt);
         // Now scopes = [global] only; push a fresh function scope
         self.scopes.push(HashMap::new());
     }
@@ -73,6 +78,7 @@ impl Env {
     fn pop_call_scope(&mut self) {
         // Pop the function scope
         self.scopes.pop();
+        self.exempt_frames.pop();
         // Restore saved non-global scopes
         if let Some(saved) = self.saved_stacks.pop() {
             self.scopes.extend(saved);
@@ -168,6 +174,10 @@ pub struct Interpreter {
     cancelled: Option<Arc<AtomicBool>>,
     registry: crate::modules::ModuleRegistry,
     lowerer: crate::lower::Lowerer,
+    /// Names declared with `view` (reactive-exempt, element vocabulary)
+    view_fns: std::collections::HashSet<String>,
+    /// Event handlers referenced from views/page[] (reactive-exempt)
+    handler_fns: std::collections::HashSet<String>,
 }
 
 impl Interpreter {
@@ -185,6 +195,8 @@ impl Interpreter {
             cancelled: None,
             registry: crate::modules::ModuleRegistry::new(),
             lowerer: crate::lower::Lowerer::new(),
+            view_fns: std::collections::HashSet::new(),
+            handler_fns: std::collections::HashSet::new(),
         }
     }
 
@@ -259,12 +271,105 @@ impl Interpreter {
         }
     }
 
+    /// Collect view names and event-handler names (bare fn refs inside view
+    /// bodies + page[] registration args) — these frames keep reactive state
+    /// visible under `use ui`.
+    fn prescan_views(&mut self, stmts: &[Stmt]) {
+        let mut fn_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        fn collect_fns(stmts: &[Stmt], out: &mut std::collections::HashSet<String>) {
+            for st in stmts {
+                if let Stmt::FnDecl { name, .. } = st {
+                    out.insert(name.clone());
+                }
+            }
+        }
+        collect_fns(stmts, &mut fn_names);
+
+        fn walk_expr(e: &Expr, fns: &std::collections::HashSet<String>, out: &mut std::collections::HashSet<String>) {
+            match e {
+                Expr::Ident(n) => {
+                    if fns.contains(n) {
+                        out.insert(n.clone());
+                    }
+                }
+                Expr::Call { callee, args } => {
+                    if !matches!(callee.as_ref(), Expr::Ident(_)) {
+                        walk_expr(callee, fns, out);
+                    }
+                    for a in args { walk_expr(a, fns, out); }
+                }
+                Expr::Named { value, .. } => walk_expr(value, fns, out),
+                Expr::BinOp { left, right, .. } => {
+                    walk_expr(left, fns, out);
+                    walk_expr(right, fns, out);
+                }
+                Expr::UnaryOp { expr, .. } => walk_expr(expr, fns, out),
+                Expr::Array(items) => for i in items { walk_expr(i, fns, out); },
+                Expr::Map(pairs) => for (_, v) in pairs { walk_expr(v, fns, out); },
+                Expr::FieldAccess { object, .. } => walk_expr(object, fns, out),
+                Expr::ForExpr { iter, body, .. } => {
+                    walk_expr(iter, fns, out);
+                    walk_stmts(body, fns, out);
+                }
+                _ => {}
+            }
+        }
+        fn walk_stmts(stmts: &[Stmt], fns: &std::collections::HashSet<String>, out: &mut std::collections::HashSet<String>) {
+            for st in stmts {
+                match st {
+                    Stmt::Assign { value, .. } => walk_expr(value, fns, out),
+                    Stmt::Return(Some(e)) | Stmt::ExprStmt(e) => walk_expr(e, fns, out),
+                    Stmt::If { condition, then_body, else_body } => {
+                        walk_expr(condition, fns, out);
+                        walk_stmts(then_body, fns, out);
+                        if let Some(eb) = else_body { walk_stmts(eb, fns, out); }
+                    }
+                    Stmt::For { iter, body, .. } => {
+                        walk_expr(iter, fns, out);
+                        walk_stmts(body, fns, out);
+                    }
+                    Stmt::While { condition, body } => {
+                        walk_expr(condition, fns, out);
+                        walk_stmts(body, fns, out);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        for st in stmts {
+            if let Stmt::FnDecl { name, body, is_view: true, .. } = st {
+                self.view_fns.insert(name.clone());
+                let mut handlers = std::collections::HashSet::new();
+                walk_stmts(body, &fn_names, &mut handlers);
+                self.handler_fns.extend(handlers);
+            }
+            if let Stmt::ExprStmt(Expr::Call { callee, args }) = st {
+                if matches!(callee.as_ref(), Expr::Ident(n) if n == "page") {
+                    for a in args.iter().skip(1) {
+                        if let Expr::Ident(n) = a {
+                            if fn_names.contains(n) {
+                                self.handler_fns.insert(n.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Does this fn keep reactive-state visibility inside its call frame?
+    fn reactive_exempt(&self, name: &str) -> bool {
+        self.env.ui_mode && (self.view_fns.contains(name) || self.handler_fns.contains(name))
+    }
+
     pub fn run(&mut self, stmts: &[Stmt]) -> Result<CrowValue, String> {
         // Resolve named arguments to positional form (single implementation
         // shared with the transpiler pipeline — see src/lower.rs). The lowerer
         // persists on the interpreter so REPL batches see earlier functions.
         let lowered = self.lowerer.lower(stmts)?;
         let stmts: &[Stmt] = &lowered;
+        self.prescan_views(stmts);
         let waves = group_into_waves(stmts);
         let mut result = CrowValue::done();
 
@@ -1316,7 +1421,8 @@ impl Interpreter {
                 // clobber caller variables with the same name.
                 let saved_function = self.current_function.clone();
                 self.current_function = func.name.clone();
-                self.env.push_call_scope();
+                let _ex = self.reactive_exempt(&func.name);
+                self.env.push_call_scope(_ex);
                 for (param, val) in func.params.iter().zip(arg_vals) {
                     self.env.set(param, val);
                 }
@@ -1366,7 +1472,8 @@ impl Interpreter {
                     // Run function with param i as Dual(xi, 1.0), rest as Dual(xj, 0.0)
                     let saved_function = self.current_function.clone();
                     self.current_function = func.name.clone();
-                    self.env.push_call_scope();
+                    let _ex = self.reactive_exempt(&func.name);
+                    self.env.push_call_scope(_ex);
                     for (j, param) in func.params.iter().enumerate() {
                         let dual_val = if j == i {
                             Value::Dual(float_args[j], 1.0)
@@ -1634,7 +1741,8 @@ impl Interpreter {
         // Call the user's function with the connection
         let saved_function = self.current_function.clone();
         self.current_function = func.name.clone();
-        self.env.push_call_scope();
+        let _ex = self.reactive_exempt(&func.name);
+        self.env.push_call_scope(_ex);
         self.env.set(&func.params[0], tx_val);
 
         let mut call_result = Ok(CrowValue::done());
@@ -1679,7 +1787,8 @@ impl Interpreter {
         }
         let saved_function = self.current_function.clone();
         self.current_function = func.name.clone();
-        self.env.push_call_scope();
+        let _ex = self.reactive_exempt(&func.name);
+        self.env.push_call_scope(_ex);
         for (p, a) in func.params.iter().zip(args) {
             self.env.set(p, a);
         }
