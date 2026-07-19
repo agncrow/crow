@@ -236,3 +236,80 @@ New parity corpus: `19_fn_values.crow` (fn values in arrays/for-exprs/maps), `20
 2. One real dogfood app (the trading dashboard, live, against a real DB)
 3. Deepen `crow check`
 4. Ecosystem/registry last — packages follow users
+
+## The 1.0 namespace round — DECIDED (July 2026), implementation pending
+
+Post-campaign design session triggered by the question "can we call it 1.0?" — the last open
+semantic (builtin shadowing) plus everything it pulled in. All rulings are Vijay's; the
+discussion record is summarized here so the implementation has one source of truth.
+
+### The problem
+
+Shadowing was never decided — it was an accident of implementation order, and inconsistent:
+call position let builtins silently beat user variables AND user functions (`range = [10,20,30];
+range[0]` → `[]` silently; `fn sum` under `use math` silently ignored), while value position let
+variables beat constants. Crow's unified `[]` (calls = indexing) makes shadowing uniquely
+dangerous — MATLAB, the only mainstream language with the same collision, chose shadowing and it
+became a 40-year footgun. Our own cleanup month (ls, e = eye[2], fn sum) was the local evidence.
+
+### The rulings
+
+1. **Strict scoped reservation.** A bare name means exactly one thing. Any user definition
+   (variable, function, struct, param) colliding with a core builtin or an imported module's
+   export is a compile/validation error at the definition line, with rename suggestions.
+   Identical in both modes. Constants included: `use math` reserves `pi`, `e`, `inf`, `nan`
+   (reverses the vars-shadow-constants patch from the examples-cleanup week).
+2. **Three namespace tiers.** Core: bare, reserved always, frozen by the budget rule. Stdlib
+   modules (`use math` etc.): bare + reserved in importing files only. Everything else (user
+   modules today, registry packages tomorrow): qualified-only — the import reserves exactly one
+   name, the prefix. "The language owns the bare namespace; packages get prefixes."
+   (User modules are already qualified-only in the implementation — tier 3 codifies it.)
+3. **`as` aliasing, universal, Python-semantics.** `use X as y` works for any module; an
+   aliased import is qualified-only under its alias (exactly `import pandas as pd` — no bare
+   names). For stdlib this doubles as the opt-out: `use math as m` frees `sum` for your
+   variables. Contextual keyword (only special after a use-path) — zero reserved-word growth.
+   Fixes the otherwise-impossible case of two packages with the same trailing name.
+4. **`view` blocks — the ui zone.** New declaration keyword, sibling of `fn`. Inside a view,
+   the standard HTML vocabulary (current 31 elements, exact HTML names — kept for learnability)
+   is active; outside views the names don't exist, so `use ui` reserves NOTHING — `p = 0.95`,
+   `fn add[a, b]`, `form = req.body` are fine everywhere. Replaces the transpiler's heuristic
+   render-fn detection with a declarative marker. Precedent: the JSX/SwiftUI/Phoenix boundary;
+   like JSX, the lowercase vocabulary is fixed — components are module-exported views called as
+   `prefix.component`. Reactive-state access narrows from "any fn under use ui" to views +
+   event handlers (tightens F1: `fn` is now ALWAYS fully isolated). Migration `fn render` →
+   `view render` via crow fmt, accepted pre-1.0.
+5. **No user-defined zones.** Vocabulary zones are language-owned and budget-priced, same
+   principle as bare names. Modules participate by exporting functions (qualified) or views
+   (components). A future external-fixed-vocabulary case (e.g. SVG) extends the view
+   vocabulary rather than adding a zone.
+6. **Target-independence pre-commitment.** "The view tree is target-independent; platforms
+   (desktop/mobile) are build targets, never language dialects." One zone, one tree model;
+   the natural desktop path is a Tauri-style wry shell around the existing compiled server
+   (Crow already emits Rust), where LiveView latency goes to zero in-process.
+7. **Non-view trees need no mechanism**: recursive structs (data), builder modules with
+   named args (scene-graph style, `use scene as s` → `s.group[s.mesh['tree', x = 10]]`),
+   `json` (open data).
+8. **Deferred**: whether 1.0 scopes to core-language with web/ui marked preview — revisit
+   after the dogfood app (which is confirmed as a 1.0 gate).
+
+### Bugs found while stress-testing the design (fix before/with implementation)
+
+- **Struct-args parity break (core, worst)**: `pair[leaf[1], leaf[2]]` — struct-returning
+  calls as struct arguments fail compiled validation with "expected N but got N" (interp runs
+  fine). Likely the Int+Struct→OptBoxStruct sentinel unify misfiring; message must print
+  wrapper types regardless.
+- **Named args on qualified calls don't lower** (`scene.mesh['tree', x = 10]`) — documented
+  v1 limit, now blocking the tier-3 builder pattern.
+- **Import expander doesn't rewrite intra-module references** — a module fn can't construct
+  the module's own struct (renamed out from under it). User modules only work flat.
+
+### Implementation order (agreed)
+
+1. Struct-arg inference bug (live parity break, independent)
+2. Module expander reference rewriting + qualified named args
+3. `view` blocks (parser keyword, both modes, vocabulary scoping, reactive narrowing,
+   fmt migration of render fns)
+4. Reservation enforcement (core + stdlib + constants + package prefixes + aliases),
+   shadow-aware error messages, `as` parsing
+5. Spec Design Note ("Names Are Never Ambiguous" + zones + targets), crow-for-llms update,
+   parity files, example sweep
