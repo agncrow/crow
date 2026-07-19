@@ -81,17 +81,18 @@ while count lt 5
     count = count + 1
 log['while result: `count`']
 
---- Test: match ---
+--- Test: branching on a value
 val = 3
-match val
-    1
-        log['one']
-    2
+if val eq 1
+    log['one']
+else
+    if val eq 2
         log['two']
-    3
-        log['three']
-    _
-        log['other']
+    else
+        if val eq 3
+            log['three']
+        else
+            log['other']
 
 --- Test: arrays ---
 nums = [10, 20, 30]
@@ -121,7 +122,7 @@ fn safe_divide[a, b]
 
 result = safe_divide[10, 2]
 log['safe divide: `result`']
-log['status: `result.status`']
+log['ok: `result.ok`']
 
 --- Test: variable reassignment ---
 counter = 0

@@ -1,3 +1,4 @@
+--- module: imported by module_test.crow (not a standalone program)
 --- math utility module
 
 fn double[x]

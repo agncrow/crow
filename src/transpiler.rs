@@ -53,6 +53,8 @@ pub struct Transpiler {
     /// Whether the transpiled code uses regex
     pub needs_regex: bool,
     needs_find_struct: bool,
+    needs_shell_struct: bool,
+    needs_elapsed_struct: bool,
     /// Whether the transpiled code uses sha2/md5 hashing
     pub needs_sha2: bool,
     /// Whether the transpiled code uses chrono (date/time)
@@ -75,6 +77,7 @@ pub struct Transpiler {
     live_handle_fns: std::collections::HashSet<String>,
     /// Whether the code uses page[] (implicit app pattern — no user-visible app variable)
     has_page_routes: bool,
+    has_noapp_web: bool,
     /// Reactive variables: top-level assignments in UI files that become state-backed.
     /// Maps var_name -> (type, default_value_as_rust_string)
     reactive_vars: std::collections::BTreeMap<String, (CrowType, String)>,
@@ -111,6 +114,8 @@ impl Transpiler {
             binop_counter: 0,
             needs_regex: false,
             needs_find_struct: false,
+            needs_shell_struct: false,
+            needs_elapsed_struct: false,
             needs_sha2: false,
             needs_chrono: false,
             needs_crow_db: false,
@@ -126,6 +131,7 @@ impl Transpiler {
             live_render_fns: std::collections::HashSet::new(),
             live_handle_fns: std::collections::HashSet::new(),
             has_page_routes: false,
+            has_noapp_web: false,
             reactive_vars: std::collections::BTreeMap::new(),
             reactive_event_handlers: std::collections::HashSet::new(),
             reactive_render_fns: std::collections::HashSet::new(),
@@ -326,9 +332,9 @@ impl Transpiler {
         match expr {
             Expr::Call { callee, args } => {
                 if let Expr::Ident(name) = callee.as_ref() {
-                    if name == "route" && args.len() >= 3 {
-                        // Third arg is the handler — could be Ident (named fn) or Lambda
-                        if let Expr::Ident(handler_name) = &args[2] {
+                    if name == "route" && args.len() >= 2 {
+                        // Handler is the last arg — Ident (named fn) or Lambda
+                        if let Some(Expr::Ident(handler_name)) = args.last() {
                             out.insert(handler_name.clone());
                         }
                     }
@@ -766,6 +772,8 @@ impl Transpiler {
                 // Detect db module early
                 if path == "db" {
                     self.needs_crow_db = true;
+                    // db queries return crow_runtime frames
+                    self.needs_crow_runtime = true;
                     // Default to sqlite feature; URL-based dispatch adds others at runtime
                     self.db_features.insert("sqlite".to_string());
                 }
@@ -1000,8 +1008,12 @@ impl Transpiler {
         }
         self.emit_line("");
 
-        // Emit CrowResult<T> struct if any fallible builtins are used
-        if self.program_uses_result() {
+        // Emit CrowResult<T> unconditionally: fallible builtins can appear in
+        // any expression position, and the need is only known during body
+        // generation (after this header) — allow(dead_code) covers unused
+        {
+            let _ = self.program_uses_result();
+            self.emit_line("#[allow(dead_code)]");
             self.emit_line("#[derive(Debug, Clone)]");
             self.emit_line("struct CrowResult<T: Clone> {");
             self.indent += 1;
@@ -1101,7 +1113,7 @@ impl Transpiler {
         // actual use — its need isn't known until the body has been generated.
         let struct_names: Vec<String> = self.ctx.structs.keys().cloned().collect();
         for name in &struct_names {
-            if name != "CrowFindResult" {
+            if !matches!(name.as_str(), "CrowFindResult" | "CrowShell" | "CrowElapsed") {
                 self.emit_struct(name);
             }
         }
@@ -1157,14 +1169,18 @@ impl Transpiler {
             if self.ctx.specializations.contains_key(name) {
                 continue;
             }
-            // Check if this is a module-prefixed function with unresolved types
-            let is_module_fn = self.modules.iter().any(|m| name.starts_with(&format!("{}_", m)));
-            if is_module_fn {
-                let sig = self.ctx.functions.get(name).unwrap();
-                let has_unknown = sig.params.iter().any(|(_, t)| matches!(t, CrowType::Unknown));
-                if has_unknown {
-                    continue; // Skip uncalled module functions
-                }
+            // Skip functions with unresolved param types: they are never
+            // called (a call site would have typed them) and cannot compile.
+            // Exception: live/reactive callbacks get injected signatures.
+            let sig = self.ctx.functions.get(name).unwrap();
+            let has_unknown = sig.params.iter().any(|(_, t)| matches!(t, CrowType::Unknown));
+            let is_callback = self.live_render_fns.contains(name)
+                || self.live_handle_fns.contains(name)
+                || self.reactive_render_fns.contains(name)
+                || self.reactive_event_handlers.contains(name)
+                || self.web_handlers.contains(name);
+            if has_unknown && !is_callback {
+                continue;
             }
             self.emit_function(name);
         }
@@ -1219,6 +1235,25 @@ impl Transpiler {
             .cloned()
             .collect();
 
+        // Pre-scan: no-app route[]/serve[] calls (plain `use web`, no ui)
+        // still need the implicit __crow_app
+        if self.needs_crow_web && !self.has_page_routes {
+            for stmt in stmts {
+                if let Stmt::ExprStmt(Expr::Call { callee, args }) = stmt {
+                    if let Expr::Ident(name) = callee.as_ref() {
+                        let noapp_route = name == "route"
+                            && (args.len() == 2
+                                || (args.len() == 3
+                                    && matches!(self.ctx.infer_expr(&args[0]), CrowType::Str)));
+                        let noapp_serve = name == "serve" && args.len() == 1;
+                        if noapp_route || noapp_serve {
+                            self.has_noapp_web = true;
+                        }
+                    }
+                }
+            }
+        }
+
         // Emit main function with automatic parallelism
         if self.needs_crow_web {
             self.emit_line("#[tokio::main]");
@@ -1228,6 +1263,10 @@ impl Transpiler {
         }
         self.indent += 1;
         self.emit_panic_hook();
+        // No-app web calls without LiveView state: just the implicit app
+        if self.has_noapp_web && !self.has_page_routes {
+            self.emit_line("let mut __crow_app = CrowApp::new();");
+        }
         // If page[] routes are used, create implicit app and reactive state at start of main
         if self.has_page_routes {
             self.emit_line("let mut __crow_app = CrowApp::new();");
@@ -1272,6 +1311,16 @@ impl Transpiler {
             self.emit_line("");
             self.emit_line("#[derive(Clone, Debug)]");
             self.emit_line("struct CrowFindResult { ok: bool, groups: Vec<String> }");
+        }
+        if self.needs_shell_struct {
+            self.emit_line("");
+            self.emit_line("#[derive(Clone, Debug)]");
+            self.emit_line("struct CrowShell { status: i64, stdout: String, stderr: String }");
+        }
+        if self.needs_elapsed_struct {
+            self.emit_line("");
+            self.emit_line("#[derive(Clone, Debug)]");
+            self.emit_line("struct CrowElapsed { seconds: f64, minutes: f64, hours: f64, days: f64 }");
         }
 
         self.output.clone()
@@ -1346,6 +1395,29 @@ impl Transpiler {
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
+        // Display through the shared kernel, matching the interpreter's
+        // Name[field = value] format (fields alphabetical — the interpreter
+        // stores them in a BTreeMap)
+        if self.struct_kernel_displayable(name) {
+            self.needs_crow_runtime = true;
+            let mut sorted: Vec<&(String, CrowType)> = sig.fields.iter().collect();
+            sorted.sort_by(|a, b| a.0.cmp(&b.0));
+            let parts: Vec<String> = sorted.iter().map(|(f, _)| format!("{} = {{}}", f)).collect();
+            let vals: Vec<String> = sorted.iter().map(|(f, _)| format!("self.{}.crow_repr()", f)).collect();
+            self.emit_line(&format!("impl crow_runtime::display::CrowDisplay for {} {{", name));
+            self.indent += 1;
+            self.emit_line("fn crow_repr(&self) -> String {");
+            self.indent += 1;
+            self.emit_line(&format!(
+                "{{ use crow_runtime::display::CrowDisplay as _; format!(\"{}[{}]\", {}) }}",
+                name, parts.join(", "), vals.join(", ")
+            ));
+            self.indent -= 1;
+            self.emit_line("}");
+            self.indent -= 1;
+            self.emit_line("}");
+            self.emit_line("");
+        }
     }
 
     fn emit_function(&mut self, name: &str) {
@@ -2272,6 +2344,28 @@ impl Transpiler {
             .join(", ")
     }
 
+    /// SQL bind params: a literal array like ['alice', 30] is positional open
+    /// data — emit each element as its own json! value (a single Rust vec
+    /// could not hold the mixed types).
+    fn db_params_to_json(&mut self, params: &[Expr]) -> String {
+        let mut out = Vec::new();
+        for p in params {
+            match p {
+                Expr::Array(elems) => {
+                    for e in elems {
+                        let s = self.expr_to_string(e);
+                        out.push(format!("serde_json::json!({})", s));
+                    }
+                }
+                other => {
+                    let s = self.expr_to_string(other);
+                    out.push(format!("serde_json::json!({})", s));
+                }
+            }
+        }
+        out.join(", ")
+    }
+
     fn expr_to_string(&mut self, expr: &Expr) -> String {
         match expr {
             // Lowering resolves all named arguments before codegen
@@ -2625,11 +2719,37 @@ impl Transpiler {
                             arg_strs.push(format!("&{}", expr_str));
                         }
                     } else {
-                        // By-value param: existing behavior
+                        // By-value param: pass a clone when handing a non-Copy
+                        // VARIABLE to a user function — Crow has value
+                        // semantics, and the variable may be used again
+                        // (fixes use-of-moved-value for tensor/array/map args)
                         if let Some(unwrapped) = self.maybe_unwrap_optbox(a) {
                             arg_strs.push(unwrapped);
                         } else {
-                            arg_strs.push(self.expr_to_string(a));
+                            let is_user_fn = callee_name
+                                .as_ref()
+                                .map_or(false, |n| self.ctx.functions.contains_key(n));
+                            let needs_clone = is_user_fn
+                                && matches!(a, Expr::Ident(_))
+                                && {
+                                    let t = self.ctx.infer_expr(a);
+                                    let t = if let CrowType::Result(i) = t { *i } else { t };
+                                    matches!(
+                                        t,
+                                        CrowType::NumArray(_)
+                                            | CrowType::Array(_)
+                                            | CrowType::Map(_)
+                                            | CrowType::Str
+                                            | CrowType::Frame
+                                            | CrowType::Struct(_)
+                                    )
+                                };
+                            let e = self.expr_to_string(a);
+                            if needs_clone {
+                                arg_strs.push(format!("{}.clone()", e));
+                            } else {
+                                arg_strs.push(e);
+                            }
                         }
                     }
                 }
@@ -2990,7 +3110,16 @@ impl Transpiler {
                         return format!("{}.contains_key(&{})", arg_strs[0], arg_strs[1]);
                     }
                     if name == "set" && arg_strs.len() == 3 {
-                        return format!("{{ let mut tmp = {}.clone(); tmp.insert({}, {}); tmp }}", arg_strs[0], arg_strs[1], arg_strs[2]);
+                        // Fn values: cast to the fn-pointer type so distinct
+                        // fn items unify inside one map
+                        let val = match self.ctx.infer_expr(&args[2]) {
+                            CrowType::Fn(_, _) => {
+                                let t = self.ctx.infer_expr(&args[2]).to_rust_type();
+                                format!("{} as {}", arg_strs[2], t)
+                            }
+                            _ => arg_strs[2].clone(),
+                        };
+                        return format!("{{ let mut tmp = {}.clone(); tmp.insert({}, {}); tmp }}", arg_strs[0], arg_strs[1], val);
                     }
                     if name == "del" && arg_strs.len() == 2 {
                         return format!("{{ let mut tmp = {}.clone(); tmp.remove(&{}); tmp }}", arg_strs[0], arg_strs[1]);
@@ -3154,7 +3283,8 @@ impl Transpiler {
 
                     // --- Shell builtin ---
                     if name == "shell" && arg_strs.len() == 1 {
-                        return format!("{{ let _cmd = &*{}; match std::process::Command::new(\"sh\").arg(\"-c\").arg(_cmd).output() {{ Ok(out) => {{ let mut _m = std::collections::BTreeMap::new(); _m.insert(\"status\".to_string(), out.status.code().unwrap_or(-1) as i64); _m.insert(\"stdout\".to_string(), String::from_utf8_lossy(&out.stdout).trim_end().to_string()); _m.insert(\"stderr\".to_string(), String::from_utf8_lossy(&out.stderr).trim_end().to_string()); _m }}, Err(e) => panic!(\"shell failed: {{}}\", e) }} }}", arg_strs[0]);
+                        self.needs_shell_struct = true;
+                        return format!("{{ let _cmd = &*{}; match std::process::Command::new(\"sh\").arg(\"-c\").arg(_cmd).output() {{ Ok(out) => CrowShell {{ status: out.status.code().unwrap_or(-1) as i64, stdout: String::from_utf8_lossy(&out.stdout).trim_end().to_string(), stderr: String::from_utf8_lossy(&out.stderr).trim_end().to_string() }}, Err(e) => panic!(\"shell failed: {{}}\", e) }} }}", arg_strs[0]);
                     }
                     // --- Hashing builtin ---
                     if name == "hash" && arg_strs.len() == 2 {
@@ -3228,7 +3358,8 @@ impl Transpiler {
                         return format!("{{ let _y = {} as i32; let _m = {} as u32; let _d = {} as u32; let _dt = chrono::NaiveDate::from_ymd_opt(_y, _m, _d).expect(\"invalid date\"); let mut _map = std::collections::BTreeMap::new(); _map.insert(\"year\".to_string(), _y as i64); _map.insert(\"month\".to_string(), _m as i64); _map.insert(\"day\".to_string(), _d as i64); _map.insert(\"timestamp\".to_string(), _dt.and_hms_opt(0,0,0).unwrap().and_utc().timestamp()); _map }}", arg_strs[0], arg_strs[1], arg_strs[2]);
                     }
                     if name == "elapsed" && arg_strs.len() == 2 {
-                        return format!("{{ let _t1 = {}.get(\"timestamp\").copied().unwrap_or(0i64); let _t2 = {}.get(\"timestamp\").copied().unwrap_or(0i64); let _diff = _t2 - _t1; let mut _m = std::collections::BTreeMap::new(); _m.insert(\"seconds\".to_string(), _diff); _m.insert(\"minutes\".to_string(), _diff as f64 / 60.0); _m.insert(\"hours\".to_string(), _diff as f64 / 3600.0); _m.insert(\"days\".to_string(), _diff as f64 / 86400.0); _m }}", arg_strs[0], arg_strs[1]);
+                        self.needs_elapsed_struct = true;
+                        return format!("{{ let _t1 = {}.get(\"timestamp\").copied().unwrap_or(0i64); let _t2 = {}.get(\"timestamp\").copied().unwrap_or(0i64); let _d = (_t2 - _t1) as f64; CrowElapsed {{ seconds: _d, minutes: _d / 60.0, hours: _d / 3600.0, days: _d / 86400.0 }} }}", arg_strs[0], arg_strs[1]);
                     }
 
                     // --- UI element builtins (use ui) ---
@@ -3316,12 +3447,21 @@ impl Transpiler {
 
                     // --- Web builtins ---
                     if name == "route" && self.needs_crow_web {
+                        // No-app forms (implicit __crow_app, like page[]/serve[])
+                        if arg_strs.len() == 2 {
+                            // route[path, handler]
+                            return format!("__crow_app = __crow_app.route(&{}, Arc::new({}))", arg_strs[0], arg_strs[1]);
+                        }
+                        if arg_strs.len() == 3 && matches!(self.ctx.infer_expr(&args[0]), CrowType::Str) {
+                            // route[path, method, handler]
+                            return format!("__crow_app = __crow_app.route_method(&{}, {}, Arc::new({}))", arg_strs[0], arg_strs[1], arg_strs[2]);
+                        }
                         if arg_strs.len() == 3 {
-                            // route[app, path, handler] → app.route(&path, Arc::new(handler))
+                            // legacy route[app, path, handler]
                             return format!("{}.route(&{}, Arc::new({}))", arg_strs[0], arg_strs[1], arg_strs[2]);
                         }
                         if arg_strs.len() == 4 {
-                            // route[app, path, method, handler] → app.route_method(&path, method, Arc::new(handler))
+                            // legacy route[app, path, method, handler]
                             return format!("{}.route_method(&{}, {}, Arc::new({}))", arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[3]);
                         }
                     }
@@ -3405,7 +3545,7 @@ impl Transpiler {
                         if arg_strs.len() == 2 {
                             return format!("{}.query(&{}, &[]).unwrap()", arg_strs[0], arg_strs[1]);
                         } else {
-                            let params = Self::crow_params_to_json(&arg_strs[2..]);
+                            let params = self.db_params_to_json(&args[2..]);
                             return format!("{}.query(&{}, &[{}]).unwrap()", arg_strs[0], arg_strs[1], params);
                         }
                     }
@@ -3413,7 +3553,7 @@ impl Transpiler {
                         if arg_strs.len() == 2 {
                             return format!("{}.exec(&{}, &[]).unwrap()", arg_strs[0], arg_strs[1]);
                         } else {
-                            let params = Self::crow_params_to_json(&arg_strs[2..]);
+                            let params = self.db_params_to_json(&args[2..]);
                             return format!("{}.exec(&{}, &[{}]).unwrap()", arg_strs[0], arg_strs[1], params);
                         }
                     }
@@ -3425,7 +3565,7 @@ impl Transpiler {
                     }
                     if name == "transact" && self.needs_crow_db && arg_strs.len() == 2 {
                         // transact[conn, fn] → conn.transact(&|tx| { fn(tx); Ok(()) })
-                        return format!("{}.transact(&|_tx| {{ {}(_tx.into()); Ok(()) }}).unwrap()", arg_strs[0], arg_strs[1]);
+                        return format!("{}.transact(&|_tx| {{ {}(_tx); Ok(()) }}).unwrap()", arg_strs[0], arg_strs[1]);
                     }
 
                     // Web.db builtins (legacy web.db module)
@@ -3756,6 +3896,20 @@ impl Transpiler {
                 // Module function/struct call: module.func[args] or module.Struct[args]
                 if let Expr::FieldAccess { object, field } = callee.as_ref() {
                     if let Expr::Ident(mod_name) = object.as_ref() {
+                        // Registry-module prefixed call (math.zeros[...]):
+                        // route exactly like the bare call — spec: module
+                        // prefixes always work
+                        // db has its own dedicated branch below (DbHandle codegen)
+                        if matches!(mod_name.as_str(), "math" | "io" | "frame")
+                            && self.registry.is_loaded(mod_name)
+                            && self.registry.has_function(field)
+                        {
+                            let bare = Expr::Call {
+                                callee: Box::new(Expr::Ident(field.clone())),
+                                args: args.clone(),
+                            };
+                            return self.expr_to_string(&bare);
+                        }
                         // db.connect[url] → crow_db::connect(url, None)
                         if mod_name == "db" && self.needs_crow_db {
                             match field.as_str() {
@@ -3794,7 +3948,7 @@ impl Transpiler {
                                 }
                                 "transact" => {
                                     if arg_strs.len() == 2 {
-                                        return format!("{}.transact(&|_tx| {{ {}(_tx.into()); Ok(()) }}).unwrap()", arg_strs[0], arg_strs[1]);
+                                        return format!("{}.transact(&|_tx| {{ {}(_tx); Ok(()) }}).unwrap()", arg_strs[0], arg_strs[1]);
                                     }
                                 }
                                 _ => {}
@@ -3966,6 +4120,28 @@ impl Transpiler {
                     }
                 }
                 let obj = self.expr_to_string(object);
+                // Recursive struct link (OptBoxStruct): unwrap the box —
+                // field access on the empty sentinel (0) is a runtime error
+                {
+                    let obj_type = self.ctx.infer_expr(object);
+                    if let CrowType::OptBoxStruct(sname) = &obj_type {
+                        let is_copy = self
+                            .ctx
+                            .structs
+                            .get(sname)
+                            .and_then(|sig| {
+                                sig.fields.iter().find(|(f, _)| f == field).map(|(_, t)| {
+                                    matches!(t, CrowType::Int | CrowType::Float | CrowType::Bool)
+                                })
+                            })
+                            .unwrap_or(false);
+                        let suffix = if is_copy { "" } else { ".clone()" };
+                        return format!(
+                            "{}.as_ref().expect(\"field access on an empty (0) node\").{}{}",
+                            obj, field, suffix
+                        );
+                    }
+                }
                 // Auto-unwrap: struct field access through a Result reads .value
                 {
                     let obj_type = self.ctx.infer_expr(object);
@@ -4411,10 +4587,17 @@ impl Transpiler {
                                 CrowType::Result(inner) => inner.as_ref().clone(),
                                 other => other.clone(),
                             };
-                            match inner_type {
+                            match &inner_type {
                                 CrowType::FrameCol => {
                                     fmt_str.push_str("{:?}");
                                     args.push(format!("{}.to_strings()", rust_expr));
+                                }
+                                t if self.kernel_displayable(t) => {
+                                    // Shared display kernel: interpolated
+                                    // arrays/maps match interpreter output
+                                    self.needs_crow_runtime = true;
+                                    fmt_str.push_str("{}");
+                                    args.push(format!("{{ use crow_runtime::display::CrowDisplay as _; ({}).crow_fmt() }}", rust_expr));
                                 }
                                 CrowType::Array(_) | CrowType::Map(_) | CrowType::Struct(_) => {
                                     fmt_str.push_str("{:?}");
@@ -4589,16 +4772,37 @@ impl Transpiler {
 
     /// Arrays whose element types the shared display kernel
     /// (crow_runtime::display::CrowDisplay) can format.
-    fn kernel_displayable(ty: &CrowType) -> bool {
+    fn kernel_displayable(&self, ty: &CrowType) -> bool {
         match ty {
             CrowType::Array(inner) => match inner.as_ref() {
                 CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Bool => true,
                 CrowType::NumArray(_) => true,
-                nested @ CrowType::Array(_) => Self::kernel_displayable(nested),
+                nested @ CrowType::Array(_) => self.kernel_displayable(nested),
                 _ => false,
             },
+            CrowType::Map(inner) => match inner.as_ref() {
+                CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Bool
+                | CrowType::Unknown => true,
+                nested @ (CrowType::Array(_) | CrowType::Map(_)) => self.kernel_displayable(nested),
+                _ => false,
+            },
+            CrowType::Struct(n) => self.struct_kernel_displayable(n),
             _ => false,
         }
+    }
+
+    /// A struct prints through the shared display kernel when a CrowDisplay
+    /// impl is emitted for it: simple field types only, and never the
+    /// synthetic builtin-return structs.
+    fn struct_kernel_displayable(&self, name: &str) -> bool {
+        if matches!(name, "CrowShell" | "CrowElapsed" | "CrowFindResult") {
+            return false;
+        }
+        self.ctx.structs.get(name).map(|sig| {
+            sig.fields.iter().all(|(_, t)| {
+                matches!(t, CrowType::Int | CrowType::Float | CrowType::Bool | CrowType::Str)
+            })
+        }).unwrap_or(false)
     }
 
     fn emit_log_call(&mut self, args: &[String], orig_exprs: &[Expr]) -> String {
@@ -4634,7 +4838,7 @@ impl Transpiler {
                 }
                 // Arrays print via the shared display kernel so output matches
                 // the interpreter exactly (strings single-quoted, etc.)
-                if Self::kernel_displayable(&inner) {
+                if self.kernel_displayable(&inner) {
                     self.needs_crow_runtime = true;
                     return format!("{{ use crow_runtime::display::CrowDisplay as _; println!(\"{{}}\", ({}).crow_fmt()) }}", arg);
                 }
@@ -4673,7 +4877,7 @@ impl Transpiler {
             let kernel = if i < orig_exprs.len() {
                 let ty = self.ctx.infer_expr(&orig_exprs[i]);
                 let inner = match &ty { CrowType::Result(t) => t.as_ref().clone(), o => o.clone() };
-                is_col || Self::kernel_displayable(&inner)
+                is_col || self.kernel_displayable(&inner)
             } else { false };
             if needs_debug && !kernel {
                 fmt_parts.push("{:?}".to_string());
@@ -4899,9 +5103,11 @@ mod tests {
 
     #[test]
     fn test_crow_result_not_emitted_when_unnecessary() {
+        // CrowResult is now always emitted (allow(dead_code)) — flag-timing
+        // made conditional emission unreliable. Assert no Result USAGE instead.
         let src = "x = 5\nlog[x]\n";
         let rust = transpile(src);
-        assert!(!rust.contains("CrowResult"), "should not emit CrowResult when not needed\n{}", rust);
+        assert!(!rust.contains("CrowResult {"), "no Result values should be constructed\n{}", rust);
     }
 
     #[test]
@@ -4965,7 +5171,7 @@ mod tests {
     fn test_int_from_float_no_result() {
         let src = "x = 3.14\ny = int[x]\n";
         let rust = transpile(src);
-        assert!(!rust.contains("CrowResult"), "int from float should not use CrowResult\n{}", rust);
+        assert!(!rust.contains("CrowResult {"), "int from float should not construct a Result\n{}", rust);
     }
 
     #[test]
@@ -5148,7 +5354,7 @@ mod tests {
 
     #[test]
     fn test_fn_declaration_transpile() {
-        let rust = transpile("fn add[a, b]\n    a + b\n");
+        let rust = transpile("fn add[a, b]\n    a + b\nlog[add[1, 2]]\n");
         assert!(rust.contains("fn add("), "should declare function\n{}", rust);
     }
 
@@ -6406,20 +6612,20 @@ mod tests {
 
     #[test]
     fn test_ui_state_get_int() {
-        let rust = transpile("use web\nuse ui\nfn render[state]\n    count = state.get['count', 0]\n    return div[h1['{count}']]\n");
+        let rust = transpile("use web\nuse ui\nfn render[state]\n    count = state.get['count', 0]\n    return div[h1['{count}']]\nserve[3000]\npage['/', render]\n");
         assert!(rust.contains(".get_i64("), "state.get with int default should map to get_i64\n{}", rust);
         assert!(!rust.contains("get_i64["), "should not contain Crow syntax in output\n{}", rust);
     }
 
     #[test]
     fn test_ui_state_get_str() {
-        let rust = transpile("use web\nuse ui\nfn render[state]\n    name = state.get['name', '']\n    return div[h1['{name}']]\n");
+        let rust = transpile("use web\nuse ui\nfn render[state]\n    name = state.get['name', '']\n    return div[h1['{name}']]\nserve[3000]\npage['/', render]\n");
         assert!(rust.contains(".get_str("), "state.get with str default should map to get_str\n{}", rust);
     }
 
     #[test]
     fn test_ui_state_get_bool() {
-        let rust = transpile("use web\nuse ui\nfn render[state]\n    active = state.get['active', false]\n    return div[h1['{active}']]\n");
+        let rust = transpile("use web\nuse ui\nfn render[state]\n    active = state.get['active', false]\n    return div[h1['{active}']]\nserve[3000]\npage['/', render]\n");
         assert!(rust.contains(".get_bool("), "state.get with bool default should map to get_bool\n{}", rust);
     }
 
@@ -6439,14 +6645,14 @@ mod tests {
 
     #[test]
     fn test_ui_field_codegen() {
-        let rust = transpile("use web\nuse ui\nfn render[s]\n    vol = s.get['vol', 0]\n    return div[field['Min Vol', vol]]\n");
+        let rust = transpile("use web\nuse ui\nfn render[s]\n    vol = s.get['vol', 0]\n    return div[field['Min Vol', vol]]\nserve[3000]\npage['/', render]\n");
         assert!(rust.contains("CrowVNode::field("), "field should emit CrowVNode::field\n{}", rust);
         assert!(rust.contains("\"vol\""), "field should extract key name\n{}", rust);
     }
 
     #[test]
     fn test_ui_select_codegen() {
-        let rust = transpile("use web\nuse ui\nfn render[s]\n    opts = ['a', 'b']\n    val = s.get['choice', 'a']\n    return div[select[opts, val]]\n");
+        let rust = transpile("use web\nuse ui\nfn render[s]\n    opts = ['a', 'b']\n    val = s.get['choice', 'a']\n    return div[select[opts, val]]\nserve[3000]\npage['/', render]\n");
         assert!(rust.contains("CrowVNode::select_input("), "select should emit CrowVNode::select_input\n{}", rust);
         assert!(rust.contains("\"val\""), "select should extract key name\n{}", rust);
     }

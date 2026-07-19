@@ -287,7 +287,13 @@ impl<'a> Validator<'a> {
                         // Module call: module.func[args]
                         if let Expr::Ident(mod_name) = object.as_ref() {
                             let prefixed = format!("{}_{}", mod_name, field);
-                            if !self.ctx.functions.contains_key(&prefixed)
+                            let registry_module = matches!(
+                                mod_name.as_str(),
+                                "math" | "io" | "frame" | "db"
+                            ) && self.ctx.registry.is_loaded(mod_name)
+                                && self.ctx.registry.has_function(field);
+                            if !registry_module
+                                && !self.ctx.functions.contains_key(&prefixed)
                                 && !self.ctx.structs.contains_key(&prefixed)
                                 && !self.defined_vars.contains(mod_name)
                             {
@@ -301,6 +307,18 @@ impl<'a> Validator<'a> {
                 }
             }
             Expr::FieldAccess { object, field } => {
+                // Module variable/function reference (mymath.pi): the import
+                // expander registered it under the prefixed name
+                if let Expr::Ident(mod_name) = object.as_ref() {
+                    let prefixed = format!("{}_{}", mod_name, field);
+                    if !self.defined_vars.contains(mod_name)
+                        && (self.defined_vars.contains(&prefixed)
+                            || self.ctx.vars.contains_key(&prefixed)
+                            || self.ctx.functions.contains_key(&prefixed))
+                    {
+                        return;
+                    }
+                }
                 self.validate_expr(object);
                 // Check field access validity
                 let obj_type = self.ctx.infer_expr(object);
@@ -495,7 +513,7 @@ impl<'a> Validator<'a> {
             "date" => argc == 3,
             "elapsed" => argc == 2,
             // Web
-            "route" => argc == 3 || argc == 4,
+            "route" => (2..=4).contains(&argc), // route[path, handler] / +method / legacy app-first
             "serve" => argc == 1,                // serve[port]
             "respond" => argc == 2,
             "redirect" | "html" | "text" => argc == 1,

@@ -1,5 +1,7 @@
 --- sum builtin: sum an array of numbers
 
+use math
+
 nums = [1, 2, 3, 4, 5]
 total = sum[nums]
 log['sum of ints: `total`']

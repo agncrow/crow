@@ -7,10 +7,10 @@ write['/tmp/crow_io_test.csv', 'name,age,city\nalice,30,nyc\nbob,25,sf\n']
 log['files written']
 
 --- Read lines (io module)
-ls = lines['/tmp/crow_io_test.txt']
-log['line count: `len[ls]`']
-log['first line: `ls[0]`']
-log['second line: `ls[1]`']
+file_lines = lines['/tmp/crow_io_test.txt']
+log['line count: `len[file_lines]`']
+log['first line: `file_lines[0]`']
+log['second line: `file_lines[1]`']
 
 --- Parse CSV (io module)
 rows = csv['/tmp/crow_io_test.csv']

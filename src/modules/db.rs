@@ -154,7 +154,7 @@ fn emit_db_rust(_name: &str, _arg_strs: &[String], _arg_types: &[CrowType]) -> R
 
 fn db_type_of(name: &str) -> CrowType {
     match name {
-        "connect" => CrowType::Unknown, // DbConn type
+        "connect" => CrowType::DbHandle,
         "query" => CrowType::Frame,
         "exec" => CrowType::Int,
         "insert" => CrowType::Int,

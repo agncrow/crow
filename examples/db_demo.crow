@@ -46,9 +46,9 @@ transact[conn, transfer]
 log['transaction committed']
 
 --- Verify transaction
-final = query[conn, 'SELECT name, age FROM users ORDER BY id']
+after_tx = query[conn, 'SELECT name, age FROM users ORDER BY id']
 log['after transaction:']
-log[final]
+log[after_tx]
 
 --- Module-prefixed syntax
 conn2 = db.connect['sqlite://:memory:']

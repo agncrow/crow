@@ -16,7 +16,7 @@ log[b]
 
 --- Invalid JSON returns error-value
 bad = json['not json']
-log[bad.status]
+log[bad.ok]
 log[bad.reason]
 
 --- Encode an array back to JSON
@@ -25,5 +25,5 @@ log[encoded]
 
 --- JSON null becomes error-value
 n = json['null']
-log[n.status]
+log[n.ok]
 log[n.reason]

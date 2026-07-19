@@ -1,0 +1,20 @@
+--- display kernel: maps and structs match across modes
+
+struct Point [x, y]
+
+p = Point[3, 4]
+log[p]
+log['point: `p`']
+
+config = map[host = 'localhost', port = '8080']
+log[config]
+log['config: `config`']
+
+counts = map[a = 1, b = 2]
+log[counts]
+
+empty = map[]
+log['empty: `empty`']
+
+nums = map[pi_ish = 3.5, half = 0.5]
+log[nums]

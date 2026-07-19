@@ -112,9 +112,9 @@ log[choice[linspace[1, 10, 10], 3]]
 log[permutation[5]]
 
 --- signal processing
-f = fft[linspace[1, 4, 4]]
-log[f]
-log[ifft[f[0], f[1]]]
+spec = fft[linspace[1, 4, 4]]
+log[spec]
+log[ifft[spec[0], spec[1]]]
 log[conv[linspace[1, 3, 3], linspace[1, 2, 2]]]
 log[hamming[5]]
 log[hanning[5]]
@@ -127,12 +127,12 @@ log[factorial[linspace[0, 5, 6]]]
 log[choose[linspace[5, 5, 3], linspace[0, 2, 3]]]
 
 --- complex numbers
-c = complex[3, 4]
-log[real[c]]
-log[imag[c]]
-log[magnitude[c]]
-log[phase[c]]
-log[conjugate[c]]
+z = complex[3, 4]
+log[real[z]]
+log[imag[z]]
+log[magnitude[z]]
+log[phase[z]]
+log[conjugate[z]]
 
 --- sparse arrays
 s = sparse[eye[3]]
