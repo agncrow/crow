@@ -68,9 +68,9 @@ Crow rejects `break` in `for` because silent sequentialization is "a hidden perf
 
 **Fix:** either bless a small set of search/reduction builtins (`find`, `any`, `all` — loops the compiler can parallelize with early exit, which users cannot write themselves; same justification as `contains`), or allow `break` in `for` and retire the rationale. Update the three related Design Notes coherently.
 
-- [ ] Decision made (builtins vs `break`) with Design Note
-- [ ] Implemented in interpreter + transpiler with parallel early-exit
-- [ ] Spec Design Notes reconciled
+- [x] **Decision: search builtins** (July 2026, settled through the backtest/parallelism discussion). `any[arr, pred]`, `all[arr, pred]`, `find[arr, pred]` — named-function predicates, `find` returns the first element (error-value on miss, flowing into the errors-at-decisions machinery); `find` dispatches by argument types against the regex builtin.
+- [x] Implemented: interpreter sequential early-exit; **compiled mode parallel early-exit** (rayon `any`/`all`/`find_first` — deterministic first-match), the capability no user code can express. Predicate param types inferred from the array's element type; by-ref-param aware calls. Two latent codegen bugs found and fixed along the way: missing rayon prelude gating for body-generated flags, and `x.len() as i64 < n` parsing as Rust generics (any `len[x] lt n` comparison was broken compiled).
+- [x] Spec reconciled: the "No Reduce, Any, All" and "No find/index" Design Notes replaced by "Search Builtins — a Reversal" recording the self-contradiction (flag loops triggered the exact trap the `break` ban warns about); the `break` note now points to the trio. `reduce` stays rejected. Parity `17_search.crow`; 791 tests, 17 parity files green.
 
 ### 4. LLM adoption pack
 

@@ -479,6 +479,25 @@ impl TypeContext {
                         .map(|a| self.infer_expr(a))
                         .collect();
 
+                    // Search builtins: the predicate's parameter is the
+                    // array's element type (any[arr, pred] etc.)
+                    if matches!(name.as_str(), "any" | "all" | "find") && args.len() == 2 {
+                        if let Expr::Ident(fn_name) = &args[1] {
+                            let elem = match arg_types.first() {
+                                Some(CrowType::Array(inner)) => Some(inner.as_ref().clone()),
+                                Some(CrowType::NumArray(inner)) => Some(inner.as_ref().clone()),
+                                _ => None,
+                            };
+                            if let Some(elem) = elem {
+                                if let Some(sig) = self.functions.get_mut(fn_name) {
+                                    if let Some(p) = sig.params.first_mut() {
+                                        p.1 = p.1.unify(&elem);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Is it a function call?
                     if self.functions.contains_key(name) {
                         let sig = self.functions.get(name).unwrap().clone();
@@ -1015,9 +1034,22 @@ impl TypeContext {
                 CrowType::Unknown
             }
             "len" => CrowType::Int,
-            // Regex
+            // Regex + search builtins
             "matches" => CrowType::Bool,
-            "find" => CrowType::Struct("CrowFindResult".to_string()),
+            "any" | "all" => CrowType::Bool,
+            "find" => {
+                // Dispatch: find[str, pattern] → regex result struct;
+                // find[array, predicate] → Result(element)
+                let arg0 = args.first().map(|a| self.infer_expr(a)).unwrap_or(CrowType::Unknown);
+                match arg0 {
+                    CrowType::Array(inner) => CrowType::Result(inner),
+                    CrowType::NumArray(inner) => match inner.as_ref() {
+                        CrowType::NumArray(_) => CrowType::Result(inner),
+                        _ => CrowType::Result(inner),
+                    },
+                    _ => CrowType::Struct("CrowFindResult".to_string()),
+                }
+            }
             "sub" => CrowType::Str,
             // CLI / IO
             "args" => CrowType::Array(Box::new(CrowType::Str)),
@@ -1352,7 +1384,16 @@ impl TypeContext {
                         _ => return CrowType::Unknown,
                     }
                 }
-                if let CrowType::Struct(name) = obj_type {
+                // Auto-unwrap: field access on Result(Struct) reads the value's field
+                let struct_obj = match &obj_type {
+                    CrowType::Struct(n) => Some(n.clone()),
+                    CrowType::Result(inner) => match inner.as_ref() {
+                        CrowType::Struct(n) => Some(n.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(name) = struct_obj {
                     if let Some(sig) = self.structs.get(&name) {
                         for (fname, ftype) in &sig.fields {
                             if fname == field {

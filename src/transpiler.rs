@@ -826,6 +826,10 @@ impl Transpiler {
         });
         // For loops are parallel by default — any for loop means we need rayon
         let has_for = Self::has_for_loop(stmts) || self.ctx.functions.values().any(|sig| Self::has_for_loop(&sig.body));
+        // Search builtins (any/all/find with a predicate) emit par_iter
+        let has_search = Self::has_search_builtin(stmts)
+            || self.ctx.functions.values().any(|sig| Self::has_search_builtin(&sig.body));
+        let has_for = has_for || has_search;
         // Check for parallel waves (uses rayon::join, no prelude needed)
         let needs_parallel_waves = Self::has_parallel_waves(stmts) || self.ctx.functions.values().any(|sig| Self::has_parallel_waves(&sig.body));
         self.needs_rayon = needs_par_iter || needs_parallel_waves || has_for;
@@ -2893,7 +2897,7 @@ impl Transpiler {
                         if matches!(arg_type, CrowType::Frame) {
                             return format!("({}).nrows() as i64", arg_strs[0]);
                         }
-                        return format!("({}).len() as i64", arg_strs[0]);
+                        return format!("(({}).len() as i64)", arg_strs[0]);
                     }
 
                     if name == "contains" && arg_strs.len() == 2 {
@@ -3149,6 +3153,49 @@ impl Transpiler {
                         self.needs_sha2 = true;
                         return format!("{{ let _s = &*{}; let _algo = &*{}; match _algo {{ \"sha256\" => {{ use sha2::Digest; format!(\"{{:x}}\", sha2::Sha256::digest(_s.as_bytes())) }}, \"sha512\" => {{ use sha2::Digest; format!(\"{{:x}}\", sha2::Sha512::digest(_s.as_bytes())) }}, \"md5\" => {{ use md5::Digest; format!(\"{{:x}}\", md5::Md5::digest(_s.as_bytes())) }}, _ => panic!(\"unsupported hash algorithm '{{}}'\", _algo) }} }}", arg_strs[0], arg_strs[1]);
                     }
+                    // --- Search builtins: parallel early-exit via rayon ---
+                    if (name == "any" || name == "all") && arg_strs.len() == 2 {
+                        let arr_ty = self.ctx.infer_expr(&args[0]);
+                        let arr_ty = if let CrowType::Result(i) = arr_ty { *i } else { arr_ty };
+                        self.needs_rayon = true;
+                        let method = if name == "any" { "any" } else { "all" };
+                        if let CrowType::NumArray(inner) = &arr_ty {
+                            let cast = if matches!(inner.as_ref(), CrowType::Int) { " as i64" } else { "" };
+                            return format!("{}.to_vec().par_iter().{}(|&_x| {}(_x{}))", arg_strs[0], method, arg_strs[1], cast);
+                        }
+                        let by_ref = self.pred_takes_ref(&args[1]);
+                        let call = if by_ref { "(_x)" } else { "(_x.clone())" };
+                        return format!("{}.par_iter().{}(|_x| {}{})", arg_strs[0], method, arg_strs[1], call);
+                    }
+                    if name == "find" && arg_strs.len() == 2 {
+                        let arr_ty = self.ctx.infer_expr(&args[0]);
+                        let arr_ty = if let CrowType::Result(i) = arr_ty { *i } else { arr_ty };
+                        // find[array, predicate] → parallel first match as a Result
+                        let elem = match &arr_ty {
+                            CrowType::Array(inner) => Some(inner.as_ref().clone()),
+                            CrowType::NumArray(inner) => Some(inner.as_ref().clone()),
+                            _ => None,
+                        };
+                        if let Some(elem) = elem {
+                            self.needs_rayon = true;
+                            let default = elem.default_rust_value();
+                            if matches!(arr_ty, CrowType::NumArray(_)) {
+                                let cast = if matches!(elem, CrowType::Int) { " as i64" } else { "" };
+                                return format!(
+                                    "{{ match {}.to_vec().par_iter().copied().find_first(|&_x| {}(_x{})) {{ Some(_v) => CrowResult {{ ok: true, value: _v{}, reason: String::new(), kind: String::new(), trace: vec![] }}, None => CrowResult {{ ok: false, value: {}, reason: \"no match\".to_string(), kind: \"find\".to_string(), trace: vec![] }} }} }}",
+                                    arg_strs[0], arg_strs[1], cast, cast, default
+                                );
+                            }
+                            let by_ref = self.pred_takes_ref(&args[1]);
+                            let call = if by_ref { "(*_x)" } else { "((*_x).clone())" };
+                            return format!(
+                                "{{ match {}.par_iter().find_first(|_x| {}{}) {{ Some(_v) => CrowResult {{ ok: true, value: _v.clone(), reason: String::new(), kind: String::new(), trace: vec![] }}, None => CrowResult {{ ok: false, value: {}, reason: \"no match\".to_string(), kind: \"find\".to_string(), trace: vec![] }} }} }}",
+                                arg_strs[0], arg_strs[1], call, default
+                            );
+                        }
+                        // fall through to the regex find below
+                    }
+
                     // --- Regex builtins ---
                     if name == "matches" && arg_strs.len() == 2 {
                         self.needs_regex = true;
@@ -3884,6 +3931,28 @@ impl Transpiler {
                     }
                 }
                 let obj = self.expr_to_string(object);
+                // Auto-unwrap: struct field access through a Result reads .value
+                {
+                    let obj_type = self.ctx.infer_expr(object);
+                    if let CrowType::Result(inner) = &obj_type {
+                        if let CrowType::Struct(sname) = inner.as_ref() {
+                            if !matches!(field.as_str(), "ok" | "reason" | "kind" | "trace") {
+                                let is_copy = self
+                                    .ctx
+                                    .structs
+                                    .get(sname)
+                                    .and_then(|sig| {
+                                        sig.fields.iter().find(|(f, _)| f == field).map(|(_, t)| {
+                                            matches!(t, CrowType::Int | CrowType::Float | CrowType::Bool)
+                                        })
+                                    })
+                                    .unwrap_or(false);
+                                let suffix = if is_copy { "" } else { ".clone()" };
+                                return format!("{}.value.{}{}", obj, field, suffix);
+                            }
+                        }
+                    }
+                }
                 // Json object field access: j.a → j["a"] (Null if missing)
                 {
                     let obj_type = self.ctx.infer_expr(object);
@@ -3906,7 +3975,7 @@ impl Transpiler {
                         return format!("{}.nrows() as i64", obj);
                     }
                     if matches!(obj_type, CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Str | CrowType::FrameCol) {
-                        return format!("{}.len() as i64", obj);
+                        return format!("({}.len() as i64)", obj);
                     }
                 }
                 // Error-value struct field access: .ok, .reason, .kind, .trace
@@ -4422,6 +4491,65 @@ impl Transpiler {
             "{{ let _c = {}; if !_c.ok {{ {} }} _c.value }}",
             cond_str, on_error
         )
+    }
+
+    /// Does a predicate function take its first parameter by reference?
+    /// (The by-ref-params optimization passes non-Copy params as &T.)
+    fn pred_takes_ref(&self, pred: &Expr) -> bool {
+        if let Expr::Ident(fn_name) = pred {
+            if let Some(sig) = self.ctx.functions.get(fn_name) {
+                if let Some((pname, _)) = sig.params.first() {
+                    return self
+                        .by_ref_params
+                        .get(fn_name)
+                        .map_or(false, |set| set.contains(pname));
+                }
+            }
+        }
+        false
+    }
+
+    /// Does this body call any of the search builtins (any/all/find)?
+    /// They emit par_iter, which needs the rayon prelude in the header.
+    fn has_search_builtin(stmts: &[Stmt]) -> bool {
+        fn expr_has(e: &Expr) -> bool {
+            match e {
+                Expr::Call { callee, args } => {
+                    if let Expr::Ident(n) = callee.as_ref() {
+                        if matches!(n.as_str(), "any" | "all" | "find") && args.len() == 2 {
+                            return true;
+                        }
+                    }
+                    expr_has(callee) || args.iter().any(expr_has)
+                }
+                Expr::BinOp { left, right, .. } => expr_has(left) || expr_has(right),
+                Expr::UnaryOp { expr, .. } => expr_has(expr),
+                Expr::FieldAccess { object, .. } => expr_has(object),
+                Expr::Array(items) => items.iter().any(expr_has),
+                Expr::Map(pairs) => pairs.iter().any(|(k, v)| expr_has(k) || expr_has(v)),
+                Expr::Named { value, .. } => expr_has(value),
+                Expr::ForExpr { iter, body, .. } => expr_has(iter) || body.iter().any(stmt_has),
+                _ => false,
+            }
+        }
+        fn stmt_has(s: &Stmt) -> bool {
+            match s {
+                Stmt::Assign { value, .. } => expr_has(value),
+                Stmt::MultiAssign { values, .. } => values.iter().any(expr_has),
+                Stmt::ExprStmt(e) => expr_has(e),
+                Stmt::Return(Some(e)) => expr_has(e),
+                Stmt::If { condition, then_body, else_body } => {
+                    expr_has(condition)
+                        || then_body.iter().any(stmt_has)
+                        || else_body.as_ref().map_or(false, |b| b.iter().any(stmt_has))
+                }
+                Stmt::For { iter, body, .. } => expr_has(iter) || body.iter().any(stmt_has),
+                Stmt::While { condition, body } => expr_has(condition) || body.iter().any(stmt_has),
+                Stmt::FnDecl { body, .. } => body.iter().any(stmt_has),
+                _ => false,
+            }
+        }
+        stmts.iter().any(stmt_has)
     }
 
     /// Arrays whose element types the shared display kernel
@@ -6361,6 +6489,14 @@ mod tests {
         // Regression: compiled find[] previously emitted an uncompilable mixed-type map
         let rust = transpile("m = find['abc', '[a-z]+']\nlog[m.ok]\n");
         assert!(rust.contains("CrowFindResult"), "find should use the synthetic struct\n{}", rust);
+    }
+
+    #[test]
+    fn test_search_builtins_emit_parallel_early_exit() {
+        let rust = transpile("fn big[x]\n    return x gt 10\na = any[[1, 2], big]\nlog[a]\n");
+        assert!(rust.contains("par_iter().any"), "any should be parallel\n{}", rust);
+        let rust = transpile("fn big[x]\n    return x gt 10\nh = find[[1, 2], big]\nlog[h.ok]\n");
+        assert!(rust.contains("find_first"), "find should use parallel find_first\n{}", rust);
     }
 
     #[test]

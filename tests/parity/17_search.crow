@@ -1,0 +1,46 @@
+--- search builtins: any / all / find with named predicates
+fn over_90[x]
+    return x gt 90
+
+fn positive[x]
+    return x gt 0
+
+fn short_name[s]
+    return len[s] lt 4
+
+scores = [70, 85, 95, 60]
+log[any[scores, over_90]]
+log[all[scores, over_90]]
+log[all[scores, positive]]
+
+hit = find[scores, over_90]
+log[hit]
+log[hit.ok]
+
+names = ['bo', 'alice', 'cy']
+log[any[names, short_name]]
+first_short = find[names, short_name]
+log[first_short]
+
+--- find miss returns an error-value: guard it
+fn over_1000[x]
+    return x gt 1000
+none = find[scores, over_1000]
+log[none.ok]
+log[none.reason]
+if not none.ok
+    log['guarded: no score over 1000']
+
+--- structs
+struct Trade [sym, pnl]
+fn losing[t]
+    return t.pnl lt 0
+trades = [Trade['AAPL', 120], Trade['TSLA', -80], Trade['MSFT', 40]]
+log[any[trades, losing]]
+bad = find[trades, losing]
+log[bad.sym]
+
+--- regex find is unchanged (string + pattern dispatch)
+m = find['2024-01-15', '([0-9]+)-([0-9]+)']
+log[m.ok]
+log[m.groups]
