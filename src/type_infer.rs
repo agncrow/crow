@@ -1085,6 +1085,10 @@ impl TypeContext {
                         body: base.body.clone(),
                     });
                     self.specializations.entry(name.clone()).or_default().push((sig.clone(), mangled.clone()));
+                    // Clones of a view are views (component monomorphization)
+                    if self.views.contains(name.as_str()) {
+                        self.views.insert(mangled.clone());
+                    }
                     new_clones.push((name.clone(), sig.clone(), mangled));
                 }
             }
@@ -1727,7 +1731,8 @@ impl TypeContext {
                 if let Expr::Ident(name) = callee.as_ref() {
                     let base = self.infer_call_base(name, args, callee);
                     // Auto-propagation: wrap in CrowResult if any arg is CrowResult
-                    let skip = matches!(name.as_str(), "log" | "assert" | "type" | "cpu" | "gpu" | "error");
+                    let skip = matches!(name.as_str(), "log" | "assert" | "type" | "cpu" | "gpu" | "error" | "len" | "table")
+                        || crate::lower::UI_ELEMENTS.contains(&name.as_str());
                     if !skip && !matches!(base, CrowType::Result(_) | CrowType::Void) {
                         let has_result_arg = args.iter().any(|a| matches!(self.infer_expr(a), CrowType::Result(_)));
                         if has_result_arg {

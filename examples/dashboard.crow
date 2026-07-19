@@ -1,56 +1,51 @@
---- Trading Dashboard
-use web, ui, frame, math
+--- Live trading dashboard: SQLite -> frames -> views
+--- Seed first: crow run dashboard_seed.crow   Then: crow run dashboard.crow
+use web, ui, db, frame, math
 
---- Reactive data sources
-positions = poll['/api/positions', 5]
-trades = poll['/api/trades', 5]
-playbooks = fetch['/api/playbooks']
+conn = db.connect['sqlite://trades.db']
 
 --- Reactive UI state
-filter_pb = 'all'
-min_vol = 0
+min_qty = 0
 
 --- Event handlers
-fn clear_filter[]
-  filter_pb = 'all'
-  min_vol = 0
+fn reset_filters[]
+    min_qty = 0
 
---- Render
+view stat_card[label, value]
+    return div[
+        h3[label],
+        p['`value`'],
+        class = 'card'
+    ]
+
 view render[]
-  todays = filter[trades, trades.date eq today[]]
-  pnl = sum[todays.pnl]
-  count = len[todays]
+    trades = query[conn, 'SELECT symbol, qty, price, pnl FROM trades ORDER BY id']
+    total_pnl = sum[trades.pnl]
 
-  filtered = positions
-  if filter_pb ne 'all'
-    filtered = filter[filtered, filtered.playbook_code eq filter_pb]
-  if min_vol gt 0
-    filtered = filter[filtered, filtered.vol gte min_vol]
-  filtered = sort[filtered, 'pnl', desc = true]
-  top = head[filtered, 50]
+    shown = trades
+    if min_qty gt 0
+        shown = filter[trades, trades.qty gte min_qty]
+    shown = sort[shown, 'pnl', desc = true]
 
-  by_playbook = group[todays, 'playbook_code', ['pnl', 'sum'], ['pnl', 'count'], ['pnl', 'mean']]
+    by_symbol = group[trades, 'symbol', ['pnl', 'sum'], ['pnl', 'count']]
 
-  return div[
-    h1['Trading Dashboard'],
-    div[
-      div['P&L: `pnl`'],
-      div['Trades: `count`'],
-      div['Positions: `len[positions]`'],
-      class = 'stats'
-    ],
-    div[
-      field['Min Volume', min_vol],
-      select[unique[positions.playbook_code], filter_pb],
-      class = 'controls'
-    ],
-    h2['Positions'],
-    table[top],
-    h2['P&L by Playbook'],
-    table[by_playbook],
-    button['Reset Filters', click = clear_filter],
-    class = 'dashboard'
-  ]
+    return div[
+        h1['Trading Dashboard'],
+        div[
+            stat_card['P&L', fmt[total_pnl, decimals = 2, commas = true]],
+            stat_card['Trades', len[trades]],
+            class = 'stats'
+        ],
+        div[
+            field['Min qty', min_qty],
+            button['Reset', click = reset_filters],
+            class = 'controls'
+        ],
+        h2['Trades'],
+        table[shown],
+        h2['P&L by Symbol'],
+        table[by_symbol]
+    ]
 
 serve[3000]
 page['/', render]

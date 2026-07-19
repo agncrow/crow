@@ -1101,7 +1101,10 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
             "crow_db = {{ path = \"{}\", features = [\"{}\"] }}",
             db_path, features_str
         ));
-        dep_list.push("serde_json = \"1\"".to_string());
+        // serde_json may already be present from needs_serde_json
+        if !dep_list.iter().any(|d| d.starts_with("serde_json")) {
+            dep_list.push("serde_json = \"1\"".to_string());
+        }
     }
     let deps = if dep_list.is_empty() {
         String::new()
