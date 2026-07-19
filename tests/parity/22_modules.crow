@@ -1,0 +1,22 @@
+--- user modules: qualified calls, named args on qualified calls,
+--- module-internal references (own structs + own fns)
+use lib/scene
+
+world = scene.group[
+    scene.mesh['player'],
+    scene.group[
+        scene.mesh['tree', x = 10],
+        scene.mesh['rock', x = 5]
+    ]
+]
+
+fn count_nodes[n]
+    total = 1
+    for child in n.children
+        total = total + count_nodes[child]
+    return total
+
+log[world.ntype]
+log[count_nodes[world]]
+log[scene.describe[world]]
+log[scene.count]

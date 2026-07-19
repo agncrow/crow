@@ -196,6 +196,33 @@ impl Lowerer {
                     _ => None,
                 };
 
+                // Qualified user-module call (scene.mesh[...]): the import
+                // expander registered the prefixed fn/struct — resolve named
+                // args against it and canonicalize the callee to the prefixed
+                // name so both modes see an ordinary call
+                if let Expr::FieldAccess { object, field } = &callee {
+                    if let Expr::Ident(m) = object.as_ref() {
+                        let prefixed = format!("{}_{}", m, field);
+                        if let Some(sig) = self.fns.get(&prefixed).cloned() {
+                            let resolved =
+                                self.resolve_args(&prefixed, &sig.params, &sig.defaults, args)?;
+                            return Ok(Expr::Call {
+                                callee: Box::new(Expr::Ident(prefixed)),
+                                args: resolved,
+                            });
+                        }
+                        if let Some(fields) = self.structs.get(&prefixed).cloned() {
+                            let no_defaults = vec![None; fields.len()];
+                            let resolved =
+                                self.resolve_args(&prefixed, &fields, &no_defaults, args)?;
+                            return Ok(Expr::Call {
+                                callee: Box::new(Expr::Ident(prefixed)),
+                                args: resolved,
+                            });
+                        }
+                    }
+                }
+
                 match callee_name.as_deref() {
                     Some("map") => self.lower_map_call(args)?,
                     // fmt has a full named signature with sentinel defaults
