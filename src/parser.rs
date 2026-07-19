@@ -88,6 +88,17 @@ impl Parser {
     // --- Statement parsing ---
 
     fn parse_stmt(&mut self) -> Result<Vec<Stmt>, String> {
+        // Python/JS keyword reflexes in statement position — teach the Crow
+        // form rather than letting them fail as stray identifiers. Skip when the
+        // name is being assigned to (`from = x`, `print = 5`) — then it's just a
+        // variable that happens to share a Python keyword's spelling.
+        if let Token::Ident(name) = self.peek() {
+            if !matches!(self.peek_ahead(1), Token::Assign) {
+                if let Some(hint) = python_keyword_hint(name) {
+                    return Err(hint);
+                }
+            }
+        }
         match self.peek().clone() {
             Token::Fn => self.parse_fn_decl().map(|s| vec![s]),
             Token::Return => self.parse_return().map(|s| vec![s]),
@@ -533,6 +544,11 @@ impl Parser {
                 Ok(Expr::Bool(false))
             }
             Token::Ident(name) => {
+                // Python/JS value keywords in expression position (x = None,
+                // flag = True) — teach the Crow form.
+                if let Some(hint) = python_value_hint(&name) {
+                    return Err(hint);
+                }
                 self.advance();
                 Ok(Expr::Ident(name))
             }
@@ -685,3 +701,95 @@ impl Parser {
     }
 }
 
+/// Python/JS keywords that lead a statement and have a direct Crow form. These
+/// are plain identifiers in Crow's grammar (not keywords), so without this they
+/// fail as stray names or confusing indent errors. Returning a message teaches
+/// the Crow equivalent instead.
+fn python_keyword_hint(name: &str) -> Option<String> {
+    let hint = match name {
+        "def" => "Crow declares functions with 'fn name[params]', not 'def' — \
+                  and blocks use indentation, no ':' or '()'.",
+        "lambda" => "Crow has no lambdas — define a named function with \
+                     'fn name[params]' and pass its name (see Design Note: No Lambdas).",
+        "class" => "Crow has no classes — use 'struct Name [field1, field2]' for \
+                    records, and free functions that take the struct as a parameter.",
+        "match" => "Crow removed 'match' — use if / else. There are no sum types or \
+                    pattern matching (see Design Note: No Pattern Matching).",
+        "elif" => "Crow has no 'elif' — write 'else' on its own line, then an \
+                   indented 'if' beneath it.",
+        "pass" => "Crow has no 'pass' — a block is just its indented lines; there's \
+                   nothing to fill an empty one with.",
+        "import" | "from" => "Crow imports with 'use module' (e.g. 'use math', \
+                              'use myapp/utils'), not 'import'.",
+        "print" => "Crow prints with 'log[value]', not 'print(...)'. Brackets are \
+                    square: log['hello'].",
+        "async" | "await" => "Crow has no async/await — concurrency is automatic: \
+                              a 'for' loop runs its iterations in parallel.",
+        "try" | "except" | "catch" | "raise" | "throw" => "Crow has no try/except — \
+                    errors are values. A fallible call returns a value you can check \
+                    with '.ok'; branching on an error propagates it (see §11 Error Handling).",
+        _ => return None,
+    };
+    Some(hint.to_string())
+}
+
+/// Python/JS literal keywords that appear in expression position. Called on
+/// every identifier reference, so it must stay a cheap match that returns None
+/// for ordinary names.
+fn python_value_hint(name: &str) -> Option<String> {
+    let hint = match name {
+        "True" => "Crow booleans are lowercase: use 'true', not 'True'.",
+        "False" => "Crow booleans are lowercase: use 'false', not 'False'.",
+        "None" | "null" | "nil" | "undefined" => "Crow has no null value — a missing \
+                    or failed value is an error-value (checked with '.ok'), and there \
+                    is no 'none' (see Design Note: No none).",
+        "lambda" => "Crow has no lambdas — define a named function with 'fn' and pass \
+                     its name (see Design Note: No Lambdas).",
+        _ => return None,
+    };
+    Some(hint.to_string())
+}
+
+
+#[cfg(test)]
+mod pyism_tests {
+    use super::*;
+    use crate::lexer::Lexer;
+
+    fn err(src: &str) -> String {
+        let tokens = match Lexer::new(src).tokenize() {
+            Ok(t) => t,
+            Err(e) => return e,
+        };
+        Parser::new(tokens).parse().err().unwrap_or_default()
+    }
+
+    #[test]
+    fn keyword_statements_teach_crow_form() {
+        assert!(err("def f[x]\n  return x\n").contains("fn name[params]"));
+        assert!(err("class Foo\n  x\n").contains("struct"));
+        assert!(err("match v\n  1\n    log['a']\n").contains("if / else"));
+        assert!(err("import math\n").contains("use module"));
+        assert!(err("print(5)\n").contains("log["));
+        assert!(err("try\n  x = 1\n").contains("errors are values"));
+    }
+
+    #[test]
+    fn value_keywords_teach_crow_form() {
+        assert!(err("flag = True\n").contains("lowercase"));
+        assert!(err("x = None\n").contains("no null"));
+    }
+
+    #[test]
+    fn keyword_names_are_still_usable_as_variables() {
+        // A variable that shares a Python keyword's spelling, when assigned to,
+        // must not trip the hint.
+        assert!(err("from = 'alice'\nlog[from]\n").is_empty());
+        assert!(err("print = 5\nlog[print]\n").is_empty());
+    }
+
+    #[test]
+    fn ordinary_program_parses() {
+        assert!(err("fn double[x]\n  return x * 2\nlog[double[5]]\n").is_empty());
+    }
+}

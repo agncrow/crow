@@ -72,13 +72,18 @@ Crow rejects `break` in `for` because silent sequentialization is "a hidden perf
 - [x] Implemented: interpreter sequential early-exit; **compiled mode parallel early-exit** (rayon `any`/`all`/`find_first` — deterministic first-match), the capability no user code can express. Predicate param types inferred from the array's element type; by-ref-param aware calls. Two latent codegen bugs found and fixed along the way: missing rayon prelude gating for body-generated flags, and `x.len() as i64 < n` parsing as Rust generics (any `len[x] lt n` comparison was broken compiled).
 - [x] Spec reconciled: the "No Reduce, Any, All" and "No find/index" Design Notes replaced by "Search Builtins — a Reversal" recording the self-contradiction (flag loops triggered the exact trap the `break` ban warns about); the `break` note now points to the trio. `reduce` stays rejected. Parity `17_search.crow`; 791 tests, 17 parity files green.
 
-### 4. LLM adoption pack
+### 4. LLM adoption pack — ✅ DONE (July 2026): the final review item
 
 The LLM-friendliness claim is half right: consistency helps, but models are trained on zero lines of Crow and will emit Python-isms (`+=`, f-strings, `"..."`, `lambda`, `()` calls).
 
 **Fix:**
-- [ ] A compact canonical cheatsheet (`docs/crow-for-llms.md`) designed to paste into system prompts
-- [ ] Transpiler/interpreter errors that recognize Python-isms: "Crow has no `+=` — write `x = x + 1`", double quotes → single quotes, `def`/`lambda` → `fn`, `(...)` call → `[...]`
+- [x] **`docs/crow-for-llms.md`** — a compact canonical cheatsheet designed to paste into system prompts: the bracket rule up top, a single dense cheat-sheet block covering every core construct, a 24-row "Reflexes to Unlearn" table (Python/JS form → Crow form), a "things that trip up generators" section (implicit return, parallel `for`-as-expression, no-lambda predicates, maps-vs-structs, errors-have-no-truth-value), and two complete idiomatic programs (word count + LiveView counter). Every code idiom in the doc was executed in both modes with matching output before shipping.
+- [x] **Python-ism-aware errors** (lexer + parser, so both modes share them). 18 distinct reflexes now produce a message that teaches the Crow form instead of "unexpected character":
+  - Lexer: `"..."` → single quotes; `+=`/`-=`/`*=`/`/=`/`%=` → write it out; `==`/`!=`/`<`/`>`/`<=`/`>=` → `eq`/`ne`/`lt`/`gt`/`lte`/`gte`; `&&`/`||`/`!` → `and`/`or`/`not`; `:` → indentation defines blocks; `f'...'`/`r'...'` string prefixes → backtick interpolation.
+  - Parser (statement position): `def`, `lambda`, `class`, `match`, `elif`, `pass`, `import`/`from`, `print`, `async`/`await`, `try`/`except`/`catch`/`raise`/`throw` — each redirects to the Crow construct (with Design Note pointers). Guarded: a variable that merely shares a Python keyword's spelling (`from = 'alice'`, `print = 5`) still works — the hint only fires when the name isn't being assigned to.
+  - Parser (expression position): `True`/`False` → lowercase; `None`/`null`/`nil`/`undefined` → no null, error-values + `.ok`.
+  - 10 new unit tests (lexer + parser); 803 total.
+- Found & fixed while validating the cheatsheet: **interpolated calls with named args never lowered** — `` '`fmt[x, decimals = 2]`' `` failed with "undefined function 'fmt'" in both modes because the interpolation re-parse skipped the lowering pass. Both modes now lower interpolated expressions; regression lines added to `16_fmt.crow` parity file.
 
 ### 5. Syntax readability taxes
 
