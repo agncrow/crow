@@ -75,8 +75,10 @@ fn call_db(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             } else {
                 vec![]
             };
-            let frame = conn.query(sql, &params)?;
-            Ok(CrowValue::ok(Value::Frame(frame)))
+            match conn.query(sql, &params) {
+                Ok(frame) => Ok(CrowValue::ok(Value::Frame(frame))),
+                Err(e) => Ok(CrowValue::error(&e, "db")),
+            }
         }
         "exec" => {
             // exec[conn, sql] or exec[conn, sql, params]
@@ -90,8 +92,10 @@ fn call_db(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             } else {
                 vec![]
             };
-            let count = conn.exec(sql, &params)?;
-            Ok(CrowValue::ok(Value::Int(count)))
+            match conn.exec(sql, &params) {
+                Ok(count) => Ok(CrowValue::ok(Value::Int(count))),
+                Err(e) => Ok(CrowValue::error(&e, "db")),
+            }
         }
         "insert" => {
             // insert[conn, table, frame]
@@ -155,8 +159,8 @@ fn emit_db_rust(_name: &str, _arg_strs: &[String], _arg_types: &[CrowType]) -> R
 fn db_type_of(name: &str) -> CrowType {
     match name {
         "connect" => CrowType::DbHandle,
-        "query" => CrowType::Frame,
-        "exec" => CrowType::Int,
+        "query" => CrowType::Result(Box::new(CrowType::Frame)),
+        "exec" => CrowType::Result(Box::new(CrowType::Int)),
         "insert" => CrowType::Int,
         "migrate" => CrowType::Int,
         "transact" => CrowType::Unknown,

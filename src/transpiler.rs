@@ -1470,7 +1470,10 @@ impl Transpiler {
                 .collect()
         };
 
-        let ret_str = if is_live_render {
+        // Any `view` declaration returns a UI tree, whether or not the
+        // page[]-driven detection saw it (parameterized components)
+        let is_component_view = self.ctx.views.contains(name);
+        let ret_str = if is_live_render || is_component_view {
             " -> CrowVNode".to_string()
         } else if is_live_handle {
             String::new() // void
@@ -3216,6 +3219,11 @@ impl Transpiler {
                         let ty = self.ctx.infer_expr(&args[0]);
                         let cond = match ty {
                             CrowType::Bool => arg_strs[0].clone(),
+                            // An assert is a decision: a fallible condition is
+                            // guarded like if/while — error halts with reason
+                            CrowType::Result(_) => {
+                                format!("{{ let _a = {}; if !_a.ok {{ panic!(\"cannot branch on an error value — {{}}\", _a.reason); }} _a.value }}", arg_strs[0])
+                            }
                             CrowType::Int => format!("({}) != 0", arg_strs[0]),
                             CrowType::Str => format!("!({}).is_empty()", arg_strs[0]),
                             _ => format!("({}) != 0", arg_strs[0]),
@@ -3447,8 +3455,22 @@ impl Transpiler {
                                         format!("CrowVNode::text(&{})", s_str)
                                     }
                                     _ => {
-                                        // Assume it's already a CrowVNode expression
-                                        self.expr_to_string(child)
+                                        // Any string/number-typed expression is
+                                        // a text node (h3[label] with label a
+                                        // param); trees pass through
+                                        let ty = self.ctx.infer_expr(child);
+                                        let inner = match &ty {
+                                            CrowType::Result(i) => i.as_ref().clone(),
+                                            o => o.clone(),
+                                        };
+                                        let c_str = self.expr_to_string(child);
+                                        match inner {
+                                            CrowType::Str => format!("CrowVNode::text(&{})", c_str),
+                                            CrowType::Int | CrowType::Float | CrowType::Bool => {
+                                                format!("CrowVNode::text(&format!(\"{{}}\", {}))", c_str)
+                                            }
+                                            _ => c_str,
+                                        }
                                     }
                                 }
                             }).collect();
@@ -3585,18 +3607,18 @@ impl Transpiler {
                     }
                     if name == "query" && self.needs_crow_db && arg_strs.len() >= 2 {
                         if arg_strs.len() == 2 {
-                            return format!("{}.query(&{}, &[]).unwrap()", arg_strs[0], arg_strs[1]);
+                            return format!("{{ match {}.query(&{}, &[{}]) {{ Ok(_f) => CrowResult {{ ok: true, value: _f, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"db\".to_string(), trace: vec![] }} }} }}", arg_strs[0], arg_strs[1], "");
                         } else {
                             let params = self.db_params_to_json(&args[2..]);
-                            return format!("{}.query(&{}, &[{}]).unwrap()", arg_strs[0], arg_strs[1], params);
+                            return format!("{{ match {}.query(&{}, &[{}]) {{ Ok(_f) => CrowResult {{ ok: true, value: _f, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"db\".to_string(), trace: vec![] }} }} }}", arg_strs[0], arg_strs[1], params);
                         }
                     }
                     if name == "exec" && self.needs_crow_db && arg_strs.len() >= 2 {
                         if arg_strs.len() == 2 {
-                            return format!("{}.exec(&{}, &[]).unwrap()", arg_strs[0], arg_strs[1]);
+                            return format!("{{ match {}.exec(&{}, &[{}]) {{ Ok(_n) => CrowResult {{ ok: true, value: _n, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(_e) => CrowResult {{ ok: false, value: 0_i64, reason: _e, kind: \"db\".to_string(), trace: vec![] }} }} }}", arg_strs[0], arg_strs[1], "");
                         } else {
                             let params = self.db_params_to_json(&args[2..]);
-                            return format!("{}.exec(&{}, &[{}]).unwrap()", arg_strs[0], arg_strs[1], params);
+                            return format!("{{ match {}.exec(&{}, &[{}]) {{ Ok(_n) => CrowResult {{ ok: true, value: _n, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(_e) => CrowResult {{ ok: false, value: 0_i64, reason: _e, kind: \"db\".to_string(), trace: vec![] }} }} }}", arg_strs[0], arg_strs[1], params);
                         }
                     }
                     if name == "insert" && self.needs_crow_db && arg_strs.len() == 3 {
@@ -3976,18 +3998,18 @@ impl Transpiler {
                                 }
                                 "query" => {
                                     if arg_strs.len() == 2 {
-                                        return format!("{}.query(&{}, &[]).unwrap()", arg_strs[0], arg_strs[1]);
+                                        return format!("{{ match {}.query(&{}, &[{}]) {{ Ok(_f) => CrowResult {{ ok: true, value: _f, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"db\".to_string(), trace: vec![] }} }} }}", arg_strs[0], arg_strs[1], "");
                                     } else if arg_strs.len() >= 3 {
                                         let params = Self::crow_params_to_json(&arg_strs[2..]);
-                                        return format!("{}.query(&{}, &[{}]).unwrap()", arg_strs[0], arg_strs[1], params);
+                                        return format!("{{ match {}.query(&{}, &[{}]) {{ Ok(_f) => CrowResult {{ ok: true, value: _f, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"db\".to_string(), trace: vec![] }} }} }}", arg_strs[0], arg_strs[1], params);
                                     }
                                 }
                                 "exec" => {
                                     if arg_strs.len() == 2 {
-                                        return format!("{}.exec(&{}, &[]).unwrap()", arg_strs[0], arg_strs[1]);
+                                        return format!("{{ match {}.exec(&{}, &[{}]) {{ Ok(_n) => CrowResult {{ ok: true, value: _n, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(_e) => CrowResult {{ ok: false, value: 0_i64, reason: _e, kind: \"db\".to_string(), trace: vec![] }} }} }}", arg_strs[0], arg_strs[1], "");
                                     } else if arg_strs.len() >= 3 {
                                         let params = Self::crow_params_to_json(&arg_strs[2..]);
-                                        return format!("{}.exec(&{}, &[{}]).unwrap()", arg_strs[0], arg_strs[1], params);
+                                        return format!("{{ match {}.exec(&{}, &[{}]) {{ Ok(_n) => CrowResult {{ ok: true, value: _n, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(_e) => CrowResult {{ ok: false, value: 0_i64, reason: _e, kind: \"db\".to_string(), trace: vec![] }} }} }}", arg_strs[0], arg_strs[1], params);
                                     }
                                 }
                                 "insert" => {

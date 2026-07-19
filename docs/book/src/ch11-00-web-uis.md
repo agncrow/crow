@@ -1,5 +1,10 @@
 # Building Web UIs
 
-> **Not yet written.** view blocks, reactive state, components: the LiveView model.
+Crow's web story is the LiveView model: your UI logic lives on the
+server, in Crow; the browser renders HTML and streams events back over a
+WebSocket; state changes re-render automatically. No JavaScript build
+step, no client framework, no API layer between your data and your page —
+the dashboard in chapter 12 is one file.
 
-For now, see [`language-spec.md`](../../language-spec.md) and the runnable programs in `examples/`.
+Three pieces: `view` blocks describe the page, reactive state makes it
+live, components make it composable.
