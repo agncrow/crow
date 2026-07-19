@@ -1672,13 +1672,20 @@ fn cmd_run_file_interpreted(filename: &str) {
         })
     } else {
         let source = read_file(filename);
-        match build(&source) {
+        let stmts = match build(&source) {
             Ok(stmts) => stmts,
             Err(e) => {
                 eprintln!("{}", e);
                 process::exit(1);
             }
-        }
+        };
+        // Expand user-module imports exactly as the compiled path does — the
+        // lowerer needs the prefixed fns to resolve qualified named-arg calls
+        let source_dir = std::path::Path::new(filename)
+            .parent()
+            .unwrap_or(std::path::Path::new("."));
+        let mut visited = std::collections::HashSet::new();
+        expand_module_imports(&stmts, source_dir, &mut visited)
     };
 
     let mut interpreter = Interpreter::new();
@@ -1866,15 +1873,39 @@ fn expand_module_imports(
             let mod_dir = file_path.parent().unwrap_or(source_dir);
             let mod_stmts = expand_module_imports(&mod_stmts, mod_dir, visited);
 
+            // Collect the module's own top-level names, then rewrite both the
+            // declarations AND every reference inside module bodies — a module
+            // fn must still reach its own structs/fns/vars after prefixing.
+            let mut local_names: std::collections::BTreeMap<String, String> =
+                std::collections::BTreeMap::new();
+            for mod_stmt in &mod_stmts {
+                match mod_stmt {
+                    ast::Stmt::FnDecl { name, .. }
+                    | ast::Stmt::StructDecl { name, .. }
+                    | ast::Stmt::Assign { name, .. } => {
+                        local_names
+                            .insert(name.clone(), format!("{}_{}", module_name, name));
+                    }
+                    _ => {}
+                }
+            }
+
             // Rewrite module declarations with prefixed names
             for mod_stmt in &mod_stmts {
                 match mod_stmt {
                     ast::Stmt::FnDecl { name, params, defaults, body } => {
+                        let mut body = body.clone();
+                        // Params shadow module names inside the body
+                        let shadowed: std::collections::HashSet<String> =
+                            params.iter().cloned().collect();
+                        for st in &mut body {
+                            rewrite_refs_stmt(st, &local_names, &shadowed);
+                        }
                         expanded.push(ast::Stmt::FnDecl {
                             name: format!("{}_{}", module_name, name),
                             params: params.clone(),
                             defaults: defaults.clone(),
-                            body: body.clone(),
+                            body,
                         });
                     }
                     ast::Stmt::StructDecl { name, fields } => {
@@ -1885,9 +1916,15 @@ fn expand_module_imports(
                     }
                     ast::Stmt::Assign { name, value } => {
                         // Module-level variables become prefixed assigns
+                        let mut value = value.clone();
+                        rewrite_refs_expr(
+                            &mut value,
+                            &local_names,
+                            &std::collections::HashSet::new(),
+                        );
                         expanded.push(ast::Stmt::Assign {
                             name: format!("{}_{}", module_name, name),
-                            value: value.clone(),
+                            value,
                         });
                     }
                     // Pass through nested Use statements so the transpiler
@@ -1903,4 +1940,128 @@ fn expand_module_imports(
         expanded.push(stmt.clone());
     }
     expanded
+}
+
+/// Rewrite references to a module's own top-level names (fns, structs, vars)
+/// to their prefixed forms inside module bodies. `shadowed` holds names bound
+/// locally (params, locals) that must NOT be rewritten. String interpolation
+/// contents are not rewritten (known limitation — interpolate locals, not
+/// module-level names, inside module strings).
+fn rewrite_refs_stmt(
+    stmt: &mut ast::Stmt,
+    map: &std::collections::BTreeMap<String, String>,
+    shadowed: &std::collections::HashSet<String>,
+) {
+    match stmt {
+        ast::Stmt::Assign { name, value } => {
+            // Assigning creates/updates a local inside a fn body — the name is
+            // shadowed from here on, but the RHS is evaluated first
+            rewrite_refs_expr(value, map, shadowed);
+            let _ = name;
+        }
+        ast::Stmt::MultiAssign { values, .. } => {
+            for v in values {
+                rewrite_refs_expr(v, map, shadowed);
+            }
+        }
+        ast::Stmt::Return(Some(e)) | ast::Stmt::ExprStmt(e) => {
+            rewrite_refs_expr(e, map, shadowed)
+        }
+        ast::Stmt::If { condition, then_body, else_body } => {
+            rewrite_refs_expr(condition, map, shadowed);
+            for st in then_body {
+                rewrite_refs_stmt(st, map, shadowed);
+            }
+            if let Some(eb) = else_body {
+                for st in eb {
+                    rewrite_refs_stmt(st, map, shadowed);
+                }
+            }
+        }
+        ast::Stmt::For { var, iter, body } => {
+            rewrite_refs_expr(iter, map, shadowed);
+            let mut inner = shadowed.clone();
+            inner.insert(var.clone());
+            for st in body {
+                rewrite_refs_stmt(st, map, &inner);
+            }
+        }
+        ast::Stmt::While { condition, body } => {
+            rewrite_refs_expr(condition, map, shadowed);
+            for st in body {
+                rewrite_refs_stmt(st, map, shadowed);
+            }
+        }
+        ast::Stmt::FnDecl { params, body, .. } => {
+            let mut inner = shadowed.clone();
+            for p in params {
+                inner.insert(p.clone());
+            }
+            for st in body {
+                rewrite_refs_stmt(st, map, &inner);
+            }
+        }
+        ast::Stmt::FieldAssign { object, value, .. } => {
+            rewrite_refs_expr(object, map, shadowed);
+            rewrite_refs_expr(value, map, shadowed);
+        }
+        ast::Stmt::IndexAssign { object, index, value } => {
+            rewrite_refs_expr(object, map, shadowed);
+            rewrite_refs_expr(index, map, shadowed);
+            rewrite_refs_expr(value, map, shadowed);
+        }
+        ast::Stmt::Resource { count, .. } => rewrite_refs_expr(count, map, shadowed),
+        _ => {}
+    }
+}
+
+fn rewrite_refs_expr(
+    expr: &mut ast::Expr,
+    map: &std::collections::BTreeMap<String, String>,
+    shadowed: &std::collections::HashSet<String>,
+) {
+    match expr {
+        ast::Expr::Ident(name) => {
+            if !shadowed.contains(name) {
+                if let Some(prefixed) = map.get(name) {
+                    *name = prefixed.clone();
+                }
+            }
+        }
+        ast::Expr::BinOp { left, right, .. } => {
+            rewrite_refs_expr(left, map, shadowed);
+            rewrite_refs_expr(right, map, shadowed);
+        }
+        ast::Expr::UnaryOp { expr: e, .. } => rewrite_refs_expr(e, map, shadowed),
+        ast::Expr::Call { callee, args } => {
+            rewrite_refs_expr(callee, map, shadowed);
+            for a in args {
+                rewrite_refs_expr(a, map, shadowed);
+            }
+        }
+        ast::Expr::FieldAccess { object, .. } => {
+            // Only the object side — the field name is not a module-level ref
+            rewrite_refs_expr(object, map, shadowed);
+        }
+        ast::Expr::Array(items) => {
+            for i in items {
+                rewrite_refs_expr(i, map, shadowed);
+            }
+        }
+        ast::Expr::Map(pairs) => {
+            for (_, v) in pairs {
+                rewrite_refs_expr(v, map, shadowed);
+            }
+        }
+        ast::Expr::Named { value, .. } => rewrite_refs_expr(value, map, shadowed),
+        ast::Expr::ForExpr { var, iter, body } => {
+            rewrite_refs_expr(iter, map, shadowed);
+            let mut inner = shadowed.clone();
+            inner.insert(var.clone());
+            for st in body {
+                rewrite_refs_stmt(st, map, &inner);
+            }
+        }
+        _ => {}
+    }
 }

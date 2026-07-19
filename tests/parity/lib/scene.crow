@@ -1,0 +1,16 @@
+--- module: scene-graph builders (imported by 22_modules.crow)
+struct SNode [ntype, label, x, children]
+
+count = 0
+
+fn mesh[label, x = 0]
+    return SNode['mesh', label, x, []]
+
+fn group[a, b]
+    return SNode['group', '', 0, [a, b]]
+
+fn describe[n]
+    return build_desc[n]
+
+fn build_desc[n]
+    return 'node(`n.ntype`)'
