@@ -268,12 +268,12 @@ a, b = b, a
 | float  | `3.14`, `-0.5`                   |
 | str    | `'hello'`, `'crow'`              |
 | bool   | `true`, `false`                  |
-| list   | `[1, 2, 3]`                      |
-| map    | `['name' = 'crow', 'age' = 3]`  |
+| array  | `[1, 2, 3]`                      |
+| map    | `map[name = 'crow', count = 3]`  |
 
 ### String Interpolation
 
-Use `{}` inside strings to embed expressions:
+Use paired backticks inside strings to embed expressions:
 
 ```
 name = 'crow'
@@ -486,54 +486,94 @@ log['parallel: `par`']
 
 ### Error Handling
 
-Every value in Crow has `status`, `result`, and `reason` fields. Values auto-unwrap so you use them directly.
+Every value in Crow carries error metadata: `.ok`, `.reason`, `.kind`, `.trace`. Values auto-unwrap so you use them directly.
 
 ```
 x = 5
-log[x]            --- 5, auto-unwraps ---
-x.status          --- 'ok' ---
-x.result          --- 5 ---
+log[x]            --- 5, auto-unwraps
+x.ok              --- true
+x.reason          --- ''
 ```
 
-Check `.status` when you want explicit error handling:
+Check `.ok` when you want explicit error handling:
 
 ```
 content = read['file.txt']
-if content.status eq 'error'
+if not content.ok
     log['failed: `content.reason`']
 else
-    log[content.result]
+    log[content]
 ```
+
+Errors have no truth value: comparing or branching on an error-value propagates it (inside a function) or halts (at top level) — it never silently becomes `false`. See the spec's "Errors in Conditions".
 
 ### Comments
 
-Comments use `---`:
+Comments run from `---` to the end of the line — no closing delimiter:
 
 ```
---- this is a comment ---
-x = 5  --- inline comment ---
+--- this is a comment
+x = 5  --- inline comment
 
----
-multi line
-comment
----
+--- multi line comments
+--- are per-line
 ```
 
-### Lists
+### Arrays
 
 ```
 items = [1, 2, 3]
-items[0]             --- 1 ---
-len[items]           --- 3 ---
-push[items, 4]       --- [1, 2, 3, 4] ---
+items[0]             --- 1
+len[items]           --- 3
+grown = push[items, 4]   --- [1, 2, 3, 4]
 ```
 
 ### Maps
 
+Maps hold homogeneous values and are built with the `map[...]` constructor:
+
 ```
-data = ['name' = 'crow', 'age' = 3]
-data['name']         --- 'crow' ---
+data = map[name = 'crow', kind_of = 'bird']
+data['name']         --- 'crow'
+data.name            --- dot access works too
 empty = map[]
+```
+
+(For mixed named fields, use a struct — `struct Bird [name, speed]`.)
+
+### Import Aliases
+
+Any import can be aliased — the module then lives behind the alias only (Python `import x as y` semantics), freeing its bare names:
+
+```
+use math as m
+
+sum = 0              --- legal: math's names were never dumped
+t = m.sum[[1, 2, 3]]
+```
+
+Names you define may not collide with core builtins or a bare import's exports — the compiler errors at the definition line with the fix (rename, or alias the import). See the spec's Design Note "Names Are Never Ambiguous".
+
+### Views (web UI)
+
+UI trees are built in `view` blocks — inside a view the HTML element vocabulary (`div`, `h1`, `button`, ...) is active; outside views those names are free for your own code:
+
+```
+use web, ui
+
+count = 0
+
+fn inc[]
+    count = count + 1
+
+view render[]
+    return div[
+        h1['Count: `count`'],
+        button['+', click = inc]
+    ]
+
+serve[3000]
+page['/', render]
 ```
 
 ## Examples

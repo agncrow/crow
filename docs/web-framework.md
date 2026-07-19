@@ -1,5 +1,12 @@
 # Crow Web Framework — Design Document
 
+> **Status note:** this is the framework's design/vision document. The shipped
+> surface is specified in `language-spec.md` (Built-in Module: web). Code
+> sketches below have been updated to current syntax (named handlers — Crow
+> has no lambdas; no-app routing; `map[k = v]`), but phase sections describe
+> features that may not exist yet.
+
+
 ## Vision
 
 One web framework that does it all. Composable modules sharing a thin core, each independently useful, assembled by the user. Not a monolith you opt out of — independent pieces you opt into.
@@ -112,8 +119,8 @@ Every `web` module requirement mapped to axum support:
 |------------------------|-------------|-----|
 | `serve[port]` — start server | ✅ | `axum::serve()` with tokio (implicit app) |
 | `page[path, render, handle]` — LiveView route | ✅ | Implicit app + `CrowLiveView::new()` |
-| `route[app, path, handler]` — GET route | ✅ | `.route("/path", get(handler))` |
-| `route[app, path, method, handler]` — any method | ✅ | `.route("/path", post(handler))` etc. |
+| `route[path, handler]` — GET route (implicit app) | ✅ | `.route("/path", get(handler))` |
+| `route[path, method, handler]` — any method | ✅ | `.route("/path", post(handler))` etc. |
 | `json[value]` — JSON response | ✅ | `Json(value)` |
 | `html[string]` — HTML response | ✅ | `Html(string)` |
 | `text[string]` — plain text | ✅ | Returns `String` |
@@ -232,8 +239,8 @@ The transpiler manages the application instance implicitly — no `app` variable
 |----------|-------------|
 | `serve[port]` | Start server on given port (implicit app) |
 | `page[path, render_fn, handle_fn]` | Add a LiveView page route |
-| `route[app, path, handler]` | Add GET route (explicit app threading) |
-| `route[app, path, method, handler]` | Add route with specific method |
+| `route[path, handler]` | Add GET route (implicit app; legacy app-first form still accepted) |
+| `route[path, method, handler]` | Add route with specific method |
 | `json[value]` | Return JSON response |
 | `html[string]` | Return HTML response |
 | `text[string]` | Return plain text response |
@@ -510,14 +517,16 @@ Generates: OpenAPI 3.0 spec + Swagger UI
 use web
 use web.docs
 
-route[app, '/users', 'GET', fn[req]
-  json[{users, ['alice', 'bob']}]
-]
+fn list_users[req]
+  return json[map[users = 'alice, bob']]
 
-route[app, '/users', 'POST', fn[req]
+fn create_user[req]
   name = req.json.name
   age = int[req.json.age]
-  json[{id, 1, name, name, age, age}]
+  return json[map[name = name]]
+
+route['/users', list_users]
+route['/users', 'POST', create_user
 ]
 
 docs[app, '/docs']    --- Swagger UI at /docs ---
@@ -788,7 +797,7 @@ visible = computed[fn[]
   if state.filter eq 'all'
     state.items
   else
-    select[state.items, fn[item] item.status eq state.filter]
+    filter[state.items, is_active]   --- named predicate (no lambdas)
 ]
 ```
 
@@ -920,9 +929,10 @@ use web.db
 
 db = open[env['DATABASE_URL']]
 
-route['/users', fn[req]
-  json[query[db, 'SELECT * FROM users']]
-]
+fn users[req]
+  return json[query[db, 'SELECT * FROM users']]
+
+route['/users', users]
 
 serve[env['PORT', 3000]]
 ```
@@ -942,11 +952,11 @@ use web
 
 model = load['model.crow']
 
-route['/predict', 'POST', fn[req]
-  input = tensor[req.json.data]
-  output = model[input]
-  json[{prediction, output}]
-]
+fn predict[req]
+  x = tensor[req.json.data]
+  return json[map[prediction = model[x]]]
+
+route['/predict', 'POST', predict]
 serve[env['PORT', 3000]]
 ```
 
@@ -995,37 +1005,38 @@ use math.nn
 
 model = load['model.crow']
 
---- JSON (small, human-readable) ---
-route['/predict', 'POST', fn[req]
+--- JSON (small, human-readable)
+fn predict_json[req]
   result = model[tensor[req.json.data]]
-  json[{prediction, result}]
-]
+  return json[map[prediction = result]]
 
---- MessagePack (fast, binary — 10x faster than JSON) ---
-route['/predict/fast', 'POST', fn[req]
+--- MessagePack (fast, binary — 10x faster than JSON)
+fn predict_fast[req]
   result = model[tensor[req.json.data]]
-  msgpack[{prediction, result}]
-]
+  return msgpack[map[prediction = result]]
 
---- Arrow IPC (zero-copy DataFrame response) ---
-route['/data', fn[req]
+--- Arrow IPC (zero-copy DataFrame response)
+fn metrics[req]
   df = query[db, 'SELECT * FROM metrics']
-  arrow[df]
-]
+  return arrow[df]
 
---- Streaming batch inference ---
-route['/batch', 'POST', fn[req]
-  stream[fn[send]
-    for batch in chunks[req.json.data, 100]
-      pred = model[tensor[batch]]
-      send[pred]
-  ]
-]
+--- Streaming batch inference (handler passed by name)
+fn send_batches[send]
+  for batch in chunks[req_data, 100]
+    send[model[tensor[batch]]]
 
---- Raw model weights download ---
-route['/model/weights', fn[req]
-  bytes[read['model.bin']]
-]
+fn batch[req]
+  return stream[send_batches]
+
+--- Raw model weights download
+fn weights[req]
+  return bytes[read['model.bin']]
+
+route['/predict', 'POST', predict_json]
+route['/predict/fast', 'POST', predict_fast]
+route['/data', metrics]
+route['/batch', 'POST', batch]
+route['/model/weights', weights]
 
 serve[env['PORT', 3000]]
 ```
