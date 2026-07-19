@@ -545,6 +545,14 @@ impl Interpreter {
                 self.exec_while(condition, body)
             }
             Stmt::StructDecl { name, fields } => {
+                for f in fields {
+                    if matches!(f.as_str(), "ok" | "reason" | "kind" | "trace") {
+                        return Err(format!(
+                            "struct '{}' field '{}' collides with error-value metadata (.ok/.reason/.kind/.trace are reserved on every value) — rename it",
+                            name, f
+                        ));
+                    }
+                }
                 let sd = CrowValue::ok(Value::StructDef(StructDef {
                     name: name.clone(),
                     fields: fields.clone(),

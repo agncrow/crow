@@ -1967,7 +1967,7 @@ impl Transpiler {
                         }
                     }
                 }
-                let expr_str = self.expr_to_string(value);
+                let expr_str = self.owned_expr_str(value);
                 if self.declared.contains(name) {
                     // Check for type-changing reassignment
                     let new_ty = self.ctx.infer_expr(value);
@@ -2065,7 +2065,7 @@ impl Transpiler {
                 }
             }
             Stmt::Return(Some(e)) => {
-                let expr_str = self.expr_to_string(e);
+                let expr_str = self.owned_expr_str(e);
                 let expr_type = self.ctx.infer_expr(e);
                 // If the function returns CrowResult<T> but this expression is a plain T, wrap it
                 if let Some(CrowType::Result(_)) = &self.current_fn_return_type {
@@ -2364,6 +2364,19 @@ impl Transpiler {
             }
         }
         out.join(", ")
+    }
+
+    /// Emit an expression as an OWNED value. A by-ref struct parameter used
+    /// where ownership is required (array literal, struct field, return,
+    /// assignment) must be cloned — call sites pass structs as &T.
+    fn owned_expr_str(&mut self, e: &Expr) -> String {
+        let s = self.expr_to_string(e);
+        if let Expr::Ident(name) = e {
+            if self.current_ref_params.contains(name) {
+                return format!("{}.clone()", s);
+            }
+        }
+        s
     }
 
     fn expr_to_string(&mut self, expr: &Expr) -> String {
@@ -3761,15 +3774,18 @@ impl Transpiler {
                             .zip(args.iter())
                             .zip(arg_strs.iter())
                             .map(|(((fname, ftype), orig_expr), val)| {
+                                // By-ref params need an owned clone in field position
+                                let is_ref_param = matches!(orig_expr, Expr::Ident(n) if self.current_ref_params.contains(n));
+                                let owned = if is_ref_param { format!("{}.clone()", val) } else { val.clone() };
                                 if let CrowType::OptBoxStruct(_) = ftype {
                                     // Check if the arg is a sentinel (literal 0)
                                     if matches!(orig_expr, Expr::Int(0)) {
                                         format!("{}: None", fname)
                                     } else {
-                                        format!("{}: Some(Box::new({}))", fname, val)
+                                        format!("{}: Some(Box::new({}))", fname, owned)
                                     }
                                 } else {
-                                    format!("{}: {}", fname, val)
+                                    format!("{}: {}", fname, owned)
                                 }
                             })
                             .collect();
@@ -4320,7 +4336,7 @@ impl Transpiler {
                         .collect()
                 } else {
                     items.iter()
-                        .map(|i| self.expr_to_string(i))
+                        .map(|i| self.owned_expr_str(i))
                         .collect()
                 };
                 format!("vec![{}]", vals.join(", "))

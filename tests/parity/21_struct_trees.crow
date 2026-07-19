@@ -1,0 +1,27 @@
+--- recursive struct trees: struct-returning calls as struct args,
+--- by-ref params in owned contexts (array literals, fields, returns)
+struct SNode [ntype, label, x, children]
+
+fn mesh[label, x = 0]
+    return SNode['mesh', label, x, []]
+
+fn group[a, b]
+    return SNode['group', '', 0, [a, b]]
+
+world = group[
+    mesh['player'],
+    group[
+        mesh['tree', x = 10],
+        mesh['rock', x = 5]
+    ]
+]
+
+fn count_nodes[n]
+    total = 1
+    for child in n.children
+        total = total + count_nodes[child]
+    return total
+
+log[world.ntype]
+log[count_nodes[world]]
+log[world.children.len]

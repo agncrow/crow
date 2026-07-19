@@ -198,7 +198,18 @@ impl<'a> Validator<'a> {
                 self.validate_expr(condition);
                 for s in body { self.validate_stmt(s); }
             }
-            Stmt::StructDecl { name, .. } => {
+            Stmt::StructDecl { name, fields } => {
+                // The error-metadata names (.ok/.reason/.kind/.trace) are a
+                // fixed vocabulary on EVERY value — a struct field with one of
+                // these names is unreachable through dot access
+                for f in fields {
+                    if matches!(f.as_str(), "ok" | "reason" | "kind" | "trace") {
+                        self.error(format!(
+                            "struct '{}' field '{}' collides with error-value metadata (.ok/.reason/.kind/.trace are reserved on every value) — rename it",
+                            name, f
+                        ));
+                    }
+                }
                 self.defined_vars.insert(name.clone());
             }
             Stmt::FieldAssign { object, value, .. } => {
