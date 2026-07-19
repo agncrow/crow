@@ -280,6 +280,26 @@ impl Interpreter {
     /// Collect view names and event-handler names (bare fn refs inside view
     /// bodies + page[] registration args) — these frames keep reactive state
     /// visible under `use ui`.
+    /// Coerce an all-numeric Array (how frame columns arrive) into a tensor
+    /// value for element-wise operators; other values pass through unchanged.
+    fn coerce_numeric_array(v: &Value) -> Value {
+        if let Value::Array(items) = v {
+            if !items.is_empty() {
+                let mut data = Vec::with_capacity(items.len());
+                for item in items {
+                    match &item.value {
+                        Value::Int(n) => data.push(*n as f64),
+                        Value::Float(f) => data.push(*f),
+                        _ => return v.clone(),
+                    }
+                }
+                let n = data.len();
+                return Value::NumArray(CrowTensor::from_vec(data, vec![n]));
+            }
+        }
+        v.clone()
+    }
+
     fn prescan_views(&mut self, stmts: &[Stmt]) {
         let mut fn_names: std::collections::HashSet<String> = std::collections::HashSet::new();
         fn collect_fns(stmts: &[Stmt], out: &mut std::collections::HashSet<String>) {
@@ -1356,6 +1376,17 @@ impl Interpreter {
                         .iter()
                         .map(|a| self.eval_expr(a))
                         .collect::<Result<_, _>>()?;
+                    // Overlapping scalar/tensor names (math.sqrt[16.0]):
+                    // scalar args use the core builtin, same as bare calls
+                    let overlapping = matches!(
+                        field.as_str(),
+                        "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max"
+                    );
+                    if overlapping
+                        && !arg_vals.iter().any(|a| matches!(&a.value, Value::NumArray(_)))
+                    {
+                        return self.call_builtin(field, &arg_vals);
+                    }
                     // Module-scoped resolution: the prefix names the provider,
                     // so overlapping exports (frame.load vs math.load) resolve
                     return self.registry.call_in(mod_name, field, &arg_vals);
@@ -1856,8 +1887,10 @@ impl Interpreter {
         args: &[CrowValue],
     ) -> Result<CrowValue, String> {
         // Auto-propagation: if any argument is an error-value, return the first error.
-        // Exception: `log` intentionally prints error-values, `type` inspects them, `error` creates them.
-        if !matches!(name, "log" | "type" | "error") {
+        // Exceptions: `log` prints error-values, `type` inspects them, `error`
+        // creates them — and `assert` is a DECISION, so an error condition
+        // halts with its reason (errors have no truth value) via its own arm.
+        if !matches!(name, "log" | "type" | "error" | "assert") {
             for arg in args {
                 if arg.is_error() {
                     let mut err = arg.clone();
@@ -3222,6 +3255,13 @@ impl Interpreter {
                     return Err("assert[] takes 1 or 2 arguments".to_string());
                 }
                 let cond = &args[0];
+                // An assert is a decision — errors have no truth value
+                if !cond.ok {
+                    return Err(format!(
+                        "cannot branch on an error value — {}",
+                        cond.reason
+                    ));
+                }
                 let passed = match &cond.value {
                     Value::Bool(b) => *b,
                     Value::Int(n) => *n != 0,
@@ -3526,7 +3566,7 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a.powf(*b)))),
                 _ => Err("^ requires numbers".to_string()),
             },
-            BinOp::ElemMul => match (l, r) {
+            BinOp::ElemMul => match (&Self::coerce_numeric_array(l), &Self::coerce_numeric_array(r)) {
                 (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul(b)))),
                 (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(*b as f64)))),
                 (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(*b)))),
@@ -3534,7 +3574,7 @@ impl Interpreter {
                 (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.mul_scalar(*a)))),
                 _ => Err(".* requires tensors or tensor and scalar".to_string()),
             },
-            BinOp::ElemDiv => match (l, r) {
+            BinOp::ElemDiv => match (&Self::coerce_numeric_array(l), &Self::coerce_numeric_array(r)) {
                 (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.div(b)))),
                 (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(1.0 / *b as f64)))),
                 (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(1.0 / *b)))),
@@ -3548,7 +3588,7 @@ impl Interpreter {
                 }
                 _ => Err("./ requires tensors or tensor and scalar".to_string()),
             },
-            BinOp::ElemPow => match (l, r) {
+            BinOp::ElemPow => match (&Self::coerce_numeric_array(l), &Self::coerce_numeric_array(r)) {
                 (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.pow(b)))),
                 (Value::NumArray(a), Value::Int(b)) => {
                     let s = *b as f64;

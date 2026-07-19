@@ -2609,6 +2609,21 @@ impl Transpiler {
                     if l_is_sparse && matches!(&rt_inner, CrowType::NumArray(_)) && matches!(op, BinOp::Mul) {
                         return format!("{}.matmul_dense(&{})", l, r);
                     }
+                    // Frame columns bridge into tensor ops via to_tensor()
+                    let (l, lt_inner) = if matches!(&lt_inner, CrowType::FrameCol)
+                        && matches!(op, BinOp::ElemMul | BinOp::ElemDiv | BinOp::ElemPow | BinOp::Add | BinOp::Sub)
+                    {
+                        (format!("({}).to_tensor()", l), CrowType::NumArray(Box::new(CrowType::Float)))
+                    } else {
+                        (l.clone(), lt_inner.clone())
+                    };
+                    let (r, rt_inner) = if matches!(&rt_inner, CrowType::FrameCol)
+                        && matches!(op, BinOp::ElemMul | BinOp::ElemDiv | BinOp::ElemPow | BinOp::Add | BinOp::Sub)
+                    {
+                        (format!("({}).to_tensor()", r), CrowType::NumArray(Box::new(CrowType::Float)))
+                    } else {
+                        (r.clone(), rt_inner.clone())
+                    };
                     // NumArray element-wise ops
                     let l_is_numarray = matches!(&lt_inner, CrowType::NumArray(_));
                     let r_is_numarray = matches!(&rt_inner, CrowType::NumArray(_));
@@ -2975,7 +2990,15 @@ impl Transpiler {
                     let skip_frame_select = name == "select" && self.needs_ui && args.len() == 2
                         && self.registry.module_name_for(name).map_or(false, |m| m == "frame");
                     if !is_overlapping && !skip_frame_select && self.registry.has_function(name) {
-                        let arg_types: Vec<_> = args.iter().map(|a| self.ctx.infer_expr(a)).collect();
+                        let mut arg_types: Vec<_> = args.iter().map(|a| self.ctx.infer_expr(a)).collect();
+                        // Frame columns bridge into tensor math via to_tensor()
+                        let mut arg_strs = arg_strs.clone();
+                        for (i, t) in arg_types.iter_mut().enumerate() {
+                            if matches!(t, CrowType::FrameCol) {
+                                arg_strs[i] = format!("({}).to_tensor()", arg_strs[i]);
+                                *t = CrowType::NumArray(Box::new(CrowType::Float));
+                            }
+                        }
                         self.needs_crow_runtime = true;
                         let emitted = match &self.pinned_module {
                             Some(m) => self.registry.emit_rust_in(m, name, &arg_strs, &arg_types),

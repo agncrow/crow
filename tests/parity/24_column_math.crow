@@ -1,0 +1,17 @@
+--- frame columns bridge into tensor math (both modes)
+use frame, math
+
+csv = 'symbol,qty,price
+AAPL,100,191.5
+MSFT,50,415.2
+NVDA,20,875.0'
+write['col_math.csv', csv]
+t = frame.load['col_math.csv']
+
+notional = t.qty .* t.price
+log[notional]
+log[sum[notional]]
+log[mean[t.price]]
+log[max[t.qty .* 1.0]]
+log[math.sqrt[16.0]]
+rm['col_math.csv']

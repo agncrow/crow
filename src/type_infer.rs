@@ -1653,8 +1653,13 @@ impl TypeContext {
                         }
                     }
                     BinOp::ElemMul | BinOp::ElemDiv | BinOp::ElemPow => {
-                        // Element-wise tensor ops return NumArray
-                        if matches!(&lt_inner, CrowType::NumArray(_)) {
+                        // Element-wise tensor ops return NumArray; frame
+                        // columns bridge into tensors
+                        if matches!(&lt_inner, CrowType::FrameCol)
+                            || matches!(&rt_inner, CrowType::FrameCol)
+                        {
+                            CrowType::NumArray(Box::new(CrowType::Float))
+                        } else if matches!(&lt_inner, CrowType::NumArray(_)) {
                             lt_inner.clone()
                         } else if matches!(&rt_inner, CrowType::NumArray(_)) {
                             rt_inner.clone()
