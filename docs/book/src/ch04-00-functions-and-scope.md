@@ -1,5 +1,7 @@
 # Functions and Scope
 
-> **Not yet written.** Functions, named arguments with defaults, and why module variables are invisible inside functions.
-
-For now, see [`language-spec.md`](../../language-spec.md) and the runnable programs in `examples/`.
+Functions are where Crow makes its first big bet. The syntax will take you
+thirty seconds; the *scope rule* — what a function can and cannot see — is
+where Crow deliberately parts company with Python, and it's the foundation
+that makes chapter 5's automatic parallelism possible. We take them in
+that order.
