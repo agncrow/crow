@@ -311,7 +311,7 @@ log[scaled[count]]        --- 12: pass it in ---
 
 Because module variables were never visible, a local reusing a module name shadows nothing — it is simply a new binding. There are no `global` declarations and no scope-resolution rules to learn: inside a function, every name is a parameter, a local, or a function/struct/constant.
 
-**Exception — `use ui` reactive state:** in a ui program, top-level assignments become managed reactive state, and render/handler functions access them through the state machinery (the transpiler rewrites them to `state.get`/`state.set`). That is the sanctioned mutable-state channel — owned by the runtime and synchronized, like LiveView assigns.
+**Exception — views and event handlers:** in a ui program, top-level assignments become managed reactive state. **Only `view` declarations and event handlers** (functions referenced from views or `page[]`) access that state — through the state machinery, rewritten to `state.get`/`state.set`. Ordinary `fn` declarations are fully isolated even under `use ui`. That is the sanctioned mutable-state channel — owned by the runtime and synchronized, like LiveView assigns.
 
 #### Design Note: No Ambient Mutability
 
@@ -1006,6 +1006,21 @@ Dot-separated paths map to directories: `use views.home` loads `views/home.crow`
 
 Comma-separated imports expand at parse time: `use web, ui` is equivalent to writing `use web` and `use ui` on separate lines.
 
+#### Aliased Imports: `use X as y`
+
+Any import may take an alias. **An aliased import is qualified-only under its alias** — exactly Python's `import pandas as pd`: nothing enters your bare namespace except the alias itself.
+
+```
+use math as m
+
+sum = 0                --- legal: math's names were never dumped
+t = m.sum[xs]          --- the module is reached through the alias
+
+use lib/scene as s     --- user modules too: s.mesh[...], s.group[...]
+```
+
+For the stdlib this doubles as the opt-out when you want a name the module owns (`sum`, `mean`, `e`). For packages and user modules — which are always qualified-only — the alias shortens long prefixes and resolves the otherwise-impossible case of two modules sharing a trailing name (`use alice/stats as astats`). `as` is contextual: it only has meaning after a use path, so a variable named `as` stays legal.
+
 ### Accessing
 
 After `use`, all module functions become top-level — no prefix needed.
@@ -1520,6 +1535,50 @@ sorted = sort[df, col]
 ### Built-in Module: web
 
 Import sub-modules with `use web.X`. Each sub-module enables only its feature — minimal binary, minimal compile time. See `docs/web-framework.md` for full architecture details.
+
+#### View Blocks — the UI Vocabulary Zone
+
+UI trees are built in `view` blocks — a declaration form, sibling of `fn`:
+
+```
+use web, ui
+
+count = 0
+
+fn inc[]
+    count = count + 1
+
+view render[]
+    return div[
+        h1['Count: `count`'],
+        button['+', click = inc]
+    ]
+
+serve[3000]
+page['/', render]
+```
+
+**Inside a view, the standard HTML element vocabulary is active** — `div`, `span`, `p`, `h1`–`h6`, `button`, `ul`, `ol`, `li`, `form`, `a`, `nav`, `header`, `footer`, `section`, `tr`, `td`, `th`, `thead`, `tbody`, `option`, `textarea`, `label`, `pre`, `code`, `input`, `img`, `table` — with their exact HTML names. **Outside a view, those names don't exist**: `p = 0.95`, `fn add[a, b]`, and `form = req.body` are ordinary code in any ui program, and `use ui` reserves nothing in your file. Calling an element outside a view is an error that points at the fix.
+
+Views compose: a view calls other views (components) and ordinary functions freely. A module can export views — importers reach them qualified, like any module name:
+
+```
+--- cards.crow ---
+view card[title, body_text]
+    div[h2[title], p[body_text]]
+
+--- main.crow ---
+use cards as c
+
+view render[]
+    div[h1['Home'], c.card['Status', 'All good']]
+```
+
+This is the JSX/SwiftUI boundary: the lowercase vocabulary is fixed and language-owned; your components are module-exported views. There is no way to add elements or define new vocabulary zones — see the Design Note "Names Are Never Ambiguous".
+
+Views and event handlers are the only functions that see reactive state (see Function Scope). `crow fmt --fix-views` migrates pre-view code (`fn` declarations that build ui trees) automatically.
+
+**The view tree is target-independent.** A view describes a tree; what renders it is a build target. Web today; a desktop or mobile shell renders the same tree without a language change. Platforms are build targets, never dialects — there will never be a `screen` or `window` vocabulary fork.
 
 #### Core (Server)
 
@@ -2929,3 +2988,30 @@ User['alice', 25]            --- named, mixed-type fields ---
 **Mixed-type data uses structs, not arrays.** `struct User [id, name, active]` then `User[1, 'alice', true]` gives named, typed fields with dot access. This is clearer than a mixed-type list anyway — fields are named and self-documenting. (Maps are homogeneous — see Design Note: Maps Are Dictionaries, Not Records.)
 
 **What this eliminates:** `tensor` keyword, `list` vs `tensor` confusion, `tensor[[1,2,3]]` wrapper syntax, mixed-type arrays.
+## Design Note: Names Are Never Ambiguous
+
+A bare name in Crow means exactly one thing. Collisions are never resolved silently — not by shadowing, not by precedence, not by context. This is one rule applied at every level of the language:
+
+**1. Definitions cannot take reserved names.** A variable, function, view, struct, parameter, or loop variable that collides with a name the language or an imported module owns is a compile error at the definition line:
+
+```
+range = [10, 20, 30]     --- error: 'range' is a core builtin
+use math
+sum = 0                  --- error: 'sum' is provided by math (line 2)
+e = 100                  --- error: 'e' is a math constant
+math = 5                 --- error: 'math' is a module name
+```
+
+Every error names the source and both fixes: rename your definition, or import the module qualified (`use math as m`).
+
+**2. Three namespace tiers.** *Core* (~70 names: `log`, `len`, `range`, `map`, `set`, `type`…) is reserved in every file, frozen by the budget rule — core does not grow, so this reservation never breaks existing programs. *Stdlib modules* (`math`, `frame`, `io`, `db`, `web`, `ui`) reserve their exports only in files that import them bare. *Everything else* — user modules today, registry packages tomorrow — is **qualified-only**: the import reserves exactly one name (the prefix), and the module can export ten thousand names without taking any of yours. The language owns the bare namespace; packages get prefixes.
+
+**3. Aliased imports are qualified-only** (`use math as m` — see Aliased Imports). This is the escape valve when you want a name a module owns: rename what you own, or alias what you don't.
+
+**4. Fields are exempt.** Struct fields, map keys, JSON fields, and frame columns live inside their containers, not in the file's namespace — `account.sum`, `row.type`, `df.mean` are always fine. The one exception: the four error-metadata names (`ok`, `reason`, `kind`, `trace`) are a fixed vocabulary on *every* value, so struct fields may not use them.
+
+**5. Vocabulary zones are language-owned.** `view` blocks activate the HTML element vocabulary — the only zone, granted because HTML is an external, universal, unchangeable vocabulary that could not be renamed, reserved, or qualified without wrecking either learnability or ordinary code. User modules cannot define zones (that mechanism is a macro system, and Crow rejects macros); they export functions and views instead, reached by prefix — exactly how JSX fixes lowercase tags while components are imported references.
+
+**Why not shadowing (Python/Go-style)?** Because Crow's brackets unify calling and indexing, shadowing produces *silent wrong answers*: `range = [10, 20, 30]` then `range[0]` — delete the assignment during a refactor and the same expression silently becomes `range(0)` = `[]`. MATLAB, the one mainstream language sharing this syntax collision, chose shadowing — and it has been a documented footgun for forty years. Languages where shadowing is safe (Python, Go, Julia) are exactly the ones whose call syntax is distinct from indexing. Crow's is not, so a collision must be an error, at the earliest possible moment, with the fix in the message.
+
+**Why this survives growth:** every new stdlib export visibly costs a name taken from every importer, which enforces the budget rule structurally; packages can never collide with anything; and `crow fmt --fix-collisions`-style migrations handle the rare stdlib addition that lands on someone's variable.
