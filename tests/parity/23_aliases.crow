@@ -1,0 +1,19 @@
+--- as-aliasing: qualified-only imports (Python import-as semantics)
+use math as m
+
+--- the bare names are free for user code under an alias
+sum = 0
+for x in [1, 2, 3, 4]
+    sum = sum + x
+log[sum]
+
+mean = 2.5
+log[mean]
+
+e = 271
+log[e]
+
+--- the module is reachable only through the alias
+log[m.sum[[10, 20, 30]]]
+log[m.mean[[2.0, 4.0]]]
+log[m.prod[[2.0, 3.0, 4.0]]]

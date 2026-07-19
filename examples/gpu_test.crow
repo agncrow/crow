@@ -16,11 +16,11 @@ d = math.linspace[0, 1, 5]
 log['linspace: `d`']
 
 --- Scalar ops
-e = c * 2
-log['scaled: `e`']
+seq = c * 2
+log['scaled: `seq`']
 
 --- Reductions
-s = math.sum[e]
+s = math.sum[seq]
 log['sum: `s`']
 
 --- Math ops

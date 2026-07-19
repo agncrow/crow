@@ -67,6 +67,9 @@ pub enum Stmt {
     /// Use statement: use module/path
     Use {
         path: String,
+        /// `use path as alias` — the module becomes qualified-only under the
+        /// alias (Python import-as semantics); None = default import
+        alias: Option<String>,
     },
     /// Resource control: cpu[n] or gpu[n]
     Resource {

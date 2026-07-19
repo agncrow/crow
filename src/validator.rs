@@ -7,6 +7,43 @@ use crate::ast::*;
 use crate::type_infer::{CrowType, TypeContext};
 
 /// All builtin function names recognized by the Crow language.
+/// True core — reserved in every Crow file, forever (frozen by the budget
+/// rule). Names here can never be user definitions.
+const CORE_RESERVED: &[&str] = &[
+    "log", "assert", "type",
+    "abs", "sqrt", "floor", "ceil", "round", "min", "max",
+    "split", "trim", "replace", "upper", "lower", "join", "starts", "ends",
+    "repeat", "fmt",
+    "int", "float", "str",
+    "len", "contains", "slice", "push", "pop", "sort", "reverse", "concat",
+    "range", "map",
+    "keys", "values", "has", "set", "del",
+    "args", "input",
+    "read", "write",
+    "exists", "mkdir", "ls", "rm", "mv", "cp",
+    "rand", "time", "sleep", "env", "exit",
+    "json", "encode",
+    "error",
+    "shell",
+    "hash",
+    "find", "matches", "sub", "any", "all",
+    "now", "date", "elapsed",
+    "cpu", "gpu", "nodes",
+    "grad",
+];
+
+/// Reserved only in files that import web (use web / use web.*)
+const WEB_RESERVED: &[&str] = &[
+    "route", "serve", "respond", "redirect", "html", "text",
+    "sqlite", "sign", "verify",
+    "cors", "sessions", "templates", "cache", "limit",
+    "uploads", "sse", "ws", "connect", "send", "recv", "close",
+    "page", "static_dir", "smtp",
+];
+
+/// Reserved only in files that import ui
+const UI_RESERVED: &[&str] = &["fetch", "poll", "field", "today"];
+
 const BUILTINS: &[&str] = &[
     "log", "assert", "type",
     // Math
@@ -72,6 +109,10 @@ pub struct Validator<'a> {
     ui_mode: bool,
     /// Validating inside a `view` body — the element vocabulary is active
     in_view: bool,
+    /// Bare imports: module path → line of the `use` (reservation source)
+    bare_import_lines: std::collections::BTreeMap<String, usize>,
+    /// Aliases and module prefixes: name → line of the `use`
+    prefix_lines: std::collections::BTreeMap<String, usize>,
     current_line: usize,
 }
 
@@ -85,6 +126,8 @@ impl<'a> Validator<'a> {
             fn_depth: 0,
             ui_mode: false,
             in_view: false,
+            bare_import_lines: std::collections::BTreeMap::new(),
+            prefix_lines: std::collections::BTreeMap::new(),
             current_line: 0,
         }
     }
@@ -104,26 +147,64 @@ impl<'a> Validator<'a> {
         // Pre-scan top-level assignments to populate defined_vars
         // (the validator will also add them as it walks, but we need forward refs).
         // These are module variables — visible at top level, invisible in functions.
+        // Prescan A: imports first — reservation is file-scoped, so an
+        // assignment above the `use` line is still checked against it
+        let mut prescan_line = 0usize;
         for stmt in stmts {
             match stmt {
-                Stmt::Assign { name, .. } => {
-                    self.defined_vars.insert(name.clone());
-                    self.module_vars.insert(name.clone());
-                }
-                Stmt::MultiAssign { names, .. } => {
-                    for n in names {
-                        self.defined_vars.insert(n.clone());
-                        self.module_vars.insert(n.clone());
-                    }
-                }
-                Stmt::Use { path } => {
+                Stmt::Line(n) => prescan_line = *n,
+                Stmt::Use { path, alias } => {
                     if path == "ui" {
                         self.ui_mode = true;
+                    }
+                    match alias {
+                        Some(a) => {
+                            self.prefix_lines.insert(a.clone(), prescan_line);
+                        }
+                        None => {
+                            self.bare_import_lines.insert(path.clone(), prescan_line);
+                            // The module's prefix name is also taken
+                            let prefix = path
+                                .rsplit(['.', '/'])
+                                .next()
+                                .unwrap_or(path)
+                                .to_string();
+                            self.prefix_lines.insert(prefix, prescan_line);
+                        }
                     }
                 }
                 _ => {}
             }
         }
+
+        // Prescan B: top-level assignments (module variables) — reservation
+        // checked here since the main walk sees them as already-defined
+        let mut prescan_line = 0usize;
+        for stmt in stmts {
+            match stmt {
+                Stmt::Line(n) => prescan_line = *n,
+                Stmt::Assign { name, .. } => {
+                    if !self.defined_vars.contains(name) {
+                        self.current_line = prescan_line;
+                        self.check_reserved(name, "variable");
+                    }
+                    self.defined_vars.insert(name.clone());
+                    self.module_vars.insert(name.clone());
+                }
+                Stmt::MultiAssign { names, .. } => {
+                    for n in names {
+                        if !self.defined_vars.contains(n) {
+                            self.current_line = prescan_line;
+                            self.check_reserved(n, "variable");
+                        }
+                        self.defined_vars.insert(n.clone());
+                        self.module_vars.insert(n.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.current_line = 0;
 
         for stmt in stmts {
             self.validate_stmt(stmt);
@@ -140,6 +221,9 @@ impl<'a> Validator<'a> {
         match stmt {
             Stmt::Line(n) => { self.current_line = *n; }
             Stmt::Assign { name, value } => {
+                if !self.defined_vars.contains(name) {
+                    self.check_reserved(name, "variable");
+                }
                 self.validate_expr(value);
                 self.defined_vars.insert(name.clone());
                 // Check type-changing reassignment
@@ -158,9 +242,18 @@ impl<'a> Validator<'a> {
             }
             Stmt::MultiAssign { names, values } => {
                 for v in values { self.validate_expr(v); }
-                for n in names { self.defined_vars.insert(n.clone()); }
+                for n in names {
+                    if !self.defined_vars.contains(n) {
+                        self.check_reserved(n, "variable");
+                    }
+                    self.defined_vars.insert(n.clone());
+                }
             }
             Stmt::FnDecl { name, params, body, is_view, .. } => {
+                self.check_reserved(name, if *is_view { "view" } else { "function" });
+                for p in params {
+                    self.check_reserved(p, "parameter");
+                }
                 self.defined_vars.insert(name.clone());
                 let saved = self.defined_vars.clone();
                 // Function scope isolation: module variables are not visible
@@ -204,6 +297,7 @@ impl<'a> Validator<'a> {
                 }
             }
             Stmt::For { var, iter, body } => {
+                self.check_reserved(var, "loop variable");
                 self.validate_expr(iter);
                 let saved = self.defined_vars.clone();
                 self.defined_vars.insert(var.clone());
@@ -216,6 +310,7 @@ impl<'a> Validator<'a> {
                 for s in body { self.validate_stmt(s); }
             }
             Stmt::StructDecl { name, fields } => {
+                self.check_reserved(name, "struct");
                 // The error-metadata names (.ok/.reason/.kind/.trace) are a
                 // fixed vocabulary on EVERY value — a struct field with one of
                 // these names is unreachable through dot access
@@ -238,7 +333,7 @@ impl<'a> Validator<'a> {
                 self.validate_expr(index);
                 self.validate_expr(value);
             }
-            Stmt::Use { path } => {
+            Stmt::Use { path, alias } => {
                 // Built-in modules: register all their function and constant names
                 // so validate_call doesn't flag them as undefined.
                 // The registry was already populated during type inference (Pass 1).
@@ -306,11 +401,16 @@ impl<'a> Validator<'a> {
                         // Module call: module.func[args]
                         if let Expr::Ident(mod_name) = object.as_ref() {
                             let prefixed = format!("{}_{}", mod_name, field);
+                            let real_mod = self
+                                .ctx
+                                .module_aliases
+                                .get(mod_name.as_str())
+                                .cloned()
+                                .unwrap_or_else(|| mod_name.to_string());
                             let registry_module = matches!(
-                                mod_name.as_str(),
-                                "math" | "io" | "frame" | "db"
-                            ) && self.ctx.registry.is_loaded(mod_name)
-                                && self.ctx.registry.has_function(field);
+                                real_mod.as_str(),
+                                "math" | "io" | "frame" | "db" | "math.stats" | "math.nn"
+                            ) && self.ctx.registry.has_function(field);
                             if !registry_module
                                 && !self.ctx.functions.contains_key(&prefixed)
                                 && !self.ctx.structs.contains_key(&prefixed)
@@ -378,6 +478,65 @@ impl<'a> Validator<'a> {
         }
     }
 
+    /// Reservation: a user definition (variable, fn, struct, param, loop var)
+    /// may not take a name the language or an imported module owns.
+    /// (Spec Design Note "Names Are Never Ambiguous".)
+    fn check_reserved(&mut self, name: &str, what: &str) {
+        if CORE_RESERVED.contains(&name) {
+            self.error(format!(
+                "'{}' is a core builtin — pick another name for this {}",
+                name, what
+            ));
+            return;
+        }
+        // Bare stdlib imports reserve their exports
+        if let Some(module) = self.ctx.registry.module_name_of(name) {
+            if self.ctx.bare_modules.contains(module) {
+                let line = self.bare_import_lines.get(module).copied().unwrap_or(0);
+                self.error(format!(
+                    "'{}' is provided by {} (imported on line {}) — rename the {}, or import qualified: use {} as m",
+                    name, module, line, what, module
+                ));
+                return;
+            }
+        }
+        // Constants (pi, e, inf, nan) reserve under a bare math import
+        if self.ctx.registry.has_constant(name) && self.ctx.bare_modules.contains("math") {
+            let line = self.bare_import_lines.get("math").copied().unwrap_or(0);
+            self.error(format!(
+                "'{}' is a math constant (imported on line {}) — rename the {}, or import qualified: use math as m",
+                name, line, what
+            ));
+            return;
+        }
+        // Web/ui builtin names reserve under their imports
+        let web_bare = self
+            .bare_import_lines
+            .keys()
+            .any(|p| p == "web" || p.starts_with("web."));
+        if web_bare && WEB_RESERVED.contains(&name) {
+            self.error(format!(
+                "'{}' is a web builtin (use web) — rename the {}",
+                name, what
+            ));
+            return;
+        }
+        if self.ui_mode && UI_RESERVED.contains(&name) {
+            self.error(format!(
+                "'{}' is a ui builtin (use ui) — rename the {}",
+                name, what
+            ));
+            return;
+        }
+        // Module prefixes and aliases are taken
+        if let Some(line) = self.prefix_lines.get(name) {
+            self.error(format!(
+                "'{}' is a module name (use on line {}) — pick another name for this {}",
+                name, line, what
+            ));
+        }
+    }
+
     fn validate_call(&mut self, name: &str, args: &[Expr]) {
         let argc = args.len();
 
@@ -411,8 +570,27 @@ impl<'a> Validator<'a> {
             return;
         }
 
-        // Module function? Accept — modules validate args at runtime/transpile time.
+        // Module function? Accept only when its module was imported bare —
+        // an aliased import (use math as m) is qualified-only.
         if self.ctx.registry.has_function(name) {
+            if let Some(module) = self.ctx.registry.module_name_of(name) {
+                if self.ctx.bare_modules.contains(module) {
+                    return;
+                }
+                // Imported under an alias?
+                if let Some((alias, _)) = self
+                    .ctx
+                    .module_aliases
+                    .iter()
+                    .find(|(_, p)| p.as_str() == module)
+                {
+                    self.error(format!(
+                        "'{}' comes from {} which was imported as '{}' — call {}.{}[...]",
+                        name, module, alias, alias, name
+                    ));
+                    return;
+                }
+            }
             return;
         }
 

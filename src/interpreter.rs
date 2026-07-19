@@ -178,6 +178,10 @@ pub struct Interpreter {
     view_fns: std::collections::HashSet<String>,
     /// Event handlers referenced from views/page[] (reactive-exempt)
     handler_fns: std::collections::HashSet<String>,
+    /// alias → module path for `use X as y` (qualified-only imports)
+    module_aliases: std::collections::HashMap<String, String>,
+    /// Modules imported bare — their exports are callable without a prefix
+    bare_modules: std::collections::HashSet<String>,
 }
 
 impl Interpreter {
@@ -197,6 +201,8 @@ impl Interpreter {
             lowerer: crate::lower::Lowerer::new(),
             view_fns: std::collections::HashSet::new(),
             handler_fns: std::collections::HashSet::new(),
+            module_aliases: std::collections::HashMap::new(),
+            bare_modules: std::collections::HashSet::new(),
         }
     }
 
@@ -686,7 +692,15 @@ impl Interpreter {
                 Self::assign_index(&mut var.value, object, idx_val, new_val)?;
                 Ok(Signal::None)
             }
-            Stmt::Use { path } => {
+            Stmt::Use { path, alias } => {
+                match alias {
+                    Some(a) => {
+                        self.module_aliases.insert(a.clone(), path.clone());
+                    }
+                    None => {
+                        self.bare_modules.insert(path.clone());
+                    }
+                }
                 self.load_module(path)?;
                 Ok(Signal::None)
             }
@@ -1323,8 +1337,15 @@ impl Interpreter {
         args: &[Expr],
     ) -> Result<CrowValue, String> {
         // Handle module-prefixed calls: db.connect[url], math.sin[x], etc.
+        // (aliases translate first: m.sum after `use math as m`)
         if let Expr::FieldAccess { object, field } = callee {
-            if let Expr::Ident(mod_name) = object.as_ref() {
+            if let Expr::Ident(raw_mod) = object.as_ref() {
+                let mod_name = self
+                    .module_aliases
+                    .get(raw_mod.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| raw_mod.clone());
+                let mod_name = &mod_name;
                 // Check if this is a registry module
                 if self.registry.is_loaded(mod_name) {
                     // Special handling for db.transact

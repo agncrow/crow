@@ -84,6 +84,12 @@ impl ModuleRegistry {
         self.fn_map.contains_key(name)
     }
 
+    /// Which loaded module provides this function (for reservation messages).
+    pub fn module_name_of(&self, name: &str) -> Option<&str> {
+        let idx = self.fn_map.get(name)?;
+        Some(self.modules[*idx].name())
+    }
+
     /// Check if a constant name belongs to any loaded module.
     pub fn has_constant(&self, name: &str) -> bool {
         self.const_map.contains_key(name)

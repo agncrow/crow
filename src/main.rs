@@ -1692,7 +1692,24 @@ fn cmd_run_file_interpreted(filename: &str) {
             .parent()
             .unwrap_or(std::path::Path::new("."));
         let mut visited = std::collections::HashSet::new();
-        expand_module_imports(&stmts, source_dir, &mut visited)
+        let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
+        // Lower + validate exactly as the compiled path does — the two modes
+        // must reject the same programs (reservation, scope, ui rules)
+        let lowered = match lower::lower_program(&stmts) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("error: {}", e);
+                process::exit(1);
+            }
+        };
+        let mut vctx = type_infer::TypeContext::new();
+        vctx.infer_program(&lowered);
+        let mut v = validator::Validator::new(&vctx);
+        if let Err(e) = v.validate(&lowered) {
+            eprintln!("{}", e);
+            process::exit(1);
+        }
+        stmts
     };
 
     let mut interpreter = Interpreter::new();
@@ -1822,7 +1839,7 @@ fn expand_module_imports(
 ) -> Vec<ast::Stmt> {
     let mut expanded = Vec::new();
     for stmt in stmts {
-        if let ast::Stmt::Use { path } = stmt {
+        if let ast::Stmt::Use { path, alias } = stmt {
             // Built-in modules: skip file lookup
             if path == "math" || path.starts_with("math.") {
                 expanded.push(stmt.clone());
@@ -1831,10 +1848,13 @@ fn expand_module_imports(
 
             // Convert dot-separated path to file path (views.home → views/home)
             let file_rel = path.replace('.', "/");
-            let module_name = path.rsplit(['.', '/']).next()
-                .and_then(|s| if s.is_empty() { None } else { Some(s) })
-                .unwrap_or(path)
-                .to_string();
+            // `use path as alias` renames the module prefix
+            let module_name = alias.clone().unwrap_or_else(|| {
+                path.rsplit(['.', '/']).next()
+                    .and_then(|s| if s.is_empty() { None } else { Some(s) })
+                    .unwrap_or(path)
+                    .to_string()
+            });
 
             // Circular import detection
             if visited.contains(path) {

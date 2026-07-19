@@ -764,7 +764,7 @@ impl Transpiler {
     pub fn transpile(&mut self, stmts: &[Stmt]) -> String {
         // Register all module names upfront so function bodies can resolve module references
         for stmt in stmts {
-            if let Stmt::Use { path } = stmt {
+            if let Stmt::Use { path, alias } = stmt {
                 let module_name = path.rsplit('/').next().unwrap_or(path).to_string();
                 if module_name == "math" || path.starts_with("math.") {
                     self.needs_crow_runtime = true;
@@ -2240,7 +2240,7 @@ impl Transpiler {
                     }
                 }
             }
-            Stmt::Use { path } => {
+            Stmt::Use { path, alias } => {
                 self.emit_use(path);
             }
             Stmt::Resource { kind, count } => {
@@ -3918,8 +3918,13 @@ impl Transpiler {
                         // route exactly like the bare call — spec: module
                         // prefixes always work
                         // db has its own dedicated branch below (DbHandle codegen)
-                        if matches!(mod_name.as_str(), "math" | "io" | "frame")
-                            && self.registry.is_loaded(mod_name)
+                        let real_mod = self
+                            .ctx
+                            .module_aliases
+                            .get(mod_name.as_str())
+                            .cloned()
+                            .unwrap_or_else(|| mod_name.to_string());
+                        if matches!(real_mod.as_str(), "math" | "io" | "frame" | "math.stats" | "math.nn")
                             && self.registry.has_function(field)
                         {
                             let bare = Expr::Call {

@@ -209,16 +209,29 @@ impl Parser {
     fn parse_use(&mut self) -> Result<Vec<Stmt>, String> {
         self.advance(); // skip 'use'
         let mut stmts = Vec::new();
-        // Parse first module path
-        let path = self.parse_use_path()?;
-        stmts.push(Stmt::Use { path });
+        // Parse first module path (with optional `as alias`)
+        let (path, alias) = self.parse_use_path_aliased()?;
+        stmts.push(Stmt::Use { path, alias });
         // Support comma-separated: use web, ui, views.home
         while self.check(&Token::Comma) {
             self.advance();
-            let path = self.parse_use_path()?;
-            stmts.push(Stmt::Use { path });
+            let (path, alias) = self.parse_use_path_aliased()?;
+            stmts.push(Stmt::Use { path, alias });
         }
         Ok(stmts)
+    }
+
+    /// Parse a use path with an optional trailing `as alias`. `as` is a
+    /// contextual keyword — it only has meaning here, so a variable named
+    /// `as` stays legal everywhere else.
+    fn parse_use_path_aliased(&mut self) -> Result<(String, Option<String>), String> {
+        let path = self.parse_use_path()?;
+        if matches!(self.peek(), Token::Ident(n) if n == "as") {
+            self.advance(); // skip 'as'
+            let alias = self.expect_ident()?;
+            return Ok((path, Some(alias)));
+        }
+        Ok((path, None))
     }
 
     fn parse_use_path(&mut self) -> Result<String, String> {
