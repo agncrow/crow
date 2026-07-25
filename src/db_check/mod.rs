@@ -22,7 +22,10 @@ pub struct RunResult {
 /// `--db` or the crowfile `db` variable; without it only the checks that
 /// need no schema run (injection flags).
 pub fn run(file: &str, source: &str, db_url: Option<&str>) -> Result<RunResult, String> {
-    let stmts = crate::build(source)?;
+    // Lenient parse: db checks should still cover the healthy statements of
+    // a file that has an unrelated syntax error (the LSP lives in that state).
+    let tokens = crate::lexer::Lexer::new(source).tokenize()?;
+    let (stmts, _parse_errors) = crate::parser::Parser::new(tokens).parse_lenient();
     let facts = sql_facts::collect(&stmts);
     let mut hazards = Vec::new();
     let mut schema_checked = false;

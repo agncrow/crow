@@ -77,7 +77,7 @@ fn span_text(span: (usize, usize)) -> String {
     }
 }
 
-fn headline(k: &HazardKind) -> String {
+pub(crate) fn headline(k: &HazardKind) -> String {
     match k {
         HazardKind::WriteSkew { .. } => "two programs can pass this check at the same time".into(),
         HazardKind::LostUpdate { column, .. } => {

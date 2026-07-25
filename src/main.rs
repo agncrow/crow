@@ -1,6 +1,7 @@
 mod ast;
 mod checker;
 mod db_check;
+mod lsp;
 mod interpreter;
 mod lexer;
 mod lower;
@@ -105,6 +106,12 @@ fn main() {
                 config.entry
             });
             cmd_check(&filename, verbose, db_url, strict);
+        }
+        "lsp" => {
+            if let Err(e) = lsp::run_server() {
+                eprintln!("crow lsp: {}", e);
+                process::exit(1);
+            }
         }
         "fix" => {
             let mut hazard_n: Option<usize> = None;
@@ -214,6 +221,7 @@ fn print_usage() {
     eprintln!("  crow check file.crow   auto-verify a specific file");
     eprintln!("  crow check --db <url>  + schema-aware db checks (or db = '…' in crowfile)");
     eprintln!("  crow fix file.crow --hazard N [--option M]   apply a fix from the check report");
+    eprintln!("  crow lsp               language server over stdio (see docs/crow-lsp.md)");
     eprintln!("  crow fmt               format project (uses crowfile)");
     eprintln!("  crow fmt file.crow     format a specific file");
     eprintln!("  crow fmt --check       check formatting without changing files");
@@ -2007,7 +2015,12 @@ fn cmd_run_file_interpreted(filename: &str) {
 /// Lenient lookup of the optional `db = 'url'` variable in the crowfile.
 /// Unlike parse_crowfile this never exits — no crowfile just means no url.
 fn crowfile_db_url() -> Option<String> {
-    let source = std::fs::read_to_string("crowfile").ok()?;
+    crowfile_db_url_at(std::path::Path::new("."))
+}
+
+/// Same lookup rooted at an arbitrary directory (the LSP workspace root).
+pub(crate) fn crowfile_db_url_at(dir: &std::path::Path) -> Option<String> {
+    let source = std::fs::read_to_string(dir.join("crowfile")).ok()?;
     let stmts = build(&source).ok()?;
     let mut interpreter = Interpreter::new();
     interpreter.run(&stmts).ok()?;
