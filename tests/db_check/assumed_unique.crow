@@ -1,0 +1,9 @@
+--- fixture: single-row access without a unique rule (hazard 1d)
+use db
+
+conn = connect['sqlite://fixture.db']
+email = 'a@b.c'
+
+u = query[conn, 'SELECT name FROM users WHERE email = ?', [email]]
+name = u.name[0]
+log[name]

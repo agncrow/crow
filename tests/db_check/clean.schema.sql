@@ -1,0 +1,9 @@
+CREATE TABLE users (
+  id    INTEGER PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  name  TEXT NOT NULL
+);
+CREATE TABLE accounts (
+  id      INTEGER PRIMARY KEY,
+  balance REAL NOT NULL DEFAULT 0
+);

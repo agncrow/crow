@@ -1,5 +1,6 @@
 mod ast;
 mod checker;
+mod db_check;
 mod interpreter;
 mod lexer;
 mod lower;
@@ -73,24 +74,78 @@ fn main() {
         "build" => cmd_build(),
         "launch" => cmd_launch(),
         "check" => {
-            for a in args.iter().skip(2) {
-                if a.starts_with('-') && a != "--verbose" {
-                    eprintln!("unknown flag '{}' for crow check", a);
-                    if a == "-v" {
-                        eprintln!("  did you mean 'crow -v' or 'crow check --verbose'?");
+            let mut verbose = false;
+            let mut strict = false;
+            let mut db_url: Option<String> = None;
+            let mut file: Option<String> = None;
+            let mut rest = args.iter().skip(2);
+            while let Some(a) = rest.next() {
+                match a.as_str() {
+                    "--verbose" => verbose = true,
+                    "--strict" => strict = true,
+                    "--db" => {
+                        db_url = rest.next().cloned();
+                        if db_url.is_none() {
+                            eprintln!("--db needs a url, e.g. crow check --db 'sqlite://dev.db'");
+                            process::exit(1);
+                        }
                     }
+                    f if !f.starts_with('-') => file = Some(f.to_string()),
+                    other => {
+                        eprintln!("unknown flag '{}' for crow check", other);
+                        if other == "-v" {
+                            eprintln!("  did you mean 'crow -v' or 'crow check --verbose'?");
+                        }
+                        process::exit(1);
+                    }
+                }
+            }
+            let filename = file.unwrap_or_else(|| {
+                let config = parse_crowfile();
+                config.entry
+            });
+            cmd_check(&filename, verbose, db_url, strict);
+        }
+        "fix" => {
+            let mut hazard_n: Option<usize> = None;
+            let mut option_m: usize = 1;
+            let mut db_url: Option<String> = None;
+            let mut file: Option<String> = None;
+            let mut rest = args.iter().skip(2);
+            while let Some(a) = rest.next() {
+                match a.as_str() {
+                    "--hazard" => hazard_n = rest.next().and_then(|v| v.parse().ok()),
+                    "--option" => {
+                        option_m = rest.next().and_then(|v| v.parse().ok()).unwrap_or(1)
+                    }
+                    "--db" => db_url = rest.next().cloned(),
+                    f if !f.starts_with('-') => file = Some(f.to_string()),
+                    other => {
+                        eprintln!("unknown flag '{}' for crow fix", other);
+                        process::exit(1);
+                    }
+                }
+            }
+            let (Some(filename), Some(hazard_n)) = (file, hazard_n) else {
+                eprintln!("usage: crow fix file.crow --hazard N [--option M] [--db url]");
+                eprintln!("  N and the option numbers come from the crow check report");
+                process::exit(1);
+            };
+            let source = read_file(&filename);
+            let resolved_db = db_url.or_else(crowfile_db_url);
+            match db_check::fix::apply(
+                &filename,
+                &source,
+                resolved_db.as_deref(),
+                hazard_n,
+                option_m,
+            ) {
+                Ok(log) => print!("{}", log),
+                Err(e) => {
+                    eprintln!("crow fix: {}", e);
                     process::exit(1);
                 }
             }
-            let verbose = args.iter().any(|a| a == "--verbose");
-            let filename = args.iter().skip(2)
-                .find(|a| !a.starts_with('-'))
-                .cloned()
-                .unwrap_or_else(|| {
-                    let config = parse_crowfile();
-                    config.entry
-                });
-            cmd_check(&filename, verbose);
         }
         "test" => {
             if args.iter().any(|a| a == "--parity") {
@@ -157,6 +212,8 @@ fn print_usage() {
     eprintln!("  crow run -i file.crow  run with interpreter (slow, for debugging)");
     eprintln!("  crow check             auto-verify project (uses crowfile)");
     eprintln!("  crow check file.crow   auto-verify a specific file");
+    eprintln!("  crow check --db <url>  + schema-aware db checks (or db = '…' in crowfile)");
+    eprintln!("  crow fix file.crow --hazard N [--option M]   apply a fix from the check report");
     eprintln!("  crow fmt               format project (uses crowfile)");
     eprintln!("  crow fmt file.crow     format a specific file");
     eprintln!("  crow fmt --check       check formatting without changing files");
@@ -1622,11 +1679,43 @@ fn format_location(filename: &str, issue: &checker::Issue, fn_lines: &std::colle
     filename.to_string()
 }
 
-fn cmd_check(filename: &str, verbose: bool) {
+fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool) {
     use std::io::{self, Write, BufRead};
 
     let mut result = run_check_pipeline(filename);
     print_check_summary(&result, verbose);
+
+    // Schema-aware database checks (Level 1). Advisory unless --strict.
+    let source = read_file(filename);
+    let resolved_db = db_url.or_else(crowfile_db_url);
+    match db_check::run(filename, &source, resolved_db.as_deref()) {
+        Ok(db_result) => {
+            if let Some(report) =
+                db_check::report::render_all(&db_result.hazards, &source)
+            {
+                let n = db_result.hazards.len();
+                println!(
+                    "\n  database checks: \x1b[33m{} finding{}\x1b[0m\n",
+                    n,
+                    if n == 1 { "" } else { "s" }
+                );
+                println!("{}", report);
+                if strict {
+                    process::exit(1);
+                }
+            } else if db_result.schema_checked {
+                println!("  \x1b[32m✓ database checks clean\x1b[0m — {} SQL call{} verified against schema",
+                    db_result.sql_calls, if db_result.sql_calls == 1 { "" } else { "s" });
+            } else if db_result.sql_calls > 0 {
+                println!(
+                    "  \x1b[90m{} SQL call{} found — pass --db <url> (or set db = '…' in crowfile) for schema-aware checks\x1b[0m",
+                    db_result.sql_calls,
+                    if db_result.sql_calls == 1 { "" } else { "s" }
+                );
+            }
+        }
+        Err(e) => println!("  \x1b[90mdatabase checks skipped: {}\x1b[0m", e),
+    }
 
     if result.issues.is_empty() {
         return;
@@ -1912,6 +2001,22 @@ fn cmd_run_file_interpreted(filename: &str) {
     if let Err(e) = interpreter.run(&stmts) {
         eprintln!("runtime error: {}", e);
         process::exit(1);
+    }
+}
+
+/// Lenient lookup of the optional `db = 'url'` variable in the crowfile.
+/// Unlike parse_crowfile this never exits — no crowfile just means no url.
+fn crowfile_db_url() -> Option<String> {
+    let source = std::fs::read_to_string("crowfile").ok()?;
+    let stmts = build(&source).ok()?;
+    let mut interpreter = Interpreter::new();
+    interpreter.run(&stmts).ok()?;
+    match interpreter.get_var("db") {
+        Some(val) => match &val.value {
+            value::Value::Str(s) => Some(s.clone()),
+            _ => None,
+        },
+        None => None,
     }
 }
 

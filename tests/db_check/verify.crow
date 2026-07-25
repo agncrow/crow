@@ -1,0 +1,10 @@
+--- fixture: SQL-vs-schema verification findings (1f)
+use db
+
+conn = connect['sqlite://fixture.db']
+email = 'a@b.c'
+
+df = query[conn, 'SELECT nmae FROM users']
+rows = query[conn, 'SELECT name FROM usrs']
+one = query[conn, 'SELECT name FROM users WHERE email = ? AND id = ?', [email]]
+bad = query[conn, 'SELECT name FROM users WHERE email = "`email`"']
