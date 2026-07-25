@@ -146,6 +146,59 @@ placement) from work that doesn't (refresh) — likely a teach, not a proof.
 **Status: revisit after the store/claim (Level-3/persist) design round —
 explicitly queued at Vijay's request.**
 
+---
+
+# Fundamentals audit (July 25) — gaps vs. other languages, not from finch
+
+A deliberate sweep: what do mainstream languages consider table stakes that
+Crow neither has nor has documented-rejected? Five items survived the
+filter; everything else (generators, channels, generics, closures, match)
+is either covered by existing design or already rejected on the record.
+
+## F-6. User testing story — the biggest gap
+
+World-class internal testing (parity corpus, book runner, check's
+edge-gen + snapshots) and no way for a user to write a test beyond bare
+`assert`. Proposal: `crow test` discovers `*_test.crow` / `test_*` fns,
+runs each in BOTH modes (user code gets the parity guarantee free),
+failure = error value (assert produces one; fallible code propagates in
+with `.trace`). Native assert introspection: assert is a builtin, so the
+runtime can report operand values without pytest-style AST magic.
+Rejected: matcher DSLs, fixture frameworks. Design questions: two-arg
+`assert[actual, expected]` diff form; test parallelism + isolation for
+impure tests; snapshot[] for users; doctest generalization of the book
+runner.
+
+## F-7. Datetime depth — audit required, blocks F-2
+
+`now/date/elapsed` + frame datetime columns exist; timezones, parsing,
+durations, market-calendar arithmetic likely don't. The domain is
+time-obsessed (stale prints, ET market hours) and `age[x]` (F-2) is time
+arithmetic. First step is an audit, then a small principled surface.
+
+## F-8. Constrained values — the stringly-typed status problem
+
+`if status eq 'actve'` compiles and is silently never true. Sketch:
+`choice status = ['active', 'closed', 'pending']` — validator rejects
+literals outside the set at compare/assign sites. No match, no payloads —
+just "the compiler knows the legal values." Needs the vocabulary-rule
+audit.
+
+## F-9. Money — decide the decimal question deliberately
+
+All P&L examples are IEEE floats in a language whose dogfood is a trading
+system. Options: real decimal type (heavy) / int-cents as blessed idiom +
+Design Note + checker nudge (cheap, my lean) / documented float
+acceptance. Currently undecided by omission — that's the gap.
+
+## F-10. Interop — formalize or reject the Python bridge
+
+Today's answer is `shell[]` (finch's own sklearn call), now non-blocking
+via `later[]`. Options: blessed subprocess-JSON bridge / real FFI /
+documented 1.x rejection. Any is defensible; drifting isn't. Related
+kernel work, not language design: parquet/arrow IO for frames — data-
+science table stakes.
+
 # Check roadmap (no language change needed)
 
 Detectors buildable on current machinery, from the same mining:
