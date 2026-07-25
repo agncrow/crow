@@ -1,0 +1,7 @@
+--- later[]: background scheduling. The interpreter runs the work inline
+--- (a legal schedule of "eventually"); compiled mode runs it on a thread
+--- and waits for stragglers at exit. Output is one deterministic line.
+fn announce[msg]
+    log[msg]
+
+later[announce, 'background work done']

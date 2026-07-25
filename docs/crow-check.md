@@ -80,10 +80,14 @@ acknowledgment comment. Current members: stale snapshot (move the query into
 the view), remote query in view (move behind a handler refresh).
 
 **Tier 3 — design work.** The cure is a restructuring only the developer can
-choose — or the language cannot express it yet. Blocking-in-view's real fix
-is a background-work primitive (proposal F-1 in `discovered-features.md`);
-the one-way latch's fix is modeling ("derive from ground truth"). The check
-teaches; the code is yours.
+choose — or the language cannot express it yet. The one-way latch's fix is
+modeling ("derive from ground truth"). The check teaches; the code is yours.
+
+Blocking-in-view graduated from Tier 3 to Tier 2 when `later[]` shipped:
+the interactive check loop offers `f = fix`, which rewrites the bare
+`helper[]` call in the handler to `later[helper]` and re-checks. Slow work
+scheduled via `later[]` is the sanctioned home for blocking calls and is
+never flagged.
 
 ### Where data belongs in a live app — the decision matrix these checks enforce
 
@@ -91,7 +95,8 @@ teaches; the code is yours.
 |---|---|---|
 | local (sqlite) state | query inside the view — fresh every render | stale-snapshot pushes in |
 | remote (network db) state | re-query in a handler, on demand | remote-query-in-view pushes out of render; stale-snapshot still bars startup-forever |
-| periodic / background freshness | not expressible yet — proposals F-1/F-3 | both checks point there |
+| on-demand background work | `later[fn]` from a handler; results land in state | blocking-in-view teaches and applies it |
+| periodic freshness | not expressible yet — proposal F-3 (`serve` refresh) | stale-loop-read points there |
 
 ## Accepting a hazard
 

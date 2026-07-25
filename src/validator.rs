@@ -27,6 +27,7 @@ const CORE_RESERVED: &[&str] = &[
     "shell",
     "hash",
     "find", "matches", "sub", "any", "all",
+    "later", "running",
     "now", "date", "elapsed",
     "cpu", "gpu", "nodes",
     "grad",
@@ -76,6 +77,7 @@ const BUILTINS: &[&str] = &[
     "hash",
     // Regex
     "find", "matches", "sub", "any", "all",
+    "later", "running",
     // Date/time
     "now", "date", "elapsed",
     // Resource

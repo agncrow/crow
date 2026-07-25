@@ -1628,6 +1628,40 @@ fn run_binary(binary: &std::path::Path, extra_args: &[String]) {
     process::exit(status.code().unwrap_or(1));
 }
 
+/// Tier-2 applier for blocking-in-view: inside `view`'s body, rewrite the
+/// bare call `helper[]` to `later[helper]` — the work moves off the live
+/// loop and its state writes re-render every client. Only fires on the
+/// exact zero-arg statement shape; anything else stays a manual edit.
+fn apply_later_fix(filename: &str, view: &str, helper: &str) -> Result<(), String> {
+    let source = read_file(filename);
+    let mut lines: Vec<String> = source.lines().map(|s| s.to_string()).collect();
+    let decl = format!("fn {}[", view);
+    let start = lines
+        .iter()
+        .position(|l| l.trim_start().starts_with(&decl))
+        .ok_or_else(|| format!("could not find fn {}", view))?;
+    let needle = format!("{}[]", helper);
+    for line in lines.iter_mut().skip(start + 1) {
+        let trimmed = line.trim_start();
+        if !line.starts_with(' ') && !trimmed.is_empty() {
+            break; // left the fn body
+        }
+        if trimmed == needle {
+            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+            *line = format!("{}later[{}]", indent, helper);
+            let new_source = lines.join("\n") + "\n";
+            build(&new_source).map_err(|e| format!("rewrite would not parse: {}", e))?;
+            std::fs::write(filename, new_source)
+                .map_err(|e| format!("could not write {}: {}", filename, e))?;
+            return Ok(());
+        }
+    }
+    Err(format!(
+        "no bare `{}[]` call in {} — the call passes arguments or is part of an expression; move it into a zero-arg fn and call later[…] manually",
+        helper, view
+    ))
+}
+
 fn run_check_pipeline(filename: &str) -> checker::CheckResult {
     let source = read_file(filename);
     let stmts = match build(&source) {
@@ -1763,9 +1797,12 @@ fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool
         // Show prompt with available commands
         let has_try = issue.try_input().is_some();
         let is_regression = matches!(issue, checker::Issue::RegressionChange { .. });
+        let later_fixable = matches!(issue,
+            checker::Issue::BlockingInView { path, .. } if path.len() >= 3);
         let mut prompt_parts = vec!["enter = recheck", "s = skip"];
         if has_try { prompt_parts.push("t = try input"); }
         if is_regression { prompt_parts.push("a = accept new"); }
+        if later_fixable { prompt_parts.push("f = fix (later[])"); }
         prompt_parts.push("q = quit");
         print!("\n        {} > ", prompt_parts.join(", "));
         io::stdout().flush().unwrap();
@@ -1792,6 +1829,24 @@ fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool
             }
             "s" => {
                 idx += 1;
+            }
+            "f" if later_fixable => {
+                if let checker::Issue::BlockingInView { view, path, .. } = issue {
+                    let helper = path[1].clone();
+                    let view = view.clone();
+                    match apply_later_fix(filename, &view, &helper) {
+                        Ok(()) => {
+                            println!("
+  rewrote {}: {}[] → later[{}] — rechecking...", filename, helper, helper);
+                            result = run_check_pipeline(filename);
+                            print_check_summary(&result, false);
+                            if result.issues.is_empty() { break; }
+                            idx = 0;
+                        }
+                        Err(e) => println!("
+  could not apply: {}", e),
+                    }
+                }
             }
             "t" if has_try => {
                 // Run the try input through the interpreter

@@ -14,6 +14,7 @@ use crate::value::{CrowValue, Value};
 const IMPURE_BUILTINS: &[&str] = &[
     "read", "write", "log", "input", "rand", "time", "sleep", "env", "exit",
     "args", "exists", "mkdir", "ls", "rm", "mv", "cp",
+    "later", "running", "shell",
 ];
 
 /// All builtin function names (reused from validator for undefined-variable detection).
@@ -35,6 +36,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     "cpu", "gpu",
     "shell", "elapsed",
     "serve", "route", "page",
+    "later", "running",
 ];
 
 // --- Issue types ---
@@ -146,11 +148,18 @@ impl Issue {
                 },
             Issue::UnreachableCode { .. } =>
                 "remove the dead code or move it before the return".to_string(),
-            Issue::BlockingInView { builtin, .. } =>
-                format!(
-                    "views and handlers run on the live loop — do the {}[] work before serve[] (or in the data path) and read the result from state",
-                    builtin
-                ),
+            Issue::BlockingInView { builtin, path, .. } =>
+                if path.len() >= 3 {
+                    format!(
+                        "schedule it off the loop: later[{}] — the work runs in the background and its state writes re-render every client",
+                        path[1]
+                    )
+                } else {
+                    format!(
+                        "extract the {}[] work into a fn and schedule it with later[fn] — results land in state, every client stays live",
+                        builtin
+                    )
+                },
             Issue::StaleSnapshot { var, .. } =>
                 format!(
                     "move the query into the view so every render sees current data, or re-query '{}' in the handler that changes it",
@@ -200,7 +209,20 @@ pub fn find_blocking_in_views(
         call_graph.insert(name.clone(), callees);
     }
 
-    let roots: BTreeSet<&String> = ctx.views.iter().chain(ctx.view_handlers.iter()).collect();
+    // Fns scheduled via later[] are the sanctioned home for slow work —
+    // they run off the loop, so they are never blocking roots even when
+    // they are also referenced as handlers.
+    let mut later_targets: BTreeSet<String> = BTreeSet::new();
+    for sig in ctx.functions.values() {
+        collect_later_target_names(&sig.body, &mut later_targets);
+    }
+
+    let roots: BTreeSet<&String> = ctx
+        .views
+        .iter()
+        .chain(ctx.view_handlers.iter())
+        .filter(|r| !later_targets.contains(*r))
+        .collect();
     let mut issues = Vec::new();
     for root in roots {
         let mut path = vec![root.clone()];
@@ -217,6 +239,60 @@ pub fn find_blocking_in_views(
         }
     }
     issues
+}
+
+/// Fn names appearing as later[f]/running[f] targets anywhere in a body.
+fn collect_later_target_names(body: &[Stmt], out: &mut BTreeSet<String>) {
+    fn walk(e: &Expr, out: &mut BTreeSet<String>) {
+        if let Expr::Call { callee, args } = e {
+            if let Expr::Ident(name) = callee.as_ref() {
+                if (name == "later" || name == "running") && !args.is_empty() {
+                    if let Expr::Ident(target) = &args[0] {
+                        out.insert(target.clone());
+                    }
+                }
+            }
+            walk(callee, out);
+            for a in args {
+                walk(a, out);
+            }
+        } else if let Expr::BinOp { left, right, .. } = e {
+            walk(left, out);
+            walk(right, out);
+        } else if let Expr::UnaryOp { expr, .. } = e {
+            walk(expr, out);
+        } else if let Expr::FieldAccess { object, .. } = e {
+            walk(object, out);
+        } else if let Expr::Array(items) = e {
+            for i in items {
+                walk(i, out);
+            }
+        } else if let Expr::Named { value, .. } = e {
+            walk(value, out);
+        }
+    }
+    for stmt in body {
+        match stmt {
+            Stmt::Assign { value, .. } => walk(value, out),
+            Stmt::ExprStmt(e) => walk(e, out),
+            Stmt::Return(Some(e)) => walk(e, out),
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                walk(condition, out);
+                collect_later_target_names(then_body, out);
+                if let Some(eb) = else_body {
+                    collect_later_target_names(eb, out);
+                }
+            }
+            Stmt::For { body, .. } | Stmt::While { body, .. } => {
+                collect_later_target_names(body, out);
+            }
+            _ => {}
+        }
+    }
 }
 
 fn reach_blocking(
@@ -1433,6 +1509,22 @@ pub fn run_check(
 mod tests {
     use super::*;
     use crate::type_infer::TypeContext;
+
+    #[test]
+    fn later_is_the_sanctioned_blocking_boundary() {
+        // A handler that reaches sleep[] directly is flagged; the same slow
+        // work scheduled via later[] is the prescribed fix and must be clean.
+        let src = "use web, ui\n\ncount = 0\n\nfn slow_work[]\n    sleep[2]\n    count = count + 1\n\nfn go[]\n    later[slow_work]\n\nview render[]\n    return div[p['`count`'], button['go', click = go]]\n\nserve[3000]\n";
+        let stmts = crate::build(src).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        let issues = find_blocking_in_views(&ctx, &find_fn_lines(&stmts));
+        assert!(
+            issues.is_empty(),
+            "later[]-scheduled work must not be flagged as blocking, got {:?}",
+            issues
+        );
+    }
 
     #[test]
     fn remote_query_in_view_flagged_sqlite_not() {

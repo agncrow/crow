@@ -3,6 +3,7 @@ pub mod distributed;
 pub mod frame;
 pub mod gpu;
 pub mod io;
+pub mod later;
 pub mod linalg;
 pub mod nn;
 pub mod pool;
