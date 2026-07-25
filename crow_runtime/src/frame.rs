@@ -558,59 +558,6 @@ fn infer_and_convert_refs(raw: &[&str], valid: &[bool]) -> Column {
     Column::Str(raw.iter().map(|s| s.to_string()).collect())
 }
 
-/// Infer column type from raw string values and convert.
-fn infer_and_convert(raw: &[String], valid: &[bool]) -> Column {
-    // Try int first, then float, then datetime, then fall back to string
-    let valid_values: Vec<&str> = raw.iter().zip(valid.iter())
-        .filter(|&(_, &v)| v)
-        .map(|(s, _)| s.as_str())
-        .collect();
-
-    if valid_values.is_empty() {
-        // All missing — default to str
-        return Column::Str(raw.to_vec());
-    }
-
-    // Try int
-    if valid_values.iter().all(|s| s.parse::<i64>().is_ok()) {
-        let data: Vec<i64> = raw.iter().zip(valid.iter())
-            .map(|(s, &v)| if v { s.parse().unwrap_or(0) } else { 0 })
-            .collect();
-        return Column::Int(data);
-    }
-
-    // Try float
-    if valid_values.iter().all(|s| s.parse::<f64>().is_ok()) {
-        let data: Vec<f64> = raw.iter().zip(valid.iter())
-            .map(|(s, &v)| if v { s.parse().unwrap_or(f64::NAN) } else { f64::NAN })
-            .collect();
-        return Column::Float(data);
-    }
-
-    // Try datetime (ISO 8601 patterns)
-    if valid_values.iter().all(|s| parse_datetime(s).is_some()) {
-        let mut millis = Vec::with_capacity(raw.len());
-        let mut offsets = Vec::with_capacity(raw.len());
-        for (s, &v) in raw.iter().zip(valid.iter()) {
-            if v {
-                if let Some((m, o)) = parse_datetime(s) {
-                    millis.push(m);
-                    offsets.push(o);
-                } else {
-                    millis.push(0);
-                    offsets.push(0);
-                }
-            } else {
-                millis.push(0);
-                offsets.push(0);
-            }
-        }
-        return Column::DateTime(millis, offsets);
-    }
-
-    // Fall back to string
-    Column::Str(raw.to_vec())
-}
 
 /// Parse ISO 8601 datetime string → (epoch_millis, offset_minutes).
 /// Supports: 2024-01-15, 2024-01-15T10:30:00, 2024-01-15T10:30:00Z,
@@ -1489,34 +1436,6 @@ fn aggregate_by_groups(col: &Column, valid: &[bool], group_ids: &[u32], ngroups:
     }
 }
 
-fn aggregate_column(col: &Column, valid: &[bool], rows: &[usize], agg: AggFn) -> f64 {
-    match agg {
-        AggFn::Count => {
-            rows.iter().filter(|&&r| valid[r]).count() as f64
-        }
-        _ => {
-            // Extract numeric values
-            let vals: Vec<f64> = rows.iter()
-                .filter(|&&r| valid[r])
-                .map(|&r| match col {
-                    Column::Int(v) => v[r] as f64,
-                    Column::Float(v) => v[r],
-                    Column::Bool(v) => if v[r] { 1.0 } else { 0.0 },
-                    _ => f64::NAN,
-                })
-                .filter(|v| !v.is_nan())
-                .collect();
-            if vals.is_empty() { return f64::NAN; }
-            match agg {
-                AggFn::Sum => vals.iter().sum(),
-                AggFn::Mean => vals.iter().sum::<f64>() / vals.len() as f64,
-                AggFn::Min => vals.iter().cloned().fold(f64::INFINITY, f64::min),
-                AggFn::Max => vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
-                AggFn::Count => unreachable!(),
-            }
-        }
-    }
-}
 
 fn gather_column(col: &Column, valid: &[bool], indices: &[Option<usize>]) -> (Column, Vec<bool>) {
     let new_valid: Vec<bool> = indices.iter().map(|opt| {

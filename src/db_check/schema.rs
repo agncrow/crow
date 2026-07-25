@@ -21,6 +21,10 @@ pub struct TableSchema {
 #[derive(Debug, Clone, Default)]
 pub struct Schema {
     pub tables: BTreeMap<String, TableSchema>,
+    /// Which introspector produced this ("sqlite"/"postgres"/"offline") —
+    /// read by tests today; fix lowering will dispatch on it when the
+    /// generated SQL diverges per backend.
+    #[allow(dead_code)]
     pub backend: String,
 }
 

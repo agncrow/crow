@@ -333,7 +333,7 @@ impl<'a> Validator<'a> {
                 self.validate_expr(index);
                 self.validate_expr(value);
             }
-            Stmt::Use { path, alias } => {
+            Stmt::Use { path, alias: _ } => {
                 // Built-in modules: register all their function and constant names
                 // so validate_call doesn't flag them as undefined.
                 // The registry was already populated during type inference (Pass 1).
