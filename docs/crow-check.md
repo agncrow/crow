@@ -31,6 +31,19 @@ language, followed by a ranked fix menu — safest first. Constraint fixes rank
 above code rewrites because a database rule binds **every** writer, including
 programs that are not this one.
 
+## Live-loop checks (no database needed)
+
+Views and event handlers run on the live loop — mined from a production
+trading system's bug history:
+
+| Finding | What it means |
+|---|---|
+| blocking in view/handler | `sleep`/`input`/`shell` reachable (directly or through helpers, path shown) — every connected client freezes while it runs. Do the work before `serve[]`; render-time `query` is fine and deliberately not flagged. |
+| stale snapshot | a top-level variable queried once at startup is read by a view — every render serves launch-time data. Query inside the view, or re-query in a handler (which clears the finding). |
+
+The language gaps these point at (background work, freshness, periodicity)
+are documented as reviewable proposals in `discovered-features.md`.
+
 ## crow fix
 
 Each hazard's menu is executable:

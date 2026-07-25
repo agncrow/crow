@@ -33,6 +33,8 @@ pub(crate) const BUILTINS: &[&str] = &[
     "json", "encode",
     "error",
     "cpu", "gpu",
+    "shell", "elapsed",
+    "serve", "route", "page",
 ];
 
 // --- Issue types ---
@@ -44,6 +46,12 @@ pub enum Issue {
     UndefinedVariable { func: String, var: String, line: usize },
     EdgeCaseCrash { func: String, input_desc: String, error: String },
     RegressionChange { func: String, input_desc: String, was: String, now: String },
+    /// A view or event handler reaches a blocking builtin — it runs on the
+    /// live loop, so every connected client freezes while it runs.
+    BlockingInView { view: String, builtin: String, path: Vec<String>, line: usize },
+    /// A view/handler reads a variable captured from the database at startup —
+    /// every render serves launch-time data, forever.
+    StaleSnapshot { view: String, var: String, source_line: usize, line: usize },
 }
 
 impl Issue {
@@ -59,6 +67,16 @@ impl Issue {
                 format!("{} crashes on {} — {}", func, input_desc, error),
             Issue::RegressionChange { func, input_desc, was, now } =>
                 format!("{} behavior changed: {} was {}, now {}", func, input_desc, was, now),
+            Issue::BlockingInView { view, builtin, path, .. } =>
+                format!(
+                    "'{}' can freeze every connected client — {}[] blocks the live loop ({})",
+                    view, builtin, path.join(" → ")
+                ),
+            Issue::StaleSnapshot { view, var, source_line, .. } =>
+                format!(
+                    "'{}' serves launch-time data — '{}' was queried once at startup (line {}) and never refreshed",
+                    view, var, source_line
+                ),
         }
     }
 
@@ -69,6 +87,8 @@ impl Issue {
             Issue::UndefinedVariable { line, .. } => *line,
             Issue::EdgeCaseCrash { .. } => 0,
             Issue::RegressionChange { .. } => 0,
+            Issue::BlockingInView { line, .. } => *line,
+            Issue::StaleSnapshot { line, .. } => *line,
         }
     }
 
@@ -79,6 +99,8 @@ impl Issue {
             Issue::UnusedVariable { func, .. } => func,
             Issue::UnreachableCode { func, .. } => func,
             Issue::UndefinedVariable { func, .. } => func,
+            Issue::BlockingInView { view, .. } => view,
+            Issue::StaleSnapshot { view, .. } => view,
             Issue::EdgeCaseCrash { func, .. } => func,
             Issue::RegressionChange { func, .. } => func,
         }
@@ -104,6 +126,16 @@ impl Issue {
                 },
             Issue::UnreachableCode { .. } =>
                 "remove the dead code or move it before the return".to_string(),
+            Issue::BlockingInView { builtin, .. } =>
+                format!(
+                    "views and handlers run on the live loop — do the {}[] work before serve[] (or in the data path) and read the result from state",
+                    builtin
+                ),
+            Issue::StaleSnapshot { var, .. } =>
+                format!(
+                    "move the query into the view so every render sees current data, or re-query '{}' in the handler that changes it",
+                    var
+                ),
             Issue::UndefinedVariable { var, .. } =>
                 format!("'{}' is not defined — check for typos or add an assignment", var),
             Issue::EdgeCaseCrash { error, .. } => {
@@ -119,6 +151,180 @@ impl Issue {
             }
             Issue::RegressionChange { was, now, .. } =>
                 format!("was {} — verify the new result {} is correct, then press 'a' to accept", was, now),
+        }
+    }
+}
+
+// --- Blocking-in-view analysis ---
+
+/// Builtins that stall the caller for arbitrary time. A view renders for
+/// every connected client and a handler runs on the live loop — reaching one
+/// of these freezes the whole app for everyone (the asyncio-event-loop bug
+/// class: slow work executed directly on the loop). Deliberately excludes
+/// `query`/`exec`: render-time database reads are the blessed derive idiom.
+const BLOCKING_BUILTINS: &[&str] = &["sleep", "input", "shell"];
+
+/// For each view and event handler, find a call path to a blocking builtin.
+pub fn find_blocking_in_views(
+    ctx: &TypeContext,
+    fn_lines: &BTreeMap<String, usize>,
+) -> Vec<Issue> {
+    let mut call_graph: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (name, sig) in &ctx.functions {
+        let mut callees = BTreeSet::new();
+        collect_callees_from_stmts(&sig.body, &mut callees);
+        call_graph.insert(name.clone(), callees);
+    }
+
+    let roots: BTreeSet<&String> = ctx.views.iter().chain(ctx.view_handlers.iter()).collect();
+    let mut issues = Vec::new();
+    for root in roots {
+        let mut path = vec![root.clone()];
+        let mut visited = BTreeSet::new();
+        if let Some((builtin, chain)) =
+            reach_blocking(root, &call_graph, &mut path, &mut visited)
+        {
+            issues.push(Issue::BlockingInView {
+                view: root.clone(),
+                builtin,
+                path: chain,
+                line: fn_lines.get(root).copied().unwrap_or(0),
+            });
+        }
+    }
+    issues
+}
+
+fn reach_blocking(
+    fn_name: &str,
+    call_graph: &BTreeMap<String, BTreeSet<String>>,
+    path: &mut Vec<String>,
+    visited: &mut BTreeSet<String>,
+) -> Option<(String, Vec<String>)> {
+    if !visited.insert(fn_name.to_string()) {
+        return None;
+    }
+    let callees = call_graph.get(fn_name)?;
+    for c in callees {
+        if BLOCKING_BUILTINS.contains(&c.as_str()) {
+            let mut chain = path.clone();
+            chain.push(c.clone());
+            return Some((c.clone(), chain));
+        }
+    }
+    for c in callees {
+        if call_graph.contains_key(c) {
+            path.push(c.clone());
+            if let Some(found) = reach_blocking(c, call_graph, path, visited) {
+                return Some(found);
+            }
+            path.pop();
+        }
+    }
+    None
+}
+
+// --- Stale-snapshot analysis ---
+
+/// Top-level variables holding query results are a snapshot of the database
+/// at launch. A view or handler that reads one serves that snapshot forever —
+/// the "stale coverage / stale prints" class. Refreshing the variable in any
+/// handler clears the hazard; the blessed idiom is querying inside the view.
+pub fn find_stale_snapshots(
+    ctx: &TypeContext,
+    top_level_stmts: &[Stmt],
+    fn_lines: &BTreeMap<String, usize>,
+) -> Vec<Issue> {
+    // 1. Startup snapshots: top-level `x = …query[…]…`.
+    let mut snapshots: BTreeMap<String, usize> = BTreeMap::new();
+    let mut line = 0usize;
+    for stmt in top_level_stmts {
+        match stmt {
+            Stmt::Line(n) => line = *n,
+            Stmt::Assign { name, value } if expr_calls_query(value) => {
+                snapshots.insert(name.clone(), line);
+            }
+            _ => {}
+        }
+    }
+    if snapshots.is_empty() {
+        return Vec::new();
+    }
+
+    // 2. A handler that re-queries the variable keeps it fresh — not a hazard.
+    for handler in &ctx.view_handlers {
+        if let Some(sig) = ctx.functions.get(handler) {
+            let mut refreshed = BTreeSet::new();
+            collect_query_assigns(&sig.body, &mut refreshed);
+            for name in refreshed {
+                snapshots.remove(&name);
+            }
+        }
+    }
+
+    // 3. Views/handlers reading a snapshot serve launch-time data.
+    let mut issues = Vec::new();
+    for root in ctx.views.iter().chain(ctx.view_handlers.iter()) {
+        let Some(sig) = ctx.functions.get(root) else { continue };
+        let mut reads = BTreeSet::new();
+        collect_reads_from_stmts(&sig.body, &mut reads);
+        for (var, source_line) in &snapshots {
+            if reads.contains(var) {
+                issues.push(Issue::StaleSnapshot {
+                    view: root.clone(),
+                    var: var.clone(),
+                    source_line: *source_line,
+                    line: fn_lines.get(root).copied().unwrap_or(0),
+                });
+            }
+        }
+    }
+    issues
+}
+
+fn expr_calls_query(e: &Expr) -> bool {
+    match e {
+        Expr::Call { callee, args } => {
+            let is_query = match callee.as_ref() {
+                Expr::Ident(n) => n == "query",
+                Expr::FieldAccess { object, field } => {
+                    matches!(object.as_ref(), Expr::Ident(m) if m == "db") && field == "query"
+                }
+                _ => false,
+            };
+            is_query
+                || args.iter().any(expr_calls_query)
+                || expr_calls_query(callee)
+        }
+        Expr::BinOp { left, right, .. } => expr_calls_query(left) || expr_calls_query(right),
+        Expr::UnaryOp { expr, .. } => expr_calls_query(expr),
+        Expr::FieldAccess { object, .. } => expr_calls_query(object),
+        Expr::Array(items) => items.iter().any(expr_calls_query),
+        Expr::Named { value, .. } => expr_calls_query(value),
+        _ => false,
+    }
+}
+
+fn collect_query_assigns(body: &[Stmt], out: &mut BTreeSet<String>) {
+    for stmt in body {
+        match stmt {
+            Stmt::Assign { name, value } if expr_calls_query(value) => {
+                out.insert(name.clone());
+            }
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_query_assigns(then_body, out);
+                if let Some(eb) = else_body {
+                    collect_query_assigns(eb, out);
+                }
+            }
+            Stmt::For { body, .. } | Stmt::While { body, .. } => {
+                collect_query_assigns(body, out);
+            }
+            _ => {}
         }
     }
 }
@@ -267,10 +473,12 @@ fn collect_callees_from_expr(expr: &Expr, callees: &mut BTreeSet<String>) {
 // --- Static checks ---
 
 /// Find unused variables within a function body.
-fn find_unused_vars_in_fn(name: &str, params: &[String], body: &[Stmt]) -> Vec<Issue> {
+fn find_unused_vars_in_fn(
+    name: &str, params: &[String], body: &[Stmt], extra_reads: &BTreeSet<String>,
+) -> Vec<Issue> {
     let mut issues = Vec::new();
     let mut assigned: Vec<(String, usize)> = Vec::new();
-    let mut read: BTreeSet<String> = BTreeSet::new();
+    let mut read: BTreeSet<String> = extra_reads.clone();
     collect_reads_from_stmts(body, &mut read);
     for p in params {
         if !read.contains(p) {
@@ -411,14 +619,41 @@ fn check_unreachable(name: &str, stmts: &[Stmt], issues: &mut Vec<Issue>) {
 /// Find undefined variable references in a function body.
 /// A variable is undefined if it is read but not a parameter, not assigned before use,
 /// not a builtin, and not a user-defined function or struct name.
+/// Full stdlib export vocabulary, built once — keeps the undefined-variable
+/// check in agreement with what the registry actually provides (db, frame,
+/// web, …) instead of the frozen BUILTINS list.
+fn stdlib_names() -> &'static BTreeSet<String> {
+    static NAMES: std::sync::OnceLock<BTreeSet<String>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        crate::modules::ModuleRegistry::with_stdlib()
+            .all_function_names()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect()
+    })
+}
+
 fn find_undefined_vars_in_fn(
     name: &str, params: &[String], body: &[Stmt], ctx: &TypeContext,
 ) -> Vec<Issue> {
     let mut defined: BTreeSet<String> = BTreeSet::new();
     // Parameters are defined
     for p in params { defined.insert(p.clone()); }
-    // Builtins are defined
+    // Builtins are defined — the static list plus everything the module
+    // registry provides (db/web/frame/... exports) and, in views/handlers,
+    // the HTML element vocabulary.
     for b in BUILTINS { defined.insert(b.to_string()); }
+    for b in stdlib_names() { defined.insert(b.clone()); }
+    if ctx.views.contains(name) || ctx.view_handlers.contains(name) {
+        for el in crate::lower::UI_ELEMENTS {
+            defined.insert(el.to_string());
+        }
+        // Reactive state is the sanctioned channel: views and handlers read
+        // top-level variables (the function-scope isolation exemption).
+        for v in ctx.vars.keys() {
+            defined.insert(v.clone());
+        }
+    }
     // User-defined functions and structs are defined (global scope)
     for fname in ctx.functions.keys() { defined.insert(fname.clone()); }
     for sname in ctx.structs.keys() { defined.insert(sname.clone()); }
@@ -547,7 +782,7 @@ pub fn run_static_checks(ctx: &TypeContext, top_level_stmts: &[Stmt]) -> Vec<Iss
     // Check user-defined functions
     for (name, sig) in &ctx.functions {
         let param_names: Vec<String> = sig.params.iter().map(|(n, _)| n.clone()).collect();
-        issues.extend(find_unused_vars_in_fn(name, &param_names, &sig.body));
+        issues.extend(find_unused_vars_in_fn(name, &param_names, &sig.body, &BTreeSet::new()));
         issues.extend(find_unreachable_code(name, &sig.body));
         issues.extend(find_undefined_vars_in_fn(name, &param_names, &sig.body, ctx));
     }
@@ -557,7 +792,15 @@ pub fn run_static_checks(ctx: &TypeContext, top_level_stmts: &[Stmt]) -> Vec<Iss
         .collect();
     if !top_stmts.is_empty() {
         let top_owned: Vec<Stmt> = top_stmts.into_iter().cloned().collect();
-        issues.extend(find_unused_vars_in_fn("<top-level>", &[], &top_owned));
+        // Views and handlers read top-level reactive state — their reads
+        // keep those variables "used".
+        let mut view_reads: BTreeSet<String> = BTreeSet::new();
+        for name in ctx.views.iter().chain(ctx.view_handlers.iter()) {
+            if let Some(sig) = ctx.functions.get(name) {
+                collect_reads_from_stmts(&sig.body, &mut view_reads);
+            }
+        }
+        issues.extend(find_unused_vars_in_fn("<top-level>", &[], &top_owned, &view_reads));
         issues.extend(find_unreachable_code("<top-level>", &top_owned));
         issues.extend(find_undefined_vars_in_fn("<top-level>", &[], &top_owned, ctx));
     }
@@ -929,13 +1172,27 @@ pub fn run_check(
     let total_functions = all_fns.len();
 
     let mut issues = Vec::new();
+    let fn_lines = find_fn_lines(stmts);
 
     // 1. Static checks (functions + top-level code)
     issues.extend(run_static_checks(ctx, stmts));
 
-    // 2. Edge case generation (pure, non-recursive functions only)
+    // 1b. Views/handlers reaching blocking builtins freeze the live loop.
+    issues.extend(find_blocking_in_views(ctx, &fn_lines));
+
+    // 1c. Views/handlers serving launch-time query snapshots.
+    issues.extend(find_stale_snapshots(ctx, stmts, &fn_lines));
+
+    // 2. Edge case generation (pure, non-recursive functions only).
+    // Views and handlers are excluded: they build UI trees / mutate reactive
+    // state, and are exercised by rendering, not by synthetic inputs.
     let recursive_fns = find_recursive_functions(ctx);
-    let (edge_issues, new_snapshots) = run_edge_cases(ctx, stmts, &pure_fns, &recursive_fns);
+    let edge_candidates: BTreeSet<String> = pure_fns
+        .iter()
+        .filter(|f| !ctx.views.contains(*f) && !ctx.view_handlers.contains(*f))
+        .cloned()
+        .collect();
+    let (edge_issues, new_snapshots) = run_edge_cases(ctx, stmts, &edge_candidates, &recursive_fns);
     let edge_cases_generated = new_snapshots.values().map(|v| v.len()).sum::<usize>();
     issues.extend(edge_issues);
 
@@ -954,8 +1211,6 @@ pub fn run_check(
     let snapshots_saved = new_snapshots.len();
     save_snapshots(&new_snapshots);
 
-    let fn_lines = find_fn_lines(stmts);
-
     CheckResult {
         pure_fns,
         impure_fns,
@@ -972,6 +1227,61 @@ pub fn run_check(
 mod tests {
     use super::*;
     use crate::type_infer::TypeContext;
+
+    #[test]
+    fn stale_snapshot_detected_and_refresh_clears_it() {
+        // trades queried once at startup, served by the view forever → flagged.
+        let src = "use web, ui, db\n\nconn = connect['sqlite://x.db']\ntrades = query[conn, 'SELECT * FROM trades']\n\nview render[]\n    return div[table[trades]]\n\nserve[3000]\n";
+        let stmts = crate::build(src).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        let fn_lines = find_fn_lines(&stmts);
+        let issues = find_stale_snapshots(&ctx, &stmts, &fn_lines);
+        assert!(
+            issues.iter().any(|i| matches!(i,
+                Issue::StaleSnapshot { view, var, source_line, .. }
+                    if view == "render" && var == "trades" && *source_line == 4)),
+            "expected stale snapshot on trades, got {:?}",
+            issues
+        );
+
+        // Same program plus a handler that re-queries → hazard cleared.
+        let src2 = "use web, ui, db\n\nconn = connect['sqlite://x.db']\ntrades = query[conn, 'SELECT * FROM trades']\n\nfn refresh[]\n    trades = query[conn, 'SELECT * FROM trades']\n\nview render[]\n    return div[table[trades], button['refresh', click = refresh]]\n\nserve[3000]\n";
+        let stmts2 = crate::build(src2).unwrap();
+        let mut ctx2 = TypeContext::new();
+        ctx2.infer_program(&stmts2);
+        let issues2 = find_stale_snapshots(&ctx2, &stmts2, &find_fn_lines(&stmts2));
+        assert!(
+            !issues2.iter().any(|i| matches!(i, Issue::StaleSnapshot { .. })),
+            "handler refresh should clear the hazard, got {:?}",
+            issues2
+        );
+    }
+
+    #[test]
+    fn blocking_in_view_detected_transitively() {
+        let src = "use web, ui\n\ncount = 0\n\nfn slow_fetch[]\n    sleep[2]\n\nfn refresh_data[]\n    slow_fetch[]\n\nview render[]\n    return div[p['count: `count`'], button['refresh', click = refresh_data]]\n\nserve[3000]\n";
+        let stmts = crate::build(src).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        let fn_lines = find_fn_lines(&stmts);
+        let issues = find_blocking_in_views(&ctx, &fn_lines);
+        // The handler reaches sleep through a helper — flagged with the path.
+        assert!(
+            issues.iter().any(|i| matches!(i,
+                Issue::BlockingInView { view, builtin, path, .. }
+                    if view == "refresh_data" && builtin == "sleep"
+                       && path == &vec!["refresh_data".to_string(), "slow_fetch".to_string(), "sleep".to_string()])),
+            "expected transitive blocking issue, got {:?}",
+            issues
+        );
+        // The view itself is clean — not flagged.
+        assert!(
+            !issues.iter().any(|i| matches!(i,
+                Issue::BlockingInView { view, .. } if view == "render")),
+            "render does not block and must not be flagged"
+        );
+    }
 
     /// Helper: parse source, run type inference, return (stmts, ctx)
     fn parse_and_infer(src: &str) -> (Vec<Stmt>, TypeContext) {
