@@ -79,6 +79,27 @@ impl ModuleRegistry {
         self.modules.push(module);
     }
 
+    /// A registry with every stdlib module loaded — for tooling (checker,
+    /// LSP) that needs the full export vocabulary without a `use` context.
+    pub fn with_stdlib() -> Self {
+        let mut r = Self::new();
+        r.load(Arc::new(crate::modules::math::MathModule));
+        r.load(Arc::new(crate::modules::stats::StatsModule));
+        r.load(Arc::new(crate::modules::nn::NnModule));
+        r.load(Arc::new(crate::modules::io::IoModule));
+        r.load(Arc::new(crate::modules::frame::FrameModule));
+        r.load(Arc::new(crate::modules::db::DbModule));
+        r
+    }
+
+    /// Every function name provided by any loaded module.
+    pub fn all_function_names(&self) -> Vec<&str> {
+        self.modules
+            .iter()
+            .flat_map(|m| m.functions().iter().copied())
+            .collect()
+    }
+
     /// Check if a function name belongs to any loaded module.
     pub fn has_function(&self, name: &str) -> bool {
         self.fn_map.contains_key(name)
