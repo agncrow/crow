@@ -52,6 +52,7 @@
   - [View Blocks](ch11-01-views.md)
   - [Reactive State and Events](ch11-02-reactive-state.md)
   - [Components](ch11-03-components.md)
+  - [Slow Work and the Live Loop](ch11-04-background-work.md)
 
 - [Final Project: A Live Dashboard](ch12-00-final-project.md)
   - [Loading and Shaping the Data](ch12-01-data.md)

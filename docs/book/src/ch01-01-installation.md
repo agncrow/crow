@@ -18,3 +18,25 @@ crow
 
 You should see the usage help listing `run`, `build`, `new`, `fmt`,
 `check`, and `test`.
+
+## Editor Support
+
+Crow ships its own language server — diagnostics as you type, completions
+with inferred signatures, hover types, go-to-definition — as a subcommand
+of the same binary you just installed:
+
+```bash
+crow lsp
+```
+
+You never run that yourself; your editor does. For VS Code, build and
+install the extension once:
+
+```bash
+cd editors/vscode && npm install && npx @vscode/vsce package --allow-missing-repository
+code --install-extension crow-lang-0.1.0.vsix
+```
+
+Neovim, Helix, and Zed speak LSP natively — copy the snippet for your
+editor from `docs/crow-lsp.md`. Everything the editor shows comes from the
+real compiler pipeline, so the squiggles never disagree with `crow run`.
