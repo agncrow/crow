@@ -2924,6 +2924,42 @@ work is gone. Work that must survive a crash (placing an order) belongs in
 a durable queue the fn drains — see the claim-semantics proposal in
 `discovered-features.md`.
 
+### Periodic Freshness and the Loop Budget
+
+```
+serve[3000, refresh = 5, budget = 50]
+```
+
+| Named arg | Meaning |
+|-----------|---------|
+| `refresh = N` | re-render every connected session every N seconds. Render-time queries re-run, so pages stay current with zero user code. Missed ticks are skipped, never stacked — a slow render coalesces. |
+| `budget = M` | log any handler or render that takes more than M ms, with its name — the loop ships its own heartbeat. |
+
+There is no `every[]`, no timer builtin, and no way to write periodic user
+code. Periodicity is a property you declare on `serve`, not a loop you
+write.
+
+### Design Note: Periodicity Is Declared, Not Written
+
+**Evidence:** in the same production system that motivated `later`, a 1s
+status poll needed a hand-written in-flight guard so slow rounds couldn't
+stack out-of-order updates, and a 3s news poll starved a 60s universe
+refresh through a shared rate gate — four symptoms, one root cause: user
+code owned the clock. Every hand-rolled poll loop eventually needs the
+same three fixes (overlap guard, backoff, shutdown), and every codebase
+writes them badly once first.
+
+**What was considered:** an `every[N] { … }` block (rejected: it is the
+poll loop with nicer clothes — overlap, starvation, and shutdown become
+the user's problem again); a timer builtin (rejected: same, smaller).
+
+**Why this design:** the runtime owns the clock, so no-overlap
+(missed-tick skipping) and lifecycle come built in, and there is nothing
+to hand-roll badly. The `while + sleep` poll shape remains for scripts —
+`crow check` steers UI-shaped uses toward `refresh` (the stale-loop-read
+finding). Deferred: per-source refresh intervals, backoff policy for
+failing render queries.
+
 ### Design Note: The Loop Never Blocks
 
 **Evidence:** a production trading scanner froze in premarket because a

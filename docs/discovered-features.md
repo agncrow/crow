@@ -75,7 +75,13 @@ user-side arithmetic instead.
 
 ---
 
-## F-3. Language-owned periodicity — polls without overlap
+## F-3. Language-owned periodicity — polls without overlap ✅ SHIPPED
+
+Implemented as two named arguments on serve: `serve[port, refresh = N,
+budget = M]` — runtime-owned re-render interval (missed ticks skipped,
+never stacked) and a loop latency budget that logs slow handlers/renders.
+No `every[]`, no timers: periodicity is declared, not written (see the
+spec's Design Note). Original proposal kept below.
 
 **Evidence:** finch `a082820b` (1s orders poll needed a hand-written
 in-flight guard so slow polls don't overlap), plus the digest/TTL-refresh

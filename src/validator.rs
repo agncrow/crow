@@ -735,7 +735,7 @@ impl<'a> Validator<'a> {
             "elapsed" => argc == 2,
             // Web
             "route" => (2..=4).contains(&argc), // route[path, handler] / +method / legacy app-first
-            "serve" => argc == 1,                // serve[port]
+            "serve" => argc == 1 || argc == 3,   // serve[port] (pre-lower) or serve[port, refresh, budget]
             "respond" => argc == 2,
             "redirect" | "html" | "text" => argc == 1,
             "sqlite" => argc == 1,

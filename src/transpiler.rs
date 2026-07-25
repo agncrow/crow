@@ -1348,7 +1348,8 @@ impl Transpiler {
                             && (args.len() == 2
                                 || (args.len() == 3
                                     && matches!(self.ctx.infer_expr(&args[0]), CrowType::Str)));
-                        let noapp_serve = name == "serve" && args.len() == 1;
+                        let noapp_serve =
+                            name == "serve" && (args.len() == 1 || args.len() == 3);
                         if noapp_route || noapp_serve {
                             self.has_noapp_web = true;
                         }
@@ -3768,6 +3769,17 @@ impl Transpiler {
                     }
                     if name == "serve" && self.needs_crow_web && arg_strs.len() == 1 {
                         // serve[port] → implicit app: __crow_app.serve(port as u16).await.unwrap()
+                        return format!("__crow_app.serve({} as u16).await.unwrap()", arg_strs[0]);
+                    }
+                    if name == "serve" && self.needs_crow_web && arg_strs.len() == 3 {
+                        // serve[port, refresh, budget] (lowered form, 0 = unset):
+                        // configure the live runtime, then serve.
+                        if self.has_page_routes {
+                            return format!(
+                                "{{ crow_web::live::configure({} as i64, {} as i64); __crow_app.serve({} as u16).await.unwrap() }}",
+                                arg_strs[1], arg_strs[2], arg_strs[0]
+                            );
+                        }
                         return format!("__crow_app.serve({} as u16).await.unwrap()", arg_strs[0]);
                     }
                     if name == "respond" && self.needs_crow_web && arg_strs.len() == 2 {
@@ -7006,6 +7018,17 @@ mod tests {
         assert!(rust.contains("__crow_state.set(\"count\", serde_json::json!(0"), "should register count default in main\n{}", rust);
         // page[] should auto-inject __crow_handle
         assert!(rust.contains("__crow_handle"), "page should auto-inject __crow_handle\n{}", rust);
+    }
+
+    #[test]
+    fn test_serve_refresh_budget_emission() {
+        let rust = transpile("use web, ui\n\ncount = 0\n\nview render[]\n    return div[p['{count}']]\n\npage['/', render]\nserve[3000, refresh = 5, budget = 50]\n");
+        assert!(
+            rust.contains("crow_web::live::configure(5_i64 as i64, 50_i64 as i64)"),
+            "serve named args should configure the live runtime\n{}",
+            rust
+        );
+        assert!(rust.contains("__crow_app.serve(3000_i64 as u16)"), "{}", rust);
     }
 
     #[test]

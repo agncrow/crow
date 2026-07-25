@@ -107,6 +107,36 @@ One honest subtlety: in the interpreter (`crow run -i`, `crow test`),
 *atomically*, and "immediately" is a perfectly legal schedule. Tests get
 deterministic behavior; the compiled app gets true background threads.
 
+## Periodic freshness
+
+Some pages shouldn't wait for a click at all — a dashboard should just stay
+current. That's not a loop you write; it's a property you declare on
+`serve`:
+
+```crow,norun
+use web, ui
+
+status = 'ready'
+
+view render[]
+    return div[h1['Board'], p['`status`']]
+
+page['/', render]
+serve[3000, refresh = 5, budget = 50]
+```
+
+`refresh = 5` re-renders every connected session every five seconds —
+render-time queries re-run, so the page tracks the database with zero
+lines of update code. If a render is slow, missed ticks are *skipped*,
+never stacked. And `budget = 50` is the loop's own heartbeat: any handler
+or render over 50ms gets logged with its name, so a freezing loop is
+loud in development instead of mysterious in production.
+
+There is no `every[]` and no timer in Crow, deliberately: hand-rolled
+poll loops always end up needing an overlap guard, backoff, and shutdown
+handling, and every codebase writes them badly once first. The runtime
+owns the clock.
+
 ## What later is not
 
 `later` is for **responsiveness**; `for` is for **throughput**. Crunching
