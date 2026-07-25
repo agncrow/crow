@@ -1,0 +1,10 @@
+--- fixture: read-modify-write on a column (hazard 1b)
+use db
+
+conn = connect['sqlite://fixture.db']
+acct = 7
+amount = 50
+
+row = query[conn, 'SELECT balance FROM accounts WHERE id = ?', [acct]]
+bal = row.balance[0] + amount
+exec[conn, 'UPDATE accounts SET balance = ? WHERE id = ?', [bal, acct]]

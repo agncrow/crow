@@ -1,0 +1,10 @@
+--- fixture: paired writes with no transaction (hazard 1e)
+use db
+
+conn = connect['sqlite://fixture.db']
+amt = 100
+from_id = 1
+to_id = 2
+
+exec[conn, 'UPDATE accounts SET balance = balance - ? WHERE id = ?', [amt, from_id]]
+exec[conn, 'UPDATE accounts SET balance = balance + ? WHERE id = ?', [amt, to_id]]

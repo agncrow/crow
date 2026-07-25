@@ -1,0 +1,18 @@
+--- fixture: no hazards — constraint exists, single-statement writes, transact used
+use db
+
+conn = connect['sqlite://fixture.db']
+sym = 'AAPL'
+email = 'a@b.c'
+amt = 100
+
+u = query[conn, 'SELECT name FROM users WHERE email = ?', [email]]
+name = u.name[0]
+
+exec[conn, 'UPDATE accounts SET balance = balance - ? WHERE id = 1', [amt]]
+
+fn move_funds[t]
+    exec[t, 'UPDATE accounts SET balance = balance - 100 WHERE id = 1']
+    exec[t, 'UPDATE accounts SET balance = balance + 100 WHERE id = 2']
+
+transact[conn, move_funds]

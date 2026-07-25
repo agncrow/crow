@@ -1,0 +1,4 @@
+CREATE TABLE accounts (
+  id      INTEGER PRIMARY KEY,
+  balance REAL NOT NULL DEFAULT 0
+);

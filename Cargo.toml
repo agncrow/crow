@@ -20,3 +20,4 @@ sha2 = "0.10.9"
 md-5 = "0.10.6"
 chrono = "0.4.44"
 crow_db = { version = "0.1.0", path = "crow_db", features = ["sqlite"] }
+sqlparser = "0.62.0"
