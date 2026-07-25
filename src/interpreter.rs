@@ -1427,6 +1427,57 @@ impl Interpreter {
                 return self.registry.call(name, &arg_vals);
             }
 
+            // later[work, …] — background scheduling. The interpreter runs the
+            // work synchronously inline: "eventually, atomically" admits the
+            // immediate schedule, which keeps tests deterministic.
+            if name == "later" {
+                if args.is_empty() {
+                    return Err("later[] needs a function: later[work] or later[work, args…]".into());
+                }
+                let fname = match &args[0] {
+                    Expr::Ident(n) => n.clone(),
+                    _ => return Err("later[] first argument must be a function name".into()),
+                };
+                let val = self
+                    .env
+                    .get(&fname)
+                    .ok_or_else(|| format!("later[]: unknown function '{}'", fname))?;
+                let func = match &val.value {
+                    Value::Fn(f) => f.clone(),
+                    _ => {
+                        return Err(format!(
+                            "later[] first argument must be a function, got {}",
+                            val.value.type_name()
+                        ))
+                    }
+                };
+                let mut arg_vals = Vec::new();
+                for a in &args[1..] {
+                    arg_vals.push(self.eval_expr(a)?);
+                }
+                if func.params.len() != arg_vals.len() {
+                    return Err(format!(
+                        "later[{}]: function takes {} parameter{}, got {}",
+                        fname,
+                        func.params.len(),
+                        if func.params.len() == 1 { "" } else { "s" },
+                        arg_vals.len()
+                    ));
+                }
+                let _ = self.call_fn_value(&func, arg_vals)?;
+                return Ok(CrowValue::ok(Value::Bool(true)));
+            }
+            // running[work] — inline schedules complete instantly, so nothing
+            // is ever observably in flight in the interpreter.
+            if name == "running" {
+                match args.first() {
+                    Some(Expr::Ident(_)) => {
+                        return Ok(CrowValue::ok(Value::Bool(false)));
+                    }
+                    _ => return Err("running[] takes a function name: running[work]".into()),
+                }
+            }
+
             // Core builtins
             if self.is_builtin(name) {
                 let arg_vals: Vec<CrowValue> = args

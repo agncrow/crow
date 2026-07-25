@@ -32,6 +32,8 @@ enum LiveAction {
     Message(axum::extract::ws::Message),
     /// A poll timer fired — time to re-fetch data sources.
     PollTick,
+    /// A later[] background fn finished — apply its state writes.
+    LaterDelta(Vec<(String, serde_json::Value)>),
 }
 
 /// A data source that fetches from a URL — one-time or periodic.
@@ -51,6 +53,17 @@ pub struct CrowLiveState {
     pub data: HashMap<String, serde_json::Value>,
     /// Registered data sources (fetch/poll).
     pub sources: Vec<DataSource>,
+    /// Session-scoped channel delivering later[] state deltas to the live loop.
+    pub later_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<(String, serde_json::Value)>>>,
+    /// Distinguishes sessions in the later[] in-flight registry.
+    pub session_id: u64,
+}
+
+/// In-flight registry for later[] work, keyed "session:fn".
+fn later_registry() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static R: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    R.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
 }
 
 impl CrowLiveState {
@@ -59,7 +72,54 @@ impl CrowLiveState {
         Self {
             data: HashMap::new(),
             sources: Vec::new(),
+            later_tx: None,
+            session_id: 0,
         }
+    }
+
+    /// Schedule a background fn for this session (skip-if-running). The fn
+    /// runs against a snapshot of state on its own thread; the keys it
+    /// changed are sent back to the live loop, which applies them and
+    /// re-renders. State never mutates concurrently.
+    pub fn spawn_later(&self, name: &str, f: fn(&mut CrowLiveState)) -> bool {
+        let key = format!("{}:{}", self.session_id, name);
+        {
+            let mut reg = later_registry().lock().unwrap();
+            if !reg.insert(key.clone()) {
+                return false;
+            }
+        }
+        let mut snapshot = self.clone();
+        let tx = self.later_tx.clone();
+        std::thread::spawn(move || {
+            struct InFlight(String);
+            impl Drop for InFlight {
+                fn drop(&mut self) {
+                    later_registry().lock().unwrap().remove(&self.0);
+                }
+            }
+            let _guard = InFlight(key);
+            let before = snapshot.data.clone();
+            f(&mut snapshot);
+            let delta: Vec<(String, serde_json::Value)> = snapshot
+                .data
+                .iter()
+                .filter(|(k, v)| before.get(*k) != Some(*v))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            if let Some(tx) = tx {
+                let _ = tx.send(delta);
+            }
+        });
+        true
+    }
+
+    /// Is a later[] schedule for this session still in flight?
+    pub fn later_running(&self, name: &str) -> bool {
+        later_registry()
+            .lock()
+            .unwrap()
+            .contains(&format!("{}:{}", self.session_id, name))
     }
 
     /// Get a value from state.
@@ -355,6 +415,15 @@ where
                 ws.on_upgrade(move |mut socket| async move {
                     use axum::extract::ws::Message;
                     let mut state = (*s2).clone();
+                    let (later_tx, mut later_rx) = tokio::sync::mpsc::unbounded_channel::<
+                        Vec<(String, serde_json::Value)>,
+                    >();
+                    state.later_tx = Some(later_tx);
+                    state.session_id = {
+                        static NEXT: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(1);
+                        NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    };
 
                     // Execute initial fetches for all registered data sources
                     for source in &state.sources.clone() {
@@ -401,11 +470,27 @@ where
                                 _ = futures_util::StreamExt::next(ticker) => {
                                     LiveAction::PollTick
                                 }
+                                delta = later_rx.recv() => {
+                                    match delta {
+                                        Some(d) => LiveAction::LaterDelta(d),
+                                        None => continue,
+                                    }
+                                }
                             }
                         } else {
-                            match futures_util::StreamExt::next(&mut socket).await {
-                                Some(Ok(m)) => LiveAction::Message(m),
-                                _ => break,
+                            tokio::select! {
+                                msg = futures_util::StreamExt::next(&mut socket) => {
+                                    match msg {
+                                        Some(Ok(m)) => LiveAction::Message(m),
+                                        _ => break,
+                                    }
+                                }
+                                delta = later_rx.recv() => {
+                                    match delta {
+                                        Some(d) => LiveAction::LaterDelta(d),
+                                        None => continue,
+                                    }
+                                }
                             }
                         };
 
@@ -454,6 +539,12 @@ where
                                         }
                                     }
                                 }
+                            }
+                            LiveAction::LaterDelta(delta) => {
+                                for (k, v) in delta {
+                                    state.set(&k, v);
+                                }
+                                state_changed = true;
                             }
                             _ => {}
                         }
@@ -543,6 +634,15 @@ where
                 ws.on_upgrade(move |mut socket| async move {
                     use axum::extract::ws::Message;
                     let mut state = (*s2).clone();
+                    let (later_tx, mut _later_rx) = tokio::sync::mpsc::unbounded_channel::<
+                        Vec<(String, serde_json::Value)>,
+                    >();
+                    state.later_tx = Some(later_tx);
+                    state.session_id = {
+                        static NEXT: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(1);
+                        NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    };
                     let mut last_html = (h2)(&mut state, "init");
 
                     while let Some(Ok(msg)) = futures_util::StreamExt::next(&mut socket).await {

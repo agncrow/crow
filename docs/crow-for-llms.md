@@ -107,6 +107,11 @@ found = find[nums, is_big]   --- first matching element (error-value if none)
 any_big = any[nums, is_big]  --- true/false, stops early
 all_big = all[nums, is_big]
 
+--- Slow work in a ui handler? NEVER block the loop — schedule it:
+--- later[load_data]        (fire-and-forget; results land in state, views re-render)
+--- running[load_data]      (true while in flight — spinners, disabled buttons)
+--- No async/await/threads/Promise exist in Crow. later[fn] is the only form.
+
 --- Operators are WORDS.
 --- eq ne gt lt gte lte   and or not
 if a gt b and not done

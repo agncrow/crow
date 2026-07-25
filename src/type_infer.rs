@@ -395,6 +395,35 @@ impl TypeContext {
                     }
                 }
             }
+            // later[f] targets scheduled from views/handlers are deferred
+            // handler halves: they read/write reactive state off the loop,
+            // so they join the handler class (validator exemption, interp
+            // exempt frames, transpiler state signature). Fixpoint covers
+            // later-chains (handler → later f → later g).
+            loop {
+                let mut added = false;
+                let roots: Vec<String> = handlers.iter().cloned().collect();
+                let view_fns: Vec<String> = self
+                    .functions
+                    .iter()
+                    .filter(|(n, _)| self.views.contains(*n))
+                    .map(|(n, _)| n.clone())
+                    .collect();
+                for name in roots.iter().chain(view_fns.iter()) {
+                    if let Some(sig) = self.functions.get(name) {
+                        let mut targets = std::collections::BTreeSet::new();
+                        Self::collect_later_targets_stmts(&sig.body, &mut targets);
+                        for t in targets {
+                            if self.functions.contains_key(&t) && handlers.insert(t) {
+                                added = true;
+                            }
+                        }
+                    }
+                }
+                if !added {
+                    break;
+                }
+            }
             self.view_handlers = handlers;
         }
 
@@ -540,6 +569,60 @@ impl TypeContext {
 
 
     /// Scan a statement for call sites to infer parameter types.
+    /// Fn names appearing as later[f]/running[f] targets.
+    fn collect_later_targets_stmts(stmts: &[Stmt], out: &mut std::collections::BTreeSet<String>) {
+        fn walk(e: &Expr, out: &mut std::collections::BTreeSet<String>) {
+            if let Expr::Call { callee, args } = e {
+                if let Expr::Ident(name) = callee.as_ref() {
+                    if (name == "later" || name == "running") && !args.is_empty() {
+                        if let Expr::Ident(target) = &args[0] {
+                            out.insert(target.clone());
+                        }
+                    }
+                }
+                walk(callee, out);
+                for a in args {
+                    walk(a, out);
+                }
+            } else if let Expr::BinOp { left, right, .. } = e {
+                walk(left, out);
+                walk(right, out);
+            } else if let Expr::UnaryOp { expr, .. } = e {
+                walk(expr, out);
+            } else if let Expr::FieldAccess { object, .. } = e {
+                walk(object, out);
+            } else if let Expr::Array(items) = e {
+                for i in items {
+                    walk(i, out);
+                }
+            } else if let Expr::Named { value, .. } = e {
+                walk(value, out);
+            }
+        }
+        for stmt in stmts {
+            match stmt {
+                Stmt::Assign { value, .. } => walk(value, out),
+                Stmt::ExprStmt(e) => walk(e, out),
+                Stmt::Return(Some(e)) => walk(e, out),
+                Stmt::If {
+                    condition,
+                    then_body,
+                    else_body,
+                } => {
+                    walk(condition, out);
+                    Self::collect_later_targets_stmts(then_body, out);
+                    if let Some(eb) = else_body {
+                        Self::collect_later_targets_stmts(eb, out);
+                    }
+                }
+                Stmt::For { body, .. } | Stmt::While { body, .. } => {
+                    Self::collect_later_targets_stmts(body, out);
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn collect_call_types_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Assign { name, value } => {
@@ -648,6 +731,21 @@ impl TypeContext {
                                         p.1 = p.1.unify(&elem);
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    // later[f, args…] IS a call of f with those args — infer
+                    // it as one so f's params unify and monomorphization
+                    // emits it even when later[] is its only call site.
+                    if name == "later" && !args.is_empty() {
+                        if let Expr::Ident(target) = &args[0] {
+                            if self.functions.contains_key(target) {
+                                let synthetic = Expr::Call {
+                                    callee: Box::new(Expr::Ident(target.clone())),
+                                    args: args[1..].to_vec(),
+                                };
+                                self.collect_call_types_expr(&synthetic);
                             }
                         }
                     }
@@ -1524,6 +1622,10 @@ impl TypeContext {
             }
             "time" => CrowType::Float,
             "sleep" => CrowType::Int,
+            // Background work: later[] is fire-and-forget (Void — ask
+            // running[] for in-flight status)
+            "later" => CrowType::Void,
+            "running" => CrowType::Bool,
             "env" => CrowType::Str,
             "exit" => CrowType::Int,
             // JSON builtins

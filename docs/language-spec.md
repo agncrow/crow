@@ -2875,6 +2875,82 @@ if not x.ok
 
 This may be revisited in the future if a design emerges that preserves error visibility while reducing verbosity.
 
+## Background Work: later
+
+A live Crow app is one loop serving every connected client; a script's poll
+loop is one loop feeding everything downstream. Slow work on the loop
+freezes everyone behind it. `later` is the one verb that moves work off the
+loop:
+
+```
+fn load_book[]
+    book = query[pg, 'SELECT symbol, pnl FROM trades']
+    status = 'updated'
+
+fn refresh[]
+    status = 'loading'
+    later[load_book]
+```
+
+| Form | Meaning |
+|------|---------|
+| `later[f]` | run `f` off the current loop; returns immediately |
+| `later[f, a, b]` | scripts/servers: capture `a, b` by value, pass to `f` |
+| `running[f]` | is a schedule of `f` still in flight? (spinners, disabled buttons) |
+
+Semantics, in order of importance:
+
+1. **State is the only mailbox.** In live apps the fn reads and writes
+   reactive state; its writes are applied on the loop between renders, one
+   schedule at a time — state never mutates concurrently, and landing
+   writes re-render every client. In scripts (function-scope isolation
+   applies) the fn communicates through its arguments and the database.
+2. **Skip-if-running.** A second `later[f]` while `f` is in flight is a
+   no-op. Double-clicks and overlapping polls cannot stack.
+3. **Errors are values.** A failing query inside the fn lands in state as
+   an ordinary error value; views render its `.reason`.
+4. **Nothing vanishes at exit.** A script waits for in-flight work before
+   ending.
+5. **The interpreter runs the work inline.** `later` promises
+   "eventually, atomically" — immediate is a legal schedule, so
+   `crow run -i` and `crow test` are deterministic.
+
+`later` is for responsiveness; `for` is for throughput. Crunching data is
+parallel already — `later` exists so an interaction (a click, a tick) never
+waits on slow work: remote queries, `shell` calls, model loads.
+
+`later` is in-process and best-effort: if the process dies mid-flight, the
+work is gone. Work that must survive a crash (placing an order) belongs in
+a durable queue the fn drains — see the claim-semantics proposal in
+`discovered-features.md`.
+
+### Design Note: The Loop Never Blocks
+
+**Evidence:** a production trading scanner froze in premarket because a
+~700ms model load and synchronous database reads ran directly on its event
+loop — every websocket and poll stalled behind them. The fix (offload to
+threads) exists in every ecosystem, and in every ecosystem it is *opt-in
+discipline*: Python's `to_thread`, JS's workers, Go's `go`, Swift's
+detached tasks. Discipline failed there and fails everywhere.
+
+**What was considered:** async/await (rejected: function colors infect
+every caller); a bare spawn verb with return values (rejected: Go's leak
+and race classes arrive with it); nothing (rejected: `crow check` can
+detect blocking handlers but the language must be able to express the
+cure).
+
+**Why this design:** Elixir/LiveView's mailbox model — background work
+communicates by messages the loop applies serially — is the only surveyed
+approach with no colors, no locks, and no shared-state races, and Crow's
+reactive state is already exactly such a mailbox. Skip-if-running is built
+in because the overlap guard is the first thing every production system
+bolts on. The interpreter's inline schedule keeps the parity principle:
+both modes satisfy the same contract, tests see the simplest legal
+schedule. Deferred deliberately: automatic offload of slow handlers (the
+no-verb endgame — needs the decision-span machinery), cancel-and-restart
+for typeahead-shaped work, a render latency budget on `serve`, and durable
+jobs.
+
 ## Appendix: Implementation Status
 
 All core language features have interpreter–transpiler parity. The following items were identified during development and have been resolved:

@@ -22,6 +22,8 @@ pub struct Transpiler {
     pub needs_crow_runtime: bool,
     /// Whether the transpiled code uses distributed computing (nodes[])
     pub needs_distributed: bool,
+    /// later[]/running[] used outside live handlers — wait for stragglers at exit
+    needs_later: bool,
     /// Map of function name -> set of param names that should be passed by reference
     by_ref_params: std::collections::BTreeMap<String, std::collections::HashSet<String>>,
     /// By-ref params in the current function being emitted
@@ -108,6 +110,7 @@ impl Transpiler {
             needs_serde_json: false,
             needs_crow_runtime: false,
             needs_distributed: false,
+            needs_later: false,
             by_ref_params: std::collections::BTreeMap::new(),
             current_ref_params: std::collections::HashSet::new(),
             modules: std::collections::HashSet::new(),
@@ -357,6 +360,60 @@ impl Transpiler {
             }
             Expr::FieldAccess { object, .. } => Self::collect_web_handlers_expr(object, out),
             _ => {}
+        }
+    }
+
+    /// Fn names referenced as later[f] / running[f] targets in a body.
+    fn collect_later_targets(stmts: &[Stmt], out: &mut std::collections::HashSet<String>) {
+        fn walk_expr(e: &Expr, out: &mut std::collections::HashSet<String>) {
+            if let Expr::Call { callee, args } = e {
+                if let Expr::Ident(name) = callee.as_ref() {
+                    if (name == "later" || name == "running") && !args.is_empty() {
+                        if let Expr::Ident(target) = &args[0] {
+                            out.insert(target.clone());
+                        }
+                    }
+                }
+                walk_expr(callee, out);
+                for a in args {
+                    walk_expr(a, out);
+                }
+            } else if let Expr::BinOp { left, right, .. } = e {
+                walk_expr(left, out);
+                walk_expr(right, out);
+            } else if let Expr::UnaryOp { expr, .. } = e {
+                walk_expr(expr, out);
+            } else if let Expr::FieldAccess { object, .. } = e {
+                walk_expr(object, out);
+            } else if let Expr::Array(items) = e {
+                for i in items {
+                    walk_expr(i, out);
+                }
+            } else if let Expr::Named { value, .. } = e {
+                walk_expr(value, out);
+            }
+        }
+        for stmt in stmts {
+            match stmt {
+                Stmt::Assign { value, .. } => walk_expr(value, out),
+                Stmt::ExprStmt(e) => walk_expr(e, out),
+                Stmt::Return(Some(e)) => walk_expr(e, out),
+                Stmt::If {
+                    condition,
+                    then_body,
+                    else_body,
+                } => {
+                    walk_expr(condition, out);
+                    Self::collect_later_targets(then_body, out);
+                    if let Some(eb) = else_body {
+                        Self::collect_later_targets(eb, out);
+                    }
+                }
+                Stmt::For { body, .. } | Stmt::While { body, .. } => {
+                    Self::collect_later_targets(body, out);
+                }
+                _ => {}
+            }
         }
     }
 
@@ -944,6 +1001,36 @@ impl Transpiler {
                 for h in self.reactive_event_handlers.clone() {
                     self.live_handle_fns.insert(h);
                 }
+                // Fns scheduled via later[] from handlers/renders are
+                // handler-class too: they read/write reactive state, so they
+                // compile with the state preamble/epilogue. Iterate to a
+                // fixpoint so later-chains (handler → later f → later g) all
+                // get the state signature.
+                loop {
+                    let mut added = false;
+                    for h in self
+                        .reactive_event_handlers
+                        .clone()
+                        .iter()
+                        .chain(self.reactive_render_fns.clone().iter())
+                    {
+                        if let Some(sig) = self.ctx.functions.get(h) {
+                            let mut targets = std::collections::HashSet::new();
+                            Self::collect_later_targets(&sig.body, &mut targets);
+                            for t in targets {
+                                if self.ctx.functions.contains_key(&t)
+                                    && self.reactive_event_handlers.insert(t.clone())
+                                {
+                                    self.live_handle_fns.insert(t);
+                                    added = true;
+                                }
+                            }
+                        }
+                    }
+                    if !added {
+                        break;
+                    }
+                }
             }
         }
 
@@ -1330,6 +1417,9 @@ impl Transpiler {
         }
         if self.needs_distributed {
             self.emit_line("crow_runtime::distributed::finalize();");
+        }
+        if self.needs_later {
+            self.emit_line("crow_runtime::later::wait_all();");
         }
         self.indent -= 1;
         self.emit_line("}");
@@ -3297,6 +3387,48 @@ impl Transpiler {
                     }
                     if name == "time" && arg_strs.is_empty() {
                         return "std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64()".to_string();
+                    }
+                    // later[work, …] — background scheduling (skip-if-running).
+                    // Handlers/renders: session-scoped via state, delta applied
+                    // on the live loop. Scripts/servers: kernel thread + args
+                    // captured by value; main waits for stragglers at exit.
+                    if name == "later" && !args.is_empty() {
+                        if let Expr::Ident(fname) = &args[0] {
+                            let f = &self.current_function_name;
+                            let in_live = self.reactive_event_handlers.contains(f)
+                                || self.reactive_render_fns.contains(f);
+                            if in_live {
+                                return format!("{{ let _ = state.spawn_later(\"{}\", {}); }}", fname, fname);
+                            }
+                            self.needs_later = true;
+                            self.needs_crow_runtime = true;
+                            let mut captures = String::new();
+                            let mut params: Vec<String> = Vec::new();
+                            for (i, a) in arg_strs.iter().skip(1).enumerate() {
+                                captures.push_str(&format!("let __l{} = ({}).clone(); ", i, a));
+                                params.push(format!("__l{}", i));
+                            }
+                            return format!(
+                                "{{ {}let _ = crow_runtime::later::spawn(\"{}\", move || {{ let _ = {}({}); }}); }}",
+                                captures,
+                                fname,
+                                fname,
+                                params.join(", ")
+                            );
+                        }
+                    }
+                    if name == "running" && args.len() == 1 {
+                        if let Expr::Ident(fname) = &args[0] {
+                            let f = &self.current_function_name;
+                            let in_live = self.reactive_event_handlers.contains(f)
+                                || self.reactive_render_fns.contains(f);
+                            if in_live {
+                                return format!("state.later_running(\"{}\")", fname);
+                            }
+                            self.needs_later = true;
+                            self.needs_crow_runtime = true;
+                            return format!("crow_runtime::later::running(\"{}\")", fname);
+                        }
                     }
                     if name == "sleep" && arg_strs.len() == 1 {
                         let arg_type = self.ctx.infer_expr(&args[0]);
@@ -6874,6 +7006,36 @@ mod tests {
         assert!(rust.contains("__crow_state.set(\"count\", serde_json::json!(0"), "should register count default in main\n{}", rust);
         // page[] should auto-inject __crow_handle
         assert!(rust.contains("__crow_handle"), "page should auto-inject __crow_handle\n{}", rust);
+    }
+
+    #[test]
+    fn test_later_script_emission() {
+        let rust = transpile("fn work[msg]\n    log[msg]\n\nlater[work, 'hi']\n");
+        assert!(
+            rust.contains("crow_runtime::later::spawn(\"work\""),
+            "script later[] should emit kernel spawn\n{}",
+            rust
+        );
+        assert!(
+            rust.contains("crow_runtime::later::wait_all()"),
+            "main should wait for stragglers at exit\n{}",
+            rust
+        );
+    }
+
+    #[test]
+    fn test_later_handler_emission() {
+        let rust = transpile("use web, ui\n\ncount = 0\n\nfn slow_work[]\n    count = count + 1\n\nfn go[]\n    later[slow_work]\n\nview render[]\n    return div[p['{count}'], button['go', click = go]]\n\npage['/', render]\nserve[3000]\n");
+        assert!(
+            rust.contains("state.spawn_later(\"slow_work\", slow_work)"),
+            "handler later[] should go through session state\n{}",
+            rust
+        );
+        assert!(
+            rust.contains("fn slow_work(state: &mut CrowLiveState)"),
+            "later target must compile as a handler-class fn\n{}",
+            rust
+        );
     }
 
     #[test]

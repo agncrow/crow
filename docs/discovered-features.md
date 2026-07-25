@@ -12,7 +12,15 @@ before it ships.
 
 ---
 
-## F-1. Background work — a sanctioned "off the loop" primitive
+## F-1. Background work — a sanctioned "off the loop" primitive ✅ SHIPPED
+
+Implemented as `later[f]` / `running[f]` — see the language spec's
+"Background Work: later" section for final semantics (state-as-mailbox,
+skip-if-running, inline interpreter schedule, exit wait). The blocking-in-
+view check now teaches `later[…]` and applies it interactively (`f` in the
+crow check loop). Deferred to future rounds: auto-offload (the no-verb
+endgame), cancel-and-restart, `serve` latency budget. Original proposal
+kept below for the record.
 
 **Evidence:** finch `188772df` (event-loop hang: ~700ms model load + sync DB
 reads directly on the loop froze the entire scanner) and `8c15d8ef`
@@ -109,6 +117,28 @@ relationship to F-2 (a grace window is freshness inverted: *minimum* age
 before acting on an absence).
 
 ---
+
+## F-5. Durable jobs — claim semantics for work that must survive a crash
+
+**Evidence:** `later` (F-1) is deliberately in-process and best-effort: a
+process death loses in-flight work. Fine for a refresh; unacceptable for
+"place this order." The durable version of background work is a persisted
+queue with **claim semantics** — the claim/release design from the
+concurrency arc (see crow-check.md and the design memory): work items are
+rows, a worker `claim`s one atomically (the unique-constraint machinery
+makes double-processing unwritable), completes it, releases/marks it; a
+crashed worker's claim expires and the item is retried. This is the
+composition of `later` with the deferred store/claim design, and it is the
+correct home for finch-class order placement.
+
+**Design questions:** claim leases/expiry (crash recovery without
+double-fire); at-least-once vs exactly-once honesty; whether the queue is
+a `store` with `claim` or its own noun; retry/backoff policy ownership;
+how `crow check` distinguishes work that needs durability (order
+placement) from work that doesn't (refresh) — likely a teach, not a proof.
+
+**Status: revisit after the store/claim (Level-3/persist) design round —
+explicitly queued at Vijay's request.**
 
 # Check roadmap (no language change needed)
 
