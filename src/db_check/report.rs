@@ -171,16 +171,16 @@ fn body(s: &mut String, h: &Hazard) {
             );
         }
         HazardKind::LostUpdate {
+            table,
             column,
             read_line,
             write_line,
-            ..
         } => {
             s.push('\n');
             s.push_str("  what can happen:\n");
             s.push_str(&format!(
-                "    1. program A reads {} (line {}) — say it is 100\n",
-                column, read_line
+                "    1. program A reads {}.{} (line {}) — say it is 100\n",
+                table, column, read_line
             ));
             s.push_str(&format!("    2. program B reads {} — also 100\n", column));
             s.push_str(&format!(
@@ -191,16 +191,16 @@ fn body(s: &mut String, h: &Hazard) {
             s.push_str("    5. A's update is gone, silently\n");
         }
         HazardKind::OneWayLatch {
+            table,
             column,
             set_value,
             write_line,
             gate_line,
-            ..
         } => {
             s.push('\n');
             s.push_str(&format!(
-                "  '{}' is set to {} (line {}) and never set back; work is gated on it (line {}).\n",
-                column, set_value, write_line, gate_line
+                "  '{}.{}' is set to {} (line {}) and never set back; work is gated on it (line {}).\n",
+                table, column, set_value, write_line, gate_line
             ));
             s.push_str(
                 "  a flag that moves one way records that something happened once — not what is true now.\n",
@@ -217,12 +217,16 @@ fn body(s: &mut String, h: &Hazard) {
             ));
             s.push_str("  two rows can match, and which one you get is luck.\n");
         }
-        HazardKind::UnpairedWrites { write_lines, .. } => {
+        HazardKind::UnpairedWrites {
+            tables,
+            write_lines,
+        } => {
             s.push('\n');
             s.push_str(&format!(
-                "  a crash between line {} and line {} leaves the first write applied and the rest lost.\n",
+                "  a crash between line {} and line {} leaves {} half-updated — the first write applied, the rest lost.\n",
                 write_lines.first().unwrap_or(&0),
-                write_lines.last().unwrap_or(&0)
+                write_lines.last().unwrap_or(&0),
+                tables.join(", ")
             ));
         }
         HazardKind::UnknownTable { suggestion, .. }
@@ -462,7 +466,7 @@ bank.crow:1-3 — concurrent updates to 'balance' can vanish here
     3 │ exec[conn, 'UPDATE accounts SET balance = ? WHERE id = ?', [bal, acct]]
 
   what can happen:
-    1. program A reads balance (line 1) — say it is 100
+    1. program A reads accounts.balance (line 1) — say it is 100
     2. program B reads balance — also 100
     3. A computes and writes its new value (line 3)
     4. B computes from the stale 100 and writes over it
@@ -500,7 +504,7 @@ hotel.crow:1 — 'checked_out' only ever moves one way
 
     1 │ exec[conn, 'UPDATE rooms SET checked_out = 1 WHERE room = ?', [room_no]]
 
-  'checked_out' is set to 1 (line 1) and never set back; work is gated on it (line 9).
+  'rooms.checked_out' is set to 1 (line 1) and never set back; work is gated on it (line 9).
   a flag that moves one way records that something happened once — not what is true now.
   when new work appears after the flag flips, that work is invisible forever.
 
@@ -567,7 +571,7 @@ transfer.crow:1-2 — these writes succeed or fail separately
     1 │ exec[conn, 'UPDATE accounts SET balance = balance - ? WHERE id = ?', [amt, from_id]]
     2 │ exec[conn, 'UPDATE accounts SET balance = balance + ? WHERE id = ?', [amt, to_id]]
 
-  a crash between line 1 and line 2 leaves the first write applied and the rest lost.
+  a crash between line 1 and line 2 leaves accounts half-updated — the first write applied, the rest lost.
 
   fixes, safest first:
   [1] run them inside transact[…] so they succeed or fail together

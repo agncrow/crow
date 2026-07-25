@@ -184,14 +184,6 @@ impl ModuleRegistry {
         Some(self.modules[*idxs.first()?].type_of(name, arg_count))
     }
 
-    /// Get all constant (name, value) pairs from all loaded modules.
-    pub fn all_constants(&self) -> Vec<(&str, CrowValue)> {
-        let mut result = Vec::new();
-        for module in &self.modules {
-            result.extend(module.constants());
-        }
-        result
-    }
 
     /// Check if a specific module (by name) has been loaded.
     pub fn is_loaded(&self, module_name: &str) -> bool {

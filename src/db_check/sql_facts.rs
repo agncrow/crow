@@ -71,13 +71,10 @@ pub struct SqlCall {
     pub params: Option<Vec<ParamLit>>,
     /// Variable the result was assigned to (`x = query[...]`).
     pub result_var: Option<String>,
-    /// First argument when it is a plain variable (the connection).
-    pub conn_var: Option<String>,
     /// SQL string contains backtick interpolation.
     pub interpolated: bool,
     /// SQL failed to parse (reported nowhere yet — future lint).
     pub unparsed: bool,
-    pub raw_sql: String,
 }
 
 #[derive(Debug, Default)]
@@ -161,17 +158,12 @@ fn walk_expr(
             if let Some(name) = call_name(callee) {
                 if name == "query" || name == "exec" {
                     if let Some(Expr::Str(sql_text)) = args.get(1) {
-                        let conn_var = match args.first() {
-                            Some(Expr::Ident(c)) => Some(c.clone()),
-                            _ => None,
-                        };
                         facts.calls.push(analyze_call(
                             sql_text,
                             args.get(2),
                             line,
                             func,
                             assign_to,
-                            conn_var,
                         ));
                     }
                 } else if name == "transact" {
@@ -230,7 +222,6 @@ fn analyze_call(
     line: usize,
     func: Option<&str>,
     assign_to: Option<&str>,
-    conn_var: Option<String>,
 ) -> SqlCall {
     let mut call = SqlCall {
         line,
@@ -246,10 +237,8 @@ fn analyze_call(
         placeholders: 0,
         params: None,
         result_var: assign_to.map(|s| s.to_string()),
-        conn_var,
         interpolated: sql_text.contains('`'),
         unparsed: false,
-        raw_sql: sql_text.to_string(),
     };
 
     call.params = params_arg.map(|p| match p {
@@ -369,12 +358,10 @@ fn analyze_statement(stmt: &sql::Statement, call: &mut SqlCall) {
         }
         sql::Statement::Delete(del) => {
             call.kind = SqlKind::Delete;
-            if let sql::FromTable::WithFromKeyword(tables)
-            | sql::FromTable::WithoutKeyword(tables) = &del.from
-            {
-                if let Some(t) = tables.first() {
-                    call.table = table_name(&t.relation);
-                }
+            let (sql::FromTable::WithFromKeyword(tables)
+            | sql::FromTable::WithoutKeyword(tables)) = &del.from;
+            if let Some(t) = tables.first() {
+                call.table = table_name(&t.relation);
             }
             if let Some(w) = &del.selection {
                 collect_where(w, call);

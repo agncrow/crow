@@ -772,7 +772,7 @@ impl Transpiler {
     pub fn transpile(&mut self, stmts: &[Stmt]) -> String {
         // Register all module names upfront so function bodies can resolve module references
         for stmt in stmts {
-            if let Stmt::Use { path, alias } = stmt {
+            if let Stmt::Use { path, alias: _ } = stmt {
                 let module_name = path.rsplit('/').next().unwrap_or(path).to_string();
                 if module_name == "math" || path.starts_with("math.") {
                     self.needs_crow_runtime = true;
@@ -2287,7 +2287,7 @@ impl Transpiler {
                     }
                 }
             }
-            Stmt::Use { path, alias } => {
+            Stmt::Use { path, alias: _ } => {
                 self.emit_use(path);
             }
             Stmt::Resource { kind, count } => {

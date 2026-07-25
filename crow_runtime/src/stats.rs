@@ -99,7 +99,6 @@ pub fn cov(x: &CrowTensor, y: &CrowTensor) -> f64 {
 pub fn linreg(x: &CrowTensor, y: &CrowTensor) -> (f64, f64, f64) {
     let xd = x.to_vec();
     let yd = y.to_vec();
-    let n = xd.len() as f64;
     if xd.len() < 2 || yd.len() != xd.len() {
         return (f64::NAN, f64::NAN, f64::NAN);
     }

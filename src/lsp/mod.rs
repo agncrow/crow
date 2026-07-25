@@ -44,13 +44,8 @@ pub fn run_server() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     Ok(())
 }
 
-struct Doc {
-    text: String,
-    analysis: analysis::Analysis,
-}
-
 pub(crate) struct State {
-    docs: HashMap<String, Doc>,
+    docs: HashMap<String, analysis::Analysis>,
     /// Database url from the workspace crowfile, resolved once at startup.
     db_url: Option<String>,
 }
@@ -61,9 +56,16 @@ fn main_loop(
 ) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     let init: InitializeParams = serde_json::from_value(init_params).unwrap_or_default();
     let root = init
-        .root_uri
+        .workspace_folders
         .as_ref()
-        .map(|u| PathBuf::from(u.path().as_str()));
+        .and_then(|f| f.first())
+        .map(|f| PathBuf::from(f.uri.path().as_str()))
+        .or_else(|| {
+            // Older clients send only the deprecated rootUri.
+            #[allow(deprecated)]
+            let legacy = init.root_uri.as_ref();
+            legacy.map(|u| PathBuf::from(u.path().as_str()))
+        });
     let db_url = root.as_deref().and_then(crate::crowfile_db_url_at);
 
     let mut state = State {
@@ -133,9 +135,7 @@ fn open_or_change(state: &mut State, uri: &Uri, text: String) -> Vec<lsp_types::
         .unwrap_or_else(|| "file.crow".into());
     let analysis = analysis::analyze(&text, dir.as_deref(), state.db_url.as_deref(), &label);
     let diags = analysis.diagnostics.clone();
-    state
-        .docs
-        .insert(uri.as_str().to_string(), Doc { text, analysis });
+    state.docs.insert(uri.as_str().to_string(), analysis);
     diags
 }
 
@@ -169,7 +169,7 @@ fn handle_request(state: &State, req: lsp_server::Request) -> Response {
             let items = state
                 .docs
                 .get(uri.as_str())
-                .map(|d| features::completions(&d.analysis))
+                .map(features::completions)
                 .unwrap_or_default();
             Response::new_ok(req.id, CompletionResponse::Array(items))
         }
@@ -183,7 +183,7 @@ fn handle_request(state: &State, req: lsp_server::Request) -> Response {
             let hover = state
                 .docs
                 .get(uri.as_str())
-                .and_then(|d| features::hover(&d.analysis, pos))
+                .and_then(|d| features::hover(d, pos))
                 .map(|text| Hover {
                     contents: HoverContents::Scalar(MarkedString::String(text)),
                     range: None,
@@ -200,7 +200,7 @@ fn handle_request(state: &State, req: lsp_server::Request) -> Response {
             let loc = state
                 .docs
                 .get(uri.as_str())
-                .and_then(|d| features::definition(&d.analysis, pos, &uri))
+                .and_then(|d| features::definition(d, pos, &uri))
                 .map(GotoDefinitionResponse::Scalar);
             Response::new_ok(req.id, loc)
         }
@@ -212,7 +212,7 @@ fn handle_request(state: &State, req: lsp_server::Request) -> Response {
             let syms = state
                 .docs
                 .get(p.text_document.uri.as_str())
-                .map(|d| features::document_symbols(&d.analysis))
+                .map(features::document_symbols)
                 .map(DocumentSymbolResponse::Nested)
                 .unwrap_or(DocumentSymbolResponse::Nested(Vec::new()));
             Response::new_ok(req.id, syms)
