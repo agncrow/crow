@@ -116,10 +116,19 @@ Detectors buildable on current machinery, from the same mining:
 
 | Check | Finch evidence | Status |
 |---|---|---|
-| Blocking in views/handlers (transitive) | 188772df, 8c15d8ef | ✅ shipped (sample 1) |
-| Startup snapshot served forever (query at top level, read in views) | da9020d6, 4e90b882 class | sample 2 |
-| Remote-DB query inside views (latency-aware refinement of the blessed render-time-query idiom) | 188772df root cause #2 | proposed; needs backend-awareness at check time |
+| Blocking in views/handlers (transitive) | 188772df, 8c15d8ef | ✅ shipped |
+| Startup snapshot served forever (query at top level, read in views) | da9020d6, 4e90b882 class | ✅ shipped |
+| Remote-DB query inside views (a network hop per render stalls every client) | 188772df root cause #2 | ✅ shipped |
+| Poll loop deciding on a pre-loop snapshot (while+sleep reading launch-time query data) | 4e90b882, 53c71e5a class | ✅ shipped |
 | Debounce-free adoption of external absence | 75a33fbe | needs F-4 design first |
+
+Further evidence logged during the complete scan: `8748874c` (impossible
+cross-source data — float > shares outstanding — silently consumed signals)
+is direct evidence for the **declared data invariants** feature from the
+persist design (arbitrary-predicate `invariant` checked at commit); and
+`b3b6b034` (news poll starving the universe refresh through a shared rate
+gate) strengthens F-3's case that the runtime, not the user, must own
+periodicity and its resource arbitration.
 
 Classes finch fixed that Crow makes unwritable by existing design: re-entrant
 lock deadlock (no locks), signature-mismatch loop crash (static types),

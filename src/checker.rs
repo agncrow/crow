@@ -52,6 +52,12 @@ pub enum Issue {
     /// A view/handler reads a variable captured from the database at startup —
     /// every render serves launch-time data, forever.
     StaleSnapshot { view: String, var: String, source_line: usize, line: usize },
+    /// A view/handler queries a remote database directly — a network round
+    /// trip per render, and every connected client waits on it.
+    RemoteQueryInView { view: String, conn: String, url: String, line: usize },
+    /// A while+sleep poll loop reads a query result captured before the loop —
+    /// every iteration decides on launch-time data.
+    StaleLoopRead { var: String, source_line: usize, line: usize },
 }
 
 impl Issue {
@@ -77,6 +83,16 @@ impl Issue {
                     "'{}' serves launch-time data — '{}' was queried once at startup (line {}) and never refreshed",
                     view, var, source_line
                 ),
+            Issue::RemoteQueryInView { view, conn, url, .. } =>
+                format!(
+                    "'{}' waits on the network every render — query['{}', …] where '{}' is {}",
+                    view, conn, conn, url
+                ),
+            Issue::StaleLoopRead { var, source_line, .. } =>
+                format!(
+                    "the poll loop decides on launch-time data — '{}' was queried once (line {}) and read every iteration",
+                    var, source_line
+                ),
         }
     }
 
@@ -89,6 +105,8 @@ impl Issue {
             Issue::RegressionChange { .. } => 0,
             Issue::BlockingInView { line, .. } => *line,
             Issue::StaleSnapshot { line, .. } => *line,
+            Issue::RemoteQueryInView { line, .. } => *line,
+            Issue::StaleLoopRead { line, .. } => *line,
         }
     }
 
@@ -101,6 +119,8 @@ impl Issue {
             Issue::UndefinedVariable { func, .. } => func,
             Issue::BlockingInView { view, .. } => view,
             Issue::StaleSnapshot { view, .. } => view,
+            Issue::RemoteQueryInView { view, .. } => view,
+            Issue::StaleLoopRead { .. } => "<top-level>",
             Issue::EdgeCaseCrash { func, .. } => func,
             Issue::RegressionChange { func, .. } => func,
         }
@@ -136,6 +156,10 @@ impl Issue {
                     "move the query into the view so every render sees current data, or re-query '{}' in the handler that changes it",
                     var
                 ),
+            Issue::RemoteQueryInView { .. } =>
+                "remote data belongs behind a handler refresh (re-query on click) or in local sqlite for the render path — a network hop per render stalls every client".to_string(),
+            Issue::StaleLoopRead { var, .. } =>
+                format!("re-query '{}' inside the loop so each poll sees the current database", var),
             Issue::UndefinedVariable { var, .. } =>
                 format!("'{}' is not defined — check for typos or add an assignment", var),
             Issue::EdgeCaseCrash { error, .. } => {
@@ -327,6 +351,182 @@ fn collect_query_assigns(body: &[Stmt], out: &mut BTreeSet<String>) {
             _ => {}
         }
     }
+}
+
+// --- Remote-query-in-view analysis ---
+
+/// Connections opened at top level with a literal url: conn name → url.
+fn top_level_connections(top_level_stmts: &[Stmt]) -> BTreeMap<String, String> {
+    let mut conns = BTreeMap::new();
+    for stmt in top_level_stmts {
+        if let Stmt::Assign { name, value } = stmt {
+            if let Expr::Call { callee, args } = value {
+                let is_connect = match callee.as_ref() {
+                    Expr::Ident(n) => n == "connect",
+                    Expr::FieldAccess { object, field } => {
+                        matches!(object.as_ref(), Expr::Ident(m) if m == "db")
+                            && field == "connect"
+                    }
+                    _ => false,
+                };
+                if is_connect {
+                    if let Some(Expr::Str(url)) = args.first() {
+                        conns.insert(name.clone(), url.clone());
+                    }
+                }
+            }
+        }
+    }
+    conns
+}
+
+/// A render-path query against a remote database is a network round trip
+/// per render, serialized on the live loop — every connected client waits.
+/// Local sqlite is the blessed render-time source and is not flagged.
+pub fn find_remote_queries_in_views(
+    ctx: &TypeContext,
+    top_level_stmts: &[Stmt],
+    fn_lines: &BTreeMap<String, usize>,
+) -> Vec<Issue> {
+    let remote: BTreeMap<String, String> = top_level_connections(top_level_stmts)
+        .into_iter()
+        .filter(|(_, url)| !url.starts_with("sqlite"))
+        .collect();
+    if remote.is_empty() {
+        return Vec::new();
+    }
+    let mut issues = Vec::new();
+    for root in ctx.views.iter().chain(ctx.view_handlers.iter()) {
+        let Some(sig) = ctx.functions.get(root) else { continue };
+        let mut flagged: BTreeSet<String> = BTreeSet::new();
+        collect_query_conns(&sig.body, &mut flagged);
+        for conn in flagged {
+            if let Some(url) = remote.get(&conn) {
+                issues.push(Issue::RemoteQueryInView {
+                    view: root.clone(),
+                    conn: conn.clone(),
+                    url: url.clone(),
+                    line: fn_lines.get(root).copied().unwrap_or(0),
+                });
+            }
+        }
+    }
+    issues
+}
+
+/// Connection variables passed as first arg to query/exec anywhere in a body.
+fn collect_query_conns(body: &[Stmt], out: &mut BTreeSet<String>) {
+    fn walk_expr(e: &Expr, out: &mut BTreeSet<String>) {
+        if let Expr::Call { callee, args } = e {
+            let name = match callee.as_ref() {
+                Expr::Ident(n) => Some(n.as_str()),
+                Expr::FieldAccess { object, field } => {
+                    if matches!(object.as_ref(), Expr::Ident(m) if m == "db") {
+                        Some(field.as_str())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if matches!(name, Some("query") | Some("exec")) {
+                if let Some(Expr::Ident(conn)) = args.first() {
+                    out.insert(conn.clone());
+                }
+            }
+        }
+        match e {
+            Expr::Call { callee, args } => {
+                walk_expr(callee, out);
+                for a in args {
+                    walk_expr(a, out);
+                }
+            }
+            Expr::BinOp { left, right, .. } => {
+                walk_expr(left, out);
+                walk_expr(right, out);
+            }
+            Expr::UnaryOp { expr, .. } => walk_expr(expr, out),
+            Expr::FieldAccess { object, .. } => walk_expr(object, out),
+            Expr::Array(items) => items.iter().for_each(|i| walk_expr(i, out)),
+            Expr::Map(pairs) => pairs.iter().for_each(|(k, v)| {
+                walk_expr(k, out);
+                walk_expr(v, out);
+            }),
+            Expr::Named { value, .. } => walk_expr(value, out),
+            Expr::ForExpr { iter, .. } => walk_expr(iter, out),
+            _ => {}
+        }
+    }
+    for stmt in body {
+        match stmt {
+            Stmt::Assign { value, .. } => walk_expr(value, out),
+            Stmt::ExprStmt(e) => walk_expr(e, out),
+            Stmt::Return(Some(e)) => walk_expr(e, out),
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                walk_expr(condition, out);
+                collect_query_conns(then_body, out);
+                if let Some(eb) = else_body {
+                    collect_query_conns(eb, out);
+                }
+            }
+            Stmt::For { iter, body, .. } => {
+                walk_expr(iter, out);
+                collect_query_conns(body, out);
+            }
+            Stmt::While { condition, body } => {
+                walk_expr(condition, out);
+                collect_query_conns(body, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+// --- Stale-loop-read analysis ---
+
+/// A top-level `while` loop that sleeps is a poll loop. Reading a query
+/// result captured before the loop means every iteration decides on
+/// launch-time data (the stale-prints class).
+pub fn find_stale_loop_reads(top_level_stmts: &[Stmt]) -> Vec<Issue> {
+    // Startup snapshots, as in find_stale_snapshots.
+    let mut snapshots: BTreeMap<String, usize> = BTreeMap::new();
+    let mut line = 0usize;
+    let mut issues = Vec::new();
+    for stmt in top_level_stmts {
+        match stmt {
+            Stmt::Line(n) => line = *n,
+            Stmt::Assign { name, value } if expr_calls_query(value) => {
+                snapshots.insert(name.clone(), line);
+            }
+            Stmt::While { body, .. } => {
+                let mut callees = BTreeSet::new();
+                collect_callees_from_stmts(body, &mut callees);
+                if !callees.contains("sleep") {
+                    continue; // not a poll loop
+                }
+                let mut refreshed = BTreeSet::new();
+                collect_query_assigns(body, &mut refreshed);
+                let mut reads = BTreeSet::new();
+                collect_reads_from_stmts(body, &mut reads);
+                for (var, source_line) in &snapshots {
+                    if reads.contains(var) && !refreshed.contains(var) {
+                        issues.push(Issue::StaleLoopRead {
+                            var: var.clone(),
+                            source_line: *source_line,
+                            line,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    issues
 }
 
 // --- Purity analysis ---
@@ -1183,6 +1383,12 @@ pub fn run_check(
     // 1c. Views/handlers serving launch-time query snapshots.
     issues.extend(find_stale_snapshots(ctx, stmts, &fn_lines));
 
+    // 1d. Render-path queries against remote databases.
+    issues.extend(find_remote_queries_in_views(ctx, stmts, &fn_lines));
+
+    // 1e. Poll loops deciding on pre-loop snapshots.
+    issues.extend(find_stale_loop_reads(stmts));
+
     // 2. Edge case generation (pure, non-recursive functions only).
     // Views and handlers are excluded: they build UI trees / mutate reactive
     // state, and are exercised by rendering, not by synthetic inputs.
@@ -1227,6 +1433,51 @@ pub fn run_check(
 mod tests {
     use super::*;
     use crate::type_infer::TypeContext;
+
+    #[test]
+    fn remote_query_in_view_flagged_sqlite_not() {
+        let src = "use web, ui, db\n\npg = connect['postgres://prod/trading']\nlocal = connect['sqlite://cache.db']\n\nview render[]\n    live = query[pg, 'SELECT * FROM trades']\n    cached = query[local, 'SELECT * FROM summary']\n    return div[table[live], table[cached]]\n\nserve[3000]\n";
+        let stmts = crate::build(src).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        let issues =
+            find_remote_queries_in_views(&ctx, &stmts, &find_fn_lines(&stmts));
+        assert!(
+            issues.iter().any(|i| matches!(i,
+                Issue::RemoteQueryInView { view, conn, .. }
+                    if view == "render" && conn == "pg")),
+            "expected remote-query finding for pg, got {:?}",
+            issues
+        );
+        assert!(
+            !issues.iter().any(|i| matches!(i,
+                Issue::RemoteQueryInView { conn, .. } if conn == "local")),
+            "sqlite render-time queries are blessed and must not be flagged"
+        );
+    }
+
+    #[test]
+    fn stale_loop_read_flagged_requery_clears() {
+        let src = "use db\n\nconn = connect['sqlite://x.db']\nprices = query[conn, 'SELECT px FROM ticks']\n\nwhile true\n    log[len[prices]]\n    sleep[5]\n";
+        let stmts = crate::build(src).unwrap();
+        let issues = find_stale_loop_reads(&stmts);
+        assert!(
+            issues.iter().any(|i| matches!(i,
+                Issue::StaleLoopRead { var, source_line, .. }
+                    if var == "prices" && *source_line == 4)),
+            "expected stale loop read, got {:?}",
+            issues
+        );
+
+        let src2 = "use db\n\nconn = connect['sqlite://x.db']\nprices = query[conn, 'SELECT px FROM ticks']\n\nwhile true\n    prices = query[conn, 'SELECT px FROM ticks']\n    log[len[prices]]\n    sleep[5]\n";
+        let stmts2 = crate::build(src2).unwrap();
+        let issues2 = find_stale_loop_reads(&stmts2);
+        assert!(
+            issues2.is_empty(),
+            "re-query inside the loop should clear it, got {:?}",
+            issues2
+        );
+    }
 
     #[test]
     fn stale_snapshot_detected_and_refresh_clears_it() {

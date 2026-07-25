@@ -62,6 +62,37 @@ Every applied fix is self-verifying: the file must still parse and a re-check
 must no longer report the hazard. Options that cannot be safely automated
 print the exact manual edit instead.
 
+## What crow fix can and cannot do — the three tiers
+
+Every finding falls into one of three tiers, and the tier decides whether a
+fix can be applied mechanically:
+
+**Tier 1 — mechanical and unambiguous.** The correct code is derivable from
+what's written, and there is no legitimate version of the flagged pattern.
+`crow fix` applies these and self-verifies: constraint migrations (1a, 1d),
+lost-update fusion (1b), transact wrapping (1e).
+
+**Tier 2 — mechanical but intent-gated.** The edit is derivable, but only
+the developer knows whether the pattern is a bug or a design. A stale
+snapshot is a bug for live coverage and correct for a static lookup table.
+These fixes are offered, never assumed — and the deliberate case gets an
+acknowledgment comment. Current members: stale snapshot (move the query into
+the view), remote query in view (move behind a handler refresh).
+
+**Tier 3 — design work.** The cure is a restructuring only the developer can
+choose — or the language cannot express it yet. Blocking-in-view's real fix
+is a background-work primitive (proposal F-1 in `discovered-features.md`);
+the one-way latch's fix is modeling ("derive from ground truth"). The check
+teaches; the code is yours.
+
+### Where data belongs in a live app — the decision matrix these checks enforce
+
+| Data | Blessed home | Checks fencing it |
+|---|---|---|
+| local (sqlite) state | query inside the view — fresh every render | stale-snapshot pushes in |
+| remote (network db) state | re-query in a handler, on demand | remote-query-in-view pushes out of render; stale-snapshot still bars startup-forever |
+| periodic / background freshness | not expressible yet — proposals F-1/F-3 | both checks point there |
+
 ## Accepting a hazard
 
 Some flagged sites are safe by design (a genuinely single-writer batch job).
