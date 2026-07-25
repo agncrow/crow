@@ -23,6 +23,8 @@ section). The core set is listed in Appendix A; highlights by area:
 - **Strings** — `split join trim replace upper lower starts ends repeat fmt`
 - **Collections** — `len contains slice push pop sort reverse concat range map set del keys values has`
 - **Search** — `find any all` (named predicates, parallel early exit)
+- **Background work** — `later[fn, args…]` (off-loop, skip-if-running),
+  `running[fn]`
 - **Errors** — `error[reason, kind]`, metadata `.ok .reason .kind .trace`
 - **IO** — `read write mkdir ls rm mv cp env input args shell`
 - **Math** (via `use math`) — reductions, tensor constructors, linear

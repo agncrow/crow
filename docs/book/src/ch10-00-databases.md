@@ -121,4 +121,73 @@ The function receives a transaction handle `tx` and uses the same `exec`
 on it — passed by name, like every callback in Crow.
 
 That's the whole database API: `connect`, `query`, `exec`, `insert`,
-`transact`, `migrate`. Next: putting a live web page in front of it.
+`transact`, `migrate`.
+
+## Letting the Checker Read Your Schema
+
+There's a class of database bug that no amount of testing on your laptop
+will find, because it only exists when *two copies* of your program run at
+once. Here's the classic — enforcing "at most one active trade per symbol"
+with an `if`:
+
+```crow
+use db
+
+conn = connect['sqlite://:memory:']
+exec[conn, 'CREATE TABLE trades (symbol TEXT, qty INT, status TEXT)']
+
+sym = 'AAPL'
+open_trades = query[conn, 'SELECT symbol FROM trades WHERE symbol = ? AND status = ?', [sym, 'active']]
+if len[open_trades] eq 0
+    exec[conn, 'INSERT INTO trades (symbol, qty, status) VALUES (?, ?, ?)', [sym, 100, 'active']]
+
+after = query[conn, 'SELECT symbol FROM trades']
+log[len[after]]
+```
+
+```text
+1
+```
+
+Runs perfectly. Ships. Then one day two copies run at the same moment:
+both query, both see zero rows, both insert — two active trades, and the
+`if` never lied, it just couldn't hold between two programs.
+
+Point `crow check` at your development database and it reads *both sides*
+of the story — your code's assumptions and the schema's actual guarantees:
+
+```bash
+crow check trading.crow --db 'sqlite://dev.db'
+```
+
+```text
+trading.crow:7-9 — two programs can pass this check at the same time
+
+  what can happen:
+    1. program A runs the query (line 7) — the check passes
+    2. program B runs the same query — the check passes too
+    3. A writes (line 9).  4. B writes.
+    5. the rule the check was protecting is now broken
+
+  the database has no rule saying 'at most one active trades row per symbol',
+  so this if is the only guard — and an if cannot hold between two programs.
+
+  fixes, safest first:
+  [1] let the database enforce it — generates migrations/one_active_per_symbol.sql:
+        CREATE UNIQUE INDEX one_active_per_symbol ON trades(symbol) WHERE status = 'active';
+```
+
+`crow fix trading.crow --hazard 1 --option 1` applies the first option:
+writes the migration, applies it to the dev database, and re-checks to
+confirm the hazard is gone. After that, the losing program's insert comes
+back as an ordinary error value with `kind = 'conflict'` — loud, at the
+moment it matters, instead of a silent duplicate.
+
+The catalog goes well beyond this one shape — lost updates, one-way status
+flags, single-row reads on non-unique columns, un-transacted write pairs,
+plus schema verification (column typos get did-you-mean suggestions). Put
+`db = 'sqlite://dev.db'` in your crowfile and every `crow check` — and the
+editor, through `crow lsp` — runs them. The full reference is
+`docs/crow-check.md`.
+
+Next: putting a live web page in front of it.
