@@ -21,3 +21,5 @@ md-5 = "0.10.6"
 chrono = "0.4.44"
 crow_db = { version = "0.1.0", path = "crow_db", features = ["sqlite"] }
 sqlparser = "0.62.0"
+lsp-server = "0.10.0"
+lsp-types = "0.97.0"

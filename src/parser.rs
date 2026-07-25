@@ -24,6 +24,91 @@ impl Parser {
         Ok(stmts)
     }
 
+    /// Error-tolerant parse for the language server: a statement that fails
+    /// to parse is recorded as (line, message) and skipped, and parsing
+    /// continues with the next statement. The compiler paths never use this —
+    /// `parse()` stays strict, so build/run semantics are untouched.
+    pub fn parse_lenient(&mut self) -> (Vec<Stmt>, Vec<(usize, String)>) {
+        let mut stmts = Vec::new();
+        let mut errors = Vec::new();
+        self.skip_newlines();
+        while !self.is_at_end() {
+            let line = self.current_line();
+            let checkpoint = self.pos;
+            match self.parse_stmt() {
+                Ok(parsed) => {
+                    stmts.push(Stmt::Line(line));
+                    stmts.extend(parsed);
+                }
+                Err(e) => {
+                    errors.push((line, e));
+                    // If parse_stmt consumed nothing, force progress.
+                    if self.pos == checkpoint {
+                        self.pos += 1;
+                    }
+                    self.sync_to_statement_end();
+                }
+            }
+            self.skip_newlines();
+        }
+        (stmts, errors)
+    }
+
+    /// Skip past the broken statement. Newline tokens are unreliable here —
+    /// an unclosed `[` suppresses them (bracket continuation), turning the
+    /// rest of the file into one logical line — so the sync walks by
+    /// *physical* token lines instead: consume everything on the error's
+    /// line, then any indented block that belonged to the broken header.
+    fn sync_to_statement_end(&mut self) {
+        let start_line = self
+            .tokens
+            .get(self.pos.saturating_sub(1))
+            .map(|t| t.line)
+            .unwrap_or(0);
+        while !self.is_at_end() {
+            let t = &self.tokens[self.pos];
+            let is_layout = matches!(
+                t.token,
+                crate::token::Token::Newline
+                    | crate::token::Token::Indent
+                    | crate::token::Token::Dedent
+            );
+            if t.line > start_line && !is_layout {
+                break;
+            }
+            if t.line > start_line && matches!(t.token, crate::token::Token::Indent) {
+                break; // indented body of the broken header — handled below
+            }
+            self.pos += 1;
+        }
+        // A broken block header owns the indented body that follows; consume
+        // balanced Indent..Dedent groups so body statements don't reparse at
+        // the wrong nesting level.
+        while matches!(self.peek_token(), Some(crate::token::Token::Indent)) {
+            let mut depth = 0i32;
+            while !self.is_at_end() {
+                match self.peek_token() {
+                    Some(crate::token::Token::Indent) => {
+                        depth += 1;
+                        self.pos += 1;
+                    }
+                    Some(crate::token::Token::Dedent) => {
+                        depth -= 1;
+                        self.pos += 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => self.pos += 1,
+                }
+            }
+        }
+    }
+
+    fn peek_token(&self) -> Option<&crate::token::Token> {
+        self.tokens.get(self.pos).map(|t| &t.token)
+    }
+
     // --- Helpers ---
 
     fn peek(&self) -> &Token {

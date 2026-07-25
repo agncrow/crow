@@ -17,7 +17,7 @@ const IMPURE_BUILTINS: &[&str] = &[
 ];
 
 /// All builtin function names (reused from validator for undefined-variable detection).
-const BUILTINS: &[&str] = &[
+pub(crate) const BUILTINS: &[&str] = &[
     "log", "assert", "type",
     "abs", "sqrt", "floor", "ceil", "round", "pow", "min", "max",
     "split", "trim", "replace", "upper", "lower", "join", "starts", "ends",
