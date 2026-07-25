@@ -34,6 +34,8 @@ enum LiveAction {
     PollTick,
     /// A later[] background fn finished — apply its state writes.
     LaterDelta(Vec<(String, serde_json::Value)>),
+    /// The serve[…, refresh = N] interval fired — re-render this session.
+    RefreshTick,
 }
 
 /// A data source that fetches from a URL — one-time or periodic.
@@ -57,6 +59,30 @@ pub struct CrowLiveState {
     pub later_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<(String, serde_json::Value)>>>,
     /// Distinguishes sessions in the later[] in-flight registry.
     pub session_id: u64,
+}
+
+/// serve[port, refresh = secs, budget = ms] configuration — set once before
+/// serve, read by every session loop. 0 = unset.
+static REFRESH_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static BUDGET_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn configure(refresh_secs: i64, budget_ms: i64) {
+    REFRESH_SECS.store(refresh_secs.max(0) as u64, std::sync::atomic::Ordering::SeqCst);
+    BUDGET_MS.store(budget_ms.max(0) as u64, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn refresh_secs() -> Option<u64> {
+    match REFRESH_SECS.load(std::sync::atomic::Ordering::SeqCst) {
+        0 => None,
+        n => Some(n),
+    }
+}
+
+fn budget_ms() -> Option<u128> {
+    match BUDGET_MS.load(std::sync::atomic::Ordering::SeqCst) {
+        0 => None,
+        n => Some(n as u128),
+    }
 }
 
 /// In-flight registry for later[] work, keyed "session:fn".
@@ -453,6 +479,20 @@ where
                         )
                     });
 
+                    // serve[…, refresh = N]: re-render every N seconds. The
+                    // interval always exists (a year-long period when unset)
+                    // so the select! stays one shape; missed ticks are
+                    // skipped — a slow render coalesces, never stacks.
+                    let refresh_period = std::time::Duration::from_secs(
+                        refresh_secs().unwrap_or(31_536_000),
+                    );
+                    let mut refresh_interval = tokio::time::interval_at(
+                        tokio::time::Instant::now() + refresh_period,
+                        refresh_period,
+                    );
+                    refresh_interval
+                        .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
                     // Track elapsed ticks per source for per-source intervals
                     let mut tick_count: u64 = 0;
                     let base_secs = tick_secs.unwrap_or(1);
@@ -476,6 +516,7 @@ where
                                         None => continue,
                                     }
                                 }
+                                _ = refresh_interval.tick() => LiveAction::RefreshTick,
                             }
                         } else {
                             tokio::select! {
@@ -491,6 +532,7 @@ where
                                         None => continue,
                                     }
                                 }
+                                _ = refresh_interval.tick() => LiveAction::RefreshTick,
                             }
                         };
 
@@ -520,7 +562,17 @@ where
                                     state_changed = true;
                                 } else {
                                     // Regular event → call user handle function
+                                    let t0 = std::time::Instant::now();
                                     (h2)(&mut state, &event, value.as_deref());
+                                    if let Some(budget) = budget_ms() {
+                                        let ms = t0.elapsed().as_millis();
+                                        if ms > budget {
+                                            eprintln!(
+                                                "crow live: handler '{}' took {}ms (budget {}ms) — schedule slow work with later[]",
+                                                event, ms, budget
+                                            );
+                                        }
+                                    }
                                     state_changed = true;
                                 }
                             }
@@ -546,12 +598,26 @@ where
                                 }
                                 state_changed = true;
                             }
+                            LiveAction::RefreshTick => {
+                                // Render-time queries re-run — that's the point.
+                                state_changed = true;
+                            }
                             _ => {}
                         }
 
                         if state_changed {
                             // Re-render and diff
+                            let t0 = std::time::Instant::now();
                             let new_vnode = (r2)(&state);
+                            if let Some(budget) = budget_ms() {
+                                let ms = t0.elapsed().as_millis();
+                                if ms > budget {
+                                    eprintln!(
+                                        "crow live: render took {}ms (budget {}ms) — move slow work out of the render path",
+                                        ms, budget
+                                    );
+                                }
+                            }
                             let patches = CrowVNode::diff(&last_vnode, &new_vnode);
 
                             if !patches.is_empty() {

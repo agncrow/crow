@@ -255,6 +255,18 @@ impl Lowerer {
                         let resolved = self.resolve_args("fmt", &params, &defaults, args)?;
                         Expr::Call { callee: Box::new(callee), args: resolved }
                     }
+                    // serve[port, refresh = secs, budget = ms] — 0 means unset.
+                    // refresh: the runtime re-renders every session on this
+                    // interval; budget: handlers/renders over this many ms are
+                    // logged. Both modes receive exactly 3 positional args.
+                    Some("serve") if !self.fns.contains_key("serve") => {
+                        let params: Vec<String> =
+                            ["port", "refresh", "budget"].iter().map(|s| s.to_string()).collect();
+                        let defaults: Vec<Option<Expr>> =
+                            vec![None, Some(Expr::Int(0)), Some(Expr::Int(0))];
+                        let resolved = self.resolve_args("serve", &params, &defaults, args)?;
+                        Expr::Call { callee: Box::new(callee), args: resolved }
+                    }
                     Some(name) if self.fns.contains_key(name) => {
                         let sig = self.fns.get(name).unwrap().clone();
                         let resolved = self.resolve_args(name, &sig.params, &sig.defaults, args)?;

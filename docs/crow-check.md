@@ -96,7 +96,7 @@ never flagged.
 | local (sqlite) state | query inside the view — fresh every render | stale-snapshot pushes in |
 | remote (network db) state | re-query in a handler, on demand | remote-query-in-view pushes out of render; stale-snapshot still bars startup-forever |
 | on-demand background work | `later[fn]` from a handler; results land in state | blocking-in-view teaches and applies it |
-| periodic freshness | not expressible yet — proposal F-3 (`serve` refresh) | stale-loop-read points there |
+| periodic freshness | `serve[port, refresh = N]` — runtime-owned, skipped-not-stacked | stale-loop-read steers script polls; UI polls need no code at all |
 
 ## Accepting a hazard
 
