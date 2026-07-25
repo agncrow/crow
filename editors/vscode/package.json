@@ -1,0 +1,44 @@
+{
+  "name": "crow-lang",
+  "displayName": "Crow",
+  "description": "Crow language support: diagnostics, completions, hover, navigation — powered by `crow lsp`",
+  "version": "0.1.0",
+  "publisher": "crow-lang",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages"],
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "languages": [
+      {
+        "id": "crow",
+        "aliases": ["Crow"],
+        "extensions": [".crow"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "crow",
+        "scopeName": "source.crow",
+        "path": "./syntaxes/crow.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Crow",
+      "properties": {
+        "crow.serverPath": {
+          "type": "string",
+          "default": "crow",
+          "description": "Path to the crow binary (the server runs as `crow lsp`)."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "scripts": {
+    "package": "vsce package"
+  }
+}
