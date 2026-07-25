@@ -40,3 +40,5 @@ _tmp_test_error_line
 *.txt
 *.json
 docs/book/book/
+editors/vscode/node_modules/
+*.vsix
