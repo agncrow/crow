@@ -172,16 +172,24 @@ artifacts are *curriculum* that teach the checker the domain:
   generator seeds for layer 2. Editor folds them by default (kills file
   bloat); convention: doc-worthy examples only, overflow → test files;
   transpiler strips them from release builds.
-- **Layer 2 — `prop_` laws (optional):** properties over generated
-  inputs. Minimal-first generation (edges before random) makes failures
-  small without a Hypothesis-grade shrinker; seeds fixed per-fn and
-  printed on failure; where-examples harvested as generation corpus for
-  rich types. Tautology trap mitigated by layer 0 covering the
-  universal properties automatically.
-- **Layer 3 — `*_test.crow` files:** scenarios across fns (db, views).
-  Division of labor teachable in one sentence: where = what one fn
-  does; test files = how fns work together. crow check nudges (a test
-  touching one fn → "belongs in its where block") — fixable.
+- **Layer 2 — laws, unified into where (prop_ DELETED):** a where line
+  with a free variable is a law: `fee[n] gte 1.0` — unbound names are
+  universally quantified, typed from their usage position, generated
+  minimal-first. Ground lines = examples (checked once); free-var lines
+  = laws (checked across generated inputs). The upgrade path from
+  example to law is literally "generalize a constant." Typo risk
+  (misspelled name silently becomes a quantified var) mitigated by
+  did-you-mean against visible fns + type constraints; LSP annotates
+  generated vars. Relational two-fn laws attach to either fn.
+- **Layer 3 — scenarios (directory/suffix conventions DELETED):** a
+  `test_` fn may live in ANY file — discovery is by name prefix alone;
+  tests/ and *_test.crow are organizational suggestions, not tool
+  requirements. Colocated scenarios get affected-selection trivially.
+  A test_ fn WITH parameters is a stateful property: params are
+  generated inputs (same rule as where — unbound = generated), enabling
+  idempotency/invariant laws that need setup (db, app harness).
+  Division of labor: where = truths of one fn; test_ = truths of fns
+  working together.
 - **Delivery (the C loops):** editor = incremental affected-run on save
   (conservative call graph; fn-values → run everything); CI/pre-commit
   = always complete. Stale-green contained by policy, not cleverness.
@@ -191,7 +199,10 @@ artifacts are *curriculum* that teach the checker the domain:
 
 Open rulings: does user-facing `crow test` exist at all, or does check
 subsume it (--parity/--book stay internal); where-block scope (lean:
-what callers see, F1-consistent); auto-contract battery default-on.
+what callers see, F1-consistent); auto-contract battery default-on;
+implicit quantification (free vars, with did-you-mean guard — lean) vs
+an explicit marker word; bless the two deletions (prop_ prefix, required
+file conventions).
 Persona-analysis gaps to design: (a) fullstack harness — handlers write
 reactive state that test fns cannot read under F1; scenario tests need a
 sanctioned way to drive a handler and observe state (headless
