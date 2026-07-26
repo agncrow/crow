@@ -172,29 +172,31 @@ artifacts are *curriculum* that teach the checker the domain:
   generator seeds for layer 2. Editor folds them by default (kills file
   bloat); convention: doc-worthy examples only, overflow → test files;
   transpiler strips them from release builds.
-- **Layer 2 — laws, unified into where (prop_ DELETED):** a where line
-  with a free variable is a law: `fee[n] gte 1.0` — unbound names are
-  universally quantified, typed from their usage position, generated
-  minimal-first. Ground lines = examples (checked once); free-var lines
-  = laws (checked across generated inputs). The upgrade path from
-  example to law is literally "generalize a constant." Typo risk
-  (misspelled name silently becomes a quantified var) mitigated by
-  did-you-mean against visible fns + type constraints; LSP annotates
-  generated vars. Relational two-fn laws attach to either fn. Multi-line
-  laws are named boolean/assert fns applied from a one-line where entry
-  (predicates-are-named-fns precedent); assert-steps inside the law fn
-  preserve operand introspection through error propagation. Preconditions:
-  early `return true` skips an input (report skip ratio to expose vacuous
-  laws).
-- **Layer 3 — scenarios (directory/suffix conventions DELETED):** a
-  `test_` fn may live in ANY file — discovery is by name prefix alone;
-  tests/ and *_test.crow are organizational suggestions, not tool
-  requirements. Colocated scenarios get affected-selection trivially.
-  A test_ fn WITH parameters is a stateful property: params are
-  generated inputs (same rule as where — unbound = generated), enabling
-  idempotency/invariant laws that need setup (db, app harness).
-  Division of labor: where = truths of one fn; test_ = truths of fns
-  working together.
+- **Layers 2+3 — THE RULE CONSTRUCT (settled after Vijay's "rules for a
+  method" reframe; deletes prop_, test_ naming, helper-fn extraction,
+  file conventions, AND implicit-free-var quantification):** a `where`
+  block holds ground boolean lines (examples, checked once) and `rule`
+  blocks (laws). A rule declares its generated inputs as params —
+  explicit quantification, so the typo hazard is gone (unbound name in
+  a rule body = ordinary undefined error):
+
+      fn encode[order] … 
+      where
+          encode[Order['AAPL', 100, 189.50]] ne ''
+          rule round_trip[s, q, p]
+              o = Order[s, q, p]
+              decode[encode[o]] eq o
+
+  Rule names live in rule-space only (reporting: "encode · round_trip
+  fails at s='', q=0"), never in the module namespace — the logic/rules
+  boundary is syntactic. Bodies are ordinary statements; last expression
+  is the truth; assert-steps allowed for rich diagnostics via error
+  propagation; early `return true` = precondition skip (skip ratio
+  reported). **Standalone `rule` at module level replaces test_ fns
+  entirely**: zero params = scenario (runs once — db setup, app
+  harness); with params = stateful law over generated inputs. Discovery
+  is syntactic, not by naming convention; stripping from release builds
+  is syntactic. Final user surface: `where`, `rule`, `assert`.
 - **Delivery (the C loops):** editor = incremental affected-run on save
   (conservative call graph; fn-values → run everything); CI/pre-commit
   = always complete. Stale-green contained by policy, not cleverness.
@@ -205,9 +207,9 @@ artifacts are *curriculum* that teach the checker the domain:
 Open rulings: does user-facing `crow test` exist at all, or does check
 subsume it (--parity/--book stay internal); where-block scope (lean:
 what callers see, F1-consistent); auto-contract battery default-on;
-implicit quantification (free vars, with did-you-mean guard — lean) vs
-an explicit marker word; bless the two deletions (prop_ prefix, required
-file conventions).
+bless `rule` as a reserved word (CORE_RESERVED) and the where/rule
+two-keyword surface; one-line rule form (`rule floor[n] …` single
+indented line) confirmed sufficient vs inline form.
 Persona-analysis gaps to design: (a) fullstack harness — handlers write
 reactive state that test fns cannot read under F1; scenario tests need a
 sanctioned way to drive a handler and observe state (headless
