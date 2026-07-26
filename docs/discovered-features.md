@@ -200,7 +200,14 @@ artifacts are *curriculum* that teach the checker the domain:
 Open rulings: does user-facing `crow test` exist at all, or does check
 subsume it (--parity/--book stay internal); where-block scope (lean:
 what callers see, F1-consistent); auto-contract battery default-on;
-block-keyword naming: `verify` vs `where` (lean: verify — SQL-WHERE
+block-keyword naming: full shortlist surveyed — verify (lean) > check
+(strong second: unifies with the verb, "you write checks, crow check
+runs them"; but the command checks far more than these blocks, and the
+word carries mild runtime ambiguity) > spec (honest noun, slight
+jargon) > where (math prose, SQL-clash) > must (punchy modal, novelty
+risk); rejected: assert (dual lifetime), ensure/contract (Eiffel
+runtime connotation — these strip), expect (framework matcher baggage),
+given (means setup), proof (overclaim). Original note: `verify` vs `where` (lean: verify — SQL-WHERE
 connotation clash for a data-language audience, self-describing, matches
 the brand; contextual keyword so web.verify/JWT stays callable — the
 `as`/`view` precedent; assert must NOT be taken for the block: it stays
