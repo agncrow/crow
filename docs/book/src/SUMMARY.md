@@ -21,6 +21,7 @@
   - [Defining and Calling Functions](ch04-01-defining-functions.md)
   - [Named Arguments](ch04-02-named-arguments.md)
   - [Function Scope Isolation](ch04-03-scope-isolation.md)
+  - [Test Blocks](ch04-04-test-blocks.md)
 
 - [Parallel by Default](ch05-00-parallel-by-default.md)
   - [for as an Expression](ch05-01-for-as-expression.md)

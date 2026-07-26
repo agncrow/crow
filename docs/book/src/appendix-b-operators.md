@@ -25,6 +25,8 @@ section). The core set is listed in Appendix A; highlights by area:
 - **Search** — `find any all` (named predicates, parallel early exit)
 - **Background work** — `later[fn, args…]` (off-loop, skip-if-running),
   `running[fn]`
+- **Verification** — `test` blocks (attached = the fn above's truths;
+  named = standalone; params = generated inputs), `assert[cond]`
 - **Errors** — `error[reason, kind]`, metadata `.ok .reason .kind .trace`
 - **IO** — `read write mkdir ls rm mv cp env input args shell`
 - **Math** (via `use math`) — reductions, tensor constructors, linear

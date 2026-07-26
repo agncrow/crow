@@ -395,6 +395,49 @@ impl TypeContext {
                     }
                 }
             }
+            // click[a, f] inside a test block names f as a handler: the
+            // harness drives handlers, so they get the reactive exemption.
+            fn collect_click_handlers(stmts: &[Stmt], out: &mut std::collections::BTreeSet<String>) {
+                fn walk(e: &Expr, out: &mut std::collections::BTreeSet<String>) {
+                    if let Expr::Call { callee, args } = e {
+                        if matches!(callee.as_ref(), Expr::Ident(n) if n == "click") && args.len() == 2 {
+                            if let Expr::Ident(h) = &args[1] {
+                                out.insert(h.clone());
+                            }
+                        }
+                        for a in args {
+                            walk(a, out);
+                        }
+                    }
+                }
+                for st in stmts {
+                    match st {
+                        Stmt::ExprStmt(e) | Stmt::Return(Some(e)) => walk(e, out),
+                        Stmt::Assign { value, .. } => walk(value, out),
+                        Stmt::TestBlock { body, .. } => collect_click_handlers(body, out),
+                        Stmt::If { then_body, else_body, .. } => {
+                            collect_click_handlers(then_body, out);
+                            if let Some(eb) = else_body {
+                                collect_click_handlers(eb, out);
+                            }
+                        }
+                        Stmt::For { body, .. } | Stmt::While { body, .. } => {
+                            collect_click_handlers(body, out)
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            {
+                let mut clicked = std::collections::BTreeSet::new();
+                collect_click_handlers(stmts, &mut clicked);
+                for h in clicked {
+                    if self.functions.contains_key(&h) {
+                        handlers.insert(h);
+                    }
+                }
+            }
+
             // later[f] targets scheduled from views/handlers are deferred
             // handler halves: they read/write reactive state off the loop,
             // so they join the handler class (validator exemption, interp

@@ -161,8 +161,9 @@ Shipped: the `test` keyword (attached + named forms), params-are-generated
 -inputs, bare-boolean truths, assert operand introspection, build/run
 stripping, `crow test` verb, `crow check` superset, Layer-0 determinism
 contract, parity file 26. Deferred: compiled-mode test execution, struct/
-frame input generation, seeds/skip-ratio reporting, the `app[]` harness
-(T8), the verification-helper boundary nudge. Original design below.
+frame input generation, seeds/skip-ratio reporting, the verification-
+helper boundary nudge. `app[]` harness SHIPPED (app/click/html + inline
+later + interpreter ui rendering). Original design below.
 
 Not a test framework: an extension of crow check. There is one question
 ("is my program right?"), one verb asking it (crow check), and user

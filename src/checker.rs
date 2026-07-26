@@ -37,6 +37,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     "shell", "elapsed",
     "serve", "route", "page",
     "later", "running",
+    "app", "html", "click",
 ];
 
 // --- Issue types ---
@@ -265,14 +266,22 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
     }
     counts.blocks = blocks.len();
 
-    // Declarations only — the boundary: tests see what callers see.
+    // Declarations only — the boundary: tests see what callers see. Literal
+    // top-level assigns ride along: they are reactive-state defaults, which
+    // app[]-harness scenarios read and handlers write.
+    fn is_literal(e: &Expr) -> bool {
+        match e {
+            Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Bool(_) => true,
+            Expr::Array(items) => items.iter().all(is_literal),
+            _ => false,
+        }
+    }
     let decls: Vec<Stmt> = stmts
         .iter()
-        .filter(|s| {
-            matches!(
-                s,
-                Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::Use { .. }
-            )
+        .filter(|s| match s {
+            Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::Use { .. } => true,
+            Stmt::Assign { value, .. } => is_literal(value),
+            _ => false,
         })
         .cloned()
         .collect();
@@ -1384,7 +1393,21 @@ pub fn run_static_checks(ctx: &TypeContext, top_level_stmts: &[Stmt]) -> Vec<Iss
     // Check user-defined functions
     for (name, sig) in &ctx.functions {
         let param_names: Vec<String> = sig.params.iter().map(|(n, _)| n.clone()).collect();
-        issues.extend(find_unused_vars_in_fn(name, &param_names, &sig.body, &BTreeSet::new()));
+        // Views and handlers write reactive state; those assignments are the
+        // point of the fn, never "unused locals".
+        let state_writes: BTreeSet<String> =
+            if ctx.views.contains(name) || ctx.view_handlers.contains(name) {
+                top_level_stmts
+                    .iter()
+                    .filter_map(|s| match s {
+                        Stmt::Assign { name, .. } => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect()
+            } else {
+                BTreeSet::new()
+            };
+        issues.extend(find_unused_vars_in_fn(name, &param_names, &sig.body, &state_writes));
         issues.extend(find_unreachable_code(name, &sig.body));
         issues.extend(find_undefined_vars_in_fn(name, &param_names, &sig.body, ctx));
     }
@@ -1917,6 +1940,25 @@ mod tests {
         assert_eq!(counts.truths, 2, "two bare boolean lines are truths");
         assert_eq!(counts.laws, 1, "the parameterized block is a law");
         assert!(counts.inputs_run > 1, "law must run over generated inputs");
+    }
+
+    #[test]
+    fn app_harness_click_state_html() {
+        let src = "use web, ui\n\nstatus = 'ready'\n\nfn go[]\n    status = 'loading'\n\nview render[]\n    return div[h1['Book'], p['s: `status`']]\n\ntest refresh_flow[]\n    a = app[render]\n    assert[contains[html[a], 'ready']]\n    click[a, go]\n    assert[a.status eq 'loading']\n    assert[contains[html[a], 'loading']]\n";
+        let stmts = crate::build(src).unwrap();
+        let (issues, counts) = run_test_blocks(&stmts);
+        assert!(issues.is_empty(), "harness scenario should pass, got {:?}", issues);
+        assert_eq!(counts.blocks, 1);
+    }
+
+    #[test]
+    fn app_harness_later_runs_inline() {
+        // The handler schedules slow work with later[]; in tests it runs
+        // inline, so the state is updated by the next line — deterministic.
+        let src = "use web, ui\n\nstatus = 'ready'\n\nfn slow_work[]\n    status = 'updated'\n\nfn go[]\n    later[slow_work]\n\nview render[]\n    return div[p['`status`']]\n\ntest refresh[]\n    a = app[render]\n    click[a, go]\n    assert[a.status eq 'updated']\n";
+        let stmts = crate::build(src).unwrap();
+        let (issues, _) = run_test_blocks(&stmts);
+        assert!(issues.is_empty(), "later must run inline in tests, got {:?}", issues);
     }
 
     #[test]
