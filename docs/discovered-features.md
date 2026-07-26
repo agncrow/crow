@@ -155,19 +155,43 @@ Crow neither has nor has documented-rejected? Five items survived the
 filter; everything else (generators, channels, generics, closures, match)
 is either covered by existing design or already rejected on the record.
 
-## F-6. User testing story — the biggest gap
+## F-6. Verification story — "one verb, layered curriculum" (design settled in discussion, awaiting go)
 
-World-class internal testing (parity corpus, book runner, check's
-edge-gen + snapshots) and no way for a user to write a test beyond bare
-`assert`. Proposal: `crow test` discovers `*_test.crow` / `test_*` fns,
-runs each in BOTH modes (user code gets the parity guarantee free),
-failure = error value (assert produces one; fallible code propagates in
-with `.trace`). Native assert introspection: assert is a builtin, so the
-runtime can report operand values without pytest-style AST magic.
-Rejected: matcher DSLs, fixture frameworks. Design questions: two-arg
-`assert[actual, expected]` diff form; test parallelism + isolation for
-impure tests; snapshot[] for users; doctest generalization of the book
-runner.
+Not a test framework: an extension of crow check. There is one question
+("is my program right?"), one verb asking it (crow check), and user
+artifacts are *curriculum* that teach the checker the domain:
+
+- **Layer 0 — auto-contracts, free on every fn:** determinism for pure
+  fns (run twice, compare), error-propagation contract (error in →
+  error out with trace), both-mode parity on generated + example
+  inputs, no-panic on edges. Zero user input; no other language runs a
+  contract battery on every function by default.
+- **Layer 1 — `where` blocks:** canonical examples attached to the fn.
+  Lines are bare booleans (implicit asserts). They are simultaneously
+  verified docs (LSP hover/renderer), inference call-sites, and
+  generator seeds for layer 2. Editor folds them by default (kills file
+  bloat); convention: doc-worthy examples only, overflow → test files;
+  transpiler strips them from release builds.
+- **Layer 2 — `prop_` laws (optional):** properties over generated
+  inputs. Minimal-first generation (edges before random) makes failures
+  small without a Hypothesis-grade shrinker; seeds fixed per-fn and
+  printed on failure; where-examples harvested as generation corpus for
+  rich types. Tautology trap mitigated by layer 0 covering the
+  universal properties automatically.
+- **Layer 3 — `*_test.crow` files:** scenarios across fns (db, views).
+  Division of labor teachable in one sentence: where = what one fn
+  does; test files = how fns work together. crow check nudges (a test
+  touching one fn → "belongs in its where block") — fixable.
+- **Delivery (the C loops):** editor = incremental affected-run on save
+  (conservative call graph; fn-values → run everything); CI/pre-commit
+  = always complete. Stale-green contained by policy, not cleverness.
+- assert is the only assertion everywhere, with native operand
+  introspection (builtin, no AST rewriting). No matcher DSL, no fixture
+  framework, no describe/it, no config.
+
+Open rulings: does user-facing `crow test` exist at all, or does check
+subsume it (--parity/--book stay internal); where-block scope (lean:
+what callers see, F1-consistent); auto-contract battery default-on.
 
 ## F-7. Datetime depth — audit required, blocks F-2
 
