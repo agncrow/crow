@@ -3017,6 +3017,23 @@ A bare boolean line is a truth to check. `assert` is for steps inside
 scenarios, and reports both operands on failure. Preconditions are plain
 `if`s. Bindings are plain assignments. A test body is ordinary Crow.
 
+Live apps are tested through a headless session — `app[view]` opens one,
+`click[a, handler]` runs a handler on it, `a.name` reads reactive state,
+and `html[a]` renders the view to a string:
+
+```
+test refresh_flow[]
+    a = app[render]
+    click[a, go]
+    assert[a.status eq 'updated']
+    assert[contains[html[a], 'count: 1']]
+```
+
+Background work scheduled with `later[]` runs inline in tests, so a
+handler's eventual state is observable on the next line — no waiting, no
+flakiness. Two sessions are two independent apps, which is how event
+interleavings are tested deterministically.
+
 **Verification never creates methods.** Test bodies call production
 functions — that is what verification is — but no function exists in the
 program's namespace because verification needed it. Anything a truth needs

@@ -117,6 +117,8 @@ all_big = all[nums, is_big]
 --- test scenario_name[]        (named = standalone; assert[] for steps)
 ---     assert[fee[2000.0] eq 2.0]
 --- Never write test_ prefixed fns, test directories, or verification helper fns.
+--- Testing a live app: a = app[render] / click[a, handler] / a.state_var / html[a]
+
 
 --- Slow work in a ui handler? NEVER block the loop — schedule it:
 --- later[load_data]        (fire-and-forget; results land in state, views re-render)

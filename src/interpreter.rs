@@ -86,6 +86,26 @@ impl Env {
     }
 
     fn set(&mut self, name: &str, value: CrowValue) {
+        // Reactive state: inside a view/handler frame (the `use ui` exemption)
+        // an assignment to an existing global updates that global — writing
+        // state is the whole point of a handler. Everywhere else, assignment
+        // is local to the current scope.
+        let exempt = self.exempt_frames.last().copied().unwrap_or(false);
+        if exempt && !self.saved_stacks.is_empty() {
+            let local_first = self
+                .scopes
+                .iter()
+                .skip(1)
+                .any(|sc| sc.contains_key(name));
+            if !local_first {
+                if let Some(global) = self.scopes.first_mut() {
+                    if global.contains_key(name) {
+                        global.insert(name.to_string(), value);
+                        return;
+                    }
+                }
+            }
+        }
         // set in the current (top) scope
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_string(), value);
@@ -176,6 +196,8 @@ pub struct Interpreter {
     lowerer: crate::lower::Lowerer,
     /// Names declared with `view` (reactive-exempt, element vocabulary)
     view_fns: std::collections::HashSet<String>,
+    /// Depth of view rendering — ui element names build html strings here.
+    in_view: usize,
     /// Event handlers referenced from views/page[] (reactive-exempt)
     handler_fns: std::collections::HashSet<String>,
     /// alias → module path for `use X as y` (qualified-only imports)
@@ -200,6 +222,7 @@ impl Interpreter {
             registry: crate::modules::ModuleRegistry::new(),
             lowerer: crate::lower::Lowerer::new(),
             view_fns: std::collections::HashSet::new(),
+            in_view: 0,
             handler_fns: std::collections::HashSet::new(),
             module_aliases: std::collections::HashMap::new(),
             bare_modules: std::collections::HashSet::new(),
@@ -503,6 +526,13 @@ impl Interpreter {
         // exception — spec Design Note "No Ambient Mutability")
         if module_path == "ui" {
             self.env.ui_mode = true;
+            return Ok(());
+        }
+        // `use web` (and web.*): the web layer is compiled-only — a no-op
+        // here so programs and their test blocks still run under the
+        // interpreter.
+        if module_path == "web" || module_path.starts_with("web.") {
+            return Ok(());
         }
         // Built-in module: math — load via module registry
         if module_path == "math" {
@@ -1466,6 +1496,11 @@ impl Interpreter {
                         arg_vals.len()
                     ));
                 }
+                // A later[] target scheduled in a ui context is a deferred
+                // handler half: it writes reactive state when it lands.
+                if self.env.ui_mode {
+                    self.handler_fns.insert(fname.clone());
+                }
                 let _ = self.call_fn_value(&func, arg_vals)?;
                 return Ok(CrowValue::ok(Value::Bool(true)));
             }
@@ -1477,6 +1512,79 @@ impl Interpreter {
                         return Ok(CrowValue::ok(Value::Bool(false)));
                     }
                     _ => return Err("running[] takes a function name: running[work]".into()),
+                }
+            }
+
+            // --- app[] harness + view rendering (interpreter ui support) ---
+            if self.env.ui_mode {
+                // Inside a rendering view, element names build html strings.
+                if self.in_view > 0 && crate::lower::UI_ELEMENTS.contains(&name.as_str()) {
+                    let mut inner = String::new();
+                    for a in args {
+                        let v = self.eval_expr(a)?;
+                        if v.is_error() {
+                            let mut err = v;
+                            err.append_trace(&self.trace_entry());
+                            return Ok(err);
+                        }
+                        match &v.value {
+                            Value::Map(_) => {} // attribute map (click = fn, …)
+                            other => inner.push_str(&format!("{}", other)),
+                        }
+                    }
+                    return Ok(CrowValue::ok(Value::Str(format!(
+                        "<{0}>{1}</{0}>",
+                        name, inner
+                    ))));
+                }
+                // app[render] — a headless session bound to a view.
+                if name == "app" && args.len() == 1 {
+                    if let Expr::Ident(vname) = &args[0] {
+                        if let Some(val) = self.env.get(vname) {
+                            if let Value::Fn(f) = &val.value {
+                                return Ok(CrowValue::ok(Value::App(f.clone())));
+                            }
+                        }
+                    }
+                    return Err("app[] takes a view name: app[render]".into());
+                }
+                // html[a] — render the session's view against current state.
+                if name == "html" && args.len() == 1 {
+                    let a = self.eval_expr(&args[0])?;
+                    if let Value::App(f) = &a.value {
+                        let f = f.clone();
+                        self.in_view += 1;
+                        let r = self.call_fn_value(&f, Vec::new());
+                        self.in_view -= 1;
+                        return r;
+                    }
+                    return Err("html[] takes an app session: html[a]".into());
+                }
+                // click[a, handler] — run the handler (reactive-exempt);
+                // later[] work inside it runs inline, so tests stay
+                // deterministic.
+                if name == "click" && args.len() == 2 {
+                    let a = self.eval_expr(&args[0])?;
+                    if !matches!(a.value, Value::App(_)) {
+                        return Err(
+                            "click[] first argument must be an app session: click[a, go]".into(),
+                        );
+                    }
+                    if let Expr::Ident(h) = &args[1] {
+                        if let Some(val) = self.env.get(h) {
+                            if let Value::Fn(f) = &val.value {
+                                let f = f.clone();
+                                // click[] names this fn as a handler — it
+                                // gains the reactive-state exemption.
+                                self.handler_fns.insert(h.clone());
+                                return self.call_fn_value(&f, Vec::new());
+                            }
+                        }
+                        return Err(format!("click[]: unknown handler '{}'", h));
+                    }
+                    return Err(
+                        "click[] second argument must be a handler name: click[a, go]".into(),
+                    );
                 }
             }
 
@@ -2005,6 +2113,7 @@ impl Interpreter {
                     "error".to_string()
                 } else {
                     match &args[0].value {
+                        Value::App(_) => "app".to_string(),
                         Value::Int(_) => "int".to_string(),
                         Value::Float(_) => "float".to_string(),
                         Value::Str(_) => "str".to_string(),
@@ -4069,6 +4178,12 @@ impl Interpreter {
 
         // struct and module field access
         match &obj.value {
+            // App session: fields read the current reactive state.
+            Value::App(_) => {
+                return self.env.get(field).cloned().ok_or_else(|| {
+                    format!("no reactive state named '{}'", field)
+                });
+            }
             Value::StructInstance(si) => {
                 match si.fields.get(field) {
                     Some(val) => Ok(val.clone()),

@@ -15,7 +15,7 @@ int float str
 len contains slice push pop sort reverse concat range map
 keys values has set del
 args input read write exists mkdir ls rm mv cp
-rand time sleep env exit json encode error shell hash later running
+rand time sleep env exit json encode error shell hash later running test
 find matches sub any all now date elapsed cpu gpu nodes grad
 ```
 

@@ -38,6 +38,7 @@ const CORE_RESERVED: &[&str] = &[
 const WEB_RESERVED: &[&str] = &[
     "route", "serve", "respond", "redirect", "html", "text",
     "sqlite", "sign", "verify",
+    "app", "click",
     "cors", "sessions", "templates", "cache", "limit",
     "uploads", "sse", "ws", "connect", "send", "recv", "close",
     "page", "static_dir", "smtp",
@@ -111,6 +112,8 @@ pub struct Validator<'a> {
     /// ui transpiler rewrites into state.get/state.set inside render/handler
     /// functions — the documented exception to function-scope isolation.
     ui_mode: bool,
+    /// Inside a `test` block — harness builtins (app, click) are callable.
+    in_test_block: bool,
     /// Validating inside a `view` body — the element vocabulary is active
     in_view: bool,
     /// Bare imports: module path → line of the `use` (reservation source)
@@ -129,6 +132,7 @@ impl<'a> Validator<'a> {
             module_vars: BTreeSet::new(),
             fn_depth: 0,
             ui_mode: false,
+            in_test_block: false,
             in_view: false,
             bare_import_lines: std::collections::BTreeMap::new(),
             prefix_lines: std::collections::BTreeMap::new(),
@@ -229,6 +233,8 @@ impl<'a> Validator<'a> {
             // verification boundary mirrors function-scope isolation.
             Stmt::TestBlock { params, body, .. } => {
                 let saved = self.defined_vars.clone();
+                let saved_in_test = self.in_test_block;
+                self.in_test_block = true;
                 for mv in &self.module_vars.clone() {
                     self.defined_vars.remove(mv);
                 }
@@ -239,6 +245,7 @@ impl<'a> Validator<'a> {
                     self.validate_stmt(s);
                 }
                 self.defined_vars = saved;
+                self.in_test_block = saved_in_test;
             }
             Stmt::Assign { name, value } => {
                 if !self.defined_vars.contains(name) {
@@ -558,6 +565,21 @@ impl<'a> Validator<'a> {
     }
 
     fn validate_call(&mut self, name: &str, args: &[Expr]) {
+        // Test-harness builtins exist only inside test blocks (which never
+        // reach a build) — accept them there, reject them anywhere else.
+        if matches!(name, "app" | "click") {
+            if self.in_test_block {
+                for a in args {
+                    self.validate_expr(a);
+                }
+                return;
+            }
+            self.error(format!(
+                "'{}' is a test-harness builtin — it only works inside a test block",
+                name
+            ));
+            return;
+        }
         let argc = args.len();
 
         // Maps are dictionaries: set[] must not change the map's value type
