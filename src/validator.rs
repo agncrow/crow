@@ -28,6 +28,7 @@ const CORE_RESERVED: &[&str] = &[
     "hash",
     "find", "matches", "sub", "any", "all",
     "later", "running",
+    "test",
     "now", "date", "elapsed",
     "cpu", "gpu", "nodes",
     "grad",
@@ -78,6 +79,7 @@ const BUILTINS: &[&str] = &[
     // Regex
     "find", "matches", "sub", "any", "all",
     "later", "running",
+    "test",
     // Date/time
     "now", "date", "elapsed",
     // Resource
@@ -222,6 +224,22 @@ impl<'a> Validator<'a> {
     fn validate_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Line(n) => { self.current_line = *n; }
+            // Test blocks: params are generated inputs; the body sees what a
+            // caller sees (fns, structs, builtins) plus its params — the
+            // verification boundary mirrors function-scope isolation.
+            Stmt::TestBlock { params, body, .. } => {
+                let saved = self.defined_vars.clone();
+                for mv in &self.module_vars.clone() {
+                    self.defined_vars.remove(mv);
+                }
+                for p in params {
+                    self.defined_vars.insert(p.clone());
+                }
+                for s in body {
+                    self.validate_stmt(s);
+                }
+                self.defined_vars = saved;
+            }
             Stmt::Assign { name, value } => {
                 if !self.defined_vars.contains(name) {
                     self.check_reserved(name, "variable");

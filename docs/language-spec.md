@@ -2987,6 +2987,64 @@ no-verb endgame — needs the decision-span machinery), cancel-and-restart
 for typeahead-shaped work, a render latency budget on `serve`, and durable
 jobs.
 
+## Verification: test Blocks
+
+Verification is part of writing a function, not a separate discipline. A
+`test` block states what a function does at points you chose, and what it
+can never do anywhere:
+
+```
+fn fee[notional]
+    if notional lt 0
+        return error['negative notional', 'validation']
+    return max[1.0, notional * 0.001]
+test[n]
+    fee[50000.0] eq 50.0                --- example: exact fact, checked once
+    fee[100.0] eq 1.0                   --- the floor decision
+    fee[-5.0].kind eq 'validation'      --- the error path
+    if n gte 0.0
+        fee[n] gte 1.0                  --- law: n is generated, many values
+```
+
+| Form | Means |
+|------|-------|
+| `test` after a fn | that function's examples and laws |
+| `test name[…]` | a standalone scenario, any file, any position |
+| `test[a, b]` | params are **generated inputs** — boundaries first |
+| no params | runs once |
+
+A bare boolean line is a truth to check. `assert` is for steps inside
+scenarios, and reports both operands on failure. Preconditions are plain
+`if`s. Bindings are plain assignments. A test body is ordinary Crow.
+
+**Verification never creates methods.** Test bodies call production
+functions — that is what verification is — but no function exists in the
+program's namespace because verification needed it. Anything a truth needs
+beyond calling the program lives inside the block.
+
+`test` blocks never run in production: `crow build` strips them, `crow run`
+ignores them. `crow test` runs them; `crow check` runs them plus everything
+automatic — determinism contracts, edge cases, database hazards.
+
+### Design Note: Verification Is Part of the Function
+
+**What was considered:** a conventional test framework (files by naming
+convention, `assert` helpers, fixtures); separate keywords for examples
+and laws (`verify` + `rule`, or `where` + `prop_`); helper functions
+holding multi-line laws.
+
+**Why this design:** every alternative created a boundary the language then
+had to police — test files that drift from code, two words with identical
+semantics, "is this function logic or test scaffolding?". One keyword whose
+*position* carries the distinction (attached vs named) and whose *params*
+carry quantification needs no policing: a test block cannot drift from the
+function it sits under, and a helper function for verification is rejected
+by the checker. The runtime/verification split is drawn by the vocabulary
+itself: `assert` is a builtin that ships; `test` is a keyword that never
+executes in a build. Deferred: compiled-mode execution of test blocks
+(today they run in the interpreter), richer input generation for structs
+and frames, and the `app[]` harness for view/handler scenarios.
+
 ## Appendix: Implementation Status
 
 All core language features have interpreter–transpiler parity. The following items were identified during development and have been resolved:

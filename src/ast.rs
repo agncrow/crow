@@ -64,6 +64,14 @@ pub enum Stmt {
         index: Expr,
         value: Expr,
     },
+    /// Verification block: `test[params]` (attached to the preceding fn)
+    /// or `test name[params]` (standalone). Never executes at runtime —
+    /// crow check consumes these; crow build strips them.
+    TestBlock {
+        name: Option<String>,
+        params: Vec<String>,
+        body: Vec<Stmt>,
+    },
     /// Use statement: use module/path
     Use {
         path: String,

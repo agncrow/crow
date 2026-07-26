@@ -184,6 +184,17 @@ impl Parser {
                 }
             }
         }
+        // `test` blocks: reserved word, recognized in statement position.
+        if let Token::Ident(name) = self.peek() {
+            if name == "test"
+                && matches!(
+                    self.peek_ahead(1),
+                    Token::Ident(_) | Token::LBracket | Token::Newline
+                )
+            {
+                return self.parse_test_block().map(|s| vec![s]);
+            }
+        }
         match self.peek().clone() {
             Token::Fn => self.parse_fn_decl(false).map(|s| vec![s]),
             Token::View => self.parse_fn_decl(true).map(|s| vec![s]),
@@ -218,6 +229,32 @@ impl Parser {
             }
         }
         Ok(Stmt::FnDecl { name, params, defaults, body, is_view })
+    }
+
+    /// `test` (attached, applies to the fn above) or `test name` (standalone),
+    /// optionally with [params] — params are generated inputs. Body is an
+    /// ordinary statement block; bare boolean lines are the truths.
+    fn parse_test_block(&mut self) -> Result<Stmt, String> {
+        self.advance(); // skip 'test'
+        let name = if let Token::Ident(_) = self.peek() {
+            Some(self.expect_ident()?)
+        } else {
+            None
+        };
+        let mut params = Vec::new();
+        if self.check(&Token::LBracket) {
+            self.advance();
+            while !self.check(&Token::RBracket) {
+                params.push(self.expect_ident()?);
+                if self.check(&Token::Comma) {
+                    self.advance();
+                }
+            }
+            self.expect(&Token::RBracket)?;
+        }
+        self.skip_newlines();
+        let body = self.parse_block()?;
+        Ok(Stmt::TestBlock { name, params, body })
     }
 
     fn parse_return(&mut self) -> Result<Stmt, String> {

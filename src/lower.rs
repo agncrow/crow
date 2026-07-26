@@ -174,6 +174,11 @@ impl Lowerer {
                 condition: self.lower_expr(condition)?,
                 body: self.lower_stmts(body)?,
             },
+            Stmt::TestBlock { name, params, body } => Stmt::TestBlock {
+                name: name.clone(),
+                params: params.clone(),
+                body: self.lower_stmts(body)?,
+            },
             Stmt::FieldAssign { object, field, value } => Stmt::FieldAssign {
                 object: self.lower_expr(object)?,
                 field: field.clone(),
