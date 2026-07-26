@@ -200,7 +200,13 @@ artifacts are *curriculum* that teach the checker the domain:
 Open rulings: does user-facing `crow test` exist at all, or does check
 subsume it (--parity/--book stay internal); where-block scope (lean:
 what callers see, F1-consistent); auto-contract battery default-on;
-reserve `rule` and `test` (CORE_RESERVED); crow check runs all layers
+block-keyword naming: `verify` vs `where` (lean: verify — SQL-WHERE
+connotation clash for a data-language audience, self-describing, matches
+the brand; contextual keyword so web.verify/JWT stays callable — the
+`as`/`view` precedent; assert must NOT be taken for the block: it stays
+the single runtime/test-step assertion, or one word would carry both
+ship-and-strip semantics); reserve `rule` and `test` (CORE_RESERVED);
+crow check runs all layers
 while `crow test` stays internal (--parity/--book) — revisit whether a
 user-facing "just my tests" subset verb is wanted post-v1.
 Persona-analysis gaps to design: (a) fullstack harness — handlers write
