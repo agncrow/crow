@@ -2397,6 +2397,8 @@ impl Transpiler {
                     }
                 }
             }
+            // Verification blocks are check-time only — stripped from builds.
+            Stmt::TestBlock { .. } => {}
             Stmt::Line(n) => {
                 self.current_line = *n;
             }

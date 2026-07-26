@@ -155,7 +155,14 @@ Crow neither has nor has documented-rejected? Five items survived the
 filter; everything else (generators, channels, generics, closures, match)
 is either covered by existing design or already rejected on the record.
 
-## F-6. Verification story — "one verb, layered curriculum" (design settled in discussion, awaiting go)
+## F-6. Verification story ✅ SHIPPED (core) — `test` blocks
+
+Shipped: the `test` keyword (attached + named forms), params-are-generated
+-inputs, bare-boolean truths, assert operand introspection, build/run
+stripping, `crow test` verb, `crow check` superset, Layer-0 determinism
+contract, parity file 26. Deferred: compiled-mode test execution, struct/
+frame input generation, seeds/skip-ratio reporting, the `app[]` harness
+(T8), the verification-helper boundary nudge. Original design below.
 
 Not a test framework: an extension of crow check. There is one question
 ("is my program right?"), one verb asking it (crow check), and user

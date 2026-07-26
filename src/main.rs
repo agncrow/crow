@@ -160,10 +160,13 @@ fn main() {
             } else if args.iter().any(|a| a == "--book") {
                 cmd_test_book();
             } else {
-                eprintln!("crow test: pass --parity or --book");
-                eprintln!("  crow test --parity   run tests/parity/*.crow in both modes and diff output");
-                eprintln!("  crow test --book     execute every code block in docs/book/ (both modes)");
-                process::exit(1);
+                // crow test — run the authored test blocks. `crow check` runs
+                // these plus everything automatic (contracts, hazards, edges).
+                let filename = args.iter().skip(2)
+                    .find(|a| !a.starts_with('-'))
+                    .cloned()
+                    .unwrap_or_else(|| parse_crowfile().entry);
+                cmd_test_blocks(&filename);
             }
         }
         "run" => {
@@ -1662,6 +1665,39 @@ fn apply_later_fix(filename: &str, view: &str, helper: &str) -> Result<(), Strin
     ))
 }
 
+/// `crow test` — run only the authored test blocks in a file.
+fn cmd_test_blocks(filename: &str) {
+    let source = read_file(filename);
+    let stmts = match build(&source) {
+        Ok(s) => s,
+        Err(e) => { eprintln!("{}", e); process::exit(1); }
+    };
+    let stmts = match lower::lower_program(&stmts) {
+        Ok(s) => s,
+        Err(e) => { eprintln!("{}", e); process::exit(1); }
+    };
+    let (issues, counts) = checker::run_test_blocks(&stmts);
+    if counts.blocks == 0 {
+        println!("  no test blocks in {} — add `test` after a fn, or `test name[]` anywhere", filename);
+        return;
+    }
+    if issues.is_empty() {
+        println!("\n  \x1b[32m✓ {} block{} pass\x1b[0m — {} truth{}, {} law{}, {} input{} run",
+            counts.blocks, if counts.blocks == 1 { "" } else { "s" },
+            counts.truths, if counts.truths == 1 { "" } else { "s" },
+            counts.laws, if counts.laws == 1 { "" } else { "s" },
+            counts.inputs_run, if counts.inputs_run == 1 { "" } else { "s" });
+        return;
+    }
+    println!("\n  \x1b[33m⚠ {} failing\x1b[0m of {} block{}\n",
+        issues.len(), counts.blocks, if counts.blocks == 1 { "" } else { "s" });
+    for issue in &issues {
+        println!("  \x1b[90m{}:{}\x1b[0m", filename, issue.line());
+        println!("     {}\n", issue.summary());
+    }
+    process::exit(1);
+}
+
 fn run_check_pipeline(filename: &str) -> checker::CheckResult {
     let source = read_file(filename);
     let stmts = match build(&source) {
@@ -1677,6 +1713,16 @@ fn run_check_pipeline(filename: &str) -> checker::CheckResult {
 }
 
 fn print_check_summary(result: &checker::CheckResult, verbose: bool) {
+    let tc = result.test_counts;
+    if tc.blocks > 0 {
+        println!(
+            "\n  tests: {} block{} | {} truth{} | {} law{} | {} input{} run",
+            tc.blocks, if tc.blocks == 1 { "" } else { "s" },
+            tc.truths, if tc.truths == 1 { "" } else { "s" },
+            tc.laws, if tc.laws == 1 { "" } else { "s" },
+            tc.inputs_run, if tc.inputs_run == 1 { "" } else { "s" },
+        );
+    }
     if result.issues.is_empty() {
         println!("\n  \x1b[32m✓ all good\x1b[0m — {} functions checked, {} edge cases generated",
             result.total_functions, result.edge_cases_generated);

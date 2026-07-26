@@ -107,6 +107,17 @@ found = find[nums, is_big]   --- first matching element (error-value if none)
 any_big = any[nums, is_big]  --- true/false, stops early
 all_big = all[nums, is_big]
 
+--- Tests are part of the function. No framework, no imports, no test files.
+--- fn fee[n]
+---     return max[1.0, n * 0.001]
+--- test[x]                     (attached: examples + laws for the fn above)
+---     fee[100.0] eq 1.0       (bare boolean = a truth, checked once)
+---     if x gte 0.0
+---         fee[x] gte 1.0      (params = GENERATED inputs; law over many values)
+--- test scenario_name[]        (named = standalone; assert[] for steps)
+---     assert[fee[2000.0] eq 2.0]
+--- Never write test_ prefixed fns, test directories, or verification helper fns.
+
 --- Slow work in a ui handler? NEVER block the loop — schedule it:
 --- later[load_data]        (fire-and-forget; results land in state, views re-render)
 --- running[load_data]      (true while in flight — spinners, disabled buttons)

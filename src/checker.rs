@@ -60,6 +60,11 @@ pub enum Issue {
     /// A while+sleep poll loop reads a query result captured before the loop —
     /// every iteration decides on launch-time data.
     StaleLoopRead { var: String, source_line: usize, line: usize },
+    /// A truth in a test block failed (or its body errored).
+    TestFailure { block: String, line: usize, detail: String },
+    /// Layer-0 contract: a pure fn returned different results for the same
+    /// input — hidden state or an impure builtin the classifier missed.
+    Nondeterministic { func: String, input_desc: String },
 }
 
 impl Issue {
@@ -95,6 +100,13 @@ impl Issue {
                     "the poll loop decides on launch-time data — '{}' was queried once (line {}) and read every iteration",
                     var, source_line
                 ),
+            Issue::TestFailure { block, detail, .. } =>
+                format!("{} — {}", block, detail),
+            Issue::Nondeterministic { func, input_desc } =>
+                format!(
+                    "'{}' is pure but returned different results for the same input ({}) — hidden state or an impure call the classifier missed",
+                    func, input_desc
+                ),
         }
     }
 
@@ -109,6 +121,8 @@ impl Issue {
             Issue::StaleSnapshot { line, .. } => *line,
             Issue::RemoteQueryInView { line, .. } => *line,
             Issue::StaleLoopRead { line, .. } => *line,
+            Issue::TestFailure { line, .. } => *line,
+            Issue::Nondeterministic { .. } => 0,
         }
     }
 
@@ -123,6 +137,8 @@ impl Issue {
             Issue::StaleSnapshot { view, .. } => view,
             Issue::RemoteQueryInView { view, .. } => view,
             Issue::StaleLoopRead { .. } => "<top-level>",
+            Issue::TestFailure { block, .. } => block,
+            Issue::Nondeterministic { func, .. } => func,
             Issue::EdgeCaseCrash { func, .. } => func,
             Issue::RegressionChange { func, .. } => func,
         }
@@ -169,6 +185,10 @@ impl Issue {
                 "remote data belongs behind a handler refresh (re-query on click) or in local sqlite for the render path — a network hop per render stalls every client".to_string(),
             Issue::StaleLoopRead { var, .. } =>
                 format!("re-query '{}' inside the loop so each poll sees the current database", var),
+            Issue::TestFailure { .. } =>
+                "fix the code — or the truth, if the decision changed".to_string(),
+            Issue::Nondeterministic { .. } =>
+                "find the hidden state: shell/time/rand reached through a path the purity scan missed".to_string(),
             Issue::UndefinedVariable { var, .. } =>
                 format!("'{}' is not defined — check for typos or add an assignment", var),
             Issue::EdgeCaseCrash { error, .. } => {
@@ -186,6 +206,312 @@ impl Issue {
                 format!("was {} — verify the new result {} is correct, then press 'a' to accept", was, now),
         }
     }
+}
+
+// --- Test blocks (the `test` keyword): authored truths and laws ---
+
+#[derive(Default, Clone, Copy)]
+pub struct TestCounts {
+    pub blocks: usize,
+    pub truths: usize,
+    pub laws: usize,
+    pub inputs_run: usize,
+}
+
+/// Execute every test block: attached (unnamed — the fn above's examples and
+/// laws) and named (standalone scenarios). Params are generated inputs,
+/// boundaries first; bodies run in the interpreter against declarations only
+/// (the verification boundary: tests see what callers see). Bare boolean
+/// lines are truths — transformed into assert calls so failures carry
+/// operand introspection.
+pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
+    let mut issues = Vec::new();
+    let mut counts = TestCounts::default();
+
+    // Collect blocks with attachment labels.
+    struct Block {
+        label: String,
+        params: Vec<String>,
+        body: Vec<Stmt>,
+        line: usize,
+    }
+    let mut blocks = Vec::new();
+    let mut line = 0usize;
+    let mut last_fn: Option<String> = None;
+    for s in stmts {
+        match s {
+            Stmt::Line(n) => line = *n,
+            Stmt::FnDecl { name, .. } => last_fn = Some(name.clone()),
+            Stmt::TestBlock { name, params, body } => {
+                let label = match name {
+                    Some(n) => format!("test {}", n),
+                    None => format!(
+                        "{} tests",
+                        last_fn.clone().unwrap_or_else(|| "<top-level>".into())
+                    ),
+                };
+                blocks.push(Block {
+                    label,
+                    params: params.clone(),
+                    body: body.clone(),
+                    line,
+                });
+            }
+            _ => {}
+        }
+    }
+    if blocks.is_empty() {
+        return (issues, counts);
+    }
+    counts.blocks = blocks.len();
+
+    // Declarations only — the boundary: tests see what callers see.
+    let decls: Vec<Stmt> = stmts
+        .iter()
+        .filter(|s| {
+            matches!(
+                s,
+                Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::Use { .. }
+            )
+        })
+        .cloned()
+        .collect();
+
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+
+    for block in &blocks {
+        // Type the block: wrap as a synthetic fn so params infer from usage.
+        let mut ctx2 = TypeContext::new();
+        let mut infer_input = decls.clone();
+        infer_input.push(Stmt::FnDecl {
+            name: "__testblock".into(),
+            params: block.params.clone(),
+            defaults: vec![None; block.params.len()],
+            body: block.body.clone(),
+            is_view: false,
+        });
+        ctx2.infer_program(&infer_input);
+        let mut sig = match ctx2.functions.get("__testblock") {
+            Some(s) => s.clone(),
+            None => continue,
+        };
+        // Nothing calls a test block, so param types come from usage: find
+        // each param as an argument to a known fn and adopt that param type.
+        for (i, (pname, pty)) in sig.params.clone().iter().enumerate() {
+            if !matches!(pty, CrowType::Unknown) {
+                continue;
+            }
+            if let Some(t) = infer_param_from_usage(&block.body, pname, &ctx2) {
+                sig.params[i].1 = t;
+            }
+        }
+        // Params visible to per-line inference below.
+        for (pname, pty) in &sig.params {
+            ctx2.vars.insert(pname.clone(), pty.clone());
+        }
+
+        // Bare boolean lines become assert calls (operand introspection).
+        let mut transformed = Vec::with_capacity(block.body.len());
+        for st in &block.body {
+            match st {
+                Stmt::ExprStmt(e)
+                    if matches!(ctx2.infer_expr(e), CrowType::Bool)
+                        || matches!(ctx2.infer_expr(e), CrowType::Result(ref inner) if matches!(**inner, CrowType::Bool)) =>
+                {
+                    counts.truths += 1;
+                    transformed.push(Stmt::ExprStmt(Expr::Call {
+                        callee: Box::new(Expr::Ident("assert".into())),
+                        args: vec![e.clone()],
+                    }));
+                }
+                other => transformed.push(other.clone()),
+            }
+        }
+
+        // Input tuples: none → run once; params → generated, boundaries first.
+        let combos: Vec<Vec<CrowValue>> = if block.params.is_empty() {
+            vec![Vec::new()]
+        } else {
+            if !can_generate_edge_cases(&sig)
+                || sig
+                    .params
+                    .iter()
+                    .any(|(_, ty)| matches!(ty, CrowType::Unknown))
+            {
+                issues.push(Issue::TestFailure {
+                    block: block.label.clone(),
+                    line: block.line,
+                    detail: "cannot generate inputs for these param types yet — give the params simpler types or drop them".into(),
+                });
+                continue;
+            }
+            counts.laws += 1;
+            generate_input_combos(&sig)
+        };
+
+        'combos: for combo in &combos {
+            counts.inputs_run += 1;
+            let mut program: Vec<Stmt> = Vec::new();
+            for (pname, val) in block.params.iter().zip(combo.iter()) {
+                program.push(Stmt::Assign {
+                    name: pname.clone(),
+                    value: value_to_expr(val),
+                });
+            }
+            program.extend(transformed.iter().cloned());
+
+            let decls_clone = decls.clone();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut interp = Interpreter::new();
+                let _ = interp.run(&decls_clone);
+                interp.run(&program)
+            }));
+            let failure = match result {
+                Ok(Ok(_)) => None,
+                Ok(Err(e)) => Some(e),
+                Err(_) => Some("panicked".to_string()),
+            };
+            if let Some(msg) = failure {
+                let at = if block.params.is_empty() {
+                    String::new()
+                } else {
+                    let vals: Vec<String> = block
+                        .params
+                        .iter()
+                        .zip(combo.iter())
+                        .map(|(p, v)| format!("{} = {}", p, v.value))
+                        .collect();
+                    format!("  (at {})", vals.join(", "))
+                };
+                issues.push(Issue::TestFailure {
+                    block: block.label.clone(),
+                    line: block.line,
+                    detail: format!("{}{}", msg, at),
+                });
+                break 'combos; // one failure per block keeps reports readable
+            }
+        }
+    }
+
+    std::panic::set_hook(prev_hook);
+    (issues, counts)
+}
+
+/// Find `param` used as an argument to a known fn/builtin and adopt the
+/// corresponding parameter type — how a test block's generated inputs get
+/// their types.
+fn infer_param_from_usage(body: &[Stmt], param: &str, ctx: &TypeContext) -> Option<CrowType> {
+    fn walk(e: &Expr, param: &str, ctx: &TypeContext) -> Option<CrowType> {
+        if let Expr::Call { callee, args } = e {
+            if let Expr::Ident(fname) = callee.as_ref() {
+                for (i, a) in args.iter().enumerate() {
+                    if matches!(a, Expr::Ident(n) if n == param) {
+                        if let Some(sig) = ctx.functions.get(fname) {
+                            if let Some((_, ty)) = sig.params.get(i) {
+                                if !matches!(ty, CrowType::Unknown) {
+                                    return Some(ty.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            for a in args {
+                if let Some(t) = walk(a, param, ctx) {
+                    return Some(t);
+                }
+            }
+            return walk(callee, param, ctx);
+        }
+        match e {
+            Expr::BinOp { left, right, .. } => {
+                walk(left, param, ctx).or_else(|| walk(right, param, ctx))
+            }
+            Expr::UnaryOp { expr, .. } => walk(expr, param, ctx),
+            Expr::FieldAccess { object, .. } => walk(object, param, ctx),
+            Expr::Array(items) => items.iter().find_map(|i| walk(i, param, ctx)),
+            Expr::Named { value, .. } => walk(value, param, ctx),
+            _ => None,
+        }
+    }
+    for st in body {
+        let found = match st {
+            Stmt::ExprStmt(e) | Stmt::Return(Some(e)) => walk(e, param, ctx),
+            Stmt::Assign { value, .. } => walk(value, param, ctx),
+            Stmt::If { condition, then_body, else_body } => walk(condition, param, ctx)
+                .or_else(|| infer_param_from_usage(then_body, param, ctx))
+                .or_else(|| {
+                    else_body
+                        .as_ref()
+                        .and_then(|eb| infer_param_from_usage(eb, param, ctx))
+                }),
+            Stmt::For { body, .. } | Stmt::While { body, .. } => {
+                infer_param_from_usage(body, param, ctx)
+            }
+            _ => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
+// --- Layer 0: determinism contract ---
+
+/// A pure fn must return identical results for identical inputs. This can
+/// only fail when the purity classification or the runtime is wrong — which
+/// is exactly why it's checked: it audits the machinery, free.
+/// (The error-propagation contract is runtime-enforced in the interpreter,
+/// so probing it here is vacuous — it becomes meaningful as a compiled-mode
+/// contract, queued with the compiled test-runner milestone.)
+pub fn run_determinism_probe(
+    ctx: &TypeContext,
+    stmts: &[Stmt],
+    pure_fns: &BTreeSet<String>,
+    recursive_fns: &BTreeSet<String>,
+) -> Vec<Issue> {
+    let mut issues = Vec::new();
+    let decls: Vec<Stmt> = stmts
+        .iter()
+        .filter(|s| matches!(s, Stmt::FnDecl { .. } | Stmt::StructDecl { .. }))
+        .cloned()
+        .collect();
+    for name in pure_fns {
+        if recursive_fns.contains(name) {
+            continue;
+        }
+        let sig = match ctx.functions.get(name) {
+            Some(s) => s,
+            None => continue,
+        };
+        if !can_generate_edge_cases(sig)
+            || sig.params.iter().any(|(_, ty)| matches!(ty, CrowType::Unknown))
+        {
+            continue;
+        }
+        for combo in generate_input_combos(sig).iter().take(2) {
+            let call = Expr::Call {
+                callee: Box::new(Expr::Ident(name.clone())),
+                args: combo.iter().map(value_to_expr).collect(),
+            };
+            let mut interp = Interpreter::new();
+            let _ = interp.run(&decls);
+            let a = interp.eval_expr_pub(&call);
+            let b = interp.eval_expr_pub(&call);
+            let (Ok(a), Ok(b)) = (a, b) else { continue };
+            let (da, db) = (format!("{}", a.value), format!("{}", b.value));
+            if da != db {
+                issues.push(Issue::Nondeterministic {
+                    func: name.clone(),
+                    input_desc: format!("{} → {} then {}", format_call(name, combo), da, db),
+                });
+                break;
+            }
+        }
+    }
+    issues
 }
 
 // --- Blocking-in-view analysis ---
@@ -1425,6 +1751,7 @@ fn compare_snapshots(
 
 /// Result of running `crow check`.
 pub struct CheckResult {
+    pub test_counts: TestCounts,
     pub pure_fns: BTreeSet<String>,
     pub impure_fns: BTreeSet<String>,
     pub issues: Vec<Issue>,
@@ -1452,6 +1779,14 @@ pub fn run_check(
 
     // 1. Static checks (functions + top-level code)
     issues.extend(run_static_checks(ctx, stmts));
+
+    // 1a2. Authored test blocks: truths, laws, scenarios.
+    let (test_issues, test_counts) = run_test_blocks(stmts);
+    issues.extend(test_issues);
+
+    // 1a3. Layer-0 contract: determinism of pure fns.
+    let recursive_for_probe = find_recursive_functions(ctx);
+    issues.extend(run_determinism_probe(ctx, stmts, &pure_fns, &recursive_for_probe));
 
     // 1b. Views/handlers reaching blocking builtins freeze the live loop.
     issues.extend(find_blocking_in_views(ctx, &fn_lines));
@@ -1494,6 +1829,7 @@ pub fn run_check(
     save_snapshots(&new_snapshots);
 
     CheckResult {
+        test_counts,
         pure_fns,
         impure_fns,
         issues,
@@ -1569,6 +1905,39 @@ mod tests {
             "re-query inside the loop should clear it, got {:?}",
             issues2
         );
+    }
+
+    #[test]
+    fn test_blocks_run_truths_laws_and_scenarios() {
+        let src = "fn fee[notional]\n    if notional lt 0\n        return error['negative', 'validation']\n    return max[1.0, notional * 0.001]\ntest[n]\n    fee[100.0] eq 1.0\n    fee[-5.0].kind eq 'validation'\n    if n gte 0.0\n        fee[n] gte 1.0\n\ntest floor_holds[]\n    assert[fee[100.0] eq 1.0]\n";
+        let stmts = crate::build(src).unwrap();
+        let (issues, counts) = run_test_blocks(&stmts);
+        assert!(issues.is_empty(), "expected all truths to hold, got {:?}", issues);
+        assert_eq!(counts.blocks, 2);
+        assert_eq!(counts.truths, 2, "two bare boolean lines are truths");
+        assert_eq!(counts.laws, 1, "the parameterized block is a law");
+        assert!(counts.inputs_run > 1, "law must run over generated inputs");
+    }
+
+    #[test]
+    fn failing_truth_reports_operands() {
+        let src = "fn fee[n]\n    return n * 2.0\ntest[]\n    fee[2.0] eq 5.0\n";
+        let stmts = crate::build(src).unwrap();
+        let (issues, _) = run_test_blocks(&stmts);
+        assert_eq!(issues.len(), 1);
+        let d = format!("{:?}", issues[0]);
+        assert!(d.contains("left:") && d.contains("4") && d.contains("right:") && d.contains("5"),
+            "failure must show both operands, got {}", d);
+    }
+
+    #[test]
+    fn failing_law_reports_the_input() {
+        let src = "fn half[x]\n    return x / 2\ntest[n]\n    half[4] eq 2\n    half[n] gt 0\n";
+        let stmts = crate::build(src).unwrap();
+        let (issues, _) = run_test_blocks(&stmts);
+        assert_eq!(issues.len(), 1, "law fails at some generated input");
+        let d = format!("{:?}", issues[0]);
+        assert!(d.contains("at n ="), "must report the failing input, got {}", d);
     }
 
     #[test]

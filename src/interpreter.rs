@@ -589,6 +589,8 @@ impl Interpreter {
 
     fn exec_stmt(&mut self, stmt: &Stmt) -> Result<Signal, String> {
         match stmt {
+            // Verification blocks never execute — crow check consumes them.
+            Stmt::TestBlock { .. } => Ok(Signal::None),
             Stmt::Assign { name, value } => {
                 let val = self.eval_expr(value)?;
                 // Check for type-changing reassignment
@@ -1475,6 +1477,38 @@ impl Interpreter {
                         return Ok(CrowValue::ok(Value::Bool(false)));
                     }
                     _ => return Err("running[] takes a function name: running[work]".into()),
+                }
+            }
+
+            // assert[a op b] — introspect the comparison on failure: report
+            // both operand values, not just "assertion failed".
+            if name == "assert" && args.len() == 1 {
+                if let Expr::BinOp { left, op, right } = &args[0] {
+                    use crate::ast::BinOp as B;
+                    let word = match op {
+                        B::Eq => Some("eq"), B::Ne => Some("ne"),
+                        B::Gt => Some("gt"), B::Lt => Some("lt"),
+                        B::Gte => Some("gte"), B::Lte => Some("lte"),
+                        _ => None,
+                    };
+                    if let Some(word) = word {
+                        let full = self.eval_expr(&args[0])?;
+                        if !full.ok {
+                            return Err(format!(
+                                "cannot branch on an error value — {}",
+                                full.reason
+                            ));
+                        }
+                        if matches!(full.value, Value::Bool(false)) {
+                            let lv = self.eval_expr(left)?;
+                            let rv = self.eval_expr(right)?;
+                            return Err(format!(
+                                "assert failed: {}\n    left:  {}\n    right: {}",
+                                word, lv.value, rv.value
+                            ));
+                        }
+                        return Ok(CrowValue::done());
+                    }
                 }
             }
 
