@@ -172,31 +172,24 @@ artifacts are *curriculum* that teach the checker the domain:
   generator seeds for layer 2. Editor folds them by default (kills file
   bloat); convention: doc-worthy examples only, overflow → test files;
   transpiler strips them from release builds.
-- **Layers 2+3 — THE RULE CONSTRUCT (settled after Vijay's "rules for a
-  method" reframe; deletes prop_, test_ naming, helper-fn extraction,
-  file conventions, AND implicit-free-var quantification):** a `where`
-  block holds ground boolean lines (examples, checked once) and `rule`
-  blocks (laws). A rule declares its generated inputs as params —
-  explicit quantification, so the typo hazard is gone (unbound name in
-  a rule body = ordinary undefined error):
+- **Layers 2+3 — FINAL TAXONOMY: examples, rules, tests (settled):**
+  three constructs, each named for what it is; no naming conventions, no
+  required directories, discovery and release-stripping are syntactic.
 
-      fn encode[order] … 
-      where
-          encode[Order['AAPL', 100, 189.50]] ne ''
-          rule round_trip[s, q, p]
-              o = Order[s, q, p]
-              decode[encode[o]] eq o
+  `where` — attached to a fn; holds that fn's ground example lines and
+  its `rule` blocks. `rule name[params]` — ONLY inside where — states a
+  law of that fn; params are the generated inputs (explicit
+  quantification); body = ordinary statements, last expression is the
+  truth, assert-steps allowed, early `return true` = precondition skip.
+  Cross-fn pure laws attach to either fn's where. Rule names live in
+  rule-space only, never the module namespace.
 
-  Rule names live in rule-space only (reporting: "encode · round_trip
-  fails at s='', q=0"), never in the module namespace — the logic/rules
-  boundary is syntactic. Bodies are ordinary statements; last expression
-  is the truth; assert-steps allowed for rich diagnostics via error
-  propagation; early `return true` = precondition skip (skip ratio
-  reported). **Standalone `rule` at module level replaces test_ fns
-  entirely**: zero params = scenario (runs once — db setup, app
-  harness); with params = stateful law over generated inputs. Discovery
-  is syntactic, not by naming convention; stripping from release builds
-  is syntactic. Final user surface: `where`, `rule`, `assert`.
+  `test name[params]` — module level, any file; a named block, not a
+  fn. Zero params = scenario (runs once: db setup, app[] harness,
+  sequences). With params = stateful law (params generated) — "test
+  webhook_idempotent[fill]" reads as "test that for any fill…".
+
+  Teaching line: examples show, rules bind, tests exercise.
 - **Delivery (the C loops):** editor = incremental affected-run on save
   (conservative call graph; fn-values → run everything); CI/pre-commit
   = always complete. Stale-green contained by policy, not cleverness.
@@ -207,9 +200,9 @@ artifacts are *curriculum* that teach the checker the domain:
 Open rulings: does user-facing `crow test` exist at all, or does check
 subsume it (--parity/--book stay internal); where-block scope (lean:
 what callers see, F1-consistent); auto-contract battery default-on;
-bless `rule` as a reserved word (CORE_RESERVED) and the where/rule
-two-keyword surface; one-line rule form (`rule floor[n] …` single
-indented line) confirmed sufficient vs inline form.
+reserve `rule` and `test` (CORE_RESERVED); crow check runs all layers
+while `crow test` stays internal (--parity/--book) — revisit whether a
+user-facing "just my tests" subset verb is wanted post-v1.
 Persona-analysis gaps to design: (a) fullstack harness — handlers write
 reactive state that test fns cannot read under F1; scenario tests need a
 sanctioned way to drive a handler and observe state (headless
