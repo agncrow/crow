@@ -192,6 +192,12 @@ artifacts are *curriculum* that teach the checker the domain:
 Open rulings: does user-facing `crow test` exist at all, or does check
 subsume it (--parity/--book stay internal); where-block scope (lean:
 what callers see, F1-consistent); auto-contract battery default-on.
+Persona-analysis gaps to design: (a) fullstack harness — handlers write
+reactive state that test fns cannot read under F1; scenario tests need a
+sanctioned way to drive a handler and observe state (headless
+app-under-test or a test-scoped state accessor); (b) route testing needs
+a request-construction helper; (c) view output testing (tree/html
+compare) is the natural future home of user snapshot[].
 
 ## F-7. Datetime depth — audit required, blocks F-2
 
