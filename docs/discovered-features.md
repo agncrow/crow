@@ -172,38 +172,28 @@ artifacts are *curriculum* that teach the checker the domain:
   generator seeds for layer 2. Editor folds them by default (kills file
   bloat); convention: doc-worthy examples only, overflow → test files;
   transpiler strips them from release builds.
-- **Layers 2+3 — SETTLED: `verify` + `test`, rule DELETED:** one
-  quantification convention across both constructs: *params on a
-  verification construct are generated inputs.*
+- **Layers 2+3 — FINAL: one keyword, `test` (verify deleted — Vijay's
+  merge):** after rule's deletion, verify and test had IDENTICAL
+  semantics (statements + bare-boolean truths, params = generated,
+  stripped from builds) differing only in attachment — and same
+  semantics must mean same word. Attached form (follows a fn, unnamed)
+  holds that fn's examples and laws; standalone form is named:
 
       fn fee[notional] …
-      verify[n]
-          fee[100.0] eq 1.0            --- ground line: example, checked once
-          fee[n] gte 1.0               --- uses n: law, checked per generated n
-          if n gt 0
-              fee[n] lte fee[n * 2]    --- precondition = plain if
+      test[n]
+          fee[100.0] eq 1.0            --- example (ground)
+          fee[n] gte 1.0               --- law (generated n)
 
-      verify[s, q, p]-style blocks allow assignments as shared bindings
-      (o = Order[s, q, p] then decode[encode[o]] eq o) — multi-line laws
-      with no helper fns and no rule keyword. `verify` bare = examples
-      only. Semantics: block runs per generated tuple; lines with no
-      dataflow from generated names are checked once. Reporting is by
-      line text + generated values ("verify:12 — fee[n] gte 1.0 fails at
-      n = -3"); named laws are gone, line-text reporting replaces them.
+      test webhook_idempotent[fill]    --- standalone: named, stateful
+          …
 
-  `test name[params]` — module-level scenario block; zero params = runs
-  once (db setup, app[] harness); params = generated (stateful law).
-  Same params-mean-generated rule as verify. Final user surface:
-  **verify, test, assert** — two keywords, one builtin, one convention.
-
-  **BOUNDARY PRINCIPLE (Vijay's ruling): verification never creates
-  methods.** Verify/test bodies are the only home for verification
-  logic; a function must never exist because of verification. Verify
-  lines call *production* fns (that is what testing is) — but the
-  program's namespace contains zero verification helpers. ENFORCED by
-  the checker: a fn whose only callers are verify/test constructs gets
-  flagged ("only verification calls 'round_trips' — inline it") with a
-  fix applier that inlines and deletes it.
+  Teaching line: "attach tests to a function; name tests that stand
+  alone." Bonus deletions: the verify/web-JWT contextual-keyword
+  machinery (no verify keyword exists), and the which-block
+  classification decision (position decides). Verb story: `crow test`
+  runs authored test blocks (universal muscle memory); `crow check` =
+  the full audit (contracts + tests + hazards) — test ⊂ check.
+  Final user surface: **test, assert.**
 - **Delivery (the C loops):** editor = incremental affected-run on save
   (conservative call graph; fn-values → run everything); CI/pre-commit
   = always complete. Stale-green contained by policy, not cleverness.
@@ -226,7 +216,7 @@ connotation clash for a data-language audience, self-describing, matches
 the brand; contextual keyword so web.verify/JWT stays callable — the
 `as`/`view` precedent; assert must NOT be taken for the block: it stays
 the single runtime/test-step assertion, or one word would carry both
-ship-and-strip semantics); reserve `verify` (contextual) and `test` (CORE_RESERVED);
+ship-and-strip semantics); reserve `test` (CORE_RESERVED);
 crow check runs all layers
 while `crow test` stays internal (--parity/--book) — revisit whether a
 user-facing "just my tests" subset verb is wanted post-v1.
