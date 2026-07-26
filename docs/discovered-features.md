@@ -172,24 +172,29 @@ artifacts are *curriculum* that teach the checker the domain:
   generator seeds for layer 2. Editor folds them by default (kills file
   bloat); convention: doc-worthy examples only, overflow → test files;
   transpiler strips them from release builds.
-- **Layers 2+3 — FINAL TAXONOMY: examples, rules, tests (settled):**
-  three constructs, each named for what it is; no naming conventions, no
-  required directories, discovery and release-stripping are syntactic.
+- **Layers 2+3 — SETTLED: `verify` + `test`, rule DELETED:** one
+  quantification convention across both constructs: *params on a
+  verification construct are generated inputs.*
 
-  `where` — attached to a fn; holds that fn's ground example lines and
-  its `rule` blocks. `rule name[params]` — ONLY inside where — states a
-  law of that fn; params are the generated inputs (explicit
-  quantification); body = ordinary statements, last expression is the
-  truth, assert-steps allowed, early `return true` = precondition skip.
-  Cross-fn pure laws attach to either fn's where. Rule names live in
-  rule-space only, never the module namespace.
+      fn fee[notional] …
+      verify[n]
+          fee[100.0] eq 1.0            --- ground line: example, checked once
+          fee[n] gte 1.0               --- uses n: law, checked per generated n
+          if n gt 0
+              fee[n] lte fee[n * 2]    --- precondition = plain if
 
-  `test name[params]` — module level, any file; a named block, not a
-  fn. Zero params = scenario (runs once: db setup, app[] harness,
-  sequences). With params = stateful law (params generated) — "test
-  webhook_idempotent[fill]" reads as "test that for any fill…".
+      verify[s, q, p]-style blocks allow assignments as shared bindings
+      (o = Order[s, q, p] then decode[encode[o]] eq o) — multi-line laws
+      with no helper fns and no rule keyword. `verify` bare = examples
+      only. Semantics: block runs per generated tuple; lines with no
+      dataflow from generated names are checked once. Reporting is by
+      line text + generated values ("verify:12 — fee[n] gte 1.0 fails at
+      n = -3"); named laws are gone, line-text reporting replaces them.
 
-  Teaching line: examples show, rules bind, tests exercise.
+  `test name[params]` — module-level scenario block; zero params = runs
+  once (db setup, app[] harness); params = generated (stateful law).
+  Same params-mean-generated rule as verify. Final user surface:
+  **verify, test, assert** — two keywords, one builtin, one convention.
 - **Delivery (the C loops):** editor = incremental affected-run on save
   (conservative call graph; fn-values → run everything); CI/pre-commit
   = always complete. Stale-green contained by policy, not cleverness.
@@ -212,7 +217,7 @@ connotation clash for a data-language audience, self-describing, matches
 the brand; contextual keyword so web.verify/JWT stays callable — the
 `as`/`view` precedent; assert must NOT be taken for the block: it stays
 the single runtime/test-step assertion, or one word would carry both
-ship-and-strip semantics); reserve `rule` and `test` (CORE_RESERVED);
+ship-and-strip semantics); reserve `verify` (contextual) and `test` (CORE_RESERVED);
 crow check runs all layers
 while `crow test` stays internal (--parity/--book) — revisit whether a
 user-facing "just my tests" subset verb is wanted post-v1.
