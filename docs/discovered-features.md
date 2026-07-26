@@ -195,6 +195,15 @@ artifacts are *curriculum* that teach the checker the domain:
   once (db setup, app[] harness); params = generated (stateful law).
   Same params-mean-generated rule as verify. Final user surface:
   **verify, test, assert** — two keywords, one builtin, one convention.
+
+  **BOUNDARY PRINCIPLE (Vijay's ruling): verification never creates
+  methods.** Verify/test bodies are the only home for verification
+  logic; a function must never exist because of verification. Verify
+  lines call *production* fns (that is what testing is) — but the
+  program's namespace contains zero verification helpers. ENFORCED by
+  the checker: a fn whose only callers are verify/test constructs gets
+  flagged ("only verification calls 'round_trips' — inline it") with a
+  fix applier that inlines and deletes it.
 - **Delivery (the C loops):** editor = incremental affected-run on save
   (conservative call graph; fn-values → run everything); CI/pre-commit
   = always complete. Stale-green contained by policy, not cleverness.
