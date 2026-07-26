@@ -180,7 +180,12 @@ artifacts are *curriculum* that teach the checker the domain:
   example to law is literally "generalize a constant." Typo risk
   (misspelled name silently becomes a quantified var) mitigated by
   did-you-mean against visible fns + type constraints; LSP annotates
-  generated vars. Relational two-fn laws attach to either fn.
+  generated vars. Relational two-fn laws attach to either fn. Multi-line
+  laws are named boolean/assert fns applied from a one-line where entry
+  (predicates-are-named-fns precedent); assert-steps inside the law fn
+  preserve operand introspection through error propagation. Preconditions:
+  early `return true` skips an input (report skip ratio to expose vacuous
+  laws).
 - **Layer 3 — scenarios (directory/suffix conventions DELETED):** a
   `test_` fn may live in ANY file — discovery is by name prefix alone;
   tests/ and *_test.crow are organizational suggestions, not tool
