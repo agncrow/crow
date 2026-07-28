@@ -346,12 +346,17 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
         };
         // Nothing calls a test block, so param types come from usage: find
         // each param as an argument to a known fn and adopt that param type.
-        for (i, (pname, pty)) in sig.params.clone().iter().enumerate() {
-            if !matches!(pty, CrowType::Unknown) {
-                continue;
-            }
-            if let Some(t) = infer_param_from_usage(&block.body, pname, &ctx2) {
-                sig.params[i].1 = t;
+        // Two passes: `dt` in `a - dt` types from `a`, which itself may
+        // resolve only in the first pass.
+        for _ in 0..2 {
+            for (i, (pname, pty)) in sig.params.clone().iter().enumerate() {
+                if !matches!(pty, CrowType::Unknown) {
+                    continue;
+                }
+                if let Some(t) = infer_param_from_usage(&block.body, pname, &ctx2) {
+                    sig.params[i].1 = t.clone();
+                    ctx2.vars.insert(pname.clone(), t);
+                }
             }
         }
         // Params visible to per-line inference below.
@@ -473,7 +478,21 @@ fn infer_param_from_usage(body: &[Stmt], param: &str, ctx: &TypeContext) -> Opti
             return walk(callee, param, ctx);
         }
         match e {
-            Expr::BinOp { left, right, .. } => {
+            Expr::BinOp { left, right, op } => {
+                // Arithmetic with a known numeric side types the param:
+                // `a - dt` where a is float makes dt a float.
+                use crate::ast::BinOp as B;
+                if matches!(op, B::Add | B::Sub | B::Mul | B::Div | B::Pow) {
+                    let param_on_left = matches!(left.as_ref(), Expr::Ident(n) if n == param);
+                    let param_on_right = matches!(right.as_ref(), Expr::Ident(n) if n == param);
+                    if param_on_left || param_on_right {
+                        let other = if param_on_left { right } else { left };
+                        let t = ctx.infer_expr(other);
+                        if matches!(t, CrowType::Int | CrowType::Float) {
+                            return Some(t);
+                        }
+                    }
+                }
                 walk(left, param, ctx).or_else(|| walk(right, param, ctx))
             }
             Expr::UnaryOp { expr, .. } => walk(expr, param, ctx),
@@ -846,7 +865,11 @@ pub fn find_remote_queries_in_views(
         return Vec::new();
     }
     let mut issues = Vec::new();
-    for root in ctx.views.iter().chain(ctx.view_handlers.iter()) {
+    // A view registered in page[] is also collected as a handler — one
+    // root, one finding.
+    let roots: std::collections::BTreeSet<&String> =
+        ctx.views.iter().chain(ctx.view_handlers.iter()).collect();
+    for root in roots {
         let Some(sig) = ctx.functions.get(root) else { continue };
         let mut flagged: BTreeSet<String> = BTreeSet::new();
         collect_query_conns(&sig.body, &mut flagged);
@@ -1763,9 +1786,15 @@ fn can_generate_edge_cases(sig: &FnSig) -> bool {
 
 /// Generate all combinations of boundary inputs for a function (capped at 50).
 fn generate_input_combos(sig: &FnSig) -> Vec<Vec<CrowValue>> {
-    let param_values: Vec<Vec<CrowValue>> = sig.params.iter()
-        .filter_map(|(_, ty)| boundary_values(ty))
-        .collect();
+    // All params or none: silently dropping an ungeneratable param would
+    // call the fn with the wrong arity and report phantom crashes.
+    let mut param_values: Vec<Vec<CrowValue>> = Vec::new();
+    for (_, ty) in &sig.params {
+        match boundary_values(ty) {
+            Some(vals) => param_values.push(vals),
+            None => return vec![],
+        }
+    }
 
     if param_values.is_empty() { return vec![vec![]]; }
 
@@ -1780,7 +1809,9 @@ fn generate_input_combos(sig: &FnSig) -> Vec<Vec<CrowValue>> {
             }
         }
         combos = new_combos;
-        if combos.len() > 50 { combos.truncate(50); break; }
+        // Cap the count, never the arity: breaking out mid-product would
+        // emit short tuples and report phantom wrong-arity crashes.
+        if combos.len() > 50 { combos.truncate(50); }
     }
     combos
 }
@@ -1799,6 +1830,7 @@ pub fn run_edge_cases(
     pure_fns: &BTreeSet<String>,
     recursive_fns: &BTreeSet<String>,
 ) -> (Vec<Issue>, BTreeMap<String, Vec<(String, String)>>) {
+    let mut crash_seen: BTreeSet<(String, String)> = BTreeSet::new();
     let mut issues = Vec::new();
     let mut snapshots: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
 
@@ -1854,11 +1886,15 @@ pub fn run_edge_cases(
                     fn_snapshots.push((call_desc, output));
                 }
                 Ok(Ok(Err(e))) => {
-                    issues.push(Issue::EdgeCaseCrash {
-                        func: name.clone(),
-                        input_desc: call_desc,
-                        error: e,
-                    });
+                    // One report per distinct failure — fifty combos hitting
+                    // the same error is one finding, not fifty.
+                    if crash_seen.insert((name.clone(), e.clone())) {
+                        issues.push(Issue::EdgeCaseCrash {
+                            func: name.clone(),
+                            input_desc: call_desc,
+                            error: e,
+                        });
+                    }
                 }
                 Ok(Err(panic_info)) => {
                     let msg = if let Some(s) = panic_info.downcast_ref::<String>() {

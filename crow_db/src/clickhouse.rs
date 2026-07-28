@@ -209,12 +209,78 @@ fn blocks_to_frame(
 }
 
 
+/// Client-side `?` parameter substitution with proper escaping — the
+/// native protocol has no bind API, and telling users to interpolate is
+/// exactly the injection hazard crow check exists to flag. Placeholders
+/// inside string literals are left alone.
+pub fn substitute_params(sql: &str, params: &[serde_json::Value]) -> Result<String, String> {
+    let mut out = String::with_capacity(sql.len() + params.len() * 8);
+    let mut idx = 0usize;
+    let mut in_string = false;
+    let mut chars = sql.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                in_string = !in_string;
+                out.push(c);
+            }
+            '\\' if in_string => {
+                out.push(c);
+                if let Some(n) = chars.next() {
+                    out.push(n);
+                }
+            }
+            '?' if !in_string => {
+                let p = params.get(idx).ok_or_else(|| {
+                    format!("SQL has more ? placeholders than params ({} given)", params.len())
+                })?;
+                idx += 1;
+                match p {
+                    serde_json::Value::Null => out.push_str("NULL"),
+                    serde_json::Value::Bool(b) => out.push_str(if *b { "1" } else { "0" }),
+                    serde_json::Value::Number(n) => out.push_str(&n.to_string()),
+                    serde_json::Value::String(v) => {
+                        out.push('\'');
+                        for ch in v.chars() {
+                            match ch {
+                                '\'' => out.push_str("\\'"),
+                                '\\' => out.push_str("\\\\"),
+                                '\0' => {}
+                                _ => out.push(ch),
+                            }
+                        }
+                        out.push('\'');
+                    }
+                    other => {
+                        return Err(format!(
+                            "cannot bind {} as a ClickHouse param — use a string or number",
+                            other
+                        ))
+                    }
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    if idx != params.len() {
+        return Err(format!(
+            "SQL has {} ? placeholders but {} params were given",
+            idx,
+            params.len()
+        ));
+    }
+    Ok(out)
+}
+
 impl CrowDb for CrowClickhouseDb {
     fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
-        if !params.is_empty() {
-            return Err("ClickHouse does not support parameterized queries via native protocol; \
-                        use string interpolation in the SQL".into());
-        }
+        let sql_owned;
+        let sql: &str = if params.is_empty() {
+            sql
+        } else {
+            sql_owned = substitute_params(sql, params)?;
+            &sql_owned
+        };
 
         Self::off_runtime(|| self.rt.block_on(async {
             let mut stream = self.client.query_raw(sql).await
@@ -252,10 +318,13 @@ impl CrowDb for CrowClickhouseDb {
     }
 
     fn exec(&self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
-        if !params.is_empty() {
-            return Err("ClickHouse does not support parameterized queries via native protocol; \
-                        use string interpolation in the SQL".into());
-        }
+        let sql_owned;
+        let sql: &str = if params.is_empty() {
+            sql
+        } else {
+            sql_owned = substitute_params(sql, params)?;
+            &sql_owned
+        };
 
         Self::off_runtime(|| self.rt.block_on(async {
             self.client.execute(sql).await
@@ -313,5 +382,41 @@ impl CrowDb for CrowClickhouseDb {
 
     fn backend_name(&self) -> &str {
         "clickhouse"
+    }
+}
+
+#[cfg(test)]
+mod param_tests {
+    use super::substitute_params;
+    use serde_json::json;
+
+    #[test]
+    fn substitutes_types_and_counts() {
+        let sql = substitute_params(
+            "SELECT * FROM t WHERE s = ? AND n = ? AND f = ? AND b = ?",
+            &[json!("VIVK"), json!(42), json!(1.5), json!(true)],
+        )
+        .unwrap();
+        assert_eq!(sql, "SELECT * FROM t WHERE s = 'VIVK' AND n = 42 AND f = 1.5 AND b = 1");
+        assert!(substitute_params("? ?", &[json!(1)]).is_err());
+        assert!(substitute_params("?", &[json!(1), json!(2)]).is_err());
+    }
+
+    #[test]
+    fn escapes_injection_attempts() {
+        let sql = substitute_params(
+            "SELECT * FROM t WHERE s = ?",
+            &[json!("x'; DROP TABLE t; --")],
+        )
+        .unwrap();
+        assert_eq!(sql, "SELECT * FROM t WHERE s = 'x\\'; DROP TABLE t; --'");
+        let sql2 = substitute_params("SELECT ?", &[json!("a\\b")]).unwrap();
+        assert_eq!(sql2, "SELECT 'a\\\\b'");
+    }
+
+    #[test]
+    fn placeholders_inside_strings_are_literal() {
+        let sql = substitute_params("SELECT 'a?b', ?", &[json!(7)]).unwrap();
+        assert_eq!(sql, "SELECT 'a?b', 7");
     }
 }
