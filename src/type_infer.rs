@@ -403,7 +403,18 @@ impl TypeContext {
                     }
                     Expr::Call { args, .. } => for a in args { collect_event_call_handlers(a, fns, out); },
                     Expr::Array(items) => for i in items { collect_event_call_handlers(i, fns, out); },
-                    Expr::Named { value, .. } => collect_event_call_handlers(value, fns, out),
+                    Expr::Named { name, value } => {
+                        if matches!(name.as_str(), "click" | "input" | "submit" | "change" | "seek") {
+                            if let Expr::Call { callee, .. } = value.as_ref() {
+                                if let Expr::Ident(f) = callee.as_ref() {
+                                    if fns.contains_key(f) {
+                                        out.insert(f.clone());
+                                    }
+                                }
+                            }
+                        }
+                        collect_event_call_handlers(value, fns, out);
+                    }
                     Expr::BinOp { left, right, .. } => {
                         collect_event_call_handlers(left, fns, out);
                         collect_event_call_handlers(right, fns, out);
