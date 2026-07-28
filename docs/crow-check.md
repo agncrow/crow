@@ -39,6 +39,7 @@ trading system's bug history:
 | Finding | What it means |
 |---|---|
 | blocking in view/handler | `sleep`/`input`/`shell` reachable (directly or through helpers, path shown) — every connected client freezes while it runs. Do the work before `serve[]`; render-time `query` is fine and deliberately not flagged. |
+| unguarded staleness | a value read from outside flows into a decision (directly or through computation) with no freshness check — guard it with `now[] - captured[x]`. This is the propagation the runtime deliberately does not carry. |
 | stale snapshot | a top-level variable queried once at startup is read by a view — every render serves launch-time data. Query inside the view, or re-query in a handler (which clears the finding). |
 
 The language gaps these point at (background work, freshness, periodicity)

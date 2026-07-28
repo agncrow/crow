@@ -1,0 +1,17 @@
+--- captured[x]: the moment a value was read from the outside world.
+--- Staleness is ordinary arithmetic on moments; values computed here
+--- have no capture moment and say so.
+use db
+
+conn = connect['sqlite://:memory:']
+exec[conn, 'CREATE TABLE ticks (px REAL)']
+exec[conn, 'INSERT INTO ticks VALUES (191.5)']
+
+px = query[conn, 'SELECT px FROM ticks']
+c = captured[px]
+log['read carries a capture moment: `c.ok`']
+log['and it is recent: `now[] - c lt 5.0`']
+
+computed = 5.0 * 2.0
+w = captured[computed]
+log['computed value: `w.kind`']

@@ -27,7 +27,8 @@ section). The core set is listed in Appendix A; highlights by area:
   `running[fn]`
 - **Moments** — `now[]`, `moment[y, m, d, hour =, minute =, second =, tz =]`,
   `calendar[t, tz =]`, `parse_time[text, tz =]`, `fmt[t, time =, tz =]`
-  (a moment is epoch seconds; subtraction is elapsed seconds)
+  (a moment is epoch seconds; subtraction is elapsed seconds),
+  `captured[x]` (when a value was read from outside)
 - **Verification** — `test` blocks (attached = the fn above's truths;
   named = standalone; params = generated inputs), `assert[cond]`
 - **Errors** — `error[reason, kind]`, metadata `.ok .reason .kind .trace`

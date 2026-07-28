@@ -710,6 +710,73 @@ and are **always explicit** — the default everywhere is UTC. Invalid dates,
 unknown zones, DST gaps, and unparseable strings return error values with
 `kind = 'time'`.
 
+#### Freshness: captured
+
+Values read from the outside world remember when they arrived:
+
+| Function | Description |
+|----------|-------------|
+| `captured[x]` | The moment `x` was read from outside (a moment, so ordinary arithmetic applies). A value computed here has no capture moment: the answer is an error value with `kind = 'no_capture'` |
+
+```
+px = query[conn, 'SELECT last FROM ticks WHERE symbol = ?', [sym]]
+
+if now[] - captured[px] gt 10.0
+    return error['price is stale — not trading on it', 'stale']
+
+place_order[sym, px.last[0]]
+```
+
+Readers stamp: `query`, `read`, `fetch`, `recv`, `load`, and friends.
+Reading a field of a captured value keeps the capture (`px.last` is as old
+as `px`); **arithmetic does not** — a computed number is a new value, not a
+remembered one. `crow check` covers that gap statically: a reader value
+that flows through computation into a decision without any freshness guard
+is reported (see `crow-check.md`).
+
+#### Design Note: Freshness Lives at the Boundary
+
+**What was considered:** propagating capture time through every operation
+so a derived value is as old as its oldest input — provenance as a sibling
+of the error system.
+
+**Why it was rejected:** compiled Crow stores plain numbers as bare machine
+values with nowhere to keep a header; carrying age through arithmetic would
+mean boxing every scalar, forfeiting exactly what compiled mode is for. The
+interpreter could do it (measured: ~4-5% on a scalar-heavy loop), but the
+two modes must agree, so the feature would have been interpreter-only.
+
+**Why this design:** freshness is tracked where data enters and checked
+before it is trusted — which is what every system that got burned by stale
+data already does: HTTP's `Age` header, ROS message stamps, dbt source
+freshness, stream-processing watermarks. The flow-through-computation case
+moves to `crow check`, which is the same answer compiled languages reached
+for taint tracking: runtime labels stayed in interpreted languages, while
+compiled ones (Java's Checker Framework, FlowDroid) moved propagation into
+static analysis. Deferred: declarative thresholds on the reader itself
+(dbt's `warn_after` shape), which would fit a future `store` declaration.
+
+#### Design Note: Adopting External Ground Truth
+
+A remote system's state cannot be made atomic by any language. Observations
+of it are delayed and transiently wrong — a position row reads flat for a
+moment while a fill settles, an order looks missing before it appears. The
+doctrine: **never act on an external absence until it has been stably
+absent.** A grace window is freshness inverted — where `captured` asks "is
+this recent enough to trust?", adopting an absence asks "has this been
+true long enough to believe?":
+
+```
+if flat[position] and now[] - first_seen_flat gt 15.0
+    mark_closed[sym]
+```
+
+The authoritative source is the external system, not a cached row derived
+from it: derive closure from order status and fills, not from a position
+snapshot. No primitive can enforce this — it is a modeling rule, and the
+reason it is written down here is that every system that skipped it
+rediscovered it as an incident.
+
 #### Design Note: A Moment Is a Number
 
 **What was considered:** the previous design — `now[]`/`date[]` returning

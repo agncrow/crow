@@ -1305,22 +1305,18 @@ impl Interpreter {
             Expr::BinOp { left, op, right } => {
                 let l = self.eval_expr(left)?;
                 let r = self.eval_expr(right)?;
-                let mut out = self.eval_binop(&l, op, &r)?;
-                // Age flows like error metadata: as old as the oldest input.
-                out.inherit_capture(&l);
-                out.inherit_capture(&r);
-                Ok(out)
+                self.eval_binop(&l, op, &r)
             }
             Expr::UnaryOp { op, expr } => {
                 let val = self.eval_expr(expr)?;
-                let mut out = self.eval_unaryop(op, &val)?;
-                out.inherit_capture(&val);
-                Ok(out)
+                self.eval_unaryop(op, &val)
             }
             Expr::Call { callee, args } => {
                 self.eval_call(callee, args)
             }
             Expr::FieldAccess { object, field } => {
+                // Reading a field of a captured value is still that value —
+                // px.last is as old as px. (Arithmetic is not: see age[].)
                 let obj = self.eval_expr(object)?;
                 let mut out = self.eval_field_access(object, field)?;
                 out.inherit_capture(&obj);
@@ -1644,26 +1640,26 @@ impl Interpreter {
                     .iter()
                     .map(|a| self.eval_expr(a))
                     .collect::<Result<_, _>>()?;
-                // age[x] — seconds since x was captured from the outside
-                // world; 0 for values computed here and now.
-                if name == "age" {
+                // captured[x] — the moment x was read from the outside world.
+                // Staleness is ordinary arithmetic: now[] - captured[px].
+                // A value computed here has no capture moment: asking is a
+                // category error, so it answers with an error value.
+                if name == "captured" {
                     if arg_vals.len() != 1 {
-                        return Err("age[] takes exactly 1 argument".into());
+                        return Err("captured[] takes exactly 1 argument".into());
                     }
-                    let a = match arg_vals[0].captured {
-                        Some(t) => (crow_runtime::moments::now() - t).max(0.0),
-                        None => 0.0,
-                    };
-                    return Ok(CrowValue::ok(Value::Float(a)));
+                    return Ok(match arg_vals[0].captured {
+                        Some(t) => CrowValue::ok(Value::Float(t)),
+                        None => CrowValue::error_with_kind(
+                            "this value was computed here, not read from outside - it has no capture moment",
+                            "no_capture",
+                            &self.trace_entry(),
+                        ),
+                    });
                 }
                 let mut out = self.call_builtin(name, &arg_vals)?;
                 if READER_FNS.contains(&name.as_str()) {
                     out = out.stamp_captured();
-                } else {
-                    // Derived values inherit the oldest input's capture time.
-                    for a in &arg_vals {
-                        out.inherit_capture(a);
-                    }
                 }
                 return Ok(out);
             }
@@ -1962,7 +1958,7 @@ impl Interpreter {
             | "type" | "grad"
             | "shell" | "hash"
             | "find" | "matches" | "sub" | "any" | "all"
-            | "now" | "date" | "elapsed" | "moment" | "calendar" | "parse_time"
+            | "now" | "date" | "elapsed" | "moment" | "calendar" | "parse_time" | "captured"
             // Web P4 builtins
             | "cors" | "sessions" | "templates" | "render" | "cache" | "limit"
             | "uploads" | "sse" | "ws" | "connect" | "send" | "recv" | "close"

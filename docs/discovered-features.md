@@ -47,7 +47,23 @@ concurrency design; what gets *deleted* in exchange.
 
 ---
 
-## F-2. Freshness — PARTIAL: propagation is architecturally blocked compiled
+## F-2. Freshness ✅ SHIPPED (option 1) — `captured[x]` + a checker rule
+
+Shipped: `captured[x]` returns the moment a value was read from outside
+(readers: query/read/fetch/recv/input/load/env/shell/ls), or an error
+value with kind 'no_capture' for values computed here. Staleness is
+ordinary arithmetic — `now[] - captured[px] gt 10.0`. Field access keeps
+the capture; arithmetic does not. Both modes (CrowResult gained a
+capture slot compiled; captured[] is metadata access and never
+propagates its argument, like .ok), parity 28. The propagation gap is
+covered statically by the new **unguarded staleness** check. Spec
+section + Design Note "Freshness Lives at the Boundary". Named
+`captured` not `age` — `age` is far too common a variable/param name
+(Crow's own parity file has `fn validate[age]`), the second such catch
+this session after `parts`. Deferred: declarative thresholds on the
+reader (dbt `warn_after` shape) if `store` ever lands.
+
+Original analysis below.
 
 **Implemented (dormant, in-tree):** `CrowValue.captured: Option<f64>`,
 reader stamping (query/read/fetch/recv/input/load/env/shell/ls), and
@@ -129,7 +145,15 @@ minimal periodic form; overlap semantics (skip vs queue); parity.
 
 ---
 
-## F-4. External ground truth — adopting beliefs about systems Crow doesn't own
+## F-4. External ground truth ✅ SHIPPED (doctrine) — Design Note
+
+Shipped as the spec's Design Note "Adopting External Ground Truth":
+never act on an external absence until it has been stably absent; the
+authoritative source is the external system, not a row derived from it.
+A grace window is freshness inverted, and with F-2 it is one line. No
+primitive — this is a modeling rule, as the analysis below concluded.
+
+Original analysis below.
 
 **Evidence:** finch `75a33fbe` (fill-settlement race: a transiently-flat
 position row was adopted as "trade closed" — fix was a 15s grace window) and
