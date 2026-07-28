@@ -235,12 +235,37 @@ app-under-test or a test-scoped state accessor); (b) route testing needs
 a request-construction helper; (c) view output testing (tree/html
 compare) is the natural future home of user snapshot[].
 
-## F-7. Datetime depth — audit required, blocks F-2
+## F-7. Datetime — AUDITED (July 25); proposal below, awaiting rulings
 
-`now/date/elapsed` + frame datetime columns exist; timezones, parsing,
-durations, market-calendar arithmetic likely don't. The domain is
-time-obsessed (stale prints, ET market hours) and `age[x]` (F-2) is time
-arithmetic. First step is an audit, then a small principled surface.
+**What exists:** `now[]` → map of components in MACHINE-LOCAL time +
+epoch timestamp; `date[y,m,d]` → map with UTC-midnight timestamp (note:
+now-local vs date-UTC is an inconsistency that already off-by-hours any
+mixed arithmetic); `elapsed[a,b]` → seconds/minutes/hours/days map;
+`time[]` → epoch float; `today[]` → local 'YYYY-MM-DD'; frames parse
+datetime columns internally. Usage is tiny (2 examples + 1 parity file
+— break cost near zero).
+
+**What cannot be expressed:** any named timezone ("09:30 ET"), parsing a
+timestamp string, adding a duration to a moment, weekday, comparing two
+date maps directly, formatting a moment. The finch stale-print question
+("was this print >10s before 09:30 ET?") is unwritable.
+
+**Proposal — a moment is a number (epoch seconds, float):**
+comparisons and arithmetic come free from numbers (`b - a` IS elapsed;
+`t lt open - 10` IS the stale check); the type system stays untouched.
+Surface: `now[]` → float (BREAKING: drops the map — migration trivial
+given usage); `moment[y, m, d, h, min, s, tz = 'America/New_York']` →
+float (named args, the tz-aware constructor); `parts[t, tz = …]` →
+components + weekday; `parse_time[s, tz = …]` → float or error value;
+`fmt` gains `time =` / `tz =` named args for display. Timezones via
+chrono-tz (named zones). DELETIONS (vocab rule paid): `elapsed`
+(subtraction does it), `date` (moment subsumes), `today` (fmt does it).
+
+**Rulings needed:** (1) moments-are-numbers + the now[] break; (2)
+default tz — UTC default vs explicit-always (lean: UTC default, loudly
+documented; machine-local is the deploy-time footgun and is removed
+entirely); (3) bless the three deletions; (4) fmt named-arg form for
+time display. The finch question after: two lines.
 
 ## F-8. Constrained values — the stringly-typed status problem
 
