@@ -38,6 +38,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     "serve", "route", "page",
     "later", "running",
     "app", "html", "click",
+    "fmt",
 ];
 
 // --- Issue types ---
@@ -1259,12 +1260,17 @@ fn find_undefined_vars_in_fn(
         for el in crate::lower::UI_ELEMENTS {
             defined.insert(el.to_string());
         }
+        // Live elements the transpiler handles outside the core list.
+        defined.insert("field".to_string());
         // Reactive state is the sanctioned channel: views and handlers read
         // top-level variables (the function-scope isolation exemption).
         for v in ctx.vars.keys() {
             defined.insert(v.clone());
         }
     }
+    // Imported module prefixes and aliases are readable names (db.connect)
+    for m in &ctx.bare_modules { defined.insert(m.clone()); }
+    for a in ctx.module_aliases.keys() { defined.insert(a.clone()); }
     // User-defined functions and structs are defined (global scope)
     for fname in ctx.functions.keys() { defined.insert(fname.clone()); }
     for sname in ctx.structs.keys() { defined.insert(sname.clone()); }
