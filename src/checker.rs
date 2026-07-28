@@ -66,6 +66,8 @@ pub enum Issue {
     StaleLoopRead { var: String, source_line: usize, line: usize },
     /// A truth in a test block failed (or its body errored).
     TestFailure { block: String, line: usize, detail: String },
+    /// css/app.css overrides a --crow-* token that doesn't exist.
+    UnknownStyleToken { name: String, suggestion: String },
     /// A value read from the outside world flows into a decision with no
     /// freshness guard — the stale-data class.
     UnguardedStaleness { var: String, root: String, read_line: usize, decision_line: usize },
@@ -109,6 +111,13 @@ impl Issue {
                 ),
             Issue::TestFailure { block, detail, .. } =>
                 format!("{} — {}", block, detail),
+            Issue::UnknownStyleToken { name, suggestion } => {
+                if suggestion.is_empty() {
+                    format!("css/app.css overrides '{}', which is not a style token", name)
+                } else {
+                    format!("css/app.css overrides '{}', which is not a style token — did you mean '{}'?", name, suggestion)
+                }
+            }
             Issue::UnguardedStaleness { var, root, read_line, .. } => {
                 if var == root {
                     format!(
@@ -142,6 +151,7 @@ impl Issue {
             Issue::RemoteQueryInView { line, .. } => *line,
             Issue::StaleLoopRead { line, .. } => *line,
             Issue::TestFailure { line, .. } => *line,
+            Issue::UnknownStyleToken { .. } => 0,
             Issue::UnguardedStaleness { decision_line, .. } => *decision_line,
             Issue::Nondeterministic { .. } => 0,
         }
@@ -159,6 +169,7 @@ impl Issue {
             Issue::RemoteQueryInView { view, .. } => view,
             Issue::StaleLoopRead { .. } => "<top-level>",
             Issue::TestFailure { block, .. } => block,
+            Issue::UnknownStyleToken { .. } => "<css/app.css>",
             Issue::UnguardedStaleness { .. } => "<top-level>",
             Issue::Nondeterministic { func, .. } => func,
             Issue::EdgeCaseCrash { func, .. } => func,
@@ -209,6 +220,8 @@ impl Issue {
                 format!("re-query '{}' inside the loop so each poll sees the current database", var),
             Issue::TestFailure { .. } =>
                 "fix the code — or the truth, if the decision changed".to_string(),
+            Issue::UnknownStyleToken { .. } =>
+                "a typo'd token renders fine with the default value — silently unthemed. Fix the name; the blessed list is in style-module-design.md".to_string(),
             Issue::UnguardedStaleness { root, .. } =>
                 format!(
                     "guard the read: if now[] - captured[{}] gt 10.0 → refuse. Data captured at one moment and trusted at another is the stale-data class",
@@ -922,6 +935,47 @@ fn collect_query_conns(body: &[Stmt], out: &mut BTreeSet<String>) {
             _ => {}
         }
     }
+}
+
+// --- Style-token check: css/app.css may override --crow-* tokens; a
+// typo'd token fails silently (everything renders, slightly wrong), so
+// unknown names get a did-you-mean. ---
+
+pub const STYLE_TOKENS: &[&str] = &[
+    "--crow-bg", "--crow-surface", "--crow-text", "--crow-muted",
+    "--crow-border", "--crow-accent", "--crow-up", "--crow-down",
+];
+
+pub fn check_style_tokens(css_path: &str) -> Vec<(String, String)> {
+    let Ok(css) = std::fs::read_to_string(css_path) else {
+        return vec![];
+    };
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    let bytes = css.as_bytes();
+    let mut i = 0;
+    while let Some(pos) = css[i..].find("--crow-") {
+        let start = i + pos;
+        let mut end = start;
+        while end < bytes.len()
+            && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'-')
+        {
+            end += 1;
+        }
+        let name = &css[start..end];
+        i = end;
+        if STYLE_TOKENS.contains(&name) || !seen.insert(name.to_string()) {
+            continue;
+        }
+        let suggestion = STYLE_TOKENS
+            .iter()
+            .min_by_key(|t| crate::db_check::catalog::levenshtein(name, t))
+            .filter(|t| crate::db_check::catalog::levenshtein(name, t) <= 3)
+            .map(|t| t.to_string())
+            .unwrap_or_default();
+        out.push((name.to_string(), suggestion));
+    }
+    out
 }
 
 // --- Unguarded-staleness analysis (F-2's static half) ---
@@ -1996,6 +2050,11 @@ pub fn run_check(
     // 1f. Outside-world data deciding a branch with no freshness guard.
     issues.extend(find_unguarded_staleness(stmts));
 
+    // 1g. Style-token overrides that name no token.
+    for (name, suggestion) in check_style_tokens("css/app.css") {
+        issues.push(Issue::UnknownStyleToken { name, suggestion });
+    }
+
     // 2. Edge case generation (pure, non-recursive functions only).
     // Views and handlers are excluded: they build UI trees / mutate reactive
     // state, and are exercised by rendering, not by synthetic inputs.
@@ -2101,6 +2160,20 @@ mod tests {
             "re-query inside the loop should clear it, got {:?}",
             issues2
         );
+    }
+
+    #[test]
+    fn style_token_check_catches_typos() {
+        let dir = std::env::temp_dir().join(format!("crow_css_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("app.css");
+        std::fs::write(&f, ":root { --crow-accnet: #fff; --crow-up: #0f0; --crow-brand: red }").unwrap();
+        let found = check_style_tokens(f.to_str().unwrap());
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].0, "--crow-accnet");
+        assert_eq!(found[0].1, "--crow-accent");
+        assert_eq!(found[1].0, "--crow-brand");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
