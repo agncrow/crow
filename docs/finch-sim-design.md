@@ -314,3 +314,47 @@ ask_price, ask_size, spread, mid_price)`, plus `ohlc_1s`,
 
 Item 5's `done` leaks are language bugs, not module gaps — an error
 value's reason should survive every surface it reaches.
+
+
+## 13. M1 results (2026-07-27) — the app serves; compiled mode taught us plenty
+
+`crow_projects/finch` serves the simulation page compiled (`crow build
+main.crow`, port 3100): derived-clock controls, session start, NBBO
+buy/sell against the invariant-guarded book, live blotter. Single-file
+`main.crow` for now (see fix 1). Getting there surfaced a second fix
+list — all compiled-mode, all found by this app:
+
+1. **Module-scoped reactive state is broken in both modes** (top
+   priority). Validator: only click-referenced handlers are F1-exempt, so
+   a helper like `set_speed[s]` can neither read nor write state — and
+   the fix (`click = set_speed[10.0]`) is F-11, its third appearance.
+   Transpiler: state threading loses the module prefix entirely
+   (handlers referenced bare `session_id` where state held
+   `sim_session_id`). Until fixed, live pages are single-file.
+2. **Compiled query frames are stringly typed** (second priority). No
+   type introspection for ClickHouse (or expression columns anywhere), so
+   every column reads as str compiled but native-typed interpreted — a
+   parity break in the type system. Cascaded into six separate app
+   errors. Cure: CH DESCRIBE-based introspection + DateTime64 → moment.
+3. **Fixed in crow this session:** (a) `expand_module_imports` now
+   rewrites qualified refs (`home.render` → `home_render`) and the
+   interpreter no-ops pre-expanded user modules instead of dynamically
+   double-loading them — `crow new --web`'s own template never ran
+   before this; (b) assignment into a typed variable is now a
+   **consumption point**: `result[T]` unwraps into `T`, aborting the
+   handler on error (the checked-fallible-into-state pattern was
+   previously unwritable); (c) auto-parallel waves no longer fuse
+   db-handle assignments (the rayon::join bypassed the OnceCell `.set()`
+   protocol — handles stayed forever unset); (d) ClickHouse driver runs
+   its blocking work off-runtime (compiled apps are #[tokio::main];
+   `block_on` inside it is illegal); (e) the generated panic hook exits
+   only for main-thread panics — a contained task panic killed the whole
+   server; (f) `crow new --web` template fixed (`view render` +
+   `home.render`); (g) generated crates now compile in the db features
+   the connect URLs actually name.
+4. **Smaller findings:** bare `connect` means websocket once `use web`
+   is present (must write `db.connect` — a vocabulary collision worth a
+   teaching error); mixed-type SQL param arrays don't exist (params were
+   stringified through sqlite affinity); `exec`'s affected-count can't be
+   compared without tripping handler propagation; `serve`/`page` are
+   interpreter no-op mocks, so `crow run -i` never serves (harness-only).

@@ -18,6 +18,19 @@ pub struct CrowClickhouseDb {
 }
 
 impl CrowClickhouseDb {
+    /// Run blocking runtime work safely: if we are already inside a tokio
+    /// runtime (compiled apps run in #[tokio::main]), block_on would panic —
+    /// hop to a scoped worker thread where blocking is legal.
+    fn off_runtime<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            std::thread::scope(|sc| {
+                sc.spawn(f).join().expect("clickhouse worker thread panicked")
+            })
+        } else {
+            f()
+        }
+    }
+
     /// Connect to ClickHouse using a URL.
     /// `url` should be like `clickhouse://user:pass@host:port/database`
     /// or `clickhouse://host:port/database` (defaults to user=default, no password).
@@ -62,16 +75,16 @@ impl CrowClickhouseDb {
             tcp_nodelay: true,
         };
 
-        let client = rt.block_on(async {
+        let client = Self::off_runtime(|| rt.block_on(async {
             Client::connect(&addr, options).await
                 .map_err(|e| format!("clickhouse connection failed: {}", e))
-        })?;
+        }))?;
 
         // Ping to verify connection
-        rt.block_on(async {
+        Self::off_runtime(|| rt.block_on(async {
             client.execute("SELECT 1").await
                 .map_err(|e| format!("clickhouse ping failed: {}", e))
-        })?;
+        }))?;
 
         Ok(Self { client, rt: Arc::new(rt) })
     }
@@ -203,7 +216,7 @@ impl CrowDb for CrowClickhouseDb {
                         use string interpolation in the SQL".into());
         }
 
-        self.rt.block_on(async {
+        Self::off_runtime(|| self.rt.block_on(async {
             let mut stream = self.client.query_raw(sql).await
                 .map_err(|e| format!("clickhouse query error: {}", e))?;
 
@@ -235,7 +248,7 @@ impl CrowDb for CrowClickhouseDb {
             }
 
             blocks_to_frame(all_col_names, all_col_data)
-        })
+        }))
     }
 
     fn exec(&self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
@@ -244,12 +257,12 @@ impl CrowDb for CrowClickhouseDb {
                         use string interpolation in the SQL".into());
         }
 
-        self.rt.block_on(async {
+        Self::off_runtime(|| self.rt.block_on(async {
             self.client.execute(sql).await
                 .map_err(|e| format!("clickhouse exec error: {}", e))?;
             // ClickHouse native protocol doesn't return affected row counts
             Ok(0)
-        })
+        }))
     }
 
     fn insert(&self, table: &str, frame: &CrowFrame) -> Result<i64, String> {
@@ -283,11 +296,11 @@ impl CrowDb for CrowClickhouseDb {
             rows.push(raw_row);
         }
 
-        self.rt.block_on(async {
+        Self::off_runtime(|| self.rt.block_on(async {
             self.client.insert_native_block(&sql, rows).await
                 .map_err(|e| format!("clickhouse insert error: {}", e))?;
             Ok(nrows as i64)
-        })
+        }))
     }
 
     fn transact(&self, _f: &dyn Fn(&dyn DbTx) -> Result<(), String>) -> Result<(), String> {

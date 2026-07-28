@@ -188,6 +188,10 @@ const READER_FNS: &[&str] = &[
 
 #[derive(Clone)]
 pub struct Interpreter {
+    /// True when user modules were inlined by expand_module_imports before
+    /// this interpreter ran — `use views.home` is then a no-op, not a
+    /// dynamic load (which would double-define with separate state).
+    modules_preexpanded: bool,
     env: Env,
     cpu_count: Option<usize>,
     gpu_count: Option<usize>,
@@ -215,6 +219,7 @@ pub struct Interpreter {
 impl Interpreter {
     pub fn new() -> Self {
         Interpreter {
+            modules_preexpanded: false,
             env: Env::new(),
             cpu_count: None,
             gpu_count: None,
@@ -502,6 +507,10 @@ impl Interpreter {
         Ok(result)
     }
 
+    pub fn set_modules_preexpanded(&mut self, v: bool) {
+        self.modules_preexpanded = v;
+    }
+
     fn resolve_module_file(&self, module_path: &str) -> Result<PathBuf, String> {
         // 1. try relative to source_dir: <source_dir>/<module_path>.crow
         let rel_path = self.source_dir.join(format!("{}.crow", module_path));
@@ -576,6 +585,16 @@ impl Interpreter {
         if module_path == "db" {
             self.registry.load(std::sync::Arc::new(crate::modules::db::DbModule));
             return Ok(());
+        }
+
+        // Pre-expanded user module (views.home → views/home.crow already
+        // inlined with prefixed names): loading it again would create a
+        // second copy with separate state. No-op.
+        if self.modules_preexpanded {
+            let rel = self.source_dir.join(format!("{}.crow", module_path.replace('.', "/")));
+            if rel.exists() {
+                return Ok(());
+            }
         }
 
         let file_path = self.resolve_module_file(module_path)?;

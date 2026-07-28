@@ -1501,7 +1501,11 @@ impl Transpiler {
         self.emit_line("    format!(\"runtime error: {}\", msg)");
         self.emit_line("};");
         self.emit_line("eprintln!(\"error: {}\", crow_msg);");
-        self.emit_line("std::process::exit(1);");
+        self.emit_line("// A panic on the main thread is fatal; a contained panic in a");
+        self.emit_line("// worker/server task is reported but must not kill the server.");
+        self.emit_line("if std::thread::current().name() == Some(\"main\") {");
+        self.emit_line("    std::process::exit(1);");
+        self.emit_line("}");
         self.indent -= 1;
         self.emit_line("}));");
     }
@@ -1901,7 +1905,13 @@ impl Transpiler {
                     }
                 }
             }
-            if wave.len() <= 1 {
+            // Handle-backed vars (db/ui handles read through OnceCell) must go
+            // through emit_stmt's .set() protocol — fusing them into a
+            // rayon::join let-binding would leave the handle forever unset.
+            let touches_handle = wave.iter().any(|&i| {
+                matches!(&stmts[i], Stmt::Assign { name, .. } if self.static_handle_vars.contains(name))
+            });
+            if wave.len() <= 1 || touches_handle {
                 // Single statement — emit normally
                 for &i in wave {
                     // Update line for this specific statement
@@ -2130,6 +2140,36 @@ impl Transpiler {
                     // Check for type-changing reassignment
                     let new_ty = self.ctx.infer_expr(value);
                     if let Some(existing_ty) = self.ctx.vars.get(name).cloned() {
+                        // Assignment into a typed variable is a consumption
+                        // point: result[T] unwraps into T, aborting this fn
+                        // on error (handlers stop; result-fns propagate).
+                        if let CrowType::Result(inner) = &new_ty {
+                            if existing_ty.compatible(inner)
+                                || (matches!(existing_ty, CrowType::Float)
+                                    && matches!(inner.as_ref(), CrowType::Int))
+                            {
+                                let abort = if matches!(
+                                    self.current_fn_return_type,
+                                    Some(CrowType::Result(_))
+                                ) {
+                                    "return CrowResult { ok: false, value: Default::default(), reason: _asg.reason.clone(), kind: _asg.kind.clone(), trace: _asg.trace.clone(), captured: 0.0 };".to_string()
+                                } else {
+                                    "return;".to_string()
+                                };
+                                let cast = if matches!(existing_ty, CrowType::Float)
+                                    && matches!(inner.as_ref(), CrowType::Int)
+                                {
+                                    " as f64"
+                                } else {
+                                    ""
+                                };
+                                self.emit_line(&format!(
+                                    "{{ let _asg = {}; if !_asg.ok {{ {} }} {} = _asg.value{}; }}",
+                                    expr_str, abort, name, cast
+                                ));
+                                return;
+                            }
+                        }
                         if !existing_ty.compatible(&new_ty) {
                             panic!("error: cannot reassign '{}' from {} to {} — variable type cannot change", name, existing_ty.crow_name(), new_ty.crow_name());
                         }
@@ -2494,6 +2534,17 @@ impl Transpiler {
             self.modules.insert("db".to_string());
         }
         self.modules.insert(module_name);
+    }
+
+    /// A connect[] url literal names its backend — the generated crate must
+    /// compile that feature in.
+    fn note_db_backend(&mut self, url_expr: &str) {
+        if url_expr.contains("clickhouse://") {
+            self.db_features.insert("clickhouse".to_string());
+        }
+        if url_expr.contains("postgres://") || url_expr.contains("postgresql://") {
+            self.db_features.insert("postgres".to_string());
+        }
     }
 
     /// Convert Crow SQL params to serde_json::Value for crow_db calls.
@@ -3919,6 +3970,7 @@ impl Transpiler {
                     // --- db module builtins (top-level `use db`) ---
                     if name == "connect" && self.needs_crow_db && !self.needs_crow_web {
                         // connect[url] or connect[url, pool_size]
+                        self.note_db_backend(&arg_strs[0]);
                         if arg_strs.len() == 1 {
                             return format!("crow_db::connect(&{}, None).unwrap()", arg_strs[0]);
                         } else if arg_strs.len() == 2 {
@@ -4319,6 +4371,7 @@ impl Transpiler {
                         if mod_name == "db" && self.needs_crow_db {
                             match field.as_str() {
                                 "connect" => {
+                                    self.note_db_backend(&arg_strs[0]);
                                     if arg_strs.len() == 1 {
                                         return format!("crow_db::connect(&{}, None).unwrap()", arg_strs[0]);
                                     } else if arg_strs.len() == 2 {
