@@ -15,6 +15,7 @@ const IMPURE_BUILTINS: &[&str] = &[
     "read", "write", "log", "input", "rand", "time", "sleep", "env", "exit",
     "args", "exists", "mkdir", "ls", "rm", "mv", "cp",
     "later", "running", "shell",
+    "captured",
 ];
 
 /// All builtin function names (reused from validator for undefined-variable detection).
@@ -39,7 +40,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     "later", "running",
     "app", "html", "click",
     "fmt",
-    "now", "moment", "calendar", "parse_time",
+    "now", "moment", "calendar", "parse_time", "captured",
 ];
 
 // --- Issue types ---
@@ -65,6 +66,9 @@ pub enum Issue {
     StaleLoopRead { var: String, source_line: usize, line: usize },
     /// A truth in a test block failed (or its body errored).
     TestFailure { block: String, line: usize, detail: String },
+    /// A value read from the outside world flows into a decision with no
+    /// freshness guard — the stale-data class.
+    UnguardedStaleness { var: String, root: String, read_line: usize, decision_line: usize },
     /// Layer-0 contract: a pure fn returned different results for the same
     /// input — hidden state or an impure builtin the classifier missed.
     Nondeterministic { func: String, input_desc: String },
@@ -105,6 +109,19 @@ impl Issue {
                 ),
             Issue::TestFailure { block, detail, .. } =>
                 format!("{} — {}", block, detail),
+            Issue::UnguardedStaleness { var, root, read_line, .. } => {
+                if var == root {
+                    format!(
+                        "'{}' was read from outside (line {}) and decides this branch — nothing checks how old it is",
+                        var, read_line
+                    )
+                } else {
+                    format!(
+                        "'{}' comes from '{}', read from outside (line {}), and decides this branch — nothing checks how old it is",
+                        var, root, read_line
+                    )
+                }
+            }
             Issue::Nondeterministic { func, input_desc } =>
                 format!(
                     "'{}' is pure but returned different results for the same input ({}) — hidden state or an impure call the classifier missed",
@@ -125,6 +142,7 @@ impl Issue {
             Issue::RemoteQueryInView { line, .. } => *line,
             Issue::StaleLoopRead { line, .. } => *line,
             Issue::TestFailure { line, .. } => *line,
+            Issue::UnguardedStaleness { decision_line, .. } => *decision_line,
             Issue::Nondeterministic { .. } => 0,
         }
     }
@@ -141,6 +159,7 @@ impl Issue {
             Issue::RemoteQueryInView { view, .. } => view,
             Issue::StaleLoopRead { .. } => "<top-level>",
             Issue::TestFailure { block, .. } => block,
+            Issue::UnguardedStaleness { .. } => "<top-level>",
             Issue::Nondeterministic { func, .. } => func,
             Issue::EdgeCaseCrash { func, .. } => func,
             Issue::RegressionChange { func, .. } => func,
@@ -190,6 +209,11 @@ impl Issue {
                 format!("re-query '{}' inside the loop so each poll sees the current database", var),
             Issue::TestFailure { .. } =>
                 "fix the code — or the truth, if the decision changed".to_string(),
+            Issue::UnguardedStaleness { root, .. } =>
+                format!(
+                    "guard the read: if now[] - captured[{}] gt 10.0 → refuse. Data captured at one moment and trusted at another is the stale-data class",
+                    root
+                ),
             Issue::Nondeterministic { .. } =>
                 "find the hidden state: shell/time/rand reached through a path the purity scan missed".to_string(),
             Issue::UndefinedVariable { var, .. } =>
@@ -898,6 +922,145 @@ fn collect_query_conns(body: &[Stmt], out: &mut BTreeSet<String>) {
             _ => {}
         }
     }
+}
+
+// --- Unguarded-staleness analysis (F-2's static half) ---
+
+/// A value read from the outside world (query, read, fetch…) that flows —
+/// directly or through computation — into a decision, with no freshness
+/// guard anywhere. This is the propagation the runtime deliberately does
+/// not carry: capture lives on the read, the checker traces the flow.
+pub fn find_unguarded_staleness(stmts: &[Stmt]) -> Vec<Issue> {
+    const READERS: &[&str] = &["query", "read", "fetch", "recv", "load"];
+
+    fn calls_reader(e: &Expr) -> bool {
+        match e {
+            Expr::Call { callee, args } => {
+                let named = match callee.as_ref() {
+                    Expr::Ident(n) => READERS.contains(&n.as_str()),
+                    Expr::FieldAccess { field, .. } => READERS.contains(&field.as_str()),
+                    _ => false,
+                };
+                named || args.iter().any(calls_reader)
+            }
+            Expr::BinOp { left, right, .. } => calls_reader(left) || calls_reader(right),
+            Expr::FieldAccess { object, .. } => calls_reader(object),
+            _ => false,
+        }
+    }
+
+    // Guarded once anywhere in the file = guarded (conservative: one guard
+    // is evidence the author is thinking about freshness).
+    let mut guarded: BTreeSet<String> = BTreeSet::new();
+    fn collect_guards(stmts: &[Stmt], out: &mut BTreeSet<String>) {
+        fn walk(e: &Expr, out: &mut BTreeSet<String>) {
+            if let Expr::Call { callee, args } = e {
+                if matches!(callee.as_ref(), Expr::Ident(n) if n == "captured") {
+                    if let Some(Expr::Ident(v)) = args.first() {
+                        out.insert(v.clone());
+                    }
+                }
+                for a in args {
+                    walk(a, out);
+                }
+            } else if let Expr::BinOp { left, right, .. } = e {
+                walk(left, out);
+                walk(right, out);
+            } else if let Expr::UnaryOp { expr, .. } = e {
+                walk(expr, out);
+            } else if let Expr::FieldAccess { object, .. } = e {
+                walk(object, out);
+            }
+        }
+        for st in stmts {
+            match st {
+                Stmt::Assign { value, .. } => walk(value, out),
+                Stmt::ExprStmt(e) | Stmt::Return(Some(e)) => walk(e, out),
+                Stmt::If { condition, then_body, else_body, .. } => {
+                    walk(condition, out);
+                    collect_guards(then_body, out);
+                    if let Some(eb) = else_body {
+                        collect_guards(eb, out);
+                    }
+                }
+                Stmt::For { body, .. } | Stmt::While { body, .. } => collect_guards(body, out),
+                Stmt::FnDecl { body, .. } => collect_guards(body, out),
+                _ => {}
+            }
+        }
+    }
+    collect_guards(stmts, &mut guarded);
+
+    // Reader-derived variables, and the decisions that use them.
+    // name → (line of the read, root reader variable)
+    let mut derived: BTreeMap<String, (usize, String)> = BTreeMap::new();
+    let mut issues = Vec::new();
+    let mut line = 0usize;
+    let mut reported: BTreeSet<String> = BTreeSet::new();
+    fn scan(
+        stmts: &[Stmt],
+        line: &mut usize,
+        derived: &mut BTreeMap<String, (usize, String)>,
+        guarded: &BTreeSet<String>,
+        reported: &mut BTreeSet<String>,
+        issues: &mut Vec<Issue>,
+    ) {
+        for st in stmts {
+            match st {
+                Stmt::Line(n) => *line = *n,
+                Stmt::Assign { name, value } => {
+                    if calls_reader(value) {
+                        derived.insert(name.clone(), (*line, name.clone()));
+                    } else {
+                        // Flows onward: a value computed from a reader value
+                        // is still reader-derived (what the runtime drops).
+                        let mut reads = BTreeSet::new();
+                        collect_reads_from_stmts(
+                            std::slice::from_ref(&Stmt::ExprStmt(value.clone())),
+                            &mut reads,
+                        );
+                        if let Some(src) = reads.iter().find_map(|r| derived.get(r).cloned()) {
+                            derived.insert(name.clone(), src);
+                        }
+                    }
+                }
+                Stmt::If { condition, then_body, else_body, .. } => {
+                    let mut reads = BTreeSet::new();
+                    collect_reads_from_stmts(
+                        std::slice::from_ref(&Stmt::ExprStmt(condition.clone())),
+                        &mut reads,
+                    );
+                    for r in &reads {
+                        if let Some((read_line, root)) = derived.get(r) {
+                            // A guard anywhere on the root read covers every
+                            // value derived from it.
+                            if !guarded.contains(r)
+                                && !guarded.contains(root)
+                                && reported.insert(root.clone())
+                            {
+                                issues.push(Issue::UnguardedStaleness {
+                                    var: r.clone(),
+                                    root: root.clone(),
+                                    read_line: *read_line,
+                                    decision_line: *line,
+                                });
+                            }
+                        }
+                    }
+                    scan(then_body, line, derived, guarded, reported, issues);
+                    if let Some(eb) = else_body {
+                        scan(eb, line, derived, guarded, reported, issues);
+                    }
+                }
+                Stmt::For { body, .. } | Stmt::While { body, .. } => {
+                    scan(body, line, derived, guarded, reported, issues)
+                }
+                _ => {}
+            }
+        }
+    }
+    scan(stmts, &mut line, &mut derived, &guarded, &mut reported, &mut issues);
+    issues
 }
 
 // --- Stale-loop-read analysis ---
@@ -1830,6 +1993,9 @@ pub fn run_check(
     // 1e. Poll loops deciding on pre-loop snapshots.
     issues.extend(find_stale_loop_reads(stmts));
 
+    // 1f. Outside-world data deciding a branch with no freshness guard.
+    issues.extend(find_unguarded_staleness(stmts));
+
     // 2. Edge case generation (pure, non-recursive functions only).
     // Views and handlers are excluded: they build UI trees / mutate reactive
     // state, and are exercised by rendering, not by synthetic inputs.
@@ -1934,6 +2100,26 @@ mod tests {
             issues2.is_empty(),
             "re-query inside the loop should clear it, got {:?}",
             issues2
+        );
+    }
+
+    #[test]
+    fn unguarded_staleness_flags_flow_and_guard_clears() {
+        // A read flows through arithmetic into a decision: flagged.
+        let src = "use db\nconn = connect['sqlite://x.db']\npx = query[conn, 'SELECT last FROM ticks']\nnotional = px.last * 100.0\nif notional gt 1000.0\n    log['big']\n";
+        let stmts = crate::build(src).unwrap();
+        let issues = find_unguarded_staleness(&stmts);
+        assert!(
+            issues.iter().any(|i| matches!(i, Issue::UnguardedStaleness { var, .. } if var == "notional")),
+            "expected staleness finding, got {:?}", issues
+        );
+
+        // Same program with a freshness guard: clean.
+        let src2 = "use db\nconn = connect['sqlite://x.db']\npx = query[conn, 'SELECT last FROM ticks']\nif now[] - captured[px] gt 10.0\n    log['stale']\nnotional = px.last * 100.0\nif notional gt 1000.0\n    log['big']\n";
+        let stmts2 = crate::build(src2).unwrap();
+        assert!(
+            find_unguarded_staleness(&stmts2).is_empty(),
+            "a captured[] guard should clear the finding"
         );
     }
 

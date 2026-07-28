@@ -127,6 +127,10 @@ all_big = all[nums, is_big]
 --- c = calendar[b, tz = 'UTC']                     (c.year c.month c.day c.hour c.weekday)
 --- fmt[b, time = 'iso']                         ('iso' 'date' 'time' 'datetime'; tz = ...)
 --- parse_time['2026-07-14T04:09:00-04:00']      (or 'YYYY-MM-DD HH:MM' + tz)
+--- Data read from outside remembers when it arrived:
+--- px = query[conn, '...']
+--- if now[] - captured[px] gt 10.0  → refuse (staleness is plain arithmetic)
+--- captured[x] on a computed value is an error value (kind 'no_capture').
 --- date[]/elapsed[]/today[] were REMOVED. Timezones are always explicit; default UTC.
 
 --- Slow work in a ui handler? NEVER block the loop — schedule it:
