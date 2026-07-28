@@ -1,7 +1,8 @@
 # The chart module — design
 
-**Status: design round. The replay simulator (docs/replay-sim-design.md) is
-the driving application; the module is general.**
+**Status: design round. The finch app's simulation page
+(docs/finch-sim-design.md) is the driving application; the module is
+general.**
 
 Charts are the first UI element whose *content* is dense numeric data
 rather than text. That makes them a different kind of component: the
