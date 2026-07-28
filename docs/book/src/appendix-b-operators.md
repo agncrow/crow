@@ -25,6 +25,9 @@ section). The core set is listed in Appendix A; highlights by area:
 - **Search** — `find any all` (named predicates, parallel early exit)
 - **Background work** — `later[fn, args…]` (off-loop, skip-if-running),
   `running[fn]`
+- **Moments** — `now[]`, `moment[y, m, d, hour =, minute =, second =, tz =]`,
+  `calendar[t, tz =]`, `parse_time[text, tz =]`, `fmt[t, time =, tz =]`
+  (a moment is epoch seconds; subtraction is elapsed seconds)
 - **Verification** — `test` blocks (attached = the fn above's truths;
   named = standalone; params = generated inputs), `assert[cond]`
 - **Errors** — `error[reason, kind]`, metadata `.ok .reason .kind .trace`

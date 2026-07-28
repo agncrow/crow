@@ -55,6 +55,8 @@ pub struct Transpiler {
     /// Whether the transpiled code uses regex
     pub needs_regex: bool,
     needs_find_struct: bool,
+    /// moment[]/parse_time[] used — emit the Result<f64,String> → CrowResult bridge
+    needs_time_result: bool,
     /// Top-level non-serializable handles (db connections) in ui programs:
     /// emitted as static OnceLocks, not reactive state
     static_handle_vars: std::collections::BTreeSet<String>,
@@ -111,6 +113,7 @@ impl Transpiler {
             needs_crow_runtime: false,
             needs_distributed: false,
             needs_later: false,
+            needs_time_result: false,
             by_ref_params: std::collections::BTreeMap::new(),
             current_ref_params: std::collections::HashSet::new(),
             modules: std::collections::HashSet::new(),
@@ -1428,6 +1431,20 @@ impl Transpiler {
         // Synthetic types used by builtin codegen. Emitted after main (item
         // order is irrelevant in Rust) because the need is only known once
         // the body has been generated.
+        if self.needs_time_result {
+            self.emit_line("");
+            self.emit_line("#[allow(dead_code)]");
+            self.emit_line("fn __crow_time_result(r: Result<f64, String>) -> CrowResult<f64> {");
+            self.indent += 1;
+            self.emit_line("match r {");
+            self.indent += 1;
+            self.emit_line("Ok(t) => CrowResult { ok: true, value: t, reason: String::new(), kind: String::new(), trace: Vec::new() },");
+            self.emit_line("Err(e) => CrowResult { ok: false, value: 0.0, reason: e, kind: \"time\".to_string(), trace: Vec::new() },");
+            self.indent -= 1;
+            self.emit_line("}");
+            self.indent -= 1;
+            self.emit_line("}");
+        }
         if self.needs_find_struct {
             self.emit_line("");
             self.emit_line("#[derive(Clone, Debug)]");
@@ -3196,8 +3213,42 @@ impl Transpiler {
                     if name == "repeat" && arg_strs.len() == 2 {
                         return format!("({}).repeat(({}) as usize)", arg_strs[0], arg_strs[1]);
                     }
-                    if name == "fmt" && arg_strs.len() == 7 {
+                    if name == "now" && arg_strs.is_empty() {
                         self.needs_crow_runtime = true;
+                        return "crow_runtime::moments::now()".to_string();
+                    }
+                    if name == "moment" && arg_strs.len() == 7 {
+                        self.needs_crow_runtime = true;
+                        self.needs_time_result = true;
+                        return format!(
+                            "__crow_time_result(crow_runtime::moments::moment(({}) as i64, ({}) as i64, ({}) as i64, ({}) as i64, ({}) as i64, ({}) as f64, &{}))",
+                            arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[3], arg_strs[4], arg_strs[5], arg_strs[6]
+                        );
+                    }
+                    if name == "parse_time" && arg_strs.len() == 2 {
+                        self.needs_crow_runtime = true;
+                        self.needs_time_result = true;
+                        return format!(
+                            "__crow_time_result(crow_runtime::moments::parse_time(&{}, &{}))",
+                            arg_strs[0], arg_strs[1]
+                        );
+                    }
+                    if name == "calendar" && arg_strs.len() == 2 {
+                        self.needs_crow_runtime = true;
+                        return format!(
+                            "crow_runtime::moments::calendar(({}) as f64, &{}).map(|f| f.iter().map(|(k, v)| (k.to_string(), *v)).collect::<std::collections::BTreeMap<String, i64>>()).unwrap_or_else(|e| {{ eprintln!(\"calendar[]: {{}}\", e); std::collections::BTreeMap::new() }})",
+                            arg_strs[0], arg_strs[1]
+                        );
+                    }
+                    if name == "fmt" && arg_strs.len() == 9 {
+                        self.needs_crow_runtime = true;
+                        // Time display path: the 8th arg (style) is set.
+                        if !matches!(&args[7], Expr::Str(s) if s.is_empty()) {
+                            return format!(
+                                "match crow_runtime::moments::fmt_time(({}) as f64, &{}, &{}) {{ Ok(s) => s, Err(e) => format!(\"[fmt: {{}}]\", e) }}",
+                                arg_strs[0], arg_strs[7], arg_strs[8]
+                            );
+                        }
                         let ty = self.ctx.infer_expr(&args[0]);
                         let inner = match &ty { CrowType::Result(i) => i.as_ref().clone(), o => o.clone() };
                         if matches!(inner, CrowType::Str) {
@@ -4497,6 +4548,17 @@ impl Transpiler {
                                 let suffix = if is_copy { "" } else { ".clone()" };
                                 return format!("{}.value.{}{}", obj, field, suffix);
                             }
+                        }
+                    }
+                }
+                // Map dot access through a Result: r.key → r.value["key"]
+                {
+                    let obj_type = self.ctx.infer_expr(object);
+                    if let CrowType::Result(inner) = &obj_type {
+                        if matches!(inner.as_ref(), CrowType::Map(_))
+                            && !matches!(field.as_str(), "ok" | "reason" | "kind" | "trace")
+                        {
+                            return format!("{}.value[\"{}\"].clone()", obj, field);
                         }
                     }
                 }

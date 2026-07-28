@@ -4,6 +4,7 @@ pub mod frame;
 pub mod gpu;
 pub mod io;
 pub mod later;
+pub mod moments;
 pub mod linalg;
 pub mod nn;
 pub mod pool;

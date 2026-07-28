@@ -120,6 +120,15 @@ all_big = all[nums, is_big]
 --- Testing a live app: a = app[render] / click[a, handler] / a.state_var / html[a]
 
 
+--- A moment is a NUMBER (epoch seconds). No date type, no duration type.
+--- t = now[]                                    (float)
+--- b = moment[2026, 7, 14, hour = 9, minute = 30, tz = 'America/New_York']
+--- b - t                                        (elapsed SECONDS — just subtraction)
+--- c = calendar[b, tz = 'UTC']                     (c.year c.month c.day c.hour c.weekday)
+--- fmt[b, time = 'iso']                         ('iso' 'date' 'time' 'datetime'; tz = ...)
+--- parse_time['2026-07-14T04:09:00-04:00']      (or 'YYYY-MM-DD HH:MM' + tz)
+--- date[]/elapsed[]/today[] were REMOVED. Timezones are always explicit; default UTC.
+
 --- Slow work in a ui handler? NEVER block the loop — schedule it:
 --- later[load_data]        (fire-and-forget; results land in state, views re-render)
 --- running[load_data]      (true while in flight — spinners, disabled buttons)

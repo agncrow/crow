@@ -677,25 +677,59 @@ log[m.groups]    --- ['2024-01-15', '2024', '01', '15'] ---
 sub['hello world', 'world', 'crow']  --- 'hello crow' ---
 ```
 
-#### Date/Time
+#### Moments
+
+A moment is a number: seconds since the Unix epoch, as a float. Comparison
+and arithmetic therefore come free — `end - start` *is* elapsed seconds,
+`t lt open - 10.0` *is* a staleness check — and no separate duration or
+date type exists.
 
 | Function | Description |
 |----------|-------------|
-| `now[]` | Current date/time as map with `year`, `month`, `day`, `hour`, `minute`, `second`, `timestamp` |
-| `date[y, m, d]` | Create date map with `year`, `month`, `day`, `timestamp` |
-| `elapsed[start, end]` | Time difference between two date maps. Returns map with `seconds`, `minutes`, `hours`, `days` |
+| `now[]` | The current moment (epoch seconds) |
+| `moment[y, m, d, hour = 0, minute = 0, second = 0, tz = 'UTC']` | Build a moment from calendar components in a named timezone |
+| `calendar[t, tz = 'UTC']` | Calendar components of a moment: `year month day hour minute second weekday` (weekday 1 = Monday) |
+| `parse_time[text, tz = 'UTC']` | Parse RFC3339, or `'YYYY-MM-DD[ HH:MM[:SS]]'` read in the named zone |
+| `fmt[t, time = 'iso' \| 'date' \| 'time' \| 'datetime', tz = 'UTC']` | Render a moment |
 
 ```
-t = now[]
-log[t.year]        --- 2026 ---
-log[t.timestamp]   --- unix timestamp ---
+open_bell = moment[2026, 7, 14, hour = 9, minute = 30, tz = 'America/New_York']
+log[fmt[open_bell, time = 'datetime', tz = 'America/New_York']]   --- 2026-07-14 09:30:00 ---
+log[fmt[open_bell, time = 'iso']]                                 --- 2026-07-14T13:30:00Z ---
 
-d1 = date[2024, 1, 15]
-d2 = date[2024, 1, 16]
-e = elapsed[d1, d2]
-log[e.seconds]     --- 86400 ---
-log[e.days]        --- 1 ---
+--- subtraction is elapsed seconds; comparison is comparison
+if print_time lt open_bell - 10.0
+    log['stale print — not driving price']
+
+c = calendar[open_bell, tz = 'UTC']
+log[c.hour]                                                       --- 13 ---
 ```
+
+Timezones are IANA names (`'America/New_York'`, `'Europe/London'`, `'UTC'`)
+and are **always explicit** — the default everywhere is UTC. Invalid dates,
+unknown zones, DST gaps, and unparseable strings return error values with
+`kind = 'time'`.
+
+#### Design Note: A Moment Is a Number
+
+**What was considered:** the previous design — `now[]`/`date[]` returning
+component maps and `elapsed[a, b]` returning a duration map. It could not
+express a named timezone, parse a timestamp, add a duration, or compare two
+moments directly; worse, `now[]` built its components in *machine-local*
+time while `date[]` timestamped at UTC midnight, so mixed arithmetic was
+already silently wrong by hours.
+
+**Why this design:** representing a moment as epoch seconds makes the
+number line do the work — comparison, subtraction, and "ten seconds before
+the bell" are ordinary arithmetic on ordinary floats, with no new type, no
+operator overloads, and no duration vocabulary. Calendars and zones are
+where the real complexity lives, so they are named-argument functions
+(`moment`, `calendar`) rather than hidden defaults. Machine-local time is
+absent by design: "correct on my laptop, wrong on the UTC server" is the
+classic deploy-day bug, and a language that makes the timezone explicit
+never has it. **Deleted in exchange:** `elapsed` (subtraction), `date`
+(subsumed by `moment`), `today` (`fmt[now[], time = 'date']`) — all three
+now raise teaching errors naming their replacement.
 
 ## 4. Control Flow
 

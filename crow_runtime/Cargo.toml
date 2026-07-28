@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 arrow = { version = "58.0.0", features = ["ipc"], optional = true }
 bytemuck = { version = "1.25.0", features = ["derive"] }
+chrono = "0.4.45"
+chrono-tz = "0.10.4"
 faer = "0.24.0"
 itoa = "1.0.17"
 pollster = "0.4.0"

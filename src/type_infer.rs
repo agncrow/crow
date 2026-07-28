@@ -1627,8 +1627,7 @@ impl TypeContext {
             }
             "len" => CrowType::Int,
             "shell" => CrowType::Struct("CrowShell".to_string()),
-            "now" | "date" => CrowType::Map(Box::new(CrowType::Int)),
-            "elapsed" => CrowType::Struct("CrowElapsed".to_string()),
+            "calendar" => CrowType::Map(Box::new(CrowType::Int)),
             // Regex + search builtins
             "matches" => CrowType::Bool,
             "any" | "all" => CrowType::Bool,
@@ -1664,6 +1663,10 @@ impl TypeContext {
                 if args.is_empty() { CrowType::Float } else { CrowType::Int }
             }
             "time" => CrowType::Float,
+            // Moments are numbers (epoch seconds); constructors are fallible
+            "now" => CrowType::Float,
+            "age" => CrowType::Float,
+            "moment" | "parse_time" => CrowType::Result(Box::new(CrowType::Float)),
             "sleep" => CrowType::Int,
             // Background work: later[] is fire-and-forget (Void — ask
             // running[] for in-flight status)
