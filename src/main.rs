@@ -741,7 +741,7 @@ fn cmd_new() {
 
     // main.crow
     if has_web {
-        write_file(&project_dir.join("main.crow"), "use web, ui\nuse views.home\n\nserve[3000]\npage['/', home_render]\n");
+        write_file(&project_dir.join("main.crow"), "use web, ui\nuse views.home\n\nserve[3000]\npage['/', home.render]\n");
     } else {
         write_file(&project_dir.join("main.crow"), &format!("log['hello, {}']\n", short_name));
     }
@@ -749,7 +749,7 @@ fn cmd_new() {
     // --web: add views/home.crow
     if has_web {
         write_file(&project_dir.join("views/home.crow"),
-            "--- home page ---\nuse ui\n\nmessage = 'welcome to crow'\n\nview home_render[]\n    return div[\n        h1['`message`']\n    ]\n");
+            "--- home page ---\nuse ui\n\nmessage = 'welcome to crow'\n\nview render[]\n    return div[\n        h1['`message`']\n    ]\n");
     }
 
     // --ml: add jobs/train.crow and lib/model.crow
@@ -2079,6 +2079,8 @@ fn cmd_run_file_interpreted(filename: &str) {
         let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
         // Lower + validate exactly as the compiled path does — the two modes
         // must reject the same programs (reservation, scope, ui rules)
+        // (user modules are already inlined; the interpreter must not
+        // dynamically re-load them — see set_modules_preexpanded below)
         let lowered = match lower::lower_program(&stmts) {
             Ok(l) => l,
             Err(e) => {
@@ -2097,6 +2099,7 @@ fn cmd_run_file_interpreted(filename: &str) {
     };
 
     let mut interpreter = Interpreter::new();
+    interpreter.set_modules_preexpanded(true);
     let base = filename.replace(".crowc", ".crow");
     let source_file = std::path::Path::new(&base).file_name()
         .map(|f| f.to_string_lossy().to_string())
@@ -2243,6 +2246,7 @@ fn expand_module_imports(
     visited: &mut std::collections::HashSet<String>,
 ) -> Vec<ast::Stmt> {
     let mut expanded = Vec::new();
+    let mut expanded_modules: Vec<(String, std::collections::BTreeMap<String, String>)> = Vec::new();
     for stmt in stmts {
         if let ast::Stmt::Use { path, alias } = stmt {
             // Built-in modules: skip file lookup
@@ -2368,9 +2372,16 @@ fn expand_module_imports(
                     _ => {}
                 }
             }
+            expanded_modules.push((module_name.clone(), local_names.clone()));
         }
         // Keep the original statement (including Use, so transpiler knows about it)
         expanded.push(stmt.clone());
+    }
+    // Rewrite qualified refs in the importing file: home.render → home_render
+    for (module_name, local_names) in &expanded_modules {
+        for st in &mut expanded {
+            rewrite_qualified_refs_stmt(st, module_name, local_names);
+        }
     }
     expanded
 }
@@ -2444,6 +2455,96 @@ fn rewrite_refs_stmt(
             rewrite_refs_expr(value, map, shadowed);
         }
         ast::Stmt::Resource { count, .. } => rewrite_refs_expr(count, map, shadowed),
+        _ => {}
+    }
+}
+
+/// Rewrite qualified module references in the importing file:
+/// `home.render` → `home_render` for every name the module defines.
+/// Runs after a module is expanded so both modes see plain idents.
+fn rewrite_qualified_refs_stmt(
+    stmt: &mut ast::Stmt,
+    module_name: &str,
+    local_names: &std::collections::BTreeMap<String, String>,
+) {
+    let map = |e: &mut ast::Expr| rewrite_qualified_refs_expr(e, module_name, local_names);
+    match stmt {
+        ast::Stmt::Assign { value, .. } => map(value),
+        ast::Stmt::ExprStmt(e) => map(e),
+        ast::Stmt::Return(Some(e)) => map(e),
+        ast::Stmt::If { condition, then_body, else_body, .. } => {
+            map(condition);
+            for st in then_body {
+                rewrite_qualified_refs_stmt(st, module_name, local_names);
+            }
+            if let Some(eb) = else_body {
+                for st in eb {
+                    rewrite_qualified_refs_stmt(st, module_name, local_names);
+                }
+            }
+        }
+        ast::Stmt::While { condition, body } => {
+            map(condition);
+            for st in body {
+                rewrite_qualified_refs_stmt(st, module_name, local_names);
+            }
+        }
+        ast::Stmt::For { iter, body, .. } => {
+            map(iter);
+            for st in body {
+                rewrite_qualified_refs_stmt(st, module_name, local_names);
+            }
+        }
+        ast::Stmt::FnDecl { body, .. } => {
+            for st in body {
+                rewrite_qualified_refs_stmt(st, module_name, local_names);
+            }
+        }
+        ast::Stmt::IndexAssign { object, index, value } => {
+            map(object);
+            map(index);
+            map(value);
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_qualified_refs_expr(
+    expr: &mut ast::Expr,
+    module_name: &str,
+    local_names: &std::collections::BTreeMap<String, String>,
+) {
+    // home.render → home_render (only names the module actually defines)
+    if let ast::Expr::FieldAccess { object, field } = expr {
+        if let ast::Expr::Ident(obj) = object.as_ref() {
+            if obj == module_name {
+                if let Some(prefixed) = local_names.get(field) {
+                    *expr = ast::Expr::Ident(prefixed.clone());
+                    return;
+                }
+            }
+        }
+    }
+    match expr {
+        ast::Expr::BinOp { left, right, .. } => {
+            rewrite_qualified_refs_expr(left, module_name, local_names);
+            rewrite_qualified_refs_expr(right, module_name, local_names);
+        }
+        ast::Expr::UnaryOp { expr: e, .. } => rewrite_qualified_refs_expr(e, module_name, local_names),
+        ast::Expr::Call { callee, args } => {
+            rewrite_qualified_refs_expr(callee, module_name, local_names);
+            for a in args {
+                rewrite_qualified_refs_expr(a, module_name, local_names);
+            }
+        }
+        ast::Expr::FieldAccess { object, .. } => {
+            rewrite_qualified_refs_expr(object, module_name, local_names);
+        }
+        ast::Expr::Array(items) => {
+            for i in items {
+                rewrite_qualified_refs_expr(i, module_name, local_names);
+            }
+        }
         _ => {}
     }
 }
