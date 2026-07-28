@@ -1,0 +1,23 @@
+--- A moment is a number: epoch seconds. Arithmetic and comparison come
+--- free; timezones are named and explicit; UTC is the default everywhere.
+open_bell = moment[2026, 7, 14, hour = 9, minute = 30, tz = 'America/New_York']
+print_ts = moment[2026, 7, 14, hour = 0, minute = 20, tz = 'America/New_York']
+
+log[fmt[open_bell, time = 'datetime', tz = 'America/New_York']]
+log[fmt[open_bell, time = 'iso']]
+
+--- subtraction IS elapsed seconds
+log[open_bell - print_ts]
+
+--- the finch stale-print question, as arithmetic
+if print_ts lt open_bell - 10.0
+    log['stale print — not driving price']
+
+c = calendar[open_bell, tz = 'UTC']
+log['utc hour: `c.hour` weekday: `c.weekday`']
+
+t = parse_time['2026-07-14T04:09:00-04:00']
+log[fmt[t, time = 'iso']]
+
+bad = moment[2026, 2, 30]
+log[bad.kind]

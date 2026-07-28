@@ -16,6 +16,10 @@ pub struct CrowValue {
     pub reason: String,            // error message ("" if not error)
     pub kind: String,              // error category ("" if not error)
     pub trace: Vec<String>,        // call trace, built during propagation
+    /// When this value was captured from the outside world (epoch seconds),
+    /// or None for values computed here and now. Flows like error metadata:
+    /// a derived value is as old as its oldest input (see age[]).
+    pub captured: Option<f64>,
 }
 
 impl CrowValue {
@@ -26,6 +30,7 @@ impl CrowValue {
             reason: String::new(),
             kind: String::new(),
             trace: Vec::new(),
+            captured: None,
         }
     }
 
@@ -36,6 +41,7 @@ impl CrowValue {
             reason: String::new(),
             kind: String::new(),
             trace: Vec::new(),
+            captured: None,
         }
     }
 
@@ -46,6 +52,7 @@ impl CrowValue {
             reason: reason.to_string(),
             kind: String::new(),
             trace: vec![trace_entry.to_string()],
+            captured: None,
         }
     }
 
@@ -56,6 +63,7 @@ impl CrowValue {
             reason: reason.to_string(),
             kind: kind.to_string(),
             trace: vec![trace_entry.to_string()],
+            captured: None,
         }
     }
 
@@ -82,6 +90,23 @@ impl CrowValue {
     /// Append a trace entry during auto-propagation
     pub fn append_trace(&mut self, location: &str) {
         self.trace.push(location.to_string());
+    }
+
+    /// Stamp this value as captured from the outside world now.
+    pub fn stamp_captured(mut self) -> Self {
+        self.captured = Some(crow_runtime::moments::now());
+        self
+    }
+
+    /// Adopt the older of two capture moments — a derived value is as old as
+    /// its oldest input (age flows like error metadata).
+    pub fn inherit_capture(&mut self, other: &CrowValue) {
+        self.captured = match (self.captured, other.captured) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
     }
 }
 

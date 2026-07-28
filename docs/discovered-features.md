@@ -235,7 +235,14 @@ app-under-test or a test-scoped state accessor); (b) route testing needs
 a request-construction helper; (c) view output testing (tree/html
 compare) is the natural future home of user snapshot[].
 
-## F-7. Datetime — AUDITED (July 25); proposal below, awaiting rulings
+## F-7. Datetime ✅ SHIPPED — moments are numbers
+
+Shipped exactly as proposed: `now[]` → float, `moment[…, tz =]`,
+`calendar[t, tz =]`, `parse_time[text, tz =]`, `fmt[t, time =, tz =]`;
+kernel `crow_runtime::moments` (chrono-tz), both modes, parity 27.
+UTC default, machine-local time removed entirely. `date`/`elapsed`/
+`today` deleted with teaching errors. Spec section + Design Note
+"A Moment Is a Number". Audit + proposal kept below.
 
 **What exists:** `now[]` → map of components in MACHINE-LOCAL time +
 epoch timestamp; `date[y,m,d]` → map with UTC-midnight timestamp (note:

@@ -180,6 +180,12 @@ enum Signal {
 
 
 
+/// Builtins that read the outside world — their results are stamped with a
+/// capture moment, which then flows through derived values (see age[]).
+const READER_FNS: &[&str] = &[
+    "query", "read", "fetch", "recv", "input", "load", "env", "shell", "ls",
+];
+
 #[derive(Clone)]
 pub struct Interpreter {
     env: Env,
@@ -1299,17 +1305,26 @@ impl Interpreter {
             Expr::BinOp { left, op, right } => {
                 let l = self.eval_expr(left)?;
                 let r = self.eval_expr(right)?;
-                self.eval_binop(&l, op, &r)
+                let mut out = self.eval_binop(&l, op, &r)?;
+                // Age flows like error metadata: as old as the oldest input.
+                out.inherit_capture(&l);
+                out.inherit_capture(&r);
+                Ok(out)
             }
             Expr::UnaryOp { op, expr } => {
                 let val = self.eval_expr(expr)?;
-                self.eval_unaryop(op, &val)
+                let mut out = self.eval_unaryop(op, &val)?;
+                out.inherit_capture(&val);
+                Ok(out)
             }
             Expr::Call { callee, args } => {
                 self.eval_call(callee, args)
             }
             Expr::FieldAccess { object, field } => {
-                self.eval_field_access(object, field)
+                let obj = self.eval_expr(object)?;
+                let mut out = self.eval_field_access(object, field)?;
+                out.inherit_capture(&obj);
+                Ok(out)
             }
             Expr::Array(items) => {
                 let vals: Vec<CrowValue> = items
@@ -1421,7 +1436,8 @@ impl Interpreter {
                     }
                     // Module-scoped resolution: the prefix names the provider,
                     // so overlapping exports (frame.load vs math.load) resolve
-                    return self.registry.call_in(mod_name, field, &arg_vals);
+                    return self.registry.call_in(mod_name, field, &arg_vals)
+                        .map(|v| if READER_FNS.contains(&field.as_str()) { v.stamp_captured() } else { v });
                 }
             }
         }
@@ -1441,7 +1457,8 @@ impl Interpreter {
                 // If any arg is NumArray, route to module
                 let has_numarray = arg_vals.iter().any(|a| matches!(&a.value, Value::NumArray(_)));
                 if has_numarray && self.registry.has_function(name) {
-                    return self.registry.call(name, &arg_vals);
+                    return self.registry.call(name, &arg_vals)
+                        .map(|v| if READER_FNS.contains(&name.as_str()) { v.stamp_captured() } else { v });
                 }
                 return self.call_builtin(name, &arg_vals);
             }
@@ -1456,7 +1473,8 @@ impl Interpreter {
                 let arg_vals: Vec<CrowValue> = args.iter()
                     .map(|a| self.eval_expr(a))
                     .collect::<Result<_, _>>()?;
-                return self.registry.call(name, &arg_vals);
+                return self.registry.call(name, &arg_vals)
+                    .map(|v| if READER_FNS.contains(&name.as_str()) { v.stamp_captured() } else { v });
             }
 
             // later[work, …] — background scheduling. The interpreter runs the
@@ -1626,7 +1644,28 @@ impl Interpreter {
                     .iter()
                     .map(|a| self.eval_expr(a))
                     .collect::<Result<_, _>>()?;
-                return self.call_builtin(name, &arg_vals);
+                // age[x] — seconds since x was captured from the outside
+                // world; 0 for values computed here and now.
+                if name == "age" {
+                    if arg_vals.len() != 1 {
+                        return Err("age[] takes exactly 1 argument".into());
+                    }
+                    let a = match arg_vals[0].captured {
+                        Some(t) => (crow_runtime::moments::now() - t).max(0.0),
+                        None => 0.0,
+                    };
+                    return Ok(CrowValue::ok(Value::Float(a)));
+                }
+                let mut out = self.call_builtin(name, &arg_vals)?;
+                if READER_FNS.contains(&name.as_str()) {
+                    out = out.stamp_captured();
+                } else {
+                    // Derived values inherit the oldest input's capture time.
+                    for a in &arg_vals {
+                        out.inherit_capture(a);
+                    }
+                }
+                return Ok(out);
             }
         }
 
@@ -1923,7 +1962,7 @@ impl Interpreter {
             | "type" | "grad"
             | "shell" | "hash"
             | "find" | "matches" | "sub" | "any" | "all"
-            | "now" | "date" | "elapsed"
+            | "now" | "date" | "elapsed" | "moment" | "calendar" | "parse_time" | "age"
             // Web P4 builtins
             | "cors" | "sessions" | "templates" | "render" | "cache" | "limit"
             | "uploads" | "sse" | "ws" | "connect" | "send" | "recv" | "close"
@@ -2437,7 +2476,20 @@ impl Interpreter {
             // fmt: value formatting via the shared display kernel. The lowering
             // pass guarantees exactly 7 positional args (sentinel defaults).
             "fmt" => {
-                if args.len() != 7 { return Err("fmt[] takes a value plus named arguments (decimals, commas, width, align, fill, percent)".into()); }
+                if args.len() != 9 { return Err("fmt[] takes a value plus named arguments (decimals, commas, width, align, fill, percent, time, tz)".into()); }
+                let time_style = match &args[7].value { Value::Str(s) => s.clone(), _ => String::new() };
+                if !time_style.is_empty() {
+                    let tz = match &args[8].value { Value::Str(s) => s.clone(), _ => "UTC".to_string() };
+                    let t = match args[0].unwrap_or_propagate()? {
+                        Value::Int(n) => *n as f64,
+                        Value::Float(f) => *f,
+                        other => return Err(format!("fmt: time display needs a moment (a number), got {}", other.type_name())),
+                    };
+                    return match crow_runtime::moments::fmt_time(t, &time_style, &tz) {
+                        Ok(s) => Ok(CrowValue::ok(Value::Str(s))),
+                        Err(e) => Ok(CrowValue::error_with_kind(&e, "time", &self.trace_entry())),
+                    };
+                }
                 let decimals = match &args[1].value { Value::Int(n) => *n, _ => return Err("fmt: decimals must be an int".into()) };
                 let commas = matches!(&args[2].value, Value::Bool(true));
                 let width = match &args[3].value { Value::Int(n) => *n, _ => return Err("fmt: width must be an int".into()) };
@@ -3208,61 +3260,44 @@ impl Interpreter {
             // --- Date/time builtins ---
             "now" => {
                 if !args.is_empty() { return Err("now[] takes no arguments".into()); }
-                let now = chrono::Local::now();
-                let mut map = std::collections::BTreeMap::new();
-                map.insert("year".to_string(), CrowValue::ok(Value::Int(now.format("%Y").to_string().parse::<i64>().unwrap())));
-                map.insert("month".to_string(), CrowValue::ok(Value::Int(now.format("%m").to_string().parse::<i64>().unwrap())));
-                map.insert("day".to_string(), CrowValue::ok(Value::Int(now.format("%d").to_string().parse::<i64>().unwrap())));
-                map.insert("hour".to_string(), CrowValue::ok(Value::Int(now.format("%H").to_string().parse::<i64>().unwrap())));
-                map.insert("minute".to_string(), CrowValue::ok(Value::Int(now.format("%M").to_string().parse::<i64>().unwrap())));
-                map.insert("second".to_string(), CrowValue::ok(Value::Int(now.format("%S").to_string().parse::<i64>().unwrap())));
-                map.insert("timestamp".to_string(), CrowValue::ok(Value::Int(now.timestamp())));
-                Ok(CrowValue::ok(Value::Map(map)))
+                Ok(CrowValue::ok(Value::Float(crow_runtime::moments::now())))
             }
-            "date" => {
-                if args.len() != 3 { return Err("date[] takes exactly 3 arguments (year, month, day)".into()); }
-                let y = match args[0].unwrap_or_propagate()? { Value::Int(n) => *n as i32, _ => return Err("date[] year must be int".into()) };
-                let m = match args[1].unwrap_or_propagate()? { Value::Int(n) => *n as u32, _ => return Err("date[] month must be int".into()) };
-                let d = match args[2].unwrap_or_propagate()? { Value::Int(n) => *n as u32, _ => return Err("date[] day must be int".into()) };
-                match chrono::NaiveDate::from_ymd_opt(y, m, d) {
-                    Some(dt) => {
-                        let mut map = std::collections::BTreeMap::new();
-                        map.insert("year".to_string(), CrowValue::ok(Value::Int(y as i64)));
-                        map.insert("month".to_string(), CrowValue::ok(Value::Int(m as i64)));
-                        map.insert("day".to_string(), CrowValue::ok(Value::Int(d as i64)));
-                        map.insert("timestamp".to_string(), CrowValue::ok(Value::Int(dt.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())));
-                        Ok(CrowValue::ok(Value::Map(map)))
-                    }
-                    None => Ok(CrowValue::error_with_kind(&format!("invalid date: {}-{}-{}", y, m, d), "date", &self.trace_entry())),
+            "moment" => {
+                if args.len() != 7 { return Err("moment[] takes year, month, day + named hour, minute, second, tz".into()); }
+                let geti = |i: usize| -> Result<i64, String> {
+                    match &args[i].value { Value::Int(n) => Ok(*n), Value::Float(f) => Ok(*f as i64), _ => Err("moment[]: components must be numbers".into()) }
+                };
+                let second = match &args[5].value { Value::Int(n) => *n as f64, Value::Float(f) => *f, _ => return Err("moment[]: second must be a number".into()) };
+                let tz = match &args[6].value { Value::Str(s) => s.clone(), _ => return Err("moment[]: tz must be a string".into()) };
+                match crow_runtime::moments::moment(geti(0)?, geti(1)?, geti(2)?, geti(3)?, geti(4)?, second, &tz) {
+                    Ok(t) => Ok(CrowValue::ok(Value::Float(t))),
+                    Err(e) => Ok(CrowValue::error_with_kind(&e, "time", &self.trace_entry())),
                 }
             }
-            "elapsed" => {
-                if args.len() != 2 { return Err("elapsed[] takes exactly 2 arguments (start, end)".into()); }
-                let t1 = match args[0].unwrap_or_propagate()? {
-                    Value::Map(m) => match m.get("timestamp") {
-                        Some(v) => match &v.value { Value::Int(n) => *n, _ => return Err("elapsed[] start must have numeric timestamp".into()) },
-                        None => return Err("elapsed[] start must have a 'timestamp' field".into()),
-                    },
-                    _ => return Err("elapsed[] arguments must be date/time maps".into()),
-                };
-                let t2 = match args[1].unwrap_or_propagate()? {
-                    Value::Map(m) => match m.get("timestamp") {
-                        Some(v) => match &v.value { Value::Int(n) => *n, _ => return Err("elapsed[] end must have numeric timestamp".into()) },
-                        None => return Err("elapsed[] end must have a 'timestamp' field".into()),
-                    },
-                    _ => return Err("elapsed[] arguments must be date/time maps".into()),
-                };
-                let diff = t2 - t1;
-                let mut map = std::collections::BTreeMap::new();
-                map.insert("seconds".to_string(), CrowValue::ok(Value::Float(diff as f64)));
-                map.insert("minutes".to_string(), CrowValue::ok(Value::Float(diff as f64 / 60.0)));
-                map.insert("hours".to_string(), CrowValue::ok(Value::Float(diff as f64 / 3600.0)));
-                map.insert("days".to_string(), CrowValue::ok(Value::Float(diff as f64 / 86400.0)));
-                Ok(CrowValue::ok(Value::Map(map)))
+            "calendar" => {
+                if args.len() != 2 { return Err("calendar[] takes a moment + named tz".into()); }
+                let t = match &args[0].value { Value::Int(n) => *n as f64, Value::Float(f) => *f, _ => return Err("calendar[]: takes a moment (a number)".into()) };
+                let tz = match &args[1].value { Value::Str(s) => s.clone(), _ => return Err("calendar[]: tz must be a string".into()) };
+                match crow_runtime::moments::calendar(t, &tz) {
+                    Ok(fields) => {
+                        let mut map = std::collections::BTreeMap::new();
+                        for (k, v) in fields { map.insert(k.to_string(), CrowValue::ok(Value::Int(v))); }
+                        Ok(CrowValue::ok(Value::Map(map)))
+                    }
+                    Err(e) => Ok(CrowValue::error_with_kind(&e, "time", &self.trace_entry())),
+                }
             }
-
-            // --- Web P4 builtins (interpreter mock implementations) ---
-
+            "parse_time" => {
+                if args.len() != 2 { return Err("parse_time[] takes a string + named tz".into()); }
+                let text = match &args[0].value { Value::Str(s) => s.clone(), _ => return Err("parse_time[]: takes a string".into()) };
+                let tz = match &args[1].value { Value::Str(s) => s.clone(), _ => return Err("parse_time[]: tz must be a string".into()) };
+                match crow_runtime::moments::parse_time(&text, &tz) {
+                    Ok(t) => Ok(CrowValue::ok(Value::Float(t))),
+                    Err(e) => Ok(CrowValue::error_with_kind(&e, "time", &self.trace_entry())),
+                }
+            }
+            "date" => Err("date[] was removed - a moment is a number: moment[y, m, d] (hour/minute/second/tz are named args)".into()),
+            "elapsed" => Err("elapsed[] was removed - subtract moments: end - start is seconds".into()),
             "cors" => {
                 // cors[app] or cors[app, origins] → returns app unchanged (mock)
                 if args.is_empty() { return Err("cors[] requires at least 1 argument".into()); }
@@ -3437,13 +3472,7 @@ impl Interpreter {
                 if args.len() != 2 { return Err("field[] takes 2 arguments".into()); }
                 Ok(CrowValue::done())
             }
-            "today" => {
-                // today[] → returns today's date as string YYYY-MM-DD
-                if !args.is_empty() { return Err("today[] takes 0 arguments".into()); }
-                let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-                Ok(CrowValue::ok(Value::Str(today)))
-            }
-
+            "today" => Err("today[] was removed - use fmt[now[], time = \'date\'] (tz = ... for a zone)".into()),
             "assert" => {
                 if args.is_empty() || args.len() > 2 {
                     return Err("assert[] takes 1 or 2 arguments".to_string());
@@ -6726,43 +6755,8 @@ mod tests {
     }
 
     // --- P3: Date/Time ---
-    #[test]
-    fn test_now_has_year() {
-        let val = get_var("t = now[]", "t");
-        match &val.value {
-            Value::Map(m) => {
-                assert!(m.contains_key("year"));
-                assert!(m.contains_key("timestamp"));
-            }
-            _ => panic!("expected map"),
-        }
-    }
 
-    #[test]
-    fn test_date_builtin() {
-        let val = get_var("d = date[2024, 1, 15]", "d");
-        match &val.value {
-            Value::Map(m) => {
-                let year = m.get("year").unwrap();
-                assert_eq!(format!("{}", year.value), "2024");
-                let month = m.get("month").unwrap();
-                assert_eq!(format!("{}", month.value), "1");
-            }
-            _ => panic!("expected map"),
-        }
-    }
 
-    #[test]
-    fn test_elapsed_builtin() {
-        let val = get_var("d1 = date[2024, 1, 15]\nd2 = date[2024, 1, 16]\ne = elapsed[d1, d2]", "e");
-        match &val.value {
-            Value::Map(m) => {
-                let secs = m.get("seconds").unwrap();
-                assert_eq!(format!("{}", secs.value), "86400");
-            }
-            _ => panic!("expected map"),
-        }
-    }
 
     // --- P4: Web builtin interpreter mock tests ---
 
@@ -7468,4 +7462,51 @@ mod tests {
         });
         assert!(result.is_err(), "bare column name should be an undefined variable");
     }
+    #[test]
+    fn test_now_is_a_number() {
+        let val = get_var("t = now[]", "t");
+        match &val.value {
+            Value::Float(f) => assert!(*f > 1_700_000_000.0, "epoch seconds, got {}", f),
+            other => panic!("now[] must be a number, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_moment_calendar_and_arithmetic() {
+        // 09:30 New York on 2026-07-14 reads as 13:30 UTC — same instant.
+        let val = get_var(
+            "t = moment[2026, 7, 14, hour = 9, minute = 30, tz = 'America/New_York']\nc = calendar[t, tz = 'UTC']\nh = c.hour",
+            "h",
+        );
+        assert_eq!(format!("{}", val.value), "13");
+        // Subtraction is elapsed seconds.
+        let d = get_var(
+            "a = moment[2026, 7, 14, hour = 9]\nb = moment[2026, 7, 14, hour = 10]\nd = b - a",
+            "d",
+        );
+        assert_eq!(format!("{}", d.value), "3600");
+    }
+
+    #[test]
+    fn test_parse_time_and_fmt_time() {
+        let val = get_var("t = parse_time['2026-07-14T04:09:00-04:00']\ns = fmt[t, time = 'iso']", "s");
+        assert_eq!(format!("{}", val.value), "2026-07-14T08:09:00Z");
+        let ny = get_var("t = parse_time['2026-07-14 12:00:00']\ns = fmt[t, time = 'datetime', tz = 'America/New_York']", "s");
+        assert_eq!(format!("{}", ny.value), "2026-07-14 08:00:00");
+    }
+
+    #[test]
+    fn test_removed_time_builtins_teach() {
+        let mut i = Interpreter::new();
+        for (src, want) in [
+            ("d = date[2024, 1, 15]", "moment["),
+            ("e = elapsed[1.0, 2.0]", "subtract moments"),
+            ("t = today[]", "fmt[now[]"),
+        ] {
+            let stmts = crate::build(src).unwrap();
+            let err = i.run(&stmts).unwrap_err();
+            assert!(err.contains(want), "expected teaching error for {}, got {}", src, err);
+        }
+    }
+
 }

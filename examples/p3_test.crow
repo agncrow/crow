@@ -32,21 +32,23 @@ replaced = sub['hello world', 'world', 'crow']
 log['sub: `replaced`']
 assert[replaced eq 'hello crow', 'sub should replace']
 
---- Date/time
+--- Moments: a moment is a number (epoch seconds)
 t = now[]
-log['now: `t`']
-assert[t.year gte 2024, 'year should be >= 2024']
-assert[t.timestamp gt 0, 'timestamp should be positive']
+log['now: `fmt[t, time = \'iso\']`']
+assert[t gt 1700000000.0, 'now should be after 2023']
 
-d = date[2024, 1, 15]
-log['date: `d`']
-assert[d.year eq 2024, 'year mismatch']
-assert[d.month eq 1, 'month mismatch']
-assert[d.day eq 15, 'day mismatch']
+d = moment[2024, 1, 15]
+c = calendar[d]
+assert[c.year eq 2024, 'year mismatch']
+assert[c.month eq 1, 'month mismatch']
+assert[c.day eq 15, 'day mismatch']
 
-d2 = date[2024, 1, 16]
-e = elapsed[d, d2]
-log['elapsed: `e`']
-assert[e.seconds eq 86400, 'elapsed should be 86400 seconds']
+d2 = moment[2024, 1, 16]
+assert[d2 - d eq 86400.0, 'a day is 86400 seconds']
+log['elapsed: `d2 - d` seconds']
+
+--- timezones are named and explicit
+bell = moment[2024, 1, 16, hour = 9, minute = 30, tz = 'America/New_York']
+log['bell in utc: `fmt[bell, time = \'time\']`']
 
 log['all P3 tests passed']

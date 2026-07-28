@@ -246,7 +246,7 @@ impl Lowerer {
                     // (decimals < 0 / width 0 / align '' mean "unset") so both
                     // modes always receive exactly 7 positional args
                     Some("fmt") if !self.fns.contains_key("fmt") => {
-                        let params: Vec<String> = ["value", "decimals", "commas", "width", "align", "fill", "percent"]
+                        let params: Vec<String> = ["value", "decimals", "commas", "width", "align", "fill", "percent", "time", "tz"]
                             .iter().map(|s| s.to_string()).collect();
                         let defaults: Vec<Option<Expr>> = vec![
                             None,
@@ -256,8 +256,45 @@ impl Lowerer {
                             Some(Expr::Str(String::new())),
                             Some(Expr::Str(" ".to_string())),
                             Some(Expr::Bool(false)),
+                            Some(Expr::Str(String::new())),
+                            Some(Expr::Str("UTC".to_string())),
                         ];
                         let resolved = self.resolve_args("fmt", &params, &defaults, args)?;
+                        Expr::Call { callee: Box::new(callee), args: resolved }
+                    }
+                    // moment[year, month, day, hour = 0, minute = 0,
+                    // second = 0, tz = 'UTC'] — the tz-aware constructor.
+                    // A moment is a number (epoch seconds).
+                    Some("moment") if !self.fns.contains_key("moment") => {
+                        let params: Vec<String> =
+                            ["year", "month", "day", "hour", "minute", "second", "tz"]
+                                .iter().map(|s| s.to_string()).collect();
+                        let defaults: Vec<Option<Expr>> = vec![
+                            None, None, None,
+                            Some(Expr::Int(0)),
+                            Some(Expr::Int(0)),
+                            Some(Expr::Int(0)),
+                            Some(Expr::Str("UTC".to_string())),
+                        ];
+                        let resolved = self.resolve_args("moment", &params, &defaults, args)?;
+                        Expr::Call { callee: Box::new(callee), args: resolved }
+                    }
+                    // parts[t, tz = 'UTC'] — calendar components + weekday.
+                    Some("calendar") if !self.fns.contains_key("calendar") => {
+                        let params: Vec<String> =
+                            ["t", "tz"].iter().map(|s| s.to_string()).collect();
+                        let defaults: Vec<Option<Expr>> =
+                            vec![None, Some(Expr::Str("UTC".to_string()))];
+                        let resolved = self.resolve_args("calendar", &params, &defaults, args)?;
+                        Expr::Call { callee: Box::new(callee), args: resolved }
+                    }
+                    // parse_time[text, tz = 'UTC'] — string → moment.
+                    Some("parse_time") if !self.fns.contains_key("parse_time") => {
+                        let params: Vec<String> =
+                            ["text", "tz"].iter().map(|s| s.to_string()).collect();
+                        let defaults: Vec<Option<Expr>> =
+                            vec![None, Some(Expr::Str("UTC".to_string()))];
+                        let resolved = self.resolve_args("parse_time", &params, &defaults, args)?;
                         Expr::Call { callee: Box::new(callee), args: resolved }
                     }
                     // serve[port, refresh = secs, budget = ms] — 0 means unset.
