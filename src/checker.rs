@@ -15,7 +15,6 @@ const IMPURE_BUILTINS: &[&str] = &[
     "read", "write", "log", "input", "rand", "time", "sleep", "env", "exit",
     "args", "exists", "mkdir", "ls", "rm", "mv", "cp",
     "later", "running", "shell",
-    "age",
 ];
 
 /// All builtin function names (reused from validator for undefined-variable detection).
@@ -40,7 +39,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     "later", "running",
     "app", "html", "click",
     "fmt",
-    "now", "moment", "calendar", "parse_time", "age",
+    "now", "moment", "calendar", "parse_time",
 ];
 
 // --- Issue types ---

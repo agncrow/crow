@@ -29,7 +29,7 @@ const CORE_RESERVED: &[&str] = &[
     "find", "matches", "sub", "any", "all",
     "later", "running",
     "test",
-    "now", "moment", "calendar", "parse_time", "age",
+    "now", "moment", "calendar", "parse_time",
     "cpu", "gpu", "nodes",
     "grad",
 ];
@@ -82,7 +82,7 @@ const BUILTINS: &[&str] = &[
     "later", "running",
     "test",
     // Date/time
-    "now", "moment", "calendar", "parse_time", "age",
+    "now", "moment", "calendar", "parse_time",
     // Resource
     "cpu", "gpu", "nodes",
     // Autograd
@@ -740,7 +740,6 @@ impl<'a> Validator<'a> {
             "moment" => argc == 7,
             "calendar" | "parse_time" => argc == 2,
             "now" => argc == 0,
-            "age" => argc == 1,
             "push" | "append" => argc == 2,
             "pop" | "sort" | "reverse" => argc == 1,
             "range" => argc >= 1 && argc <= 3,

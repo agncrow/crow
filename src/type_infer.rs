@@ -1665,7 +1665,6 @@ impl TypeContext {
             "time" => CrowType::Float,
             // Moments are numbers (epoch seconds); constructors are fallible
             "now" => CrowType::Float,
-            "age" => CrowType::Float,
             "moment" | "parse_time" => CrowType::Result(Box::new(CrowType::Float)),
             "sleep" => CrowType::Int,
             // Background work: later[] is fire-and-forget (Void — ask
