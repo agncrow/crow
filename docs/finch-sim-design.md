@@ -1,13 +1,17 @@
-# Replay Simulator in Crow — design
+# finch in Crow — the simulation page (design)
 
 **Status: design round in progress. Rulings received (2026-07-27): own
 database (never write finch's), chart as a comprehensive module
 (→ `chart-module-design.md`), project scaffolded. M0 data spike DONE —
 findings in §12.**
 
-Dogfood app #2. Port the finch Simulation page — historical replay of the
-VWAP scanner with paper trading — to Crow. Not a translation: a
-re-architecture under Crow's doctrine, using the app to field-test what
+Dogfood app #2: **the finch trading application rebuilt in Crow**, at
+`~/code/crow_projects/finch` — the whole app, page by page, starting with
+the Simulation page (historical replay of the VWAP scanner with paper
+trading). Each page is a view module (`views/sim.crow` first; scanner,
+dashboard, history follow) behind one `serve[]`. This document designs the
+simulation page. Not a translation: a re-architecture under Crow's
+doctrine, using the app to field-test what
 shipped this month (moments, freshness, `later`, `serve`, test blocks,
 `crow check --db`) and to force the next round of language work with real
 requirements instead of speculation.
@@ -266,9 +270,10 @@ Confirmed gaps, in expected order of pain:
 4. **F-11 spelling** — `click = focus[sym]` (call-shaped, args at
    render)? Alternatives exist; needs the vocabulary treatment at M4.
 5. ~~Where does the app live~~ — **ruled**: its own Crow project at
-   `~/code/crow_projects/replay` (via `crow new replay --web --db`), with
-   its own sqlite database `db/replay.db`. finch's databases are
-   read-only ground truth; every write lands in ours.
+   `~/code/crow_projects/finch` (via `crow new`, then renamed: the
+   project is the whole app, the simulation page is only where the build
+   starts), with its own sqlite database `db/finch.db`. finch's Python
+   databases are read-only ground truth; every write lands in ours.
 
 
 ## 12. M0 results (2026-07-27) — the read path works; the fix list is real
