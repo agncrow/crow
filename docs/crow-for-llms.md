@@ -133,6 +133,11 @@ all_big = all[nums, is_big]
 --- captured[x] on a computed value is an error value (kind 'no_capture').
 --- date[]/elapsed[]/today[] were REMOVED. Timezones are always explicit; default UTC.
 
+--- Styling: pages look right with ZERO css. Blessed classes only:
+--- class = 'card' 'stats' 'controls' 'row' 'primary' 'up' 'down' 'stale'
+--- Tokens --crow-bg/surface/text/muted/border/accent/up/down; override in
+--- css/app.css (optional). NEVER write css strings inside views.
+
 --- Slow work in a ui handler? NEVER block the loop — schedule it:
 --- later[load_data]        (fire-and-forget; results land in state, views re-render)
 --- running[load_data]      (true while in flight — spinners, disabled buttons)

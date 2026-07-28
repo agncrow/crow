@@ -1,9 +1,14 @@
 # The style module — design
 
-**Status: design round — awaiting rulings. Nothing implemented.** Today
-Crow ships exactly one line of CSS (box-sizing + system-ui + 1rem
-padding in the LiveView shell); `class = 'card'` attributes in the
-dogfood apps pass through to HTML and nothing styles them.
+**Status: SHIPPED (Layers 0–2 + checker guard), 2026-07-28.** The
+default stylesheet lives in `crow_web` (`DEFAULT_CSS`, ~3KB) and is
+emitted into every page shell: 8 tokens as CSS custom properties, Layer
+0 element defaults, Layer 1 classes (`card stats controls row primary
+up down stale`), auto dark/light plus `data-theme` override hooks. A
+project's `css/app.css` is inlined after the defaults when present;
+`crow check` flags unknown `--crow-*` token overrides with a
+did-you-mean. Survey + rulings recorded below; C4-era additions (more
+tokens, `active` state, widget variants) return through this doc.
 
 Driven by the finch app's first serve (unstyled browser defaults) and
 the framework discussion of 2026-07-27/28.
