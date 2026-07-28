@@ -47,7 +47,35 @@ concurrency design; what gets *deleted* in exchange.
 
 ---
 
-## F-2. Freshness — staleness as a first-class property of data
+## F-2. Freshness — PARTIAL: propagation is architecturally blocked compiled
+
+**Implemented (dormant, in-tree):** `CrowValue.captured: Option<f64>`,
+reader stamping (query/read/fetch/recv/input/load/env/shell/ls), and
+oldest-input propagation through binops, unary ops, field access, and
+builtin calls. `age[]` is NOT in the vocabulary — withdrawn so the two
+modes cannot diverge.
+
+**Benchmark (the ruling's gate):** 400k scalar binops in a tight
+interpreter loop — 1.42s baseline vs 1.49s with propagation, ~4-5%.
+Acceptable in the interpreter.
+
+**The blocker:** compiled mode has no metadata slot on plain scalars —
+`let x: f64 = …` by design, for speed. Only fallible values carry
+CrowResult. So option-2 propagation (age flows through arithmetic) is
+architecturally infeasible compiled without boxing every scalar, which
+would forfeit the compiled mode's whole point. Parity is the repo's
+hard rule, so age[] cannot ship with interpreter-only propagation.
+
+**The honest paths:** (a) option 1 — `age[]` reads capture on values
+that already carry a metadata header (reader results), no arithmetic
+propagation, parity-clean in both modes, plus a `crow check` warning
+when a reader value flows into a decision without an age guard (the
+checker catches statically what the runtime declines to carry);
+(b) box scalars compiled (rejected — costs the language its
+performance story); (c) age as an explicit second return / wrapper type
+(new vocabulary, needs its own round). **Recommend (a).**
+
+Original proposal below.
 
 **Evidence:** four independent finch fixes for the same class: `4e90b882`
 ("stale prints must never drive price"), `792e2e4e` (stale-breakout guard),

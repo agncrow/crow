@@ -1962,7 +1962,7 @@ impl Interpreter {
             | "type" | "grad"
             | "shell" | "hash"
             | "find" | "matches" | "sub" | "any" | "all"
-            | "now" | "date" | "elapsed" | "moment" | "calendar" | "parse_time" | "age"
+            | "now" | "date" | "elapsed" | "moment" | "calendar" | "parse_time"
             // Web P4 builtins
             | "cors" | "sessions" | "templates" | "render" | "cache" | "limit"
             | "uploads" | "sse" | "ws" | "connect" | "send" | "recv" | "close"
