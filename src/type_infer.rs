@@ -377,12 +377,73 @@ impl TypeContext {
         // visibility it didn't need.
         {
             let mut handlers = std::collections::BTreeSet::new();
+            // F-11: click = set_speed[10.0] — the callee of a call-shape in
+            // event-attribute position is a handler too.
+            fn collect_event_call_handlers(
+                e: &Expr,
+                fns: &std::collections::BTreeMap<String, crate::type_infer::FnSig>,
+                out: &mut std::collections::BTreeSet<String>,
+            ) {
+                match e {
+                    Expr::Map(pairs) => {
+                        for (k, v) in pairs {
+                            let is_event = matches!(k, Expr::Ident(n) | Expr::Str(n)
+                                if matches!(n.as_str(), "click" | "input" | "submit" | "change" | "seek"));
+                            if is_event {
+                                if let Expr::Call { callee, .. } = v {
+                                    if let Expr::Ident(f) = callee.as_ref() {
+                                        if fns.contains_key(f) {
+                                            out.insert(f.clone());
+                                        }
+                                    }
+                                }
+                            }
+                            collect_event_call_handlers(v, fns, out);
+                        }
+                    }
+                    Expr::Call { args, .. } => for a in args { collect_event_call_handlers(a, fns, out); },
+                    Expr::Array(items) => for i in items { collect_event_call_handlers(i, fns, out); },
+                    Expr::Named { value, .. } => collect_event_call_handlers(value, fns, out),
+                    Expr::BinOp { left, right, .. } => {
+                        collect_event_call_handlers(left, fns, out);
+                        collect_event_call_handlers(right, fns, out);
+                    }
+                    _ => {}
+                }
+            }
+            fn collect_event_call_stmts(
+                stmts: &[Stmt],
+                fns: &std::collections::BTreeMap<String, crate::type_infer::FnSig>,
+                out: &mut std::collections::BTreeSet<String>,
+            ) {
+                for st in stmts {
+                    match st {
+                        Stmt::Assign { value, .. } => collect_event_call_handlers(value, fns, out),
+                        Stmt::ExprStmt(e) | Stmt::Return(Some(e)) => collect_event_call_handlers(e, fns, out),
+                        Stmt::If { condition, then_body, else_body } => {
+                            collect_event_call_handlers(condition, fns, out);
+                            collect_event_call_stmts(then_body, fns, out);
+                            if let Some(eb) = else_body {
+                                collect_event_call_stmts(eb, fns, out);
+                            }
+                        }
+                        Stmt::For { body, .. } | Stmt::While { body, .. } => {
+                            collect_event_call_stmts(body, fns, out)
+                        }
+                        _ => {}
+                    }
+                }
+            }
             for stmt in stmts {
                 if let Stmt::FnDecl { body, is_view: true, .. } = stmt {
                     for st in body {
                         Self::collect_fn_value_refs_stmt(st, &self.functions, &mut handlers);
                     }
+                    collect_event_call_stmts(body, &self.functions, &mut handlers);
                 }
+            }
+            for stmt in stmts {
+                if let Stmt::FnDecl { .. } = stmt {}
                 if let Stmt::ExprStmt(Expr::Call { callee, args }) = stmt {
                     if matches!(callee.as_ref(), Expr::Ident(n) if n == "page") {
                         for a in args.iter().skip(1) {

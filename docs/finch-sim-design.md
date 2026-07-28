@@ -358,3 +358,10 @@ list — all compiled-mode, all found by this app:
    stringified through sqlite affinity); `exec`'s affected-count can't be
    compared without tripping handler propagation; `serve`/`page` are
    interpreter no-op mocks, so `crow run -i` never serves (harness-only).
+
+**M1 addendum (2026-07-28):** F-11 shipped (deferred calls in event
+position) — the speed handlers collapsed to one; main.crow is 198
+lines. New finding: `crow build` printed "build ok" while its inner
+cargo invocation had not recompiled the changed crow_web dependency —
+the copied binary was stale. Needs a build-freshness guarantee (fix
+list).

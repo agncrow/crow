@@ -365,7 +365,21 @@ impl Interpreter {
                 }
                 Expr::UnaryOp { expr, .. } => walk_expr(expr, fns, out),
                 Expr::Array(items) => for i in items { walk_expr(i, fns, out); },
-                Expr::Map(pairs) => for (_, v) in pairs { walk_expr(v, fns, out); },
+                Expr::Map(pairs) => for (k, v) in pairs {
+                    // F-11: click = set_speed[10.0] — the callee is a handler
+                    let is_event_key = matches!(k, Expr::Ident(n) | Expr::Str(n)
+                        if matches!(n.as_str(), "click" | "input" | "submit" | "change" | "seek"));
+                    if is_event_key {
+                        if let Expr::Call { callee, .. } = v {
+                            if let Expr::Ident(f) = callee.as_ref() {
+                                if fns.contains(f) {
+                                    out.insert(f.clone());
+                                }
+                            }
+                        }
+                    }
+                    walk_expr(v, fns, out);
+                },
                 Expr::FieldAccess { object, .. } => walk_expr(object, fns, out),
                 Expr::ForExpr { iter, body, .. } => {
                     walk_expr(iter, fns, out);
@@ -1554,6 +1568,30 @@ impl Interpreter {
                 if self.in_view > 0 && crate::lower::UI_ELEMENTS.contains(&name.as_str()) {
                     let mut inner = String::new();
                     for a in args {
+                        // F-11: an attribute map may carry deferred calls
+                        // (click = set_speed[10.0]) — evaluating it verbatim
+                        // would RUN the handler at render. Strip event-key
+                        // call values before evaluation; the harness's
+                        // click[] carries the args explicitly.
+                        let a_clean;
+                        let a = if let Expr::Map(pairs) = a {
+                            let stripped: Vec<(Expr, Expr)> = pairs.iter().map(|(k, v)| {
+                                let is_event_key = matches!(k, Expr::Ident(n) | Expr::Str(n)
+                                    if matches!(n.as_str(), "click" | "input" | "submit" | "change" | "seek"));
+                                if is_event_key {
+                                    if let Expr::Call { callee, .. } = v {
+                                        if let Expr::Ident(f) = callee.as_ref() {
+                                            return (k.clone(), Expr::Ident(f.clone()));
+                                        }
+                                    }
+                                }
+                                (k.clone(), v.clone())
+                            }).collect();
+                            a_clean = Expr::Map(stripped);
+                            &a_clean
+                        } else {
+                            a
+                        };
                         let v = self.eval_expr(a)?;
                         if v.is_error() {
                             let mut err = v;
@@ -1615,8 +1653,25 @@ impl Interpreter {
                         }
                         return Err(format!("click[]: unknown handler '{}'", h));
                     }
+                    // F-11: click[a, set_speed[10.0]] — frozen args ride along
+                    if let Expr::Call { callee, args: fargs } = &args[1] {
+                        if let Expr::Ident(h) = callee.as_ref() {
+                            if let Some(val) = self.env.get(h) {
+                                if let Value::Fn(f) = &val.value {
+                                    let f = f.clone();
+                                    self.handler_fns.insert(h.clone());
+                                    let mut vals = Vec::new();
+                                    for fa in fargs {
+                                        vals.push(self.eval_expr(fa)?);
+                                    }
+                                    return self.call_fn_value(&f, vals);
+                                }
+                            }
+                            return Err(format!("click[]: unknown handler '{}'", h));
+                        }
+                    }
                     return Err(
-                        "click[] second argument must be a handler name: click[a, go]".into(),
+                        "click[] second argument must be a handler name or call: click[a, go] or click[a, go[x]]".into(),
                     );
                 }
             }
@@ -7508,6 +7563,17 @@ mod tests {
         assert_eq!(format!("{}", val.value), "2026-07-14T08:09:00Z");
         let ny = get_var("t = parse_time['2026-07-14 12:00:00']\ns = fmt[t, time = 'datetime', tz = 'America/New_York']", "s");
         assert_eq!(format!("{}", ny.value), "2026-07-14 08:00:00");
+    }
+
+    #[test]
+    fn f11_click_with_frozen_args() {
+        // click[a, set_speed[10.0]] delivers the frozen arg to the handler,
+        // and rendering must NOT invoke the deferred call.
+        let src = "use ui\nhits = 0\nspeed = 1.0\nfn set_speed[s]\n    hits = hits + 1\n    speed = s\nview render[]\n    return div[button['10x', click = set_speed[10.0]], p['`speed`']]\ntest t[]\n    a = app[render]\n    h = html[a]\n    assert[a.hits eq 0]\n    click[a, set_speed[10.0]]\n    assert[a.hits eq 1]\n    assert[a.speed eq 10.0]\n";
+        let stmts = crate::build(src).unwrap();
+        let (issues, counts) = crate::checker::run_test_blocks(&stmts);
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+        assert!(counts.blocks >= 1);
     }
 
     #[test]

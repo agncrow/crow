@@ -492,6 +492,15 @@ impl Transpiler {
                                         handlers.insert(fn_name.clone());
                                     }
                                 }
+                                // F-11: call-shape with frozen args — the
+                                // callee is the handler
+                                if let Expr::Call { callee, .. } = v {
+                                    if let Expr::Ident(fn_name) = callee.as_ref() {
+                                        if known_fns.contains(fn_name) {
+                                            handlers.insert(fn_name.clone());
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1309,7 +1318,24 @@ impl Transpiler {
             let handlers: Vec<String> = self.reactive_event_handlers.iter().cloned().collect();
             for h in &handlers {
                 let rust_name = Self::rust_fn_name(h);
-                self.emit_line(&format!("\"{}\" => {}(state),", h, rust_name));
+                let params = self.ctx.functions.get(h).map(|f| f.params.clone()).unwrap_or_default();
+                if params.is_empty() {
+                    self.emit_line(&format!("\"{}\" => {}(state),", h, rust_name));
+                } else {
+                    // F-11: frozen args arrive as a JSON array in _value
+                    let extracts: Vec<String> = params.iter().enumerate().map(|(i, (_, t))| {
+                        match t {
+                            CrowType::Int => format!("_a[{}].as_i64().unwrap_or(0)", i),
+                            CrowType::Float => format!("_a[{}].as_f64().unwrap_or(0.0)", i),
+                            CrowType::Bool => format!("_a[{}].as_bool().unwrap_or(false)", i),
+                            _ => format!("_a[{}].as_str().unwrap_or(\"\").to_string()", i),
+                        }
+                    }).collect();
+                    self.emit_line(&format!(
+                        "\"{}\" => {{ if let Some(_v) = _value {{ if let Ok(_a) = serde_json::from_str::<Vec<serde_json::Value>>(_v) {{ if _a.len() == {} {{ {}(state, {}); }} }} }} }},",
+                        h, params.len(), rust_name, extracts.join(", ")
+                    ));
+                }
             }
             self.emit_line("_ => {}");
             self.indent -= 1;
@@ -1577,8 +1603,19 @@ impl Transpiler {
             // Reactive render: inject state param (user wrote 0 params)
             vec!["state: &CrowLiveState".to_string()]
         } else if is_reactive_handler {
-            // Reactive handler: inject mut state param (user wrote 0 params)
-            vec!["state: &mut CrowLiveState".to_string()]
+            // Reactive handler: mut state first, then any declared params —
+            // F-11 event args arrive through the dispatch (frozen at render)
+            let mut ps = vec!["state: &mut CrowLiveState".to_string()];
+            for (pname, ptype) in &sig.params {
+                let rt = match ptype {
+                    CrowType::Int => "i64",
+                    CrowType::Float => "f64",
+                    CrowType::Bool => "bool",
+                    _ => "String",
+                };
+                ps.push(format!("{}: {}", pname, rt));
+            }
+            ps
         } else if is_live_render {
             // render(state: &CrowLiveState) -> CrowVNode
             sig.params.iter().enumerate().map(|(i, (pname, _))| {
@@ -3850,6 +3887,22 @@ impl Transpiler {
                                     Expr::Str(s) => s.clone(),
                                     _ => self.expr_to_string(k),
                                 };
+                                // F-11: call-shape in event position — freeze
+                                // args at render, defer the call to the event
+                                if key_str == "click" {
+                                    if let Expr::Call { callee, args: fargs } = v {
+                                        if let Expr::Ident(fn_name) = callee.as_ref() {
+                                            if self.reactive_event_handlers.contains(fn_name) {
+                                                let arg_strs: Vec<String> = fargs.iter().map(|a| self.expr_to_string(a)).collect();
+                                                result = format!(
+                                                    "{}.on_click_args(\"{}\", &serde_json::json!([{}]).to_string())",
+                                                    result, fn_name, arg_strs.join(", ")
+                                                );
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                }
                                 // Check if value is a function reference for event handlers
                                 let is_fn_ref = matches!(v, Expr::Ident(fn_name) if self.reactive_event_handlers.contains(fn_name));
                                 let event_name = if is_fn_ref {
@@ -4433,6 +4486,22 @@ impl Transpiler {
                                     Expr::Str(s) => s.clone(),
                                     _ => self.expr_to_string(k),
                                 };
+                                // F-11: call-shape in event position — freeze
+                                // args at render, defer the call to the event
+                                if key_str == "click" {
+                                    if let Expr::Call { callee, args: fargs } = v {
+                                        if let Expr::Ident(fn_name) = callee.as_ref() {
+                                            if self.reactive_event_handlers.contains(fn_name) {
+                                                let arg_strs: Vec<String> = fargs.iter().map(|a| self.expr_to_string(a)).collect();
+                                                result = format!(
+                                                    "{}.on_click_args(\"{}\", &serde_json::json!([{}]).to_string())",
+                                                    result, fn_name, arg_strs.join(", ")
+                                                );
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                }
                                 // Check if value is a function reference for event handlers
                                 let is_fn_ref = matches!(v, Expr::Ident(fn_name) if self.reactive_event_handlers.contains(fn_name));
                                 let event_name = if is_fn_ref {
@@ -7081,6 +7150,15 @@ mod tests {
         let rust = transpile("use web\nuse ui\nview v[]\n    return div[h1['title'], class = 'container']\n");
         assert!(rust.contains(".attr("), "should emit .attr() for class\n{}", rust);
         assert!(rust.contains("container"), "should contain class value\n{}", rust);
+    }
+
+    #[test]
+    fn f11_click_call_shape_emits_frozen_args() {
+        let rust = transpile("use web, ui\nspeed = 1.0\nfn set_speed[s]\n    speed = s\nview render[]\n    return div[button['10x', click = set_speed[10.0]]]\nserve[3000]\npage['/', render]\n");
+        assert!(rust.contains("on_click_args(\"set_speed\""), "call-shape should emit on_click_args\n{}", rust);
+        assert!(rust.contains("json!([10.0"), "frozen arg should serialize at render\n{}", rust);
+        assert!(rust.contains("fn set_speed(state: &mut CrowLiveState, s: f64)"), "handler keeps its declared param\n{}", rust);
+        assert!(rust.contains("_a[0].as_f64()"), "dispatch should parse the frozen arg\n{}", rust);
     }
 
     #[test]
