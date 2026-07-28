@@ -306,7 +306,8 @@ pub fn live_js(ws_path: &str) -> String {
       var ev = t.getAttribute('data-crow-click');
       if (ev) {{
         e.preventDefault();
-        ws.send(JSON.stringify({{event: ev}}));
+        var ar = t.getAttribute('data-crow-args');
+        ws.send(JSON.stringify(ar ? {{event: ev, value: ar}} : {{event: ev}}));
         return;
       }}
       t = t.parentElement;

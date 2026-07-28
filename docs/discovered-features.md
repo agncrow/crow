@@ -47,6 +47,30 @@ concurrency design; what gets *deleted* in exchange.
 
 ---
 
+## F-11. Parameterized UI events ✅ SHIPPED — deferred calls in event position
+
+`click = set_speed[10.0]` — in event-attribute position, a call-shape is
+a **deferred call**: the handler runs when the event fires; arguments are
+evaluated at render (frozen) and delivered with the event. Everywhere
+else a call is a call. Bare names stay legal for the zero-arg case.
+
+The keyword option (`on[set_speed, 10.0]`) was considered and rejected
+in the design round: event attributes were *already* a quotation context
+(`click = play` never called play), and test blocks had already
+established that a block's declared nature may re-read expressions — so
+the call-shape carries no new ambiguity, costs zero vocabulary, and
+matches what Vue/HTML users already guess. Elm's frozen-message
+semantics, Phoenix's data-attribute transport (`data-crow-args` JSON on
+the existing `{event, value}` wire), compiler-checked arity via normal
+call validation. Handlers keep their declared params compiled
+(`fn set_speed(state, s: f64)`); dispatch parses typed args.
+
+Harness form: `click[a, set_speed[10.0]]`. First consumer: the finch
+speed buttons — four handlers collapsed to one. Future: `later[f[x]]`
+and the chart's `seek` (event-appended args) adopt the same reading.
+Deferred: the checker's frozen-arg re-sort hazard warning; event args
+for `input`/`change`.
+
 ## F-2. Freshness ✅ SHIPPED (option 1) — `captured[x]` + a checker rule
 
 Shipped: `captured[x]` returns the moment a value was read from outside

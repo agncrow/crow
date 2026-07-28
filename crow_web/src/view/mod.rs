@@ -118,6 +118,14 @@ impl CrowVNode {
         self.attr("data-crow-click", event_name)
     }
 
+    /// A click handler with frozen arguments (F-11): the handler name plus
+    /// a JSON array of values captured at render, delivered back with the
+    /// event. `click = set_speed[10.0]` lowers to this.
+    pub fn on_click_args(self, event_name: &str, args_json: &str) -> Self {
+        self.attr("data-crow-click", event_name)
+            .attr("data-crow-args", args_json)
+    }
+
     /// Add an input event handler name. Sets `data-crow-input` attribute.
     pub fn on_input(self, event_name: &str) -> Self {
         self.attr("data-crow-input", event_name)

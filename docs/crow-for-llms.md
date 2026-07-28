@@ -138,6 +138,10 @@ all_big = all[nums, is_big]
 --- Tokens --crow-bg/surface/text/muted/border/accent/up/down; override in
 --- css/app.css (optional). NEVER write css strings inside views.
 
+--- Event args: in event position a call-shape DEFERS — args frozen at render.
+--- button['10x', click = set_speed[10.0]]   (fn set_speed[s] runs on click)
+--- Everywhere else a call is a call. Harness: click[a, set_speed[10.0]]
+
 --- Slow work in a ui handler? NEVER block the loop — schedule it:
 --- later[load_data]        (fire-and-forget; results land in state, views re-render)
 --- running[load_data]      (true while in flight — spinners, disabled buttons)
