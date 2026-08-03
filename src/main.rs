@@ -169,6 +169,9 @@ fn main() {
                 cmd_test_blocks(&filename);
             }
         }
+        "stop" => {
+            cmd_stop();
+        }
         "run" => {
             // Check for -i flag (interpreter mode)
             if args.len() > 2 && args[2] == "-i" {
@@ -220,6 +223,7 @@ fn print_usage() {
     eprintln!("  crow run file.crow     transpile + compile + run a specific file");
     eprintln!("  crow run train         run a named job from crowfile");
     eprintln!("  crow run -i file.crow  run with interpreter (slow, for debugging)");
+    eprintln!("  crow stop              stop the running app (pidfile, then project binary)");
     eprintln!("  crow check             auto-verify project (uses crowfile)");
     eprintln!("  crow check file.crow   auto-verify a specific file");
     eprintln!("  crow check --db <url>  + schema-aware db checks (or db = '…' in crowfile)");
@@ -1621,14 +1625,90 @@ struct CrowfileConfig {
 
 /// Run a binary, forwarding its exit code and passing extra args.
 fn run_binary(binary: &std::path::Path, extra_args: &[String]) {
-    let status = std::process::Command::new(binary)
+    let mut child = std::process::Command::new(binary)
         .args(extra_args)
-        .status()
+        .spawn()
         .unwrap_or_else(|e| {
             eprintln!("error running binary: {}", e);
             process::exit(1);
         });
+    // Record the app's pid so `crow stop` can find it from any terminal.
+    // Ownership rule: never clobber a LIVE instance's pidfile (a run that
+    // dies on port collision must not erase the survivor's record), and
+    // only remove the file on exit if it still names our child.
+    let _ = std::fs::create_dir_all(".crow");
+    let existing_alive = std::fs::read_to_string(".crow/app.pid")
+        .ok()
+        .and_then(|p| p.trim().parse::<i32>().ok())
+        .map(|pid| unsafe { libc_kill(pid, 0) } == 0)
+        .unwrap_or(false);
+    if !existing_alive {
+        let _ = std::fs::write(".crow/app.pid", child.id().to_string());
+    }
+    let status = child.wait().unwrap_or_else(|e| {
+        eprintln!("error running binary: {}", e);
+        process::exit(1);
+    });
+    if std::fs::read_to_string(".crow/app.pid")
+        .map(|p| p.trim() == child.id().to_string())
+        .unwrap_or(false)
+    {
+        let _ = std::fs::remove_file(".crow/app.pid");
+    }
     process::exit(status.code().unwrap_or(1));
+}
+
+/// `crow stop` — stop the project's running app. Tries the pidfile first,
+/// then any process running this project's built binary.
+fn cmd_stop() {
+    if let Ok(pid_s) = std::fs::read_to_string(".crow/app.pid") {
+        if let Ok(pid) = pid_s.trim().parse::<i32>() {
+            let alive = unsafe { libc_kill(pid, 0) } == 0;
+            if alive {
+                unsafe { libc_kill(pid, 15) };
+                let _ = std::fs::remove_file(".crow/app.pid");
+                println!("stopped (pid {})", pid);
+                return;
+            }
+        }
+        // Stale pidfile — the app died some other way.
+        let _ = std::fs::remove_file(".crow/app.pid");
+    }
+    // Fallback: any process running a .crow_build binary WHOSE WORKING
+    // DIRECTORY is this project — matches absolute, ./-relative, and bare
+    // relative launches, and never touches another project's app.
+    let here = std::env::current_dir().unwrap_or_default();
+    let here_s = here.to_string_lossy().to_string();
+    let pids = std::process::Command::new("pgrep")
+        .args(["-f", ".crow_build/target"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    let mut stopped = 0;
+    for pid_s in pids.split_whitespace() {
+        let Ok(pid) = pid_s.parse::<i32>() else { continue };
+        let cwd = std::process::Command::new("lsof")
+            .args(["-a", "-p", pid_s, "-d", "cwd", "-Fn"])
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
+        if cwd.lines().any(|l| l.strip_prefix('n') == Some(here_s.as_str())) {
+            unsafe { libc_kill(pid, 15) };
+            stopped += 1;
+        }
+    }
+    if stopped > 0 {
+        println!("stopped ({} process{})", stopped, if stopped == 1 { "" } else { "es" });
+    } else {
+        println!("nothing running — start with: crow run");
+    }
+}
+
+unsafe extern "C" {
+    #[link_name = "kill"]
+    fn libc_kill(pid: i32, sig: i32) -> i32;
 }
 
 /// Tier-2 applier for blocking-in-view: inside `view`'s body, rewrite the

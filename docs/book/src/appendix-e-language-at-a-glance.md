@@ -130,6 +130,7 @@ These four names are consequently forbidden as struct fields.
 
 ```text
 crow new [--web --ml --db]   scaffold      crow run [-i]   execute
+crow stop                    stop the app
 crow build                   compile       crow check      verify
 crow fix                     apply fixes   crow fmt        format
 crow test --parity|--book    infrastructure tests
