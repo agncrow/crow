@@ -1709,15 +1709,23 @@ fn cmd_stop() {
     // relative launches, and never touches another project's app.
     let here = std::env::current_dir().unwrap_or_default();
     let here_s = here.to_string_lossy().to_string();
-    let pids = std::process::Command::new("pgrep")
-        .args(["-f", ".crow_build/target"])
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-        .unwrap_or_default();
+    // Candidates: the cargo-built binary AND the copied ./main that
+    // `crow build` announces. Over-matching is safe — every candidate is
+    // cwd-verified against this project before any signal is sent.
+    let mut pids = String::new();
+    for pattern in [".crow_build/target", "^\\./main( |$)", "/main$"] {
+        if let Ok(o) = std::process::Command::new("pgrep").args(["-f", pattern]).output() {
+            pids.push_str(&String::from_utf8_lossy(&o.stdout));
+            pids.push('\n');
+        }
+    }
     let mut stopped = 0;
+    let mut seen: std::collections::BTreeSet<i32> = std::collections::BTreeSet::new();
     for pid_s in pids.split_whitespace() {
         let Ok(pid) = pid_s.parse::<i32>() else { continue };
+        if !seen.insert(pid) {
+            continue;
+        }
         let cwd = std::process::Command::new("lsof")
             .args(["-a", "-p", pid_s, "-d", "cwd", "-Fn"])
             .output()
