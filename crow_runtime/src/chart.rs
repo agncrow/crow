@@ -321,3 +321,164 @@ mod tests {
         assert!(err.contains("9360") && err.contains("bucket["), "{}", err);
     }
 }
+
+/// Assemble the full chart SVG. Both modes call this — the interpreter
+/// for its html strings, crow_web for its raw vnode — so the markup is
+/// identical by construction. Colors reference the style tokens
+/// (var(--crow-…)), which makes every chart theme-correct with zero
+/// color plumbing.
+pub struct ChartSpec<'a> {
+    pub ts: &'a [f64],
+    /// (open, high, low, close) column slices; empty slices = no candles.
+    pub candles: (&'a [f64], &'a [f64], &'a [f64], &'a [f64]),
+    /// Named line series: (label, values).
+    pub lines: Vec<(&'a str, &'a [f64])>,
+    /// Volume bars; empty = no volume pane.
+    pub volume: &'a [f64],
+    /// Play-head moment; NaN = none.
+    pub marker: f64,
+    pub tz: &'a str,
+    pub width: f64,
+    pub height: f64,
+}
+
+pub fn render_svg(spec: &ChartSpec) -> Result<String, String> {
+    let n = spec.ts.len();
+    check_budget(n, "chart")?;
+    if n == 0 {
+        return Ok(format!(
+            "<svg class=\"crow-chart\" viewBox=\"0 0 {w} {h}\" width=\"100%\" height=\"{h}\"><text x=\"{cx}\" y=\"{cy}\" text-anchor=\"middle\" fill=\"var(--crow-muted)\" font-size=\"13\">no data yet</text></svg>",
+            w = spec.width, h = spec.height, cx = spec.width / 2.0, cy = spec.height / 2.0
+        ));
+    }
+
+    // Layout: main pane + optional volume strip, margins for axes.
+    let ml = 54.0;
+    let mr = 10.0;
+    let mt = 8.0;
+    let mb = 22.0;
+    let has_vol = !spec.volume.is_empty();
+    let vol_h = if has_vol { (spec.height * 0.18).floor() } else { 0.0 };
+    let main_bot = spec.height - mb - if has_vol { vol_h + 6.0 } else { 0.0 };
+
+    // Domains
+    let t0 = spec.ts[0];
+    let t1 = spec.ts[n - 1].max(t0 + 1.0);
+    let mut ymin = f64::INFINITY;
+    let mut ymax = f64::NEG_INFINITY;
+    let (o, h, l, c) = spec.candles;
+    for v in l.iter().chain(h.iter()) {
+        if v.is_finite() {
+            ymin = ymin.min(*v);
+            ymax = ymax.max(*v);
+        }
+    }
+    for (_, vs) in &spec.lines {
+        for v in vs.iter() {
+            if v.is_finite() {
+                ymin = ymin.min(*v);
+                ymax = ymax.max(*v);
+            }
+        }
+    }
+    if !ymin.is_finite() {
+        ymin = 0.0;
+        ymax = 1.0;
+    }
+    let (ymin, ymax) = pad_domain(ymin, ymax);
+    let sx = Scale::new(t0, t1, ml, spec.width - mr);
+    let sy = Scale::new(ymin, ymax, main_bot, mt);
+
+    let mut svg = String::with_capacity(16 * 1024);
+    svg.push_str(&format!(
+        "<svg class=\"crow-chart\" viewBox=\"0 0 {w} {h}\" width=\"100%\" height=\"{h}\" font-family=\"ui-monospace,monospace\">",
+        w = spec.width, h = spec.height
+    ));
+
+    // Gridlines + y ticks
+    for yt in y_ticks(ymin, ymax, 4) {
+        let y = sy.map(yt);
+        svg.push_str(&format!(
+            "<line x1=\"{ml}\" y1=\"{y:.1}\" x2=\"{x2}\" y2=\"{y:.1}\" stroke=\"var(--crow-border)\" stroke-width=\"1\"/><text x=\"{tx}\" y=\"{ty:.1}\" text-anchor=\"end\" fill=\"var(--crow-muted)\" font-size=\"11\">{lab}</text>",
+            ml = ml, x2 = spec.width - mr, tx = ml - 6.0, ty = y + 4.0,
+            lab = trim_num(yt)
+        ));
+    }
+    // Time ticks
+    for (tt, lab) in time_ticks(t0, t1, spec.tz, 6)? {
+        let x = sx.map(tt);
+        svg.push_str(&format!(
+            "<text x=\"{x:.1}\" y=\"{y}\" text-anchor=\"middle\" fill=\"var(--crow-muted)\" font-size=\"11\">{lab}</text>",
+            y = spec.height - 6.0
+        ));
+    }
+
+    // Candles
+    if !o.is_empty() {
+        for cd in candles(o, h, l, c, ml, spec.width - mr, &sy) {
+            let color = if cd.rising { "var(--crow-up)" } else { "var(--crow-down)" };
+            svg.push_str(&format!(
+                "<line x1=\"{cx:.1}\" y1=\"{wt:.1}\" x2=\"{cx:.1}\" y2=\"{wb:.1}\" stroke=\"{color}\" stroke-width=\"1\"/><rect x=\"{bx:.1}\" y=\"{bt:.1}\" width=\"{bw:.1}\" height=\"{bh:.1}\" fill=\"{color}\"/>",
+                cx = cd.cx, wt = cd.wick_top, wb = cd.wick_bot,
+                bx = cd.body_x, bt = cd.body_top, bw = cd.body_w, bh = cd.body_h
+            ));
+        }
+    }
+
+    // Lines
+    for (label, vs) in &spec.lines {
+        let d = path_line(spec.ts, vs, &sx, &sy);
+        if !d.is_empty() {
+            svg.push_str(&format!(
+                "<path class=\"crow-series-{label}\" d=\"{d}\" fill=\"none\" stroke=\"var(--crow-accent)\" stroke-width=\"1.5\"/>"
+            ));
+        }
+    }
+
+    // Volume pane
+    if has_vol {
+        let vmax = spec
+            .volume
+            .iter()
+            .cloned()
+            .filter(|v| v.is_finite())
+            .fold(0.0_f64, f64::max)
+            .max(1.0);
+        let v_top = main_bot + 6.0;
+        let svy = Scale::new(0.0, vmax, spec.height - mb, v_top);
+        let band = (spec.width - ml - mr) / n as f64;
+        let bw = (band * 0.8).max(1.0);
+        for (i, v) in spec.volume.iter().enumerate() {
+            if !v.is_finite() || *v <= 0.0 {
+                continue;
+            }
+            let x = ml + band * (i as f64 + 0.5) - bw / 2.0;
+            let y = svy.map(*v);
+            svg.push_str(&format!(
+                "<rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{bw:.1}\" height=\"{bh:.1}\" fill=\"var(--crow-muted)\" opacity=\"0.45\"/>",
+                bh = (spec.height - mb - y).max(0.5)
+            ));
+        }
+    }
+
+    // Play-head marker
+    if spec.marker.is_finite() && spec.marker >= t0 && spec.marker <= t1 {
+        let x = sx.map(spec.marker);
+        svg.push_str(&format!(
+            "<line class=\"crow-marker\" x1=\"{x:.1}\" y1=\"{mt}\" x2=\"{x:.1}\" y2=\"{yb}\" stroke=\"var(--crow-accent)\" stroke-width=\"1.5\" stroke-dasharray=\"4 3\"/>",
+            yb = spec.height - mb
+        ));
+    }
+
+    svg.push_str("</svg>");
+    Ok(svg)
+}
+
+fn trim_num(v: f64) -> String {
+    if (v - v.round()).abs() < 1e-9 {
+        format!("{}", v.round() as i64)
+    } else {
+        let s = format!("{:.2}", v);
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    }
+}

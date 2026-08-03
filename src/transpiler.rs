@@ -3066,7 +3066,8 @@ impl Transpiler {
                                 // given — a fallible arg renders its reason,
                                 // it doesn't wrap the tree in a Result
                                 || (self.needs_ui
-                                    && (n == "table"
+                                    && (n == "chart"
+                                        || n == "table"
                                         || crate::lower::UI_ELEMENTS.contains(&n.as_str())))
                                 // len[] unwraps fallible frames itself
                                 || n == "len"
@@ -4233,6 +4234,21 @@ impl Transpiler {
                     // table[frame] → CrowVNode::table_from_data from CrowFrame columns/rows.
                     // A fallible frame (query result) renders its reason on error —
                     // a view renders what it's given.
+                    if name == "chart" && self.needs_ui && arg_strs.len() == 8 {
+                        let frame_ty = self.ctx.infer_expr(&args[0]);
+                        let core = format!(
+                            "CrowVNode::chart_from_frame(_f, &{x}, &{cd}, &{ln}, &{by}, {{ let _m: f64 = ({mk}) as f64; if _m <= 0.0 {{ f64::NAN }} else {{ _m }} }}, &{tz}, ({h}) as f64)",
+                            x = arg_strs[1], cd = arg_strs[2], ln = arg_strs[3],
+                            by = arg_strs[4], mk = arg_strs[5], tz = arg_strs[6], h = arg_strs[7]
+                        );
+                        if matches!(frame_ty, CrowType::Result(_)) {
+                            return format!(
+                                "{{ let _fr = {}; if !_fr.ok {{ CrowVNode::text(&format!(\"chart error: {{}}\", _fr.reason)) }} else {{ let _f = &_fr.value; {} }} }}",
+                                arg_strs[0], core
+                            );
+                        }
+                        return format!("{{ let _f = &{}; {} }}", arg_strs[0], core);
+                    }
                     if name == "table" && self.needs_ui && arg_strs.len() == 1 {
                         let arg_ty = self.ctx.infer_expr(&args[0]);
                         if matches!(arg_ty, CrowType::Result(_)) {
