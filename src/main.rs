@@ -1741,6 +1741,19 @@ unsafe extern "C" {
     fn libc_kill(pid: i32, sig: i32) -> i32;
 }
 
+/// Record a deliberate render-time remote read: insert the acknowledgment
+/// comment above the flagged view so the finding stays visible in the code
+/// instead of in every check run.
+fn apply_remote_accept(filename: &str, view_line_1based: usize) -> Result<(), String> {
+    let source = read_file(filename);
+    let mut lines: Vec<String> = source.lines().map(|s| s.to_string()).collect();
+    if view_line_1based == 0 || view_line_1based > lines.len() {
+        return Err("could not locate the view declaration".into());
+    }
+    lines.insert(view_line_1based - 1, "--- crow: remote-render".to_string());
+    std::fs::write(filename, lines.join("\n") + "\n").map_err(|e| e.to_string())
+}
+
 /// Tier-2 applier for blocking-in-view: inside `view`'s body, rewrite the
 /// bare call `helper[]` to `later[helper]` — the work moves off the live
 /// loop and its state writes re-render every client. Only fires on the
@@ -1819,7 +1832,9 @@ fn run_check_pipeline(filename: &str) -> checker::CheckResult {
     };
     let mut ctx = type_infer::TypeContext::new();
     ctx.infer_program(&stmts);
-    checker::run_check(&stmts, &ctx, false)
+    let mut result = checker::run_check(&stmts, &ctx, false);
+    result.issues = checker::suppress_acknowledged(std::mem::take(&mut result.issues), &source);
+    result
 }
 
 fn print_check_summary(result: &checker::CheckResult, verbose: bool) {
@@ -1955,9 +1970,11 @@ fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool
         let is_regression = matches!(issue, checker::Issue::RegressionChange { .. });
         let later_fixable = matches!(issue,
             checker::Issue::BlockingInView { path, .. } if path.len() >= 3);
+        let remote_acceptable = matches!(issue, checker::Issue::RemoteQueryInView { .. });
         let mut prompt_parts = vec!["enter = recheck", "s = skip"];
         if has_try { prompt_parts.push("t = try input"); }
         if is_regression { prompt_parts.push("a = accept new"); }
+        if remote_acceptable { prompt_parts.push("a = accept (deliberate)"); }
         if later_fixable { prompt_parts.push("f = fix (later[])"); }
         prompt_parts.push("q = quit");
         print!("\n        {} > ", prompt_parts.join(", "));
@@ -1985,6 +2002,21 @@ fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool
             }
             "s" => {
                 idx += 1;
+            }
+            "a" if remote_acceptable => {
+                if let checker::Issue::RemoteQueryInView { line, view, .. } = issue {
+                    let (line, view) = (*line, view.clone());
+                    match apply_remote_accept(filename, line) {
+                        Ok(()) => {
+                            println!("\n  recorded: --- crow: remote-render above '{}' — rechecking...", view);
+                            result = run_check_pipeline(filename);
+                            print_check_summary(&result, false);
+                            if result.issues.is_empty() { break; }
+                            idx = 0;
+                        }
+                        Err(e) => println!("\n  could not apply: {}", e),
+                    }
+                }
             }
             "f" if later_fixable => {
                 if let checker::Issue::BlockingInView { view, path, .. } = issue {
