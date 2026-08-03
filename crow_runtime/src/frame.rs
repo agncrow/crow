@@ -141,6 +141,33 @@ pub struct CrowColumn {
 impl CrowColumn {
     pub fn len(&self) -> usize { self.data.len() }
 
+    /// Numeric view of the column: floats pass through, ints cast,
+    /// numeric strings parse (stringly-typed backends), everything else
+    /// (and invalid rows) becomes NaN — which charts render as gaps.
+    pub fn to_f64_vec(&self) -> Vec<f64> {
+        let n = self.data.len();
+        (0..n)
+            .map(|i| {
+                if !self.valid.get(i).copied().unwrap_or(false) {
+                    return f64::NAN;
+                }
+                match self.data.as_ref() {
+                    Column::Float(v) => v[i],
+                    Column::Int(v) => v[i] as f64,
+                    Column::Str(v) => v[i].trim().parse::<f64>().unwrap_or(f64::NAN),
+                    Column::Bool(v) => {
+                        if v[i] {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
+                    Column::DateTime(ms, _) => ms[i] as f64 / 1000.0,
+                }
+            })
+            .collect()
+    }
+
     /// Get a single cell as a formatted string.
     pub fn get_str(&self, idx: usize) -> String {
         self.data.fmt_cell(idx, self.valid[idx])

@@ -1744,6 +1744,7 @@ impl TypeContext {
             // Moments are numbers (epoch seconds); constructors are fallible
             "now" => CrowType::Float,
             "captured" => CrowType::Result(Box::new(CrowType::Float)),
+            "chart" => CrowType::Str,
             "moment" | "parse_time" => CrowType::Result(Box::new(CrowType::Float)),
             "sleep" => CrowType::Int,
             // Background work: later[] is fire-and-forget (Void — ask
@@ -1962,7 +1963,7 @@ impl TypeContext {
                 if let Expr::Ident(name) = callee.as_ref() {
                     let base = self.infer_call_base(name, args, callee);
                     // Auto-propagation: wrap in CrowResult if any arg is CrowResult
-                    let skip = matches!(name.as_str(), "log" | "assert" | "type" | "cpu" | "gpu" | "error" | "len" | "table")
+                    let skip = matches!(name.as_str(), "log" | "assert" | "type" | "cpu" | "gpu" | "error" | "len" | "table" | "chart")
                         || crate::lower::UI_ELEMENTS.contains(&name.as_str());
                     if !skip && !matches!(base, CrowType::Result(_) | CrowType::Void) {
                         let has_result_arg = args.iter().any(|a| matches!(self.infer_expr(a), CrowType::Result(_)));

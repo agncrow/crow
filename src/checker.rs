@@ -40,7 +40,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     "later", "running",
     "app", "html", "click",
     "fmt",
-    "now", "moment", "calendar", "parse_time", "captured",
+    "now", "moment", "calendar", "parse_time", "captured", "chart",
 ];
 
 // --- Issue types ---
@@ -1519,6 +1519,7 @@ fn find_undefined_vars_in_fn(
         }
         // Live elements the transpiler handles outside the core list.
         defined.insert("field".to_string());
+        defined.insert("chart".to_string());
         // Reactive state is the sanctioned channel: views and handlers read
         // top-level variables (the function-scope isolation exemption).
         for v in ctx.vars.keys() {
@@ -2211,6 +2212,19 @@ mod tests {
             issues2.is_empty(),
             "re-query inside the loop should clear it, got {:?}",
             issues2
+        );
+    }
+
+    #[test]
+    fn chart_element_renders_in_the_harness() {
+        let src = std::fs::read_to_string("tests/chart_harness.crow").unwrap();
+        let stmts = crate::build(&src).unwrap();
+        let (issues, counts) = run_test_blocks(&stmts);
+        assert_eq!(counts.blocks, 1);
+        assert!(
+            issues.is_empty(),
+            "chart harness assertions failed: {:?}",
+            issues.iter().map(|i| i.summary()).collect::<Vec<_>>()
         );
     }
 

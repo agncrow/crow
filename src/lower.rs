@@ -297,6 +297,30 @@ impl Lowerer {
                         let resolved = self.resolve_args("parse_time", &params, &defaults, args)?;
                         Expr::Call { callee: Box::new(callee), args: resolved }
                     }
+                    // chart[frame, x = 'ts', candles = [], lines = [],
+                    // bars_y = '', marker = 0, tz = 'UTC', height = 320] —
+                    // a chart is a view over a frame (chart-module-design).
+                    Some("chart") if !self.fns.contains_key("chart") => {
+                        let params: Vec<String> = [
+                            "frame", "x", "candles", "lines", "bars_y",
+                            "marker", "tz", "height",
+                        ]
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect();
+                        let defaults: Vec<Option<Expr>> = vec![
+                            None,
+                            Some(Expr::Str("ts".to_string())),
+                            Some(Expr::Array(vec![])),
+                            Some(Expr::Array(vec![])),
+                            Some(Expr::Str(String::new())),
+                            Some(Expr::Int(0)),
+                            Some(Expr::Str("UTC".to_string())),
+                            Some(Expr::Int(320)),
+                        ];
+                        let resolved = self.resolve_args("chart", &params, &defaults, args)?;
+                        Expr::Call { callee: Box::new(callee), args: resolved }
+                    }
                     // serve[port, refresh = secs, budget = ms] — 0 means unset.
                     // refresh: the runtime re-renders every session on this
                     // interval; budget: handlers/renders over this many ms are

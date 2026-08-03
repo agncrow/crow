@@ -1564,6 +1564,53 @@ impl Interpreter {
 
             // --- app[] harness + view rendering (interpreter ui support) ---
             if self.env.ui_mode {
+                // chart[frame, x, candles, lines, bars_y, marker, tz, height]
+                // (lowered) — the shared kernel renders the SVG so both
+                // modes emit identical markup.
+                if self.in_view > 0 && name == "chart" {
+                    let vals: Vec<CrowValue> = args
+                        .iter()
+                        .map(|a| self.eval_expr(a))
+                        .collect::<Result<_, _>>()?;
+                    let Value::Frame(f) = &vals[0].value else {
+                        if vals[0].is_error() {
+                            return Ok(CrowValue::ok(Value::Str(format!(
+                                "<p>chart error: {}</p>",
+                                vals[0].reason
+                            ))));
+                        }
+                        return Err("chart[] takes a frame first".into());
+                    };
+                    let as_str = |v: &CrowValue| -> String { format!("{}", v.value) };
+                    let str_list = |v: &CrowValue| -> Vec<String> {
+                        match &v.value {
+                            Value::Array(items) => {
+                                items.iter().map(|i| format!("{}", i.value)).collect()
+                            }
+                            _ => vec![],
+                        }
+                    };
+                    let as_f64 = |v: &CrowValue| -> f64 {
+                        match &v.value {
+                            Value::Float(x) => *x,
+                            Value::Int(x) => *x as f64,
+                            _ => 0.0,
+                        }
+                    };
+                    let marker = as_f64(&vals[5]);
+                    let node = crow_web::view::CrowVNode::chart_from_frame(
+                        f,
+                        &as_str(&vals[1]),
+                        &str_list(&vals[2]),
+                        &str_list(&vals[3]),
+                        &as_str(&vals[4]),
+                        if marker <= 0.0 { f64::NAN } else { marker },
+                        &as_str(&vals[6]),
+                        as_f64(&vals[7]),
+                    );
+                    return Ok(CrowValue::ok(Value::Str(node.to_html())));
+                }
+
                 // Inside a rendering view, element names build html strings.
                 if self.in_view > 0 && crate::lower::UI_ELEMENTS.contains(&name.as_str()) {
                     let mut inner = String::new();
@@ -2032,7 +2079,7 @@ impl Interpreter {
             | "type" | "grad"
             | "shell" | "hash"
             | "find" | "matches" | "sub" | "any" | "all"
-            | "now" | "date" | "elapsed" | "moment" | "calendar" | "parse_time" | "captured"
+            | "now" | "date" | "elapsed" | "moment" | "calendar" | "parse_time" | "captured" | "chart"
             // Web P4 builtins
             | "cors" | "sessions" | "templates" | "render" | "cache" | "limit"
             | "uploads" | "sse" | "ws" | "connect" | "send" | "recv" | "close"

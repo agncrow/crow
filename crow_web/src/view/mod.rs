@@ -61,6 +61,9 @@ impl CrowComponent {
 pub enum CrowVNode {
     /// Text content.
     Text(String),
+    /// Pre-built markup emitted verbatim (charts' SVG). Producers are
+    /// trusted crate code, never user strings.
+    Raw(String),
     /// Element with tag, attributes, and children.
     Element {
         tag: String,
@@ -177,6 +180,7 @@ impl CrowVNode {
     pub fn to_html(&self) -> String {
         match self {
             CrowVNode::Text(s) => html_escape(s),
+            CrowVNode::Raw(s) => s.clone(),
             CrowVNode::Element {
                 tag,
                 attrs,
@@ -199,6 +203,57 @@ impl CrowVNode {
     /// ```text
     /// table[frame]  →  table_from_data(headers, rows)
     /// ```
+    pub fn raw(s: &str) -> Self {
+        CrowVNode::Raw(s.to_string())
+    }
+
+    /// chart[frame, ...] — extract named columns and hand geometry+SVG to
+    /// the shared kernel, so both modes emit identical markup.
+    pub fn chart_from_frame(
+        f: &crow_runtime::frame::CrowFrame,
+        x: &str,
+        candle_cols: &[String],
+        line_cols: &[String],
+        bars_y: &str,
+        marker: f64,
+        tz: &str,
+        height: f64,
+    ) -> Self {
+        let col = |name: &str| -> Vec<f64> {
+            f.col_native(name).map(|c| c.to_f64_vec()).unwrap_or_default()
+        };
+        let ts = col(x);
+        let (o, h, l, c4);
+        if candle_cols.len() == 4 {
+            o = col(&candle_cols[0]);
+            h = col(&candle_cols[1]);
+            l = col(&candle_cols[2]);
+            c4 = col(&candle_cols[3]);
+        } else {
+            o = vec![];
+            h = vec![];
+            l = vec![];
+            c4 = vec![];
+        }
+        let lines_data: Vec<(String, Vec<f64>)> =
+            line_cols.iter().map(|n| (n.clone(), col(n))).collect();
+        let vol = if bars_y.is_empty() { vec![] } else { col(bars_y) };
+        let spec = crow_runtime::chart::ChartSpec {
+            ts: &ts,
+            candles: (&o, &h, &l, &c4),
+            lines: lines_data.iter().map(|(n, v)| (n.as_str(), v.as_slice())).collect(),
+            volume: &vol,
+            marker,
+            tz,
+            width: 720.0,
+            height,
+        };
+        match crow_runtime::chart::render_svg(&spec) {
+            Ok(svg) => CrowVNode::Raw(svg),
+            Err(e) => CrowVNode::text(&format!("chart error: {}", e)),
+        }
+    }
+
     pub fn table_from_data(headers: &[String], rows: &[Vec<String>]) -> Self {
         let header_cells: Vec<CrowVNode> = headers.iter()
             .map(|h| CrowVNode::th(vec![CrowVNode::text(h)]))
@@ -270,6 +325,11 @@ impl CrowVNode {
             (CrowVNode::Text(a), CrowVNode::Text(b)) => {
                 if a != b {
                     patches.push(VPatch::SetText { path: path.clone(), text: b.clone() });
+                }
+            }
+            (CrowVNode::Raw(a), CrowVNode::Raw(b)) => {
+                if a != b {
+                    patches.push(VPatch::Replace { path: path.clone(), node: new.clone() });
                 }
             }
             (CrowVNode::Element { tag: t1, attrs: a1, children: c1 },

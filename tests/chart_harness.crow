@@ -1,0 +1,19 @@
+use ui, db, frame, math
+
+view render[]
+    conn = db.connect['sqlite://:memory:']
+    exec[conn, 'CREATE TABLE bars (ts REAL, o REAL, hi REAL, lo REAL, c REAL, vol REAL)']
+    exec[conn, 'INSERT INTO bars VALUES (1753702200, 3.1, 3.4, 3.0, 3.3, 1200), (1753702260, 3.3, 3.5, 3.2, 3.2, 900), (1753702320, 3.2, 3.6, 3.2, 3.6, 2100)']
+    bars = query[conn, 'SELECT ts, o, hi, lo, c, vol FROM bars ORDER BY ts']
+    return div[
+        chart[bars, candles = ['o', 'hi', 'lo', 'c'], bars_y = 'vol', marker = 1753702260.0, tz = 'America/New_York', height = 200]
+    ]
+
+test chart_renders[]
+    a = app[render]
+    h = html[a]
+    assert[contains[h, 'crow-chart']]
+    assert[contains[h, 'var(--crow-up)']]
+    assert[contains[h, 'var(--crow-down)']]
+    assert[contains[h, 'crow-marker']]
+    assert[contains[h, '<rect']]
