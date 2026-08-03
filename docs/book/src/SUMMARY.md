@@ -65,3 +65,4 @@
 - [Appendix B: Operators and Builtins](appendix-b-operators.md)
 - [Appendix C: Coming from Python](appendix-c-from-python.md)
 - [Appendix D: The Two Execution Modes](appendix-d-execution-modes.md)
+- [Appendix E: The Language at a Glance](appendix-e-language-at-a-glance.md)
