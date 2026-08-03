@@ -53,6 +53,9 @@ pub enum ParamLit {
 #[derive(Debug, Clone)]
 pub struct SqlCall {
     pub line: usize,
+    /// The connection argument (`query[CONN, ...]`) when it's a plain
+    /// variable — lets multi-database files scope checks to the checked db.
+    pub conn_var: Option<String>,
     /// Enclosing function name; None at top level.
     pub func: Option<String>,
     pub kind: SqlKind,
@@ -158,13 +161,17 @@ fn walk_expr(
             if let Some(name) = call_name(callee) {
                 if name == "query" || name == "exec" {
                     if let Some(Expr::Str(sql_text)) = args.get(1) {
-                        facts.calls.push(analyze_call(
+                        let mut call = analyze_call(
                             sql_text,
                             args.get(2),
                             line,
                             func,
                             assign_to,
-                        ));
+                        );
+                        if let Some(Expr::Ident(cv)) = args.first() {
+                            call.conn_var = Some(cv.clone());
+                        }
+                        facts.calls.push(call);
                     }
                 } else if name == "transact" {
                     if let Some(Expr::Ident(fn_name)) = args.get(1) {
@@ -225,6 +232,7 @@ fn analyze_call(
 ) -> SqlCall {
     let mut call = SqlCall {
         line,
+        conn_var: None,
         func: func.map(|f| f.to_string()),
         kind: SqlKind::Other,
         table: None,

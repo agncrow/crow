@@ -133,6 +133,36 @@ fn main() {
                     }
                 }
             }
+            // No --hazard: run the check and print the numbered menu, so
+            // the N crow fix asks for is discoverable from crow fix itself.
+            if let (Some(filename), None) = (&file, hazard_n) {
+                let source = read_file(filename);
+                let url = db_url.clone().or_else(crowfile_db_url);
+                match db_check::run(filename, &source, url.as_deref()) {
+                    Ok(result) => {
+                        let ordered = db_check::report::ordered(&result.hazards);
+                        if ordered.is_empty() {
+                            println!("no fixable hazards — database checks are clean");
+                        } else {
+                            println!("hazards in {}:", filename);
+                            for (i, h) in ordered.iter().enumerate() {
+                                println!(
+                                    "  {}. line {} — {}",
+                                    i + 1,
+                                    h.span.0,
+                                    db_check::report::headline(&h.kind)
+                                );
+                            }
+                            println!("\napply one with: crow fix {} --hazard N", filename);
+                        }
+                        process::exit(0);
+                    }
+                    Err(e) => {
+                        eprintln!("error: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
             let (Some(filename), Some(hazard_n)) = (file, hazard_n) else {
                 eprintln!("usage: crow fix file.crow --hazard N [--option M] [--db url]");
                 eprintln!("  N and the option numbers come from the crow check report");

@@ -18,6 +18,127 @@ pub struct RunResult {
     pub schema_checked: bool,
 }
 
+
+/// Map connection variables to their connect[] urls, following one level
+/// of parameter passing: `fill_at[ch, ...]` binds fill_at's first param
+/// to ch's url when every call site agrees.
+fn connection_urls(stmts: &[crate::ast::Stmt]) -> Vec<(String, String)> {
+    use crate::ast::{Expr, Stmt};
+    let mut direct: Vec<(String, String)> = Vec::new();
+    fn scan(stmts: &[Stmt], out: &mut Vec<(String, String)>) {
+        for st in stmts {
+            match st {
+                Stmt::Assign { name, value } => {
+                    if let Expr::Call { callee, args } = value {
+                        let is_connect = match callee.as_ref() {
+                            Expr::Ident(n) => n == "connect",
+                            Expr::FieldAccess { field, .. } => field == "connect",
+                            _ => false,
+                        };
+                        if is_connect {
+                            if let Some(Expr::Str(u)) = args.first() {
+                                out.push((name.clone(), u.clone()));
+                            }
+                        }
+                    }
+                }
+                Stmt::If { then_body, else_body, .. } => {
+                    scan(then_body, out);
+                    if let Some(eb) = else_body {
+                        scan(eb, out);
+                    }
+                }
+                Stmt::FnDecl { body, .. } => scan(body, out),
+                _ => {}
+            }
+        }
+    }
+    scan(stmts, &mut direct);
+
+    // One-hop param resolution: for each fn whose param receives exactly
+    // one known connection var across all call sites, bind param → url.
+    let by_var: std::collections::BTreeMap<&str, &str> = direct
+        .iter()
+        .map(|(v, u)| (v.as_str(), u.as_str()))
+        .collect();
+    let mut fn_params: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for st in stmts {
+        if let Stmt::FnDecl { name, params, .. } = st {
+            fn_params.insert(name.clone(), params.clone());
+        }
+    }
+    let mut param_urls: std::collections::BTreeMap<(String, usize), std::collections::BTreeSet<String>> =
+        Default::default();
+    fn scan_calls(
+        stmts: &[Stmt],
+        by_var: &std::collections::BTreeMap<&str, &str>,
+        fn_params: &std::collections::BTreeMap<String, Vec<String>>,
+        out: &mut std::collections::BTreeMap<(String, usize), std::collections::BTreeSet<String>>,
+    ) {
+        use crate::ast::{Expr, Stmt};
+        fn walk(
+            e: &Expr,
+            by_var: &std::collections::BTreeMap<&str, &str>,
+            fn_params: &std::collections::BTreeMap<String, Vec<String>>,
+            out: &mut std::collections::BTreeMap<(String, usize), std::collections::BTreeSet<String>>,
+        ) {
+            if let Expr::Call { callee, args } = e {
+                if let Expr::Ident(fname) = callee.as_ref() {
+                    if fn_params.contains_key(fname) {
+                        for (i, a) in args.iter().enumerate() {
+                            if let Expr::Ident(v) = a {
+                                if let Some(u) = by_var.get(v.as_str()) {
+                                    out.entry((fname.clone(), i)).or_default().insert(u.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                for a in args {
+                    walk(a, by_var, fn_params, out);
+                }
+                walk(callee, by_var, fn_params, out);
+            } else if let Expr::BinOp { left, right, .. } = e {
+                walk(left, by_var, fn_params, out);
+                walk(right, by_var, fn_params, out);
+            } else if let Expr::Named { value, .. } = e {
+                walk(value, by_var, fn_params, out);
+            }
+        }
+        for st in stmts {
+            match st {
+                Stmt::Assign { value, .. } => walk(value, by_var, fn_params, out),
+                Stmt::ExprStmt(e) | Stmt::Return(Some(e)) => walk(e, by_var, fn_params, out),
+                Stmt::If { condition, then_body, else_body, .. } => {
+                    walk(condition, by_var, fn_params, out);
+                    scan_calls(then_body, by_var, fn_params, out);
+                    if let Some(eb) = else_body {
+                        scan_calls(eb, by_var, fn_params, out);
+                    }
+                }
+                Stmt::For { body, .. } | Stmt::While { body, .. } => {
+                    scan_calls(body, by_var, fn_params, out)
+                }
+                Stmt::FnDecl { body, .. } => scan_calls(body, by_var, fn_params, out),
+                _ => {}
+            }
+        }
+    }
+    scan_calls(stmts, &by_var, &fn_params, &mut param_urls);
+
+    let mut all = direct.clone();
+    for ((fname, idx), urls) in &param_urls {
+        if urls.len() == 1 {
+            if let Some(params) = fn_params.get(fname) {
+                if let Some(pname) = params.get(*idx) {
+                    all.push((pname.clone(), urls.iter().next().unwrap().clone()));
+                }
+            }
+        }
+    }
+    all
+}
+
 /// Run the database checks over a source file. `db_url` comes from
 /// `--db` or the crowfile `db` variable; without it only the checks that
 /// need no schema run (injection flags).
@@ -27,6 +148,7 @@ pub fn run(file: &str, source: &str, db_url: Option<&str>) -> Result<RunResult, 
     let tokens = crate::lexer::Lexer::new(source).tokenize()?;
     let (stmts, _parse_errors) = crate::parser::Parser::new(tokens).parse_lenient();
     let facts = sql_facts::collect(&stmts);
+    let total_sql_calls = facts.calls.len();
     let mut hazards = Vec::new();
     let mut schema_checked = false;
     match db_url {
@@ -40,6 +162,37 @@ pub fn run(file: &str, source: &str, db_url: Option<&str>) -> Result<RunResult, 
             } else {
                 let db = crow_db::connect(url, None)?;
                 schema::introspect(&db)?
+            };
+            // Multi-database files: schema checks apply only to queries on
+            // the connection whose connect[] url is the checked db. Other
+            // connections (and conns not statically resolvable) are out of
+            // scope — checking a ClickHouse query against the sqlite schema
+            // reports fictions.
+            let conn_urls = connection_urls(&stmts);
+            let checked: std::collections::BTreeSet<String> = conn_urls
+                .iter()
+                .filter(|(_, u)| u.as_str() == url)
+                .map(|(v, _)| v.clone())
+                .collect();
+            let facts = if conn_urls.len() > 1 {
+                let mut scoped = facts;
+                let before = scoped.calls.len();
+                scoped.calls.retain(|c| match &c.conn_var {
+                    Some(v) => checked.contains(v),
+                    None => true,
+                });
+                let skipped = before - scoped.calls.len();
+                if skipped > 0 {
+                    eprintln!(
+                        "  note: {} quer{} on other connections not checked against '{}' (multi-database file)",
+                        skipped,
+                        if skipped == 1 { "y" } else { "ies" },
+                        url
+                    );
+                }
+                scoped
+            } else {
+                facts
             };
             hazards.extend(detect(&stmts, &facts, &sch, file));
             schema_checked = true;
@@ -60,7 +213,7 @@ pub fn run(file: &str, source: &str, db_url: Option<&str>) -> Result<RunResult, 
     let hazards = suppress(hazards, source);
     Ok(RunResult {
         hazards,
-        sql_calls: facts.calls.len(),
+        sql_calls: total_sql_calls,
         schema_checked,
     })
 }
