@@ -256,7 +256,17 @@ impl<'a> Validator<'a> {
                 // Check type-changing reassignment
                 let new_ty = self.ctx.infer_expr(value);
                 if let Some(existing_ty) = self.ctx.vars.get(name) {
-                    if !existing_ty.compatible(&new_ty)
+                    // Assignment into a typed variable is a consumption
+                    // point: result[T] unwraps into T (the transpiler
+                    // aborts the fn on error) — not a type change.
+                    let unwraps = matches!(&new_ty, CrowType::Result(inner)
+                        if existing_ty.compatible(inner)
+                            || (matches!(existing_ty, CrowType::Float)
+                                && matches!(inner.as_ref(), CrowType::Int)))
+                        || matches!(&existing_ty, CrowType::Result(inner)
+                            if inner.compatible(&new_ty));
+                    if !unwraps
+                        && !existing_ty.compatible(&new_ty)
                         && !matches!(existing_ty, CrowType::Unknown)
                         && !matches!(new_ty, CrowType::Unknown)
                     {

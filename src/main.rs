@@ -772,7 +772,7 @@ fn cmd_new() {
 
     // Add [jobs] section to crowfile if needed
     if !jobs_section.is_empty() {
-        crowfile.push_str("\njobs = [");
+        crowfile.push_str("\njobs = map[");
         let entries: Vec<String> = jobs_section.iter()
             .map(|(k, v)| format!("{} = '{}'", k, v))
             .collect();
