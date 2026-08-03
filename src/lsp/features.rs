@@ -19,7 +19,36 @@ const KEYWORDS: &[&str] = &[
 
 pub fn completions(a: &Analysis) -> Vec<CompletionItem> {
     let mut items: Vec<CompletionItem> = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    for (name, sig) in &a.ctx.functions {
+        // Function completion inserts the full call with every parameter as
+        // a tab-stopped placeholder — tab through to accept the names
+        // (which resolve when same-named facts are in scope: the threading
+        // idiom typed for you), or type over any slot. The committed code
+        // is always the fully explicit call.
+        if seen.insert(name.to_string()) {
+            let insert = if sig.params.is_empty() {
+                format!("{}[]", name)
+            } else {
+                let slots: Vec<String> = sig
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (p, _))| format!("${{{}:{}}}", i + 1, p))
+                    .collect();
+                format!("{}[{}]", name, slots.join(", "))
+            };
+            items.push(CompletionItem {
+                label: name.to_string(),
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: Some(fn_signature(name, sig)),
+                insert_text: Some(insert),
+                insert_text_format: Some(lsp_types::InsertTextFormat::SNIPPET),
+                ..Default::default()
+            });
+        }
+    }
     let mut push = |label: &str, kind: CompletionItemKind, detail: Option<String>,
                     items: &mut Vec<CompletionItem>| {
         if seen.insert(label.to_string()) {
@@ -32,14 +61,6 @@ pub fn completions(a: &Analysis) -> Vec<CompletionItem> {
         }
     };
 
-    for (name, sig) in &a.ctx.functions {
-        push(
-            name,
-            CompletionItemKind::FUNCTION,
-            Some(fn_signature(name, sig)),
-            &mut items,
-        );
-    }
     for (name, s) in &a.ctx.structs {
         push(
             name,
@@ -279,5 +300,115 @@ name = 'crow'
         let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"add"));
         assert!(names.contains(&"total"));
+    }
+}
+
+/// Signature help: find the innermost unclosed call at the cursor and
+/// report its signature with the active parameter (comma count since the
+/// opening bracket). Answered from the last good analysis, like hover.
+pub fn signature_help(a: &Analysis, line: u32, character: u32) -> Option<lsp_types::SignatureHelp> {
+    let text = a.source.lines().nth(line as usize)?;
+    let upto: String = text.chars().take(character as usize).collect();
+
+    // Forward scan for the innermost unclosed '[', string-aware: brackets
+    // inside 'string literals' are text, not structure.
+    let mut opens: Vec<usize> = Vec::new();
+    let mut in_str = false;
+    for (i, c) in upto.char_indices() {
+        match c {
+            '\'' => in_str = !in_str,
+            '[' if !in_str => opens.push(i),
+            ']' if !in_str => {
+                opens.pop();
+            }
+            _ => {}
+        }
+    }
+    let open_idx = *opens.last()?;
+
+    // The callee name directly before the bracket.
+    let head = &upto[..open_idx];
+    let name: String = head
+        .chars()
+        .rev()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    if name.is_empty() {
+        return None;
+    }
+    let sig = a.ctx.functions.get(&name)?;
+
+    // Active parameter: top-level commas between the bracket and the cursor.
+    let inside = &upto[open_idx + 1..];
+    let mut inner_depth = 0i32;
+    let mut active = 0u32;
+    let mut in_str = false;
+    for c in inside.chars() {
+        match c {
+            '\'' => in_str = !in_str,
+            '[' | '(' if !in_str => inner_depth += 1,
+            ']' | ')' if !in_str => inner_depth -= 1,
+            ',' if !in_str && inner_depth == 0 => active += 1,
+            _ => {}
+        }
+    }
+
+    let params: Vec<lsp_types::ParameterInformation> = sig
+        .params
+        .iter()
+        .map(|(p, ty)| lsp_types::ParameterInformation {
+            label: lsp_types::ParameterLabel::Simple(format!("{}: {}", p, type_name(ty))),
+            documentation: None,
+        })
+        .collect();
+    Some(lsp_types::SignatureHelp {
+        signatures: vec![lsp_types::SignatureInformation {
+            label: fn_signature(&name, sig),
+            documentation: None,
+            parameters: Some(params),
+            active_parameter: Some(active),
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(active),
+    })
+}
+
+#[cfg(test)]
+mod param_fill_tests {
+    use super::*;
+
+    fn analyzed(src: &str) -> crate::lsp::analysis::Analysis {
+        crate::lsp::analysis::analyze(src, None, None, "t.crow")
+    }
+
+    #[test]
+    fn function_completion_is_a_tabbed_snippet() {
+        let a = analyzed("fn clock_at[base, anchor, speed, live, w_end]\n    return base\nx = clock_at[1.0, 2.0, 3.0, true, 4.0]\n");
+        let items = completions(&a);
+        let item = items.iter().find(|i| i.label == "clock_at").unwrap();
+        assert_eq!(
+            item.insert_text.as_deref(),
+            Some("clock_at[${1:base}, ${2:anchor}, ${3:speed}, ${4:live}, ${5:w_end}]")
+        );
+        assert_eq!(item.insert_text_format, Some(lsp_types::InsertTextFormat::SNIPPET));
+    }
+
+    #[test]
+    fn signature_help_tracks_the_active_parameter() {
+        let src = "fn clock_at[base, anchor, speed]\n    return base\nx = clock_at[1.0, 2.0, \n";
+        let a = analyzed(src);
+        // Cursor after the second comma on line 3 (0-based line 2)
+        let h = signature_help(&a, 2, 23).unwrap();
+        assert_eq!(h.active_parameter, Some(2));
+        let sig = &h.signatures[0];
+        assert!(sig.label.starts_with("fn clock_at["), "{}", sig.label);
+        // Inside a string, brackets and commas must not confuse it
+        let src2 = "fn f[a, b]\n    return a\nx = f['a,[b', \n";
+        let a2 = analyzed(src2);
+        let h2 = signature_help(&a2, 2, 16).unwrap();
+        assert_eq!(h2.active_parameter, Some(1));
     }
 }
