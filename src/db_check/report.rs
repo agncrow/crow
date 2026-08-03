@@ -90,9 +90,16 @@ pub(crate) fn headline(k: &HazardKind) -> String {
             "this code assumes one matching row; the schema allows many".into()
         }
         HazardKind::UnpairedWrites { .. } => "these writes succeed or fail separately".into(),
-        HazardKind::UnknownTable { table, .. } => {
-            format!("table '{}' does not exist in the database", table)
-        }
+        HazardKind::UnknownTable { table, suggestion } => match suggestion {
+            Some(sg) => format!(
+                "table '{}' does not exist in the database — did you mean '{}'? (a query on a DIFFERENT database's connection is out of this check's scope)",
+                table, sg
+            ),
+            None => format!(
+                "table '{}' does not exist in the database — check the name, or note this query may target a different database than the checked one",
+                table
+            ),
+        },
         HazardKind::UnknownColumn { table, column, .. } => {
             format!("column '{}.{}' does not exist", table, column)
         }
