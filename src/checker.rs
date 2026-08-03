@@ -12,7 +12,7 @@ use crate::value::{CrowValue, Value};
 
 // --- Impure builtins ---
 const IMPURE_BUILTINS: &[&str] = &[
-    "read", "write", "log", "input", "rand", "time", "sleep", "env", "exit",
+    "read", "write", "log", "input", "rand", "time", "now", "sleep", "env", "exit",
     "args", "exists", "mkdir", "ls", "rm", "mv", "cp",
     "later", "running", "shell",
     "captured",
@@ -215,7 +215,7 @@ impl Issue {
                     var
                 ),
             Issue::RemoteQueryInView { .. } =>
-                "remote data belongs behind a handler refresh (re-query on click) or in local sqlite for the render path — a network hop per render stalls every client".to_string(),
+                "remote data belongs behind a handler refresh (re-query on click) or in local sqlite for the render path — a network hop per render stalls every client. Deliberate for this app? press a — it records the decision as a comment".to_string(),
             Issue::StaleLoopRead { var, .. } =>
                 format!("re-query '{}' inside the loop so each poll sees the current database", var),
             Issue::TestFailure { .. } =>
@@ -958,6 +958,22 @@ fn collect_query_conns(body: &[Stmt], out: &mut BTreeSet<String>) {
             _ => {}
         }
     }
+}
+
+/// Drop findings the code has explicitly accepted with a pragma comment
+/// on the line above the flagged declaration.
+pub fn suppress_acknowledged(issues: Vec<Issue>, source: &str) -> Vec<Issue> {
+    let lines: Vec<&str> = source.lines().collect();
+    issues
+        .into_iter()
+        .filter(|i| match i {
+            Issue::RemoteQueryInView { line, .. } => {
+                let above = line.checked_sub(2).and_then(|n| lines.get(n));
+                !matches!(above, Some(l) if l.trim().starts_with("--- crow: remote-render"))
+            }
+            _ => true,
+        })
+        .collect()
 }
 
 // --- Style-token check: css/app.css may override --crow-* tokens; a
