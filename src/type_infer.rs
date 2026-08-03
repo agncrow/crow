@@ -1650,7 +1650,13 @@ impl TypeContext {
             }
             "pop" | "sort" | "reverse" | "concat" => {
                 if let Some(arg) = args.first() {
-                    return self.infer_expr(arg);
+                    // Base type = with fallible args already unwrapped (the
+                    // propagation block feeds these builtins plain values).
+                    let t = self.infer_expr(arg);
+                    if let CrowType::Result(inner) = t {
+                        return *inner;
+                    }
+                    return t;
                 }
                 CrowType::Unknown
             }
