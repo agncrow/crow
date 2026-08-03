@@ -67,7 +67,11 @@ impl CrowApp {
         let listener = match tokio::net::TcpListener::bind(&addr).await {
             Ok(l) => l,
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-                eprintln!("error: port {} is already in use", port);
+                eprintln!(
+                    "error: port {} is already in use — another instance of this app? \
+                     stop it with: crow stop  (or: lsof -ti :{} | xargs kill)",
+                    port, port
+                );
                 std::process::exit(1);
             }
             Err(e) => {
