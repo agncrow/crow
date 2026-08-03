@@ -91,6 +91,8 @@ pub fn analyze(
         // The validator accumulates "line N: message" entries, one per line.
         for entry in e.lines().filter(|l| !l.trim().is_empty()) {
             let (line, _) = extract_line_col(entry);
+            // Point inside multi-line statements at the actual line.
+            let line = crate::refine_error_line(text, line, entry);
             diagnostics.push(diag(
                 line,
                 0,

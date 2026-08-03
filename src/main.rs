@@ -1092,7 +1092,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     // Run validation pass — catch user errors before transpilation
     let mut v = validator::Validator::new(&ctx);
     if let Err(e) = v.validate(&stmts) {
-        eprintln!("{}", e);
+        eprintln!("{}", refine_error_lines(&source, &e));
         process::exit(1);
     }
 
@@ -2092,7 +2092,7 @@ fn cmd_run_file_interpreted(filename: &str) {
         vctx.infer_program(&lowered);
         let mut v = validator::Validator::new(&vctx);
         if let Err(e) = v.validate(&lowered) {
-            eprintln!("{}", e);
+            eprintln!("{}", refine_error_lines(&source, &e));
             process::exit(1);
         }
         stmts
@@ -2235,6 +2235,124 @@ pub(crate) fn build(source: &str) -> Result<Vec<ast::Stmt>, String> {
     let tokens = lexer.tokenize()?;
     let mut parser = Parser::new(tokens);
     parser.parse()
+}
+
+
+/// Statement-granular line markers make errors inside a multi-line
+/// expression report the statement's first line — a 30-line view tree
+/// reports `return div[` for a typo 25 lines below it. When a message
+/// names a quoted identifier, walk the statement's bracket extent and
+/// point at the line that actually contains it.
+pub fn refine_error_line(source: &str, line_1based: usize, msg: &str) -> usize {
+    let name = match msg.find('\'') {
+        Some(a) => {
+            let rest = &msg[a + 1..];
+            match rest.find('\'') {
+                Some(b) => &rest[..b],
+                None => return line_1based,
+            }
+        }
+        None => return line_1based,
+    };
+    if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return line_1based;
+    }
+    let lines: Vec<&str> = source.lines().collect();
+    if line_1based == 0 || line_1based > lines.len() {
+        return line_1based;
+    }
+    let start = line_1based - 1;
+    let contains_word = |l: &str| -> bool {
+        // Mask string literals: a name inside '...' is text, not code.
+        let mut masked = String::with_capacity(l.len());
+        let mut in_str = false;
+        for c in l.chars() {
+            if c == '\'' {
+                in_str = !in_str;
+                masked.push(' ');
+            } else {
+                masked.push(if in_str { ' ' } else { c });
+            }
+        }
+        let l = masked.as_str();
+        let bytes = l.as_bytes();
+        let mut from = 0;
+        while let Some(pos) = l[from..].find(name) {
+            let i = from + pos;
+            let before_ok = i == 0
+                || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
+            let end = i + name.len();
+            let after_ok = end >= bytes.len()
+                || !(bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_');
+            if before_ok && after_ok {
+                return true;
+            }
+            from = end;
+        }
+        false
+    };
+    let mut depth = 0i32;
+    for (idx, l) in lines.iter().enumerate().skip(start) {
+        if idx > start && depth <= 0 {
+            break;
+        }
+        if contains_word(l) {
+            return idx + 1;
+        }
+        let mut in_str = false;
+        for c in l.chars() {
+            match c {
+                '\'' => in_str = !in_str,
+                '[' | '(' if !in_str => depth += 1,
+                ']' | ')' if !in_str => depth -= 1,
+                _ => {}
+            }
+        }
+    }
+    line_1based
+}
+
+/// Rewrite every `line N:` prefix in a (possibly multi-line) error
+/// message to the refined line.
+pub fn refine_error_lines(source: &str, err: &str) -> String {
+    err.lines()
+        .map(|entry| {
+            let t = entry.trim_start();
+            if let Some(rest) = t.strip_prefix("line ") {
+                if let Some(colon) = rest.find(':') {
+                    if let Ok(n) = rest[..colon].parse::<usize>() {
+                        let refined = refine_error_line(source, n, &rest[colon..]);
+                        if refined != n {
+                            return entry.replacen(
+                                &format!("line {}:", n),
+                                &format!("line {}:", refined),
+                                1,
+                            );
+                        }
+                    }
+                }
+            }
+            entry.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(test)]
+mod refine_tests {
+    #[test]
+    fn refines_into_multiline_trees_and_leaves_correct_lines_alone() {
+        let src = "x = 1\nv = div[\n    p[a],\n    p[missing_name],\n    p[b]\n]\ny = 2\n";
+        // Statement starts at line 2; the offender is on line 4.
+        assert_eq!(crate::refine_error_line(src, 2, "undefined variable 'missing_name'"), 4);
+        // Already-correct lines stay put.
+        assert_eq!(crate::refine_error_line(src, 1, "undefined variable 'x'"), 1);
+        // A name inside a string literal on an earlier line must not match.
+        let src2 = "v = div[\n    p['missing_name is fine here'],\n    p[missing_name]\n]\n";
+        assert_eq!(crate::refine_error_line(src2, 1, "undefined variable 'missing_name'"), 3);
+        // Unquoted messages pass through.
+        assert_eq!(crate::refine_error_line(src, 2, "some other error"), 2);
+    }
 }
 
 /// Expand `use` imports by parsing module files and inserting prefixed
