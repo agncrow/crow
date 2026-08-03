@@ -272,6 +272,20 @@ pub fn substitute_params(sql: &str, params: &[serde_json::Value]) -> Result<Stri
     Ok(out)
 }
 
+/// ClickHouse server exceptions arrive with a full C++ stack trace.
+/// Keep the message (including the useful "In scope SELECT ..." tail),
+/// drop the frames.
+fn trim_server_error(e: &str) -> String {
+    let cut = e
+        .find("\n0. Poco::Exception")
+        .or_else(|| e.find(" 0. Poco::Exception"))
+        .or_else(|| e.find("\n0. "))
+        .unwrap_or(e.len());
+    let msg = e[..cut].trim();
+    // The server doubles the prefix: "DB::Exception: DB::Exception: ..."
+    msg.replace("DB::Exception: DB::Exception: ", "DB::Exception: ")
+}
+
 impl CrowDb for CrowClickhouseDb {
     fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
         let sql_owned;
@@ -284,13 +298,13 @@ impl CrowDb for CrowClickhouseDb {
 
         Self::off_runtime(|| self.rt.block_on(async {
             let mut stream = self.client.query_raw(sql).await
-                .map_err(|e| format!("clickhouse query error: {}", e))?;
+                .map_err(|e| format!("clickhouse query error: {}", trim_server_error(&e.to_string())))?;
 
             let mut all_col_names: Vec<String> = Vec::new();
             let mut all_col_data: Vec<Vec<Value>> = Vec::new();
 
             while let Some(block_result) = stream.next().await {
-                let block = block_result.map_err(|e| format!("clickhouse block error: {}", e))?;
+                let block = block_result.map_err(|e| format!("clickhouse block error: {}", trim_server_error(&e.to_string())))?;
                 if block.rows == 0 {
                     // Capture column names from empty blocks too
                     if all_col_names.is_empty() {
@@ -328,7 +342,7 @@ impl CrowDb for CrowClickhouseDb {
 
         Self::off_runtime(|| self.rt.block_on(async {
             self.client.execute(sql).await
-                .map_err(|e| format!("clickhouse exec error: {}", e))?;
+                .map_err(|e| format!("clickhouse exec error: {}", trim_server_error(&e.to_string())))?;
             // ClickHouse native protocol doesn't return affected row counts
             Ok(0)
         }))
