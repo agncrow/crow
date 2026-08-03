@@ -30,6 +30,11 @@ pub fn run_server() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     let capabilities = ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
         completion_provider: Some(Default::default()),
+        signature_help_provider: Some(lsp_types::SignatureHelpOptions {
+            trigger_characters: Some(vec!["[".into(), ",".into()]),
+            retrigger_characters: None,
+            work_done_progress_options: Default::default(),
+        }),
         hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
@@ -172,6 +177,19 @@ fn handle_request(state: &State, req: lsp_server::Request) -> Response {
                 .map(features::completions)
                 .unwrap_or_default();
             Response::new_ok(req.id, CompletionResponse::Array(items))
+        }
+        lsp_types::request::SignatureHelpRequest::METHOD => {
+            let p: lsp_types::SignatureHelpParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return Response::new_err(req.id, -32602, e.to_string()),
+            };
+            let uri = p.text_document_position_params.text_document.uri;
+            let pos = p.text_document_position_params.position;
+            let help = state
+                .docs
+                .get(uri.as_str())
+                .and_then(|a| features::signature_help(a, pos.line, pos.character));
+            Response::new_ok(req.id, help)
         }
         HoverRequest::METHOD => {
             let p: lsp_types::HoverParams = match serde_json::from_value(req.params) {

@@ -16,6 +16,9 @@ pub struct Analysis {
     pub ctx: TypeContext,
     pub tokens: Vec<SpannedToken>,
     pub diagnostics: Vec<Diagnostic>,
+    /// The analyzed document text — signature help walks it to find the
+    /// enclosing call at the cursor.
+    pub source: String,
 }
 
 pub fn analyze(
@@ -39,6 +42,7 @@ pub fn analyze(
                 DiagnosticSeverity::ERROR,
             ));
             return Analysis {
+            source: text.to_string(),
                 stmts: Vec::new(),
                 ctx: TypeContext::new(),
                 tokens: Vec::new(),
@@ -124,6 +128,7 @@ pub fn analyze(
     }
 
     Analysis {
+            source: text.to_string(),
         stmts,
         ctx,
         tokens,
