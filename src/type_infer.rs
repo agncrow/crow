@@ -354,6 +354,11 @@ impl TypeContext {
                             self.registry.load(std::sync::Arc::new(crate::modules::frame::FrameModule));
                         }
                     }
+                    if path == "doc" {
+                        if !self.registry.is_loaded("doc") {
+                            self.registry.load(std::sync::Arc::new(crate::modules::doc::DocModule));
+                        }
+                    }
                     if path == "db" {
                         if !self.registry.is_loaded("db") {
                             self.registry.load(std::sync::Arc::new(crate::modules::db::DbModule));
@@ -1211,6 +1216,44 @@ impl TypeContext {
     }
 
     /// Parse string interpolations and collect call types from embedded expressions.
+    /// True when any backtick span of the string evaluates to a fallible
+    /// value — the string is then fallible itself (errors propagate through
+    /// interpolation).
+    fn string_has_fallible_span(&self, s: &str) -> bool {
+        if !s.contains('`') { return false; }
+        let chars: Vec<char> = s.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '`' { i += 2; continue; }
+            if chars[i] == '`' {
+                let start = i + 1;
+                i += 1;
+                let mut in_str = false;
+                while i < chars.len() {
+                    let c = chars[i];
+                    if in_str {
+                        if c == '\\' && i + 1 < chars.len() { i += 2; continue; }
+                        if c == '\'' { in_str = false; }
+                    } else if c == '\'' { in_str = true; } else if c == '`' { break; }
+                    i += 1;
+                }
+                let expr_str: String = chars[start..i.min(chars.len())].iter().collect();
+                i += 1;
+                let mut lexer = crate::lexer::Lexer::new(&expr_str);
+                if let Ok(tokens) = lexer.tokenize() {
+                    let mut parser = crate::parser::Parser::new(tokens);
+                    if let Ok(stmts) = parser.parse() {
+                        let stmts = crate::lower::lower_program(&stmts).unwrap_or(stmts);
+                        if let Some(crate::ast::Stmt::ExprStmt(expr)) = stmts.iter().find(|s| !matches!(s, Stmt::Line(_))) {
+                            if matches!(self.infer_expr(expr), CrowType::Result(_)) { return true; }
+                        }
+                    }
+                }
+            } else { i += 1; }
+        }
+        false
+    }
+
     fn collect_call_types_in_string(&mut self, s: &str) {
         let chars: Vec<char> = s.chars().collect();
         let mut i = 0;
@@ -1559,6 +1602,24 @@ impl TypeContext {
         }
         // Non-overlapping module functions
         if !is_overlapping && self.registry.has_function(name) {
+            // A name two modules export (stack, unique, load: frame + math)
+            // resolves by its first argument's type — the same dispatch the
+            // emitters use — so a qualified call that lowering made bare
+            // keeps its type.
+            if self.registry.providers_of(name).len() > 1 {
+                let arg0 = args.first().map(|a| self.infer_expr(a));
+                let arg0 = arg0.map(|t| if let CrowType::Result(i) = t { *i } else { t });
+                let pick = match arg0 {
+                    Some(CrowType::Frame) | Some(CrowType::FrameCol) => Some("frame"),
+                    Some(CrowType::NumArray(_)) | Some(CrowType::Array(_)) => Some("math"),
+                    _ => None,
+                };
+                if let Some(m) = pick {
+                    if let Some(t) = self.registry.type_of_in(m, name, args.len()) {
+                        return t;
+                    }
+                }
+            }
             if let Some(t) = self.registry.type_of(name, args.len()) {
                 return t;
             }
@@ -1604,7 +1665,7 @@ impl TypeContext {
                 if let Some(arg) = args.first() {
                     let arg_type = self.infer_expr(arg);
                     let unwrapped = if let CrowType::Result(inner) = &arg_type { inner.as_ref() } else { &arg_type };
-                    if matches!(unwrapped, CrowType::Str) {
+                    if matches!(unwrapped, CrowType::Str | CrowType::Json) {
                         return CrowType::Result(Box::new(CrowType::Int));
                     }
                 }
@@ -1614,7 +1675,7 @@ impl TypeContext {
                 if let Some(arg) = args.first() {
                     let arg_type = self.infer_expr(arg);
                     let unwrapped = if let CrowType::Result(inner) = &arg_type { inner.as_ref() } else { &arg_type };
-                    if matches!(unwrapped, CrowType::Str) {
+                    if matches!(unwrapped, CrowType::Str | CrowType::Json) {
                         return CrowType::Result(Box::new(CrowType::Float));
                     }
                 }
@@ -1666,12 +1727,25 @@ impl TypeContext {
                     let map_type = self.infer_expr(arg);
                     if args.len() == 3 {
                         let val_type = self.infer_expr(&args[2]);
+                        // A fallible value propagates out of the call (the map
+                        // is built from the unwrapped value or not at all): the
+                        // result is a fallible map of plain values, never a map
+                        // of results. The same holds for a fallible map argument.
+                        let (map_fallible, map_type) = match map_type {
+                            CrowType::Result(inner) => (true, *inner),
+                            other => (false, other),
+                        };
+                        let (val_fallible, val_type) = match val_type {
+                            CrowType::Result(inner) => (true, *inner),
+                            other => (false, other),
+                        };
                         let existing_inner = if let CrowType::Map(inner) = &map_type {
                             *inner.clone()
                         } else {
                             CrowType::Unknown
                         };
-                        return CrowType::Map(Box::new(existing_inner.unify(&val_type)));
+                        let out = CrowType::Map(Box::new(existing_inner.unify(&val_type)));
+                        return if map_fallible || val_fallible { CrowType::Result(Box::new(out)) } else { out };
                     }
                     return map_type;
                 }
@@ -1704,7 +1778,9 @@ impl TypeContext {
                 CrowType::Unknown
             }
             "len" => CrowType::Int,
-            "shell" => CrowType::Struct("CrowShell".to_string()),
+            // shell/env are readers: error values on failure, stamped with a
+            // capture moment on success (same shape as read[])
+            "shell" => CrowType::Result(Box::new(CrowType::Struct("CrowShell".to_string()))),
             "calendar" => CrowType::Map(Box::new(CrowType::Int)),
             // Regex + search builtins
             "matches" => CrowType::Bool,
@@ -1751,7 +1827,7 @@ impl TypeContext {
             // running[] for in-flight status)
             "later" => CrowType::Void,
             "running" => CrowType::Bool,
-            "env" => CrowType::Str,
+            "env" => CrowType::Result(Box::new(CrowType::Str)),
             "exit" => CrowType::Int,
             // JSON builtins
             "json" => CrowType::Result(Box::new(CrowType::Json)),
@@ -1820,7 +1896,9 @@ impl TypeContext {
             Expr::Int(_) => CrowType::Int,
             Expr::Float(_) => CrowType::Float,
             Expr::Bool(_) => CrowType::Bool,
-            Expr::Str(_) => CrowType::Str,
+            Expr::Str(s) => {
+                if self.string_has_fallible_span(s) { CrowType::Result(Box::new(CrowType::Str)) } else { CrowType::Str }
+            }
             // Lowering resolves named args before inference; type is the value's
             Expr::Named { value, .. } => self.infer_expr(value),
             Expr::Ident(name) => {
@@ -1987,10 +2065,17 @@ impl TypeContext {
                             .get(_mod_name.as_str())
                             .cloned()
                             .unwrap_or_else(|| _mod_name.to_string());
-                        if matches!(_real_mod.as_str(), "math" | "io" | "frame" | "db" | "math.stats" | "math.nn")
+                        if matches!(_real_mod.as_str(), "math" | "io" | "frame" | "db" | "doc" | "math.stats" | "math.nn")
                             && self.registry.has_function(field)
                         {
                             if let Some(t) = self.registry.type_of_in(&_real_mod, field, args.len()) {
+                                // auto-propagation applies to qualified calls too:
+                                // a fallible argument makes the result fallible
+                                if !matches!(t, CrowType::Result(_) | CrowType::Void)
+                                    && args.iter().any(|a| matches!(self.infer_expr(a), CrowType::Result(_)))
+                                {
+                                    return CrowType::Result(Box::new(t));
+                                }
                                 return t;
                             }
                         }

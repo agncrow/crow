@@ -9,30 +9,30 @@ Crow is a data science language. The math library must be powerful enough to bui
 The foundation. Not nested arrays in the interpreter sense — a contiguous block of memory with shape, stride, and dtype. Every numerical operation in ML and scientific computing flows through arrays.
 
 ```
---- literals ---
-x = [1, 2, 3]                             --- 1D ---
-m = [[1, 2], [3, 4]]                      --- 2D ---
+--- literals
+x = [1, 2, 3]                             --- 1D
+m = [[1, 2], [3, 4]]                      --- 2D
 
---- creation ---
-z = zeros[3, 4]                            --- 3x4 of zeros ---
-o = ones[2, 3]                             --- 2x3 of ones ---
-r = rand[2, 3]                             --- 2x3 uniform random ---
-f = full[3, 4, 7.0]                        --- 3x4 filled with 7.0 ---
+--- creation
+z = zeros[3, 4]                            --- 3x4 of zeros
+o = ones[2, 3]                             --- 2x3 of ones
+r = rand[2, 3]                             --- 2x3 uniform random
+f = full[3, 4, 7.0]                        --- 3x4 filled with 7.0
 
---- ranges ---
-a = arange[0, 10, 2]                      --- [0, 2, 4, 6, 8] ---
-l = linspace[0, 1, 5]                      --- [0, 0.25, 0.5, 0.75, 1.0] ---
+--- ranges
+a = arange[0, 10, 2]                      --- [0, 2, 4, 6, 8]
+l = linspace[0, 1, 5]                      --- [0, 0.25, 0.5, 0.75, 1.0]
 
---- special matrices ---
-i = eye[3]                                 --- 3x3 identity ---
-d = diag[x]                                --- diagonal matrix from vector ---
-d = diag[m]                                --- extract diagonal from matrix ---
+--- special matrices
+i = eye[3]                                 --- 3x3 identity
+d = diag[x]                                --- diagonal matrix from vector
+d = diag[m]                                --- extract diagonal from matrix
 
---- constants ---
-pi                                         --- 3.14159... ---
-e                                          --- 2.71828... ---
-inf                                        --- infinity ---
-nan                                        --- not a number ---
+--- constants
+pi                                         --- 3.14159...
+e                                          --- 2.71828...
+inf                                        --- infinity
+nan                                        --- not a number
 ```
 
 Properties: `shape`, `dtype`, `device`, `grad`.
@@ -42,14 +42,14 @@ Properties: `shape`, `dtype`, `device`, `grad`.
 Element-wise math, reductions, reshaping, sorting, combining, and broadcasting.
 
 ```
---- element-wise arithmetic ---
+--- element-wise arithmetic
 c = a + b
 c = a - b
-c = a .* b                                --- element-wise multiply ---
-c = a ./ b                                --- element-wise divide ---
-c = a .^ b                                --- element-wise power ---
+c = a .* b                                --- element-wise multiply
+c = a ./ b                                --- element-wise divide
+c = a .^ b                                --- element-wise power
 
---- element-wise math ---
+--- element-wise math
 c = exp[a]
 c = log[a]
 c = sqrt[a]
@@ -58,10 +58,10 @@ c = sign[a]
 c = floor[a]
 c = ceil[a]
 c = round[a]
-c = clip[a, 0, 1]                         --- clamp values ---
-c = mod[a, b]                              --- modular arithmetic ---
+c = clip[a, 0, 1]                         --- clamp values
+c = mod[a, b]                              --- modular arithmetic
 
---- trigonometry ---
+--- trigonometry
 c = sin[a]
 c = cos[a]
 c = tan[a]
@@ -73,44 +73,44 @@ c = sinh[a]
 c = cosh[a]
 c = tanh[a]
 
---- reductions ---
-s = sum[x]                                 --- total ---
-s = sum[x, axis = 0]                       --- along axis ---
+--- reductions
+s = sum[x]                                 --- total
+s = sum[x, axis = 0]                       --- along axis
 m = mean[x]
 mx = max[x, axis = 1]
 mn = min[x]
-p = prod[x]                               --- product ---
+p = prod[x]                               --- product
 
---- selection ---
-i = argmax[x]                              --- index of max ---
-i = argmin[x]                              --- index of min ---
-c = where[cond, a, b]                      --- conditional: a if true, b if false ---
+--- selection
+i = argmax[x]                              --- index of max
+i = argmin[x]                              --- index of min
+c = where[cond, a, b]                      --- conditional: a if true, b if false
 
---- sorting ---
-s = sort[x]                                --- sorted array ---
-i = argsort[x]                             --- indices that would sort ---
-t = topk[x, 5]                             --- top 5 values ---
-u = unique[x]                              --- unique values ---
+--- sorting
+s = sort[x]                                --- sorted array
+i = argsort[x]                             --- indices that would sort
+t = topk[x, 5]                             --- top 5 values
+u = unique[x]                              --- unique values
 
---- cumulative ---
-c = cumsum[x]                              --- running sum ---
-c = cumprod[x]                             --- running product ---
+--- cumulative
+c = cumsum[x]                              --- running sum
+c = cumprod[x]                             --- running product
 
---- shape ---
+--- shape
 r = reshape[x, [2, 3]]
 t = trans[x]
 f = flatten[x]
 s = slice[x, 0, 3]
 
---- combining ---
-c = concat[a, b, axis = 0]                --- join along axis ---
-s = stack[arrays, axis = 0]               --- new axis ---
+--- combining
+c = concat[a, b, axis = 0]                --- join along axis
+s = stack[arrays, axis = 0]               --- new axis
 
---- advanced indexing ---
-y = x[indices]                             --- gather by index array ---
+--- advanced indexing
+y = x[indices]                             --- gather by index array
 
---- broadcasting ---
---- shapes [3, 1] + [1, 4] → [3, 4] automatically ---
+--- broadcasting
+--- shapes [3, 1] + [1, 4] → [3, 4] automatically
 ```
 
 ### Layer 2: Linear Algebra
@@ -118,24 +118,24 @@ y = x[indices]                             --- gather by index array ---
 What makes ML possible.
 
 ```
---- core ---
-c = a * b                                 --- matmul ---
+--- core
+c = a * b                                 --- matmul
 t = trans[m]
 i = inv[m]
 d = det[m]
 
---- decompositions ---
+--- decompositions
 u, s, v = svd[m]
 q, r = qr[m]
 l = cholesky[m]
 vals, vecs = eigen[m]
 
---- solving ---
-x = solve[a, b]                            --- solve Ax = b ---
+--- solving
+x = solve[a, b]                            --- solve Ax = b
 
---- norms ---
-n = norm[x]                                --- L2 norm ---
-n = norm[x, p = 1]                         --- L1 norm ---
+--- norms
+n = norm[x]                                --- L2 norm
+n = norm[x, p = 1]                         --- L1 norm
 ```
 
 ### Layer 3: Random & Distributions
@@ -143,20 +143,20 @@ n = norm[x, p = 1]                         --- L1 norm ---
 Reproducible random number generation and sampling from distributions.
 
 ```
---- seeding ---
-seed[42]                                   --- set global seed ---
+--- seeding
+seed[42]                                   --- set global seed
 
---- sampling ---
-r = rand[3, 4]                             --- uniform [0, 1) ---
-n = normal[0, 1, [3, 4]]                  --- normal distribution ---
-u = uniform[5, 10, [3, 4]]                --- uniform [5, 10) ---
-p = poisson[3.0, [100]]                   --- poisson distribution ---
-b = bernoulli[0.5, [100]]                 --- coin flips ---
+--- sampling
+r = rand[3, 4]                             --- uniform [0, 1)
+n = normal[0, 1, [3, 4]]                  --- normal distribution
+u = uniform[5, 10, [3, 4]]                --- uniform [5, 10)
+p = poisson[3.0, [100]]                   --- poisson distribution
+b = bernoulli[0.5, [100]]                 --- coin flips
 
---- array operations ---
-s = shuffle[x]                             --- random permutation ---
-c = choice[x, 10]                          --- random sample of 10 ---
-p = permutation[n]                         --- random permutation of 0..n ---
+--- array operations
+s = shuffle[x]                             --- random permutation
+c = choice[x, 10]                          --- random sample of 10
+p = permutation[n]                         --- random permutation of 0..n
 ```
 
 ### Layer 4: Signal Processing
@@ -164,18 +164,18 @@ p = permutation[n]                         --- random permutation of 0..n ---
 FFT and related transforms. Native implementations — can't build efficiently from array ops.
 
 ```
---- FFT ---
-f = fft[x]                                --- 1D FFT (returns complex) ---
-x = ifft[f]                               --- inverse FFT ---
-f = fft2[m]                               --- 2D FFT ---
+--- FFT
+f = fft[x]                                --- 1D FFT (returns complex)
+x = ifft[f]                               --- inverse FFT
+f = fft2[m]                               --- 2D FFT
 
---- convolution (mathematical, not NN) ---
-c = conv[a, b]                             --- 1D convolution ---
-c = conv2d[a, b]                           --- 2D convolution ---
+--- convolution (mathematical, not NN)
+c = conv[a, b]                             --- 1D convolution
+c = conv2d[a, b]                           --- 2D convolution
 
---- windowing ---
-w = hamming[n]                             --- Hamming window ---
-w = hanning[n]                             --- Hanning window ---
+--- windowing
+w = hamming[n]                             --- Hamming window
+w = hanning[n]                             --- Hanning window
 ```
 
 ### Layer 5: Special Functions & Complex Numbers
@@ -183,20 +183,20 @@ w = hanning[n]                             --- Hanning window ---
 Mathematical functions that can't be built from basic ops, and complex number support (required by FFT).
 
 ```
---- special functions ---
-g = gamma[x]                               --- gamma function ---
-e = erf[x]                                --- error function ---
-b = bessel[x, n]                           --- Bessel function ---
-f = factorial[n]                           --- n! ---
-c = choose[n, k]                           --- binomial coefficient ---
+--- special functions
+g = gamma[x]                               --- gamma function
+e = erf[x]                                --- error function
+b = bessel[x, n]                           --- Bessel function
+f = factorial[n]                           --- n!
+c = choose[n, k]                           --- binomial coefficient
 
---- complex numbers ---
-c = complex[3, 4]                          --- 3 + 4i ---
-r = real[c]                                --- real part ---
-i = imag[c]                                --- imaginary part ---
-m = magnitude[c]                           --- |c| ---
-p = phase[c]                               --- angle ---
-c = conjugate[c]                           --- complex conjugate ---
+--- complex numbers
+c = complex[3, 4]                          --- 3 + 4i
+r = real[c]                                --- real part
+i = imag[c]                                --- imaginary part
+m = magnitude[c]                           --- |c|
+p = phase[c]                               --- angle
+c = conjugate[c]                           --- complex conjugate
 ```
 
 ### Layer 6: Sparse Arrays
@@ -204,15 +204,15 @@ c = conjugate[c]                           --- complex conjugate ---
 Different data structure for matrices that are mostly zeros. Native implementation — can't fake with dense arrays.
 
 ```
---- creation ---
-s = sparse[dense_array]                    --- dense to sparse ---
-s = sparse[rows, cols, vals, shape]        --- COO format ---
-d = dense[s]                               --- sparse to dense ---
+--- creation
+s = sparse[dense_array]                    --- dense to sparse
+s = sparse[rows, cols, vals, shape]        --- COO format
+d = dense[s]                               --- sparse to dense
 
---- operations (same syntax as dense) ---
-c = s * v                                  --- sparse matmul ---
-c = s + s2                                 --- sparse add ---
-x = solve[s, b]                            --- sparse solve ---
+--- operations (same syntax as dense)
+c = s * v                                  --- sparse matmul
+c = s + s2                                 --- sparse add
+x = solve[s, b]                            --- sparse solve
 ```
 
 Sparse arrays use the same operators as dense arrays. The runtime dispatches to sparse-optimized algorithms automatically.
@@ -225,8 +225,8 @@ What makes deep learning possible. Computational graph that records operations a
 fn loss[w, x, y]
   return mean[(x * w - y) .* (x * w - y)]
 
-dloss = grad[loss]                         --- returns gradient function ---
-g = dloss[w, x, y]                         --- computes gradients ---
+dloss = grad[loss]                         --- returns gradient function
+g = dloss[w, x, y]                         --- computes gradients
 w = w - 0.01 * g
 ```
 
@@ -237,12 +237,12 @@ No manual derivative computation. `grad[f]` transforms a function into its gradi
 Array operations on GPU. Crow uses `gpu` as a language-level directive — the programmer specifies *intent*, the compiler decides what runs on GPU. No per-array device placement, no manual transfers.
 
 ```
-gpu[]                    --- all GPUs on this machine ---
-gpu[2]                   --- 2 GPUs on this machine ---
+gpu[]                    --- all GPUs on this machine
+gpu[2]                   --- 2 GPUs on this machine
 
 w = rand[784, 128] .* 0.01
 
---- compiler auto-dispatches numeric ops to GPU ---
+--- compiler auto-dispatches numeric ops to GPU
 h = relu[data * w + b]
 ```
 
@@ -253,16 +253,16 @@ The compiler decides what is GPU-eligible (numeric ops on arrays) and what falls
 Training across multiple machines. Crow uses `nodes` as a directive — same philosophy as `gpu`. Specify intent, the compiler handles data sharding, gradient synchronization, and communication.
 
 ```
-gpu[]                    --- all GPUs, this machine ---
-gpu[2]                   --- 2 GPUs, this machine ---
-nodes[4]                 --- 4 machines ---
-nodes[4, gpu = 2]        --- 4 machines, 2 GPUs each ---
+gpu[]                    --- all GPUs, this machine
+gpu[2]                   --- 2 GPUs, this machine
+nodes[4]                 --- 4 machines
+nodes[4, gpu = 2]        --- 4 machines, 2 GPUs each
 ```
 
 The user writes the same training loop. The compiler inserts allreduce, data sharding, and gradient sync automatically.
 
 ```
---- single machine ---
+--- single machine
 gpu[]
 
 fn loss[w, x, y]
@@ -273,7 +273,7 @@ for i in range[1000]
   g = dloss[w, x, y]
   w = w - 0.01 * g
 
---- distributed across 4 machines, same code ---
+--- distributed across 4 machines, same code
 nodes[4]
 gpu[]
 
@@ -353,14 +353,14 @@ Crow is in the **Julia camp** — transpiles to a fast language (Rust), so no "t
 One `math` library with sub-modules:
 
 ```
-use math                --- core: arrays, ops, linalg ---
-use math.stats          --- statistics, distributions, hypothesis testing ---
-use math.signal         --- FFT, convolution, filtering, windowing ---
-use math.optimize       --- minimize, root finding, curve fitting ---
-use math.sparse         --- sparse arrays ---
-use math.cluster        --- k-means, PCA, t-SNE ---
-use math.nn             --- neural network layers, activations, loss functions ---
-use math.series         --- time series, rolling, autocorrelation ---
+use math                --- core: arrays, ops, linalg
+use math.stats          --- statistics, distributions, hypothesis testing
+use math.signal         --- FFT, convolution, filtering, windowing
+use math.optimize       --- minimize, root finding, curve fitting
+use math.sparse         --- sparse arrays
+use math.cluster        --- k-means, PCA, t-SNE
+use math.nn             --- neural network layers, activations, loss functions
+use math.series         --- time series, rolling, autocorrelation
 ```
 
 `use math` gives you arrays, element-wise ops, linalg, autograd, random, and GPU/distributed directives — everything needed for most work. Sub-modules are imported only when needed.
@@ -474,8 +474,8 @@ Row-major (C order), matching Rust's default. A 3×4 matrix stores 12 f64 values
 #### Two-Tier Value System
 
 ```
-Value::Array(Vec<CrowValue>)     --- general arrays: ['hello', true] ---
-Value::NumArray(CrowTensor)      --- numeric arrays: contiguous f64, shaped ---
+Value::Array(Vec<CrowValue>)     --- general arrays: ['hello', true]
+Value::NumArray(CrowTensor)      --- numeric arrays: contiguous f64, shaped
 ```
 
 Type is decided at creation and never changes. Arrays are homogeneous per the spec. `[1, 2, 3]` → `NumArray`. `['a', 'b']` → `Array`. No mixed types, no type changes mid-program.
@@ -593,8 +593,8 @@ Three approaches exist in the wild:
 fn loss[w, x, y]
   return mean[(x * w - y) .* (x * w - y)]
 
-dloss = grad[loss]                         --- returns gradient function ---
-g = dloss[w, x, y]                         --- computes gradients ---
+dloss = grad[loss]                         --- returns gradient function
+g = dloss[w, x, y]                         --- computes gradients
 w = w - 0.01 * g
 ```
 
@@ -627,19 +627,19 @@ Zero overhead for non-gradient code — `grad` is only applied where explicitly 
 `nodes[n]` handles data parallelism — same model, different data on each device. This covers most training. For larger models, Crow provides strategy directives:
 
 ```
---- data parallelism (default) ---
+--- data parallelism (default)
 nodes[4]
 
---- ZeRO-style sharding ---
+--- ZeRO-style sharding
 nodes[4, shard = 'full']
 
---- tensor parallelism ---
+--- tensor parallelism
 nodes[4, tensor = 8]
 
---- pipeline parallelism ---
+--- pipeline parallelism
 nodes[4, split = 'pipeline', stages = 4]
 
---- mix (what Llama/GPT actually use) ---
+--- mix (what Llama/GPT actually use)
 nodes[64, tensor = 8, pipeline = 8]
 ```
 
@@ -652,7 +652,7 @@ Shard optimizer states, gradients, and parameters across devices to fit larger m
 ```
 nodes[4, shard = 'full']
 
---- same training code ---
+--- same training code
 dloss = grad[loss]
 for batch in batches
   g = dloss[w, batch.x, batch.y]
@@ -711,13 +711,13 @@ Sometimes compiler-generated GPU code isn't fast enough. Flash Attention is the 
 This can't be expressed in Crow (or Python, or Julia). It requires GPU-specific code managing memory hierarchy and tiling. The escape hatch is Rust:
 
 ```
---- crowfile ---
+--- crowfile
 native = ['kernels/flash_attention.rs']
 ```
 
 ```
---- main.crow ---
-out = flash_attention[q, k, v]     --- calls the Rust kernel ---
+--- main.crow
+out = flash_attention[q, k, v]     --- calls the Rust kernel
 ```
 
 Custom kernels are a build concern, not a language concern. Long-term, the compiler should recognize common patterns (e.g., `softmax[q * trans[k] ./ sqrt[d]] * v`) and auto-fuse them.
@@ -795,7 +795,7 @@ for epoch in range[10]
   total = 0.0
   for batch in batches
     g = dloss[w, batch.x, batch.y]
-    w = w - 0.001 * g                     --- map arithmetic ---
+    w = w - 0.001 * g                     --- map arithmetic
     total = total + loss[w, batch.x, batch.y]
   log['epoch `epoch` loss = `total / len[batches]`']
 ```
@@ -810,7 +810,7 @@ w = [
   b1 = zeros[128]
 ]
 
---- compiler auto-dispatches numeric ops to GPU ---
+--- compiler auto-dispatches numeric ops to GPU
 h = relu[data * w.w1 + w.b1]
 ```
 
@@ -820,7 +820,7 @@ h = relu[data * w.w1 + w.b1]
 nodes[4]
 gpu[]
 
---- same training code, compiler handles distribution ---
+--- same training code, compiler handles distribution
 dloss = grad[loss]
 for i in range[1000]
   g = dloss[w, x, y]

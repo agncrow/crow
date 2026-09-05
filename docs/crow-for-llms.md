@@ -74,14 +74,13 @@ if score gte 10
 else
     log['low']
 
---- No elif: nest else + if.
+--- No elif keyword: write else if.
 if n eq 1
     log['one']
+else if n eq 2
+    log['two']
 else
-    if n eq 2
-        log['two']
-    else
-        log['other']
+    log['other']
 
 --- Loops.
 for x in nums
@@ -117,7 +116,9 @@ all_big = all[nums, is_big]
 --- test scenario_name[]        (named = standalone; assert[] for steps)
 ---     assert[fee[2000.0] eq 2.0]
 --- Never write test_ prefixed fns, test directories, or verification helper fns.
---- Testing a live app: a = app[render] / click[a, handler] / a.state_var / html[a]
+--- Testing a live app (test blocks only): s = app[render] / click[s, handler] /
+---   change[s, 'var', value] / s.state_var / html[s] / elements[s, 'div.card button']
+---   (records: .tag .text .class + every attribute). No browser: views are trees.
 
 
 --- A moment is a NUMBER (epoch seconds). No date type, no duration type.
@@ -134,9 +135,12 @@ all_big = all[nums, is_big]
 --- date[]/elapsed[]/today[] were REMOVED. Timezones are always explicit; default UTC.
 
 --- Styling: pages look right with ZERO css. Blessed classes only:
---- class = 'card' 'stats' 'controls' 'row' 'primary' 'up' 'down' 'stale'
+--- class = 'card' 'stats' 'controls' 'primary' 'up' 'down' 'stale'
 --- Tokens --crow-bg/surface/text/muted/border/accent/up/down; override in
 --- css/app.css (optional). NEVER write css strings inside views.
+
+--- Charts: an element inside views. chart[frame, candles = ['o','hi','lo','c'],
+---   lines = ['vwap'], bars_y = 'vol', x = 'ts', tz = 'UTC', height = 320]
 
 --- Event args: in event position a call-shape DEFERS — args frozen at render.
 --- button['10x', click = set_speed[10.0]]   (fn set_speed[s] runs on click)
@@ -192,7 +196,7 @@ write the right column from the start.
 | `lambda x: x*2` | a named `fn` — no lambdas |
 | `class Foo:` | `struct Foo [a, b]` + free functions |
 | `match/case` | `if / else` — no pattern matching or sum types |
-| `elif` | `else` then an indented `if` |
+| `elif` | `else if` |
 | `import math` | `use math` |
 | `from pkg import x` | `use pkg` (then `pkg.x`), or `use pkg as p` |
 | `print(x)` | `log[x]` |
@@ -307,6 +311,8 @@ owns — the error tells you the fix. Rules of thumb:
 
 ## Where to look for more
 
+- `docs/book/` — The Crow Book: the tutorial, every code block machine-verified in both
+  execution modes. Chapter order is the recommended learning order.
 - `docs/language-spec.md` — the full specification, including every builtin and
   a long series of "Design Note: No X" sections explaining each deliberate
   omission (they answer "why can't I just…?").

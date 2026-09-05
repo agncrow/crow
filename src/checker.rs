@@ -23,9 +23,9 @@ pub(crate) const BUILTINS: &[&str] = &[
     "log", "assert", "type",
     "abs", "sqrt", "floor", "ceil", "round", "pow", "min", "max",
     "split", "trim", "replace", "upper", "lower", "join", "starts", "ends",
-    "repeat", "pad",
+    "repeat",
     "int", "float", "str",
-    "len", "contains", "slice", "push", "pop", "sort", "reverse", "append",
+    "len", "contains", "slice", "push", "pop", "sort", "reverse", "concat",
     "range", "map",
     "keys", "values", "has", "set", "del",
     "args", "input",
@@ -35,10 +35,10 @@ pub(crate) const BUILTINS: &[&str] = &[
     "json", "encode",
     "error",
     "cpu", "gpu",
-    "shell", "elapsed",
+    "shell",
     "serve", "route", "page",
     "later", "running",
-    "app", "html", "click",
+    "app", "html", "click", "elements", "change", "box", "fits", "style",
     "fmt",
     "now", "moment", "calendar", "parse_time", "captured", "chart",
 ];
@@ -315,11 +315,24 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
             _ => false,
         }
     }
+    // A connection is a declaration of a resource, not a computation: a
+    // view that reads at render (--- crow: remote-render) needs it to exist
+    // for app[] to render at all, exactly as it does for the served page.
+    fn is_connect(e: &Expr) -> bool {
+        match e {
+            Expr::Call { callee, .. } => match callee.as_ref() {
+                Expr::Ident(n) => n == "connect",
+                Expr::FieldAccess { object, field } => field == "connect" && matches!(object.as_ref(), Expr::Ident(m) if m == "db"),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
     let decls: Vec<Stmt> = stmts
         .iter()
         .filter(|s| match s {
             Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::Use { .. } => true,
-            Stmt::Assign { value, .. } => is_literal(value),
+            Stmt::Assign { value, .. } => is_literal(value) || is_connect(value),
             _ => false,
         })
         .cloned()
@@ -1024,7 +1037,7 @@ pub fn check_style_tokens(css_path: &str) -> Vec<(String, String)> {
 /// guard anywhere. This is the propagation the runtime deliberately does
 /// not carry: capture lives on the read, the checker traces the flow.
 pub fn find_unguarded_staleness(stmts: &[Stmt]) -> Vec<Issue> {
-    const READERS: &[&str] = &["query", "read", "fetch", "recv", "load"];
+    const READERS: &[&str] = &["query", "read", "fetch", "recv", "load", "csv", "lines", "input", "ls"];
 
     fn calls_reader(e: &Expr) -> bool {
         match e {

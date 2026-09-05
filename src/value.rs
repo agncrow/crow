@@ -57,12 +57,15 @@ impl CrowValue {
     }
 
     pub fn error_with_kind(reason: &str, kind: &str, trace_entry: &str) -> Self {
+        // An empty trace entry means "no location" — module builtins have
+        // none, and compiled mode emits an empty trace for them too.
+        let trace = if trace_entry.is_empty() { vec![] } else { vec![trace_entry.to_string()] };
         CrowValue {
             value: Value::Done,
             ok: false,
             reason: reason.to_string(),
             kind: kind.to_string(),
-            trace: vec![trace_entry.to_string()],
+            trace,
             captured: None,
         }
     }
@@ -128,7 +131,7 @@ pub enum Value {
     Frame(CrowFrame), // column-oriented data frame
     DbConn(DbHandle), // database connection handle
     Dual(f64, f64), // dual number for autograd: (real, derivative)
-    App(FnValue),   // headless app session for test blocks (holds the view)
+    App(FnValue, f64),   // headless app session for test blocks (the view, its viewport width)
     GradFn(FnValue), // gradient function wrapping a user function
     Done, // represents no value (from 'done' status)
 }
@@ -170,7 +173,7 @@ impl Value {
     /// Return the Crow type name for this value
     pub fn type_name(&self) -> &'static str {
         match self {
-            Value::App(_) => "app",
+            Value::App(..) => "app",
             Value::Int(_) => "int",
             Value::Float(_) => "float",
             Value::Str(_) => "string",
@@ -210,7 +213,7 @@ impl Value {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Value::App(a) => write!(f, "app[{}]", a.name),
+            Value::App(a, _) => write!(f, "app[{}]", a.name),
             Value::Int(n) => write!(f, "{}", n),
             Value::Float(n) => write!(f, "{}", n),
             Value::Str(s) => write!(f, "{}", s),

@@ -4,7 +4,7 @@ use crate::modules::CrowModule;
 
 pub struct NnModule;
 
-const NN_FUNCTIONS: &[&str] = &[
+pub(crate) const NN_FUNCTIONS: &[&str] = &[
     "relu", "sigmoid", "softmax", "gelu",
     "mse", "crossentropy", "bce",
     "linear",

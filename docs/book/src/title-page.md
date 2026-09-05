@@ -2,12 +2,24 @@
 
 *by the Crow project*
 
-This book teaches Crow from the ground up — a language for data work and web
-applications that compiles to Rust, runs parallel by default, and treats
-errors as values.
+Two documents, one language:
 
-Every code block in this book is executed by `crow test --book` in both of
-Crow's execution modes on every change: what you read is what runs.
+- **Part I, the book** — teaches Crow from the ground up: a language for
+  data work and web applications that compiles to Rust, runs parallel by
+  default, and treats errors as values. Read it in order. Every code block
+  is executed by `crow test --book` in both of Crow's execution modes on
+  every change: what you read is what runs.
+- **Part II, the [language specification](language-spec.md)** — the
+  reference and the source of truth (`docs/language-spec.md` in the
+  repository): every construct, every builtin, and a Design Note for every
+  feature Crow deliberately leaves out. Consult it whenever the book says
+  "the spec covers the rest", and read its Design Notes whenever you
+  wonder "why can't I…".
 
-The companion reference is [`language-spec.md`](../../language-spec.md) — the
-book teaches, the spec specifies.
+The book teaches; the spec specifies.
+
+Every code block on this site can be run where it stands. From a checkout
+of the repository run `crow book` and open the printed address: each block
+gets ▶ Run (interpreter), ⚙ Compile (native), ✓ Test (its test blocks),
+↺ Reset (the block itself is editable — change it and run again), and ■ Stop — the same binary that
+verifies the book serves it.

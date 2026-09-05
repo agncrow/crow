@@ -5,7 +5,7 @@ use crow_runtime::frame::{CrowFrame, AggFn, parse_datetime, format_datetime};
 
 pub struct FrameModule;
 
-const FRAME_FUNCTIONS: &[&str] = &[
+pub(crate) const FRAME_FUNCTIONS: &[&str] = &[
     "load", "save", "select", "filter", "sort", "group", "join", "stack",
     "head", "tail", "fill", "unique", "rename", "stats", "datetime", "tz",
 ];
@@ -60,7 +60,7 @@ fn call_frame(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             let path = to_str(&args[0], "load")?;
             match crow_runtime::frame::load_csv(path) {
                 Ok(frame) => Ok(CrowValue::ok(Value::Frame(frame))),
-                Err(ref e) => Ok(CrowValue::error(e, "frame")),
+                Err(ref e) => Ok(CrowValue::error_with_kind(e, "frame", "")),
             }
         }
         "save" => {
@@ -69,7 +69,7 @@ fn call_frame(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             let path = to_str(&args[1], "save")?;
             match frame.save(path) {
                 Ok(()) => Ok(CrowValue::done()),
-                Err(e) => Ok(CrowValue::error(&e, "frame")),
+                Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
             }
         }
         "select" => {
@@ -79,7 +79,7 @@ fn call_frame(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             let refs: Vec<&str> = col_names.iter().map(|s| s.as_str()).collect();
             match frame.select(&refs) {
                 Ok(f) => Ok(CrowValue::ok(Value::Frame(f))),
-                Err(e) => Ok(CrowValue::error(&e, "frame")),
+                Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
             }
         }
         "filter" => {
@@ -88,7 +88,7 @@ fn call_frame(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             let mask = extract_bool_list(&args[1], "filter")?;
             match frame.filter(&mask) {
                 Ok(f) => Ok(CrowValue::ok(Value::Frame(f))),
-                Err(e) => Ok(CrowValue::error(&e, "frame")),
+                Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
             }
         }
         "sort" => call_sort(args),
@@ -119,7 +119,7 @@ fn call_sort(args: &[CrowValue]) -> Result<CrowValue, String> {
     } else { false };
     match frame.sort(col, desc) {
         Ok(f) => Ok(CrowValue::ok(Value::Frame(f))),
-        Err(e) => Ok(CrowValue::error(&e, "frame")),
+        Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
     }
 }
 
@@ -151,7 +151,7 @@ fn call_group(args: &[CrowValue]) -> Result<CrowValue, String> {
     let agg_refs: Vec<(&str, AggFn)> = aggs.iter().map(|(s, a)| (s.as_str(), *a)).collect();
     match frame.group(group_col, &agg_refs) {
         Ok(f) => Ok(CrowValue::ok(Value::Frame(f))),
-        Err(e) => Ok(CrowValue::error(&e, "frame")),
+        Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
     }
 }
 
@@ -163,7 +163,7 @@ fn call_join(args: &[CrowValue]) -> Result<CrowValue, String> {
     let jtype = if args.len() == 4 { to_str(&args[3], "join")? } else { "inner" };
     match left.join(right, key, jtype) {
         Ok(f) => Ok(CrowValue::ok(Value::Frame(f))),
-        Err(e) => Ok(CrowValue::error(&e, "frame")),
+        Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
     }
 }
 
@@ -173,7 +173,7 @@ fn call_stack(args: &[CrowValue]) -> Result<CrowValue, String> {
     let b = to_frame(&args[1], "stack")?;
     match a.stack(b) {
         Ok(f) => Ok(CrowValue::ok(Value::Frame(f))),
-        Err(e) => Ok(CrowValue::error(&e, "frame")),
+        Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
     }
 }
 
@@ -193,7 +193,7 @@ fn call_fill(args: &[CrowValue]) -> Result<CrowValue, String> {
     let fill_val = format!("{}", args[2].value);
     match frame.fill_column(col, &fill_val) {
         Ok(f) => Ok(CrowValue::ok(Value::Frame(f))),
-        Err(e) => Ok(CrowValue::error(&e, "frame")),
+        Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
     }
 }
 
@@ -210,7 +210,7 @@ fn call_unique(args: &[CrowValue]) -> Result<CrowValue, String> {
                 .collect();
             Ok(CrowValue::ok(Value::Array(arr)))
         }
-        Err(e) => Ok(CrowValue::error(&e, "frame")),
+        Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
     }
 }
 
@@ -221,7 +221,7 @@ fn call_rename(args: &[CrowValue]) -> Result<CrowValue, String> {
     let new = to_str(&args[2], "rename")?;
     match frame.rename(old, new) {
         Ok(f) => Ok(CrowValue::ok(Value::Frame(f))),
-        Err(e) => Ok(CrowValue::error(&e, "frame")),
+        Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
     }
 }
 
@@ -240,7 +240,7 @@ fn call_datetime(args: &[CrowValue]) -> Result<CrowValue, String> {
             let formatted = format_datetime(millis, offset);
             Ok(CrowValue::ok(Value::Str(formatted)))
         }
-        None => Ok(CrowValue::error(&format!("datetime: cannot parse '{}'", s), "frame")),
+        None => Ok(CrowValue::error_with_kind(&format!("datetime: cannot parse '{}'", s), "frame", "")),
     }
 }
 
@@ -302,8 +302,10 @@ fn extract_bool_list(v: &CrowValue, fname: &str) -> Result<Vec<bool>, String> {
 fn emit_frame_rust(name: &str, arg_strs: &[String], _arg_types: &[CrowType]) -> Result<String, String> {
     // For now, emit simple Rust calls to crow_runtime::frame functions
     let result = match name {
+        // load[path] is a reader: an error value on failure (kind 'frame'),
+        // stamped with a capture moment on success — same shape as query[].
         "load" => format!(
-            "{{ match crow_runtime::frame::load_csv(&{}) {{ Ok(f) => f, Err(e) => panic!(\"load: {{}}\", e) }} }}",
+            "{{ match crow_runtime::frame::load_csv(&{}) {{ Ok(_f) => CrowResult {{ ok: true, value: _f, reason: String::new(), kind: String::new(), trace: vec![], captured: crow_runtime::moments::now() }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"frame\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
             arg_strs[0]
         ),
         "save" => format!(
@@ -400,7 +402,7 @@ fn emit_frame_rust(name: &str, arg_strs: &[String], _arg_types: &[CrowType]) -> 
 
 fn frame_type_of(name: &str) -> CrowType {
     match name {
-        "load" => CrowType::Frame,
+        "load" => CrowType::Result(Box::new(CrowType::Frame)),
         "save" => CrowType::Void,
         "select" | "filter" | "sort" | "group" | "join" | "stack"
         | "head" | "tail" | "fill" | "rename" => CrowType::Frame,

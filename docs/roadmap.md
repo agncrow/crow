@@ -13,15 +13,19 @@ What's done, what's remaining, and in what order.
 | Statistics (13) | median, std, var, percentile, zscore, corr, cov, ttest, linreg, chisq, anova, kstest, fit |
 | Neural networks (8) | relu, sigmoid, softmax, gelu, mse, crossentropy, bce, linear |
 | DataFrames (16+) | load, save, select, filter, sort, group, join, stack, head, tail, fill, unique, rename, stats, datetime, tz |
-| General-purpose (P3) | regex (find, matches, sub), date/time (now, date, elapsed), shell, hashing (sha256/sha512/md5) |
+| General-purpose (P3) | regex (find, matches, sub), moments (now, moment, calendar, parse_time — a moment is a number), freshness (captured), shell, hashing (sha256/sha512/md5) |
 | Web framework (P4) | 17 modules: server, client, db, auth, cors, session, template, cache, rate, upload, sse, ws, live, static, mail, queue, docs — all with transpiler codegen + interpreter support |
 | Autograd | `grad[f]` functional transformation |
 | Parallel execution | Auto-parallel `for` loops (rayon), statement-level parallelism via dependency analysis |
-| CLI | `crow run`, `crow build`, `crow fmt`, `crow check`, `crow new`, `crow install`, REPL |
+| CLI | `crow run`, `crow build`, `crow stop`, `crow fmt`, `crow check` (+ `--db`, `--strict`), `crow fix`, `crow test` (blocks, `--parity`, `--book`), `crow lsp`, `crow new`, `crow install`, `crow launch`, REPL |
+| Verification | `test` blocks (attached examples/laws, named scenarios, generated inputs, `app[]` harness for views); `crow check` hazards for the live loop (blocking, stale snapshots) and, with a schema, the concurrency catalog (write skew, lost update, latch, assumed-unique, unpaired writes) |
+| Live apps | `view` blocks, reactive state, named-argument attributes, deferred event calls, `later[]`/`running[]`, `serve[port, refresh =, budget =]`, default stylesheet (8 classes + 8 tokens, `css/app.css` hatch), `chart[]` element |
+| Book runner | `crow book`: the book served by the compiler with every block runnable in place (interpret / compile / test / stop) |
+| Editor | `crow lsp` (diagnostics, completion, hover, go-to-definition, signature help) + VS Code extension in `editors/vscode` |
 | Project structure | `crow new` scaffolding (--web, --ml, --db), `crow run <job>`, convention-based views/jobs/layout/db, dot-path imports (`use views.home`), multi-import (`use web, ui`) |
 | DX | Default welcome page for empty web apps, friendly error messages (e.g. "port 3000 is already in use") |
-| Tests | 998 unit tests (+ 3 GPU benchmarks) |
-| Documentation | language-spec.md, web-framework.md, ui-framework.md, math-library.md, feature-map.md, frame-module.md, usage.md, comparison.md, automatic-verification.md |
+| Tests | cargo unit tests, 33-file parity corpus (`crow test --parity`), every book block in both modes (`crow test --book`), docs-vs-compiler coverage (`crow test --docs`), db-check fixtures in `tests/db_check`, chart harness; CI runs all of them (`.github/workflows/ci.yml`) |
+| Documentation | The Crow Book (`docs/book`, 13 chapters + 5 appendices), language-spec.md, crow-for-llms.md, usage.md, crow-check.md, crow-lsp.md, module references, design records — indexed in `docs/README.md` |
 
 ## Remaining Work
 
@@ -106,7 +110,7 @@ All 17 server-side modules implemented with 119 tests passing:
 #### Client-side WASM — rejected
 Rejected in favor of the Crow UI framework (see below). Building a WASM frontend pipeline would require `wasm-bindgen`, `web-sys`, and a reactive runtime — essentially building React/Svelte from scratch. The UI framework approach achieves the same goal (one-language full-stack) with pure Crow libraries and server-rendered HTML.
 
-#### P8 — UI Framework — in progress
+#### P8 — UI Framework — in progress (Phases 1–2 done; `view` blocks, `later`, style and chart modules shipped since — see the status table above)
 
 > **See [docs/ui-framework.md](ui-framework.md) for the full design document.**
 
@@ -160,7 +164,7 @@ Goal: `fetch[url]`, `poll[url, seconds]`, `field[label, var]`, `select[options, 
 ##### Phase 5: Developer Experience
 
 - [ ] **`crow dev`** — hot reload server, error overlay
-- [ ] **Chart engine** — `chart.live`, custom Canvas renderer, hooks
+- [x] **Chart engine** — shipped as the `chart[frame, ...]` element (server-rendered SVG, `chart-module-design.md`)
 - [ ] **Dev tools** — state inspector, event log
 
 ### P4.5 — Database module ✅
@@ -199,7 +203,7 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. All three backen
 - [ ] **Community packages**: Seed the ecosystem with useful packages (plotting, data connectors, model zoo).
 - [ ] **Pretrained models**: Common models (linear regression, decision trees, simple NNs) as installable packages.
 - [ ] **Notebook integration**: Jupyter kernel or similar interactive environment for exploratory data science.
-- [ ] **Editor support**: Syntax highlighting and LSP for VS Code, Vim, etc.
+- [x] **Editor support**: `crow lsp` + VS Code extension (Neovim/Helix/Zed via native LSP clients) — see `crow-lsp.md`.
 
 ## Overall Rating (current)
 

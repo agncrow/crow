@@ -351,39 +351,7 @@ pub fn live_js(ws_path: &str) -> String {
 /// class vocabulary (card stats controls row primary up down stale).
 /// Tokens are CSS custom properties; a project's css/app.css may
 /// override just the tokens, or everything (see style-module-design.md).
-pub const DEFAULT_CSS: &str = r#":root{--crow-bg:#f6f7f9;--crow-surface:#ffffff;--crow-text:#1b222b;--crow-muted:#5d6773;--crow-border:#dce1e8;--crow-accent:#a86e1c;--crow-up:#177a4e;--crow-down:#bd3a3a}
-@media (prefers-color-scheme:dark){:root{--crow-bg:#0f1317;--crow-surface:#171d24;--crow-text:#e6e9ec;--crow-muted:#8b95a1;--crow-border:#28313c;--crow-accent:#e8a940;--crow-up:#3dbd85;--crow-down:#e06060}}
-:root[data-theme="dark"]{--crow-bg:#0f1317;--crow-surface:#171d24;--crow-text:#e6e9ec;--crow-muted:#8b95a1;--crow-border:#28313c;--crow-accent:#e8a940;--crow-up:#3dbd85;--crow-down:#e06060}
-:root[data-theme="light"]{--crow-bg:#f6f7f9;--crow-surface:#ffffff;--crow-text:#1b222b;--crow-muted:#5d6773;--crow-border:#dce1e8;--crow-accent:#a86e1c;--crow-up:#177a4e;--crow-down:#bd3a3a}
-*{box-sizing:border-box}
-body{margin:0 auto;max-width:860px;padding:2.2rem 1.25rem 4rem;background:var(--crow-bg);color:var(--crow-text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:15px;line-height:1.55}
-h1{font-size:1.45rem;font-weight:650;letter-spacing:-0.015em;margin:0 0 0.25rem}
-h2{font-size:0.8rem;font-weight:600;text-transform:uppercase;letter-spacing:0.09em;color:var(--crow-muted);margin:2.2rem 0 0.7rem}
-h3{font-size:0.95rem;margin:1.2rem 0 0.4rem}
-p{margin:0.4rem 0}
-a{color:var(--crow-accent)}
-button{font:inherit;font-size:0.92rem;color:var(--crow-text);background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px;padding:0.42rem 0.95rem;cursor:pointer;transition:border-color 120ms ease,background 120ms ease}
-button:hover{border-color:var(--crow-accent)}
-button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--crow-accent);outline-offset:1px}
-@media (prefers-reduced-motion:reduce){button{transition:none}}
-label{color:var(--crow-muted);font-size:0.88rem;display:inline-flex;align-items:center;gap:0.5rem}
-input,select,textarea{font:inherit;font-size:0.92rem;color:var(--crow-text);background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px;padding:0.4rem 0.6rem}
-input{width:9.5rem}
-pre,code{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:0.9em}
-table{border-collapse:collapse;width:100%;font-size:0.92rem}
-th{text-align:left;font-weight:600;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.08em;color:var(--crow-muted);border-bottom:1px solid var(--crow-border);padding:0.45rem 0.9rem 0.45rem 0}
-td{border-bottom:1px solid var(--crow-border);padding:0.5rem 0.9rem 0.5rem 0;font-variant-numeric:tabular-nums}
-.controls{display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;margin:0.9rem 0}
-.row{display:flex;flex-wrap:wrap;gap:0.6rem;align-items:center}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.6rem;margin:1.1rem 0}
-.card{background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px;padding:0.75rem 0.9rem}
-.card h3{margin:0 0 0.3rem;font-size:0.68rem;font-weight:600;text-transform:uppercase;letter-spacing:0.09em;color:var(--crow-muted)}
-.card p{margin:0;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:1.25rem;font-variant-numeric:tabular-nums;letter-spacing:-0.01em}
-button.primary{background:var(--crow-accent);border-color:var(--crow-accent);color:var(--crow-bg);font-weight:600}
-button.primary:hover{filter:brightness(1.08)}
-.up{color:var(--crow-up)}
-.down{color:var(--crow-down)}
-.stale{color:var(--crow-muted)}"#;
+pub use crow_runtime::layout::DEFAULT_CSS;
 
 /// A project's own css/app.css, inlined after the defaults when present —
 /// override tokens for a theme, or anything for a full custom look.
@@ -411,7 +379,7 @@ fn page_shell(body_html: &str, js: &str) -> String {
 {js}
 </body>
 </html>"#,
-        css = DEFAULT_CSS,
+        css = format!("{}\n{}", DEFAULT_CSS, crow_runtime::layout::RESPONSIVE_CSS),
         project = project_css(),
         body = body_html,
         js = js

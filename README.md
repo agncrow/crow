@@ -30,9 +30,11 @@ crow new hello && cd hello && crow run
 ## Learn
 
 - **[The Crow Book](docs/book/src/SUMMARY.md)** — step-by-step, from install to a live dashboard. Every code block is executed in both execution modes by CI (`crow test --book`).
+- **[Toolchain guide](docs/usage.md)** — every `crow` command, project layout, the crowfile.
+- **Run the book's examples in place** — `crow book` serves the book with ▶ Run / ⚙ Compile / ✓ Test / ■ Stop on every code block.
 - **Learning with an AI assistant?** Paste [`docs/crow-for-llms.md`](docs/crow-for-llms.md) into it and ask it to teach you interactively — the file is written to make any LLM an accurate Crow tutor.
 - **[Language specification](docs/language-spec.md)** — the reference, including the Design Notes explaining every deliberately rejected feature.
-- Runnable programs in [`examples/`](examples/).
+- Runnable programs in [`examples/`](examples/) (indexed in its README), and the full documentation map in [`docs/README.md`](docs/README.md).
 
 ## Two execution modes, one behavior
 

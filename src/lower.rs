@@ -29,6 +29,8 @@ pub const UI_ELEMENTS: &[&str] = &[
     "header", "footer", "section", "tr", "td", "th",
     "thead", "tbody", "option", "textarea", "label",
     "pre", "code", "input", "img", "table",
+    // the layout vocabulary's containers (render as div; see crow_runtime::layout)
+    "stack", "row", "grid", "overlay", "scroll",
 ];
 
 /// Builtins with named parameters: name → ordered named-parameter list.
@@ -37,6 +39,8 @@ fn builtin_named_params(name: &str) -> Option<&'static [&'static str]> {
     match name {
         "sum" | "mean" | "min" | "max" | "prod" | "stack" | "concat" => Some(&["axis"]),
         "sort" => Some(&["desc"]),
+        // test harness: app[view, width = 1280]
+        "app" => Some(&["width"]),
         _ => None,
     }
 }
@@ -195,6 +199,13 @@ impl Lowerer {
 
     fn lower_expr(&mut self, expr: &Expr) -> Result<Expr, String> {
         Ok(match expr {
+            // a for expression's body is a block like any other: its map
+            // literals and named arguments lower the same way
+            Expr::ForExpr { var, iter, body } => Expr::ForExpr {
+                var: var.clone(),
+                iter: Box::new(self.lower_expr(iter)?),
+                body: self.lower_stmts(body)?,
+            },
             Expr::Call { callee, args } => {
                 let callee = self.lower_expr(callee)?;
                 let args: Vec<Expr> = args.iter().map(|a| self.lower_expr(a)).collect::<Result<_, _>>()?;

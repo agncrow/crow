@@ -220,8 +220,8 @@ Crow code accesses these naturally:
 
 ```
 fn handle[req]
-  log[req.method]         --- 'GET' ---
-  log[req.path]           --- '/users/42' ---
+  log[req.method]         --- 'GET'
+  log[req.path]           --- '/users/42'
 
 ```
 use web, ui
@@ -261,23 +261,23 @@ Rust module: `crow_web::client`
 ```
 use web.client
 
---- Simple GET ---
+--- Simple GET
 res = get['https://api.example.com/users']
-log[res.status]       --- 200 ---
-log[res.ok]           --- true ---
-users = res.json      --- parsed JSON ---
-log[res.body]         --- raw string ---
+log[res.status]       --- 200
+log[res.ok]           --- true
+users = res.json      --- parsed JSON
+log[res.body]         --- raw string
 
---- POST with JSON body ---
+--- POST with JSON body
 res = post['https://api.example.com/users', {name, 'alice', age, 30}]
 
---- PUT ---
+--- PUT
 res = put['https://api.example.com/users/1', {name, 'bob'}]
 
---- DELETE ---
+--- DELETE
 res = del['https://api.example.com/users/1']
 
---- With headers ---
+--- With headers
 res = get['https://api.example.com/data', {authorization, 'Bearer token123'}]
 res = post['https://api.example.com/data', {key, 'value'}, {authorization, 'Bearer token123'}]
 ```
@@ -363,7 +363,7 @@ use web.ws
 sock = connect['ws://localhost:8080/feed']
 send[sock, 'hello']
 msg = recv[sock]
-log[msg]              --- 'world' ---
+log[msg]              --- 'world'
 close[sock]
 ```
 
@@ -472,24 +472,24 @@ Rust backend: `rusqlite` (SQLite) + `postgres` (PostgreSQL), feature-gated
 ```
 use web.db
 
---- SQLite ---
+--- SQLite
 db = open[env['DATABASE_URL', 'sqlite://app.db']]
 
---- PostgreSQL ---
+--- PostgreSQL
 db = open[env['DATABASE_URL', 'postgres://user:pass@localhost/mydb']]
 
---- Create table ---
+--- Create table
 execute[db, 'CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)']
 
---- Insert ---
+--- Insert
 execute[db, 'INSERT INTO users (name, age) VALUES (?, ?)', ['alice', 30]]
 
---- Query ---
+--- Query
 rows = query[db, 'SELECT * FROM users WHERE age > ?', [25]]
 for row in rows
   log['{row.name} is {row.age}']
 
---- Close ---
+--- Close
 close[db]
 ```
 
@@ -529,7 +529,7 @@ route['/users', list_users]
 route['/users', 'POST', create_user
 ]
 
-docs[app, '/docs']    --- Swagger UI at /docs ---
+docs[app, '/docs']    --- Swagger UI at /docs
 serve[env['PORT', 3000]]
 ```
 
@@ -624,7 +624,7 @@ live['/dashboard', fn[state]
       tr[]
         td[m.ts]
         td[m.value]
-, {interval, 1000}]   --- auto-refresh every 1s ---
+, {interval, 1000}]   --- auto-refresh every 1s
 
 serve[env['PORT', 3000]]
 ```
@@ -767,8 +767,8 @@ state = store[{
   user, none
 }]
 
---- Reactive updates ---
-state.count = state.count + 1    --- triggers re-render of dependent views ---
+--- Reactive updates
+state.count = state.count + 1    --- triggers re-render of dependent views
 ```
 
 **How it works:**
@@ -923,7 +923,7 @@ SECRET_KEY=abc123
 ```
 
 ```
---- app.crow ---
+--- app.crow
 use web
 use web.db
 

@@ -43,11 +43,11 @@ Two reasons, and they're both load-bearing:
    signature — refactoring, testing, and `crow check` all get harder.
    Parameters-in, return-out means every dependency is visible at the
    call site.
-2. **Parallelism needs it.** The next chapter's automatic parallel loops
+2. **Parallelism needs it.** Chapter 6's automatic parallel loops
    work because the scheduler can see every read and write at each call
    site. Hidden reads would turn "parallel by default" into "data races
    by default." Crow chose the scope rule that makes the loop rule sound.
 
 The one sanctioned exception is reactive state in web UIs (`view` blocks
-and event handlers, chapter 11) — a managed channel, synchronized by the
+and event handlers, chapter 12) — a managed channel, synchronized by the
 runtime, not ambient mutation.

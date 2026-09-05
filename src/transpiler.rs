@@ -36,6 +36,10 @@ pub struct Transpiler {
     unwrap_result_args: bool,
     /// Indices of CrowResult args being unwrapped (used with unwrap_result_args)
     propagation_indices: Option<Vec<usize>>,
+    /// The exact argument expressions being unwrapped (by address): a map
+    /// literal lowers to nested set[] calls whose inner calls have the same
+    /// argument positions, and only the outer call's arguments are temps.
+    propagation_ptrs: Vec<usize>,
     /// Return type of the current function being emitted (for wrapping plain returns in CrowResult)
     current_fn_return_type: Option<CrowType>,
     /// Name of the current function being emitted (for trace entries)
@@ -120,6 +124,7 @@ impl Transpiler {
             current_line: 0,
             unwrap_result_args: false,
             propagation_indices: None,
+            propagation_ptrs: Vec::new(),
             current_fn_return_type: None,
             current_function_name: String::new(),
             source_file: String::new(),
@@ -901,6 +906,11 @@ impl Transpiler {
                         self.registry.load(std::sync::Arc::new(crate::modules::frame::FrameModule));
                     }
                 }
+                if path == "doc" {
+                    if !self.registry.is_loaded("doc") {
+                        self.registry.load(std::sync::Arc::new(crate::modules::doc::DocModule));
+                    }
+                }
                 self.modules.insert(module_name);
             }
         }
@@ -1476,11 +1486,21 @@ impl Transpiler {
             self.emit_line("");
             self.emit_line("#[derive(Clone, Debug)]");
             self.emit_line("struct CrowFindResult { ok: bool, groups: Vec<String> }");
+            // Display like the interpreter's map: [groups = [...], ok = true]
+            self.needs_crow_runtime = true;
+            self.emit_line("impl crow_runtime::display::CrowDisplay for CrowFindResult {");
+            self.emit_line("    fn crow_repr(&self) -> String { use crow_runtime::display::CrowDisplay as _; format!(\"[groups = {}, ok = {}]\", self.groups.crow_repr(), self.ok.crow_repr()) }");
+            self.emit_line("}");
         }
         if self.needs_shell_struct {
             self.emit_line("");
             self.emit_line("#[derive(Clone, Debug)]");
             self.emit_line("struct CrowShell { status: i64, stdout: String, stderr: String }");
+            // Display like the interpreter's map: [status = 0, stderr = '', stdout = 'hi']
+            self.needs_crow_runtime = true;
+            self.emit_line("impl crow_runtime::display::CrowDisplay for CrowShell {");
+            self.emit_line("    fn crow_repr(&self) -> String { use crow_runtime::display::CrowDisplay as _; format!(\"[status = {}, stderr = {}, stdout = {}]\", self.status.crow_repr(), self.stderr.crow_repr(), self.stdout.crow_repr()) }");
+            self.emit_line("}");
         }
         if self.needs_elapsed_struct {
             self.emit_line("");
@@ -1488,7 +1508,18 @@ impl Transpiler {
             self.emit_line("struct CrowElapsed { seconds: f64, minutes: f64, hours: f64, days: f64 }");
         }
 
-        self.output.clone()
+        // A map that only ever exists as a temporary (json[map[...]] in a
+        // handler) is invisible to the type-based import scan above, so the
+        // import follows textual use. Inner attributes must stay first.
+        let mut out = self.output.clone();
+        if out.contains("BTreeMap") && !out.contains("use std::collections::BTreeMap;") {
+            let mut at = 0;
+            for line in out.split_inclusive('\n') {
+                if line.starts_with("#!") { at += line.len(); } else { break; }
+            }
+            out.insert_str(at, "use std::collections::BTreeMap;\n");
+        }
+        out
     }
 
     fn emit_panic_hook(&mut self) {
@@ -2543,6 +2574,12 @@ impl Transpiler {
                 self.registry.load(std::sync::Arc::new(crate::modules::frame::FrameModule));
             }
         }
+        if path == "doc" {
+            self.needs_crow_runtime = true;
+            if !self.registry.is_loaded("doc") {
+                self.registry.load(std::sync::Arc::new(crate::modules::doc::DocModule));
+            }
+        }
         // Handle web.* modules → crow_web crate with feature flags
         if path.starts_with("web.") {
             self.needs_crow_web = true;
@@ -2593,25 +2630,41 @@ impl Transpiler {
     }
 
     /// SQL bind params: a literal array like ['alice', 30] is positional open
-    /// data — emit each element as its own json! value (a single Rust vec
-    /// could not hold the mixed types).
-    fn db_params_to_json(&mut self, params: &[Expr]) -> String {
+    /// data — each element is its own json! value. A fallible element (a string that
+    /// interpolated a Result, say) binds by value and reports itself: the
+    /// second half is the list of those expressions, for the caller to
+    /// check with db_guard before the statement runs — an error param is
+    /// the statement's error, never a silent unwrap.
+    fn db_params_to_json_guarded(&mut self, params: &[Expr]) -> (String, Vec<String>) {
         let mut out = Vec::new();
-        for p in params {
-            match p {
-                Expr::Array(elems) => {
-                    for e in elems {
-                        let s = self.expr_to_string(e);
-                        out.push(format!("serde_json::json!({})", s));
-                    }
-                }
-                other => {
-                    let s = self.expr_to_string(other);
-                    out.push(format!("serde_json::json!({})", s));
-                }
+        let mut fallible = Vec::new();
+        let elems: Vec<&Expr> = params.iter().flat_map(|p| match p {
+            Expr::Array(items) => items.iter().collect::<Vec<_>>(),
+            other => vec![other],
+        }).collect();
+        for e in elems {
+            let s = self.expr_to_string(e);
+            if matches!(self.ctx.infer_expr(e), CrowType::Result(_)) {
+                out.push(format!("serde_json::json!(({}).value)", s));
+                fallible.push(s);
+            } else {
+                out.push(format!("serde_json::json!({})", s));
             }
         }
-        out.join(", ")
+        (out.join(", "), fallible)
+    }
+
+    /// Wrap a db statement so that a fallible param short-circuits to its
+    /// own error, with `err_value` as the statement's typed placeholder.
+    fn db_guard(fallible: &[String], err_value: &str, body: String) -> String {
+        let mut out = body;
+        for f in fallible.iter().rev() {
+            out = format!(
+                "{{ if !({f}).ok {{ CrowResult {{ ok: false, value: {ev}, reason: ({f}).reason.clone(), kind: ({f}).kind.clone(), trace: vec![], captured: 0.0 }} }} else {out} }}",
+                f = f, ev = err_value, out = out
+            );
+        }
+        out
     }
 
     /// Emit an expression as an OWNED value. A by-ref struct parameter used
@@ -2997,7 +3050,7 @@ impl Transpiler {
                     // When unwrapping CrowResult args, replace with temp var .value
                     if self.unwrap_result_args {
                         if let Some(ref indices) = self.propagation_indices {
-                            if indices.contains(&i) {
+                            if indices.contains(&i) && self.propagation_ptrs.contains(&(a as *const Expr as usize)) {
                                 arg_strs.push(format!("_prop_{}.value.clone()", i));
                                 continue;
                             }
@@ -3071,6 +3124,8 @@ impl Transpiler {
                                         || crate::lower::UI_ELEMENTS.contains(&n.as_str())))
                                 // len[] unwraps fallible frames itself
                                 || n == "len"
+                                // a frame response reports a failed frame itself
+                                || (self.needs_crow_web && n == "arrow")
                         })
                         .unwrap_or(true);
                     if !skip_propagation {
@@ -3083,22 +3138,49 @@ impl Transpiler {
                             let orig_arg_strs: Vec<String> = result_arg_indices.iter()
                                 .map(|&i| arg_strs[i].clone())
                                 .collect();
+                            // A view renders what it is given (see the interpreter's
+                            // view rule): a failed argument becomes the text
+                            // "error: reason" in place of the tree, never a Result.
+                            if let Some(v) = callee_name.as_ref().filter(|n| self.ctx.views.contains(n.as_str())) {
+                                let mut bound = arg_strs.clone();
+                                let mut pre = String::new();
+                                let mut checks: Vec<String> = Vec::new();
+                                for (k, &i) in result_arg_indices.iter().enumerate() {
+                                    pre.push_str(&format!("let _va{} = {}; ", k, orig_arg_strs[k]));
+                                    checks.push(format!("if !_va{k}.ok {{ CrowVNode::text(&format!(\"error: {{}}\", _va{k}.reason)) }} else", k = k));
+                                    bound[i] = format!("_va{}.value.clone()", k);
+                                }
+                                let call = format!("{}({})", Self::rust_fn_name(v), bound.join(", "));
+                                return format!("{{ {}{} {{ {} }} }}", pre, checks.join(" "), call);
+                            }
                             // Re-enter with unwrapping enabled
                             self.unwrap_result_args = true;
                             self.propagation_indices = Some(result_arg_indices.clone());
+                            let saved_ptrs = std::mem::replace(&mut self.propagation_ptrs, result_arg_indices.iter().map(|&i| &args[i] as *const Expr as usize).collect());
                             let inner_expr = self.expr_to_string(expr);
                             self.unwrap_result_args = false;
                             self.propagation_indices = None;
-                            // Determine return type for error default
+                            self.propagation_ptrs = saved_ptrs;
+                            // Determine return type for error default. The value
+                            // was built from unwrapped arguments, so a collection
+                            // typed over Results holds plain values here.
                             let full_type = self.ctx.infer_expr(expr);
                             let inner_type = match &full_type {
                                 CrowType::Result(inner) => inner.as_ref().clone(),
                                 other => other.clone(),
                             };
+                            let inner_type = match inner_type {
+                                CrowType::Map(v) => CrowType::Map(Box::new(match *v { CrowType::Result(i) => *i, o => o })),
+                                CrowType::Array(v) => CrowType::Array(Box::new(match *v { CrowType::Result(i) => *i, o => o })),
+                                o => o,
+                            };
                             // Check if the inner call already returns CrowResult
                             let base_name = callee_name.as_deref().unwrap_or("");
                             let base_type = self.ctx.infer_call_base(base_name, args, callee);
-                            let already_result = matches!(base_type, CrowType::Result(_));
+                            // set[] is typed fallible only because of a fallible
+                            // argument, which this block unwraps: the call itself
+                            // returns a plain map and is wrapped here.
+                            let already_result = matches!(base_type, CrowType::Result(_)) && base_name != "set";
                             return self.emit_propagation_block(
                                 &result_arg_indices,
                                 &orig_arg_strs,
@@ -3192,10 +3274,26 @@ impl Transpiler {
                     // Skip frame `select` when in UI context with 2 args (it's a UI widget)
                     let skip_frame_select = name == "select" && self.needs_ui && args.len() == 2
                         && self.registry.module_name_for(name).map_or(false, |m| m == "frame");
-                    if !is_overlapping && !skip_frame_select && self.registry.has_function(name) {
+                    // Inside a view an element name is the element, never the
+                    // module function of the same bare name (stack vs frame.stack).
+                    let element_in_view = self.needs_ui
+                        && self.ctx.views.contains(&self.current_function_name)
+                        && crate::lower::UI_ELEMENTS.contains(&name.as_str());
+                    if !is_overlapping && !skip_frame_select && !element_in_view && self.registry.has_function(name) {
                         let mut arg_types: Vec<_> = args.iter().map(|a| self.ctx.infer_expr(a)).collect();
-                        // Frame columns bridge into tensor math via to_tensor()
                         let mut arg_strs = arg_strs.clone();
+                        // A view's tree handed to a module function is its markup
+                        // (doc.document[title, chapter[...]]): the interpreter's
+                        // views return strings, so compiled ones render here.
+                        for (i, a) in args.iter().enumerate() {
+                            if let Expr::Call { callee, .. } = a {
+                                if matches!(callee.as_ref(), Expr::Ident(v) if self.ctx.views.contains(v)) {
+                                    arg_strs[i] = format!("({}).to_html()", arg_strs[i]);
+                                    arg_types[i] = CrowType::Str;
+                                }
+                            }
+                        }
+                        // Frame columns bridge into tensor math via to_tensor()
                         for (i, t) in arg_types.iter_mut().enumerate() {
                             if matches!(t, CrowType::FrameCol) {
                                 arg_strs[i] = format!("({}).to_tensor()", arg_strs[i]);
@@ -3311,7 +3409,7 @@ impl Transpiler {
                         let _ty = self.ctx.infer_expr(&args[0]);
                         if matches!(_ty, CrowType::Result(_)) {
                             return format!(
-                                "{{ let _v = {}; if _v.captured > 0.0 {{ CrowResult {{ ok: true, value: _v.captured, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }} else {{ CrowResult {{ ok: false, value: 0.0, reason: \"this value was computed here, not read from outside - it has no capture moment\".to_string(), kind: \"no_capture\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
+                                "{{ let _v = &({}); if !_v.ok {{ CrowResult {{ ok: false, value: 0.0, reason: _v.reason.clone(), kind: _v.kind.clone(), trace: _v.trace.clone(), captured: 0.0 }} }} else if _v.captured > 0.0 {{ CrowResult {{ ok: true, value: _v.captured, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }} else {{ CrowResult {{ ok: false, value: 0.0, reason: \"this value was computed here, not read from outside - it has no capture moment\".to_string(), kind: \"no_capture\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
                                 arg_strs[0]
                             );
                         }
@@ -3382,6 +3480,8 @@ impl Transpiler {
                             CrowType::Float => format!("({}) as i64", arg_strs[0]),
                             CrowType::Str => format!("{{ let _int_arg = {}; match _int_arg.parse::<i64>() {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_) => CrowResult {{ ok: false, value: 0_i64, reason: format!(\"cannot convert '{{}}' to int\", _int_arg), kind: \"parse\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], self.trace_format_expr()),
                             CrowType::Bool => format!("if {} {{ 1_i64 }} else {{ 0_i64 }}", arg_strs[0]),
+                            // open-schema JSON: number, numeric string, or a parse error value
+                            CrowType::Json => format!("{{ let _j = &({}); match _j.as_i64().or_else(|| _j.as_f64().map(|f| f as i64)).or_else(|| _j.as_str().and_then(|s| s.trim().parse::<i64>().ok())) {{ Some(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, None => CrowResult {{ ok: false, value: 0_i64, reason: format!(\"cannot convert {{}} to int\", _j), kind: \"parse\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], self.trace_format_expr()),
                             _ => format!("({}) as i64", arg_strs[0]),
                         };
                     }
@@ -3397,6 +3497,7 @@ impl Transpiler {
                             CrowType::Int => format!("({}) as f64", arg_strs[0]),
                             CrowType::Str => format!("{{ let _float_arg = {}; match _float_arg.parse::<f64>() {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_) => CrowResult {{ ok: false, value: 0.0_f64, reason: format!(\"cannot convert '{{}}' to float\", _float_arg), kind: \"parse\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], self.trace_format_expr()),
                             CrowType::Bool => format!("if {} {{ 1.0_f64 }} else {{ 0.0_f64 }}", arg_strs[0]),
+                            CrowType::Json => format!("{{ let _j = &({}); match _j.as_f64().or_else(|| _j.as_str().and_then(|s| s.trim().parse::<f64>().ok())) {{ Some(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, None => CrowResult {{ ok: false, value: 0.0_f64, reason: format!(\"cannot convert {{}} to float\", _j), kind: \"parse\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], self.trace_format_expr()),
                             _ => format!("({}) as f64", arg_strs[0]),
                         };
                     }
@@ -3409,6 +3510,8 @@ impl Transpiler {
                         };
                         return match ty {
                             CrowType::Str => arg_strs[0].clone(),
+                            // a JSON string prints bare, not with its quotes
+                            CrowType::Json => format!("{{ let _j = &({}); match _j.as_str() {{ Some(s) => s.to_string(), None => _j.to_string() }} }}", arg_strs[0]),
                             _ => format!("format!(\"{{}}\", {})", arg_strs[0]),
                         };
                     }
@@ -3424,7 +3527,14 @@ impl Transpiler {
                             if matches!(inner.as_ref(), CrowType::Frame) {
                                 return format!("({}).value.nrows() as i64", arg_strs[0]);
                             }
+                            if matches!(inner.as_ref(), CrowType::Str) {
+                                return format!("(({}).value.chars().count() as i64)", arg_strs[0]);
+                            }
                             return format!("(({}).value.len() as i64)", arg_strs[0]);
+                        }
+                        // strings count characters, as the interpreter does
+                        if matches!(arg_type, CrowType::Str) {
+                            return format!("(({}).chars().count() as i64)", arg_strs[0]);
                         }
                         return format!("(({}).len() as i64)", arg_strs[0]);
                     }
@@ -3441,7 +3551,7 @@ impl Transpiler {
                         let ty = self.ctx.infer_expr(&args[0]);
                         return match ty {
                             CrowType::NumArray(_) => format!("{}.slice(0, ({}) as usize, ({}) as usize)", arg_strs[0], arg_strs[1], arg_strs[2]),
-                            CrowType::Str => format!("({})[({}) as usize..({}) as usize].to_string()", arg_strs[0], arg_strs[1], arg_strs[2]),
+                            CrowType::Str => format!("{{ let _st = ({}).max(0) as usize; let _en = ({}).max(0) as usize; if _st >= _en {{ String::new() }} else {{ ({}).chars().skip(_st).take(_en - _st).collect::<String>() }} }}", arg_strs[1], arg_strs[2], arg_strs[0]),
                             _ => format!("({})[({}) as usize..({}) as usize].to_vec()", arg_strs[0], arg_strs[1], arg_strs[2]),
                         };
                     }
@@ -3518,6 +3628,9 @@ impl Transpiler {
                                 let t = self.ctx.infer_expr(&args[2]).to_rust_type();
                                 format!("{} as {}", arg_strs[2], t)
                             }
+                            // a variable is inserted by value (a loop variable
+                            // is a reference inside a parallel body)
+                            _ if matches!(&args[2], Expr::Ident(_)) => format!("({}).clone()", arg_strs[2]),
                             _ => arg_strs[2].clone(),
                         };
                         return format!("{{ let mut tmp = {}.clone(); tmp.insert({}, {}); tmp }}", arg_strs[0], arg_strs[1], val);
@@ -3529,12 +3642,14 @@ impl Transpiler {
                     if name == "args" && arg_strs.is_empty() {
                         return "std::env::args().skip(1).collect::<Vec<String>>()".to_string();
                     }
-                    if name == "input" {
+                    // inside a view, `input` is the HTML element (emitted below)
+                    let in_view = self.needs_ui && self.ctx.views.contains(&self.current_function_name);
+                    if name == "input" && !in_view {
                         let trace = self.trace_format_expr();
                         if arg_strs.len() == 1 {
-                            return format!("{{ print!(\"{{}}\", {}); use std::io::Write; std::io::stdout().flush().unwrap(); let mut _line = String::new(); match std::io::stdin().read_line(&mut _line) {{ Ok(_) => CrowResult {{ ok: true, value: _line.trim_end().to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], trace);
+                            return format!("{{ print!(\"{{}}\", {}); use std::io::Write; std::io::stdout().flush().unwrap(); let mut _line = String::new(); match std::io::stdin().read_line(&mut _line) {{ Ok(_) => CrowResult {{ ok: true, value: _line.trim_end().to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], trace);
                         }
-                        return format!("{{ let mut _line = String::new(); match std::io::stdin().read_line(&mut _line) {{ Ok(_) => CrowResult {{ ok: true, value: _line.trim_end().to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", trace);
+                        return format!("{{ let mut _line = String::new(); match std::io::stdin().read_line(&mut _line) {{ Ok(_) => CrowResult {{ ok: true, value: _line.trim_end().to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", trace);
                     }
                     // --- System builtins ---
                     if name == "rand" {
@@ -3598,11 +3713,14 @@ impl Transpiler {
                             _ => format!("std::thread::sleep(std::time::Duration::from_secs_f64({}))", arg_strs[0]),
                         };
                     }
+                    // env[] is a reader: an error value (kind 'env') when unset,
+                    // the default when one is given, stamped with a capture moment
                     if name == "env" {
+                        let trace = self.trace_format_expr();
                         if arg_strs.len() == 2 {
-                            return format!("std::env::var({}).unwrap_or_else(|_| {}.to_string())", arg_strs[0], arg_strs[1]);
+                            return format!("{{ let _name = &*{}; let _val = std::env::var(_name).unwrap_or_else(|_| {}.to_string()); CrowResult {{ ok: true, value: _val, reason: String::new(), kind: String::new(), trace: vec![], captured: STAMP }} }}", arg_strs[0], arg_strs[1]).replace("STAMP", "std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)");
                         } else if arg_strs.len() == 1 {
-                            return format!("std::env::var({}).unwrap_or_default()", arg_strs[0]);
+                            return format!("{{ let _name = &*{}; match std::env::var(_name) {{ Ok(_val) => CrowResult {{ ok: true, value: _val, reason: String::new(), kind: String::new(), trace: vec![], captured: STAMP }}, Err(_) => CrowResult {{ ok: false, value: String::new(), reason: format!(\"environment variable '{{}}' not set\", _name), kind: \"env\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], trace).replace("STAMP", "std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)");
                         }
                     }
                     if name == "exit" {
@@ -3681,11 +3799,11 @@ impl Transpiler {
                     // --- File I/O builtins ---
                     if name == "read" && arg_strs.len() == 1 {
                         let trace = self.trace_format_expr();
-                        return format!("match std::fs::read_to_string(&*{}) {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }}", arg_strs[0], trace);
+                        return format!("match std::fs::read_to_string(&*{}) {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![], captured: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: format!(\"cannot read '{{}}': {{}}\", &*{}, e), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }}", arg_strs[0], arg_strs[0], trace);
                     }
                     if name == "write" && arg_strs.len() == 2 {
                         let trace = self.trace_format_expr();
-                        return format!("match std::fs::write(&*{}, &*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }}", arg_strs[0], arg_strs[1], trace);
+                        return format!("match std::fs::write(&*{}, &*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }}", arg_strs[0], arg_strs[1], trace);
                     }
                     // --- File system builtins ---
                     if name == "exists" && arg_strs.len() == 1 {
@@ -3697,11 +3815,11 @@ impl Transpiler {
                     }
                     if name == "ls" && arg_strs.len() == 1 {
                         let trace = self.trace_format_expr();
-                        return format!("match std::fs::read_dir(&*{}) {{ Ok(entries) => {{ let mut names: Vec<String> = entries.filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string())).collect(); names.sort(); CrowResult {{ ok: true, value: names, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }}, Err(e) => CrowResult {{ ok: false, value: Vec::<String>::new(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }}", arg_strs[0], trace);
+                        return format!("match std::fs::read_dir(&*{}) {{ Ok(entries) => {{ let mut names: Vec<String> = entries.filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string())).collect(); names.sort(); CrowResult {{ ok: true, value: names, reason: String::new(), kind: String::new(), trace: vec![], captured: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) }} }}, Err(e) => CrowResult {{ ok: false, value: Vec::<String>::new(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }}", arg_strs[0], trace);
                     }
                     if name == "rm" && arg_strs.len() == 1 {
                         let trace = self.trace_format_expr();
-                        return format!("{{ let _s = {}; let _p = std::path::Path::new(&*_s); let _r = if _p.is_dir() {{ std::fs::remove_dir_all(_p) }} else {{ std::fs::remove_file(_p) }}; match _r {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], trace);
+                        return format!("{{ let _s = {}; let _p = std::path::Path::new(&*_s); let _r = if _p.is_dir() {{ std::fs::remove_dir_all(_p) }} else {{ std::fs::remove_file(_p) }}; match _r {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], trace);
                     }
                     if name == "mv" && arg_strs.len() == 2 {
                         let trace = self.trace_format_expr();
@@ -3712,7 +3830,9 @@ impl Transpiler {
                         return format!("match std::fs::copy(&*{}, &*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }}", arg_strs[0], arg_strs[1], trace);
                     }
                     // --- JSON builtins ---
-                    if name == "json" && arg_strs.len() == 1 {
+                    // json[map] in a web program is the JSON *response* (handled
+                    // in the web section below); everything else is the parser
+                    if name == "json" && arg_strs.len() == 1 && !(self.needs_crow_web && matches!(self.ctx.infer_expr(&args[0]), CrowType::Map(_))) {
                         self.needs_serde_json = true;
                         let trace = self.trace_format_expr();
                         return format!("match serde_json::from_str::<serde_json::Value>(&*{}) {{ Ok(v) => if v.is_null() {{ CrowResult {{ ok: false, value: serde_json::Value::Null, reason: \"null\".to_string(), kind: \"parse\".to_string(), trace: vec![{}], captured: 0.0 }} }} else {{ CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }}, Err(e) => CrowResult {{ ok: false, value: serde_json::Value::Null, reason: format!(\"invalid JSON: {{}}\", e), kind: \"parse\".to_string(), trace: vec![{}], captured: 0.0 }} }}", arg_strs[0], trace, trace);
@@ -3726,13 +3846,22 @@ impl Transpiler {
                         if matches!(arg_inner, CrowType::NumArray(_)) {
                             return format!("{{ let _vals: Vec<serde_json::Value> = {}.to_vec().iter().map(|&_f| if _f == (_f as i64) as f64 && _f.is_finite() {{ serde_json::json!(_f as i64) }} else {{ serde_json::json!(_f) }}).collect(); CrowResult {{ ok: true, value: serde_json::to_string(&_vals).unwrap_or_default(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }}", arg_strs[0]);
                         }
+                        // An array of fallible elements encodes each one the way the
+                        // interpreter does: an ok element as its payload, an error as null.
+                        if let CrowType::Array(el) = &arg_inner {
+                            if matches!(el.as_ref(), CrowType::Result(_)) {
+                                let src = if matches!(arg_ty, CrowType::Result(_)) { format!("({}).value", arg_strs[0]) } else { format!("({})", arg_strs[0]) };
+                                return format!("{{ let _vals: Vec<serde_json::Value> = {}.iter().map(|_e| if _e.ok {{ serde_json::to_value(&_e.value).unwrap_or(serde_json::Value::Null) }} else {{ serde_json::Value::Null }}).collect(); CrowResult {{ ok: true, value: serde_json::to_string(&_vals).unwrap_or_default(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }}", src);
+                            }
+                        }
                         return format!("CrowResult {{ ok: true, value: serde_json::to_string(&{}).unwrap_or_default(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", arg_strs[0]);
                     }
 
                     // --- Shell builtin ---
                     if name == "shell" && arg_strs.len() == 1 {
                         self.needs_shell_struct = true;
-                        return format!("{{ let _cmd = &*{}; match std::process::Command::new(\"sh\").arg(\"-c\").arg(_cmd).output() {{ Ok(out) => CrowShell {{ status: out.status.code().unwrap_or(-1) as i64, stdout: String::from_utf8_lossy(&out.stdout).trim_end().to_string(), stderr: String::from_utf8_lossy(&out.stderr).trim_end().to_string() }}, Err(e) => panic!(\"shell failed: {{}}\", e) }} }}", arg_strs[0]);
+                        let trace = self.trace_format_expr();
+                        return format!("{{ let _cmd = &*{}; match std::process::Command::new(\"sh\").arg(\"-c\").arg(_cmd).output() {{ Ok(out) => CrowResult {{ ok: true, value: CrowShell {{ status: out.status.code().unwrap_or(-1) as i64, stdout: String::from_utf8_lossy(&out.stdout).trim_end().to_string(), stderr: String::from_utf8_lossy(&out.stderr).trim_end().to_string() }}, reason: String::new(), kind: String::new(), trace: vec![], captured: STAMP }}, Err(e) => CrowResult {{ ok: false, value: CrowShell {{ status: -1, stdout: String::new(), stderr: String::new() }}, reason: format!(\"shell failed: {{}}\", e), kind: \"shell\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], trace).replace("STAMP", "std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)");
                     }
                     // --- Hashing builtin ---
                     if name == "hash" && arg_strs.len() == 2 {
@@ -3818,17 +3947,26 @@ impl Transpiler {
                             "button", "ul", "ol", "li", "form", "a", "nav",
                             "header", "footer", "section", "tr", "td", "th",
                             "thead", "tbody", "option", "textarea", "label",
-                            "pre", "code",
+                            "pre", "code", "stack", "row", "grid", "overlay", "scroll",
                         ];
                         // Void elements (no children)
                         const VOID_ELEMENTS: &[&str] = &["input", "img"];
 
-                        let is_html_el = HTML_ELEMENTS.contains(&name.as_str());
+                        // table[frame] renders a frame (handled below); table with
+                        // element children is an ordinary element
+                        let first_is_frame = args.first().map(|a| {
+                            let t = self.ctx.infer_expr(a);
+                            let t = if let CrowType::Result(i) = t { *i } else { t };
+                            matches!(t, CrowType::Frame)
+                        }).unwrap_or(false);
+                        let is_html_el = HTML_ELEMENTS.contains(&name.as_str()) || (name == "table" && !first_is_frame);
                         let is_void_el = VOID_ELEMENTS.contains(&name.as_str());
 
                         if is_html_el || is_void_el {
-                            // Rust method name: "main" → "main_el" (keyword conflict)
-                            let rust_name = if name == "main" { "main_el" } else { name.as_str() };
+                            // Rust method name: "main" → "main_el" (keyword conflict);
+                            // the layout containers are divs with a class
+                            let is_container = crow_runtime::layout::CONTAINERS.contains(&name.as_str());
+                            let rust_name = if name == "main" { "main_el" } else if is_container { "div" } else { name.as_str() };
 
                             // Separate first Map arg (attrs) from children
                             let (attr_pairs, child_args): (Vec<(&Expr, &Expr)>, Vec<&Expr>) =
@@ -3848,22 +3986,49 @@ impl Transpiler {
                             let child_strs: Vec<String> = child_args.iter().map(|child| {
                                 match child {
                                     Expr::Str(_) => {
-                                        // String literal → CrowVNode::text(...)
+                                        // String literal → CrowVNode::text(...). An
+                                        // interpolated literal with a failed span is a
+                                        // fallible string: the view renders its reason.
                                         let s_str = self.expr_to_string(child);
-                                        format!("CrowVNode::text(&{})", s_str)
+                                        if matches!(self.ctx.infer_expr(child), CrowType::Result(_)) {
+                                            format!("{{ let _c = {}; if !_c.ok {{ CrowVNode::text(&format!(\"error: {{}}\", _c.reason)) }} else {{ CrowVNode::text(&_c.value) }} }}", s_str)
+                                        } else {
+                                            format!("CrowVNode::text(&{})", s_str)
+                                        }
+                                    }
+                                    // Element calls (and chart/field/select, which the
+                                    // type tables type as Str) emit vnodes: tree children,
+                                    // never text nodes.
+                                    Expr::Call { callee, .. }
+                                        if matches!(callee.as_ref(), Expr::Ident(n)
+                                            if n == "chart" || n == "field" || n == "select"
+                                                || crate::lower::UI_ELEMENTS.contains(&n.as_str())) =>
+                                    {
+                                        self.expr_to_string(child)
                                     }
                                     _ => {
                                         // Any string/number-typed expression is
                                         // a text node (h3[label] with label a
                                         // param); trees pass through
                                         let ty = self.ctx.infer_expr(child);
+                                        let fallible = matches!(ty, CrowType::Result(_));
                                         let inner = match &ty {
                                             CrowType::Result(i) => i.as_ref().clone(),
                                             o => o.clone(),
                                         };
                                         let c_str = self.expr_to_string(child);
                                         match inner {
-                                            CrowType::Str => format!("CrowVNode::text(&{})", c_str),
+                                            // a view renders what it is given: a failed
+                                            // text child shows its reason
+                                            CrowType::Str if fallible => {
+                                                format!("{{ let _c = {}; if !_c.ok {{ CrowVNode::text(&format!(\"error: {{}}\", _c.reason)) }} else if _c.value.starts_with('<') && _c.value.ends_with('>') {{ CrowVNode::raw(&_c.value) }} else {{ CrowVNode::text(&_c.value) }} }}", c_str)
+                                            }
+                                            CrowType::Int | CrowType::Float | CrowType::Bool if fallible => {
+                                                format!("{{ let _c = {}; if !_c.ok {{ CrowVNode::text(&format!(\"error: {{}}\", _c.reason)) }} else {{ CrowVNode::text(&format!(\"{{}}\", _c.value)) }} }}", c_str)
+                                            }
+                                            // markup (a rendered chapter, a menu) passes
+                                            // through; the interpreter applies the same rule
+                                            CrowType::Str => format!("{{ let _c = {}; if _c.starts_with('<') && _c.ends_with('>') {{ CrowVNode::raw(&_c) }} else {{ CrowVNode::text(&_c) }} }}", c_str),
                                             CrowType::Int | CrowType::Float | CrowType::Bool => {
                                                 format!("CrowVNode::text(&format!(\"{{}}\", {}))", c_str)
                                             }
@@ -3880,8 +4045,34 @@ impl Transpiler {
                                 format!("CrowVNode::{}(vec![{}])", rust_name, child_strs.join(", "))
                             };
 
-                            // Chain .attr() and .on_*() calls from the Map
+                            // Layout attributes (literals) go through the kernel table
+                            // exactly as the interpreter renders them; the remaining
+                            // pairs are HTML attributes and events, handled below.
+                            let mut literal_layout: Vec<(String, String)> = Vec::new();
+                            let mut other_pairs: Vec<(&Expr, &Expr)> = Vec::new();
+                            for (k, v) in &attr_pairs {
+                                let key = match k { Expr::Ident(s) | Expr::Str(s) => s.clone(), _ => String::new() };
+                                let lit = match v {
+                                    Expr::Str(s) => Some(s.clone()),
+                                    Expr::Int(n) => Some(n.to_string()),
+                                    Expr::Bool(b) => Some(b.to_string()),
+                                    _ => None,
+                                };
+                                let is_layout = crow_runtime::layout::LAYOUT_ATTRS.contains(&key.as_str()) || (is_container && key == "class");
+                                match (is_layout, lit) {
+                                    (true, Some(s)) => literal_layout.push((key, s)),
+                                    // non-literal layout attrs were rejected by the validator
+                                    (true, None) => other_pairs.push((k, v)),
+                                    _ => other_pairs.push((k, v)),
+                                }
+                            }
+                            let rendered = crow_runtime::layout::render(name, &literal_layout);
                             let mut result = base;
+                            if !rendered.class.is_empty() { result = format!("{}.attr(\"class\", \"{}\")", result, rendered.class); }
+                            if !rendered.style.is_empty() { result = format!("{}.attr(\"style\", \"{}\")", result, rendered.style); }
+                            for (k, v) in &rendered.data { result = format!("{}.attr(\"{}\", \"{}\")", result, k, v); }
+                            for (k, v) in &rendered.passthrough { result = format!("{}.attr(\"{}\", \"{}\")", result, k, v.replace('\"', "\\\"")); }
+                            let attr_pairs = other_pairs;
                             for (k, v) in &attr_pairs {
                                 let key_str = match k {
                                     Expr::Ident(s) => s.clone(),
@@ -3993,6 +4184,13 @@ impl Transpiler {
                     if name == "arrow" && self.needs_crow_web && arg_strs.len() == 1 {
                         self.web_features.insert("arrow_ipc".to_string());
                         self.needs_crow_runtime = true;
+                        // a fallible frame (load/query result) answers with its reason
+                        if matches!(self.ctx.infer_expr(&args[0]), CrowType::Result(_)) {
+                            return format!(
+                                "{{ let _fr = {}; if !_fr.ok {{ CrowResponse::text(format!(\"error: {{}}\", _fr.reason)) }} else {{ CrowResponse::arrow_ipc(crow_runtime::frame::to_arrow_ipc(&_fr.value)) }} }}",
+                                arg_strs[0]
+                            );
+                        }
                         return format!(
                             "CrowResponse::arrow_ipc(crow_runtime::frame::to_arrow_ipc(&{}))",
                             arg_strs[0]
@@ -4033,18 +4231,20 @@ impl Transpiler {
                     }
                     if name == "query" && self.needs_crow_db && arg_strs.len() >= 2 {
                         if arg_strs.len() == 2 {
-                            return format!("{{ match {}.query(&{}, &[{}]) {{ Ok(_f) => CrowResult {{ ok: true, value: _f, reason: String::new(), kind: String::new(), trace: vec![], captured: crow_runtime::moments::now() }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0], arg_strs[1], "");
+                            return format!("{{ match {}.query(&{}, &[{}]) {{ Ok(_f) => CrowResult {{ ok: true, value: _f, reason: String::new(), kind: String::new(), trace: vec![], captured: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0], arg_strs[1], "");
                         } else {
-                            let params = self.db_params_to_json(&args[2..]);
-                            return format!("{{ match {}.query(&{}, &[{}]) {{ Ok(_f) => CrowResult {{ ok: true, value: _f, reason: String::new(), kind: String::new(), trace: vec![], captured: crow_runtime::moments::now() }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0], arg_strs[1], params);
+                            let (params, fallible) = self.db_params_to_json_guarded(&args[2..]);
+                            let body = format!("{{ match {}.query(&{}, &[{}]) {{ Ok(_f) => CrowResult {{ ok: true, value: _f, reason: String::new(), kind: String::new(), trace: vec![], captured: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0], arg_strs[1], params);
+                            return Self::db_guard(&fallible, "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])", body);
                         }
                     }
                     if name == "exec" && self.needs_crow_db && arg_strs.len() >= 2 {
                         if arg_strs.len() == 2 {
                             return format!("{{ match {}.exec(&{}, &[{}]) {{ Ok(_n) => CrowResult {{ ok: true, value: _n, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: 0_i64, reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0], arg_strs[1], "");
                         } else {
-                            let params = self.db_params_to_json(&args[2..]);
-                            return format!("{{ match {}.exec(&{}, &[{}]) {{ Ok(_n) => CrowResult {{ ok: true, value: _n, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: 0_i64, reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0], arg_strs[1], params);
+                            let (params, fallible) = self.db_params_to_json_guarded(&args[2..]);
+                            let body = format!("{{ match {}.exec(&{}, &[{}]) {{ Ok(_n) => CrowResult {{ ok: true, value: _n, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: 0_i64, reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0], arg_strs[1], params);
+                            return Self::db_guard(&fallible, "0_i64", body);
                         }
                     }
                     if name == "insert" && self.needs_crow_db && arg_strs.len() == 3 {
@@ -4423,7 +4623,7 @@ impl Transpiler {
                             .get(mod_name.as_str())
                             .cloned()
                             .unwrap_or_else(|| mod_name.to_string());
-                        if matches!(real_mod.as_str(), "math" | "io" | "frame" | "math.stats" | "math.nn")
+                        if matches!(real_mod.as_str(), "math" | "io" | "frame" | "doc" | "math.stats" | "math.nn")
                             && self.registry.has_function(field)
                         {
                             let bare = Expr::Call {
@@ -4449,10 +4649,10 @@ impl Transpiler {
                                 }
                                 "query" => {
                                     if arg_strs.len() == 2 {
-                                        return format!("{{ match {}.query(&{}, &[{}]) {{ Ok(_f) => CrowResult {{ ok: true, value: _f, reason: String::new(), kind: String::new(), trace: vec![], captured: crow_runtime::moments::now() }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0], arg_strs[1], "");
+                                        return format!("{{ match {}.query(&{}, &[{}]) {{ Ok(_f) => CrowResult {{ ok: true, value: _f, reason: String::new(), kind: String::new(), trace: vec![], captured: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0], arg_strs[1], "");
                                     } else if arg_strs.len() >= 3 {
                                         let params = Self::crow_params_to_json(&arg_strs[2..]);
-                                        return format!("{{ match {}.query(&{}, &[{}]) {{ Ok(_f) => CrowResult {{ ok: true, value: _f, reason: String::new(), kind: String::new(), trace: vec![], captured: crow_runtime::moments::now() }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0], arg_strs[1], params);
+                                        return format!("{{ match {}.query(&{}, &[{}]) {{ Ok(_f) => CrowResult {{ ok: true, value: _f, reason: String::new(), kind: String::new(), trace: vec![], captured: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0], arg_strs[1], params);
                                     }
                                 }
                                 "exec" => {
@@ -5087,9 +5287,13 @@ impl Transpiler {
 
     /// Convert a Crow interpolated string to Rust format!() macro.
     fn string_to_rust(&mut self, s: &str) -> String {
-        // Crow strings use {expr} for interpolation
+        // Backtick spans interpolate. A span whose value is fallible makes
+        // the whole string fallible: the failed span's error propagates
+        // (spec: errors propagate through interpolation), never a
+        // placeholder value.
         let mut fmt_str = String::new();
         let mut args: Vec<String> = Vec::new();
+        let mut fallible: Vec<(String, String)> = Vec::new(); // (binding, expr)
         let chars: Vec<char> = s.chars().collect();
         let mut i = 0;
 
@@ -5138,13 +5342,19 @@ impl Transpiler {
                         // interpolated calls with named args aren't recognized.
                         let stmts = crate::lower::lower_program(&stmts).unwrap_or(stmts);
                         if let Some(crate::ast::Stmt::ExprStmt(expr)) = stmts.iter().find(|s| !matches!(s, Stmt::Line(_))) {
-                            let rust_expr = self.expr_to_string(expr);
+                            let mut rust_expr = self.expr_to_string(expr);
                             // Use {:?} for collection/struct types since they don't impl Display
                             let expr_type = self.ctx.infer_expr(expr);
                             let inner_type = match &expr_type {
                                 CrowType::Result(inner) => inner.as_ref().clone(),
                                 other => other.clone(),
                             };
+                            if matches!(expr_type, CrowType::Result(_)) {
+                                let binding = format!("_ip{}", fallible.len());
+                                // by clone: the variable stays usable after the string
+                                fallible.push((binding.clone(), format!("({}).clone()", rust_expr)));
+                                rust_expr = format!("{}.value", binding);
+                            }
                             match &inner_type {
                                 CrowType::FrameCol => {
                                     fmt_str.push_str("{:?}");
@@ -5198,8 +5408,18 @@ impl Transpiler {
             // (they are only doubled for format!'s syntax)
             let raw = fmt_str.replace("{{", "{").replace("}}", "}");
             format!("\"{}\".to_string()", raw)
-        } else {
+        } else if fallible.is_empty() {
             format!("format!(\"{}\", {})", fmt_str, args.join(", "))
+        } else {
+            // bind every fallible span, fail on the first failed one
+            let binds: String = fallible.iter().map(|(b, e)| format!("let {} = {}; ", b, e)).collect();
+            let trace = self.trace_format_expr();
+            let mut out = format!("{{ {}", binds);
+            for (b, _) in &fallible {
+                out.push_str(&format!("if !{b}.ok {{ let mut _err = CrowResult {{ ok: false, value: String::new(), reason: {b}.reason.clone(), kind: {b}.kind.clone(), trace: {b}.trace.clone(), captured: 0.0 }}; _err.trace.push({trace}); _err }} else ", b = b, trace = trace));
+            }
+            out.push_str(&format!("{{ CrowResult {{ ok: true, value: format!(\"{}\", {}), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }} }}", fmt_str, args.join(", ")));
+            out
         }
     }
 
@@ -5353,7 +5573,13 @@ impl Transpiler {
     /// impl is emitted for it: simple field types only, and never the
     /// synthetic builtin-return structs.
     fn struct_kernel_displayable(&self, name: &str) -> bool {
-        if matches!(name, "CrowShell" | "CrowElapsed" | "CrowFindResult") {
+        // CrowShell / CrowFindResult carry hand-written kernel impls (emitted
+        // next to their struct definitions) so they print like the
+        // interpreter's maps.
+        if matches!(name, "CrowShell" | "CrowFindResult") {
+            return true;
+        }
+        if name == "CrowElapsed" {
             return false;
         }
         self.ctx.structs.get(name).map(|sig| {
@@ -5392,12 +5618,19 @@ impl Transpiler {
                 let ty = self.ctx.infer_expr(expr);
                 let inner = match &ty { CrowType::Result(i) => i.as_ref().clone(), o => o.clone() };
                 if matches!(inner, CrowType::FrameCol) {
-                    return format!("{{ use crow_runtime::display::CrowDisplay as _; println!(\"{{}}\", {}.to_strings().crow_fmt()) }}", arg);
+                    // columns print through the kernel: numbers bare, strings quoted
+                    self.needs_crow_runtime = true;
+                    return format!("{{ use crow_runtime::display::CrowDisplay as _; println!(\"{{}}\", ({}).crow_fmt()) }}", arg);
                 }
                 // Arrays print via the shared display kernel so output matches
                 // the interpreter exactly (strings single-quoted, etc.)
                 if self.kernel_displayable(&inner) {
                     self.needs_crow_runtime = true;
+                    if matches!(ty, CrowType::Result(_)) {
+                        // A Result-wrapped value (shell[], a reader) prints its
+                        // payload, or its reason when it failed
+                        return format!("{{ use crow_runtime::display::CrowDisplay as _; let _r = &({}); if !_r.ok {{ println!(\"error: {{}}\", _r.reason) }} else {{ println!(\"{{}}\", _r.value.crow_fmt()) }} }}", arg);
+                    }
                     return format!("{{ use crow_runtime::display::CrowDisplay as _; println!(\"{{}}\", ({}).crow_fmt()) }}", arg);
                 }
             }
@@ -6807,7 +7040,8 @@ mod tests {
     fn test_env_one_arg_transpile() {
         let rust = transpile("x = env['PORT']\n");
         assert!(rust.contains("std::env::var("), "should emit std::env::var\n{}", rust);
-        assert!(rust.contains("unwrap_or_default()"), "should emit unwrap_or_default for 1-arg env\n{}", rust);
+        assert!(rust.contains("\"env\".to_string()"), "1-arg env is an error value (kind env) when unset\n{}", rust);
+        assert!(rust.contains("captured: std::time::SystemTime"), "env is a reader: its result carries a capture moment\n{}", rust);
     }
 
     #[test]

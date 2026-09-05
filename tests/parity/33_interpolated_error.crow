@@ -1,0 +1,9 @@
+--- an error value inside a backtick span makes the whole string that error
+--- (it never prints a placeholder), and the error keeps its reason and kind
+bad = int['not a number']
+line = 'value: `bad`'
+log[line.ok]
+log[line.kind]
+log[line.reason]
+good = int['42']
+log['value: `good`']

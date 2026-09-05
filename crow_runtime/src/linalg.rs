@@ -78,10 +78,15 @@ impl CrowTensor {
     /// A must be square. b can be a column vector (n×1) or a matrix (n×m).
     pub fn solve(&self, b: &CrowTensor) -> CrowTensor {
         let a = tensor_to_mat(self);
-        let b_mat = tensor_to_mat(b);
+        // A plain vector right-hand side (`solve[A, [1.0, 2.0]]`) is the
+        // common call; treat it as one column and hand back a vector.
+        let b_is_vec = b.shape().len() == 1;
+        let b2 = if b_is_vec { b.reshape(vec![b.shape()[0], 1]) } else { b.clone() };
+        let b_mat = tensor_to_mat(&b2);
         let lu = a.partial_piv_lu();
         let x = lu.solve(&b_mat);
-        mat_to_tensor(&x)
+        let out = mat_to_tensor(&x);
+        if b_is_vec { out.reshape(vec![out.shape()[0]]) } else { out }
     }
 
     /// Matrix inverse. Self must be square and non-singular.
@@ -210,7 +215,11 @@ impl CrowTensor {
     /// Least-squares solve: find x that minimizes ||Ax - b||².
     /// Uses pseudo-inverse: x = pinv(A) * b.
     pub fn lstsq(&self, b: &CrowTensor) -> CrowTensor {
-        self.pinv().matmul(b)
+        // a plain vector right-hand side is one column (same as solve)
+        let b_is_vec = b.shape().len() == 1;
+        let b2 = if b_is_vec { b.reshape(vec![b.shape()[0], 1]) } else { b.clone() };
+        let out = self.pinv().matmul(&b2);
+        if b_is_vec { out.reshape(vec![out.shape()[0]]) } else { out }
     }
 
     /// Extract upper triangular part of a matrix. Elements below the main diagonal are set to 0.

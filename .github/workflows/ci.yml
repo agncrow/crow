@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Unit tests
+        run: cargo test --workspace
+      - name: Build crow
+        run: cargo build --release
+      - name: Docs cover the compiler (and nothing more)
+        run: ./target/release/crow test --docs
+      - name: Parity corpus (both execution modes must agree)
+        run: ./target/release/crow test --parity
+      - name: Book (every code block runs in both modes)
+        run: ./target/release/crow test --book
+      - name: Book site built by Crow (layout tested, pages written)
+        run: |
+          ./target/release/crow test docs/book/site.crow
+          ./target/release/crow run -i docs/book/site.crow
+      - name: Layout engine agrees with the browser (fixtures measured once, checked without one)
+        run: ./target/release/crow test tests/layout/conformance.crow
+      - name: Layout example
+        run: ./target/release/crow test examples/layout_dashboard.crow

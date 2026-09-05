@@ -31,4 +31,4 @@ none of anyone's vocabulary — the import costs exactly one word, the
 prefix. That's also why two modules can never collide: same trailing
 name, different aliases, done.
 
-Next: put the last five chapters to work on real data.
+Next: saying what a function must do — and having Crow prove it.

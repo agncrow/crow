@@ -184,7 +184,238 @@ enum Signal {
 /// capture moment, which then flows through derived values (see age[]).
 const READER_FNS: &[&str] = &[
     "query", "read", "fetch", "recv", "input", "load", "env", "shell", "ls",
+    "csv", "lines",
 ];
+
+
+fn html_escape_text(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+fn html_escape_attr(s: &str) -> String {
+    s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// A node of the harness's own rendered HTML (well-formed by construction).
+struct HNode {
+    tag: String,
+    attrs: Vec<(String, String)>,
+    children: Vec<HNode>,
+    text: String, // for text nodes (tag is empty)
+}
+
+fn html_unescape(s: &str) -> String {
+    s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&amp;", "&")
+}
+
+/// Parse the harness's rendered markup into a tree. Handles open/close tags,
+/// self-closing tags (charts' SVG), quoted attributes, and text.
+fn harness_parse_html(html: &str) -> HNode {
+    let mut root = HNode { tag: String::new(), attrs: vec![], children: vec![], text: String::new() };
+    let mut stack: Vec<HNode> = vec![];
+    let chars: Vec<char> = html.chars().collect();
+    let mut i = 0;
+    let push_child = |stack: &mut Vec<HNode>, root: &mut HNode, node: HNode| {
+        if let Some(parent) = stack.last_mut() { parent.children.push(node); } else { root.children.push(node); }
+    };
+    while i < chars.len() {
+        if chars[i] == '<' {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j] != '>' { j += 1; }
+            let inside: String = chars[i + 1..j.min(chars.len())].iter().collect();
+            i = j + 1;
+            let inside = inside.trim();
+            if inside.starts_with('/') {
+                let name = inside[1..].trim();
+                // close the nearest open element with this name
+                if let Some(pos) = stack.iter().rposition(|n| n.tag == name) {
+                    while stack.len() > pos + 1 { let n = stack.pop().unwrap(); push_child(&mut stack, &mut root, n); }
+                    let n = stack.pop().unwrap();
+                    push_child(&mut stack, &mut root, n);
+                }
+                continue;
+            }
+            if inside.starts_with('!') { continue; }
+            let self_closing = inside.ends_with('/');
+            let inside = inside.trim_end_matches('/').trim();
+            let mut parts = inside.splitn(2, char::is_whitespace);
+            let tag = parts.next().unwrap_or("").to_string();
+            let rest = parts.next().unwrap_or("").to_string();
+            let mut attrs = vec![];
+            let rc: Vec<char> = rest.chars().collect();
+            let mut k = 0;
+            while k < rc.len() {
+                while k < rc.len() && rc[k].is_whitespace() { k += 1; }
+                let ks = k;
+                while k < rc.len() && rc[k] != '=' && !rc[k].is_whitespace() { k += 1; }
+                let key: String = rc[ks..k].iter().collect();
+                if key.is_empty() { break; }
+                let mut val = String::new();
+                if k < rc.len() && rc[k] == '=' {
+                    k += 1;
+                    if k < rc.len() && (rc[k] == '"' || rc[k] == '\'') {
+                        let q = rc[k]; k += 1; let vs = k;
+                        while k < rc.len() && rc[k] != q { k += 1; }
+                        val = rc[vs..k.min(rc.len())].iter().collect(); k += 1;
+                    } else {
+                        let vs = k; while k < rc.len() && !rc[k].is_whitespace() { k += 1; }
+                        val = rc[vs..k].iter().collect();
+                    }
+                }
+                attrs.push((key, html_unescape(&val)));
+            }
+            let node = HNode { tag, attrs, children: vec![], text: String::new() };
+            if self_closing { push_child(&mut stack, &mut root, node); } else { stack.push(node); }
+        } else {
+            let mut j = i;
+            while j < chars.len() && chars[j] != '<' { j += 1; }
+            let text: String = chars[i..j].iter().collect();
+            i = j;
+            if !text.trim().is_empty() || !text.is_empty() {
+                push_child(&mut stack, &mut root, HNode { tag: String::new(), attrs: vec![], children: vec![], text: html_unescape(&text) });
+            }
+        }
+    }
+    while let Some(n) = stack.pop() { push_child(&mut stack, &mut root, n); }
+    root
+}
+
+fn hnode_text(n: &HNode) -> String {
+    if n.tag.is_empty() { return n.text.clone(); }
+    n.children.iter().map(hnode_text).collect::<Vec<_>>().join("")
+}
+
+fn hnode_matches(n: &HNode, tag: &str, class: &str) -> bool {
+    if n.tag.is_empty() { return false; }
+    if !tag.is_empty() && n.tag != tag { return false; }
+    if !class.is_empty() {
+        let cls = n.attrs.iter().find(|(k, _)| k == "class").map(|(_, v)| v.clone()).unwrap_or_default();
+        if !cls.split_whitespace().any(|c| c == class) { return false; }
+    }
+    true
+}
+
+/// Descendant selection: `steps[i]` must match an ancestor-or-self chain in
+/// document order; the last step's matches are collected as records.
+fn harness_select(n: &HNode, steps: &[(String, String)], depth: usize, out: &mut Vec<CrowValue>) {
+    let normalized = harness_normalize_steps(steps);
+    let steps = &normalized;
+    for child in &n.children {
+        if child.tag.is_empty() { continue; }
+        let (tag, class) = &steps[depth];
+        if hnode_matches(child, tag, class) {
+            if depth + 1 == steps.len() {
+                let mut m = std::collections::BTreeMap::new();
+                // every attribute is a key (href, name, src, …); tag, text and
+                // class are always present so records read uniformly
+                for (k, v) in &child.attrs {
+                    m.insert(k.clone(), CrowValue::ok(Value::Str(v.clone())));
+                }
+                let cls = child.attrs.iter().find(|(k, _)| k == "class").map(|(_, v)| v.clone()).unwrap_or_default();
+                let text = hnode_text(child).split_whitespace().collect::<Vec<_>>().join(" ");
+                m.insert("tag".to_string(), CrowValue::ok(Value::Str(child.tag.clone())));
+                m.insert("text".to_string(), CrowValue::ok(Value::Str(text)));
+                m.insert("class".to_string(), CrowValue::ok(Value::Str(cls)));
+                out.push(CrowValue::ok(Value::Map(m)));
+            } else {
+                harness_select(child, steps, depth + 1, out);
+            }
+        }
+        // a later step may still start deeper down
+        harness_select(child, steps, depth, out);
+    }
+}
+
+/// The layout engine, written in Crow and shipped inside the compiler.
+const LAYOUT_ENGINE_SRC: &str = include_str!("modules/layout.crow");
+
+/// A rendered node as the engine's LNode struct value.
+fn harness_to_lnode(n: &HNode) -> CrowValue {
+    let mut attrs = std::collections::BTreeMap::new();
+    let mut class = String::new();
+    for (k, v) in &n.attrs {
+        if k == "class" { class = v.clone(); }
+        // the kernel table's data-* carry the responsive rules
+        let key = k.trim_start_matches("data-").replace('-', "_");
+        attrs.insert(key, CrowValue::ok(Value::Str(v.clone())));
+    }
+    // inline style declarations become attrs the engine understands
+    if let Some((_, style)) = n.attrs.iter().find(|(k, _)| k == "style") {
+        for decl in style.split(';') {
+            if let Some((k, v)) = decl.split_once(':') {
+                let (k, v) = (k.trim(), v.trim());
+                let mapped: Option<(&str, String)> = match k {
+                    "gap" => Some(("gap", crow_space_name(v))),
+                    "padding" => {
+                        let parts: Vec<String> = v.split_whitespace().map(crow_space_name).collect();
+                        Some(("pad", parts.join(" ")))
+                    }
+                    "margin" => Some(("margin", crow_space_name(v.split_whitespace().next().unwrap_or("0px")))),
+                    "width" => Some(("width", v.to_string())),
+                    "height" => Some(("height", v.to_string())),
+                    "flex" => Some(("fill", "true".to_string())),
+                    "flex-wrap" if v == "wrap" => Some(("wrap", "true".to_string())),
+                    "font-size" => Some(("size", match v { "12px" => "xs", "14px" => "s", "16px" => "m", "20px" => "l", "24px" => "xl", "32px" => "xxl", _ => "m" }.to_string())),
+                    "font-weight" => Some(("weight", match v { "700" => "bold", "500" => "medium", _ => "regular" }.to_string())),
+                    "grid-template-columns" => {
+                        // repeat(N, minmax(0, 1fr)) → N
+                        v.strip_prefix("repeat(").and_then(|r| r.split(',').next()).map(|n| ("columns", n.trim().to_string()))
+                    }
+                    _ => None,
+                };
+                if let Some((k, v)) = mapped { attrs.insert(k.to_string(), CrowValue::ok(Value::Str(v))); }
+            }
+        }
+    }
+    let kids: Vec<CrowValue> = n.children.iter().filter(|c| !c.tag.is_empty()).map(harness_to_lnode).collect();
+    let text = hnode_text(n).split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut fields = std::collections::BTreeMap::new();
+    fields.insert("tag".to_string(), CrowValue::ok(Value::Str(n.tag.clone())));
+    fields.insert("class".to_string(), CrowValue::ok(Value::Str(class)));
+    fields.insert("text".to_string(), CrowValue::ok(Value::Str(text)));
+    fields.insert("attrs".to_string(), CrowValue::ok(Value::Map(attrs)));
+    fields.insert("kids".to_string(), CrowValue::ok(Value::Array(kids)));
+    CrowValue::ok(Value::StructInstance(StructInstance { name: "LNode".to_string(), fields }))
+}
+
+fn crow_space_name(px: &str) -> String {
+    match px.trim() { "4px" => "xs", "8px" => "s", "16px" => "m", "24px" => "l", "32px" => "xl", _ => "" }.to_string()
+}
+
+/// `path` is "/tag.class/tag.class/…" from the engine; a selector chain
+/// matches when its steps appear in order as ancestors-or-self.
+/// A selector step naming a layout container (`grid`, `row`, …) means its
+/// class: containers render as divs carrying the primitive's name.
+fn harness_normalize_steps(steps: &[(String, String)]) -> Vec<(String, String)> {
+    steps.iter().map(|(t, c)| {
+        if crow_runtime::layout::CONTAINERS.contains(&t.as_str()) && c.is_empty() { (String::new(), t.clone()) } else { (t.clone(), c.clone()) }
+    }).collect()
+}
+
+fn harness_path_matches(path: &str, steps: &[(String, String)]) -> bool {
+    let steps = &harness_normalize_steps(steps);
+    let nodes: Vec<(&str, &str)> = path.split('/').filter(|s| !s.is_empty()).map(|seg| {
+        match seg.find('.') { Some(i) => (&seg[..i], &seg[i + 1..]), None => (seg, "") }
+    }).collect();
+    if nodes.is_empty() || steps.is_empty() { return false; }
+    // the last step must match the node itself
+    let matches = |(tag, class): (&str, &str), (st, sc): &(String, String)| -> bool {
+        (st.is_empty() || tag == st) && (sc.is_empty() || class.split_whitespace().any(|c| c == sc))
+    };
+    let last = nodes[nodes.len() - 1];
+    if !matches(last, &steps[steps.len() - 1]) { return false; }
+    let mut si = steps.len() - 1;
+    let mut ni = nodes.len() - 1;
+    while si > 0 {
+        si -= 1;
+        loop {
+            if ni == 0 { return false; }
+            ni -= 1;
+            if matches(nodes[ni], &steps[si]) { break; }
+        }
+    }
+    true
+}
 
 #[derive(Clone)]
 pub struct Interpreter {
@@ -210,6 +441,7 @@ pub struct Interpreter {
     in_view: usize,
     /// Event handlers referenced from views/page[] (reactive-exempt)
     handler_fns: std::collections::HashSet<String>,
+    layout_engine_loaded: bool,
     /// alias → module path for `use X as y` (qualified-only imports)
     module_aliases: std::collections::HashMap<String, String>,
     /// Modules imported bare — their exports are callable without a prefix
@@ -235,6 +467,7 @@ impl Interpreter {
             view_fns: std::collections::HashSet::new(),
             in_view: 0,
             handler_fns: std::collections::HashSet::new(),
+            layout_engine_loaded: false,
             module_aliases: std::collections::HashMap::new(),
             bare_modules: std::collections::HashSet::new(),
         }
@@ -598,6 +831,11 @@ impl Interpreter {
         // Built-in module: db — database connectivity
         if module_path == "db" {
             self.registry.load(std::sync::Arc::new(crate::modules::db::DbModule));
+            return Ok(());
+        }
+        // Built-in module: doc — documentation from Markdown
+        if module_path == "doc" {
+            self.registry.load(std::sync::Arc::new(crate::modules::doc::DocModule));
             return Ok(());
         }
 
@@ -1313,8 +1551,9 @@ impl Interpreter {
             Expr::Int(n) => Ok(CrowValue::ok(Value::Int(*n))),
             Expr::Float(n) => Ok(CrowValue::ok(Value::Float(*n))),
             Expr::Str(s) => {
-                let interpolated = self.interpolate_string(s)?;
-                Ok(CrowValue::ok(Value::Str(interpolated)))
+                // an error value inside a backtick span propagates: the string
+                // is that error, never the text "done"
+                self.interpolate_string(s)
             }
             Expr::Bool(b) => Ok(CrowValue::ok(Value::Bool(*b))),
             Expr::Ident(name) => {
@@ -1466,7 +1705,7 @@ impl Interpreter {
                     // Module-scoped resolution: the prefix names the provider,
                     // so overlapping exports (frame.load vs math.load) resolve
                     return self.registry.call_in(mod_name, field, &arg_vals)
-                        .map(|v| if READER_FNS.contains(&field.as_str()) { v.stamp_captured() } else { v });
+                        .map(|v| if READER_FNS.contains(&field.as_str()) && v.is_ok() { v.stamp_captured() } else { v });
                 }
             }
         }
@@ -1487,13 +1726,16 @@ impl Interpreter {
                 let has_numarray = arg_vals.iter().any(|a| matches!(&a.value, Value::NumArray(_)));
                 if has_numarray && self.registry.has_function(name) {
                     return self.registry.call(name, &arg_vals)
-                        .map(|v| if READER_FNS.contains(&name.as_str()) { v.stamp_captured() } else { v });
+                        .map(|v| if READER_FNS.contains(&name.as_str()) && v.is_ok() { v.stamp_captured() } else { v });
                 }
                 return self.call_builtin(name, &arg_vals);
             }
 
-            // Non-overlapping module functions take priority
-            if self.registry.has_function(name) {
+            // Non-overlapping module functions take priority — except inside
+            // a rendering view, where an element name (stack, row, table…)
+            // is the element; the prefix reaches frame.stack / math.stack.
+            let element_here = self.in_view > 0 && crate::lower::UI_ELEMENTS.contains(&name.as_str());
+            if self.registry.has_function(name) && !element_here {
                 // transact[conn, fn] needs special handling — we must call a Crow function
                 if name == "transact" && self.registry.module_name_for(name) == Some("db") {
                     return self.call_db_transact(args);
@@ -1503,7 +1745,7 @@ impl Interpreter {
                     .map(|a| self.eval_expr(a))
                     .collect::<Result<_, _>>()?;
                 return self.registry.call(name, &arg_vals)
-                    .map(|v| if READER_FNS.contains(&name.as_str()) { v.stamp_captured() } else { v });
+                    .map(|v| if READER_FNS.contains(&name.as_str()) && v.is_ok() { v.stamp_captured() } else { v });
             }
 
             // later[work, …] — background scheduling. The interpreter runs the
@@ -1614,6 +1856,7 @@ impl Interpreter {
                 // Inside a rendering view, element names build html strings.
                 if self.in_view > 0 && crate::lower::UI_ELEMENTS.contains(&name.as_str()) {
                     let mut inner = String::new();
+                    let mut attrs: Vec<(String, String)> = Vec::new();
                     for a in args {
                         // F-11: an attribute map may carry deferred calls
                         // (click = set_speed[10.0]) — evaluating it verbatim
@@ -1641,35 +1884,150 @@ impl Interpreter {
                         };
                         let v = self.eval_expr(a)?;
                         if v.is_error() {
-                            let mut err = v;
-                            err.append_trace(&self.trace_entry());
-                            return Ok(err);
+                            // a view renders what it is given: a failed value
+                            // shows its reason (same as the compiled renderer)
+                            inner.push_str(&format!("error: {}", v.reason));
+                            continue;
                         }
                         match &v.value {
-                            Value::Map(_) => {} // attribute map (click = fn, …)
-                            other => inner.push_str(&format!("{}", other)),
+                            // attribute map: scalar entries render as attributes
+                            // (class, href, name, …) exactly as the compiled
+                            // renderer does; event keys hold handlers and are
+                            // wiring, not markup
+                            Value::Map(m) => {
+                                for (k, val) in m.iter() {
+                                    if matches!(k.as_str(), "click" | "input" | "submit" | "change" | "seek") { continue; }
+                                    let s = match &val.value {
+                                        Value::Str(s) => s.clone(),
+                                        Value::Int(i) => i.to_string(),
+                                        Value::Float(f) => f.to_string(),
+                                        Value::Bool(b) => b.to_string(),
+                                        _ => continue,
+                                    };
+                                    attrs.push((k.clone(), s));
+                                }
+                            }
+                            // a child that is already markup passes through; text
+                            // is escaped exactly as the compiled renderer does
+                            Value::Str(s) if s.starts_with('<') && s.ends_with('>') => inner.push_str(s),
+                            other => inner.push_str(&html_escape_text(&format!("{}", other))),
                         }
                     }
+                    // layout attributes become class/style/data-* through the
+                    // kernel table; the rest pass through as HTML attributes
+                    let rendered = crow_runtime::layout::render(name, &attrs);
+                    if let Some(e) = rendered.errors.first() {
+                        return Err(format!("{}: {}", name, e));
+                    }
+                    let mut out_attrs: Vec<(String, String)> = rendered.passthrough.clone();
+                    if !rendered.class.is_empty() { out_attrs.push(("class".to_string(), rendered.class.clone())); }
+                    if !rendered.style.is_empty() { out_attrs.push(("style".to_string(), rendered.style.clone())); }
+                    out_attrs.extend(rendered.data.iter().cloned());
+                    out_attrs.sort();
+                    let attr_str: String = out_attrs.iter().map(|(k, v)| format!(" {}=\"{}\"", k, html_escape_attr(v))).collect();
                     return Ok(CrowValue::ok(Value::Str(format!(
-                        "<{0}>{1}</{0}>",
-                        name, inner
+                        "<{0}{2}>{1}</{0}>",
+                        rendered.tag, inner, attr_str
                     ))));
                 }
                 // app[render] — a headless session bound to a view.
-                if name == "app" && args.len() == 1 {
+                if name == "app" && (args.len() == 1 || args.len() == 2) {
+                    // Load the engine now, in this interpreter: a box[] inside a
+                    // parallel loop runs in a clone whose call scopes only see the
+                    // globals that existed when it was made.
+                    self.ensure_layout_engine()?;
                     if let Expr::Ident(vname) = &args[0] {
-                        if let Some(val) = self.env.get(vname) {
-                            if let Value::Fn(f) = &val.value {
-                                return Ok(CrowValue::ok(Value::App(f.clone())));
-                            }
+                        let found = self.env.get(vname).and_then(|val| if let Value::Fn(f) = &val.value { Some(f.clone()) } else { None });
+                        if let Some(f) = found {
+                            // app[view, width = 1280]: the viewport the engine lays out for
+                            let width = if args.len() == 2 {
+                                match self.eval_expr(&args[1])?.value { Value::Int(n) => n as f64, Value::Float(f) => f, _ => 1280.0 }
+                            } else { 1280.0 };
+                            return Ok(CrowValue::ok(Value::App(f, width)));
                         }
                     }
-                    return Err("app[] takes a view name: app[render]".into());
+                    return Err("app[] takes a view name: app[render] (and an optional width = 390)".into());
+                }
+                // box[s, selector] / fits[s, width] / style[s, selector] — the layout
+                // engine (src/modules/layout.crow) over the rendered tree.
+                if (name == "box" || name == "fits" || name == "style") && args.len() == 2 {
+                    let a = self.eval_expr(&args[0])?;
+                    let (f, session_width) = match &a.value { Value::App(f, w) => (f.clone(), *w), _ => return Err(format!("{}[] takes an app session first: {}[s, ...]", name, name)) };
+                    let arg1 = self.eval_expr(&args[1])?;
+                    self.in_view += 1;
+                    let rendered = self.call_fn_value(&f, Vec::new());
+                    self.in_view -= 1;
+                    let rendered = rendered?;
+                    let html = match &rendered.value { Value::Str(s) => s.clone(), other => format!("{}", other) };
+                    let tree = harness_parse_html(&html);
+                    if name == "style" {
+                        let selector = match &arg1.value { Value::Str(s) => s.clone(), _ => return Err("style[] selector must be a string".into()) };
+                        let steps: Vec<(String, String)> = selector.split_whitespace().map(|step| match step.find('.') { Some(i) => (step[..i].to_string(), step[i + 1..].to_string()), None => (step.to_string(), String::new()) }).collect();
+                        let mut hits: Vec<CrowValue> = Vec::new();
+                        harness_select(&tree, &steps, 0, &mut hits);
+                        // resolved tokens per element: from its style attribute and class rules
+                        let mut out = Vec::new();
+                        for h in hits {
+                            if let Value::Map(m) = &h.value {
+                                let mut r = std::collections::BTreeMap::new();
+                                let cls = m.get("class").map(|v| format!("{}", v.value)).unwrap_or_default();
+                                let style = m.get("style").map(|v| format!("{}", v.value)).unwrap_or_default();
+                                let mut background = String::new();
+                                let mut color = String::from("--crow-text");
+                                let mut size = String::from("m");
+                                let mut weight = String::from("regular");
+                                for c in cls.split_whitespace() {
+                                    match c { "card" => background = "--crow-surface".into(), "primary" => { background = "--crow-accent".into(); color = "--crow-bg".into(); }, "up" => color = "--crow-up".into(), "down" => color = "--crow-down".into(), "stale" => color = "--crow-muted".into(), _ => {} }
+                                }
+                                for decl in style.split(';') {
+                                    if let Some((k, v)) = decl.split_once(':') {
+                                        let v = v.trim();
+                                        match k.trim() {
+                                            "color" => color = v.trim_start_matches("var(").trim_end_matches(')').to_string(),
+                                            "background" => background = v.trim_start_matches("var(").trim_end_matches(')').to_string(),
+                                            "font-size" => size = match v { "12px" => "xs", "14px" => "s", "16px" => "m", "20px" => "l", "24px" => "xl", "32px" => "xxl", _ => "m" }.to_string(),
+                                            "font-weight" => weight = match v { "700" => "bold", "500" => "medium", _ => "regular" }.to_string(),
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                r.insert("background".to_string(), CrowValue::ok(Value::Str(background)));
+                                r.insert("color".to_string(), CrowValue::ok(Value::Str(color)));
+                                r.insert("size".to_string(), CrowValue::ok(Value::Str(size)));
+                                r.insert("weight".to_string(), CrowValue::ok(Value::Str(weight)));
+                                out.push(CrowValue::ok(Value::Map(r)));
+                            }
+                        }
+                        return Ok(CrowValue::ok(Value::Array(out)));
+                    }
+                    self.ensure_layout_engine()?;
+                    let viewport = if name == "fits" {
+                        match &arg1.value { Value::Int(n) => *n as f64, Value::Float(f) => *f, _ => return Err("fits[] takes a width: fits[s, 390]".into()) }
+                    } else {
+                        session_width
+                    };
+                    let root = harness_to_lnode(&tree);
+                    let engine = match self.env.get("crow_layout") { Some(v) => match &v.value { Value::Fn(f) => f.clone(), _ => return Err("layout engine missing".into()) }, None => return Err("layout engine missing".into()) };
+                    let boxes = self.call_fn_value(&engine, vec![root, CrowValue::ok(Value::Float(viewport))])?;
+                    let list = match &boxes.value { Value::Array(items) => items.clone(), _ => Vec::new() };
+                    if name == "fits" {
+                        let any_overflow = list.iter().any(|b| match &b.value { Value::StructInstance(si) => matches!(si.fields.get("overflow").map(|v| &v.value), Some(Value::Bool(true))), _ => false });
+                        return Ok(CrowValue::ok(Value::Bool(!any_overflow)));
+                    }
+                    let selector = match &arg1.value { Value::Str(s) => s.clone(), _ => return Err("box[] selector must be a string like 'button' or 'div.stats .card'".into()) };
+                    let steps: Vec<(String, String)> = selector.split_whitespace().map(|step| match step.find('.') { Some(i) => (step[..i].to_string(), step[i + 1..].to_string()), None => (step.to_string(), String::new()) }).collect();
+                    let hits: Vec<CrowValue> = list.into_iter().filter(|b| {
+                        if let Value::StructInstance(si) = &b.value {
+                            let path = si.fields.get("path").map(|v| format!("{}", v.value)).unwrap_or_default();
+                            harness_path_matches(&path, &steps)
+                        } else { false }
+                    }).collect();
+                    return Ok(CrowValue::ok(Value::Array(hits)));
                 }
                 // html[a] — render the session's view against current state.
                 if name == "html" && args.len() == 1 {
                     let a = self.eval_expr(&args[0])?;
-                    if let Value::App(f) = &a.value {
+                    if let Value::App(f, _) = &a.value {
                         let f = f.clone();
                         self.in_view += 1;
                         let r = self.call_fn_value(&f, Vec::new());
@@ -1678,12 +2036,67 @@ impl Interpreter {
                     }
                     return Err("html[] takes an app session: html[a]".into());
                 }
+                // elements[a, selector] — the rendered view as a tree: every
+                // element matching `tag`, `.class`, `tag.class`, or a
+                // descendant chain of those, in document order, as records
+                // [tag = …, text = …, class = …]. Structure becomes a truth.
+                if name == "elements" && args.len() == 2 {
+                    let a = self.eval_expr(&args[0])?;
+                    let sel = self.eval_expr(&args[1])?;
+                    let f = match &a.value { Value::App(f, _) => f.clone(), _ => return Err("elements[] takes an app session and a selector: elements[a, 'button']".into()) };
+                    let selector = match &sel.value { Value::Str(s) => s.clone(), _ => return Err("elements[] selector must be a string like 'button', '.card', or 'div.stats button'".into()) };
+                    self.in_view += 1;
+                    let rendered = self.call_fn_value(&f, Vec::new());
+                    self.in_view -= 1;
+                    let rendered = rendered?;
+                    let html = match &rendered.value { Value::Str(s) => s.clone(), other => format!("{}", other) };
+                    let tree = harness_parse_html(&html);
+                    let steps: Vec<(String, String)> = selector.split_whitespace().map(|step| {
+                        let (tag, class) = match step.find('.') { Some(i) => (step[..i].to_string(), step[i + 1..].to_string()), None => (step.to_string(), String::new()) };
+                        (tag, class)
+                    }).collect();
+                    if steps.is_empty() { return Err("elements[] selector is empty".into()); }
+                    let mut hits: Vec<CrowValue> = Vec::new();
+                    harness_select(&tree, &steps, 0, &mut hits);
+                    return Ok(CrowValue::ok(Value::Array(hits)));
+                }
+                // change[a, 'var', value] — what typing into a bound field
+                // does: set the reactive variable, so the next render and the
+                // next handler see it.
+                if name == "change" && args.len() == 3 {
+                    let a = self.eval_expr(&args[0])?;
+                    if !matches!(a.value, Value::App(..)) {
+                        return Err("change[] first argument must be an app session: change[a, 'min_qty', 5]".into());
+                    }
+                    let var = match self.eval_expr(&args[1])?.value {
+                        Value::Str(s) => s,
+                        _ => return Err("change[] names the reactive variable as a string: change[a, 'min_qty', 5]".into()),
+                    };
+                    let value = self.eval_expr(&args[2])?;
+                    let current = match self.env.scopes.first().and_then(|s| s.get(&var)) {
+                        Some(v) => v.clone(),
+                        None => return Err(format!("change[]: no reactive variable named '{}' (reactive state is a top-level assignment)", var)),
+                    };
+                    let compatible = match (&current.value, &value.value) {
+                        (Value::Int(_), Value::Int(_)) | (Value::Float(_), Value::Float(_)) | (Value::Float(_), Value::Int(_)) | (Value::Int(_), Value::Float(_)) | (Value::Str(_), Value::Str(_)) | (Value::Bool(_), Value::Bool(_)) => true,
+                        (a, b) => a.type_name() == b.type_name(),
+                    };
+                    if !compatible {
+                        return Err(format!("change[]: '{}' holds {} — cannot set it to {}", var, current.value.type_name(), value.value.type_name()));
+                    }
+                    let value = match (&current.value, &value.value) {
+                        (Value::Float(_), Value::Int(i)) => CrowValue::ok(Value::Float(*i as f64)),
+                        _ => value,
+                    };
+                    if let Some(scope) = self.env.scopes.first_mut() { scope.insert(var, value); }
+                    return Ok(CrowValue::done());
+                }
                 // click[a, handler] — run the handler (reactive-exempt);
                 // later[] work inside it runs inline, so tests stay
                 // deterministic.
                 if name == "click" && args.len() == 2 {
                     let a = self.eval_expr(&args[0])?;
-                    if !matches!(a.value, Value::App(_)) {
+                    if !matches!(a.value, Value::App(..)) {
                         return Err(
                             "click[] first argument must be an app session: click[a, go]".into(),
                         );
@@ -1769,6 +2182,13 @@ impl Interpreter {
                     if arg_vals.len() != 1 {
                         return Err("captured[] takes exactly 1 argument".into());
                     }
+                    // A failed read has no value to have captured: the read's
+                    // own error propagates (same as compiled mode).
+                    if arg_vals[0].is_error() {
+                        let mut err = arg_vals[0].clone();
+                        err.append_trace(&self.trace_entry());
+                        return Ok(err);
+                    }
                     return Ok(match arg_vals[0].captured {
                         Some(t) => CrowValue::ok(Value::Float(t)),
                         None => CrowValue::error_with_kind(
@@ -1779,7 +2199,9 @@ impl Interpreter {
                     });
                 }
                 let mut out = self.call_builtin(name, &arg_vals)?;
-                if READER_FNS.contains(&name.as_str()) {
+                // Only a successful read has a capture moment: a failed read
+                // yielded no value, and captured[] on it propagates the error.
+                if READER_FNS.contains(&name.as_str()) && out.is_ok() {
                     out = out.stamp_captured();
                 }
                 return Ok(out);
@@ -1800,9 +2222,16 @@ impl Interpreter {
             .map(|a| self.eval_expr(a))
             .collect::<Result<_, _>>()?;
 
-        // Auto-propagation: if any argument is an error-value, return the first error
+        // Auto-propagation: if any argument is an error-value, return the first error.
+        // A view is the exception, like the elements it is made of: it renders
+        // what it is given, so a failed argument shows as text in the page
+        // rather than wrapping the whole tree in a Result.
+        let is_view_call = matches!(&callee_val.value, Value::Fn(f) if self.view_fns.contains(&f.name));
         for arg in &arg_vals {
             if arg.is_error() {
+                if is_view_call {
+                    return Ok(CrowValue::ok(Value::Str(format!("error: {}", html_escape_text(&arg.reason)))));
+                }
                 let mut err = arg.clone();
                 err.append_trace(&self.trace_entry());
                 return Ok(err);
@@ -1825,15 +2254,26 @@ impl Interpreter {
                 let saved_function = self.current_function.clone();
                 self.current_function = func.name.clone();
                 let _ex = self.reactive_exempt(&func.name);
+                // A view renders wherever it is called (see call_fn_value).
+                let renders = self.view_fns.contains(&func.name);
+                if renders { self.in_view += 1; }
                 self.env.push_call_scope(_ex);
                 for (param, val) in func.params.iter().zip(arg_vals) {
                     self.env.set(param, val);
                 }
                 let mut result = CrowValue::done();
                 for stmt in func.body.iter() {
-                    match self.exec_stmt(stmt)? {
+                    let signal = match self.exec_stmt(stmt) {
+                        Ok(sig) => sig,
+                        Err(e) => {
+                            if renders { self.in_view -= 1; }
+                            return Err(e);
+                        }
+                    };
+                    match signal {
                         Signal::Return(val) => {
                             self.env.pop_call_scope();
+                            if renders { self.in_view -= 1; }
                             self.current_function = saved_function;
                             return Ok(val);
                         }
@@ -1842,6 +2282,7 @@ impl Interpreter {
                     }
                 }
                 self.env.pop_call_scope();
+                if renders { self.in_view -= 1; }
                 self.current_function = saved_function;
                 Ok(result)
             }
@@ -2181,6 +2622,30 @@ impl Interpreter {
 
     /// Call a Crow function value with evaluated arguments (used by builtins
     /// that take function parameters: any/all/find, transact, grad).
+    /// Load the Crow-written layout engine into this interpreter once.
+    fn ensure_layout_engine(&mut self) -> Result<(), String> {
+        if self.layout_engine_loaded { return Ok(()); }
+        let stmts = crate::build(LAYOUT_ENGINE_SRC).map_err(|e| format!("layout engine: {}", e))?;
+        let saved_view = self.in_view;
+        let saved_line = self.current_line;
+        self.in_view = 0;
+        // The engine's functions belong to the global scope whichever call
+        // frame first needs them — a test block's frame, or a clone running
+        // one iteration of a parallel loop — so run it with the globals alone.
+        let saved_scopes: Vec<HashMap<String, CrowValue>> = self.env.scopes.drain(1..).collect();
+        let saved_stacks = std::mem::take(&mut self.env.saved_stacks);
+        let saved_frames = std::mem::take(&mut self.env.exempt_frames);
+        let r = self.run(&stmts);
+        self.env.exempt_frames = saved_frames;
+        self.env.saved_stacks = saved_stacks;
+        self.env.scopes.extend(saved_scopes);
+        self.in_view = saved_view;
+        self.current_line = saved_line;
+        r.map_err(|e| format!("layout engine: {}", e))?;
+        self.layout_engine_loaded = true;
+        Ok(())
+    }
+
     fn call_fn_value(&mut self, func: &FnValue, args: Vec<CrowValue>) -> Result<CrowValue, String> {
         if func.params.len() != args.len() {
             return Err(format!(
@@ -2189,8 +2654,16 @@ impl Interpreter {
             ));
         }
         let saved_function = self.current_function.clone();
+        // The callee moves current_line; the caller's statement (an assert,
+        // say) must still report its own line once the call returns. An
+        // error inside is stamped with the callee's line before the restore.
+        let saved_line = self.current_line;
         self.current_function = func.name.clone();
         let _ex = self.reactive_exempt(&func.name);
+        // A view renders wherever it is called — from a page, a test
+        // harness, or a program writing pages to disk.
+        let renders = self.view_fns.contains(&func.name);
+        if renders { self.in_view += 1; }
         self.env.push_call_scope(_ex);
         for (p, a) in func.params.iter().zip(args) {
             self.env.set(p, a);
@@ -2201,11 +2674,13 @@ impl Interpreter {
                 Ok(Signal::Return(val)) => { result = Ok(val); break; }
                 Ok(Signal::Value(val)) => { result = Ok(val); }
                 Ok(Signal::Break | Signal::Continue | Signal::None) => {}
-                Err(e) => { result = Err(e); break; }
+                Err(e) => { result = Err(self.line_err(e)); break; }
             }
         }
         self.env.pop_call_scope();
+        if renders { self.in_view -= 1; }
         self.current_function = saved_function;
+        self.current_line = saved_line;
         result
     }
 
@@ -2269,7 +2744,7 @@ impl Interpreter {
                     "error".to_string()
                 } else {
                     match &args[0].value {
-                        Value::App(_) => "app".to_string(),
+                        Value::App(..) => "app".to_string(),
                         Value::Int(_) => "int".to_string(),
                         Value::Float(_) => "float".to_string(),
                         Value::Str(_) => "str".to_string(),
@@ -2671,7 +3146,7 @@ impl Interpreter {
                 match args[0].unwrap_or_propagate()? {
                     Value::Array(items) => Ok(CrowValue::ok(Value::Int(items.len() as i64))),
                     Value::NumArray(t) => Ok(CrowValue::ok(Value::Int(t.len() as i64))),
-                    Value::Str(s) => Ok(CrowValue::ok(Value::Int(s.len() as i64))),
+                    Value::Str(s) => Ok(CrowValue::ok(Value::Int(s.chars().count() as i64))),
                     Value::Map(m) => Ok(CrowValue::ok(Value::Int(m.len() as i64))),
                     Value::Frame(f) => Ok(CrowValue::ok(Value::Int(f.nrows() as i64))),
                     _ => Err("len[] requires an array, string, map, or frame".into()),
@@ -2750,12 +3225,14 @@ impl Interpreter {
                     Value::Str(s) => {
                         match (args[1].unwrap_or_propagate()?, args[2].unwrap_or_propagate()?) {
                             (Value::Int(start), Value::Int(end)) => {
+                                // character positions, so 'a—b' slices the same
+                                // in both modes and never lands inside a glyph
                                 let st = (*start).max(0) as usize;
-                                let en = (*end as usize).min(s.len());
+                                let en = (*end).max(0) as usize;
                                 if st >= en {
                                     Ok(CrowValue::ok(Value::Str(String::new())))
                                 } else {
-                                    Ok(CrowValue::ok(Value::Str(s[st..en].to_string())))
+                                    Ok(CrowValue::ok(Value::Str(s.chars().skip(st).take(en - st).collect())))
                                 }
                             }
                             _ => Err("slice[] requires integer start and end".into()),
@@ -3585,8 +4062,14 @@ impl Interpreter {
                 Ok(CrowValue::ok(Value::Map(std::collections::BTreeMap::new())))
             }
             "field" => {
-                // field[label, var] → mock: returns nil (UI element)
+                // field[label, var] → a labelled input bound to the variable —
+                // the same markup the compiled renderer produces
                 if args.len() != 2 { return Err("field[] takes 2 arguments".into()); }
+                if self.in_view > 0 {
+                    let label = html_escape_text(&format!("{}", args[0].value));
+                    let value = html_escape_attr(&format!("{}", args[1].value));
+                    return Ok(CrowValue::ok(Value::Str(format!("<div class=\"crow-field\"><label>{}</label><input value=\"{}\"></input></div>", label, value))));
+                }
                 Ok(CrowValue::done())
             }
             "today" => Err("today[] was removed - use fmt[now[], time = \'date\'] (tz = ... for a zone)".into()),
@@ -4325,7 +4808,7 @@ impl Interpreter {
         // struct and module field access
         match &obj.value {
             // App session: fields read the current reactive state.
-            Value::App(_) => {
+            Value::App(..) => {
                 return self.env.get(field).cloned().ok_or_else(|| {
                     format!("no reactive state named '{}'", field)
                 });
@@ -4358,7 +4841,7 @@ impl Interpreter {
         }
     }
 
-    fn interpolate_string(&mut self, s: &str) -> Result<String, String> {
+    fn interpolate_string(&mut self, s: &str) -> Result<CrowValue, String> {
         let mut result = String::new();
         let chars: Vec<char> = s.chars().collect();
         let mut i = 0;
@@ -4413,6 +4896,11 @@ impl Interpreter {
 
                 if let Some(crate::ast::Stmt::ExprStmt(expr)) = stmts.iter().find(|s| !matches!(s, crate::ast::Stmt::Line(_))) {
                     let val = self.eval_expr(expr)?;
+                    if val.is_error() {
+                        let mut err = val;
+                        err.append_trace(&self.trace_entry());
+                        return Ok(err);
+                    }
                     result.push_str(&format!("{}", val.value));
                 }
             } else {
@@ -4421,7 +4909,7 @@ impl Interpreter {
             }
         }
 
-        Ok(result)
+        Ok(CrowValue::ok(Value::Str(result)))
     }
 }
 
@@ -6191,8 +6679,12 @@ mod tests {
     }
 
 
+    /// The GPU flag is process-global; the tests that touch it take turns.
+    static GPU_FLAG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_gpu_call_sets_flag() {
+        let _serial = GPU_FLAG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Reset GPU flag
         crow_runtime::gpu::set_gpu_enabled(false);
         assert!(!crow_runtime::gpu::is_gpu_enabled());
@@ -6205,6 +6697,7 @@ mod tests {
 
     #[test]
     fn test_gpu_resource_stmt() {
+        let _serial = GPU_FLAG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crow_runtime::gpu::set_gpu_enabled(false);
         // Directly test the Stmt::Resource path
         let mut interp = Interpreter::new();

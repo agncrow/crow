@@ -11,6 +11,7 @@ chrono-tz = "0.10.4"
 faer = "0.24.0"
 itoa = "1.0.17"
 pollster = "0.4.0"
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 rand = "0.10.0"
 rand_distr = "0.6.0"
 rayon = "1.11.0"

@@ -1,0 +1,580 @@
+--- The Crow layout engine — boxes for a rendered view tree.
+---
+--- One algorithm, written in Crow, for the vocabulary in docs/ui-engine-design.md.
+--- The browser lays out the same vocabulary from the CSS the kernel table
+--- emits (crow_runtime::layout); this engine gives tests and the desktop
+--- shell the same boxes without a browser. Every rule here has a written
+--- twin in that table.
+---
+--- A node is what the harness parses from the rendered markup; a box is
+--- what a test reads: position, size, and whether anything overflowed.
+
+struct LNode [tag, class, text, attrs, kids]
+struct LBox [tag, class, path, x, y, width, height, overflow]
+
+--- scales (px), the same numbers as the kernel table
+fn lay_space[name]
+    if name eq 'xs'
+        return 4.0
+    if name eq 's'
+        return 8.0
+    if name eq 'm'
+        return 16.0
+    if name eq 'l'
+        return 24.0
+    if name eq 'xl'
+        return 32.0
+    return 0.0
+
+fn lay_font_size[name]
+    if name eq 'xs'
+        return 12.0
+    if name eq 's'
+        return 14.0
+    if name eq 'm'
+        return 16.0
+    if name eq 'l'
+        return 20.0
+    if name eq 'xl'
+        return 24.0
+    if name eq 'xxl'
+        return 32.0
+    return 15.0
+
+fn lay_line_height[name]
+    if name eq 'xs'
+        return 18.0
+    if name eq 's'
+        return 20.0
+    if name eq 'm'
+        return 24.0
+    if name eq 'l'
+        return 28.0
+    if name eq 'xl'
+        return 32.0
+    if name eq 'xxl'
+        return 40.0
+    return 23.0
+
+fn lay_named_width[name]
+    if name eq 'phone'
+        return 600.0
+    if name eq 'tablet'
+        return 1024.0
+    if name eq 'desktop'
+        return 1600.0
+    return 0.0
+
+--- text metrics: a placeholder average-advance table until the shipped
+--- font's metrics are generated (design doc, open questions)
+--- Text metrics: advance width per character as a fraction of the font
+--- size, measured in Chrome for the kernel stylesheet's font stack. The
+--- system font has two optical sizes — text below 20px, display from
+--- 20px — with different advances, so there is a table for each. The
+--- monospace stack is uniform at 0.602. Summed advances land within
+--- 0.5% of a measured string.
+--- text size, weight 400
+fn lay_sans_table[]
+    return map[
+        ' ' = 0.266, '!' = 0.295, '"' = 0.462, '#' = 0.614, '$' = 0.614, '%' = 0.910, '&' = 0.696, '\'' = 0.281,
+        '(' = 0.366, ')' = 0.366, '*' = 0.456, '+' = 0.614, ',' = 0.281, '-' = 0.456, '.' = 0.281, '/' = 0.289,
+        '0' = 0.614, '1' = 0.448, '2' = 0.588, '3' = 0.611, '4' = 0.628, '5' = 0.603, '6' = 0.621, '7' = 0.554,
+        '8' = 0.623, '9' = 0.621, ':' = 0.281, ';' = 0.281, '<' = 0.614, '=' = 0.614, '>' = 0.614, '?' = 0.497,
+        '@' = 0.902, 'A' = 0.658, 'B' = 0.642, 'C' = 0.700, 'D' = 0.711, 'E' = 0.580, 'F' = 0.557, 'G' = 0.731,
+        'H' = 0.727, 'I' = 0.252, 'J' = 0.522, 'K' = 0.643, 'L' = 0.552, 'M' = 0.858, 'N' = 0.727, 'O' = 0.756,
+        'P' = 0.620, 'Q' = 0.756, 'R' = 0.638, 'S' = 0.622, 'T' = 0.618, 'U' = 0.722, 'V' = 0.658, 'W' = 0.952,
+        'X' = 0.663, 'Y' = 0.640, 'Z' = 0.646, '[' = 0.366, '\\' = 0.289, ']' = 0.366, '^' = 0.614, '_' = 0.568,
+        'a' = 0.536, 'b' = 0.599, 'c' = 0.544, 'd' = 0.599, 'e' = 0.556, 'f' = 0.346, 'g' = 0.594, 'h' = 0.573,
+        'i' = 0.231, 'j' = 0.231, 'k' = 0.527, 'l' = 0.237, 'm' = 0.855, 'n' = 0.568, 'o' = 0.575, 'p' = 0.595,
+        'q' = 0.594, 'r' = 0.365, 's' = 0.508, 't' = 0.348, 'u' = 0.568, 'v' = 0.526, 'w' = 0.759, 'x' = 0.509,
+        'y' = 0.527, 'z' = 0.523, '{' = 0.366, '|' = 0.243, '}' = 0.366, '~' = 0.614
+    ]
+
+--- text size, weight 650 (h2, h3, th)
+fn lay_sans_bold_table[]
+    return map[
+        ' ' = 0.246, '!' = 0.333, '"' = 0.538, '#' = 0.649, '$' = 0.649, '%' = 1.002, '&' = 0.723, '\'' = 0.324,
+        '(' = 0.405, ')' = 0.405, '*' = 0.467, '+' = 0.649, ',' = 0.324, '-' = 0.467, '.' = 0.324, '/' = 0.314,
+        '0' = 0.660, '1' = 0.488, '2' = 0.621, '3' = 0.646, '4' = 0.664, '5' = 0.640, '6' = 0.660, '7' = 0.583,
+        '8' = 0.669, '9' = 0.660, ':' = 0.324, ';' = 0.324, '<' = 0.649, '=' = 0.649, '>' = 0.649, '?' = 0.534,
+        '@' = 0.910, 'A' = 0.707, 'B' = 0.672, 'C' = 0.721, 'D' = 0.728, 'E' = 0.602, 'F' = 0.578, 'G' = 0.742,
+        'H' = 0.761, 'I' = 0.294, 'J' = 0.575, 'K' = 0.685, 'L' = 0.575, 'M' = 0.885, 'N' = 0.748, 'O' = 0.768,
+        'P' = 0.651, 'Q' = 0.768, 'R' = 0.672, 'S' = 0.653, 'T' = 0.640, 'U' = 0.741, 'V' = 0.698, 'W' = 0.987,
+        'X' = 0.706, 'Y' = 0.684, 'Z' = 0.658, '[' = 0.405, '\\' = 0.314, ']' = 0.405, '^' = 0.649, '_' = 0.605,
+        'a' = 0.568, 'b' = 0.629, 'c' = 0.567, 'd' = 0.629, 'e' = 0.580, 'f' = 0.385, 'g' = 0.624, 'h' = 0.609,
+        'i' = 0.265, 'j' = 0.265, 'k' = 0.576, 'l' = 0.273, 'm' = 0.906, 'n' = 0.605, 'o' = 0.599, 'p' = 0.625,
+        'q' = 0.625, 'r' = 0.411, 's' = 0.543, 't' = 0.389, 'u' = 0.605, 'v' = 0.560, 'w' = 0.819, 'x' = 0.556,
+        'y' = 0.573, 'z' = 0.546, '{' = 0.405, '|' = 0.277, '}' = 0.405, '~' = 0.649
+    ]
+
+--- display size, weight 650 (h1)
+fn lay_display_bold_table[]
+    return map[
+        ' ' = 0.213, '!' = 0.318, '"' = 0.469, '#' = 0.642, '$' = 0.647, '%' = 0.905, '&' = 0.707, '\'' = 0.283,
+        '(' = 0.384, ')' = 0.384, '*' = 0.452, '+' = 0.647, ',' = 0.258, '-' = 0.450, '.' = 0.258, '/' = 0.307,
+        '0' = 0.656, '1' = 0.482, '2' = 0.607, '3' = 0.633, '4' = 0.650, '5' = 0.628, '6' = 0.655, '7' = 0.576,
+        '8' = 0.652, '9' = 0.655, ':' = 0.258, ';' = 0.258, '<' = 0.647, '=' = 0.647, '>' = 0.647, '?' = 0.534,
+        '@' = 0.895, 'A' = 0.693, 'B' = 0.646, 'C' = 0.716, 'D' = 0.708, 'E' = 0.581, 'F' = 0.557, 'G' = 0.732,
+        'H' = 0.737, 'I' = 0.271, 'J' = 0.558, 'K' = 0.658, 'L' = 0.552, 'M' = 0.867, 'N' = 0.724, 'O' = 0.758,
+        'P' = 0.624, 'Q' = 0.758, 'R' = 0.646, 'S' = 0.636, 'T' = 0.611, 'U' = 0.718, 'V' = 0.681, 'W' = 0.969,
+        'X' = 0.688, 'Y' = 0.667, 'Z' = 0.640, '[' = 0.384, '\\' = 0.307, ']' = 0.384, '^' = 0.647, '_' = 0.580,
+        'a' = 0.550, 'b' = 0.603, 'c' = 0.548, 'd' = 0.602, 'e' = 0.560, 'f' = 0.360, 'g' = 0.598, 'h' = 0.588,
+        'i' = 0.246, 'j' = 0.246, 'k' = 0.543, 'l' = 0.248, 'm' = 0.869, 'n' = 0.580, 'o' = 0.578, 'p' = 0.599,
+        'q' = 0.598, 'r' = 0.371, 's' = 0.519, 't' = 0.360, 'u' = 0.580, 'v' = 0.534, 'w' = 0.791, 'x' = 0.530,
+        'y' = 0.543, 'z' = 0.513, '{' = 0.384, '|' = 0.251, '}' = 0.384, '~' = 0.647
+    ]
+
+--- width of a run of text: summed advances (monospace is uniform)
+fn lay_text_width[text, font_px, bold]
+    table = lay_sans_table[]
+    fallback = 0.55
+    if bold
+        table = lay_sans_bold_table[]
+        fallback = 0.6
+        if font_px gte 20.0
+            table = lay_display_bold_table[]
+    total = 0.0
+    for i in range[len[text]]
+        ch = slice[text, i, i + 1]
+        if has[table, ch]
+            total = total + table[ch]
+        else
+            total = total + fallback
+    return total * font_px
+
+--- the stylesheet sets some elements in monospace, some in small caps
+--- with letter-spacing; measure what the reader sees
+fn lay_is_mono[node]
+    if node.tag eq 'pre' or node.tag eq 'code'
+        return true
+    if lay_in_card[node] and node.tag eq 'p'
+        return true
+    return false
+
+fn lay_text_px[node]
+    font = lay_font_px[node]
+    if lay_is_mono[node]
+        return len[node.text] * font * 0.602
+    text = node.text
+    spacing = 0.0
+    if node.tag eq 'h2' or node.tag eq 'th' or (lay_in_card[node] and node.tag eq 'h3')
+        text = upper[text]
+        spacing = 0.09 * font
+        if node.tag eq 'th'
+            spacing = 0.08 * font
+    if node.tag eq 'h1'
+        spacing = -0.015 * font
+    return lay_text_width[text, font, lay_is_bold[node]] + spacing * float[len[text]]
+
+fn lay_attr[node, name, default]
+    if has[node.attrs, name]
+        return node.attrs[name]
+    return default
+
+fn lay_has_class[node, cls]
+    return contains[split[node.class, ' '], cls]
+
+--- the stylesheet's `.card h3` / `.card p` rules reach descendants; the
+--- walk marks a card's children so their own rules can see it
+fn lay_in_card[node]
+    return lay_has_class[node, 'card'] or has[node.attrs, '_card']
+
+fn lay_mark_card[kids]
+    out = []
+    for k in kids
+        out = concat[out, [LNode[k.tag, k.class, k.text, set[k.attrs, '_card', '1'], k.kids]]]
+    return out
+
+--- the stylesheet's own defaults for the legacy elements, in px at 15px base
+fn lay_font_px[node]
+    size = lay_attr[node, 'size', '']
+    if size ne ''
+        return lay_font_size[size]
+    --- rem is the root's 16px; only the body's running text is 15px
+    if node.tag eq 'h1'
+        return 23.2
+    if node.tag eq 'h2'
+        return 12.8
+    if node.tag eq 'h3'
+        if lay_in_card[node]
+            return 10.88
+        return 15.2
+    if node.tag eq 'pre' or node.tag eq 'code'
+        return 13.5
+    if node.tag eq 'button' or node.tag eq 'input' or node.tag eq 'td'
+        return 14.72
+    if node.tag eq 'th'
+        return 11.52
+    if node.tag eq 'label'
+        return 14.08
+    if lay_in_card[node] and node.tag eq 'p'
+        return 20.0
+    return 15.0
+
+fn lay_line_px[node]
+    size = lay_attr[node, 'size', '']
+    if size ne ''
+        return lay_line_height[size]
+    return lay_font_px[node] * 1.55
+
+fn lay_is_bold[node]
+    w = lay_attr[node, 'weight', '']
+    if w eq 'bold'
+        return true
+    if node.tag eq 'h1' or node.tag eq 'h2' or node.tag eq 'h3' or node.tag eq 'th'
+        return true
+    return false
+
+--- kind of node: 'stack' 'row' 'grid' 'overlay' 'scroll' 'table' 'leaf'
+fn lay_kind[node, viewport]
+    --- the document root the harness hands over has no tag: a plain stack
+    if node.tag eq ''
+        return 'stack'
+    below = lay_attr[node, 'below', '']
+    narrow = false
+    if below ne ''
+        if viewport lt lay_named_width[below]
+            narrow = true
+    if lay_has_class[node, 'row']
+        if narrow and lay_attr[node, 'becomes', ''] eq 'stack'
+            return 'stack'
+        return 'row'
+    if lay_has_class[node, 'crow-field']
+        return 'row'
+    if lay_has_class[node, 'grid']
+        return 'grid'
+    if lay_has_class[node, 'overlay']
+        return 'overlay'
+    if lay_has_class[node, 'scroll']
+        return 'scroll'
+    if lay_has_class[node, 'stack']
+        return 'stack'
+    if lay_has_class[node, 'stats']
+        return 'grid'
+    if lay_has_class[node, 'controls']
+        return 'row'
+    if node.tag eq 'table'
+        return 'table'
+    if node.tag eq 'div' or node.tag eq 'section' or node.tag eq 'header' or node.tag eq 'footer' or node.tag eq 'form' or node.tag eq 'nav' or node.tag eq 'ul' or node.tag eq 'ol' or node.tag eq 'label' or node.tag eq 'details' or node.tag eq 'summary'
+        return 'stack'
+    return 'leaf'
+
+--- padding: vertical and horizontal, from pad = 'm' / 'm l', or the card rule
+fn lay_pad_v[node]
+    pad = lay_attr[node, 'pad', '']
+    if pad ne ''
+        parts = split[pad, ' ']
+        return lay_space[parts[0]]
+    if lay_has_class[node, 'card']
+        return 13.0
+    if node.tag eq 'button'
+        return 7.72
+    if node.tag eq 'input'
+        return 7.4
+    if node.tag eq 'td'
+        return 8.0
+    if node.tag eq 'th'
+        return 7.2
+    return 0.0
+
+fn lay_pad_h[node]
+    pad = lay_attr[node, 'pad', '']
+    if pad ne ''
+        parts = split[pad, ' ']
+        if len[parts] gt 1
+            return lay_space[parts[1]]
+        return lay_space[parts[0]]
+    if lay_has_class[node, 'card']
+        return 15.4
+    if node.tag eq 'button'
+        return 16.2
+    if node.tag eq 'input'
+        return 10.6
+    if node.tag eq 'td' or node.tag eq 'th'
+        return 7.2
+    return 0.0
+
+fn lay_gap[node, kind]
+    gap = lay_attr[node, 'gap', '']
+    if gap ne ''
+        return lay_space[gap]
+    if lay_has_class[node, 'stats']
+        return 9.6
+    if lay_has_class[node, 'controls']
+        return 8.0
+    return 0.0
+
+--- the stylesheet's vertical margins on text elements (px at 15px base)
+fn lay_margin_top[node]
+    m = lay_attr[node, 'margin', '']
+    if m ne ''
+        return lay_space[m]
+    if lay_in_card[node] and (node.tag eq 'h3' or node.tag eq 'p')
+        return 0.0
+    if node.tag eq 'h2'
+        return 35.2
+    if node.tag eq 'h3'
+        return 19.2
+    if node.tag eq 'p'
+        return 6.4
+    return 0.0
+
+fn lay_margin_bottom[node]
+    m = lay_attr[node, 'margin', '']
+    if m ne ''
+        return lay_space[m]
+    if lay_in_card[node] and node.tag eq 'h3'
+        return 4.8
+    if lay_in_card[node] and node.tag eq 'p'
+        return 0.0
+    if node.tag eq 'h1'
+        return 4.0
+    if node.tag eq 'h2'
+        return 11.2
+    if node.tag eq 'h3'
+        return 6.4
+    if node.tag eq 'p'
+        return 6.4
+    return 0.0
+
+--- an explicit width: '240px' → 240, '50%' of avail, 'fill' → -1 (share)
+fn lay_explicit_width[node, avail]
+    w = lay_attr[node, 'width', '']
+    if w eq ''
+        if lay_attr[node, 'fill', ''] eq 'true'
+            return -1.0
+        if node.tag eq 'input'
+            return 152.0
+        return 0.0
+    if w eq 'fill'
+        return -1.0
+    if ends[w, '%']
+        return float[slice[w, 0, len[w] - 1]] * avail / 100.0
+    if ends[w, 'px']
+        return float[slice[w, 0, len[w] - 2]]
+    return float[w]
+
+--- the width a node wants on its own (in a row): text plus padding
+--- hidden at this viewport: the html `hidden` attribute (present until a
+--- script shows the element) or a `hidden_below` rule that applies
+fn lay_hidden[node, viewport]
+    if has[node.attrs, 'hidden']
+        return true
+    below = lay_attr[node, 'hidden_below', '']
+    if below ne ''
+        if viewport lt lay_named_width[below]
+            return true
+    return false
+
+--- the children that take part in layout at this viewport
+fn lay_visible_kids[node, viewport]
+    out = []
+    for k in node.kids
+        if not lay_hidden[k, viewport]
+            out = concat[out, [k]]
+    return out
+
+fn lay_intrinsic_width[node, viewport]
+    kids = lay_visible_kids[node, viewport]
+    if len[kids] eq 0
+        return lay_text_px[node] + 2.0 * lay_pad_h[node]
+    total = 0.0
+    for k in kids
+        --- an explicit width (or the stylesheet's, for inputs) is what the
+        --- child takes; only unsized children are measured from their text
+        ew = lay_explicit_width[k, 0.0]
+        if ew gt 0.0
+            total = total + ew
+        else
+            total = total + lay_intrinsic_width[k, viewport]
+    --- a row's children sit side by side with its gaps between them; the
+    --- layout pass charges the same gaps, so the two must agree
+    kind = lay_kind[node, viewport]
+    if kind eq 'row'
+        total = total + lay_gap[node, kind] * float[len[kids] - 1]
+    return total + 2.0 * lay_pad_h[node]
+
+--- number of text lines a wrapping paragraph needs at a width
+fn lay_lines[node, width]
+    tw = lay_text_px[node]
+    if width lte 0.0
+        return 1.0
+    return ceil[tw / width]
+
+fn lay_box[node, path, x, y, w, h, overflow]
+    return LBox[node.tag, node.class, path, x, y, w, h, overflow]
+
+--- lay out one node at (x, y) with the given width; returns its boxes:
+--- itself first, then every descendant in document order
+fn lay_node[node, x, y, width, viewport, path]
+    if lay_hidden[node, viewport]
+        return []
+    --- a hidden child takes no space in any pass below
+    kids = lay_visible_kids[node, viewport]
+    if lay_in_card[node]
+        kids = lay_mark_card[kids]
+    node = LNode[node.tag, node.class, node.text, node.attrs, kids]
+    kind = lay_kind[node, viewport]
+    here = '`path`/`node.tag`.`node.class`'
+    mt = lay_margin_top[node]
+    mb = lay_margin_bottom[node]
+    pv = lay_pad_v[node]
+    ph = lay_pad_h[node]
+    top = y + mt
+    inner_w = width - 2.0 * ph
+    if kind eq 'leaf'
+        lines = 1.0
+        --- running text wraps: paragraphs, headings, spans, labels, items;
+        --- a card's one-line figures and form controls do not
+        if node.tag ne 'button' and node.tag ne 'input' and not lay_in_card[node]
+            lines = lay_lines[node, inner_w]
+        h = lines * lay_line_px[node] + 2.0 * pv
+        return [lay_box[node, here, x, top, width, h, false]]
+    if kind eq 'table'
+        rows = 0.0
+        for k in node.kids
+            for r in k.kids
+                rows = rows + 1.0
+        if rows eq 0.0
+            rows = float[len[node.kids]]
+        h = rows * (13.8 * 1.55 + 14.0)
+        return [lay_box[node, here, x, top, width, h, false]]
+    gap = lay_gap[node, kind]
+    boxes = []
+    cy = top + pv
+    cx = x + ph
+    overflow = false
+    if kind eq 'stack' or kind eq 'scroll'
+        first = true
+        for k in node.kids
+            if not first
+                cy = cy + gap
+            first = false
+            kb = lay_node[k, cx, cy, inner_w, viewport, here]
+            if len[kb] gt 0
+                boxes = concat[boxes, kb]
+                cy = kb[0].y + kb[0].height + lay_margin_bottom[k]
+        content_h = cy - top - pv
+        if kind eq 'scroll'
+            hh = lay_explicit_height[node]
+            if hh gt 0.0
+                content_h = hh - 2.0 * pv
+        h = content_h + 2.0 * pv
+        me = lay_box[node, here, x, top, width, h, overflow]
+        return concat[[me], boxes]
+    if kind eq 'row'
+        --- widths: explicit, fill (shared), or intrinsic
+        n = float[len[node.kids]]
+        fixed = 0.0
+        fills = 0.0
+        for k in node.kids
+            ew = lay_explicit_width[k, inner_w]
+            if ew lt 0.0
+                fills = fills + 1.0
+            else
+                if ew gt 0.0
+                    fixed = fixed + ew
+                else
+                    fixed = fixed + lay_intrinsic_width[k, viewport]
+        gaps = gap * (n - 1.0)
+        remaining = inner_w - fixed - gaps
+        fill_w = 0.0
+        if fills gt 0.0
+            fill_w = remaining / fills
+        if fills eq 0.0 and remaining lt 0.0 and lay_attr[node, 'wrap', ''] ne 'true'
+            overflow = true
+        row_h = 0.0
+        line_x = cx
+        line_y = cy
+        first = true
+        for k in node.kids
+            ew = lay_explicit_width[k, inner_w]
+            kw = ew
+            if ew lt 0.0
+                kw = fill_w
+            if ew eq 0.0
+                kw = lay_intrinsic_width[k, viewport]
+            if not first
+                line_x = line_x + gap
+            first = false
+            if lay_attr[node, 'wrap', ''] eq 'true' and line_x + kw gt cx + inner_w and line_x gt cx
+                line_x = cx
+                line_y = line_y + row_h + gap
+                row_h = 0.0
+            kb = lay_node[k, line_x, line_y, kw, viewport, here]
+            if len[kb] gt 0
+                boxes = concat[boxes, kb]
+                if kb[0].height gt row_h
+                    row_h = kb[0].height
+                line_x = line_x + kw
+        h = (line_y - cy) + row_h + 2.0 * pv
+        me = lay_box[node, here, x, top, width, h, overflow]
+        return concat[[me], boxes]
+    if kind eq 'grid'
+        cols = 2.0
+        c = lay_attr[node, 'columns', '']
+        if c ne ''
+            cols = float[c]
+        below = lay_attr[node, 'below', '']
+        if below ne '' and viewport lt lay_named_width[below]
+            ct = lay_attr[node, 'columns_then', '']
+            if ct ne ''
+                cols = float[ct]
+        if lay_has_class[node, 'stats'] and c eq ''
+            cols = floor[(inner_w + gap) / (140.0 + gap)]
+            if cols lt 1.0
+                cols = 1.0
+            if cols gt float[len[node.kids]]
+                cols = float[len[node.kids]]
+        cell_w = (inner_w - gap * (cols - 1.0)) / cols
+        i = 0.0
+        row_h = 0.0
+        ry = cy
+        for k in node.kids
+            col = i - cols * floor[i / cols]
+            if col eq 0.0 and i gt 0.0
+                ry = ry + row_h + gap
+                row_h = 0.0
+            kx = cx + col * (cell_w + gap)
+            kb = lay_node[k, kx, ry, cell_w, viewport, here]
+            if len[kb] gt 0
+                boxes = concat[boxes, kb]
+                if kb[0].height gt row_h
+                    row_h = kb[0].height
+            i = i + 1.0
+        h = (ry - cy) + row_h + 2.0 * pv
+        me = lay_box[node, here, x, top, width, h, overflow]
+        return concat[[me], boxes]
+    if kind eq 'overlay'
+        if len[node.kids] eq 0
+            return [lay_box[node, here, x, top, width, 0.0, false]]
+        base = lay_node[node.kids[0], cx, cy, inner_w, viewport, here]
+        boxes = base
+        bh = base[0].height
+        rest = slice[node.kids, 1, len[node.kids]]
+        for k in rest
+            kw = lay_intrinsic_width[k, viewport]
+            kb = lay_node[k, cx, cy, kw, viewport, here]
+            boxes = concat[boxes, kb]
+        me = lay_box[node, here, x, top, width, bh + 2.0 * pv, overflow]
+        return concat[[me], boxes]
+    return [lay_box[node, here, x, top, width, 0.0, false]]
+
+fn lay_explicit_height[node]
+    h = lay_attr[node, 'height', '']
+    if h eq ''
+        return 0.0
+    if ends[h, 'px']
+        return float[slice[h, 0, len[h] - 2]]
+    return float[h]
+
+--- entry point: the whole page at a viewport width. The page shell centres
+--- content at max 860px with 1.25rem side padding (the body rule).
+fn crow_layout[root, viewport]
+    --- the body: at most 860px including its 1.25rem sides, 2.2rem on top
+    body_w = viewport
+    if body_w gt 860.0
+        body_w = 860.0
+    content = body_w - 40.0
+    x = (viewport - body_w) / 2.0 + 20.0
+    return lay_node[root, x, 35.2, content, viewport, '']

@@ -65,6 +65,30 @@ impl<T: CrowDisplay> CrowDisplay for Vec<T> {
     }
 }
 
+/// A frame column prints like the interpreter's array of its values:
+/// numbers bare, strings quoted, missing cells as nan.
+impl CrowDisplay for crate::frame::CrowColumn {
+    fn crow_repr(&self) -> String {
+        use crate::frame::Column;
+        let n = self.len();
+        let parts: Vec<String> = (0..n)
+            .map(|i| {
+                if !self.valid[i] {
+                    return "nan".to_string();
+                }
+                match self.data.as_ref() {
+                    Column::Int(v) => v[i].crow_repr(),
+                    Column::Float(v) => v[i].crow_repr(),
+                    Column::Str(v) => v[i].crow_repr(),
+                    Column::Bool(v) => v[i].crow_repr(),
+                    Column::DateTime(..) => self.data.fmt_cell(i, true),
+                }
+            })
+            .collect();
+        format!("[{}]", parts.join(", "))
+    }
+}
+
 impl<T: CrowDisplay> CrowDisplay for std::collections::BTreeMap<String, T> {
     fn crow_repr(&self) -> String {
         let parts: Vec<String> = self

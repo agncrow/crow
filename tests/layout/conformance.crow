@@ -1,0 +1,102 @@
+--- Layout conformance: the engine against a real browser.
+---
+--- The views below are served and measured once in Chrome
+--- (tests/layout/measure.py writes tests/layout/expected/*.csv). The test
+--- blocks then run the same views through the engine and require every
+--- measured box to land within tolerance — no browser at test time.
+---
+---   crow test tests/layout/conformance.crow          --- the check (CI runs this)
+---   python3 tests/layout/measure.py                  --- re-measure after a stylesheet or engine change
+use web, ui, io
+
+min_qty = 0
+
+fn reset[]
+    min_qty = 0
+
+view stat_card[label, value]
+    return stack[h3[label], p['`value`', size = 'xl', weight = 'bold'], surface = 'card']
+
+--- containers, a responsive grid, a control row, an overlay and a scroll
+view dashboard[]
+    return stack[
+        h1['Trading Dashboard'],
+        p['Positions, fills and the tape, laid out by the vocabulary.'],
+        grid[stat_card['P&L', '1,116.10'], stat_card['Trades', '4'], stat_card['Drawdown', '-2.1%'],
+             columns = 3, gap = 'm', below = 'phone', columns_then = 1],
+        row[field['Min qty', min_qty], button['Reset', click = reset], span['showing everything', color = 'muted'],
+            gap = 'm', align = 'center', below = 'phone', becomes = 'stack'],
+        overlay[scroll[stack[p['09:30 AAPL 100 @ 191.50'], p['09:31 MSFT 50 @ 415.20'], gap = 'xs'], height = '96px'],
+                span['LIVE', color = 'up', anchor = 'top_right']],
+        gap = 'l', pad = 'l'
+    ]
+
+--- text that wraps, a wrapping row of buttons, headings at every level
+view prose[]
+    return stack[
+        h1['A heading that is long enough to matter on a phone screen'],
+        p['The layout engine estimates text from measured advances. This paragraph is long enough to wrap at every viewport width we test, which is the point: line count drives height, and height drives everything below.'],
+        h2['Controls'],
+        row[button['Play'], button['Pause'], button['1x'], button['10x'], button['60x'], button['300x'], button['Restart'], gap = 's', wrap = 'true'],
+        h3['A third-level heading'],
+        p['Short line.'],
+        gap = 'm', pad = 'm'
+    ]
+
+--- Every row of the measured file names a selector, an index, and the
+--- browser's box. Positions within 6px, sizes within 8px: the engine's
+--- job is placement, and a wrapped line or a rounded rem is not a bug.
+fn within[b, r]
+    dx = abs[b.x - float[r.x]]
+    dy = abs[b.y - float[r.y]]
+    dw = abs[b.width - float[r.w]]
+    dh = abs[b.height - float[r.h]]
+    return dx lte 6.0 and dy lte 6.0 and dw lte 8.0 and dh lte 8.0
+
+test dashboard_desktop[]
+    s = app[dashboard, width = 1280]
+    file = 'tests/layout/expected/dashboard_1280.csv'
+    rows = csv[file]
+    assert[rows.ok, 'no measurements at `file` — run tests/layout/measure.py']
+    for r in rows
+        boxes = box[s, r.sel]
+        assert[len[boxes] gt int[r.i], '`r.sel` #`r.i` is missing from the engine']
+        b = boxes[int[r.i]]
+        assert[within[b, r], '`r.sel` #`r.i`: engine `b.x`,`b.y` `b.width`x`b.height` vs browser `r.x`,`r.y` `r.w`x`r.h`']
+
+test dashboard_phone[]
+    s = app[dashboard, width = 390]
+    file = 'tests/layout/expected/dashboard_390.csv'
+    rows = csv[file]
+    assert[rows.ok, 'no measurements at `file` — run tests/layout/measure.py']
+    for r in rows
+        boxes = box[s, r.sel]
+        assert[len[boxes] gt int[r.i], '`r.sel` #`r.i` is missing from the engine']
+        b = boxes[int[r.i]]
+        assert[within[b, r], '`r.sel` #`r.i`: engine `b.x`,`b.y` `b.width`x`b.height` vs browser `r.x`,`r.y` `r.w`x`r.h`']
+
+test prose_desktop[]
+    s = app[prose, width = 1280]
+    file = 'tests/layout/expected/prose_1280.csv'
+    rows = csv[file]
+    assert[rows.ok, 'no measurements at `file` — run tests/layout/measure.py']
+    for r in rows
+        boxes = box[s, r.sel]
+        assert[len[boxes] gt int[r.i], '`r.sel` #`r.i` is missing from the engine']
+        b = boxes[int[r.i]]
+        assert[within[b, r], '`r.sel` #`r.i`: engine `b.x`,`b.y` `b.width`x`b.height` vs browser `r.x`,`r.y` `r.w`x`r.h`']
+
+test prose_phone[]
+    s = app[prose, width = 390]
+    file = 'tests/layout/expected/prose_390.csv'
+    rows = csv[file]
+    assert[rows.ok, 'no measurements at `file` — run tests/layout/measure.py']
+    for r in rows
+        boxes = box[s, r.sel]
+        assert[len[boxes] gt int[r.i], '`r.sel` #`r.i` is missing from the engine']
+        b = boxes[int[r.i]]
+        assert[within[b, r], '`r.sel` #`r.i`: engine `b.x`,`b.y` `b.width`x`b.height` vs browser `r.x`,`r.y` `r.w`x`r.h`']
+
+page['/', dashboard]
+page['/prose', prose]
+serve[3000]

@@ -1,0 +1,63 @@
+--- Failures from readers are error values with a kind, in both modes:
+--- db (query/exec), io (csv/lines), math (load), and the core read[].
+use db, io, math
+
+conn = connect['sqlite://:memory:']
+q = query[conn, 'SELECT nope FROM missing_table']
+log['query ok: `q.ok`']
+log['query kind: `q.kind`']
+log['query reason: `q.reason`']
+x = exec[conn, 'THIS IS NOT SQL']
+log['exec ok: `x.ok`']
+log['exec kind: `x.kind`']
+
+rows = csv['/tmp/crow_parity_missing_29.csv']
+log['csv ok: `rows.ok`']
+log['csv kind: `rows.kind`']
+ls2 = lines['/tmp/crow_parity_missing_29.txt']
+log['lines ok: `ls2.ok`']
+log['lines kind: `ls2.kind`']
+
+t = load['/tmp/crow_parity_missing_29.csv']
+log['load ok: `t.ok`']
+log['load kind: `t.kind`']
+
+f = read['/tmp/crow_parity_missing_29.txt']
+log['read ok: `f.ok`']
+log['read kind: `f.kind`']
+
+--- errors propagate through arithmetic and keep their kind
+y = x + 1
+log['propagated kind: `y.kind`']
+
+--- successful reads carry a capture moment; computed values do not
+write['/tmp/crow_parity_29.csv', 'a,b\n1,2\n']
+good = read['/tmp/crow_parity_29.csv']
+log['read captured: `captured[good].ok`']
+rows2 = csv['/tmp/crow_parity_29.csv']
+log['csv captured: `captured[rows2].ok`']
+lines2 = lines['/tmp/crow_parity_29.csv']
+log['lines captured: `captured[lines2].ok`']
+t2 = load['/tmp/crow_parity_29.csv']
+log['load captured: `captured[t2].ok`']
+n = 2 + 2
+log['computed captured: `captured[n].kind`']
+rm['/tmp/crow_parity_29.csv']
+
+--- env[] and shell[] are readers too: error values with a kind, capture
+--- moments on success, and a failed read propagates through captured[]
+home = env['HOME']
+log['env ok: `home.ok` captured: `captured[home].ok`']
+unset = env['CROW_PARITY_29_UNSET_VAR']
+log['env unset ok: `unset.ok` kind: `unset.kind`']
+log['env unset reason: `unset.reason`']
+c = captured[unset]
+log['captured of failed read: `c.ok` `c.kind`']
+dflt = env['CROW_PARITY_29_UNSET_VAR', 'fallback']
+log['env default: `dflt` captured: `captured[dflt].ok`']
+r = shell['echo hi; echo oops 1>&2; exit 3']
+log['shell ok: `r.ok` status: `r.status` out: `r.stdout` err: `r.stderr`']
+log['shell captured: `captured[r].ok`']
+log[shell['printf abc']]
+if r.status eq 3
+    log['shell status compares']

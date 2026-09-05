@@ -25,7 +25,14 @@ know Rust — Crow compiles *to* Rust, you never read the output.
 
 ## How to Read It
 
-Chapters 1–8 build the language up concept by concept, with two hands-on
-project chapters (2 and 9) along the way. Chapters 10–12 cover the applied
-layers — databases, web UIs, and the final project. If you're arriving from
-Python, Appendix C lists every habit to unlearn on one page.
+Chapter 1 installs Crow and chapter 2 builds a small game before any
+theory. Chapters 3–9 then build the language up one idea at a time —
+concepts, functions and scope, collections, parallelism, errors, modules,
+testing — each chapter using only what came before it. Chapter 10 is a
+hands-on data project, and chapters 11–13 cover the applied layers:
+databases, web UIs, and the final project that uses everything. Whatever
+language you're arriving from — Python, JavaScript, R, MATLAB, Julia, Go,
+Rust, Elixir, Ruby, Swift, Zig — Appendix B lists the habits to unlearn.
+Appendix A is the whole language on one page — a good bookmark once the
+chapters are behind you — and Part II is the full language specification,
+the document to keep open while you write real programs.

@@ -1,5 +1,14 @@
 # Crow UI Framework
 
+> **Status note:** this is the UI framework's design/vision document,
+> written before `view` blocks, named-argument attributes, and the chart
+> and style modules shipped. The shipped surface is specified in
+> `language-spec.md` (Built-in Module: web → View Blocks, Charts, Styling)
+> and taught in the book (chapters 11–12). Code sketches below may use
+> pre-current syntax (`page[path, render, handle]`, `today[]`,
+> `chart.live[...]`), and the phase sections describe features that may
+> not exist yet.
+
 ## Overview
 
 Crow's UI framework enables full-stack web applications written entirely in Crow. No JavaScript, no HTML, no CSS by hand. The developer writes functions per route using element functions, reactive data loading, and two-way binding. The framework handles rendering, diffing, and real-time updates over WebSocket.
@@ -239,15 +248,15 @@ Available elements:
 Attributes are named arguments. Event handlers use function references.
 
 ```
---- static attributes ---
+--- static attributes
 div[id = 'main', class = 'card']
 img[src = '/logo.png', alt = 'Logo']
 
---- event attributes (function references) ---
+--- event attributes (function references)
 button['Save', click = save]
 button['Delete', click = delete_item]
 
---- two-way binding (no event handler needed) ---
+--- two-way binding (no event handler needed)
 query = ''
 symbol = 'AAPL'
 field['Search', query]
@@ -450,7 +459,7 @@ Each WebSocket connection has its own `state`. Authentication adds a `session` t
 ```
 use web, ui
 
---- login page (no auth required) ---
+--- login page (no auth required)
 email = ''
 password = ''
 error = ''
@@ -473,7 +482,7 @@ view login_render[]
         button['Log in', click = do_login]
     ]
 
---- protected page ---
+--- protected page
 fn do_logout[]
     session.clear[]
     redirect['/login']
@@ -503,7 +512,7 @@ Key API:
 Dynamic route segments and query parameters. Route params use `:name` syntax.
 
 ```
---- route parameters ---
+--- route parameters
 trade = nil
 trade_id = ''
 
@@ -520,7 +529,7 @@ view trade_render[]
 
 page['/trade/:id', trade_render, init = trade_init]
 
---- query parameters ---
+--- query parameters
 q = ''
 results = frame[]
 
@@ -535,9 +544,9 @@ view search_render[]
     ]
 
 page['/search', search_render, init = search_init]
---- accessed via /search?q=hello ---
+--- accessed via /search?q=hello
 
---- multiple route params ---
+--- multiple route params
 user = nil
 trade = nil
 trade_id = ''
@@ -582,7 +591,7 @@ fn app_layout[user, content]
         class = 'app'
     ]
 
---- each route uses the layout ---
+--- each route uses the layout
 user = session.get['user_name']
 ohlcv = poll['/api/ohlcv', 5]
 
@@ -612,10 +621,10 @@ The layout is a function that takes data and a content VNode. No special compone
 Typing in a search input fires `input` on every keystroke. Debounce delays the server call until the user stops typing.
 
 ```
---- without debounce: field fires on every keystroke ---
+--- without debounce: field fires on every keystroke
 field['Search', query]
 
---- with debounce: fires 300ms after last keystroke ---
+--- with debounce: fires 300ms after last keystroke
 field['Search', query, debounce = 300]
 ```
 
@@ -623,7 +632,7 @@ field['Search', query, debounce = 300]
 
 Also available on other events:
 ```
---- debounce a button click (prevent double-click) ---
+--- debounce a button click (prevent double-click)
 button['Save', click = save, debounce = 500]
 ```
 
@@ -682,10 +691,10 @@ fn search_key[value]
     if value eq 'Enter'
         results = query[db, 'SELECT * FROM items WHERE name = \'`q`\'']
 
---- keydown on a specific element ---
+--- keydown on a specific element
 ui.input[type = 'text', keydown = search_key]
 
---- global keyboard shortcuts ---
+--- global keyboard shortcuts
 modal = nil
 
 fn on_keydown[value]
@@ -768,10 +777,10 @@ The framework automatically handles common web security concerns.
 All string values rendered into HTML are automatically escaped. No raw HTML injection.
 
 ```
---- safe: angle brackets are escaped ---
+--- safe: angle brackets are escaped
 name = '<script>alert("xss")</script>'
 p[name]
---- renders: <p>&lt;script&gt;alert("xss")&lt;/script&gt;</p> ---
+--- renders: <p>&lt;script&gt;alert("xss")&lt;/script&gt;</p>
 ```
 
 For intentional raw HTML (rare), use `raw`:
@@ -786,11 +795,11 @@ Forms submitted over WebSocket are already protected — the WebSocket connectio
 For standard `route` endpoints (non-WebSocket), CSRF tokens are generated automatically:
 ```
 fn action_handler[req]
-    --- process the action ---
+    --- process the action
     return json[map[ok = true]]
 
 route['/api/action', 'POST', action_handler]
---- CSRF token validated automatically for POST/PUT/DELETE ---
+--- CSRF token validated automatically for POST/PUT/DELETE
 ```
 
 **Session security:**
@@ -814,9 +823,9 @@ Provides: `page[path, render]`, `div`, `button`, `field`, `select`, `table`, `ui
 Also provides the JS runtime that gets embedded in the initial HTML page.
 
 ```
---- page[path, render] ---
---- mounts a page route (implicit app) ---
---- manages WebSocket connections per session ---
+--- page[path, render]
+--- mounts a page route (implicit app)
+--- manages WebSocket connections per session
 
 use web, ui
 
@@ -1085,8 +1094,8 @@ page['/items', render]
 `paginate[total, per_page]` renders page navigation buttons and updates the current page on click:
 
 ```
---- renders: « ‹ 1 2 3 4 5 › » ---
---- clicking a page number updates the page and re-renders ---
+--- renders: « ‹ 1 2 3 4 5 › »
+--- clicking a page number updates the page and re-renders
 ```
 
 For custom pagination UI, use reactive variables and named handlers:
@@ -1113,23 +1122,23 @@ fn pagination_bar[pg, total, per_page]
 The `table` element supports sorting, filtering, and column configuration.
 
 ```
---- basic table ---
+--- basic table
 table[items]
 
---- with column selection ---
+--- with column selection
 table[items, cols = ['symbol', 'qty', 'entry', 'pnl']]
 
---- with column headers ---
+--- with column headers
 table[items, cols = [
     [key = 'symbol', label = 'Symbol'],
     [key = 'qty', label = 'Quantity'],
     [key = 'pnl', label = 'P&L']
 ]]
 
---- with sorting (calls handler with column name) ---
+--- with sorting (calls handler with column name)
 table[items, cols = ['symbol', 'qty', 'pnl'], [sort = sort_col]]
 
---- with row click (calls handler with row data) ---
+--- with row click (calls handler with row data)
 table[items, cols = ['symbol', 'pnl'], [row_click = select_row]]
 ```
 
@@ -1179,7 +1188,7 @@ The client-side JS runtime handles reconnection automatically:
 Configuration:
 ```
 secret[key]
---- state is kept for 30 seconds after disconnect (default: 30000ms) ---
+--- state is kept for 30 seconds after disconnect (default: 30000ms)
 ```
 
 ### Downloads and Export
@@ -1215,7 +1224,7 @@ page['/reports', render]
 HTML accessibility attributes are passed as regular attributes. The framework generates semantic HTML by default.
 
 ```
---- ARIA attributes ---
+--- ARIA attributes
 menu = false
 fn toggle_menu[]
     menu = not menu
@@ -1230,11 +1239,11 @@ nav[aria_label = 'Main navigation',
     a['About', href = '/about']
 ]
 
---- form accessibility ---
+--- form accessibility
 label[for = 'email', 'Email']
 ui.input[id = 'email', type = 'email', aria_required = true, placeholder = 'Email']
 
---- live regions (auto-announced by screen readers) ---
+--- live regions (auto-announced by screen readers)
 status_message = ''
 div[aria_live = 'polite', class = 'status', status_message]
 ```
@@ -1287,7 +1296,7 @@ error = ''
 data = frame[]
 
 fn load[]
-    --- this might crash ---
+    --- this might crash
     data = query[db, 'SELECT * FROM missing_table']
 
 view render[]
@@ -1365,7 +1374,7 @@ fn toggle_theme[]
         theme = 'dark'
         session.set['theme', 'dark']
 
---- on page load, restore from session ---
+--- on page load, restore from session
 fn theme_init[params]
     saved = session.get['theme']
     if saved
@@ -1445,13 +1454,13 @@ Some interactions cannot round-trip to the server: 60fps crosshair, zoom, pan, d
 `chart.live` is the first hook. The pattern generalizes to any client-side widget:
 
 ```
---- chart.live is a hook: server data → client-side chart engine ---
+--- chart.live is a hook: server data → client-side chart engine
 chart.live[ohlcv, height = 400]
 
---- future hooks could include: ---
---- map.live[locations]         — interactive map ---
---- editor.live[content]        — rich text editor ---
---- canvas.live[shapes]         — drawing canvas ---
+--- future hooks could include:
+--- map.live[locations]         — interactive map
+--- editor.live[content]        — rich text editor
+--- canvas.live[shapes]         — drawing canvas
 ```
 
 **Hook contract:**
@@ -1474,7 +1483,7 @@ use chart
 
 conn = connect['postgres://user:pass@host/finch']
 
---- Reusable views ---
+--- Reusable views
 fn nav_bar[]
     return header[
         div[
@@ -1510,7 +1519,7 @@ fn stat_row[positions, symbol]
         class = 'stats'
     ]
 
---- Dashboard page (interactive chart) ---
+--- Dashboard page (interactive chart)
 symbol = 'AAPL'
 tf = '1m'
 ohlcv = poll['/api/ohlcv?symbol=`symbol`&tf=`tf`', 1]
@@ -1539,7 +1548,7 @@ view dash_render[]
 
 page['/', dash_render]
 
---- Positions page (static table, no chart) ---
+--- Positions page (static table, no chart)
 all_positions = poll['/api/positions', 5]
 
 view pos_render[]
@@ -1555,7 +1564,7 @@ view pos_render[]
 
 page['/positions', pos_render]
 
---- Leaderboard page (static SVG chart) ---
+--- Leaderboard page (static SVG chart)
 leaders = poll['/api/leaderboard', 30]
 
 view lb_render[]
@@ -1572,7 +1581,7 @@ view lb_render[]
 
 page['/leaderboard', lb_render]
 
---- API endpoint on the same server ---
+--- API endpoint on the same server
 fn positions_api[req]
     return json[query[conn, 'SELECT * FROM positions']]
 
@@ -1591,10 +1600,10 @@ Crow compiles to Rust, which compiles to a single static binary. Deployment is c
 
 ```
 crow build app.crow
---- Transpiles to Rust ---
---- Compiles with cargo (release mode) ---
---- Bundles static assets (CSS, images, JS runtime) ---
---- Output: build/app (single binary, ~5-10 MB) ---
+--- Transpiles to Rust
+--- Compiles with cargo (release mode)
+--- Bundles static assets (CSS, images, JS runtime)
+--- Output: build/app (single binary, ~5-10 MB)
 ```
 
 The binary includes:
@@ -1608,14 +1617,14 @@ Static assets are embedded in the binary at compile time — no separate file se
 ### Running in production
 
 ```
---- run directly ---
+--- run directly
 ./build/app
---- Server running at 0.0.0.0:8080 ---
+--- Server running at 0.0.0.0:8080
 
---- with environment variables ---
+--- with environment variables
 PORT=3000 DB_URL=postgres://... ./build/app
 
---- with systemd ---
+--- with systemd
 [Service]
 ExecStart=/opt/myapp/app
 Environment=PORT=8080
@@ -1638,7 +1647,7 @@ The image is just the binary — no OS, no runtime, no dependencies. Typically 1
 Production settings via environment variables or a config file:
 
 ```
---- in app.crow ---
+--- in app.crow
 secret[env['SECRET_KEY']]
 
 conn = connect[env['DATABASE_URL']]
@@ -1670,7 +1679,7 @@ Tab 2: WebSocket #2 → reactive state B
 positions = poll['/api/positions', 5]
 selected_row = nil
 
---- session is shared across tabs ---
+--- session is shared across tabs
 theme = session.get['theme', 'dark']
 
 view render[]
@@ -1708,7 +1717,7 @@ page['/', render, on_channel = on_channel]
 ### `channel.send` — push from any Crow process
 
 ```
---- in the page: subscribe to updates ---
+--- in the page: subscribe to updates
 user_id = 0
 positions = frame[]
 channel.join['trades:`user_id`']
@@ -1723,10 +1732,10 @@ view dash_render[]
 
 page['/dashboard', dash_render, on_channel = on_channel]
 
---- in the trade execution engine (separate process or route): ---
+--- in the trade execution engine (separate process or route):
 fn execute_api[req]
     result = execute_trade[req.body]
-    --- push update to the user's dashboard ---
+    --- push update to the user's dashboard
     channel.send['trades:`req.body.user_id`', [
         type = 'trade_filled',
         symbol = req.body.symbol,
@@ -1819,7 +1828,7 @@ Tests should not hit real databases or APIs. Seed reactive variables via `page.s
 test 'dashboard shows positions'
   page = live.test[app, '/']
 
-  --- seed mock data ---
+  --- seed mock data
   page.state.symbol = 'AAPL'
   page.state.ohlcv = [
     [time = 1000, open = 150, high = 155, low = 149, close = 153, volume = 1000],
@@ -1870,7 +1879,7 @@ test 'chart receives correct data'
   ]
   page.render[]
 
-  --- verify chart.live element exists with correct data ---
+  --- verify chart.live element exists with correct data
   assert page.has['chart.live']
   chart = page.hook['chart.live']
   assert len[chart.data] eq 1
@@ -1935,7 +1944,7 @@ view render[]
 
 page['/', render]
 
---- Tests ---
+--- Tests
 
 test 'initial render'
     page = live.test[app, '/']
@@ -2019,9 +2028,9 @@ During development, `crow dev` serves the app with automatic hot reload on file 
 
 ```
 crow dev app.crow
---- Server running at http://localhost:8080 ---
---- Watching app.crow for changes ---
---- Hot reload enabled ---
+--- Server running at http://localhost:8080
+--- Watching app.crow for changes
+--- Hot reload enabled
 ```
 
 Features:
@@ -2092,19 +2101,19 @@ test 'empty state'
 **Screenshot options:**
 
 ```
---- custom viewport size ---
+--- custom viewport size
 page.screenshot['dashboard', width = 1280, height = 720]
 
---- mobile viewport ---
+--- mobile viewport
 page.screenshot['dashboard-mobile', width = 375, height = 667]
 
---- capture a specific element, not the full page ---
+--- capture a specific element, not the full page
 page.screenshot['nav-bar', selector = 'header.main-header']
 
---- custom diff threshold (percentage of pixels that can differ) ---
+--- custom diff threshold (percentage of pixels that can differ)
 page.screenshot['dashboard', threshold = 0.5]
 
---- dark mode ---
+--- dark mode
 page.screenshot['dashboard-dark', color_scheme = 'dark']
 ```
 
@@ -2125,7 +2134,7 @@ Auto-generates a page showing all reusable view functions with sample data:
 
 ```
 crow dev app.crow --gallery
---- opens http://localhost:8080/__gallery ---
+--- opens http://localhost:8080/__gallery
 ```
 
 The gallery discovers all functions that produce HTML elements and renders each one with sample data on a single page. Useful for:
@@ -2134,7 +2143,7 @@ The gallery discovers all functions that produce HTML elements and renders each 
 - Sharing designs with non-developers
 
 ```
---- gallery auto-discovers these functions: ---
+--- gallery auto-discovers these functions:
 fn card[title, value]
   div[class = 'card']
     h3[title]
@@ -2235,11 +2244,11 @@ The `drag.sortable` hook handles the visual drag interaction client-side and sen
 CSS-only animations work today (add/remove classes, CSS `transition` property). Framework-level animation support would add:
 
 ```
---- element enter/exit animations ---
+--- element enter/exit animations
 div[animate = 'fade', class = 'card']
   p['This fades in when added, fades out when removed']
 
---- page transitions ---
+--- page transitions
 page['/', render, transition = 'slide']
 ```
 
@@ -2282,8 +2291,8 @@ A dedicated i18n module would add locale detection, pluralization, and date/numb
 ```
 i18n.locale['en']
 h1[i18n.t['welcome']]
-p[i18n.n[1500.50]]  --- formats as "1,500.50" or "1.500,50" depending on locale ---
-p[i18n.d[now[]]]     --- formats date per locale ---
+p[i18n.n[1500.50]]  --- formats as "1,500.50" or "1.500,50" depending on locale
+p[i18n.d[now[]]]     --- formats date per locale
 ```
 
 **Complexity:** Medium — the translation lookup is simple, but pluralization rules and locale-aware formatting are non-trivial.
@@ -2325,16 +2334,16 @@ The `scroll.bottom` hook fires a client-side event when the element enters the v
 ```
 use web, ui, frame
 
---- data sources (reactive) ---
+--- data sources (reactive)
 playbooks = fetch['/api/playbooks']
 positions = poll['/api/positions', 5]
 trades = poll['/api/trades', 5]
 
---- filters (two-way bound) ---
+--- filters (two-way bound)
 struct Filters [min_vol, max_vol, min_price, max_price, filter_pb]
 f = Filters[0, 999999, 0, 999999, 'all']
 
---- data operations ---
+--- data operations
 fn apply_filters[data, f]
     result = filter[data, data.volume >= f.min_vol and data.volume <= f.max_vol]
     result = filter[result, result.price >= f.min_price and result.price <= f.max_price]
@@ -2353,7 +2362,7 @@ fn performance[trades]
     summary = sort[summary, pnl_sum, desc]
     table[summary]
 
---- render function ---
+--- render function
 view render[]
     div[
         h1['Trading Dashboard'],
