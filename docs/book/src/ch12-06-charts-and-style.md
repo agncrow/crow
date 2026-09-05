@@ -123,6 +123,27 @@ engine that determined the page's layout, and the browser lays out the
 emitted CSS by the same rules — see `docs/ui-engine-design.md` for how
 that agreement is kept.
 
+### The whole vocabulary
+
+Every attribute is a literal, and `crow check` rejects a value the table
+does not know.
+
+| On | Attribute | Values |
+|---|---|---|
+| any container | `gap`, `pad`, `margin` | `'xs' 's' 'm' 'l' 'xl'` (4, 8, 16, 24, 32px); `pad = 'm l'` is vertical then horizontal |
+| `row` | `align`, `justify`, `wrap` | `'start' 'center' 'end' 'stretch'`; `'start' 'center' 'end' 'between' 'around'`; `wrap = 'true'` |
+| `grid` | `columns` | a count; cells share the width equally |
+| `scroll` | `height` | a size such as `'96px'` |
+| `overlay` children | `anchor` | `'top_left' 'top_right' 'bottom_left' 'bottom_right' 'center'` |
+| any element | `width`, `min_width`, `max_width`, `fill` | `'240px'`, `'50%'`, `'fill'`; `fill = 'true'` takes the remaining space in a row |
+| any element | `size`, `weight`, `lines` | `'xs' 's' 'm' 'l' 'xl' 'xxl'`; `'normal' 'bold'`; a line clamp |
+| any element | `surface`, `radius`, `border`, `shadow` | `surface = 'card'`; `radius = 's'`; `border = 'true'`; `shadow = 's' 'm'` |
+| any element | `color`, `background` | a token name: `'text' 'muted' 'accent' 'up' 'down' 'surface' 'bg'` |
+| any container | `below` + `becomes`, `below` + `columns_then`, `hidden_below` | `below = 'phone'` (under 600px) or `'tablet'` (under 1024px); `becomes = 'stack'` turns a row into a stack; `columns_then = 1` reflows a grid; `hidden_below` hides the element |
+
+Anything else (`class`, `href`, `title`, `placeholder`) passes through as
+an ordinary HTML attribute.
+
 ## Run the layout example yourself
 
 The full version of that dashboard — three cards, an alert badge in an

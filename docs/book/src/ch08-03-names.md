@@ -38,3 +38,7 @@ Three softenings keep it livable:
   fields — every value already carries those.)
 - **Modules reserve only where imported** — no `use math`, no reserved
   `sum`.
+- **Inside a view, the element wins.** With `use frame, math` loaded,
+  `stack[...]` in a view is the layout container, not `frame.stack` or
+  `math.stack`; the prefix (`frame.stack[a, b]`) still reaches the module
+  version from inside a view.

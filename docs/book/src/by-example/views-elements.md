@@ -3,6 +3,41 @@
 Every HTML element Crow knows, in one view. Built by the book's
 verification, not served.
 
+## Layout containers
+
+The five containers and their literal attributes, rendered to a page
+with `document[]` and checked at two widths by the engine:
+
+```crow
+use web, ui, doc
+
+view page_body[]
+    return stack[
+        row[h1['Title'], span['badge', color = 'muted'], justify = 'between', align = 'center'],
+        grid[p['a'], p['b'], p['c'], columns = 3, gap = 'm', below = 'phone', columns_then = 1],
+        overlay[scroll[p['a long tape'], height = '96px'], span['LIVE', color = 'up', anchor = 'top_right']],
+        row[button['One'], button['Two'], gap = 's', wrap = 'true', below = 'phone', becomes = 'stack'],
+        gap = 'l', pad = 'l'
+    ]
+
+test layout[]
+    s = app[page_body, width = 1280]
+    assert[fits[s, 1280]]
+    assert[len[box[s, 'grid p']] eq 3]
+    assert[fits[app[page_body, width = 390], 390]]
+
+markup = doc.document['Containers', page_body[]]
+log[contains[markup, 'class="grid"']]
+log[contains[markup, 'data-becomes="stack"']]
+```
+
+```text
+true
+true
+```
+
+## Every element
+
 ```crow,norun
 use web, ui
 

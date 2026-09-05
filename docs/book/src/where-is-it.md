@@ -13,13 +13,13 @@ no page, the build fails, so this list is complete by construction.
 | `all` | [Math: random numbers and distributions](by-example/math-random.md) · [Searching with any, all, and find](ch06-02-search-builtins.md) |
 | `any` | [Searching with any, all, and find](ch06-02-search-builtins.md) |
 | `args` | [The system: shell, environment, time, arguments](by-example/system.md) |
-| `assert` | [Testing](ch09-00-testing.md) · [Testing a Live App](ch12-05-testing-live-apps.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
+| `assert` | [Views: the whole element vocabulary](by-example/views-elements.md) · [Testing](ch09-00-testing.md) · [Testing a Live App](ch12-05-testing-live-apps.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
 | `calendar` | [Moments and freshness](by-example/moments.md) |
 | `captured` | [Moments and freshness](by-example/moments.md) |
 | `ceil` | [Numbers and conversion](by-example/numbers.md) |
 | `chart` | [Charts and Styling](ch12-06-charts-and-style.md) |
 | `concat` | [Arrays](by-example/arrays.md) · [Math: shape operations](by-example/math-shape.md) · [Arrays and Tensors](ch05-01-arrays-and-tensors.md) |
-| `contains` | [Arrays](by-example/arrays.md) · [Documentation: `use doc`](by-example/doc.md) · [Testing a Live App](ch12-05-testing-live-apps.md) |
+| `contains` | [Arrays](by-example/arrays.md) · [Documentation: `use doc`](by-example/doc.md) · [Views: the whole element vocabulary](by-example/views-elements.md) · [View Blocks](ch12-01-views.md) · [Testing a Live App](ch12-05-testing-live-apps.md) |
 | `cp` | [Files and directories](by-example/files.md) |
 | `cpu` | [Controlling Resources](ch06-03-resources.md) |
 | `del` | [Maps](by-example/maps.md) |
@@ -43,8 +43,8 @@ no page, the build fails, so this list is complete by construction.
 | `json` | [JSON](by-example/json.md) · [Web: a JSON route](by-example/web.md) |
 | `keys` | [Maps](by-example/maps.md) · [Maps Are Dictionaries](ch05-02-maps.md) |
 | `later` | [Slow Work and the Live Loop](ch12-04-background-work.md) · [Testing a Live App](ch12-05-testing-live-apps.md) |
-| `len` | [Databases: `use db`](by-example/db.md) · [Documentation: `use doc`](by-example/doc.md) · [Frames: `use frame`](by-example/frames.md) · [Structured files: `use io`](by-example/io.md) · [Maps](by-example/maps.md) · [Math: random numbers and distributions](by-example/math-random.md) · [Strings](by-example/strings.md) · [The system: shell, environment, time, arguments](by-example/system.md) · [Arrays and Tensors](ch05-01-arrays-and-tensors.md) · [Project: Analyzing Data](ch10-00-analyzing-data.md) · [Working with Databases](ch11-00-databases.md) · [Testing a Live App](ch12-05-testing-live-apps.md) · [Charts and Styling](ch12-06-charts-and-style.md) · [Views and Live Updates](ch13-03-views.md) |
-| `log` | [Arrays](by-example/arrays.md) · [Databases: `use db`](by-example/db.md) · [Documentation: `use doc`](by-example/doc.md) · [Files and directories](by-example/files.md) · [Formatting](by-example/formatting.md) · [Frames: `use frame`](by-example/frames.md) · [Automatic differentiation](by-example/grad.md) · [Structured files: `use io`](by-example/io.md) · [JSON](by-example/json.md) · [Maps](by-example/maps.md) · [Math: creating tensors](by-example/math-creation.md) · [Math: element-wise functions](by-example/math-elementwise.md) · [Math: linear algebra](by-example/math-linalg.md) · [Math: random numbers and distributions](by-example/math-random.md) · [Math: reductions, sorting, and selection](by-example/math-reductions.md) · [Math: shape operations](by-example/math-shape.md) · [Math: signal processing](by-example/math-signal.md) · [Math: sparse matrices](by-example/math-sparse.md) · [Math: special functions and complex numbers](by-example/math-special.md) · [Math: tensors and linear algebra](by-example/math.md) · [Moments and freshness](by-example/moments.md) · [Neural-network building blocks: `use math.nn`](by-example/nn.md) · [Numbers and conversion](by-example/numbers.md) · [Regular expressions](by-example/regex.md) · [Statistics: `use math.stats`](by-example/stats.md) · [Strings](by-example/strings.md) · [The system: shell, environment, time, arguments](by-example/system.md) · [Hello, World!](ch01-02-hello-world.md) · [Programming a Guessing Game](ch02-00-guessing-game.md) · [Variables](ch03-01-variables.md) · [Data Types](ch03-02-data-types.md) · [Strings and Interpolation](ch03-03-strings.md) · [Comments](ch03-04-comments.md) · [Control Flow](ch03-05-control-flow.md) · [Defining and Calling Functions](ch04-01-defining-functions.md) · [Named Arguments](ch04-02-named-arguments.md) · [Function Scope Isolation](ch04-03-scope-isolation.md) · [Arrays and Tensors](ch05-01-arrays-and-tensors.md) · [Maps Are Dictionaries](ch05-02-maps.md) · [Structs Are Records](ch05-03-structs.md) · [for as an Expression](ch06-01-for-as-expression.md) · [Searching with any, all, and find](ch06-02-search-builtins.md) · [Every Value Has Status](ch07-01-every-value-has-status.md) · [Propagation](ch07-02-propagation.md) · [Errors Have No Truth Value](ch07-03-no-truth-value.md) · [Handling Errors Explicitly](ch07-04-explicit-handling.md) · [Importing with use](ch08-01-importing.md) · [Aliased Imports](ch08-02-aliased-imports.md) · [Writing Your Own Modules](ch08-04-writing-modules.md) · [Testing](ch09-00-testing.md) · [Project: Analyzing Data](ch10-00-analyzing-data.md) · [Working with Databases](ch11-00-databases.md) · [Slow Work and the Live Loop](ch12-04-background-work.md) · [Testing a Live App](ch12-05-testing-live-apps.md) · [Charts and Styling](ch12-06-charts-and-style.md) · [Loading and Shaping the Data](ch13-01-data.md) · [The Database Layer](ch13-02-database.md) |
+| `len` | [Databases: `use db`](by-example/db.md) · [Documentation: `use doc`](by-example/doc.md) · [Frames: `use frame`](by-example/frames.md) · [Structured files: `use io`](by-example/io.md) · [Maps](by-example/maps.md) · [Math: random numbers and distributions](by-example/math-random.md) · [Strings](by-example/strings.md) · [The system: shell, environment, time, arguments](by-example/system.md) · [Views: the whole element vocabulary](by-example/views-elements.md) · [Strings and Interpolation](ch03-03-strings.md) · [Arrays and Tensors](ch05-01-arrays-and-tensors.md) · [Project: Analyzing Data](ch10-00-analyzing-data.md) · [Working with Databases](ch11-00-databases.md) · [Testing a Live App](ch12-05-testing-live-apps.md) · [Charts and Styling](ch12-06-charts-and-style.md) · [Views and Live Updates](ch13-03-views.md) |
+| `log` | [Arrays](by-example/arrays.md) · [Databases: `use db`](by-example/db.md) · [Documentation: `use doc`](by-example/doc.md) · [Files and directories](by-example/files.md) · [Formatting](by-example/formatting.md) · [Frames: `use frame`](by-example/frames.md) · [Automatic differentiation](by-example/grad.md) · [Structured files: `use io`](by-example/io.md) · [JSON](by-example/json.md) · [Maps](by-example/maps.md) · [Math: creating tensors](by-example/math-creation.md) · [Math: element-wise functions](by-example/math-elementwise.md) · [Math: linear algebra](by-example/math-linalg.md) · [Math: random numbers and distributions](by-example/math-random.md) · [Math: reductions, sorting, and selection](by-example/math-reductions.md) · [Math: shape operations](by-example/math-shape.md) · [Math: signal processing](by-example/math-signal.md) · [Math: sparse matrices](by-example/math-sparse.md) · [Math: special functions and complex numbers](by-example/math-special.md) · [Math: tensors and linear algebra](by-example/math.md) · [Moments and freshness](by-example/moments.md) · [Neural-network building blocks: `use math.nn`](by-example/nn.md) · [Numbers and conversion](by-example/numbers.md) · [Regular expressions](by-example/regex.md) · [Statistics: `use math.stats`](by-example/stats.md) · [Strings](by-example/strings.md) · [The system: shell, environment, time, arguments](by-example/system.md) · [Views: the whole element vocabulary](by-example/views-elements.md) · [Hello, World!](ch01-02-hello-world.md) · [Programming a Guessing Game](ch02-00-guessing-game.md) · [Variables](ch03-01-variables.md) · [Data Types](ch03-02-data-types.md) · [Strings and Interpolation](ch03-03-strings.md) · [Comments](ch03-04-comments.md) · [Control Flow](ch03-05-control-flow.md) · [Defining and Calling Functions](ch04-01-defining-functions.md) · [Named Arguments](ch04-02-named-arguments.md) · [Function Scope Isolation](ch04-03-scope-isolation.md) · [Arrays and Tensors](ch05-01-arrays-and-tensors.md) · [Maps Are Dictionaries](ch05-02-maps.md) · [Structs Are Records](ch05-03-structs.md) · [for as an Expression](ch06-01-for-as-expression.md) · [Searching with any, all, and find](ch06-02-search-builtins.md) · [Every Value Has Status](ch07-01-every-value-has-status.md) · [Propagation](ch07-02-propagation.md) · [Errors Have No Truth Value](ch07-03-no-truth-value.md) · [Handling Errors Explicitly](ch07-04-explicit-handling.md) · [Importing with use](ch08-01-importing.md) · [Aliased Imports](ch08-02-aliased-imports.md) · [Writing Your Own Modules](ch08-04-writing-modules.md) · [Testing](ch09-00-testing.md) · [Project: Analyzing Data](ch10-00-analyzing-data.md) · [Working with Databases](ch11-00-databases.md) · [View Blocks](ch12-01-views.md) · [Slow Work and the Live Loop](ch12-04-background-work.md) · [Testing a Live App](ch12-05-testing-live-apps.md) · [Charts and Styling](ch12-06-charts-and-style.md) · [Loading and Shaping the Data](ch13-01-data.md) · [The Database Layer](ch13-02-database.md) |
 | `lower` | [Strings](by-example/strings.md) |
 | `ls` | [Files and directories](by-example/files.md) |
 | `map` | [Maps](by-example/maps.md) · [Web: responses and submodules](by-example/web-more.md) · [Web: a JSON route](by-example/web.md) · [Maps Are Dictionaries](ch05-02-maps.md) · [Testing](ch09-00-testing.md) |
@@ -61,7 +61,7 @@ no page, the build fails, so this list is complete by construction.
 | `push` | [Arrays](by-example/arrays.md) · [Arrays and Tensors](ch05-01-arrays-and-tensors.md) |
 | `rand` | [Math: random numbers and distributions](by-example/math-random.md) · [Programming a Guessing Game](ch02-00-guessing-game.md) |
 | `range` | [Arrays](by-example/arrays.md) · [Math: creating tensors](by-example/math-creation.md) · [Math: random numbers and distributions](by-example/math-random.md) · [for as an Expression](ch06-01-for-as-expression.md) |
-| `read` | [Files and directories](by-example/files.md) · [Moments and freshness](by-example/moments.md) |
+| `read` | [Files and directories](by-example/files.md) · [Moments and freshness](by-example/moments.md) · [View Blocks](ch12-01-views.md) |
 | `repeat` | [Strings](by-example/strings.md) |
 | `replace` | [Strings](by-example/strings.md) |
 | `reverse` | [Arrays](by-example/arrays.md) · [Strings](by-example/strings.md) |
@@ -71,7 +71,7 @@ no page, the build fails, so this list is complete by construction.
 | `set` | [Maps](by-example/maps.md) · [Maps Are Dictionaries](ch05-02-maps.md) · [Testing](ch09-00-testing.md) · [Testing a Live App](ch12-05-testing-live-apps.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
 | `shell` | [The system: shell, environment, time, arguments](by-example/system.md) |
 | `sleep` | [The system: shell, environment, time, arguments](by-example/system.md) · [Slow Work and the Live Loop](ch12-04-background-work.md) |
-| `slice` | [Arrays](by-example/arrays.md) |
+| `slice` | [Arrays](by-example/arrays.md) · [Strings and Interpolation](ch03-03-strings.md) |
 | `sort` | [Arrays](by-example/arrays.md) · [Frames: `use frame`](by-example/frames.md) · [Math: linear algebra](by-example/math-linalg.md) · [Math: reductions, sorting, and selection](by-example/math-reductions.md) · [Project: Analyzing Data](ch10-00-analyzing-data.md) · [Views and Live Updates](ch13-03-views.md) |
 | `split` | [Strings](by-example/strings.md) · [Strings and Interpolation](ch03-03-strings.md) |
 | `sqrt` | [Math: element-wise functions](by-example/math-elementwise.md) · [Numbers and conversion](by-example/numbers.md) |
@@ -90,9 +90,9 @@ no page, the build fails, so this list is complete by construction.
 
 | Name | Shown in |
 |---|---|
-| `app` | [Testing a Live App](ch12-05-testing-live-apps.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
+| `app` | [Views: the whole element vocabulary](by-example/views-elements.md) · [Testing a Live App](ch12-05-testing-live-apps.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
 | `arrow` | [Web: responses and submodules](by-example/web-more.md) |
-| `box` | [Charts and Styling](ch12-06-charts-and-style.md) |
+| `box` | [Views: the whole element vocabulary](by-example/views-elements.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
 | `bytes` | [Web: responses and submodules](by-example/web-more.md) |
 | `cache` | [Web: responses and submodules](by-example/web-more.md) |
 | `change` | [Testing a Live App](ch12-05-testing-live-apps.md) |
@@ -101,7 +101,7 @@ no page, the build fails, so this list is complete by construction.
 | `connect` | [Databases: `use db`](by-example/db.md) · [Working with Databases](ch11-00-databases.md) · [Charts and Styling](ch12-06-charts-and-style.md) · [Loading and Shaping the Data](ch13-01-data.md) · [The Database Layer](ch13-02-database.md) · [Views and Live Updates](ch13-03-views.md) |
 | `cors` | spec only — no compiled example yet |
 | `elements` | [Testing a Live App](ch12-05-testing-live-apps.md) |
-| `fits` | [Charts and Styling](ch12-06-charts-and-style.md) |
+| `fits` | [Views: the whole element vocabulary](by-example/views-elements.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
 | `html` | [Web: responses and submodules](by-example/web-more.md) · [Testing a Live App](ch12-05-testing-live-apps.md) |
 | `limit` | [Web: responses and submodules](by-example/web-more.md) |
 | `msgpack` | [Web: responses and submodules](by-example/web-more.md) |
@@ -145,10 +145,10 @@ no page, the build fails, so this list is complete by construction.
 | `div` | [Views: the whole element vocabulary](by-example/views-elements.md) · [View Blocks](ch12-01-views.md) · [Reactive State and Events](ch12-02-reactive-state.md) · [Components](ch12-03-components.md) · [Slow Work and the Live Loop](ch12-04-background-work.md) · [Testing a Live App](ch12-05-testing-live-apps.md) · [Charts and Styling](ch12-06-charts-and-style.md) · [Views and Live Updates](ch13-03-views.md) |
 | `footer` | [Views: the whole element vocabulary](by-example/views-elements.md) |
 | `form` | [Math: random numbers and distributions](by-example/math-random.md) · [Views: the whole element vocabulary](by-example/views-elements.md) |
-| `grid` | [Charts and Styling](ch12-06-charts-and-style.md) |
+| `grid` | [Views: the whole element vocabulary](by-example/views-elements.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
 | `h1` | [Views: the whole element vocabulary](by-example/views-elements.md) · [View Blocks](ch12-01-views.md) · [Reactive State and Events](ch12-02-reactive-state.md) · [Components](ch12-03-components.md) · [Slow Work and the Live Loop](ch12-04-background-work.md) · [Testing a Live App](ch12-05-testing-live-apps.md) · [Charts and Styling](ch12-06-charts-and-style.md) · [Views and Live Updates](ch13-03-views.md) |
 | `h2` | [Views: the whole element vocabulary](by-example/views-elements.md) · [Views and Live Updates](ch13-03-views.md) |
-| `h3` | [Views: the whole element vocabulary](by-example/views-elements.md) · [Components](ch12-03-components.md) · [Charts and Styling](ch12-06-charts-and-style.md) · [Views and Live Updates](ch13-03-views.md) |
+| `h3` | [Views: the whole element vocabulary](by-example/views-elements.md) · [View Blocks](ch12-01-views.md) · [Components](ch12-03-components.md) · [Charts and Styling](ch12-06-charts-and-style.md) · [Views and Live Updates](ch13-03-views.md) |
 | `h4` | [Views: the whole element vocabulary](by-example/views-elements.md) |
 | `h5` | [Views: the whole element vocabulary](by-example/views-elements.md) |
 | `h6` | [Views: the whole element vocabulary](by-example/views-elements.md) |
@@ -160,14 +160,14 @@ no page, the build fails, so this list is complete by construction.
 | `nav` | [Views: the whole element vocabulary](by-example/views-elements.md) |
 | `ol` | [Views: the whole element vocabulary](by-example/views-elements.md) |
 | `option` | [Views: the whole element vocabulary](by-example/views-elements.md) |
-| `overlay` | [Charts and Styling](ch12-06-charts-and-style.md) |
+| `overlay` | [Views: the whole element vocabulary](by-example/views-elements.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
 | `p` | [Arrays](by-example/arrays.md) · [Files and directories](by-example/files.md) · [Frames: `use frame`](by-example/frames.md) · [Maps](by-example/maps.md) · [Math: element-wise functions](by-example/math-elementwise.md) · [The system: shell, environment, time, arguments](by-example/system.md) · [Views: the whole element vocabulary](by-example/views-elements.md) · [Web: responses and submodules](by-example/web-more.md) · [Web: a JSON route](by-example/web.md) · [Defining and Calling Functions](ch04-01-defining-functions.md) · [Function Scope Isolation](ch04-03-scope-isolation.md) · [Maps Are Dictionaries](ch05-02-maps.md) · [Testing](ch09-00-testing.md) · [Project: Analyzing Data](ch10-00-analyzing-data.md) · [View Blocks](ch12-01-views.md) · [Components](ch12-03-components.md) · [Slow Work and the Live Loop](ch12-04-background-work.md) · [Testing a Live App](ch12-05-testing-live-apps.md) · [Charts and Styling](ch12-06-charts-and-style.md) · [The Database Layer](ch13-02-database.md) · [Views and Live Updates](ch13-03-views.md) |
 | `pre` | [Views: the whole element vocabulary](by-example/views-elements.md) |
-| `row` | [Web: responses and submodules](by-example/web-more.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
-| `scroll` | [Charts and Styling](ch12-06-charts-and-style.md) |
+| `row` | [Views: the whole element vocabulary](by-example/views-elements.md) · [Web: responses and submodules](by-example/web-more.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
+| `scroll` | [Views: the whole element vocabulary](by-example/views-elements.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
 | `section` | [Views: the whole element vocabulary](by-example/views-elements.md) |
 | `span` | [Views: the whole element vocabulary](by-example/views-elements.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
-| `stack` | [Frames: `use frame`](by-example/frames.md) · [Math: shape operations](by-example/math-shape.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
+| `stack` | [Frames: `use frame`](by-example/frames.md) · [Math: shape operations](by-example/math-shape.md) · [Views: the whole element vocabulary](by-example/views-elements.md) · [View Blocks](ch12-01-views.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
 | `table` | [Views: the whole element vocabulary](by-example/views-elements.md) · [Views and Live Updates](ch13-03-views.md) |
 | `tbody` | [Views: the whole element vocabulary](by-example/views-elements.md) |
 | `td` | [Statistics: `use math.stats`](by-example/stats.md) · [Views: the whole element vocabulary](by-example/views-elements.md) |
@@ -268,7 +268,7 @@ no page, the build fails, so this list is complete by construction.
 | `spectrogram` | [Math: signal processing](by-example/math-signal.md) |
 | `spmv` | [Math: sparse matrices](by-example/math-sparse.md) |
 | `sqrt` | [Math: element-wise functions](by-example/math-elementwise.md) · [Numbers and conversion](by-example/numbers.md) |
-| `stack` | [Frames: `use frame`](by-example/frames.md) · [Math: shape operations](by-example/math-shape.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
+| `stack` | [Frames: `use frame`](by-example/frames.md) · [Math: shape operations](by-example/math-shape.md) · [Views: the whole element vocabulary](by-example/views-elements.md) · [View Blocks](ch12-01-views.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
 | `stft` | [Math: signal processing](by-example/math-signal.md) |
 | `sum` | [Frames: `use frame`](by-example/frames.md) · [Math: linear algebra](by-example/math-linalg.md) · [Math: random numbers and distributions](by-example/math-random.md) · [Math: reductions, sorting, and selection](by-example/math-reductions.md) · [Math: tensors and linear algebra](by-example/math.md) · [Importing with use](ch08-01-importing.md) · [Aliased Imports](ch08-02-aliased-imports.md) · [Project: Analyzing Data](ch10-00-analyzing-data.md) · [The Database Layer](ch13-02-database.md) · [Views and Live Updates](ch13-03-views.md) |
 | `svd` | [Math: linear algebra](by-example/math-linalg.md) |
@@ -330,7 +330,7 @@ no page, the build fails, so this list is complete by construction.
 | `save` | [Frames: `use frame`](by-example/frames.md) |
 | `select` | [Frames: `use frame`](by-example/frames.md) |
 | `sort` | [Arrays](by-example/arrays.md) · [Frames: `use frame`](by-example/frames.md) · [Math: linear algebra](by-example/math-linalg.md) · [Math: reductions, sorting, and selection](by-example/math-reductions.md) · [Project: Analyzing Data](ch10-00-analyzing-data.md) · [Views and Live Updates](ch13-03-views.md) |
-| `stack` | [Frames: `use frame`](by-example/frames.md) · [Math: shape operations](by-example/math-shape.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
+| `stack` | [Frames: `use frame`](by-example/frames.md) · [Math: shape operations](by-example/math-shape.md) · [Views: the whole element vocabulary](by-example/views-elements.md) · [View Blocks](ch12-01-views.md) · [Charts and Styling](ch12-06-charts-and-style.md) |
 | `stats` | [Frames: `use frame`](by-example/frames.md) |
 | `tail` | [Frames: `use frame`](by-example/frames.md) |
 | `tz` | [Frames: `use frame`](by-example/frames.md) |
@@ -359,7 +359,7 @@ no page, the build fails, so this list is complete by construction.
 | Name | Shown in |
 |---|---|
 | `chapters` | [Documentation: `use doc`](by-example/doc.md) |
-| `document` | [Documentation: `use doc`](by-example/doc.md) |
+| `document` | [Documentation: `use doc`](by-example/doc.md) · [Views: the whole element vocabulary](by-example/views-elements.md) · [View Blocks](ch12-01-views.md) |
 | `markdown` | [Documentation: `use doc`](by-example/doc.md) |
 | `menu` | [Documentation: `use doc`](by-example/doc.md) |
 | `pager` | [Documentation: `use doc`](by-example/doc.md) |

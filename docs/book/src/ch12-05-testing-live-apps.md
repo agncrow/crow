@@ -122,6 +122,16 @@ otherwise survives until someone looks at the page. The second block is
 two-way binding end to end: the field's variable changes, the paragraph
 re-renders with it, the handler puts it back.
 
+## What a test block sees
+
+A test block sees declarations: functions, views, structs, imports. Of the
+top-level assignments only two kinds ride along — literal values, which
+are reactive-state defaults the harness reads and handlers write, and
+connections (`db.connect[...]`), which are resources a render-time view
+needs to exist at all. Everything computed at the top level is invisible,
+exactly as it is inside a function, so a view under test cannot depend on
+work the program did before `page[]`.
+
 ## Failure renders, it doesn't crash
 
 A view renders what it is given, and what it is given may be an error
