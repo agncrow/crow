@@ -80,13 +80,15 @@ test runner[]
     assert[fits[phone, 390]]
 
 toc = doc.chapters[read['`src`SUMMARY.md']]
-mkdir['`out`by-example']
 for i in range[len[toc]]
     path = toc.path[i]
     title = toc.title[i]
     up = ''
     if contains[path, '/']
         up = '../'
+        parts = split[path, '/']
+        folder = parts[0]
+        mkdir['`out``folder`']
     doc_page = doc.document[title, chapter[title, doc.markdown[read['`src``path`']], doc.menu[toc, path], doc.pager[toc, path], up]]
     html_path = replace[path, '.md', '.html']
     write['`out``html_path`', doc_page]

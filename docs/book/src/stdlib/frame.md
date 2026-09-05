@@ -1,0 +1,71 @@
+# frame
+
+Column-oriented data frames: load, select, filter, sort, group, join, and time handling.
+
+
+Import with `use frame`. Column-oriented DataFrames for tabular data. See `docs/frame-module.md` for design details.
+
+**Column references: strings for names, expressions for computation.** Naming a column is a string; computing on a column is a normal Crow expression over `df.col`. Every line is plain Crow — there is no special evaluation inside frame calls.
+
+| Function | Description | Example |
+|---|---|---|
+| `load[path]` | Load CSV → frame (error-value on failure) | [Databases: `use db`](../by-example/db.md) · [Frames: `use frame`](../by-example/frames.md) · [Web: responses and submodules](../by-example/web-more.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) |
+| `save[frame, path]` | Write frame → CSV | [Frames: `use frame`](../by-example/frames.md) |
+| `select[frame, cols]` | Pick columns: `select[df, ['name', 'age']]` | [Frames: `use frame`](../by-example/frames.md) |
+| `filter[frame, mask]` | Keep rows where mask is true: `filter[df, df.age gt 50]` | [Frames: `use frame`](../by-example/frames.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `sort[frame, col]` | Sort ascending: `sort[df, 'age']`. Descending: `sort[df, 'age', desc = true]` | [Arrays](../by-example/arrays.md) · [Frames: `use frame`](../by-example/frames.md) · [Math: linear algebra](../by-example/math-linalg.md) · [Math: reductions, sorting, and selection](../by-example/math-reductions.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `group[frame, col, aggs...]` | Group + aggregate: `group[df, 'dept', ['salary', 'mean'], ['age', 'max']]` | [Frames: `use frame`](../by-example/frames.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `join[f1, f2, key]` | Join on key column: `join[df1, df2, 'id']`. Type: `join[df1, df2, 'id', 'left']` | [Strings](../by-example/strings.md) · [Strings and Interpolation](../ch03-03-strings.md) |
+| `stack[f1, f2]` | Stack frames vertically | [Frames: `use frame`](../by-example/frames.md) · [Math: shape operations](../by-example/math-shape.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [View Blocks](../ch12-01-views.md) · [Charts and Styling](../ch12-06-charts-and-style.md) |
+| `head[frame, n]` / `tail[frame, n]` | First/last n rows (returns a frame) | [Frames: `use frame`](../by-example/frames.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) |
+| `fill[frame, col, value]` | Fill missing values in a column | [Frames: `use frame`](../by-example/frames.md) |
+| `unique[frame, col]` | Unique values of a column: `unique[df, 'symbol']` | [Frames: `use frame`](../by-example/frames.md) · [Math: reductions, sorting, and selection](../by-example/math-reductions.md) |
+| `rename[frame, old, new]` | Rename a column: `rename[df, 'salary', 'pay']` | [Frames: `use frame`](../by-example/frames.md) |
+| `stats[frame]` | Summary statistics | [Frames: `use frame`](../by-example/frames.md) |
+| `datetime[s]` | Parse ISO 8601 datetime | [Frames: `use frame`](../by-example/frames.md) |
+| `tz[d, offset]` | Convert timezone: `tz[d, '+09:00']` | [Frames: `use frame`](../by-example/frames.md) |
+
+Properties: `.shape`, `.columns`, `.dtypes`. Column access: `df.age`. `len[df]` returns the row count. Aggregation names for `group`: `'sum'`, `'mean'`, `'min'`, `'max'`, `'count'`.
+
+### Boolean Masks
+
+Filtering uses ordinary Crow expressions that evaluate to boolean arrays. These operations are vectorized (element-wise):
+
+- `eq ne gt lt gte lte` — column vs scalar → boolean array
+- `and` / `or` — two boolean arrays → boolean array
+- `not` — boolean array → boolean array
+
+```
+use frame
+df = load['people.csv']
+
+old = filter[df, df.age gt 50]
+alices = filter[df, df.name eq 'alice']
+rich_old = filter[df, df.age gt 50 and df.salary gt 100000]
+others = filter[df, not (df.name eq 'alice')]
+```
+
+Missing values compare as `false` — they are excluded by any filter.
+
+Dynamic column names need no special syntax — a string variable works everywhere a column name does:
+
+```
+col = 'age'
+sorted = sort[df, col]
+```
+
+### Design Note: No Bare-Name Column References
+
+**What was considered (and originally shipped):** Bare identifiers as column names — `sort[df, age]`, `group[df, dept, [salary, mean]]` — where an identifier that isn't a defined variable is treated as a column-name string.
+
+**Why it was removed:**
+
+1. **Scope-dependent meaning.** Adding a local variable named `age` silently changed `sort[df, age]` from a column reference into a value argument. Code broke at a distance with no error.
+2. **Interpreter–transpiler divergence.** The interpreter preferred the variable when one existed; the transpiler force-converted certain argument positions to strings regardless. The same program meant different things in the two modes, violating the parity rule.
+3. **Violates rule 19 (no DSL).** A second evaluation rule inside frame calls means a line of Crow can't be read without knowing which builtin it appears in.
+
+**What to use instead:** Strings for column names, expressions for computation — as specified above. One mechanism, no sugar, dynamic columns free.
+
+
+
+Generated by `crow test --docs --write` from the language specification, section 11 and 13. Edit the spec, not this page.

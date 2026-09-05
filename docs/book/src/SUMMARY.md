@@ -71,6 +71,16 @@
 
 # Part II — The Reference
 
+- [The Standard Library](stdlib/index.md)
+  - [Core builtins](stdlib/core.md)
+  - [math](stdlib/math.md)
+  - [math.stats](stdlib/math-stats.md)
+  - [math.nn](stdlib/math-nn.md)
+  - [frame](stdlib/frame.md)
+  - [db](stdlib/db.md)
+  - [io](stdlib/io.md)
+  - [doc](stdlib/doc.md)
+  - [web and ui](stdlib/web.md)
 - [Crow by Example](by-example/index.md)
   - [Numbers and conversion](by-example/numbers.md)
   - [Strings](by-example/strings.md)
