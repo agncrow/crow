@@ -94,6 +94,7 @@ use frame       16: load save select filter sort group join stack head
                 tail fill unique rename stats datetime tz
 use db          6:  connect query exec insert transact migrate
 use io          2:  csv lines
+use doc         6:  markdown chapters menu pager plain document
 use web         route serve page respond redirect html text send recv
                 close sse ws cors sessions cache limit uploads sign
                 verify static_dir smtp + the test harness app click
@@ -102,6 +103,17 @@ use ui          fetch poll field (the elements below are NOT reserved —
 ```
 
 `use math as m` reserves only `m`.
+
+## Layout containers — valid only inside `view` blocks
+
+```text
+stack  row  grid  overlay  scroll
+attributes (literals): gap pad margin align justify wrap columns
+  width min_width max_width fill size weight lines surface radius
+  border shadow color background anchor below becomes columns_then
+  hidden_below
+test harness: app[view, width = N] box[s, sel] style[s, sel] fits[s, w]
+```
 
 ## UI elements — valid only inside `view` blocks
 

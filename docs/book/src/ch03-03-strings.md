@@ -31,6 +31,26 @@ hello, crow
 Outside backticks, strings are completely inert — braces, JSON, and regex
 punctuation need no escaping. For a literal backtick, write ``\` ``.
 
+## Length and slicing count characters
+
+`len[]`, `slice[]`, and indexing all work in characters, never bytes, so
+accented letters and dashes are one step each in both execution modes:
+
+```crow
+s = 'naïve — café'
+log[len[s]]
+log[slice[s, 6, 7]]
+log[s[-1]]
+log[s[2]]
+```
+
+```text
+12
+—
+é
+ï
+```
+
 ## No `+` on strings
 
 `+` is for numbers. To combine strings, interpolate; to build from many

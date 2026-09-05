@@ -666,6 +666,8 @@ word[2]                  --- 'l'
 
 Out-of-bounds indices are a runtime error.
 
+`len[s]`, `slice[s, start, end]`, and indexing count characters, never bytes, in both execution modes: `len['a—b']` is 3 and `slice['a—b', 1, 2]` is `'—'`.
+
 
 ### Maps
 
@@ -1015,6 +1017,10 @@ log[result.trace]           --- ['main.validate:5', 'main:6', ...]
 ```
 
 **Exception:** `log[]` does not propagate — it prints error-values directly for debugging.
+
+**Exception:** elements and views render what they are given. An error-value handed to an element or a `view` renders as the text `error: reason` in place of that child; the tree is never wrapped in a Result. A page with one failed part is still a page.
+
+**Collections:** a `map[...]` built with a fallible value is a fallible map of plain values (the map is built from the unwrapped value or not at all), and `encode[]` of an array of fallible values writes each ok element's payload and `null` for each error.
 
 Errors also propagate through operators (`+`, `-`, etc.) and unary operations. If either operand of a binary op is an error, the result is that error.
 
@@ -1450,6 +1456,7 @@ exec[db_conn, 'SELECT 1']
 Rules:
 - If only one module exports a name, bare calls work.
 - If multiple modules export the same name, bare calls error with a list of qualified alternatives.
+- Inside a `view`, an element name is the element: `stack[...]` is the layout container even with `frame` and `math` (which both export `stack`) imported. The prefix (`frame.stack[a, b]`) reaches the module function from inside a view.
 - Module-prefixed calls (`module.fn[args]`) always work regardless of conflicts.
 
 
@@ -2051,7 +2058,11 @@ Top-level variables in a ui program are reactive state (see Function Scope). Thr
 | `poll[url, seconds]` | Reactive state re-fetched every `seconds`; every reader re-renders when it changes |
 | `field[label, var]` | A labeled input two-way bound to reactive variable `var` (inside a view) |
 
-#### Layout — the vocabulary
+#### Views render wherever they are called
+
+A `view` returns its markup from any call site — a `page[]`, the test harness, another view, or a program writing pages to disk (`doc.document[title, chapter[...]]`). Inside an element, a string child that starts and ends with a tag passes through as markup; any other string is text and is escaped. Both renderers apply the same rule.
+
+### Layout — the vocabulary
 
 Pages are composed from layout primitives, never styled with CSS. Five containers join the element vocabulary inside views, and a fixed set of layout attributes applies to any element. Each has one written rule; the kernel table (`crow_runtime::layout`) turns it into the CSS a browser lays out with, and the layout engine — written in Crow, shipped inside the compiler — implements the same rule for tests and the desktop shell. Design and rationale: `ui-engine-design.md`.
 
@@ -2725,6 +2736,8 @@ test[n]
 A bare boolean line is a truth to check. `assert` is for steps inside
 scenarios, and reports both operands on failure. Preconditions are plain
 `if`s. Bindings are plain assignments. A test body is ordinary Crow.
+
+A test block sees declarations (functions, views, structs, imports) and two kinds of top-level assignment: literal values, which are reactive-state defaults, and connections (`db.connect[...]`), which are resources a render-time view needs. Computed top-level values are invisible, as inside any function.
 
 Live apps are tested through a headless session — `app[view]` opens one,
 `click[a, handler]` runs a handler on it, `a.name` reads reactive state,

@@ -29,6 +29,39 @@ Elements nest by nesting calls — the tree you write is the tree you get.
 Attributes are named arguments: `a['docs', href = '/docs']`,
 `div[..., class = 'card']`.
 
+## A view renders wherever it is called
+
+A view is not tied to `page[]`. Call it from a test block, from a loop
+that writes pages to disk, or from another view, and it returns its
+markup. Hand that markup to `document[]` from `use doc` (Part II) and you
+have a complete page without a server — the book you are reading is built
+exactly this way. Two rules make this safe:
+
+- **Markup passes through, text is escaped.** A string that starts and
+  ends with a tag is treated as markup inside `stack[...]` or any element;
+  anything else is text and is escaped.
+- **A failed argument renders, it does not propagate.** Elements render
+  what they are given (chapter 12.5), and so does a view: an error value
+  handed to a view shows as `error: reason` in place of the tree. A page
+  with one unreadable chapter is still a page.
+
+```crow
+use web, ui, doc
+
+view card[title, body]
+    return stack[h3[title], p[body], surface = 'card']
+
+markup = doc.document['Card', card['Hello', 'a paragraph']]
+log[contains[markup, '<div class="stack card"']]
+broken = doc.document['Card', card['Hello', read['/nonexistent/notes.md']]]
+log[contains[broken, 'error: cannot read']]
+```
+
+```text
+true
+true
+```
+
 **The vocabulary boundary matters:** `div`, `p`, `a`, `form` are element
 functions *only inside views*. Outside, they're free — `p = 0.95` is fine
 in the same file — and using an element outside a view is a compile error
