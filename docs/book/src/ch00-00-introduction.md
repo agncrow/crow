@@ -25,17 +25,32 @@ know Rust — Crow compiles *to* Rust, you never read the output.
 
 ## How to Read It
 
-Chapter 1 installs Crow and chapter 2 builds a small game before any
-theory. Chapters 3–9 then build the language up one idea at a time —
-concepts, functions and scope, collections, parallelism, errors, modules,
-testing — each chapter using only what came before it. Chapter 10 is a
-hands-on data project, and chapters 11–13 cover the applied layers:
-databases, web UIs, and the final project that uses everything. Whatever
-language you're arriving from — Python, JavaScript, R, MATLAB, Julia, Go,
-Rust, Elixir, Ruby, Swift, Zig — Appendix B lists the habits to unlearn.
-Crow by Example closes Part I with one runnable program per area of the
-language, and Appendix A is the whole language on one page — a good
-bookmark once the chapters are behind you. Part II is the reference: the
-standard library module by module, the index of where every name is
-shown, and the full language specification, the document to keep open
-while you write real programs.
+Two parts, one language. Part I is the book: read it in order. Getting
+Started installs Crow and meets the toolchain, the guessing game builds a
+small program before any theory, and the chapters that follow build the
+language up one idea at a time — concepts, functions and scope,
+collections, parallelism, errors, modules, testing — each using only what
+came before it. Then the applied layers: a hands-on data project,
+databases, web UIs, and a final project that uses everything. Crow by
+Example closes Part I with one runnable program per area of the language.
+Whatever language you're arriving from — Python, JavaScript, R, MATLAB,
+Julia, Go, Rust, Elixir, Ruby, Swift, Zig — Appendix B lists the habits to
+unlearn, and Appendix A is the language on one page.
+
+Part II is the reference: the standard library module by module, every
+function linked to the example that shows it, and the language
+specification — the source of truth (`docs/language-spec.md` in the
+repository), with a Design Note for every feature Crow deliberately
+leaves out. Consult it whenever the book says "the spec covers the rest",
+and read its Design Notes whenever you wonder "why can't I…". The book
+teaches; the spec specifies.
+
+## Every Block Runs
+
+Every code block in this book is executed by `crow test --book` in both of
+Crow's execution modes on every change: what you read is what runs. And
+every block can be run where it stands. From a checkout of the repository
+run `crow book` and open the printed address: each block gets ▶ Run (the
+interpreter), ⚙ Compile (the native binary), ✓ Test (its test blocks),
+↺ Reset, and ■ Stop. The block itself is editable — change it and run
+again. The same binary that verifies the book serves it.

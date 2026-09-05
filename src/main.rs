@@ -676,11 +676,10 @@ fn cmd_test_docs() {
     };
     // a page from a slice of spec lines: headings demoted one level, tables
     // given an example column, the page's own title on top
-    let render_page = |title: &str, intro: &str, ranges: &[(usize, usize)], exclude: &[(usize, usize)]| -> String {
+    let render_page = |title: &str, intro: &str, ranges: &[(usize, usize, bool)], exclude: &[(usize, usize)]| -> String {
         let mut out = format!("# {}\n\n{}\n\n", title, intro);
-        for (r, &(a, b)) in ranges.iter().enumerate() {
-            // the first range's heading is the page title; later ranges keep theirs
-            let mut i = if r == 0 { a + 1 } else { a };
+        for &(a, b, keep_heading) in ranges.iter() {
+            let mut i = if keep_heading { a } else { a + 1 };
             while i < b {
                 if exclude.iter().any(|&(x, y)| i >= x && i < y) { i += 1; continue; }
                 let l = lines[i];
@@ -710,20 +709,27 @@ fn cmd_test_docs() {
     let mut pages: Vec<(String, String)> = Vec::new();
     let mut index = String::from("# The Standard Library\n\nEvery module ships with the compiler: `use` it and its names are there in both execution modes. Each page lists the module's functions with the book examples that use them, generated from the language specification so the two cannot drift. Core builtins need no import.\n\n| Module | Import | Names | Page |\n|---|---|---|---|\n");
     let count = |t: &str| tables.iter().find(|(n, _)| *n == t).map(|(_, ns)| ns.len()).unwrap_or(0);
-    let mut add = |file: &str, title: &str, import: &str, table: &str, intro: &str, ranges: Vec<(usize, usize)>, exclude: Vec<(usize, usize)>| {
+    let mut add = |file: &str, title: &str, import: &str, table: &str, intro: &str, ranges: Vec<(usize, usize, bool)>, exclude: Vec<(usize, usize)>| {
         if ranges.is_empty() { return; }
         index.push_str(&format!("| {} | `{}` | {} | [{}]({}.md) |\n", title, import, count(table), title, file));
         pages.push((format!("{}.md", file), render_page(title, intro, &ranges, &exclude)));
     };
-    if let Some(core) = section("## 11. Core Builtins") { add("core", "Core builtins", "(none)", "core", "Always available, no import. The tables below are the spec's, with the book pages whose verified code uses each name.", vec![core], vec![]); }
-    if let Some(m) = section("### math") { let ex: Vec<(usize, usize)> = [stats, nn].iter().flatten().copied().collect(); add("math", "math", "use math", "math", "Tensors, element-wise math, reductions, linear algebra, random numbers, signal processing, sparse arrays, and numeric loading.", vec![m], ex); }
-    if let Some(s) = stats { add("math-stats", "math.stats", "use math.stats", "math.stats", "Descriptive statistics, correlation, tests, and fitting over tensors and frame columns.", vec![s], vec![]); }
-    if let Some(n) = nn { add("math-nn", "math.nn", "use math.nn", "math.nn", "Activation functions, losses, and a linear layer for small networks with autograd.", vec![n], vec![]); }
-    if let Some(f) = section("### frame") { add("frame", "frame", "use frame", "frame", "Column-oriented data frames: load, select, filter, sort, group, join, and time handling.", vec![f], vec![]); }
-    if let Some(d) = section("### db") { add("db", "db", "use db", "db", "Databases as connections: query, exec, bulk insert, transactions, migrations, and pooling.", vec![d], vec![]); }
-    if let Some(i) = section("### io") { add("io", "io", "use io", "io", "Structured file parsing beyond the built-in read and write.", vec![i], vec![]); }
-    if let Some(d) = section("### doc") { add("doc", "doc", "use doc", "doc", "Documentation from Markdown, rendered by the kernel so both execution modes write the same pages.", vec![d], vec![]); }
-    if let Some(w) = section("### web") { let lay = section("### Layout — the vocabulary"); let mut r = vec![w]; if let Some(l) = lay { r.push(l); } add("web", "web and ui", "use web, ui", "web", "Views, reactive state, the layout vocabulary, charts, styling, and the server: routes, responses, auth, sessions, sockets, and more.", r, vec![]); }
+    let one = |r: Option<(usize, usize)>| -> Vec<(usize, usize, bool)> { r.map(|(a, b)| vec![(a, b, false)]).unwrap_or_default() };
+    if let Some(core) = section("## 11. Core Builtins") { add("core", "Core builtins", "(none)", "core", "Always available, no import. The tables below are the spec's, with the book pages whose verified code uses each name.", one(Some(core)), vec![]); }
+    if let Some(m) = section("### math") { let ex: Vec<(usize, usize)> = [stats, nn].iter().flatten().copied().collect(); add("math", "math", "use math", "math", "Tensors, element-wise math, reductions, linear algebra, random numbers, signal processing, sparse arrays, and numeric loading.", one(Some(m)), ex); }
+    if stats.is_some() { add("math-stats", "math.stats", "use math.stats", "math.stats", "Descriptive statistics, correlation, tests, and fitting over tensors and frame columns.", one(stats), vec![]); }
+    if nn.is_some() { add("math-nn", "math.nn", "use math.nn", "math.nn", "Activation functions, losses, and a linear layer for small networks with autograd.", one(nn), vec![]); }
+    if let Some(f) = section("### frame") { add("frame", "frame", "use frame", "frame", "Column-oriented data frames: load, select, filter, sort, group, join, and time handling.", one(Some(f)), vec![]); }
+    if let Some(d) = section("### db") { add("db", "db", "use db", "db", "Databases as connections: query, exec, bulk insert, transactions, migrations, and pooling.", one(Some(d)), vec![]); }
+    if let Some(i) = section("### io") { add("io", "io", "use io", "io", "Structured file parsing beyond the built-in read and write.", one(Some(i)), vec![]); }
+    if let Some(d) = section("### doc") { add("doc", "doc", "use doc", "doc", "Documentation from Markdown, rendered by the kernel so both execution modes write the same pages.", one(Some(d)), vec![]); }
+    // web splits where the spec does: the view side (`use ui`) and the server side (`use web`)
+    // (the spec's `### web` runs, through the `### Layout` section, up to `### db`)
+    if let (Some((w0, _)), Some((d0, _))) = (section("### web"), section("### db")) {
+        let server = (w0..d0).find(|&i| lines[i].trim_end() == "#### Core (Server)").unwrap_or(d0);
+        add("ui", "ui", "use ui", "ui", "Views and the element vocabulary, reactive state and inputs, the layout vocabulary, charts, and styling.", vec![(w0, server, false)], vec![]);
+        if server < d0 { add("web", "web", "use web", "web", "The server: routes and responses, auth, CORS, sessions, templates, cache, rate limits, uploads, SSE, sockets, pages, static files, mail, queues, API docs, and the HTTP client.", vec![(server, d0, true)], vec![]); }
+    }
     pages.push(("index.md".to_string(), index));
     let stdlib_dir = book_dir.join("stdlib");
     let _ = std::fs::create_dir_all(&stdlib_dir);

@@ -1,12 +1,11 @@
 # The Crow Programming Language
 
-[The Crow Programming Language](title-page.md)
 [Introduction](ch00-00-introduction.md)
 
 # Part I — Learning Crow
 
 - [Getting Started](ch01-00-getting-started.md)
-  - [Installation](ch01-01-installation.md)
+  - [The Toolchain](ch01-01-toolchain.md)
   - [Hello, World!](ch01-02-hello-world.md)
   - [Hello, Crowfile!](ch01-03-hello-crowfile.md)
 
@@ -77,16 +76,9 @@
   - [JSON](by-example/json.md)
   - [The system: shell, environment, time, arguments](by-example/system.md)
   - [Moments and freshness](by-example/moments.md)
-  - [Math: tensors and linear algebra](by-example/math.md)
-  - [Math: creating tensors](by-example/math-creation.md)
-  - [Math: element-wise functions](by-example/math-elementwise.md)
-  - [Math: reductions, sorting, and selection](by-example/math-reductions.md)
-  - [Math: shape operations](by-example/math-shape.md)
-  - [Math: linear algebra](by-example/math-linalg.md)
-  - [Math: random numbers and distributions](by-example/math-random.md)
-  - [Math: signal processing](by-example/math-signal.md)
-  - [Math: special functions and complex numbers](by-example/math-special.md)
-  - [Math: sparse matrices](by-example/math-sparse.md)
+  - [Math: tensors](by-example/math.md)
+  - [Math: reductions and linear algebra](by-example/math-linalg.md)
+  - [Math: random, signal, special, and sparse](by-example/math-more.md)
   - [Automatic differentiation](by-example/grad.md)
   - [Statistics: `use math.stats`](by-example/stats.md)
   - [Neural-network building blocks: `use math.nn`](by-example/nn.md)
@@ -99,7 +91,7 @@
   - [Views: the whole element vocabulary](by-example/views-elements.md)
 
 - [Appendix A: The Language at a Glance](appendix-a-language-at-a-glance.md)
-- [Appendix B: Coming from Another Language](appendix-b-from-python.md)
+- [Appendix B: Coming from Another Language](appendix-b-from-another-language.md)
 
 # Part II — The Reference
 
@@ -112,5 +104,6 @@
   - [db](stdlib/db.md)
   - [io](stdlib/io.md)
   - [doc](stdlib/doc.md)
-  - [web and ui](stdlib/web.md)
+  - [ui](stdlib/ui.md)
+  - [web](stdlib/web.md)
 - [The Crow Language Specification](language-spec.md)
