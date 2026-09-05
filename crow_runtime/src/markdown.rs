@@ -132,14 +132,17 @@ pub fn menu(chapters: &[Chapter], current: &str) -> String {
         format!("<a class=\"{}\" href=\"{}{}\">{}</a>", cls, up, escape(&html_path(&c.path)), escape(&c.title))
     };
     let mut out = String::from("<nav class=\"doc-nav\">");
-    let brand = chapters.iter().find(|c| c.depth == 0);
-    if let Some(bc) = brand {
-        out.push_str(&format!("<a class=\"brand\" href=\"{}{}\">{}</a>", up, escape(&html_path(&bc.path)), escape(&bc.title)));
+    // the brand: the summary's title (its first heading) linking to the
+    // first page; a summary with no title heading uses that page's title
+    let brand = chapters.iter().find(|c| c.depth == 0).or(chapters.first());
+    let brand_text: Option<String> = brand.map(|bc| if bc.part.is_empty() { bc.title.clone() } else { bc.part.clone() });
+    if let (Some(bc), Some(text)) = (brand, &brand_text) {
+        out.push_str(&format!("<a class=\"brand\" href=\"{}{}\">{}</a>", up, escape(&html_path(&bc.path)), escape(text)));
     }
     let mut part = String::new();
     let mut open: Vec<i64> = Vec::new();
     for (i, c) in chapters.iter().enumerate() {
-        if Some(c) == brand {
+        if Some(c) == brand && c.depth == 0 {
             continue;
         }
         // leave every group this chapter is not inside
@@ -147,7 +150,7 @@ pub fn menu(chapters: &[Chapter], current: &str) -> String {
             out.push_str("</details>");
             open.pop();
         }
-        if c.part != part && !c.part.is_empty() && brand.map_or(true, |b| b.title != c.part) {
+        if c.part != part && !c.part.is_empty() && brand_text.as_deref() != Some(c.part.as_str()) {
             while open.pop().is_some() {
                 out.push_str("</details>");
             }

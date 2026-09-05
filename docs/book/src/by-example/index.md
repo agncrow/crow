@@ -21,16 +21,9 @@ Part II.
 | [JSON](json.md) | `json encode`, converting open-schema fields |
 | [The system: shell, environment, time, arguments](system.md) | `shell env time args hash` |
 | [Moments and freshness](moments.md) | `moment calendar parse_time now captured`, `fmt[t, time =]` |
-| [Math: tensors and linear algebra](math.md) | matmul, `.*`, `transpose det solve sum mean zeros eye linspace argmax` |
-| [Math: creating tensors](math-creation.md) | `zeros ones full eye diag arange linspace tensor randn seed` |
-| [Math: element-wise functions](math-elementwise.md) | `exp ln log2 log10 sign clip mod` and trigonometry |
-| [Math: reductions, sorting, and selection](math-reductions.md) | `prod argmin cumsum cumprod topk argsort unique where`, `axis =` |
-| [Math: shape operations](math-shape.md) | `reshape flatten transpose stack concat` |
-| [Math: linear algebra](math-linalg.md) | `inv norm dot triu tril rank cond solve lstsq pinv qr svd cholesky eigen` |
-| [Math: random numbers and distributions](math-random.md) | `normal uniform poisson bernoulli gamma_dist beta_dist exponential shuffle choice permutation` |
-| [Math: signal processing](math-signal.md) | `fft ifft fft2 conv conv2d hamming hanning stft spectrogram lowpass highpass bandpass` |
-| [Math: special functions and complex numbers](math-special.md) | `gamma erf bessel factorial choose complex real imag magnitude phase conjugate` |
-| [Math: sparse matrices](math-sparse.md) | `sparse dense nnz spmv` |
+| [Math: tensors](math.md) | creating tensors, element-wise functions, shape operations |
+| [Math: reductions and linear algebra](math-linalg.md) | `sum mean min max argmax cumsum sort argsort topk unique where`, `solve inv det svd qr eigen norm dot lstsq` |
+| [Math: random, signal, special, and sparse](math-more.md) | `seed rand randn normal shuffle choice`, `fft conv hamming stft lowpass`, `gamma erf bessel complex`, `sparse dense nnz spmv` |
 | [Automatic differentiation](grad.md) | `grad` for one and many parameters |
 | [Statistics: `use math.stats`](stats.md) | `median std var percentile corr linreg` |
 | [Neural-network building blocks: `use math.nn`](nn.md) | `relu sigmoid softmax mse` |
