@@ -2317,6 +2317,9 @@ n = exec[conn, 'DELETE FROM users WHERE age < ?', [18]]
 log[n]
 ```
 
+**Typed cells in compiled programs.** The compiler asks the program's databases what each literal query returns — a `prepare` on Postgres, `DESCRIBE` on ClickHouse — and types every column: `rows.price[0]` is a float, `rows.n[0]` an int, in the compiled program as it always was in the interpreter. Connections bound to a literal URL (`pg = db.connect['postgres://…']`) are asked in declaration order; `?` placeholders and interpolated spans stand in as NULL. A database that cannot be reached at compile time is skipped and the build says so once; the cells of that query then read as text, the pre-typing behaviour. Frames derived through `select`, `filter`, `sort`, `head`, `tail`, `fill`, `stack`, and `join` keep their column types. Set `CROW_NO_DESCRIBE=1` to build without asking.
+
+
 #### Bulk Insert
 
 | Function | Description |

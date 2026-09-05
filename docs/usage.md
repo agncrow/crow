@@ -170,3 +170,10 @@ program the interpreter accepts but the transpiler rejects has a type error.
 
 The generated Rust lives in `.crow_build/` next to your source — you never
 need to read it, but it is there.
+
+### Environment
+
+| Variable | Effect |
+|---|---|
+| `CROW_BUILD_PROFILE=dev` | Compile checked programs without optimisation (the verification harnesses set it). |
+| `CROW_NO_DESCRIBE=1` | Do not ask the program's databases what each query returns at compile time; frame cells then read as text in the compiled program. |

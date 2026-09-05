@@ -1427,8 +1427,10 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         process::exit(1);
     });
 
-    // Run type inference
+    // Run type inference. The compiler may ask the program's databases what
+    // each literal query returns, so frame cells are typed natively.
     let mut ctx = type_infer::TypeContext::new();
+    ctx.describe_queries = std::env::var("CROW_NO_DESCRIBE").is_err();
     ctx.infer_program(&stmts);
 
     // Run validation pass — catch user errors before transpilation

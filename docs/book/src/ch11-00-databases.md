@@ -193,3 +193,18 @@ editor, through `crow lsp` — runs them. The full reference is
 `docs/crow-check.md`.
 
 Next: putting a live web page in front of it.
+
+## The compiler asks your database
+
+A query's result is a frame, and a frame's cells are typed by the
+database: an integer column reads as an int, a numeric one as a float.
+The interpreter sees that at run time. The compiled program cannot, so
+`crow build` and `crow run` ask the databases your program connects to
+what each literal query returns — a prepared statement on Postgres, a
+`DESCRIBE` on ClickHouse — and type the cells the same way. A `?`
+placeholder and an interpolated span stand in as NULL for the question.
+If a database cannot be reached while building, the build says so once
+and that query's cells read as text, which is what compiled frames always
+did before. `CROW_NO_DESCRIBE=1` skips the question entirely.
+
+Next: the web layer, where these frames become pages.
