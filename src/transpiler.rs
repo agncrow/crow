@@ -2667,6 +2667,16 @@ impl Transpiler {
         out
     }
 
+    /// The column accessor for a cell of the given type.
+    fn cell_getter(t: &CrowType) -> &'static str {
+        match t {
+            CrowType::Int => "get_i64",
+            CrowType::Float => "get_f64",
+            CrowType::Bool => "get_bool",
+            _ => "get_str",
+        }
+    }
+
     /// Emit an expression as an OWNED value. A by-ref struct parameter used
     /// where ownership is required (array literal, struct field, return,
     /// assignment) must be cloned — call sites pass structs as &T.
@@ -3095,6 +3105,9 @@ impl Transpiler {
                                             | CrowType::Str
                                             | CrowType::Frame
                                             | CrowType::Struct(_)
+                                            // a connection is shared, not consumed: the
+                                            // handle clones cheaply and the caller keeps it
+                                            | CrowType::DbHandle
                                     )
                                 };
                             let e = self.expr_to_string(a);
@@ -4571,9 +4584,11 @@ impl Transpiler {
                             return format!("{{ let _s: Vec<char> = {}.chars().collect(); let _i = {}; let _idx = if _i < 0 {{ (_s.len() as i64 + _i) as usize }} else {{ _i as usize }}; _s[_idx].to_string() }}", base_name, idx);
                         }
                         CrowType::FrameCol => {
-                            // CrowColumn indexing: col[i] → col.get_str(i)
+                            // CrowColumn indexing: col[i] → the cell, typed when the
+                            // database described the query, text otherwise
                             let idx = &arg_strs[0];
-                            return format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.get_str(_idx) }}", idx, base_name, base_name);
+                            let getter = Self::cell_getter(&self.ctx.infer_expr(expr));
+                            return format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.{}(_idx) }}", idx, base_name, base_name, getter);
                         }
                         CrowType::Map(_) => {
                             // Map lookup: map[key] → map[&key]
@@ -4828,7 +4843,8 @@ impl Transpiler {
                     }
                     CrowType::FrameCol => {
                         let idx = &arg_strs[0];
-                        format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.get_str(_idx) }}", idx, callee_str, callee_str)
+                        let getter = Self::cell_getter(&self.ctx.infer_expr(expr));
+                        format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.{}(_idx) }}", idx, callee_str, callee_str, getter)
                     }
                     CrowType::Map(_) => format!("{}[&{}].clone()", callee_str, arg_strs.join(", ")),
                     CrowType::Json => {

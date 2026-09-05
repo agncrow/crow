@@ -173,6 +173,45 @@ impl CrowColumn {
         self.data.fmt_cell(idx, self.valid[idx])
     }
 
+    /// A cell as a float: ints cast, numeric strings parse, moments are
+    /// seconds; a missing or unparsable cell is NaN.
+    pub fn get_f64(&self, idx: usize) -> f64 {
+        if !self.valid.get(idx).copied().unwrap_or(false) { return f64::NAN; }
+        match self.data.as_ref() {
+            Column::Float(v) => v[idx],
+            Column::Int(v) => v[idx] as f64,
+            Column::Str(v) => v[idx].trim().parse::<f64>().unwrap_or(f64::NAN),
+            Column::Bool(v) => if v[idx] { 1.0 } else { 0.0 },
+            Column::DateTime(ms, _) => ms[idx] as f64 / 1000.0,
+        }
+    }
+
+    /// A cell as an int: floats truncate, numeric strings parse, moments
+    /// are whole seconds; a missing or unparsable cell is 0.
+    pub fn get_i64(&self, idx: usize) -> i64 {
+        if !self.valid.get(idx).copied().unwrap_or(false) { return 0; }
+        match self.data.as_ref() {
+            Column::Int(v) => v[idx],
+            Column::Float(v) => v[idx] as i64,
+            Column::Str(v) => { let s = v[idx].trim(); s.parse::<i64>().ok().or_else(|| s.parse::<f64>().ok().map(|f| f as i64)).unwrap_or(0) }
+            Column::Bool(v) => if v[idx] { 1 } else { 0 },
+            Column::DateTime(ms, _) => ms[idx] / 1000,
+        }
+    }
+
+    /// A cell as a bool: numbers are true when non-zero, strings when
+    /// `true` or `1`; a missing cell is false.
+    pub fn get_bool(&self, idx: usize) -> bool {
+        if !self.valid.get(idx).copied().unwrap_or(false) { return false; }
+        match self.data.as_ref() {
+            Column::Bool(v) => v[idx],
+            Column::Int(v) => v[idx] != 0,
+            Column::Float(v) => v[idx] != 0.0,
+            Column::Str(v) => matches!(v[idx].trim(), "true" | "1" | "t"),
+            Column::DateTime(ms, _) => ms[idx] != 0,
+        }
+    }
+
     /// Convert to Vec<String> (for display, interpolation, etc.)
     pub fn to_strings(&self) -> Vec<String> {
         let n = self.len();

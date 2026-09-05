@@ -286,7 +286,58 @@ fn trim_server_error(e: &str) -> String {
     msg.replace("DB::Exception: DB::Exception: ", "DB::Exception: ")
 }
 
+/// `?` placeholders outside string literals.
+fn placeholder_count(sql: &str) -> usize {
+    let mut n = 0;
+    let mut in_string = false;
+    let mut prev = ' ';
+    for c in sql.chars() {
+        match c {
+            '\'' if prev != '\\' => in_string = !in_string,
+            '?' if !in_string => n += 1,
+            _ => {}
+        }
+        prev = c;
+    }
+    n
+}
+
+/// A ClickHouse type name to the kinds the compiler knows.
+fn ch_kind(t: &str) -> &'static str {
+    let mut t = t.trim();
+    loop {
+        let inner = t.strip_prefix("Nullable(").or_else(|| t.strip_prefix("LowCardinality("));
+        match inner.and_then(|x| x.strip_suffix(')')) {
+            Some(x) => t = x,
+            None => break,
+        }
+    }
+    if t.starts_with("Int") || t.starts_with("UInt") { "int" }
+    else if t.starts_with("Float") || t.starts_with("Decimal") { "float" }
+    else if t == "Bool" { "bool" }
+    else if t.starts_with("Date") { "datetime" }
+    else { "str" }
+}
+
 impl CrowDb for CrowClickhouseDb {
+    fn describe(&self, sql: &str) -> Result<Vec<(String, String)>, String> {
+        // parameters are unknown at compile time: NULL stands in for each
+        let nulls = vec![serde_json::Value::Null; placeholder_count(sql)];
+        let filled = substitute_params(sql, &nulls)?;
+        let frame = self.query(&format!("DESCRIBE TABLE ({})", filled), &[])?;
+        let col = |name: &str| -> Vec<String> {
+            frame.columns.iter().position(|c| c == name)
+                .and_then(|i| match frame.data[i].as_ref() { Column::Str(v) => Some(v.clone()), _ => None })
+                .unwrap_or_default()
+        };
+        let names = col("name");
+        let types = col("type");
+        if names.is_empty() || names.len() != types.len() {
+            return Err("clickhouse describe: unexpected DESCRIBE output".into());
+        }
+        Ok(names.into_iter().zip(types).map(|(n, t)| (n, ch_kind(&t).to_string())).collect())
+    }
+
     fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
         let sql_owned;
         let sql: &str = if params.is_empty() {

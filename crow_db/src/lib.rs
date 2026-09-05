@@ -56,6 +56,13 @@ pub trait CrowDb: Send + Sync {
 
     /// Backend name for error messages.
     fn backend_name(&self) -> &str;
+
+    /// The columns a statement would return — name and coarse kind
+    /// (`int` `float` `str` `bool` `datetime`) — without running it. The
+    /// compiler asks so a frame read from a query has typed cells.
+    fn describe(&self, _sql: &str) -> Result<Vec<(String, String)>, String> {
+        Err(format!("{}: describe is not supported", self.backend_name()))
+    }
 }
 
 /// Thread-safe database handle — wraps a trait object.
@@ -71,6 +78,11 @@ impl DbHandle {
 
     pub fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
         self.inner.query(sql, params)
+    }
+
+    /// Column names and kinds of a statement's result, without running it.
+    pub fn describe(&self, sql: &str) -> Result<Vec<(String, String)>, String> {
+        self.inner.describe(sql)
     }
 
     pub fn exec(&self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {

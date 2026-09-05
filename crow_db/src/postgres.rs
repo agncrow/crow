@@ -33,42 +33,67 @@ impl CrowPostgresDb {
             .map_err(|e| format!("failed to create postgres pool: {}", e))?;
 
         // Test the connection
-        rt.block_on(async {
+        CrowPostgresDb::off_runtime(|| rt.block_on(async {
             let client = pool.get().await
                 .map_err(|e| format!("postgres connection failed: {}", e))?;
             client.simple_query("SELECT 1").await
                 .map_err(|e| format!("postgres ping failed: {}", e))?;
             Ok::<(), String>(())
-        })?;
+        }))?;
 
         Ok(Self { pool, rt: Arc::new(rt) })
     }
 }
 
-/// Convert serde_json params to tokio-postgres parameter references.
-/// Numbers are sent as text to avoid INT4/INT8 type mismatches — Postgres
-/// will coerce text to the column type automatically when using untyped params.
-fn json_to_pg_params(params: &[serde_json::Value]) -> Vec<Box<dyn tokio_postgres::types::ToSql + Sync>> {
-    params.iter().map(|v| -> Box<dyn tokio_postgres::types::ToSql + Sync> {
-        match v {
-            serde_json::Value::String(s) => Box::new(s.clone()),
-            serde_json::Value::Number(n) => {
-                // Use i32 for small ints, i64 for large, f64 for floats
-                if let Some(i) = n.as_i64() {
-                    if i >= i32::MIN as i64 && i <= i32::MAX as i64 {
-                        Box::new(i as i32)
-                    } else {
-                        Box::new(i)
-                    }
-                } else {
-                    Box::new(n.as_f64().unwrap_or(0.0))
-                }
-            }
-            serde_json::Value::Bool(b) => Box::new(*b),
-            serde_json::Value::Null => Box::new(Option::<String>::None),
-            _ => Box::new(v.to_string()),
+/// Crow's one placeholder is `?` on every backend; Postgres wants `$1`,
+/// `$2`, … — rewrite outside string literals so a `?` in quoted text
+/// survives.
+fn numbered_placeholders(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len() + 8);
+    let mut n = 0;
+    let mut in_str = false;
+    for c in sql.chars() {
+        match c {
+            '\'' => { in_str = !in_str; out.push(c); }
+            '?' if !in_str => { n += 1; out.push('$'); out.push_str(&n.to_string()); }
+            _ => out.push(c),
         }
-    }).collect()
+    }
+    out
+}
+
+/// The server's own message, not tokio-postgres's one-word summary.
+fn describe(e: tokio_postgres::Error) -> String {
+    match e.as_db_error() {
+        Some(db) => match db.detail() {
+            Some(d) => format!("{} ({})", db.message(), d),
+            None => db.message().to_string(),
+        },
+        None => e.to_string(),
+    }
+}
+
+/// Convert Crow's params to typed Postgres parameters. Every parameter is
+/// declared (text, int8, float8, bool) so a cast in the SQL — `?::date`,
+/// `?::my_enum` — is a cast from text, and a comparison against a numeric
+/// column is numeric.
+fn json_to_pg_params(params: &[serde_json::Value]) -> (Vec<Box<dyn tokio_postgres::types::ToSql + Sync>>, Vec<tokio_postgres::types::Type>) {
+    use tokio_postgres::types::Type;
+    let mut values: Vec<Box<dyn tokio_postgres::types::ToSql + Sync>> = Vec::with_capacity(params.len());
+    let mut types: Vec<Type> = Vec::with_capacity(params.len());
+    for v in params {
+        match v {
+            serde_json::Value::String(s) => { values.push(Box::new(s.clone())); types.push(Type::TEXT); }
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() { values.push(Box::new(i)); types.push(Type::INT8); }
+                else { values.push(Box::new(n.as_f64().unwrap_or(0.0))); types.push(Type::FLOAT8); }
+            }
+            serde_json::Value::Bool(b) => { values.push(Box::new(*b)); types.push(Type::BOOL); }
+            serde_json::Value::Null => { values.push(Box::new(Option::<String>::None)); types.push(Type::TEXT); }
+            _ => { values.push(Box::new(v.to_string())); types.push(Type::TEXT); }
+        }
+    }
+    (values, types)
 }
 
 /// Build a CrowFrame from tokio-postgres rows.
@@ -150,33 +175,71 @@ fn rows_to_frame(rows: &[tokio_postgres::Row]) -> Result<CrowFrame, String> {
     Ok(CrowFrame::new(col_names, columns, validities))
 }
 
+fn pg_kind(t: &tokio_postgres::types::Type) -> &'static str {
+    use tokio_postgres::types::Type;
+    match *t {
+        Type::INT2 | Type::INT4 | Type::INT8 | Type::OID => "int",
+        Type::FLOAT4 | Type::FLOAT8 | Type::NUMERIC => "float",
+        Type::BOOL => "bool",
+        Type::TIMESTAMP | Type::TIMESTAMPTZ | Type::DATE => "datetime",
+        _ => "str",
+    }
+}
+
+impl CrowPostgresDb {
+    /// A compiled Crow program is a tokio runtime; blocking on this driver's
+    /// own runtime from inside it is not allowed, so the blocking work
+    /// runs on a scoped thread when a runtime is already current.
+    fn off_runtime<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            std::thread::scope(|sc| sc.spawn(f).join().expect("postgres worker thread panicked"))
+        } else {
+            f()
+        }
+    }
+}
+
 impl CrowDb for CrowPostgresDb {
+    fn describe(&self, sql: &str) -> Result<Vec<(String, String)>, String> {
+        Self::off_runtime(|| self.rt.block_on(async {
+            let client = self.pool.get().await
+                .map_err(|e| format!("postgres pool error: {}", e))?;
+            let stmt = client.prepare(&numbered_placeholders(sql)).await
+                .map_err(|e| format!("postgres describe error: {}", describe(e)))?;
+            Ok(stmt.columns().iter().map(|c| (c.name().to_string(), pg_kind(c.type_()).to_string())).collect())
+        }))
+    }
+
     fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
-        let pg_params = json_to_pg_params(params);
+        let (pg_params, pg_types) = json_to_pg_params(params);
         let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
             pg_params.iter().map(|b| b.as_ref()).collect();
 
-        self.rt.block_on(async {
+        Self::off_runtime(|| self.rt.block_on(async {
             let client = self.pool.get().await
                 .map_err(|e| format!("postgres pool error: {}", e))?;
-            let rows = client.query(sql, &param_refs).await
-                .map_err(|e| format!("postgres query error: {}", e))?;
+            let stmt = client.prepare_typed(&numbered_placeholders(sql), &pg_types).await
+                .map_err(|e| format!("postgres query error: {}", describe(e)))?;
+            let rows = client.query(&stmt, &param_refs).await
+                .map_err(|e| format!("postgres query error: {}", describe(e)))?;
             rows_to_frame(&rows)
-        })
+        }))
     }
 
     fn exec(&self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
-        let pg_params = json_to_pg_params(params);
+        let (pg_params, pg_types) = json_to_pg_params(params);
         let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
             pg_params.iter().map(|b| b.as_ref()).collect();
 
-        self.rt.block_on(async {
+        Self::off_runtime(|| self.rt.block_on(async {
             let client = self.pool.get().await
                 .map_err(|e| format!("postgres pool error: {}", e))?;
-            let n = client.execute(sql, &param_refs).await
-                .map_err(|e| format!("postgres exec error: {}", e))?;
+            let stmt = client.prepare_typed(&numbered_placeholders(sql), &pg_types).await
+                .map_err(|e| format!("postgres exec error: {}", describe(e)))?;
+            let n = client.execute(&stmt, &param_refs).await
+                .map_err(|e| format!("postgres exec error: {}", describe(e)))?;
             Ok(n as i64)
-        })
+        }))
     }
 
     fn insert(&self, table: &str, frame: &CrowFrame) -> Result<i64, String> {
@@ -190,7 +253,7 @@ impl CrowDb for CrowPostgresDb {
         let placeholders_str = placeholders.join(", ");
         let sql = format!("INSERT INTO {} ({}) VALUES ({})", table, col_names, placeholders_str);
 
-        self.rt.block_on(async {
+        Self::off_runtime(|| self.rt.block_on(async {
             let mut client = self.pool.get().await
                 .map_err(|e| format!("postgres pool error: {}", e))?;
 
@@ -222,7 +285,7 @@ impl CrowDb for CrowPostgresDb {
             tx.commit().await
                 .map_err(|e| format!("postgres commit error: {}", e))?;
             Ok(nrows as i64)
-        })
+        }))
     }
 
     fn transact(&self, f: &dyn Fn(&dyn DbTx) -> Result<(), String>) -> Result<(), String> {
@@ -268,25 +331,29 @@ struct PgTransactWrapper<'a> {
 
 impl DbTx for PgTransactWrapper<'_> {
     fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
-        let pg_params = json_to_pg_params(params);
+        let (pg_params, pg_types) = json_to_pg_params(params);
         let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
             pg_params.iter().map(|b| b.as_ref()).collect();
 
         self.rt.block_on(async {
-            let rows = self.client.query(sql, &param_refs).await
-                .map_err(|e| format!("postgres query error: {}", e))?;
+            let stmt = self.client.prepare_typed(&numbered_placeholders(sql), &pg_types).await
+                .map_err(|e| format!("postgres query error: {}", describe(e)))?;
+            let rows = self.client.query(&stmt, &param_refs).await
+                .map_err(|e| format!("postgres query error: {}", describe(e)))?;
             rows_to_frame(&rows)
         })
     }
 
     fn exec(&self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
-        let pg_params = json_to_pg_params(params);
+        let (pg_params, pg_types) = json_to_pg_params(params);
         let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
             pg_params.iter().map(|b| b.as_ref()).collect();
 
         self.rt.block_on(async {
-            let n = self.client.execute(sql, &param_refs).await
-                .map_err(|e| format!("postgres exec error: {}", e))?;
+            let stmt = self.client.prepare_typed(&numbered_placeholders(sql), &pg_types).await
+                .map_err(|e| format!("postgres exec error: {}", describe(e)))?;
+            let n = self.client.execute(&stmt, &param_refs).await
+                .map_err(|e| format!("postgres exec error: {}", describe(e)))?;
             Ok(n as i64)
         })
     }

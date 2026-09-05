@@ -240,6 +240,20 @@ pub struct TypeContext {
     current_fn_params: Vec<String>,
     /// Module registry for generic type dispatch
     pub registry: crate::modules::ModuleRegistry,
+    /// Connection variables bound to a literal URL (`pg = db.connect['...']`),
+    /// in declaration order — the compiler asks these databases what a
+    /// query returns.
+    pub conn_urls: Vec<(String, String)>,
+    /// Frame variables whose columns are known: from a described query,
+    /// or derived through select/filter/sort/join from one.
+    pub frame_schemas: BTreeMap<String, BTreeMap<String, CrowType>>,
+    /// Functions whose returned frame has known columns.
+    pub fn_frame_schemas: BTreeMap<String, BTreeMap<String, CrowType>>,
+    /// Ask the databases at compile time (the transpiler); the interpreter
+    /// reads cells natively and never needs to.
+    pub describe_queries: bool,
+    describe_cache: BTreeMap<String, Option<BTreeMap<String, CrowType>>>,
+    current_fn_name: Option<String>,
 }
 
 impl TypeContext {
@@ -291,6 +305,12 @@ impl TypeContext {
             cpu_count: None,
             current_fn_params: Vec::new(),
             registry: crate::modules::ModuleRegistry::new(),
+            conn_urls: Vec::new(),
+            frame_schemas: BTreeMap::new(),
+            fn_frame_schemas: BTreeMap::new(),
+            describe_queries: false,
+            describe_cache: BTreeMap::new(),
+            current_fn_name: None,
         }
     }
 
@@ -751,6 +771,10 @@ impl TypeContext {
                 let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
                 self.vars.insert(name.clone(), existing.unify(&ty));
                 self.collect_call_types_expr(value);
+                self.note_connection(name, value);
+                if let Some(schema) = self.frame_schema_of(value) {
+                    self.frame_schemas.insert(name.clone(), schema);
+                }
             }
             Stmt::MultiAssign { names, values, .. } => {
                 for (name, value) in names.iter().zip(values.iter()) {
@@ -764,6 +788,7 @@ impl TypeContext {
                 // Add function params as known vars before scanning body
                 let saved_vars = self.vars.clone();
                 let saved_fn_params = self.current_fn_params.clone();
+                let saved_fn_name = self.current_fn_name.replace(name.clone());
                 if let Some(sig) = self.functions.get(name) {
                     self.current_fn_params = sig.params.iter().map(|(n, _)| n.clone()).collect();
                     for (pname, pty) in &sig.params.clone() {
@@ -787,9 +812,17 @@ impl TypeContext {
                 }
 
                 self.current_fn_params = saved_fn_params;
+                self.current_fn_name = saved_fn_name;
                 self.vars = saved_vars;
             }
-            Stmt::Return(Some(e)) => self.collect_call_types_expr(e),
+            Stmt::Return(Some(e)) => {
+                self.collect_call_types_expr(e);
+                if let Some(f) = self.current_fn_name.clone() {
+                    if let Some(schema) = self.frame_schema_of(e) {
+                        self.fn_frame_schemas.insert(f, schema);
+                    }
+                }
+            }
             Stmt::ExprStmt(e) => self.collect_call_types_expr(e),
             Stmt::If { condition, then_body, else_body } => {
                 self.collect_call_types_expr(condition);
@@ -1891,7 +1924,116 @@ impl TypeContext {
     }
 
     /// Infer the type of an expression.
+    /// `x = db.connect['url']` (or bare `connect`) binds x to a database.
+    fn note_connection(&mut self, name: &str, value: &Expr) {
+        if let Expr::Call { callee, args } = value {
+            let is_connect = match callee.as_ref() {
+                Expr::Ident(n) => n == "connect",
+                Expr::FieldAccess { object, field } => field == "connect" && matches!(object.as_ref(), Expr::Ident(m) if m == "db"),
+                _ => false,
+            };
+            if is_connect {
+                if let Some(Expr::Str(url)) = args.first() {
+                    self.conn_urls.retain(|(n, _)| n != name);
+                    self.conn_urls.push((name.to_string(), url.clone()));
+                }
+            }
+        }
+    }
+
+    /// The columns of the frame an expression produces, when they can be
+    /// known: a literal query (described by the database), a function that
+    /// returns one, or a frame operation over a known frame.
+    fn frame_schema_of(&mut self, e: &Expr) -> Option<BTreeMap<String, CrowType>> {
+        match e {
+            Expr::Ident(v) => self.frame_schemas.get(v).cloned(),
+            Expr::Call { callee, args } => {
+                let name = match callee.as_ref() {
+                    Expr::Ident(n) => n.clone(),
+                    Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if m == "db" || m == "frame") => field.clone(),
+                    _ => return None,
+                };
+                match name.as_str() {
+                    "query" => match args.get(1) { Some(Expr::Str(sql)) => self.describe_sql(sql), _ => None },
+                    "filter" | "sort" | "head" | "tail" | "fill" | "stack" => args.first().and_then(|a| self.frame_schema_of(a)),
+                    "select" => {
+                        let base = args.first().and_then(|a| self.frame_schema_of(a))?;
+                        let mut out = BTreeMap::new();
+                        if let Some(Expr::Array(cols)) = args.get(1) {
+                            for c in cols {
+                                if let Expr::Str(n) = c { if let Some(t) = base.get(n) { out.insert(n.clone(), t.clone()); } }
+                            }
+                        }
+                        Some(out)
+                    }
+                    "join" => {
+                        let mut out = args.first().and_then(|a| self.frame_schema_of(a))?;
+                        if let Some(right) = args.get(1).and_then(|a| self.frame_schema_of(a)) {
+                            for (k, v) in right { out.entry(k).or_insert(v); }
+                        }
+                        Some(out)
+                    }
+                    other => self.fn_frame_schemas.get(other).cloned(),
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Ask each declared database, in order, what the statement returns.
+    /// Interpolated spans and `?` placeholders are unknown at compile
+    /// time and stand in as NULL. A database that cannot be reached or
+    /// does not understand the statement is skipped; when none answers,
+    /// the cells read as text, as before, and the build says so once.
+    fn describe_sql(&mut self, sql: &str) -> Option<BTreeMap<String, CrowType>> {
+        if !self.describe_queries || self.conn_urls.is_empty() { return None; }
+        if let Some(cached) = self.describe_cache.get(sql) { return cached.clone(); }
+        // `...` spans → NULL
+        let mut scrubbed = String::with_capacity(sql.len());
+        let mut in_span = false;
+        for c in sql.chars() {
+            if c == '`' { if !in_span { scrubbed.push_str("NULL"); } in_span = !in_span; continue; }
+            if !in_span { scrubbed.push(c); }
+        }
+        let mut reasons = Vec::new();
+        let mut found: Option<BTreeMap<String, CrowType>> = None;
+        for (var, url) in self.conn_urls.clone() {
+            match crate::type_infer::describe_with(&url, &scrubbed) {
+                Ok(cols) => {
+                    let mut schema = BTreeMap::new();
+                    for (n, kind) in cols {
+                        let t = match kind.as_str() { "int" => CrowType::Int, "float" | "datetime" => CrowType::Float, "bool" => CrowType::Bool, _ => CrowType::Str };
+                        schema.insert(n, t);
+                    }
+                    found = Some(schema);
+                    break;
+                }
+                Err(e) => reasons.push(format!("{}: {}", var, e)),
+            }
+        }
+        if found.is_none() {
+            let head: String = sql.chars().take(60).collect();
+            eprintln!("note: the columns of `{}…` could not be typed at compile time — cells read as text ({})", head, reasons.join("; "));
+        }
+        self.describe_cache.insert(sql.to_string(), found.clone());
+        found
+    }
+
     pub fn infer_expr(&self, expr: &Expr) -> CrowType {
+        // a cell of a column whose type the database told us: frame.col[i]
+        if let Expr::Call { callee, args } = expr {
+            if args.len() == 1 {
+                if let Expr::FieldAccess { object, field } = callee.as_ref() {
+                    if let Expr::Ident(v) = object.as_ref() {
+                        if let Some(t) = self.frame_schemas.get(v).and_then(|s| s.get(field)) {
+                            if !matches!(self.infer_expr(&args[0]), CrowType::NumArray(_) | CrowType::Array(_)) {
+                                return t.clone();
+                            }
+                        }
+                    }
+                }
+            }
+        }
         match expr {
             Expr::Int(_) => CrowType::Int,
             Expr::Float(_) => CrowType::Float,
@@ -2285,3 +2427,18 @@ impl TypeContext {
     }
 }
 
+thread_local! {
+    static DESCRIBE_HANDLES: std::cell::RefCell<std::collections::HashMap<String, Result<crow_db::DbHandle, String>>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Describe a statement against a database URL, keeping one connection per URL for the build.
+pub fn describe_with(url: &str, sql: &str) -> Result<Vec<(String, String)>, String> {
+    DESCRIBE_HANDLES.with(|h| {
+        let mut map = h.borrow_mut();
+        let handle = map.entry(url.to_string()).or_insert_with(|| crow_db::connect(url, Some(1)));
+        match handle {
+            Ok(db) => db.describe(sql),
+            Err(e) => Err(e.clone()),
+        }
+    })
+}
