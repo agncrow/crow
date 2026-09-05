@@ -66,21 +66,6 @@
   - [Views and Live Updates](ch13-03-views.md)
   - [Polish and Deployment](ch13-04-deployment.md)
 
-- [Appendix A: The Language at a Glance](appendix-a-language-at-a-glance.md)
-- [Appendix B: Coming from Another Language](appendix-b-from-python.md)
-
-# Part II — The Reference
-
-- [The Standard Library](stdlib/index.md)
-  - [Core builtins](stdlib/core.md)
-  - [math](stdlib/math.md)
-  - [math.stats](stdlib/math-stats.md)
-  - [math.nn](stdlib/math-nn.md)
-  - [frame](stdlib/frame.md)
-  - [db](stdlib/db.md)
-  - [io](stdlib/io.md)
-  - [doc](stdlib/doc.md)
-  - [web and ui](stdlib/web.md)
 - [Crow by Example](by-example/index.md)
   - [Numbers and conversion](by-example/numbers.md)
   - [Strings](by-example/strings.md)
@@ -112,5 +97,21 @@
   - [Web: a JSON route](by-example/web.md)
   - [Web: responses, auth, sessions, and sockets](by-example/web-more.md)
   - [Views: the whole element vocabulary](by-example/views-elements.md)
+
+- [Appendix A: The Language at a Glance](appendix-a-language-at-a-glance.md)
+- [Appendix B: Coming from Another Language](appendix-b-from-python.md)
+
+# Part II — The Reference
+
+- [The Standard Library](stdlib/index.md)
+  - [Core builtins](stdlib/core.md)
+  - [math](stdlib/math.md)
+  - [math.stats](stdlib/math-stats.md)
+  - [math.nn](stdlib/math-nn.md)
+  - [frame](stdlib/frame.md)
+  - [db](stdlib/db.md)
+  - [io](stdlib/io.md)
+  - [doc](stdlib/doc.md)
+  - [web and ui](stdlib/web.md)
 - [Where Is It?](where-is-it.md)
 - [The Crow Language Specification](language-spec.md)

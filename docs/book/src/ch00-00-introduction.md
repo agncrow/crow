@@ -33,6 +33,9 @@ hands-on data project, and chapters 11–13 cover the applied layers:
 databases, web UIs, and the final project that uses everything. Whatever
 language you're arriving from — Python, JavaScript, R, MATLAB, Julia, Go,
 Rust, Elixir, Ruby, Swift, Zig — Appendix B lists the habits to unlearn.
-Appendix A is the whole language on one page — a good bookmark once the
-chapters are behind you — and Part II is the full language specification,
-the document to keep open while you write real programs.
+Crow by Example closes Part I with one runnable program per area of the
+language, and Appendix A is the whole language on one page — a good
+bookmark once the chapters are behind you. Part II is the reference: the
+standard library module by module, the index of where every name is
+shown, and the full language specification, the document to keep open
+while you write real programs.

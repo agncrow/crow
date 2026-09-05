@@ -1,11 +1,13 @@
 # Crow by Example
 
-One short, runnable program per area of the language — the reference in
-example form. Every block is executed by `crow test --book` in both
-execution modes, and `crow test --docs` fails the build if any builtin or
-module has no example here or in the book's chapters. Looking for a
-specific name? [Where Is It?](../where-is-it.md) maps every builtin to the
-pages that show it.
+One short, runnable program per area of the language. The chapters taught
+the ideas; this is every corner of the language and its modules in
+example form, to read through once and come back to. Every block is
+executed by `crow test --book` in both execution modes, and `crow test
+--docs` fails the build if any builtin or module has no example here or
+in the chapters. For the tables, see [The Standard Library](../stdlib/index.md)
+in Part II; for a specific name, [Where Is It?](../where-is-it.md) maps
+every builtin to the pages that show it.
 
 | Page | Covers |
 |---|---|
