@@ -33,7 +33,7 @@ Attributes are named arguments: `a['docs', href = '/docs']`,
 
 A view is not tied to `page[]`. Call it from a test block, from a loop
 that writes pages to disk, or from another view, and it returns its
-markup. Hand that markup to `document[]` from `use doc` (Part II) and you
+markup. Hand that markup to `document[]` from `use doc` (Crow by Example, and the standard library reference in Part II) and you
 have a complete page without a server — the book you are reading is built
 exactly this way. Two rules make this safe:
 

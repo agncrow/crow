@@ -9,10 +9,11 @@ Two documents, one language:
   default, and treats errors as values. Read it in order. Every code block
   is executed by `crow test --book` in both of Crow's execution modes on
   every change: what you read is what runs.
-- **Part II, the [language specification](language-spec.md)** — the
-  reference and the source of truth (`docs/language-spec.md` in the
-  repository): every construct, every builtin, and a Design Note for every
-  feature Crow deliberately leaves out. Consult it whenever the book says
+- **Part II, the reference** — [the standard library](stdlib/index.md)
+  module by module, [where every name is shown](where-is-it.md), and the
+  [language specification](language-spec.md), the source of truth
+  (`docs/language-spec.md` in the repository): every construct, every
+  builtin, and a Design Note for every feature Crow deliberately leaves out. Consult it whenever the book says
   "the spec covers the rest", and read its Design Notes whenever you
   wonder "why can't I…".
 
