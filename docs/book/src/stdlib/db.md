@@ -1,0 +1,117 @@
+# db
+
+Databases as connections: query, exec, bulk insert, transactions, migrations, and pooling.
+
+
+The `db` module provides database connectivity. Import with `use db`. Supports SQLite, PostgreSQL, and ClickHouse via URL-scheme dispatch. See `docs/db-module.md` for full architecture details.
+
+### Connection
+
+```
+use db
+
+--- SQLite
+conn = connect['sqlite://data.db']
+
+--- PostgreSQL (default pool: 10 connections)
+conn = connect['postgres://user:pass@host/mydb']
+
+--- ClickHouse
+conn = connect['http://localhost:8123/default']
+
+--- Custom pool size
+conn = connect['postgres://user:pass@host/mydb', 20]
+```
+
+| Function | Description | Example |
+|---|---|---|
+| `connect[url]` | Open a database connection (pool) with default pool size | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `connect[url, pool_size]` | Open a database connection (pool) with custom pool size | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+
+Note: `connect` is also exported by `web.ws`. If both `use db` and `use web` are active, bare `connect[...]` is ambiguous — use `db.connect[...]` or `web.connect[...]`.
+
+### Query & Execute
+
+| Function | Description | Example |
+|---|---|---|
+| `query[conn, sql]` | Execute a SELECT and return results as a frame | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `exec[conn, sql]` | Execute DDL/DML (CREATE, INSERT, UPDATE, DELETE), return affected row count | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) |
+| `exec[conn, sql, params]` | Execute parameterized DDL/DML with an array of bind values | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) |
+
+```
+use db
+conn = connect['postgres://user:pass@host/mydb']
+
+--- Query returns a frame
+users = query[conn, 'SELECT * FROM users']
+log[len[users]]
+filtered = filter[users, users.age gt 25]
+
+--- Execute returns affected row count
+exec[conn, 'CREATE TABLE users (id INT, name TEXT)']
+n = exec[conn, 'DELETE FROM users WHERE age < ?', [18]]
+log[n]
+```
+
+### Bulk Insert
+
+| Function | Description | Example |
+|---|---|---|
+| `insert[conn, table, frame]` | Bulk insert a frame into a table using native fast paths | [Databases: `use db`](../by-example/db.md) |
+
+Uses backend-specific protocols for maximum performance:
+- **PostgreSQL:** COPY protocol
+- **ClickHouse:** Native RowBinary
+- **SQLite:** Batched prepared statements in a transaction
+
+```
+use db
+conn = connect['http://localhost:8123/default']
+insert[conn, 'events', events_frame]
+```
+
+### Transactions
+
+| Function | Description | Example |
+|---|---|---|
+| `transact[conn, fn]` | Execute a named function inside a transaction (auto commit/rollback) | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) |
+
+Checks out one connection from the pool, passes it to the function, commits on success, rolls back on error. No `begin`/`commit`/`rollback` builtins — one way to do transactions.
+
+```
+use db
+conn = connect['postgres://user:pass@host/mydb']
+
+fn transfer[t]
+  exec[t, 'UPDATE accounts SET balance = balance - 100 WHERE id = 1']
+  exec[t, 'UPDATE accounts SET balance = balance + 100 WHERE id = 2']
+
+transact[conn, transfer]
+```
+
+### Migrations
+
+| Function | Description | Example |
+|---|---|---|
+| `migrate[conn, dir]` | Run forward-only SQL migrations from a directory | [Databases: `use db`](../by-example/db.md) |
+
+Reads `.sql` files sorted by filename, executes new ones in order, tracks applied migrations in `_crow_migrations` table. Returns count of newly applied migrations.
+
+```
+use db
+conn = connect['postgres://user:pass@host/mydb']
+n = migrate[conn, 'migrations/']
+log['`n` migrations applied']
+```
+
+### Pool Defaults
+
+| Backend | Default Pool Size | Notes | Example |
+|---|---|---|---|
+| SQLite | 1 | File-based, concurrent writes lock | |
+| PostgreSQL | 10 | Standard for web/data apps | |
+| ClickHouse | 10 | Native protocol | |
+
+
+
+Generated by `crow test --docs --write` from the language specification, section 11 and 13. Edit the spec, not this page.
