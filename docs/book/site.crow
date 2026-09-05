@@ -1,0 +1,103 @@
+--- The Crow Book, rendered by Crow: Markdown chapters in (docs/book/src),
+--- a static site out (docs/book/crow-site). No mdBook, no Node.
+---
+---   crow run docs/book/site.crow       --- compiled: writes every page
+---   crow run -i docs/book/site.crow    --- interpreted: the same pages
+---   crow test docs/book/site.crow      --- the page layout, no browser
+use web, ui, doc
+
+src = 'docs/book/src/'
+out = 'docs/book/crow-site/'
+
+--- One page: a top bar with search, the menu on the left, the chapter
+--- and its previous/next links on the right. Below tablet width the menu
+--- steps aside and the top bar's button brings it back as an overlay.
+--- `up` takes links back to the site root.
+view chapter[title, body, nav, pages, up]
+    return stack[
+        row[
+            button['☰', class = 'nav-toggle', title = 'menu'],
+            a['The Crow Programming Language', href = '`up`index.html', class = 'title'],
+            row[
+                input[class = 'doc-search', type = 'search', placeholder = 'Search  /', hidden_below = 'phone'],
+                a['Spec', href = '`up`language-spec.html'],
+                a['Where is it?', href = '`up`where-is-it.html'],
+                a['GitHub', href = 'https://github.com/vsriram/crow'],
+                gap = 'm', align = 'center', class = 'links', hidden_below = 'phone'
+            ],
+            gap = 'm', align = 'center', justify = 'between', class = 'doc-top'
+        ],
+        div[class = 'doc-results', hidden = 'hidden'],
+        row[
+            stack[nav, width = '272px', hidden_below = 'tablet', class = 'doc-side'],
+            stack[body, pages, fill = 'true', class = 'doc', pad = 'xl'],
+            align = 'start'
+        ]
+    ]
+
+--- A page for the harness: a real chapter with runnable blocks.
+view sample[]
+    toc = doc.chapters['# Sample\n\n- [One](one.md)\n  - [Two](two.md)']
+    return chapter['One', doc.markdown[read['docs/book/src/ch01-02-hello-world.md']], doc.menu[toc, 'one.md'], doc.pager[toc, 'one.md'], '']
+
+test layout[]
+    s = app[sample, width = 1280]
+    top = box[s, '.doc-top'][0]
+    nav_box = box[s, '.doc-nav'][0]
+    text_box = box[s, '.doc'][0]
+    assert[top.y lt nav_box.y]                     --- the bar is above everything
+    assert[nav_box.x lt text_box.x]                --- the menu sits left of the text
+    assert[len[box[s, '.doc-top .nav-toggle']] eq 1]
+    assert[len[box[s, '.doc-top .doc-search']] eq 1]
+    assert[len[box[s, '.doc-results']] eq 0]     --- search results take no space until typed
+    pager_box = box[s, '.doc-pager'][0]
+    last = box[s, '.doc pre']
+    assert[pager_box.y gt last[len[last] - 1].y]   --- previous/next after the chapter
+    assert[len[elements[s, '.doc h1']] eq 1]
+    assert[fits[s, 1280]]
+    phone = app[sample, width = 390]
+    assert[len[box[phone, '.doc-nav']] eq 0]      --- and steps aside on a phone
+    assert[len[box[phone, '.nav-toggle']] eq 1]   --- where the bar's button brings it back
+    assert[fits[phone, 390]]
+
+--- The runner is markup, so its placement is a truth too: gutter beside
+--- the code, toolbar below the block, expected output below the toolbar,
+--- and all of it inside a phone.
+test runner[]
+    s = app[sample, width = 1280]
+    editor = box[s, '.crow-editor'][0]
+    gutter = box[s, '.crow-editor .gutter'][0]
+    code = box[s, '.crow-editor pre.crow'][0]
+    bar = box[s, '.crow-toolbar'][0]
+    assert[gutter.y eq code.y]                     --- side by side
+    assert[code.x gt gutter.x]
+    assert[bar.y gte editor.y + editor.height]     --- toolbar under the block, never beside it
+    assert[len[box[s, '.crow-toolbar button']] gte 4]
+    expected = box[s, 'pre.expected'][0]
+    assert[expected.y gt bar.y]
+    assert[len[box[s, '.crow-result']] eq 0]       --- the output panel is hidden until a run
+    phone = app[sample, width = 390]
+    assert[fits[phone, 390]]
+
+toc = doc.chapters[read['`src`SUMMARY.md']]
+mkdir['`out`by-example']
+for i in range[len[toc]]
+    path = toc.path[i]
+    title = toc.title[i]
+    up = ''
+    if contains[path, '/']
+        up = '../'
+    doc_page = doc.document[title, chapter[title, doc.markdown[read['`src``path`']], doc.menu[toc, path], doc.pager[toc, path], up]]
+    html_path = replace[path, '.md', '.html']
+    write['`out``html_path`', doc_page]
+--- the front door is the first chapter
+first = toc.path[0]
+write['`out`index.html', doc.document[toc.title[0], chapter[toc.title[0], doc.markdown[read['`src``first`']], doc.menu[toc, first], doc.pager[toc, first], '']]]
+
+--- the search index: every chapter's title, page, and words
+entries = for i in range[len[toc]]
+    path = toc.path[i]
+    map[t = toc.title[i], p = replace[path, '.md', '.html'], x = doc.plain[read['`src``path`']]]
+write['`out`search.json', encode[entries]]
+n = len[toc]
+log['`n` pages written to `out`']

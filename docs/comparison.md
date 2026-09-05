@@ -12,8 +12,8 @@ Side-by-side examples:
 | Function | `func add(a, b int) int {` | `fn add(a: i64, b: i64) -> i64 {` | `def add(a, b):` | `function add(a, b) {` | `fn add[a, b]` |
 | Call | `add(3, 4)` | `add(3, 4)` | `add(3, 4)` | `add(3, 4)` | `add[3, 4]` |
 | Blocks | `{ }` | `{ }` | indentation | `{ }` | indentation |
-| Interpolation | `fmt.Sprintf("%d", x)` | `format!("{x}")` | `f'{x}'` | `` `${x}` `` | `'{x}'` |
-| Comments | `//` `/* */` | `//` `/* */` | `#` `"""` | `//` `/* */` | `--- ---` |
+| Interpolation | `fmt.Sprintf("%d", x)` | `format!("{x}")` | `f'{x}'` | `` `${x}` `` | `` '`x`' `` |
+| Comments | `//` `/* */` | `//` `/* */` | `#` `"""` | `//` `/* */` | `---` |
 
 | Language | Boilerplate | Type Annotations | Learning Curve | Rating |
 |----------|-------------|-----------------|----------------|--------|
@@ -58,14 +58,14 @@ Where Crow loses points: no generics, no sum types, `.kind` is a free-form strin
 Side-by-side — parallel fetch:
 
 ```
---- Go ---
+--- Go
 ch1 := make(chan string)
 ch2 := make(chan string)
 go func() { ch1 <- fetch("url1") }()
 go func() { ch2 <- fetch("url2") }()
 a, b := <-ch1, <-ch2
 
---- Crow ---
+--- Crow
 a = fetch['url1']
 b = fetch['url2']
 d = a + b
@@ -112,20 +112,20 @@ By transpiling to Rust and compiling in release mode, Crow gets near-Rust perfor
 Side-by-side:
 
 ```
---- Go ---
+--- Go
 val, err := strconv.Atoi("hello")
 if err != nil { fmt.Println(err) }
 
---- Rust ---
+--- Rust
 let val: i64 = "hello".parse()?;
 
---- Python ---
+--- Python
 try:
     val = int("hello")
 except ValueError as e:
     print(e)
 
---- Crow ---
+--- Crow
 bad = int['hello']
 if not bad.ok
     log['error: `bad.reason`']

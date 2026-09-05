@@ -327,7 +327,7 @@ crow check
 Behind the scenes, `.crow/snapshots/` records every input-output pair from edge case generation:
 
 ```
---- .crow/snapshots/binary_search.snap ---
+--- .crow/snapshots/binary_search.snap
 binary_search[[], 5] = -1
 binary_search[[5], 5] = 0
 binary_search[[5], 3] = -1

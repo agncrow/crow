@@ -86,18 +86,18 @@ guess = 50
 
 if guess eq secret
     log['you got it!']
+else if guess lt secret
+    log['too low']
 else
-    if guess lt secret
-        log['too low']
-    else
-        log['too high']
+    log['too high']
 ```
 
 ```text
 too low
 ```
 
-(There is no `elif` in Crow — nest an `if` under `else`.)
+(There is no `elif` keyword — `else if` is just an `if` in the `else` branch,
+and it reads the same way.)
 
 ## Looping Until They Get It
 

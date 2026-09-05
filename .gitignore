@@ -39,6 +39,12 @@ _tmp_test_error_line
 *.csv
 *.txt
 *.json
-docs/book/book/
+docs/book/crow-site/
 editors/vscode/node_modules/
 *.vsix
+
+# Binaries that `crow build` drops in the cwd for out-of-tree sources
+# (path-mangled names like _tmp_foo, _private_tmp_..., _var_folders_...)
+/_tmp_*
+/_private_*
+/_var_folders_*

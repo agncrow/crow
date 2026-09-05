@@ -1,4 +1,5 @@
 pub mod db;
+pub mod doc;
 pub mod frame;
 pub mod io;
 pub mod math;
@@ -89,6 +90,7 @@ impl ModuleRegistry {
         r.load(Arc::new(crate::modules::io::IoModule));
         r.load(Arc::new(crate::modules::frame::FrameModule));
         r.load(Arc::new(crate::modules::db::DbModule));
+        r.load(Arc::new(crate::modules::doc::DocModule));
         r
     }
 

@@ -870,6 +870,7 @@ mod view_integration {
     }
 
     #[test]
+    #[cfg(feature = "live")]
     fn reactive_render_cycle_with_field() {
         use crow_web::live::CrowLiveState;
 

@@ -13,14 +13,14 @@ use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
 
 /// Hard ceiling per series. Over budget is a teaching error naming the
-/// fix (`bucket` the frame first), never a silent downsample.
+/// fix (aggregate the frame first), never a silent downsample.
 pub const POINT_BUDGET: usize = 1000;
 
 /// Refuse oversized input with the fix spelled out.
 pub fn check_budget(points: usize, series: &str) -> Result<(), String> {
     if points > POINT_BUDGET {
         return Err(format!(
-            "chart got {} points for '{}' (budget {}) — bucket first: bars_1m = bucket[bars, 'ts', 60.0, ...]",
+            "chart got {} points for '{}' (budget {}) — aggregate first: fewer rows per query (GROUP BY a coarser interval in SQL) or head[frame, n]",
             points, series, POINT_BUDGET
         ));
     }
@@ -318,7 +318,7 @@ mod tests {
     fn budget_refuses_and_teaches() {
         assert!(check_budget(900, "close").is_ok());
         let err = check_budget(9360, "close").unwrap_err();
-        assert!(err.contains("9360") && err.contains("bucket["), "{}", err);
+        assert!(err.contains("9360") && err.contains("aggregate first"), "{}", err);
     }
 }
 

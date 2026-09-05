@@ -1,0 +1,12 @@
+--- a name both frame and math export (stack, unique) types by its argument:
+--- bare calls are ambiguous (an error in both modes); qualified calls resolve, and
+--- the typing follows the argument in both modes
+use frame, math
+write['/tmp/crow_parity_32.csv', 'a,b\n1,2\n1,3\n']
+t = frame.load['/tmp/crow_parity_32.csv']
+s = frame.stack[t, t]
+log[len[s]]
+log[frame.unique[t, 'a']]
+log[math.stack[[[1.0, 2.0], [3.0, 4.0]]]]
+log[math.unique[[3.0, 1.0, 3.0]]]
+rm['/tmp/crow_parity_32.csv']

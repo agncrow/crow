@@ -7,7 +7,7 @@ use crow_runtime::sparse::CrowSparse;
 
 pub struct MathModule;
 
-const MATH_FUNCTIONS: &[&str] = &[
+pub(crate) const MATH_FUNCTIONS: &[&str] = &[
     // Tensor creation
     "zeros", "ones", "eye", "randn", "linspace", "arange", "full", "diag", "tensor",
     // Element-wise math (ln replaces log; abs/sqrt/floor/ceil/round overlap with core builtins)
@@ -821,7 +821,7 @@ fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String
                     let t = CrowTensor::from_vec(data, vec![nrows, ncols]);
                     Ok(CrowValue::ok(Value::NumArray(t)))
                 }
-                Err(e) => Ok(CrowValue::error(&e, "load")),
+                Err(e) => Ok(CrowValue::error_with_kind(&e, "load", "")),
             }
         }
 
@@ -854,6 +854,9 @@ fn emit_math_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Re
                 } else {
                     format!("{{ let (_d, _r, _c) = crow_runtime::frame::frame_to_tensor_data(&{}, None).unwrap(); CrowTensor::from_vec(_d, vec![_r, _c]) }}", arg_strs[0])
                 }
+            } else if !arg_types.is_empty() && matches!(arg_types[0], CrowType::NumArray(_)) {
+                // an all-numeric array literal is already a tensor
+                arg_strs[0].clone()
             } else {
                 format!("{{ let _arr = {}; CrowTensor::from_vec(_arr.iter().map(|v| *v as f64).collect(), vec![_arr.len()]) }}", arg_strs[0])
             }
@@ -1035,7 +1038,7 @@ fn emit_math_rust_continued(name: &str, arg_strs: &[String]) -> Result<String, S
         "nnz" => format!("{}.nnz() as i64", arg_strs[0]),
         "spmv" => format!("{}.matmul_dense(&{})", arg_strs[0], arg_strs[1]),
         // I/O
-        "load" => format!("{{ match crow_runtime::io::load_csv_numeric(&{}) {{ Ok((data, nrows, ncols)) => CrowResult {{ value: CrowTensor::from_vec(data, vec![nrows, ncols]), ok: true, reason: String::new(), kind: String::new(), trace: vec![] }}, Err(e) => CrowResult {{ value: CrowTensor::zeros(vec![0]), ok: false, reason: e, kind: \"load\".to_string(), trace: vec![] }} }} }}", arg_strs[0]),
+        "load" => format!("{{ match crow_runtime::io::load_csv_numeric(&{}) {{ Ok((data, nrows, ncols)) => CrowResult {{ value: CrowTensor::from_vec(data, vec![nrows, ncols]), ok: true, reason: String::new(), kind: String::new(), trace: vec![], captured: crow_runtime::moments::now() }}, Err(e) => CrowResult {{ value: CrowTensor::zeros(vec![0]), ok: false, reason: e, kind: \"load\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0]),
         _ => return Err(format!("{}: unknown math function for transpiler", name)),
     };
     Ok(result)

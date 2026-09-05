@@ -9,7 +9,7 @@ use crate::type_infer::{CrowType, TypeContext};
 /// All builtin function names recognized by the Crow language.
 /// True core — reserved in every Crow file, forever (frozen by the budget
 /// rule). Names here can never be user definitions.
-const CORE_RESERVED: &[&str] = &[
+pub(crate) const CORE_RESERVED: &[&str] = &[
     "log", "assert", "type",
     "abs", "sqrt", "floor", "ceil", "round", "min", "max",
     "split", "trim", "replace", "upper", "lower", "join", "starts", "ends",
@@ -35,17 +35,22 @@ const CORE_RESERVED: &[&str] = &[
 ];
 
 /// Reserved only in files that import web (use web / use web.*)
-const WEB_RESERVED: &[&str] = &[
+pub(crate) const WEB_RESERVED: &[&str] = &[
     "route", "serve", "respond", "redirect", "html", "text",
     "sqlite", "sign", "verify",
-    "app", "click",
+    "app", "click", "elements", "change", "box", "fits", "style",
     "cors", "sessions", "templates", "cache", "limit",
     "uploads", "sse", "ws", "connect", "send", "recv", "close",
     "page", "static_dir", "smtp",
 ];
 
+/// Web builtins the compiler implements but deliberately does NOT reserve
+/// (`render` is free for views; the response encoders are rarely-collided
+/// names). Listed so `crow test --docs` can hold the spec to them.
+pub(crate) const WEB_EXTRA_FUNCTIONS: &[&str] = &["msgpack", "arrow", "bytes", "stream", "render"];
+
 /// Reserved only in files that import ui
-const UI_RESERVED: &[&str] = &["fetch", "poll", "field", "today"];
+pub(crate) const UI_RESERVED: &[&str] = &["fetch", "poll", "field", "today"];
 
 const BUILTINS: &[&str] = &[
     "log", "assert", "type",
@@ -89,6 +94,7 @@ const BUILTINS: &[&str] = &[
     "grad",
     // Web
     "route", "serve", "respond", "redirect", "html", "text",
+    "msgpack", "arrow", "bytes", "stream",
     "sqlite", "exec", "query", "sign", "verify",
     // Web P4 modules
     "cors", "sessions", "templates", "render", "cache", "limit",
@@ -374,7 +380,7 @@ impl<'a> Validator<'a> {
                 // Built-in modules: register all their function and constant names
                 // so validate_call doesn't flag them as undefined.
                 // The registry was already populated during type inference (Pass 1).
-                if path == "math" || path == "math.stats" || path == "math.nn" || path == "io" || path == "frame" {
+                if path == "math" || path == "math.stats" || path == "math.nn" || path == "io" || path == "frame" || path == "doc" {
                     if path == "math" || path.starts_with("math.") {
                         self.defined_vars.insert("math".to_string());
                     }
@@ -446,7 +452,7 @@ impl<'a> Validator<'a> {
                                 .unwrap_or_else(|| mod_name.to_string());
                             let registry_module = matches!(
                                 real_mod.as_str(),
-                                "math" | "io" | "frame" | "db" | "math.stats" | "math.nn"
+                                "math" | "io" | "frame" | "db" | "doc" | "math.stats" | "math.nn"
                             ) && self.ctx.registry.has_function(field);
                             if !registry_module
                                 && !self.ctx.functions.contains_key(&prefixed)
@@ -577,7 +583,7 @@ impl<'a> Validator<'a> {
     fn validate_call(&mut self, name: &str, args: &[Expr]) {
         // Test-harness builtins exist only inside test blocks (which never
         // reach a build) — accept them there, reject them anywhere else.
-        if matches!(name, "app" | "click") {
+        if matches!(name, "app" | "click" | "elements" | "change" | "box" | "fits" | "style") {
             if self.in_test_block {
                 for a in args {
                     self.validate_expr(a);
@@ -611,6 +617,31 @@ impl<'a> Validator<'a> {
                     ));
                 }
             }
+        }
+
+        // Layout attributes are part of the vocabulary: literal, and valid per
+        // the kernel table both renderers use (crow_runtime::layout).
+        if crate::lower::UI_ELEMENTS.contains(&name) && self.in_view {
+            if let Some(Expr::Map(pairs)) = args.first() {
+                let mut literal: Vec<(String, String)> = Vec::new();
+                for (k, v) in pairs {
+                    let key = match k { Expr::Ident(s) | Expr::Str(s) => s.clone(), _ => continue };
+                    if !crow_runtime::layout::LAYOUT_ATTRS.contains(&key.as_str()) { continue; }
+                    match v {
+                        Expr::Str(s) => literal.push((key, s.clone())),
+                        Expr::Int(n) => literal.push((key, n.to_string())),
+                        Expr::Bool(b) => literal.push((key, b.to_string())),
+                        _ => self.error(format!("{}: '{}' is a layout attribute and must be a literal — a scale step like 'm', a size like '240px', or true", name, key)),
+                    }
+                }
+                for e in crow_runtime::layout::render(name, &literal).errors {
+                    self.error(format!("{}: {}", name, e));
+                }
+            }
+            // Inside a view the element wins over a module function of the
+            // same bare name (stack vs frame.stack / math.stack): the prefix
+            // is how a view reaches the module version.
+            return;
         }
 
         // ui elements exist only inside view blocks
@@ -792,6 +823,7 @@ impl<'a> Validator<'a> {
             "serve" => argc == 1 || argc == 3,   // serve[port] (pre-lower) or serve[port, refresh, budget]
             "respond" => argc == 2,
             "redirect" | "html" | "text" => argc == 1,
+            "msgpack" | "arrow" | "bytes" | "stream" => argc == 1,
             "sqlite" => argc == 1,
             "exec" | "query" => argc >= 2,
             "sign" | "verify" => argc == 2,

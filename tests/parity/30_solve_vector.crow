@@ -1,0 +1,9 @@
+--- solve[A, b] accepts a plain vector b (the common call) as well as a column
+use math
+a = [[2.0, 1.0], [1.0, 3.0]]
+x = solve[a, [1.0, 2.0]]
+log[x.shape]
+log[round[x[0] * 100.0]]
+log[round[x[1] * 100.0]]
+y = solve[a, [[1.0], [2.0]]]
+log[y.shape]

@@ -18,8 +18,25 @@ else
 working age
 ```
 
-There is no `elif` — nest an `if` under `else` (you saw this in the game).
-There is also no ternary expression: use an `if`/`else` statement.
+Chain conditions with `else if` (there is no `elif` keyword — it's just an
+`if` in the `else` branch):
+
+```crow
+score = 72
+
+if score gte 90
+    log['A']
+else if score gte 70
+    log['B']
+else
+    log['C']
+```
+
+```text
+B
+```
+
+There is no ternary expression: use an `if`/`else` statement.
 
 ## while
 
@@ -54,7 +71,7 @@ log[total]
 But `for` is bigger than this in Crow: it's an *expression* that collects
 values, and it runs its iterations **in parallel** — which is why we won't
 print from inside a loop body (output order is unspecified). That story
-deserves its own chapter, and it's next-but-one: chapter 5.
+deserves its own chapter, and it's chapter 6.
 
 ```crow
 doubled = for n in [1, 2, 3]

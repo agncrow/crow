@@ -189,6 +189,8 @@ fn main() {
                 cmd_test_parity();
             } else if args.iter().any(|a| a == "--book") {
                 cmd_test_book();
+            } else if args.iter().any(|a| a == "--docs") {
+                cmd_test_docs();
             } else {
                 // crow test — run the authored test blocks. `crow check` runs
                 // these plus everything automatic (contracts, hazards, edges).
@@ -201,6 +203,9 @@ fn main() {
         }
         "stop" => {
             cmd_stop();
+        }
+        "book" => {
+            cmd_book();
         }
         "run" => {
             // Check for -i flag (interpreter mode)
@@ -254,6 +259,7 @@ fn print_usage() {
     eprintln!("  crow run train         run a named job from crowfile");
     eprintln!("  crow run -i file.crow  run with interpreter (slow, for debugging)");
     eprintln!("  crow stop              stop the running app (pidfile, then project binary)");
+    eprintln!("  crow book [--port N]   serve the book with every code block runnable in place (default port 3008)");
     eprintln!("  crow check             auto-verify project (uses crowfile)");
     eprintln!("  crow check file.crow   auto-verify a specific file");
     eprintln!("  crow check --db <url>  + schema-aware db checks (or db = '…' in crowfile)");
@@ -266,6 +272,8 @@ fn print_usage() {
     eprintln!("  crow fmt --fix-views      migrate ui-building fns to view declarations");
     eprintln!("  crow launch 4 file.crow  build + run on 4 distributed processes");
     eprintln!("  crow test --parity     run tests/parity/ in both modes, diff output");
+    eprintln!("  crow test --book       execute every code block of the book in both modes");
+    eprintln!("  crow test --docs       check the docs cover every compiler name (and nothing more)");
     eprintln!("  crow check --verbose   verbose output with purity and snapshot details");
     eprintln!("  crow -v                show version");
 }
@@ -279,19 +287,28 @@ fn print_usage() {
 /// modes must agree — and match a directly following ```text block, if any),
 /// builds (`crow,norun`), is expected to fail (`crow,error`), or is
 /// explicitly skipped (`crow,ignore`).
+/// Every .md page under docs/book/src, recursively (symlinks — the bound
+/// spec — excluded: its untagged fences are not book blocks).
+fn book_pages(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = vec![];
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if std::fs::symlink_metadata(&p).map(|m| m.file_type().is_symlink()).unwrap_or(false) { continue; }
+            if p.is_dir() { out.extend(book_pages(&p)); }
+            else if p.extension().map_or(false, |x| x == "md") { out.push(p); }
+        }
+    }
+    out
+}
+
 fn cmd_test_book() {
     let dir = std::path::Path::new("docs/book/src");
     if !dir.is_dir() {
         eprintln!("error: no docs/book/src/ directory found (run from the project root)");
         process::exit(1);
     }
-    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
-        .map(|rd| {
-            rd.filter_map(|e| e.ok().map(|e| e.path()))
-                .filter(|p| p.extension().map_or(false, |x| x == "md"))
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut files = book_pages(dir);
     files.sort();
 
     #[derive(PartialEq)]
@@ -308,7 +325,7 @@ fn cmd_test_book() {
     // Extract fenced blocks (```crow[,flag]) and any directly following ```text block
     let mut blocks: Vec<Block> = Vec::new();
     for file in &files {
-        let name = file.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let name = file.strip_prefix(dir).unwrap_or(file).to_string_lossy().to_string();
         let src = std::fs::read_to_string(file).unwrap_or_default();
         let lines: Vec<&str> = src.lines().collect();
         let mut i = 0;
@@ -368,87 +385,311 @@ fn cmd_test_book() {
         eprintln!("error locating crow binary: {}", e);
         process::exit(1);
     });
-    let tmp_dir = std::env::temp_dir().join("crow_book_test");
-    let _ = std::fs::create_dir_all(&tmp_dir);
-    let run_mode = |mode_args: &[&str], file: &std::path::Path| -> (bool, String, String) {
-        let out = std::process::Command::new(&exe).args(mode_args).arg(file).output();
-        match out {
-            Ok(o) => (
-                o.status.success(),
-                String::from_utf8_lossy(&o.stdout).to_string(),
-                String::from_utf8_lossy(&o.stderr).to_string(),
-            ),
-            Err(e) => (false, String::new(), format!("failed to spawn: {}", e)),
+    // One scratch root per invocation (two overlapping runs must never share a
+    // block.crow), and one directory per worker inside it: blocks are checked
+    // in parallel — each compiled block is a cargo build, which is what makes
+    // this harness slow — and reported in book order.
+    // The root is persistent so each worker's cargo cache survives between
+    // runs (a cold cache is a minute of dependency builds per worker); a lock
+    // file refuses a second run while one is in progress.
+    let root = std::env::temp_dir().join("crow_book_test");
+    let _ = std::fs::create_dir_all(&root);
+    let lock = root.join("lock");
+    if let Ok(pid) = std::fs::read_to_string(&lock) {
+        let alive = std::process::Command::new("kill").arg("-0").arg(pid.trim()).output().map(|o| o.status.success()).unwrap_or(false);
+        if alive {
+            eprintln!("error: another `crow test --book` (pid {}) is still running — wait for it, or delete {}", pid.trim(), lock.display());
+            process::exit(1);
         }
-    };
+    }
+    let _ = std::fs::write(&lock, std::process::id().to_string());
+    let workers: usize = std::env::var("CROW_BOOK_JOBS").ok().and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(1, 6));
 
     let start = std::time::Instant::now();
     let total = blocks.iter().filter(|b| b.mode != Mode::Ignore).count();
-    println!("book: {} blocks across {} pages\n", total, files.len());
-    let mut failures = 0;
-    for b in &blocks {
+    println!("book: {} blocks across {} pages, {} workers\n", total, files.len(), workers);
+
+    // Check one block in its own directory; returns (passed, report lines).
+    let check = |b: &Block, dir: &std::path::Path| -> (bool, String) {
+        let run_mode = |mode_args: &[&str], file: &std::path::Path| -> (bool, String, String) {
+            let out = std::process::Command::new(&exe).args(mode_args).arg(file).current_dir(dir).env("CROW_BUILD_PROFILE", "dev").output();
+            match out {
+                Ok(o) => (o.status.success(), String::from_utf8_lossy(&o.stdout).to_string(), String::from_utf8_lossy(&o.stderr).to_string()),
+                Err(e) => (false, String::new(), format!("failed to spawn: {}", e)),
+            }
+        };
         let label = format!("{}:{}", b.file, b.line);
+        let path = dir.join("block.crow");
+        let _ = std::fs::write(&path, &b.code);
         match b.mode {
-            Mode::Ignore => continue,
+            Mode::Ignore => (true, String::new()),
             Mode::Run => {
-                let path = tmp_dir.join("block.crow");
-                let _ = std::fs::write(&path, &b.code);
                 let (i_ok, i_out, i_err) = run_mode(&["run", "-i"], &path);
                 let (t_ok, t_out, t_err) = run_mode(&["run"], &path);
                 if !i_ok || !t_ok {
-                    failures += 1;
-                    println!("  FAIL  {} (execution)", label);
                     let tail = if !t_ok { t_err } else { i_err };
-                    println!("        {}", tail.lines().last().unwrap_or("(no stderr)"));
-                    continue;
+                    return (false, format!("  FAIL  {} (execution)\n        {}\n", label, tail.lines().last().unwrap_or("(no stderr)")));
                 }
                 if i_out != t_out {
-                    failures += 1;
-                    println!("  FAIL  {} (modes disagree)", label);
-                    continue;
+                    return (false, format!("  FAIL  {} (modes disagree)\n", label));
                 }
                 if let Some(exp) = &b.expected {
                     if t_out.trim_end() != exp.trim_end() {
-                        failures += 1;
-                        println!("  FAIL  {} (output != book text)", label);
-                        println!("        expected: {:?}", exp.trim_end());
-                        println!("        got:      {:?}", t_out.trim_end());
-                        continue;
+                        return (false, format!("  FAIL  {} (output != book text)\n        expected: {:?}\n        got:      {:?}\n", label, exp.trim_end(), t_out.trim_end()));
                     }
                 }
-                println!("  ok    {}", label);
+                // A block that declares test blocks must also pass `crow test`:
+                // `crow run` skips them, so this is the only place they execute.
+                let has_tests = b.code.lines().any(|l| l.starts_with("test ") || l.starts_with("test["));
+                if has_tests {
+                    let (s_ok, s_out, s_err) = run_mode(&["test"], &path);
+                    if !s_ok {
+                        let detail = s_out.lines().rev().find(|l| !l.trim().is_empty())
+                            .or_else(|| s_err.lines().last()).unwrap_or("(no output)");
+                        return (false, format!("  FAIL  {} (test blocks)\n        {}\n", label, detail.trim()));
+                    }
+                    return (true, format!("  ok    {} (+ test blocks)\n", label));
+                }
+                (true, format!("  ok    {}\n", label))
             }
             Mode::NoRun => {
-                let path = tmp_dir.join("block.crow");
-                let _ = std::fs::write(&path, &b.code);
                 let (ok, _, err) = run_mode(&["build"], &path);
-                if ok {
-                    println!("  ok    {} (build only)", label);
-                } else {
-                    failures += 1;
-                    println!("  FAIL  {} (does not build)", label);
-                    println!("        {}", err.lines().last().unwrap_or("(no stderr)"));
-                }
+                if ok { (true, format!("  ok    {} (build only)\n", label)) }
+                else { (false, format!("  FAIL  {} (does not build)\n        {}\n", label, err.lines().last().unwrap_or("(no stderr)"))) }
             }
             Mode::Error => {
-                let path = tmp_dir.join("block.crow");
-                let _ = std::fs::write(&path, &b.code);
                 let (ok, _, _) = run_mode(&["build"], &path);
-                if !ok {
-                    println!("  ok    {} (fails as documented)", label);
-                } else {
-                    failures += 1;
-                    println!("  FAIL  {} (documented as an error, but builds)", label);
-                }
+                if !ok { (true, format!("  ok    {} (fails as documented)\n", label)) }
+                else { (false, format!("  FAIL  {} (documented as an error, but builds)\n", label)) }
             }
         }
+    };
+
+    let results: Vec<std::sync::Mutex<Option<(bool, String)>>> = blocks.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        for w in 0..workers {
+            let dir = root.join(format!("w{}", w));
+            let _ = std::fs::create_dir_all(&dir);
+            let (blocks, results, next, check) = (&blocks, &results, &next, &check);
+            scope.spawn(move || loop {
+                let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if i >= blocks.len() { break; }
+                let r = check(&blocks[i], &dir);
+                *results[i].lock().unwrap() = Some(r);
+            });
+        }
+    });
+    let mut failures = 0;
+    for r in &results {
+        if let Some((ok, report)) = r.lock().unwrap().as_ref() {
+            if !ok { failures += 1; }
+            print!("{}", report);
+        }
     }
+    let _ = std::fs::remove_file(&lock);
     let elapsed = start.elapsed().as_secs_f32();
     println!();
     if failures == 0 {
-        println!("\u{2713} {} book blocks verified in both modes ({:.1}s)", total, elapsed);
+        println!("\u{2713} {} book blocks verified in both modes ({:.1}s, {} workers)", total, elapsed, workers);
     } else {
         println!("\u{2717} {} of {} book blocks fail ({:.1}s)", failures, total, elapsed);
+        process::exit(1);
+    }
+}
+
+/// `crow test --docs` — the documentation cannot drift from the compiler.
+///
+/// Reads the compiler's own name tables (core builtins, module exports, ui
+/// elements, web/ui names) and checks, in both directions:
+///   1. every name the compiler knows is documented in docs/language-spec.md
+///   2. every reference-table row in the spec names something the compiler
+///      knows (no phantom builtins)
+///   3. every module has a `use` in at least one verified book block, and
+///      every core builtin is called in at least one
+///   4. every examples/*.crow is listed in examples/README.md
+fn cmd_test_docs() {
+    use std::collections::BTreeSet;
+    let spec = std::fs::read_to_string("docs/language-spec.md").unwrap_or_else(|_| {
+        eprintln!("error: docs/language-spec.md not found (run from the project root)");
+        process::exit(1);
+    });
+    let mut tables: Vec<(&str, Vec<&str>)> = vec![
+        ("core", validator::CORE_RESERVED.to_vec()),
+        ("web", validator::WEB_RESERVED.iter().chain(validator::WEB_EXTRA_FUNCTIONS.iter()).copied().collect()),
+        ("ui", validator::UI_RESERVED.iter().copied().filter(|n| *n != "today").collect()),
+        ("element", lower::UI_ELEMENTS.to_vec()),
+        ("math", modules::math::MATH_FUNCTIONS.to_vec()),
+        ("math.stats", modules::stats::STATS_FUNCTIONS.to_vec()),
+        ("math.nn", modules::nn::NN_FUNCTIONS.to_vec()),
+        ("frame", modules::frame::FRAME_FUNCTIONS.to_vec()),
+        ("db", modules::db::DB_FUNCTIONS.to_vec()),
+        ("io", modules::io::IO_FUNCTIONS.to_vec()),
+        ("doc", modules::doc::DOC_FUNCTIONS.to_vec()),
+    ];
+    for (_, names) in tables.iter_mut() { names.sort(); names.dedup(); }
+    let known: BTreeSet<&str> = tables.iter().flat_map(|(_, ns)| ns.iter().copied()).collect();
+    let mut failures = 0;
+
+    // 1. compiler → spec
+    println!("docs: compiler names documented in the spec");
+    for (table, names) in &tables {
+        let missing: Vec<&str> = names.iter().copied()
+            .filter(|n| !(spec.contains(&format!("`{}[", n)) || spec.contains(&format!("`{}`", n))))
+            .collect();
+        if missing.is_empty() {
+            println!("  ok    {:10} {:3} names", table, names.len());
+        } else {
+            failures += missing.len();
+            println!("  FAIL  {:10} {} undocumented: {}", table, missing.len(), missing.join(" "));
+        }
+    }
+
+    // 2. spec reference rows → compiler (phantom entries)
+    println!("docs: spec reference rows name real builtins");
+    let keywords = ["map", "struct", "fn", "view", "test", "use"];
+    let mut phantom: Vec<String> = vec![];
+    let mut in_reference = false; // only the Core Builtins / Standard Library sections
+    for (i, line) in spec.lines().enumerate() {
+        if line.starts_with("## ") {
+            in_reference = line.starts_with("## 11.") || line.starts_with("## 13.");
+            continue;
+        }
+        if !in_reference { continue; }
+        let l = line.trim_start();
+        if !l.starts_with("| `") { continue; }
+        let rest = &l[3..];
+        let name: String = rest.chars().take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_').collect();
+        let after = rest[name.len()..].chars().next().unwrap_or(' ');
+        if after != '[' || name.is_empty() { continue; }
+        if known.contains(name.as_str()) || keywords.contains(&name.as_str()) { continue; }
+        phantom.push(format!("line {}: `{}[`", i + 1, name));
+    }
+    if phantom.is_empty() {
+        println!("  ok    every `name[` table row is a compiler name");
+    } else {
+        failures += phantom.len();
+        for p in &phantom { println!("  FAIL  {} is documented but the compiler has no such builtin", p); }
+    }
+
+    // 3. book blocks: every module used, every core builtin called
+    println!("docs: book blocks cover every module and core builtin");
+    let book_dir = std::path::Path::new("docs/book/src");
+    let mut pages = book_pages(book_dir);
+    pages.sort();
+    // (relative page path, page title, its crow blocks joined)
+    let mut page_blocks: Vec<(String, String, String)> = vec![];
+    let mut blocks = String::new();
+    for p in &pages {
+        let src = std::fs::read_to_string(p).unwrap_or_default();
+        let title = src.lines().find(|l| l.starts_with("# ")).map(|l| l[2..].trim().to_string()).unwrap_or_default();
+        let mut mine = String::new();
+        let mut in_block = false;
+        for line in src.lines() {
+            if line.trim_start().starts_with("```crow") { in_block = true; continue; }
+            if line.trim_start().starts_with("```") { in_block = false; continue; }
+            if in_block { mine.push_str(line); mine.push('\n'); }
+        }
+        if !mine.is_empty() {
+            blocks.push_str(&mine);
+            page_blocks.push((p.strip_prefix(book_dir).unwrap_or(p).to_string_lossy().to_string(), title, mine));
+        }
+    }
+    for m in ["math", "math.stats", "math.nn", "frame", "io", "db", "doc", "web", "ui"] {
+        let used = blocks.lines().any(|l| l.starts_with("use ") && l[4..].split(',').any(|part| {
+            let part = part.trim();
+            let base = part.split(" as ").next().unwrap_or(part).trim();
+            base == m
+        }));
+        if used { println!("  ok    use {}", m); } else { failures += 1; println!("  FAIL  no book block imports `{}`", m); }
+    }
+    // Every name in every table must appear in a verified block. The
+    // allowlist is the honest exception: web submodule calls whose compiled
+    // codegen does not build today — documented in the spec, listed here so
+    // the gap is visible (they show as 'spec only' in Where Is It?).
+    const SPEC_ONLY: &[&str] = &[
+        "test", "today",                                    // keyword / removed name
+        "sign", "verify", "templates", "render", "uploads", // auth/template/upload codegen
+        "connect", "send", "recv", "close",                // websocket client
+        "sse", "ws", "cors", "static_dir", "sqlite",       // legacy app-parameter APIs
+        "stream",                                           // handler contract undocumented
+        "app", "click",                                     // test-harness names (used in test blocks, not run blocks)
+    ];
+    for (table, names) in &tables {
+        let uncalled: Vec<&str> = names.iter().copied()
+            .filter(|n| !SPEC_ONLY.contains(n) && !blocks.contains(&format!("{}[", n)))
+            .collect();
+        if uncalled.is_empty() {
+            println!("  ok    {:10} every name is used in a verified block", table);
+        } else {
+            failures += uncalled.len();
+            println!("  FAIL  {:10} {} names never used in a book block: {}", table, uncalled.len(), uncalled.join(" "));
+        }
+    }
+
+    // 4. examples indexed
+    println!("docs: examples/ indexed in examples/README.md");
+    let readme = std::fs::read_to_string("examples/README.md").unwrap_or_default();
+    let prefixes: Vec<String> = readme.split(|c: char| c.is_whitespace() || c == '`')
+        .filter(|t| t.ends_with("*.crow"))
+        .map(|t| t.trim_end_matches("*.crow").to_string())
+        .collect();
+    let mut unlisted: Vec<String> = vec![];
+    if let Ok(rd) = std::fs::read_dir("examples") {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().map_or(true, |x| x != "crow") { continue; }
+            let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+            if readme.contains(&name) || prefixes.iter().any(|pre| name.starts_with(pre.as_str())) { continue; }
+            unlisted.push(name);
+        }
+    }
+    unlisted.sort();
+    if unlisted.is_empty() {
+        println!("  ok    every example is listed");
+    } else {
+        failures += unlisted.len();
+        println!("  FAIL  not listed in examples/README.md: {}", unlisted.join(" "));
+    }
+
+    // 5. "Where Is It?" — every name → the pages whose verified blocks use it.
+    // Generated from the tables above; `--write` regenerates, otherwise a
+    // stale index is a failure like any other gap.
+    println!("docs: where-is-it index");
+    let mut index = String::from("# Where Is It?\n\nEvery builtin, module function, and element the compiler knows, with the\nbook pages whose verified code blocks use it. Generated by\n`crow test --docs --write` from the compiler's own tables — if a name has\nno page, the build fails, so this list is complete by construction.\n\n");
+    for (table, names) in &tables {
+        index.push_str(&format!("## {}\n\n| Name | Shown in |\n|---|---|\n", table));
+        for n in names {
+            if *n == "today" { continue; }
+            let call = format!("{}[", n);
+            let hits: Vec<String> = page_blocks.iter()
+                .filter(|(_, _, b)| b.contains(&call))
+                .map(|(path, title, _)| format!("[{}]({})", title, path))
+                .collect();
+            let shown = if !hits.is_empty() { hits.join(" · ") } else if SPEC_ONLY.contains(n) { "spec only — no compiled example yet".to_string() } else { "—".to_string() };
+            index.push_str(&format!("| `{}` | {} |\n", n, shown));
+        }
+        index.push('\n');
+    }
+    let index_path = book_dir.join("where-is-it.md");
+    let current = std::fs::read_to_string(&index_path).unwrap_or_default();
+    let write = std::env::args().any(|a| a == "--write");
+    if write {
+        let _ = std::fs::write(&index_path, &index);
+        println!("  ok    wrote {}", index_path.display());
+    } else if current == index {
+        println!("  ok    {} is current", index_path.display());
+    } else {
+        failures += 1;
+        println!("  FAIL  {} is stale — run `crow test --docs --write`", index_path.display());
+    }
+
+    println!();
+    if failures == 0 {
+        println!("\u{2713} documentation covers the compiler ({} names)", known.len());
+    } else {
+        println!("\u{2717} {} documentation gaps", failures);
         process::exit(1);
     }
 }
@@ -480,6 +721,7 @@ fn cmd_test_parity() {
         let out = std::process::Command::new(&exe)
             .args(mode_args)
             .arg(file)
+            .env("CROW_BUILD_PROFILE", "dev")
             .output();
         match out {
             Ok(o) => (
@@ -1097,6 +1339,10 @@ fn install_from_registry(name: &str, version: &str, dest: &std::path::Path) -> b
 /// If `quiet` is true, suppress cargo build output (used for `crow run`).
 /// If `release` is true, compile with --release (optimized). Otherwise, use debug mode (fast compile).
 fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: bool) -> std::path::PathBuf {
+    // Verification harnesses (`crow test --book`, `--parity`) set
+    // CROW_BUILD_PROFILE=dev: a checked program only has to run, not ship,
+    // and skipping optimization + LTO is most of the per-block build time.
+    let release = release && std::env::var("CROW_BUILD_PROFILE").map(|v| v != "dev").unwrap_or(true);
     let source = read_file(entry);
     let stmts = match build(&source) {
         Ok(s) => s,
@@ -1690,6 +1936,191 @@ fn run_binary(binary: &std::path::Path, extra_args: &[String]) {
 
 /// `crow stop` — stop the project's running app. Tries the pidfile first,
 /// then any process running this project's built binary.
+/// `crow book [--port N]` — serve the built book with every code block
+/// runnable in place. A tiny std-only HTTP server: static files from
+/// docs/book/book, `POST /run` executes a block with this same binary
+/// (interpreter, compiler, or `crow test`) in a scratch directory, and
+/// `POST /stop` kills it. No new dependencies: the compiler already ships
+/// the interpreter, the transpiler, and the runner; this just puts a
+/// button in front of them.
+fn cmd_book() {
+    use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
+    let args: Vec<String> = std::env::args().collect();
+    let port: u16 = args.iter().position(|a| a == "--port")
+        .and_then(|i| args.get(i + 1)).and_then(|p| p.parse().ok()).unwrap_or(3008);
+    // The site is Crow's own: docs/book/site.crow renders every chapter
+    // (use doc) with the runner built into each code block. Render it fresh
+    // with the interpreter — well under a second — then serve the files.
+    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("crow"));
+    let book_dir = std::path::PathBuf::from("docs/book/crow-site");
+    let site = std::path::Path::new("docs/book/site.crow");
+    if !site.exists() {
+        eprintln!("error: docs/book/site.crow not found — run `crow book` from the crow repository");
+        process::exit(1);
+    }
+    let rendered = std::process::Command::new(&exe).args(["run", "-i", "docs/book/site.crow"]).status().map(|s| s.success()).unwrap_or(false);
+    if !rendered || !book_dir.join("index.html").exists() {
+        eprintln!("error: rendering the book with docs/book/site.crow failed");
+        process::exit(1);
+    }
+    let listener = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap_or_else(|e| {
+        eprintln!("error: cannot listen on port {}: {}", port, e);
+        process::exit(1);
+    });
+    println!("crow book: http://localhost:{}/  (every code block has ▶ Run — Ctrl-C to stop)", port);
+    let children: Arc<Mutex<std::collections::HashMap<String, u32>>> = Arc::new(Mutex::new(Default::default()));
+
+    fn content_type(path: &std::path::Path) -> &'static str {
+        match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
+            "html" => "text/html; charset=utf-8", "js" => "application/javascript", "css" => "text/css",
+            "json" => "application/json", "svg" => "image/svg+xml", "png" => "image/png", "woff2" => "font/woff2",
+            "woff" => "font/woff", "ttf" => "font/ttf", "txt" => "text/plain; charset=utf-8", _ => "application/octet-stream",
+        }
+    }
+    fn respond(stream: &mut std::net::TcpStream, status: &str, ctype: &str, body: &[u8]) {
+        let _ = write!(stream, "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n", status, ctype, body.len());
+        let _ = stream.write_all(body);
+        let _ = stream.flush();
+    }
+
+    for stream in listener.incoming() {
+        let mut stream = match stream { Ok(s) => s, Err(_) => continue };
+        let book_dir = book_dir.clone();
+        let exe = exe.clone();
+        let children = children.clone();
+        std::thread::spawn(move || {
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+            // Read the request head, then the body per Content-Length.
+            let mut buf = Vec::new();
+            let mut tmp = [0u8; 8192];
+            let head_end;
+            loop {
+                let n = match stream.read(&mut tmp) { Ok(0) | Err(_) => return, Ok(n) => n };
+                buf.extend_from_slice(&tmp[..n]);
+                if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") { head_end = i + 4; break; }
+                if buf.len() > 1 << 20 { return; }
+            }
+            let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
+            let mut lines = head.lines();
+            let req_line = lines.next().unwrap_or("");
+            let mut parts = req_line.split_whitespace();
+            let method = parts.next().unwrap_or("GET").to_string();
+            let target = parts.next().unwrap_or("/").to_string();
+            let content_length: usize = lines
+                .filter_map(|l| l.split_once(':'))
+                .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+                .and_then(|(_, v)| v.trim().parse().ok()).unwrap_or(0);
+            let mut body = buf[head_end..].to_vec();
+            while body.len() < content_length {
+                let n = match stream.read(&mut tmp) { Ok(0) | Err(_) => break, Ok(n) => n };
+                body.extend_from_slice(&tmp[..n]);
+            }
+            let path = target.split('?').next().unwrap_or("/").to_string();
+
+            if method == "POST" && path == "/run" {
+                let req: serde_json::Value = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+                let id = req["id"].as_str().unwrap_or("anon").chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>();
+                let code = req["code"].as_str().unwrap_or("").to_string();
+                let mode = req["mode"].as_str().unwrap_or("interp").to_string();
+                let dir = std::env::temp_dir().join("crow_book_play").join(&id);
+                let _ = std::fs::create_dir_all(&dir);
+                let file = dir.join("block.crow");
+                let _ = std::fs::write(&file, &code);
+                let (cmd_args, limit): (Vec<&str>, u64) = match mode.as_str() {
+                    "compile" => (vec!["run", "block.crow"], 600),
+                    "test" => (vec!["test", "block.crow"], 120),
+                    _ => (vec!["run", "-i", "block.crow"], 60),
+                };
+                // Own process group: a served app is a grandchild (crow run →
+                // native binary), and Stop must take the whole tree down.
+                let mut command = std::process::Command::new(&exe);
+                command.args(&cmd_args).current_dir(&dir)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+                #[cfg(unix)]
+                { use std::os::unix::process::CommandExt; command.process_group(0); }
+                let child = command.spawn();
+                let mut child = match child {
+                    Ok(c) => c,
+                    Err(e) => { respond(&mut stream, "200 OK", "application/json", serde_json::json!({"ok": false, "output": format!("cannot start crow: {}", e)}).to_string().as_bytes()); return; }
+                };
+                children.lock().unwrap().insert(id.clone(), child.id());
+                // Drain stdout/stderr on threads so a chatty server block can't block.
+                let mut out_pipe = child.stdout.take();
+                let mut err_pipe = child.stderr.take();
+                let out_t = std::thread::spawn(move || { let mut s = String::new(); if let Some(p) = out_pipe.as_mut() { let _ = p.read_to_string(&mut s); } s });
+                let err_t = std::thread::spawn(move || { let mut s = String::new(); if let Some(p) = err_pipe.as_mut() { let _ = p.read_to_string(&mut s); } s });
+                let started = std::time::Instant::now();
+                let mut timed_out = false;
+                let status = loop {
+                    match child.try_wait() {
+                        Ok(Some(st)) => break Some(st),
+                        Ok(None) => {
+                            if started.elapsed().as_secs() > limit {
+                                let _ = std::process::Command::new("kill").arg("-TERM").arg("--").arg(format!("-{}", child.id())).status();
+                                let _ = child.kill(); timed_out = true; break child.wait().ok();
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                        }
+                        Err(_) => break None,
+                    }
+                };
+                children.lock().unwrap().remove(&id);
+                let stdout = out_t.join().unwrap_or_default();
+                let stderr = err_t.join().unwrap_or_default();
+                // Strip the compiler's cargo chatter; keep the program's own lines.
+                let stderr: String = stderr.lines()
+                    .filter(|l| { let t = l.trim_start(); !(t.starts_with("Compiling") || t.starts_with("Finished") || t.starts_with("Running") || t.starts_with("Adding") || t.starts_with("Updating") || t.starts_with("Locking") || t.starts_with("Downloaded") || t.starts_with("Downloading") || t.starts_with("Blocking") || t.starts_with("warning:") || t.starts_with("Building") || t.starts_with("build ok")) })
+                    .collect::<Vec<_>>().join("\n");
+                let mut output = stdout;
+                if !stderr.trim().is_empty() { if !output.is_empty() { output.push('\n'); } output.push_str(stderr.trim_end()); }
+                // `crow test` colors its report; a <pre> wants plain text
+                let output = {
+                    let mut s = String::with_capacity(output.len());
+                    let mut chars = output.chars().peekable();
+                    while let Some(c) = chars.next() {
+                        if c == '\u{1b}' && chars.peek() == Some(&'[') {
+                            for d in chars.by_ref() { if d.is_ascii_alphabetic() { break; } }
+                        } else { s.push(c); }
+                    }
+                    s
+                };
+                let ok = status.map(|s| s.success()).unwrap_or(false) && !timed_out;
+                let reply = serde_json::json!({
+                    "ok": ok, "output": output,
+                    "timeout": if timed_out { format!("after {}s", limit) } else { String::new() },
+                });
+                respond(&mut stream, "200 OK", "application/json", reply.to_string().as_bytes());
+                return;
+            }
+            if method == "POST" && path == "/stop" {
+                let req: serde_json::Value = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+                let id = req["id"].as_str().unwrap_or("").chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>();
+                let pid = children.lock().unwrap().remove(&id);
+                if let Some(pid) = pid {
+                    // The block runs in its own process group (pgid == pid):
+                    // signal the group so the native binary behind `crow run`
+                    // goes down with it, then the parent for good measure.
+                    let _ = std::process::Command::new("kill").arg("-TERM").arg("--").arg(format!("-{}", pid)).status();
+                    let _ = std::process::Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
+                }
+                respond(&mut stream, "200 OK", "application/json", b"{\"ok\":true}");
+                return;
+            }
+            // Static book files.
+            let rel = path.trim_start_matches('/');
+            let rel = if rel.is_empty() { "index.html" } else { rel };
+            let file = book_dir.join(rel);
+            let safe = file.canonicalize().ok().map(|f| f.starts_with(book_dir.canonicalize().unwrap_or(book_dir.clone()))).unwrap_or(false);
+            match if safe { std::fs::read(&file).ok() } else { None } {
+                Some(bytes) => respond(&mut stream, "200 OK", content_type(&file), &bytes),
+                None => respond(&mut stream, "404 Not Found", "text/plain; charset=utf-8", b"not found"),
+            }
+        });
+    }
+}
+
 fn cmd_stop() {
     if let Ok(pid_s) = std::fs::read_to_string(".crow/app.pid") {
         if let Ok(pid) = pid_s.trim().parse::<i32>() {

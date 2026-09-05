@@ -1,0 +1,10 @@
+--- parsed JSON fields are open-schema; int/float/str convert them (or fail as values)
+obj = json['{"name": "crow", "n": 3, "p": 2.5, "s": "7"}']
+log[obj.name]
+log[int[obj.n] + 1]
+log[float[obj.p] * 2.0]
+log[int[obj.s] + 1]
+log[str[obj.name]]
+bad = int[obj.name]
+log[bad.ok]
+log[bad.kind]

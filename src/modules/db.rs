@@ -4,7 +4,7 @@ use crate::modules::CrowModule;
 
 pub struct DbModule;
 
-const DB_FUNCTIONS: &[&str] = &[
+pub(crate) const DB_FUNCTIONS: &[&str] = &[
     "connect", "query", "exec", "insert", "migrate", "transact",
 ];
 
@@ -77,7 +77,7 @@ fn call_db(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             };
             match conn.query(sql, &params) {
                 Ok(frame) => Ok(CrowValue::ok(Value::Frame(frame))),
-                Err(e) => Ok(CrowValue::error(&e, "db")),
+                Err(e) => Ok(CrowValue::error_with_kind(&e, "db", "")),
             }
         }
         "exec" => {
@@ -94,7 +94,7 @@ fn call_db(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             };
             match conn.exec(sql, &params) {
                 Ok(count) => Ok(CrowValue::ok(Value::Int(count))),
-                Err(e) => Ok(CrowValue::error(&e, "db")),
+                Err(e) => Ok(CrowValue::error_with_kind(&e, "db", "")),
             }
         }
         "insert" => {
@@ -147,6 +147,20 @@ fn crow_value_to_json_params(v: &CrowValue) -> Result<Vec<serde_json::Value>, St
             }
             Ok(params)
         }
+        // An all-numeric literal like [18.95] or [100, 50] is a tensor in the
+        // interpreter; bind its elements as numbers (whole values as ints,
+        // matching what compiled mode emits for the same literal).
+        Value::NumArray(t) => Ok(t
+            .to_vec()
+            .into_iter()
+            .map(|f| {
+                if f.is_finite() && f == (f as i64) as f64 {
+                    serde_json::json!(f as i64)
+                } else {
+                    serde_json::json!(f)
+                }
+            })
+            .collect()),
         _ => Err("SQL params must be an array".into()),
     }
 }

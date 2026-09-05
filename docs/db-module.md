@@ -94,10 +94,10 @@ The pool is transparent to users. Crow manages it automatically:
 use db
 use web
 
---- ERROR: ambiguous — use db.connect or web.connect ---
+--- ERROR: ambiguous — use db.connect or web.connect
 conn = connect['postgres://...']
 
---- Correct ---
+--- Correct
 db_conn = db.connect['postgres://user:pass@host/mydb']
 ws_conn = web.connect['ws://localhost/ws']
 ```
@@ -149,33 +149,33 @@ use db
 
 conn = connect['sqlite://:memory:']
 
---- Create and populate ---
+--- Create and populate
 exec[conn, 'CREATE TABLE users (id INTEGER, name TEXT, age INTEGER)']
 exec[conn, 'INSERT INTO users VALUES (1, ?, ?)', ['alice', 30]]
 exec[conn, 'INSERT INTO users VALUES (2, ?, ?)', ['bob', 25]]
 
---- Query returns a frame ---
+--- Query returns a frame
 users = query[conn, 'SELECT * FROM users']
 log[len[users]]
 
---- Parameterized query ---
+--- Parameterized query
 young = query[conn, 'SELECT name FROM users WHERE age < ?', [30]]
 
---- Bulk insert ---
+--- Bulk insert
 new_users = load['new_users.csv']
 insert[conn, 'users', new_users]
 
---- Transaction ---
+--- Transaction
 fn transfer[t]
   exec[t, 'UPDATE accounts SET balance = balance - 100 WHERE id = ?', [1]]
   exec[t, 'UPDATE accounts SET balance = balance + 100 WHERE id = ?', [2]]
 
 transact[conn, transfer]
 
---- Migrations ---
+--- Migrations
 migrate[conn, 'migrations/']
 
---- Module-prefixed (when web.ws is also imported) ---
+--- Module-prefixed (when web.ws is also imported)
 db_conn = db.connect['sqlite://data.db']
 db.exec[db_conn, 'SELECT 1']
 ```

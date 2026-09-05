@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 pub struct StatsModule;
 
-const STATS_FUNCTIONS: &[&str] = &[
+pub(crate) const STATS_FUNCTIONS: &[&str] = &[
     "median", "std", "var", "percentile", "zscore", "corr", "cov", "ttest", "linreg",
     "chisq", "anova", "kstest", "fit",
 ];

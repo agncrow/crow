@@ -22,10 +22,10 @@ New `Value::Frame` variant with column-oriented storage.
 ```crow
 use frame
 df = load['people.csv']
-type[df]    --- 'frame' ---
-df.age      --- [30, 25, 42, ...] ---
-df.shape    --- [1000, 5] ---
-df.columns  --- ['name', 'age', 'city', 'salary', 'score'] ---
+type[df]    --- 'frame'
+df.age      --- [30, 25, 42, ...]
+df.shape    --- [1000, 5]
+df.columns  --- ['name', 'age', 'city', 'salary', 'score']
 ```
 
 - Clean separation — frame is its own thing
@@ -44,16 +44,16 @@ df.columns  --- ['name', 'age', 'city', 'salary', 'score'] ---
 use frame
 df = load['people.csv']
 
---- filter rows where age > 50 ---
+--- filter rows where age > 50
 old = filter[df, df.age gt 50]
 
---- string equality ---
+--- string equality
 alices = filter[df, df.name eq 'alice']
 
---- compound conditions ---
+--- compound conditions
 rich_old = filter[df, df.age gt 50 and df.salary gt 100000]
 
---- negation ---
+--- negation
 others = filter[df, not (df.name eq 'alice')]
 ```
 
@@ -74,13 +74,13 @@ use frame
 use math
 
 df = load['scores.csv']
---- df has columns: age(float), salary(float), score(float) ---
+--- df has columns: age(float), salary(float), score(float)
 
---- all-numeric frame → tensor ---
-t = tensor[df]                        --- shape: [N, 3] ---
+--- all-numeric frame → tensor
+t = tensor[df]                        --- shape: [N, 3]
 
---- pick specific columns → tensor ---
-t = tensor[df, [age, salary]]         --- shape: [N, 2] ---
+--- pick specific columns → tensor
+t = tensor[df, [age, salary]]         --- shape: [N, 2]
 ```
 
 Not duplicates — different use cases. `tensor[df]` errors on string columns to prevent silent data loss.
@@ -97,13 +97,13 @@ normal Crow expression over `df.col` (`filter[df, df.age gt 50]`). Every line
 is plain Crow — no special evaluation rules inside frame calls.
 
 ```crow
-sort[df, 'age']                    --- name a column: string ---
-sort[df, 'first name']             --- spaces, hyphens — no escape hatch needed ---
-select[df, ['name', 'age']]        --- list of names: strings ---
-filter[df, df.age gt 50]           --- compute on a column: expression ---
+sort[df, 'age']                    --- name a column: string
+sort[df, 'first name']             --- spaces, hyphens — no escape hatch needed
+select[df, ['name', 'age']]        --- list of names: strings
+filter[df, df.age gt 50]           --- compute on a column: expression
 
 col = 'age'
-sorted = sort[df, col]             --- dynamic column names just work ---
+sorted = sort[df, col]             --- dynamic column names just work
 ```
 
 > **Design Note (July 2026):** Bare-name column references (`sort[df, age]`)
@@ -153,16 +153,16 @@ Each column stores a **validity bitmap** (1 bit per row). No sentinels, no `none
 - **String/DateTime**: bitmap says "missing", individual access returns error value.
 
 ```crow
-df.name[1]       --- error: missing ---
-df.name[1].ok    --- false ---
+df.name[1]       --- error: missing
+df.name[1].ok    --- false
 
---- .ok returns boolean array — same for every column type ---
-df.name.ok       --- [true, true, false, true] ---
-df.age.ok        --- [true, false, true, true] ---
+--- .ok returns boolean array — same for every column type
+df.name.ok       --- [true, true, false, true]
+df.age.ok        --- [true, false, true, true]
 
---- count present/missing ---
-count[df.age.ok]         --- 3 (present) ---
-count[not df.age.ok]     --- 1 (missing) ---
+--- count present/missing
+count[df.age.ok]         --- 3 (present)
+count[not df.age.ok]     --- 1 (missing)
 ```
 
 ---
@@ -177,22 +177,22 @@ Internal storage: UTC epoch milliseconds (`i64`) + timezone offset in minutes (`
 - v1: UTC offset format (`+05:30`, `-08:00`). No IANA names — can add later.
 
 ```crow
---- auto-detect ISO 8601 in CSV ---
---- 2024-01-15, 2024-01-15T10:30:00, 2024-01-15T10:30:00-05:00, 2024-01-15T10:30:00Z ---
+--- auto-detect ISO 8601 in CSV
+--- 2024-01-15, 2024-01-15T10:30:00, 2024-01-15T10:30:00-05:00, 2024-01-15T10:30:00Z
 
---- construction ---
+--- construction
 d = datetime['2024-01-15T10:30:00-05:00']
 
---- properties ---
-d.year       --- 2024 ---
-d.month      --- 1 ---
-d.day        --- 15 ---
-d.hour       --- 10 ---
-d.minute     --- 30 ---
-d.second     --- 0 ---
-d.offset     --- -300 (minutes from UTC) ---
+--- properties
+d.year       --- 2024
+d.month      --- 1
+d.day        --- 15
+d.hour       --- 10
+d.minute     --- 30
+d.second     --- 0
+d.offset     --- -300 (minutes from UTC)
 
---- timezone conversion ---
+--- timezone conversion
 utc = tz[d, 'UTC']
 tokyo = tz[d, '+09:00']
 ```
@@ -220,64 +220,64 @@ use math
 ---      ,25,,2024-03-20
 ---      carol,42,90000,2024-06-01
 
---- load ---
+--- load
 df = load['people.csv']
 log[df]
 
---- properties ---
-log[df.shape]      --- [4, 4] ---
-log[df.columns]    --- ['name', 'age', 'salary', 'start_date'] ---
-log[df.dtypes]     --- ['str', 'int', 'float', 'datetime'] ---
+--- properties
+log[df.shape]      --- [4, 4]
+log[df.columns]    --- ['name', 'age', 'salary', 'start_date']
+log[df.dtypes]     --- ['str', 'int', 'float', 'datetime']
 
---- column access ---
-log[df.age]        --- [30, nan, 25, 42] ---
-log[df.name]       --- ['alice', 'bob', error, 'carol'] ---
+--- column access
+log[df.age]        --- [30, nan, 25, 42]
+log[df.name]       --- ['alice', 'bob', error, 'carol']
 
---- missing values ---
-log[df.age.ok]             --- [true, false, true, true] ---
-log[count[not df.age.ok]]  --- 1 ---
+--- missing values
+log[df.age.ok]             --- [true, false, true, true]
+log[count[not df.age.ok]]  --- 1
 clean = fill[df, 'age', 0]
 
---- column arithmetic ---
-log[df.salary * 1.1]       --- [55000, 82500, nan, 99000] ---
+--- column arithmetic
+log[df.salary * 1.1]       --- [55000, 82500, nan, 99000]
 
---- filter ---
+--- filter
 rich = filter[df, df.salary gt 60000]
 
---- select ---
+--- select
 sub = select[df, ['age', 'salary']]
 
---- sort ---
+--- sort
 sorted = sort[df, 'age']
 sorted_desc = sort[df, 'age', desc = true]
 
---- group (single scan, multi-agg) ---
+--- group (single scan, multi-agg)
 g = group[df, 'name', ['salary', 'mean'], ['age', 'max']]
 
---- join ---
+--- join
 deps = load['departments.csv']
 merged = join[df, deps, 'name']
 merged2 = join[df, deps, 'name', 'left']
 
---- stack ---
+--- stack
 df3 = load['more_people.csv']
 all = stack[df, df3]
 
---- unique ---
-log[unique[df.name]]   --- ['alice', 'bob', 'carol'] ---
+--- unique
+log[unique[df.name]]   --- ['alice', 'bob', 'carol']
 
---- rename ---
+--- rename
 df2 = rename[df, 'salary', 'pay']
 
---- stats ---
+--- stats
 stats[df]
 
---- head/tail ---
+--- head/tail
 top = head[df, 5]
 
---- save ---
+--- save
 save[df, 'out.csv']
 
---- convert to tensor ---
+--- convert to tensor
 t = tensor[df, ['age', 'salary']]
 ```

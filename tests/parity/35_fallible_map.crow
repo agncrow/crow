@@ -1,0 +1,9 @@
+--- A map built with a fallible value (read[] may fail) is a fallible map
+--- of plain values, and an array of them encodes as their payloads.
+write['/tmp/crow_parity_a.txt', 'alpha words']
+write['/tmp/crow_parity_b.txt', 'beta words']
+paths = ['/tmp/crow_parity_a.txt', '/tmp/crow_parity_b.txt']
+entries = for p in paths
+    map[path = p, words = read[p]]
+log[len[entries]]
+log[encode[entries]]

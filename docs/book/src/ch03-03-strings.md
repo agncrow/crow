@@ -55,4 +55,4 @@ s = 'a' + 'b'    --- error: cannot use '+' with strings
 
 The error message itself tells you the two idioms above. For value
 formatting (decimals, widths, percents) there's `fmt[...]` with named
-arguments — chapter 9 uses it heavily.
+arguments — chapter 10 uses it heavily.

@@ -1,0 +1,92 @@
+--- Layout vocabulary demo: a dashboard composed from stack / row / grid /
+--- overlay / scroll with no CSS, plus tests that check where things are.
+---
+---   crow test examples/layout_dashboard.crow    --- the layout truths (no browser)
+---   crow run examples/layout_dashboard.crow     --- serve it: http://localhost:3000
+---   crow stop                                   --- stop the server
+use web, ui
+
+min_qty = 0
+alerts = 3
+
+fn reset[]
+    min_qty = 0
+
+fn more_alerts[]
+    alerts = alerts + 1
+
+--- Layout attributes are literals (the checker reads them), so a colour
+--- is a choice of view, not a parameter.
+view stat_card[label, value]
+    return stack[h3[label], p['`value`', size = 'xl', weight = 'bold'], surface = 'card']
+
+view gain_card[label, value]
+    return stack[h3[label], p['`value`', size = 'xl', weight = 'bold', color = 'up'], surface = 'card']
+
+view loss_card[label, value]
+    return stack[h3[label], p['`value`', size = 'xl', weight = 'bold', color = 'down'], surface = 'card']
+
+view render[]
+    return stack[
+        row[
+            h1['Trading Dashboard'],
+            overlay[
+                button['Alerts', click = more_alerts],
+                span['`alerts`', color = 'down', anchor = 'top_right']
+            ],
+            justify = 'between', align = 'center', below = 'phone', becomes = 'stack'
+        ],
+        grid[
+            gain_card['P&L', '1,116.10'],
+            stat_card['Trades', '4'],
+            loss_card['Drawdown', '-2.1%'],
+            columns = 3, gap = 'm', below = 'phone', columns_then = 1
+        ],
+        row[
+            field['Min qty', min_qty],
+            button['Reset', click = reset],
+            span['showing trades with qty above `min_qty`', color = 'muted'],
+            gap = 'm', align = 'center', below = 'phone', becomes = 'stack'
+        ],
+        h2['Tape'],
+        scroll[
+            stack[p['09:30 AAPL 100 @ 191.50'], p['09:31 MSFT 50 @ 415.20'], p['09:32 NVDA 20 @ 875.00'], gap = 'xs'],
+            height = '96px'
+        ],
+        gap = 'l', pad = 'l'
+    ]
+
+--- Structure and behaviour: the tree and the handlers.
+test structure[]
+    s = app[render]
+    assert[len[elements[s, 'grid .card']] eq 3]
+    assert[elements[s, 'h1'][0].text eq 'Trading Dashboard']
+    click[s, more_alerts]
+    assert[s.alerts eq 4]
+    change[s, 'min_qty', 25]
+    assert[contains[elements[s, 'row span'][1].text, 'above 25']]
+
+--- Geometry: the same engine that laid out the page answers the questions.
+test layout_desktop[]
+    s = app[render, width = 1280]
+    cards = box[s, 'grid .card']
+    assert[len[cards] eq 3]
+    assert[cards[0].y eq cards[2].y]                          --- one line of three
+    assert[cards[1].x gt cards[0].x + cards[0].width]         --- with a gap between
+    title = box[s, 'h1'][0]
+    controls = box[s, 'row'][1]
+    assert[controls.y gt title.y + title.height]              --- controls under the header
+    assert[fits[s, 1280]]
+    assert[style[s, '.card'][0].background eq '--crow-surface']
+    assert[style[s, '.card p'][0].color eq '--crow-up']       --- the P&L is green
+    assert[style[s, '.card p'][2].color eq '--crow-down']     --- the drawdown is red
+
+test layout_phone[]
+    s = app[render, width = 390]
+    cards = box[s, 'grid .card']
+    assert[cards[1].y gte cards[0].y + cards[0].height]       --- stacked, one per row
+    assert[cards[0].width eq cards[2].width]
+    assert[fits[s, 390]]                                      --- nothing pokes out of a phone
+
+page['/', render]
+serve[3000]

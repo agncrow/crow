@@ -1,0 +1,5 @@
+--- A failed read names the file in both modes.
+r = read['/nonexistent/crow-parity-check.txt']
+log[r.ok]
+log[r.reason]
+log[r.kind]
