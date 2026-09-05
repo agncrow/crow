@@ -5,9 +5,9 @@ the ideas; this is every corner of the language and its modules in
 example form, to read through once and come back to. Every block is
 executed by `crow test --book` in both execution modes, and `crow test
 --docs` fails the build if any builtin or module has no example here or
-in the chapters. For the tables, see [The Standard Library](../stdlib/index.md)
-in Part II; for a specific name, [Where Is It?](../where-is-it.md) maps
-every builtin to the pages that show it.
+in the chapters. For the tables, with every function linked back to the
+example that shows it, see [The Standard Library](../stdlib/index.md) in
+Part II.
 
 | Page | Covers |
 |---|---|

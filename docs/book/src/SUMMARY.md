@@ -113,5 +113,4 @@
   - [io](stdlib/io.md)
   - [doc](stdlib/doc.md)
   - [web and ui](stdlib/web.md)
-- [Where Is It?](where-is-it.md)
 - [The Crow Language Specification](language-spec.md)

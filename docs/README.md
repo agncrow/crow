@@ -16,7 +16,7 @@ Start here if you are new; jump to the reference if you already write Crow.
 | Document | What it is |
 |---|---|
 | [Crow by Example](book/src/by-example/index.md) | One verified program per feature area — numbers, strings, regex, files, JSON, shell, moments, math, stats, nn, io, frames, db, web. Part II of the book site. |
-| [Where Is It?](book/src/where-is-it.md) | Generated index: every builtin and module function → the book pages whose verified blocks use it (`crow test --docs --write`). |
+| [The Standard Library](book/src/stdlib/index.md) | Generated reference: one page per module from the spec's tables, every function linked to the book pages whose verified blocks use it (`crow test --docs --write`). |
 | [language-spec.md](language-spec.md) | **The specification.** Every construct and builtin, each module's API, and a Design Note for every deliberately rejected feature (the answer to "why can't I…"). |
 | [crow-check.md](crow-check.md) | `crow check` and `crow fix`: automatic verification, and the schema-aware database hazard catalog. |
 | [crow-lsp.md](crow-lsp.md) | The language server: what it does and how to wire it into VS Code, Neovim, Helix, Zed. |
