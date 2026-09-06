@@ -1,0 +1,48 @@
+# Crow — notes for Claude Code
+
+Read `docs/design-rules.md` first: nine principles, the implementation and
+documentation rules, and the feature workflow. The spec and the code cite
+them by number. The short version:
+
+- **One way to do things.** Before adding syntax, an operator, or a
+  builtin, search `docs/language-spec.md` for an existing way; if one
+  exists, don't add another. Rejected ideas become Design Notes in the spec.
+- **The spec is the source of truth.** Read it before designing, update it
+  after implementing. Then the book chapter and `crow test --docs`.
+- **Both modes, one behavior.** Every feature works identically in
+  `crow run -i` and `crow run`. Shared logic lives in `crow_runtime` so
+  both call the same code; new behavior gets a `tests/parity/` program.
+- **Builtins are short lowercase words**, every call is `f[x]`, blocks are
+  indentation, and shift-key syntax needs a recorded tradeoff.
+- **Every bug fix ships with the test that reproduces it.** No stubs: a
+  feature isn't done until every planned backend works and is documented.
+
+## Before calling anything done
+
+```
+cargo test --workspace
+./target/release/crow test --parity
+./target/release/crow test --docs
+./target/release/crow test --book
+./target/release/crow test tests/layout/conformance.crow
+```
+
+Use the release binary for the layout and site suites: the debug binary
+overflows its stack there. CI (`.github/workflows/ci.yml`) runs the same
+steps on every push and must be green.
+
+## Things that have bitten
+
+- `*.csv`, `*.txt`, `*.json` are gitignored. A fixture needs a negation
+  rule in `.gitignore` or CI never sees it.
+- `Cargo.lock` is not tracked, and `cargo install` re-resolves unless
+  given `--locked`.
+- The seeded RNG is process-global; tests that draw random numbers take
+  the lock in `crow_runtime/src/tensor.rs`'s tests.
+- Map literals are `map[k = v]`; nested numeric literals must be
+  rectangular (ragged ones are refused in both modes).
+- Generated programs link the runtime crates by the absolute path baked in
+  at build time (`CARGO_MANIFEST_DIR`); `install.sh` snapshots the source
+  to `~/.crow/src` for that reason.
+- After verifying a served app (finch on 3100), run `crow stop` so the
+  port is free for the user.
