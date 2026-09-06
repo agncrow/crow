@@ -1006,6 +1006,7 @@ pub fn suppress_acknowledged(issues: Vec<Issue>, source: &str) -> Vec<Issue> {
 pub const STYLE_TOKENS: &[&str] = &[
     "--crow-bg", "--crow-surface", "--crow-text", "--crow-muted",
     "--crow-border", "--crow-accent", "--crow-up", "--crow-down",
+    "--crow-series-2", "--crow-series-3", "--crow-series-4", "--crow-series-5", "--crow-series-6",
 ];
 
 pub fn check_style_tokens(css_path: &str) -> Vec<(String, String)> {
@@ -2244,7 +2245,8 @@ mod tests {
         let src = std::fs::read_to_string("tests/chart_harness.crow").unwrap();
         let stmts = crate::build(&src).unwrap();
         let (issues, counts) = run_test_blocks(&stmts);
-        assert_eq!(counts.blocks, 1);
+        // the candle chart, and the study with panes, points and a seek target
+        assert_eq!(counts.blocks, 2);
         assert!(
             issues.is_empty(),
             "chart harness assertions failed: {:?}",

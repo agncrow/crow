@@ -50,7 +50,7 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 
 | Function | Returns | Example |
 |---|---|---|
-| `sum[t]` | Sum of all elements (float) | [Frames: `use frame`](../by-example/frames.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Importing with use](../ch08-01-importing.md) · [Aliased Imports](../ch08-02-aliased-imports.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `sum[t]` | Sum of all elements (float) | [Frames: `use frame`](../by-example/frames.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Importing with use](../ch08-01-importing.md) · [Aliased Imports](../ch08-02-aliased-imports.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
 | `mean[t]` | Mean of all elements (float) | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) · [Importing with use](../ch08-01-importing.md) |
 | `min[t]` | Minimum element (float) | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Numbers and conversion](../by-example/numbers.md) |
 | `max[t]` | Maximum element (float) | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) · [Numbers and conversion](../by-example/numbers.md) · [Testing](../ch09-00-testing.md) |
@@ -131,7 +131,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 
 | Function | Description | Example |
 |---|---|---|
-| `a * b` | Matrix multiplication (use `*` operator) | [JSON](../by-example/json.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Statistics: `use math.stats`](../by-example/stats.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Defining and Calling Functions](../ch04-01-defining-functions.md) · [Writing Your Own Modules](../ch08-04-writing-modules.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) |
+| `a * b` | Matrix multiplication (use `*` operator) | [JSON](../by-example/json.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Statistics: `use math.stats`](../by-example/stats.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Defining and Calling Functions](../ch04-01-defining-functions.md) · [Writing Your Own Modules](../ch08-04-writing-modules.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) |
 | `solve[a, b]` | Solve linear system Ax = b | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) |
 | `inv[a]` | Matrix inverse | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `det[a]` | Determinant (returns float) | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) |

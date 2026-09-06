@@ -316,12 +316,19 @@ impl Lowerer {
                         Expr::Call { callee: Box::new(callee), args: resolved }
                     }
                     // chart[frame, x = 'ts', candles = [], lines = [],
-                    // bars_y = '', marker = 0, tz = 'UTC', height = 320] —
+                    // bars_y = '', marker = 0, tz = 'UTC', height = 320,
+                    // panes = [], levels = 0, points = 0, seek = 0] —
                     // a chart is a view over a frame (chart-module-design).
+                    // panes: lists of column names, each drawn in its own
+                    // strip; levels: map[col = [values]] of reference lines
+                    // for the pane that draws col; points: a frame of markers
+                    // (ts, y, label, kind); seek: a handler that receives the
+                    // clicked bucket's moment.
                     Some("chart") if !self.fns.contains_key("chart") => {
                         let params: Vec<String> = [
                             "frame", "x", "candles", "lines", "bars_y",
-                            "marker", "tz", "height",
+                            "marker", "tz", "height", "panes", "levels",
+                            "points", "seek",
                         ]
                         .iter()
                         .map(|s| s.to_string())
@@ -335,6 +342,10 @@ impl Lowerer {
                             Some(Expr::Int(0)),
                             Some(Expr::Str("UTC".to_string())),
                             Some(Expr::Int(320)),
+                            Some(Expr::Array(vec![])),
+                            Some(Expr::Int(0)),
+                            Some(Expr::Int(0)),
+                            Some(Expr::Int(0)),
                         ];
                         let resolved = self.resolve_args("chart", &params, &defaults, args)?;
                         Expr::Call { callee: Box::new(callee), args: resolved }

@@ -38,6 +38,10 @@ The named arguments are the whole vocabulary:
 | `marker` | `0` | a moment marked with a vertical play-head |
 | `tz` | `'UTC'` | the timezone the axis ticks are labeled in |
 | `height` | `320` | height in pixels |
+| `panes` | `[]` | lists of columns, each drawn in its own strip with its own scale (`[['rsi'], ['cvd']]`) |
+| `levels` | `0` | dashed reference lines keyed by column (`map[rsi = [30, 70], cvd = [0]]`) |
+| `points` | `0` | a frame of markers: `ts`, `y`, and optionally `label` and `kind` (`'buy'`, `'sell'`) |
+| `seek` | `0` | a handler that receives the moment of whichever bucket is clicked |
 
 Three properties follow from "a chart is a view over a frame":
 
@@ -54,6 +58,88 @@ Three properties follow from "a chart is a view over a frame":
 
 The colors come from the style tokens below, so a chart is theme-correct
 in light and dark mode without any color plumbing.
+
+## Indicators and panes
+
+A chart draws columns, so an indicator is a column. `use chart` brings
+the usual ones — `sma`, `ema`, `rsi`, `macd`, `vwap`, `rolling_sum`,
+`cvd` — as functions over series that return a series of the same length,
+with `NaN` where the value is not defined yet, so the line starts where
+the math does instead of guessing:
+
+```crow
+use chart, frame
+
+bars = frame.new[]
+bars = with[bars, 'ts', [0.0, 60.0, 120.0, 180.0, 240.0, 300.0]]
+bars = with[bars, 'c', [10.0, 11.0, 10.5, 11.5, 12.0, 11.0]]
+bars = with[bars, 'vol', [100.0, 200.0, 150.0, 300.0, 250.0, 100.0]]
+bars = with[bars, 'sma3', sma[bars.c, 3]]
+bars = with[bars, 'ema3', ema[bars.c, 3]]
+bars = with[bars, 'rsi3', rsi[bars.c, 3]]
+bars = with[bars, 'vwap', vwap[bars.c, bars.vol]]
+bars = with[bars, 'vol_2m', rolling_sum[bars.ts, bars.vol, 120.0]]
+bars = with[bars, 'cvd', cvd[bars.c, bars.vol]]
+m = macd[bars.c, 2, 4, 2]
+log[bars.sma3[5]]
+log[bars.ema3[5]]
+log[bars.rsi3[5]]
+log[bars.vwap[1]]
+log[bars.vol_2m[5]]
+log[bars.cvd[5]]
+log[m.columns]
+```
+
+```text
+11.5
+11.25
+50
+10.666666666666666
+650
+500
+['line', 'signal', 'hist']
+```
+
+The same function computed the same numbers in both execution modes —
+the indicators live in the kernel, next to the chart geometry. Two forms
+take moments: `rsi[ts, values, n, secs]` computes on clock-aligned
+buckets of `secs` seconds (a 14-period RSI on 3-minute candles, drawn
+over 1-second bars, whose history never changes as the tape advances),
+and `vwap[ts, price, vol, secs]` is the trailing-window VWAP.
+
+In the view, each indicator column names a pane, a level, or a line:
+
+```crow,norun
+use web, ui, db, frame, chart
+
+conn = db.connect['sqlite://bars.db']
+clock = 0.0
+
+fn jump[t]
+    clock = t
+
+view render[]
+    bars = query[conn, 'SELECT ts, o, hi, lo, c, vol FROM bars ORDER BY ts']
+    bars = with[bars, 'rsi', rsi[bars.c, 14]]
+    bars = with[bars, 'cvd', cvd[bars.c, bars.vol]]
+    fills = query[conn, 'SELECT ts, px AS y, side AS kind FROM fills']
+    return chart[bars, candles = ['o', 'hi', 'lo', 'c'], bars_y = 'vol',
+                 panes = [['rsi'], ['cvd']],
+                 levels = map[rsi = [30, 70], cvd = [0]],
+                 points = fills, seek = jump,
+                 marker = clock, tz = 'America/New_York', height = 400]
+
+page['/', render]
+serve[3000]
+```
+
+`panes` stacks strips under the volume, each with its own scale and a
+legend; `levels` draws dashed lines in whichever pane holds the column;
+`points` marks trades on the price pane (`kind = 'buy'` is an up
+triangle in the up color, `'sell'` a down triangle); `seek = jump` makes
+every bucket a click target that sends its moment to the handler — a
+replay's scrubber in one line, with the play-head as reactive state the
+way the live-loop section described.
 
 ## Layout: compose boxes, don't write CSS
 

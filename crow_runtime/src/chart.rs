@@ -322,6 +322,24 @@ mod tests {
     }
 }
 
+/// One strip under the main pane with its own y scale: line series plus
+/// dashed reference levels (70 for an RSI pane, 0 for a delta).
+pub struct Pane<'a> {
+    pub lines: Vec<(&'a str, &'a [f64])>,
+    pub levels: Vec<f64>,
+}
+
+/// A marker on the main pane: a moment, a price, a label, and a kind
+/// (`buy` draws an up triangle in the up color, `sell` a down triangle in
+/// the down color, anything else a dot in the accent color).
+#[derive(Debug, Clone)]
+pub struct Point {
+    pub ts: f64,
+    pub y: f64,
+    pub label: String,
+    pub kind: String,
+}
+
 /// Assemble the full chart SVG. Both modes call this — the interpreter
 /// for its html strings, crow_web for its raw vnode — so the markup is
 /// identical by construction. Colors reference the style tokens
@@ -331,15 +349,101 @@ pub struct ChartSpec<'a> {
     pub ts: &'a [f64],
     /// (open, high, low, close) column slices; empty slices = no candles.
     pub candles: (&'a [f64], &'a [f64], &'a [f64], &'a [f64]),
-    /// Named line series: (label, values).
+    /// Named line series on the main pane: (label, values).
     pub lines: Vec<(&'a str, &'a [f64])>,
-    /// Volume bars; empty = no volume pane.
+    /// Volume bars; empty = no volume strip.
     pub volume: &'a [f64],
     /// Play-head moment; NaN = none.
     pub marker: f64,
     pub tz: &'a str,
     pub width: f64,
     pub height: f64,
+    /// Extra strips under the volume, each with its own scale.
+    pub panes: Vec<Pane<'a>>,
+    /// Markers on the main pane.
+    pub points: Vec<Point>,
+    /// A handler name: every bucket becomes a click target that sends
+    /// its moment (`data-crow-args="[ts]"`) to the handler.
+    pub seek: Option<&'a str>,
+}
+
+/// Reference levels keyed by column: `levels = map[rsi = [30, 70], cvd = [0]]`.
+/// A pane draws the levels of every column it holds. Implemented for the
+/// map shapes a program can produce and for `()` (no levels).
+pub trait LevelMap {
+    fn levels_for(&self, col: &str) -> Vec<f64>;
+}
+impl LevelMap for () {
+    fn levels_for(&self, _col: &str) -> Vec<f64> {
+        vec![]
+    }
+}
+impl LevelMap for std::collections::BTreeMap<String, Vec<f64>> {
+    fn levels_for(&self, col: &str) -> Vec<f64> {
+        self.get(col).cloned().unwrap_or_default()
+    }
+}
+impl LevelMap for std::collections::BTreeMap<String, Vec<i64>> {
+    fn levels_for(&self, col: &str) -> Vec<f64> {
+        self.get(col).map(|v| v.iter().map(|x| *x as f64).collect()).unwrap_or_default()
+    }
+}
+impl LevelMap for std::collections::BTreeMap<String, crate::tensor::CrowTensor> {
+    fn levels_for(&self, col: &str) -> Vec<f64> {
+        self.get(col).map(|t| t.to_vec()).unwrap_or_default()
+    }
+}
+impl LevelMap for std::collections::BTreeMap<String, f64> {
+    fn levels_for(&self, col: &str) -> Vec<f64> {
+        self.get(col).map(|x| vec![*x]).unwrap_or_default()
+    }
+}
+impl LevelMap for std::collections::BTreeMap<String, i64> {
+    fn levels_for(&self, col: &str) -> Vec<f64> {
+        self.get(col).map(|x| vec![*x as f64]).unwrap_or_default()
+    }
+}
+impl<T: LevelMap + ?Sized> LevelMap for &T {
+    fn levels_for(&self, col: &str) -> Vec<f64> {
+        (**self).levels_for(col)
+    }
+}
+
+/// Series colors, by order of appearance across the whole chart.
+pub const SERIES_COLORS: [&str; 6] = [
+    "var(--crow-accent)",
+    "var(--crow-series-2)",
+    "var(--crow-series-3)",
+    "var(--crow-series-4)",
+    "var(--crow-series-5)",
+    "var(--crow-series-6)",
+];
+
+fn series_color(i: usize) -> &'static str {
+    SERIES_COLORS[i % SERIES_COLORS.len()]
+}
+
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// Joint finite min/max over several series.
+fn extent(series: &[&[f64]]) -> (f64, f64) {
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for s in series {
+        for v in s.iter() {
+            if v.is_finite() {
+                lo = lo.min(*v);
+                hi = hi.max(*v);
+            }
+        }
+    }
+    if !lo.is_finite() {
+        (0.0, 1.0)
+    } else {
+        (lo, hi)
+    }
 }
 
 pub fn render_svg(spec: &ChartSpec) -> Result<String, String> {
@@ -352,44 +456,35 @@ pub fn render_svg(spec: &ChartSpec) -> Result<String, String> {
         ));
     }
 
-    // Layout: main pane + optional volume strip, margins for axes.
+    // Layout: main pane, optional volume strip, extra panes, time axis.
     let ml = 54.0;
     let mr = 10.0;
     let mt = 8.0;
     let mb = 22.0;
+    let gap = 6.0;
     let has_vol = !spec.volume.is_empty();
-    let vol_h = if has_vol { (spec.height * 0.18).floor() } else { 0.0 };
-    let main_bot = spec.height - mb - if has_vol { vol_h + 6.0 } else { 0.0 };
+    let vol_h = if has_vol { (spec.height * 0.16).floor() } else { 0.0 };
+    let pane_h = (spec.height * 0.18).floor();
+    let strips = vol_h + if has_vol { gap } else { 0.0 } + spec.panes.len() as f64 * (pane_h + gap);
+    let main_bot = (spec.height - mb - strips).max(mt + 40.0);
+    let x0 = ml;
+    let x1 = spec.width - mr;
 
     // Domains
     let t0 = spec.ts[0];
     let t1 = spec.ts[n - 1].max(t0 + 1.0);
-    let mut ymin = f64::INFINITY;
-    let mut ymax = f64::NEG_INFINITY;
     let (o, h, l, c) = spec.candles;
-    for v in l.iter().chain(h.iter()) {
-        if v.is_finite() {
-            ymin = ymin.min(*v);
-            ymax = ymax.max(*v);
-        }
-    }
+    let mut main_series: Vec<&[f64]> = vec![l, h];
     for (_, vs) in &spec.lines {
-        for v in vs.iter() {
-            if v.is_finite() {
-                ymin = ymin.min(*v);
-                ymax = ymax.max(*v);
-            }
-        }
+        main_series.push(vs);
     }
-    if !ymin.is_finite() {
-        ymin = 0.0;
-        ymax = 1.0;
-    }
+    let (ymin, ymax) = extent(&main_series);
     let (ymin, ymax) = pad_domain(ymin, ymax);
-    let sx = Scale::new(t0, t1, ml, spec.width - mr);
+    let sx = Scale::new(t0, t1, x0, x1);
     let sy = Scale::new(ymin, ymax, main_bot, mt);
+    let band = (x1 - x0) / n as f64;
 
-    let mut svg = String::with_capacity(16 * 1024);
+    let mut svg = String::with_capacity(32 * 1024);
     svg.push_str(&format!(
         "<svg class=\"crow-chart\" viewBox=\"0 0 {w} {h}\" width=\"100%\" height=\"{h}\" font-family=\"ui-monospace,monospace\">",
         w = spec.width, h = spec.height
@@ -399,9 +494,8 @@ pub fn render_svg(spec: &ChartSpec) -> Result<String, String> {
     for yt in y_ticks(ymin, ymax, 4) {
         let y = sy.map(yt);
         svg.push_str(&format!(
-            "<line x1=\"{ml}\" y1=\"{y:.1}\" x2=\"{x2}\" y2=\"{y:.1}\" stroke=\"var(--crow-border)\" stroke-width=\"1\"/><text x=\"{tx}\" y=\"{ty:.1}\" text-anchor=\"end\" fill=\"var(--crow-muted)\" font-size=\"11\">{lab}</text>",
-            ml = ml, x2 = spec.width - mr, tx = ml - 6.0, ty = y + 4.0,
-            lab = trim_num(yt)
+            "<line x1=\"{x0}\" y1=\"{y:.1}\" x2=\"{x1}\" y2=\"{y:.1}\" stroke=\"var(--crow-border)\" stroke-width=\"1\"/><text x=\"{tx}\" y=\"{ty:.1}\" text-anchor=\"end\" fill=\"var(--crow-muted)\" font-size=\"11\">{lab}</text>",
+            tx = x0 - 6.0, ty = y + 4.0, lab = trim_num(yt)
         ));
     }
     // Time ticks
@@ -415,7 +509,7 @@ pub fn render_svg(spec: &ChartSpec) -> Result<String, String> {
 
     // Candles
     if !o.is_empty() {
-        for cd in candles(o, h, l, c, ml, spec.width - mr, &sy) {
+        for cd in candles(o, h, l, c, x0, x1, &sy) {
             let color = if cd.rising { "var(--crow-up)" } else { "var(--crow-down)" };
             svg.push_str(&format!(
                 "<line x1=\"{cx:.1}\" y1=\"{wt:.1}\" x2=\"{cx:.1}\" y2=\"{wb:.1}\" stroke=\"{color}\" stroke-width=\"1\"/><rect x=\"{bx:.1}\" y=\"{bt:.1}\" width=\"{bw:.1}\" height=\"{bh:.1}\" fill=\"{color}\"/>",
@@ -425,17 +519,58 @@ pub fn render_svg(spec: &ChartSpec) -> Result<String, String> {
         }
     }
 
-    // Lines
+    // Main-pane lines, with a legend
+    let mut series_i = 0usize;
+    let mut legend_x = x0 + 4.0;
     for (label, vs) in &spec.lines {
+        let color = series_color(series_i);
         let d = path_line(spec.ts, vs, &sx, &sy);
         if !d.is_empty() {
             svg.push_str(&format!(
-                "<path class=\"crow-series-{label}\" d=\"{d}\" fill=\"none\" stroke=\"var(--crow-accent)\" stroke-width=\"1.5\"/>"
+                "<path class=\"crow-series-{lab}\" d=\"{d}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"1.5\"/>",
+                lab = esc(label)
+            ));
+        }
+        svg.push_str(&format!(
+            "<text class=\"crow-legend\" x=\"{legend_x:.1}\" y=\"{y}\" fill=\"{color}\" font-size=\"10\">{lab}</text>",
+            y = mt + 10.0, lab = esc(label)
+        ));
+        legend_x += label.chars().count() as f64 * 6.2 + 10.0;
+        series_i += 1;
+    }
+
+    // Points on the main pane
+    for p in &spec.points {
+        if !p.ts.is_finite() || p.ts < t0 || p.ts > t1 {
+            continue;
+        }
+        let x = sx.map(p.ts);
+        let y = if p.y.is_finite() { sy.map(p.y) } else { mt + 6.0 };
+        let (shape, color) = match p.kind.as_str() {
+            "buy" => (
+                format!("<path d=\"M{x:.1} {y0:.1}L{xl:.1} {y1:.1}L{xr:.1} {y1:.1}Z\"", y0 = y + 3.0, y1 = y + 11.0, xl = x - 5.0, xr = x + 5.0),
+                "var(--crow-up)",
+            ),
+            "sell" => (
+                format!("<path d=\"M{x:.1} {y0:.1}L{xl:.1} {y1:.1}L{xr:.1} {y1:.1}Z\"", y0 = y - 3.0, y1 = y - 11.0, xl = x - 5.0, xr = x + 5.0),
+                "var(--crow-down)",
+            ),
+            _ => (format!("<circle cx=\"{x:.1}\" cy=\"{y:.1}\" r=\"3.5\""), "var(--crow-accent)"),
+        };
+        svg.push_str(&format!(
+            "{shape} class=\"crow-point crow-point-{kind}\" fill=\"{color}\"/>",
+            kind = esc(&p.kind)
+        ));
+        if !p.label.is_empty() {
+            svg.push_str(&format!(
+                "<text x=\"{tx:.1}\" y=\"{ty:.1}\" fill=\"{color}\" font-size=\"10\">{lab}</text>",
+                tx = x + 7.0, ty = y + 3.5, lab = esc(&p.label)
             ));
         }
     }
 
-    // Volume pane
+    // Volume strip
+    let mut strip_top = main_bot + gap;
     if has_vol {
         let vmax = spec
             .volume
@@ -444,30 +579,100 @@ pub fn render_svg(spec: &ChartSpec) -> Result<String, String> {
             .filter(|v| v.is_finite())
             .fold(0.0_f64, f64::max)
             .max(1.0);
-        let v_top = main_bot + 6.0;
-        let svy = Scale::new(0.0, vmax, spec.height - mb, v_top);
-        let band = (spec.width - ml - mr) / n as f64;
+        let bot = strip_top + vol_h;
+        let svy = Scale::new(0.0, vmax, bot, strip_top);
         let bw = (band * 0.8).max(1.0);
+        svg.push_str(&format!(
+            "<line x1=\"{x0}\" y1=\"{y:.1}\" x2=\"{x1}\" y2=\"{y:.1}\" stroke=\"var(--crow-border)\" stroke-width=\"1\"/>",
+            y = strip_top - gap / 2.0
+        ));
         for (i, v) in spec.volume.iter().enumerate() {
             if !v.is_finite() || *v <= 0.0 {
                 continue;
             }
-            let x = ml + band * (i as f64 + 0.5) - bw / 2.0;
+            let x = x0 + band * (i as f64 + 0.5) - bw / 2.0;
             let y = svy.map(*v);
             svg.push_str(&format!(
                 "<rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{bw:.1}\" height=\"{bh:.1}\" fill=\"var(--crow-muted)\" opacity=\"0.45\"/>",
-                bh = (spec.height - mb - y).max(0.5)
+                bh = (bot - y).max(0.5)
             ));
         }
+        strip_top = bot + gap;
     }
 
-    // Play-head marker
+    // Extra panes
+    for pane in &spec.panes {
+        let top = strip_top;
+        let bot = top + pane_h;
+        let mut all: Vec<&[f64]> = pane.lines.iter().map(|(_, v)| *v).collect();
+        let levels_slice: &[f64] = &pane.levels;
+        all.push(levels_slice);
+        let (lo, hi) = extent(&all);
+        let (lo, hi) = pad_domain(lo, hi);
+        let psy = Scale::new(lo, hi, bot, top);
+        svg.push_str(&format!(
+            "<g class=\"crow-pane\"><line x1=\"{x0}\" y1=\"{y:.1}\" x2=\"{x1}\" y2=\"{y:.1}\" stroke=\"var(--crow-border)\" stroke-width=\"1\"/>",
+            y = top - gap / 2.0
+        ));
+        for yt in y_ticks(lo, hi, 2) {
+            let y = psy.map(yt);
+            svg.push_str(&format!(
+                "<text x=\"{tx}\" y=\"{ty:.1}\" text-anchor=\"end\" fill=\"var(--crow-muted)\" font-size=\"10\">{lab}</text>",
+                tx = x0 - 6.0, ty = y + 3.5, lab = trim_num(yt)
+            ));
+        }
+        for lv in &pane.levels {
+            if !lv.is_finite() {
+                continue;
+            }
+            let y = psy.map(*lv);
+            svg.push_str(&format!(
+                "<line class=\"crow-level\" x1=\"{x0}\" y1=\"{y:.1}\" x2=\"{x1}\" y2=\"{y:.1}\" stroke=\"var(--crow-muted)\" stroke-width=\"1\" stroke-dasharray=\"3 3\"/>"
+            ));
+        }
+        let mut lx = x0 + 4.0;
+        for (label, vs) in &pane.lines {
+            let color = series_color(series_i);
+            let d = path_line(spec.ts, vs, &sx, &psy);
+            if !d.is_empty() {
+                svg.push_str(&format!(
+                    "<path class=\"crow-series-{lab}\" d=\"{d}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"1.2\"/>",
+                    lab = esc(label)
+                ));
+            }
+            svg.push_str(&format!(
+                "<text class=\"crow-legend\" x=\"{lx:.1}\" y=\"{y:.1}\" fill=\"{color}\" font-size=\"10\">{lab}</text>",
+                y = top + 9.0, lab = esc(label)
+            ));
+            lx += label.chars().count() as f64 * 6.2 + 10.0;
+            series_i += 1;
+        }
+        svg.push_str("</g>");
+        strip_top = bot + gap;
+    }
+
+    // Play-head marker, across every pane
     if spec.marker.is_finite() && spec.marker >= t0 && spec.marker <= t1 {
         let x = sx.map(spec.marker);
         svg.push_str(&format!(
             "<line class=\"crow-marker\" x1=\"{x:.1}\" y1=\"{mt}\" x2=\"{x:.1}\" y2=\"{yb}\" stroke=\"var(--crow-accent)\" stroke-width=\"1.5\" stroke-dasharray=\"4 3\"/>",
             yb = spec.height - mb
         ));
+    }
+
+    // Seek targets: one transparent band per bucket, on top of everything
+    if let Some(handler) = spec.seek {
+        let yb = spec.height - mb;
+        for (i, t) in spec.ts.iter().enumerate() {
+            if !t.is_finite() {
+                continue;
+            }
+            let x = x0 + band * i as f64;
+            svg.push_str(&format!(
+                "<rect class=\"crow-seek\" x=\"{x:.1}\" y=\"{mt}\" width=\"{bw:.2}\" height=\"{bh:.1}\" fill=\"transparent\" style=\"cursor:pointer\" data-crow-click=\"{h}\" data-crow-args=\"[{t}]\"/>",
+                bw = band, bh = yb - mt, h = esc(handler), t = trim_ts(*t)
+            ));
+        }
     }
 
     svg.push_str("</svg>");
@@ -480,5 +685,53 @@ fn trim_num(v: f64) -> String {
     } else {
         let s = format!("{:.2}", v);
         s.trim_end_matches('0').trim_end_matches('.').to_string()
+    }
+}
+
+/// A moment as a JSON number: whole seconds stay integers, fractions keep
+/// three places.
+fn trim_ts(t: f64) -> String {
+    if (t - t.round()).abs() < 1e-6 {
+        format!("{}", t.round() as i64)
+    } else {
+        let s = format!("{:.3}", t);
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    }
+}
+
+#[cfg(test)]
+mod render_tests {
+    use super::*;
+
+    fn spec<'a>(ts: &'a [f64], close: &'a [f64], rsi: &'a [f64]) -> ChartSpec<'a> {
+        ChartSpec {
+            ts,
+            candles: (&[], &[], &[], &[]),
+            lines: vec![("close", close)],
+            volume: &[],
+            marker: f64::NAN,
+            tz: "UTC",
+            width: 400.0,
+            height: 200.0,
+            panes: vec![Pane { lines: vec![("rsi", rsi)], levels: vec![70.0] }],
+            points: vec![Point { ts: ts[1], y: close[1], label: "B".into(), kind: "buy".into() }],
+            seek: Some("jump"),
+        }
+    }
+
+    #[test]
+    fn panes_points_and_seek_targets_render() {
+        let ts = [0.0, 60.0, 120.0];
+        let close = [1.0, 2.0, 1.5];
+        let rsi = [f64::NAN, 80.0, 40.0];
+        let svg = render_svg(&spec(&ts, &close, &rsi)).unwrap();
+        assert!(svg.contains("class=\"crow-pane\""));
+        assert!(svg.contains("crow-level"));
+        assert!(svg.contains("crow-series-rsi"));
+        assert!(svg.contains("crow-point-buy"));
+        assert!(svg.contains("data-crow-click=\"jump\" data-crow-args=\"[60]\""));
+        assert_eq!(svg.matches("crow-seek").count(), 3);
+        // the pane's own series takes the next palette color
+        assert!(svg.contains("var(--crow-series-2)"));
     }
 }

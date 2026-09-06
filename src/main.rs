@@ -527,6 +527,7 @@ fn cmd_test_docs() {
         ("db", modules::db::DB_FUNCTIONS.to_vec()),
         ("io", modules::io::IO_FUNCTIONS.to_vec()),
         ("doc", modules::doc::DOC_FUNCTIONS.to_vec()),
+        ("chart", modules::chart::CHART_FUNCTIONS.to_vec()),
     ];
     for (_, names) in tables.iter_mut() { names.sort(); names.dedup(); }
     let known: BTreeSet<&str> = tables.iter().flat_map(|(_, ns)| ns.iter().copied()).collect();
@@ -596,7 +597,7 @@ fn cmd_test_docs() {
             page_blocks.push((p.strip_prefix(book_dir).unwrap_or(p).to_string_lossy().to_string(), title, mine));
         }
     }
-    for m in ["math", "math.stats", "math.nn", "frame", "io", "db", "doc", "web", "ui"] {
+    for m in ["math", "math.stats", "math.nn", "frame", "io", "db", "doc", "chart", "web", "ui"] {
         let used = blocks.lines().any(|l| l.starts_with("use ") && l[4..].split(',').any(|part| {
             let part = part.trim();
             let base = part.split(" as ").next().unwrap_or(part).trim();
@@ -723,6 +724,7 @@ fn cmd_test_docs() {
     if let Some(d) = section("### db") { add("db", "db", "use db", "db", "Databases as connections: query, exec, bulk insert, transactions, migrations, and pooling.", one(Some(d)), vec![]); }
     if let Some(i) = section("### io") { add("io", "io", "use io", "io", "Structured file parsing beyond the built-in read and write.", one(Some(i)), vec![]); }
     if let Some(d) = section("### doc") { add("doc", "doc", "use doc", "doc", "Documentation from Markdown, rendered by the kernel so both execution modes write the same pages.", one(Some(d)), vec![]); }
+    if let Some(c) = section("### chart") { add("chart", "chart", "use chart", "chart", "Technical indicators for the chart element, computed by the kernel so both execution modes draw the same numbers.", one(Some(c)), vec![]); }
     // web splits where the spec does: the view side (`use ui`) and the server side (`use web`)
     // (the spec's `### web` runs, through the `### Layout` section, up to `### db`)
     if let (Some((w0, _)), Some((d0, _))) = (section("### web"), section("### db")) {

@@ -16,5 +16,6 @@ pub mod signal;
 pub mod sparse;
 pub mod special;
 pub mod stats;
+pub mod ta;
 pub mod tensor;
 

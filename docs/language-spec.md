@@ -1936,6 +1936,48 @@ for i in range[len[toc]]
 ```
 
 
+### chart
+
+Import with `use chart`. Technical indicators for the chart element, computed by the kernel (`crow_runtime::ta`) so the interpreter and compiled programs draw the same numbers. Every function takes series — frame columns or arrays of numbers — and returns a series of the same length, `NaN` where the value is not yet defined (a 14-period RSI has no value on row 3), so a chart draws a gap instead of a guess. Put a result back into the frame with `with[frame, name, series]` and name the column in `lines = [...]` or `panes = [...]`.
+
+| Function | Description |
+|----------|-------------|
+| `sma[values, n]` | Simple moving average over the last `n` rows |
+| `ema[values, n]` | Exponential moving average, smoothing `2/(n+1)`, seeded by the first `n` rows' mean |
+| `rsi[values, n]` | Wilder's relative strength index over `n` deltas (0–100; 50 when flat) |
+| `rsi[ts, values, n, secs]` | RSI on clock-aligned buckets of `secs` seconds over finer rows — a 14-period RSI on 3-minute candles drawn over 1-second bars: completed buckets feed the smoothing once, and rows inside the forming bucket see a provisional value from the latest close, so history never changes and the newest value moves with the tape |
+| `macd[values, fast, slow, signal]` | A frame with columns `line` (fast EMA − slow EMA), `signal` (its EMA), `hist` (their difference) |
+| `vwap[price, vol]` | Cumulative volume-weighted average price from the first row |
+| `vwap[ts, price, vol, secs]` | VWAP over the trailing `secs` seconds (rows with `ts >= t − secs`) |
+| `rolling_sum[ts, values, secs]` | Sum over the trailing `secs` seconds |
+| `cvd[close, vol]` | Cumulative volume delta: volume counted positive when the close rose, negative when it fell |
+
+`ts` is a column of moments (seconds). A wrong number of arguments is an error naming the forms.
+
+```
+use chart, frame
+
+bars = frame.new[]
+bars = with[bars, 'ts', [0.0, 60.0, 120.0, 180.0, 240.0, 300.0]]
+bars = with[bars, 'c', [10.0, 11.0, 10.5, 11.5, 12.0, 11.0]]
+bars = with[bars, 'vol', [100.0, 200.0, 150.0, 300.0, 250.0, 100.0]]
+bars = with[bars, 'sma3', sma[bars.c, 3]]
+bars = with[bars, 'rsi3', rsi[bars.c, 3]]
+bars = with[bars, 'vwap', vwap[bars.c, bars.vol]]
+log[bars.sma3[5]]      --- 11.5
+log[bars.rsi3[5]]      --- 50
+log[bars.vwap[1]]      --- 10.666666666666666
+```
+
+In a view, the columns become panes with reference levels:
+
+```
+chart[bars, candles = ['o', 'hi', 'lo', 'c'], lines = ['vwap'], bars_y = 'vol',
+      panes = [['rsi3'], ['cvd']], levels = map[rsi3 = [30, 70], cvd = [0]],
+      points = fills, seek = jump, marker = clock, tz = 'America/New_York']
+```
+
+
 ### frame
 
 Import with `use frame`. Column-oriented DataFrames for tabular data. See `docs/frame-module.md` for design details.
@@ -2128,8 +2170,12 @@ view render[]
 | `marker` | `0` | A moment marked with a vertical play-head |
 | `tz` | `'UTC'` | Timezone for the axis ticks |
 | `height` | `320` | Height in pixels |
+| `panes` | `[]` | Lists of column names, each list drawn as its own strip under the volume with its own scale: `[['rsi'], ['cvd']]` |
+| `levels` | `0` | Reference lines keyed by column, drawn dashed in the pane that holds the column: `map[rsi = [30, 70], cvd = [0]]` |
+| `points` | `0` | A frame of markers on the main pane — columns `ts`, `y`, and optionally `label` and `kind` (`'buy'` an up triangle in the up color, `'sell'` a down triangle in the down color, anything else a dot) |
+| `seek` | `0` | A handler: every bucket becomes a click target and the handler receives the bucket's moment — `seek = jump` with `fn jump[t]` |
 
-Colors come from the style tokens (`--crow-up`, `--crow-down`, `--crow-accent`), so every chart is theme-correct with no color plumbing. An empty frame renders a placeholder rather than an error; a frame over the point budget (1000 points) refuses with an error that says to aggregate first — coarser rows from the query, or `head[frame, n]` — never a silent downsample. The geometry and the SVG assembly live in `crow_runtime::chart`, so both modes emit identical markup. Design and roadmap: `chart-module-design.md`.
+Colors come from the style tokens (`--crow-up`, `--crow-down`, `--crow-accent`, and `--crow-series-2` … `--crow-series-6` for the second line onward, counted across the whole chart), so every chart is theme-correct with no color plumbing. Every line series is named in a legend at the top of its pane. The indicators a pane usually draws come from `use chart` (`### chart`). An empty frame renders a placeholder rather than an error; a frame over the point budget (1000 points) refuses with an error that says to aggregate first — coarser rows from the query, or `head[frame, n]` — never a silent downsample. The geometry and the SVG assembly live in `crow_runtime::chart`, so both modes emit identical markup. Design and roadmap: `chart-module-design.md`.
 
 #### Styling — the default stylesheet
 

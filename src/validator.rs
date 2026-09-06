@@ -380,7 +380,7 @@ impl<'a> Validator<'a> {
                 // Built-in modules: register all their function and constant names
                 // so validate_call doesn't flag them as undefined.
                 // The registry was already populated during type inference (Pass 1).
-                if path == "math" || path == "math.stats" || path == "math.nn" || path == "io" || path == "frame" || path == "doc" {
+                if path == "math" || path == "math.stats" || path == "math.nn" || path == "io" || path == "frame" || path == "doc" || path == "chart" {
                     if path == "math" || path.starts_with("math.") {
                         self.defined_vars.insert("math".to_string());
                     }
@@ -452,7 +452,7 @@ impl<'a> Validator<'a> {
                                 .unwrap_or_else(|| mod_name.to_string());
                             let registry_module = matches!(
                                 real_mod.as_str(),
-                                "math" | "io" | "frame" | "db" | "doc" | "math.stats" | "math.nn"
+                                "math" | "io" | "frame" | "db" | "doc" | "chart" | "math.stats" | "math.nn"
                             ) && self.ctx.registry.has_function(field);
                             if !registry_module
                                 && !self.ctx.functions.contains_key(&prefixed)
@@ -782,7 +782,7 @@ impl<'a> Validator<'a> {
             "calendar" | "parse_time" => argc == 2,
             "now" => argc == 0,
             "captured" => argc == 1,
-            "chart" => argc == 8,
+            "chart" => argc == 12,
             "push" | "append" => argc == 2,
             "pop" | "sort" | "reverse" => argc == 1,
             "range" => argc >= 1 && argc <= 3,

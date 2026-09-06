@@ -487,6 +487,13 @@ impl Transpiler {
     fn collect_event_handler_refs(expr: &Expr, known_fns: &std::collections::HashSet<String>, handlers: &mut std::collections::HashSet<String>) {
         match expr {
             Expr::Call { callee, args } => {
+                // chart[..., seek = jump] (lowered: positional arg 11) — the
+                // handler every bucket's click goes to
+                if let Some(f) = chart_seek_handler(callee, args) {
+                    if known_fns.contains(f) {
+                        handlers.insert(f.to_string());
+                    }
+                }
                 // Check first arg for Map with event keys
                 if let Some(first_arg) = args.first() {
                     if let Expr::Map(pairs) = first_arg {
@@ -913,6 +920,11 @@ impl Transpiler {
                 if path == "doc" {
                     if !self.registry.is_loaded("doc") {
                         self.registry.load(std::sync::Arc::new(crate::modules::doc::DocModule));
+                    }
+                }
+                if path == "chart" {
+                    if !self.registry.is_loaded("chart") {
+                        self.registry.load(std::sync::Arc::new(crate::modules::chart::ChartModule));
                     }
                 }
                 self.modules.insert(module_name);
@@ -2286,11 +2298,16 @@ impl Transpiler {
                                 || (matches!(existing_ty, CrowType::Float)
                                     && matches!(inner.as_ref(), CrowType::Int))
                             {
+                                let in_view = self.needs_ui && self.ctx.views.contains(&self.current_function_name);
                                 let abort = if matches!(
                                     self.current_fn_return_type,
                                     Some(CrowType::Result(_))
                                 ) {
                                     "return CrowResult { ok: false, value: Default::default(), reason: _asg.reason.clone(), kind: _asg.kind.clone(), trace: _asg.trace.clone(), captured: 0.0 };".to_string()
+                                } else if in_view {
+                                    // a view renders what it is given: the
+                                    // failed frame's reason becomes the page
+                                    "return CrowVNode::text(&format!(\"error: {}\", _asg.reason));".to_string()
                                 } else {
                                     "return;".to_string()
                                 };
@@ -2654,6 +2671,12 @@ impl Transpiler {
             self.needs_crow_runtime = true;
             if !self.registry.is_loaded("doc") {
                 self.registry.load(std::sync::Arc::new(crate::modules::doc::DocModule));
+            }
+        }
+        if path == "chart" {
+            self.needs_crow_runtime = true;
+            if !self.registry.is_loaded("chart") {
+                self.registry.load(std::sync::Arc::new(crate::modules::chart::ChartModule));
             }
         }
         // Handle web.* modules → crow_web crate with feature flags
@@ -4580,20 +4603,43 @@ impl Transpiler {
                     // table[frame] → CrowVNode::table_from_data from CrowFrame columns/rows.
                     // A fallible frame (query result) renders its reason on error —
                     // a view renders what it's given.
-                    if name == "chart" && self.needs_ui && arg_strs.len() == 8 {
+                    if name == "chart" && self.needs_ui && arg_strs.len() == 12 {
                         let frame_ty = self.ctx.infer_expr(&args[0]);
+                        // levels: map[col = [values]] — 0 means none
+                        let levels = match &args[9] {
+                            Expr::Int(0) => "()".to_string(),
+                            _ => arg_strs[9].clone(),
+                        };
+                        let seek = match &args[11] {
+                            Expr::Ident(f) if self.ctx.functions.contains_key(f) => format!("Some(\"{}\")", f),
+                            _ => "None".to_string(),
+                        };
                         let core = format!(
-                            "CrowVNode::chart_from_frame(_f, &{x}, &{cd}, &{ln}, &{by}, {{ let _m: f64 = ({mk}) as f64; if _m <= 0.0 {{ f64::NAN }} else {{ _m }} }}, &{tz}, ({h}) as f64)",
+                            "CrowVNode::chart_from_frame(_f, &{x}, &{cd}, &{ln}, &{by}, {{ let _m: f64 = ({mk}) as f64; if _m <= 0.0 {{ f64::NAN }} else {{ _m }} }}, &{tz}, ({h}) as f64, &{pn}, &{lv}, _pts, {sk})",
                             x = arg_strs[1], cd = arg_strs[2], ln = arg_strs[3],
-                            by = arg_strs[4], mk = arg_strs[5], tz = arg_strs[6], h = arg_strs[7]
+                            by = arg_strs[4], mk = arg_strs[5], tz = arg_strs[6], h = arg_strs[7],
+                            pn = arg_strs[8], lv = levels, sk = seek
                         );
+                        // points: 0 means none; a fallible frame that failed
+                        // draws no markers rather than failing the chart
+                        let with_points = match &args[10] {
+                            Expr::Int(0) => format!("{{ let _pts: Option<&crow_runtime::frame::CrowFrame> = None; {} }}", core),
+                            _ if matches!(self.ctx.infer_expr(&args[10]), CrowType::Result(_)) => format!(
+                                "{{ let _pr = {}; let _pts = if _pr.ok {{ Some(&_pr.value) }} else {{ None }}; {} }}",
+                                arg_strs[10], core
+                            ),
+                            _ => format!(
+                                "{{ let _pf: &crow_runtime::frame::CrowFrame = &{}; let _pts = Some(_pf); {} }}",
+                                arg_strs[10], core
+                            ),
+                        };
                         if matches!(frame_ty, CrowType::Result(_)) {
                             return format!(
                                 "{{ let _fr = {}; if !_fr.ok {{ CrowVNode::text(&format!(\"chart error: {{}}\", _fr.reason)) }} else {{ let _f = &_fr.value; {} }} }}",
-                                arg_strs[0], core
+                                arg_strs[0], with_points
                             );
                         }
-                        return format!("{{ let _f = &{}; {} }}", arg_strs[0], core);
+                        return format!("{{ let _f = &{}; {} }}", arg_strs[0], with_points);
                     }
                     if name == "table" && self.needs_ui && arg_strs.len() == 1 {
                         let arg_ty = self.ctx.infer_expr(&args[0]);
@@ -4779,7 +4825,7 @@ impl Transpiler {
                             .get(mod_name.as_str())
                             .cloned()
                             .unwrap_or_else(|| mod_name.to_string());
-                        if matches!(real_mod.as_str(), "math" | "io" | "frame" | "doc" | "math.stats" | "math.nn")
+                        if matches!(real_mod.as_str(), "math" | "io" | "frame" | "doc" | "chart" | "math.stats" | "math.nn")
                             && self.registry.has_function(field)
                         {
                             let bare = Expr::Call {
@@ -7795,5 +7841,17 @@ mod tests {
         // Regression: bare-name force conversion removed — quoted strings pass through
         let rust = transpile("use frame\ndf = load['d.csv']\ns = sort[df, 'age', desc = true]\n");
         assert!(rust.contains("\"age\""), "column name string should appear in codegen\n{}", rust);
+    }
+}
+/// `chart[..., seek = handler]` after lowering: twelve positional args with
+/// the handler's name in the last slot. Every pass that discovers event
+/// handlers asks this so the seek target counts as one.
+pub(crate) fn chart_seek_handler<'a>(callee: &Expr, args: &'a [Expr]) -> Option<&'a str> {
+    match callee {
+        Expr::Ident(n) if n == "chart" && args.len() == 12 => match &args[11] {
+            Expr::Ident(f) => Some(f.as_str()),
+            _ => None,
+        },
+        _ => None,
     }
 }

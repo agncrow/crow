@@ -203,10 +203,10 @@ pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: O
 
 /// The kernel stylesheet: theme tokens, element defaults, and the eight
 /// classes — every served page and every exported document starts here.
-pub const DEFAULT_CSS: &str = r#":root{--crow-bg:#f6f7f9;--crow-surface:#ffffff;--crow-text:#1b222b;--crow-muted:#5d6773;--crow-border:#dce1e8;--crow-accent:#a86e1c;--crow-up:#177a4e;--crow-down:#bd3a3a}
-@media (prefers-color-scheme:dark){:root{--crow-bg:#0f1317;--crow-surface:#171d24;--crow-text:#e6e9ec;--crow-muted:#8b95a1;--crow-border:#28313c;--crow-accent:#e8a940;--crow-up:#3dbd85;--crow-down:#e06060}}
-:root[data-theme="dark"]{--crow-bg:#0f1317;--crow-surface:#171d24;--crow-text:#e6e9ec;--crow-muted:#8b95a1;--crow-border:#28313c;--crow-accent:#e8a940;--crow-up:#3dbd85;--crow-down:#e06060}
-:root[data-theme="light"]{--crow-bg:#f6f7f9;--crow-surface:#ffffff;--crow-text:#1b222b;--crow-muted:#5d6773;--crow-border:#dce1e8;--crow-accent:#a86e1c;--crow-up:#177a4e;--crow-down:#bd3a3a}
+pub const DEFAULT_CSS: &str = r#":root{--crow-bg:#f6f7f9;--crow-surface:#ffffff;--crow-text:#1b222b;--crow-muted:#5d6773;--crow-border:#dce1e8;--crow-accent:#a86e1c;--crow-up:#177a4e;--crow-down:#bd3a3a;--crow-series-2:#2f6fb5;--crow-series-3:#7c4dbd;--crow-series-4:#178a8a;--crow-series-5:#c23d7a;--crow-series-6:#d2701a}
+@media (prefers-color-scheme:dark){:root{--crow-bg:#0f1317;--crow-surface:#171d24;--crow-text:#e6e9ec;--crow-muted:#8b95a1;--crow-border:#28313c;--crow-accent:#e8a940;--crow-up:#3dbd85;--crow-down:#e06060;--crow-series-2:#5b9cf0;--crow-series-3:#a884ee;--crow-series-4:#3cc0c0;--crow-series-5:#ee6fa8;--crow-series-6:#f09a4a}}
+:root[data-theme="dark"]{--crow-bg:#0f1317;--crow-surface:#171d24;--crow-text:#e6e9ec;--crow-muted:#8b95a1;--crow-border:#28313c;--crow-accent:#e8a940;--crow-up:#3dbd85;--crow-down:#e06060;--crow-series-2:#5b9cf0;--crow-series-3:#a884ee;--crow-series-4:#3cc0c0;--crow-series-5:#ee6fa8;--crow-series-6:#f09a4a}
+:root[data-theme="light"]{--crow-bg:#f6f7f9;--crow-surface:#ffffff;--crow-text:#1b222b;--crow-muted:#5d6773;--crow-border:#dce1e8;--crow-accent:#a86e1c;--crow-up:#177a4e;--crow-down:#bd3a3a;--crow-series-2:#2f6fb5;--crow-series-3:#7c4dbd;--crow-series-4:#178a8a;--crow-series-5:#c23d7a;--crow-series-6:#d2701a}
 *{box-sizing:border-box}
 body{margin:0 auto;max-width:860px;padding:2.2rem 1.25rem 4rem;background:var(--crow-bg);color:var(--crow-text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:15px;line-height:1.55}
 h1{font-size:1.45rem;font-weight:650;letter-spacing:-0.015em;margin:0 0 0.25rem}

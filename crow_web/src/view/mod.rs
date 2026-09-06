@@ -218,6 +218,10 @@ impl CrowVNode {
         marker: f64,
         tz: &str,
         height: f64,
+        panes: &[Vec<String>],
+        levels: &dyn crow_runtime::chart::LevelMap,
+        points: Option<&crow_runtime::frame::CrowFrame>,
+        seek: Option<&str>,
     ) -> Self {
         let col = |name: &str| -> Vec<f64> {
             f.col_native(name).map(|c| c.to_f64_vec()).unwrap_or_default()
@@ -238,6 +242,36 @@ impl CrowVNode {
         let lines_data: Vec<(String, Vec<f64>)> =
             line_cols.iter().map(|n| (n.clone(), col(n))).collect();
         let vol = if bars_y.is_empty() { vec![] } else { col(bars_y) };
+        // Panes: each a list of column names; a pane draws the levels of
+        // every column it holds
+        let pane_data: Vec<Vec<(String, Vec<f64>)>> = panes
+            .iter()
+            .map(|cols| cols.iter().map(|n| (n.clone(), col(n))).collect())
+            .collect();
+        let pane_specs: Vec<crow_runtime::chart::Pane> = pane_data
+            .iter()
+            .map(|lines| crow_runtime::chart::Pane {
+                lines: lines.iter().map(|(n, v)| (n.as_str(), v.as_slice())).collect(),
+                levels: lines.iter().flat_map(|(n, _)| levels.levels_for(n)).collect(),
+            })
+            .collect();
+        // Points: a frame with ts, y, label, kind columns (label and kind optional)
+        let point_specs: Vec<crow_runtime::chart::Point> = points
+            .map(|pf| {
+                let pts = pf.col_native("ts").map(|c| c.to_f64_vec()).unwrap_or_default();
+                let ys = pf.col_native("y").map(|c| c.to_f64_vec()).unwrap_or_default();
+                let labels = pf.col_native("label");
+                let kinds = pf.col_native("kind");
+                (0..pts.len())
+                    .map(|i| crow_runtime::chart::Point {
+                        ts: pts[i],
+                        y: ys.get(i).cloned().unwrap_or(f64::NAN),
+                        label: labels.as_ref().map(|c| c.get_str(i)).unwrap_or_default(),
+                        kind: kinds.as_ref().map(|c| c.get_str(i)).unwrap_or_default(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let spec = crow_runtime::chart::ChartSpec {
             ts: &ts,
             candles: (&o, &h, &l, &c4),
@@ -247,6 +281,9 @@ impl CrowVNode {
             tz,
             width: 720.0,
             height,
+            panes: pane_specs,
+            points: point_specs,
+            seek,
         };
         match crow_runtime::chart::render_svg(&spec) {
             Ok(svg) => CrowVNode::Raw(svg),
