@@ -1,0 +1,33 @@
+--- Indicators are kernel math: both modes compute the same numbers from
+--- the same columns, and a result goes back into the frame with `with`.
+use chart, frame
+
+f = frame.new[]
+f = with[f, 'ts', [0.0, 60.0, 120.0, 180.0, 240.0, 300.0, 360.0, 420.0]]
+f = with[f, 'c', [10.0, 11.0, 10.5, 11.5, 12.0, 11.0, 11.8, 12.5]]
+f = with[f, 'v', [100.0, 200.0, 150.0, 300.0, 250.0, 100.0, 200.0, 400.0]]
+f = with[f, 'sma3', sma[f.c, 3]]
+f = with[f, 'ema3', ema[f.c, 3]]
+f = with[f, 'rsi3', rsi[f.c, 3]]
+f = with[f, 'rsi_2m', rsi[f.ts, f.c, 2, 120.0]]
+f = with[f, 'vwap', vwap[f.c, f.v]]
+f = with[f, 'vwap_2m', vwap[f.ts, f.c, f.v, 120.0]]
+f = with[f, 'vol_2m', rolling_sum[f.ts, f.v, 120.0]]
+f = with[f, 'cvd', cvd[f.c, f.v]]
+log[f.columns]
+log[len[f]]
+log[f.sma3[2]]
+log[f.sma3[7]]
+log[f.ema3[7]]
+log[f.rsi3[7]]
+log[f.rsi_2m[7]]
+log[f.vwap[1]]
+log[f.vwap_2m[7]]
+log[f.vol_2m[7]]
+log[f.cvd[7]]
+m = macd[f.c, 2, 4, 2]
+log[m.columns]
+log[len[m]]
+log[m.hist[7]]
+--- qualified names work too, and a wrong arity teaches the forms
+log[chart.sma[[1.0, 2.0, 3.0, 4.0], 2][3]]

@@ -379,6 +379,11 @@ impl TypeContext {
                             self.registry.load(std::sync::Arc::new(crate::modules::doc::DocModule));
                         }
                     }
+                    if path == "chart" {
+                        if !self.registry.is_loaded("chart") {
+                            self.registry.load(std::sync::Arc::new(crate::modules::chart::ChartModule));
+                        }
+                    }
                     if path == "db" {
                         if !self.registry.is_loaded("db") {
                             self.registry.load(std::sync::Arc::new(crate::modules::db::DbModule));
@@ -426,7 +431,15 @@ impl TypeContext {
                             collect_event_call_handlers(v, fns, out);
                         }
                     }
-                    Expr::Call { args, .. } => for a in args { collect_event_call_handlers(a, fns, out); },
+                    Expr::Call { callee, args } => {
+                        // chart[..., seek = jump]: the seek target is a handler
+                        if let Some(f) = crate::transpiler::chart_seek_handler(callee, args) {
+                            if fns.contains_key(f) {
+                                out.insert(f.to_string());
+                            }
+                        }
+                        for a in args { collect_event_call_handlers(a, fns, out); }
+                    }
                     Expr::Array(items) => for i in items { collect_event_call_handlers(i, fns, out); },
                     Expr::Named { name, value } => {
                         if matches!(name.as_str(), "click" | "input" | "submit" | "change" | "seek") {
@@ -588,6 +601,53 @@ impl TypeContext {
                 }
             }
             self.view_handlers = handlers;
+
+            // A seek handler receives the clicked bucket's moment: its
+            // first parameter is a float whether or not a call site says so.
+            fn seek_expr(e: &Expr, out: &mut Vec<String>) {
+                match e {
+                    Expr::Call { callee, args } => {
+                        if let Some(f) = crate::transpiler::chart_seek_handler(callee, args) {
+                            out.push(f.to_string());
+                        }
+                        seek_expr(callee, out);
+                        for a in args { seek_expr(a, out); }
+                    }
+                    Expr::BinOp { left, right, .. } => { seek_expr(left, out); seek_expr(right, out); }
+                    Expr::UnaryOp { expr, .. } => seek_expr(expr, out),
+                    Expr::FieldAccess { object, .. } => seek_expr(object, out),
+                    Expr::Array(items) => for i in items { seek_expr(i, out); },
+                    Expr::Map(pairs) => for (k, v) in pairs { seek_expr(k, out); seek_expr(v, out); },
+                    Expr::Named { value, .. } => seek_expr(value, out),
+                    Expr::ForExpr { iter, body, .. } => { seek_expr(iter, out); seek_stmts(body, out); }
+                    _ => {}
+                }
+            }
+            fn seek_stmts(stmts: &[Stmt], out: &mut Vec<String>) {
+                for st in stmts {
+                    match st {
+                        Stmt::Assign { value, .. } => seek_expr(value, out),
+                        Stmt::ExprStmt(e) | Stmt::Return(Some(e)) => seek_expr(e, out),
+                        Stmt::If { condition, then_body, else_body } => {
+                            seek_expr(condition, out);
+                            seek_stmts(then_body, out);
+                            if let Some(eb) = else_body { seek_stmts(eb, out); }
+                        }
+                        Stmt::For { body, .. } | Stmt::While { body, .. } => seek_stmts(body, out),
+                        Stmt::FnDecl { body, .. } => seek_stmts(body, out),
+                        _ => {}
+                    }
+                }
+            }
+            let mut seeks = Vec::new();
+            seek_stmts(stmts, &mut seeks);
+            for f in seeks {
+                if let Some(sig) = self.functions.get_mut(&f) {
+                    if let Some(p) = sig.params.first_mut() {
+                        p.1 = CrowType::Float;
+                    }
+                }
+            }
         }
 
         // Pass 2+: iterate call-site scanning and function body inference
@@ -2306,7 +2366,7 @@ impl TypeContext {
                             .get(_mod_name.as_str())
                             .cloned()
                             .unwrap_or_else(|| _mod_name.to_string());
-                        if matches!(_real_mod.as_str(), "math" | "io" | "frame" | "db" | "doc" | "math.stats" | "math.nn")
+                        if matches!(_real_mod.as_str(), "math" | "io" | "frame" | "db" | "doc" | "chart" | "math.stats" | "math.nn")
                             && self.registry.has_function(field)
                         {
                             if let Some(t) = self.registry.type_of_in(&_real_mod, field, args.len()) {

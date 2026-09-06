@@ -914,6 +914,11 @@ impl Interpreter {
             self.registry.load(std::sync::Arc::new(crate::modules::doc::DocModule));
             return Ok(());
         }
+        // Built-in module: chart — indicators for the chart element
+        if module_path == "chart" {
+            self.registry.load(std::sync::Arc::new(crate::modules::chart::ChartModule));
+            return Ok(());
+        }
 
         // Pre-expanded user module (views.home → views/home.crow already
         // inlined with prefixed names): loading it again would create a
@@ -1924,6 +1929,33 @@ impl Interpreter {
                         }
                     };
                     let marker = as_f64(&vals[5]);
+                    // panes = [['rsi'], ['cvd']]: one strip per inner list
+                    let panes: Vec<Vec<String>> = match &vals[8].value {
+                        Value::Array(items) => items.iter().map(|i| str_list(i)).collect(),
+                        _ => vec![],
+                    };
+                    // levels = map[rsi = [30, 70], cvd = [0]]: reference
+                    // lines, keyed by the column whose pane draws them
+                    let mut levels: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
+                    if let Value::Map(m) = &vals[9].value {
+                        for (k, v) in m.iter() {
+                            let row = match &v.value {
+                                Value::Array(xs) => xs.iter().map(as_f64).collect(),
+                                Value::NumArray(t) => t.to_vec(),
+                                Value::Int(_) | Value::Float(_) => vec![as_f64(v)],
+                                _ => vec![],
+                            };
+                            levels.insert(k.clone(), row);
+                        }
+                    }
+                    let points = match &vals[10].value {
+                        Value::Frame(pf) => Some(pf),
+                        _ => None,
+                    };
+                    let seek = match &vals[11].value {
+                        Value::Fn(func) => Some(func.name.clone()),
+                        _ => None,
+                    };
                     let node = crow_web::view::CrowVNode::chart_from_frame(
                         f,
                         &as_str(&vals[1]),
@@ -1933,6 +1965,10 @@ impl Interpreter {
                         if marker <= 0.0 { f64::NAN } else { marker },
                         &as_str(&vals[6]),
                         as_f64(&vals[7]),
+                        &panes,
+                        &levels,
+                        points,
+                        seek.as_deref(),
                     );
                     return Ok(CrowValue::ok(Value::Str(node.to_html())));
                 }

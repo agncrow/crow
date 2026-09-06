@@ -1,3 +1,4 @@
+pub mod chart;
 pub mod db;
 pub mod doc;
 pub mod frame;
@@ -91,6 +92,7 @@ impl ModuleRegistry {
         r.load(Arc::new(crate::modules::frame::FrameModule));
         r.load(Arc::new(crate::modules::db::DbModule));
         r.load(Arc::new(crate::modules::doc::DocModule));
+        r.load(Arc::new(crate::modules::chart::ChartModule));
         r
     }
 
