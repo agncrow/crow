@@ -58,6 +58,7 @@
   - [Slow Work and the Live Loop](ch12-04-background-work.md)
   - [Testing a Live App](ch12-05-testing-live-apps.md)
   - [Charts and Styling](ch12-06-charts-and-style.md)
+  - [The Element Vocabulary](ch12-07-vocabulary.md)
 
 - [Final Project: A Live Dashboard](ch13-00-final-project.md)
   - [Loading and Shaping the Data](ch13-01-data.md)

@@ -2072,7 +2072,7 @@ serve[3000]
 page['/', render]
 ```
 
-**Inside a view, the standard HTML element vocabulary is active** — `div`, `span`, `p`, `h1`, `h2`, `h3`, `h4`, `h5`, `h6`, `button`, `ul`, `ol`, `li`, `form`, `a`, `nav`, `header`, `footer`, `section`, `tr`, `td`, `th`, `thead`, `tbody`, `option`, `textarea`, `label`, `pre`, `code`, `input`, `img`, `table` — with their exact HTML names. **Outside a view, those names don't exist**: `p = 0.95`, `fn add[a, b]`, and `form = req.body` are ordinary code in any ui program, and `use ui` reserves nothing in your file. Calling an element outside a view is an error that points at the fix.
+**Inside a view, the standard HTML element vocabulary is active** — plus the vocabulary's own elements: the containers `stack`, `row`, `grid`, `overlay`, `scroll`, the layers `modal`, `drawer`, `toast`, and `details`, `summary`, `dropdown`, `divider` (Revealing and framing, below) — `div`, `span`, `p`, `h1`, `h2`, `h3`, `h4`, `h5`, `h6`, `button`, `ul`, `ol`, `li`, `form`, `a`, `nav`, `header`, `footer`, `section`, `tr`, `td`, `th`, `thead`, `tbody`, `option`, `textarea`, `label`, `pre`, `code`, `input`, `img`, `table` — with their exact HTML names. **Outside a view, those names don't exist**: `p = 0.95`, `fn add[a, b]`, and `form = req.body` are ordinary code in any ui program, and `use ui` reserves nothing in your file. Calling an element outside a view is an error that points at the fix.
 
 Views compose: a view calls other views (components) and ordinary functions freely. A module can export views — importers reach them qualified, like any module name:
 
@@ -2102,11 +2102,21 @@ Top-level variables in a ui program are reactive state (see Function Scope). Thr
 |---|---|
 | `fetch[url]` | Reactive state loaded once by HTTP GET when the page connects |
 | `poll[url, seconds]` | Reactive state re-fetched every `seconds`; every reader re-renders when it changes |
-| `field[label, var]` | A labeled input two-way bound to reactive variable `var` (inside a view) |
+| `field[label, var, type = '', lines = 0]` | A labeled input two-way bound to reactive variable `var` (inside a view). `type` is the input's kind — `'text'`, `'number'`, `'date'`, `'time'`, `'password'` — and defaults to `'number'` for an int or float variable; `lines = 3` makes it a textarea |
+| `slider[label, var, min = 0, max = 100, step = 1]` | A range input bound to a number |
+| `checkbox[label, var]` | A checkbox bound to a bool |
+| `toggle[label, var]` | A switch bound to a bool — the same binding as `checkbox`, drawn as a toggle |
+| `radio[options, var]` | One of several strings, as radio buttons: `radio[['buy', 'sell'], side]` |
+| `tabs[options, var]` | One of several strings, as a tab strip; the view shows the selected tab's content with `if mode eq 'Practice'` |
+| `select[options, var]` | One of several strings, as a dropdown list |
+| `progress[value, max = 1.0]` | A progress bar |
+| `icon[name, size = 'm', color = '']` | An icon from the closed set (below), sized by the type scale, colored by a token |
+
+Inputs are state: the reader's change lands in the variable, the handlers read it, and the next render draws it. There is no "value of the input" apart from the variable.
 
 #### Tables over frames
 
-`table[frame]` renders a frame's rows. Three named arguments make it interactive: `click = handler` sends the row's key to the handler when a row is clicked (`fn focus[symbol]`), `key = 'col'` names the column whose cell is sent (the first column by default), and `mark = 'col'` names a column whose truthy cells put the class `marked` on their row, tinted by the stylesheet.
+`table[frame]` renders a frame's rows. Numeric columns are typed: their cells carry the class `num` and the stylesheet right-aligns them with tabular figures. Four named arguments make it interactive and legible: `click = handler` sends the row's key to the handler when a row is clicked (`fn focus[symbol]`), `key = 'col'` names the column whose cell is sent (the first column by default), `mark = 'col'` names a column whose truthy cells put the class `marked` on their row, tinted by the stylesheet, and `delta = ['pnl', 'pct']` names columns whose cells are colored by sign (`up` / `down`).
 
 #### Sliders
 
@@ -2145,8 +2155,28 @@ Pages are composed from layout primitives, never styled with CSS. Five container
 | `color`, `background` | a colour token: `text muted accent up down surface bg` — never a literal colour |
 | `lines = 2` | clamp a wrapping paragraph |
 | `below = 'phone' \| 'tablet'`, `becomes = 'stack'`, `columns_then = 1`, `hidden_below` | responsive rules at named widths (phone < 600, tablet < 1024) — no media queries |
+| `open = true`, `side = 'left' \| 'right'` | a disclosure's or layer's state (any bool expression) and a drawer's or dropdown's side |
+| `tip = 'text'`, `fit = 'cover' \| 'contain'`, `active = '/path'` | a tooltip on anything; how an `img` fills its `aspect` box; the current page of a `nav` |
 
 Layout attributes are literals; a wrong value is a compile error naming the scale (`gap = 'huge' is not a spacing step (xs s m l xl)`), the same in both modes. Attributes outside the vocabulary (`class`, `href`, `name`, ...) pass through as HTML. Labels, headings, buttons, and cells are single-line; only `p` wraps.
+
+#### Revealing and framing
+
+The vocabulary's own elements beyond the containers, each earning its place by a capability a stack of divs cannot compose:
+
+| Element | Renders |
+|---|---|
+| `details[summary[...], ..., open = true]` | A disclosure: the summary always shows, the rest only when open. `open` follows a bool — `open = show` toggles it from state |
+| `dropdown[summary[...], panel, side = 'right']` | A button that opens a floating panel — its second child, usually a `stack` of buttons or links. `side` anchors the panel to the button's right edge |
+| `modal[child, open = var]` | A dialog layer over a dimmed page while `open` is true; the child (a `stack` with a heading, text, and a `button['Close', click = close]`) is the dialog |
+| `drawer[..., open = var, side = 'left']` | A side panel layer, sliding from the right by default |
+| `toast[..., open = var]` | A brief notice at the bottom corner while `open` is true; it fades on its own, and the program clears the flag |
+| `divider[]` | A rule between siblings: horizontal in a `stack`, vertical in a `row` |
+| `nav[a[...], ..., active = path]` | A navigation row; the link whose `href` equals `active` gets `aria-current="page"` and the stylesheet's active look |
+
+Three attributes any element takes: `tip = 'text'` is the browser's tooltip, `fit = 'cover'` (or `'contain'`) sizes an `img` into its box together with `aspect`, and `open` as above. The layers take no room in the flow and are hidden until opened; the layout engine lays an open layer out as a stack where it sits.
+
+**The icon set**, closed like the rest of the vocabulary: `check x plus minus chevron_down chevron_up chevron_left chevron_right arrow_up arrow_down arrow_left arrow_right search menu more settings user home calendar clock refresh play pause stop upload download trash edit copy link external info warning error success star filter sort chart table bell mail lock eye eye_off dollar bookmark flag tag circle dot loader`. An unknown name is an error that lists them. Icons are inline SVG in the current text color, so `color = 'muted'` and the theme both apply.
 
 #### Charts — `chart[frame, ...]`
 
@@ -2199,7 +2229,7 @@ serve[3000]
 page['/', home.render]
 ```
 
-The transpiler manages the application instance implicitly — no `app` variable needed. `page[path, view]` registers a LiveView page rendered by a view; event handlers are bound inside the view (`click = inc`), so there is no separate handler argument. `serve[port]` starts the server (`serve[port, refresh = N, budget = M]` adds periodic re-rendering and a latency budget — see Background Work). The order in source doesn't matter: the transpiler always emits `serve[]` after all routes are registered.
+The transpiler manages the application instance implicitly — no `app` variable needed. `page[path, view]` registers a LiveView page rendered by a view; event handlers are bound inside the view (`click = inc`), so there is no separate handler argument. `serve[port]` starts the server (`serve[port, refresh = N, budget = M]` adds periodic re-rendering and a latency budget — see Background Work). The look of the whole app is set there too: `serve[port, theme = 'dark', density = 'compact', accent = '#3b82f6', wide = true]` — `theme` is `'light'`, `'dark'`, or `'system'` (the default, following the reader's setting), `density = 'compact'` tightens the element defaults for dense screens, `accent` overrides the accent token with a hex colour, and `wide = true` lets the page use the full window instead of the reading column. A wrong value is a startup error naming the choices. The order in source doesn't matter: the transpiler always emits `serve[]` after all routes are registered.
 
 If no routes are registered, `serve[]` shows a default welcome page so the user always sees something.
 

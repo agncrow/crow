@@ -65,6 +65,28 @@ pub struct CrowLiveState {
 /// serve, read by every session loop. 0 = unset.
 static REFRESH_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static BUDGET_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The look `serve[..., theme, density, accent, wide]` asked for, as the
+/// attributes of the page's `<html>` element.
+static LOOK_ATTRS: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// serve[…, theme = 'dark', density = 'compact', accent = '#c60', wide = true]:
+/// remember the look for every page shell. A bad value is a startup error.
+pub fn configure_look(theme: &str, density: &str, accent: &str, wide: bool) {
+    match crow_runtime::layout::look_attrs(theme, density, accent) {
+        Ok(mut attrs) => {
+            if wide { attrs.push_str(" data-wide=\"true\""); }
+            *LOOK_ATTRS.lock().unwrap_or_else(|p| p.into_inner()) = attrs;
+        }
+        Err(e) => {
+            eprintln!("error: serve[]: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn look_attrs() -> String {
+    LOOK_ATTRS.lock().unwrap_or_else(|p| p.into_inner()).clone()
+}
 
 pub fn configure(refresh_secs: i64, budget_ms: i64) {
     REFRESH_SECS.store(refresh_secs.max(0) as u64, std::sync::atomic::Ordering::SeqCst);
@@ -265,6 +287,9 @@ pub fn live_js(ws_path: &str) -> String {
     var focusId = focused ? (focused.getAttribute('data-crow-input') || focused.getAttribute('data-crow-change') || focused.getAttribute('data-crow-id')) : null;
     var savedInputs = {{}};
     target.querySelectorAll('[data-crow-input],[data-crow-change]').forEach(function(el) {{
+      // radios and checkboxes carry their state in `checked`, which the
+      // server renders; a group shares one key, so never save or restore them
+      if (el.type === 'radio' || el.type === 'checkbox') return;
       var key = el.getAttribute('data-crow-input') || el.getAttribute('data-crow-change');
       if (key) savedInputs[key] = {{ value: el.value, start: el.selectionStart, end: el.selectionEnd }};
     }});
@@ -273,6 +298,7 @@ pub fn live_js(ws_path: &str) -> String {
     // the value the server just rendered, so a handler that assigns to a
     // bound variable shows up in its field.
     target.querySelectorAll('[data-crow-input],[data-crow-change]').forEach(function(el) {{
+      if (el.type === 'radio' || el.type === 'checkbox') return;
       var key = el.getAttribute('data-crow-input') || el.getAttribute('data-crow-change');
       if (key && savedInputs[key] && key === focusId) {{
         el.value = savedInputs[key].value;
@@ -342,7 +368,8 @@ pub fn live_js(ws_path: &str) -> String {
   document.addEventListener('input', function(e) {{
     var ev = e.target.getAttribute('data-crow-input');
     if (ev) {{
-      ws.send(JSON.stringify({{event: ev, value: e.target.value}}));
+      var v = e.target.type === 'checkbox' ? (e.target.checked ? 'true' : 'false') : e.target.value;
+      ws.send(JSON.stringify({{event: ev, value: v}}));
     }}
   }});
 
@@ -390,7 +417,7 @@ fn project_css() -> String {
 fn page_shell(body_html: &str, js: &str) -> String {
     format!(
         r#"<!DOCTYPE html>
-<html>
+<html{look}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -403,6 +430,7 @@ fn page_shell(body_html: &str, js: &str) -> String {
 {js}
 </body>
 </html>"#,
+        look = look_attrs(),
         css = format!("{}\n{}", DEFAULT_CSS, crow_runtime::layout::RESPONSIVE_CSS),
         project = project_css(),
         body = body_html,

@@ -1542,8 +1542,9 @@ fn find_undefined_vars_in_fn(
             defined.insert(el.to_string());
         }
         // Live elements the transpiler handles outside the core list.
-        defined.insert("field".to_string());
-        defined.insert("slider".to_string());
+        for live in ["field", "slider", "checkbox", "toggle", "radio", "tabs", "progress", "icon"] {
+            defined.insert(live.to_string());
+        }
         defined.insert("chart".to_string());
         // Reactive state is the sanctioned channel: views and handlers read
         // top-level variables (the function-scope isolation exemption).

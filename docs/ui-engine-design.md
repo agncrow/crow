@@ -253,6 +253,18 @@ test layout[]
 Nothing in either block is CSS. Everything in the test is a property the
 engine computes and the browser reproduces.
 
+### The primitives (September 2026)
+
+The vocabulary was completed as a set of generic primitives — inputs bound
+to state (`field` by type, `checkbox`, `toggle`, `radio`, `tabs`, `select`,
+`slider`, `progress`), disclosure and layers (`details`, `dropdown`,
+`modal`, `drawer`, `toast`), `nav` with an active page, `icon` from a
+closed set, `divider`, `tip`, `fit`, and the app's look on `serve` (theme,
+density, accent, wide). Composites (a KPI tile, a hero, a pricing table)
+are views written from these, never elements. The engine models every
+primitive (`src/modules/layout.crow`), and `tests/layout/conformance.crow`
+holds it to Chrome's measurements of a page that uses them all.
+
 ### What the vocabulary deliberately lacks
 
 Absolute pixel positioning outside `overlay`, percentage heights, floats,

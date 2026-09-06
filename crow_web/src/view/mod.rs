@@ -175,6 +175,101 @@ impl CrowVNode {
     pub fn label(children: Vec<CrowVNode>) -> Self { Self::tag("label", children) }
     pub fn pre(children: Vec<CrowVNode>) -> Self { Self::tag("pre", children) }
     pub fn code(children: Vec<CrowVNode>) -> Self { Self::tag("code", children) }
+    pub fn details(children: Vec<CrowVNode>) -> Self { Self::tag("details", children) }
+    pub fn summary(children: Vec<CrowVNode>) -> Self { Self::tag("summary", children) }
+    pub fn hr() -> Self { Self::el("hr", HashMap::new(), vec![]) }
+
+    /// `open = expr` at render time: a real `open` attribute on details, a
+    /// data attribute on the layers — the same rule the kernel applies to
+    /// literals.
+    pub fn open_attr(self, open: bool) -> Self {
+        let is_details = matches!(&self, CrowVNode::Element { tag, .. } if tag == "details");
+        if is_details {
+            if open { self.attr("open", "") } else { self }
+        } else {
+            self.attr("data-open", if open { "true" } else { "false" })
+        }
+    }
+
+    /// `nav[..., active = path]`: the link whose href is the active path
+    /// gets aria-current="page".
+    pub fn mark_active(mut self, active: &str) -> Self {
+        if active.is_empty() { return self; }
+        fn walk(node: &mut CrowVNode, active: &str) {
+            if let CrowVNode::Element { tag, attrs, children } = node {
+                if tag == "a" && attrs.get("href").map(|h| h == active).unwrap_or(false) {
+                    attrs.insert("aria-current".to_string(), "page".to_string());
+                }
+                for c in children.iter_mut() { walk(c, active); }
+            }
+        }
+        walk(&mut self, active);
+        self
+    }
+
+    /// `icon[name, size, color]`, from the kernel's closed set.
+    pub fn icon(name: &str, size: &str, color: &str) -> Self {
+        match crow_runtime::layout::icon_html(name, size, color) {
+            Ok(svg) => CrowVNode::Raw(svg),
+            Err(e) => CrowVNode::text(&format!("error: {}", e)),
+        }
+    }
+
+    /// `progress[value, max]`.
+    pub fn progress(value: f64, max: f64) -> Self {
+        CrowVNode::el("progress", HashMap::new(), vec![])
+            .attr("class", "crow-progress")
+            .attr("value", &fmt_num(value))
+            .attr("max", &fmt_num(if max > 0.0 { max } else { 1.0 }))
+    }
+
+    /// `checkbox[label, var]` / `toggle[label, var]` — a bool bound to state.
+    pub fn check_input(label: &str, key: &str, checked: bool, toggle: bool) -> Self {
+        let mut input = CrowVNode::input()
+            .attr("type", "checkbox")
+            .attr("data-crow-input", &format!("__field:{}", key));
+        if checked { input = input.attr("checked", ""); }
+        CrowVNode::label(vec![input, CrowVNode::text(label)])
+            .attr("class", if toggle { "crow-check crow-toggle" } else { "crow-check" })
+    }
+
+    /// `radio[options, var]` / `tabs[options, var]` — one of several
+    /// strings bound to state; the selected option's label is marked.
+    pub fn choice_input(options: &[String], key: &str, current: &str, tabs: bool) -> Self {
+        let name = format!("__field:{}", key);
+        let items: Vec<CrowVNode> = options.iter().map(|opt| {
+            let selected = opt == current;
+            let mut input = CrowVNode::input()
+                .attr("type", "radio")
+                .attr("name", &name)
+                .attr("value", opt)
+                .attr("data-crow-input", &name);
+            if selected { input = input.attr("checked", ""); }
+            let mut label = CrowVNode::label(vec![input, CrowVNode::text(opt)]);
+            if tabs { label = label.attr("role", "tab").attr("aria-selected", if selected { "true" } else { "false" }); }
+            label
+        }).collect();
+        let mut node = CrowVNode::div(items).attr("class", if tabs { "crow-tabs" } else { "crow-radio" });
+        if tabs { node = node.attr("role", "tablist"); }
+        node
+    }
+
+    /// `field[label, var, type, lines]` — a labelled input (or a textarea
+    /// when `lines` > 0) bound to state.
+    pub fn field_typed(label: &str, key: &str, current_value: &str, kind: &str, lines: i64) -> Self {
+        let bound = format!("__field:{}", key);
+        let control = if lines > 0 {
+            CrowVNode::textarea(vec![CrowVNode::text(current_value)])
+                .attr("rows", &lines.to_string())
+                .attr("data-crow-input", &bound)
+        } else {
+            CrowVNode::input()
+                .attr("type", if kind.is_empty() { "text" } else { kind })
+                .attr("value", current_value)
+                .attr("data-crow-input", &bound)
+        };
+        CrowVNode::div(vec![CrowVNode::label(vec![CrowVNode::text(label)]), control]).attr("class", "crow-field")
+    }
 
     /// Render to HTML string.
     pub fn to_html(&self) -> String {
@@ -413,6 +508,11 @@ impl CrowVNode {
             }
         }
     }
+}
+
+/// A number as an attribute value: whole numbers without a trailing `.0`.
+fn fmt_num(v: f64) -> String {
+    if (v - v.round()).abs() < 1e-9 { format!("{}", v.round() as i64) } else { format!("{}", v) }
 }
 
 /// Escape HTML special characters.

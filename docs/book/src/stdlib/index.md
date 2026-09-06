@@ -13,5 +13,5 @@ Every module ships with the compiler: `use` it and its names are there in both e
 | io | `use io` | 2 | [io](io.md) |
 | doc | `use doc` | 6 | [doc](doc.md) |
 | chart | `use chart` | 7 | [chart](chart.md) |
-| ui | `use ui` | 4 | [ui](ui.md) |
+| ui | `use ui` | 10 | [ui](ui.md) |
 | web | `use web` | 36 | [web](web.md) |

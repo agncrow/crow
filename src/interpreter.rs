@@ -1973,11 +1973,56 @@ impl Interpreter {
                     return Ok(CrowValue::ok(Value::Str(node.to_html())));
                 }
 
+                // Bound inputs: the variable's name is the binding key, so
+                // they are built here, before evaluation, through the same
+                // vnode helpers the compiled renderer uses — one markup, by
+                // construction (design rule 12).
+                let bound_input = matches!(name.as_str(), "field" | "slider" | "checkbox" | "toggle" | "radio" | "tabs")
+                    || (name == "select" && args.len() == 2 && !matches!(args.first(), Some(Expr::Map(_))));
+                if self.in_view > 0 && bound_input {
+                    let expected = match name.as_str() { "field" => 4, "slider" => 5, _ => 2 };
+                    if args.len() == expected {
+                        use crow_web::view::CrowVNode;
+                        let key = match args.get(1) {
+                            Some(Expr::Ident(v)) => v.clone(),
+                            Some(Expr::FieldAccess { field, .. }) => field.clone(),
+                            _ => "unknown".to_string(),
+                        };
+                        let vals: Vec<CrowValue> = args.iter().map(|a| self.eval_expr(a)).collect::<Result<_, _>>()?;
+                        let s = |v: &CrowValue| format!("{}", v.value);
+                        let num = |v: &CrowValue| match &v.value { Value::Int(n) => *n as f64, Value::Float(f) => *f, _ => 0.0 };
+                        let options = |v: &CrowValue| -> Result<Vec<String>, String> {
+                            match &v.value {
+                                Value::Array(items) => Ok(items.iter().map(|i| format!("{}", i.value)).collect()),
+                                other => Err(format!("{}[] takes a list of options first, got {}", name, other.type_name())),
+                            }
+                        };
+                        let node = match name.as_str() {
+                            "field" => {
+                                let kind = match &vals[2].value {
+                                    Value::Str(k) if !k.is_empty() => k.clone(),
+                                    _ => match &vals[1].value { Value::Int(_) | Value::Float(_) => "number".to_string(), _ => "text".to_string() },
+                                };
+                                CrowVNode::field_typed(&s(&vals[0]), &key, &s(&vals[1]), &kind, num(&vals[3]) as i64)
+                            }
+                            "slider" => CrowVNode::slider(&s(&vals[0]), &key, &s(&vals[1]), num(&vals[2]), num(&vals[3]), num(&vals[4])),
+                            "checkbox" | "toggle" => {
+                                let on = match &vals[1].value { Value::Bool(b) => *b, Value::Int(n) => *n != 0, Value::Str(t) => t == "true", _ => false };
+                                CrowVNode::check_input(&s(&vals[0]), &key, on, name == "toggle")
+                            }
+                            "radio" | "tabs" => CrowVNode::choice_input(&options(&vals[0])?, &key, &s(&vals[1]), name == "tabs"),
+                            _ => CrowVNode::select_input(&options(&vals[0])?, &key, &s(&vals[1])),
+                        };
+                        return Ok(CrowValue::ok(Value::Str(node.to_html())));
+                    }
+                }
+
                 // Inside a rendering view, element names build html strings.
                 if self.in_view > 0 && crate::lower::UI_ELEMENTS.contains(&name.as_str()) {
                     let mut inner = String::new();
                     let mut attrs: Vec<(String, String)> = Vec::new();
                     let (mut table_click, mut table_key, mut table_mark): (Option<String>, Option<String>, Option<String>) = (None, None, None);
+                    let mut table_delta: Vec<String> = Vec::new();
                     for a in args {
                         // F-11: an attribute map may carry deferred calls
                         // (click = set_speed[10.0]) — evaluating it verbatim
@@ -2023,6 +2068,7 @@ impl Interpreter {
                                             ("click", Value::Fn(f)) => { table_click = Some(f.name.clone()); continue; }
                                             ("key", Value::Str(s)) => { table_key = Some(s.clone()); continue; }
                                             ("mark", Value::Str(s)) => { table_mark = Some(s.clone()); continue; }
+                                            ("delta", Value::Array(items)) => { table_delta = items.iter().map(|i| format!("{}", i.value)).collect(); continue; }
                                             _ => {}
                                         }
                                     }
@@ -2041,8 +2087,14 @@ impl Interpreter {
                             // is escaped exactly as the compiled renderer does
                             Value::Str(s) if s.starts_with('<') && s.ends_with('>') => inner.push_str(s),
                             // a frame in a table is its rows, from the kernel
-                            Value::Frame(f) if name == "table" => inner.push_str(&crow_runtime::layout::frame_table_html(f, table_click.as_deref(), table_key.as_deref(), table_mark.as_deref())),
+                            Value::Frame(f) if name == "table" => inner.push_str(&crow_runtime::layout::frame_table_html(f, table_click.as_deref(), table_key.as_deref(), table_mark.as_deref(), &table_delta)),
                             other => inner.push_str(&html_escape_text(&format!("{}", other))),
+                        }
+                    }
+                    // nav[..., active = path]: the link to the active path is marked
+                    if name == "nav" {
+                        if let Some((_, active)) = attrs.iter().find(|(k, _)| k == "active") {
+                            inner = crow_runtime::layout::nav_active_html(&inner, active);
                         }
                     }
                     // layout attributes become class/style/data-* through the
@@ -2661,6 +2713,7 @@ impl Interpreter {
             | "msgpack" | "arrow" | "bytes" | "stream"
             // UI reactive builtins
             | "serve" | "page" | "fetch" | "poll" | "field" | "slider" | "today"
+            | "checkbox" | "toggle" | "radio" | "tabs" | "progress" | "icon"
         )
     }
 
@@ -4208,13 +4261,81 @@ impl Interpreter {
                 Ok(CrowValue::done())
             }
             "field" => {
-                // field[label, var] → a labelled input bound to the variable —
-                // the same markup the compiled renderer produces
-                if args.len() != 2 { return Err("field[] takes 2 arguments".into()); }
+                // field[label, var, type, lines] (lowered) → a labelled input
+                // bound to the variable, or a textarea when lines > 0 — the
+                // markup the compiled renderer produces (minus the binding
+                // attribute, which the harness has no use for)
+                if args.len() != 4 { return Err("field[] takes label, var, type = '', lines = 0".into()); }
                 if self.in_view > 0 {
                     let label = html_escape_text(&format!("{}", args[0].value));
                     let value = html_escape_attr(&format!("{}", args[1].value));
-                    return Ok(CrowValue::ok(Value::Str(format!("<div class=\"crow-field\"><label>{}</label><input value=\"{}\"></input></div>", label, value))));
+                    let lines = match &args[3].value { Value::Int(n) => *n, Value::Float(f) => *f as i64, _ => 0 };
+                    let kind = match &args[2].value {
+                        Value::Str(s) if !s.is_empty() => s.clone(),
+                        _ => match &args[1].value { Value::Int(_) | Value::Float(_) => "number".to_string(), _ => "text".to_string() },
+                    };
+                    if lines > 0 {
+                        return Ok(CrowValue::ok(Value::Str(format!("<div class=\"crow-field\"><label>{}</label><textarea rows=\"{}\">{}</textarea></div>", label, lines, html_escape_text(&format!("{}", args[1].value))))));
+                    }
+                    return Ok(CrowValue::ok(Value::Str(format!("<div class=\"crow-field\"><label>{}</label><input type=\"{}\" value=\"{}\"></input></div>", label, html_escape_attr(&kind), value))));
+                }
+                Ok(CrowValue::done())
+            }
+            "checkbox" | "toggle" => {
+                // checkbox[label, var] / toggle[label, var] — a bool bound to state
+                if args.len() != 2 { return Err(format!("{}[] takes label, var", name)); }
+                if self.in_view > 0 {
+                    let label = html_escape_text(&format!("{}", args[0].value));
+                    let checked = match &args[1].value { Value::Bool(b) => *b, Value::Int(n) => *n != 0, Value::Str(s) => s == "true", _ => false };
+                    let class = if name == "toggle" { "crow-check crow-toggle" } else { "crow-check" };
+                    let on = if checked { "checked=\"\" " } else { "" };
+                    return Ok(CrowValue::ok(Value::Str(format!("<label class=\"{}\"><input {}type=\"checkbox\"></input>{}</label>", class, on, label))));
+                }
+                Ok(CrowValue::done())
+            }
+            "radio" | "tabs" => {
+                // radio[options, var] / tabs[options, var] — one of several
+                // strings bound to state; the selected one is marked
+                if args.len() != 2 { return Err(format!("{}[] takes options, var", name)); }
+                if self.in_view > 0 {
+                    let options: Vec<String> = match &args[0].value {
+                        Value::Array(items) => items.iter().map(|i| format!("{}", i.value)).collect(),
+                        other => return Err(format!("{}[] takes a list of options first, got {}", name, other.type_name())),
+                    };
+                    let current = format!("{}", args[1].value);
+                    let tabs = name == "tabs";
+                    let mut out = String::from(if tabs { "<div class=\"crow-tabs\" role=\"tablist\">" } else { "<div class=\"crow-radio\">" });
+                    for opt in &options {
+                        let selected = *opt == current;
+                        let on = if selected { "checked=\"\" " } else { "" };
+                        let label_attrs = if tabs { format!(" aria-selected=\"{}\" role=\"tab\"", selected) } else { String::new() };
+                        out.push_str(&format!("<label{}><input {}type=\"radio\" value=\"{}\"></input>{}</label>", label_attrs, on, html_escape_attr(opt), html_escape_text(opt)));
+                    }
+                    out.push_str("</div>");
+                    return Ok(CrowValue::ok(Value::Str(out)));
+                }
+                Ok(CrowValue::done())
+            }
+            "progress" => {
+                // progress[value, max] (lowered)
+                if args.len() != 2 { return Err("progress[] takes value, max = 1.0".into()); }
+                if self.in_view > 0 {
+                    let num = |v: &Value| match v { Value::Int(n) => *n as f64, Value::Float(f) => *f, _ => 0.0 };
+                    let fmt_num = |x: f64| if (x - x.round()).abs() < 1e-9 { format!("{}", x.round() as i64) } else { format!("{}", x) };
+                    let max = num(&args[1].value);
+                    return Ok(CrowValue::ok(Value::Str(format!("<progress class=\"crow-progress\" max=\"{}\" value=\"{}\"></progress>", fmt_num(if max > 0.0 { max } else { 1.0 }), fmt_num(num(&args[0].value))))));
+                }
+                Ok(CrowValue::done())
+            }
+            "icon" => {
+                // icon[name, size, color] (lowered) — inline SVG from the kernel's set
+                if args.len() != 3 { return Err("icon[] takes name, size = 'm', color = ''".into()); }
+                if self.in_view > 0 {
+                    let s = |v: &Value| format!("{}", v);
+                    return match crow_runtime::layout::icon_html(&s(&args[0].value), &s(&args[1].value), &s(&args[2].value)) {
+                        Ok(svg) => Ok(CrowValue::ok(Value::Str(svg))),
+                        Err(e) => Err(format!("icon: {}", e)),
+                    };
                 }
                 Ok(CrowValue::done())
             }
