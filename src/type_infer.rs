@@ -534,6 +534,17 @@ impl TypeContext {
                     }
                 }
             }
+            // the module's reactive state: every top-level assignment
+            let module_vars: std::collections::BTreeSet<String> = stmts.iter().filter_map(|s| if let Stmt::Assign { name, .. } = s { Some(name.clone()) } else { None }).collect();
+            fn assigns_any(stmts: &[Stmt], names: &std::collections::BTreeSet<String>) -> bool {
+                stmts.iter().any(|st| match st {
+                    Stmt::Assign { name, .. } => names.contains(name),
+                    Stmt::MultiAssign { names: ns, .. } => ns.iter().any(|n| names.contains(n)),
+                    Stmt::If { then_body, else_body, .. } => assigns_any(then_body, names) || else_body.as_ref().map_or(false, |eb| assigns_any(eb, names)),
+                    Stmt::For { body, .. } | Stmt::While { body, .. } => assigns_any(body, names),
+                    _ => false,
+                })
+            }
 
             // later[f] targets scheduled from views/handlers are deferred
             // handler halves: they read/write reactive state off the loop,
@@ -553,8 +564,20 @@ impl TypeContext {
                     if let Some(sig) = self.functions.get(name) {
                         let mut targets = std::collections::BTreeSet::new();
                         Self::collect_later_targets_stmts(&sig.body, &mut targets);
+                        // and, for a handler, every function it calls that writes
+                        // module state: a helper moving state on the handler's
+                        // behalf. A pure helper keeps its own scope.
+                        if !self.views.contains(name) {
+                            let mut called = std::collections::BTreeSet::new();
+                            Self::collect_called_fns_stmts(&sig.body, &mut called);
+                            for c in called {
+                                if self.functions.get(&c).map_or(false, |cs| assigns_any(&cs.body, &module_vars)) {
+                                    targets.insert(c);
+                                }
+                            }
+                        }
                         for t in targets {
-                            if self.functions.contains_key(&t) && handlers.insert(t) {
+                            if self.functions.contains_key(&t) && !self.views.contains(&t) && handlers.insert(t) {
                                 added = true;
                             }
                         }
@@ -796,6 +819,19 @@ impl TypeContext {
                     }
                 }
                 for s in body { self.collect_call_types_stmt(s); }
+                // A module-level variable assigned in this body (reactive
+                // state written by a handler) keeps the refined type: an
+                // empty default learns its element type from the handler
+                let module_vars: Vec<String> = saved_vars.keys().cloned().collect();
+                let mut refined: Vec<(String, CrowType)> = Vec::new();
+                for m in &module_vars {
+                    if let (Some(before), Some(after)) = (saved_vars.get(m), self.vars.get(m)) {
+                        let open = matches!(before, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Unknown))
+                            || matches!(before, CrowType::Map(inner) if matches!(inner.as_ref(), CrowType::Unknown))
+                            || matches!(before, CrowType::Unknown);
+                        if open && before != after { refined.push((m.clone(), before.unify(after))); }
+                    }
+                }
 
                 // After scanning body, propagate any updated Fn-typed param types back.
                 // This handles `f[result, array[i]]` where `f` is a known function param.
@@ -814,6 +850,7 @@ impl TypeContext {
                 self.current_fn_params = saved_fn_params;
                 self.current_fn_name = saved_fn_name;
                 self.vars = saved_vars;
+                for (m, t) in refined { self.vars.insert(m, t); }
             }
             Stmt::Return(Some(e)) => {
                 self.collect_call_types_expr(e);
@@ -1633,8 +1670,19 @@ impl TypeContext {
                 }
             }
         }
+        // An element-wise math function over a plain number is a number
+        if crate::modules::math::SCALAR_UNARY.contains(&name) && args.len() == 1 && self.registry.has_function(name) {
+            let t = self.infer_expr(&args[0]);
+            let t = if let CrowType::Result(i) = t { *i } else { t };
+            if matches!(t, CrowType::Int | CrowType::Float) { return CrowType::Float; }
+        }
+        // A frame function whose first argument is not a frame is the core
+        // builtin of the same name (sort[xs], join[parts, sep] with frame imported)
+        let frame_core_fallback = self.registry.module_name_of(name) == Some("frame")
+            && crate::checker::BUILTINS.contains(&name)
+            && !args.first().map(|a| { let t = self.infer_expr(a); let t = if let CrowType::Result(i) = t { *i } else { t }; matches!(t, CrowType::Frame | CrowType::FrameCol) }).unwrap_or(false);
         // Non-overlapping module functions
-        if !is_overlapping && self.registry.has_function(name) {
+        if !is_overlapping && !frame_core_fallback && self.registry.has_function(name) {
             // A name two modules export (stack, unique, load: frame + math)
             // resolves by its first argument's type — the same dispatch the
             // emitters use — so a qualified call that lowering made bare
@@ -1956,6 +2004,17 @@ impl TypeContext {
                 match name.as_str() {
                     "query" => match args.get(1) { Some(Expr::Str(sql)) => self.describe_sql(sql), _ => None },
                     "filter" | "sort" | "head" | "tail" | "fill" | "stack" => args.first().and_then(|a| self.frame_schema_of(a)),
+                    "new" => Some(BTreeMap::new()),
+                    "with" => {
+                        let mut base = args.first().and_then(|a| self.frame_schema_of(a)).unwrap_or_default();
+                        if let (Some(Expr::Str(col)), Some(v)) = (args.get(1), args.get(2)) {
+                            let vt = self.infer_expr(v);
+                            let vt = if let CrowType::Result(i) = vt { *i } else { vt };
+                            let cell = match vt { CrowType::Array(inner) => *inner, CrowType::NumArray(_) => CrowType::Float, CrowType::Int => CrowType::Int, CrowType::Float => CrowType::Float, CrowType::Bool => CrowType::Bool, _ => CrowType::Str };
+                            base.insert(col.clone(), cell);
+                        }
+                        Some(base)
+                    }
                     "select" => {
                         let base = args.first().and_then(|a| self.frame_schema_of(a))?;
                         let mut out = BTreeMap::new();
@@ -2008,15 +2067,55 @@ impl TypeContext {
                     found = Some(schema);
                     break;
                 }
+                // a backend without describe (sqlite) is not a failure to report
+                Err(e) if e.contains("describe is not supported") => {}
                 Err(e) => reasons.push(format!("{}: {}", var, e)),
             }
         }
-        if found.is_none() {
+        if found.is_none() && !reasons.is_empty() {
             let head: String = sql.chars().take(60).collect();
             eprintln!("note: the columns of `{}…` could not be typed at compile time — cells read as text ({})", head, reasons.join("; "));
         }
         self.describe_cache.insert(sql.to_string(), found.clone());
         found
+    }
+
+    /// Names of the functions a body calls or references.
+    fn collect_called_fns_expr(e: &Expr, out: &mut std::collections::BTreeSet<String>) {
+        match e {
+            Expr::Call { callee, args } => {
+                if let Expr::Ident(n) = callee.as_ref() { out.insert(n.clone()); } else { Self::collect_called_fns_expr(callee, out); }
+                for a in args { Self::collect_called_fns_expr(a, out); }
+            }
+            Expr::Ident(n) => { out.insert(n.clone()); }
+            Expr::Named { value, .. } => Self::collect_called_fns_expr(value, out),
+            Expr::BinOp { left, right, .. } => { Self::collect_called_fns_expr(left, out); Self::collect_called_fns_expr(right, out); }
+            Expr::UnaryOp { expr, .. } => Self::collect_called_fns_expr(expr, out),
+            Expr::Array(items) => for i in items { Self::collect_called_fns_expr(i, out); },
+            Expr::Map(pairs) => for (k, v) in pairs { Self::collect_called_fns_expr(k, out); Self::collect_called_fns_expr(v, out); },
+            Expr::FieldAccess { object, .. } => Self::collect_called_fns_expr(object, out),
+            Expr::ForExpr { iter, body, .. } => { Self::collect_called_fns_expr(iter, out); Self::collect_called_fns_stmts(body, out); }
+            _ => {}
+        }
+    }
+    fn collect_called_fns_stmts(stmts: &[Stmt], out: &mut std::collections::BTreeSet<String>) {
+        for st in stmts {
+            match st {
+                Stmt::Assign { value, .. } => Self::collect_called_fns_expr(value, out),
+                Stmt::MultiAssign { values, .. } => for v in values { Self::collect_called_fns_expr(v, out); },
+                Stmt::ExprStmt(e) => Self::collect_called_fns_expr(e, out),
+                Stmt::Return(Some(e)) => Self::collect_called_fns_expr(e, out),
+                Stmt::If { condition, then_body, else_body } => {
+                    Self::collect_called_fns_expr(condition, out);
+                    Self::collect_called_fns_stmts(then_body, out);
+                    if let Some(eb) = else_body { Self::collect_called_fns_stmts(eb, out); }
+                }
+                Stmt::For { iter, body, .. } => { Self::collect_called_fns_expr(iter, out); Self::collect_called_fns_stmts(body, out); }
+                Stmt::While { condition, body } => { Self::collect_called_fns_expr(condition, out); Self::collect_called_fns_stmts(body, out); }
+                Stmt::FieldAssign { value, .. } | Stmt::IndexAssign { value, .. } => Self::collect_called_fns_expr(value, out),
+                _ => {}
+            }
+        }
     }
 
     pub fn infer_expr(&self, expr: &Expr) -> CrowType {

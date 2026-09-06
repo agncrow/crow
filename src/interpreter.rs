@@ -85,6 +85,14 @@ impl Env {
         }
     }
 
+    /// Bind a name in the current scope only — a parameter, never a write to
+    /// module state whatever frame this is.
+    fn set_local(&mut self, name: &str, value: CrowValue) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name.to_string(), value);
+        }
+    }
+
     fn set(&mut self, name: &str, value: CrowValue) {
         // Reactive state: inside a view/handler frame (the `use ui` exemption)
         // an assignment to an existing global updates that global — writing
@@ -662,6 +670,74 @@ impl Interpreter {
                     }
                 }
             }
+        }
+
+        // Reactive state reaches what a view or handler calls, not only the
+        // functions named in click attributes: close over callees.
+        fn called_fns_expr(e: &Expr, fns: &std::collections::HashSet<String>, out: &mut std::collections::HashSet<String>) {
+            match e {
+                Expr::Call { callee, args } => {
+                    if let Expr::Ident(n) = callee.as_ref() { if fns.contains(n) { out.insert(n.clone()); } }
+                    else { called_fns_expr(callee, fns, out); }
+                    for a in args { called_fns_expr(a, fns, out); }
+                }
+                Expr::Ident(n) => { if fns.contains(n) { out.insert(n.clone()); } }
+                Expr::Named { value, .. } => called_fns_expr(value, fns, out),
+                Expr::BinOp { left, right, .. } => { called_fns_expr(left, fns, out); called_fns_expr(right, fns, out); }
+                Expr::UnaryOp { expr, .. } => called_fns_expr(expr, fns, out),
+                Expr::Array(items) => for i in items { called_fns_expr(i, fns, out); },
+                Expr::Map(pairs) => for (k, v) in pairs { called_fns_expr(k, fns, out); called_fns_expr(v, fns, out); },
+                Expr::FieldAccess { object, .. } => called_fns_expr(object, fns, out),
+                Expr::ForExpr { iter, body, .. } => { called_fns_expr(iter, fns, out); called_fns_stmts(body, fns, out); }
+                _ => {}
+            }
+        }
+        fn called_fns_stmts(stmts: &[Stmt], fns: &std::collections::HashSet<String>, out: &mut std::collections::HashSet<String>) {
+            for st in stmts {
+                match st {
+                    Stmt::Assign { value, .. } => called_fns_expr(value, fns, out),
+                    Stmt::MultiAssign { values, .. } => for v in values { called_fns_expr(v, fns, out); },
+                    Stmt::ExprStmt(e) => called_fns_expr(e, fns, out),
+                    Stmt::Return(Some(e)) => called_fns_expr(e, fns, out),
+                    Stmt::If { condition, then_body, else_body } => {
+                        called_fns_expr(condition, fns, out);
+                        called_fns_stmts(then_body, fns, out);
+                        if let Some(eb) = else_body { called_fns_stmts(eb, fns, out); }
+                    }
+                    Stmt::For { iter, body, .. } => { called_fns_expr(iter, fns, out); called_fns_stmts(body, fns, out); }
+                    Stmt::While { condition, body } => { called_fns_expr(condition, fns, out); called_fns_stmts(body, fns, out); }
+                    Stmt::FieldAssign { value, .. } | Stmt::IndexAssign { value, .. } => called_fns_expr(value, fns, out),
+                    _ => {}
+                }
+            }
+        }
+        fn assigns_any(stmts: &[Stmt], names: &std::collections::HashSet<String>) -> bool {
+            stmts.iter().any(|st| match st {
+                Stmt::Assign { name, .. } => names.contains(name),
+                Stmt::MultiAssign { names: ns, .. } => ns.iter().any(|n| names.contains(n)),
+                Stmt::If { then_body, else_body, .. } => assigns_any(then_body, names) || else_body.as_ref().map_or(false, |eb| assigns_any(eb, names)),
+                Stmt::For { body, .. } | Stmt::While { body, .. } => assigns_any(body, names),
+                _ => false,
+            })
+        }
+        let module_vars: std::collections::HashSet<String> = stmts.iter().filter_map(|s| if let Stmt::Assign { name, .. } = s { Some(name.clone()) } else { None }).collect();
+        let bodies: std::collections::HashMap<String, &Vec<Stmt>> = stmts.iter().filter_map(|s| if let Stmt::FnDecl { name, body, .. } = s { Some((name.clone(), body)) } else { None }).collect();
+        loop {
+            let mut grown = false;
+            let roots: Vec<String> = self.handler_fns.iter().cloned().collect();
+            for r in roots {
+                if let Some(b) = bodies.get(&r) {
+                    let mut out = std::collections::HashSet::new();
+                    called_fns_stmts(b, &fn_names, &mut out);
+                    for f in out {
+                        // only a callee that writes module state moves it on the
+                        // handler's behalf; a pure helper keeps its own locals
+                        let writes_state = bodies.get(&f).map_or(false, |fb| assigns_any(fb, &module_vars));
+                        if writes_state && !self.view_fns.contains(&f) && self.handler_fns.insert(f) { grown = true; }
+                    }
+                }
+            }
+            if !grown { break; }
         }
     }
 
@@ -1744,6 +1820,14 @@ impl Interpreter {
                 let arg_vals: Vec<CrowValue> = args.iter()
                     .map(|a| self.eval_expr(a))
                     .collect::<Result<_, _>>()?;
+                // A frame function given something other than a frame is the
+                // core builtin of the same name (sort[xs], join[parts, sep])
+                if self.registry.module_name_for(name) == Some("frame")
+                    && crate::checker::BUILTINS.contains(&name.as_str())
+                    && !arg_vals.first().map(|a| matches!(a.value, Value::Frame(_))).unwrap_or(false)
+                {
+                    return self.call_builtin(name, &arg_vals);
+                }
                 return self.registry.call(name, &arg_vals)
                     .map(|v| if READER_FNS.contains(&name.as_str()) && v.is_ok() { v.stamp_captured() } else { v });
             }
@@ -1857,6 +1941,7 @@ impl Interpreter {
                 if self.in_view > 0 && crate::lower::UI_ELEMENTS.contains(&name.as_str()) {
                     let mut inner = String::new();
                     let mut attrs: Vec<(String, String)> = Vec::new();
+                    let (mut table_click, mut table_key, mut table_mark): (Option<String>, Option<String>, Option<String>) = (None, None, None);
                     for a in args {
                         // F-11: an attribute map may carry deferred calls
                         // (click = set_speed[10.0]) — evaluating it verbatim
@@ -1896,6 +1981,15 @@ impl Interpreter {
                             // wiring, not markup
                             Value::Map(m) => {
                                 for (k, val) in m.iter() {
+                                    // a table over a frame consumes its row options
+                                    if name == "table" {
+                                        match (k.as_str(), &val.value) {
+                                            ("click", Value::Fn(f)) => { table_click = Some(f.name.clone()); continue; }
+                                            ("key", Value::Str(s)) => { table_key = Some(s.clone()); continue; }
+                                            ("mark", Value::Str(s)) => { table_mark = Some(s.clone()); continue; }
+                                            _ => {}
+                                        }
+                                    }
                                     if matches!(k.as_str(), "click" | "input" | "submit" | "change" | "seek") { continue; }
                                     let s = match &val.value {
                                         Value::Str(s) => s.clone(),
@@ -1910,6 +2004,8 @@ impl Interpreter {
                             // a child that is already markup passes through; text
                             // is escaped exactly as the compiled renderer does
                             Value::Str(s) if s.starts_with('<') && s.ends_with('>') => inner.push_str(s),
+                            // a frame in a table is its rows, from the kernel
+                            Value::Frame(f) if name == "table" => inner.push_str(&crow_runtime::layout::frame_table_html(f, table_click.as_deref(), table_key.as_deref(), table_mark.as_deref())),
                             other => inner.push_str(&html_escape_text(&format!("{}", other))),
                         }
                     }
@@ -2259,7 +2355,7 @@ impl Interpreter {
                 if renders { self.in_view += 1; }
                 self.env.push_call_scope(_ex);
                 for (param, val) in func.params.iter().zip(arg_vals) {
-                    self.env.set(param, val);
+                    self.env.set_local(param, val);
                 }
                 let mut result = CrowValue::done();
                 for stmt in func.body.iter() {
@@ -2528,7 +2624,7 @@ impl Interpreter {
             // Response format builtins
             | "msgpack" | "arrow" | "bytes" | "stream"
             // UI reactive builtins
-            | "serve" | "page" | "fetch" | "poll" | "field" | "today"
+            | "serve" | "page" | "fetch" | "poll" | "field" | "slider" | "today"
         )
     }
 
@@ -2666,7 +2762,7 @@ impl Interpreter {
         if renders { self.in_view += 1; }
         self.env.push_call_scope(_ex);
         for (p, a) in func.params.iter().zip(args) {
-            self.env.set(p, a);
+            self.env.set_local(p, a);
         }
         let mut result = Ok(CrowValue::done());
         for stmt in func.body.iter() {
@@ -4060,6 +4156,20 @@ impl Interpreter {
                 // poll[url, seconds] → mock: returns empty map
                 if args.len() != 2 { return Err("poll[] takes 2 arguments".into()); }
                 Ok(CrowValue::ok(Value::Map(std::collections::BTreeMap::new())))
+            }
+            "slider" => {
+                // slider[label, var, min, max, step] — a range input bound to
+                // the variable; the same markup the compiled renderer produces
+                if args.len() != 5 { return Err("slider[] takes label, var, min, max, step".into()); }
+                if self.in_view > 0 {
+                    let label = html_escape_text(&format!("{}", args[0].value));
+                    let value = html_escape_attr(&format!("{}", args[1].value));
+                    return Ok(CrowValue::ok(Value::Str(format!(
+                        "<div class=\"crow-field crow-slider\"><label>{}</label><input type=\"range\" min=\"{}\" max=\"{}\" step=\"{}\" value=\"{}\"></input></div>",
+                        label, args[2].value, args[3].value, args[4].value, value
+                    ))));
+                }
+                Ok(CrowValue::done())
             }
             "field" => {
                 // field[label, var] → a labelled input bound to the variable —

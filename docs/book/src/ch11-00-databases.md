@@ -194,6 +194,27 @@ editor, through `crow lsp` — runs them. The full reference is
 
 Next: putting a live web page in front of it.
 
+## A list is a parameter too
+
+An array bound as a parameter expands to a list, so `WHERE id IN ?`
+takes `[[1, 3]]` and never needs the ids pasted into the query text:
+
+```crow
+use db
+
+conn = db.connect['sqlite://:memory:']
+exec[conn, 'CREATE TABLE t (id INTEGER, name TEXT)']
+exec[conn, 'INSERT INTO t VALUES (1, ?)', ['ann']]
+exec[conn, 'INSERT INTO t VALUES (2, ?)', ['bob']]
+exec[conn, 'INSERT INTO t VALUES (3, ?)', ['cat']]
+picked = query[conn, 'SELECT name FROM t WHERE id IN ? ORDER BY id', [[1, 3]]]
+log[picked.name]
+```
+
+```text
+['ann', 'cat']
+```
+
 ## The compiler asks your database
 
 A query's result is a frame, and a frame's cells are typed by the

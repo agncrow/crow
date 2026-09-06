@@ -312,6 +312,16 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
         match e {
             Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Bool(_) => true,
             Expr::Array(items) => items.iter().all(is_literal),
+            // a default built from literals by a constructor — map[...] (a
+            // set[] chain after lowering), frame.new[], with[...] — is a literal too
+            Expr::Call { callee, args } => {
+                let name = match callee.as_ref() {
+                    Expr::Ident(n) => n.as_str(),
+                    Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if m == "frame") => field.as_str(),
+                    _ => return false,
+                };
+                matches!(name, "map" | "set" | "new" | "with") && args.iter().all(is_literal)
+            }
             _ => false,
         }
     }
@@ -1532,6 +1542,7 @@ fn find_undefined_vars_in_fn(
         }
         // Live elements the transpiler handles outside the core list.
         defined.insert("field".to_string());
+        defined.insert("slider".to_string());
         defined.insert("chart".to_string());
         // Reactive state is the sanctioned channel: views and handlers read
         // top-level variables (the function-scope isolation exemption).

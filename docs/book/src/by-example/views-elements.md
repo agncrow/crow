@@ -12,11 +12,13 @@ with `document[]` and checked at two widths by the engine:
 use web, ui, doc
 
 view page_body[]
+    level = 3
     return stack[
         row[h1['Title'], span['badge', color = 'muted'], justify = 'between', align = 'center'],
         grid[p['a'], p['b'], p['c'], columns = 3, gap = 'm', below = 'phone', columns_then = 1],
         overlay[scroll[p['a long tape'], height = '96px'], span['LIVE', color = 'up', anchor = 'top_right']],
         row[button['One'], button['Two'], gap = 's', wrap = 'true', below = 'phone', becomes = 'stack'],
+        slider['Level', level, min = 0, max = 10, step = 1],
         gap = 'l', pad = 'l'
     ]
 
@@ -29,9 +31,11 @@ test layout[]
 markup = doc.document['Containers', page_body[]]
 log[contains[markup, 'class="grid"']]
 log[contains[markup, 'data-becomes="stack"']]
+log[contains[markup, 'type="range"']]
 ```
 
 ```text
+true
 true
 true
 ```

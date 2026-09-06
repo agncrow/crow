@@ -92,6 +92,30 @@ fn later_registry() -> &'static std::sync::Mutex<std::collections::HashSet<Strin
     R.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
 }
 
+/// A bound field or slider always sends its value as text. Store it in the
+/// shape the variable already has: an int var gets an int, a float var a
+/// float, a bool var a bool, anything else the text. Text that does not
+/// parse leaves a number or bool untouched (`None`), so a half-typed field
+/// never resets a counter to zero.
+pub fn coerce_field_value(current: Option<&serde_json::Value>, val: &str) -> Option<serde_json::Value> {
+    use serde_json::Value;
+    let t = val.trim();
+    match current {
+        Some(Value::Number(n)) if n.is_i64() || n.is_u64() => t
+            .parse::<i64>()
+            .ok()
+            .or_else(|| t.parse::<f64>().ok().map(|f| f as i64))
+            .map(Value::from),
+        Some(Value::Number(_)) => t.parse::<f64>().ok().map(|f| serde_json::json!(f)),
+        Some(Value::Bool(_)) => match t {
+            "true" | "on" | "1" | "yes" => Some(Value::Bool(true)),
+            "false" | "off" | "0" | "no" | "" => Some(Value::Bool(false)),
+            _ => None,
+        },
+        _ => Some(Value::String(val.to_string())),
+    }
+}
+
 impl CrowLiveState {
     /// Create a new empty state.
     pub fn new() -> Self {
@@ -245,15 +269,15 @@ pub fn live_js(ws_path: &str) -> String {
       if (key) savedInputs[key] = {{ value: el.value, start: el.selectionStart, end: el.selectionEnd }};
     }});
     target.innerHTML = source.innerHTML;
-    // Restore input values and focus
+    // Restore only the input being typed in; every other bound input takes
+    // the value the server just rendered, so a handler that assigns to a
+    // bound variable shows up in its field.
     target.querySelectorAll('[data-crow-input],[data-crow-change]').forEach(function(el) {{
       var key = el.getAttribute('data-crow-input') || el.getAttribute('data-crow-change');
-      if (key && savedInputs[key]) {{
+      if (key && savedInputs[key] && key === focusId) {{
         el.value = savedInputs[key].value;
-        if (key === focusId) {{
-          el.focus();
-          try {{ el.setSelectionRange(savedInputs[key].start, savedInputs[key].end); }} catch(e) {{}}
-        }}
+        el.focus();
+        try {{ el.setSelectionRange(savedInputs[key].start, savedInputs[key].end); }} catch(e) {{}}
       }}
     }});
   }}
@@ -571,14 +595,11 @@ where
                                 };
 
                                 // Two-way binding: __field:key or __select:key
-                                if let Some(key) = event.strip_prefix("__field:") {
+                                if let Some(key) = event.strip_prefix("__field:").or_else(|| event.strip_prefix("__select:")) {
                                     if let Some(val) = &value {
-                                        state.set(key, serde_json::json!(val));
-                                    }
-                                    state_changed = true;
-                                } else if let Some(key) = event.strip_prefix("__select:") {
-                                    if let Some(val) = &value {
-                                        state.set(key, serde_json::json!(val));
+                                        if let Some(v) = coerce_field_value(state.get(key), val) {
+                                            state.set(key, v);
+                                        }
                                     }
                                     state_changed = true;
                                 } else {
@@ -769,6 +790,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bound_fields_keep_the_variable_shape() {
+        use serde_json::json;
+        assert_eq!(coerce_field_value(Some(&json!(0)), "72"), Some(json!(72)));
+        assert_eq!(coerce_field_value(Some(&json!(0)), "72.9"), Some(json!(72)));
+        assert_eq!(coerce_field_value(Some(&json!(0)), "abc"), None);
+        assert_eq!(coerce_field_value(Some(&json!(1.5)), "2.25"), Some(json!(2.25)));
+        assert_eq!(coerce_field_value(Some(&json!(false)), "on"), Some(json!(true)));
+        assert_eq!(coerce_field_value(Some(&json!("IMRN")), "AXTX"), Some(json!("AXTX")));
+        assert_eq!(coerce_field_value(None, "7"), Some(json!("7")));
+    }
 
     #[test]
     fn test_live_state() {

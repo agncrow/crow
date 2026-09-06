@@ -289,29 +289,28 @@ impl CrowDb for CrowPostgresDb {
     }
 
     fn transact(&self, f: &dyn Fn(&dyn DbTx) -> Result<(), String>) -> Result<(), String> {
-        self.rt.block_on(async {
-            let client = self.pool.get().await
-                .map_err(|e| format!("postgres pool error: {}", e))?;
-            client.simple_query("BEGIN").await
-                .map_err(|e| format!("postgres begin error: {}", e))?;
-
-            let wrapper = PgTransactWrapper {
-                client: &client,
-                rt: Arc::clone(&self.rt),
-            };
-
-            match f(&wrapper) {
-                Ok(()) => {
-                    client.simple_query("COMMIT").await
-                        .map_err(|e| format!("postgres commit error: {}", e))?;
-                    Ok(())
-                }
-                Err(e) => {
-                    let _ = client.simple_query("ROLLBACK").await;
-                    Err(e)
-                }
-            }
-        })
+        // Each step blocks on its own; the user's function runs between them
+        // on this thread, so its own queries never nest inside a block_on.
+        let client = Self::off_runtime(|| self.rt.block_on(async {
+            let client = self.pool.get().await.map_err(|e| format!("postgres pool error: {}", e))?;
+            client.simple_query("BEGIN").await.map_err(|e| format!("postgres begin error: {}", e))?;
+            Ok::<_, String>(client)
+        }))?;
+        let wrapper = PgTransactWrapper { client: &client, rt: Arc::clone(&self.rt) };
+        let outcome = f(&wrapper);
+        let rt = Arc::clone(&self.rt);
+        let finish = match &outcome {
+            Ok(()) => "COMMIT",
+            Err(_) => "ROLLBACK",
+        };
+        let ended = Self::off_runtime(|| rt.block_on(async {
+            client.simple_query(finish).await.map(|_| ()).map_err(|e| format!("postgres {} error: {}", finish.to_lowercase(), e))
+        }));
+        match (outcome, ended) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Ok(()), Err(e)) => Err(e),
+            (Err(e), _) => Err(e),
+        }
     }
 
     fn migrate(&self, dir: &str) -> Result<i64, String> {
@@ -335,13 +334,13 @@ impl DbTx for PgTransactWrapper<'_> {
         let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
             pg_params.iter().map(|b| b.as_ref()).collect();
 
-        self.rt.block_on(async {
+        CrowPostgresDb::off_runtime(|| self.rt.block_on(async {
             let stmt = self.client.prepare_typed(&numbered_placeholders(sql), &pg_types).await
                 .map_err(|e| format!("postgres query error: {}", describe(e)))?;
             let rows = self.client.query(&stmt, &param_refs).await
                 .map_err(|e| format!("postgres query error: {}", describe(e)))?;
             rows_to_frame(&rows)
-        })
+        }))
     }
 
     fn exec(&self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
@@ -349,13 +348,13 @@ impl DbTx for PgTransactWrapper<'_> {
         let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
             pg_params.iter().map(|b| b.as_ref()).collect();
 
-        self.rt.block_on(async {
+        CrowPostgresDb::off_runtime(|| self.rt.block_on(async {
             let stmt = self.client.prepare_typed(&numbered_placeholders(sql), &pg_types).await
                 .map_err(|e| format!("postgres exec error: {}", describe(e)))?;
             let n = self.client.execute(&stmt, &param_refs).await
                 .map_err(|e| format!("postgres exec error: {}", describe(e)))?;
             Ok(n as i64)
-        })
+        }))
     }
 }
 

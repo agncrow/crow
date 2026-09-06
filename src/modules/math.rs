@@ -144,7 +144,25 @@ fn shape_from_args(args: &[CrowValue], fname: &str) -> Result<Vec<usize>, String
 
 // ===== Interpreter dispatch =====
 
+/// Element-wise functions that also take a plain number.
+pub(crate) const SCALAR_UNARY: &[&str] = &[
+    "exp", "ln", "log2", "log10", "sign", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh",
+];
+
 fn call_math(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
+    // A number goes through the same code as a one-element tensor and
+    // comes back as a number.
+    if SCALAR_UNARY.contains(&name) && args.len() == 1 {
+        let x = match &args[0].value { Value::Int(n) => Some(*n as f64), Value::Float(f) => Some(*f), _ => None };
+        if let Some(x) = x {
+            let t = CrowTensor::from_vec(vec![x], vec![1]);
+            let r = call_math(name, &[CrowValue::ok(Value::NumArray(t))])?;
+            return Ok(match &r.value {
+                Value::NumArray(t) => CrowValue::ok(Value::Float(t.to_vec().first().copied().unwrap_or(f64::NAN))),
+                _ => r,
+            });
+        }
+    }
     match name {
         // Tensor creation
         "zeros" => {
@@ -832,6 +850,16 @@ fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String
 // ===== Transpiler emission =====
 
 fn emit_math_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String> {
+    if SCALAR_UNARY.contains(&name) && arg_strs.len() == 1 {
+        let t = arg_types.first().cloned().unwrap_or(CrowType::Unknown);
+        let t = if let CrowType::Result(i) = t { *i } else { t };
+        let method = if name == "sign" { "signum" } else { name };
+        match t {
+            CrowType::Int => return Ok(format!("(({}) as f64).{}()", arg_strs[0], method)),
+            CrowType::Float => return Ok(format!("(({}) as f64).{}()", arg_strs[0], method)),
+            _ => {}
+        }
+    }
     let result = match name {
         // Tensor creation
         "zeros" => format!("CrowTensor::zeros(vec![{}])", arg_strs.iter().map(|a| format!("{} as usize", a)).collect::<Vec<_>>().join(", ")),

@@ -1,0 +1,20 @@
+--- Frames built in Crow: an empty frame, columns from arrays and a
+--- scalar, a frame function over it, and core names beside frame names.
+use frame, math
+
+f = frame.new[]
+f = with[f, 'symbol', ['IMRN', 'AOUT', 'CHPT']]
+f = with[f, 'price', [1.91, 13.56, 9.59]]
+f = with[f, 'gate', [1, 0, 1]]
+f = with[f, 'day', '2026-09-04']
+log[f.columns]
+log[len[f]]
+log[f.price[1]]
+log[f.gate[0]]
+log[f.day[2]]
+log[sort[f, 'price'].symbol]
+log[join[['a', 'b'], '-']]
+log[sort[[3, 1, 2]]]
+log[log10[100.0]]
+log[exp[0.0]]
+log[sign[-3]]
