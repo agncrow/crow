@@ -8,7 +8,18 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # incremental caches are most of a debug target's bulk, and every
+      # generated program here is built once
+      CARGO_INCREMENTAL: 0
+      # each book worker keeps its own dependency build; two fit the runner
+      CROW_BOOK_JOBS: 2
     steps:
+      - name: Free disk space (the suites compile dozens of programs)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune -af > /dev/null 2>&1 || true
+          df -h / | tail -1
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -30,3 +41,6 @@ jobs:
         run: ./target/release/crow test tests/layout/conformance.crow
       - name: Layout example
         run: ./target/release/crow test examples/layout_dashboard.crow
+      - name: Disk used by the run
+        if: always()
+        run: df -h / | tail -1; du -sh target .crow_build 2>/dev/null || true
