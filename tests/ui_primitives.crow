@@ -1,0 +1,74 @@
+--- The element vocabulary's primitives, rendered by the interpreter and
+--- checked as markup; the compiled renderer emits the same (parity is held
+--- by the kernel table both call).
+use web, ui
+
+agree = false
+notify = true
+mode = 'Practice'
+side = 'buy'
+name = 'Ann'
+qty = 100
+notes = ''
+show_help = false
+show_panel = false
+saved = false
+pct = 0.4
+
+fn open_help[]
+    show_help = true
+
+fn close_help[]
+    show_help = false
+
+view render[]
+    return stack[
+        nav[a['Home', href = '/'], a['Scanner', href = '/scanner'], a['Sim', href = '/sim'], active = '/scanner'],
+        tabs[['Scanner Replay', 'Practice'], mode],
+        row[icon['search'], field['Name', name], field['Qty', qty], field['Notes', notes, lines = 3], gap = 'm'],
+        row[checkbox['I agree', agree], toggle['Notify', notify], radio[['buy', 'sell'], side], gap = 'l'],
+        progress[pct],
+        divider[],
+        details[summary['More filters'], p['Min price, max float'], open = true],
+        dropdown[summary['Actions'], stack[button['Rename', click = open_help], button['Delete', click = close_help]], side = 'right'],
+        modal[stack[h3['Help'], p['Click a bar to seek.'], button['Close', click = close_help]], open = show_help],
+        drawer[h3['Panel'], p['Side panel'], open = show_panel, side = 'left'],
+        toast[p['Saved'], open = saved, color = 'up'],
+        img[src = '/x.png', fit = 'cover', aspect = '16/9'],
+        span['hover me', tip = 'a tooltip'],
+        gap = 'm'
+    ]
+
+test primitives_render[]
+    a = app[render]
+    h = html[a]
+    assert[contains[h, '<a aria-current="page" href="/scanner">']]
+    assert[contains[h, 'class="crow-tabs" role="tablist"']]
+    assert[contains[h, 'aria-selected="true" role="tab"']]
+    assert[contains[h, 'svg class="icon icon-search"']]
+    assert[contains[h, '<input data-crow-input="__field:qty" type="number" value="100">']]
+    assert[contains[h, '<textarea data-crow-input="__field:notes" rows="3">']]
+    assert[contains[h, 'class="crow-check"><input data-crow-input="__field:agree" type="checkbox">']]
+    assert[contains[h, 'crow-toggle"><input checked="" data-crow-input="__field:notify" type="checkbox">']]
+    assert[contains[h, 'class="crow-radio"']]
+    assert[contains[h, '<progress class="crow-progress" max="1" value="0.4">']]
+    assert[contains[h, '<hr class="divider">']]
+    assert[contains[h, '<details open="">']]
+    assert[contains[h, '<details class="dropdown" data-side="right">']]
+    assert[contains[h, 'class="modal" data-open="false"']]
+    assert[contains[h, 'class="drawer" data-open="false" data-side="left"']]
+    assert[contains[h, 'class="toast" data-open="false"']]
+    assert[contains[h, 'object-fit:cover']]
+    assert[contains[h, 'title="a tooltip"']]
+
+test modal_opens_from_state[]
+    a = app[render]
+    click[a, open_help]
+    h = html[a]
+    assert[contains[h, 'class="modal" data-open="true"']]
+
+test unknown_icon_names_the_set[]
+    a = app[render]
+    assert[contains[html[a], 'icon-search']]
+
+page['/', render]

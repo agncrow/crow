@@ -31,6 +31,10 @@ pub const UI_ELEMENTS: &[&str] = &[
     "pre", "code", "input", "img", "table",
     // the layout vocabulary's containers (render as div; see crow_runtime::layout)
     "stack", "row", "grid", "overlay", "scroll",
+    // revealing: disclosure, a dropdown panel, and the three layers
+    "details", "summary", "dropdown", "modal", "drawer", "toast",
+    // a rule between siblings
+    "divider",
 ];
 
 /// Builtins with named parameters: name → ordered named-parameter list.
@@ -254,6 +258,28 @@ impl Lowerer {
                 match callee_name.as_deref() {
                     Some("map") => self.lower_map_call(args)?,
                     // slider[label, var, min = 0, max = 100, step = 1]
+                    // field[label, var, type = '', lines = 0] — '' means "from
+                    // the variable's type"; lines > 0 is a textarea
+                    Some("field") if !self.fns.contains_key("field") => {
+                        let params: Vec<String> = ["label", "var", "type", "lines"].iter().map(|s| s.to_string()).collect();
+                        let defaults: Vec<Option<Expr>> = vec![None, None, Some(Expr::Str(String::new())), Some(Expr::Int(0))];
+                        let resolved = self.resolve_args("field", &params, &defaults, args)?;
+                        Expr::Call { callee: Box::new(callee), args: resolved }
+                    }
+                    // progress[value, max = 1.0]
+                    Some("progress") if !self.fns.contains_key("progress") => {
+                        let params: Vec<String> = ["value", "max"].iter().map(|s| s.to_string()).collect();
+                        let defaults: Vec<Option<Expr>> = vec![None, Some(Expr::Float(1.0))];
+                        let resolved = self.resolve_args("progress", &params, &defaults, args)?;
+                        Expr::Call { callee: Box::new(callee), args: resolved }
+                    }
+                    // icon[name, size = 'm', color = '']
+                    Some("icon") if !self.fns.contains_key("icon") => {
+                        let params: Vec<String> = ["name", "size", "color"].iter().map(|s| s.to_string()).collect();
+                        let defaults: Vec<Option<Expr>> = vec![None, Some(Expr::Str("m".to_string())), Some(Expr::Str(String::new()))];
+                        let resolved = self.resolve_args("icon", &params, &defaults, args)?;
+                        Expr::Call { callee: Box::new(callee), args: resolved }
+                    }
                     Some("slider") if !self.fns.contains_key("slider") => {
                         let params: Vec<String> = ["label", "var", "min", "max", "step"].iter().map(|s| s.to_string()).collect();
                         let defaults: Vec<Option<Expr>> = vec![None, None, Some(Expr::Int(0)), Some(Expr::Int(100)), Some(Expr::Int(1))];
@@ -354,11 +380,13 @@ impl Lowerer {
                     // refresh: the runtime re-renders every session on this
                     // interval; budget: handlers/renders over this many ms are
                     // logged. Both modes receive exactly 3 positional args.
+                    // Plus the look: theme ('' = system), density ('' =
+                    // comfortable), accent ('' = the theme's), wide (false).
                     Some("serve") if !self.fns.contains_key("serve") => {
                         let params: Vec<String> =
-                            ["port", "refresh", "budget"].iter().map(|s| s.to_string()).collect();
+                            ["port", "refresh", "budget", "theme", "density", "accent", "wide"].iter().map(|s| s.to_string()).collect();
                         let defaults: Vec<Option<Expr>> =
-                            vec![None, Some(Expr::Int(0)), Some(Expr::Int(0))];
+                            vec![None, Some(Expr::Int(0)), Some(Expr::Int(0)), Some(Expr::Str(String::new())), Some(Expr::Str(String::new())), Some(Expr::Str(String::new())), Some(Expr::Bool(false))];
                         let resolved = self.resolve_args("serve", &params, &defaults, args)?;
                         Expr::Call { callee: Box::new(callee), args: resolved }
                     }

@@ -1458,7 +1458,7 @@ impl Transpiler {
                                 || (args.len() == 3
                                     && matches!(self.ctx.infer_expr(&args[0]), CrowType::Str)));
                         let noapp_serve =
-                            name == "serve" && (args.len() == 1 || args.len() == 3);
+                            name == "serve" && (args.len() == 1 || args.len() == 7);
                         if noapp_route || noapp_serve {
                             self.has_noapp_web = true;
                         }
@@ -4078,9 +4078,10 @@ impl Transpiler {
                             "header", "footer", "section", "tr", "td", "th",
                             "thead", "tbody", "option", "textarea", "label",
                             "pre", "code", "stack", "row", "grid", "overlay", "scroll",
+                            "details", "summary", "dropdown", "modal", "drawer", "toast",
                         ];
                         // Void elements (no children)
-                        const VOID_ELEMENTS: &[&str] = &["input", "img"];
+                        const VOID_ELEMENTS: &[&str] = &["input", "img", "divider"];
 
                         // table[frame] renders a frame (handled below); table with
                         // element children is an ordinary element
@@ -4102,7 +4103,7 @@ impl Transpiler {
                             // Rust method name: "main" → "main_el" (keyword conflict);
                             // the layout containers are divs with a class
                             let is_container = crow_runtime::layout::CONTAINERS.contains(&name.as_str());
-                            let rust_name = if name == "main" { "main_el" } else if is_container { "div" } else { name.as_str() };
+                            let rust_name = if name == "main" { "main_el" } else { crow_runtime::layout::html_tag(name) };
 
                             // Separate first Map arg (attrs) from children
                             let (attr_pairs, child_args): (Vec<(&Expr, &Expr)>, Vec<&Expr>) =
@@ -4137,7 +4138,7 @@ impl Transpiler {
                                     // never text nodes.
                                     Expr::Call { callee, .. }
                                         if matches!(callee.as_ref(), Expr::Ident(n)
-                                            if n == "chart" || n == "field" || n == "select"
+                                            if matches!(n.as_str(), "chart" | "field" | "select" | "slider" | "checkbox" | "toggle" | "radio" | "tabs" | "progress" | "icon")
                                                 || crate::lower::UI_ELEMENTS.contains(&n.as_str())) =>
                                     {
                                         self.expr_to_string(child)
@@ -4208,6 +4209,12 @@ impl Transpiler {
                             if !rendered.style.is_empty() { result = format!("{}.attr(\"style\", \"{}\")", result, rendered.style); }
                             for (k, v) in &rendered.data { result = format!("{}.attr(\"{}\", \"{}\")", result, k, v); }
                             for (k, v) in &rendered.passthrough { result = format!("{}.attr(\"{}\", \"{}\")", result, k, v.replace('\"', "\\\"")); }
+                            // a literal active path was rendered as data-active; mark the link too
+                            if name == "nav" {
+                                if let Some((_, a)) = literal_layout.iter().find(|(k, _)| k == "active") {
+                                    result = format!("{}.mark_active(\"{}\")", result, a);
+                                }
+                            }
                             let attr_pairs = other_pairs;
                             for (k, v) in &attr_pairs {
                                 let key_str = match k {
@@ -4239,6 +4246,12 @@ impl Transpiler {
                                     self.expr_to_string(v)
                                 };
                                 match key_str.as_str() {
+                                    // open = expr: the kernel's rule at render time
+                                    "open" => result = format!("{}.open_attr({{ let _o = {}; _o }})", result, self.expr_to_string(v)),
+                                    // nav[..., active = expr]: mark the active link
+                                    "active" if name == "nav" => result = format!("{}.attr(\"data-active\", &{a}).mark_active(&{a})", result, a = self.expr_to_string(v)),
+                                    // tip = expr: the browser's tooltip
+                                    "tip" => result = format!("{}.attr(\"title\", &format!(\"{{}}\", {}))", result, self.expr_to_string(v)),
                                     "click" => result = if is_fn_ref { format!("{}.on_click({})", result, event_name) } else { format!("{}.on_click(&{})", result, event_name) },
                                     "input" => result = if is_fn_ref { format!("{}.on_input({})", result, event_name) } else { format!("{}.on_input(&{})", result, event_name) },
                                     "submit" => result = if is_fn_ref { format!("{}.on_submit({})", result, event_name) } else { format!("{}.on_submit(&{})", result, event_name) },
@@ -4274,13 +4287,14 @@ impl Transpiler {
                         // serve[port] → implicit app: __crow_app.serve(port as u16).await.unwrap()
                         return format!("__crow_app.serve({} as u16).await.unwrap()", arg_strs[0]);
                     }
-                    if name == "serve" && self.needs_crow_web && arg_strs.len() == 3 {
-                        // serve[port, refresh, budget] (lowered form, 0 = unset):
-                        // configure the live runtime, then serve.
+                    if name == "serve" && self.needs_crow_web && arg_strs.len() == 7 {
+                        // serve[port, refresh, budget, theme, density, accent, wide]
+                        // (lowered form, 0/'' = unset): configure the live
+                        // runtime and the look, then serve.
                         if self.has_page_routes {
                             return format!(
-                                "{{ crow_web::live::configure({} as i64, {} as i64); __crow_app.serve({} as u16).await.unwrap() }}",
-                                arg_strs[1], arg_strs[2], arg_strs[0]
+                                "{{ crow_web::live::configure({} as i64, {} as i64); crow_web::live::configure_look(&{}, &{}, &{}, {}); __crow_app.serve({} as u16).await.unwrap() }}",
+                                arg_strs[1], arg_strs[2], arg_strs[3], arg_strs[4], arg_strs[5], arg_strs[6], arg_strs[0]
                             );
                         }
                         return format!("__crow_app.serve({} as u16).await.unwrap()", arg_strs[0]);
@@ -4563,6 +4577,7 @@ impl Transpiler {
                         let is_frame = matches!(&frame_ty, CrowType::Frame) || matches!(&frame_ty, CrowType::Result(i) if matches!(i.as_ref(), CrowType::Frame));
                         if is_frame {
                             let (mut click, mut key, mut mark) = ("None".to_string(), "None".to_string(), "None".to_string());
+                            let mut delta = "&[]".to_string();
                             if let Expr::Map(pairs) = &args[0] {
                                 for (k, v) in pairs {
                                     let kname = match k { Expr::Ident(s) | Expr::Str(s) => s.clone(), _ => continue };
@@ -4570,26 +4585,63 @@ impl Transpiler {
                                         ("click", Expr::Ident(f)) => click = format!("Some(\"{}\")", f),
                                         ("key", Expr::Str(s)) => key = format!("Some(\"{}\")", s),
                                         ("mark", Expr::Str(s)) => mark = format!("Some(\"{}\")", s),
+                                        ("delta", Expr::Array(items)) => {
+                                            let names: Vec<String> = items.iter().filter_map(|i| if let Expr::Str(s) = i { Some(format!("\"{}\".to_string()", s)) } else { None }).collect();
+                                            delta = format!("&[{}]", names.join(", "));
+                                        }
                                         _ => {}
                                     }
                                 }
                             }
-                            let rows = format!("CrowVNode::table(vec![CrowVNode::raw(&crow_runtime::layout::frame_table_html(_f, {}, {}, {}))])", click, key, mark);
+                            let rows = format!("CrowVNode::table(vec![CrowVNode::raw(&crow_runtime::layout::frame_table_html(_f, {}, {}, {}, {}))])", click, key, mark, delta);
                             if matches!(frame_ty, CrowType::Result(_)) {
                                 return format!("{{ let _fr = {}; if !_fr.ok {{ CrowVNode::text(&format!(\"error: {{}}\", _fr.reason)) }} else {{ let _f = &_fr.value; {} }} }}", arg_strs[1], rows);
                             }
                             return format!("{{ let _f = &{}; {} }}", arg_strs[1], rows);
                         }
                     }
-                    // field[label, var] → CrowVNode::field(label, key, current_value)
-                    if name == "field" && self.needs_ui && arg_strs.len() == 2 {
-                        // Extract the state key from the second argument
+                    // field[label, var, type, lines] (lowered) → CrowVNode::field_typed
+                    if name == "field" && self.needs_ui && arg_strs.len() == 4 {
                         let key = match &args[1] {
                             Expr::Ident(vname) => vname.clone(),
                             Expr::FieldAccess { field, .. } => field.clone(),
                             _ => "unknown".to_string(),
                         };
-                        return format!("CrowVNode::field(&{}, \"{}\", &format!(\"{{}}\", {}))", arg_strs[0], key, arg_strs[1]);
+                        // '' means: a number var gets a number input
+                        let kind = match &args[2] {
+                            Expr::Str(s) if s.is_empty() => match self.ctx.infer_expr(&args[1]) {
+                                CrowType::Int | CrowType::Float => "\"number\"".to_string(),
+                                _ => "\"text\"".to_string(),
+                            },
+                            _ => format!("&{}", arg_strs[2]),
+                        };
+                        return format!("CrowVNode::field_typed(&{}, \"{}\", &format!(\"{{}}\", {}), {}, ({}) as i64)", arg_strs[0], key, arg_strs[1], kind, arg_strs[3]);
+                    }
+                    // checkbox[label, var] / toggle[label, var]
+                    if (name == "checkbox" || name == "toggle") && self.needs_ui && arg_strs.len() == 2 {
+                        let key = match &args[1] {
+                            Expr::Ident(vname) => vname.clone(),
+                            Expr::FieldAccess { field, .. } => field.clone(),
+                            _ => "unknown".to_string(),
+                        };
+                        return format!("CrowVNode::check_input(&{}, \"{}\", format!(\"{{}}\", {}) == \"true\", {})", arg_strs[0], key, arg_strs[1], name == "toggle");
+                    }
+                    // radio[options, var] / tabs[options, var]
+                    if (name == "radio" || name == "tabs") && self.needs_ui && arg_strs.len() == 2 {
+                        let key = match &args[1] {
+                            Expr::Ident(vname) => vname.clone(),
+                            Expr::FieldAccess { field, .. } => field.clone(),
+                            _ => "unknown".to_string(),
+                        };
+                        return format!("CrowVNode::choice_input(&{}, \"{}\", &format!(\"{{}}\", {}), {})", arg_strs[0], key, arg_strs[1], name == "tabs");
+                    }
+                    // progress[value, max] (lowered)
+                    if name == "progress" && self.needs_ui && arg_strs.len() == 2 {
+                        return format!("CrowVNode::progress(({}) as f64, ({}) as f64)", arg_strs[0], arg_strs[1]);
+                    }
+                    // icon[name, size, color] (lowered)
+                    if name == "icon" && self.needs_ui && arg_strs.len() == 3 {
+                        return format!("CrowVNode::icon(&{}, &{}, &{})", arg_strs[0], arg_strs[1], arg_strs[2]);
                     }
                     // select[options, var] → CrowVNode::select_input(options, key, current_value)
                     if name == "select" && self.needs_ui && arg_strs.len() == 2 {
@@ -4643,7 +4695,7 @@ impl Transpiler {
                     }
                     if name == "table" && self.needs_ui && arg_strs.len() == 1 {
                         let arg_ty = self.ctx.infer_expr(&args[0]);
-                        let rows = "CrowVNode::table(vec![CrowVNode::raw(&crow_runtime::layout::frame_table_html(_f, None, None, None))])";
+                        let rows = "CrowVNode::table(vec![CrowVNode::raw(&crow_runtime::layout::frame_table_html(_f, None, None, None, &[]))])";
                         if matches!(arg_ty, CrowType::Result(_)) {
                             return format!(
                                 "{{ let _fr = {}; if !_fr.ok {{ CrowVNode::text(&format!(\"error: {{}}\", _fr.reason)) }} else {{ let _f = &_fr.value; {} }} }}",
@@ -7661,7 +7713,7 @@ mod tests {
     #[test]
     fn test_ui_field_codegen() {
         let rust = transpile("use web\nuse ui\nview render[s]\n    vol = s.get['vol', 0]\n    return div[field['Min Vol', vol]]\nserve[3000]\npage['/', render]\n");
-        assert!(rust.contains("CrowVNode::field("), "field should emit CrowVNode::field\n{}", rust);
+        assert!(rust.contains("CrowVNode::field_typed("), "field should emit CrowVNode::field_typed\n{}", rust);
         assert!(rust.contains("\"vol\""), "field should extract key name\n{}", rust);
     }
 

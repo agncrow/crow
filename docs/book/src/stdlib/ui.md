@@ -27,7 +27,7 @@ serve[3000]
 page['/', render]
 ```
 
-**Inside a view, the standard HTML element vocabulary is active** — `div`, `span`, `p`, `h1`, `h2`, `h3`, `h4`, `h5`, `h6`, `button`, `ul`, `ol`, `li`, `form`, `a`, `nav`, `header`, `footer`, `section`, `tr`, `td`, `th`, `thead`, `tbody`, `option`, `textarea`, `label`, `pre`, `code`, `input`, `img`, `table` — with their exact HTML names. **Outside a view, those names don't exist**: `p = 0.95`, `fn add[a, b]`, and `form = req.body` are ordinary code in any ui program, and `use ui` reserves nothing in your file. Calling an element outside a view is an error that points at the fix.
+**Inside a view, the standard HTML element vocabulary is active** — plus the vocabulary's own elements: the containers `stack`, `row`, `grid`, `overlay`, `scroll`, the layers `modal`, `drawer`, `toast`, and `details`, `summary`, `dropdown`, `divider` (Revealing and framing, below) — `div`, `span`, `p`, `h1`, `h2`, `h3`, `h4`, `h5`, `h6`, `button`, `ul`, `ol`, `li`, `form`, `a`, `nav`, `header`, `footer`, `section`, `tr`, `td`, `th`, `thead`, `tbody`, `option`, `textarea`, `label`, `pre`, `code`, `input`, `img`, `table` — with their exact HTML names. **Outside a view, those names don't exist**: `p = 0.95`, `fn add[a, b]`, and `form = req.body` are ordinary code in any ui program, and `use ui` reserves nothing in your file. Calling an element outside a view is an error that points at the fix.
 
 Views compose: a view calls other views (components) and ordinary functions freely. A module can export views — importers reach them qualified, like any module name:
 
@@ -57,11 +57,21 @@ Top-level variables in a ui program are reactive state (see Function Scope). Thr
 |---|---|---|
 | `fetch[url]` | Reactive state loaded once by HTTP GET when the page connects | [Views: the whole element vocabulary](../by-example/views-elements.md) |
 | `poll[url, seconds]` | Reactive state re-fetched every `seconds`; every reader re-renders when it changes | [Views: the whole element vocabulary](../by-example/views-elements.md) |
-| `field[label, var]` | A labeled input two-way bound to reactive variable `var` (inside a view) | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `field[label, var, type = '', lines = 0]` | A labeled input two-way bound to reactive variable `var` (inside a view). `type` is the input's kind — `'text'`, `'number'`, `'date'`, `'time'`, `'password'` — and defaults to `'number'` for an int or float variable; `lines = 3` makes it a textarea | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `slider[label, var, min = 0, max = 100, step = 1]` | A range input bound to a number | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
+| `checkbox[label, var]` | A checkbox bound to a bool | [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `toggle[label, var]` | A switch bound to a bool — the same binding as `checkbox`, drawn as a toggle | [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `radio[options, var]` | One of several strings, as radio buttons: `radio[['buy', 'sell'], side]` | [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `tabs[options, var]` | One of several strings, as a tab strip; the view shows the selected tab's content with `if mode eq 'Practice'` | [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `select[options, var]` | One of several strings, as a dropdown list | [Frames: `use frame`](../by-example/frames.md) |
+| `progress[value, max = 1.0]` | A progress bar | [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `icon[name, size = 'm', color = '']` | An icon from the closed set (below), sized by the type scale, colored by a token | [The Element Vocabulary](../ch12-07-vocabulary.md) |
+
+Inputs are state: the reader's change lands in the variable, the handlers read it, and the next render draws it. There is no "value of the input" apart from the variable.
 
 ### Tables over frames
 
-`table[frame]` renders a frame's rows. Three named arguments make it interactive: `click = handler` sends the row's key to the handler when a row is clicked (`fn focus[symbol]`), `key = 'col'` names the column whose cell is sent (the first column by default), and `mark = 'col'` names a column whose truthy cells put the class `marked` on their row, tinted by the stylesheet.
+`table[frame]` renders a frame's rows. Numeric columns are typed: their cells carry the class `num` and the stylesheet right-aligns them with tabular figures. Four named arguments make it interactive and legible: `click = handler` sends the row's key to the handler when a row is clicked (`fn focus[symbol]`), `key = 'col'` names the column whose cell is sent (the first column by default), `mark = 'col'` names a column whose truthy cells put the class `marked` on their row, tinted by the stylesheet, and `delta = ['pnl', 'pct']` names columns whose cells are colored by sign (`up` / `down`).
 
 ### Sliders
 
@@ -83,8 +93,8 @@ Pages are composed from layout primitives, never styled with CSS. Five container
 
 | Container | Rule | Example |
 |---|---|---|
-| `stack[a, b, ...]` | children top to bottom, each the container's full content width | [Frames: `use frame`](../by-example/frames.md) · [Math: tensors](../by-example/math.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [View Blocks](../ch12-01-views.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Charts and Styling](../ch12-06-charts-and-style.md) |
-| `row[a, b, ...]` | children left to right on one line; overflow is a failure `fits[]` reports, never a silent wrap (`wrap = true` opts in) | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Web: responses and submodules](../by-example/web-more.md) · [Charts and Styling](../ch12-06-charts-and-style.md) |
+| `stack[a, b, ...]` | children top to bottom, each the container's full content width | [Frames: `use frame`](../by-example/frames.md) · [Math: tensors](../by-example/math.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [View Blocks](../ch12-01-views.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `row[a, b, ...]` | children left to right on one line; overflow is a failure `fits[]` reports, never a silent wrap (`wrap = true` opts in) | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Web: responses and submodules](../by-example/web-more.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `grid[a, b, ..., columns = 2]` | cells left-to-right, top-to-bottom, equal columns; `columns = '240px fill'` names tracks | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Charts and Styling](../ch12-06-charts-and-style.md) |
 | `overlay[base, top]` | `top` positioned over `base` by `anchor = 'center' \| 'top_right' \| ...` | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Charts and Styling](../ch12-06-charts-and-style.md) |
 | `scroll[child, height = '360px']` | a fixed-height viewport; the platform scrolls | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Charts and Styling](../ch12-06-charts-and-style.md) |
@@ -100,8 +110,28 @@ Pages are composed from layout primitives, never styled with CSS. Five container
 | `color`, `background` | a colour token: `text muted accent up down surface bg` — never a literal colour |  |
 | `lines = 2` | clamp a wrapping paragraph | [Structured files: `use io`](../by-example/io.md) |
 | `below = 'phone' \| 'tablet'`, `becomes = 'stack'`, `columns_then = 1`, `hidden_below` | responsive rules at named widths (phone < 600, tablet < 1024) — no media queries |  |
+| `open = true`, `side = 'left' \| 'right'` | a disclosure's or layer's state (any bool expression) and a drawer's or dropdown's side |  |
+| `tip = 'text'`, `fit = 'cover' \| 'contain'`, `active = '/path'` | a tooltip on anything; how an `img` fills its `aspect` box; the current page of a `nav` |  |
 
 Layout attributes are literals; a wrong value is a compile error naming the scale (`gap = 'huge' is not a spacing step (xs s m l xl)`), the same in both modes. Attributes outside the vocabulary (`class`, `href`, `name`, ...) pass through as HTML. Labels, headings, buttons, and cells are single-line; only `p` wraps.
+
+### Revealing and framing
+
+The vocabulary's own elements beyond the containers, each earning its place by a capability a stack of divs cannot compose:
+
+| Element | Renders | Example |
+|---|---|---|
+| `details[summary[...], ..., open = true]` | A disclosure: the summary always shows, the rest only when open. `open` follows a bool — `open = show` toggles it from state | [Views: the whole element vocabulary](../by-example/views-elements.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `dropdown[summary[...], panel, side = 'right']` | A button that opens a floating panel — its second child, usually a `stack` of buttons or links. `side` anchors the panel to the button's right edge | [Views: the whole element vocabulary](../by-example/views-elements.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `modal[child, open = var]` | A dialog layer over a dimmed page while `open` is true; the child (a `stack` with a heading, text, and a `button['Close', click = close]`) is the dialog | [Views: the whole element vocabulary](../by-example/views-elements.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `drawer[..., open = var, side = 'left']` | A side panel layer, sliding from the right by default | [Views: the whole element vocabulary](../by-example/views-elements.md) |
+| `toast[..., open = var]` | A brief notice at the bottom corner while `open` is true; it fades on its own, and the program clears the flag | [Views: the whole element vocabulary](../by-example/views-elements.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `divider[]` | A rule between siblings: horizontal in a `stack`, vertical in a `row` | [Views: the whole element vocabulary](../by-example/views-elements.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `nav[a[...], ..., active = path]` | A navigation row; the link whose `href` equals `active` gets `aria-current="page"` and the stylesheet's active look | [Views: the whole element vocabulary](../by-example/views-elements.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+
+Three attributes any element takes: `tip = 'text'` is the browser's tooltip, `fit = 'cover'` (or `'contain'`) sizes an `img` into its box together with `aspect`, and `open` as above. The layers take no room in the flow and are hidden until opened; the layout engine lays an open layer out as a stack where it sits.
+
+**The icon set**, closed like the rest of the vocabulary: `check x plus minus chevron_down chevron_up chevron_left chevron_right arrow_up arrow_down arrow_left arrow_right search menu more settings user home calendar clock refresh play pause stop upload download trash edit copy link external info warning error success star filter sort chart table bell mail lock eye eye_off dollar bookmark flag tag circle dot loader`. An unknown name is an error that lists them. Icons are inline SVG in the current text color, so `color = 'muted'` and the theme both apply.
 
 ### Charts — `chart[frame, ...]`
 
@@ -118,7 +148,7 @@ view render[]
 
 | Named argument | Default | Meaning | Example |
 |---|---|---|---|
-| `x` | `'ts'` | Column of moments for the x axis | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) · [Numbers and conversion](../by-example/numbers.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Testing](../ch09-00-testing.md) · [Charts and Styling](../ch12-06-charts-and-style.md) |
+| `x` | `'ts'` | Column of moments for the x axis | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) · [Numbers and conversion](../by-example/numbers.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Testing](../ch09-00-testing.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `candles` | `[]` | Four column names — open, high, low, close — drawn as candlesticks |  |
 | `lines` | `[]` | Column names drawn as line series | [Structured files: `use io`](../by-example/io.md) |
 | `bars_y` | `''` | Column drawn as a volume pane under the chart |  |

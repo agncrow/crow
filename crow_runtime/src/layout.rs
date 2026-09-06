@@ -10,15 +10,28 @@
 //! every browser agrees with the engine.
 
 /// Containers the vocabulary adds. They render as `<div class="stack">` etc.
-pub const CONTAINERS: &[&str] = &["stack", "row", "grid", "overlay", "scroll"];
+/// `modal`, `drawer` and `toast` are layers: fixed-position containers shown
+/// while `open = true`, laid out by the stylesheet.
+pub const CONTAINERS: &[&str] = &["stack", "row", "grid", "overlay", "scroll", "modal", "drawer", "toast"];
+
+/// Elements the vocabulary adds that render as a different HTML tag with a
+/// class: (name, tag).
+pub const ALIASED_ELEMENTS: &[(&str, &str)] = &[("divider", "hr"), ("dropdown", "details")];
+
+/// The HTML tag an element renders as.
+pub fn html_tag(name: &str) -> &str {
+    if CONTAINERS.contains(&name) { return "div"; }
+    ALIASED_ELEMENTS.iter().find(|(n, _)| *n == name).map(|(_, t)| *t).unwrap_or(name)
+}
 
 /// Attributes the vocabulary owns. Anything else on an element passes
 /// through as an HTML attribute (class, href, name, …).
 pub const LAYOUT_ATTRS: &[&str] = &[
     "gap", "pad", "margin", "align", "justify", "wrap", "columns", "columns_then",
-    "width", "height", "min_width", "max_width", "aspect", "fill",
+    "width", "height", "min_width", "max_width", "aspect", "fill", "fit",
     "surface", "radius", "border", "shadow", "color", "background",
     "size", "weight", "lines", "anchor", "below", "becomes", "hidden_below",
+    "tip", "open", "active", "side",
 ];
 
 /// The spacing scale, in px.
@@ -78,12 +91,13 @@ pub struct Rendered {
 /// Turn a tag and its literal attributes into markup pieces.
 pub fn render(tag: &str, attrs: &[(String, String)]) -> Rendered {
     let is_container = CONTAINERS.contains(&tag);
+    let is_aliased = ALIASED_ELEMENTS.iter().any(|(n, _)| *n == tag);
     let mut css: Vec<String> = Vec::new();
     let mut classes: Vec<String> = Vec::new();
     let mut data = Vec::new();
     let mut passthrough = Vec::new();
     let mut errors = Vec::new();
-    if is_container { classes.push(tag.to_string()); }
+    if is_container || is_aliased { classes.push(tag.to_string()); }
     match tag {
         "stack" => css.push("display:flex;flex-direction:column".into()),
         "row" => {
@@ -136,6 +150,20 @@ pub fn render(tag: &str, attrs: &[(String, String)]) -> Rendered {
             "min_width" => match size_css(v) { Some(s) => css.push(format!("min-width:{}", s)), None => bad("size", &mut errors) },
             "max_width" => match size_css(v) { Some(s) => css.push(format!("max-width:{}", s)), None => bad("size", &mut errors) },
             "aspect" => css.push(format!("aspect-ratio:{}", v)),
+            "fit" => match v { "cover" | "contain" => css.push(format!("object-fit:{};width:100%", v)), _ => bad("fit (cover contain)", &mut errors) },
+            // a tooltip is the browser's own: the title attribute
+            "tip" => passthrough.push(("title".to_string(), v.to_string())),
+            // open: a real attribute on details (the browser needs it), a
+            // data attribute on the layers (the stylesheet shows and hides)
+            "open" => match v {
+                "true" | "false" => {
+                    if tag == "details" || tag == "dropdown" { if v == "true" { passthrough.push(("open".to_string(), String::new())); } }
+                    else { data.push(("data-open".to_string(), v.to_string())); }
+                }
+                _ => bad("truth (true false)", &mut errors),
+            },
+            "active" => data.push(("data-active".to_string(), v.to_string())),
+            "side" => match v { "left" | "right" => data.push(("data-side".to_string(), v.to_string())), _ => bad("side (left right)", &mut errors) },
             "surface" => match v { "card" => classes.push("card".into()), _ => bad("surface (card)", &mut errors) },
             "radius" => match radius_px(v) { Some(r) => css.push(format!("border-radius:{}", r)), None => bad("radius (none s m l round)", &mut errors) },
             "border" => if v == "true" { css.push("border:1px solid var(--crow-border)".into()) },
@@ -159,7 +187,7 @@ pub fn render(tag: &str, attrs: &[(String, String)]) -> Rendered {
         // children after the first are positioned by their anchor (stylesheet rules)
     }
     Rendered {
-        tag: if is_container { "div".to_string() } else { tag.to_string() },
+        tag: html_tag(tag).to_string(),
         class: classes.join(" "),
         style: css.join(";"),
         data,
@@ -173,11 +201,18 @@ pub fn render(tag: &str, attrs: &[(String, String)]) -> Rendered {
 /// A frame as table rows — the markup inside `<table>` — for both renderers.
 /// `click` names a handler each row sends with the `key` column's cell as its
 /// argument (the first column when no key is given); `mark` names a column
-/// whose truthy cells put `marked` on their row.
-pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: Option<&str>, mark: Option<&str>) -> String {
+/// whose truthy cells put `marked` on their row; `delta` names columns whose
+/// cells are colored by sign (`up` / `down`). Numeric columns are typed:
+/// their cells carry `num` and the stylesheet right-aligns them.
+pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: Option<&str>, mark: Option<&str>, delta: &[String]) -> String {
+    use crate::frame::Column;
     let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
+    let numeric: Vec<bool> = f.data.iter().map(|c| matches!(c.as_ref(), Column::Int(_) | Column::Float(_))).collect();
+    let is_delta: Vec<bool> = f.columns.iter().map(|c| delta.iter().any(|d| d == c)).collect();
     let mut out = String::from("<thead><tr>");
-    for c in &f.columns { out.push_str(&format!("<th>{}</th>", esc(c))); }
+    for (i, c) in f.columns.iter().enumerate() {
+        if numeric[i] { out.push_str(&format!("<th class=\"num\">{}</th>", esc(c))); } else { out.push_str(&format!("<th>{}</th>", esc(c))); }
+    }
     out.push_str("</tr></thead><tbody>");
     let key_i = key.and_then(|k| f.columns.iter().position(|c| c == k)).unwrap_or(0);
     let mark_i = mark.and_then(|m| f.columns.iter().position(|c| c == m));
@@ -193,12 +228,153 @@ pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: O
             }
         }
         tr.push('>');
-        for c in 0..f.ncols() { tr.push_str(&format!("<td>{}</td>", esc(&f.data[c].fmt_cell(r, f.validity[c][r])))); }
+        for c in 0..f.ncols() {
+            let text = f.data[c].fmt_cell(r, f.validity[c][r]);
+            let mut classes: Vec<&str> = Vec::new();
+            if numeric[c] { classes.push("num"); }
+            if is_delta[c] && f.validity[c][r] {
+                let sign = match f.data[c].as_ref() {
+                    Column::Int(v) => v[r].signum() as f64,
+                    Column::Float(v) => if v[r].is_finite() { v[r].signum() } else { 0.0 },
+                    _ => text.trim().parse::<f64>().map(|x| x.signum()).unwrap_or(0.0),
+                };
+                if sign > 0.0 { classes.push("up"); } else if sign < 0.0 { classes.push("down"); }
+            }
+            if classes.is_empty() { tr.push_str(&format!("<td>{}</td>", esc(&text))); }
+            else { tr.push_str(&format!("<td class=\"{}\">{}</td>", classes.join(" "), esc(&text))); }
+        }
         tr.push_str("</tr>");
         out.push_str(&tr);
     }
     out.push_str("</tbody>");
     out
+}
+
+/// `nav[..., active = '/path']`: the link whose href is the active path
+/// gets `aria-current="page"`. String form, for the renderer that builds
+/// markup directly; the vnode renderer marks its tree the same way.
+pub fn nav_active_html(inner: &str, active: &str) -> String {
+    if active.is_empty() { return inner.to_string(); }
+    let needle_dq = format!("href=\"{}\"", active);
+    let mut out = String::with_capacity(inner.len() + 32);
+    let mut rest = inner;
+    while let Some(pos) = rest.find("<a ") {
+        let (before, after) = rest.split_at(pos);
+        out.push_str(before);
+        let end = after.find('>').unwrap_or(after.len());
+        let open_tag = &after[..end];
+        if open_tag.contains(&needle_dq) && !open_tag.contains("aria-current") {
+            out.push_str("<a aria-current=\"page\"");
+            out.push_str(&open_tag[2..]);
+        } else {
+            out.push_str(open_tag);
+        }
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The icon set: a closed list of names, each a 24×24 stroke path. Both
+/// renderers emit the same inline SVG, so an icon is theme-colored text.
+pub const ICONS: &[(&str, &str)] = &[
+    ("check", "M5 12l5 5L20 7"),
+    ("x", "M6 6l12 12M18 6L6 18"),
+    ("plus", "M12 5v14M5 12h14"),
+    ("minus", "M5 12h14"),
+    ("chevron_down", "M6 9l6 6 6-6"),
+    ("chevron_up", "M6 15l6-6 6 6"),
+    ("chevron_left", "M15 6l-6 6 6 6"),
+    ("chevron_right", "M9 6l6 6-6 6"),
+    ("arrow_up", "M12 19V5M5 12l7-7 7 7"),
+    ("arrow_down", "M12 5v14M5 12l7 7 7-7"),
+    ("arrow_left", "M19 12H5M12 5l-7 7 7 7"),
+    ("arrow_right", "M5 12h14M12 5l7 7-7 7"),
+    ("search", "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4"),
+    ("menu", "M4 6h16M4 12h16M4 18h16"),
+    ("more", "M4 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0M11 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0M18 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0"),
+    ("settings", "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"),
+    ("user", "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0"),
+    ("home", "M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"),
+    ("calendar", "M4 5h16v15H4zM4 10h16M8 3v4M16 3v4"),
+    ("clock", "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2"),
+    ("refresh", "M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"),
+    ("play", "M7 5v14l12-7z"),
+    ("pause", "M7 5v14M17 5v14"),
+    ("stop", "M6 6h12v12H6z"),
+    ("upload", "M12 16V4M6 10l6-6 6 6M4 20h16"),
+    ("download", "M12 4v12M6 10l6 6 6-6M4 20h16"),
+    ("trash", "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"),
+    ("edit", "M4 20h4l11-11-4-4L4 16v4zM13 7l4 4"),
+    ("copy", "M9 9h11v11H9zM5 15H4V4h11v1"),
+    ("link", "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5"),
+    ("external", "M14 4h6v6M20 4l-9 9M19 14v6H4V5h6"),
+    ("info", "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 11v5M12 8h.01"),
+    ("warning", "M12 3l10 18H2zM12 10v4M12 17h.01"),
+    ("error", "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM9 9l6 6M15 9l-6 6"),
+    ("success", "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM8 12l3 3 5-6"),
+    ("star", "M12 3l2.8 6 6.2.8-4.5 4.4 1.1 6.3L12 17.5 6.4 20.5l1.1-6.3L3 9.8 9.2 9z"),
+    ("filter", "M3 5h18l-7 8v6l-4 2v-8z"),
+    ("sort", "M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3"),
+    ("chart", "M4 20V10M10 20V4M16 20v-7M22 20H2"),
+    ("table", "M3 5h18v14H3zM3 10h18M3 15h18M9 5v14M15 5v14"),
+    ("bell", "M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 21h4"),
+    ("mail", "M3 6h18v12H3zM3 7l9 6 9-6"),
+    ("lock", "M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4"),
+    ("eye", "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"),
+    ("eye_off", "M3 3l18 18M10.5 5.2A10 10 0 0 1 22 12s-1.3 2.4-3.6 4.3M6.6 6.6C3.7 8.4 2 12 2 12s4 7 10 7c1.5 0 2.8-.3 4-.8M9.9 9.9a3 3 0 0 0 4.2 4.2"),
+    ("dollar", "M12 2v20M17 6.5C16 5 14 4.5 12 4.5S7.5 5.5 7.5 8s2 3.5 4.5 3.5 4.5 1 4.5 3.5-2 3.5-4.5 3.5S7 17.5 6.5 16"),
+    ("bookmark", "M6 3h12v18l-6-4-6 4z"),
+    ("flag", "M5 21V4h12l-2 4 2 4H5"),
+    ("tag", "M3 3h9l9 9-9 9-9-9zM8 8h.01"),
+    ("circle", "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"),
+    ("dot", "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"),
+    ("loader", "M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"),
+];
+
+/// Icon sizes follow the type scale: xs 12 · s 16 · m 20 · l 24 · xl 32.
+pub fn icon_px(size: &str) -> Option<u32> {
+    match size { "xs" => Some(12), "s" => Some(16), "m" => Some(20), "l" => Some(24), "xl" => Some(32), _ => None }
+}
+
+/// `icon[name, size = 'm', color = 'text']` as inline SVG, or the error
+/// that names the set.
+pub fn icon_html(name: &str, size: &str, color: &str) -> Result<String, String> {
+    let Some((_, d)) = ICONS.iter().find(|(n, _)| *n == name) else {
+        let names: Vec<&str> = ICONS.iter().map(|(n, _)| *n).collect();
+        return Err(format!("icon '{}' is not in the set: {}", name, names.join(" ")));
+    };
+    let px = icon_px(if size.is_empty() { "m" } else { size }).ok_or_else(|| format!("size = '{}' is not a type step (xs s m l xl)", size))?;
+    let color_css = if color.is_empty() { String::new() } else {
+        format!(" style=\"color:{}\"", color_var(color).ok_or_else(|| format!("color = '{}' is not a colour token (text muted accent up down)", color))?)
+    };
+    let fill = if name == "dot" { "currentColor" } else { "none" };
+    Ok(format!(
+        "<svg class=\"icon icon-{n}\" width=\"{px}\" height=\"{px}\" viewBox=\"0 0 24 24\" fill=\"{fill}\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"{color}><path d=\"{d}\"></path></svg>",
+        n = name, px = px, fill = fill, color = color_css, d = d
+    ))
+}
+
+/// The look an app asks for with `serve[..., theme, density, accent]`:
+/// attributes for the `<html>` element and an inline accent override.
+pub fn look_attrs(theme: &str, density: &str, accent: &str) -> Result<String, String> {
+    let mut out = String::new();
+    match theme {
+        "" | "system" => {}
+        "dark" | "light" => out.push_str(&format!(" data-theme=\"{}\"", theme)),
+        _ => return Err(format!("theme = '{}' is not a theme (light dark system)", theme)),
+    }
+    match density {
+        "" | "comfortable" => {}
+        "compact" => out.push_str(" data-density=\"compact\""),
+        _ => return Err(format!("density = '{}' is not a density (comfortable compact)", density)),
+    }
+    if !accent.is_empty() {
+        let ok = accent.starts_with('#') && (accent.len() == 4 || accent.len() == 7) && accent[1..].chars().all(|c| c.is_ascii_hexdigit());
+        if !ok { return Err(format!("accent = '{}' is not a hex colour like '#c60' or '#cc6600'", accent)); }
+        out.push_str(&format!(" style=\"--crow-accent:{}\"", accent));
+    }
+    Ok(out)
 }
 
 /// The kernel stylesheet: theme tokens, element defaults, and the eight
@@ -238,7 +414,74 @@ button.primary:hover{filter:brightness(1.08)}
 tr[data-crow-click]{cursor:pointer}
 tr[data-crow-click]:hover td{background:color-mix(in srgb,var(--crow-accent) 10%,transparent)}
 tr.marked td{background:color-mix(in srgb,var(--crow-up) 14%,transparent)}
-.crow-slider input{width:16rem;padding:0;border:0;background:transparent}"#;
+.crow-slider input{width:16rem;padding:0;border:0;background:transparent}
+.crow-field{display:inline-flex;align-items:center;gap:0.4rem}
+.crow-field:has(textarea){align-items:flex-start}
+hr.divider{border:0;border-top:1px solid var(--crow-border);margin:0;width:100%;height:0}
+.row > hr.divider{width:0;height:auto;align-self:stretch;border-top:0;border-left:1px solid var(--crow-border);min-height:1.5em}
+details{border:1px solid var(--crow-border);border-radius:4px;background:var(--crow-surface);padding:0.5rem 0.75rem}
+summary{cursor:pointer;font-weight:600;list-style:none;display:flex;align-items:center;gap:0.5rem}
+summary::-webkit-details-marker{display:none}
+summary::before{content:'';width:0.4em;height:0.4em;border-right:2px solid var(--crow-muted);border-bottom:2px solid var(--crow-muted);transform:rotate(-45deg);transition:transform 120ms ease;flex:none}
+details[open] > summary::before{transform:rotate(45deg)}
+details > :not(summary){margin-top:0.5rem}
+.dropdown{position:relative;display:inline-block;border:0;padding:0;background:transparent}
+.dropdown > summary{border:1px solid var(--crow-border);border-radius:4px;padding:0.42rem 0.95rem;background:var(--crow-surface);font-weight:400;font-size:0.92rem}
+.dropdown > summary::before{order:2;margin-left:0.25rem}
+.dropdown > :not(summary){position:absolute;top:calc(100% + 4px);left:0;z-index:20;min-width:12rem;margin:0;padding:0.35rem;background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,.18)}
+.dropdown[data-side="right"] > :not(summary){left:auto;right:0}
+.dropdown > :not(summary) > button,.dropdown > :not(summary) > a{display:block;width:100%;text-align:left;border:0;background:transparent;border-radius:3px;padding:0.4rem 0.6rem;color:var(--crow-text);text-decoration:none}
+.dropdown > :not(summary) > button:hover,.dropdown > :not(summary) > a:hover{background:color-mix(in srgb,var(--crow-accent) 12%,transparent)}
+.modal{display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.45);align-items:center;justify-content:center;padding:1rem}
+.modal[data-open="true"]{display:flex}
+.modal > *{background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:6px;padding:1.25rem;max-width:min(560px,100%);max-height:90vh;overflow:auto;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+.drawer{position:fixed;top:0;bottom:0;right:0;z-index:100;width:min(420px,92vw);background:var(--crow-surface);border-left:1px solid var(--crow-border);box-shadow:-6px 0 18px rgba(0,0,0,.18);padding:1.25rem;overflow:auto;display:flex;flex-direction:column;gap:0.75rem;transform:translateX(105%);visibility:hidden;transition:transform 160ms ease,visibility 160ms}
+.drawer[data-open="true"]{transform:none;visibility:visible}
+.drawer[data-side="left"]{left:0;right:auto;border-left:0;border-right:1px solid var(--crow-border);box-shadow:6px 0 18px rgba(0,0,0,.18);transform:translateX(-105%)}
+.drawer[data-side="left"][data-open="true"]{transform:none}
+.toast{display:none;position:fixed;right:24px;bottom:24px;z-index:110;max-width:min(420px,92vw);background:var(--crow-surface);color:var(--crow-text);border:1px solid var(--crow-border);border-left:4px solid var(--crow-accent);border-radius:4px;padding:0.7rem 1rem;box-shadow:0 6px 18px rgba(0,0,0,.18)}
+.toast[style*="color:"]{border-left-color:currentColor}
+.toast[data-open="true"]{display:block;animation:crow-toast 4s ease forwards}
+@keyframes crow-toast{0%{opacity:0;transform:translateY(8px)}8%{opacity:1;transform:none}85%{opacity:1}100%{opacity:0;visibility:hidden}}
+.crow-check{display:inline-flex;align-items:center;gap:0.5rem;color:var(--crow-text);font-size:0.92rem;cursor:pointer}
+.crow-check input{width:auto;margin:0;accent-color:var(--crow-accent)}
+.crow-toggle input{appearance:none;-webkit-appearance:none;width:2.2rem;height:1.25rem;border-radius:999px;background:var(--crow-border);position:relative;padding:0;border:0;transition:background 120ms ease;cursor:pointer}
+.crow-toggle input::after{content:'';position:absolute;top:2px;left:2px;width:calc(1.25rem - 4px);height:calc(1.25rem - 4px);border-radius:50%;background:var(--crow-surface);box-shadow:0 1px 2px rgba(0,0,0,.3);transition:transform 120ms ease}
+.crow-toggle input:checked{background:var(--crow-accent)}
+.crow-toggle input:checked::after{transform:translateX(0.95rem)}
+.crow-radio{display:inline-flex;gap:1rem;flex-wrap:wrap;align-items:center}
+.crow-radio label{color:var(--crow-text);cursor:pointer}
+.crow-radio input{width:auto;margin:0;accent-color:var(--crow-accent)}
+.crow-tabs{display:flex;gap:0;border-bottom:1px solid var(--crow-border);align-items:stretch}
+.crow-tabs label{cursor:pointer;padding:0.5rem 0.9rem;margin-bottom:-1px;border-bottom:2px solid transparent;color:var(--crow-muted);font-size:0.92rem;font-weight:500;white-space:nowrap;position:relative}
+.crow-tabs label[aria-selected="true"]{color:var(--crow-text);border-bottom-color:var(--crow-accent)}
+.crow-tabs input{position:absolute;opacity:0;width:0;height:0;margin:0;padding:0;border:0}
+progress.crow-progress{display:block;width:100%;height:0.5rem;appearance:none;-webkit-appearance:none;border:0;border-radius:999px;overflow:hidden;background:var(--crow-border);accent-color:var(--crow-accent)}
+progress.crow-progress::-webkit-progress-bar{background:var(--crow-border)}
+progress.crow-progress::-webkit-progress-value{background:var(--crow-accent)}
+progress.crow-progress::-moz-progress-bar{background:var(--crow-accent)}
+svg.icon{display:inline-block;vertical-align:-0.2em;flex:none}
+.icon-loader{animation:crow-spin 1s linear infinite}
+@keyframes crow-spin{to{transform:rotate(360deg)}}
+nav:not(.doc-nav):not(.doc-pager){display:flex;gap:0.25rem;align-items:center;flex-wrap:wrap}
+nav:not(.doc-nav):not(.doc-pager) a{color:var(--crow-muted);text-decoration:none;padding:0.35rem 0.6rem;border-radius:4px}
+nav:not(.doc-nav):not(.doc-pager) a:hover{color:var(--crow-text)}
+nav:not(.doc-nav):not(.doc-pager) a[aria-current="page"]{color:var(--crow-text);background:color-mix(in srgb,var(--crow-accent) 14%,transparent)}
+td.num,th.num{text-align:right}
+td.up{color:var(--crow-up)}
+td.down{color:var(--crow-down)}
+img[style*="object-fit"]{display:block}
+:root[data-wide="true"] body{max-width:none;padding:1.25rem 1.25rem 3rem}
+:root[data-density="compact"] body{font-size:13.5px;line-height:1.45;padding-top:1.25rem}
+[data-density="compact"] h1{font-size:1.25rem}
+[data-density="compact"] h2{margin:1.4rem 0 0.5rem}
+[data-density="compact"] button{padding:0.3rem 0.7rem;font-size:0.88rem}
+[data-density="compact"] input,[data-density="compact"] select,[data-density="compact"] textarea{padding:0.28rem 0.5rem;font-size:0.88rem}
+[data-density="compact"] th{padding:0.3rem 0.7rem 0.3rem 0}
+[data-density="compact"] td{padding:0.32rem 0.7rem 0.32rem 0}
+[data-density="compact"] .card{padding:0.55rem 0.7rem}
+[data-density="compact"] .card p{font-size:1.1rem}
+[data-density="compact"] .crow-tabs label{padding:0.4rem 0.7rem}"#;
 
 // Responsive rules override the element's own inline rule (the base
 // display/direction the kernel emits), so they carry !important.

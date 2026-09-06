@@ -50,7 +50,7 @@ pub(crate) const WEB_RESERVED: &[&str] = &[
 pub(crate) const WEB_EXTRA_FUNCTIONS: &[&str] = &["msgpack", "arrow", "bytes", "stream", "render"];
 
 /// Reserved only in files that import ui
-pub(crate) const UI_RESERVED: &[&str] = &["fetch", "poll", "field", "slider", "today"];
+pub(crate) const UI_RESERVED: &[&str] = &["fetch", "poll", "field", "slider", "checkbox", "toggle", "radio", "tabs", "progress", "icon", "today"];
 
 const BUILTINS: &[&str] = &[
     "log", "assert", "type",
@@ -101,7 +101,7 @@ const BUILTINS: &[&str] = &[
     "uploads", "sse", "ws", "connect", "send", "recv", "close",
     "page", "static_dir", "smtp",
     // UI reactive builtins
-    "fetch", "poll", "field", "slider", "today",
+    "fetch", "poll", "field", "slider", "checkbox", "toggle", "radio", "tabs", "progress", "icon", "today",
 ];
 
 pub struct Validator<'a> {
@@ -627,6 +627,9 @@ impl<'a> Validator<'a> {
                 for (k, v) in pairs {
                     let key = match k { Expr::Ident(s) | Expr::Str(s) => s.clone(), _ => continue };
                     if !crow_runtime::layout::LAYOUT_ATTRS.contains(&key.as_str()) { continue; }
+                    // state-driven by design: open follows a bool, active a
+                    // path, tip a text — any expression, checked at render
+                    if matches!(key.as_str(), "open" | "active" | "tip") && !matches!(v, Expr::Str(_) | Expr::Int(_) | Expr::Bool(_)) { continue; }
                     match v {
                         Expr::Str(s) => literal.push((key, s.clone())),
                         Expr::Int(n) => literal.push((key, n.to_string())),
@@ -820,7 +823,7 @@ impl<'a> Validator<'a> {
             "elapsed" => argc == 2,
             // Web
             "route" => (2..=4).contains(&argc), // route[path, handler] / +method / legacy app-first
-            "serve" => argc == 1 || argc == 3,   // serve[port] (pre-lower) or serve[port, refresh, budget]
+            "serve" => argc == 1 || argc == 7,   // serve[port] (pre-lower) or serve[port, refresh, budget, theme, density, accent, wide]
             "respond" => argc == 2,
             "redirect" | "html" | "text" => argc == 1,
             "msgpack" | "arrow" | "bytes" | "stream" => argc == 1,
@@ -847,8 +850,12 @@ impl<'a> Validator<'a> {
             // UI reactive builtins
             "fetch" => argc == 1,                 // fetch[url]
             "poll" => argc == 2,                  // poll[url, seconds]
-            "field" => argc == 2,                 // field[label, var]
+            "field" => argc == 4,                 // field[label, var, type, lines] (lowered)
             "slider" => argc == 5,                // slider[label, var, min, max, step] (lowered)
+            "checkbox" | "toggle" => argc == 2,   // checkbox[label, var]
+            "radio" | "tabs" => argc == 2,        // radio[options, var]
+            "progress" => argc == 2,              // progress[value, max] (lowered)
+            "icon" => argc == 3,                  // icon[name, size, color] (lowered)
             "today" => argc == 0,                 // today[]
             _ => true,
         };

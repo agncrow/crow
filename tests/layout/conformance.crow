@@ -43,6 +43,36 @@ view prose[]
         gap = 'm', pad = 'm'
     ]
 
+--- the rest of the vocabulary: navigation, tabs, inputs, disclosure, icons
+agree = false
+notify = true
+mode = 'Practice'
+side = 'buy'
+name = 'Ann'
+qty = 100
+notes = ''
+show_help = false
+pct = 0.4
+
+view primitives[]
+    return stack[
+        nav[a['Home', href = '/'], a['Scanner', href = '/scanner'], a['Sim', href = '/sim'], active = '/scanner'],
+        tabs[['Scanner Replay', 'Practice'], mode],
+        row[icon['search'], field['Name', name], field['Qty', qty], gap = 'm', below = 'phone', becomes = 'stack'],
+        field['Notes', notes, lines = 3],
+        row[checkbox['I agree', agree], toggle['Notify', notify], radio[['buy', 'sell'], side], gap = 'l'],
+        progress[pct],
+        divider[],
+        details[summary['More filters'], p['Min price, max float', class = 'body'], open = true],
+        details[summary['Closed by default'], p['Hidden until opened']],
+        row[dropdown[summary['Actions'], stack[a['Help', href = '#'], a['Panel', href = '#']]], button['Save', class = 'primary'], gap = 'm'],
+        modal[stack[h3['Help'], p['Click a bar to seek.']], open = show_help],
+        p['The end.', class = 'end'],
+        gap = 'm', pad = 'm'
+    ]
+
+page['/primitives', primitives]
+
 --- Every row of the measured file names a selector, an index, and the
 --- browser's box. Positions within 6px, sizes within 8px: the engine's
 --- job is placement, and a wrapped line or a rounded rem is not a bug.
@@ -100,3 +130,25 @@ test prose_phone[]
 page['/', dashboard]
 page['/prose', prose]
 serve[3000]
+
+test primitives_desktop[]
+    s = app[primitives, width = 1280]
+    file = 'tests/layout/expected/primitives_1280.csv'
+    rows = csv[file]
+    assert[rows.ok, 'no measurements at `file` — run tests/layout/measure.py']
+    for r in rows
+        boxes = box[s, r.sel]
+        assert[len[boxes] gt int[r.i], '`r.sel` #`r.i` is missing from the engine']
+        b = boxes[int[r.i]]
+        assert[within[b, r], '`r.sel` #`r.i`: engine `b.x`,`b.y` `b.width`x`b.height` vs browser `r.x`,`r.y` `r.w`x`r.h`']
+
+test primitives_phone[]
+    s = app[primitives, width = 390]
+    file = 'tests/layout/expected/primitives_390.csv'
+    rows = csv[file]
+    assert[rows.ok, 'no measurements at `file` — run tests/layout/measure.py']
+    for r in rows
+        boxes = box[s, r.sel]
+        assert[len[boxes] gt int[r.i], '`r.sel` #`r.i` is missing from the engine']
+        b = boxes[int[r.i]]
+        assert[within[b, r], '`r.sel` #`r.i`: engine `b.x`,`b.y` `b.width`x`b.height` vs browser `r.x`,`r.y` `r.w`x`r.h`']

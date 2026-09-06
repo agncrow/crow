@@ -58,6 +58,12 @@ view render[]
             pre[code['x = 1']],
             img[src = '/logo.png'],
             ul[li['one'], li['two']],
+            details[summary['More'], p['body']],
+            dropdown[summary['Actions'], stack[a['Help', href = '/help']]],
+            modal[p['dialog'], open = false],
+            drawer[p['panel'], open = false],
+            toast[p['notice'], open = false],
+            divider[],
             ol[li['first'], li['second']],
             form[
                 label['search'],

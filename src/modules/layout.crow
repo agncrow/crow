@@ -164,7 +164,18 @@ fn lay_text_px[node]
             spacing = 0.08 * font
     if node.tag eq 'h1'
         spacing = -0.015 * font
-    return lay_text_width[text, font, lay_is_bold[node]] + spacing * float[len[text]]
+    tw = lay_text_width[text, font, lay_is_bold[node]] + spacing * float[len[text]]
+    --- a checkbox (13px) or a toggle (2.2rem) and the label rule's 0.5rem gap
+    if lay_has_class[node, 'crow-toggle']
+        return tw + 35.2 + 8.0
+    if lay_has_class[node, 'crow-check']
+        return tw + 13.0 + 8.0
+    if node.tag eq 'label' and has[node.attrs, '_radio']
+        return tw + 13.0 + 8.0
+    --- a summary's chevron: 0.4em turned, and the 0.5rem gap before it
+    if node.tag eq 'summary'
+        return tw + 0.4 * font * 1.414 + 8.0
+    return tw
 
 fn lay_attr[node, name, default]
     if has[node.attrs, name]
@@ -201,10 +212,18 @@ fn lay_font_px[node]
         return 15.2
     if node.tag eq 'pre' or node.tag eq 'code'
         return 13.5
-    if node.tag eq 'button' or node.tag eq 'input' or node.tag eq 'td'
+    if node.tag eq 'button' or node.tag eq 'input' or node.tag eq 'td' or node.tag eq 'textarea'
         return 14.72
     if node.tag eq 'th'
         return 11.52
+    --- the vocabulary's inputs: tabs and checks at 0.92rem, a radio's
+    --- label at the label rule's 0.88rem, a dropdown's summary at 0.92rem
+    if lay_has_class[node, 'crow-check']
+        return 14.72
+    if node.tag eq 'summary' and has[node.attrs, '_dropdown']
+        return 14.72
+    if node.tag eq 'label' and has[node.attrs, '_tabs']
+        return 14.72
     if node.tag eq 'label'
         return 14.08
     if lay_in_card[node] and node.tag eq 'p'
@@ -222,6 +241,9 @@ fn lay_is_bold[node]
     if w eq 'bold'
         return true
     if node.tag eq 'h1' or node.tag eq 'h2' or node.tag eq 'h3' or node.tag eq 'th'
+        return true
+    --- a summary is bold, except a dropdown's (a button face)
+    if node.tag eq 'summary' and not has[node.attrs, '_dropdown']
         return true
     return false
 
@@ -241,6 +263,11 @@ fn lay_kind[node, viewport]
         return 'row'
     if lay_has_class[node, 'crow-field']
         return 'row'
+    --- the layers sit outside the flow; open, they lay out as stacks
+    if lay_has_class[node, 'modal'] or lay_has_class[node, 'drawer'] or lay_has_class[node, 'toast']
+        return 'layer'
+    if lay_has_class[node, 'crow-tabs'] or lay_has_class[node, 'crow-radio']
+        return 'row'
     if lay_has_class[node, 'grid']
         return 'grid'
     if lay_has_class[node, 'overlay']
@@ -255,7 +282,11 @@ fn lay_kind[node, viewport]
         return 'row'
     if node.tag eq 'table'
         return 'table'
-    if node.tag eq 'div' or node.tag eq 'section' or node.tag eq 'header' or node.tag eq 'footer' or node.tag eq 'form' or node.tag eq 'nav' or node.tag eq 'ul' or node.tag eq 'ol' or node.tag eq 'label' or node.tag eq 'details' or node.tag eq 'summary'
+    if node.tag eq 'nav'
+        return 'row'
+    if node.tag eq 'summary' or node.tag eq 'label'
+        return 'leaf'
+    if node.tag eq 'div' or node.tag eq 'section' or node.tag eq 'header' or node.tag eq 'footer' or node.tag eq 'form' or node.tag eq 'ul' or node.tag eq 'ol' or node.tag eq 'details'
         return 'stack'
     return 'leaf'
 
@@ -269,12 +300,23 @@ fn lay_pad_v[node]
         return 13.0
     if node.tag eq 'button'
         return 7.72
-    if node.tag eq 'input'
+    if node.tag eq 'input' or node.tag eq 'textarea'
         return 7.4
     if node.tag eq 'td'
         return 8.0
     if node.tag eq 'th'
         return 7.2
+    --- a details box: 0.5rem plus its border; a dropdown has neither
+    if node.tag eq 'details' and not lay_has_class[node, 'dropdown']
+        return 9.0
+    --- a dropdown's summary is a button face: 0.42rem plus border
+    if node.tag eq 'summary' and has[node.attrs, '_dropdown']
+        return 7.72
+    --- a nav link: 0.35rem; a tab: 0.5rem plus its 2px underline
+    if node.tag eq 'a' and has[node.attrs, '_nav']
+        return 5.6
+    if node.tag eq 'label' and has[node.attrs, '_tabs']
+        return 9.0
     return 0.0
 
 fn lay_pad_h[node]
@@ -288,10 +330,18 @@ fn lay_pad_h[node]
         return 15.4
     if node.tag eq 'button'
         return 16.2
-    if node.tag eq 'input'
+    if node.tag eq 'input' or node.tag eq 'textarea'
         return 10.6
     if node.tag eq 'td' or node.tag eq 'th'
         return 7.2
+    if node.tag eq 'details' and not lay_has_class[node, 'dropdown']
+        return 13.0
+    if node.tag eq 'summary' and has[node.attrs, '_dropdown']
+        return 16.2
+    if node.tag eq 'a' and has[node.attrs, '_nav']
+        return 9.6
+    if node.tag eq 'label' and has[node.attrs, '_tabs']
+        return 14.4
     return 0.0
 
 fn lay_gap[node, kind]
@@ -302,6 +352,16 @@ fn lay_gap[node, kind]
         return 9.6
     if lay_has_class[node, 'controls']
         return 8.0
+    --- the stylesheet's own gaps: a field's 0.4rem, a nav's 0.25rem, a
+    --- radio group's 1rem, a details box's 0.5rem between summary and body
+    if lay_has_class[node, 'crow-field']
+        return 6.4
+    if node.tag eq 'nav'
+        return 4.0
+    if lay_has_class[node, 'crow-radio']
+        return 16.0
+    if node.tag eq 'details' and not lay_has_class[node, 'dropdown']
+        return 8.0
     return 0.0
 
 --- the stylesheet's vertical margins on text elements (px at 15px base)
@@ -310,6 +370,8 @@ fn lay_margin_top[node]
     if m ne ''
         return lay_space[m]
     if lay_in_card[node] and (node.tag eq 'h3' or node.tag eq 'p')
+        return 0.0
+    if has[node.attrs, '_details']
         return 0.0
     if node.tag eq 'h2'
         return 35.2
@@ -345,6 +407,13 @@ fn lay_explicit_width[node, avail]
             return -1.0
         if node.tag eq 'input'
             return 152.0
+        if node.tag eq 'textarea'
+            return 197.2
+        if node.tag eq 'svg'
+            return float[lay_attr[node, 'width', '20']]
+        --- a divider standing in a row is its 1px border
+        if lay_has_class[node, 'divider']
+            return 1.0
         return 0.0
     if w eq 'fill'
         return -1.0
@@ -369,15 +438,51 @@ fn lay_hidden[node, viewport]
 --- the children that take part in layout at this viewport
 fn lay_visible_kids[node, viewport]
     out = []
+    closed = node.tag eq 'details' and not has[node.attrs, 'open']
     for k in node.kids
-        if not lay_hidden[k, viewport]
+        shown = not lay_hidden[k, viewport]
+        if closed and k.tag ne 'summary'
+            shown = false
+        if shown
             out = concat[out, [k]]
     return out
 
+--- marks a parent's rules leave on its children, the way a card marks its
+--- own: a dropdown's summary, a nav's links, a tab strip's labels, a radio
+--- group's labels, a details body
+fn lay_mark_kids[node, kids]
+    mark = ''
+    if node.tag eq 'details' and lay_has_class[node, 'dropdown']
+        mark = '_dropdown'
+    if node.tag eq 'details' and not lay_has_class[node, 'dropdown']
+        mark = '_details'
+    if node.tag eq 'nav'
+        mark = '_nav'
+    if lay_has_class[node, 'crow-tabs']
+        mark = '_tabs'
+    if lay_has_class[node, 'crow-radio']
+        mark = '_radio'
+    if mark eq ''
+        return kids
+    out = []
+    for k in kids
+        out = concat[out, [LNode[k.tag, k.class, k.text, set[k.attrs, mark, '1'], k.kids]]]
+    return out
+
+--- a layer takes no room in the flow
+fn lay_is_layer[node]
+    return lay_has_class[node, 'modal'] or lay_has_class[node, 'drawer'] or lay_has_class[node, 'toast']
+
 fn lay_intrinsic_width[node, viewport]
     kids = lay_visible_kids[node, viewport]
-    if len[kids] eq 0
+    --- a leaf is its text, whatever controls sit inside it (a checkbox's
+    --- input is priced into the text width)
+    if len[kids] eq 0 or lay_kind[node, viewport] eq 'leaf'
         return lay_text_px[node] + 2.0 * lay_pad_h[node]
+    --- the parent's rules reach its children here as they do in layout
+    if lay_in_card[node]
+        kids = lay_mark_card[kids]
+    kids = lay_mark_kids[node, kids]
     total = 0.0
     for k in kids
         --- an explicit width (or the stylesheet's, for inputs) is what the
@@ -413,6 +518,7 @@ fn lay_node[node, x, y, width, viewport, path]
     kids = lay_visible_kids[node, viewport]
     if lay_in_card[node]
         kids = lay_mark_card[kids]
+    kids = lay_mark_kids[node, kids]
     node = LNode[node.tag, node.class, node.text, node.attrs, kids]
     kind = lay_kind[node, viewport]
     here = '`path`/`node.tag`.`node.class`'
@@ -423,13 +529,45 @@ fn lay_node[node, x, y, width, viewport, path]
     top = y + mt
     inner_w = width - 2.0 * ph
     if kind eq 'leaf'
+        --- fixed-size leaves: a divider's border, a progress bar, an icon,
+        --- a textarea's rows
+        if lay_has_class[node, 'divider']
+            return [lay_box[node, here, x, top, width, 1.0, false]]
+        if node.tag eq 'progress'
+            return [lay_box[node, here, x, top, width, 8.0, false]]
+        if node.tag eq 'svg'
+            return [lay_box[node, here, x, top, width, float[lay_attr[node, 'height', '20']], false]]
+        if node.tag eq 'textarea'
+            rows = float[lay_attr[node, 'rows', '2']]
+            return [lay_box[node, here, x, top, width, rows * lay_line_px[node] + 2.0 * pv, false]]
         lines = 1.0
         --- running text wraps: paragraphs, headings, spans, labels, items;
         --- a card's one-line figures and form controls do not
-        if node.tag ne 'button' and node.tag ne 'input' and not lay_in_card[node]
+        if node.tag ne 'button' and node.tag ne 'input' and node.tag ne 'summary' and not lay_in_card[node] and not lay_has_class[node, 'crow-check'] and not has[node.attrs, '_tabs'] and not has[node.attrs, '_radio'] and not has[node.attrs, '_nav']
             lines = lay_lines[node, inner_w]
         h = lines * lay_line_px[node] + 2.0 * pv
         return [lay_box[node, here, x, top, width, h, false]]
+    if kind eq 'layer'
+        --- closed: nothing; open: a stack where it sits, outside the flow
+        if lay_attr[node, 'open', ''] ne 'true'
+            return []
+        w = inner_w
+        if w gt 560.0
+            w = 560.0
+        gap = lay_gap[node, 'stack']
+        boxes = []
+        cy = top + pv
+        first = true
+        for k in node.kids
+            if not first
+                cy = cy + gap
+            first = false
+            kb = lay_node[k, cx, cy, w - 2.0 * ph, viewport, here]
+            if len[kb] gt 0
+                boxes = concat[boxes, kb]
+                cy = kb[0].y + kb[0].height + lay_margin_bottom[k]
+        me = lay_box[node, here, x, top, w, cy - top + pv, false]
+        return concat[[me], boxes]
     if kind eq 'table'
         rows = 0.0
         for k in node.kids
@@ -447,13 +585,22 @@ fn lay_node[node, x, y, width, viewport, path]
     if kind eq 'stack' or kind eq 'scroll'
         first = true
         for k in node.kids
-            if not first
-                cy = cy + gap
-            first = false
-            kb = lay_node[k, cx, cy, inner_w, viewport, here]
-            if len[kb] gt 0
-                boxes = concat[boxes, kb]
-                cy = kb[0].y + kb[0].height + lay_margin_bottom[k]
+            if lay_is_layer[k]
+                boxes = concat[boxes, lay_node[k, cx, cy, inner_w, viewport, here]]
+            else
+                if not first
+                    cy = cy + gap
+                first = false
+                --- a replaced element keeps its own width in a column
+                kw = inner_w
+                if k.tag eq 'svg' or k.tag eq 'img'
+                    ew = lay_explicit_width[k, inner_w]
+                    if ew gt 0.0 and ew lt inner_w
+                        kw = ew
+                kb = lay_node[k, cx, cy, kw, viewport, here]
+                if len[kb] gt 0
+                    boxes = concat[boxes, kb]
+                    cy = kb[0].y + kb[0].height + lay_margin_bottom[k]
         content_h = cy - top - pv
         if kind eq 'scroll'
             hh = lay_explicit_height[node]
@@ -506,6 +653,31 @@ fn lay_node[node, x, y, width, viewport, path]
                 boxes = concat[boxes, kb]
                 if kb[0].height gt row_h
                     row_h = kb[0].height
+                line_x = line_x + kw
+        --- the default cross-axis alignment is centre: a second pass drops
+        --- each shorter child to the middle of its line (one line: the row)
+        centred = lay_attr[node, 'align', ''] eq '' or lay_attr[node, 'align', ''] eq 'center'
+        if centred and lay_attr[node, 'wrap', ''] ne 'true'
+            boxes = []
+            line_x = cx
+            first = true
+            for k in node.kids
+                ew = lay_explicit_width[k, inner_w]
+                kw = ew
+                if ew lt 0.0
+                    kw = fill_w
+                if ew eq 0.0
+                    kw = lay_intrinsic_width[k, viewport]
+                if not first
+                    line_x = line_x + gap
+                first = false
+                probe = lay_node[k, line_x, cy, kw, viewport, here]
+                kh = 0.0
+                if len[probe] gt 0
+                    kh = probe[0].height
+                kb = lay_node[k, line_x, cy + (row_h - kh) / 2.0, kw, viewport, here]
+                if len[kb] gt 0
+                    boxes = concat[boxes, kb]
                 line_x = line_x + kw
         h = (line_y - cy) + row_h + 2.0 * pv
         me = lay_box[node, here, x, top, width, h, overflow]
