@@ -11,7 +11,7 @@ You need a Mac or a Linux machine (on Windows, run everything inside WSL),
 fresh clone does the rest:
 
 ```bash
-git clone https://github.com/vsriram/crow.git
+git clone https://github.com/agncrow/crow.git
 cd crow
 ./install.sh
 ```

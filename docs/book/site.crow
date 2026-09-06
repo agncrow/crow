@@ -21,7 +21,7 @@ view chapter[title, body, nav, pages, up]
             row[
                 input[class = 'doc-search', type = 'search', placeholder = 'Search  /', hidden_below = 'phone'],
                 a['Spec', href = '`up`language-spec.html'],
-                a['GitHub', href = 'https://github.com/vsriram/crow'],
+                a['GitHub', href = 'https://github.com/agncrow/crow'],
                 gap = 'm', align = 'center', class = 'links', hidden_below = 'phone'
             ],
             gap = 'm', align = 'center', justify = 'between', class = 'doc-top'

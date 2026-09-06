@@ -235,7 +235,7 @@ an ordinary HTML attribute.
 The full version of that dashboard — three cards, an alert badge in an
 `overlay`, a control `row` that turns into a stack on phones, a
 scrolling tape — lives in the repository as
-[`examples/layout_dashboard.crow`](https://github.com/vsriram/crow/blob/main/examples/layout_dashboard.crow).
+[`examples/layout_dashboard.crow`](https://github.com/agncrow/crow/blob/main/examples/layout_dashboard.crow).
 Three commands, in the order you'd use them:
 
 ```text
