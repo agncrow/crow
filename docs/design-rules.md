@@ -92,5 +92,3 @@ Every feature follows this sequence.
    CI runs the same on every push; it must be green.
 7. **Document after.** Reconcile the spec with what shipped; move the
    feature off the roadmap.
-8. **Commit.** One clear message per logical change; never a broken build
-   or a warning in a commit.
