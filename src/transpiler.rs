@@ -4119,8 +4119,11 @@ impl Transpiler {
                                     (vec![], vec![])
                                 };
 
-                            // Build children as CrowVNode expressions
+                            // Build children as CrowVNode expressions; a child
+                            // that is a list is spliced (each item a node)
+                            let mut spliced: Vec<bool> = Vec::new();
                             let child_strs: Vec<String> = child_args.iter().map(|child| {
+                                spliced.push(false);
                                 match child {
                                     Expr::Str(_) => {
                                         // String literal → CrowVNode::text(...). An
@@ -4139,7 +4142,8 @@ impl Transpiler {
                                     Expr::Call { callee, .. }
                                         if matches!(callee.as_ref(), Expr::Ident(n)
                                             if matches!(n.as_str(), "chart" | "field" | "select" | "slider" | "checkbox" | "toggle" | "radio" | "tabs" | "progress" | "icon")
-                                                || crate::lower::UI_ELEMENTS.contains(&n.as_str())) =>
+                                                || crate::lower::UI_ELEMENTS.contains(&n.as_str())
+                                                || self.ctx.views.contains(n)) =>
                                     {
                                         self.expr_to_string(child)
                                     }
@@ -4154,6 +4158,13 @@ impl Transpiler {
                                             o => o.clone(),
                                         };
                                         let c_str = self.expr_to_string(child);
+                                        if let CrowType::Array(_) = inner {
+                                            *spliced.last_mut().unwrap() = true;
+                                            if fallible {
+                                                return format!("{{ let _c = {}; if !_c.ok {{ vec![CrowVNode::text(&format!(\"error: {{}}\", _c.reason))] }} else {{ crow_web::view::children_of(&_c.value) }} }}", c_str);
+                                            }
+                                            return format!("crow_web::view::children_of(&{})", c_str);
+                                        }
                                         match inner {
                                             // a view renders what it is given: a failed
                                             // text child shows its reason
@@ -4178,6 +4189,11 @@ impl Transpiler {
                             // Build the element call
                             let base = if is_void_el {
                                 format!("CrowVNode::{}()", rust_name)
+                            } else if spliced.iter().any(|s| *s) {
+                                let pushes: Vec<String> = child_strs.iter().zip(&spliced).map(|(c, s)| {
+                                    if *s { format!("_k.extend({});", c) } else { format!("_k.push({});", c) }
+                                }).collect();
+                                format!("CrowVNode::{}({{ let mut _k: Vec<CrowVNode> = Vec::new(); {} _k }})", rust_name, pushes.join(" "))
                             } else {
                                 format!("CrowVNode::{}(vec![{}])", rust_name, child_strs.join(", "))
                             };
@@ -4252,6 +4268,10 @@ impl Transpiler {
                                     "active" if name == "nav" => result = format!("{}.attr(\"data-active\", &{a}).mark_active(&{a})", result, a = self.expr_to_string(v)),
                                     // tip = expr: the browser's tooltip
                                     "tip" => result = format!("{}.attr(\"title\", &format!(\"{{}}\", {}))", result, self.expr_to_string(v)),
+                                    // a boolean attribute from state: present when true
+                                    k if crow_runtime::layout::BOOL_ATTRS.contains(&k) && !matches!(v, Expr::Str(_)) => {
+                                        result = format!("{}.bool_attr(\"{}\", {{ let _b: bool = {}; _b }})", result, k, self.expr_to_string(v));
+                                    }
                                     "click" => result = if is_fn_ref { format!("{}.on_click({})", result, event_name) } else { format!("{}.on_click(&{})", result, event_name) },
                                     "input" => result = if is_fn_ref { format!("{}.on_input({})", result, event_name) } else { format!("{}.on_input(&{})", result, event_name) },
                                     "submit" => result = if is_fn_ref { format!("{}.on_submit({})", result, event_name) } else { format!("{}.on_submit(&{})", result, event_name) },
@@ -5463,6 +5483,16 @@ impl Transpiler {
             format!("|{}|", var)
         };
 
+        // A body whose value is a view or an element yields a node; the
+        // list holds its markup, as the interpreter's does, so a child
+        // that is a list renders it and a string sees a string.
+        let views = self.ctx.views.clone();
+        let makes_node = move |e: &Expr| matches!(e, Expr::Call { callee, .. }
+            if matches!(callee.as_ref(), Expr::Ident(n)
+                if views.contains(n)
+                    || crate::lower::UI_ELEMENTS.contains(&n.as_str())
+                    || matches!(n.as_str(), "chart" | "field" | "select" | "slider" | "checkbox" | "toggle" | "radio" | "tabs" | "progress" | "icon")));
+
         // Check for filter pattern: for x in array \n if cond \n x
         if Self::is_filter_pattern(body) {
             if let Some((cond, val_expr)) = Self::extract_filter_parts(body) {
@@ -5471,8 +5501,12 @@ impl Transpiler {
                 self.ctx.vars.insert(var.to_string(), elem_type.clone());
 
                 let cond_str = self.expr_to_string(cond);
-                let val_str = self.expr_to_string(val_expr);
-                let val_type = self.ctx.infer_expr(val_expr);
+                let mut val_str = self.expr_to_string(val_expr);
+                let mut val_type = self.ctx.infer_expr(val_expr);
+                if makes_node(val_expr) {
+                    val_str = format!("({}).to_html()", val_str);
+                    val_type = CrowType::Str;
+                }
 
                 self.ctx.vars = saved_vars;
 
@@ -5525,8 +5559,13 @@ impl Transpiler {
         }
 
         // Emit last expression without semicolon (it's the return value)
+        let mut last_type = last_type;
         if let Some(Stmt::ExprStmt(e)) = last_expr {
-            let expr_str = self.expr_to_string(e);
+            let mut expr_str = self.expr_to_string(e);
+            if makes_node(e) {
+                expr_str = format!("({}).to_html()", expr_str);
+                last_type = CrowType::Str;
+            }
             let indent = "    ".repeat(self.indent);
             self.output.push_str(&format!("{}{}\n", indent, expr_str));
         }

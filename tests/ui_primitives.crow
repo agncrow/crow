@@ -71,4 +71,29 @@ test unknown_icon_names_the_set[]
     a = app[render]
     assert[contains[html[a], 'icon-search']]
 
+--- a list child contributes each item; a boolean attribute follows state
+past = ['A', 'B', 'C']
+starting = true
+
+view session_row[s]
+    return row[span[s], button['delete', click = forget], gap = 's']
+
+fn forget[]
+    past = ['A']
+    starting = false
+
+view sessions_view[]
+    rows = for s in past
+        session_row[s]
+    return stack[h2['Sessions'], rows, button['Start', disabled = starting, class = 'primary'], gap = 'm']
+
+test lists_and_booleans[]
+    a = app[sessions_view]
+    assert[len[elements[a, 'row']] eq 3]
+    assert[contains[html[a], '<button class="primary" disabled="">Start</button>']]
+    click[a, forget]
+    assert[len[elements[a, 'row']] eq 1]
+    assert[contains[html[a], '<button class="primary">Start</button>']]
+
 page['/', render]
+page['/past', sessions_view]

@@ -24,6 +24,11 @@ pub fn html_tag(name: &str) -> &str {
     ALIASED_ELEMENTS.iter().find(|(n, _)| *n == name).map(|(_, t)| *t).unwrap_or(name)
 }
 
+/// HTML's boolean attributes: present or absent, never "false". A view
+/// writes them from state (`disabled = starting`) and the renderers keep
+/// the browser's rule.
+pub const BOOL_ATTRS: &[&str] = &["disabled", "hidden", "readonly", "required", "checked", "selected", "multiple", "autofocus"];
+
 /// Attributes the vocabulary owns. Anything else on an element passes
 /// through as an HTML attribute (class, href, name, …).
 pub const LAYOUT_ATTRS: &[&str] = &[
@@ -177,6 +182,11 @@ pub fn render(tag: &str, attrs: &[(String, String)]) -> Rendered {
             "below" => match width_px(v) { Some(_) => data.push(("data-below".to_string(), v.to_string())), None => bad("named width (phone tablet desktop)", &mut errors) },
             "becomes" => data.push(("data-becomes".to_string(), v.to_string())),
             "hidden_below" => match width_px(v) { Some(_) => data.push(("data-hidden-below".to_string(), v.to_string())), None => bad("named width (phone tablet desktop)", &mut errors) },
+            _ if BOOL_ATTRS.contains(&k) => match v {
+                "true" => passthrough.push((k.to_string(), String::new())),
+                "false" => {}
+                _ => passthrough.push((k.to_string(), v.to_string())),
+            },
             _ => passthrough.push((k.to_string(), v.to_string())),
         }
     }

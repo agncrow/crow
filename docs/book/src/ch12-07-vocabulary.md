@@ -123,6 +123,51 @@ test the_shell[]
 page['/', top_bar]
 ```
 
+## Lists of things
+
+A page shows many of something: past, bookmarks, trades. A `for`
+expression over a view gives a list of nodes, and a child that is a list
+contributes each item. That is the whole rule — no loop element, no
+template syntax:
+
+```crow
+use web, ui
+
+past = ['HSCS 2026-06-23', 'EZGO 2026-06-17', 'ANY 2026-06-01']
+starting = true
+
+fn forget[]
+    past = ['HSCS 2026-06-23']
+    starting = false
+
+view session_row[s]
+    return row[span[s], button[icon['x', size = 's'], click = forget, tip = 'delete'], justify = 'between']
+
+view past_sessions[]
+    rows = for s in past
+        session_row[s]
+    return stack[h2['Past past'], rows, button['Start', disabled = starting, class = 'primary'], gap = 's']
+
+test a_list_is_its_items[]
+    a = app[past_sessions]
+    assert[len[elements[a, 'row']] eq 3]
+    assert[contains[html[a], 'disabled=""']]
+    click[a, forget]
+    assert[len[elements[a, 'row']] eq 1]
+    assert[not contains[html[a], 'disabled=""']]
+
+page['/', past_sessions]
+```
+
+The same rule gives every row its own controls — a delete icon, a pin,
+a link — which `table[frame]` cannot, since a frame's cells are values.
+Use the table for data and a list of views for rows that act.
+
+`disabled = starting` shows the other half: a boolean attribute follows
+state. HTML reads presence, not the word, so the renderers write
+`disabled=""` when the value is true and nothing when it is false — the
+same for `hidden`, `readonly`, `required`, `checked` and `selected`.
+
 ## The look of the app
 
 Theme, density, accent and width are settings of the app, not of the
