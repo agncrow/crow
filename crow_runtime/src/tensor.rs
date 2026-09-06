@@ -1349,6 +1349,22 @@ impl crate::display::CrowDisplay for CrowTensor {
 mod tests {
     use super::*;
 
+    /// The seeded RNG is process-global (`crate::rng`), so tests that draw
+    /// random numbers must not overlap: each holds this lock while it runs.
+    static RNG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn rng_lock() -> std::sync::MutexGuard<'static, ()> {
+        RNG_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Hold the lock and seed the generator; the guard keeps other random
+    /// tests out until the test ends.
+    fn seeded(seed: u64) -> std::sync::MutexGuard<'static, ()> {
+        let guard = rng_lock();
+        crate::rng::set_seed(seed);
+        guard
+    }
+
     // ── Creation ────────────────────────────────────────────────────
 
     #[test]
@@ -1895,6 +1911,7 @@ mod tests {
 
     #[test]
     fn test_rand() {
+        let _rng = rng_lock();
         let t = CrowTensor::rand(vec![100]);
         assert_eq!(t.shape(), &[100]);
         assert_eq!(t.len(), 100);
@@ -1906,6 +1923,7 @@ mod tests {
 
     #[test]
     fn test_randn() {
+        let _rng = rng_lock();
         let t = CrowTensor::randn(vec![1000]);
         assert_eq!(t.shape(), &[1000]);
         // Mean should be near 0
@@ -1915,6 +1933,7 @@ mod tests {
 
     #[test]
     fn test_rand_range() {
+        let _rng = rng_lock();
         let t = CrowTensor::rand_range(vec![100], 5.0, 10.0);
         for v in t.to_vec() {
             assert!(v >= 5.0 && v < 10.0);
@@ -1923,6 +1942,7 @@ mod tests {
 
     #[test]
     fn test_rand_2d_shape() {
+        let _rng = rng_lock();
         let t = CrowTensor::rand(vec![3, 4]);
         assert_eq!(t.shape(), &[3, 4]);
         assert_eq!(t.len(), 12);
@@ -1980,7 +2000,7 @@ mod tests {
 
     #[test]
     fn test_seed_reproducibility() {
-        crate::rng::set_seed(42);
+        let _rng = seeded(42);
         let a = CrowTensor::rand(vec![5]);
         crate::rng::set_seed(42);
         let b = CrowTensor::rand(vec![5]);
@@ -1990,7 +2010,7 @@ mod tests {
 
     #[test]
     fn test_normal_shape() {
-        crate::rng::set_seed(99);
+        let _rng = seeded(99);
         let t = CrowTensor::normal(vec![3, 2], 5.0, 0.1);
         assert_eq!(t.shape, vec![3, 2]);
         assert_eq!(t.to_vec().len(), 6);
@@ -2003,7 +2023,7 @@ mod tests {
 
     #[test]
     fn test_poisson_shape() {
-        crate::rng::set_seed(7);
+        let _rng = seeded(7);
         let t = CrowTensor::poisson(vec![10], 3.5);
         assert_eq!(t.shape, vec![10]);
         // All values should be non-negative integers
@@ -2015,7 +2035,7 @@ mod tests {
 
     #[test]
     fn test_bernoulli_values() {
-        crate::rng::set_seed(123);
+        let _rng = seeded(123);
         let t = CrowTensor::bernoulli(vec![20], 0.5);
         assert_eq!(t.shape, vec![20]);
         for v in t.to_vec() {
@@ -2026,7 +2046,7 @@ mod tests {
 
     #[test]
     fn test_shuffle_preserves_elements() {
-        crate::rng::set_seed(1);
+        let _rng = seeded(1);
         let t = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], vec![5]);
         let s = t.shuffle();
         let mut sv = s.to_vec();
@@ -2037,7 +2057,7 @@ mod tests {
 
     #[test]
     fn test_choice_subset() {
-        crate::rng::set_seed(2);
+        let _rng = seeded(2);
         let t = CrowTensor::from_vec(vec![10.0, 20.0, 30.0, 40.0, 50.0], vec![5]);
         let c = t.choice(3);
         assert_eq!(c.shape, vec![3]);
@@ -2050,7 +2070,7 @@ mod tests {
 
     #[test]
     fn test_permutation_range() {
-        crate::rng::set_seed(3);
+        let _rng = seeded(3);
         let p = CrowTensor::permutation(5);
         assert_eq!(p.shape, vec![5]);
         let mut vals = p.to_vec();
@@ -2087,7 +2107,7 @@ mod tests {
 
     #[test]
     fn test_gamma_dist_shape_and_positive() {
-        crate::rng::set_seed(42);
+        let _rng = seeded(42);
         let t = CrowTensor::gamma_dist(vec![100], 2.0, 1.0);
         assert_eq!(t.shape, vec![100]);
         // Gamma(alpha, beta) values should all be positive
@@ -2099,7 +2119,7 @@ mod tests {
 
     #[test]
     fn test_beta_dist_shape_and_range() {
-        crate::rng::set_seed(42);
+        let _rng = seeded(42);
         let t = CrowTensor::beta_dist(vec![100], 2.0, 5.0);
         assert_eq!(t.shape, vec![100]);
         // Beta values should be in (0, 1)
@@ -2111,7 +2131,7 @@ mod tests {
 
     #[test]
     fn test_exponential_shape_and_positive() {
-        crate::rng::set_seed(42);
+        let _rng = seeded(42);
         let t = CrowTensor::exponential(vec![100], 1.5);
         assert_eq!(t.shape, vec![100]);
         // Exponential values should all be positive
@@ -2121,7 +2141,7 @@ mod tests {
 
     #[test]
     fn test_exponential_2d() {
-        crate::rng::set_seed(42);
+        let _rng = seeded(42);
         let t = CrowTensor::exponential(vec![3, 4], 1.0);
         assert_eq!(t.shape, vec![3, 4]);
         assert_eq!(t.to_vec().len(), 12);
