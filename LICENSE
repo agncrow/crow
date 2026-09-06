@@ -1,21 +1,45 @@
-MIT License
+Crow — Proprietary License (Early Access)
 
-Copyright (c) 2026 vsriram
+Copyright (c) 2026 Vijay Sriram. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This software, its source code, and its documentation (the "Software")
+are the proprietary and confidential property of the copyright holder.
+No license is granted to anyone except as stated below or in a separate
+written agreement signed by the copyright holder.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+EARLY-ACCESS EVALUATION LICENSE
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+If the copyright holder has given you access to the Software, you may,
+for the purpose of evaluating it:
+
+  1. read, build, and run the Software on machines you control;
+  2. write programs in the Crow language, keep them, and run them and
+     the binaries the Software compiles from them on machines you
+     control — what you write is yours;
+  3. report defects and suggestions, which the copyright holder may use
+     without obligation to you.
+
+You may not:
+
+  a. distribute, publish, sublicense, sell, rent, or otherwise make the
+     Software or any part of it, including binaries that embed its
+     runtime, available to anyone else;
+  b. share the source code, the documentation, or your access with
+     anyone the copyright holder has not given access to;
+  c. use the Software in production or to build a product or service
+     offered to others, without written permission;
+  d. remove or alter copyright or license notices.
+
+This license is personal, non-transferable, and revocable. It ends
+automatically if you breach it, or when the copyright holder asks you
+to stop, and you must then delete your copies. The confidentiality,
+ownership, and warranty terms survive its end.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE, AND NON-INFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY
+ARISING FROM OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+Third-party components bundled with or depended on by the Software
+remain under their own licenses, and their notices apply to them.

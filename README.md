@@ -3,6 +3,9 @@
 A programming language for data work and web applications. Looks like
 Python, compiles to Rust, runs parallel by default, treats errors as values.
 
+> **Early access.** Crow is proprietary software, shared by invitation under
+> the evaluation terms in [LICENSE](LICENSE). Please don't redistribute it.
+
 ```crow
 use math
 
