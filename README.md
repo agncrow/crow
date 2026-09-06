@@ -30,7 +30,7 @@ ten minutes, most of it compiling. The installer brings everything else — a
 C compiler and the Rust toolchain — and skips whatever you already have:
 
 ```bash
-git clone https://github.com/vsriram/crow.git
+git clone https://github.com/agncrow/crow.git
 cd crow
 ./install.sh
 ```
