@@ -39,6 +39,8 @@ _tmp_test_error_line
 *.csv
 *.txt
 *.json
+# the fixture the frame tests, the parity corpus, and the book load
+!examples/test_data.csv
 docs/book/crow-site/
 editors/vscode/node_modules/
 *.vsix
