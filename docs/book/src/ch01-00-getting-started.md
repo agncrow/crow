@@ -6,24 +6,60 @@ directory ready for the rest of the book.
 
 ## Installation
 
-Crow builds from source with the Rust toolchain (it compiles your programs
-to Rust, so `cargo` is a real dependency, not just a build-time one):
+You need a Mac or a Linux machine (on Windows, run everything inside WSL),
+`git`, and about ten minutes, most of it compiling. One command from a
+fresh clone does the rest:
 
 ```bash
-git clone <the crow repository>
+git clone https://github.com/vsriram/crow.git
 cd crow
-cargo install --path .
+./install.sh
 ```
 
-The binary lands in `~/.cargo/bin/crow` — make sure that directory is on
-your `PATH`, then verify:
+Crow compiles your programs to Rust, so the Rust toolchain is a real
+dependency, not just a build-time one — and the script takes care of it.
+It installs whatever is missing and skips whatever is present, in order:
+
+1. **A C toolchain.** The Xcode Command Line Tools on macOS (a dialog
+   opens; accept it), `gcc` through your package manager on Linux.
+2. **Rust**, through rustup — stable, no prompts. Crow needs 1.85 or newer.
+3. **A permanent home.** The source is copied to `~/.crow/src`. Compiled
+   programs link against the runtime crates there, so the clone can go once
+   the script is done, and re-running the script on a newer checkout is the
+   upgrade.
+4. **The binary**, built in release mode into `~/.cargo/bin/crow`. The
+   first build takes a few minutes.
+5. **Proof.** A hello project is created, compiled, and run.
+
+`./install.sh --dev` builds from the checkout in place instead — for
+working on Crow itself, since compiled programs then link against your
+working tree. `--quick` skips the proof; `--uninstall` removes the binary
+and `~/.crow` and leaves Rust alone. On Windows, run it inside WSL.
+
+If this was your first Rust install, open a new terminal (rustup put
+`~/.cargo/bin` on your `PATH` through your shell profile), then verify:
 
 ```bash
-crow
+crow -v
 ```
 
-You should see the usage help listing `run`, `build`, `new`, `fmt`,
-`check`, and `test`.
+You should see the version. `crow` on its own starts the REPL, and `crow
+help` lists `run`, `build`, `new`, `fmt`, `check`, and `test`.
+
+### If something goes wrong
+
+- **`crow: command not found`** right after the install: the binary is in
+  `~/.cargo/bin`, which a fresh Rust install adds to your shell profile.
+  Open a new terminal, or run `source "$HOME/.cargo/env"` in this one.
+- **A dialog appeared on macOS.** That is the Command Line Tools installer;
+  accept it. The script waits for it to finish.
+- **Linux asked for a password.** Installing the C compiler goes through
+  your package manager with `sudo`. Nothing else in the script needs it.
+- **It seems stuck on "building crow".** A release build of the compiler
+  takes a few minutes the first time and is quiet while it runs. Later
+  runs reuse the cache in `~/.crow/target`.
+- **Upgrading:** `git pull`, then `./install.sh` again. **Removing:**
+  `./install.sh --uninstall`.
 
 ## Editor Support
 
