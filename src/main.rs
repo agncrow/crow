@@ -66,9 +66,10 @@ fn main() {
     }
 
     match args[1].as_str() {
-        "-v" => {
+        "-v" | "--version" => {
             println!("(o.o) crow {}", env!("CARGO_PKG_VERSION"));
         }
+        "help" | "--help" | "-h" => print_usage(),
         "new" => cmd_new(),
         "install" => cmd_install(),
         "fmt" => cmd_fmt(),

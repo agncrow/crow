@@ -20,12 +20,29 @@ log['average: `fmt[avg, decimals = 2]`']
 - **One way to do things** — one call syntax `f[x]`, one string quote, one loop; every rejected feature has a documented reason
 - **Batteries included** — tensors, data frames, SQL, and a reactive web framework (LiveView-style `view` blocks) in one binary
 
-## Install
+## Quick start
+
+You need a Mac or a Linux machine (on Windows, use WSL), `git`, and about
+ten minutes, most of it compiling. The installer brings everything else — a
+C compiler and the Rust toolchain — and skips whatever you already have:
 
 ```bash
-cargo install --path .
+git clone https://github.com/vsriram/crow.git
+cd crow
+./install.sh
+```
+
+It ends by compiling and running a hello program, so when it says done, it
+works. If it installed Rust for you, open a new terminal first. Then:
+
+```bash
 crow new hello && cd hello && crow run
 ```
+
+`crow help` lists every command. To upgrade, `git pull` and run
+`./install.sh` again. `./install.sh --uninstall` removes Crow and leaves
+Rust alone. Working on Crow itself? `./install.sh --dev` builds your
+checkout in place.
 
 ## Learn
 
