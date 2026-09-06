@@ -510,6 +510,50 @@ impl CrowVNode {
     }
 }
 
+/// A child that is a list contributes each item: rendered markup passes
+/// through, anything else is text. The one rule for every list a view can
+/// hold — strings, numbers, or the nodes a `for` over a view produced.
+pub trait ChildList {
+    fn into_nodes(&self) -> Vec<CrowVNode>;
+}
+impl ChildList for Vec<CrowVNode> {
+    fn into_nodes(&self) -> Vec<CrowVNode> { self.clone() }
+}
+impl ChildList for Vec<String> {
+    fn into_nodes(&self) -> Vec<CrowVNode> { self.iter().map(|s| CrowVNode::text_or_raw(s)).collect() }
+}
+impl ChildList for Vec<i64> {
+    fn into_nodes(&self) -> Vec<CrowVNode> { self.iter().map(|n| CrowVNode::text(&n.to_string())).collect() }
+}
+impl ChildList for Vec<f64> {
+    fn into_nodes(&self) -> Vec<CrowVNode> { self.iter().map(|n| CrowVNode::text(&n.to_string())).collect() }
+}
+impl ChildList for Vec<bool> {
+    fn into_nodes(&self) -> Vec<CrowVNode> { self.iter().map(|b| CrowVNode::text(&b.to_string())).collect() }
+}
+impl<T: ChildList + ?Sized> ChildList for &T {
+    fn into_nodes(&self) -> Vec<CrowVNode> { (**self).into_nodes() }
+}
+
+/// The nodes a list child contributes.
+pub fn children_of<T: ChildList + ?Sized>(list: &T) -> Vec<CrowVNode> {
+    list.into_nodes()
+}
+
+impl CrowVNode {
+    /// A string child: markup passes through, text is escaped — the rule
+    /// both renderers apply to every string a view holds.
+    pub fn text_or_raw(s: &str) -> Self {
+        if s.starts_with('<') && s.ends_with('>') { CrowVNode::Raw(s.to_string()) } else { CrowVNode::text(s) }
+    }
+
+    /// A boolean attribute (`disabled = starting`): present when true,
+    /// absent when false — the browser reads presence, not the word.
+    pub fn bool_attr(self, name: &str, on: bool) -> Self {
+        if on { self.attr(name, "") } else { self }
+    }
+}
+
 /// A number as an attribute value: whole numbers without a trailing `.0`.
 fn fmt_num(v: f64) -> String {
     if (v - v.round()).abs() < 1e-9 { format!("{}", v.round() as i64) } else { format!("{}", v) }

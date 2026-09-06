@@ -56,7 +56,7 @@ If the port is already in use, the server prints a friendly error: `error: port 
 
 | Function | Description | Example |
 |---|---|---|
-| `sessions[]` | Create an in-memory session store | [Web: responses and submodules](../by-example/web-more.md) |
+| `sessions[]` | Create an in-memory session store | [Web: responses and submodules](../by-example/web-more.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 
 ### Templates (`use web.template`)
 

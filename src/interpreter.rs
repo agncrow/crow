@@ -2088,6 +2088,21 @@ impl Interpreter {
                             Value::Str(s) if s.starts_with('<') && s.ends_with('>') => inner.push_str(s),
                             // a frame in a table is its rows, from the kernel
                             Value::Frame(f) if name == "table" => inner.push_str(&crow_runtime::layout::frame_table_html(f, table_click.as_deref(), table_key.as_deref(), table_mark.as_deref(), &table_delta)),
+                            // a list contributes each item: markup passes
+                            // through, anything else is text (the compiled
+                            // renderer's children_of applies the same rule)
+                            Value::Array(items) => {
+                                fn splice(inner: &mut String, items: &[CrowValue]) {
+                                    for it in items {
+                                        match &it.value {
+                                            Value::Str(s) if s.starts_with('<') && s.ends_with('>') => inner.push_str(s),
+                                            Value::Array(nested) => splice(inner, nested),
+                                            other => inner.push_str(&html_escape_text(&format!("{}", other))),
+                                        }
+                                    }
+                                }
+                                splice(&mut inner, items);
+                            }
                             other => inner.push_str(&html_escape_text(&format!("{}", other))),
                         }
                     }

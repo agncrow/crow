@@ -1697,6 +1697,12 @@ impl TypeContext {
         if self.structs.contains_key(name) {
             return CrowType::Struct(name.to_string());
         }
+        // A view's tree is markup at every boundary a type can see — the
+        // interpreter's views return strings, and compiled ones render to
+        // one wherever a string is expected (a list, a module argument).
+        if self.views.contains(name) {
+            return CrowType::Str;
+        }
         // User-defined function call (specialization-aware: a monomorphized
         // callee's return type depends on this call's argument types)
         if let Some(sig) = self.functions.get(name) {
@@ -2342,8 +2348,11 @@ impl TypeContext {
                 if let Expr::Ident(name) = callee.as_ref() {
                     let base = self.infer_call_base(name, args, callee);
                     // Auto-propagation: wrap in CrowResult if any arg is CrowResult
+                    // a view renders what it is given: a failed argument shows
+                    // its reason inside the tree, it never fails the view
                     let skip = matches!(name.as_str(), "log" | "assert" | "type" | "cpu" | "gpu" | "error" | "len" | "table" | "chart")
-                        || crate::lower::UI_ELEMENTS.contains(&name.as_str());
+                        || crate::lower::UI_ELEMENTS.contains(&name.as_str())
+                        || self.views.contains(name);
                     if !skip && !matches!(base, CrowType::Result(_) | CrowType::Void) {
                         let has_result_arg = args.iter().any(|a| matches!(self.infer_expr(a), CrowType::Result(_)));
                         if has_result_arg {
