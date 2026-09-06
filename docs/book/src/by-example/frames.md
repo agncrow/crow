@@ -23,6 +23,10 @@ save[t, 'ex_copy.csv']
 log[len[frame.load['ex_copy.csv']]]
 d = datetime['2026-07-14T13:30:00Z']
 log[tz[d, '+09:00']]
+g = with[with[frame.new[], 'symbol', ['A', 'B']], 'px', [1.5, 2.5]]
+log[g.columns]
+log[with[g, 'day', 'today'].day[1]]
+log[join[['x', 'y'], '+']]
 rm['ex_trades.csv']
 rm['ex_copy.csv']
 ```
@@ -43,6 +47,14 @@ true
 3
 3
 2026-07-14T22:30:00+09:00
+['symbol', 'px']
+today
+x+y
 ```
+
+`frame.new[]` and `with[]` build a frame column by column from arrays or
+a repeated scalar. With `frame` imported the core `join`, `sort`, and
+friends still work on arrays: the first argument decides which one you
+meant.
 
 Reference: spec section 13 (frame) and book chapter 10.

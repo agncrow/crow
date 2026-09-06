@@ -1,13 +1,14 @@
 use crate::value::{CrowValue, Value};
 use crate::type_infer::CrowType;
 use crate::modules::CrowModule;
-use crow_runtime::frame::{CrowFrame, AggFn, parse_datetime, format_datetime};
+use crow_runtime::frame::{CrowFrame, Column, AggFn, parse_datetime, format_datetime};
 
 pub struct FrameModule;
 
 pub(crate) const FRAME_FUNCTIONS: &[&str] = &[
     "load", "save", "select", "filter", "sort", "group", "join", "stack",
     "head", "tail", "fill", "unique", "rename", "stats", "datetime", "tz",
+    "new", "with",
 ];
 
 impl CrowModule for FrameModule {
@@ -53,8 +54,46 @@ fn to_int(v: &CrowValue, fname: &str) -> Result<i64, String> {
     }
 }
 
+/// A Crow value as a frame column: an array of one scalar kind, a
+/// tensor, another frame's column, or a scalar (repeated by the caller).
+fn value_to_column(v: &CrowValue, fname: &str) -> Result<(Column, bool), String> {
+    match &v.value {
+        Value::Array(items) => {
+            if items.is_empty() { return Ok((Column::Str(vec![]), false)); }
+            match &items[0].value {
+                Value::Int(_) => Ok((Column::Int(items.iter().map(|x| match &x.value { Value::Int(n) => *n, Value::Float(f) => *f as i64, _ => 0 }).collect()), false)),
+                Value::Float(_) => Ok((Column::Float(items.iter().map(|x| match &x.value { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => f64::NAN }).collect()), false)),
+                Value::Bool(_) => Ok((Column::Bool(items.iter().map(|x| matches!(x.value, Value::Bool(true))).collect()), false)),
+                Value::Str(_) => Ok((Column::Str(items.iter().map(|x| format!("{}", x.value)).collect()), false)),
+                other => Err(format!("{}: cannot make a column of {}", fname, other.type_name())),
+            }
+        }
+        Value::NumArray(t) => Ok((Column::Float(t.to_vec()), false)),
+        Value::Int(n) => Ok((Column::Int(vec![*n]), true)),
+        Value::Float(x) => Ok((Column::Float(vec![*x]), true)),
+        Value::Bool(b) => Ok((Column::Bool(vec![*b]), true)),
+        Value::Str(s) => Ok((Column::Str(vec![s.clone()]), true)),
+        other => Err(format!("{}: cannot make a column of {}", fname, other.type_name())),
+    }
+}
+
 fn call_frame(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
     match name {
+        "new" => {
+            if !args.is_empty() { return Err("new: takes no arguments — frame.new[] is the empty frame; add columns with with[frame, name, values]".into()); }
+            Ok(CrowValue::ok(Value::Frame(CrowFrame::new(vec![], vec![], vec![]))))
+        }
+        "with" => {
+            if args.len() != 3 { return Err("with: expected 3 arguments (frame, column name, values)".into()); }
+            let f = to_frame(&args[0], "with")?;
+            let name = to_str(&args[1], "with")?;
+            let (col, scalar) = value_to_column(&args[2], "with")?;
+            let out = if scalar { f.with_scalar(name, col) } else { f.with_column(name, col) };
+            match out {
+                Ok(fr) => Ok(CrowValue::ok(Value::Frame(fr))),
+                Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
+            }
+        }
         "load" => {
             if args.len() != 1 { return Err("load: expected 1 argument (path)".into()); }
             let path = to_str(&args[0], "load")?;
@@ -299,9 +338,32 @@ fn extract_bool_list(v: &CrowValue, fname: &str) -> Result<Vec<bool>, String> {
     }
 }
 
-fn emit_frame_rust(name: &str, arg_strs: &[String], _arg_types: &[CrowType]) -> Result<String, String> {
+fn emit_frame_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String> {
     // For now, emit simple Rust calls to crow_runtime::frame functions
     let result = match name {
+        "new" => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])".to_string(),
+        "with" => {
+            use crow_runtime::frame::Column as _C;
+            let _ = _C::Int(vec![]);
+            let vt = arg_types.get(2).cloned().unwrap_or(CrowType::Unknown);
+            let vt = if let CrowType::Result(i) = vt { *i } else { vt };
+            let (col, scalar) = match &vt {
+                CrowType::Array(inner) => match inner.as_ref() {
+                    CrowType::Int => (format!("crow_runtime::frame::Column::Int(({}).clone())", arg_strs[2]), false),
+                    CrowType::Float => (format!("crow_runtime::frame::Column::Float(({}).clone())", arg_strs[2]), false),
+                    CrowType::Bool => (format!("crow_runtime::frame::Column::Bool(({}).clone())", arg_strs[2]), false),
+                    _ => (format!("crow_runtime::frame::Column::Str(({}).iter().map(|x| format!(\"{{}}\", x)).collect())", arg_strs[2]), false),
+                },
+                CrowType::NumArray(_) => (format!("crow_runtime::frame::Column::Float(({}).to_vec())", arg_strs[2]), false),
+                CrowType::FrameCol => (format!("(*({}).data).clone()", arg_strs[2]), false),
+                CrowType::Int => (format!("crow_runtime::frame::Column::Int(vec![({}) as i64])", arg_strs[2]), true),
+                CrowType::Float => (format!("crow_runtime::frame::Column::Float(vec![({}) as f64])", arg_strs[2]), true),
+                CrowType::Bool => (format!("crow_runtime::frame::Column::Bool(vec![{}])", arg_strs[2]), true),
+                _ => (format!("crow_runtime::frame::Column::Str(vec![format!(\"{{}}\", {})])", arg_strs[2]), true),
+            };
+            let method = if scalar { "with_scalar" } else { "with_column" };
+            format!("{{ match ({}).{}(&{}, {}) {{ Ok(_f) => CrowResult {{ ok: true, value: _f, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"frame\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0], method, arg_strs[1], col)
+        }
         // load[path] is a reader: an error value on failure (kind 'frame'),
         // stamped with a capture moment on success — same shape as query[].
         "load" => format!(
@@ -403,6 +465,8 @@ fn emit_frame_rust(name: &str, arg_strs: &[String], _arg_types: &[CrowType]) -> 
 fn frame_type_of(name: &str) -> CrowType {
     match name {
         "load" => CrowType::Result(Box::new(CrowType::Frame)),
+        "new" => CrowType::Frame,
+        "with" => CrowType::Result(Box::new(CrowType::Frame)),
         "save" => CrowType::Void,
         "select" | "filter" | "sort" | "group" | "join" | "stack"
         | "head" | "tail" | "fill" | "rename" => CrowType::Frame,

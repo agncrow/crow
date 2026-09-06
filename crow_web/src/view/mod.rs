@@ -289,6 +289,20 @@ impl CrowVNode {
         ]).attr("class", "crow-field")
     }
 
+    /// slider[label, var, min, max, step] — a range input bound to state.
+    pub fn slider(label: &str, key: &str, current_value: &str, min: f64, max: f64, step: f64) -> Self {
+        CrowVNode::div(vec![
+            CrowVNode::label(vec![CrowVNode::text(label)]),
+            CrowVNode::input()
+                .attr("type", "range")
+                .attr("min", &format!("{}", min))
+                .attr("max", &format!("{}", max))
+                .attr("step", &format!("{}", step))
+                .attr("value", current_value)
+                .attr("data-crow-input", &format!("__field:{}", key)),
+        ]).attr("class", "crow-field crow-slider")
+    }
+
     /// Build a `<select>` dropdown with two-way binding.
     ///
     /// ```text

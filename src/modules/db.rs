@@ -141,6 +141,8 @@ fn crow_value_to_json_params(v: &CrowValue) -> Result<Vec<serde_json::Value>, St
                     Value::Float(f) => serde_json::json!(*f),
                     Value::Str(s) => serde_json::json!(s),
                     Value::Bool(b) => serde_json::json!(*b),
+                    // a list parameter: `IN ?` expands to one placeholder per element
+                    Value::Array(_) | Value::NumArray(_) => serde_json::Value::Array(crow_value_to_json_params(item)?),
                     _ => return Err(format!("cannot bind {} as SQL param", item.value.type_name())),
                 };
                 params.push(json);
@@ -150,17 +152,17 @@ fn crow_value_to_json_params(v: &CrowValue) -> Result<Vec<serde_json::Value>, St
         // An all-numeric literal like [18.95] or [100, 50] is a tensor in the
         // interpreter; bind its elements as numbers (whole values as ints,
         // matching what compiled mode emits for the same literal).
-        Value::NumArray(t) => Ok(t
-            .to_vec()
-            .into_iter()
-            .map(|f| {
-                if f.is_finite() && f == (f as i64) as f64 {
-                    serde_json::json!(f as i64)
-                } else {
-                    serde_json::json!(f)
-                }
-            })
-            .collect()),
+        Value::NumArray(t) => {
+            let num = |f: f64| if f.is_finite() && f == (f as i64) as f64 { serde_json::json!(f as i64) } else { serde_json::json!(f) };
+            let shape = t.shape();
+            // a 2-D literal like [[1, 3]] is a list of list parameters
+            if shape.len() == 2 {
+                let (rows, cols) = (shape[0], shape[1]);
+                let flat = t.to_vec();
+                return Ok((0..rows).map(|r| serde_json::Value::Array((0..cols).map(|c| num(flat[r * cols + c])).collect())).collect());
+            }
+            Ok(t.to_vec().into_iter().map(num).collect())
+        }
         _ => Err("SQL params must be an array".into()),
     }
 }

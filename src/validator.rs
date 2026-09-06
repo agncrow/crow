@@ -50,7 +50,7 @@ pub(crate) const WEB_RESERVED: &[&str] = &[
 pub(crate) const WEB_EXTRA_FUNCTIONS: &[&str] = &["msgpack", "arrow", "bytes", "stream", "render"];
 
 /// Reserved only in files that import ui
-pub(crate) const UI_RESERVED: &[&str] = &["fetch", "poll", "field", "today"];
+pub(crate) const UI_RESERVED: &[&str] = &["fetch", "poll", "field", "slider", "today"];
 
 const BUILTINS: &[&str] = &[
     "log", "assert", "type",
@@ -101,7 +101,7 @@ const BUILTINS: &[&str] = &[
     "uploads", "sse", "ws", "connect", "send", "recv", "close",
     "page", "static_dir", "smtp",
     // UI reactive builtins
-    "fetch", "poll", "field", "today",
+    "fetch", "poll", "field", "slider", "today",
 ];
 
 pub struct Validator<'a> {
@@ -848,6 +848,7 @@ impl<'a> Validator<'a> {
             "fetch" => argc == 1,                 // fetch[url]
             "poll" => argc == 2,                  // poll[url, seconds]
             "field" => argc == 2,                 // field[label, var]
+            "slider" => argc == 5,                // slider[label, var, min, max, step] (lowered)
             "today" => argc == 0,                 // today[]
             _ => true,
         };

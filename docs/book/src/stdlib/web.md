@@ -29,7 +29,7 @@ If the port is already in use, the server prints a friendly error: `error: port 
 | Function | Description | Example |
 |---|---|---|
 | `text[s]` | Plain text response | [Web: responses and submodules](../by-example/web-more.md) |
-| `html[s]` | HTML response | [Web: responses and submodules](../by-example/web-more.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) |
+| `html[s]` | HTML response | [Web: responses and submodules](../by-example/web-more.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) |
 | `json[map]` | JSON response from a map | [JSON](../by-example/json.md) · [Web: a JSON route](../by-example/web.md) |
 | `respond[status, body]` | Response with custom status code | [Web: responses and submodules](../by-example/web-more.md) |
 | `redirect[url]` | HTTP redirect response | [Web: responses and submodules](../by-example/web-more.md) |
@@ -94,7 +94,7 @@ If the port is already in use, the server prints a friendly error: `error: port 
 
 | Function | Description | Example |
 |---|---|---|
-| `ws[app, path, handler]` | Add a WebSocket endpoint | [Structured files: `use io`](../by-example/io.md) |
+| `ws[app, path, handler]` | Add a WebSocket endpoint | [Structured files: `use io`](../by-example/io.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
 | `connect[url]` | Connect to a WebSocket server | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
 | `send[sock, msg]` | Send a message on a WebSocket |  |
 | `recv[sock]` | Receive a message from a WebSocket |  |

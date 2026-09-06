@@ -42,6 +42,9 @@ pub struct Transpiler {
     propagation_ptrs: Vec<usize>,
     /// Return type of the current function being emitted (for wrapping plain returns in CrowResult)
     current_fn_return_type: Option<CrowType>,
+    /// The function being emitted has no Rust return type (a handler, a
+    /// procedure) — its implicit return runs the call and returns nothing
+    current_fn_returns_unit: bool,
     /// Name of the current function being emitted (for trace entries)
     current_function_name: String,
     /// Source file name (for trace entries)
@@ -126,6 +129,7 @@ impl Transpiler {
             propagation_indices: None,
             propagation_ptrs: Vec::new(),
             current_fn_return_type: None,
+            current_fn_returns_unit: false,
             current_function_name: String::new(),
             source_file: String::new(),
             binop_counter: 0,
@@ -1009,6 +1013,48 @@ impl Transpiler {
                     }
                 }
             }
+            // An empty default ([] or map[]) says nothing about its element type;
+            // the handlers that fill it do. Unify with what they assign, and
+            // give the default a concrete Rust type so it serializes.
+            {
+                fn assigned_types(stmts: &[Stmt], name: &str, ctx: &crate::type_infer::TypeContext, out: &mut Vec<CrowType>) {
+                    for st in stmts {
+                        match st {
+                            Stmt::Assign { name: n, value } if n == name => out.push(ctx.infer_expr(value)),
+                            Stmt::If { then_body, else_body, .. } => {
+                                assigned_types(then_body, name, ctx, out);
+                                if let Some(eb) = else_body { assigned_types(eb, name, ctx, out); }
+                            }
+                            Stmt::For { body, .. } | Stmt::While { body, .. } => assigned_types(body, name, ctx, out),
+                            _ => {}
+                        }
+                    }
+                }
+                let names: Vec<String> = self.reactive_vars.keys().cloned().collect();
+                for vname in names {
+                    let (ty, default_str) = self.reactive_vars.get(&vname).cloned().unwrap();
+                    let open = matches!(&ty, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Unknown))
+                        || matches!(&ty, CrowType::Map(inner) if matches!(inner.as_ref(), CrowType::Unknown));
+                    if !open { continue; }
+                    let mut seen: Vec<CrowType> = Vec::new();
+                    for st in stmts {
+                        if let Stmt::FnDecl { body, .. } = st { assigned_types(body, &vname, &self.ctx, &mut seen); }
+                    }
+                    let mut unified = ty.clone();
+                    for t in seen {
+                        let t = if let CrowType::Result(i) = t { *i } else { t };
+                        unified = unified.unify(&t);
+                    }
+                    let default_str = if default_str == "vec![]" {
+                        match &unified {
+                            CrowType::Array(inner) => format!("Vec::<{}>::new()", inner.to_rust_type()),
+                            _ => default_str,
+                        }
+                    } else { default_str };
+                    self.ctx.vars.insert(vname.clone(), unified.clone());
+                    self.reactive_vars.insert(vname, (unified, default_str));
+                }
+            }
 
             // Scan reactive render function bodies for event handler references
             if !self.reactive_render_fns.is_empty() {
@@ -1051,6 +1097,14 @@ impl Transpiler {
                     }
                     if !added {
                         break;
+                    }
+                }
+                // Helpers that write module state on a handler's behalf (the
+                // inferrer closed the handler class over them) compile as
+                // handlers too: state signature, preamble, epilogue.
+                for h in self.ctx.view_handlers.clone() {
+                    if self.ctx.functions.contains_key(&h) && !self.ctx.views.contains(&h) && self.reactive_event_handlers.insert(h.clone()) {
+                        self.live_handle_fns.insert(h);
                     }
                 }
             }
@@ -1329,8 +1383,11 @@ impl Transpiler {
             for h in &handlers {
                 let rust_name = Self::rust_fn_name(h);
                 let params = self.ctx.functions.get(h).map(|f| f.params.clone()).unwrap_or_default();
+                let browser_callable = params.iter().all(|(_, t)| matches!(t, CrowType::Int | CrowType::Float | CrowType::Bool | CrowType::Str | CrowType::Unknown));
                 if params.is_empty() {
                     self.emit_line(&format!("\"{}\" => {}(state),", h, rust_name));
+                } else if !browser_callable {
+                    // a helper taking a frame or array is only reachable from other handlers
                 } else {
                     // F-11: frozen args arrive as a JSON array in _value
                     let extracts: Vec<String> = params.iter().enumerate().map(|(i, (_, t))| {
@@ -1639,10 +1696,13 @@ impl Transpiler {
             let mut ps = vec!["state: &mut CrowLiveState".to_string()];
             for (pname, ptype) in &sig.params {
                 let rt = match ptype {
-                    CrowType::Int => "i64",
-                    CrowType::Float => "f64",
-                    CrowType::Bool => "bool",
-                    _ => "String",
+                    CrowType::Int => "i64".to_string(),
+                    CrowType::Float => "f64".to_string(),
+                    CrowType::Bool => "bool".to_string(),
+                    CrowType::Str | CrowType::Unknown => "String".to_string(),
+                    // a helper in the handler class (called by a handler, never
+                    // by the browser) keeps its inferred type — a frame, an array
+                    other => other.to_rust_type(),
                 };
                 ps.push(format!("{}: {}", pname, rt));
             }
@@ -1699,10 +1759,12 @@ impl Transpiler {
         let saved_ref_params = self.current_ref_params.clone();
         let saved_mutated = self.mutated_vars.clone();
         let saved_fn_return_type = self.current_fn_return_type.clone();
+        let saved_returns_unit = self.current_fn_returns_unit;
         let saved_function_name = self.current_function_name.clone();
         self.declared.clear();
         self.current_ref_params = ref_set;
         self.current_fn_return_type = Some(sig.return_type.clone());
+        self.current_fn_returns_unit = ret_str.is_empty();
         self.current_function_name = name.to_string();
 
         // Compute which local variables need `mut` in this function
@@ -1731,7 +1793,11 @@ impl Transpiler {
                     CrowType::Float => format!("state.get_f64(\"{}\", {})", vname, default_str),
                     CrowType::Str => format!("state.get_str(\"{}\", &{})", vname, default_str),
                     CrowType::Bool => format!("state.get_bool(\"{}\", {})", vname, default_str),
-                    _ => format!("state.get_i64(\"{}\", {})", vname, default_str), // fallback
+                    // arrays, maps, frames: stored as JSON, read back as their type
+                    other => format!(
+                        "state.get(\"{}\").and_then(|_v| serde_json::from_value::<{}>(_v.clone()).ok()).unwrap_or_else(|| {})",
+                        vname, other.to_rust_type(), default_str
+                    ),
                 };
                 self.emit_line(&format!("{} {} = {};", kw, vname, getter));
                 self.declared.insert(vname.clone());
@@ -1785,6 +1851,7 @@ impl Transpiler {
         self.current_ref_params = saved_ref_params;
         self.mutated_vars = saved_mutated;
         self.current_fn_return_type = saved_fn_return_type;
+        self.current_fn_returns_unit = saved_returns_unit;
         self.current_function_name = saved_function_name;
         self.indent -= 1;
         self.emit_line("}");
@@ -1909,11 +1976,13 @@ impl Transpiler {
         let saved_ref_params = self.current_ref_params.clone();
         let saved_mutated = self.mutated_vars.clone();
         let saved_fn_return_type = self.current_fn_return_type.clone();
+        let saved_returns_unit = self.current_fn_returns_unit;
         let saved_function_name = self.current_function_name.clone();
         let saved_emitting_dual = self.emitting_dual;
         self.declared.clear();
         self.current_ref_params = std::collections::HashSet::new();
         self.current_fn_return_type = Some(CrowType::Float); // placeholder
+        self.current_fn_returns_unit = false;
         self.current_function_name = name.to_string();
         self.emitting_dual = true;
 
@@ -1952,6 +2021,7 @@ impl Transpiler {
         self.current_ref_params = saved_ref_params;
         self.mutated_vars = saved_mutated;
         self.current_fn_return_type = saved_fn_return_type;
+        self.current_fn_returns_unit = saved_returns_unit;
         self.current_function_name = saved_function_name;
         self.emitting_dual = saved_emitting_dual;
         self.indent -= 1;
@@ -2284,7 +2354,8 @@ impl Transpiler {
                 let mut exprs: Vec<String> = Vec::new();
                 let mut types: Vec<CrowType> = Vec::new();
                 for value in values.iter() {
-                    exprs.push(self.expr_to_string(value));
+                    // by value: a parameter or variable assigned here stays usable after
+                    exprs.push(self.owned_expr_str(value));
                     types.push(self.ctx.infer_expr(value));
                 }
                 // Check for type-changing reassignment
@@ -2333,8 +2404,13 @@ impl Transpiler {
             Stmt::Return(Some(e)) => {
                 let expr_str = self.owned_expr_str(e);
                 let expr_type = self.ctx.infer_expr(e);
-                // If the function returns CrowResult<T> but this expression is a plain T, wrap it
-                if let Some(CrowType::Result(_)) = &self.current_fn_return_type {
+                // A void function's implicit return (its last statement is a call
+                // for effect) runs the call and returns nothing — the call may be
+                // wrapped in propagation and so carry a CrowResult<()>
+                if self.current_fn_returns_unit {
+                    self.emit_line(&format!("let _ = {};", expr_str));
+                    self.emit_line("return;");
+                } else if let Some(CrowType::Result(_)) = &self.current_fn_return_type {
                     if !matches!(expr_type, CrowType::Result(_)) {
                         self.emit_line(&format!("return CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }};", expr_str));
                     } else {
@@ -2644,12 +2720,17 @@ impl Transpiler {
         }).collect();
         for e in elems {
             let s = self.expr_to_string(e);
-            if matches!(self.ctx.infer_expr(e), CrowType::Result(_)) {
-                out.push(format!("serde_json::json!(({}).value)", s));
-                fallible.push(s);
-            } else {
-                out.push(format!("serde_json::json!({})", s));
-            }
+            let t = self.ctx.infer_expr(e);
+            let (fallible_here, inner) = match t { CrowType::Result(i) => (true, *i), o => (false, o) };
+            // a tensor parameter is a list: bind its values
+            let value = if fallible_here { format!("({}).value", s) } else { format!("({})", s) };
+            let json = match inner {
+                _ if matches!(e, Expr::Array(items) if items.is_empty()) => "serde_json::Value::Array(vec![])".to_string(),
+                CrowType::NumArray(_) => format!("serde_json::json!({}.to_vec().iter().map(|&_f| if _f.is_finite() && _f == (_f as i64) as f64 {{ serde_json::json!(_f as i64) }} else {{ serde_json::json!(_f) }}).collect::<Vec<_>>())", value),
+                _ => format!("serde_json::json!({})", value),
+            };
+            out.push(json);
+            if fallible_here { fallible.push(s); }
         }
         (out.join(", "), fallible)
     }
@@ -2689,7 +2770,13 @@ impl Transpiler {
             // Value semantics: assigning/embedding a non-Copy VARIABLE clones —
             // the source variable stays usable (a = b; use b)
             if !self.ctx.functions.contains_key(name) && !self.static_handle_vars.contains(name) {
-                let ty = self.ctx.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
+                let mut ty = self.ctx.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
+                // a handler's parameter arrives as a String unless numeric
+                if matches!(ty, CrowType::Unknown) && self.reactive_event_handlers.contains(&self.current_function_name) {
+                    if let Some(sig) = self.ctx.functions.get(&self.current_function_name) {
+                        if sig.params.iter().any(|(p, _)| p == name) { ty = CrowType::Str; }
+                    }
+                }
                 let non_copy = matches!(
                     ty,
                     CrowType::Str
@@ -3287,6 +3374,13 @@ impl Transpiler {
                     // Skip frame `select` when in UI context with 2 args (it's a UI widget)
                     let skip_frame_select = name == "select" && self.needs_ui && args.len() == 2
                         && self.registry.module_name_for(name).map_or(false, |m| m == "frame");
+                    // A frame function given something other than a frame is the
+                    // core builtin of the same name (sort[xs], join[parts, sep])
+                    let skip_frame_select = skip_frame_select || (
+                        self.registry.module_name_for(name).map_or(false, |m| m == "frame")
+                        && crate::checker::BUILTINS.contains(&name.as_str())
+                        && !args.first().map(|a| { let t = self.ctx.infer_expr(a); let t = if let CrowType::Result(i) = t { *i } else { t }; matches!(t, CrowType::Frame | CrowType::FrameCol) }).unwrap_or(false)
+                    );
                     // Inside a view an element name is the element, never the
                     // module function of the same bare name (stack vs frame.stack).
                     let element_in_view = self.needs_ui
@@ -3972,7 +4066,13 @@ impl Transpiler {
                             let t = if let CrowType::Result(i) = t { *i } else { t };
                             matches!(t, CrowType::Frame)
                         }).unwrap_or(false);
-                        let is_html_el = HTML_ELEMENTS.contains(&name.as_str()) || (name == "table" && !first_is_frame);
+                        // table[[click = f, ...], frame]: the frame rides second
+                        let table_over_frame = name == "table" && args.len() == 2 && matches!(&args[0], Expr::Map(_)) && {
+                            let t = self.ctx.infer_expr(&args[1]);
+                            let t = if let CrowType::Result(i) = t { *i } else { t };
+                            matches!(t, CrowType::Frame)
+                        };
+                        let is_html_el = HTML_ELEMENTS.contains(&name.as_str()) || (name == "table" && !first_is_frame && !table_over_frame);
                         let is_void_el = VOID_ELEMENTS.contains(&name.as_str());
 
                         if is_html_el || is_void_el {
@@ -4425,6 +4525,39 @@ impl Transpiler {
                     if name == "poll" && arg_strs.len() == 2 {
                         return format!("{{ __crow_state.register_poll(\"_anon\", &{}, {} as u64); serde_json::Value::Null }}", arg_strs[0], arg_strs[1]);
                     }
+                    // slider[label, var, min, max, step] → CrowVNode::slider(label, key, value, min, max, step)
+                    if name == "slider" && self.needs_ui && arg_strs.len() == 5 {
+                        let key = match &args[1] {
+                            Expr::Ident(vname) => vname.clone(),
+                            Expr::FieldAccess { field, .. } => field.clone(),
+                            _ => "unknown".to_string(),
+                        };
+                        return format!("CrowVNode::slider(&{}, \"{}\", &format!(\"{{}}\", {}), ({}) as f64, ({}) as f64, ({}) as f64)", arg_strs[0], key, arg_strs[1], arg_strs[2], arg_strs[3], arg_strs[4]);
+                    }
+                    // table[[click = f, key = 'col', mark = 'col'], frame] → the kernel's rows
+                    if name == "table" && self.needs_ui && args.len() == 2 && matches!(&args[0], Expr::Map(_)) {
+                        let frame_ty = self.ctx.infer_expr(&args[1]);
+                        let is_frame = matches!(&frame_ty, CrowType::Frame) || matches!(&frame_ty, CrowType::Result(i) if matches!(i.as_ref(), CrowType::Frame));
+                        if is_frame {
+                            let (mut click, mut key, mut mark) = ("None".to_string(), "None".to_string(), "None".to_string());
+                            if let Expr::Map(pairs) = &args[0] {
+                                for (k, v) in pairs {
+                                    let kname = match k { Expr::Ident(s) | Expr::Str(s) => s.clone(), _ => continue };
+                                    match (kname.as_str(), v) {
+                                        ("click", Expr::Ident(f)) => click = format!("Some(\"{}\")", f),
+                                        ("key", Expr::Str(s)) => key = format!("Some(\"{}\")", s),
+                                        ("mark", Expr::Str(s)) => mark = format!("Some(\"{}\")", s),
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            let rows = format!("CrowVNode::table(vec![CrowVNode::raw(&crow_runtime::layout::frame_table_html(_f, {}, {}, {}))])", click, key, mark);
+                            if matches!(frame_ty, CrowType::Result(_)) {
+                                return format!("{{ let _fr = {}; if !_fr.ok {{ CrowVNode::text(&format!(\"error: {{}}\", _fr.reason)) }} else {{ let _f = &_fr.value; {} }} }}", arg_strs[1], rows);
+                            }
+                            return format!("{{ let _f = &{}; {} }}", arg_strs[1], rows);
+                        }
+                    }
                     // field[label, var] → CrowVNode::field(label, key, current_value)
                     if name == "field" && self.needs_ui && arg_strs.len() == 2 {
                         // Extract the state key from the second argument
@@ -4464,16 +4597,14 @@ impl Transpiler {
                     }
                     if name == "table" && self.needs_ui && arg_strs.len() == 1 {
                         let arg_ty = self.ctx.infer_expr(&args[0]);
+                        let rows = "CrowVNode::table(vec![CrowVNode::raw(&crow_runtime::layout::frame_table_html(_f, None, None, None))])";
                         if matches!(arg_ty, CrowType::Result(_)) {
                             return format!(
-                                "{{ let _fr = {}; if !_fr.ok {{ CrowVNode::text(&format!(\"error: {{}}\", _fr.reason)) }} else {{ let _f = &_fr.value; let _headers: Vec<String> = _f.columns.clone(); let _rows: Vec<Vec<String>> = (0.._f.nrows()).map(|r| (0.._f.ncols()).map(|c| _f.data[c].fmt_cell(r, _f.validity[c][r])).collect()).collect(); CrowVNode::table_from_data(&_headers, &_rows) }} }}",
-                                arg_strs[0]
+                                "{{ let _fr = {}; if !_fr.ok {{ CrowVNode::text(&format!(\"error: {{}}\", _fr.reason)) }} else {{ let _f = &_fr.value; {} }} }}",
+                                arg_strs[0], rows
                             );
                         }
-                        return format!(
-                            "{{ let _f = &{}; let _headers: Vec<String> = _f.columns.clone(); let _rows: Vec<Vec<String>> = (0.._f.nrows()).map(|r| (0.._f.ncols()).map(|c| _f.data[c].fmt_cell(r, _f.validity[c][r])).collect()).collect(); CrowVNode::table_from_data(&_headers, &_rows) }}",
-                            arg_strs[0]
-                        );
+                        return format!("{{ let _f = &{}; {} }}", arg_strs[0], rows);
                     }
                     // today[] → chrono::Local::now().format("%Y-%m-%d").to_string()
                     if name == "today" && arg_strs.is_empty() {
@@ -4509,6 +4640,16 @@ impl Transpiler {
                     // Known function → direct call (routing to the matching
                     // specialization when the function is monomorphized)
                     if self.ctx.functions.contains_key(name) {
+                        // a handler calling a state-writing helper hands it the state
+                        let arg_strs: Vec<String> = if self.reactive_event_handlers.contains(name)
+                            && self.reactive_event_handlers.contains(&self.current_function_name)
+                        {
+                            let mut all = vec!["state".to_string()];
+                            all.extend(arg_strs.iter().cloned());
+                            all
+                        } else {
+                            arg_strs.clone()
+                        };
                         if let Some(clones) = self.ctx.specializations.get(name) {
                             let call_sig: Vec<CrowType> = args.iter()
                                 .map(|a| {
@@ -4867,7 +5008,18 @@ impl Transpiler {
                         }).collect();
                         format!("{}({})", callee_str, casted.join(", "))
                     }
-                    _ => format!("{}({})", callee_str, arg_strs.join(", ")),
+                    _ => {
+                        // a handler calling a state-writing helper hands it the state
+                        let threads_state = callee_name.as_ref().map_or(false, |n| self.reactive_event_handlers.contains(n))
+                            && self.reactive_event_handlers.contains(&self.current_function_name);
+                        if threads_state {
+                            let mut all = vec!["state".to_string()];
+                            all.extend(arg_strs.iter().cloned());
+                            format!("{}({})", callee_str, all.join(", "))
+                        } else {
+                            format!("{}({})", callee_str, arg_strs.join(", "))
+                        }
+                    }
                 }
             }
             Expr::FieldAccess { object, field } => {

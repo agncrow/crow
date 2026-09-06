@@ -253,6 +253,13 @@ impl Lowerer {
 
                 match callee_name.as_deref() {
                     Some("map") => self.lower_map_call(args)?,
+                    // slider[label, var, min = 0, max = 100, step = 1]
+                    Some("slider") if !self.fns.contains_key("slider") => {
+                        let params: Vec<String> = ["label", "var", "min", "max", "step"].iter().map(|s| s.to_string()).collect();
+                        let defaults: Vec<Option<Expr>> = vec![None, None, Some(Expr::Int(0)), Some(Expr::Int(100)), Some(Expr::Int(1))];
+                        let resolved = self.resolve_args("slider", &params, &defaults, args)?;
+                        Expr::Call { callee: Box::new(callee), args: resolved }
+                    }
                     // fmt has a full named signature with sentinel defaults
                     // (decimals < 0 / width 0 / align '' mean "unset") so both
                     // modes always receive exactly 7 positional args

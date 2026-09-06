@@ -29,6 +29,14 @@ Elements nest by nesting calls — the tree you write is the tree you get.
 Attributes are named arguments: `a['docs', href = '/docs']`,
 `div[..., class = 'card']`.
 
+## Tables that respond
+
+`table[frame]` shows a frame. Give it a handler and it becomes a control:
+`click = focus` sends the clicked row's key column to `fn focus[symbol]`,
+`key = 'symbol'` says which column that is, and `mark = 'gate'` tints the
+rows whose `gate` cell is true. The scanner in the final project is one
+of these.
+
 ## A view renders wherever it is called
 
 A view is not tied to `page[]`. Call it from a test block, from a loop

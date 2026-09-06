@@ -2480,6 +2480,11 @@ fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool
         if remote_acceptable { prompt_parts.push("a = accept (deliberate)"); }
         if later_fixable { prompt_parts.push("f = fix (later[])"); }
         prompt_parts.push("q = quit");
+        // No terminal (a script, CI, an editor): report and stop instead of waiting
+        if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            println!("\n        (no terminal — not waiting for input)");
+            process::exit(1);
+        }
         print!("\n        {} > ", prompt_parts.join(", "));
         io::stdout().flush().unwrap();
 
@@ -3161,14 +3166,27 @@ fn rewrite_refs_stmt(
 ) {
     match stmt {
         ast::Stmt::Assign { name, value } => {
-            // Assigning creates/updates a local inside a fn body — the name is
-            // shadowed from here on, but the RHS is evaluated first
+            // The RHS first; then the target: a module-level name assigned in
+            // a view or handler is the module's reactive state, so it takes
+            // the prefix too (a local of the same name is prefixed alike, and
+            // every read of it in the body was rewritten the same way)
             rewrite_refs_expr(value, map, shadowed);
-            let _ = name;
+            if !shadowed.contains(name) {
+                if let Some(prefixed) = map.get(name) {
+                    *name = prefixed.clone();
+                }
+            }
         }
-        ast::Stmt::MultiAssign { values, .. } => {
+        ast::Stmt::MultiAssign { names, values, .. } => {
             for v in values {
                 rewrite_refs_expr(v, map, shadowed);
+            }
+            for n in names {
+                if !shadowed.contains(n) {
+                    if let Some(prefixed) = map.get(n) {
+                        *n = prefixed.clone();
+                    }
+                }
             }
         }
         ast::Stmt::Return(Some(e)) | ast::Stmt::ExprStmt(e) => {
@@ -3351,6 +3369,34 @@ fn rewrite_refs_expr(
             }
         }
         ast::Expr::Named { value, .. } => rewrite_refs_expr(value, map, shadowed),
+        // `name` inside a module string interpolates the module's own variable:
+        // rewrite the identifiers in each span (a field name after `.` and the
+        // parameters that shadow are left alone)
+        ast::Expr::Str(s) => {
+            if s.contains('`') {
+                let mut out = String::with_capacity(s.len());
+                let mut in_span = false;
+                let chars: Vec<char> = s.chars().collect();
+                let mut i = 0;
+                while i < chars.len() {
+                    let c = chars[i];
+                    if c == '`' { in_span = !in_span; out.push(c); i += 1; continue; }
+                    if in_span && (c.is_alphabetic() || c == '_') && (i == 0 || chars[i - 1] != '.') {
+                        let start = i;
+                        while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') { i += 1; }
+                        let word: String = chars[start..i].iter().collect();
+                        match map.get(&word) {
+                            Some(prefixed) if !shadowed.contains(&word) => out.push_str(prefixed),
+                            _ => out.push_str(&word),
+                        }
+                        continue;
+                    }
+                    out.push(c);
+                    i += 1;
+                }
+                *s = out;
+            }
+        }
         ast::Expr::ForExpr { var, iter, body } => {
             rewrite_refs_expr(iter, map, shadowed);
             let mut inner = shadowed.clone();

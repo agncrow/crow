@@ -35,6 +35,46 @@ pub trait DbTx {
     fn exec(&self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String>;
 }
 
+/// An array parameter stands for a list: its `?` becomes `(?, ?, …)` and
+/// its elements take those places — `WHERE id IN ?` on every backend.
+/// Placeholders inside single-quoted strings are left alone.
+pub fn expand_array_params(sql: &str, params: &[serde_json::Value]) -> (String, Vec<serde_json::Value>) {
+    if !params.iter().any(|p| p.is_array()) {
+        return (sql.to_string(), params.to_vec());
+    }
+    let mut out = String::with_capacity(sql.len() + 16);
+    let mut flat: Vec<serde_json::Value> = Vec::with_capacity(params.len());
+    let mut idx = 0usize;
+    let mut in_string = false;
+    for c in sql.chars() {
+        match c {
+            '\'' => { in_string = !in_string; out.push(c); }
+            '?' if !in_string => {
+                match params.get(idx) {
+                    Some(serde_json::Value::Array(items)) => {
+                        if items.is_empty() {
+                            out.push_str("(NULL)");
+                        } else {
+                            out.push('(');
+                            for (k, item) in items.iter().enumerate() {
+                                if k > 0 { out.push_str(", "); }
+                                out.push('?');
+                                flat.push(item.clone());
+                            }
+                            out.push(')');
+                        }
+                    }
+                    Some(other) => { out.push('?'); flat.push(other.clone()); }
+                    None => out.push('?'),
+                }
+                idx += 1;
+            }
+            _ => out.push(c),
+        }
+    }
+    (out, flat)
+}
+
 /// A database connection handle — internally a pool.
 /// Users never manage individual connections.
 pub trait CrowDb: Send + Sync {
@@ -77,7 +117,8 @@ impl DbHandle {
     }
 
     pub fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
-        self.inner.query(sql, params)
+        let (sql, params) = expand_array_params(sql, params);
+        self.inner.query(&sql, &params)
     }
 
     /// Column names and kinds of a statement's result, without running it.
@@ -86,7 +127,8 @@ impl DbHandle {
     }
 
     pub fn exec(&self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
-        self.inner.exec(sql, params)
+        let (sql, params) = expand_array_params(sql, params);
+        self.inner.exec(&sql, &params)
     }
 
     pub fn insert(&self, table: &str, frame: &CrowFrame) -> Result<i64, String> {

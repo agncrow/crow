@@ -170,6 +170,37 @@ pub fn render(tag: &str, attrs: &[(String, String)]) -> Rendered {
 
 /// The responsive and overlay rules the data-* attributes rely on. Appended
 /// to the default stylesheet. Named widths: phone < 600, tablet < 1024.
+/// A frame as table rows — the markup inside `<table>` — for both renderers.
+/// `click` names a handler each row sends with the `key` column's cell as its
+/// argument (the first column when no key is given); `mark` names a column
+/// whose truthy cells put `marked` on their row.
+pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: Option<&str>, mark: Option<&str>) -> String {
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
+    let mut out = String::from("<thead><tr>");
+    for c in &f.columns { out.push_str(&format!("<th>{}</th>", esc(c))); }
+    out.push_str("</tr></thead><tbody>");
+    let key_i = key.and_then(|k| f.columns.iter().position(|c| c == k)).unwrap_or(0);
+    let mark_i = mark.and_then(|m| f.columns.iter().position(|c| c == m));
+    for r in 0..f.nrows() {
+        let mut tr = String::from("<tr");
+        if let Some(i) = mark_i {
+            if f.data[i].truthy(r) && f.validity[i][r] { tr.push_str(" class=\"marked\""); }
+        }
+        if let Some(h) = click {
+            if f.ncols() > 0 {
+                let cell = f.data[key_i].fmt_cell(r, f.validity[key_i][r]);
+                tr.push_str(&format!(" data-crow-click=\"{}\" data-crow-args=\"[&quot;{}&quot;]\"", esc(h), esc(&cell.replace('"', "\\\""))));
+            }
+        }
+        tr.push('>');
+        for c in 0..f.ncols() { tr.push_str(&format!("<td>{}</td>", esc(&f.data[c].fmt_cell(r, f.validity[c][r])))); }
+        tr.push_str("</tr>");
+        out.push_str(&tr);
+    }
+    out.push_str("</tbody>");
+    out
+}
+
 /// The kernel stylesheet: theme tokens, element defaults, and the eight
 /// classes — every served page and every exported document starts here.
 pub const DEFAULT_CSS: &str = r#":root{--crow-bg:#f6f7f9;--crow-surface:#ffffff;--crow-text:#1b222b;--crow-muted:#5d6773;--crow-border:#dce1e8;--crow-accent:#a86e1c;--crow-up:#177a4e;--crow-down:#bd3a3a}
@@ -203,7 +234,11 @@ button.primary{background:var(--crow-accent);border-color:var(--crow-accent);col
 button.primary:hover{filter:brightness(1.08)}
 .up{color:var(--crow-up)}
 .down{color:var(--crow-down)}
-.stale{color:var(--crow-muted)}"#;
+.stale{color:var(--crow-muted)}
+tr[data-crow-click]{cursor:pointer}
+tr[data-crow-click]:hover td{background:color-mix(in srgb,var(--crow-accent) 10%,transparent)}
+tr.marked td{background:color-mix(in srgb,var(--crow-up) 14%,transparent)}
+.crow-slider input{width:16rem;padding:0;border:0;background:transparent}"#;
 
 // Responsive rules override the element's own inline rule (the base
 // display/direction the kernel emits), so they carry !important.

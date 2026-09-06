@@ -5,7 +5,7 @@ use std::sync::Arc;
 use rayon::prelude::*;
 
 /// Column data types — each column stores a single typed vector.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Column {
     Int(Vec<i64>),
     Float(Vec<f64>),
@@ -16,6 +16,18 @@ pub enum Column {
 }
 
 impl Column {
+    /// A cell read as a condition: non-zero numbers, `true`, and the strings
+    /// `true`/`1`/`t` are true.
+    pub fn truthy(&self, idx: usize) -> bool {
+        match self {
+            Column::Bool(v) => v[idx],
+            Column::Int(v) => v[idx] != 0,
+            Column::Float(v) => v[idx] != 0.0,
+            Column::Str(v) => matches!(v[idx].trim(), "true" | "1" | "t"),
+            Column::DateTime(ms, _) => ms[idx] != 0,
+        }
+    }
+
     pub fn len(&self) -> usize {
         match self {
             Column::Int(v) => v.len(),
@@ -60,7 +72,7 @@ impl Column {
 }
 
 /// A column-oriented data frame.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CrowFrame {
     pub columns: Vec<String>,              // column names (order preserved)
     pub data: Vec<Arc<Column>>,            // column data (Arc for cheap sharing)
@@ -68,6 +80,40 @@ pub struct CrowFrame {
 }
 
 impl CrowFrame {
+    /// A new frame with one more (or one replaced) column. Every row is
+    /// valid; the length must match the frame's rows unless the frame is
+    /// empty, in which case the column sets the row count.
+    pub fn with_column(&self, name: &str, data: Column) -> Result<CrowFrame, String> {
+        let n = data.len();
+        if !self.columns.is_empty() && n != self.nrows() {
+            return Err(format!("with: column '{}' has {} values but the frame has {} rows", name, n, self.nrows()));
+        }
+        let mut out = self.clone();
+        let validity = Arc::new(vec![true; n]);
+        if let Some(i) = out.columns.iter().position(|c| c == name) {
+            out.data[i] = Arc::new(data);
+            out.validity[i] = validity;
+        } else {
+            out.columns.push(name.to_string());
+            out.data.push(Arc::new(data));
+            out.validity.push(validity);
+        }
+        Ok(out)
+    }
+
+    /// `with_column` from a scalar repeated for every row.
+    pub fn with_scalar(&self, name: &str, data: Column) -> Result<CrowFrame, String> {
+        let n = self.nrows();
+        let repeated = match data {
+            Column::Int(v) => Column::Int(vec![v[0]; n]),
+            Column::Float(v) => Column::Float(vec![v[0]; n]),
+            Column::Str(v) => Column::Str(vec![v[0].clone(); n]),
+            Column::Bool(v) => Column::Bool(vec![v[0]; n]),
+            Column::DateTime(v, z) => Column::DateTime(vec![v[0]; n], vec![z[0]; n]),
+        };
+        self.with_column(name, repeated)
+    }
+
     /// Create from raw (unshared) columns — wraps each in Arc.
     pub fn new(columns: Vec<String>, data: Vec<Column>, validity: Vec<Vec<bool>>) -> Self {
         CrowFrame {

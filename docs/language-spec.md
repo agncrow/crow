@@ -1457,6 +1457,8 @@ Rules:
 - If only one module exports a name, bare calls work.
 - If multiple modules export the same name, bare calls error with a list of qualified alternatives.
 - Inside a `view`, an element name is the element: `stack[...]` is the layout container even with `frame` and `math` (which both export `stack`) imported. The prefix (`frame.stack[a, b]`) reaches the module function from inside a view.
+- A `frame` function given something other than a frame is the core builtin of the same name: with `use frame`, `sort[xs]` sorts the array and `join[parts, sep]` joins strings, while `sort[df, 'col']` and `join[a, b, 'key']` are the frame operations. The first argument decides.
+- The element-wise math functions (`exp ln log2 log10 sign sin cos tan asin acos atan sinh cosh tanh`) take a plain number as well as a tensor and return a number for a number.
 - Module-prefixed calls (`module.fn[args]`) always work regardless of conflicts.
 
 
@@ -1942,6 +1944,8 @@ Import with `use frame`. Column-oriented DataFrames for tabular data. See `docs/
 
 | Function | Description |
 |---|---|
+| `new[]` | The empty frame (`frame.new[]`, since `new` reads best qualified); add columns with `with` |
+| `with[frame, col, values]` | A frame with one more (or replaced) column: `values` is an array, a tensor, or a scalar repeated for every row; the length must match the rows (error-value otherwise) |
 | `load[path]` | Load CSV → frame (error-value on failure) |
 | `save[frame, path]` | Write frame → CSV |
 | `select[frame, cols]` | Pick columns: `select[df, ['name', 'age']]` |
@@ -2057,6 +2061,20 @@ Top-level variables in a ui program are reactive state (see Function Scope). Thr
 | `fetch[url]` | Reactive state loaded once by HTTP GET when the page connects |
 | `poll[url, seconds]` | Reactive state re-fetched every `seconds`; every reader re-renders when it changes |
 | `field[label, var]` | A labeled input two-way bound to reactive variable `var` (inside a view) |
+
+#### Tables over frames
+
+`table[frame]` renders a frame's rows. Three named arguments make it interactive: `click = handler` sends the row's key to the handler when a row is clicked (`fn focus[symbol]`), `key = 'col'` names the column whose cell is sent (the first column by default), and `mark = 'col'` names a column whose truthy cells put the class `marked` on their row, tinted by the stylesheet.
+
+#### Sliders
+
+`slider[label, var, min = 0, max = 100, step = 1]` is a range input bound to a reactive variable, exactly as `field` binds a text input. A handler reads the variable when the reader acts (a `Seek` button beside the scrubber).
+
+A bound input keeps its variable's type: text typed into a field bound to an integer becomes an integer (a float is truncated), a float variable gets a float, a bool variable gets a bool, and text that does not parse leaves a number alone. When a handler assigns to a bound variable, every field bound to it shows the new value on the next render; only the input the reader is typing in keeps its draft.
+
+#### Handlers and their helpers
+
+A view sees reactive state, a handler moves it, and a function a handler calls that assigns a module-level variable is a handler too — it joins the handler class in both renderers, so `fn restart[]` may call `fn rewind_to[t]` and the write lands in state. A pure helper (one that assigns no module variable) keeps its own scope. Reactive state may be an array, a map, or a frame; the compiled program keeps it as JSON between renders.
 
 #### Views render wherever they are called
 
@@ -2316,6 +2334,8 @@ exec[conn, 'CREATE TABLE users (id INT, name TEXT)']
 n = exec[conn, 'DELETE FROM users WHERE age < ?', [18]]
 log[n]
 ```
+
+**List parameters.** An array bound as a parameter stands for a list: its `?` becomes `(?, ?, …)` with one placeholder per element, on every backend. Write `WHERE id IN ?` and pass `[[1, 3]]`; an empty list matches nothing.
 
 **Typed cells in compiled programs.** The compiler asks the program's databases what each literal query returns — a `prepare` on Postgres, `DESCRIBE` on ClickHouse — and types every column: `rows.price[0]` is a float, `rows.n[0]` an int, in the compiled program as it always was in the interpreter. Connections bound to a literal URL (`pg = db.connect['postgres://…']`) are asked in declaration order; `?` placeholders and interpolated spans stand in as NULL. A database that cannot be reached at compile time is skipped and the build says so once; the cells of that query then read as text, the pre-typing behaviour. Frames derived through `select`, `filter`, `sort`, `head`, `tail`, `fill`, `stack`, and `join` keep their column types. Set `CROW_NO_DESCRIBE=1` to build without asking.
 
