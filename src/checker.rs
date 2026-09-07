@@ -450,6 +450,7 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
             let decls_clone = decls.clone();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let mut interp = Interpreter::new();
+                interp.set_modules_preexpanded(true);
                 let _ = interp.run(&decls_clone);
                 interp.run(&program)
             }));
@@ -597,6 +598,7 @@ pub fn run_determinism_probe(
                 args: combo.iter().map(value_to_expr).collect(),
             };
             let mut interp = Interpreter::new();
+            interp.set_modules_preexpanded(true);
             let _ = interp.run(&decls);
             let a = interp.eval_expr_pub(&call);
             let b = interp.eval_expr_pub(&call);
@@ -901,11 +903,10 @@ pub fn find_remote_queries_in_views(
         return Vec::new();
     }
     let mut issues = Vec::new();
-    // A view registered in page[] is also collected as a handler — one
-    // root, one finding.
-    let roots: std::collections::BTreeSet<&String> =
-        ctx.views.iter().chain(ctx.view_handlers.iter()).collect();
-    for root in roots {
+    // The render path only: a handler that asks a remote database on a
+    // click is on-demand work, the blessed home for it (crow-check.md's
+    // matrix); a view that asks on every render is the hazard.
+    for root in ctx.views.iter() {
         let Some(sig) = ctx.functions.get(root) else { continue };
         let mut flagged: BTreeSet<String> = BTreeSet::new();
         collect_query_conns(&sig.body, &mut flagged);
@@ -1493,6 +1494,8 @@ fn collect_reads_from_expr(expr: &Expr, reads: &mut BTreeSet<String>) {
             collect_reads_from_expr(iter, reads);
             collect_reads_from_stmts(body, reads);
         }
+        // a named argument reads its value: disabled = starting, open = ending
+        Expr::Named { value, .. } => collect_reads_from_expr(value, reads),
         _ => {}
     }
 }
@@ -1575,7 +1578,7 @@ fn find_undefined_vars_in_fn(
             defined.insert(el.to_string());
         }
         // Live elements the transpiler handles outside the core list.
-        for live in ["field", "slider", "checkbox", "toggle", "radio", "tabs", "progress", "icon"] {
+        for live in ["field", "slider", "checkbox", "toggle", "radio", "tabs", "select", "progress", "icon"] {
             defined.insert(live.to_string());
         }
         defined.insert("chart".to_string());
@@ -1947,6 +1950,7 @@ pub fn run_edge_cases(
             let handle = std::thread::spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let mut interp = Interpreter::new();
+                    interp.set_modules_preexpanded(true);
                     interp.set_cancel_flag(cancel_clone);
                     let _ = interp.run(&decls_clone);
                     let call_expr = Expr::Call {

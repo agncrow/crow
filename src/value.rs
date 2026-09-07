@@ -131,7 +131,7 @@ pub enum Value {
     Frame(CrowFrame), // column-oriented data frame
     DbConn(DbHandle), // database connection handle
     Dual(f64, f64), // dual number for autograd: (real, derivative)
-    App(FnValue, f64),   // headless app session for test blocks (the view, its viewport width)
+    App(FnValue, f64, bool),   // headless app session for test blocks (the view, its viewport width, the wide look)
     GradFn(FnValue), // gradient function wrapping a user function
     Done, // represents no value (from 'done' status)
 }
@@ -213,7 +213,7 @@ impl Value {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Value::App(a, _) => write!(f, "app[{}]", a.name),
+            Value::App(a, _, _) => write!(f, "app[{}]", a.name),
             Value::Int(n) => write!(f, "{}", n),
             Value::Float(n) => write!(f, "{}", n),
             Value::Str(s) => write!(f, "{}", s),

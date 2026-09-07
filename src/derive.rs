@@ -250,7 +250,9 @@ pub fn tables_of_sql(sql: &str) -> (Vec<String>, Vec<String>) {
             "FROM" | "JOIN" => {
                 if let Some(t) = words.get(i + 1) {
                     let t = clean(t);
-                    if !t.is_empty() && !t.starts_with('?') && !t.starts_with('\'') && t.chars().next().map_or(false, |c| c.is_alphabetic()) {
+                    // FROM (SELECT …) is a subquery, not a table
+                    let keyword = matches!(t.to_ascii_uppercase().as_str(), "SELECT" | "VALUES" | "WITH");
+                    if !keyword && !t.is_empty() && !t.starts_with('?') && !t.starts_with('\'') && t.chars().next().map_or(false, |c| c.is_alphabetic()) {
                         // DELETE FROM t writes; a FROM after DELETE is the target
                         if i > 0 && words[i - 1].eq_ignore_ascii_case("DELETE") { writes.push(t); } else { reads.push(t); }
                     }
@@ -372,6 +374,8 @@ mod tests {
         assert_eq!(w, vec!["trades"]);
         let (_, w) = tables_of_sql("DELETE FROM bookmarks WHERE id = ?");
         assert_eq!(w, vec!["bookmarks"]);
+        let (r, _) = tables_of_sql("SELECT symbol FROM (SELECT symbol, close FROM dataset_bars WHERE date = ?) GROUP BY symbol");
+        assert_eq!(r, vec!["dataset_bars"], "a subquery is not a table");
     }
 
     #[test]

@@ -1,0 +1,22 @@
+--- The page: parts composed. It reads two parts' derivations, calls a
+--- part's view, wires a part's handler, and writes a part's fact.
+use web, ui
+use sim.clock
+use sim.tape
+
+derive label
+    return 'at `clock.head` x`clock.speed` marker `tape.marker`'
+
+fn slow[]
+    clock.speed = 1.0
+
+view render[]
+    return stack[p[label, class = 'h'], clock.transport[], button['1x', click = slow]]
+
+test the_page_composes_its_parts[]
+    a = app[render]
+    assert[contains[html[a], 'at 0 x1 marker 1']]
+    click[a, clock.faster]
+    assert[contains[html[a], 'x10']]
+    click[a, slow]
+    assert[contains[html[a], 'x1 ']]

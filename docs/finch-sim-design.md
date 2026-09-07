@@ -447,3 +447,66 @@ Region by region, in the order above: a harness test for the region and
 a side-by-side screenshot against the Python page at 1280px. Not a pixel
 match — the same information in the same order, with fewer controls and
 no button that exists to compensate for a missing derivation.
+
+### 14.5 What the reimplementation taught Crow (2026-09-07)
+
+The page is now parts: `sim/session.crow` (day, symbol, window, size,
+the open session, what the page last said), `sim/clock.crow` (four
+anchors and a window; `head` derived), `sim/tape.crow` (`bars` five
+minutes old at most, `so_far` at the play-head), `sim/scan.crow` (the
+scanner at the play-head), `sim/trading.crow` (fills, `trades`, the
+blotter), `sim/history.crow` (sessions and bookmarks as lists of rows,
+delete behind a `modal`), `views/shell.crow` (nav and the data chip),
+`views/sim.crow` (the page), and `main.crow` is six lines. Every part
+carries its facts, derivations, handlers, views and tests; nothing polls,
+refreshes or holds a copy. What had to change in Crow to get there, in
+the order it surfaced:
+
+- **Modules are parts.** Derivations and multi-assigns inside a module
+  were dropped by the expansion; qualified reads inside interpolation
+  spans, maps, named arguments and derive bodies were not rewritten; a
+  module reached through two importers was expanded twice under stacked
+  prefixes; module paths resolved from the importing file's directory,
+  not the project's. Now a module file is expanded once under its path
+  (`sim_clock_`), rooted at the crowfile, and `session.day = d` in another
+  part's handler writes the session's fact. `crow test sim/clock.crow`
+  runs a part's tests with its imports inlined; `crow check main.crow`
+  checks the whole app.
+- **Every view renders from the session.** Only the page's root view had
+  the state; a part's view reading its own facts had nothing to read
+  from. Every view of a page program now takes the state, and a view
+  calling a view hands it on.
+- **A handler's epilogue writes only what it assigned.** It wrote every
+  fact back from the locals it read at entry, so a helper's writes
+  (`clock.begin[...]` from `start_session`) were put back to their old
+  values a moment later. The epilogue is now the handler's own writes,
+  and after a call into a state-writing helper the caller reads those
+  facts again.
+- **A derivation's name is its value everywhere** — passed as a call
+  argument too, where it was typed as a function reference.
+- **A query is typed against its own connection**, and sqlite has a
+  `describe` from declared column types; before, every connection was
+  tried in turn and a helper scanned before its handle's part was known
+  had its failure cached — every book frame read as text, and a text
+  session id could not be assigned to the integer `confirm_id`.
+- **A local that holds a view or an element holds its markup**, in a
+  list or alone, as it does in the interpreter; sub-views' locals were
+  annotated as strings while elements produced nodes.
+- **Smaller:** `click = replay[s.id[i]]` froze its argument inside a
+  `json!` array as a block, which the macro read as a map; a select inside
+  a view reached `frame.select` in the interpreter; each part's `use db`
+  was inlined again and again until `query` was "ambiguous — provided by
+  db and db"; a view named `live` was silently shadowed by the web
+  builtin of that name in one mode — now reserved in both; a test block's
+  variables are globals, so a test's `s` collided with a view's local
+  `s`.
+- **Speed is buttons, not a radio.** A bound input cannot re-anchor the
+  clock: changing speed must freeze the play-head and move the anchor, so
+  it is a handler per speed with the active one disabled. A derived clock
+  decides this, and the design's radio gave way.
+- **Still open:** the layout engine sizes a `select` by all of its
+  options joined, where the browser sizes it by the widest; the harness
+  has no `wide`/`density` look, so the page's layout tests see the
+  reading column; mixed-type SQL parameters are still stringified; the
+  navigation trio (next in gate, next setup, next RSI > 70) is not
+  written yet.

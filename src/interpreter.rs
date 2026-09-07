@@ -993,14 +993,13 @@ impl Interpreter {
             return Ok(());
         }
 
-        // Pre-expanded user module (views.home → views/home.crow already
-        // inlined with prefixed names): loading it again would create a
-        // second copy with separate state. No-op.
+        // Pre-expanded user modules (views.home → views/home.crow already
+        // inlined with prefixed names by the front end): loading one again
+        // would create a second copy with separate state, and one the front
+        // end could not find is reported where it is used, as the compiled
+        // program reports it. No-op.
         if self.modules_preexpanded {
-            let rel = self.source_dir.join(format!("{}.crow", module_path.replace('.', "/")));
-            if rel.exists() {
-                return Ok(());
-            }
+            return Ok(());
         }
 
         let file_path = self.resolve_module_file(module_path)?;
@@ -1897,7 +1896,10 @@ impl Interpreter {
             // Non-overlapping module functions take priority — except inside
             // a rendering view, where an element name (stack, row, table…)
             // is the element; the prefix reaches frame.stack / math.stack.
-            let element_here = self.in_view > 0 && crate::lower::UI_ELEMENTS.contains(&name.as_str());
+            let element_here = self.in_view > 0 && (crate::lower::UI_ELEMENTS.contains(&name.as_str())
+                || name == "chart"
+                || matches!(name.as_str(), "field" | "slider" | "checkbox" | "toggle" | "radio" | "tabs")
+                || (name == "select" && args.len() == 2 && !matches!(args.first(), Some(Expr::Map(_)))));
             if self.registry.has_function(name) && !element_here {
                 // transact[conn, fn] needs special handling — we must call a Crow function
                 if name == "transact" && self.registry.module_name_for(name) == Some("db") {
@@ -2212,7 +2214,7 @@ impl Interpreter {
                     ))));
                 }
                 // app[render] — a headless session bound to a view.
-                if name == "app" && (args.len() == 1 || args.len() == 2) {
+                if name == "app" && (1..=3).contains(&args.len()) {
                     // Load the engine now, in this interpreter: a box[] inside a
                     // parallel loop runs in a clone whose call scopes only see the
                     // globals that existed when it was made.
@@ -2220,20 +2222,29 @@ impl Interpreter {
                     if let Expr::Ident(vname) = &args[0] {
                         let found = self.env.get(vname).and_then(|val| if let Value::Fn(f) = &val.value { Some(f.clone()) } else { None });
                         if let Some(f) = found {
-                            // app[view, width = 1280]: the viewport the engine lays out for
-                            let width = if args.len() == 2 {
-                                match self.eval_expr(&args[1])?.value { Value::Int(n) => n as f64, Value::Float(f) => f, _ => 1280.0 }
-                            } else { 1280.0 };
-                            return Ok(CrowValue::ok(Value::App(f, width)));
+                            // app[view, width = 1280, wide = true]: the viewport the
+                            // engine lays out for, and whether the page uses the full
+                            // window (serve's `wide`) or the reading column
+                            let mut width = 1280.0;
+                            let mut wide = false;
+                            for a in &args[1..] {
+                                match self.eval_expr(a)?.value {
+                                    Value::Int(n) => width = n as f64,
+                                    Value::Float(x) => width = x,
+                                    Value::Bool(b) => wide = b,
+                                    _ => return Err("app[] takes a view name, then width = 390 and wide = true".into()),
+                                }
+                            }
+                            return Ok(CrowValue::ok(Value::App(f, width, wide)));
                         }
                     }
-                    return Err("app[] takes a view name: app[render] (and an optional width = 390)".into());
+                    return Err("app[] takes a view name: app[render] (and an optional width = 390, wide = true)".into());
                 }
                 // box[s, selector] / fits[s, width] / style[s, selector] — the layout
                 // engine (src/modules/layout.crow) over the rendered tree.
                 if (name == "box" || name == "fits" || name == "style") && args.len() == 2 {
                     let a = self.eval_expr(&args[0])?;
-                    let (f, session_width) = match &a.value { Value::App(f, w) => (f.clone(), *w), _ => return Err(format!("{}[] takes an app session first: {}[s, ...]", name, name)) };
+                    let (f, session_width, session_wide) = match &a.value { Value::App(f, w, wide) => (f.clone(), *w, *wide), _ => return Err(format!("{}[] takes an app session first: {}[s, ...]", name, name)) };
                     let arg1 = self.eval_expr(&args[1])?;
                     self.tick += 1;
                     self.in_view += 1;
@@ -2290,7 +2301,7 @@ impl Interpreter {
                     };
                     let root = harness_to_lnode(&tree);
                     let engine = match self.env.get("crow_layout") { Some(v) => match &v.value { Value::Fn(f) => f.clone(), _ => return Err("layout engine missing".into()) }, None => return Err("layout engine missing".into()) };
-                    let boxes = self.call_fn_value(&engine, vec![root, CrowValue::ok(Value::Float(viewport))])?;
+                    let boxes = self.call_fn_value(&engine, vec![root, CrowValue::ok(Value::Float(viewport)), CrowValue::ok(Value::Bool(session_wide))])?;
                     let list = match &boxes.value { Value::Array(items) => items.clone(), _ => Vec::new() };
                     if name == "fits" {
                         let any_overflow = list.iter().any(|b| match &b.value { Value::StructInstance(si) => matches!(si.fields.get("overflow").map(|v| &v.value), Some(Value::Bool(true))), _ => false });
@@ -2309,7 +2320,7 @@ impl Interpreter {
                 // html[a] — render the session's view against current state.
                 if name == "html" && args.len() == 1 {
                     let a = self.eval_expr(&args[0])?;
-                    if let Value::App(f, _) = &a.value {
+                    if let Value::App(f, _, _) = &a.value {
                         let f = f.clone();
                         self.tick += 1;
                         self.in_view += 1;
@@ -2326,7 +2337,7 @@ impl Interpreter {
                 if name == "elements" && args.len() == 2 {
                     let a = self.eval_expr(&args[0])?;
                     let sel = self.eval_expr(&args[1])?;
-                    let f = match &a.value { Value::App(f, _) => f.clone(), _ => return Err("elements[] takes an app session and a selector: elements[a, 'button']".into()) };
+                    let f = match &a.value { Value::App(f, _, _) => f.clone(), _ => return Err("elements[] takes an app session and a selector: elements[a, 'button']".into()) };
                     let selector = match &sel.value { Value::Str(s) => s.clone(), _ => return Err("elements[] selector must be a string like 'button', '.card', or 'div.stats button'".into()) };
                     self.in_view += 1;
                     let rendered = self.call_fn_value(&f, Vec::new());
@@ -2809,7 +2820,7 @@ impl Interpreter {
             // Web P4 builtins
             | "cors" | "sessions" | "templates" | "render" | "cache" | "limit"
             | "uploads" | "sse" | "ws" | "connect" | "send" | "recv" | "close"
-            | "live" | "static_dir" | "smtp"
+            | "static_dir" | "smtp"
             // Response format builtins
             | "msgpack" | "arrow" | "bytes" | "stream"
             // UI reactive builtins
@@ -4331,11 +4342,6 @@ impl Interpreter {
                 // close[sock] → returns true (mock)
                 if args.len() != 1 { return Err("close[] takes 1 argument".into()); }
                 Ok(CrowValue::ok(Value::Bool(true)))
-            }
-            "live" => {
-                // live[app, path, handler] or live[app, path, render, handle] → returns app unchanged (mock)
-                if args.len() != 3 && args.len() != 4 { return Err("live[] takes 3 or 4 arguments".into()); }
-                Ok(args[0].clone())
             }
             "static_dir" => {
                 // static_dir[app, url_path, dir_path] → returns app unchanged (mock)
@@ -7905,10 +7911,12 @@ mod tests {
         assert!(matches!(&val.value, Value::Bool(true)));
     }
 
+    /// `live[...]` was a mock of a retired API; `page[]` is the one way. The
+    /// name is a user's to define, in both modes.
     #[test]
-    fn test_live_builtin() {
-        let val = get_var("fn handler[req]\n    return 'ok'\napp = []\napp = live[app, '/live', handler]", "app");
-        assert!(matches!(&val.value, Value::Array(_)));
+    fn live_is_not_a_builtin() {
+        let val = get_var("fn live[x]\n    return x + 1\nn = live[1]", "n");
+        assert!(matches!(&val.value, Value::Int(2)), "got {:?}", val.value);
     }
 
     #[test]

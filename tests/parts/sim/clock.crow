@@ -1,0 +1,30 @@
+--- A part: facts, a derivation, handlers, a view and its own test.
+use web, ui
+
+base = 0.0
+anchor = 0.0
+speed = 1.0
+playing = false
+
+fn clock_at[b, a, s, moving]
+    if moving
+        return b + (now[] - a) * s
+    return b
+
+derive head
+    return clock_at[base, anchor, speed, playing]
+
+fn play[]
+    anchor, playing = now[], true
+
+fn faster[]
+    base, anchor, speed = head, now[], 10.0
+
+view transport[]
+    return row[button['Play', click = play], button['10x', click = faster], gap = 's']
+
+test the_clock_follows_its_facts[]
+    a = app[transport]
+    click[a, faster]
+    assert[speed eq 10.0]
+    assert[head gte 0.0]

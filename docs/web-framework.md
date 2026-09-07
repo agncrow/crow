@@ -644,8 +644,6 @@ serve[env['PORT', 3000]]
 
 | Function | Description |
 |----------|-------------|
-| `live[path, handler]` | Register LiveView component (implicit app) |
-| `live[path, handler, opts]` | With options (e.g., `{interval, 1000}` for auto-refresh) |
 
 ---
 
@@ -1034,7 +1032,6 @@ All server-side web modules have transpiler codegen (Crow → Rust), validator r
 | `web.upload` | `uploads[req]` | ✅ | ✅ |
 | `web.sse` | `sse[app, path, handler]` | ✅ | ✅ |
 | `web.ws` | `ws[app, path, handler]`, `connect[]`, `send[]`, `recv[]`, `close[]` | ✅ | ✅ |
-| `web.live` | `live[path, handler]` | ✅ | ✅ |
 | `web.static` | `static_dir[app, url_path, dir_path]` | ✅ | ✅ |
 | `web.mail` | `smtp[host, port, user, pass]` | ✅ | ✅ |
 | `web.queue` | `web.queue[n]`, `push[queue, fn]` | ✅ | ✅ |

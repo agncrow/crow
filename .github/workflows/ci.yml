@@ -43,6 +43,8 @@ jobs:
         run: ./target/release/crow test tests/layout/conformance.crow
       - name: Layout example
         run: ./target/release/crow test examples/layout_dashboard.crow
+      - name: Parts (a page composed of modules with facts, derivations and views)
+        run: ./target/release/crow test tests/parts/views/sim.crow && ./target/release/crow test tests/parts/sim/clock.crow && ./target/release/crow check tests/parts/main.crow < /dev/null
       - name: Disk used by the run
         if: always()
         run: df -h / | tail -1; du -sh target .crow_build 2>/dev/null || true

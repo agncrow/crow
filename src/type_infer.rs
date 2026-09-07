@@ -320,7 +320,14 @@ impl TypeContext {
 
     /// Main entry point: run multi-pass type inference on a program.
     pub fn infer_program(&mut self, stmts: &[Stmt]) {
-        // Pass 1: collect struct and function declarations
+        // Pass 1: collect struct and function declarations — and every
+        // connection, so a helper scanned before the part that declares its
+        // handle still describes its query against the right database
+        for stmt in stmts {
+            if let Stmt::Assign { name, value } = stmt {
+                self.note_connection(name, value);
+            }
+        }
         for stmt in stmts {
             match stmt {
                 Stmt::StructDecl { name, fields } => {
@@ -895,6 +902,17 @@ impl TypeContext {
                 let saved_fn_name = self.current_fn_name.replace(name.clone());
                 self.current_fn_params = Vec::new();
                 for s in body { self.collect_call_types_stmt(s); }
+                // the frame a derivation returns keeps its columns' types
+                // under the derivation's name, as a variable's would
+                let returned: Vec<Expr> = body.iter().filter_map(|s| if let Stmt::Return(Some(e)) = s { Some(e.clone()) } else { None }).collect();
+                for e in returned {
+                    if let Some(schema) = self.frame_schema_of(&e) {
+                        if !schema.is_empty() {
+                            self.frame_schemas.insert(name.clone(), schema);
+                            break;
+                        }
+                    }
+                }
                 self.current_fn_params = saved_fn_params;
                 self.current_fn_name = saved_fn_name;
                 self.vars = saved_vars;
@@ -2111,7 +2129,13 @@ impl TypeContext {
                     _ => return None,
                 };
                 match name.as_str() {
-                    "query" => match args.get(1) { Some(Expr::Str(sql)) => self.describe_sql(sql), _ => None },
+                    "query" => match args.get(1) {
+                        Some(Expr::Str(sql)) => {
+                            let handle = match args.first() { Some(Expr::Ident(v)) => Some(v.clone()), _ => None };
+                            self.describe_sql(sql, handle.as_deref())
+                        }
+                        _ => None,
+                    },
                     "filter" | "sort" | "head" | "tail" | "fill" | "stack" => args.first().and_then(|a| self.frame_schema_of(a)),
                     "new" => Some(BTreeMap::new()),
                     "with" => {
@@ -2153,9 +2177,17 @@ impl TypeContext {
     /// time and stand in as NULL. A database that cannot be reached or
     /// does not understand the statement is skipped; when none answers,
     /// the cells read as text, as before, and the build says so once.
-    fn describe_sql(&mut self, sql: &str) -> Option<BTreeMap<String, CrowType>> {
+    /// The query's own connection answers when the handle is a known
+    /// top-level one; a handle that is a parameter (a helper's `conn`) is
+    /// unknown here, and every connection is asked until one answers.
+    fn describe_sql(&mut self, sql: &str, handle: Option<&str>) -> Option<BTreeMap<String, CrowType>> {
         if !self.describe_queries || self.conn_urls.is_empty() { return None; }
         if let Some(cached) = self.describe_cache.get(sql) { return cached.clone(); }
+        let own: Vec<(String, String)> = match handle {
+            Some(h) => self.conn_urls.iter().filter(|(n, _)| n == h).cloned().collect(),
+            None => Vec::new(),
+        };
+        let candidates: Vec<(String, String)> = if own.is_empty() { self.conn_urls.clone() } else { own };
         // `...` spans → NULL
         let mut scrubbed = String::with_capacity(sql.len());
         let mut in_span = false;
@@ -2165,7 +2197,7 @@ impl TypeContext {
         }
         let mut reasons = Vec::new();
         let mut found: Option<BTreeMap<String, CrowType>> = None;
-        for (var, url) in self.conn_urls.clone() {
+        for (var, url) in candidates {
             match crate::type_infer::describe_with(&url, &scrubbed) {
                 Ok(cols) => {
                     let mut schema = BTreeMap::new();
@@ -2260,6 +2292,11 @@ impl TypeContext {
                 // Module constants: pi, e, inf, nan
                 if self.registry.has_constant(name) {
                     return CrowType::Float;
+                }
+                // A derivation's name is its value, wherever it is read — as
+                // a call argument too — never a function reference
+                if self.derives.contains(name) {
+                    return self.functions.get(name).map(|s| s.return_type.clone()).unwrap_or(CrowType::Unknown);
                 }
                 // Check if it's a known function name — return as CrowType::Fn
                 if let Some(sig) = self.functions.get(name) {
