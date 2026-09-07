@@ -37,6 +37,36 @@ pub const UI_ELEMENTS: &[&str] = &[
     "divider",
 ];
 
+/// The pairs of a map literal as the lowering leaves it: `map[k = v, …]`
+/// becomes a chain of `set[…]` calls over `map[]`; a bare `Expr::Map` is
+/// read too. `None` for anything else (a variable, a call with dynamic keys).
+pub fn map_literal_pairs(e: &Expr) -> Option<Vec<(String, Expr)>> {
+    if let Expr::Map(pairs) = e {
+        return Some(pairs.iter().filter_map(|(k, v)| match k {
+            Expr::Ident(s) | Expr::Str(s) => Some((s.clone(), v.clone())),
+            _ => None,
+        }).collect());
+    }
+    let mut out: Vec<(String, Expr)> = Vec::new();
+    let mut cur = e;
+    loop {
+        match cur {
+            Expr::Call { callee, args } if matches!(callee.as_ref(), Expr::Ident(n) if n == "set") && args.len() == 3 => {
+                match &args[1] {
+                    Expr::Str(k) => out.push((k.clone(), args[2].clone())),
+                    _ => return None,
+                }
+                cur = &args[0];
+            }
+            Expr::Call { callee, args } if matches!(callee.as_ref(), Expr::Ident(n) if n == "map") && args.is_empty() => {
+                out.reverse();
+                return Some(out);
+            }
+            _ => return None,
+        }
+    }
+}
+
 /// Builtins with named parameters: name → ordered named-parameter list.
 /// Position of a named parameter = (call arity without it) + its index here.
 fn builtin_named_params(name: &str) -> Option<&'static [&'static str]> {

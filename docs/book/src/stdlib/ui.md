@@ -109,7 +109,7 @@ A derivation that fails — a query error — holds the error value; readers see
 
 ### Tables over frames
 
-`table[frame]` renders a frame's rows. Numeric columns are typed: their cells carry the class `num` and the stylesheet right-aligns them with tabular figures. Four named arguments make it interactive and legible: `click = handler` sends the row's key to the handler when a row is clicked (`fn focus[symbol]`), `key = 'col'` names the column whose cell is sent (the first column by default), `mark = 'col'` names a column whose truthy cells put the class `marked` on their row, tinted by the stylesheet, and `delta = ['pnl', 'pct']` names columns whose cells are colored by sign (`up` / `down`).
+`table[frame]` renders a frame's rows. Numeric columns are typed: their cells carry the class `num` and the stylesheet right-aligns them with tabular figures. Six named arguments make it interactive and legible: `click = handler` sends the row's key to the handler when a row is clicked (`fn focus[symbol]`), `key = 'col'` names the column whose cell is sent (the first column by default; a numeric key travels as a number, a text key as a string), `mark = 'col'` names a column whose truthy cells put the class `marked` on their row, tinted by the stylesheet, `delta = ['pnl', 'pct']` names columns whose cells are colored by sign (`up` / `down`), `actions = map[Replay = replay, Delete = ask_delete]` adds a trailing cell of buttons to every row, each sending the row's key to its handler, and `hide = ['id']` keeps columns out of the table that stay in the frame — the key column, a helper. In the test harness `click[a, ask_delete[3]]` presses a row's button.
 
 ### Sliders
 
@@ -119,7 +119,7 @@ A bound input keeps its variable's type: text typed into a field bound to an int
 
 ### Handlers and their helpers
 
-A view sees reactive state, a handler moves it, and a function a handler calls that assigns a module-level variable is a handler too — it joins the handler class in both renderers, so `fn restart[]` may call `fn rewind_to[t]` and the write lands in state. A pure helper (one that assigns no module variable) keeps its own scope. Reactive state may be an array, a map, or a frame; the compiled program keeps it as JSON between renders.
+A view sees reactive state, a handler moves it, and a function a handler calls that assigns a module-level variable is a handler too — it joins the handler class in both renderers, so `fn restart[]` may call `fn rewind_to[t]` and the write lands in state. A pure helper (one that assigns no module variable) keeps its own scope. A helper a handler calls sees what the handler has written so far, and the handler sees what the helper wrote when it returns, in both modes. A helper that reads state and assigns none is a derivation, not a function: `derive band` computes the price band from the scanner's config, and the handlers read `band`. A function reading a derivation is refused with that advice — by `crow run`, `crow test` and `crow check` alike, which pass every program through the same validator before doing anything else. Reactive state may be an array, a map, or a frame; the compiled program keeps it as JSON between renders.
 
 ### Views render wherever they are called
 
@@ -143,7 +143,7 @@ Pages are composed from layout primitives, never styled with CSS. Five container
 | `align` | `start center end stretch` (cross axis) |  |
 | `justify` | `start center end between around` (main axis) |  |
 | `width`, `height`, `min_width`, `max_width` | `'240px'`, `'50%'` (width only), `'fill'` for remaining space; `aspect = '16/9'` |  |
-| `size`, `weight` | the type scale `xs s m l xl xxl` = 12 14 16 20 24 32 px; `regular medium bold` |  |
+| `size`, `weight`, `font` | the type scale `xs s m l xl xxl` = 12 14 16 20 24 32 px; `regular medium bold`; `font = 'mono'` sets the monospace face with tabular digits — a figure in a stat tile, a code-like value |  |
 | `surface = 'card'`, `radius`, `border = true`, `shadow` | surfaces: radius `none s m l round`, shadow `s m l` |  |
 | `color`, `background` | a colour token: `text muted accent up down surface bg` — never a literal colour |  |
 | `lines = 2` | clamp a wrapping paragraph | [Structured files: `use io`](../by-example/io.md) |
@@ -166,6 +166,7 @@ The vocabulary's own elements beyond the containers, each earning its place by a
 | `toast[..., open = var]` | A brief notice at the bottom corner while `open` is true; it fades on its own, and the program clears the flag | [Views: the whole element vocabulary](../by-example/views-elements.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `divider[]` | A rule between siblings: horizontal in a `stack`, vertical in a `row` | [Views: the whole element vocabulary](../by-example/views-elements.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `nav[a[...], ..., active = path]` | A navigation row; the link whose `href` equals `active` gets `aria-current="page"` and the stylesheet's active look | [Views: the whole element vocabulary](../by-example/views-elements.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `header[...]` | The app's bar: a surface with a border holding its name, its `nav` and a status chip, laid out as a row (`gap`, `justify`, `align` as on any row) | [Views: the whole element vocabulary](../by-example/views-elements.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 
 Three attributes any element takes: `tip = 'text'` is the browser's tooltip, `fit = 'cover'` (or `'contain'`) sizes an `img` into its box together with `aspect`, and `open` as above. The layers take no room in the flow and are hidden until opened; the layout engine lays an open layer out as a stack where it sits.
 

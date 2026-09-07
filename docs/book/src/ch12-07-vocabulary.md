@@ -189,3 +189,43 @@ serve[3000, theme = 'dark', density = 'compact', accent = '#3b82f6', wide = true
 reading column so a dashboard uses the whole window. Nothing in the views
 changes: the same tree renders under every look, and the layout engine
 places it the same way.
+
+## Records with actions
+
+A list of records usually wants a button or two per row. `table` takes
+them as `actions`, a map from label to handler; each button sends the
+row's key to its handler, as a row click does. `hide` keeps a helper
+column in the frame but out of the table, and a header bar is `header`.
+
+```crow
+use web, ui, frame
+
+deleted = 0
+opened = 0
+
+fn open_row[id]
+    opened = id
+
+fn delete_row[id]
+    deleted = id
+
+view records[]
+    rows = frame.new[]
+    rows = with[rows, 'id', [3, 4]]
+    rows = with[rows, 'name', ['alpha', 'beta']]
+    return stack[
+        header[h1['records', size = 'm'], nav[a['Home', href = '/'], active = '/'], gap = 'm'],
+        table[rows, click = open_row, key = 'id', actions = map[Delete = delete_row], hide = ['id']]
+    ]
+
+test each_row_carries_its_actions[]
+    a = app[records]
+    h = html[a]
+    assert[contains[h, '<header']]
+    assert[contains[h, 'data-crow-click="delete_row" data-crow-args="[3]">Delete</button>']]
+    assert[not contains[h, '<th class="num">id</th>']]
+    click[a, delete_row[4]]
+    assert[deleted eq 4]
+
+page['/', records]
+```

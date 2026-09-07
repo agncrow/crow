@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CROW = os.environ.get("CROW", str(ROOT / "target" / "release" / "crow"))
 CHROME = os.environ.get("CHROME", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 PAGES = {
-    "dashboard": ("/", "h1,p,.card,.card h3,.card p,.row,.row button,.row .crow-field,.overlay,.scroll"),
+    "dashboard": ("/", "header,header nav,header span,h1,p,.card,.card h3,.card p,.row,.row button,.row .crow-field,.overlay,.scroll"),
     "prose": ("/prose", "h1,h2,h3,p,.row,.row button"),
     "primitives": ("/primitives", "select,nav,nav a,.crow-tabs,.crow-tabs label,.row,svg.icon,.crow-field,.crow-field input,.crow-field textarea,.crow-check,.crow-radio,.crow-radio label,progress,hr.divider,details,summary,details p.body,.dropdown,.dropdown summary,.row button,p.end"),
 }

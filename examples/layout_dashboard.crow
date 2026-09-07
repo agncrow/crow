@@ -18,13 +18,13 @@ fn more_alerts[]
 --- Layout attributes are literals (the checker reads them), so a colour
 --- is a choice of view, not a parameter.
 view stat_card[label, value]
-    return stack[h3[label], p['`value`', size = 'xl', weight = 'bold'], surface = 'card']
+    return stack[h3[label], p['`value`', size = 'xl', weight = 'bold', font = 'mono'], surface = 'card']
 
 view gain_card[label, value]
-    return stack[h3[label], p['`value`', size = 'xl', weight = 'bold', color = 'up'], surface = 'card']
+    return stack[h3[label], p['`value`', size = 'xl', weight = 'bold', color = 'up', font = 'mono'], surface = 'card']
 
 view loss_card[label, value]
-    return stack[h3[label], p['`value`', size = 'xl', weight = 'bold', color = 'down'], surface = 'card']
+    return stack[h3[label], p['`value`', size = 'xl', weight = 'bold', color = 'down', font = 'mono'], surface = 'card']
 
 view render[]
     return stack[

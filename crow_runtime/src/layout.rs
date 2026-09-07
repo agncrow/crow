@@ -36,7 +36,7 @@ pub const LAYOUT_ATTRS: &[&str] = &[
     "width", "height", "min_width", "max_width", "aspect", "fill", "fit",
     "surface", "radius", "border", "shadow", "color", "background",
     "size", "weight", "lines", "anchor", "below", "becomes", "hidden_below",
-    "tip", "open", "active", "side",
+    "tip", "open", "active", "side", "font",
 ];
 
 /// The spacing scale, in px.
@@ -158,6 +158,8 @@ pub fn render(tag: &str, attrs: &[(String, String)]) -> Rendered {
             "fit" => match v { "cover" | "contain" => css.push(format!("object-fit:{};width:100%", v)), _ => bad("fit (cover contain)", &mut errors) },
             // a tooltip is the browser's own: the title attribute
             "tip" => passthrough.push(("title".to_string(), v.to_string())),
+            // figures and code read in the monospace face with tabular digits
+            "font" => match v { "mono" => css.push("font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.01em".into()), _ => bad("font (mono)", &mut errors) },
             // open: a real attribute on details (the browser needs it), a
             // data attribute on the layers (the stylesheet shows and hides)
             "open" => match v {
@@ -214,18 +216,31 @@ pub fn render(tag: &str, attrs: &[(String, String)]) -> Rendered {
 /// whose truthy cells put `marked` on their row; `delta` names columns whose
 /// cells are colored by sign (`up` / `down`). Numeric columns are typed:
 /// their cells carry `num` and the stylesheet right-aligns them.
-pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: Option<&str>, mark: Option<&str>, delta: &[String]) -> String {
+/// The rows of a frame. `click` sends the `key` column's cell of the
+/// clicked row to a handler; `mark` tints rows whose cell is true; `delta`
+/// colours cells by sign; `actions` adds a trailing cell of buttons, each
+/// sending the row's key to its handler; `hide` keeps columns out of the
+/// table while they stay in the frame (a key column, a helper). A numeric
+/// key travels as a number, a text key as a string.
+pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: Option<&str>, mark: Option<&str>, delta: &[String], actions: &[(String, String)], hide: &[String]) -> String {
     use crate::frame::Column;
     let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
     let numeric: Vec<bool> = f.data.iter().map(|c| matches!(c.as_ref(), Column::Int(_) | Column::Float(_))).collect();
     let is_delta: Vec<bool> = f.columns.iter().map(|c| delta.iter().any(|d| d == c)).collect();
+    let shown: Vec<usize> = (0..f.ncols()).filter(|i| !hide.iter().any(|h| h == &f.columns[*i])).collect();
     let mut out = String::from("<thead><tr>");
-    for (i, c) in f.columns.iter().enumerate() {
+    for &i in &shown {
+        let c = &f.columns[i];
         if numeric[i] { out.push_str(&format!("<th class=\"num\">{}</th>", esc(c))); } else { out.push_str(&format!("<th>{}</th>", esc(c))); }
     }
+    if !actions.is_empty() { out.push_str("<th></th>"); }
     out.push_str("</tr></thead><tbody>");
     let key_i = key.and_then(|k| f.columns.iter().position(|c| c == k)).unwrap_or(0);
     let mark_i = mark.and_then(|m| f.columns.iter().position(|c| c == m));
+    let key_json = |r: usize| -> String {
+        let cell = f.data[key_i].fmt_cell(r, f.validity[key_i][r]);
+        if numeric[key_i] && f.validity[key_i][r] { format!("[{}]", cell.trim()) } else { format!("[&quot;{}&quot;]", esc(&cell.replace('"', "\\\""))) }
+    };
     for r in 0..f.nrows() {
         let mut tr = String::from("<tr");
         if let Some(i) = mark_i {
@@ -233,12 +248,11 @@ pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: O
         }
         if let Some(h) = click {
             if f.ncols() > 0 {
-                let cell = f.data[key_i].fmt_cell(r, f.validity[key_i][r]);
-                tr.push_str(&format!(" data-crow-click=\"{}\" data-crow-args=\"[&quot;{}&quot;]\"", esc(h), esc(&cell.replace('"', "\\\""))));
+                tr.push_str(&format!(" data-crow-click=\"{}\" data-crow-args=\"{}\"", esc(h), key_json(r)));
             }
         }
         tr.push('>');
-        for c in 0..f.ncols() {
+        for &c in &shown {
             let text = f.data[c].fmt_cell(r, f.validity[c][r]);
             let mut classes: Vec<&str> = Vec::new();
             if numeric[c] { classes.push("num"); }
@@ -252,6 +266,13 @@ pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: O
             }
             if classes.is_empty() { tr.push_str(&format!("<td>{}</td>", esc(&text))); }
             else { tr.push_str(&format!("<td class=\"{}\">{}</td>", classes.join(" "), esc(&text))); }
+        }
+        if !actions.is_empty() && f.ncols() > 0 {
+            tr.push_str("<td class=\"actions\">");
+            for (label, h) in actions {
+                tr.push_str(&format!("<button data-crow-click=\"{}\" data-crow-args=\"{}\">{}</button>", esc(h), key_json(r), esc(label)));
+            }
+            tr.push_str("</td>");
         }
         tr.push_str("</tr>");
         out.push_str(&tr);
@@ -415,7 +436,9 @@ td{border-bottom:1px solid var(--crow-border);padding:0.5rem 0.9rem 0.5rem 0;fon
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.6rem;margin:1.1rem 0}
 .card{background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px;padding:0.75rem 0.9rem}
 .card h3{margin:0 0 0.3rem;font-size:0.68rem;font-weight:600;text-transform:uppercase;letter-spacing:0.09em;color:var(--crow-muted)}
-.card p{margin:0;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:1.25rem;font-variant-numeric:tabular-nums;letter-spacing:-0.01em}
+.card p{margin:0}
+header{display:flex;align-items:center;padding:0.5rem 0.9rem;background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px}
+td.actions{white-space:nowrap}td.actions button{padding:0.15rem 0.55rem;font-size:0.8rem;margin-right:0.35rem}
 button.primary{background:var(--crow-accent);border-color:var(--crow-accent);color:var(--crow-bg);font-weight:600}
 button.primary:hover{filter:brightness(1.08)}
 .up{color:var(--crow-up)}
@@ -490,7 +513,7 @@ img[style*="object-fit"]{display:block}
 [data-density="compact"] th{padding:0.3rem 0.7rem 0.3rem 0}
 [data-density="compact"] td{padding:0.32rem 0.7rem 0.32rem 0}
 [data-density="compact"] .card{padding:0.55rem 0.7rem}
-[data-density="compact"] .card p{font-size:1.1rem}
+[data-density="compact"] 
 [data-density="compact"] .crow-tabs label{padding:0.4rem 0.7rem}"#;
 
 // Responsive rules override the element's own inline rule (the base

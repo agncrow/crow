@@ -918,6 +918,8 @@ log[r.ok]                --- false — the parse error propagated out
 log[r.reason]            --- cannot convert 'abc' to int
 ```
 
+The same holds when a function hands back an error of another shape — `if not b.ok` / `return b` in a function whose value is a number, where `b` is a frame: the caller receives the error with its reason, kind and trace, and the value is the function's default. A handler has no caller to hand an error to: when a condition in a handler meets an error, the handler stops, the facts it wrote so far land, and the served program logs the reason (`crow live: handler 'apply' stopped: …`); in the harness, `click[a, apply]` evaluates to that error value.
+
 The metadata fields `.ok`, `.reason`, `.kind`, `.trace` never propagate — they are always readable, so the guard idiom is always available and is the one bridge from error-space back to decisions:
 
 ```
@@ -1464,7 +1466,7 @@ Rules:
 
 ### User Modules: File Structure
 
-Each file is a module. The file path is the module path, rooted at the project: the nearest directory above the entry file that holds a `crowfile`, or the entry file's own directory when there is none. So `views/sim.crow` reaches `sim/clock.crow` with `use sim.clock` whichever file is the entry.
+Each file is a module. The file path is the module path, rooted at the project: the nearest directory above the entry file that holds a `crowfile`, or the entry file's own directory when there is none. So `views/sim.crow` reaches `sim/clock.crow` with `use sim.clock` whichever file is the entry. A part is validated alone as it is expanded — its own names unprefixed, its imports inlined — so a name the part reserves by what it imports (`derive progress` beside `use ui`), or a handler nothing in the part wires, is refused whichever file is the entry, under the part's path: `crow test part.crow` and `crow run main.crow` see the same part.
 
 ```
 --- file: myapp/utils.crow
@@ -2156,7 +2158,7 @@ A derivation that fails — a query error — holds the error value; readers see
 
 #### Tables over frames
 
-`table[frame]` renders a frame's rows. Numeric columns are typed: their cells carry the class `num` and the stylesheet right-aligns them with tabular figures. Four named arguments make it interactive and legible: `click = handler` sends the row's key to the handler when a row is clicked (`fn focus[symbol]`), `key = 'col'` names the column whose cell is sent (the first column by default), `mark = 'col'` names a column whose truthy cells put the class `marked` on their row, tinted by the stylesheet, and `delta = ['pnl', 'pct']` names columns whose cells are colored by sign (`up` / `down`).
+`table[frame]` renders a frame's rows. Numeric columns are typed: their cells carry the class `num` and the stylesheet right-aligns them with tabular figures. Six named arguments make it interactive and legible: `click = handler` sends the row's key to the handler when a row is clicked (`fn focus[symbol]`), `key = 'col'` names the column whose cell is sent (the first column by default; a numeric key travels as a number, a text key as a string), `mark = 'col'` names a column whose truthy cells put the class `marked` on their row, tinted by the stylesheet, `delta = ['pnl', 'pct']` names columns whose cells are colored by sign (`up` / `down`), `actions = map[Replay = replay, Delete = ask_delete]` adds a trailing cell of buttons to every row, each sending the row's key to its handler, and `hide = ['id']` keeps columns out of the table that stay in the frame — the key column, a helper. In the test harness `click[a, ask_delete[3]]` presses a row's button.
 
 #### Sliders
 
@@ -2166,7 +2168,7 @@ A bound input keeps its variable's type: text typed into a field bound to an int
 
 #### Handlers and their helpers
 
-A view sees reactive state, a handler moves it, and a function a handler calls that assigns a module-level variable is a handler too — it joins the handler class in both renderers, so `fn restart[]` may call `fn rewind_to[t]` and the write lands in state. A pure helper (one that assigns no module variable) keeps its own scope. Reactive state may be an array, a map, or a frame; the compiled program keeps it as JSON between renders.
+A view sees reactive state, a handler moves it, and a function a handler calls that assigns a module-level variable is a handler too — it joins the handler class in both renderers, so `fn restart[]` may call `fn rewind_to[t]` and the write lands in state. A pure helper (one that assigns no module variable) keeps its own scope. A helper a handler calls sees what the handler has written so far, and the handler sees what the helper wrote when it returns, in both modes. A helper that reads state and assigns none is a derivation, not a function: `derive band` computes the price band from the scanner's config, and the handlers read `band`. A function reading a derivation is refused with that advice — by `crow run`, `crow test` and `crow check` alike, which pass every program through the same validator before doing anything else. Reactive state may be an array, a map, or a frame; the compiled program keeps it as JSON between renders.
 
 #### Views render wherever they are called
 
@@ -2190,7 +2192,7 @@ Pages are composed from layout primitives, never styled with CSS. Five container
 | `align` | `start center end stretch` (cross axis) |
 | `justify` | `start center end between around` (main axis) |
 | `width`, `height`, `min_width`, `max_width` | `'240px'`, `'50%'` (width only), `'fill'` for remaining space; `aspect = '16/9'` |
-| `size`, `weight` | the type scale `xs s m l xl xxl` = 12 14 16 20 24 32 px; `regular medium bold` |
+| `size`, `weight`, `font` | the type scale `xs s m l xl xxl` = 12 14 16 20 24 32 px; `regular medium bold`; `font = 'mono'` sets the monospace face with tabular digits — a figure in a stat tile, a code-like value |
 | `surface = 'card'`, `radius`, `border = true`, `shadow` | surfaces: radius `none s m l round`, shadow `s m l` |
 | `color`, `background` | a colour token: `text muted accent up down surface bg` — never a literal colour |
 | `lines = 2` | clamp a wrapping paragraph |
@@ -2213,6 +2215,7 @@ The vocabulary's own elements beyond the containers, each earning its place by a
 | `toast[..., open = var]` | A brief notice at the bottom corner while `open` is true; it fades on its own, and the program clears the flag |
 | `divider[]` | A rule between siblings: horizontal in a `stack`, vertical in a `row` |
 | `nav[a[...], ..., active = path]` | A navigation row; the link whose `href` equals `active` gets `aria-current="page"` and the stylesheet's active look |
+| `header[...]` | The app's bar: a surface with a border holding its name, its `nav` and a status chip, laid out as a row (`gap`, `justify`, `align` as on any row) |
 
 Three attributes any element takes: `tip = 'text'` is the browser's tooltip, `fit = 'cover'` (or `'contain'`) sizes an `img` into its box together with `aspect`, and `open` as above. The layers take no room in the flow and are hidden until opened; the layout engine lays an open layer out as a stack where it sits.
 
@@ -2453,7 +2456,7 @@ log[n]
 
 **List parameters.** An array bound as a parameter stands for a list: its `?` becomes `(?, ?, …)` with one placeholder per element, on every backend. Write `WHERE id IN ?` and pass `[[1, 3]]`; an empty list matches nothing.
 
-**Typed cells in compiled programs.** The compiler asks the program's databases what each literal query returns — a `prepare` on Postgres, `DESCRIBE` on ClickHouse — and types every column: `rows.price[0]` is a float, `rows.n[0]` an int, in the compiled program as it always was in the interpreter. Connections bound to a literal URL (`pg = db.connect['postgres://…']`) are asked in declaration order; `?` placeholders and interpolated spans stand in as NULL. A database that cannot be reached at compile time is skipped and the build says so once; the cells of that query then read as text, the pre-typing behaviour. Frames derived through `select`, `filter`, `sort`, `head`, `tail`, `fill`, `stack`, and `join` keep their column types. Set `CROW_NO_DESCRIBE=1` to build without asking.
+**Typed cells in compiled programs.** The compiler asks the program's databases what each literal query returns — a `prepare` on Postgres, `DESCRIBE` on ClickHouse — and types every column: `rows.price[0]` is a float, `rows.n[0]` an int, in the compiled program as it always was in the interpreter. Connections bound to a literal URL (`pg = db.connect['postgres://…']`) are asked in declaration order; `?` placeholders and interpolated spans stand in as NULL. A database that cannot be reached at compile time is skipped and the build says so once; the cells of that query then read as text, the pre-typing behaviour. Frames derived through `select`, `filter`, `sort`, `head`, `tail`, `fill`, `stack`, and `join` keep their column types. On sqlite, a computed column (`count(*)`, `round(...)`) is typed by stepping the SELECT once with null parameters, and the cells of a `RETURNING` clause — `query[book, 'INSERT ... RETURNING id', [...]]`, the way to read back a row the database numbered — are typed from the table's declared columns; asking never runs a write. Set `CROW_NO_DESCRIBE=1` to build without asking.
 
 
 #### Bulk Insert
@@ -2890,6 +2893,8 @@ test refresh_flow[]
     assert[a.status eq 'updated']
     assert[contains[html[a], 'count: 1']]
 ```
+
+A named test is a scenario and reads the program back: the facts and derivations, as the harness's clicks left them — `assert[session_id gt 0]`, `assert[len[rows] gt 0]`. An attached test (`test[p]` after a fn) sees what a caller of that fn sees and nothing of the program's state; its inputs are generated.
 
 | Harness | Meaning |
 |---------|---------|

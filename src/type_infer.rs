@@ -229,6 +229,9 @@ pub struct TypeContext {
     /// Names declared with `derive` — values computed from facts, read by
     /// name, never assigned (derive-design.md)
     pub derives: std::collections::BTreeSet<String>,
+    /// The facts: every top-level assignment. A view or handler assigning
+    /// one a float makes it a float for its whole scope, the program
+    pub facts: std::collections::BTreeSet<String>,
     /// Modules imported bare (no alias) — their exports are reserved and
     /// callable bare in this file
     pub bare_modules: std::collections::BTreeSet<String>,
@@ -302,6 +305,7 @@ impl TypeContext {
             views: std::collections::BTreeSet::new(),
             view_handlers: std::collections::BTreeSet::new(),
             derives: std::collections::BTreeSet::new(),
+            facts: std::collections::BTreeSet::new(),
             bare_modules: std::collections::BTreeSet::new(),
             module_aliases: BTreeMap::new(),
             specializations: BTreeMap::new(),
@@ -570,6 +574,7 @@ impl TypeContext {
             }
             // the module's reactive state: every top-level assignment
             let module_vars: std::collections::BTreeSet<String> = stmts.iter().filter_map(|s| if let Stmt::Assign { name, .. } = s { Some(name.clone()) } else { None }).collect();
+            self.facts = module_vars.clone();
             fn assigns_any(stmts: &[Stmt], names: &std::collections::BTreeSet<String>) -> bool {
                 stmts.iter().any(|st| match st {
                     Stmt::Assign { name, .. } => names.contains(name),
@@ -1015,6 +1020,42 @@ impl TypeContext {
                     let arg_types: Vec<CrowType> = args.iter()
                         .map(|a| self.infer_expr(a))
                         .collect();
+
+                    // table[frame, click = h, key = 'id', actions = map[…]]: the
+                    // row's key cell is what every one of those handlers
+                    // receives, so their first parameter is the key column's type
+                    if name == "table" && args.len() == 2 {
+                        if let Expr::Map(pairs) = &args[0] {
+                            let key_name = pairs.iter().find_map(|(k, v)| match (k, v) {
+                                (Expr::Ident(s), Expr::Str(col)) | (Expr::Str(s), Expr::Str(col)) if s == "key" => Some(col.clone()),
+                                _ => None,
+                            });
+                            let schema = self.frame_schema_of(&args[1]);
+                            let key_type = match (&key_name, &schema) {
+                                (Some(col), Some(sc)) => sc.get(col).cloned().unwrap_or(CrowType::Str),
+                                (None, Some(sc)) => sc.values().next().cloned().unwrap_or(CrowType::Str),
+                                _ => CrowType::Str,
+                            };
+                            let mut handlers: Vec<String> = Vec::new();
+                            for (k, v) in pairs {
+                                let kname = match k { Expr::Ident(s) | Expr::Str(s) => s.as_str(), _ => continue };
+                                match (kname, v) {
+                                    ("click", Expr::Ident(h)) => handlers.push(h.clone()),
+                                    ("actions", v) => if let Some(acts) = crate::lower::map_literal_pairs(v) {
+                                        for (_, h) in acts { if let Expr::Ident(f) = &h { handlers.push(f.clone()); } }
+                                    },
+                                    _ => {}
+                                }
+                            }
+                            for h in handlers {
+                                if let Some(sig) = self.functions.get_mut(&h) {
+                                    if let Some(p) = sig.params.first_mut() {
+                                        if matches!(p.1, CrowType::Unknown) { p.1 = key_type.clone(); }
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     // Search builtins: the predicate's parameter is the
                     // array's element type (any[arr, pred] etc.)
@@ -1634,7 +1675,25 @@ impl TypeContext {
             }
         }
 
+        // A variable ever assigned a float is a float for its whole scope,
+        // and a fact's scope is the program: a view or handler assigning a
+        // fact a float widens it from its declaration. A plain function's
+        // local of the same name is a new binding and says nothing.
+        let mut widened: Vec<String> = Vec::new();
+        if self.views.contains(name) || self.view_handlers.contains(name) {
+            for f in &self.facts {
+                let before = saved_vars.get(f).cloned().unwrap_or(CrowType::Unknown);
+                if matches!(before, CrowType::Int | CrowType::Unknown)
+                    && matches!(self.vars.get(f), Some(CrowType::Float))
+                {
+                    widened.push(f.clone());
+                }
+            }
+        }
         self.vars = saved_vars;
+        for f in widened {
+            self.vars.insert(f, CrowType::Float);
+        }
     }
 
     /// Find the return type from a list of statements.
@@ -2119,7 +2178,7 @@ impl TypeContext {
     /// The columns of the frame an expression produces, when they can be
     /// known: a literal query (described by the database), a function that
     /// returns one, or a frame operation over a known frame.
-    fn frame_schema_of(&mut self, e: &Expr) -> Option<BTreeMap<String, CrowType>> {
+    pub fn frame_schema_of(&mut self, e: &Expr) -> Option<BTreeMap<String, CrowType>> {
         match e {
             Expr::Ident(v) => self.frame_schemas.get(v).cloned(),
             Expr::Call { callee, args } => {
@@ -2182,7 +2241,12 @@ impl TypeContext {
     /// unknown here, and every connection is asked until one answers.
     fn describe_sql(&mut self, sql: &str, handle: Option<&str>) -> Option<BTreeMap<String, CrowType>> {
         if !self.describe_queries || self.conn_urls.is_empty() { return None; }
-        if let Some(cached) = self.describe_cache.get(sql) { return cached.clone(); }
+        if let Some(cached) = self.describe_cache.get(sql) {
+            if std::env::var("CROW_DEBUG_SCHEMAS").is_ok() {
+                eprintln!("DESCRIBE cached {:?} for `{}…`", cached, sql.chars().take(50).collect::<String>());
+            }
+            return cached.clone();
+        }
         let own: Vec<(String, String)> = match handle {
             Some(h) => self.conn_urls.iter().filter(|(n, _)| n == h).cloned().collect(),
             None => Vec::new(),
@@ -2216,6 +2280,9 @@ impl TypeContext {
         if found.is_none() && !reasons.is_empty() {
             let head: String = sql.chars().take(60).collect();
             eprintln!("note: the columns of `{}…` could not be typed at compile time — cells read as text ({})", head, reasons.join("; "));
+        }
+        if std::env::var("CROW_DEBUG_SCHEMAS").is_ok() {
+            eprintln!("DESCRIBE {:?} via {:?} for `{}…`", found, handle, sql.chars().take(50).collect::<String>());
         }
         self.describe_cache.insert(sql.to_string(), found.clone());
         found

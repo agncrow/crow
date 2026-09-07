@@ -448,10 +448,15 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
             program.extend(transformed.iter().cloned());
 
             let decls_clone = decls.clone();
+            // the declarations run first; one that fails (a database that is
+            // down, a top-level query that errors) is the finding, named as
+            // such — not the "undefined variable" every later test would see
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let mut interp = Interpreter::new();
                 interp.set_modules_preexpanded(true);
-                let _ = interp.run(&decls_clone);
+                if let Err(e) = interp.run(&decls_clone) {
+                    return Err(format!("a declaration failed before the test ran: {}", e));
+                }
                 interp.run(&program)
             }));
             let failure = match result {
@@ -1256,6 +1261,13 @@ pub fn reactive_readers(ctx: &TypeContext) -> BTreeSet<String> {
             out.extend(crate::derive::called_fns(body, &fns));
         }
     }
+    // a specialisation of a reactive function (`jump__1`, typed for one
+    // call site) is the same function
+    let clones: Vec<String> = fns.keys()
+        .filter(|n| n.rsplit_once("__").map_or(false, |(base, sfx)| !sfx.is_empty() && sfx.chars().all(|c| c.is_ascii_digit()) && out.contains(base)))
+        .cloned()
+        .collect();
+    out.extend(clones);
     out
 }
 

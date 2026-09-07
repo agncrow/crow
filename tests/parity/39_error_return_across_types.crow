@@ -1,0 +1,13 @@
+--- an error returned from a function whose value is another type: the
+--- error travels (reason and kind) and the value is the function's default
+fn half[s]
+    n = int[s]
+    if not n.ok
+        return n
+    return n / 2.0
+
+r = half['bad']
+log[r.ok]
+log[r.kind]
+log[half['8']]
+log[half['9'] + 0.5]

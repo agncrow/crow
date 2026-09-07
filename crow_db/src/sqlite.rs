@@ -57,16 +57,55 @@ impl CrowDb for CrowSqliteDb {
     /// type and reads as text. The statement is prepared, never run.
     fn describe(&self, sql: &str) -> Result<Vec<(String, String)>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
-        Ok(stmt.columns().iter().map(|c| {
-            let kind = match c.decl_type().map(|t| t.to_ascii_uppercase()) {
-                Some(t) if t.contains("INT") => "int",
-                Some(t) if t.contains("REAL") || t.contains("FLOA") || t.contains("DOUB") || t.contains("NUM") || t.contains("DEC") => "float",
-                Some(t) if t.contains("BOOL") => "bool",
-                _ => "str",
-            };
-            (c.name().to_string(), kind.to_string())
-        }).collect())
+        let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+        let mut kinds: Vec<(String, Option<String>)> = stmt.columns().iter().map(|c| {
+            (c.name().to_string(), c.decl_type().and_then(kind_of_decl))
+        }).collect();
+        // A RETURNING clause's cells have no declared type of their own:
+        // they are the target table's columns, typed from its declaration
+        if kinds.iter().any(|(_, k)| k.is_none()) {
+            if let Some(table) = returning_target(sql) {
+                let declared: Vec<(String, String)> = conn
+                    .prepare(&format!("PRAGMA table_info({})", table))
+                    .and_then(|mut s| {
+                        s.query_map([], |r| Ok((r.get::<_, String>(1)?, r.get::<_, String>(2)?)))
+                            .map(|it| it.filter_map(|x| x.ok()).collect())
+                    })
+                    .unwrap_or_default();
+                for (name, k) in kinds.iter_mut() {
+                    if k.is_none() {
+                        if let Some((_, t)) = declared.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+                            *k = kind_of_decl(t);
+                        }
+                    }
+                }
+            }
+        }
+        // a computed column (count, round, a concatenation) has no declared
+        // type: the statement is stepped once with null parameters and the
+        // first row's values say what they are — a count always has a row
+        if kinds.iter().any(|(_, k)| k.is_none()) && sql.trim_start().to_ascii_uppercase().starts_with("SELECT") {
+            let n = stmt.parameter_count();
+            let nulls: Vec<rusqlite::types::Value> = vec![rusqlite::types::Value::Null; n];
+            let refs: Vec<&dyn rusqlite::types::ToSql> = nulls.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect();
+            if let Ok(mut rows) = stmt.query(refs.as_slice()) {
+                if let Ok(Some(row)) = rows.next() {
+                    for (i, (_, k)) in kinds.iter_mut().enumerate() {
+                        if k.is_none() {
+                            if let Ok(v) = row.get_ref(i) {
+                                *k = match v {
+                                    rusqlite::types::ValueRef::Integer(_) => Some("int".to_string()),
+                                    rusqlite::types::ValueRef::Real(_) => Some("float".to_string()),
+                                    rusqlite::types::ValueRef::Text(_) | rusqlite::types::ValueRef::Blob(_) => Some("str".to_string()),
+                                    rusqlite::types::ValueRef::Null => None,
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(kinds.into_iter().map(|(n, k)| (n, k.unwrap_or_else(|| "str".to_string()))).collect())
     }
 
     fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
@@ -323,9 +362,59 @@ fn base64_encode(data: &[u8]) -> String {
     result
 }
 
+/// The cell kind a declared sqlite column type stands for.
+fn kind_of_decl(t: &str) -> Option<String> {
+    let t = t.to_ascii_uppercase();
+    let k = if t.contains("INT") {
+        "int"
+    } else if t.contains("REAL") || t.contains("FLOA") || t.contains("DOUB") || t.contains("NUM") || t.contains("DEC") {
+        "float"
+    } else if t.contains("BOOL") {
+        "bool"
+    } else {
+        "str"
+    };
+    Some(k.to_string())
+}
+
+/// The table an INSERT, UPDATE or DELETE with a RETURNING clause writes.
+fn returning_target(sql: &str) -> Option<String> {
+    let upper = sql.to_ascii_uppercase();
+    if !upper.contains(" RETURNING ") {
+        return None;
+    }
+    let words: Vec<&str> = sql.split_whitespace().collect();
+    let table = match words.first().map(|w| w.to_ascii_uppercase()).as_deref() {
+        Some("INSERT") | Some("REPLACE") => words.iter().position(|w| w.eq_ignore_ascii_case("INTO")).and_then(|i| words.get(i + 1)),
+        Some("UPDATE") => words.get(1),
+        Some("DELETE") => words.iter().position(|w| w.eq_ignore_ascii_case("FROM")).and_then(|i| words.get(i + 1)),
+        _ => None,
+    }?;
+    let table = table.split('(').next().unwrap_or(table).trim_matches(|c| c == '"' || c == '`' || c == '\'');
+    if table.is_empty() { None } else { Some(table.to_string()) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A RETURNING clause's cells are typed from the table's declaration —
+    /// and asking never runs the statement
+    #[test]
+    fn a_returning_clause_is_typed_from_the_table() {
+        let db = CrowSqliteDb::memory().unwrap();
+        db.exec("CREATE TABLE sessions (id INTEGER PRIMARY KEY, day TEXT NOT NULL, speed REAL)", &[]).unwrap();
+        let d = db.describe("INSERT INTO sessions (day, speed) VALUES (?, ?) RETURNING id, speed").unwrap();
+        assert_eq!(d, vec![("id".to_string(), "int".to_string()), ("speed".to_string(), "float".to_string())]);
+        let n = db.query("SELECT count(*) AS n FROM sessions", &[]).unwrap();
+        match n.data[0].as_ref() {
+            Column::Int(v) => assert_eq!(v, &[0]),
+            other => panic!("expected Int column, got {:?}", other),
+        }
+        assert_eq!(returning_target("UPDATE t SET a = 1 WHERE id = ? RETURNING a"), Some("t".to_string()));
+        assert_eq!(returning_target("DELETE FROM \"t\" WHERE id = ? RETURNING id"), Some("t".to_string()));
+        assert_eq!(returning_target("SELECT 1"), None);
+    }
 
     #[test]
     fn test_sqlite_memory_query_returns_frame() {

@@ -39,6 +39,11 @@ is recomputed only when something it read changed: the handler wrote
 `qty`, so the next render recomputes `cost`; a render where nothing
 changed serves the cached value.
 
+A helper that only reads state is a derivation too. A `fn band[]` that
+returns the config's price band is refused — a function sees its
+parameters and nothing else — and `derive band` is what it was all along:
+a value that follows the config, read by the handlers as `band`.
+
 ## What a derivation reads is decided from the source
 
 Both execution modes obey the same read sets: the facts and other

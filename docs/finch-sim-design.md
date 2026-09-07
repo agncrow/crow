@@ -507,6 +507,87 @@ the order it surfaced:
 - **Still open:** the layout engine sizes a `select` by all of its
   options joined, where the browser sizes it by the widest; the harness
   has no `wide`/`density` look, so the page's layout tests see the
-  reading column; mixed-type SQL parameters are still stringified; the
-  navigation trio (next in gate, next setup, next RSI > 70) is not
-  written yet.
+  reading column; mixed-type SQL parameters are still stringified.
+- **A handler lives in the part that wires it** (2026-09-07). A part is
+  validated alone, with only its imports inlined, so `skip_symbol` in the
+  session part — wired only by the nav part's button — was a plain
+  function reading facts there. It moved beside its button. And a helper
+  that reads state and assigns none is a derivation: `band` (the
+  config's price band) is `derive band`, not a function. And a part's
+  names are reserved as its file is: `derive progress` beside `use ui`,
+  `derive sessions` beside `use web` and `view stats` beside `use frame`
+  were fine in the app only because expansion prefixed them; each part is
+  now validated alone as it is expanded, whichever file is the entry.
+- **One validation gate.** `crow check` and `crow test` ran no validator,
+  so a whole-app check said "all good" for a program `crow run` refused.
+  All four pipelines now pass the same gate, with the same message.
+- **A fact a handler assigns a float is a float from its declaration.**
+  `deleted = 0` then `deleted = id` from a float key column built the
+  handler's `deleted = id` as int = float. The int/float rule now spans
+  the program, for views and handlers; a plain function's local of the
+  same name is a new binding and says nothing.
+- **An error hands back across types, and a handler stops.** `if not
+  b.ok` / `return b` in `next_rsi` (a frame's error from a function
+  whose value is a moment) would not build; the error now travels with
+  the function's default value. A fallible condition in a handler
+  (`t gt 0.0` on a result) tried to return an error from a handler that
+  returns nothing; it now stops the handler, lands what it wrote, and
+  logs the reason.
+- **A helper sees what its caller wrote so far.** Skip records the
+  symbol, then calls the gate hop — which, compiled, read the state the
+  caller had not written back yet and hopped to the symbol just skipped;
+  the interpreter's helper reads the module variable directly. A
+  handler's own facts are now written through before a call into a
+  helper (an unchanged value costs nothing), as they are read back after.
+- **A session id is the database's.** `round[now[]]` collided when two
+  sessions started in one second — the part tests did. The insert says
+  `RETURNING id`, which took two compiler fixes: sqlite gives a
+  `RETURNING` cell no declared type, so it is typed from the table's
+  columns; and a frame assigned in a parallel wave (`r = query[...]`
+  beside the independent `starting = false`) kept no column types for
+  the reads after it, so `session_id = r.id[0]` read as text.
+
+## 15. Feature parity checklist (2026-09-07)
+
+Vijay's rule, after seeing the first parts build beside the Python page:
+*a reimplementation has the same functionality.* §14.1 kept the
+information and cut controls; some of those controls were capabilities.
+This list is read from the React sources (`ScannerReplayMode`,
+`PracticeMode`, `ReplayControlBar`, `TradePanel`, `ComplexOrderCard`,
+`SessionsHistoryCard`, `BookmarksCard`, `patternChips`, `replayApi`) and
+the server (`api/scanner_vwap_replay.py`, `patterns/`). What §14.1
+retires stays retired only where it was a habit and not a capability:
+Refresh buttons, mutating button labels, five disabled inputs standing
+in for the live config. Everything else is built, in this order.
+
+| # | Capability | Python | Crow status |
+|---|---|---|---|
+| 1 | History as a table: When, Mode, Date, Symbols (+N), Trades, W/L with %, PnL, PnL %, NBBO/Fb, delete; the count | SessionsHistoryCard | built (2026-09-07): `table[sessions, click = replay, key = 'id', delta = ['pnl', 'pnl %'], actions = map[Delete = ask_delete], hide = ['id']]`, every figure in the SQL |
+| 2 | Bookmarks: count, a label, open in replay, delete | BookmarksCard | built (2026-09-07): a label field beside Bookmark, a table with open-on-click and Delete; pinning is not in the schema yet |
+| 3 | Two modes: Scanner Replay (the day's universe, Max symbols) and Practice (one symbol) | mode tabs | built (2026-09-07): `tabs[modes, mode]` over the `mode` fact; the practice setup is one typed symbol; `mode_code` records the mode with the session |
+| 4 | Window start and end as times; random symbol/date over the last N months | setup | built (2026-09-07): `field[..., type = 'time']` for From and To; `random_pick` draws a day from the last N months (the `ranges` select) and a symbol from that day's universe |
+| 5 | Next in-gate episode (this symbol, any symbol); skip current stock | ReplayControlBar, next-in-gate routes | built (2026-09-07): `sim/nav.crow` — a ClickHouse window query finds the next episode after the play-head, any symbol or this one; Skip records the symbol and hops to the next in-gate stock, as the bar's Skip does |
+| 6 | Next RSI(14, 3m) > 70 crossing | ReplayControlBar | built (2026-09-07): kernel `rsi` over 3-minute bars, the first crossing above 70 after the play-head, any symbol or this one; hops are not bounded by the window's end, as in Python |
+| 7 | Scanner table filters: in-gate only, RSI > 70 charts only; per-symbol mini charts | ScannerReplayMode | to build |
+| 8 | Patterns: Flag / Pennant, VWAP Launch, Burst Ignition, VWAP Power Cross, Ascending Staircase, Leg Scalp, B2e Surge, Mid-day Grinder, EVT Fade — chips select which are searched | patterns/ (9 detectors, ~3.1k lines) | to build — Crow modules of pure functions over bar frames, with truths and laws |
+| 9 | Next pattern setup; Auto Next as a running mode; auto-advance when the closing window ends | PracticeMode, next-setup | to build — needs #8 and a tick handler |
+| 10 | Brackets: arm at trigger/stop with qty, target, trail, +2R stop floor, limit sells, flatten, unrealised P&L; bracket defaults | TradePanel, ComplexOrderCard, bracket routes | to build — needs a tick handler |
+| 11 | Session-wide Auto-trade on setups | auto-trade route | to build — needs #8, #10 |
+| 12 | Autoplay at start | setup | built (2026-09-07): the Autoplay checkbox; `start_session` presses Play; `test autoplay_starts_the_clock` |
+
+**The language question this raises.** #9, #10 and #11 act on a tick
+while the session plays, with nobody clicking: a bracket fills when the
+play-head crosses a level, Auto Next rolls on when a symbol drops out of
+the gate. The derive model has no such thing — handlers set facts, views
+derive, and only derivations move on a tick. A declared tick handler on
+the live loop (`every[1, watch_brackets]` or a form like it) is designed
+in the spec before those three are built; the alternative, a `later[]`
+job re-scheduling itself, is the habit the model exists to remove.
+
+**The look.** Three causes, none per-app CSS: records were drawn as rows
+where the vocabulary has `table`; the kernel styled every paragraph in a
+card as a monospace figure (a stat-tile rule that leaked onto the gate
+sentence); the kernel has no bar for a shell. The fixes are in the
+kernel and the vocabulary — a `font = 'mono'` text attribute for figures,
+`header` as a bar, a row action on `table` — with the layout fixtures
+re-measured after each stylesheet change.

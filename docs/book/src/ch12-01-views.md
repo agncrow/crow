@@ -34,8 +34,11 @@ Attributes are named arguments: `a['docs', href = '/docs']`,
 `table[frame]` shows a frame. Give it a handler and it becomes a control:
 `click = focus` sends the clicked row's key column to `fn focus[symbol]`,
 `key = 'symbol'` says which column that is, and `mark = 'gate'` tints the
-rows whose `gate` cell is true. The scanner in the final project is one
-of these.
+rows whose `gate` cell is true. A list of records usually wants a button
+or two per row: `actions = map[Replay = replay, Delete = ask_delete]` puts
+them in a trailing cell, each sending the row's key to its handler, and
+`hide = ['id']` keeps the key column in the frame but out of the table.
+The scanner and the session history in the final project are these.
 
 ## A view renders wherever it is called
 
