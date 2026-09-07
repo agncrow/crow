@@ -64,6 +64,15 @@ pub enum Stmt {
         index: Expr,
         value: Expr,
     },
+    /// A derivation: `derive name[fresh = N]` and a body. A value computed
+    /// from facts and sources, read by name, never assigned, recomputed
+    /// when an input changed (derive-design.md). `fresh` is seconds; 0 is
+    /// "as fresh as the loop".
+    Derive {
+        name: String,
+        fresh: f64,
+        body: Vec<Stmt>,
+    },
     /// Verification block: `test[params]` (attached to the preceding fn)
     /// or `test name[params]` (standalone). Never executes at runtime —
     /// crow check consumes these; crow build strips them.

@@ -14,6 +14,8 @@ pub enum Token {
     // Keywords
     Fn,
     View,
+    /// `derive` — a derivation block (derive-design.md)
+    Derive,
     Return,
     If,
     Else,
@@ -81,6 +83,7 @@ impl std::fmt::Display for Token {
             Token::Ident(s) => write!(f, "{}", s),
             Token::Fn => write!(f, "fn"),
             Token::View => write!(f, "view"),
+            Token::Derive => write!(f, "derive"),
             Token::Return => write!(f, "return"),
             Token::If => write!(f, "if"),
             Token::Else => write!(f, "else"),

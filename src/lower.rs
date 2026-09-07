@@ -187,6 +187,11 @@ impl Lowerer {
                 params: params.clone(),
                 body: self.lower_stmts(body)?,
             },
+            Stmt::Derive { name, fresh, body } => Stmt::Derive {
+                name: name.clone(),
+                fresh: *fresh,
+                body: self.lower_stmts(body)?,
+            },
             Stmt::FieldAssign { object, field, value } => Stmt::FieldAssign {
                 object: self.lower_expr(object)?,
                 field: field.clone(),

@@ -59,6 +59,7 @@
   - [Testing a Live App](ch12-05-testing-live-apps.md)
   - [Charts and Styling](ch12-06-charts-and-style.md)
   - [The Element Vocabulary](ch12-07-vocabulary.md)
+  - [Derivations](ch12-08-derive.md)
 
 - [Final Project: A Live Dashboard](ch13-00-final-project.md)
   - [Loading and Shaping the Data](ch13-01-data.md)

@@ -342,6 +342,8 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
         .iter()
         .filter(|s| match s {
             Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::Use { .. } => true,
+            // a derivation is a declaration: what a value is, from what
+            Stmt::Derive { .. } => true,
             Stmt::Assign { value, .. } => is_literal(value) || is_connect(value),
             _ => false,
         })

@@ -25,8 +25,8 @@ conn = connect['postgres://user:pass@host/mydb', 20]
 
 | Function | Description | Example |
 |---|---|---|
-| `connect[url]` | Open a database connection (pool) with default pool size | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
-| `connect[url, pool_size]` | Open a database connection (pool) with custom pool size | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `connect[url]` | Open a database connection (pool) with default pool size | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `connect[url, pool_size]` | Open a database connection (pool) with custom pool size | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
 
 Note: `connect` is also exported by `web.ws`. If both `use db` and `use web` are active, bare `connect[...]` is ambiguous — use `db.connect[...]` or `web.connect[...]`.
 
@@ -34,9 +34,9 @@ Note: `connect` is also exported by `web.ws`. If both `use db` and `use web` are
 
 | Function | Description | Example |
 |---|---|---|
-| `query[conn, sql]` | Execute a SELECT and return results as a frame | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
-| `exec[conn, sql]` | Execute DDL/DML (CREATE, INSERT, UPDATE, DELETE), return affected row count | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) |
-| `exec[conn, sql, params]` | Execute parameterized DDL/DML with an array of bind values | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) |
+| `query[conn, sql]` | Execute a SELECT and return results as a frame | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `exec[conn, sql]` | Execute DDL/DML (CREATE, INSERT, UPDATE, DELETE), return affected row count | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) |
+| `exec[conn, sql, params]` | Execute parameterized DDL/DML with an array of bind values | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) |
 
 ```
 use db
