@@ -30,6 +30,8 @@ conn = connect['postgres://user:pass@host/mydb', 20]
 
 Note: `connect` is also exported by `web.ws`. If both `use db` and `use web` are active, bare `connect[...]` is ambiguous — use `db.connect[...]` or `web.connect[...]`.
 
+A connection is not the program's lifetime. When the server closes it — ClickHouse drops an idle native connection after an hour, and a restart drops every one — the next query reopens it and runs, and the server log says so; Postgres connections are pooled, and sqlite is a file.
+
 ### Query & Execute
 
 | Function | Description | Example |
