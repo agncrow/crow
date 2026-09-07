@@ -209,7 +209,7 @@ fn callee_name(callee: &Expr) -> Option<String> {
 
 /// Calls whose value is a read of the world: named `q1`, `q2`, ... on the
 /// path so a condition on a query's cell stays readable.
-const READS: &[&str] = &["query", "exec", "insert", "fetch", "shell", "transact"];
+const READS: &[&str] = &["query", "exec", "insert", "fetch", "shell", "transact", "now", "rand", "random", "uuid", "input", "moment"];
 
 #[derive(Clone, Default, Debug)]
 struct Path {
@@ -568,22 +568,42 @@ fn tree(m: &Model, e: &Expr, env: &Env, depth: usize, view: &str, w: &mut Wiring
                             _ => children.push(a),
                         }
                     }
-                    // bound inputs: the fact is the argument after the label
+                    let mut inline: Vec<String> = Vec::new();
+                    let mut nested: Vec<&Expr> = Vec::new();
                     if BOUND.contains(&n.as_str()) {
-                        let fact_pos = if n == "select" || n == "radio" || n == "tabs" { 1 } else { 1 };
-                        if let Some(Expr::Ident(f)) = children.get(fact_pos) {
+                        // a bound input: its label, the fact it binds, its settings;
+                        // the lowered argument list stays out of the artifact
+                        let (label_at, fact_at) = if matches!(n.as_str(), "select" | "radio" | "tabs") { (None, 1) } else { (Some(0), 1) };
+                        if let Some(Expr::Ident(f)) = children.get(fact_at) {
                             if m.is_fact(f) {
                                 attrs.push(format!("binds {}", f));
                                 w.binds.entry(view.to_string()).or_default().insert(f.clone());
+                            } else {
+                                attrs.push(format!("binds {}", canon(children[fact_at], env)));
                             }
+                        }
+                        match n.as_str() {
+                            "field" => {
+                                if let Some(Expr::Str(t)) = children.get(2) { if !t.is_empty() { attrs.push(format!("type = '{}'", t)); } }
+                                if let Some(Expr::Int(l)) = children.get(3) { if *l > 0 { attrs.push(format!("lines = {}", l)); } }
+                            }
+                            "slider" => {
+                                for (i, k) in ["min", "max", "step"].iter().enumerate() {
+                                    if let Some(v) = children.get(2 + i) { attrs.push(format!("{} = {}", k, canon(v, env))); }
+                                }
+                            }
+                            "select" | "radio" | "tabs" => {
+                                if let Some(o) = children.first() { attrs.push(format!("options = {}", canon(o, env))); }
+                            }
+                            _ => {}
+                        }
+                        if let Some(i) = label_at { if let Some(l) = children.get(i) { inline.push(canon(l, env)); } }
+                    } else {
+                        for c in children {
+                            if is_node(m, c, env) { nested.push(c); } else { inline.push(canon(c, env)); }
                         }
                     }
                     attrs.sort();
-                    let mut inline: Vec<String> = Vec::new();
-                    let mut nested: Vec<&Expr> = Vec::new();
-                    for c in children {
-                        if is_node(m, c, env) { nested.push(c); } else { inline.push(canon(c, env)); }
-                    }
                     out.push_str(&format!("{}{}[{}]{}\n", pad, n, attrs.join(", "), if inline.is_empty() { String::new() } else { format!(" {}", inline.join(" ")) }));
                     for c in nested { tree(m, c, env, depth + 1, view, w, out); }
                     return;
@@ -787,6 +807,13 @@ pub fn derive_artifacts(stmts: &[Stmt], ctx: &TypeContext, parts: &BTreeMap<Stri
         out.sort(); out.dedup();
         out
     };
+    // who calls a helper: the functions whose bodies call it directly
+    let mut callers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (n, (_, b)) in &fns {
+        let mut called = BTreeSet::new();
+        direct_calls(b, &mut called);
+        for c in called { if c != *n && fns.contains_key(&c) { callers.entry(c).or_default().insert(n.clone()); } }
+    }
 
     // signatures
     for h in &handlers {
@@ -882,7 +909,12 @@ pub fn derive_artifacts(stmts: &[Stmt], ctx: &TypeContext, parts: &BTreeMap<Stri
         let mut text = format!("handler {} ({})\n", h, m.file_of(h));
         if !params.is_empty() { text.push_str(&format!("  inputs: {}\n", params.iter().enumerate().map(|(i, _)| format!("${}", i + 1)).collect::<Vec<_>>().join(", "))); }
         let wired = wired_in(h);
-        text.push_str(&format!("  wired: {}\n", if wired.is_empty() { "nothing".to_string() } else { wired.join(" · ") }));
+        if wired.is_empty() {
+            let by: Vec<String> = callers.get(h).map(|s| s.iter().cloned().collect()).unwrap_or_default();
+            text.push_str(&format!("  called by: {}\n", if by.is_empty() { "nobody".to_string() } else { by.join(", ") }));
+        } else {
+            text.push_str(&format!("  wired: {}\n", wired.join(" · ")));
+        }
         text.push_str(&render_paths(paths, false));
         let mut written: BTreeSet<String> = BTreeSet::new();
         for p in paths { for f in p.writes.keys() { written.insert(f.clone()); } for mw in &p.may { if let Some((f, _)) = mw.split_once(" := ") { if facts.contains(f) { written.insert(f.to_string()); } } } }
@@ -958,6 +990,39 @@ pub fn derive_artifacts(stmts: &[Stmt], ctx: &TypeContext, parts: &BTreeMap<Stri
     }
     rules.sort_by(|a, b| (a.subject.clone(), a.detail.clone()).cmp(&(b.subject.clone(), b.detail.clone())));
     (art, rules)
+}
+
+/// The names a body calls directly, in any expression.
+fn direct_calls(stmts: &[Stmt], out: &mut BTreeSet<String>) {
+    fn walk(e: &Expr, out: &mut BTreeSet<String>) {
+        match e {
+            Expr::Call { callee, args } => {
+                if let Some(n) = callee_name(callee) { out.insert(n); }
+                walk(callee, out);
+                for a in args { walk(a, out); }
+            }
+            Expr::BinOp { left, right, .. } => { walk(left, out); walk(right, out); }
+            Expr::UnaryOp { expr, .. } => walk(expr, out),
+            Expr::FieldAccess { object, .. } => walk(object, out),
+            Expr::Array(items) => for i in items { walk(i, out); },
+            Expr::Map(pairs) => for (k, v) in pairs { walk(k, out); walk(v, out); },
+            Expr::Named { value, .. } => walk(value, out),
+            Expr::ForExpr { iter, body, .. } => { walk(iter, out); direct_calls(body, out); }
+            _ => {}
+        }
+    }
+    for st in stmts {
+        match st {
+            Stmt::Assign { value, .. } => walk(value, out),
+            Stmt::MultiAssign { values, .. } => for v in values { walk(v, out); },
+            Stmt::FieldAssign { object, value, .. } | Stmt::IndexAssign { object, value, .. } => { walk(object, out); walk(value, out); }
+            Stmt::ExprStmt(e) | Stmt::Return(Some(e)) => walk(e, out),
+            Stmt::If { condition, then_body, else_body } => { walk(condition, out); direct_calls(then_body, out); if let Some(eb) = else_body { direct_calls(eb, out); } }
+            Stmt::For { iter, body, .. } => { walk(iter, out); direct_calls(body, out); }
+            Stmt::While { condition, body } => { walk(condition, out); direct_calls(body, out); }
+            _ => {}
+        }
+    }
 }
 
 fn collect_clicks(stmts: &[Stmt], out: &mut BTreeSet<String>) {
@@ -1208,6 +1273,20 @@ mod tests {
         assert!(sv.contains("modal[open = ending]") && sv.contains("button[click → end_session] 'End'"), "{}", sv);
         let f = &a.entries["fact ending"];
         assert!(f.contains("written by: ask_end, cancel_end, end_session"), "{}", f);
+        let setup = &a.entries["view setup"];
+        assert!(setup.contains("field[binds win_from] 'From'"), "a bound input shows its binding, not its lowered arguments\n{}", setup);
+        let say = &a.entries["handler say"];
+        assert!(say.contains("called by: start"), "a helper says who calls it\n{}", say);
+    }
+
+    /// A draw from chance or the clock held in a local is one value, named,
+    /// however many times the local is read.
+    #[test]
+    fn a_random_draw_is_one_value() {
+        let src = "use web, ui\nsym = ''\nstatus = ''\nnames = ['a', 'b']\nfn pick[]\n    i = rand[len[names]]\n    sym = names[i]\n    status = 'picked `names[i]`'\nview render[]\n    return button['Pick', click = pick]\npage['/', render]\n";
+        let (a, _) = artifacts(src);
+        let s = &a.entries["handler pick"];
+        assert!(s.contains("reads v1 = rand[len[names]]") && s.contains("sym := names[v1]") && !s.contains("names[rand"), "{}", s);
     }
 
     /// The kernel rules: a modal nobody can close, a dead control.
