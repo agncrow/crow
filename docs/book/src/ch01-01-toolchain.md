@@ -9,7 +9,7 @@ crow new name [--web --ml --db]  scaffold a project (a Crowfile, main.crow, css/
 crow run [-i] [file]             execute: compiled by default, -i interprets
 crow stop                        stop the served app started by crow run
 crow build [file]                compile to a native binary, ./main
-crow check [file]                verify: tests, generated edge cases, contracts
+crow check [file]                verify: tests, generated edge cases, contracts, and the app baseline — what changed since the accepted one
 crow fix                         apply the fixes crow check offers
 crow fmt                         format
 crow test [file]                 run the test blocks
