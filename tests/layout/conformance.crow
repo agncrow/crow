@@ -16,11 +16,12 @@ fn reset[]
     min_qty = 0
 
 view stat_card[label, value]
-    return stack[h3[label], p['`value`', size = 'xl', weight = 'bold'], surface = 'card']
+    return stack[h3[label], p['`value`', size = 'xl', weight = 'bold', font = 'mono'], surface = 'card']
 
 --- containers, a responsive grid, a control row, an overlay and a scroll
 view dashboard[]
     return stack[
+        header[h1['Dash', size = 'm'], nav[a['Home', href = '/'], a['Prose', href = '/prose'], active = '/'], span['bars through today', color = 'muted', size = 's'], gap = 'm', justify = 'between', wrap = 'true'],
         h1['Trading Dashboard'],
         p['Positions, fills and the tape, laid out by the vocabulary.'],
         grid[stat_card['P&L', '1,116.10'], stat_card['Trades', '4'], stat_card['Drawdown', '-2.1%'],

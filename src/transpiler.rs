@@ -102,6 +102,9 @@ pub struct Transpiler {
     /// on every exit (before each return and on fall-through), so a handler
     /// that returns early still writes its facts back.
     reactive_epilogue: Option<Vec<String>>,
+    /// The facts the handler being emitted assigns itself: written through
+    /// to the state before a call into a helper, so the helper sees them
+    reactive_own_writes: Vec<String>,
     /// derive blocks: their read sets and freshness (derive-design.md)
     derive_fns: std::collections::BTreeSet<String>,
     derive_specs: std::collections::BTreeMap<String, (crate::derive::ReadSet, f64)>,
@@ -164,6 +167,7 @@ impl Transpiler {
             has_noapp_web: false,
             reactive_vars: std::collections::BTreeMap::new(),
             reactive_epilogue: None,
+            reactive_own_writes: Vec::new(),
             derive_fns: std::collections::BTreeSet::new(),
             derive_specs: std::collections::BTreeMap::new(),
             reactive_event_handlers: std::collections::HashSet::new(),
@@ -512,6 +516,16 @@ impl Transpiler {
                                 Expr::Ident(s) | Expr::Str(s) => s.clone(),
                                 _ => continue,
                             };
+                            // a table's row actions: each value is a handler
+                            if key_str == "actions" {
+                                if let Some(acts) = crate::lower::map_literal_pairs(v) {
+                                    for (_, h) in acts {
+                                        if let Expr::Ident(fn_name) = &h {
+                                            if known_fns.contains(fn_name) { handlers.insert(fn_name.clone()); }
+                                        }
+                                    }
+                                }
+                            }
                             if matches!(key_str.as_str(), "click" | "input" | "submit") {
                                 if let Expr::Ident(fn_name) = v {
                                     if known_fns.contains(fn_name) {
@@ -1031,14 +1045,23 @@ impl Transpiler {
                                 }
                             }
                         }
-                        let ty = self.ctx.infer_expr(value);
+                        let mut ty = self.ctx.infer_expr(value);
                         // A db connection is infrastructure, not UI state —
                         // it becomes a process-wide static, never serialized
                         if matches!(ty, CrowType::DbHandle) {
                             self.static_handle_vars.insert(name.clone());
                             continue;
                         }
-                        let default_str = self.expr_to_string(value);
+                        // int/float rule: a fact a handler assigns a float is
+                        // a float from its declaration, its default included
+                        let widened = matches!(ty, CrowType::Int)
+                            && matches!(self.ctx.vars.get(name), Some(CrowType::Float));
+                        if widened { ty = CrowType::Float; }
+                        let default_str = if widened {
+                            format!("({}) as f64", self.expr_to_string(value))
+                        } else {
+                            self.expr_to_string(value)
+                        };
                         self.reactive_vars.insert(name.clone(), (ty, default_str));
                     }
                 }
@@ -1452,11 +1475,13 @@ impl Transpiler {
                 } else {
                     // F-11: frozen args arrive as a JSON array in _value
                     let extracts: Vec<String> = params.iter().enumerate().map(|(i, (_, t))| {
+                        // a frozen argument may arrive as the number it is or as
+                        // the text of a table cell: both read as the param's type
                         match t {
-                            CrowType::Int => format!("_a[{}].as_i64().unwrap_or(0)", i),
-                            CrowType::Float => format!("_a[{}].as_f64().unwrap_or(0.0)", i),
-                            CrowType::Bool => format!("_a[{}].as_bool().unwrap_or(false)", i),
-                            _ => format!("_a[{}].as_str().unwrap_or(\"\").to_string()", i),
+                            CrowType::Int => format!("_a[{i}].as_i64().or_else(|| _a[{i}].as_f64().map(|x| x as i64)).or_else(|| _a[{i}].as_str().and_then(|s| s.trim().parse::<i64>().ok())).unwrap_or(0)", i = i),
+                            CrowType::Float => format!("_a[{i}].as_f64().or_else(|| _a[{i}].as_str().and_then(|s| s.trim().parse::<f64>().ok())).unwrap_or(0.0)", i = i),
+                            CrowType::Bool => format!("_a[{i}].as_bool().or_else(|| _a[{i}].as_str().map(|s| s == \"true\")).unwrap_or(false)", i = i),
+                            _ => format!("_a[{i}].as_str().map(|s| s.to_string()).unwrap_or_else(|| _a[{i}].to_string())", i = i),
                         }
                     }).collect();
                     self.emit_line(&format!(
@@ -1930,6 +1955,7 @@ impl Transpiler {
             let facts: std::collections::BTreeSet<String> = self.reactive_vars.keys().cloned().collect();
             let own: std::collections::BTreeMap<String, Vec<Stmt>> = [(name.to_string(), sig.body.clone())].into_iter().collect();
             let written = crate::derive::written_facts(&own, &facts);
+            self.reactive_own_writes = written.iter().cloned().collect();
             for vname in written {
                 lines.push(format!("state.set(\"{}\", serde_json::json!({}));", vname, vname));
             }
@@ -1950,6 +1976,7 @@ impl Transpiler {
         // note_table_write for every table this handler writes — run on the
         // fall-through here, and injected before every early return (the
         // Return arm reads self.reactive_epilogue)
+        self.reactive_own_writes.clear();
         if let Some(lines) = self.reactive_epilogue.take() {
             for l in &lines { self.emit_line(l); }
         }
@@ -2001,6 +2028,18 @@ impl Transpiler {
                 vname, other.to_rust_type(), default_str
             ),
         }
+    }
+
+    /// Before a handler calls a helper, the facts the handler assigns
+    /// itself are written through to the state, so the helper sees what
+    /// the handler wrote so far — as the interpreter's helper does, reading
+    /// the module variable directly. An unchanged value costs nothing.
+    fn flush_before(&self) -> String {
+        self.reactive_own_writes
+            .iter()
+            .map(|v| format!("state.set(\"{}\", serde_json::json!({}));", v, v))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     /// After a handler calls a helper, the facts the helper (or anything it
@@ -2278,17 +2317,29 @@ impl Transpiler {
                             ty = resolved.clone();
                         }
                     }
-                    // Clone Frame values in parallel closures to avoid moving
-                    if matches!(ty, CrowType::Frame) {
+                    // the columns a local reads are those of the value
+                    // assigned here, in a wave as in sequence
+                    let schema = self.ctx.frame_schema_of(value);
+                    if std::env::var("CROW_DEBUG_SCHEMAS").is_ok() {
+                        eprintln!("SCHEMA {} = {:?} (in {}, wave)", name, schema, self.current_function_name);
+                    }
+                    if let Some(schema) = schema {
+                        self.ctx.frame_schemas.insert(name.clone(), schema);
+                    }
+                    // a closure of the wave captures by move: a non-Copy
+                    // variable read here is cloned so it stays usable after
+                    if matches!(ty, CrowType::Frame | CrowType::Str | CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Map(_) | CrowType::Struct(_) | CrowType::Json | CrowType::Result(_)) {
                         if let Expr::Ident(_) = value {
-                            expr_str = format!("{}.clone()", expr_str);
+                            if !expr_str.ends_with(".clone()") { expr_str = format!("{}.clone()", expr_str); }
                         }
                     }
                     assigns.push((name.clone(), expr_str, ty));
                 }
                 Stmt::MultiAssign { names, values } => {
                     for (name, value) in names.iter().zip(values.iter()) {
-                        let expr_str = self.expr_to_string(value);
+                        // a closure of the wave captures by move: a variable
+                        // read here is cloned so it stays usable after
+                        let expr_str = self.owned_expr_str(value);
                         let ty = self.ctx.infer_expr(value);
                         assigns.push((name.clone(), expr_str, ty));
                     }
@@ -2445,6 +2496,16 @@ impl Transpiler {
                 }
                 let mut expr_str = self.owned_expr_str(value);
                 let mut holds_markup = false;
+                // the columns a local reads are those of the value assigned
+                // here, in this function — not the last function's local of
+                // the same name (inference keeps one map by name)
+                let schema = self.ctx.frame_schema_of(value);
+                if std::env::var("CROW_DEBUG_SCHEMAS").is_ok() {
+                    eprintln!("SCHEMA {} = {:?} (in {})", name, schema, self.current_function_name);
+                }
+                if let Some(schema) = schema {
+                    self.ctx.frame_schemas.insert(name.clone(), schema);
+                }
                 // A local that holds a view or an element holds its markup, as
                 // it does in the interpreter: the tree it joins later reads a
                 // string, and a list of such locals is a list of strings
@@ -2474,7 +2535,17 @@ impl Transpiler {
                                     && matches!(inner.as_ref(), CrowType::Int))
                             {
                                 let in_view = self.needs_ui && self.ctx.views.contains(&self.current_function_name);
-                                let abort = if matches!(
+                                let abort = if let Some(lines) = self.reactive_epilogue.clone() {
+                                    // a handler stops: its facts written so
+                                    // far land, and the reason is logged
+                                    let mut s = format!(
+                                        "{{ eprintln!(\"crow live: handler '{}' stopped: {{}}\", _asg.reason); ",
+                                        self.current_function_name
+                                    );
+                                    for l in &lines { s.push_str(l); s.push(' '); }
+                                    s.push_str("return; }");
+                                    s
+                                } else if matches!(
                                     self.current_fn_return_type,
                                     Some(CrowType::Result(_))
                                 ) {
@@ -2616,11 +2687,22 @@ impl Transpiler {
                 if self.current_fn_returns_unit {
                     self.emit_line(&format!("let _ = {};", expr_str));
                     self.emit_line("return;");
-                } else if let Some(CrowType::Result(_)) = &self.current_fn_return_type {
+                } else if let Some(CrowType::Result(inner)) = self.current_fn_return_type.clone() {
                     if !matches!(expr_type, CrowType::Result(_)) {
                         self.emit_line(&format!("return CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }};", expr_str));
-                    } else {
-                        self.emit_line(&format!("return {};", expr_str));
+                    } else if let CrowType::Result(got) = &expr_type {
+                        // `if not b.ok return b` in a function whose value is
+                        // another type: the error travels — reason, kind and
+                        // trace — and the value is the function's default
+                        let known = |t: &CrowType| !matches!(t, CrowType::Unknown);
+                        if known(got) && known(&inner) && got.as_ref() != inner.as_ref() {
+                            self.emit_line(&format!(
+                                "return {{ let _r = {}; CrowResult {{ ok: _r.ok, value: {}, reason: _r.reason.clone(), kind: _r.kind.clone(), trace: _r.trace.clone(), captured: 0.0 }} }};",
+                                expr_str, inner.default_rust_value()
+                            ));
+                        } else {
+                            self.emit_line(&format!("return {};", expr_str));
+                        }
                     }
                 } else {
                     self.emit_line(&format!("return {};", expr_str));
@@ -3848,13 +3930,13 @@ impl Transpiler {
                     if name == "len" && arg_strs.len() == 1 {
                         let arg_type = self.ctx.infer_expr(&args[0]);
                         if matches!(arg_type, CrowType::Frame) {
-                            return format!("({}).nrows() as i64", arg_strs[0]);
+                            return format!("(({}).nrows() as i64)", arg_strs[0]);
                         }
                         // Fallible values count their payload — an error
                         // frame/array has 0 rows/items
                         if let CrowType::Result(inner) = &arg_type {
                             if matches!(inner.as_ref(), CrowType::Frame) {
-                                return format!("({}).value.nrows() as i64", arg_strs[0]);
+                                return format!("(({}).value.nrows() as i64)", arg_strs[0]);
                             }
                             if matches!(inner.as_ref(), CrowType::Str) {
                                 return format!("(({}).value.chars().count() as i64)", arg_strs[0]);
@@ -4421,7 +4503,7 @@ impl Transpiler {
                             let rendered = crow_runtime::layout::render(name, &literal_layout);
                             let mut result = base;
                             if !rendered.class.is_empty() { result = format!("{}.attr(\"class\", \"{}\")", result, rendered.class); }
-                            if !rendered.style.is_empty() { result = format!("{}.attr(\"style\", \"{}\")", result, rendered.style); }
+                            if !rendered.style.is_empty() { result = format!("{}.attr(\"style\", \"{}\")", result, rendered.style.replace('\\', "\\\\").replace('"', "\\\"")); }
                             for (k, v) in &rendered.data { result = format!("{}.attr(\"{}\", \"{}\")", result, k, v); }
                             for (k, v) in &rendered.passthrough { result = format!("{}.attr(\"{}\", \"{}\")", result, k, v.replace('\"', "\\\"")); }
                             // a literal active path was rendered as data-active; mark the link too
@@ -4797,6 +4879,8 @@ impl Transpiler {
                         if is_frame {
                             let (mut click, mut key, mut mark) = ("None".to_string(), "None".to_string(), "None".to_string());
                             let mut delta = "&[]".to_string();
+                            let mut actions = "&[]".to_string();
+                            let mut hide = "&[]".to_string();
                             if let Expr::Map(pairs) = &args[0] {
                                 for (k, v) in pairs {
                                     let kname = match k { Expr::Ident(s) | Expr::Str(s) => s.clone(), _ => continue };
@@ -4808,11 +4892,23 @@ impl Transpiler {
                                             let names: Vec<String> = items.iter().filter_map(|i| if let Expr::Str(s) = i { Some(format!("\"{}\".to_string()", s)) } else { None }).collect();
                                             delta = format!("&[{}]", names.join(", "));
                                         }
+                                        // actions = map[Delete = ask_delete]: a button per row, each sending the key
+                                        ("actions", v) if crate::lower::map_literal_pairs(v).is_some() => {
+                                            let acts = crate::lower::map_literal_pairs(v).unwrap_or_default();
+                                            let pairs_s: Vec<String> = acts.iter().filter_map(|(label, h)| {
+                                                if let Expr::Ident(f) = h { Some(format!("(\"{}\".to_string(), \"{}\".to_string())", label, f)) } else { None }
+                                            }).collect();
+                                            actions = format!("&[{}]", pairs_s.join(", "));
+                                        }
+                                        ("hide", Expr::Array(items)) => {
+                                            let names: Vec<String> = items.iter().filter_map(|i| if let Expr::Str(s) = i { Some(format!("\"{}\".to_string()", s)) } else { None }).collect();
+                                            hide = format!("&[{}]", names.join(", "));
+                                        }
                                         _ => {}
                                     }
                                 }
                             }
-                            let rows = format!("CrowVNode::table(vec![CrowVNode::raw(&crow_runtime::layout::frame_table_html(_f, {}, {}, {}, {}))])", click, key, mark, delta);
+                            let rows = format!("CrowVNode::table(vec![CrowVNode::raw(&crow_runtime::layout::frame_table_html(_f, {}, {}, {}, {}, {}, {}))])", click, key, mark, delta, actions, hide);
                             if matches!(frame_ty, CrowType::Result(_)) {
                                 return format!("{{ let _fr = {}; if !_fr.ok {{ CrowVNode::text(&format!(\"error: {{}}\", _fr.reason)) }} else {{ let _f = &_fr.value; {} }} }}", arg_strs[1], rows);
                             }
@@ -4914,7 +5010,7 @@ impl Transpiler {
                     }
                     if name == "table" && self.needs_ui && arg_strs.len() == 1 {
                         let arg_ty = self.ctx.infer_expr(&args[0]);
-                        let rows = "CrowVNode::table(vec![CrowVNode::raw(&crow_runtime::layout::frame_table_html(_f, None, None, None, &[]))])";
+                        let rows = "CrowVNode::table(vec![CrowVNode::raw(&crow_runtime::layout::frame_table_html(_f, None, None, None, &[], &[], &[]))])";
                         if matches!(arg_ty, CrowType::Result(_)) {
                             return format!(
                                 "{{ let _fr = {}; if !_fr.ok {{ CrowVNode::text(&format!(\"error: {{}}\", _fr.reason)) }} else {{ let _f = &_fr.value; {} }} }}",
@@ -4975,9 +5071,10 @@ impl Transpiler {
                         // a helper that writes facts persisted them: the
                         // caller's locals for those facts are read again
                         if helper_call {
+                            let flush = self.flush_before();
                             let reloads = self.reload_after(name);
-                            if !reloads.is_empty() {
-                                return format!("{{ let _r = {}({}); {} _r }}", name, arg_strs.join(", "), reloads);
+                            if !reloads.is_empty() || !flush.is_empty() {
+                                return format!("{{ {} let _r = {}({}); {} _r }}", flush, name, arg_strs.join(", "), reloads);
                             }
                         }
                         if let Some(clones) = self.ctx.specializations.get(name) {
@@ -5351,10 +5448,11 @@ impl Transpiler {
                             let mut all = vec!["state".to_string()];
                             all.extend(arg_strs.iter().cloned());
                             let reloads = if helper_call { callee_name.as_ref().map(|n| self.reload_after(n)).unwrap_or_default() } else { String::new() };
-                            if reloads.is_empty() {
+                            let flush = if helper_call { self.flush_before() } else { String::new() };
+                            if reloads.is_empty() && flush.is_empty() {
                                 format!("{}({})", callee_str, all.join(", "))
                             } else {
-                                format!("{{ let _r = {}({}); {} _r }}", callee_str, all.join(", "), reloads)
+                                format!("{{ {} let _r = {}({}); {} _r }}", flush, callee_str, all.join(", "), reloads)
                             }
                         } else {
                             format!("{}({})", callee_str, arg_strs.join(", "))
@@ -5445,7 +5543,7 @@ impl Transpiler {
                 if field == "len" {
                     let obj_type = self.ctx.infer_expr(object);
                     if matches!(obj_type, CrowType::Frame) {
-                        return format!("{}.nrows() as i64", obj);
+                        return format!("({}.nrows() as i64)", obj);
                     }
                     if matches!(obj_type, CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Str | CrowType::FrameCol) {
                         return format!("({}.len() as i64)", obj);
@@ -6010,7 +6108,20 @@ impl Transpiler {
         if !matches!(cond_ty, CrowType::Result(_)) {
             return cond_str;
         }
-        let on_error = if let Some(ret) = self.current_fn_return_type.clone() {
+        let on_error = if let Some(lines) = self.reactive_epilogue.clone() {
+            // A handler hands no error back: what it wrote so far lands,
+            // the reason is logged, and it stops — as the interpreter's
+            // handler does when a condition meets an error
+            let mut s = format!(
+                "{{ eprintln!(\"crow live: handler '{}' stopped: {{}}\", _c.reason); ",
+                self.current_function_name
+            );
+            for l in &lines { s.push_str(l); s.push(' '); }
+            s.push_str("return; }");
+            s
+        } else if self.current_fn_returns_unit {
+            "return;".to_string()
+        } else if let Some(ret) = self.current_fn_return_type.clone() {
             let inner_default = match &ret {
                 CrowType::Result(inner) => inner.default_rust_value(),
                 other => other.default_rust_value(),
@@ -8154,6 +8265,73 @@ mod tests {
         let rust = transpile("fn check[s]\n    n = int[s]\n    if n gt 5\n        return 'big'\n    return 'small'\nr = check['9']\nlog[r]\n");
         assert!(rust.contains("if !_c.ok"), "condition should be guarded\n{}", rust);
         assert!(rust.contains("-> CrowResult<String>"), "return type should widen to Result\n{}", rust);
+    }
+
+    /// int/float rule across the program: a fact a handler assigns a float
+    /// (a table's float key column) is a float from its declaration
+    #[test]
+    fn a_fact_a_handler_assigns_a_float_is_a_float_from_its_declaration() {
+        let rust = transpile("use web, ui, frame\ndeleted = 0\nfn delete_row[id]\n    deleted = id\nview records[]\n    rows = frame.new[]\n    rows = with[rows, 'id', [3, 4]]\n    return table[rows, click = delete_row, key = 'id']\npage['/', records]\n");
+        assert!(rust.contains("state.get_f64(\"deleted\", (0_i64) as f64)"), "the key column is float, so the fact is\n{}", rust);
+    }
+
+    /// A plain function's local of a fact's name is a new binding: it says
+    /// nothing about the fact's type
+    #[test]
+    fn a_plain_functions_local_does_not_widen_a_fact() {
+        let rust = transpile("use web, ui\nn = 0\nfn scale[x]\n    n = 2.5\n    return n * x\nview render[]\n    return p['`n` `scale[2]`']\npage['/', render]\n");
+        assert!(rust.contains("state.get_i64(\"n\", 0_i64)"), "a local n is a new binding\n{}", rust);
+    }
+
+    /// A handler hands no error back: a fallible condition stops it, the
+    /// facts it wrote so far land, and the reason is logged
+    #[test]
+    fn a_handlers_fallible_condition_stops_the_handler() {
+        let rust = transpile("use web, ui\nn = 0\ntext = ''\nfn apply[]\n    v = int[text]\n    if v gt 5\n        n = n + 1\nview render[]\n    return stack[field['Text', text], button['Go', click = apply], p['`n`']]\npage['/', render]\n");
+        assert!(rust.contains("stopped: {}\", _c.reason)"), "{}", rust);
+        assert!(!rust.contains("return CrowResult { ok: false, value: ()"), "{}", rust);
+    }
+
+    /// A result consumed into a fact inside a handler that also branches on
+    /// a result: both stop the handler; neither returns an error from it
+    #[test]
+    fn a_handlers_consumed_result_stops_the_handler_too() {
+        let rust = transpile("use web, ui\nn = 0\ntext = ''\nfn apply[]\n    v = int[text]\n    if v gt 5\n        n = n + 1\n    n = int[text]\nview render[]\n    return stack[field['Text', text], button['Go', click = apply], p['`n`']]\npage['/', render]\n");
+        assert!(!rust.contains("value: Default::default()"), "{}", rust);
+        assert!(rust.matches("stopped: {}\"").count() >= 2, "{}", rust);
+    }
+
+    /// `len[b] lt 16` on a result-typed frame: the cast is parenthesised,
+    /// or Rust reads `as i64 <` as the start of generic arguments
+    #[test]
+    fn len_of_a_result_frame_compares_cleanly() {
+        let rust = transpile("use frame\nfn get[s]\n    n = int[s]\n    if n gt 0\n        return frame.new[]\n    return frame.new[]\nb = get['1']\nif len[b] lt 16\n    log['small']\n");
+        assert!(!rust.contains("as i64 <"), "{}", rust);
+    }
+
+    /// A helper a handler calls sees what the handler wrote so far: the
+    /// handler's own facts are written through before the call
+    #[test]
+    fn a_helper_sees_what_its_caller_wrote_so_far() {
+        let rust = transpile("use web, ui\nskipped = ['']\nsym = 'A'\nstatus = ''\nfn hop[]\n    if contains[skipped, sym]\n        status = 'skipped'\n    else\n        status = 'kept'\nfn skip[]\n    skipped = concat[skipped, [sym]]\n    hop[]\nview render[]\n    return stack[p[status], button['Skip', click = skip], button['Hop', click = hop]]\npage['/', render]\n");
+        assert!(rust.contains("state.set(\"skipped\", serde_json::json!(skipped)); let _r = hop(state"), "the caller's write reaches the helper\n{}", rust);
+    }
+
+    /// `if not b.ok return b` in a function whose value is another type:
+    /// the error travels and the value is the function's default
+    #[test]
+    fn an_error_of_another_type_returned_from_a_function_is_converted() {
+        let rust = transpile("fn half[s]\n    n = int[s]\n    if not n.ok\n        return n\n    return n / 2.0\nlog[half['8']]\n");
+        assert!(rust.contains("ok: _r.ok, value: 0.0_f64"), "{}", rust);
+    }
+
+    /// A frame assigned in a parallel wave (beside an independent statement)
+    /// keeps its columns' types for the reads that follow
+    #[test]
+    fn a_frame_assigned_in_a_wave_keeps_its_column_types() {
+        let rust = transpile("use frame\nfn go[]\n    rows = with[frame.new[], 'v', [3.5, 4.5]]\n    k = 2\n    return rows.v[0] * k\nlog[go[]]\n");
+        assert!(rust.contains("rayon::join"), "two independent statements form a wave\n{}", rust);
+        assert!(rust.contains("-> f64"), "the cell is a float, so the product is\n{}", rust);
     }
 
     #[test]

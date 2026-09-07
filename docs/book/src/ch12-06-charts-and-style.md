@@ -165,7 +165,7 @@ fn reset[]
     min_qty = 0
 
 view stat_card[label, value]
-    return stack[h3[label], p['`value`', size = 'xl', weight = 'bold'], surface = 'card']
+    return stack[h3[label], p['`value`', size = 'xl', weight = 'bold', font = 'mono'], surface = 'card']
 
 view render[]
     return stack[

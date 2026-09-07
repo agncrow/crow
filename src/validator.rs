@@ -234,15 +234,20 @@ impl<'a> Validator<'a> {
     fn validate_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Line(n) => { self.current_line = *n; }
-            // Test blocks: params are generated inputs; the body sees what a
-            // caller sees (fns, structs, builtins) plus its params — the
-            // verification boundary mirrors function-scope isolation.
-            Stmt::TestBlock { params, body, .. } => {
+            // Test blocks. An attached test (`test[p]` after a fn) sees what a
+            // caller of that fn sees — fns, structs, builtins, its generated
+            // params — the verification boundary mirrors function-scope
+            // isolation. A named test is a scenario: it drives the program
+            // through the harness and reads its facts and derivations back,
+            // the way a reader would see them.
+            Stmt::TestBlock { name, params, body } => {
                 let saved = self.defined_vars.clone();
                 let saved_in_test = self.in_test_block;
                 self.in_test_block = true;
-                for mv in &self.module_vars.clone() {
-                    self.defined_vars.remove(mv);
+                if name.is_none() {
+                    for mv in &self.module_vars.clone() {
+                        self.defined_vars.remove(mv);
+                    }
                 }
                 for p in params {
                     self.defined_vars.insert(p.clone());
@@ -456,7 +461,12 @@ impl<'a> Validator<'a> {
                 if !self.defined_vars.contains(name)
                     && !BUILTINS.contains(&name.as_str())
                 {
-                    if self.fn_depth > 0 && self.module_vars.contains(name) {
+                    if self.fn_depth > 0 && self.ctx.derives.contains(name) {
+                        self.error(format!(
+                            "derivations are not visible inside functions — read '{}' in a view or handler, or make this function a derivation",
+                            name
+                        ));
+                    } else if self.fn_depth > 0 && self.module_vars.contains(name) {
                         self.error(format!(
                             "module variables are not visible inside functions — pass '{}' as a parameter",
                             name
@@ -982,6 +992,15 @@ mod tests {
         let result = validate_source("log[x]\n");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("undefined variable 'x'"));
+    }
+
+    /// A function sees its parameters and nothing of the program's state:
+    /// a derivation read inside one is refused with the way out
+    #[test]
+    fn a_function_reading_a_derivation_is_told_to_derive() {
+        let result = validate_source("use web, ui\nn = 1\nderive cfg\n    return n + 1\nfn band[]\n    return cfg * 2\nview render[]\n    return p['`band[]`']\npage['/', render]\n");
+        let err = result.unwrap_err();
+        assert!(err.contains("derivations are not visible inside functions — read 'cfg' in a view or handler"), "{}", err);
     }
 
     #[test]

@@ -365,6 +365,9 @@ fn harness_to_lnode(n: &HNode) -> CrowValue {
                     "flex-wrap" if v == "wrap" => Some(("wrap", "true".to_string())),
                     "font-size" => Some(("size", match v { "12px" => "xs", "14px" => "s", "16px" => "m", "20px" => "l", "24px" => "xl", "32px" => "xxl", _ => "m" }.to_string())),
                     "font-weight" => Some(("weight", match v { "700" => "bold", "500" => "medium", _ => "regular" }.to_string())),
+                    "font-family" if v.contains("monospace") => Some(("font", "mono".to_string())),
+                    "justify-content" => Some(("justify", match v { "space-between" => "between", "center" => "center", "flex-end" => "end", "space-around" => "around", _ => "start" }.to_string())),
+                    "align-items" => Some(("align", match v { "flex-start" => "start", "center" => "center", "flex-end" => "end", "stretch" => "stretch", _ => "center" }.to_string())),
                     "grid-template-columns" => {
                         // repeat(N, minmax(0, 1fr)) → N
                         v.strip_prefix("repeat(").and_then(|r| r.split(',').next()).map(|n| ("columns", n.trim().to_string()))
@@ -2107,6 +2110,8 @@ impl Interpreter {
                     let mut attrs: Vec<(String, String)> = Vec::new();
                     let (mut table_click, mut table_key, mut table_mark): (Option<String>, Option<String>, Option<String>) = (None, None, None);
                     let mut table_delta: Vec<String> = Vec::new();
+                    let mut table_actions: Vec<(String, String)> = Vec::new();
+                    let mut table_hide: Vec<String> = Vec::new();
                     for a in args {
                         // F-11: an attribute map may carry deferred calls
                         // (click = set_speed[10.0]) — evaluating it verbatim
@@ -2153,6 +2158,12 @@ impl Interpreter {
                                             ("key", Value::Str(s)) => { table_key = Some(s.clone()); continue; }
                                             ("mark", Value::Str(s)) => { table_mark = Some(s.clone()); continue; }
                                             ("delta", Value::Array(items)) => { table_delta = items.iter().map(|i| format!("{}", i.value)).collect(); continue; }
+                                            // actions = map[Delete = ask_delete]: a button per row, each sending the key
+                                            ("actions", Value::Map(acts)) => {
+                                                table_actions = acts.iter().filter_map(|(label, h)| if let Value::Fn(hf) = &h.value { Some((label.clone(), hf.name.clone())) } else { None }).collect();
+                                                continue;
+                                            }
+                                            ("hide", Value::Array(items)) => { table_hide = items.iter().map(|i| format!("{}", i.value)).collect(); continue; }
                                             _ => {}
                                         }
                                     }
@@ -2171,7 +2182,7 @@ impl Interpreter {
                             // is escaped exactly as the compiled renderer does
                             Value::Str(s) if s.starts_with('<') && s.ends_with('>') => inner.push_str(s),
                             // a frame in a table is its rows, from the kernel
-                            Value::Frame(f) if name == "table" => inner.push_str(&crow_runtime::layout::frame_table_html(f, table_click.as_deref(), table_key.as_deref(), table_mark.as_deref(), &table_delta)),
+                            Value::Frame(f) if name == "table" => inner.push_str(&crow_runtime::layout::frame_table_html(f, table_click.as_deref(), table_key.as_deref(), table_mark.as_deref(), &table_delta, &table_actions, &table_hide)),
                             // a list contributes each item: markup passes
                             // through, anything else is text (the compiled
                             // renderer's children_of applies the same rule)

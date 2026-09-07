@@ -10,6 +10,9 @@
 --- what a test reads: position, size, and whether anything overflowed.
 
 struct LNode [tag, class, text, attrs, kids]
+--- a row child's width and the line it sits on; a line's used width and count
+struct LSlot [w, line]
+struct LLine [used, count]
 struct LBox [tag, class, path, x, y, width, height, overflow]
 
 --- scales (px), the same numbers as the kernel table
@@ -147,7 +150,7 @@ fn lay_text_width[text, font_px, bold]
 fn lay_is_mono[node]
     if node.tag eq 'pre' or node.tag eq 'code'
         return true
-    if lay_in_card[node] and node.tag eq 'p'
+    if lay_attr[node, 'font', ''] eq 'mono'
         return true
     return false
 
@@ -234,8 +237,6 @@ fn lay_font_px[node]
         return 14.72
     if node.tag eq 'label'
         return 14.08
-    if lay_in_card[node] and node.tag eq 'p'
-        return 20.0
     return 15.0
 
 fn lay_line_px[node]
@@ -290,7 +291,7 @@ fn lay_kind[node, viewport]
         return 'row'
     if node.tag eq 'table'
         return 'table'
-    if node.tag eq 'nav'
+    if node.tag eq 'nav' or node.tag eq 'header'
         return 'row'
     if node.tag eq 'summary' or node.tag eq 'label'
         return 'leaf'
@@ -306,6 +307,9 @@ fn lay_pad_v[node]
         return lay_space[parts[0]]
     if lay_has_class[node, 'card']
         return 13.0
+    --- a header bar: 0.5rem above and below inside a 1px border
+    if node.tag eq 'header'
+        return 9.0
     if node.tag eq 'button'
         return 7.72
     if node.tag eq 'input' or node.tag eq 'textarea' or node.tag eq 'select'
@@ -335,6 +339,9 @@ fn lay_pad_h[node]
             return lay_space[parts[1]]
         return lay_space[parts[0]]
     if lay_has_class[node, 'card']
+        return 15.4
+    --- a header bar: 0.9rem sides inside a 1px border
+    if node.tag eq 'header'
         return 15.4
     if node.tag eq 'button'
         return 16.2
@@ -636,12 +643,16 @@ fn lay_node[node, x, y, width, viewport, path]
         fill_w = 0.0
         if fills gt 0.0
             fill_w = remaining / fills
-        if fills eq 0.0 and remaining lt 0.0 and lay_attr[node, 'wrap', ''] ne 'true'
+        wrapping = lay_attr[node, 'wrap', ''] eq 'true'
+        if fills eq 0.0 and remaining lt 0.0 and not wrapping
             overflow = true
-        row_h = 0.0
-        line_x = cx
-        line_y = cy
-        first = true
+        --- each child's width and the line it sits on: a wrapping row
+        --- breaks before a child that would cross the right edge
+        slots = []
+        row_lines = []
+        li = 0
+        used = 0.0
+        cnt = 0
         for k in node.kids
             ew = lay_explicit_width[k, inner_w]
             kw = ew
@@ -649,45 +660,69 @@ fn lay_node[node, x, y, width, viewport, path]
                 kw = fill_w
             if ew eq 0.0
                 kw = lay_intrinsic_width[k, viewport]
-            if not first
-                line_x = line_x + gap
-            first = false
-            if lay_attr[node, 'wrap', ''] eq 'true' and line_x + kw gt cx + inner_w and line_x gt cx
-                line_x = cx
-                line_y = line_y + row_h + gap
-                row_h = 0.0
-            kb = lay_node[k, line_x, line_y, kw, viewport, here]
-            if len[kb] gt 0
-                boxes = concat[boxes, kb]
-                if kb[0].height gt row_h
-                    row_h = kb[0].height
-                line_x = line_x + kw
-        --- the default cross-axis alignment is centre: a second pass drops
-        --- each shorter child to the middle of its line (one line: the row)
+            need = kw
+            if cnt gt 0
+                need = used + gap + kw
+            if wrapping and cnt gt 0 and need gt inner_w
+                row_lines = concat[row_lines, [LLine[used, float[cnt]]]]
+                li = li + 1
+                used = kw
+                cnt = 1
+            else
+                used = need
+                cnt = cnt + 1
+            slots = concat[slots, [LSlot[kw, li]]]
+        row_lines = concat[row_lines, [LLine[used, float[cnt]]]]
+        --- where a line's leftover space goes (justify), and the cross-axis
+        --- centring the stylesheet gives every row — per line, as flex does
+        jus = lay_attr[node, 'justify', '']
         centred = lay_attr[node, 'align', ''] eq '' or lay_attr[node, 'align', ''] eq 'center'
-        if centred and lay_attr[node, 'wrap', ''] ne 'true'
-            boxes = []
-            line_x = cx
-            first = true
-            for k in node.kids
-                ew = lay_explicit_width[k, inner_w]
-                kw = ew
-                if ew lt 0.0
-                    kw = fill_w
-                if ew eq 0.0
-                    kw = lay_intrinsic_width[k, viewport]
-                if not first
-                    line_x = line_x + gap
-                first = false
-                probe = lay_node[k, line_x, cy, kw, viewport, here]
-                kh = 0.0
-                if len[probe] gt 0
-                    kh = probe[0].height
-                kb = lay_node[k, line_x, cy + (row_h - kh) / 2.0, kw, viewport, here]
-                if len[kb] gt 0
-                    boxes = concat[boxes, kb]
-                line_x = line_x + kw
-        h = (line_y - cy) + row_h + 2.0 * pv
+        line_y = cy
+        nl = len[row_lines]
+        for l in range[nl]
+            cnt_l = row_lines[l].count
+            left = inner_w - row_lines[l].used
+            if fills gt 0.0
+                left = 0.0
+            lead = 0.0
+            extra = 0.0
+            if left gt 0.0 and cnt_l gt 0.0
+                if jus eq 'center'
+                    lead = left / 2.0
+                if jus eq 'end'
+                    lead = left
+                if jus eq 'between' and cnt_l gt 1.0
+                    extra = left / (cnt_l - 1.0)
+                if jus eq 'around'
+                    extra = left / cnt_l
+                    lead = extra / 2.0
+            --- the line's height first, from a probe of each child
+            row_h = 0.0
+            for j in range[len[node.kids]]
+                if slots[j].line eq l
+                    probe = lay_node[node.kids[j], cx, line_y, slots[j].w, viewport, here]
+                    if len[probe] gt 0
+                        if probe[0].height gt row_h
+                            row_h = probe[0].height
+            --- then the placement, centred on the line when the row is
+            line_x = cx + lead
+            for j in range[len[node.kids]]
+                if slots[j].line eq l
+                    ky = line_y
+                    if centred
+                        probe = lay_node[node.kids[j], line_x, line_y, slots[j].w, viewport, here]
+                        kh = 0.0
+                        if len[probe] gt 0
+                            kh = probe[0].height
+                        ky = line_y + (row_h - kh) / 2.0
+                    kb = lay_node[node.kids[j], line_x, ky, slots[j].w, viewport, here]
+                    if len[kb] gt 0
+                        boxes = concat[boxes, kb]
+                    line_x = line_x + slots[j].w + gap + extra
+            line_y = line_y + row_h
+            if l lt nl - 1
+                line_y = line_y + gap
+        h = (line_y - cy) + 2.0 * pv
         me = lay_box[node, here, x, top, width, h, overflow]
         return concat[[me], boxes]
     if kind eq 'grid'

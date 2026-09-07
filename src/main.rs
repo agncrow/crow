@@ -1431,18 +1431,13 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         process::exit(1);
     });
 
-    // Run type inference. The compiler may ask the program's databases what
-    // each literal query returns, so frame cells are typed natively.
-    let mut ctx = type_infer::TypeContext::new();
-    ctx.describe_queries = std::env::var("CROW_NO_DESCRIBE").is_err();
-    ctx.infer_program(&stmts);
-
-    // Run validation pass — catch user errors before transpilation
-    let mut v = validator::Validator::new(&ctx);
-    if let Err(e) = v.validate(&stmts) {
+    // Type inference and validation. The compiler may ask the program's
+    // databases what each literal query returns, so frame cells are typed
+    // natively.
+    let ctx = infer_and_validate(&stmts, std::env::var("CROW_NO_DESCRIBE").is_err()).unwrap_or_else(|e| {
         eprintln!("{}", refine_error_lines(&source, &e));
         process::exit(1);
-    }
+    });
 
     // Transpile to Rust
     let mut transpiler = transpiler::Transpiler::new(ctx);
@@ -2497,6 +2492,12 @@ fn cmd_test_blocks(filename: &str) {
         Ok(s) => s,
         Err(e) => { eprintln!("{}", e); process::exit(1); }
     };
+    // The validator gates the harness as it gates run and build: a part
+    // whose tests pass is a part the program accepts
+    if let Err(e) = infer_and_validate(&stmts, false) {
+        eprintln!("{}", refine_error_lines(&source, &e));
+        process::exit(1);
+    }
     let (issues, counts) = checker::run_test_blocks(&stmts);
     if counts.blocks == 0 {
         println!("  no test blocks in {} — add `test` after a fn, or `test name[]` anywhere", filename);
@@ -2519,6 +2520,18 @@ fn cmd_test_blocks(filename: &str) {
     process::exit(1);
 }
 
+/// Type inference and validation of an expanded, lowered program: the gate
+/// every pipeline passes — run, run -i, test and check — so the two modes
+/// and the tools refuse the same programs with the same message.
+fn infer_and_validate(lowered: &[ast::Stmt], describe: bool) -> Result<type_infer::TypeContext, String> {
+    let mut ctx = type_infer::TypeContext::new();
+    ctx.describe_queries = describe;
+    ctx.infer_program(lowered);
+    let mut v = validator::Validator::new(&ctx);
+    v.validate(lowered)?;
+    Ok(ctx)
+}
+
 fn run_check_pipeline(filename: &str) -> checker::CheckResult {
     let source = read_file(filename);
     let stmts = match build(&source) {
@@ -2535,6 +2548,17 @@ fn run_check_pipeline(filename: &str) -> checker::CheckResult {
         .unwrap_or(std::path::Path::new("."));
     let mut visited = std::collections::HashSet::new();
     let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
+    // Validated before it is checked: `crow check` refuses what `crow run`
+    // refuses, with the same message
+    match lower::lower_program(&stmts) {
+        Ok(lowered) => {
+            if let Err(e) = infer_and_validate(&lowered, false) {
+                eprintln!("{}", refine_error_lines(&source, &e));
+                process::exit(1);
+            }
+        }
+        Err(e) => { eprintln!("error: {}", e); process::exit(1); }
+    }
     let mut ctx = type_infer::TypeContext::new();
     ctx.infer_program(&stmts);
     let mut result = checker::run_check(&stmts, &ctx, false);
@@ -2969,10 +2993,7 @@ fn cmd_run_file_interpreted(filename: &str) {
                 process::exit(1);
             }
         };
-        let mut vctx = type_infer::TypeContext::new();
-        vctx.infer_program(&lowered);
-        let mut v = validator::Validator::new(&vctx);
-        if let Err(e) = v.validate(&lowered) {
+        if let Err(e) = infer_and_validate(&lowered, false) {
             eprintln!("{}", refine_error_lines(&source, &e));
             process::exit(1);
         }
@@ -3258,7 +3279,52 @@ fn expand_module_imports(
         ast::Stmt::Use { path, alias } => seen.insert(format!("{}|{}", path, alias.clone().unwrap_or_default())),
         _ => true,
     });
+    // Each part is validated alone, as `crow test part.crow` sees it — its
+    // own names unprefixed, its imports inlined — so a name a part reserves
+    // by what it imports, or a handler nothing in the part wires, is
+    // refused whichever file is the entry
+    for path in ex.done.keys() {
+        if let Err(e) = validate_part_alone(path) {
+            eprintln!("{}", e);
+            process::exit(1);
+        }
+    }
     out
+}
+
+thread_local! {
+    static VALIDATED_PARTS: std::cell::RefCell<std::collections::HashSet<std::path::PathBuf>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// Validate one part as the entry of its own program: parsed, its imports
+/// inlined, lowered and passed through the same gate as the whole app.
+/// Each part is validated once per process, and reports under its
+/// project-relative path.
+fn validate_part_alone(path: &std::path::Path) -> Result<(), String> {
+    let first = VALIDATED_PARTS.with(|v| v.borrow_mut().insert(path.to_path_buf()));
+    if !first {
+        return Ok(());
+    }
+    let dir = path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+    let root = project_root(&dir);
+    let root = std::fs::canonicalize(&root).unwrap_or_else(|_| root.to_path_buf());
+    let rel = path
+        .strip_prefix(&root)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| path.display().to_string());
+    let source = std::fs::read_to_string(path).map_err(|e| format!("{}: {}", rel, e))?;
+    let stmts = build(&source).map_err(|e| format!("{}: {}", rel, e))?;
+    let mut visited = std::collections::HashSet::new();
+    let expanded = expand_module_imports(&stmts, &dir, &mut visited);
+    let lowered = lower::lower_program(&expanded).map_err(|e| format!("{}: error: {}", rel, e))?;
+    infer_and_validate(&lowered, false).map(|_| ()).map_err(|e| {
+        refine_error_lines(&source, &e)
+            .lines()
+            .map(|l| format!("{}: {}", rel, l))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })
 }
 
 #[derive(Default)]
@@ -3714,8 +3780,43 @@ fn project_root(source_dir: &std::path::Path) -> std::path::PathBuf {
 }
 
 #[cfg(test)]
+mod validation_gate_tests {
+    use super::*;
+
+    /// The gate every pipeline passes: a function reading a derivation is
+    /// refused here, so `crow test` and `crow check` refuse it exactly as
+    /// `crow run` does — and the derivation it should have been is accepted.
+    #[test]
+    fn a_function_reading_a_derivation_is_refused_by_the_gate() {
+        let src = "use web, ui\nn = 1\nderive cfg\n    return n + 1\nfn band[]\n    c = cfg\n    return c * 2\nview render[]\n    return p['`band[]`']\npage['/', render]\n";
+        let lowered = lower::lower_program(&build(src).expect("parses")).expect("lowers");
+        let err = infer_and_validate(&lowered, false).unwrap_err();
+        assert!(err.contains("derivations are not visible inside functions"), "{}", err);
+        let fine = "use web, ui\nn = 1\nderive cfg\n    return n + 1\nderive band\n    c = cfg\n    return c * 2\nview render[]\n    return p['`band`']\npage['/', render]\n";
+        let lowered = lower::lower_program(&build(fine).unwrap()).unwrap();
+        assert!(infer_and_validate(&lowered, false).is_ok());
+    }
+}
+
+#[cfg(test)]
 mod module_parts_tests {
     use super::*;
+
+    /// A part's names are reserved as its file is: a derivation named for
+    /// a ui element is refused when the part is validated alone, and the
+    /// message carries the part's path.
+    #[test]
+    fn a_part_is_validated_alone_under_its_own_reservations() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_alone_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sim")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(dir.join("sim/clock.crow"), "use web, ui\n\nbase = 0.0\n\nderive progress\n    return base * 2.0\n\nview transport[]\n    return p['`progress`']\n").unwrap();
+        let path = std::fs::canonicalize(dir.join("sim/clock.crow")).unwrap();
+        let err = validate_part_alone(&path).unwrap_err();
+        assert!(err.contains("sim/clock.crow: line 5: 'progress' is a ui builtin"), "{}", err);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// A part's derivation, facts and tests survive expansion with the
     /// module prefix, and the importing file's references to them — in

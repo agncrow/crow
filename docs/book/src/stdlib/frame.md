@@ -9,8 +9,8 @@ Import with `use frame`. Column-oriented DataFrames for tabular data. See `docs/
 
 | Function | Description | Example |
 |---|---|---|
-| `new[]` | The empty frame (`frame.new[]`, since `new` reads best qualified); add columns with `with` | [Frames: `use frame`](../by-example/frames.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Charts and Styling](../ch12-06-charts-and-style.md) |
-| `with[frame, col, values]` | A frame with one more (or replaced) column: `values` is an array, a tensor, or a scalar repeated for every row; the length must match the rows (error-value otherwise) | [Frames: `use frame`](../by-example/frames.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Charts and Styling](../ch12-06-charts-and-style.md) |
+| `new[]` | The empty frame (`frame.new[]`, since `new` reads best qualified); add columns with `with` | [Frames: `use frame`](../by-example/frames.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `with[frame, col, values]` | A frame with one more (or replaced) column: `values` is an array, a tensor, or a scalar repeated for every row; the length must match the rows (error-value otherwise) | [Frames: `use frame`](../by-example/frames.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `load[path]` | Load CSV → frame (error-value on failure) | [Databases: `use db`](../by-example/db.md) · [Frames: `use frame`](../by-example/frames.md) · [Web: responses and submodules](../by-example/web-more.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) |
 | `save[frame, path]` | Write frame → CSV | [Frames: `use frame`](../by-example/frames.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `select[frame, cols]` | Pick columns: `select[df, ['name', 'age']]` | [Frames: `use frame`](../by-example/frames.md) |
