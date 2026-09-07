@@ -1,0 +1,6 @@
+view sim_clock_transport (sim/clock.crow)
+  composed on: page /
+  always:
+    row[gap = 's']
+      button[click → sim_clock_play] 'Play'
+      button[click → sim_clock_faster] '10x'

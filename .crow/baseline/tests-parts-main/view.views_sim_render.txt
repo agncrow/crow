@@ -1,0 +1,8 @@
+view views_sim_render (views/sim.crow)
+  composed on: page /
+  reads: views_sim_label
+  always:
+    stack[]
+      p[class = 'h'] views_sim_label
+      @sim_clock_transport[]
+      button[click → views_sim_slow] '1x'

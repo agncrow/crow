@@ -52,3 +52,7 @@ editors/vscode/node_modules/
 /_tmp_*
 /_private_*
 /_var_folders_*
+
+# The app baseline: what each checked program does, derived and accepted (app-baseline-design.md)
+!.crow/baseline/
+!.crow/baseline/**

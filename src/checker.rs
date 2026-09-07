@@ -68,6 +68,12 @@ pub enum Issue {
     TestFailure { block: String, line: usize, detail: String },
     /// css/app.css overrides a --crow-* token that doesn't exist.
     UnknownStyleToken { name: String, suggestion: String },
+    /// The app baseline moved: a declaration's derived behaviour or
+    /// composition differs from what was accepted (app-baseline-design.md).
+    BaselineChange { key: String, file: String, was: String, now: String, reach: Vec<String>, expected: bool },
+    /// A kernel rule over the wiring: a modal nobody can close, a control
+    /// that does nothing, a handler nobody can reach.
+    UiRule { subject: String, file: String, detail: String, fix: String },
     /// A value read from the outside world flows into a decision with no
     /// freshness guard — the stale-data class.
     UnguardedStaleness { var: String, root: String, read_line: usize, decision_line: usize },
@@ -89,6 +95,18 @@ impl Issue {
                 format!("{} crashes on {} — {}", func, input_desc, error),
             Issue::RegressionChange { func, input_desc, was, now } =>
                 format!("{} behavior changed: {} was {}, now {}", func, input_desc, was, now),
+            Issue::BaselineChange { key, file, was, now, expected, .. } => {
+                if now.is_empty() {
+                    return format!("{} was removed (it was in {})", key, file);
+                }
+                let scope = if *expected { "in what you edited" } else { "reached from elsewhere" };
+                let lines = crate::baseline::compact_diff(was, now);
+                let shown: Vec<String> = lines.iter().take(8).map(|l| format!("          {}", l)).collect();
+                let more = if lines.len() > 8 { format!("\n          … {} more", lines.len() - 8) } else { String::new() };
+                format!("{} changed ({}, {}):\n{}{}", key, file, scope, shown.join("\n"), more)
+            }
+            Issue::UiRule { subject, file, detail, .. } =>
+                format!("{} ({}): {}", subject, file, detail),
             Issue::BlockingInView { view, builtin, path, .. } =>
                 format!(
                     "'{}' can freeze every connected client — {}[] blocks the live loop ({})",
@@ -146,6 +164,7 @@ impl Issue {
             Issue::UndefinedVariable { line, .. } => *line,
             Issue::EdgeCaseCrash { .. } => 0,
             Issue::RegressionChange { .. } => 0,
+            Issue::BaselineChange { .. } | Issue::UiRule { .. } => 0,
             Issue::BlockingInView { line, .. } => *line,
             Issue::StaleSnapshot { line, .. } => *line,
             Issue::RemoteQueryInView { line, .. } => *line,
@@ -174,6 +193,8 @@ impl Issue {
             Issue::Nondeterministic { func, .. } => func,
             Issue::EdgeCaseCrash { func, .. } => func,
             Issue::RegressionChange { func, .. } => func,
+            Issue::BaselineChange { key, .. } => key.split(' ').nth(1).unwrap_or(key.as_str()),
+            Issue::UiRule { subject, .. } => subject,
         }
     }
 
@@ -197,6 +218,17 @@ impl Issue {
     /// Suggest a fix for this issue.
     pub fn suggest(&self) -> String {
         match self {
+            Issue::BaselineChange { now, reach, .. } => {
+                let pages: Vec<&String> = reach.iter().filter(|r| r.starts_with("page ")).collect();
+                let views = reach.len() - pages.len();
+                let mut named: Vec<String> = pages.iter().map(|p| p.to_string()).collect();
+                if views > 0 && views <= 4 { named.extend(reach.iter().filter(|r| !r.starts_with("page ")).cloned()); }
+                else if views > 4 { named.push(format!("{} views", views)); }
+                let where_ = if named.is_empty() { String::new() } else { format!(" — reaches {}", named.join(", ")) };
+                if now.is_empty() { "accept with a to drop it from the baseline, or restore it".to_string() }
+                else { format!("if intended, accept with a and the baseline moves; otherwise fix the cause{}", where_) }
+            }
+            Issue::UiRule { fix, .. } => fix.clone(),
             Issue::UnusedVariable { var, line, .. } =>
                 if *line == 0 {
                     format!("remove parameter '{}'", var)
@@ -2140,6 +2172,8 @@ pub struct CheckResult {
     pub fn_lines: BTreeMap<String, usize>,
     /// One line per derivation: what it reads and who holds it.
     pub derivations: Vec<String>,
+    /// The app baseline: recorded on the first check, diffed after.
+    pub baseline: Option<crate::baseline::Summary>,
 }
 
 /// One line per derivation — its read set, its tables and freshness, and
@@ -2275,6 +2309,7 @@ pub fn run_check(
         snapshots_unchanged,
         fn_lines,
         derivations,
+        baseline: None,
     }
 }
 

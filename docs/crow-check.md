@@ -19,6 +19,41 @@ Before any of it runs, the program passes the validator `crow run` passes
 it through — scope, reservation and `ui` rules — so `crow check` and
 `crow test` refuse what `crow run` refuses, with the same message.
 
+## The baseline
+
+`crow check` derives what the program does — every fact, derivation,
+handler, view and page in a canonical form — and keeps it under
+`.crow/baseline/<entry>/`, one file per declaration, tracked like the
+snapshot store. A handler's file is its **signature**: every path
+through it as a condition over facts and inputs, the facts it writes and
+from what, the effects it would perform. A view's file is its
+**conditional tree**: elements, attributes, controls and sub-views under
+their guards. Locals are substituted, values from calls are named
+`v1, v2, …`, paths are sorted: a rename, a temporary, a reordering or a
+helper moved between parts changes nothing; a guard flipped from `lte`
+to `lt`, a fact written or not, a button wired elsewhere shows as a diff.
+
+The first check records the baseline. Every check after diffs against
+it, per declaration, and reports each difference with its cause (the
+part's file), its reach (the views and pages it can affect, through the
+wiring) and whether the cause is a file git says you changed — a
+difference reached from a file you did not touch is the headline. Accept
+with `a` in the loop and the baseline moves; `crow check --accept`
+accepts every change at once. Without a terminal an unaccepted change
+exits non-zero, so CI blocks on it and the accepted baseline travels
+with the change in review. New declarations are recorded; removed ones
+are reported. Nothing runs, nothing is written, nothing is called: the
+artifacts come from the source alone.
+
+Four kernel rules read the same wiring, generic and nobody's to
+maintain: a `modal`, `drawer` or `toast` whose `open` fact no handler
+sets true, or none sets false; a `disabled` fact no handler writes; a
+control whose handler writes nothing and performs nothing; a function
+that assigns a fact but is wired by nothing and called by nothing. The
+design and the phases after this one (the reachable state machine,
+rehearsal with declared data, the app's chapter in `crow book`) are in
+`app-baseline-design.md`.
+
 ## The hazard catalog
 
 | # | Finding | What it means |

@@ -71,8 +71,17 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// The registry and the handles are process-global: a test that joins
+    /// while another spawns can join the other's job and return before its
+    /// own ran. The tests take turns.
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        static L: OnceLock<Mutex<()>> = OnceLock::new();
+        L.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn spawn_runs_and_wait_all_joins() {
+        let _g = serial();
         static RAN: AtomicUsize = AtomicUsize::new(0);
         assert!(spawn("t1", || {
             RAN.fetch_add(1, Ordering::SeqCst);
@@ -84,6 +93,7 @@ mod tests {
 
     #[test]
     fn overlapping_schedules_skip() {
+        let _g = serial();
         static RAN: AtomicUsize = AtomicUsize::new(0);
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         assert!(spawn("t2", move || {
@@ -108,6 +118,7 @@ mod tests {
 
     #[test]
     fn panicking_work_frees_the_name() {
+        let _g = serial();
         assert!(spawn("t3", || panic!("boom")));
         wait_all();
         assert!(!running("t3"), "panic must not leak the in-flight entry");

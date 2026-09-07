@@ -1,0 +1,3 @@
+derive sim_tape_marker (sim/tape.crow)
+  reads: sim_clock_head
+  read by: views_sim_label

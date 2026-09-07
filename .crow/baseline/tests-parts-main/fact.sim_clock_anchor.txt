@@ -1,0 +1,4 @@
+fact sim_clock_anchor (sim/clock.crow)
+  type: float
+  written by: sim_clock_faster, sim_clock_play
+  read by: sim_clock_head

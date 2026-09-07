@@ -229,3 +229,30 @@ is a design decision the test just made visible.
 hazards; `crow run` and `crow build` ignore them. Next: the two things
 every dashboard needs that you haven't written yet — a chart, and a page
 that looks right.
+
+## The baseline: what changed, without writing a test
+
+Every `crow check` derives what the program does and keeps it beside the
+source, under `.crow/baseline/`: for each handler, every path through it
+as a condition over facts and inputs with the facts it writes; for each
+view, its tree of elements, controls and sub-views under their guards;
+for each fact, who writes it and who reads it. The first check records
+it. Every check after diffs against it.
+
+```text
+$ crow check
+  baseline — 95 unchanged, 1 changed (.crow/baseline/main)
+  [1/1] sim/session.crow in start_session
+        handler start_session changed (sim/session.crow, in what you edited):
+          ~ …when (not (v2 «lte» → «lt» v1)) and v1.ok and v2.ok:
+        fix: if intended, accept with a and the baseline moves; otherwise fix the cause — reaches page /
+```
+
+Locals and temporaries are substituted and paths are sorted, so a
+rename, a reordering or a helper moved to another part changes nothing.
+A guard, a write, an effect or a wiring that changed shows as a diff,
+with the file it came from and the views and pages it reaches; a diff
+reached from a file you did not edit is the headline. Accept with `a`
+and the baseline travels with your change; without a terminal, an
+unaccepted change fails the check, so CI blocks on it. Nothing runs and
+nothing is written: the artifacts come from the source alone.

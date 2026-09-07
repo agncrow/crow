@@ -3192,7 +3192,8 @@ crow test                   --- run the test blocks of the project (or: crow tes
 crow test --parity          --- run tests/parity/ in both modes and diff output
 crow test --book            --- execute every code block of the book in both modes
 crow test --docs            --- the docs cover every compiler name, and name nothing the compiler lacks
-crow check                  --- automatic verification (uses crowfile; or: crow check file.crow)
+crow check                  --- automatic verification (uses crowfile; or: crow check file.crow); records and diffs the app baseline
+crow check --accept         --- accept every baseline change at once (the loop's `a`, for a script or a deliberate sweep)
 crow check --db <url>       --- + schema-aware database checks (or db = '…' in the crowfile)
 crow check --strict         --- exit 1 on any finding (CI)
 crow fix file.crow --hazard N [--option M]   --- apply a fix from the check report
