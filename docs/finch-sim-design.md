@@ -365,3 +365,85 @@ lines. New finding: `crow build` printed "build ok" while its inner
 cargo invocation had not recompiled the changed crow_web dependency —
 the copied binary was stale. Needs a build-freshness guarantee (fix
 list).
+
+## 14. Reimplementation, not port — the page rethought (2026-09-07)
+
+The vocabulary is complete (ui-engine-design.md, "The primitives"), so
+the question is no longer *can* Crow draw the Python page but *should*
+it. It should not. The Python simulation page is 2,458 lines of React in
+four components, fifteen effects coordinating fetches, two modes sharing
+one session hook, five polling and navigation flows (next in gate, next
+setup, next RSI>70, auto-advance with grace windows, skip lists), nine
+filter inputs of which five are disabled inputs standing in for labels,
+a Refresh button on every panel, a Start button whose label mutates to
+"Starting…", keyboard hints inside tab labels, and a broker badge on a
+page that never talks to a broker. Each of those is a habit that a
+framework without derived views forces on you. Crow removes the cause,
+so the page is redesigned from its facts.
+
+### 14.1 The habits we leave behind, and the principle that replaces each
+
+| The Python page does | Because | Crow does instead |
+|---|---|---|
+| Polls, and puts a Refresh button on every panel | Views own fetched copies of data | Views derive from facts at every render; `serve[..., refresh = 1]` declares the period (F-3). No Refresh anywhere. |
+| Shows the live scanner config as five disabled number inputs | An input was the only component that shows a number with a label | One muted sentence: *Gate: $1–15 · change ≥ 1% · float ≤ 50M · rel vol ≥ 2 — the live scanner's, edit on the Scanner page.* One home for the config (one way to do things). |
+| Mutates the button label to "Starting…" | Status had nowhere else to live | Status is a value: a status line and a toast; the button keeps its name and `disabled = starting` follows state. |
+| Two modes, a toggle, and "(A)/(B)" key hints | Two components grew separately | One session. "Mode" is derived: a session that placed trades was practice. The scanner's navigation (next in gate, next setup) is available in every session. No tabs. |
+| Window start and end as time pickers, a speed input, an Autoplay checkbox | Every parameter became a control | A window preset `select` (Pre-market 06:55–09:30 by default, Open 09:30–10:30, Full day), speed as a `radio` bound to state, Start starts paused. |
+| A free-text symbol field | Nothing knew the universe at that point | `select` over the day's universe — the scanner already computes it; no typos, no "no such symbol". |
+| A ten-column sessions table with NBBO/fallback counters and an unconfirmed ✕ | Diagnostics leaked into the product | A list of session rows: when · day · symbols · trades · W/L · P&L. The row replays; delete is behind a confirm `modal`; fallback counters stay in the database. |
+| A client-side chart with its own zoom, crosshair and clock | KLineChart owns state the app can't see | The chart is a view over the frame; seek by clicking a bar; the play-head is derived from base/anchor/speed/playing (§3). |
+| Fifteen effects | Every fetch needed a lifecycle | None. Handlers set facts; views derive. "Next in gate" is one handler that asks ClickHouse for the next moment and sets `base`. |
+| Bookmarks in a separate card with its own Refresh | A separate fetch | A list under the sessions, present only when there are bookmarks. A bookmark is a fact (day, symbol, moment, label); clicking one starts a session at that moment. |
+| A 13-page nav and a broker connection badge | The shell was shared with the live app | The shell lists the pages this app has and grows with it; the chip shows the data facts (ClickHouse `finch_trading`, datasets ready through the latest day). |
+
+### 14.2 The page, region by region
+
+The look is one line: `serve[3100, refresh = 1, theme = 'dark',
+density = 'compact', wide = true]`. Composites are views: `stat[label,
+value]`, `panel[title, ...]`, `session_row[s]`.
+
+1. **Shell.** `nav[Simulation, Scanner, active = path]` on the left; the
+   data chip on the right.
+2. **Setup** (no session). One card, one row: Day (`field`, date),
+   Symbol (`select` over the day's universe), Window (`select` of presets),
+   Speed (`radio`), *Random day & symbol*, **Start**. Under it the gate
+   sentence. That is six controls where the Python page has fourteen.
+3. **Session** (running). A header row with `sym · day` and the stat
+   tiles — Clock (ET), Progress, Last, High, Volume — and two buttons,
+   *Bookmark* and *End session* (confirm modal). The chart at full width:
+   candles, both VWAP lines, volume, RSI and CVD panes, fills as markers,
+   click to seek. A transport row: one Play/Pause button whose label
+   derives from `playing`, the speed radio, *Jump to 09:25*, *Restart*, the
+   seek slider, and the navigation trio *Next in gate · Next setup · Next
+   RSI > 70*. A trading row: Qty (`field`, number), **Buy**, **Sell**, the
+   status line. The scanner at the play-head in a `scroll`, gate rows
+   marked, click focuses the symbol. The blotter, a table with `delta =
+   ['pnl']`.
+4. **Past sessions.** A list of `session_row` views; empty state one
+   line. **Bookmarks** below it when any exist.
+
+Nothing on the page polls, refreshes, or holds a copy of anything.
+
+### 14.3 What Crow makes easier, and what this will teach it
+
+- The session is about ten facts (day, symbol, window, base, anchor,
+  speed, playing, session id, qty, status); the page is a function of
+  them and `now[]`.
+- The acceptance test is a test block, not a screenshot: `app[sim, width
+  = 1280, wide = true, density = 'compact']`, start, seek, buy, sell, end,
+  and the sessions list shows the row. Screenshots are for the reader.
+- Modules: `views/shell.crow`, `views/sim.crow`, `scanner.crow`; module
+  state now survives both modes.
+- Gaps this is likely to surface, in order of likelihood: the
+  stringified SQL parameters (`'`session_id`'`) that stand in for
+  mixed-type parameter lists; a P&L column computed at render from two
+  frame columns; the harness's look arguments; `for` as a call argument.
+  Each is a language fix, not an app workaround.
+
+### 14.4 Acceptance
+
+Region by region, in the order above: a harness test for the region and
+a side-by-side screenshot against the Python page at 1280px. Not a pixel
+match — the same information in the same order, with fewer controls and
+no button that exists to compensate for a missing derivation.

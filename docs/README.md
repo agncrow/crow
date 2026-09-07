@@ -38,6 +38,7 @@ These explain how Crow got here. They are kept for the reasoning; where a code s
 | [web-framework.md](web-framework.md) | The web framework's design and module inventory (vision document; sketches may predate current syntax). |
 | [ui-framework.md](ui-framework.md) | The LiveView-style UI framework design, phase by phase (vision document; predates `view` blocks). |
 | [style-module-design.md](style-module-design.md) | The default stylesheet, the seven classes and eight tokens, and the `css/app.css` escape hatch. |
+| [derive-design.md](derive-design.md) | **Derivations, design round.** Values computed from facts and sources, recomputed when an input changes; freshness for external sources; keyed children; the finch simulation as the worked case. |
 | [chart-module-design.md](chart-module-design.md) | The chart element: geometry kernel, budget, roadmap. |
 | [ui-engine-design.md](ui-engine-design.md) | The layout engine design: a closed layout vocabulary, one engine in Crow, CSS as the wire format, exact UI tests without a browser (decided in principle, not built). |
 | [finch-sim-design.md](finch-sim-design.md) | The second dogfood app — a trading simulator rebuilt in Crow. |
