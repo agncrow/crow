@@ -253,7 +253,44 @@ impl<'a> Validator<'a> {
                 self.defined_vars = saved;
                 self.in_test_block = saved_in_test;
             }
+            // A derivation reads facts and sources and returns a value: it
+            // is a computation, so it writes no fact, and it is read by
+            // name, so nothing assigns it.
+            Stmt::Derive { name, body, .. } => {
+                self.check_reserved(name, "derivation");
+                if !self.ui_mode {
+                    self.error(format!("derive {} needs reactive state — derivations live in a `use ui` program with a page", name));
+                }
+                self.defined_vars.insert(name.clone());
+                let saved = self.defined_vars.clone();
+                fn first_fact_write(stmts: &[Stmt], facts: &std::collections::BTreeSet<String>) -> Option<String> {
+                    for s in stmts {
+                        match s {
+                            Stmt::Assign { name, .. } if facts.contains(name) => return Some(name.clone()),
+                            Stmt::MultiAssign { names, .. } => { if let Some(n) = names.iter().find(|n| facts.contains(*n)) { return Some(n.clone()); } }
+                            Stmt::If { then_body, else_body, .. } => {
+                                if let Some(n) = first_fact_write(then_body, facts) { return Some(n); }
+                                if let Some(eb) = else_body { if let Some(n) = first_fact_write(eb, facts) { return Some(n); } }
+                            }
+                            Stmt::For { body, .. } | Stmt::While { body, .. } => { if let Some(n) = first_fact_write(body, facts) { return Some(n); } }
+                            _ => {}
+                        }
+                    }
+                    None
+                }
+                if let Some(v) = first_fact_write(body, &self.module_vars) {
+                    self.error(format!("derive {} writes '{}' — a derivation computes a value; only handlers write facts", name, v));
+                }
+                self.fn_depth += 1;
+                for s in body { self.validate_stmt(s); }
+                self.fn_depth -= 1;
+                self.defined_vars = saved;
+                self.defined_vars.insert(name.clone());
+            }
             Stmt::Assign { name, value } => {
+                if self.ctx.derives.contains(name) {
+                    self.error(format!("'{}' is derived — it follows what it reads; change those facts instead of assigning it", name));
+                }
                 if !self.defined_vars.contains(name) {
                     self.check_reserved(name, "variable");
                 }
@@ -310,6 +347,9 @@ impl<'a> Validator<'a> {
                 if !reactive_exempt {
                     for mv in &self.module_vars {
                         self.defined_vars.remove(mv);
+                    }
+                    for d in &self.ctx.derives {
+                        self.defined_vars.remove(d);
                     }
                 }
                 // Inside a view, the element vocabulary is defined

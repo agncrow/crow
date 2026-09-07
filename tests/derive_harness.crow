@@ -1,0 +1,77 @@
+--- Derivations: values computed from facts and sources, read by name,
+--- recomputed only when something they read changed (derive-design.md).
+use web, ui, db
+
+conn = db.connect['sqlite://:memory:']
+
+sym = 'IMRN'
+qty = 100
+runs = 0
+
+--- counts how often the body runs — a derivation must not recompute
+--- when nothing it read changed
+fn count_run[]
+  runs = runs + 1
+  return runs
+
+derive total
+  count_run[]
+  return qty * 2
+
+derive label
+  return 'x `sym` total `total`'
+
+derive trades[fresh = 300]
+  return query[conn, 'SELECT id, symbol, px FROM trades WHERE symbol = ?', [sym]]
+
+fn double[]
+  qty = qty * 2
+
+fn rename[]
+  sym = 'AXTX'
+
+fn same[]
+  qty = qty
+
+fn setup[]
+  exec[conn, 'CREATE TABLE IF NOT EXISTS trades (id INTEGER PRIMARY KEY, symbol TEXT, px REAL)']
+
+fn buy[]
+  exec[conn, 'INSERT INTO trades (symbol, px) VALUES (?, ?)', [sym, 1.79]]
+
+view render[]
+  return stack[p[label], p['`len[trades]` trades'], gap = 's']
+
+test a_derivation_recomputes_only_when_an_input_changed[]
+  a = app[render]
+  click[a, setup]
+  h = html[a]
+  assert[contains[h, 'x IMRN total 200']]
+  assert[runs eq 1]
+  html[a]
+  assert[runs eq 1]
+  click[a, double]
+  assert[contains[html[a], 'total 400']]
+  assert[runs eq 2]
+  --- a fact rewritten to the same value moves nothing, so the derivation
+  --- is not recomputed
+  click[a, same]
+  html[a]
+  assert[runs eq 2]
+
+test a_derivation_reads_another[]
+  a = app[render]
+  click[a, setup]
+  click[a, rename]
+  assert[contains[html[a], 'x AXTX']]
+
+test a_table_write_recomputes_a_query[]
+  a = app[render]
+  click[a, setup]
+  assert[contains[html[a], '0 trades']]
+  click[a, buy]
+  assert[contains[html[a], '1 trades']]
+  click[a, buy]
+  assert[contains[html[a], '2 trades']]
+
+page['/', render]

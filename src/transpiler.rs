@@ -98,6 +98,13 @@ pub struct Transpiler {
     /// Reactive variables: top-level assignments in UI files that become state-backed.
     /// Maps var_name -> (type, default_value_as_rust_string)
     reactive_vars: std::collections::BTreeMap<String, (CrowType, String)>,
+    /// While emitting a reactive handler: the state-persisting lines to run
+    /// on every exit (before each return and on fall-through), so a handler
+    /// that returns early still writes its facts back.
+    reactive_epilogue: Option<Vec<String>>,
+    /// derive blocks: their read sets and freshness (derive-design.md)
+    derive_fns: std::collections::BTreeSet<String>,
+    derive_specs: std::collections::BTreeMap<String, (crate::derive::ReadSet, f64)>,
     /// Functions used as event handlers via function references (click = fn_name)
     reactive_event_handlers: std::collections::HashSet<String>,
     /// Render functions that use reactive variables (0-param render fns in page[])
@@ -156,6 +163,9 @@ impl Transpiler {
             has_page_routes: false,
             has_noapp_web: false,
             reactive_vars: std::collections::BTreeMap::new(),
+            reactive_epilogue: None,
+            derive_fns: std::collections::BTreeSet::new(),
+            derive_specs: std::collections::BTreeMap::new(),
             reactive_event_handlers: std::collections::HashSet::new(),
             reactive_render_fns: std::collections::HashSet::new(),
             data_source_vars: std::collections::HashSet::new(),
@@ -1067,6 +1077,22 @@ impl Transpiler {
                     self.reactive_vars.insert(vname, (unified, default_str));
                 }
             }
+            // Derivations: reactive functions of the state, memoized by what
+            // they read; the read sets are the same the interpreter computes
+            {
+                let facts: std::collections::BTreeSet<String> = stmts.iter().filter_map(|s| if let Stmt::Assign { name, .. } = s { Some(name.clone()) } else { None }).collect();
+                let derive_names = self.ctx.derives.clone();
+                let bodies: std::collections::BTreeMap<String, Vec<Stmt>> = self.ctx.functions.iter().filter(|(n, _)| !derive_names.contains(*n)).map(|(n, s)| (n.clone(), s.body.clone())).collect();
+                let owned = crate::derive::owned_tables(stmts, &bodies);
+                for s in stmts {
+                    if let Stmt::Derive { name, fresh, body } = s {
+                        let rs = crate::derive::read_set(body, &facts, &derive_names, &bodies, &owned);
+                        self.derive_specs.insert(name.clone(), (rs, *fresh));
+                        self.derive_fns.insert(name.clone());
+                        self.reactive_render_fns.insert(name.clone());
+                    }
+                }
+            }
 
             // Scan reactive render function bodies for event handler references
             if !self.reactive_render_fns.is_empty() {
@@ -1118,6 +1144,12 @@ impl Transpiler {
                     if self.ctx.functions.contains_key(&h) && !self.ctx.views.contains(&h) && self.reactive_event_handlers.insert(h.clone()) {
                         self.live_handle_fns.insert(h);
                     }
+                }
+                // A derivation read by name in a view is a value, never a
+                // handler — it keeps its own signature
+                for d in self.derive_fns.clone() {
+                    self.reactive_event_handlers.remove(&d);
+                    self.live_handle_fns.remove(&d);
                 }
             }
         }
@@ -1761,7 +1793,8 @@ impl Transpiler {
             }
         };
 
-        let rust_name = Self::rust_fn_name(name);
+        let is_derive = self.derive_fns.contains(name);
+        let rust_name = if is_derive { format!("__derive_body_{}", name) } else { Self::rust_fn_name(name) };
         self.emit_line(&format!("fn {}({}){} {{", rust_name, params.join(", "), ret_str));
         self.indent += 1;
 
@@ -1815,6 +1848,18 @@ impl Transpiler {
                 self.declared.insert(vname.clone());
                 self.ctx.vars.insert(vname.clone(), vtype.clone());
             }
+            // Derivations this body reads: computed (or served from the
+            // cache) at the start, as the interpreter does on first read
+            if !self.derive_fns.is_empty() {
+                let reads = crate::derive::read_set(&sig.body, &std::collections::BTreeSet::new(), &self.ctx.derives, &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new()).derives;
+                for d in reads {
+                    if d == name { continue; }
+                    let dty = self.ctx.functions.get(&d).map(|s| s.return_type.clone()).unwrap_or(CrowType::Unknown);
+                    self.emit_line(&format!("let {} = __derive_{}(state);", d, d));
+                    self.declared.insert(d.clone());
+                    self.ctx.vars.insert(d, dty);
+                }
+            }
             // Data source preamble: inject JSON-to-CrowFrame conversion for poll/fetch vars
             if is_reactive_render && !self.data_source_vars.is_empty() {
                 let ds_vars = self.data_source_vars.clone();
@@ -1830,15 +1875,46 @@ impl Transpiler {
         }
 
         // For functions with non-void return type, convert last ExprStmt to Return
-        // so it becomes a tail expression (no semicolon) in Rust
+        // so it becomes a tail expression (no semicolon) in Rust. A reactive
+        // handler is void and runs its state-persisting epilogue after the
+        // body, so its last statement must NOT become a tail return (which
+        // would leave the epilogue dead after it — a handler ending in a
+        // bare fallible call would then persist nothing).
         let mut body = sig.body.clone();
-        if !matches!(sig.return_type, CrowType::Void) {
+        if is_reactive_handler || is_live_handle {
+            // a handler is void: undo the parser's implicit tail return so the
+            // last statement is a plain effect and the epilogue follows it
+            if let Some(last_idx) = body.iter().rposition(|s| !matches!(s, Stmt::Line(_))) {
+                if let Stmt::Return(Some(e)) = &body[last_idx] {
+                    body[last_idx] = Stmt::ExprStmt(e.clone());
+                }
+            }
+        } else if !matches!(sig.return_type, CrowType::Void) {
             if let Some(last_idx) = body.iter().rposition(|s| !matches!(s, Stmt::Line(_))) {
                 if let Stmt::ExprStmt(e) = &body[last_idx] {
                     body[last_idx] = Stmt::Return(Some(e.clone()));
                 }
             }
         }
+        // Build the reactive handler's epilogue and make it available to
+        // every return inside the body
+        if is_reactive_handler {
+            self.needs_serde_json = true;
+            let mut lines: Vec<String> = Vec::new();
+            if !self.derive_fns.is_empty() {
+                let bodies: std::collections::BTreeMap<String, Vec<Stmt>> = self.ctx.functions.iter().filter(|(n, _)| !self.derive_fns.contains(*n)).map(|(n, s)| (n.clone(), s.body.clone())).collect();
+                let reach = crate::derive::called_fns(&sig.body, &bodies);
+                let reach_bodies: std::collections::BTreeMap<String, Vec<Stmt>> = reach.iter().filter_map(|n| bodies.get(n).map(|b| (n.clone(), b.clone()))).collect();
+                for t in crate::derive::owned_tables(&sig.body, &reach_bodies) {
+                    lines.push(format!("state.note_table_write(\"{}\");", t));
+                }
+            }
+            for (vname, _) in self.reactive_vars.clone() {
+                lines.push(format!("state.set(\"{}\", serde_json::json!({}));", vname, vname));
+            }
+            self.reactive_epilogue = Some(lines);
+        }
+
         // Views render sequentially — they describe a tree; wave-parallelizing
         // render statements risks moving shared reads into closures for no win
         if is_component_view || is_live_render || is_reactive_render {
@@ -1849,13 +1925,12 @@ impl Transpiler {
             self.emit_stmts_parallel(&body);
         }
 
-        // Reactive epilogue: inject state.set calls for all reactive variables (handlers only)
-        if is_reactive_handler {
-            self.needs_serde_json = true;
-            let reactive_vars = self.reactive_vars.clone();
-            for (vname, _) in &reactive_vars {
-                self.emit_line(&format!("state.set(\"{}\", serde_json::json!({}));", vname, vname));
-            }
+        // Reactive epilogue: state.set for every reactive var and a
+        // note_table_write for every table this handler writes — run on the
+        // fall-through here, and injected before every early return (the
+        // Return arm reads self.reactive_epilogue)
+        if let Some(lines) = self.reactive_epilogue.take() {
+            for l in &lines { self.emit_line(l); }
         }
 
         self.declared = saved_declared;
@@ -1868,6 +1943,28 @@ impl Transpiler {
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
+
+        // The memoizing reader: refresh the derivations it reads, then ask
+        // the state for the cached value or a recomputation
+        if is_derive {
+            let (rs, fresh) = self.derive_specs.get(name).cloned().unwrap_or_default();
+            let ty = match &sig.return_type { CrowType::Void | CrowType::Unknown => "String".to_string(), t => t.to_rust_type() };
+            let eq = if matches!(sig.return_type, CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Bool) { "|a, b| a == b" } else { "|_a, _b| false" };
+            let list = |xs: &std::collections::BTreeSet<String>| xs.iter().map(|x| format!("\"{}\"", x)).collect::<Vec<_>>().join(", ");
+            self.emit_line(&format!(
+                "static __DERIVE_SPEC_{n}: crow_web::live::DeriveSpec = crow_web::live::DeriveSpec {{ name: \"{n}\", facts: &[{f}], derives: &[{d}], tables: &[{t}], now: {now}, external: {ext}, fresh: {fresh:?} }};",
+                n = name, f = list(&rs.facts), d = list(&rs.derives), t = list(&rs.tables), now = rs.now, ext = rs.external, fresh = fresh
+            ));
+            self.emit_line(&format!("fn __derive_{}(state: &CrowLiveState) -> {} {{", name, ty));
+            self.indent += 1;
+            for d in &rs.derives {
+                if d != name { self.emit_line(&format!("let _ = __derive_{}(state);", d)); }
+            }
+            self.emit_line(&format!("state.derive(&__DERIVE_SPEC_{n}, __derive_body_{n}, {eq})", n = name, eq = eq));
+            self.indent -= 1;
+            self.emit_line("}");
+            self.emit_line("");
+        }
     }
 
     /// Emit the CrowDual struct with operator implementations for forward-mode AD.
@@ -2419,6 +2516,14 @@ impl Transpiler {
                 }
             }
             Stmt::Return(Some(e)) => {
+                if let Some(lines) = self.reactive_epilogue.clone() {
+                    // a handler's early return still writes its facts back
+                    let expr_str = self.expr_to_string(e);
+                    self.emit_line(&format!("let _ = {};", expr_str));
+                    for l in &lines { self.emit_line(l); }
+                    self.emit_line("return;");
+                    return;
+                }
                 let expr_str = self.owned_expr_str(e);
                 let expr_type = self.ctx.infer_expr(e);
                 // A void function's implicit return (its last statement is a call
@@ -2438,6 +2543,9 @@ impl Transpiler {
                 }
             }
             Stmt::Return(None) => {
+                if let Some(lines) = self.reactive_epilogue.clone() {
+                    for l in &lines { self.emit_line(l); }
+                }
                 self.emit_line("return;");
             }
             Stmt::Break => {
@@ -2618,6 +2726,13 @@ impl Transpiler {
             }
             // Verification blocks are check-time only — stripped from builds.
             Stmt::TestBlock { .. } => {}
+            // emitted with the functions (a reactive function of the state);
+            // outside a live app there is no state to derive from
+            Stmt::Derive { name, .. } => {
+                if !self.needs_ui || !self.has_page_routes {
+                    panic!("error: derive {} needs reactive state — a `use ui` program with a page[] (derive-design.md)", name);
+                }
+            }
             Stmt::Line(n) => {
                 self.current_line = *n;
             }

@@ -751,64 +751,9 @@ routes[{
 
 **Dependencies:** `web.view` (for rendering), `wasm-bindgen`, `web-sys` (for browser APIs).
 
-#### `web.store` — State Management
+### Reactive state (`use ui`)
 
-Import: `use web.store`
-Compiles to: WASM (browser-side)
-Status: **Deferred** — requires `web.view` WASM target to be functional first.
-
-Reactive state container. When a value changes, all views that depend on it automatically re-render. Equivalent to Solid.js signals, Leptos signals, or Vue's `reactive()`.
-
-```
-use web.store
-
-state = store[{
-  count, 0,
-  user, none
-}]
-
---- Reactive updates
-state.count = state.count + 1    --- triggers re-render of dependent views
-```
-
-**How it works:**
-
-1. `store[]` creates a reactive state object. Each field becomes a signal.
-2. The transpiler tracks which view expressions read which state fields (dependency tracking at compile time).
-3. When a field is assigned, the runtime notifies only the DOM nodes that depend on that field — fine-grained reactivity, not full re-render.
-4. This is possible because the transpiler sees the entire component at compile time and generates targeted update code.
-
-**API:**
-
-| Function | Description |
-|----------|-------------|
-| `store[map]` | Create reactive state container with initial values |
-| `computed[fn]` | Derived value that auto-updates when dependencies change |
-| `watch[fn]` | Run a side effect whenever its dependencies change |
-
-**Example — derived state:**
-
-```
-use web.store
-
-state = store[{items, [], filter, 'all'}]
-
-visible = computed[fn[]
-  if state.filter eq 'all'
-    state.items
-  else
-    filter[state.items, is_active]   --- named predicate (no lambdas)
-]
-```
-
-**Rust implementation plan:**
-
-- Each signal is an `Rc<RefCell<T>>` with a subscriber list.
-- `computed` creates a derived signal that re-evaluates when upstream signals change.
-- `watch` registers a callback on the signal's subscriber list.
-- The transpiler generates the dependency graph at compile time — no runtime tracking overhead.
-
-**Dependencies:** `web.view` (for DOM integration), `wasm-bindgen`.
+Reactive state is the language's: top-level variables are facts written by handlers, `derive` blocks are values computed from them and from data sources, views read both, and the runtime recomputes only what an input changed (language-spec.md "Derivations", derive-design.md). An earlier sketch of a signal store (`store`, `computed`, `watch`) is retired: it was this idea in a JavaScript-shaped costume.
 
 #### Design Note: `web.router` and `web.store` are deferred
 

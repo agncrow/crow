@@ -49,10 +49,49 @@ pub struct DataSource {
     pub interval_secs: Option<u64>,
 }
 
+/// What a derivation reads (derive-design.md §3.2), fixed at compile time
+/// by the same analysis the interpreter uses.
+pub struct DeriveSpec {
+    pub name: &'static str,
+    pub facts: &'static [&'static str],
+    pub derives: &'static [&'static str],
+    pub tables: &'static [&'static str],
+    pub now: bool,
+    pub external: bool,
+    pub fresh: f64,
+}
+
+/// A derivation's cached value and the input versions it was computed from.
+#[derive(Clone)]
+pub struct DerivedSlot {
+    value: std::sync::Arc<dyn std::any::Any + Send + Sync>,
+    version: u64,
+    facts_seen: Vec<(String, u64)>,
+    derives_seen: Vec<(String, u64)>,
+    tables_seen: Vec<(String, u64)>,
+    tick_seen: u64,
+    computed_at: f64,
+}
+
+impl std::fmt::Debug for DerivedSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DerivedSlot(v{})", self.version)
+    }
+}
+
 /// Server-side component state.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CrowLiveState {
     pub data: HashMap<String, serde_json::Value>,
+    /// one version per fact key, bumped by every set — what derivations
+    /// compare their inputs against
+    pub versions: HashMap<String, u64>,
+    /// tables this program wrote, versioned the same way
+    pub table_versions: HashMap<String, u64>,
+    /// one per render: what "as fresh as the loop" means
+    pub tick: u64,
+    /// the derivation cache, per session
+    derived: std::sync::Mutex<HashMap<String, DerivedSlot>>,
     /// Registered data sources (fetch/poll).
     pub sources: Vec<DataSource>,
     /// Session-scoped channel delivering later[] state deltas to the live loop.
@@ -143,10 +182,71 @@ impl CrowLiveState {
     pub fn new() -> Self {
         Self {
             data: HashMap::new(),
+            versions: HashMap::new(),
+            table_versions: HashMap::new(),
+            tick: 0,
+            derived: std::sync::Mutex::new(HashMap::new()),
             sources: Vec::new(),
             later_tx: None,
             session_id: 0,
         }
+    }
+
+    /// A table this program wrote: derivations over it are stale.
+    pub fn note_table_write(&mut self, table: &str) {
+        *self.table_versions.entry(table.to_string()).or_insert(0) += 1;
+    }
+
+    /// A render is a tick: derivations that read the clock, or external
+    /// sources at fresh = 0, recompute once per tick.
+    pub fn next_tick(&mut self) {
+        self.tick += 1;
+    }
+
+    /// Read a derivation (derive-design.md §3.3): the cached value while
+    /// every input it saw is unchanged, else `compute` runs and the value
+    /// is cached with the versions it was computed from. Equal scalars
+    /// keep their version (early cutoff). Inputs that are derivations must
+    /// be refreshed by the caller first, so their versions are current.
+    pub fn derive<T: Clone + Send + Sync + 'static>(
+        &self,
+        spec: &DeriveSpec,
+        compute: impl Fn(&CrowLiveState) -> T,
+        equal: impl Fn(&T, &T) -> bool,
+    ) -> T {
+        let now = crow_runtime::moments::now();
+        {
+            let cache = self.derived.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(slot) = cache.get(spec.name) {
+                let valid = spec.facts.iter().all(|f| slot.facts_seen.iter().find(|(n, _)| n == f).map(|(_, v)| *v).unwrap_or(0) == self.versions.get(*f).copied().unwrap_or(0))
+                    && spec.derives.iter().all(|d| slot.derives_seen.iter().find(|(n, _)| n == d).map(|(_, v)| *v).unwrap_or(0) == cache.get(*d).map(|s| s.version).unwrap_or(0))
+                    && spec.tables.iter().all(|t| slot.tables_seen.iter().find(|(n, _)| n == t).map(|(_, v)| *v).unwrap_or(0) == self.table_versions.get(*t).copied().unwrap_or(0))
+                    && (!spec.now || slot.tick_seen == self.tick)
+                    && (!spec.external || if spec.fresh > 0.0 { now - slot.computed_at <= spec.fresh } else { slot.tick_seen == self.tick });
+                if valid {
+                    if let Some(v) = slot.value.downcast_ref::<T>() {
+                        return v.clone();
+                    }
+                }
+            }
+        }
+        let value = compute(self);
+        let mut cache = self.derived.lock().unwrap_or_else(|p| p.into_inner());
+        let (old_version, changed) = match cache.get(spec.name) {
+            Some(slot) => (slot.version, !slot.value.downcast_ref::<T>().map(|old| equal(old, &value)).unwrap_or(false)),
+            None => (0, true),
+        };
+        let derives_seen: Vec<(String, u64)> = spec.derives.iter().map(|d| (d.to_string(), cache.get(*d).map(|s| s.version).unwrap_or(0))).collect();
+        cache.insert(spec.name.to_string(), DerivedSlot {
+            value: std::sync::Arc::new(value.clone()),
+            version: if changed { old_version + 1 } else { old_version },
+            facts_seen: spec.facts.iter().map(|f| (f.to_string(), self.versions.get(*f).copied().unwrap_or(0))).collect(),
+            derives_seen,
+            tables_seen: spec.tables.iter().map(|t| (t.to_string(), self.table_versions.get(*t).copied().unwrap_or(0))).collect(),
+            tick_seen: self.tick,
+            computed_at: now,
+        });
+        value
     }
 
     /// Schedule a background fn for this session (skip-if-running). The fn
@@ -199,9 +299,16 @@ impl CrowLiveState {
         self.data.get(key)
     }
 
-    /// Set a value in state.
+    /// Set a value in state. The key's version bumps only when the value
+    /// changed, so a derivation recomputes when a fact it reads actually
+    /// moved — a handler that rewrites a fact to the same value costs
+    /// nothing downstream.
     pub fn set(&mut self, key: &str, value: serde_json::Value) {
+        let changed = self.data.get(key) != Some(&value);
         self.data.insert(key.to_string(), value);
+        if changed {
+            *self.versions.entry(key.to_string()).or_insert(0) += 1;
+        }
     }
 
     /// Get an i64 from state, with default.
@@ -240,6 +347,21 @@ impl CrowLiveState {
             key: key.to_string(),
             interval_secs: Some(interval_secs),
         });
+    }
+}
+
+impl Clone for CrowLiveState {
+    fn clone(&self) -> Self {
+        Self {
+            data: self.data.clone(),
+            versions: self.versions.clone(),
+            table_versions: self.table_versions.clone(),
+            tick: self.tick,
+            derived: std::sync::Mutex::new(self.derived.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            sources: self.sources.clone(),
+            later_tx: self.later_tx.clone(),
+            session_id: self.session_id,
+        }
     }
 }
 
@@ -495,6 +617,7 @@ where
                         }
                     }
                 }
+                state.next_tick();
                 let vnode = (r1)(&state);
                 let body_html = vnode.to_html();
                 let js = live_js(&ws_p);
@@ -533,6 +656,7 @@ where
                         }
                     }
 
+                    state.next_tick();
                     let mut last_vnode = (r2)(&state);
 
                     // Build poll intervals — collect sources that have interval_secs
@@ -678,6 +802,7 @@ where
                         if state_changed {
                             // Re-render and diff
                             let t0 = std::time::Instant::now();
+                            state.next_tick();
                             let new_vnode = (r2)(&state);
                             if let Some(budget) = budget_ms() {
                                 let ms = t0.elapsed().as_millis();

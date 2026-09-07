@@ -1,6 +1,7 @@
 mod ast;
 mod checker;
 mod db_check;
+mod derive;
 mod lsp;
 mod interpreter;
 mod lexer;

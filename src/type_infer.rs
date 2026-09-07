@@ -226,6 +226,9 @@ pub struct TypeContext {
     /// Fns referenced as values inside view bodies or page[] registrations —
     /// event handlers, which share the reactive-state exemption with views
     pub view_handlers: std::collections::BTreeSet<String>,
+    /// Names declared with `derive` — values computed from facts, read by
+    /// name, never assigned (derive-design.md)
+    pub derives: std::collections::BTreeSet<String>,
     /// Modules imported bare (no alias) — their exports are reserved and
     /// callable bare in this file
     pub bare_modules: std::collections::BTreeSet<String>,
@@ -298,6 +301,7 @@ impl TypeContext {
             call_signatures: BTreeMap::new(),
             views: std::collections::BTreeSet::new(),
             view_handlers: std::collections::BTreeSet::new(),
+            derives: std::collections::BTreeSet::new(),
             bare_modules: std::collections::BTreeSet::new(),
             module_aliases: BTreeMap::new(),
             specializations: BTreeMap::new(),
@@ -333,6 +337,16 @@ impl TypeContext {
                     if *is_view {
                         self.views.insert(name.clone());
                     }
+                }
+                // A derivation is typed like a parameterless function and read
+                // like a variable of its return type
+                Stmt::Derive { name, body, .. } => {
+                    self.functions.insert(name.clone(), FnSig {
+                        params: vec![],
+                        return_type: CrowType::Unknown,
+                        body: body.clone(),
+                    });
+                    self.derives.insert(name.clone());
                 }
                 Stmt::Use { path, alias } => {
                     match alias {
@@ -600,6 +614,8 @@ impl TypeContext {
                     break;
                 }
             }
+            // a derivation referenced in a view is read, not wired
+            let handlers: std::collections::BTreeSet<String> = handlers.into_iter().filter(|h| !self.derives.contains(h)).collect();
             self.view_handlers = handlers;
 
             // A seek handler receives the clicked bucket's moment: its
@@ -652,7 +668,10 @@ impl TypeContext {
 
         // Pass 2+: iterate call-site scanning and function body inference
         // until types stabilize (handles cross-function type propagation)
+        // A derivation's name reads as a variable of the type its body returns
+        self.sync_derive_types();
         for _round in 0..5 {
+            self.sync_derive_types();
             // Scan call sites with function-local variable context
             for stmt in stmts {
                 self.collect_call_types_stmt(stmt);
@@ -1692,6 +1711,17 @@ impl TypeContext {
 
     /// Infer the base return type of a named call (function or builtin),
     /// without auto-propagation wrapping.
+    /// `derive x` reads as a variable typed by its body's return type.
+    pub fn sync_derive_types(&mut self) {
+        for d in self.derives.clone() {
+            if let Some(sig) = self.functions.get(&d) {
+                if !matches!(sig.return_type, CrowType::Unknown) {
+                    self.vars.insert(d, sig.return_type.clone());
+                }
+            }
+        }
+    }
+
     pub fn infer_call_base(&self, name: &str, args: &[Expr], _callee: &Expr) -> CrowType {
         // Struct constructor
         if self.structs.contains_key(name) {

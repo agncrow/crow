@@ -71,6 +71,36 @@ Top-level variables in a ui program are reactive state (see Function Scope). Thr
 
 Inputs are state: the reader's change lands in the variable, the handlers read it, and the next render draws it. There is no "value of the input" apart from the variable.
 
+### Derivations — `derive`
+
+Facts are stored; beliefs are derived. A derivation is a value computed from facts and data sources, read like a fact, never assigned, and recomputed only when something it read changed:
+
+```
+qty = 100
+sym = 'IMRN'
+
+derive total
+    return qty * 2
+
+derive trades[fresh = 300]
+    return query[book, 'SELECT * FROM trades WHERE symbol = ?', [sym]]
+
+view render[]
+    return stack[p['total `total`'], table[trades]]
+```
+
+`derive name` opens a block with a `return`, like a view; it never takes parameters. The name reads as a variable anywhere a fact can be read — views, handlers, tests, other derivations — and assigning it is an error that says what to change instead. A derivation writes no fact: only handlers write.
+
+**What it reads is decided once, from the source**, and both execution modes obey the same sets: the facts and derivations it names (transitively through the functions it calls, and inside interpolated strings), `now[]` if it or a callee reads the clock, and the tables its query literals read. A derivation recomputes, on its next read, when
+
+1. a handler wrote a fact it reads;
+2. a derivation it reads recomputed and its value changed — an equal number, string or bool cuts the chain (frames always propagate);
+3. an `exec` in this program wrote a table it reads;
+4. it reads `now[]` and a tick of `serve refresh` passed;
+5. it reads a table this program never writes — an external source — and its freshness window elapsed. `fresh = N` is seconds; the default `fresh = 0` means *as fresh as the loop*: recomputed every tick, which is what a query inside a view did before. Declaring `fresh` is the relaxation.
+
+A derivation that fails — a query error — holds the error value; readers see `.ok` and `.reason` and a view renders the reason in place. `captured[x]` on a derivation is the moment it last ran. Derivations live in `use ui` programs with a page: they are reactive state, computed per session; in the test harness `html[a]` is a tick and `click[a, h]` marks what the handler wrote. Design: `derive-design.md`.
+
 ### Tables over frames
 
 `table[frame]` renders a frame's rows. Numeric columns are typed: their cells carry the class `num` and the stylesheet right-aligns them with tabular figures. Four named arguments make it interactive and legible: `click = handler` sends the row's key to the handler when a row is clicked (`fn focus[symbol]`), `key = 'col'` names the column whose cell is sent (the first column by default), `mark = 'col'` names a column whose truthy cells put the class `marked` on their row, tinted by the stylesheet, and `delta = ['pnl', 'pct']` names columns whose cells are colored by sign (`up` / `down`).
@@ -95,7 +125,7 @@ Pages are composed from layout primitives, never styled with CSS. Five container
 
 | Container | Rule | Example |
 |---|---|---|
-| `stack[a, b, ...]` | children top to bottom, each the container's full content width | [Frames: `use frame`](../by-example/frames.md) · [Math: tensors](../by-example/math.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [View Blocks](../ch12-01-views.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `stack[a, b, ...]` | children top to bottom, each the container's full content width | [Frames: `use frame`](../by-example/frames.md) · [Math: tensors](../by-example/math.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [View Blocks](../ch12-01-views.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Derivations](../ch12-08-derive.md) |
 | `row[a, b, ...]` | children left to right on one line; overflow is a failure `fits[]` reports, never a silent wrap (`wrap = true` opts in) | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Web: responses and submodules](../by-example/web-more.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `grid[a, b, ..., columns = 2]` | cells left-to-right, top-to-bottom, equal columns; `columns = '240px fill'` names tracks | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Charts and Styling](../ch12-06-charts-and-style.md) |
 | `overlay[base, top]` | `top` positioned over `base` by `anchor = 'center' \| 'top_right' \| ...` | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Charts and Styling](../ch12-06-charts-and-style.md) |

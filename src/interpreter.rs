@@ -425,6 +425,39 @@ fn harness_path_matches(path: &str, steps: &[(String, String)]) -> bool {
     true
 }
 
+/// Early cutoff (derive-design.md §3.3): equal scalars and strings mark
+/// nothing downstream; everything else counts as changed.
+fn scalar_equal(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Int(x), Value::Int(y)) => x == y,
+        (Value::Float(x), Value::Float(y)) => x == y,
+        (Value::Str(x), Value::Str(y)) => x == y,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// A derivation as registered: how stale it may be, what it reads, and
+/// its body as a callable.
+#[derive(Clone)]
+struct DeriveDef {
+    fresh: f64,
+    reads: crate::derive::ReadSet,
+    func: FnValue,
+}
+
+/// A derivation's cached value and the input versions it was computed from.
+#[derive(Clone)]
+struct DerivedEntry {
+    value: CrowValue,
+    version: u64,
+    facts_seen: std::collections::BTreeMap<String, u64>,
+    derives_seen: std::collections::BTreeMap<String, u64>,
+    tables_seen: std::collections::BTreeMap<String, u64>,
+    tick_seen: u64,
+    computed_at: f64,
+}
+
 #[derive(Clone)]
 pub struct Interpreter {
     /// True when user modules were inlined by expand_module_imports before
@@ -449,6 +482,16 @@ pub struct Interpreter {
     in_view: usize,
     /// Event handlers referenced from views/page[] (reactive-exempt)
     handler_fns: std::collections::HashSet<String>,
+    /// Derivations (derive-design.md): definition, static read set, the
+    /// cached value with the input versions it saw, and the version
+    /// counters those checks compare against.
+    derives: std::collections::HashMap<String, DeriveDef>,
+    derived_cache: std::collections::HashMap<String, DerivedEntry>,
+    fact_versions: std::collections::HashMap<String, u64>,
+    table_versions: std::collections::HashMap<String, u64>,
+    /// one per render: what "as fresh as the loop" means in the harness
+    tick: u64,
+    top_level_facts: std::collections::HashSet<String>,
     layout_engine_loaded: bool,
     /// alias → module path for `use X as y` (qualified-only imports)
     module_aliases: std::collections::HashMap<String, String>,
@@ -475,6 +518,12 @@ impl Interpreter {
             view_fns: std::collections::HashSet::new(),
             in_view: 0,
             handler_fns: std::collections::HashSet::new(),
+            derives: std::collections::HashMap::new(),
+            derived_cache: std::collections::HashMap::new(),
+            fact_versions: std::collections::HashMap::new(),
+            table_versions: std::collections::HashMap::new(),
+            tick: 0,
+            top_level_facts: std::collections::HashSet::new(),
             layout_engine_loaded: false,
             module_aliases: std::collections::HashMap::new(),
             bare_modules: std::collections::HashSet::new(),
@@ -585,6 +634,27 @@ impl Interpreter {
             }
         }
         collect_fns(stmts, &mut fn_names);
+
+        // Derivations: register each with its static read set; the body
+        // reads facts like a handler does (the reactive exemption)
+        {
+            let facts: std::collections::BTreeSet<String> = stmts.iter().filter_map(|s| if let Stmt::Assign { name, .. } = s { Some(name.clone()) } else { None }).collect();
+            let derive_names: std::collections::BTreeSet<String> = stmts.iter().filter_map(|s| if let Stmt::Derive { name, .. } = s { Some(name.clone()) } else { None }).collect();
+            let bodies: std::collections::BTreeMap<String, Vec<Stmt>> = stmts.iter().filter_map(|s| if let Stmt::FnDecl { name, body, .. } = s { Some((name.clone(), body.clone())) } else { None }).collect();
+            let owned = crate::derive::owned_tables(stmts, &bodies);
+            for s in stmts {
+                if let Stmt::Derive { name, fresh, body } = s {
+                    let reads = crate::derive::read_set(body, &facts, &derive_names, &bodies, &owned);
+                    self.derives.insert(name.clone(), DeriveDef {
+                        fresh: *fresh,
+                        reads,
+                        func: FnValue { name: name.clone(), params: vec![], body: std::sync::Arc::new(body.clone()) },
+                    });
+                    self.handler_fns.insert(name.clone());
+                }
+            }
+            self.top_level_facts.extend(facts);
+        }
 
         fn walk_expr(e: &Expr, fns: &std::collections::HashSet<String>, out: &mut std::collections::HashSet<String>) {
             match e {
@@ -721,7 +791,10 @@ impl Interpreter {
             })
         }
         let module_vars: std::collections::HashSet<String> = stmts.iter().filter_map(|s| if let Stmt::Assign { name, .. } = s { Some(name.clone()) } else { None }).collect();
-        let bodies: std::collections::HashMap<String, &Vec<Stmt>> = stmts.iter().filter_map(|s| if let Stmt::FnDecl { name, body, .. } = s { Some((name.clone(), body)) } else { None }).collect();
+        let bodies: std::collections::HashMap<String, &Vec<Stmt>> = stmts.iter().filter_map(|s| match s {
+            Stmt::FnDecl { name, body, .. } | Stmt::Derive { name, body, .. } => Some((name.clone(), body)),
+            _ => None,
+        }).collect();
         loop {
             let mut grown = false;
             let roots: Vec<String> = self.handler_fns.iter().cloned().collect();
@@ -979,6 +1052,8 @@ impl Interpreter {
         match stmt {
             // Verification blocks never execute — crow check consumes them.
             Stmt::TestBlock { .. } => Ok(Signal::None),
+            // registered in the prescan; nothing runs until it is read
+            Stmt::Derive { .. } => Ok(Signal::None),
             Stmt::Assign { name, value } => {
                 let val = self.eval_expr(value)?;
                 // Check for type-changing reassignment
@@ -1002,9 +1077,11 @@ impl Interpreter {
                     }
                     _ => val,
                 };
+                let changed = self.env.get(name).map(|e| !scalar_equal(&e.value, &val.value)).unwrap_or(true);
                 if !self.env.update(name, val.clone()) {
                     self.env.set(name, val);
                 }
+                self.note_fact_write(name, changed);
                 Ok(Signal::None)
             }
             Stmt::MultiAssign { names, values } => {
@@ -1025,9 +1102,11 @@ impl Interpreter {
                             )));
                         }
                     }
+                    let changed = self.env.get(name).map(|e| !scalar_equal(&e.value, &val.value)).unwrap_or(true);
                     if !self.env.update(name, val.clone()) {
                         self.env.set(name, val);
                     }
+                    self.note_fact_write(name, changed);
                 }
                 Ok(Signal::None)
             }
@@ -1638,6 +1717,9 @@ impl Interpreter {
             }
             Expr::Bool(b) => Ok(CrowValue::ok(Value::Bool(*b))),
             Expr::Ident(name) => {
+                if self.derives.contains_key(name) {
+                    return self.read_derived(name);
+                }
                 match self.env.get(name) {
                     Some(val) => Ok(val.clone()),
                     None => {
@@ -1785,7 +1867,7 @@ impl Interpreter {
                     }
                     // Module-scoped resolution: the prefix names the provider,
                     // so overlapping exports (frame.load vs math.load) resolve
-                    return self.registry.call_in(mod_name, field, &arg_vals)
+                    return { let _r = self.registry.call_in(mod_name, field, &arg_vals); self.note_sql_write(field, &arg_vals); _r }
                         .map(|v| if READER_FNS.contains(&field.as_str()) && v.is_ok() { v.stamp_captured() } else { v });
                 }
             }
@@ -1806,7 +1888,7 @@ impl Interpreter {
                 // If any arg is NumArray, route to module
                 let has_numarray = arg_vals.iter().any(|a| matches!(&a.value, Value::NumArray(_)));
                 if has_numarray && self.registry.has_function(name) {
-                    return self.registry.call(name, &arg_vals)
+                    return { let _r = self.registry.call(name, &arg_vals); self.note_sql_write(name, &arg_vals); _r }
                         .map(|v| if READER_FNS.contains(&name.as_str()) && v.is_ok() { v.stamp_captured() } else { v });
                 }
                 return self.call_builtin(name, &arg_vals);
@@ -1833,7 +1915,7 @@ impl Interpreter {
                 {
                     return self.call_builtin(name, &arg_vals);
                 }
-                return self.registry.call(name, &arg_vals)
+                return { let _r = self.registry.call(name, &arg_vals); self.note_sql_write(name, &arg_vals); _r }
                     .map(|v| if READER_FNS.contains(&name.as_str()) && v.is_ok() { v.stamp_captured() } else { v });
             }
 
@@ -2153,6 +2235,7 @@ impl Interpreter {
                     let a = self.eval_expr(&args[0])?;
                     let (f, session_width) = match &a.value { Value::App(f, w) => (f.clone(), *w), _ => return Err(format!("{}[] takes an app session first: {}[s, ...]", name, name)) };
                     let arg1 = self.eval_expr(&args[1])?;
+                    self.tick += 1;
                     self.in_view += 1;
                     let rendered = self.call_fn_value(&f, Vec::new());
                     self.in_view -= 1;
@@ -2228,6 +2311,7 @@ impl Interpreter {
                     let a = self.eval_expr(&args[0])?;
                     if let Value::App(f, _) = &a.value {
                         let f = f.clone();
+                        self.tick += 1;
                         self.in_view += 1;
                         let r = self.call_fn_value(&f, Vec::new());
                         self.in_view -= 1;
@@ -2287,7 +2371,9 @@ impl Interpreter {
                         (Value::Float(_), Value::Int(i)) => CrowValue::ok(Value::Float(*i as f64)),
                         _ => value,
                     };
-                    if let Some(scope) = self.env.scopes.first_mut() { scope.insert(var, value); }
+                    let changed = self.env.scopes.first().and_then(|sc| sc.get(&var)).map(|e| !scalar_equal(&e.value, &value.value)).unwrap_or(true);
+                    if let Some(scope) = self.env.scopes.first_mut() { scope.insert(var.clone(), value); }
+                    self.note_fact_write(&var, changed);
                     return Ok(CrowValue::done());
                 }
                 // click[a, handler] — run the handler (reactive-exempt);
@@ -2844,6 +2930,74 @@ impl Interpreter {
         r.map_err(|e| format!("layout engine: {}", e))?;
         self.layout_engine_loaded = true;
         Ok(())
+    }
+
+    /// A fact was written with a possibly-new value: bump its version only
+    /// when the value changed, so a derivation recomputes when a fact it
+    /// reads actually moved (scalar_equal is conservative — a collection
+    /// counts as changed, which over-recomputes but never under-).
+    fn note_fact_write(&mut self, name: &str, changed: bool) {
+        if changed && self.top_level_facts.contains(name) {
+            *self.fact_versions.entry(name.to_string()).or_insert(0) += 1;
+        }
+    }
+
+    /// A table was written by this program: derivations over it are stale.
+    fn note_sql_write(&mut self, fname: &str, args: &[CrowValue]) {
+        if fname != "exec" && fname != "insert" { return; }
+        if let Some(Value::Str(sql)) = args.get(1).map(|v| &v.value) {
+            let written = if fname == "insert" { vec![sql.clone()] } else { crate::derive::tables_of_sql(sql).1 };
+            for t in written {
+                *self.table_versions.entry(t).or_insert(0) += 1;
+            }
+        }
+    }
+
+    /// Read a derivation: recompute if anything it read changed since the
+    /// cached value — a fact's version, a derivation it reads, a table this
+    /// program wrote, the tick (for `now[]` and external sources at
+    /// fresh = 0), or its freshness window — else the cached value.
+    fn read_derived(&mut self, name: &str) -> Result<CrowValue, String> {
+        let def = match self.derives.get(name) { Some(d) => d.clone(), None => return Err(format!("undefined derivation '{}'", name)) };
+        // inputs that are derivations refresh first, so their versions are current
+        for d in &def.reads.derives {
+            if d != name { self.read_derived(d)?; }
+        }
+        let now = crow_runtime::moments::now();
+        let valid = match self.derived_cache.get(name) {
+            None => false,
+            Some(e) => {
+                def.reads.facts.iter().all(|f| e.facts_seen.get(f).copied() == self.fact_versions.get(f).copied())
+                    && def.reads.derives.iter().all(|d| e.derives_seen.get(d).copied() == self.derived_cache.get(d).map(|x| x.version))
+                    && def.reads.tables.iter().all(|t| e.tables_seen.get(t).copied() == self.table_versions.get(t).copied())
+                    && (!def.reads.now || e.tick_seen == self.tick)
+                    && (!def.reads.external || if def.fresh > 0.0 { now - e.computed_at <= def.fresh } else { e.tick_seen == self.tick })
+            }
+        };
+        if valid {
+            return Ok(self.derived_cache[name].value.clone());
+        }
+        let mut val = self.call_fn_value(&def.func, Vec::new())?;
+        val.captured = Some(now);
+        let (old_version, changed) = match self.derived_cache.get(name) {
+            Some(e) => (e.version, !scalar_equal(&e.value.value, &val.value)),
+            None => (0, true),
+        };
+        let entry = DerivedEntry {
+            value: val.clone(),
+            version: if changed { old_version + 1 } else { old_version },
+            facts_seen: def.reads.facts.iter().map(|f| (f.clone(), self.fact_versions.get(f).copied().unwrap_or(0))).collect(),
+            derives_seen: def.reads.derives.iter().map(|d| (d.clone(), self.derived_cache.get(d).map(|x| x.version).unwrap_or(0))).collect(),
+            tables_seen: def.reads.tables.iter().map(|t| (t.clone(), self.table_versions.get(t).copied().unwrap_or(0))).collect(),
+            tick_seen: self.tick,
+            computed_at: now,
+        };
+        // versions default to 0 for facts never written; store what we compared
+        let mut entry = entry;
+        for f in &def.reads.facts { if !self.fact_versions.contains_key(f) { entry.facts_seen.remove(f); } }
+        for t in &def.reads.tables { if !self.table_versions.contains_key(t) { entry.tables_seen.remove(t); } }
+        self.derived_cache.insert(name.to_string(), entry);
+        Ok(val)
     }
 
     fn call_fn_value(&mut self, func: &FnValue, args: Vec<CrowValue>) -> Result<CrowValue, String> {

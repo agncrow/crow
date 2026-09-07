@@ -198,6 +198,7 @@ impl Parser {
         match self.peek().clone() {
             Token::Fn => self.parse_fn_decl(false).map(|s| vec![s]),
             Token::View => self.parse_fn_decl(true).map(|s| vec![s]),
+            Token::Derive => self.parse_derive().map(|s| vec![s]),
             Token::Return => self.parse_return().map(|s| vec![s]),
             Token::Break => { self.advance(); Ok(vec![Stmt::Break]) }
             Token::Continue => { self.advance(); Ok(vec![Stmt::Continue]) }
@@ -229,6 +230,41 @@ impl Parser {
             }
         }
         Ok(Stmt::FnDecl { name, params, defaults, body, is_view })
+    }
+
+    /// `derive name` or `derive name[fresh = N]`, then a body. No parameters,
+    /// ever: a derivation reads facts and sources, it is not called.
+    fn parse_derive(&mut self) -> Result<Stmt, String> {
+        self.advance(); // skip 'derive'
+        let name = self.expect_ident()?;
+        let mut fresh = 0.0;
+        if self.check(&Token::LBracket) {
+            self.advance();
+            while !self.check(&Token::RBracket) {
+                let key = self.expect_ident()?;
+                if key != "fresh" {
+                    return Err(format!("derive {}: unknown option '{}' — the one option is fresh = seconds", name, key));
+                }
+                self.expect(&Token::Assign)?;
+                fresh = match self.peek().clone() {
+                    Token::Int(n) => { self.advance(); n as f64 }
+                    Token::Float(x) => { self.advance(); x }
+                    other => return Err(format!("derive {}: fresh = takes seconds, got {}", name, other)),
+                };
+                if self.check(&Token::Comma) { self.advance(); }
+            }
+            self.expect(&Token::RBracket)?;
+        }
+        self.skip_newlines();
+        let mut body = self.parse_block()?;
+        if let Some(last) = body.iter().rposition(|s| !matches!(s, Stmt::Line(_))) {
+            if matches!(body[last], Stmt::ExprStmt(_)) {
+                if let Stmt::ExprStmt(e) = body.remove(last) {
+                    body.insert(last, Stmt::Return(Some(e)));
+                }
+            }
+        }
+        Ok(Stmt::Derive { name, fresh, body })
     }
 
     /// `test` (attached, applies to the fn above) or `test name` (standalone),
