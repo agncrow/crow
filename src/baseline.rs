@@ -37,6 +37,18 @@ pub struct Artifacts {
     pub structure: Structure,
 }
 
+/// One node of a view's tree, kept beside its text so a wireframe can be
+/// laid out from it: the element, its literal attributes, its text with
+/// placeholders, its children; `@` names a sub-view, `for` a repeated body.
+#[derive(Debug, Default, Clone)]
+pub struct WNode {
+    pub tag: String,
+    pub attrs: Vec<(String, String)>,
+    pub text: String,
+    pub kids: Vec<WNode>,
+    pub view: String,
+}
+
 /// The shape of the app, for `crow check --show`.
 #[derive(Debug, Default, Clone)]
 pub struct Structure {
@@ -45,6 +57,8 @@ pub struct Structure {
     pub composes: BTreeMap<String, Vec<(String, String)>>,
     /// view → the guard of every path through it
     pub view_paths: BTreeMap<String, BTreeSet<String>>,
+    /// view → (guard, tree) per path, for the wireframes
+    pub wires: BTreeMap<String, Vec<(String, WNode)>>,
     /// view → (control, handler)
     pub controls: BTreeMap<String, Vec<(String, String)>>,
     /// view → facts its inputs bind
@@ -551,11 +565,61 @@ struct Wiring {
     view_paths: BTreeMap<String, BTreeSet<String>>,
     /// view → (element, attr, fact) for open/disabled attributes
     gates: BTreeMap<String, Vec<(String, String, String)>>,
+    /// a local holding a tree, as a node, while its view is walked
+    local_nodes: BTreeMap<String, WNode>,
+    /// view → (guard, tree) per path
+    wires: BTreeMap<String, Vec<(String, WNode)>>,
+}
+
+/// A value's short name for a placeholder: the last identifier of the
+/// expression with any part prefix removed — `sim_session_status` reads
+/// as ‹status›, `v1.symbol[0]` as ‹symbol›.
+fn short_name(expr: &str, m: &Model) -> String {
+    let mut best = String::new();
+    let mut word = String::new();
+    let mut words: Vec<String> = Vec::new();
+    for c in expr.chars() {
+        if c.is_alphanumeric() || c == '_' { word.push(c); } else if !word.is_empty() { words.push(std::mem::take(&mut word)); }
+    }
+    if !word.is_empty() { words.push(word); }
+    for w in words.iter().rev() {
+        if w.chars().all(|c| c.is_ascii_digit()) || w.starts_with('v') && w[1..].chars().all(|c| c.is_ascii_digit()) && w.len() > 1 { continue; }
+        best = w.clone();
+        break;
+    }
+    if best.is_empty() { best = "value".into(); }
+    for prefix in m.parts.keys() {
+        if let Some(rest) = best.strip_prefix(prefix.as_str()) { best = rest.to_string(); break; }
+    }
+    format!("‹{}›", best)
+}
+
+/// Text for a wireframe: literals as they are, spans and expressions as
+/// placeholders.
+fn placeholder(canon_text: &str, m: &Model) -> String {
+    if canon_text.starts_with('\'') && canon_text.ends_with('\'') && canon_text.len() >= 2 {
+        let inner = &canon_text[1..canon_text.len() - 1];
+        if !inner.contains('`') { return inner.to_string(); }
+        let mut out = String::new();
+        let mut in_span = false;
+        let mut span = String::new();
+        for c in inner.chars() {
+            if c == '`' {
+                if in_span { out.push_str(&short_name(&span, m)); span.clear(); }
+                in_span = !in_span;
+                continue;
+            }
+            if in_span { span.push(c) } else { out.push(c) }
+        }
+        return out;
+    }
+    short_name(canon_text, m)
 }
 
 /// Print an element tree with guards resolved for one path: elements one
-/// per line, attributes in name order, controls and bindings named.
-fn tree(m: &Model, e: &Expr, env: &Env, depth: usize, view: &str, w: &mut Wiring, out: &mut String) {
+/// per line, attributes in name order, controls and bindings named — and
+/// build the node the wireframe lays out.
+fn tree(m: &Model, e: &Expr, env: &Env, depth: usize, view: &str, w: &mut Wiring, out: &mut String) -> WNode {
     let pad = "  ".repeat(depth);
     match e {
         Expr::Call { callee, args } => {
@@ -637,34 +701,59 @@ fn tree(m: &Model, e: &Expr, env: &Env, depth: usize, view: &str, w: &mut Wiring
                     }
                     attrs.sort();
                     out.push_str(&format!("{}{}[{}]{}\n", pad, n, attrs.join(", "), if inline.is_empty() { String::new() } else { format!(" {}", inline.join(" ")) }));
-                    for c in nested { tree(m, c, env, depth + 1, view, w, out); }
-                    return;
+                    // the node: literal attributes, placeholder text, the kids
+                    let mut node = WNode { tag: n.clone(), ..Default::default() };
+                    for a in &attrs {
+                        if let Some((k, v)) = a.split_once(" = ") { node.attrs.push((k.to_string(), v.to_string())); }
+                        else if let Some(rest) = a.strip_prefix("binds ") { node.attrs.push(("binds".into(), rest.to_string())); }
+                        else if let Some((k, _)) = a.split_once(" → ") { node.attrs.push((k.to_string(), "handler".into())); }
+                    }
+                    node.text = inline.iter().map(|t| placeholder(t, m)).collect::<Vec<_>>().join(" ");
+                    for c in nested { let k = tree(m, c, env, depth + 1, view, w, out); node.kids.push(k); }
+                    return node;
                 }
                 if m.is_view(n) {
                     w.composes.entry(view.to_string()).or_default().insert(n.clone());
                     out.push_str(&format!("{}@{}[{}]\n", pad, n, args.iter().map(|a| canon(a, env)).collect::<Vec<_>>().join(", ")));
-                    return;
+                    return WNode { tag: "@".into(), view: n.clone(), ..Default::default() };
                 }
             }
-            out.push_str(&format!("{}{}\n", pad, canon(e, env)));
+            let t = canon(e, env);
+            out.push_str(&format!("{}{}\n", pad, t));
+            WNode { tag: "text".into(), text: placeholder(&t, m), ..Default::default() }
         }
-        Expr::Array(items) => { for i in items { tree(m, i, env, depth, view, w, out); } }
+        Expr::Array(items) => {
+            let mut node = WNode { tag: "list".into(), ..Default::default() };
+            for i in items { node.kids.push(tree(m, i, env, depth, view, w, out)); }
+            node
+        }
         Expr::Ident(n) => {
             if let Some(t) = env.locals.get(n) {
                 // a local holding a tree prints as that tree
-                if t.starts_with('\u{1}') { out.push_str(&t[1..].lines().map(|l| format!("{}{}\n", pad, l)).collect::<String>()); return; }
+                if t.starts_with('\u{1}') {
+                    out.push_str(&t[1..].lines().map(|l| format!("{}{}\n", pad, l)).collect::<String>());
+                    return w.local_nodes.get(n).cloned().unwrap_or_default();
+                }
             }
-            out.push_str(&format!("{}{}\n", pad, canon(e, env)));
+            let t = canon(e, env);
+            out.push_str(&format!("{}{}\n", pad, t));
+            WNode { tag: "text".into(), text: placeholder(&t, m), ..Default::default() }
         }
         Expr::ForExpr { var, iter, body } => {
             let mut inner = env.clone();
             inner.locals.insert(var.clone(), format!("each[{}]", canon(iter, env)));
             out.push_str(&format!("{}for each[{}]\n", pad, canon(iter, env)));
+            let mut node = WNode { tag: "for".into(), ..Default::default() };
             if let Some(Stmt::ExprStmt(e)) | Some(Stmt::Return(Some(e))) = body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
-                tree(m, e, &inner, depth + 1, view, w, out);
+                node.kids.push(tree(m, e, &inner, depth + 1, view, w, out));
             }
+            node
         }
-        other => out.push_str(&format!("{}{}\n", pad, canon(other, env))),
+        other => {
+            let t = canon(other, env);
+            out.push_str(&format!("{}{}\n", pad, t));
+            WNode { tag: "text".into(), text: placeholder(&t, m), ..Default::default() }
+        }
     }
 }
 
@@ -714,6 +803,7 @@ fn view_tree(m: &Model, name: &str, params: &[String], body: &[Stmt], w: &mut Wi
     let mut env = Env::default();
     for (i, p) in params.iter().enumerate() { env.locals.insert(p.clone(), format!("${}", i + 1)); }
     let mut paths: Vec<(Vec<String>, String)> = Vec::new();
+    w.local_nodes.clear();
     walk_view(m, name, body, env, Vec::new(), w, &mut paths);
     paths.sort();
     paths.dedup();
@@ -735,7 +825,8 @@ fn walk_view(m: &Model, view: &str, stmts: &[Stmt], mut env: Env, conds: Vec<Str
             Stmt::Assign { name, value } => {
                 if is_node(m, value, &env) {
                     let mut t = String::new();
-                    tree(m, value, &env, 0, view, w, &mut t);
+                    let node = tree(m, value, &env, 0, view, w, &mut t);
+                    w.local_nodes.insert(name.clone(), node);
                     env.locals.insert(name.clone(), format!("\u{1}{}", t));
                 } else {
                     let t = canon(value, &env);
@@ -749,8 +840,9 @@ fn walk_view(m: &Model, view: &str, stmts: &[Stmt], mut env: Env, conds: Vec<Str
             Stmt::Return(Some(e)) => {
                 let mut t = String::new();
                 let mut c = conds.clone(); c.sort();
-                tree(m, e, &env, 0, view, w, &mut t);
+                let node = tree(m, e, &env, 0, view, w, &mut t);
                 record_composition(w, view, &c, &t);
+                w.wires.entry(view.to_string()).or_default().push((c.join(" and "), node));
                 out.push((c, t));
                 return;
             }
@@ -771,8 +863,9 @@ fn walk_view(m: &Model, view: &str, stmts: &[Stmt], mut env: Env, conds: Vec<Str
                 if i == stmts.len() && is_node(m, e, &env) {
                     let mut t = String::new();
                     let mut c = conds.clone(); c.sort();
-                    tree(m, e, &env, 0, view, w, &mut t);
+                    let node = tree(m, e, &env, 0, view, w, &mut t);
                     record_composition(w, view, &c, &t);
+                    w.wires.entry(view.to_string()).or_default().push((c.join(" and "), node));
                     out.push((c, t));
                     return;
                 }
@@ -1051,6 +1144,7 @@ pub fn derive_artifacts(stmts: &[Stmt], ctx: &TypeContext, parts: &BTreeMap<Stri
     art.structure.pages = pages.clone();
     art.structure.composes = wiring.composed_under.clone();
     art.structure.view_paths = wiring.view_paths.clone();
+    art.structure.wires = wiring.wires.clone();
     art.structure.controls = wiring.controls.clone();
     art.structure.binds = wiring.binds.clone();
     for (h, paths) in &sigs {

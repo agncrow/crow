@@ -1,4 +1,5 @@
 mod ast;
+mod appbook;
 mod baseline;
 mod checker;
 mod db_check;
@@ -13,6 +14,7 @@ mod token;
 mod transpiler;
 mod type_infer;
 mod validator;
+mod wireframe;
 mod formatter;
 mod modules;
 mod value;
@@ -2029,17 +2031,29 @@ fn cmd_book() {
     // (use doc) with the runner built into each code block. Render it fresh
     // with the interpreter — well under a second — then serve the files.
     let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("crow"));
-    let book_dir = std::path::PathBuf::from("docs/book/crow-site");
+    let write_only = args.iter().any(|a| a == "--write");
     let site = std::path::Path::new("docs/book/site.crow");
-    if !site.exists() {
-        eprintln!("error: docs/book/site.crow not found — run `crow book` from the crow repository");
+    let book_dir = if site.exists() {
+        // the Crow Book itself, rendered by its own site program
+        let rendered = std::process::Command::new(&exe).args(["run", "-i", "docs/book/site.crow"]).status().map(|s| s.success()).unwrap_or(false);
+        let dir = std::path::PathBuf::from("docs/book/crow-site");
+        if !rendered || !dir.join("index.html").exists() {
+            eprintln!("error: rendering the book with docs/book/site.crow failed");
+            process::exit(1);
+        }
+        dir
+    } else if std::path::Path::new("crowfile").exists() || std::path::Path::new("main.crow").exists() {
+        // an app: its own book, derived from its source (app-baseline-design.md §8)
+        let entry = if std::path::Path::new("crowfile").exists() { parse_crowfile().entry } else { "main.crow".to_string() };
+        match build_app_book(&entry) {
+            Ok(dir) => { println!("crow book: the app's book is written to {}", dir.display()); dir }
+            Err(e) => { eprintln!("{}", e); process::exit(1); }
+        }
+    } else {
+        eprintln!("error: run `crow book` inside an app (a crowfile or main.crow) or the crow repository");
         process::exit(1);
-    }
-    let rendered = std::process::Command::new(&exe).args(["run", "-i", "docs/book/site.crow"]).status().map(|s| s.success()).unwrap_or(false);
-    if !rendered || !book_dir.join("index.html").exists() {
-        eprintln!("error: rendering the book with docs/book/site.crow failed");
-        process::exit(1);
-    }
+    };
+    if write_only { return; }
     let listener = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap_or_else(|e| {
         eprintln!("error: cannot listen on port {}: {}", port, e);
         process::exit(1);
@@ -2531,6 +2545,72 @@ fn cmd_test_blocks(filename: &str) {
         println!("     {}\n", issue.summary());
     }
     process::exit(1);
+}
+
+/// Everything the app's book needs, derived from the entry: the artifacts
+/// and rules, the diff against the accepted baseline, the lowered program
+/// (for the tests' steps) and the parts' files.
+fn derive_app(filename: &str) -> Result<(baseline::Artifacts, Vec<baseline::Rule>, Vec<baseline::Change>, Option<baseline::Summary>, Vec<ast::Stmt>, std::collections::BTreeMap<String, String>), String> {
+    let source = read_file(filename);
+    let stmts = build(&source)?;
+    let source_dir = std::path::Path::new(filename).parent().unwrap_or(std::path::Path::new("."));
+    let mut visited = std::collections::HashSet::new();
+    let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
+    let lowered = lower::lower_program(&stmts).map_err(|e| format!("error: {}", e))?;
+    let ctx = infer_and_validate(&lowered, false).map_err(|e| refine_error_lines(&source, &e))?;
+    let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
+    let (artifacts, rules) = baseline::derive_artifacts(&lowered, &ctx, &parts, filename);
+    let (changes, summary) = match baseline::load(filename) {
+        None => (Vec::new(), None),
+        Some(old) => { let (c, mut s) = baseline::compare(&old, &artifacts); s.dir = baseline::store_dir(filename).display().to_string(); (c, Some(s)) }
+    };
+    Ok((artifacts, rules, changes, summary, lowered, parts))
+}
+
+/// The comment a file opens with, as its description.
+fn leading_comment(path: &str) -> String {
+    let Ok(text) = std::fs::read_to_string(path) else { return String::new() };
+    let mut out: Vec<String> = Vec::new();
+    for l in text.lines() {
+        let t = l.trim();
+        if let Some(rest) = t.strip_prefix("---") { out.push(rest.trim().to_string()); } else if t.is_empty() && out.is_empty() { continue; } else { break; }
+    }
+    out.join(" ")
+}
+
+/// `crow book` inside an app: build the app's book under .crow/book and
+/// return the site directory to serve.
+fn build_app_book(entry: &str) -> Result<std::path::PathBuf, String> {
+    let (artifacts, rules, changes, summary, lowered, parts) = derive_app(entry)?;
+    let crowfile = std::fs::read_to_string("crowfile").unwrap_or_default();
+    let name = crowfile.lines().find_map(|l| {
+        let l = l.trim();
+        l.strip_prefix("name").map(|r| r.trim().trim_start_matches('=').trim().trim_matches(|c| c == '\'' || c == '"').to_string())
+    }).filter(|n| !n.is_empty()).unwrap_or_else(|| {
+        std::env::current_dir().ok().and_then(|d| d.file_name().map(|f| f.to_string_lossy().to_string())).unwrap_or_else(|| "the app".into())
+    });
+    let mut descriptions: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    descriptions.insert(entry.to_string(), leading_comment(entry));
+    let root = project_root(std::path::Path::new(entry).parent().unwrap_or(std::path::Path::new(".")));
+    for file in parts.values() {
+        let p = root.join(file);
+        descriptions.insert(file.clone(), leading_comment(&p.display().to_string()));
+    }
+    // a test belongs to the part its first view or handler belongs to
+    let mut tests: Vec<(String, String, Vec<String>)> = Vec::new();
+    for st in &lowered {
+        if let ast::Stmt::TestBlock { name: Some(name), body, .. } = st {
+            let steps = appbook::test_steps(body);
+            let mut file = entry.to_string();
+            for (prefix, f) in &parts {
+                if steps.iter().any(|s| s.contains(prefix.as_str())) { file = f.clone(); break; }
+            }
+            tests.push((file, name.clone(), steps));
+        }
+    }
+    let wide = read_file(entry).contains("wide = true");
+    let input = appbook::Input { entry, name, artifacts: &artifacts, rules: &rules, changes: &changes, baseline: summary.as_ref(), descriptions, tests, wide };
+    appbook::build(&input)
 }
 
 /// Type inference and validation of an expanded, lowered program: the gate

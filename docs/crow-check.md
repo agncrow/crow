@@ -45,6 +45,11 @@ with the change in review. New declarations are recorded; removed ones
 are reported. Nothing runs, nothing is written, nothing is called: the
 artifacts come from the source alone.
 
+`crow book`, run inside the app, is the same material as a book: each
+page with its composition tree and wireframes, a chapter per part, the
+data wiring and the changes, served on port 3008 and derived afresh on
+every start (`app-baseline-design.md` §8).
+
 `crow check --show` prints the app as a tree — each page, the views it
 composes under their guards, the inputs they bind, the controls and the
 handlers they fire, then the handlers with their writes and effects,

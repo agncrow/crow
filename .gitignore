@@ -56,3 +56,5 @@ editors/vscode/node_modules/
 # The app baseline: what each checked program does, derived and accepted (app-baseline-design.md)
 !.crow/baseline/
 !.crow/baseline/**
+# The app's book, derived by `crow book` on every start
+.crow/book/

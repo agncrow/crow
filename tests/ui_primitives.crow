@@ -131,3 +131,14 @@ test rows_carry_actions_and_hide_their_key[]
     assert[contains[h, 'class="num down"']]
     click[a, ask_delete[4]]
     assert[deleted eq 4]
+
+--- an open layer is laid out where it sits: the engine once read a
+--- column it never set for a modal's children
+view opened[]
+    return stack[p['behind'], modal[p['inside the modal'], button['Close'], open = true], gap = 'm']
+
+test an_open_modal_lays_out[]
+    a = app[opened, width = 800]
+    assert[len[box[a, 'div.modal']] eq 1]
+    assert[len[box[a, 'div.modal button']] eq 1]
+    assert[fits[a, 800]]
