@@ -25,6 +25,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Unit tests
         run: cargo test --workspace
+      - name: Live runtime tests (the feature the workspace run leaves off)
+        run: cargo test -p crow_web --features live
       - name: Build crow
         run: cargo build --release
       - name: Docs cover the compiler (and nothing more)

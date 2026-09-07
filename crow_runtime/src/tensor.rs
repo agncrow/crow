@@ -67,6 +67,30 @@ pub struct CrowTensor {
     offset: usize,
 }
 
+/// A tensor crosses a serialized boundary — reactive state, a JSON
+/// response — as its shape and its values in row-major order.
+impl serde::Serialize for CrowTensor {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut st = s.serialize_struct("CrowTensor", 2)?;
+        st.serialize_field("shape", self.shape())?;
+        st.serialize_field("data", &self.to_vec())?;
+        st.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for CrowTensor {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Wire { shape: Vec<usize>, data: Vec<f64> }
+        let w = Wire::deserialize(d)?;
+        if w.data.len() != CrowTensor::numel(&w.shape) {
+            return Err(serde::de::Error::custom("tensor shape does not match its data"));
+        }
+        Ok(CrowTensor::from_vec(w.data, w.shape))
+    }
+}
+
 impl CrowTensor {
     // ── Helpers ──────────────────────────────────────────────────────
 
@@ -1348,6 +1372,21 @@ impl crate::display::CrowDisplay for CrowTensor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tensor_round_trips_through_json() {
+        let t = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
+        let j = serde_json::to_value(&t).unwrap();
+        assert_eq!(j["shape"], serde_json::json!([2, 3]));
+        let back: CrowTensor = serde_json::from_value(j).unwrap();
+        assert_eq!(back.shape(), &[2, 3]);
+        assert_eq!(back.to_vec(), t.to_vec());
+        // a transposed view serializes its values in its own row-major order
+        let tt = t.transpose();
+        let back2: CrowTensor = serde_json::from_value(serde_json::to_value(&tt).unwrap()).unwrap();
+        assert_eq!(back2.shape(), &[3, 2]);
+        assert_eq!(back2.to_vec(), tt.to_vec());
+    }
 
     /// The seeded RNG is process-global (`crate::rng`), so tests that draw
     /// random numbers must not overlap: each holds this lock while it runs.

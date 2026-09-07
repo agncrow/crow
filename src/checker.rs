@@ -177,6 +177,14 @@ impl Issue {
         }
     }
 
+    /// A finding whose cure the language has as a form is an error, not a
+    /// warning: a launch-time snapshot or a network query in the render
+    /// path is what `derive` exists for, and `d` in the check loop applies
+    /// it (crow-check.md, tier 2).
+    pub fn is_error(&self) -> bool {
+        matches!(self, Issue::StaleSnapshot { .. } | Issue::RemoteQueryInView { .. })
+    }
+
     /// Get a "try" command the user can paste, if applicable.
     pub fn try_input(&self) -> Option<String> {
         match self {
@@ -211,11 +219,11 @@ impl Issue {
                 },
             Issue::StaleSnapshot { var, .. } =>
                 format!(
-                    "move the query into the view so every render sees current data, or re-query '{}' in the handler that changes it",
-                    var
+                    "make '{}' a derivation: `derive {}` with the query as its body is read like a fact and recomputed when a fact it reads or a table this program writes changes — press d to rewrite",
+                    var, var
                 ),
             Issue::RemoteQueryInView { .. } =>
-                "remote data belongs behind a handler refresh (re-query on click) or in local sqlite for the render path — a network hop per render stalls every client. Deliberate for this app? press a — it records the decision as a comment".to_string(),
+                "move the query into a derivation with a freshness window: `derive rows[fresh = 60]` runs the network hop once per window, not per render, and the view reads `rows` — press d to rewrite the `name = query[…]` line, or a if this app means to query on every render (records --- crow: remote-render)".to_string(),
             Issue::StaleLoopRead { var, .. } =>
                 format!("re-query '{}' inside the loop so each poll sees the current database", var),
             Issue::TestFailure { .. } =>
@@ -780,9 +788,12 @@ pub fn find_stale_snapshots(
         }
     }
 
-    // 3. Views/handlers reading a snapshot serve launch-time data.
+    // 3. Views/handlers reading a snapshot serve launch-time data. A view
+    // registered in page[] is also collected as a handler — one root, one
+    // finding.
     let mut issues = Vec::new();
-    for root in ctx.views.iter().chain(ctx.view_handlers.iter()) {
+    let roots: BTreeSet<&String> = ctx.views.iter().chain(ctx.view_handlers.iter()).collect();
+    for root in roots {
         let Some(sig) = ctx.functions.get(root) else { continue };
         let mut reads = BTreeSet::new();
         collect_reads_from_stmts(&sig.body, &mut reads);
@@ -1227,6 +1238,26 @@ pub fn find_stale_loop_reads(top_level_stmts: &[Stmt]) -> Vec<Issue> {
 // --- Purity analysis ---
 
 /// Returns the set of function names that are pure.
+/// Functions that read reactive state: views, handlers and derivations,
+/// and every function they call — the closure the validator exempts from
+/// function-scope isolation. Their fact reads are not undefined names,
+/// their fact writes are the point, and they are exercised by rendering,
+/// never by synthetic inputs.
+pub fn reactive_readers(ctx: &TypeContext) -> BTreeSet<String> {
+    let mut out: BTreeSet<String> = ctx.views.iter()
+        .chain(ctx.view_handlers.iter())
+        .chain(ctx.derives.iter())
+        .cloned()
+        .collect();
+    let fns: BTreeMap<String, Vec<Stmt>> = ctx.functions.iter().map(|(n, s)| (n.clone(), s.body.clone())).collect();
+    for root in out.clone() {
+        if let Some(body) = fns.get(&root) {
+            out.extend(crate::derive::called_fns(body, &fns));
+        }
+    }
+    out
+}
+
 pub fn find_pure_functions(ctx: &TypeContext) -> BTreeSet<String> {
     let mut impure: BTreeSet<String> = BTreeSet::new();
     let mut call_graph: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -1539,7 +1570,7 @@ fn find_undefined_vars_in_fn(
     // the HTML element vocabulary.
     for b in BUILTINS { defined.insert(b.to_string()); }
     for b in stdlib_names() { defined.insert(b.clone()); }
-    if ctx.views.contains(name) || ctx.view_handlers.contains(name) {
+    if reactive_readers(ctx).contains(name) {
         for el in crate::lower::UI_ELEMENTS {
             defined.insert(el.to_string());
         }
@@ -1682,13 +1713,15 @@ fn collect_undefined_in_expr(
 /// Run all static checks on functions and top-level code.
 pub fn run_static_checks(ctx: &TypeContext, top_level_stmts: &[Stmt]) -> Vec<Issue> {
     let mut issues = Vec::new();
+    let reactive = reactive_readers(ctx);
     // Check user-defined functions
     for (name, sig) in &ctx.functions {
         let param_names: Vec<String> = sig.params.iter().map(|(n, _)| n.clone()).collect();
-        // Views and handlers write reactive state; those assignments are the
-        // point of the fn, never "unused locals".
+        // Views, handlers, derivations and their helpers write reactive
+        // state; those assignments are the point of the fn, never "unused
+        // locals".
         let state_writes: BTreeSet<String> =
-            if ctx.views.contains(name) || ctx.view_handlers.contains(name) {
+            if reactive.contains(name) {
                 top_level_stmts
                     .iter()
                     .filter_map(|s| match s {
@@ -1709,10 +1742,10 @@ pub fn run_static_checks(ctx: &TypeContext, top_level_stmts: &[Stmt]) -> Vec<Iss
         .collect();
     if !top_stmts.is_empty() {
         let top_owned: Vec<Stmt> = top_stmts.into_iter().cloned().collect();
-        // Views and handlers read top-level reactive state — their reads
-        // keep those variables "used".
+        // Views, handlers and derivations read top-level reactive state —
+        // their reads keep those variables "used".
         let mut view_reads: BTreeSet<String> = BTreeSet::new();
-        for name in ctx.views.iter().chain(ctx.view_handlers.iter()) {
+        for name in reactive.iter() {
             if let Some(sig) = ctx.functions.get(name) {
                 collect_reads_from_stmts(&sig.body, &mut view_reads);
             }
@@ -2089,6 +2122,52 @@ pub struct CheckResult {
     pub snapshots_unchanged: usize,
     /// Map of function name → declaration line number.
     pub fn_lines: BTreeMap<String, usize>,
+    /// One line per derivation: what it reads and who holds it.
+    pub derivations: Vec<String>,
+}
+
+/// One line per derivation — its read set, its tables and freshness, and
+/// whether the app or each session holds it. The same analysis both
+/// execution modes obey, shown so a reader can check it against the code.
+pub fn describe_derivations(stmts: &[Stmt]) -> Vec<String> {
+    let derive_names: BTreeSet<String> = stmts.iter()
+        .filter_map(|s| if let Stmt::Derive { name, .. } = s { Some(name.clone()) } else { None })
+        .collect();
+    if derive_names.is_empty() {
+        return Vec::new();
+    }
+    let facts = crate::derive::fact_names(stmts);
+    let bodies: BTreeMap<String, Vec<Stmt>> = stmts.iter()
+        .filter_map(|s| if let Stmt::FnDecl { name, body, .. } = s { Some((name.clone(), body.clone())) } else { None })
+        .collect();
+    let owned = crate::derive::owned_tables(stmts, &bodies);
+    let mut fresh_of: BTreeMap<String, f64> = BTreeMap::new();
+    let mut sets: BTreeMap<String, crate::derive::ReadSet> = BTreeMap::new();
+    for s in stmts {
+        if let Stmt::Derive { name, fresh, body } = s {
+            sets.insert(name.clone(), crate::derive::read_set(body, &facts, &derive_names, &bodies, &owned));
+            fresh_of.insert(name.clone(), *fresh);
+        }
+    }
+    let written = crate::derive::written_facts(&bodies, &facts);
+    crate::derive::mark_shared(&mut sets, &written);
+    sets.iter().map(|(name, rs)| {
+        let mut parts: Vec<String> = Vec::new();
+        let mut reads: Vec<String> = rs.facts.iter().chain(rs.derives.iter()).cloned().collect();
+        if rs.now { reads.push("now[]".to_string()); }
+        if !reads.is_empty() { parts.push(format!("reads {}", reads.join(", "))); }
+        if !rs.tables.is_empty() {
+            let tables = rs.tables.iter().cloned().collect::<Vec<_>>().join(", ");
+            let fresh = fresh_of.get(name).copied().unwrap_or(0.0);
+            let how = if !rs.external { String::new() }
+                else if fresh > 0.0 { format!(" (external, fresh {}s)", fresh) }
+                else { " (external, every tick)".to_string() };
+            parts.push(format!("tables {}{}", tables, how));
+        }
+        if parts.is_empty() { parts.push("reads nothing".to_string()); }
+        let holder = if rs.shared { "shared by every session" } else { "per session" };
+        format!("{}: {} — {}", name, parts.join(" · "), holder)
+    }).collect()
 }
 
 /// Run the full check pipeline on parsed + type-inferred code.
@@ -2128,6 +2207,9 @@ pub fn run_check(
     // 1e. Poll loops deciding on pre-loop snapshots.
     issues.extend(find_stale_loop_reads(stmts));
 
+    // 1e2. Derivations: what each reads and who holds it, for the report.
+    let derivations = describe_derivations(stmts);
+
     // 1f. Outside-world data deciding a branch with no freshness guard.
     issues.extend(find_unguarded_staleness(stmts));
 
@@ -2137,12 +2219,14 @@ pub fn run_check(
     }
 
     // 2. Edge case generation (pure, non-recursive functions only).
-    // Views and handlers are excluded: they build UI trees / mutate reactive
-    // state, and are exercised by rendering, not by synthetic inputs.
+    // Views, handlers, derivations and the helpers they call are excluded:
+    // they build UI trees / read and write reactive state, and are
+    // exercised by rendering, not by synthetic inputs.
     let recursive_fns = find_recursive_functions(ctx);
+    let reactive = reactive_readers(ctx);
     let edge_candidates: BTreeSet<String> = pure_fns
         .iter()
-        .filter(|f| !ctx.views.contains(*f) && !ctx.view_handlers.contains(*f))
+        .filter(|f| !reactive.contains(*f))
         .cloned()
         .collect();
     let (edge_issues, new_snapshots) = run_edge_cases(ctx, stmts, &edge_candidates, &recursive_fns);
@@ -2174,6 +2258,7 @@ pub fn run_check(
         snapshots_saved,
         snapshots_unchanged,
         fn_lines,
+        derivations,
     }
 }
 

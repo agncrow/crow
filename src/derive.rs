@@ -20,6 +20,115 @@ pub struct ReadSet {
     /// reads a table this program never writes: a source outside the app,
     /// governed by the freshness window
     pub external: bool,
+    /// reads no fact a handler writes and no per-session derivation: one
+    /// value for the whole app, computed once and shared by every session
+    /// (derive-design.md §3.5). Set by `mark_shared`.
+    pub shared: bool,
+}
+
+/// The program's facts: top-level assignments that hold state. A database
+/// or socket handle is infrastructure and a `fetch`/`poll` binding is a
+/// source, not a fact — the rule the compiled program uses to decide what
+/// lives in its reactive state, applied by both modes.
+pub fn fact_names(stmts: &[Stmt]) -> BTreeSet<String> {
+    stmts.iter().filter_map(|s| match s {
+        Stmt::Assign { name, value } if !is_handle_or_source(value) => Some(name.clone()),
+        _ => None,
+    }).collect()
+}
+
+fn is_handle_or_source(e: &Expr) -> bool {
+    if let Expr::Call { callee, args } = e {
+        return match callee.as_ref() {
+            Expr::Ident(n) => n == "connect" || n == "db.connect" || (n == "fetch" && args.len() == 1) || (n == "poll" && args.len() == 2),
+            Expr::FieldAccess { object, field } => matches!(object.as_ref(), Expr::Ident(m) if m == "db") && field == "connect",
+            _ => false,
+        };
+    }
+    false
+}
+
+/// The elements that bind a fact to an input: the reader's typing writes
+/// the second argument, per session, with no handler in between.
+const BOUND_INPUTS: &[&str] = &["field", "slider", "checkbox", "toggle", "radio", "tabs", "select"];
+
+/// The facts a session writes — assigned by a handler or a helper a
+/// handler calls, or bound to an input in a view. Every other fact is a
+/// constant for the life of the program.
+pub fn written_facts(fns: &BTreeMap<String, Vec<Stmt>>, facts: &BTreeSet<String>) -> BTreeSet<String> {
+    fn walk(stmts: &[Stmt], facts: &BTreeSet<String>, out: &mut BTreeSet<String>) {
+        for st in stmts {
+            match st {
+                Stmt::Assign { name, value } => {
+                    if facts.contains(name) { out.insert(name.clone()); }
+                    walk_e(value, facts, out);
+                }
+                Stmt::MultiAssign { names, values } => {
+                    for n in names { if facts.contains(n) { out.insert(n.clone()); } }
+                    for v in values { walk_e(v, facts, out); }
+                }
+                Stmt::FieldAssign { object, value, .. } | Stmt::IndexAssign { object, value, .. } => {
+                    if let Expr::Ident(n) = object { if facts.contains(n) { out.insert(n.clone()); } }
+                    walk_e(value, facts, out);
+                }
+                Stmt::ExprStmt(e) | Stmt::Return(Some(e)) => walk_e(e, facts, out),
+                Stmt::If { condition, then_body, else_body } => {
+                    walk_e(condition, facts, out);
+                    walk(then_body, facts, out);
+                    if let Some(eb) = else_body { walk(eb, facts, out); }
+                }
+                Stmt::For { iter, body, .. } => { walk_e(iter, facts, out); walk(body, facts, out); }
+                Stmt::While { condition, body } => { walk_e(condition, facts, out); walk(body, facts, out); }
+                _ => {}
+            }
+        }
+    }
+    fn walk_e(e: &Expr, facts: &BTreeSet<String>, out: &mut BTreeSet<String>) {
+        match e {
+            Expr::Call { callee, args } => {
+                if let Expr::Ident(n) = callee.as_ref() {
+                    if BOUND_INPUTS.contains(&n.as_str()) {
+                        if let Some(Expr::Ident(v)) = args.get(1) { if facts.contains(v) { out.insert(v.clone()); } }
+                    }
+                }
+                walk_e(callee, facts, out);
+                for a in args { walk_e(a, facts, out); }
+            }
+            Expr::FieldAccess { object, .. } => walk_e(object, facts, out),
+            Expr::BinOp { left, right, .. } => { walk_e(left, facts, out); walk_e(right, facts, out); }
+            Expr::UnaryOp { expr, .. } => walk_e(expr, facts, out),
+            Expr::Array(items) => for i in items { walk_e(i, facts, out) },
+            Expr::Map(pairs) => for (k, v) in pairs { walk_e(k, facts, out); walk_e(v, facts, out); },
+            Expr::Named { value, .. } => walk_e(value, facts, out),
+            Expr::ForExpr { iter, body, .. } => { walk_e(iter, facts, out); walk(body, facts, out); }
+            _ => {}
+        }
+    }
+    let mut out = BTreeSet::new();
+    for body in fns.values() { walk(body, facts, &mut out); }
+    out
+}
+
+/// Which derivations every session shares: those that read no written fact
+/// and no derivation that is itself per session — a fixpoint, since a
+/// derivation is per session as soon as anything it reads is. A
+/// derivation over sources, constants and the clock alone is computed once
+/// for the app.
+pub fn mark_shared(specs: &mut BTreeMap<String, ReadSet>, written: &BTreeSet<String>) {
+    let mut shared: BTreeSet<String> = specs.iter()
+        .filter(|(_, rs)| rs.facts.iter().all(|f| !written.contains(f)))
+        .map(|(n, _)| n.clone())
+        .collect();
+    loop {
+        let before = shared.len();
+        let keep: BTreeSet<String> = shared.iter()
+            .filter(|n| specs[*n].derives.iter().all(|d| d == *n || shared.contains(d)))
+            .cloned()
+            .collect();
+        shared = keep;
+        if shared.len() == before { break; }
+    }
+    for (n, rs) in specs.iter_mut() { rs.shared = shared.contains(n); }
 }
 
 /// The read set of a body, given the program's facts, derivations, the
@@ -263,5 +372,43 @@ mod tests {
         assert_eq!(w, vec!["trades"]);
         let (_, w) = tables_of_sql("DELETE FROM bookmarks WHERE id = ?");
         assert_eq!(w, vec!["bookmarks"]);
+    }
+
+    #[test]
+    fn facts_skip_handles_and_sources() {
+        let src = "use web, ui, db\n\nconn = db.connect['sqlite://:memory:']\nsock = connect['ws://x']\nprices = fetch['http://x']\nsym = 'IMRN'\nqty = 100\n";
+        let stmts = crate::build(src).unwrap();
+        let facts = fact_names(&stmts);
+        assert_eq!(facts.iter().cloned().collect::<Vec<_>>(), vec!["qty", "sym"]);
+    }
+
+    #[test]
+    fn shared_is_a_fixpoint_over_what_is_read() {
+        let mut specs: BTreeMap<String, ReadSet> = BTreeMap::new();
+        let rs = |facts: &[&str], derives: &[&str]| ReadSet {
+            facts: facts.iter().map(|s| s.to_string()).collect(),
+            derives: derives.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        };
+        specs.insert("universe".into(), rs(&["day"], &[]));          // day is never written: shared
+        specs.insert("latest".into(), rs(&[], &["universe"]));        // reads a shared one: shared
+        specs.insert("head".into(), rs(&["base", "speed"], &[]));     // base is written: per session
+        specs.insert("rows".into(), rs(&[], &["head", "latest"]));    // reads a per-session one: per session
+        let written: BTreeSet<String> = ["base"].iter().map(|s| s.to_string()).collect();
+        mark_shared(&mut specs, &written);
+        assert!(specs["universe"].shared);
+        assert!(specs["latest"].shared);
+        assert!(!specs["head"].shared);
+        assert!(!specs["rows"].shared);
+    }
+
+    #[test]
+    fn written_facts_sees_handlers_helpers_and_bound_inputs() {
+        let src = "use web, ui\n\nqty = 1\nsym = 'a'\nday = 'd'\nnote = ''\nspeed = 1\n\nfn bump[]\n    qty = qty + 1\n\nfn rename[]\n    if true\n        sym = 'b'\n\nview render[]\n    return stack[field['note', note], slider['speed', speed, 1, 10, 1], p[day]]\n";
+        let stmts = crate::build(src).unwrap();
+        let facts = fact_names(&stmts);
+        let fns: BTreeMap<String, Vec<Stmt>> = stmts.iter().filter_map(|s| if let Stmt::FnDecl { name, body, .. } = s { Some((name.clone(), body.clone())) } else { None }).collect();
+        let w = written_facts(&fns, &facts);
+        assert_eq!(w.iter().cloned().collect::<Vec<_>>(), vec!["note", "qty", "speed", "sym"], "day is only read: a constant");
     }
 }

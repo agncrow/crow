@@ -1080,7 +1080,7 @@ impl Transpiler {
             // Derivations: reactive functions of the state, memoized by what
             // they read; the read sets are the same the interpreter computes
             {
-                let facts: std::collections::BTreeSet<String> = stmts.iter().filter_map(|s| if let Stmt::Assign { name, .. } = s { Some(name.clone()) } else { None }).collect();
+                let facts = crate::derive::fact_names(stmts);
                 let derive_names = self.ctx.derives.clone();
                 let bodies: std::collections::BTreeMap<String, Vec<Stmt>> = self.ctx.functions.iter().filter(|(n, _)| !derive_names.contains(*n)).map(|(n, s)| (n.clone(), s.body.clone())).collect();
                 let owned = crate::derive::owned_tables(stmts, &bodies);
@@ -1091,6 +1091,15 @@ impl Transpiler {
                         self.derive_fns.insert(name.clone());
                         self.reactive_render_fns.insert(name.clone());
                     }
+                }
+                // Shared or per session: a derivation over sources, constants
+                // and the clock alone is computed once for the whole app
+                let written = crate::derive::written_facts(&bodies, &facts);
+                let mut specs: std::collections::BTreeMap<String, crate::derive::ReadSet> =
+                    self.derive_specs.iter().map(|(n, (rs, _))| (n.clone(), rs.clone())).collect();
+                crate::derive::mark_shared(&mut specs, &written);
+                for (n, rs) in specs {
+                    if let Some(entry) = self.derive_specs.get_mut(&n) { entry.0 = rs; }
                 }
             }
 
@@ -1952,8 +1961,8 @@ impl Transpiler {
             let eq = if matches!(sig.return_type, CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Bool) { "|a, b| a == b" } else { "|_a, _b| false" };
             let list = |xs: &std::collections::BTreeSet<String>| xs.iter().map(|x| format!("\"{}\"", x)).collect::<Vec<_>>().join(", ");
             self.emit_line(&format!(
-                "static __DERIVE_SPEC_{n}: crow_web::live::DeriveSpec = crow_web::live::DeriveSpec {{ name: \"{n}\", facts: &[{f}], derives: &[{d}], tables: &[{t}], now: {now}, external: {ext}, fresh: {fresh:?} }};",
-                n = name, f = list(&rs.facts), d = list(&rs.derives), t = list(&rs.tables), now = rs.now, ext = rs.external, fresh = fresh
+                "static __DERIVE_SPEC_{n}: crow_web::live::DeriveSpec = crow_web::live::DeriveSpec {{ name: \"{n}\", facts: &[{f}], derives: &[{d}], tables: &[{t}], now: {now}, external: {ext}, fresh: {fresh:?}, shared: {sh} }};",
+                n = name, f = list(&rs.facts), d = list(&rs.derives), t = list(&rs.tables), now = rs.now, ext = rs.external, fresh = fresh, sh = rs.shared
             ));
             self.emit_line(&format!("fn __derive_{}(state: &CrowLiveState) -> {} {{", name, ty));
             self.indent += 1;
