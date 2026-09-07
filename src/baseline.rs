@@ -33,6 +33,30 @@ pub struct Artifacts {
     pub files: BTreeMap<String, String>,
     /// declaration → the views and pages it reaches
     pub reach: BTreeMap<String, Vec<String>>,
+    /// the app as a tree: pages, composition under guards, controls
+    pub structure: Structure,
+}
+
+/// The shape of the app, for `crow check --show`.
+#[derive(Debug, Default, Clone)]
+pub struct Structure {
+    pub pages: BTreeMap<String, String>,
+    /// view → (guard, child view), in order of appearance
+    pub composes: BTreeMap<String, Vec<(String, String)>>,
+    /// view → the guard of every path through it
+    pub view_paths: BTreeMap<String, BTreeSet<String>>,
+    /// view → (control, handler)
+    pub controls: BTreeMap<String, Vec<(String, String)>>,
+    /// view → facts its inputs bind
+    pub binds: BTreeMap<String, BTreeSet<String>>,
+    /// handler → facts it writes (certainly or maybe)
+    pub writes: BTreeMap<String, BTreeSet<String>>,
+    /// handler → effects on any path
+    pub effects: BTreeMap<String, BTreeSet<String>>,
+    /// fact → (bound by, written by, read by)
+    pub facts: BTreeMap<String, (BTreeSet<String>, BTreeSet<String>, BTreeSet<String>)>,
+    pub derives: BTreeSet<String>,
+    pub parts: BTreeSet<String>,
 }
 
 /// One difference between the accepted baseline and the program.
@@ -521,6 +545,10 @@ struct Wiring {
     binds: BTreeMap<String, BTreeSet<String>>,
     /// view → views it composes
     composes: BTreeMap<String, BTreeSet<String>>,
+    /// view → (guard, child view) in order
+    composed_under: BTreeMap<String, Vec<(String, String)>>,
+    /// view → the guard of every path through it
+    view_paths: BTreeMap<String, BTreeSet<String>>,
     /// view → (element, attr, fact) for open/disabled attributes
     gates: BTreeMap<String, Vec<(String, String, String)>>,
 }
@@ -548,13 +576,17 @@ fn tree(m: &Model, e: &Expr, env: &Env, depth: usize, view: &str, w: &mut Wiring
                                             other => canon(other, env),
                                         };
                                         attrs.push(format!("{} → {}", key, handler));
-                                        w.controls.entry(view.to_string()).or_default().push((format!("{} {}", n, label_of(args, env)), handler.split('[').next().unwrap_or("").to_string()));
+                                        let control = (format!("{} {}", n, label_of(args, env)), handler.split('[').next().unwrap_or("").to_string());
+                                        let list = w.controls.entry(view.to_string()).or_default();
+                                        if !list.contains(&control) { list.push(control); }
                                     } else if key == "actions" {
                                         if let Some(pairs) = crate::lower::map_literal_pairs(v) {
                                             for (label, h) in pairs {
                                                 let hn = canon(&h, env);
                                                 attrs.push(format!("action '{}' → {}", label, hn));
-                                                w.controls.entry(view.to_string()).or_default().push((format!("{} action '{}'", n, label), hn));
+                                                let control = (format!("{} action '{}'", n, label), hn);
+                                                let list = w.controls.entry(view.to_string()).or_default();
+                                                if !list.contains(&control) { list.push(control); }
                                             }
                                         } else { attrs.push(format!("actions = {}", canon(v, env))); }
                                     } else if key == "open" || key == "disabled" {
@@ -638,7 +670,11 @@ fn tree(m: &Model, e: &Expr, env: &Env, depth: usize, view: &str, w: &mut Wiring
 
 fn label_of(args: &[Expr], env: &Env) -> String {
     for a in args.iter().skip(1) {
-        if let Expr::Str(s) = a { return canon_str(s, env); }
+        match a {
+            Expr::Str(s) => return canon_str(s, env),
+            Expr::Map(_) => continue,
+            other => return format!("‹{}›", canon(other, env)),
+        }
     }
     String::new()
 }
@@ -650,6 +686,24 @@ fn is_node(m: &Model, e: &Expr, env: &Env) -> bool {
         Expr::ForExpr { .. } => true,
         Expr::Ident(n) => env.locals.get(n).map_or(false, |t| t.starts_with('\u{1}')),
         _ => false,
+    }
+}
+
+/// The sub-views a path's tree shows, recorded under the path's guard —
+/// a sub-view held in a local sits under the guard of the path that
+/// returns it, not of the statement that built it.
+fn record_composition(w: &mut Wiring, view: &str, conds: &[String], tree_text: &str) {
+    let guard = conds.join(" and ");
+    w.view_paths.entry(view.to_string()).or_default().insert(guard.clone());
+    for line in tree_text.lines() {
+        let l = line.trim_start();
+        if let Some(rest) = l.strip_prefix('@') {
+            let child: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            if child.is_empty() { continue; }
+            let pair = (guard.clone(), child);
+            let under = w.composed_under.entry(view.to_string()).or_default();
+            if !under.contains(&pair) { under.push(pair); }
+        }
     }
 }
 
@@ -694,12 +748,13 @@ fn walk_view(m: &Model, view: &str, stmts: &[Stmt], mut env: Env, conds: Vec<Str
             }
             Stmt::Return(Some(e)) => {
                 let mut t = String::new();
-                tree(m, e, &env, 0, view, w, &mut t);
                 let mut c = conds.clone(); c.sort();
+                tree(m, e, &env, 0, view, w, &mut t);
+                record_composition(w, view, &c, &t);
                 out.push((c, t));
                 return;
             }
-            Stmt::Return(None) => { let mut c = conds.clone(); c.sort(); out.push((c, "nothing".into())); return; }
+            Stmt::Return(None) => { let mut c = conds.clone(); c.sort(); record_composition(w, view, &c, ""); out.push((c, "nothing".into())); return; }
             Stmt::If { condition, then_body, else_body } => {
                 let c = canon(condition, &env);
                 let rest = &stmts[i..];
@@ -715,8 +770,9 @@ fn walk_view(m: &Model, view: &str, stmts: &[Stmt], mut env: Env, conds: Vec<Str
                 // the last statement of a view is its tree
                 if i == stmts.len() && is_node(m, e, &env) {
                     let mut t = String::new();
-                    tree(m, e, &env, 0, view, w, &mut t);
                     let mut c = conds.clone(); c.sort();
+                    tree(m, e, &env, 0, view, w, &mut t);
+                    record_composition(w, view, &c, &t);
                     out.push((c, t));
                     return;
                 }
@@ -725,6 +781,7 @@ fn walk_view(m: &Model, view: &str, stmts: &[Stmt], mut env: Env, conds: Vec<Str
         }
     }
     let mut c = conds; c.sort();
+    record_composition(w, view, &c, "");
     out.push((c, "nothing".into()));
 }
 
@@ -989,7 +1046,136 @@ pub fn derive_artifacts(stmts: &[Stmt], ctx: &TypeContext, parts: &BTreeMap<Stri
         }
     }
     rules.sort_by(|a, b| (a.subject.clone(), a.detail.clone()).cmp(&(b.subject.clone(), b.detail.clone())));
+
+    // the shape of the app, for --show
+    art.structure.pages = pages.clone();
+    art.structure.composes = wiring.composed_under.clone();
+    art.structure.view_paths = wiring.view_paths.clone();
+    art.structure.controls = wiring.controls.clone();
+    art.structure.binds = wiring.binds.clone();
+    for (h, paths) in &sigs {
+        let mut ws: BTreeSet<String> = BTreeSet::new();
+        let mut es: BTreeSet<String> = BTreeSet::new();
+        for p in paths {
+            for f in p.writes.keys() { ws.insert(f.clone()); }
+            for mw in &p.may { if let Some((f, _)) = mw.split_once(" := ") { if facts.contains(f) { ws.insert(f.to_string()); } } }
+            for e in &p.effects { es.insert(e.split_whitespace().take(3).collect::<Vec<_>>().join(" ")); }
+        }
+        art.structure.writes.insert(h.clone(), ws);
+        art.structure.effects.insert(h.clone(), es);
+    }
+    for f in &facts {
+        let b = bound_by.get(f).cloned().unwrap_or_default();
+        let w = writers.get(f).cloned().unwrap_or_default();
+        let r: BTreeSet<String> = readers_of(f).into_iter().collect();
+        art.structure.facts.insert(f.clone(), (b, w, r));
+    }
+    art.structure.derives = derives.clone();
+    art.structure.parts = parts.values().cloned().collect();
     (art, rules)
+}
+
+/// The app as a tree: each page, the views it composes under their
+/// guards, the controls and the handlers they fire; then the handlers
+/// with what they write and do; then the facts with who binds, writes
+/// and reads them.
+pub fn render_structure(art: &Artifacts, entry: &str) -> String {
+    let s = &art.structure;
+    let mut out = String::new();
+    let count = |kind: &str| art.entries.keys().filter(|k| k.starts_with(&format!("{} ", kind))).count();
+    out.push_str(&format!(
+        "{} — {} part{} · {} fact{} · {} derivation{} · {} handler{} · {} view{} · {} page{}\n",
+        entry.trim_end_matches(".crow"),
+        s.parts.len().max(1), if s.parts.len() == 1 { "" } else { "s" },
+        count("fact"), if count("fact") == 1 { "" } else { "s" },
+        count("derive"), if count("derive") == 1 { "" } else { "s" },
+        count("handler"), if count("handler") == 1 { "" } else { "s" },
+        count("view"), if count("view") == 1 { "" } else { "s" },
+        count("page"), if count("page") == 1 { "" } else { "s" },
+    ));
+    fn view_line(art: &Artifacts, v: &str) -> String {
+        let s = &art.structure;
+        let file = art.files.get(&format!("view {}", v)).cloned().unwrap_or_default();
+        let mut bits: Vec<String> = Vec::new();
+        if let Some(b) = s.binds.get(v) { for f in b { bits.push(format!("binds {}", f)); } }
+        if let Some(c) = s.controls.get(v) { for (control, h) in c { bits.push(format!("{} → {}", control, h)); } }
+        let tail = if bits.is_empty() { String::new() } else { format!("   {}", bits.join(" · ")) };
+        format!("@{} ({}){}", v, file, tail)
+    }
+    fn walk(art: &Artifacts, v: &str, depth: usize, seen: &mut Vec<String>, out: &mut String) {
+        if seen.contains(&v.to_string()) {
+            out.push_str(&format!("{}@{} (above)\n", "  ".repeat(depth), v));
+            return;
+        }
+        seen.push(v.to_string());
+        if let Some(children) = art.structure.composes.get(v) {
+            // a child on every path is common; the rest sit under their guards
+            let all_paths = art.structure.view_paths.get(v).cloned().unwrap_or_default();
+            let mut under: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+            let mut order: Vec<&str> = Vec::new();
+            for (g, c) in children {
+                under.entry(c.as_str()).or_default().insert(g.as_str());
+                if !order.contains(&c.as_str()) { order.push(c.as_str()); }
+            }
+            let mut guarded: Vec<(&str, &str)> = Vec::new();
+            for c in &order {
+                let gs = &under[c];
+                let common = all_paths.is_empty() || all_paths.iter().all(|p| gs.contains(p.as_str()));
+                if common {
+                    out.push_str(&format!("{}{}\n", "  ".repeat(depth), view_line(art, c)));
+                    walk(art, c, depth + 1, seen, out);
+                } else {
+                    for g in gs { guarded.push((g, c)); }
+                }
+            }
+            guarded.sort();
+            let mut last: Option<&str> = None;
+            for (g, c) in guarded {
+                if last != Some(g) { out.push_str(&format!("{}when {}:\n", "  ".repeat(depth), g)); last = Some(g); }
+                out.push_str(&format!("{}{}\n", "  ".repeat(depth + 1), view_line(art, c)));
+                walk(art, c, depth + 2, seen, out);
+            }
+        }
+        seen.pop();
+    }
+    for (path, v) in &s.pages {
+        out.push_str(&format!("\npage {} → {}\n", path, view_line(art, v)));
+        let mut seen = Vec::new();
+        walk(art, v, 1, &mut seen, &mut out);
+    }
+    if !s.writes.is_empty() {
+        out.push_str("\nhandlers\n");
+        for (h, ws) in &s.writes {
+            let file = art.files.get(&format!("handler {}", h)).cloned().unwrap_or_default();
+            let mut bits: Vec<String> = Vec::new();
+            if !ws.is_empty() { bits.push(format!("writes {}", ws.iter().cloned().collect::<Vec<_>>().join(", "))); }
+            if let Some(es) = s.effects.get(h) { if !es.is_empty() { bits.push(es.iter().cloned().collect::<Vec<_>>().join(" · ")); } }
+            if bits.is_empty() { bits.push("nothing".into()); }
+            out.push_str(&format!("  {} ({})   {}\n", h, file, bits.join("   ")));
+        }
+    }
+    if !s.facts.is_empty() {
+        out.push_str("\nfacts\n");
+        for (f, (b, w, r)) in &s.facts {
+            let file = art.files.get(&format!("fact {}", f)).cloned().unwrap_or_default();
+            let mut bits: Vec<String> = Vec::new();
+            if !b.is_empty() { bits.push(format!("bound by {}", b.iter().cloned().collect::<Vec<_>>().join(", "))); }
+            if !w.is_empty() { bits.push(format!("written by {}", w.iter().cloned().collect::<Vec<_>>().join(", "))); }
+            bits.push(format!("read by {}", if r.is_empty() { "nobody".to_string() } else if r.len() > 4 { format!("{} readers", r.len()) } else { r.iter().cloned().collect::<Vec<_>>().join(", ") }));
+            out.push_str(&format!("  {} ({})   {}\n", f, file, bits.join(" · ")));
+        }
+    }
+    if !s.derives.is_empty() {
+        out.push_str("\nderivations\n");
+        for d in &s.derives {
+            if let Some(text) = art.entries.get(&format!("derive {}", d)) {
+                let reads = text.lines().find(|l| l.trim_start().starts_with("reads:")).map(|l| l.trim().to_string()).unwrap_or_default();
+                let file = art.files.get(&format!("derive {}", d)).cloned().unwrap_or_default();
+                out.push_str(&format!("  {} ({})   {}\n", d, file, reads));
+            }
+        }
+    }
+    out
 }
 
 /// The names a body calls directly, in any expression.
@@ -1316,6 +1502,19 @@ mod tests {
         let (b, _) = artifacts(&flipped);
         let lines = compact_diff(&a.entries["handler start"], &b.entries["handler start"]);
         assert!(lines.iter().any(|l| l.contains("«gt» → «gte»")), "{:?}", lines);
+    }
+
+    /// The structure reads as a tree from the page down, with guards,
+    /// controls and bindings in place.
+    #[test]
+    fn the_structure_is_the_app_as_a_tree() {
+        let (a, _) = artifacts(APP);
+        let s = render_structure(&a, "main.crow");
+        assert!(s.contains("page / → @render (main.crow)"), "{}", s);
+        assert!(s.contains("when (session_id gt 0):\n    @session_view (main.crow)   button 'End session' → ask_end · button 'End' → end_session · button 'Keep going' → cancel_end"), "{}", s);
+        assert!(s.contains("@setup (main.crow)   binds win_from · button 'Start' → start"), "{}", s);
+        assert!(s.contains("start (main.crow)   writes session_id, status"), "{}", s);
+        assert!(s.contains("ending (main.crow)   written by ask_end, cancel_end, end_session · read by render, session_view"), "{}", s);
     }
 
     /// The store round-trips and the diff attributes removals.

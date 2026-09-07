@@ -2174,6 +2174,8 @@ pub struct CheckResult {
     pub derivations: Vec<String>,
     /// The app baseline: recorded on the first check, diffed after.
     pub baseline: Option<crate::baseline::Summary>,
+    /// The derived artifacts, for `--show`.
+    pub artifacts: Option<crate::baseline::Artifacts>,
 }
 
 /// One line per derivation — its read set, its tables and freshness, and
@@ -2310,6 +2312,7 @@ pub fn run_check(
         fn_lines,
         derivations,
         baseline: None,
+        artifacts: None,
     }
 }
 
