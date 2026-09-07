@@ -1,0 +1,4 @@
+fact sim_clock_speed (sim/clock.crow)
+  type: float
+  written by: sim_clock_faster, views_sim_slow
+  read by: sim_clock_head, views_sim_label

@@ -1,0 +1,4 @@
+fact sim_clock_playing (sim/clock.crow)
+  type: bool
+  written by: sim_clock_play
+  read by: sim_clock_head

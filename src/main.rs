@@ -1,4 +1,5 @@
 mod ast;
+mod baseline;
 mod checker;
 mod db_check;
 mod derive;
@@ -79,6 +80,7 @@ fn main() {
         "check" => {
             let mut verbose = false;
             let mut strict = false;
+            let mut accept_all = false;
             let mut db_url: Option<String> = None;
             let mut file: Option<String> = None;
             let mut rest = args.iter().skip(2);
@@ -86,6 +88,7 @@ fn main() {
                 match a.as_str() {
                     "--verbose" => verbose = true,
                     "--strict" => strict = true,
+                    "--accept" => accept_all = true,
                     "--db" => {
                         db_url = rest.next().cloned();
                         if db_url.is_none() {
@@ -107,7 +110,7 @@ fn main() {
                 let config = parse_crowfile();
                 config.entry
             });
-            cmd_check(&filename, verbose, db_url, strict);
+            cmd_check(&filename, verbose, db_url, strict, accept_all);
         }
         "lsp" => {
             if let Err(e) = lsp::run_server() {
@@ -2550,19 +2553,49 @@ fn run_check_pipeline(filename: &str) -> checker::CheckResult {
     let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
     // Validated before it is checked: `crow check` refuses what `crow run`
     // refuses, with the same message
-    match lower::lower_program(&stmts) {
-        Ok(lowered) => {
-            if let Err(e) = infer_and_validate(&lowered, false) {
+    let (lowered, lctx) = match lower::lower_program(&stmts) {
+        Ok(lowered) => match infer_and_validate(&lowered, false) {
+            Ok(lctx) => (lowered, lctx),
+            Err(e) => {
                 eprintln!("{}", refine_error_lines(&source, &e));
                 process::exit(1);
             }
-        }
+        },
         Err(e) => { eprintln!("error: {}", e); process::exit(1); }
-    }
+    };
     let mut ctx = type_infer::TypeContext::new();
     ctx.infer_program(&stmts);
     let mut result = checker::run_check(&stmts, &ctx, false);
     result.issues = checker::suppress_acknowledged(std::mem::take(&mut result.issues), &source);
+
+    // The app baseline: what the program does, derived from the lowered
+    // program and diffed against what was accepted (app-baseline-design.md)
+    let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
+    let (artifacts, rules) = baseline::derive_artifacts(&lowered, &lctx, &parts, filename);
+    let changed = baseline::git_changed_files(source_dir);
+    let dir = baseline::store_dir(filename).display().to_string();
+    match baseline::load(filename) {
+        None => {
+            baseline::save_all(filename, &artifacts);
+            result.baseline = Some(baseline::Summary { first: true, recorded: artifacts.entries.len(), dir, ..Default::default() });
+        }
+        Some(old) => {
+            let (changes, mut summary) = baseline::compare(&old, &artifacts);
+            summary.dir = dir;
+            for c in changes {
+                let expected = baseline::is_expected(&c.file, &changed);
+                result.issues.push(checker::Issue::BaselineChange { key: c.key, file: c.file, was: c.was, now: c.now, reach: c.reach, expected });
+            }
+            // a new declaration is recorded as it is, like a new snapshot
+            for (k, t) in &artifacts.entries {
+                if !old.contains_key(k) { baseline::accept(filename, k, t); }
+            }
+            result.baseline = Some(summary);
+        }
+    }
+    for r in rules {
+        result.issues.push(checker::Issue::UiRule { subject: r.subject, file: r.file, detail: r.detail, fix: r.fix });
+    }
     result
 }
 
@@ -2602,6 +2635,17 @@ fn print_check_summary(result: &checker::CheckResult, verbose: bool) {
             println!("    {}", d);
         }
     }
+    if let Some(b) = &result.baseline {
+        if b.first {
+            println!("  baseline — {} declarations recorded under {} (first check: what the app does, accepted as it is)", b.recorded, b.dir);
+        } else {
+            let mut parts = vec![format!("{} unchanged", b.unchanged)];
+            if b.changed > 0 { parts.push(format!("\x1b[33m{} changed\x1b[0m", b.changed)); }
+            if b.added > 0 { parts.push(format!("{} new", b.added)); }
+            if b.removed > 0 { parts.push(format!("\x1b[33m{} removed\x1b[0m", b.removed)); }
+            println!("  baseline — {} ({})", parts.join(", "), b.dir);
+        }
+    }
     if verbose {
         println!("  pure: {:?}", result.pure_fns);
         println!("  impure: {:?}", result.impure_fns);
@@ -2636,10 +2680,25 @@ fn format_location(filename: &str, issue: &checker::Issue, fn_lines: &std::colle
     filename.to_string()
 }
 
-fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool) {
+fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool, accept_all: bool) {
     use std::io::{self, Write, BufRead};
 
     let mut result = run_check_pipeline(filename);
+    // --accept: every baseline change is intended — the baseline moves
+    // without the loop, for a script or a deliberate sweep
+    if accept_all {
+        let mut n = 0;
+        for issue in &result.issues {
+            if let checker::Issue::BaselineChange { key, now, .. } = issue {
+                baseline::accept(filename, key, now);
+                n += 1;
+            }
+        }
+        if n > 0 {
+            println!("  accepted {} baseline change{}", n, if n == 1 { "" } else { "s" });
+            result = run_check_pipeline(filename);
+        }
+    }
     print_check_summary(&result, verbose);
 
     // Schema-aware database checks (Level 1). Advisory unless --strict.
@@ -2718,7 +2777,9 @@ fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool
         let derive_fixable = matches!(issue, checker::Issue::StaleSnapshot { .. } | checker::Issue::RemoteQueryInView { .. });
         let mut prompt_parts = vec!["enter = recheck", "s = skip"];
         if has_try { prompt_parts.push("t = try input"); }
+        let is_baseline = matches!(issue, checker::Issue::BaselineChange { .. });
         if is_regression { prompt_parts.push("a = accept new"); }
+        if is_baseline { prompt_parts.push("a = accept (the baseline moves)"); }
         if remote_acceptable { prompt_parts.push("a = accept (deliberate)"); }
         if derive_fixable { prompt_parts.push("d = derive (rewrite)"); }
         if later_fixable { prompt_parts.push("f = fix (later[])"); }
@@ -2753,6 +2814,16 @@ fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool
             }
             "s" => {
                 idx += 1;
+            }
+            "a" if is_baseline => {
+                if let checker::Issue::BaselineChange { key, now, .. } = issue {
+                    baseline::accept(filename, key, now);
+                    println!("\n  accepted {} — rechecking...", key);
+                    result = run_check_pipeline(filename);
+                    print_check_summary(&result, false);
+                    if result.issues.is_empty() { break; }
+                    idx = 0;
+                }
             }
             "a" if remote_acceptable => {
                 if let checker::Issue::RemoteQueryInView { line, view, .. } = issue {
@@ -3295,6 +3366,9 @@ fn expand_module_imports(
 thread_local! {
     static VALIDATED_PARTS: std::cell::RefCell<std::collections::HashSet<std::path::PathBuf>> =
         std::cell::RefCell::new(std::collections::HashSet::new());
+    /// module prefix (`sim_session_`) → the part's project-relative file
+    static EXPANSION_PARTS: std::cell::RefCell<std::collections::BTreeMap<String, String>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
 }
 
 /// Validate one part as the entry of its own program: parsed, its imports
@@ -3422,6 +3496,12 @@ fn expand_into(
         // The prefix is the module's path: unique per file, the same from
         // every importer
         let prefix = file_rel.replace('/', "_");
+        // the baseline attributes each declaration to its part's file
+        EXPANSION_PARTS.with(|p| {
+            let root = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
+            let rel = canon.strip_prefix(&root).map(|p| p.display().to_string()).unwrap_or_else(|_| file_path.display().to_string());
+            p.borrow_mut().insert(format!("{}_", prefix), rel);
+        });
         // Collect the module's own top-level names, then rewrite both the
         // declarations AND every reference inside module bodies — a module
         // fn must still reach its own structs/fns/vars after prefixing.

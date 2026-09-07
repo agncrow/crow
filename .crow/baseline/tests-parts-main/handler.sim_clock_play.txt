@@ -1,0 +1,4 @@
+handler sim_clock_play (sim/clock.crow)
+  wired: sim_clock_transport button 'Play'
+  always:
+    sim_clock_anchor := now[] · sim_clock_playing := true
