@@ -13,8 +13,22 @@ use tokio_stream::StreamExt;
 
 /// ClickHouse database — wraps a klickhouse Client + tokio runtime.
 pub struct CrowClickhouseDb {
-    client: Client,
+    /// The live connection. A connection is not the program's lifetime:
+    /// the server closes an idle one (an hour by default) and a restart
+    /// drops every one, so it is reopened when found closed
+    client: std::sync::Mutex<Client>,
     rt: Arc<Runtime>,
+    addr: String,
+    options: ClientOptions,
+}
+
+/// An error from the transport rather than the query: the server hung up
+/// (idle timeout, restart) and the client's channel is dead.
+fn is_transport_error(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    ["channel closed", "failed to send", "connection reset", "broken pipe", "connection closed", "unexpected end of file", "early eof", "os error"]
+        .iter()
+        .any(|needle| m.contains(needle))
 }
 
 impl CrowClickhouseDb {
@@ -75,18 +89,46 @@ impl CrowClickhouseDb {
             tcp_nodelay: true,
         };
 
+        let client = Self::open(&rt, &addr, options.clone())?;
+        Ok(Self { client: std::sync::Mutex::new(client), rt: Arc::new(rt), addr, options })
+    }
+
+    /// Connect and ping.
+    fn open(rt: &Runtime, addr: &str, options: ClientOptions) -> Result<Client, String> {
         let client = Self::off_runtime(|| rt.block_on(async {
-            Client::connect(&addr, options).await
+            Client::connect(addr, options).await
                 .map_err(|e| format!("clickhouse connection failed: {}", e))
         }))?;
-
-        // Ping to verify connection
         Self::off_runtime(|| rt.block_on(async {
             client.execute("SELECT 1").await
                 .map_err(|e| format!("clickhouse ping failed: {}", e))
         }))?;
+        Ok(client)
+    }
 
-        Ok(Self { client, rt: Arc::new(rt) })
+    /// The connection to use now — reopened first when the server has
+    /// closed it.
+    fn client(&self) -> Result<Client, String> {
+        let mut guard = self.client.lock().map_err(|e| e.to_string())?;
+        if guard.is_closed() {
+            eprintln!("crow db: the clickhouse connection to {} was closed; reconnecting", self.addr);
+            *guard = Self::open(&self.rt, &self.addr, self.options.clone())?;
+        }
+        Ok(guard.clone())
+    }
+
+    /// Run an operation on the connection; if the server dropped it under
+    /// the operation, reconnect and run it once more.
+    fn with_client<T>(&self, op: impl Fn(Client) -> Result<T, String>) -> Result<T, String> {
+        match op(self.client()?) {
+            Err(e) if is_transport_error(&e) => {
+                eprintln!("crow db: the clickhouse connection to {} was lost ({}); reconnecting", self.addr, e);
+                let fresh = Self::open(&self.rt, &self.addr, self.options.clone())?;
+                *self.client.lock().map_err(|e| e.to_string())? = fresh.clone();
+                op(fresh)
+            }
+            other => other,
+        }
     }
 }
 
@@ -347,8 +389,8 @@ impl CrowDb for CrowClickhouseDb {
             &sql_owned
         };
 
-        Self::off_runtime(|| self.rt.block_on(async {
-            let mut stream = self.client.query_raw(sql).await
+        self.with_client(|client| Self::off_runtime(|| self.rt.block_on(async {
+            let mut stream = client.query_raw(sql).await
                 .map_err(|e| format!("clickhouse query error: {}", trim_server_error(&e.to_string())))?;
 
             let mut all_col_names: Vec<String> = Vec::new();
@@ -379,7 +421,7 @@ impl CrowDb for CrowClickhouseDb {
             }
 
             blocks_to_frame(all_col_names, all_col_data)
-        }))
+        })))
     }
 
     fn exec(&self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
@@ -391,12 +433,12 @@ impl CrowDb for CrowClickhouseDb {
             &sql_owned
         };
 
-        Self::off_runtime(|| self.rt.block_on(async {
-            self.client.execute(sql).await
+        self.with_client(|client| Self::off_runtime(|| self.rt.block_on(async {
+            client.execute(sql).await
                 .map_err(|e| format!("clickhouse exec error: {}", trim_server_error(&e.to_string())))?;
             // ClickHouse native protocol doesn't return affected row counts
             Ok(0)
-        }))
+        })))
     }
 
     fn insert(&self, table: &str, frame: &CrowFrame) -> Result<i64, String> {
@@ -430,11 +472,11 @@ impl CrowDb for CrowClickhouseDb {
             rows.push(raw_row);
         }
 
-        Self::off_runtime(|| self.rt.block_on(async {
-            self.client.insert_native_block(&sql, rows).await
+        self.with_client(|client| Self::off_runtime(|| self.rt.block_on(async {
+            client.insert_native_block(&sql, rows.clone()).await
                 .map_err(|e| format!("clickhouse insert error: {}", e))?;
             Ok(nrows as i64)
-        }))
+        })))
     }
 
     fn transact(&self, _f: &dyn Fn(&dyn DbTx) -> Result<(), String>) -> Result<(), String> {
@@ -452,7 +494,17 @@ impl CrowDb for CrowClickhouseDb {
 
 #[cfg(test)]
 mod param_tests {
-    use super::substitute_params;
+    use super::{substitute_params, is_transport_error};
+
+    /// The message a dead channel produces is a transport error; a
+    /// server's own exception is not
+    #[test]
+    fn transport_errors_are_told_apart_from_query_errors() {
+        assert!(is_transport_error("clickhouse query error: protocol error: failed to send query: channel closed"));
+        assert!(is_transport_error("clickhouse exec error: Connection reset by peer (os error 54)"));
+        assert!(!is_transport_error("clickhouse query error: Code: 60. DB::Exception: Table finch_trading.nothing does not exist"));
+        assert!(!is_transport_error("clickhouse query error: Code: 62. DB::Exception: Syntax error"));
+    }
     use serde_json::json;
 
     #[test]
