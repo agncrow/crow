@@ -1464,7 +1464,7 @@ Rules:
 
 ### User Modules: File Structure
 
-Each file is a module. The file path is the module path.
+Each file is a module. The file path is the module path, rooted at the project: the nearest directory above the entry file that holds a `crowfile`, or the entry file's own directory when there is none. So `views/sim.crow` reaches `sim/clock.crow` with `use sim.clock` whichever file is the entry.
 
 ```
 --- file: myapp/utils.crow
@@ -1480,6 +1480,8 @@ use myapp/utils
 
 result = utils.double[5]    --- 10
 ```
+
+**A module is a part.** It may hold facts, derivations, handlers, views and `test` blocks, not only functions — the clock of a simulation, its tape, its blotter — and the page that composes them imports each one. The front end expands every module file once, whichever files import it: its names take the module's path as a prefix (`sim/clock.crow`'s `head` is `sim_clock_head` inside the program) and every importer's qualified spelling — `clock.head`, or an alias's — is rewritten to that name, in code and inside interpolation spans. A module reached through two importers is one copy with one state. A handler in one part may assign another part's fact by its qualified name (`session.day = d`), and the validator judges it like any fact write. A part's `test` blocks run with `crow test sim/clock.crow`, with the parts it imports inlined; `crow check main.crow` checks the whole app. A module's top-level statements other than declarations are not part of the program.
 
 
 ## 13. Standard Library
@@ -2896,7 +2898,7 @@ test refresh_flow[]
 | `html[a]` | the rendered view as one HTML string |
 | `elements[a, sel]` | matching elements as records — `tag`, `text`, `class`, and every attribute (`href`, `name`, …) as keys; `sel` is `tag`, `.class`, `tag.class`, or a space-separated descendant chain (`'div.controls button'`) |
 | `change[a, 'var', value]` | what typing into a bound `field` does: set the reactive variable, so the next render and handler see it |
-| `app[view, width = 390]` | a session at a viewport width (default 1280) — responsive rules are testable at every named width |
+| `app[view, width = 390, wide = true]` | a session at a viewport width (default 1280) — responsive rules are testable at every named width; `wide = true` lays the page out across the whole window, as `serve[..., wide = true]` serves it, instead of the reading column |
 | `box[a, sel]` | the layout engine's boxes for matching elements: `x y width height overflow`, plus `tag class path` |
 | `style[a, sel]` | resolved tokens: `background color size weight` |
 | `fits[a, width]` | true when nothing overflows at that viewport width |

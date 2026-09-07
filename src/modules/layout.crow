@@ -155,6 +155,14 @@ fn lay_text_px[node]
     font = lay_font_px[node]
     if lay_is_mono[node]
         return len[node.text] * font * 0.602
+    --- a select is as wide as its widest option, plus the browser's arrow
+    if node.tag eq 'select'
+        best = 0.0
+        for k in node.kids
+            w = lay_text_width[k.text, font, false]
+            if w gt best
+                best = w
+        return best + 22.0
     text = node.text
     spacing = 0.0
     if node.tag eq 'h2' or node.tag eq 'th' or (lay_in_card[node] and node.tag eq 'h3')
@@ -212,7 +220,7 @@ fn lay_font_px[node]
         return 15.2
     if node.tag eq 'pre' or node.tag eq 'code'
         return 13.5
-    if node.tag eq 'button' or node.tag eq 'input' or node.tag eq 'td' or node.tag eq 'textarea'
+    if node.tag eq 'button' or node.tag eq 'input' or node.tag eq 'td' or node.tag eq 'textarea' or node.tag eq 'select'
         return 14.72
     if node.tag eq 'th'
         return 11.52
@@ -300,7 +308,7 @@ fn lay_pad_v[node]
         return 13.0
     if node.tag eq 'button'
         return 7.72
-    if node.tag eq 'input' or node.tag eq 'textarea'
+    if node.tag eq 'input' or node.tag eq 'textarea' or node.tag eq 'select'
         return 7.4
     if node.tag eq 'td'
         return 8.0
@@ -330,7 +338,7 @@ fn lay_pad_h[node]
         return 15.4
     if node.tag eq 'button'
         return 16.2
-    if node.tag eq 'input' or node.tag eq 'textarea'
+    if node.tag eq 'input' or node.tag eq 'textarea' or node.tag eq 'select'
         return 10.6
     if node.tag eq 'td' or node.tag eq 'th'
         return 7.2
@@ -543,7 +551,7 @@ fn lay_node[node, x, y, width, viewport, path]
         lines = 1.0
         --- running text wraps: paragraphs, headings, spans, labels, items;
         --- a card's one-line figures and form controls do not
-        if node.tag ne 'button' and node.tag ne 'input' and node.tag ne 'summary' and not lay_in_card[node] and not lay_has_class[node, 'crow-check'] and not has[node.attrs, '_tabs'] and not has[node.attrs, '_radio'] and not has[node.attrs, '_nav']
+        if node.tag ne 'button' and node.tag ne 'input' and node.tag ne 'select' and node.tag ne 'summary' and not lay_in_card[node] and not lay_has_class[node, 'crow-check'] and not has[node.attrs, '_tabs'] and not has[node.attrs, '_radio'] and not has[node.attrs, '_nav']
             lines = lay_lines[node, inner_w]
         h = lines * lay_line_px[node] + 2.0 * pv
         return [lay_box[node, here, x, top, width, h, false]]
@@ -741,11 +749,12 @@ fn lay_explicit_height[node]
     return float[h]
 
 --- entry point: the whole page at a viewport width. The page shell centres
---- content at max 860px with 1.25rem side padding (the body rule).
-fn crow_layout[root, viewport]
+--- content at max 860px with 1.25rem side padding (the body rule); a wide
+--- page (serve's `wide = true`) uses the whole window.
+fn crow_layout[root, viewport, wide]
     --- the body: at most 860px including its 1.25rem sides, 2.2rem on top
     body_w = viewport
-    if body_w gt 860.0
+    if body_w gt 860.0 and not wide
         body_w = 860.0
     content = body_w - 40.0
     x = (viewport - body_w) / 2.0 + 20.0

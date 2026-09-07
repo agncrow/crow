@@ -43,8 +43,8 @@ fn builtin_named_params(name: &str) -> Option<&'static [&'static str]> {
     match name {
         "sum" | "mean" | "min" | "max" | "prod" | "stack" | "concat" => Some(&["axis"]),
         "sort" => Some(&["desc"]),
-        // test harness: app[view, width = 1280]
-        "app" => Some(&["width"]),
+        // test harness: app[view, width = 1280, wide = true]
+        "app" => Some(&["width", "wide"]),
         _ => None,
     }
 }

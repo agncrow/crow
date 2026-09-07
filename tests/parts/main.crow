@@ -1,0 +1,6 @@
+--- The app is its parts (language-spec.md "A module is a part").
+use web, ui
+use views.sim
+
+page['/', sim.render]
+serve[3000]

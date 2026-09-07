@@ -2486,6 +2486,13 @@ fn cmd_test_blocks(filename: &str) {
         Ok(s) => s,
         Err(e) => { eprintln!("{}", e); process::exit(1); }
     };
+    // A part's tests run with the parts it imports inlined, exactly as the
+    // run, build and check paths see the program
+    let source_dir = std::path::Path::new(filename)
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+    let mut visited = std::collections::HashSet::new();
+    let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
     let stmts = match lower::lower_program(&stmts) {
         Ok(s) => s,
         Err(e) => { eprintln!("{}", e); process::exit(1); }
@@ -2521,6 +2528,13 @@ fn run_check_pipeline(filename: &str) -> checker::CheckResult {
             process::exit(1);
         }
     };
+    // User modules are inlined exactly as the run and build paths do, so a
+    // multi-file app is checked whole and a module prefix is a known name
+    let source_dir = std::path::Path::new(filename)
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+    let mut visited = std::collections::HashSet::new();
+    let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
     let mut ctx = type_infer::TypeContext::new();
     ctx.infer_program(&stmts);
     let mut result = checker::run_check(&stmts, &ctx, false);
@@ -3222,150 +3236,221 @@ mod refine_tests {
     }
 }
 
-/// Expand `use` imports by parsing module files and inserting prefixed
-/// FnDecl/StructDecl/Assign statements. This must run *before* type inference
+/// Expand `use` imports: every module file is parsed once, its
+/// declarations prefixed with its path (`sim/clock.crow` → `sim_clock_`) and
+/// hoisted ahead of the program, and every importer's qualified references
+/// (`clock.head`, or the alias's) are rewritten to the prefixed names. A
+/// module reached through two importers — the tape and the trading parts
+/// both reading the clock — is one copy. This runs *before* type inference
 /// so the main program's call sites can inform module function param types.
 fn expand_module_imports(
     stmts: &[ast::Stmt],
     source_dir: &std::path::Path,
     visited: &mut std::collections::HashSet<String>,
 ) -> Vec<ast::Stmt> {
+    let mut ex = ModuleExpansion::default();
+    let body = expand_into(stmts, source_dir, &mut ex, visited);
+    let mut out = ex.hoisted;
+    out.extend(body);
+    // every part says `use db` for itself; the program imports it once
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    out.retain(|st| match st {
+        ast::Stmt::Use { path, alias } => seen.insert(format!("{}|{}", path, alias.clone().unwrap_or_default())),
+        _ => true,
+    });
+    out
+}
+
+#[derive(Default)]
+struct ModuleExpansion {
+    /// modules already expanded, by file: the local name → prefixed name map
+    done: std::collections::BTreeMap<std::path::PathBuf, std::collections::BTreeMap<String, String>>,
+    /// every module's prefixed declarations, in dependency order
+    hoisted: Vec<ast::Stmt>,
+}
+
+fn expand_into(
+    stmts: &[ast::Stmt],
+    source_dir: &std::path::Path,
+    ex: &mut ModuleExpansion,
+    in_progress: &mut std::collections::HashSet<String>,
+) -> Vec<ast::Stmt> {
     let mut expanded = Vec::new();
-    let mut expanded_modules: Vec<(String, std::collections::BTreeMap<String, String>)> = Vec::new();
+    // how this file spells each module it imports (the last segment or the
+    // alias), with the module's names
+    let mut imported: Vec<(String, std::collections::BTreeMap<String, String>)> = Vec::new();
     for stmt in stmts {
-        if let ast::Stmt::Use { path, alias } = stmt {
-            // Built-in modules: skip file lookup
-            if path == "math" || path.starts_with("math.") {
-                expanded.push(stmt.clone());
-                continue;
-            }
-
-            // Convert dot-separated path to file path (views.home → views/home)
-            let file_rel = path.replace('.', "/");
-            // `use path as alias` renames the module prefix
-            let module_name = alias.clone().unwrap_or_else(|| {
-                path.rsplit(['.', '/']).next()
-                    .and_then(|s| if s.is_empty() { None } else { Some(s) })
-                    .unwrap_or(path)
-                    .to_string()
-            });
-
-            // Circular import detection
-            if visited.contains(path) {
-                expanded.push(stmt.clone());
-                continue;
-            }
-            visited.insert(path.clone());
-
-            // Try to find the module file
-            let candidates = vec![
-                source_dir.join(format!("{}.crow", file_rel)),
-                source_dir.join(format!("crow_modules/{}.crow", file_rel)),
-                source_dir.join(format!("crow_modules/{}/main.crow", file_rel)),
-            ];
-            let file_path = candidates.iter().find(|p| p.exists());
-            let file_path = match file_path {
-                Some(p) => p.clone(),
-                None => {
-                    expanded.push(stmt.clone());
-                    continue;
-                }
-            };
-            let source = match std::fs::read_to_string(&file_path) {
-                Ok(s) => s,
-                Err(_) => {
-                    expanded.push(stmt.clone());
-                    continue;
-                }
-            };
-            // Parse the module
-            let mut lexer = Lexer::new(&source);
-            let tokens = match lexer.tokenize() {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            let mut parser = Parser::new(tokens);
-            let mod_stmts = match parser.parse() {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-
-            // Recursively expand any `use` statements within the module
-            let mod_dir = file_path.parent().unwrap_or(source_dir);
-            let mod_stmts = expand_module_imports(&mod_stmts, mod_dir, visited);
-
-            // Collect the module's own top-level names, then rewrite both the
-            // declarations AND every reference inside module bodies — a module
-            // fn must still reach its own structs/fns/vars after prefixing.
-            let mut local_names: std::collections::BTreeMap<String, String> =
-                std::collections::BTreeMap::new();
-            for mod_stmt in &mod_stmts {
-                match mod_stmt {
-                    ast::Stmt::FnDecl { name, .. }
-                    | ast::Stmt::StructDecl { name, .. }
-                    | ast::Stmt::Assign { name, .. } => {
-                        local_names
-                            .insert(name.clone(), format!("{}_{}", module_name, name));
-                    }
-                    _ => {}
-                }
-            }
-
-            // Rewrite module declarations with prefixed names
-            for mod_stmt in &mod_stmts {
-                match mod_stmt {
-                    ast::Stmt::FnDecl { name, params, defaults, body, is_view } => {
-                        let mut body = body.clone();
-                        // Params shadow module names inside the body
-                        let shadowed: std::collections::HashSet<String> =
-                            params.iter().cloned().collect();
-                        for st in &mut body {
-                            rewrite_refs_stmt(st, &local_names, &shadowed);
-                        }
-                        expanded.push(ast::Stmt::FnDecl {
-                            name: format!("{}_{}", module_name, name),
-                            params: params.clone(),
-                            defaults: defaults.clone(),
-                            body,
-                            is_view: *is_view,
-                        });
-                    }
-                    ast::Stmt::StructDecl { name, fields } => {
-                        expanded.push(ast::Stmt::StructDecl {
-                            name: format!("{}_{}", module_name, name),
-                            fields: fields.clone(),
-                        });
-                    }
-                    ast::Stmt::Assign { name, value } => {
-                        // Module-level variables become prefixed assigns
-                        let mut value = value.clone();
-                        rewrite_refs_expr(
-                            &mut value,
-                            &local_names,
-                            &std::collections::HashSet::new(),
-                        );
-                        expanded.push(ast::Stmt::Assign {
-                            name: format!("{}_{}", module_name, name),
-                            value,
-                        });
-                    }
-                    // Pass through nested Use statements so the transpiler
-                    // registers those module names too
-                    ast::Stmt::Use { .. } => {
-                        expanded.push(mod_stmt.clone());
-                    }
-                    _ => {}
-                }
-            }
-            expanded_modules.push((module_name.clone(), local_names.clone()));
+        let ast::Stmt::Use { path, alias } = stmt else {
+            expanded.push(stmt.clone());
+            continue;
+        };
+        // Built-in modules: skip file lookup
+        if path == "math" || path.starts_with("math.") {
+            expanded.push(stmt.clone());
+            continue;
         }
+        // Convert dot-separated path to file path (views.home → views/home)
+        let file_rel = path.replace('.', "/");
+        let spelling = alias.clone().unwrap_or_else(|| {
+            path.rsplit(['.', '/']).next()
+                .and_then(|s| if s.is_empty() { None } else { Some(s) })
+                .unwrap_or(path)
+                .to_string()
+        });
+        // The path is rooted at the project (the directory holding the
+        // crowfile), so a part under views/ reaches a part under sim/
+        // whichever file is the entry; without a crowfile the entry file's
+        // directory is the root
+        let root = project_root(source_dir);
+        let mut candidates = vec![
+            root.join(format!("{}.crow", file_rel)),
+            root.join(format!("crow_modules/{}.crow", file_rel)),
+            root.join(format!("crow_modules/{}/main.crow", file_rel)),
+        ];
+        if root != source_dir {
+            candidates.push(source_dir.join(format!("{}.crow", file_rel)));
+        }
+        let Some(file_path) = candidates.iter().find(|p| p.exists()).cloned() else {
+            expanded.push(stmt.clone());
+            continue;
+        };
+        let canon = std::fs::canonicalize(&file_path).unwrap_or(file_path.clone());
+        // Expanded already, through another importer: one copy, this
+        // file's spelling of it
+        if let Some(names) = ex.done.get(&canon) {
+            imported.push((spelling, names.clone()));
+            expanded.push(stmt.clone());
+            continue;
+        }
+        // Circular import: the earlier expansion covers it
+        let key = canon.to_string_lossy().to_string();
+        if in_progress.contains(&key) {
+            expanded.push(stmt.clone());
+            continue;
+        }
+        in_progress.insert(key.clone());
+        let source = match std::fs::read_to_string(&file_path) {
+            Ok(s) => s,
+            Err(_) => {
+                expanded.push(stmt.clone());
+                continue;
+            }
+        };
+        // Parse the module
+        let mut lexer = Lexer::new(&source);
+        let tokens = match lexer.tokenize() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let mut parser = Parser::new(tokens);
+        let mod_stmts = match parser.parse() {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        // The module's own imports are hoisted first and its references to
+        // them rewritten
+        let mod_dir = file_path.parent().unwrap_or(source_dir);
+        let mod_stmts = expand_into(&mod_stmts, mod_dir, ex, in_progress);
+        in_progress.remove(&key);
+
+        // The prefix is the module's path: unique per file, the same from
+        // every importer
+        let prefix = file_rel.replace('/', "_");
+        // Collect the module's own top-level names, then rewrite both the
+        // declarations AND every reference inside module bodies — a module
+        // fn must still reach its own structs/fns/vars after prefixing.
+        let mut local_names: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for mod_stmt in &mod_stmts {
+            match mod_stmt {
+                ast::Stmt::FnDecl { name, .. }
+                | ast::Stmt::StructDecl { name, .. }
+                | ast::Stmt::Assign { name, .. }
+                | ast::Stmt::Derive { name, .. } => {
+                    local_names.insert(name.clone(), format!("{}_{}", prefix, name));
+                }
+                ast::Stmt::MultiAssign { names, .. } => {
+                    for name in names {
+                        local_names.insert(name.clone(), format!("{}_{}", prefix, name));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let none = std::collections::HashSet::new();
+        for mod_stmt in &mod_stmts {
+            match mod_stmt {
+                ast::Stmt::FnDecl { name, params, defaults, body, is_view } => {
+                    let mut body = body.clone();
+                    // Params shadow module names inside the body
+                    let shadowed: std::collections::HashSet<String> =
+                        params.iter().cloned().collect();
+                    for st in &mut body {
+                        rewrite_refs_stmt(st, &local_names, &shadowed);
+                    }
+                    ex.hoisted.push(ast::Stmt::FnDecl {
+                        name: format!("{}_{}", prefix, name),
+                        params: params.clone(),
+                        defaults: defaults.clone(),
+                        body,
+                        is_view: *is_view,
+                    });
+                }
+                ast::Stmt::StructDecl { name, fields } => {
+                    ex.hoisted.push(ast::Stmt::StructDecl {
+                        name: format!("{}_{}", prefix, name),
+                        fields: fields.clone(),
+                    });
+                }
+                // Module-level variables become prefixed assigns
+                ast::Stmt::Assign { name, value } => {
+                    let mut value = value.clone();
+                    rewrite_refs_expr(&mut value, &local_names, &none);
+                    ex.hoisted.push(ast::Stmt::Assign {
+                        name: format!("{}_{}", prefix, name),
+                        value,
+                    });
+                }
+                ast::Stmt::MultiAssign { names, values } => {
+                    let mut values = values.clone();
+                    for v in &mut values {
+                        rewrite_refs_expr(v, &local_names, &none);
+                    }
+                    ex.hoisted.push(ast::Stmt::MultiAssign {
+                        names: names.iter().map(|n| format!("{}_{}", prefix, n)).collect(),
+                        values,
+                    });
+                }
+                // A derivation is a part's belief: prefixed like its facts,
+                // its body reading the module's own names
+                ast::Stmt::Derive { name, fresh, body } => {
+                    let mut body = body.clone();
+                    for st in &mut body {
+                        rewrite_refs_stmt(st, &local_names, &none);
+                    }
+                    ex.hoisted.push(ast::Stmt::Derive {
+                        name: format!("{}_{}", prefix, name),
+                        fresh: *fresh,
+                        body,
+                    });
+                }
+                // Pass through nested Use statements so the transpiler
+                // registers those module names too
+                ast::Stmt::Use { .. } => {
+                    ex.hoisted.push(mod_stmt.clone());
+                }
+                _ => {}
+            }
+        }
+        ex.done.insert(canon, local_names.clone());
+        imported.push((spelling, local_names));
         // Keep the original statement (including Use, so transpiler knows about it)
         expanded.push(stmt.clone());
     }
     // Rewrite qualified refs in the importing file: home.render → home_render
-    for (module_name, local_names) in &expanded_modules {
+    for (spelling, local_names) in &imported {
         for st in &mut expanded {
-            rewrite_qualified_refs_stmt(st, module_name, local_names);
+            rewrite_qualified_refs_stmt(st, spelling, local_names);
         }
     }
     expanded
@@ -3503,6 +3588,29 @@ fn rewrite_qualified_refs_stmt(
             map(index);
             map(value);
         }
+        // `session.day = x` in another part's handler: an assignment to the
+        // module's fact, which the validator then judges like any fact write
+        ast::Stmt::FieldAssign { object, field, value } => {
+            map(value);
+            let target = if let ast::Expr::Ident(obj) = &*object {
+                if obj == module_name { local_names.get(field).cloned() } else { None }
+            } else { None };
+            if let Some(prefixed) = target {
+                *stmt = ast::Stmt::Assign { name: prefixed, value: value.clone() };
+                return;
+            }
+            map(object);
+        }
+        ast::Stmt::MultiAssign { values, .. } => {
+            for v in values {
+                map(v);
+            }
+        }
+        ast::Stmt::Derive { body, .. } | ast::Stmt::TestBlock { body, .. } => {
+            for st in body {
+                rewrite_qualified_refs_stmt(st, module_name, local_names);
+            }
+        }
         _ => {}
     }
 }
@@ -3543,7 +3651,103 @@ fn rewrite_qualified_refs_expr(
                 rewrite_qualified_refs_expr(i, module_name, local_names);
             }
         }
+        ast::Expr::Map(pairs) => {
+            for (_, v) in pairs {
+                rewrite_qualified_refs_expr(v, module_name, local_names);
+            }
+        }
+        ast::Expr::Named { value, .. } => rewrite_qualified_refs_expr(value, module_name, local_names),
+        ast::Expr::ForExpr { iter, body, .. } => {
+            rewrite_qualified_refs_expr(iter, module_name, local_names);
+            for st in body {
+                rewrite_qualified_refs_stmt(st, module_name, local_names);
+            }
+        }
+        // `clock.head` inside an interpolation span reads the module's name
+        // like any other expression: rewritten to the prefixed form
+        ast::Expr::Str(s) => {
+            if s.contains('`') {
+                let needle = format!("{}.", module_name);
+                let chars: Vec<char> = s.chars().collect();
+                let mut out = String::with_capacity(s.len());
+                let mut in_span = false;
+                let mut i = 0;
+                while i < chars.len() {
+                    let c = chars[i];
+                    if c == '`' { in_span = !in_span; out.push(c); i += 1; continue; }
+                    if in_span && (c.is_alphabetic() || c == '_') && (i == 0 || !(chars[i - 1].is_alphanumeric() || chars[i - 1] == '_' || chars[i - 1] == '.')) {
+                        let rest: String = chars[i..].iter().collect();
+                        if rest.starts_with(&needle) {
+                            let after = &rest[needle.len()..];
+                            let field: String = after.chars().take_while(|ch| ch.is_alphanumeric() || *ch == '_').collect();
+                            if let Some(prefixed) = local_names.get(&field) {
+                                out.push_str(prefixed);
+                                i += needle.chars().count() + field.chars().count();
+                                continue;
+                            }
+                        }
+                    }
+                    out.push(c);
+                    i += 1;
+                }
+                *s = out;
+            }
+        }
         _ => {}
+    }
+}
+
+/// The directory a project's module paths are rooted at: the nearest
+/// ancestor holding a crowfile, else the entry file's own directory.
+fn project_root(source_dir: &std::path::Path) -> std::path::PathBuf {
+    let start = if source_dir.as_os_str().is_empty() { std::path::Path::new(".") } else { source_dir };
+    let mut dir = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
+    loop {
+        if dir.join("crowfile").exists() {
+            return dir;
+        }
+        match dir.parent() {
+            Some(p) => dir = p.to_path_buf(),
+            None => return start.to_path_buf(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod module_parts_tests {
+    use super::*;
+
+    /// A part's derivation, facts and tests survive expansion with the
+    /// module prefix, and the importing file's references to them — in
+    /// code and inside interpolation spans — are rewritten to match.
+    #[test]
+    fn a_parts_derivation_is_expanded_once_under_its_path() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sim")).unwrap();
+        std::fs::create_dir_all(dir.join("views")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(dir.join("sim/clock.crow"), "use web, ui\n\nbase = 0.0\nspeed = 1.0\nplaying = false\n\nderive head\n    return base * speed\n\nfn faster[]\n    base, speed = head, 10.0\n\nview transport[]\n    return button['10x', click = faster]\n").unwrap();
+        // the tape reads the clock too: a diamond through views/sim.crow
+        std::fs::write(dir.join("sim/tape.crow"), "use web, ui\nuse sim.clock\n\nderive marker\n    return clock.head + 1.0\n").unwrap();
+        std::fs::write(dir.join("views/sim.crow"), "use web, ui\nuse sim.clock\nuse sim.tape\n\nderive label\n    return 'at `clock.head` x`clock.speed` marker `tape.marker`'\n\nfn slow[]\n    clock.speed = 1.0\n\nview render[]\n    return stack[p[label], clock.transport[], button['1x', click = slow]]\n\ntest it[]\n    a = app[render]\n    click[a, clock.faster]\n").unwrap();
+        let src = "use web, ui\nuse views.sim\nuse sim.clock\n\nlog[clock.speed]\npage['/', sim.render]\n";
+        let stmts = build(src).unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let expanded = expand_module_imports(&stmts, &dir, &mut visited);
+        let text = format!("{:?}", expanded);
+        assert_eq!(text.matches("Derive { name: \"sim_clock_head\"").count(), 1, "one copy of the clock, whichever path reached it: {}", text);
+        assert!(text.contains("Derive { name: \"sim_tape_marker\""), "the tape's derivation reads the clock's: {}", text);
+        assert!(text.contains("BinOp { left: Ident(\"sim_clock_head\")"), "the tape's qualified read is rewritten");
+        assert!(text.contains("Derive { name: \"views_sim_label\""), "the page's derivation is prefixed by its path");
+        assert!(text.contains("at `sim_clock_head` x`sim_clock_speed` marker `sim_tape_marker`"), "qualified reads inside interpolation spans are rewritten: {}", text);
+        assert!(text.contains("Ident(\"sim_clock_transport\")"), "a qualified view call is rewritten");
+        assert!(text.contains("names: [\"sim_clock_base\", \"sim_clock_speed\"]"), "a multi-assign in a handler takes the prefix");
+        assert!(text.contains("args: [Str(\"/\"), Ident(\"views_sim_render\")]"), "the entry's page view is rewritten");
+        assert!(text.contains("args: [Ident(\"sim_clock_speed\")]"), "the entry's own direct import reads the same copy: {}", text);
+        assert!(text.contains("Assign { name: \"sim_clock_speed\", value: Float(1.0) }"), "a qualified assignment in another part's handler writes the fact: {}", text);
+        assert!(!text.contains("Ident(\"clock_speed\")") && !text.contains("clock_clock"), "no second prefix, no second copy");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

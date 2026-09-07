@@ -41,7 +41,7 @@ pub(crate) const WEB_RESERVED: &[&str] = &[
     "app", "click", "elements", "change", "box", "fits", "style",
     "cors", "sessions", "templates", "cache", "limit",
     "uploads", "sse", "ws", "connect", "send", "recv", "close",
-    "page", "static_dir", "smtp",
+    "page", "static_dir", "smtp", "msgpack", "arrow", "bytes", "stream",
 ];
 
 /// Web builtins the compiler implements but deliberately does NOT reserve
@@ -101,7 +101,7 @@ const BUILTINS: &[&str] = &[
     "uploads", "sse", "ws", "connect", "send", "recv", "close",
     "page", "static_dir", "smtp",
     // UI reactive builtins
-    "fetch", "poll", "field", "slider", "checkbox", "toggle", "radio", "tabs", "progress", "icon", "today",
+    "fetch", "poll", "field", "slider", "checkbox", "toggle", "radio", "tabs", "select", "progress", "icon", "today",
 ];
 
 pub struct Validator<'a> {

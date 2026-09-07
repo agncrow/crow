@@ -1009,6 +1009,14 @@ impl Transpiler {
                     }
                 }
             }
+            // Every view of a page program renders from the session's state,
+            // not only the page's root: a part's view reads the part's facts
+            // and derivations, and the view that composes it hands the state on
+            if has_page {
+                for v in self.ctx.views.clone() {
+                    self.reactive_render_fns.insert(v);
+                }
+            }
 
             // Collect reactive variables: top-level assignments that aren't fetch/poll/serve
             if !self.reactive_render_fns.is_empty() {
@@ -1741,8 +1749,16 @@ impl Transpiler {
 
         // Build param array — override for live render/handle callbacks
         let params: Vec<String> = if is_reactive_render {
-            // Reactive render: inject state param (user wrote 0 params)
-            vec!["state: &CrowLiveState".to_string()]
+            // Reactive render: the state first, then the view's own params
+            let mut ps = vec!["state: &CrowLiveState".to_string()];
+            for (pname, ptype) in &sig.params {
+                let rt = match ptype {
+                    CrowType::Str | CrowType::Unknown => "String".to_string(),
+                    other => other.to_rust_type(),
+                };
+                ps.push(format!("{}: {}", pname, rt));
+            }
+            ps
         } else if is_reactive_handler {
             // Reactive handler: mut state first, then any declared params —
             // F-11 event args arrive through the dispatch (frozen at render)
@@ -1842,17 +1858,7 @@ impl Transpiler {
             let reactive_vars = self.reactive_vars.clone();
             for (vname, (vtype, default_str)) in &reactive_vars {
                 let kw = if is_reactive_handler { "let mut" } else { "let" };
-                let getter = match vtype {
-                    CrowType::Int => format!("state.get_i64(\"{}\", {})", vname, default_str),
-                    CrowType::Float => format!("state.get_f64(\"{}\", {})", vname, default_str),
-                    CrowType::Str => format!("state.get_str(\"{}\", &{})", vname, default_str),
-                    CrowType::Bool => format!("state.get_bool(\"{}\", {})", vname, default_str),
-                    // arrays, maps, frames: stored as JSON, read back as their type
-                    other => format!(
-                        "state.get(\"{}\").and_then(|_v| serde_json::from_value::<{}>(_v.clone()).ok()).unwrap_or_else(|| {})",
-                        vname, other.to_rust_type(), default_str
-                    ),
-                };
+                let getter = Self::state_getter(vname, vtype, default_str);
                 self.emit_line(&format!("{} {} = {};", kw, vname, getter));
                 self.declared.insert(vname.clone());
                 self.ctx.vars.insert(vname.clone(), vtype.clone());
@@ -1918,7 +1924,13 @@ impl Transpiler {
                     lines.push(format!("state.note_table_write(\"{}\");", t));
                 }
             }
-            for (vname, _) in self.reactive_vars.clone() {
+            // only the facts this body itself assigns: a helper it called
+            // persisted its own writes, and writing every local back would
+            // put the values read at entry over them
+            let facts: std::collections::BTreeSet<String> = self.reactive_vars.keys().cloned().collect();
+            let own: std::collections::BTreeMap<String, Vec<Stmt>> = [(name.to_string(), sig.body.clone())].into_iter().collect();
+            let written = crate::derive::written_facts(&own, &facts);
+            for vname in written {
                 lines.push(format!("state.set(\"{}\", serde_json::json!({}));", vname, vname));
             }
             self.reactive_epilogue = Some(lines);
@@ -1974,6 +1986,46 @@ impl Transpiler {
             self.emit_line("}");
             self.emit_line("");
         }
+    }
+
+    /// How a reactive variable is read from the session state.
+    fn state_getter(vname: &str, vtype: &CrowType, default_str: &str) -> String {
+        match vtype {
+            CrowType::Int => format!("state.get_i64(\"{}\", {})", vname, default_str),
+            CrowType::Float => format!("state.get_f64(\"{}\", {})", vname, default_str),
+            CrowType::Str => format!("state.get_str(\"{}\", &{})", vname, default_str),
+            CrowType::Bool => format!("state.get_bool(\"{}\", {})", vname, default_str),
+            // arrays, maps, frames: stored as JSON, read back as their type
+            other => format!(
+                "state.get(\"{}\").and_then(|_v| serde_json::from_value::<{}>(_v.clone()).ok()).unwrap_or_else(|| {})",
+                vname, other.to_rust_type(), default_str
+            ),
+        }
+    }
+
+    /// After a handler calls a helper, the facts the helper (or anything it
+    /// calls) assigns are read back into the caller's locals, so the rest
+    /// of the handler sees what the helper wrote.
+    fn reload_after(&self, callee: &str) -> String {
+        let facts: std::collections::BTreeSet<String> = self.reactive_vars.keys().cloned().collect();
+        let bodies: std::collections::BTreeMap<String, Vec<Stmt>> = self.ctx.functions.iter()
+            .filter(|(n, _)| !self.derive_fns.contains(*n))
+            .map(|(n, s)| (n.clone(), s.body.clone()))
+            .collect();
+        let Some(body) = bodies.get(callee) else { return String::new() };
+        let mut reach = crate::derive::called_fns(body, &bodies);
+        reach.insert(callee.to_string());
+        let reach_bodies: std::collections::BTreeMap<String, Vec<Stmt>> = reach.iter().filter_map(|n| bodies.get(n).map(|b| (n.clone(), b.clone()))).collect();
+        let written = crate::derive::written_facts(&reach_bodies, &facts);
+        let mut out = String::new();
+        for v in written {
+            if let Some((vtype, default_str)) = self.reactive_vars.get(&v) {
+                if self.declared.contains(&v) {
+                    out.push_str(&format!("{} = {}; ", v, Self::state_getter(&v, vtype, default_str)));
+                }
+            }
+        }
+        out
     }
 
     /// Emit the CrowDual struct with operator implementations for forward-mode AD.
@@ -2391,7 +2443,24 @@ impl Transpiler {
                     ));
                     return;
                 }
-                let expr_str = self.owned_expr_str(value);
+                let mut expr_str = self.owned_expr_str(value);
+                let mut holds_markup = false;
+                // A local that holds a view or an element holds its markup, as
+                // it does in the interpreter: the tree it joins later reads a
+                // string, and a list of such locals is a list of strings
+                {
+                    let in_view = self.needs_ui && self.ctx.views.contains(&self.current_function_name);
+                    let views = self.ctx.views.clone();
+                    let makes_node = |e: &Expr| matches!(e, Expr::Call { callee, .. }
+                        if matches!(callee.as_ref(), Expr::Ident(n)
+                            if views.contains(n)
+                                || crate::lower::UI_ELEMENTS.contains(&n.as_str())
+                                || matches!(n.as_str(), "chart" | "field" | "select" | "slider" | "checkbox" | "toggle" | "radio" | "tabs" | "progress" | "icon")));
+                    if in_view && makes_node(value) {
+                        expr_str = format!("({}).to_html()", expr_str);
+                        holds_markup = true;
+                    }
+                }
                 if self.declared.contains(name) {
                     // Check for type-changing reassignment
                     let new_ty = self.ctx.infer_expr(value);
@@ -2443,6 +2512,8 @@ impl Transpiler {
                     self.emit_line(&format!("{} = {};", name, expr_str));
                 } else {
                     let mut ty = self.ctx.infer_expr(value);
+                    // markup is a string wherever the tree reads it later
+                    if holds_markup { ty = CrowType::Str; }
                     // If the expression type has Unknown (e.g. map[]), use the
                     // resolved variable type from the inference pass instead
                     if format!("{:?}", ty).contains("Unknown") {
@@ -2460,8 +2531,12 @@ impl Transpiler {
                         }
                     }
                     let kw = if self.mutated_vars.contains(name) { "let mut" } else { "let" };
+                    // every view, not only the page's root: a local holding
+                    // an element is a node, whatever a string-shaped type
+                    // says at the boundary
                     let in_live_callback = self.live_render_fns.contains(&self.current_function_name)
-                        || self.live_handle_fns.contains(&self.current_function_name);
+                        || self.live_handle_fns.contains(&self.current_function_name)
+                        || self.ctx.views.contains(&self.current_function_name);
                     if self.emitting_dual || in_live_callback {
                         // In dual/live mode, let Rust infer the type
                         self.emit_line(&format!("{} {} = {};", kw, name, expr_str));
@@ -4371,7 +4446,7 @@ impl Transpiler {
                                                 let arg_strs: Vec<String> = fargs.iter().map(|a| self.expr_to_string(a)).collect();
                                                 result = format!(
                                                     "{}.on_click_args(\"{}\", &serde_json::json!([{}]).to_string())",
-                                                    result, fn_name, arg_strs.join(", ")
+                                                    result, fn_name, arg_strs.iter().map(|a| format!("({})", a)).collect::<Vec<_>>().join(", ")
                                                 );
                                                 continue;
                                             }
@@ -4882,9 +4957,14 @@ impl Transpiler {
                     // Known function → direct call (routing to the matching
                     // specialization when the function is monomorphized)
                     if self.ctx.functions.contains_key(name) {
-                        // a handler calling a state-writing helper hands it the state
-                        let arg_strs: Vec<String> = if self.reactive_event_handlers.contains(name)
-                            && self.reactive_event_handlers.contains(&self.current_function_name)
+                        // a handler calling a state-writing helper hands it the
+                        // state, and so does a view calling a view
+                        let cur = self.current_function_name.clone();
+                        let helper_call = self.reactive_event_handlers.contains(name)
+                            && self.reactive_event_handlers.contains(&cur);
+                        let arg_strs: Vec<String> = if helper_call
+                            || (self.reactive_render_fns.contains(name)
+                                && (self.reactive_render_fns.contains(&cur) || self.reactive_event_handlers.contains(&cur)))
                         {
                             let mut all = vec!["state".to_string()];
                             all.extend(arg_strs.iter().cloned());
@@ -4892,6 +4972,14 @@ impl Transpiler {
                         } else {
                             arg_strs.clone()
                         };
+                        // a helper that writes facts persisted them: the
+                        // caller's locals for those facts are read again
+                        if helper_call {
+                            let reloads = self.reload_after(name);
+                            if !reloads.is_empty() {
+                                return format!("{{ let _r = {}({}); {} _r }}", name, arg_strs.join(", "), reloads);
+                            }
+                        }
                         if let Some(clones) = self.ctx.specializations.get(name) {
                             let call_sig: Vec<CrowType> = args.iter()
                                 .map(|a| {
@@ -5109,7 +5197,7 @@ impl Transpiler {
                                                 let arg_strs: Vec<String> = fargs.iter().map(|a| self.expr_to_string(a)).collect();
                                                 result = format!(
                                                     "{}.on_click_args(\"{}\", &serde_json::json!([{}]).to_string())",
-                                                    result, fn_name, arg_strs.join(", ")
+                                                    result, fn_name, arg_strs.iter().map(|a| format!("({})", a)).collect::<Vec<_>>().join(", ")
                                                 );
                                                 continue;
                                             }
@@ -5251,13 +5339,23 @@ impl Transpiler {
                         format!("{}({})", callee_str, casted.join(", "))
                     }
                     _ => {
-                        // a handler calling a state-writing helper hands it the state
-                        let threads_state = callee_name.as_ref().map_or(false, |n| self.reactive_event_handlers.contains(n))
-                            && self.reactive_event_handlers.contains(&self.current_function_name);
+                        // a handler calling a state-writing helper hands it the
+                        // state, and so does a view calling a view
+                        let cur = self.current_function_name.clone();
+                        let helper_call = callee_name.as_ref().map_or(false, |n| self.reactive_event_handlers.contains(n))
+                            && self.reactive_event_handlers.contains(&cur);
+                        let threads_state = helper_call
+                            || (callee_name.as_ref().map_or(false, |n| self.reactive_render_fns.contains(n))
+                                && (self.reactive_render_fns.contains(&cur) || self.reactive_event_handlers.contains(&cur)));
                         if threads_state {
                             let mut all = vec!["state".to_string()];
                             all.extend(arg_strs.iter().cloned());
-                            format!("{}({})", callee_str, all.join(", "))
+                            let reloads = if helper_call { callee_name.as_ref().map(|n| self.reload_after(n)).unwrap_or_default() } else { String::new() };
+                            if reloads.is_empty() {
+                                format!("{}({})", callee_str, all.join(", "))
+                            } else {
+                                format!("{{ let _r = {}({}); {} _r }}", callee_str, all.join(", "), reloads)
+                            }
                         } else {
                             format!("{}({})", callee_str, arg_strs.join(", "))
                         }
@@ -5476,11 +5574,24 @@ impl Transpiler {
                         elems.join(", ")
                     );
                 }
+                // A list of views or elements holds their markup, as a `for`
+                // over views does, so the two shapes of a list child agree
+                let in_view = self.needs_ui && self.ctx.views.contains(&self.current_function_name);
+                let views = self.ctx.views.clone();
+                let makes_node = |e: &Expr| matches!(e, Expr::Call { callee, .. }
+                    if matches!(callee.as_ref(), Expr::Ident(n)
+                        if views.contains(n)
+                            || crate::lower::UI_ELEMENTS.contains(&n.as_str())
+                            || matches!(n.as_str(), "chart" | "field" | "select" | "slider" | "checkbox" | "toggle" | "radio" | "tabs" | "progress" | "icon")));
                 let vals: Vec<String> = if let CrowType::Fn(_, _) = &inner_type {
                     // Cast each item to fn pointer type to avoid Rust's distinct fn item types
                     let fn_type = inner_type.to_rust_type();
                     items.iter()
                         .map(|i| format!("{} as {}", self.expr_to_string(i), fn_type))
+                        .collect()
+                } else if in_view && !items.is_empty() && items.iter().all(|i| makes_node(i)) {
+                    items.iter()
+                        .map(|i| format!("({}).to_html()", self.expr_to_string(i)))
                         .collect()
                 } else {
                     items.iter()
@@ -7835,7 +7946,7 @@ mod tests {
     fn f11_click_call_shape_emits_frozen_args() {
         let rust = transpile("use web, ui\nspeed = 1.0\nfn set_speed[s]\n    speed = s\nview render[]\n    return div[button['10x', click = set_speed[10.0]]]\nserve[3000]\npage['/', render]\n");
         assert!(rust.contains("on_click_args(\"set_speed\""), "call-shape should emit on_click_args\n{}", rust);
-        assert!(rust.contains("json!([10.0"), "frozen arg should serialize at render\n{}", rust);
+        assert!(rust.contains("json!([(10.0"), "frozen arg should serialize at render, parenthesised so a block argument is not read as a map\n{}", rust);
         assert!(rust.contains("fn set_speed(state: &mut CrowLiveState, s: f64)"), "handler keeps its declared param\n{}", rust);
         assert!(rust.contains("_a[0].as_f64()"), "dispatch should parse the frozen arg\n{}", rust);
     }
@@ -7863,7 +7974,9 @@ mod tests {
     fn test_ui_fetch_assignment() {
         let rust = transpile("use web\nuse ui\nview render[s]\n    return div[h1['hi']]\n\ndata = fetch['/api/data']\nserve[3000]\npage['/', render]\n");
         assert!(rust.contains("register_fetch(\"data\""), "fetch assignment should emit register_fetch\n{}", rust);
-        assert!(!rust.contains("let data"), "fetch should not create a local variable\n{}", rust);
+        // no top-level local for a data source; a view reads it as a frame
+        // from its preamble, and that is the only `let data` there is
+        assert_eq!(rust.matches("let data").count(), rust.matches("let data = __json_to_frame(").count(), "fetch should not create a local variable\n{}", rust);
     }
 
     #[test]

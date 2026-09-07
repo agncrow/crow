@@ -51,6 +51,24 @@ fn json_to_sql_params(params: &[serde_json::Value]) -> Vec<Box<dyn rusqlite::typ
 }
 
 impl CrowDb for CrowSqliteDb {
+    /// The columns a statement would return, typed from the declared types
+    /// of the table columns they come straight from (INTEGER → int, REAL →
+    /// float, TEXT → str, BOOLEAN → bool); a computed column has no declared
+    /// type and reads as text. The statement is prepared, never run.
+    fn describe(&self, sql: &str) -> Result<Vec<(String, String)>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+        Ok(stmt.columns().iter().map(|c| {
+            let kind = match c.decl_type().map(|t| t.to_ascii_uppercase()) {
+                Some(t) if t.contains("INT") => "int",
+                Some(t) if t.contains("REAL") || t.contains("FLOA") || t.contains("DOUB") || t.contains("NUM") || t.contains("DEC") => "float",
+                Some(t) if t.contains("BOOL") => "bool",
+                _ => "str",
+            };
+            (c.name().to_string(), kind.to_string())
+        }).collect())
+    }
+
     fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let params_ = json_to_sql_params(params);

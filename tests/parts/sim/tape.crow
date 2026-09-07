@@ -1,0 +1,6 @@
+--- A part that reads another part: the marker follows the clock.
+use web, ui
+use sim.clock
+
+derive marker
+    return clock.head + 1.0
