@@ -164,9 +164,50 @@ They are findings, not errors, like the live-loop hazards.
 | B1 | Artifacts for facts, derivations, handlers (signatures), views (conditional trees), pages; the baseline store; the diff with cause, reach and the git split; accept in the check loop; the four kernel rules; finch as the acceptance case | this round |
 | B2 | The reachable state machine over abstract facts (small domains: booleans, options, zero-or-a-session), so "Buy is enabled with no session" is a state, not only a path; layout bounds per view at each width from the engine | next |
 | B3 | Rehearsal: reads answered from declared data generated from each query's described schema or from a recorded fixture; writes and calls recorded as effects; `now[]` frozen; the transition snapshots per scenario | after B2 |
-| B4 | The app's chapter in `crow book`: one page per part with the tree, the wiring, the last diff, and the rendered view at two widths | after B3 |
+| B4 | The app's book in `crow book`: overview, pages with trees and wireframes, a chapter per part, data, changes (§8) | this round, ahead of B2 and B3 at Vijay's ask |
 
-## 8. Rehearsal (B3), recorded so the shape is agreed
+## 8. The app's book (B4) — built in this round, ahead of B2 and B3
+
+Vijay's ask: one command, every detail organised step by step, easy to
+view. Not SVG files a developer has to find. So `crow book`, run inside
+an app, serves the app's own book, derived from the source the way the
+Crow Book is rendered — by Crow's `doc` module, with the same page
+shell — and nothing runs against a database.
+
+**Chapters, in reading order.**
+
+| Chapter | What it holds |
+|---|---|
+| The app | The crowfile's name, the counts, and every part with the description its file opens with (the leading comment) and what it holds |
+| Pages | For each page: its composition tree — views under their guards, the inputs they bind, the controls and the handlers they fire — and its wireframe at 1280 and 390, one per state of the page |
+| One chapter per part | Its facts (type, bound by, written by, read by), derivations (reads, tables, holder), handlers (wired or called by; every path with its writes and effects), views (composed on; the tree; the wireframe of every path at both widths), and its named tests as steps |
+| Data | Facts across the app with writers and readers; derivations and who holds them; queries and tables by handle; the effects: which handler writes which table |
+| Changes | The diff against the accepted baseline as `crow check` reports it, with cause and reach; or "the baseline is current" |
+
+**Wireframes are static.** A view's conditional tree is laid out by the
+kernel's own layout engine, the one the harness uses, with placeholders
+where the tree has values: dynamic text prints as the value's short name
+(‹status›), a table draws its header from the query's described columns
+and three rows, a select lists its literal options, a chart is a box of
+its height, a sub-view is its default path inlined. Every path of every
+view is drawn, so every state is visible, and nothing runs. Geometry is
+exact where text is literal and approximate where it is dynamic; when
+rehearsal (B3) supplies declared data the same drawing becomes exact.
+
+**Rendering.** `crow book` writes Markdown under `.crow/book/src/`, a
+summary, and a `site.crow` with the Crow Book's own page shell (menu,
+pager, search, the kernel stylesheet); runs it with the interpreter;
+serves `.crow/book/site/` on the book's port. `crow book --write` builds
+without serving, for CI. The Markdown and the wireframes are derived on
+every start, so the book is never stale; the runner's `▶ Run` stays
+available on any code block a part's own documentation carries.
+
+**What it is not.** Not a place to write documentation by hand (a part's
+leading comment is the one authored line), not a diagram tool, and not
+a replacement for `crow check --show`, which is the same tree in the
+terminal.
+
+## 9. Rehearsal (B3), recorded so the shape is agreed
 
 A scenario is the initial state plus the state each named test leaves
 behind. In rehearsal a `query` returns a frame for that query — generated
@@ -177,7 +218,7 @@ handler sees success. No connection is opened. The check runs offline in
 seconds. Behaviour that turns on data needs the data declared; the
 static layer names exactly which controls those are.
 
-## 9. Open questions
+## 10. Open questions
 
 - Text in views: a renamed label is a visible change and is reported;
   dynamic text is printed as its expression. Whether long literal text

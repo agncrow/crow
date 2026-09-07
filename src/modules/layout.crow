@@ -572,6 +572,7 @@ fn lay_node[node, x, y, width, viewport, path]
         gap = lay_gap[node, 'stack']
         boxes = []
         cy = top + pv
+        cx = x + ph
         first = true
         for k in node.kids
             if not first

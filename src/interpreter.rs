@@ -337,6 +337,46 @@ fn harness_select(n: &HNode, steps: &[(String, String)], depth: usize, out: &mut
 /// The layout engine, written in Crow and shipped inside the compiler.
 const LAYOUT_ENGINE_SRC: &str = include_str!("modules/layout.crow");
 
+/// One box the layout engine produced: where an element sits at a width.
+#[derive(Debug, Clone)]
+pub struct LayoutBox {
+    pub tag: String,
+    pub class: String,
+    pub path: String,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub overflow: bool,
+}
+
+impl Interpreter {
+    /// Lay out an HTML fragment as the harness does — the same engine, the
+    /// same conversion — and return every element's box. The wireframes in
+    /// the app's book come from here with nothing rendered from state.
+    pub fn layout_html(&mut self, html: &str, viewport: f64, wide: bool) -> Result<Vec<LayoutBox>, String> {
+        self.ensure_layout_engine()?;
+        let tree = harness_parse_html(html);
+        let root = harness_to_lnode(&tree);
+        let engine = match self.env.get("crow_layout") { Some(v) => match &v.value { Value::Fn(f) => f.clone(), _ => return Err("layout engine missing".into()) }, None => return Err("layout engine missing".into()) };
+        let boxes = self.call_fn_value(&engine, vec![root, CrowValue::ok(Value::Float(viewport)), CrowValue::ok(Value::Bool(wide))])?;
+        let list = match &boxes.value { Value::Array(items) => items.clone(), _ => Vec::new() };
+        let mut out = Vec::new();
+        for b in list {
+            if let Value::StructInstance(si) = &b.value {
+                let s = |k: &str| si.fields.get(k).map(|v| format!("{}", v.value)).unwrap_or_default();
+                let f = |k: &str| si.fields.get(k).and_then(|v| match &v.value { Value::Float(x) => Some(*x), Value::Int(n) => Some(*n as f64), _ => None }).unwrap_or(0.0);
+                out.push(LayoutBox {
+                    tag: s("tag"), class: s("class"), path: s("path"),
+                    x: f("x"), y: f("y"), width: f("width"), height: f("height"),
+                    overflow: matches!(si.fields.get("overflow").map(|v| &v.value), Some(Value::Bool(true))),
+                });
+            }
+        }
+        Ok(out)
+    }
+}
+
 /// A rendered node as the engine's LNode struct value.
 fn harness_to_lnode(n: &HNode) -> CrowValue {
     let mut attrs = std::collections::BTreeMap::new();

@@ -256,3 +256,20 @@ reached from a file you did not edit is the headline. Accept with `a`
 and the baseline travels with your change; without a terminal, an
 unaccepted change fails the check, so CI blocks on it. Nothing runs and
 nothing is written: the artifacts come from the source alone.
+
+## The app's book
+
+`crow book`, run inside the app, serves a book derived from the source on
+every start: the app and its parts, each page as a composition tree with
+a wireframe per state at desktop and phone widths, a chapter per part
+with its facts, derivations, handlers as paths, views with their trees
+and wireframes, and tests as steps, then the data wiring and the changes
+since the accepted baseline. The wireframes are the layout engine's
+boxes over the view's tree with placeholders, so nothing runs and no
+database is touched.
+
+```text
+$ crow book
+crow book: the app's book is written to .crow/book/site
+crow book: http://localhost:3008/
+```
