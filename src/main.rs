@@ -81,6 +81,7 @@ fn main() {
             let mut verbose = false;
             let mut strict = false;
             let mut accept_all = false;
+            let mut show: Option<Option<String>> = None;
             let mut db_url: Option<String> = None;
             let mut file: Option<String> = None;
             let mut rest = args.iter().skip(2);
@@ -89,6 +90,11 @@ fn main() {
                     "--verbose" => verbose = true,
                     "--strict" => strict = true,
                     "--accept" => accept_all = true,
+                    "--show" => {
+                        // --show [name]: the app's structure, or one declaration
+                        let next = rest.clone().next().cloned();
+                        show = Some(match next { Some(n) if !n.starts_with('-') && !n.ends_with(".crow") => { rest.next(); Some(n) } _ => None });
+                    }
                     "--db" => {
                         db_url = rest.next().cloned();
                         if db_url.is_none() {
@@ -110,6 +116,10 @@ fn main() {
                 let config = parse_crowfile();
                 config.entry
             });
+            if let Some(name) = show {
+                cmd_show(&filename, name.as_deref());
+                return;
+            }
             cmd_check(&filename, verbose, db_url, strict, accept_all);
         }
         "lsp" => {
@@ -2596,6 +2606,7 @@ fn run_check_pipeline(filename: &str) -> checker::CheckResult {
     for r in rules {
         result.issues.push(checker::Issue::UiRule { subject: r.subject, file: r.file, detail: r.detail, fix: r.fix });
     }
+    result.artifacts = Some(artifacts);
     result
 }
 
@@ -2678,6 +2689,31 @@ fn format_location(filename: &str, issue: &checker::Issue, fn_lines: &std::colle
     }
 
     filename.to_string()
+}
+
+/// `crow check --show`: the app as a tree; `--show name`: one declaration's
+/// artifact, matched by the end of its name (`buy` finds `sim_trading_buy`).
+fn cmd_show(filename: &str, name: Option<&str>) {
+    let result = run_check_pipeline(filename);
+    let Some(art) = &result.artifacts else { println!("  nothing to show"); return; };
+    match name {
+        None => print!("{}", baseline::render_structure(art, filename)),
+        Some(n) => {
+            let n = n.trim();
+            let mut hits: Vec<(&String, &String)> = art.entries.iter().filter(|(k, _)| {
+                let decl = k.split(' ').nth(1).unwrap_or("");
+                decl == n || decl.ends_with(&format!("_{}", n)) || k.as_str() == n
+            }).collect();
+            if hits.is_empty() {
+                hits = art.entries.iter().filter(|(k, _)| k.contains(n)).collect();
+            }
+            if hits.is_empty() {
+                println!("  nothing named '{}' — try `crow check --show` for the whole app", n);
+                process::exit(1);
+            }
+            for (_, text) in hits { print!("{}\n", text); }
+        }
+    }
 }
 
 fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool, accept_all: bool) {

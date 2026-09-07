@@ -45,6 +45,13 @@ with the change in review. New declarations are recorded; removed ones
 are reported. Nothing runs, nothing is written, nothing is called: the
 artifacts come from the source alone.
 
+`crow check --show` prints the app as a tree — each page, the views it
+composes under their guards, the inputs they bind, the controls and the
+handlers they fire, then the handlers with their writes and effects,
+the facts with their binders, writers and readers, and the derivations
+with their reads. `crow check --show buy` prints one declaration's
+artifact in full, matched by the end of its name.
+
 Four kernel rules read the same wiring, generic and nobody's to
 maintain: a `modal`, `drawer` or `toast` whose `open` fact no handler
 sets true, or none sets false; a `disabled` fact no handler writes; a

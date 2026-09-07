@@ -3194,6 +3194,7 @@ crow test --book            --- execute every code block of the book in both mod
 crow test --docs            --- the docs cover every compiler name, and name nothing the compiler lacks
 crow check                  --- automatic verification (uses crowfile; or: crow check file.crow); records and diffs the app baseline
 crow check --accept         --- accept every baseline change at once (the loop's `a`, for a script or a deliberate sweep)
+crow check --show [name]    --- the app as a tree: pages, views under their guards, controls and handlers, facts; or one declaration's artifact
 crow check --db <url>       --- + schema-aware database checks (or db = '…' in the crowfile)
 crow check --strict         --- exit 1 on any finding (CI)
 crow fix file.crow --hazard N [--option M]   --- apply a fix from the check report
