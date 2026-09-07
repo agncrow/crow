@@ -638,7 +638,7 @@ impl Interpreter {
         // Derivations: register each with its static read set; the body
         // reads facts like a handler does (the reactive exemption)
         {
-            let facts: std::collections::BTreeSet<String> = stmts.iter().filter_map(|s| if let Stmt::Assign { name, .. } = s { Some(name.clone()) } else { None }).collect();
+            let facts = crate::derive::fact_names(stmts);
             let derive_names: std::collections::BTreeSet<String> = stmts.iter().filter_map(|s| if let Stmt::Derive { name, .. } = s { Some(name.clone()) } else { None }).collect();
             let bodies: std::collections::BTreeMap<String, Vec<Stmt>> = stmts.iter().filter_map(|s| if let Stmt::FnDecl { name, body, .. } = s { Some((name.clone(), body.clone())) } else { None }).collect();
             let owned = crate::derive::owned_tables(stmts, &bodies);

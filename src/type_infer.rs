@@ -886,6 +886,19 @@ impl TypeContext {
                 }
                 for v in values { self.collect_call_types_expr(v); }
             }
+            // A derivation's body is scanned like a parameterless function's:
+            // the views and helpers it calls learn their parameter types from
+            // its call sites, exactly as they would from a handler's
+            Stmt::Derive { name, body, .. } => {
+                let saved_vars = self.vars.clone();
+                let saved_fn_params = self.current_fn_params.clone();
+                let saved_fn_name = self.current_fn_name.replace(name.clone());
+                self.current_fn_params = Vec::new();
+                for s in body { self.collect_call_types_stmt(s); }
+                self.current_fn_params = saved_fn_params;
+                self.current_fn_name = saved_fn_name;
+                self.vars = saved_vars;
+            }
             Stmt::FnDecl { name, body, .. } => {
                 // Add function params as known vars before scanning body
                 let saved_vars = self.vars.clone();

@@ -40,7 +40,8 @@ trading system's bug history:
 |---|---|
 | blocking in view/handler | `sleep`/`input`/`shell` reachable (directly or through helpers, path shown) — every connected client freezes while it runs. Do the work before `serve[]`; render-time `query` is fine and deliberately not flagged. |
 | unguarded staleness | a value read from outside flows into a decision (directly or through computation) with no freshness check — guard it with `now[] - captured[x]`. This is the propagation the runtime deliberately does not carry. |
-| stale snapshot | a top-level variable queried once at startup is read by a view — every render serves launch-time data. Query inside the view, or re-query in a handler (which clears the finding). |
+| stale snapshot (error) | a top-level variable queried once at startup is read by a view — every render serves launch-time data. The cure is a derivation: `d` rewrites `x = query[…]` into `derive x`, which recomputes when a fact it reads or a table this program writes changes. Re-querying in a handler also clears the finding. |
+| remote query in view (error) | a view queries a remote database — a network hop per render, every connected client waiting on it. `d` hoists a single-line `rows = query[pg, …]` above the view as `derive rows[fresh = 60]`; `a` records `--- crow: remote-render` above the view when querying every render is the design. |
 
 The language gaps these point at (background work, freshness, periodicity)
 are documented as reviewable proposals in `discovered-features.md`.
@@ -77,8 +78,10 @@ lost-update fusion (1b), transact wrapping (1e).
 the developer knows whether the pattern is a bug or a design. A stale
 snapshot is a bug for live coverage and correct for a static lookup table.
 These fixes are offered, never assumed — and the deliberate case gets an
-acknowledgment comment. Current members: stale snapshot (move the query into
-the view), remote query in view (move behind a handler refresh).
+acknowledgment comment. Current members: stale snapshot and remote query in
+view, both cured by a derivation (`d = derive` in the check loop rewrites
+the exact single-line shapes and spells out the manual edit otherwise), and
+blocking in view (`f`, below).
 
 **Tier 3 — design work.** The cure is a restructuring only the developer can
 choose — or the language cannot express it yet. The one-way latch's fix is
@@ -94,8 +97,8 @@ never flagged.
 
 | Data | Blessed home | Checks fencing it |
 |---|---|---|
-| local (sqlite) state | query inside the view — fresh every render | stale-snapshot pushes in |
-| remote (network db) state | re-query in a handler, on demand | remote-query-in-view pushes out of render; stale-snapshot still bars startup-forever |
+| local (sqlite) state | a derivation over the table — recomputed when this program writes it — or a query inside the view | stale-snapshot pushes in, with `d = derive` |
+| remote (network db) state | `derive rows[fresh = N]` — once per window, shared by every session when it reads no session fact | remote-query-in-view pushes out of render, with `d = derive`; stale-snapshot still bars startup-forever |
 | on-demand background work | `later[fn]` from a handler; results land in state | blocking-in-view teaches and applies it |
 | periodic freshness | `serve[port, refresh = N]` — runtime-owned, skipped-not-stacked | stale-loop-read steers script polls; UI polls need no code at all |
 

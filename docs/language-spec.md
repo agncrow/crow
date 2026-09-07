@@ -2144,7 +2144,13 @@ view render[]
 4. it reads `now[]` and a tick of `serve refresh` passed;
 5. it reads a table this program never writes — an external source — and its freshness window elapsed. `fresh = N` is seconds; the default `fresh = 0` means *as fresh as the loop*: recomputed every tick, which is what a query inside a view did before. Declaring `fresh` is the relaxation.
 
-A derivation that fails — a query error — holds the error value; readers see `.ok` and `.reason` and a view renders the reason in place. `captured[x]` on a derivation is the moment it last ran. Derivations live in `use ui` programs with a page: they are reactive state, computed per session; in the test harness `html[a]` is a tick and `click[a, h]` marks what the handler wrote. Design: `derive-design.md`.
+A derivation that fails — a query error — holds the error value; readers see `.ok` and `.reason` and a view renders the reason in place. `captured[x]` on a derivation is the moment it last ran. Derivations live in `use ui` programs with a page: they are reactive state; in the test harness `html[a]` is a tick and `click[a, h]` marks what the handler wrote. Design: `derive-design.md`.
+
+**Who holds a derivation is inferred from what it reads.** A fact is a top-level variable; a database or socket handle is not one, and neither is a `fetch`/`poll` binding. A derivation that reads a fact a session writes — assigned by a handler or a helper a handler calls, or bound to an input like `field` or `select` — or another derivation held per session, is computed per session. One that reads only constants, tables and the clock — the day's universe, the latest bar in a table — is computed once for the app and shared by every session, and a table write in any session reaches every session's derivations over that table. `crow check` prints each derivation's read set and who holds it.
+
+**Rows keep their identity through `id`.** The live client patches the page in place: an element with an `id` is matched to the element with that `id` in the previous render, so a row rendered from data — `p['`s.name`', id = 's-`s.id`']` — moves when its list is reordered and is dropped when its item is gone, while its neighbours are untouched. Elements without an `id` match by position. A node that survives a render keeps its focus, caret and scroll, so the field a reader is typing in is never rebuilt under them.
+
+**The checker teaches the form.** A top-level variable assigned from a query and read by a view (a launch-time snapshot), and a query against a remote database inside a view, are errors in `crow check`; `d` in the check loop rewrites the first into `derive x` and hoists the second above its view as `derive rows[fresh = 60]`.
 
 #### Tables over frames
 

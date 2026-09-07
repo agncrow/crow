@@ -59,6 +59,9 @@ pub struct DeriveSpec {
     pub now: bool,
     pub external: bool,
     pub fresh: f64,
+    /// reads no fact a handler writes and no per-session derivation: one
+    /// value for the app, computed once and shared by every session
+    pub shared: bool,
 }
 
 /// A derivation's cached value and the input versions it was computed from.
@@ -86,11 +89,11 @@ pub struct CrowLiveState {
     /// one version per fact key, bumped by every set — what derivations
     /// compare their inputs against
     pub versions: HashMap<String, u64>,
-    /// tables this program wrote, versioned the same way
-    pub table_versions: HashMap<String, u64>,
-    /// one per render: what "as fresh as the loop" means
+    /// the render this session is at, taken from the app-wide counter:
+    /// what "as fresh as the loop" means
     pub tick: u64,
-    /// the derivation cache, per session
+    /// the derivation cache of this session; derivations over sources,
+    /// constants and the clock alone live in SHARED_DERIVED instead
     derived: std::sync::Mutex<HashMap<String, DerivedSlot>>,
     /// Registered data sources (fetch/poll).
     pub sources: Vec<DataSource>,
@@ -99,6 +102,17 @@ pub struct CrowLiveState {
     /// Distinguishes sessions in the later[] in-flight registry.
     pub session_id: u64,
 }
+
+/// Derivations shared by every session (derive-design.md §3.5): one value
+/// for the app, whichever session computed it.
+static SHARED_DERIVED: std::sync::LazyLock<std::sync::Mutex<HashMap<String, DerivedSlot>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+/// Tables this program wrote, versioned app-wide: a write in any session
+/// is a write every session's derivations see.
+static TABLE_VERSIONS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, u64>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+/// The render counter every session advances.
+static TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// serve[port, refresh = secs, budget = ms] configuration — set once before
 /// serve, read by every session loop. 0 = unset.
@@ -183,7 +197,6 @@ impl CrowLiveState {
         Self {
             data: HashMap::new(),
             versions: HashMap::new(),
-            table_versions: HashMap::new(),
             tick: 0,
             derived: std::sync::Mutex::new(HashMap::new()),
             sources: Vec::new(),
@@ -192,15 +205,33 @@ impl CrowLiveState {
         }
     }
 
-    /// A table this program wrote: derivations over it are stale.
-    pub fn note_table_write(&mut self, table: &str) {
-        *self.table_versions.entry(table.to_string()).or_insert(0) += 1;
+    /// A table this program wrote: derivations over it, in every session,
+    /// are stale.
+    pub fn note_table_write(&self, table: &str) {
+        let mut tv = TABLE_VERSIONS.lock().unwrap_or_else(|p| p.into_inner());
+        *tv.entry(table.to_string()).or_insert(0) += 1;
     }
 
     /// A render is a tick: derivations that read the clock, or external
-    /// sources at fresh = 0, recompute once per tick.
+    /// sources at fresh = 0, recompute once per tick. The counter is the
+    /// app's, so a shared derivation computed by another session's render
+    /// counts as this tick's.
     pub fn next_tick(&mut self) {
-        self.tick += 1;
+        self.tick = TICK.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    }
+
+    /// Where a derivation's slot lives: this session, or the app.
+    fn cache_for(&self, spec: &DeriveSpec) -> &std::sync::Mutex<HashMap<String, DerivedSlot>> {
+        if spec.shared { &SHARED_DERIVED } else { &self.derived }
+    }
+
+    /// The version of a derivation wherever it lives — 0 before its first
+    /// computation. Locks are taken one at a time, never nested.
+    fn derive_version(&self, name: &str) -> u64 {
+        if let Some(v) = self.derived.lock().unwrap_or_else(|p| p.into_inner()).get(name).map(|s| s.version) {
+            return v;
+        }
+        SHARED_DERIVED.lock().unwrap_or_else(|p| p.into_inner()).get(name).map(|s| s.version).unwrap_or(0)
     }
 
     /// Read a derivation (derive-design.md §3.3): the cached value while
@@ -215,14 +246,30 @@ impl CrowLiveState {
         equal: impl Fn(&T, &T) -> bool,
     ) -> T {
         let now = crow_runtime::moments::now();
+        // where every input stands, read before touching the cache the
+        // derivation lives in: facts in this session, tables app-wide,
+        // derivations wherever each one lives
+        let facts_now: Vec<(String, u64)> = spec.facts.iter()
+            .map(|f| (f.to_string(), self.versions.get(*f).copied().unwrap_or(0))).collect();
+        let tables_now: Vec<(String, u64)> = {
+            let tv = TABLE_VERSIONS.lock().unwrap_or_else(|p| p.into_inner());
+            spec.tables.iter().map(|t| (t.to_string(), tv.get(*t).copied().unwrap_or(0))).collect()
+        };
+        let derives_now: Vec<(String, u64)> = spec.derives.iter().filter(|d| **d != spec.name)
+            .map(|d| (d.to_string(), self.derive_version(d))).collect();
+        // a shared slot computed during a later render than this session's
+        // is as fresh as this tick
+        let fresh_tick = |seen: u64| if spec.shared { seen >= self.tick } else { seen == self.tick };
+        let same = |seen: &[(String, u64)], now: &[(String, u64)]| now.iter()
+            .all(|(n, v)| seen.iter().find(|(m, _)| m == n).map(|(_, s)| s == v).unwrap_or(false));
         {
-            let cache = self.derived.lock().unwrap_or_else(|p| p.into_inner());
+            let cache = self.cache_for(spec).lock().unwrap_or_else(|p| p.into_inner());
             if let Some(slot) = cache.get(spec.name) {
-                let valid = spec.facts.iter().all(|f| slot.facts_seen.iter().find(|(n, _)| n == f).map(|(_, v)| *v).unwrap_or(0) == self.versions.get(*f).copied().unwrap_or(0))
-                    && spec.derives.iter().all(|d| slot.derives_seen.iter().find(|(n, _)| n == d).map(|(_, v)| *v).unwrap_or(0) == cache.get(*d).map(|s| s.version).unwrap_or(0))
-                    && spec.tables.iter().all(|t| slot.tables_seen.iter().find(|(n, _)| n == t).map(|(_, v)| *v).unwrap_or(0) == self.table_versions.get(*t).copied().unwrap_or(0))
-                    && (!spec.now || slot.tick_seen == self.tick)
-                    && (!spec.external || if spec.fresh > 0.0 { now - slot.computed_at <= spec.fresh } else { slot.tick_seen == self.tick });
+                let valid = same(&slot.facts_seen, &facts_now)
+                    && same(&slot.derives_seen, &derives_now)
+                    && same(&slot.tables_seen, &tables_now)
+                    && (!spec.now || fresh_tick(slot.tick_seen))
+                    && (!spec.external || if spec.fresh > 0.0 { now - slot.computed_at <= spec.fresh } else { fresh_tick(slot.tick_seen) });
                 if valid {
                     if let Some(v) = slot.value.downcast_ref::<T>() {
                         return v.clone();
@@ -231,18 +278,17 @@ impl CrowLiveState {
             }
         }
         let value = compute(self);
-        let mut cache = self.derived.lock().unwrap_or_else(|p| p.into_inner());
+        let mut cache = self.cache_for(spec).lock().unwrap_or_else(|p| p.into_inner());
         let (old_version, changed) = match cache.get(spec.name) {
             Some(slot) => (slot.version, !slot.value.downcast_ref::<T>().map(|old| equal(old, &value)).unwrap_or(false)),
             None => (0, true),
         };
-        let derives_seen: Vec<(String, u64)> = spec.derives.iter().map(|d| (d.to_string(), cache.get(*d).map(|s| s.version).unwrap_or(0))).collect();
         cache.insert(spec.name.to_string(), DerivedSlot {
             value: std::sync::Arc::new(value.clone()),
             version: if changed { old_version + 1 } else { old_version },
-            facts_seen: spec.facts.iter().map(|f| (f.to_string(), self.versions.get(*f).copied().unwrap_or(0))).collect(),
-            derives_seen,
-            tables_seen: spec.tables.iter().map(|t| (t.to_string(), self.table_versions.get(*t).copied().unwrap_or(0))).collect(),
+            facts_seen: facts_now,
+            derives_seen: derives_now,
+            tables_seen: tables_now,
             tick_seen: self.tick,
             computed_at: now,
         });
@@ -355,7 +401,6 @@ impl Clone for CrowLiveState {
         Self {
             data: self.data.clone(),
             versions: self.versions.clone(),
-            table_versions: self.table_versions.clone(),
             tick: self.tick,
             derived: std::sync::Mutex::new(self.derived.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             sources: self.sources.clone(),
@@ -402,32 +447,90 @@ pub fn live_js(ws_path: &str) -> String {
     }};
   }}
 
-  // Minimal DOM morphing: update root's children to match source's children
+  // Morph the live DOM into the server's render in place: nodes keep their
+  // identity, so focus, caret and scroll survive a render. Children with an
+  // id are matched by id — a keyed row moves instead of being rewritten —
+  // and the rest by position.
   function morphChildren(target, source) {{
-    // Save focus and input values before replacing
     var focused = document.activeElement;
-    var focusId = focused ? (focused.getAttribute('data-crow-input') || focused.getAttribute('data-crow-change') || focused.getAttribute('data-crow-id')) : null;
-    var savedInputs = {{}};
-    target.querySelectorAll('[data-crow-input],[data-crow-change]').forEach(function(el) {{
-      // radios and checkboxes carry their state in `checked`, which the
-      // server renders; a group shares one key, so never save or restore them
-      if (el.type === 'radio' || el.type === 'checkbox') return;
-      var key = el.getAttribute('data-crow-input') || el.getAttribute('data-crow-change');
-      if (key) savedInputs[key] = {{ value: el.value, start: el.selectionStart, end: el.selectionEnd }};
-    }});
-    target.innerHTML = source.innerHTML;
-    // Restore only the input being typed in; every other bound input takes
-    // the value the server just rendered, so a handler that assigns to a
-    // bound variable shows up in its field.
-    target.querySelectorAll('[data-crow-input],[data-crow-change]').forEach(function(el) {{
-      if (el.type === 'radio' || el.type === 'checkbox') return;
-      var key = el.getAttribute('data-crow-input') || el.getAttribute('data-crow-change');
-      if (key && savedInputs[key] && key === focusId) {{
-        el.value = savedInputs[key].value;
-        el.focus();
-        try {{ el.setSelectionRange(savedInputs[key].start, savedInputs[key].end); }} catch(e) {{}}
+    var focusKey = focused ? (focused.getAttribute('data-crow-input') || focused.getAttribute('data-crow-change')) : null;
+    var draft = focusKey && focused.type !== 'radio' && focused.type !== 'checkbox'
+      ? {{ value: focused.value, start: focused.selectionStart, end: focused.selectionEnd }} : null;
+    morphKids(target, source);
+    // the input being typed in keeps its draft, even when its node moved;
+    // every other bound input took the value the server rendered
+    if (focusKey) {{
+      var el = document.activeElement;
+      var mine = el && (el.getAttribute('data-crow-input') === focusKey || el.getAttribute('data-crow-change') === focusKey);
+      if (!mine) {{
+        el = target.querySelector('[data-crow-input="' + focusKey + '"],[data-crow-change="' + focusKey + '"]');
+        if (el) el.focus();
       }}
-    }});
+      if (el && draft) {{
+        if (el.value !== draft.value) el.value = draft.value;
+        try {{ el.setSelectionRange(draft.start, draft.end); }} catch(e) {{}}
+      }}
+    }}
+  }}
+  function sameKind(a, b) {{
+    return a.nodeType === b.nodeType && (a.nodeType !== 1 || a.tagName === b.tagName);
+  }}
+  function morphKids(from, to) {{
+    var byId = {{}}, wanted = {{}}, c;
+    for (c = to.firstChild; c; c = c.nextSibling) if (c.nodeType === 1 && c.id) wanted[c.id] = true;
+    for (c = from.firstChild; c; c = c.nextSibling) if (c.nodeType === 1 && c.id) byId[c.id] = c;
+    var cur = from.firstChild;
+    for (var n = to.firstChild; n; n = n.nextSibling) {{
+      // a keyed child the new render dropped goes now, so its unkeyed
+      // neighbours still line up by position
+      while (cur && cur.nodeType === 1 && cur.id && !wanted[cur.id]) {{
+        var gone = cur; cur = cur.nextSibling; from.removeChild(gone);
+      }}
+      var match = null;
+      if (n.nodeType === 1 && n.id) {{
+        if (byId[n.id]) {{ match = byId[n.id]; delete byId[n.id]; }}
+      }} else if (cur && !(cur.nodeType === 1 && cur.id) && sameKind(cur, n)) {{
+        match = cur;
+      }}
+      if (match) {{
+        if (match !== cur) from.insertBefore(match, cur);
+        morphNode(match, n);
+        cur = match.nextSibling;
+      }} else {{
+        from.insertBefore(n.cloneNode(true), cur);
+      }}
+    }}
+    while (cur) {{ var rest = cur.nextSibling; from.removeChild(cur); cur = rest; }}
+  }}
+  function morphNode(from, to) {{
+    if (from.nodeType !== 1) {{
+      if (from.nodeValue !== to.nodeValue) from.nodeValue = to.nodeValue;
+      return;
+    }}
+    // a chart is one drawing: swapped whole when it changed
+    if (from.tagName === 'svg' || from.tagName === 'SVG') {{
+      if (from.outerHTML !== to.outerHTML) from.parentNode.replaceChild(to.cloneNode(true), from);
+      return;
+    }}
+    var i, a;
+    for (i = from.attributes.length - 1; i >= 0; i--) {{
+      a = from.attributes[i].name;
+      if (!to.hasAttribute(a)) from.removeAttribute(a);
+    }}
+    for (i = 0; i < to.attributes.length; i++) {{
+      a = to.attributes[i];
+      if (from.getAttribute(a.name) !== a.value) from.setAttribute(a.name, a.value);
+    }}
+    // form controls carry live state the attributes do not reach; the
+    // control being typed in is left to morphChildren
+    var tag = from.tagName;
+    if (tag === 'INPUT') {{
+      if (from.type === 'checkbox' || from.type === 'radio') {{ if (from.checked !== to.checked) from.checked = to.checked; }}
+      else if (from !== document.activeElement && from.value !== to.value) from.value = to.value;
+    }} else if (tag === 'TEXTAREA' || tag === 'SELECT') {{
+      if (from !== document.activeElement && from.value !== to.value) from.value = to.value;
+    }}
+    morphKids(from, to);
   }}
 
   // Navigate to a DOM node by path (array of child indices)
@@ -943,6 +1046,42 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shared_derivation_is_computed_once_for_every_session() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        static SPEC: DeriveSpec = DeriveSpec { name: "test_shared_universe", facts: &[], derives: &[], tables: &[], now: false, external: false, fresh: 0.0, shared: true };
+        let runs = AtomicUsize::new(0);
+        let compute = |_: &CrowLiveState| { runs.fetch_add(1, SeqCst); 42i64 };
+        let mut s1 = CrowLiveState::new();
+        s1.next_tick();
+        let mut s2 = CrowLiveState::new();
+        s2.next_tick();
+        assert_eq!(s1.derive(&SPEC, &compute, |a, b| a == b), 42);
+        assert_eq!(s2.derive(&SPEC, &compute, |a, b| a == b), 42);
+        assert_eq!(runs.load(SeqCst), 1, "the second session reads the app's value");
+    }
+
+    #[test]
+    fn a_table_write_in_one_session_is_seen_by_every_session() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        static SPEC: DeriveSpec = DeriveSpec { name: "test_session_rows", facts: &["sym"], derives: &[], tables: &["test_trades"], now: false, external: false, fresh: 0.0, shared: false };
+        let runs = AtomicUsize::new(0);
+        let compute = |_: &CrowLiveState| { runs.fetch_add(1, SeqCst); 1i64 };
+        let mut s1 = CrowLiveState::new();
+        s1.set("sym", serde_json::json!("IMRN"));
+        s1.next_tick();
+        let mut s2 = s1.clone();
+        s2.next_tick();
+        s1.derive(&SPEC, &compute, |a, b| a == b);
+        s2.derive(&SPEC, &compute, |a, b| a == b);
+        assert_eq!(runs.load(SeqCst), 2, "a derivation over a session fact is per session");
+        s1.derive(&SPEC, &compute, |a, b| a == b);
+        assert_eq!(runs.load(SeqCst), 2, "nothing changed: cached");
+        s1.note_table_write("test_trades");
+        s2.derive(&SPEC, &compute, |a, b| a == b);
+        assert_eq!(runs.load(SeqCst), 3, "the other session's write reaches this one");
+    }
 
     #[test]
     fn bound_fields_keep_the_variable_shape() {
