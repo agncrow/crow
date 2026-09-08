@@ -238,7 +238,7 @@ fn main() {
             } else if args.len() > 2 {
                 let target = &args[2];
                 if is_source(&target) || is_bytecode(&target) {
-                    if target.ends_with(".co") || target.ends_with(".coc") { note_legacy_extension(&target); }
+                    if target.ends_with(".crow") || target.ends_with(".crowc") { note_legacy_extension(&target); }
                     // crow run file.co arg1 arg2 ... -> transpile + compile + run
                     let extra_args = args[3..].to_vec();
                     cmd_run_file(target, &extra_args);
@@ -1287,7 +1287,7 @@ fn registry_cache_dir() -> std::path::PathBuf {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".to_string());
-    std::path::PathBuf::from(home).join(".co").join("registry")
+    std::path::PathBuf::from(home).join(".crow").join("registry")
 }
 
 fn fetch_registry_index() -> Option<RegistryIndex> {
@@ -1994,7 +1994,7 @@ fn run_binary(binary: &std::path::Path, extra_args: &[String]) {
     // Ownership rule: never clobber a LIVE instance's pidfile (a run that
     // dies on port collision must not erase the survivor's record), and
     // only remove the file on exit if it still names our child.
-    let _ = std::fs::create_dir_all(".co");
+    let _ = std::fs::create_dir_all(".crow");
     let existing_alive = std::fs::read_to_string(".crow/app.pid")
         .ok()
         .and_then(|p| p.trim().parse::<i32>().ok())
@@ -2073,7 +2073,7 @@ fn cmd_book() {
         process::exit(1);
     });
     // the pid, so `crow stop book` can find this server from the project
-    let _ = std::fs::create_dir_all(".co");
+    let _ = std::fs::create_dir_all(".crow");
     let _ = std::fs::write(".crow/book.pid", std::process::id().to_string());
     println!("crow book: http://localhost:{}/  — {} (Ctrl-C or `crow stop book` to stop)", port, what);
     let children: Arc<Mutex<std::collections::HashMap<String, u32>>> = Arc::new(Mutex::new(Default::default()));
@@ -2667,21 +2667,46 @@ fn build_app_book(entry: &str) -> Result<std::path::PathBuf, String> {
 
 /// Source files end in `.co`. A `.co` file is still read this release,
 /// with a note the first time one is met, so a tree renames at leisure.
-fn is_source(path: &str) -> bool { path.ends_with(".co") || path.ends_with(".co") }
-fn is_bytecode(path: &str) -> bool { path.ends_with(".coc") || path.ends_with(".coc") }
+fn is_source(path: &str) -> bool { path.ends_with(".co") || path.ends_with(".crow") }
+fn is_bytecode(path: &str) -> bool { path.ends_with(".coc") || path.ends_with(".crowc") }
 fn strip_source_ext(path: &str) -> &str {
-    path.strip_suffix(".co").or_else(|| path.strip_suffix(".co")).unwrap_or(path)
+    path.strip_suffix(".co").or_else(|| path.strip_suffix(".crow")).unwrap_or(path)
 }
 fn bytecode_path(entry: &str) -> String { format!("{}.coc", strip_source_ext(entry)) }
 fn source_of_bytecode(path: &str) -> String {
-    let base = path.strip_suffix(".coc").or_else(|| path.strip_suffix(".coc")).unwrap_or(path);
+    let base = path.strip_suffix(".coc").or_else(|| path.strip_suffix(".crowc")).unwrap_or(path);
     let co = format!("{}.co", base);
-    if std::path::Path::new(&co).exists() || !std::path::Path::new(&format!("{}.co", base)).exists() { co } else { format!("{}.co", base) }
+    if std::path::Path::new(&co).exists() || !std::path::Path::new(&format!("{}.crow", base)).exists() { co } else { format!("{}.crow", base) }
 }
 static LEGACY_NOTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 fn note_legacy_extension(path: &str) {
     if !LEGACY_NOTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
         eprintln!("note: {} — source files are `.co` now; `.crow` is still read this release (git mv to rename)", path);
+    }
+}
+
+#[cfg(test)]
+mod extension_tests {
+    use super::*;
+
+    // The rename to `.co` keeps `.crow` readable this release; a regex slip
+    // once turned every legacy branch into the new extension, so both are
+    // pinned here.
+    #[test]
+    fn new_and_legacy_extensions_are_both_recognised() {
+        assert!(is_source("a.co"));
+        assert!(is_source("a.crow"));
+        assert!(!is_source("a.coc"));
+        assert!(is_bytecode("a.coc"));
+        assert!(is_bytecode("a.crowc"));
+        assert!(!is_bytecode("a.co"));
+        assert_eq!(strip_source_ext("dir/a.co"), "dir/a");
+        assert_eq!(strip_source_ext("dir/a.crow"), "dir/a");
+        assert_eq!(strip_source_ext("dir/a"), "dir/a");
+        assert_eq!(bytecode_path("dir/a.crow"), "dir/a.coc");
+        assert_eq!(bytecode_path("dir/a.co"), "dir/a.coc");
+        assert_eq!(source_of_bytecode("zz_no_such_file.coc"), "zz_no_such_file.co");
+        assert_eq!(source_of_bytecode("zz_no_such_file.crowc"), "zz_no_such_file.co");
     }
 }
 

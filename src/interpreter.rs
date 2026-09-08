@@ -595,7 +595,7 @@ impl Interpreter {
         let file_stem = if self.current_file.is_empty() {
             "unknown"
         } else {
-            self.current_file.strip_suffix(".co").unwrap_or(&self.current_file)
+            self.current_file.strip_suffix(".co").or_else(|| self.current_file.strip_suffix(".crow")).unwrap_or(&self.current_file)
         };
         if self.current_function.is_empty() {
             format!("{}:{}", file_stem, self.current_line)
@@ -3860,7 +3860,7 @@ impl Interpreter {
                 if !args.is_empty() { return Err("args[] takes no arguments".into()); }
                 let cli_args: Vec<CrowValue> = std::env::args()
                     .skip(1) // skip binary name
-                    .skip_while(|a| a == "run" || a == "-i" || a.ends_with(".co") || a.ends_with(".coc"))
+                    .skip_while(|a| a == "run" || a == "-i" || a.ends_with(".co") || a.ends_with(".coc") || a.ends_with(".crow") || a.ends_with(".crowc"))
                     .map(|a| CrowValue::ok(Value::Str(a)))
                     .collect();
                 Ok(CrowValue::ok(Value::Array(cli_args)))

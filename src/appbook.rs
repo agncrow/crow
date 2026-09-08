@@ -26,7 +26,7 @@ pub struct Input<'a> {
 const BOOK_DIR: &str = ".crow/book";
 
 fn slug(file: &str) -> String {
-    file.trim_end_matches(".co").chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>().trim_matches('-').to_string()
+    file.trim_end_matches(".crow").trim_end_matches(".co").chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>().trim_matches('-').to_string()
 }
 
 fn decl(key: &str) -> &str { key.split(' ').nth(1).unwrap_or(key) }
