@@ -2681,7 +2681,7 @@ fn source_of_bytecode(path: &str) -> String {
 static LEGACY_NOTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 fn note_legacy_extension(path: &str) {
     if !LEGACY_NOTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        eprintln!("note: {} — source files are `.co` now; `.co` is still read this release (git mv to rename)", path);
+        eprintln!("note: {} — source files are `.co` now; `.crow` is still read this release (git mv to rename)", path);
     }
 }
 
