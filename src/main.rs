@@ -3394,7 +3394,7 @@ fn parse_crowfile() -> CrowfileConfig {
 
 fn read_file(filename: &str) -> String {
     // a `.crow` entry still runs this release, with a note the first time
-    if path.ends_with(".crow") { note_legacy_extension(path); }
+    if filename.ends_with(".crow") { note_legacy_extension(filename); }
     match std::fs::read_to_string(filename) {
         Ok(s) => s,
         Err(e) => {
