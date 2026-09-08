@@ -4,7 +4,7 @@
 Built: the five containers and the layout attributes render in both modes
 through one kernel table (`crow_runtime::layout`, emitting inline CSS +
 `data-*` responsive rules); bad values are compile errors naming the
-scale; the engine is written in Crow (`src/modules/layout.crow`, shipped
+scale; the engine is written in Crow (`src/modules/layout.co`, shipped
 inside the compiler) and the harness reads it through `box[]`, `style[]`,
 `fits[]`, and `app[view, width =]`. Not yet built: the font-metrics table
 (text widths are a placeholder average), conformance fixtures (phase 3),
@@ -195,7 +195,7 @@ in tests), so every responsive rule is testable at every named width.
 
 The eight colour tokens exist today; the vocabulary adds the spacing and
 type scales as tokens. An app overrides tokens in `css/app.css` (as now)
-or, preferably, in `theme.crow` with a `theme[...]` declaration the engine
+or, preferably, in `theme.co` with a `theme[...]` declaration the engine
 reads — the same values reach the stylesheet and the tests. A custom font
 ships with the app and gets its metrics table generated at build time.
 
@@ -207,11 +207,11 @@ first round.
 
 ### The dashboard in this vocabulary
 
-The runnable version is `examples/layout_dashboard.crow`: `crow test` it for
+The runnable version is `examples/layout_dashboard.co`: `crow test` it for
 the geometry and colour truths, `crow run` it to see the same rules as CSS.
 The book walks through it in "Charts and Styling".
 
-Today's `examples/dashboard.crow`, as it would read:
+Today's `examples/dashboard.co`, as it would read:
 
 ```
 view stat_card[label, value]
@@ -262,7 +262,7 @@ to state (`field` by type, `checkbox`, `toggle`, `radio`, `tabs`, `select`,
 closed set, `divider`, `tip`, `fit`, and the app's look on `serve` (theme,
 density, accent, wide). Composites (a KPI tile, a hero, a pricing table)
 are views written from these, never elements. The engine models every
-primitive (`src/modules/layout.crow`), and `tests/layout/conformance.crow`
+primitive (`src/modules/layout.co`), and `tests/layout/conformance.co`
 holds it to Chrome's measurements of a page that uses them all.
 
 ### What the vocabulary deliberately lacks
@@ -289,7 +289,7 @@ never quietly stretched.
 Layout depends on advance widths, not on glyph rasterization. The engine
 carries a per-character advance table for the kernel stylesheet's font
 stack, measured once in Chrome and stored as fractions of the font size
-(`src/modules/layout.crow`, `lay_sans_table` and friends). Two facts the
+(`src/modules/layout.co`, `lay_sans_table` and friends). Two facts the
 measurement surfaced and the tables encode: the system font has two
 optical sizes with different advances — text below 20px, display from
 20px — so `h1` uses a display table and everything else a text table; and
@@ -314,7 +314,7 @@ over every fixture and compares boxes within a stated tolerance
 explicit). Day to day, nothing in the build or the tests touches a
 browser. The fixture generator pins its browser version.
 
-Today `tests/layout/conformance.crow` holds two views — a dashboard (grid,
+Today `tests/layout/conformance.co` holds two views — a dashboard (grid,
 control row, overlay, scroll, cards) and a prose page (wrapping text,
 three heading levels, a wrapping button row) — measured at 1280px and
 390px by `tests/layout/measure.py` into `tests/layout/expected/*.csv`,
@@ -351,7 +351,7 @@ table, and only a browser can say whether the second one is faithful.
 
 `use doc` (Sept 5 2026) puts Markdown rendering in the kernel:
 `markdown[]`, `chapters[]`, `menu[]`, `document[]`, all pure, both
-renderers calling the same Rust. `docs/book/site.crow` renders the whole
+renderers calling the same Rust. `docs/book/site.co` renders the whole
 Crow Book with one view in the layout vocabulary and a `test layout[]`
 block, and the interpreted and compiled exports are byte-identical
 (attributes are emitted in name order for exactly that reason). Two
@@ -361,7 +361,7 @@ failed argument as `error: reason` text instead of propagating it — a page
 with one broken chapter is still a page. The in-page runner is a
 Crow element too: `markdown[]` renders a runnable block as the editor,
 gutter, toolbar row, output panel and expected output — kernel containers,
-so `site.crow`'s `test runner[]` pins their placement — and `crow book`
+so `site.co`'s `test runner[]` pins their placement — and `crow book`
 renders and serves this site; the injected mdBook script and its Node test
 are gone. Search (a kernel-built index over `plain[]`, filtered in the page), previous/next links (`pager[]`), and the phone menu followed; mdBook is deleted. Text metrics are measured advances now (see "Text metrics"), and `tests/layout/` holds the browser conformance fixtures.
 

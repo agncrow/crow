@@ -75,7 +75,7 @@ in a handler is a read whose result is a symbol, so a later `r.id[0]`
 prints as the query's cell.
 
 ```text
-handler sim_session_start_session (sim/session.crow)
+handler sim_session_start_session (sim/session.co)
   wired: sim_session_scanner_setup button 'Start' · sim_session_practice_setup button 'Start'
   reaches: views_sim_render · page /
   when not at_time[day, win_from].ok:
@@ -195,7 +195,7 @@ exact where text is literal and approximate where it is dynamic; when
 rehearsal (B3) supplies declared data the same drawing becomes exact.
 
 **Rendering.** `crow book` writes Markdown under `.crow/book/src/`, a
-summary, and a `site.crow` with the Crow Book's own page shell (menu,
+summary, and a `site.co` with the Crow Book's own page shell (menu,
 pager, search, the kernel stylesheet); runs it with the interpreter;
 serves `.crow/book/site/` next to the app, on its `serve` port plus one
 (`--port` overrides), and records its pid so `crow stop book` stops it.

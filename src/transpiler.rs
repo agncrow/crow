@@ -191,7 +191,7 @@ impl Transpiler {
         let file_stem = if self.source_file.is_empty() {
             "unknown"
         } else {
-            self.source_file.strip_suffix(".crow").unwrap_or(&self.source_file)
+            self.source_file.strip_suffix(".co").unwrap_or(&self.source_file)
         };
         if self.current_function_name.is_empty() {
             format!("format!(\"{}:{{}}\", {})", file_stem, self.current_line)

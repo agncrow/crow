@@ -16,7 +16,7 @@ crow new guessing_game
 cd guessing_game
 ```
 
-Open `main.crow` and replace its contents as we go. Run at any point with
+Open `main.co` and replace its contents as we go. Run at any point with
 `crow run` (compiled) or `crow run -i` (instant, interpreted).
 
 ## Processing a Guess

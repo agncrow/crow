@@ -1,4 +1,4 @@
-handler views_sim_slow (views/sim.crow)
+handler views_sim_slow (views/sim.co)
   wired: views_sim_render button '1x'
   always:
     sim_clock_speed := 1.0

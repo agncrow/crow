@@ -58,7 +58,7 @@ checkout in place.
 
 ## Two execution modes, one behavior
 
-`crow run -i file.crow` interprets instantly; `crow run file.crow`
+`crow run -i file.co` interprets instantly; `crow run file.co`
 transpiles to Rust and runs a native binary. The two modes are held to
 identical output on a growing parity corpus (`crow test --parity`).
 Interpret while exploring, compile when shipping.

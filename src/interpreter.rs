@@ -335,7 +335,7 @@ fn harness_select(n: &HNode, steps: &[(String, String)], depth: usize, out: &mut
 }
 
 /// The layout engine, written in Crow and shipped inside the compiler.
-const LAYOUT_ENGINE_SRC: &str = include_str!("modules/layout.crow");
+const LAYOUT_ENGINE_SRC: &str = include_str!("modules/layout.co");
 
 /// One box the layout engine produced: where an element sits at a width.
 /// The tag and class travel for callers that draw by element kind; the
@@ -595,7 +595,7 @@ impl Interpreter {
         let file_stem = if self.current_file.is_empty() {
             "unknown"
         } else {
-            self.current_file.strip_suffix(".crow").unwrap_or(&self.current_file)
+            self.current_file.strip_suffix(".co").unwrap_or(&self.current_file)
         };
         if self.current_function.is_empty() {
             format!("{}:{}", file_stem, self.current_line)
@@ -954,21 +954,21 @@ impl Interpreter {
     }
 
     fn resolve_module_file(&self, module_path: &str) -> Result<PathBuf, String> {
-        // 1. try relative to source_dir: <source_dir>/<module_path>.crow
-        let rel_path = self.source_dir.join(format!("{}.crow", module_path));
+        // 1. try relative to source_dir: <source_dir>/<module_path>.co
+        let rel_path = self.source_dir.join(format!("{}.co", module_path));
         if rel_path.exists() {
             return Ok(rel_path);
         }
 
         // 2. search module_paths (e.g. crow_modules/)
         for base in &self.module_paths {
-            // try <base>/<module_path>.crow
-            let p = base.join(format!("{}.crow", module_path));
+            // try <base>/<module_path>.co
+            let p = base.join(format!("{}.co", module_path));
             if p.exists() {
                 return Ok(p);
             }
-            // try <base>/<module_path>/main.crow (package with main entry)
-            let p = base.join(module_path).join("main.crow");
+            // try <base>/<module_path>/main.co (package with main entry)
+            let p = base.join(module_path).join("main.co");
             if p.exists() {
                 return Ok(p);
             }
@@ -1039,7 +1039,7 @@ impl Interpreter {
             return Ok(());
         }
 
-        // Pre-expanded user modules (views.home → views/home.crow already
+        // Pre-expanded user modules (views.home → views/home.co already
         // inlined with prefixed names by the front end): loading one again
         // would create a second copy with separate state, and one the front
         // end could not find is reported where it is used, as the compiled
@@ -2295,7 +2295,7 @@ impl Interpreter {
                     return Err("app[] takes a view name: app[render] (and an optional width = 390, wide = true)".into());
                 }
                 // box[s, selector] / fits[s, width] / style[s, selector] — the layout
-                // engine (src/modules/layout.crow) over the rendered tree.
+                // engine (src/modules/layout.co) over the rendered tree.
                 if (name == "box" || name == "fits" || name == "style") && args.len() == 2 {
                     let a = self.eval_expr(&args[0])?;
                     let (f, session_width, session_wide) = match &a.value { Value::App(f, w, wide) => (f.clone(), *w, *wide), _ => return Err(format!("{}[] takes an app session first: {}[s, ...]", name, name)) };
@@ -3860,7 +3860,7 @@ impl Interpreter {
                 if !args.is_empty() { return Err("args[] takes no arguments".into()); }
                 let cli_args: Vec<CrowValue> = std::env::args()
                     .skip(1) // skip binary name
-                    .skip_while(|a| a == "run" || a == "-i" || a.ends_with(".crow") || a.ends_with(".crowc"))
+                    .skip_while(|a| a == "run" || a == "-i" || a.ends_with(".co") || a.ends_with(".coc"))
                     .map(|a| CrowValue::ok(Value::Str(a)))
                     .collect();
                 Ok(CrowValue::ok(Value::Array(cli_args)))

@@ -1264,7 +1264,7 @@ When a handler crashes mid-render (bad query, nil access, division by zero), the
 Browser shows:
 ┌──────────────────────────────────────────┐
 │ ⚠ Error: nil access on trades.0          │
-│   at app.crow:47 in live handler '/'     │
+│   at app.co:47 in live handler '/'     │
 │   [Dismiss]                              │
 ├──────────────────────────────────────────┤
 │                                          │
@@ -1599,7 +1599,7 @@ Crow compiles to Rust, which compiles to a single static binary. Deployment is c
 ### `crow build`
 
 ```
-crow build app.crow
+crow build app.co
 --- Transpiles to Rust
 --- Compiles with cargo (release mode)
 --- Bundles static assets (CSS, images, JS runtime)
@@ -1647,7 +1647,7 @@ The image is just the binary — no OS, no runtime, no dependencies. Typically 1
 Production settings via environment variables or a config file:
 
 ```
---- in app.crow
+--- in app.co
 secret[env['SECRET_KEY']]
 
 conn = connect[env['DATABASE_URL']]
@@ -2027,15 +2027,15 @@ This catches structural bugs ("forgot to add the class") but not visual bugs ("t
 During development, `crow dev` serves the app with automatic hot reload on file save:
 
 ```
-crow dev app.crow
+crow dev app.co
 --- Server running at http://localhost:8080
---- Watching app.crow for changes
+--- Watching app.co for changes
 --- Hot reload enabled
 ```
 
 Features:
 - Opens the app in the default browser
-- Watches `.crow` and `.css` files for changes
+- Watches `.co` and `.css` files for changes
 - On save: re-compiles, re-renders, pushes diff to browser (no manual refresh)
 - Shows all `live` routes — navigate between them to inspect visually
 - Error overlay: if the Crow file has errors, shows them in the browser instead of crashing
@@ -2133,7 +2133,7 @@ Since Crow already produces complete HTML on the server, the WebView just needs 
 Auto-generates a page showing all reusable view functions with sample data:
 
 ```
-crow dev app.crow --gallery
+crow dev app.co --gallery
 --- opens http://localhost:8080/__gallery
 ```
 

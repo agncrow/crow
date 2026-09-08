@@ -95,7 +95,7 @@ fn main() {
                     "--show" => {
                         // --show [name]: the app's structure, or one declaration
                         let next = rest.clone().next().cloned();
-                        show = Some(match next { Some(n) if !n.starts_with('-') && !n.ends_with(".crow") => { rest.next(); Some(n) } _ => None });
+                        show = Some(match next { Some(n) if !n.starts_with('-') && !is_source(&n) => { rest.next(); Some(n) } _ => None });
                     }
                     "--db" => {
                         db_url = rest.next().cloned();
@@ -181,7 +181,7 @@ fn main() {
                 }
             }
             let (Some(filename), Some(hazard_n)) = (file, hazard_n) else {
-                eprintln!("usage: crow fix file.crow --hazard N [--option M] [--db url]");
+                eprintln!("usage: crow fix file.co --hazard N [--option M] [--db url]");
                 eprintln!("  N and the option numbers come from the crow check report");
                 process::exit(1);
             };
@@ -237,8 +237,9 @@ fn main() {
                 }
             } else if args.len() > 2 {
                 let target = &args[2];
-                if target.ends_with(".crow") || target.ends_with(".crowc") {
-                    // crow run file.crow arg1 arg2 ... -> transpile + compile + run
+                if is_source(&target) || is_bytecode(&target) {
+                    if target.ends_with(".co") || target.ends_with(".coc") { note_legacy_extension(&target); }
+                    // crow run file.co arg1 arg2 ... -> transpile + compile + run
                     let extra_args = args[3..].to_vec();
                     cmd_run_file(target, &extra_args);
                 } else {
@@ -251,8 +252,8 @@ fn main() {
             }
         }
         other => {
-            // check if it's a .crow or .crowc file (shortcut)
-            if other.ends_with(".crow") || other.ends_with(".crowc") {
+            // check if it's a .co or .coc file (shortcut)
+            if is_source(other) || is_bytecode(other) {
                 let extra_args = args[2..].to_vec();
                 cmd_run_file(other, &extra_args);
             } else {
@@ -273,24 +274,24 @@ fn print_usage() {
     eprintln!("  crow new myapp --db    create DB project (schema, migrate)");
     eprintln!("  crow install           install deps from crowfile into crow_modules/");
     eprintln!("  crow build             transpile to rust and compile to native binary");
-    eprintln!("  crow build file.crow   transpile a specific file");
-    eprintln!("  crow run               transpile + compile + run main.crow");
-    eprintln!("  crow run file.crow     transpile + compile + run a specific file");
+    eprintln!("  crow build file.co   transpile a specific file");
+    eprintln!("  crow run               transpile + compile + run main.co");
+    eprintln!("  crow run file.co     transpile + compile + run a specific file");
     eprintln!("  crow run train         run a named job from crowfile");
-    eprintln!("  crow run -i file.crow  run with interpreter (slow, for debugging)");
+    eprintln!("  crow run -i file.co  run with interpreter (slow, for debugging)");
     eprintln!("  crow stop              stop the running app (pidfile, then project binary)");
     eprintln!("  crow book [--port N]   serve the book with every code block runnable in place (default port 3008)");
     eprintln!("  crow check             auto-verify project (uses crowfile)");
-    eprintln!("  crow check file.crow   auto-verify a specific file");
+    eprintln!("  crow check file.co   auto-verify a specific file");
     eprintln!("  crow check --db <url>  + schema-aware db checks (or db = '…' in crowfile)");
-    eprintln!("  crow fix file.crow --hazard N [--option M]   apply a fix from the check report");
+    eprintln!("  crow fix file.co --hazard N [--option M]   apply a fix from the check report");
     eprintln!("  crow lsp               language server over stdio (see docs/crow-lsp.md)");
     eprintln!("  crow fmt               format project (uses crowfile)");
-    eprintln!("  crow fmt file.crow     format a specific file");
+    eprintln!("  crow fmt file.co     format a specific file");
     eprintln!("  crow fmt --check       check formatting without changing files");
     eprintln!("  crow fmt --fix-interpolation  migrate {{expr}} strings to `expr`");
     eprintln!("  crow fmt --fix-views      migrate ui-building fns to view declarations");
-    eprintln!("  crow launch 4 file.crow  build + run on 4 distributed processes");
+    eprintln!("  crow launch 4 file.co  build + run on 4 distributed processes");
     eprintln!("  crow test --parity     run tests/parity/ in both modes, diff output");
     eprintln!("  crow test --book       execute every code block of the book in both modes");
     eprintln!("  crow test --docs       check the docs cover every compiler name (and nothing more)");
@@ -298,7 +299,7 @@ fn print_usage() {
     eprintln!("  crow -v                show version");
 }
 
-/// Run every tests/parity/*.crow file through both execution modes and diff
+/// Run every tests/parity/*.co file through both execution modes and diff
 /// their stdout. The transpiler and interpreter must agree on every program
 /// (design rule 11); this makes drift a test failure instead of a discipline.
 
@@ -406,7 +407,7 @@ fn cmd_test_book() {
         process::exit(1);
     });
     // One scratch root per invocation (two overlapping runs must never share a
-    // block.crow), and one directory per worker inside it: blocks are checked
+    // block.co), and one directory per worker inside it: blocks are checked
     // in parallel — each compiled block is a cargo build, which is what makes
     // this harness slow — and reported in book order.
     // The root is persistent so each worker's cargo cache survives between
@@ -440,7 +441,7 @@ fn cmd_test_book() {
             }
         };
         let label = format!("{}:{}", b.file, b.line);
-        let path = dir.join("block.crow");
+        let path = dir.join("block.co");
         let _ = std::fs::write(&path, &b.code);
         match b.mode {
             Mode::Ignore => (true, String::new()),
@@ -528,7 +529,7 @@ fn cmd_test_book() {
 ///      knows (no phantom builtins)
 ///   3. every module has a `use` in at least one verified book block, and
 ///      every core builtin is called in at least one
-///   4. every examples/*.crow is listed in examples/README.md
+///   4. every examples/*.co is listed in examples/README.md
 fn cmd_test_docs() {
     use std::collections::BTreeSet;
     let spec = std::fs::read_to_string("docs/language-spec.md").unwrap_or_else(|_| {
@@ -653,14 +654,14 @@ fn cmd_test_docs() {
     println!("docs: examples/ indexed in examples/README.md");
     let readme = std::fs::read_to_string("examples/README.md").unwrap_or_default();
     let prefixes: Vec<String> = readme.split(|c: char| c.is_whitespace() || c == '`')
-        .filter(|t| t.ends_with("*.crow"))
-        .map(|t| t.trim_end_matches("*.crow").to_string())
+        .filter(|t| t.ends_with("*.co"))
+        .map(|t| t.trim_end_matches("*.co").to_string())
         .collect();
     let mut unlisted: Vec<String> = vec![];
     if let Ok(rd) = std::fs::read_dir("examples") {
         for e in rd.flatten() {
             let p = e.path();
-            if p.extension().map_or(true, |x| x != "crow") { continue; }
+            if p.extension().map_or(true, |x| x != "co" && x != "crow") { continue; }
             let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
             if readme.contains(&name) || prefixes.iter().any(|pre| name.starts_with(pre.as_str())) { continue; }
             unlisted.push(name);
@@ -787,13 +788,13 @@ fn cmd_test_parity() {
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
         .map(|rd| {
             rd.filter_map(|e| e.ok().map(|e| e.path()))
-                .filter(|p| p.extension().map_or(false, |x| x == "crow"))
+                .filter(|p| p.extension().map_or(false, |x| x == "co" || x == "crow"))
                 .collect()
         })
         .unwrap_or_default();
     files.sort();
     if files.is_empty() {
-        eprintln!("error: tests/parity/ contains no .crow files");
+        eprintln!("error: tests/parity/ contains no .co files");
         process::exit(1);
     }
 
@@ -1099,35 +1100,35 @@ fn cmd_new() {
     let mut crowfile = format!("name = '{}'\n", short_name);
     let mut jobs_section = Vec::new();
 
-    // main.crow
+    // main.co
     if has_web {
-        write_file(&project_dir.join("main.crow"), "use web, ui\nuse views.home\n\nserve[3000]\npage['/', home.render]\n");
+        write_file(&project_dir.join("main.co"), "use web, ui\nuse views.home\n\nserve[3000]\npage['/', home.render]\n");
     } else {
-        write_file(&project_dir.join("main.crow"), &format!("log['hello, {}']\n", short_name));
+        write_file(&project_dir.join("main.co"), &format!("log['hello, {}']\n", short_name));
     }
 
-    // --web: add views/home.crow
+    // --web: add views/home.co
     if has_web {
-        write_file(&project_dir.join("views/home.crow"),
+        write_file(&project_dir.join("views/home.co"),
             "--- home page ---\nuse ui\n\nmessage = 'welcome to crow'\n\nview render[]\n    return div[\n        h1['`message`']\n    ]\n");
     }
 
-    // --ml: add jobs/train.crow and lib/model.crow
+    // --ml: add jobs/train.co and lib/model.co
     if has_ml {
-        write_file(&project_dir.join("jobs/train.crow"),
+        write_file(&project_dir.join("jobs/train.co"),
             "use lib.model\n\nlog['training started']\ntrain[]\nlog['training complete']\n");
-        write_file(&project_dir.join("lib/model.crow"),
+        write_file(&project_dir.join("lib/model.co"),
             "fn train[]\n  log['model training...']\n");
-        jobs_section.push(("train".to_string(), "jobs/train.crow".to_string()));
+        jobs_section.push(("train".to_string(), "jobs/train.co".to_string()));
     }
 
-    // --db: add db/schema.crow and jobs/migrate.crow
+    // --db: add db/schema.co and jobs/migrate.co
     if has_db {
-        write_file(&project_dir.join("db/schema.crow"),
+        write_file(&project_dir.join("db/schema.co"),
             "use db\n\ntable users\n  name, str\n  email, str\n");
-        write_file(&project_dir.join("jobs/migrate.crow"),
+        write_file(&project_dir.join("jobs/migrate.co"),
             "use db\n\nlog['running migrations']\n");
-        jobs_section.push(("migrate".to_string(), "jobs/migrate.crow".to_string()));
+        jobs_section.push(("migrate".to_string(), "jobs/migrate.co".to_string()));
     }
 
     // Add [jobs] section to crowfile if needed
@@ -1145,15 +1146,15 @@ fn cmd_new() {
     println!("created project '{}'", short_name);
     let mut files: Vec<String> = Vec::new();
     files.push("  crowfile".to_string());
-    files.push("  main.crow".to_string());
-    if has_web { files.push("  views/home.crow".to_string()); }
+    files.push("  main.co".to_string());
+    if has_web { files.push("  views/home.co".to_string()); }
     if has_ml {
-        files.push("  jobs/train.crow".to_string());
-        files.push("  lib/model.crow".to_string());
+        files.push("  jobs/train.co".to_string());
+        files.push("  lib/model.co".to_string());
     }
     if has_db {
-        files.push("  db/schema.crow".to_string());
-        files.push("  jobs/migrate.crow".to_string());
+        files.push("  db/schema.co".to_string());
+        files.push("  jobs/migrate.co".to_string());
     }
     for f in &files {
         println!("{}", f);
@@ -1286,7 +1287,7 @@ fn registry_cache_dir() -> std::path::PathBuf {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".to_string());
-    std::path::PathBuf::from(home).join(".crow").join("registry")
+    std::path::PathBuf::from(home).join(".co").join("registry")
 }
 
 fn fetch_registry_index() -> Option<RegistryIndex> {
@@ -1419,7 +1420,7 @@ fn install_from_registry(name: &str, version: &str, dest: &std::path::Path) -> b
     }
 }
 
-/// Transpile a .crow file to Rust, compile it, and return the path to the binary.
+/// Transpile a .co file to Rust, compile it, and return the path to the binary.
 /// If `quiet` is true, suppress cargo build output (used for `crow run`).
 /// If `release` is true, compile with --release (optimized). Otherwise, use debug mode (fast compile).
 fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: bool) -> std::path::PathBuf {
@@ -1477,7 +1478,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     });
 
     // Write Cargo.toml
-    let project_name = entry.replace(".crow", "").replace('/', "_");
+    let project_name = strip_source_ext(entry).replace('/', "_");
     let mut dep_list: Vec<String> = Vec::new();
     if transpiler.needs_rayon {
         dep_list.push("rayon = \"1.11\"".to_string());
@@ -1802,7 +1803,7 @@ fn cmd_fmt() {
             let config = parse_crowfile();
             vec![config.entry]
         } else {
-            eprintln!("usage: crow fmt <file.crow> or run from a project with crowfile");
+            eprintln!("usage: crow fmt <file.co> or run from a project with crowfile");
             process::exit(1);
         }
     } else {
@@ -1876,7 +1877,7 @@ fn cmd_build() {
         let config = parse_crowfile();
         (config.entry, config.cpu)
     } else {
-        eprintln!("usage: crow build <file.crow> or run from a project with crowfile");
+        eprintln!("usage: crow build <file.co> or run from a project with crowfile");
         process::exit(1);
     };
 
@@ -1903,10 +1904,10 @@ fn cmd_build() {
 
 fn cmd_launch() {
     let args: Vec<String> = std::env::args().collect();
-    // crow launch <n> <file.crow>
+    // crow launch <n> <file.co>
     // crow launch <n>  (uses crowfile)
     if args.len() < 3 {
-        eprintln!("usage: crow launch <num_processes> [file.crow]");
+        eprintln!("usage: crow launch <num_processes> [file.co]");
         process::exit(1);
     }
 
@@ -1926,7 +1927,7 @@ fn cmd_launch() {
         let config = parse_crowfile();
         config.entry
     } else {
-        eprintln!("usage: crow launch <num_processes> <file.crow>");
+        eprintln!("usage: crow launch <num_processes> <file.co>");
         process::exit(1);
     };
 
@@ -1993,7 +1994,7 @@ fn run_binary(binary: &std::path::Path, extra_args: &[String]) {
     // Ownership rule: never clobber a LIVE instance's pidfile (a run that
     // dies on port collision must not erase the survivor's record), and
     // only remove the file on exit if it still names our child.
-    let _ = std::fs::create_dir_all(".crow");
+    let _ = std::fs::create_dir_all(".co");
     let existing_alive = std::fs::read_to_string(".crow/app.pid")
         .ok()
         .and_then(|p| p.trim().parse::<i32>().ok())
@@ -2030,12 +2031,12 @@ fn cmd_book() {
     let args: Vec<String> = std::env::args().collect();
     let chosen: Option<u16> = args.iter().position(|a| a == "--port")
         .and_then(|i| args.get(i + 1)).and_then(|p| p.parse().ok());
-    // The site is Crow's own: docs/book/site.crow renders every chapter
+    // The site is Crow's own: docs/book/site.co renders every chapter
     // (use doc) with the runner built into each code block. Render it fresh
     // with the interpreter — well under a second — then serve the files.
     let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("crow"));
     let write_only = args.iter().any(|a| a == "--write");
-    let site = std::path::Path::new("docs/book/site.crow");
+    let site = if std::path::Path::new("docs/book/site.co").exists() { std::path::Path::new("docs/book/site.co") } else { std::path::Path::new("docs/book/site.co") };
     // The language's book lives on 3008; an app's book lives next to the
     // app, on its serve port plus one, so the two never collide and two
     // apps' books do not either
@@ -2043,16 +2044,16 @@ fn cmd_book() {
     let mut what = "the Crow Book".to_string();
     let book_dir = if site.exists() {
         // the Crow Book itself, rendered by its own site program
-        let rendered = std::process::Command::new(&exe).args(["run", "-i", "docs/book/site.crow"]).status().map(|s| s.success()).unwrap_or(false);
+        let rendered = std::process::Command::new(&exe).args(["run", "-i", &site.display().to_string()]).status().map(|s| s.success()).unwrap_or(false);
         let dir = std::path::PathBuf::from("docs/book/crow-site");
         if !rendered || !dir.join("index.html").exists() {
-            eprintln!("error: rendering the book with docs/book/site.crow failed");
+            eprintln!("error: rendering the book with docs/book/site.co failed");
             process::exit(1);
         }
         dir
-    } else if std::path::Path::new("crowfile").exists() || std::path::Path::new("main.crow").exists() {
+    } else if std::path::Path::new("crowfile").exists() || std::path::Path::new("main.co").exists() || std::path::Path::new("main.co").exists() {
         // an app: its own book, derived from its source (app-baseline-design.md §8)
-        let entry = if std::path::Path::new("crowfile").exists() { parse_crowfile().entry } else { "main.crow".to_string() };
+        let entry = if std::path::Path::new("crowfile").exists() { parse_crowfile().entry } else if std::path::Path::new("main.co").exists() { "main.co".to_string() } else { "main.co".to_string() };
         if chosen.is_none() { port = serve_port_of(&read_file(&entry)).map(|p| p.saturating_add(1)).unwrap_or(3009); }
         what = "the app's book".to_string();
         match build_app_book(&entry) {
@@ -2060,7 +2061,7 @@ fn cmd_book() {
             Err(e) => { eprintln!("{}", e); process::exit(1); }
         }
     } else {
-        eprintln!("error: run `crow book` inside an app (a crowfile or main.crow) or the crow repository");
+        eprintln!("error: run `crow book` inside an app (a crowfile or main.co) or the crow repository");
         process::exit(1);
     };
     if write_only { return; }
@@ -2072,7 +2073,7 @@ fn cmd_book() {
         process::exit(1);
     });
     // the pid, so `crow stop book` can find this server from the project
-    let _ = std::fs::create_dir_all(".crow");
+    let _ = std::fs::create_dir_all(".co");
     let _ = std::fs::write(".crow/book.pid", std::process::id().to_string());
     println!("crow book: http://localhost:{}/  — {} (Ctrl-C or `crow stop book` to stop)", port, what);
     let children: Arc<Mutex<std::collections::HashMap<String, u32>>> = Arc::new(Mutex::new(Default::default()));
@@ -2131,12 +2132,12 @@ fn cmd_book() {
                 let mode = req["mode"].as_str().unwrap_or("interp").to_string();
                 let dir = std::env::temp_dir().join("crow_book_play").join(&id);
                 let _ = std::fs::create_dir_all(&dir);
-                let file = dir.join("block.crow");
+                let file = dir.join("block.co");
                 let _ = std::fs::write(&file, &code);
                 let (cmd_args, limit): (Vec<&str>, u64) = match mode.as_str() {
-                    "compile" => (vec!["run", "block.crow"], 600),
-                    "test" => (vec!["test", "block.crow"], 120),
-                    _ => (vec!["run", "-i", "block.crow"], 60),
+                    "compile" => (vec!["run", "block.co"], 600),
+                    "test" => (vec!["test", "block.co"], 120),
+                    _ => (vec!["run", "-i", "block.co"], 60),
                 };
                 // Own process group: a served app is a grandchild (crow run →
                 // native binary), and Stop must take the whole tree down.
@@ -2664,6 +2665,26 @@ fn build_app_book(entry: &str) -> Result<std::path::PathBuf, String> {
     appbook::build(&input)
 }
 
+/// Source files end in `.co`. A `.co` file is still read this release,
+/// with a note the first time one is met, so a tree renames at leisure.
+fn is_source(path: &str) -> bool { path.ends_with(".co") || path.ends_with(".co") }
+fn is_bytecode(path: &str) -> bool { path.ends_with(".coc") || path.ends_with(".coc") }
+fn strip_source_ext(path: &str) -> &str {
+    path.strip_suffix(".co").or_else(|| path.strip_suffix(".co")).unwrap_or(path)
+}
+fn bytecode_path(entry: &str) -> String { format!("{}.coc", strip_source_ext(entry)) }
+fn source_of_bytecode(path: &str) -> String {
+    let base = path.strip_suffix(".coc").or_else(|| path.strip_suffix(".coc")).unwrap_or(path);
+    let co = format!("{}.co", base);
+    if std::path::Path::new(&co).exists() || !std::path::Path::new(&format!("{}.co", base)).exists() { co } else { format!("{}.co", base) }
+}
+static LEGACY_NOTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+fn note_legacy_extension(path: &str) {
+    if !LEGACY_NOTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        eprintln!("note: {} — source files are `.co` now; `.co` is still read this release (git mv to rename)", path);
+    }
+}
+
 /// Type inference and validation of an expanded, lowered program: the gate
 /// every pipeline passes — run, run -i, test and check — so the two modes
 /// and the tools refuse the same programs with the same message.
@@ -2796,7 +2817,7 @@ fn print_check_summary(result: &checker::CheckResult, verbose: bool) {
     }
 }
 
-/// Format a clickable location string like "file.crow:12 in add"
+/// Format a clickable location string like "file.co:12 in add"
 fn format_location(filename: &str, issue: &checker::Issue, fn_lines: &std::collections::BTreeMap<String, usize>) -> String {
     let func = issue.func();
     let line = issue.line();
@@ -3143,7 +3164,7 @@ fn cmd_run_job(job_name: &str) {
 fn cmd_run_interpreted() {
     let config = parse_crowfile();
 
-    let compiled_path = config.entry.replace(".crow", ".crowc");
+    let compiled_path = bytecode_path(&config.entry);
     let stmts = if std::path::Path::new(&compiled_path).exists() {
         let bytes = std::fs::read(&compiled_path).unwrap_or_else(|e| {
             eprintln!("error reading '{}': {}", compiled_path, e);
@@ -3187,8 +3208,8 @@ fn cmd_run_interpreted() {
         }
         interpreter.add_module_path(modules_dir);
         for (name, version) in &config.deps {
-            let dep_file = std::path::PathBuf::from("crow_modules").join(format!("{}.crow", name));
-            let dep_dir = std::path::PathBuf::from("crow_modules").join(name).join("main.crow");
+            let dep_file = std::path::PathBuf::from("crow_modules").join(format!("{}.co", name));
+            let dep_dir = std::path::PathBuf::from("crow_modules").join(name).join("main.co");
             if !dep_file.exists() && !dep_dir.exists() {
                 eprintln!("warning: dependency '{}' v{} not found in crow_modules/", name, version);
             }
@@ -3201,7 +3222,7 @@ fn cmd_run_interpreted() {
 }
 
 fn cmd_run_file_interpreted(filename: &str) {
-    let stmts = if filename.ends_with(".crowc") {
+    let stmts = if is_bytecode(filename) {
         let bytes = std::fs::read(filename).unwrap_or_else(|e| {
             eprintln!("error reading '{}': {}", filename, e);
             process::exit(1);
@@ -3246,7 +3267,7 @@ fn cmd_run_file_interpreted(filename: &str) {
 
     let mut interpreter = Interpreter::new();
     interpreter.set_modules_preexpanded(true);
-    let base = filename.replace(".crowc", ".crow");
+    let base = source_of_bytecode(filename);
     let source_file = std::path::Path::new(&base).file_name()
         .map(|f| f.to_string_lossy().to_string())
         .unwrap_or_else(|| base.clone());
@@ -3308,7 +3329,12 @@ fn parse_crowfile() -> CrowfileConfig {
                         process::exit(1);
                     }
                 },
-                None => "main.crow".to_string(),
+                None => {
+                    if !std::path::Path::new("main.co").exists() && std::path::Path::new("main.co").exists() {
+                        note_legacy_extension("main.co");
+                        "main.co".to_string()
+                    } else { "main.co".to_string() }
+                }
             };
 
             let cpu = interpreter.get_var("cpu").and_then(|val| {
@@ -3342,7 +3368,7 @@ fn parse_crowfile() -> CrowfileConfig {
                 }
             }).unwrap_or_default();
 
-            // parse [jobs] section: jobs = [train = 'jobs/train.crow', ...]
+            // parse [jobs] section: jobs = [train = 'jobs/train.co', ...]
             let jobs = interpreter.get_var("jobs").map(|val| {
                 if let value::Value::Map(map) = &val.value {
                     map.iter().filter_map(|(name, v)| {
@@ -3367,6 +3393,8 @@ fn parse_crowfile() -> CrowfileConfig {
 }
 
 fn read_file(filename: &str) -> String {
+    // a `.crow` entry still runs this release, with a note the first time
+    if path.ends_with(".crow") { note_legacy_extension(path); }
     match std::fs::read_to_string(filename) {
         Ok(s) => s,
         Err(e) => {
@@ -3502,7 +3530,7 @@ mod refine_tests {
 }
 
 /// Expand `use` imports: every module file is parsed once, its
-/// declarations prefixed with its path (`sim/clock.crow` → `sim_clock_`) and
+/// declarations prefixed with its path (`sim/clock.co` → `sim_clock_`) and
 /// hoisted ahead of the program, and every importer's qualified references
 /// (`clock.head`, or the alias's) are rewritten to the prefixed names. A
 /// module reached through two importers — the tape and the trading parts
@@ -3523,7 +3551,7 @@ fn expand_module_imports(
         ast::Stmt::Use { path, alias } => seen.insert(format!("{}|{}", path, alias.clone().unwrap_or_default())),
         _ => true,
     });
-    // Each part is validated alone, as `crow test part.crow` sees it — its
+    // Each part is validated alone, as `crow test part.co` sees it — its
     // own names unprefixed, its imports inlined — so a name a part reserves
     // by what it imports, or a handler nothing in the part wires, is
     // refused whichever file is the entry
@@ -3622,18 +3650,20 @@ fn expand_into(
         // whichever file is the entry; without a crowfile the entry file's
         // directory is the root
         let root = project_root(source_dir);
-        let mut candidates = vec![
-            root.join(format!("{}.crow", file_rel)),
-            root.join(format!("crow_modules/{}.crow", file_rel)),
-            root.join(format!("crow_modules/{}/main.crow", file_rel)),
-        ];
-        if root != source_dir {
-            candidates.push(source_dir.join(format!("{}.crow", file_rel)));
+        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+        for ext in ["co", "crow"] {
+            candidates.push(root.join(format!("{}.{}", file_rel, ext)));
+            candidates.push(root.join(format!("crow_modules/{}.{}", file_rel, ext)));
+            candidates.push(root.join(format!("crow_modules/{}/main.{}", file_rel, ext)));
+            if root != source_dir {
+                candidates.push(source_dir.join(format!("{}.{}", file_rel, ext)));
+            }
         }
         let Some(file_path) = candidates.iter().find(|p| p.exists()).cloned() else {
             expanded.push(stmt.clone());
             continue;
         };
+        if file_path.extension().map_or(false, |e| e == "crow") { note_legacy_extension(&file_path.display().to_string()); }
         let canon = std::fs::canonicalize(&file_path).unwrap_or(file_path.clone());
         // Expanded already, through another importer: one copy, this
         // file's spelling of it
@@ -4084,10 +4114,10 @@ mod module_parts_tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("sim")).unwrap();
         std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
-        std::fs::write(dir.join("sim/clock.crow"), "use web, ui\n\nbase = 0.0\n\nderive progress\n    return base * 2.0\n\nview transport[]\n    return p['`progress`']\n").unwrap();
-        let path = std::fs::canonicalize(dir.join("sim/clock.crow")).unwrap();
+        std::fs::write(dir.join("sim/clock.co"), "use web, ui\n\nbase = 0.0\n\nderive progress\n    return base * 2.0\n\nview transport[]\n    return p['`progress`']\n").unwrap();
+        let path = std::fs::canonicalize(dir.join("sim/clock.co")).unwrap();
         let err = validate_part_alone(&path).unwrap_err();
-        assert!(err.contains("sim/clock.crow: line 5: 'progress' is a ui builtin"), "{}", err);
+        assert!(err.contains("sim/clock.co: line 5: 'progress' is a ui builtin"), "{}", err);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -4101,10 +4131,10 @@ mod module_parts_tests {
         std::fs::create_dir_all(dir.join("sim")).unwrap();
         std::fs::create_dir_all(dir.join("views")).unwrap();
         std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
-        std::fs::write(dir.join("sim/clock.crow"), "use web, ui\n\nbase = 0.0\nspeed = 1.0\nplaying = false\n\nderive head\n    return base * speed\n\nfn faster[]\n    base, speed = head, 10.0\n\nview transport[]\n    return button['10x', click = faster]\n").unwrap();
-        // the tape reads the clock too: a diamond through views/sim.crow
-        std::fs::write(dir.join("sim/tape.crow"), "use web, ui\nuse sim.clock\n\nderive marker\n    return clock.head + 1.0\n").unwrap();
-        std::fs::write(dir.join("views/sim.crow"), "use web, ui\nuse sim.clock\nuse sim.tape\n\nderive label\n    return 'at `clock.head` x`clock.speed` marker `tape.marker`'\n\nfn slow[]\n    clock.speed = 1.0\n\nview render[]\n    return stack[p[label], clock.transport[], button['1x', click = slow]]\n\ntest it[]\n    a = app[render]\n    click[a, clock.faster]\n").unwrap();
+        std::fs::write(dir.join("sim/clock.co"), "use web, ui\n\nbase = 0.0\nspeed = 1.0\nplaying = false\n\nderive head\n    return base * speed\n\nfn faster[]\n    base, speed = head, 10.0\n\nview transport[]\n    return button['10x', click = faster]\n").unwrap();
+        // the tape reads the clock too: a diamond through views/sim.co
+        std::fs::write(dir.join("sim/tape.co"), "use web, ui\nuse sim.clock\n\nderive marker\n    return clock.head + 1.0\n").unwrap();
+        std::fs::write(dir.join("views/sim.co"), "use web, ui\nuse sim.clock\nuse sim.tape\n\nderive label\n    return 'at `clock.head` x`clock.speed` marker `tape.marker`'\n\nfn slow[]\n    clock.speed = 1.0\n\nview render[]\n    return stack[p[label], clock.transport[], button['1x', click = slow]]\n\ntest it[]\n    a = app[render]\n    click[a, clock.faster]\n").unwrap();
         let src = "use web, ui\nuse views.sim\nuse sim.clock\n\nlog[clock.speed]\npage['/', sim.render]\n";
         let stmts = build(src).unwrap();
         let mut visited = std::collections::HashSet::new();

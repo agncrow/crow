@@ -1,4 +1,4 @@
-handler sim_clock_faster (sim/clock.crow)
+handler sim_clock_faster (sim/clock.co)
   wired: sim_clock_transport button '10x'
   always:
     sim_clock_anchor := now[] · sim_clock_base := sim_clock_head · sim_clock_speed := 10.0

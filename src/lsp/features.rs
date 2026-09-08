@@ -262,7 +262,7 @@ name = 'crow'
 
     #[test]
     fn completions_include_user_fn_builtin_and_keyword() {
-        let a = analyze(SRC, None, None, "t.crow");
+        let a = analyze(SRC, None, None, "t.co");
         let items = completions(&a);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(labels.contains(&"add"));
@@ -272,7 +272,7 @@ name = 'crow'
 
     #[test]
     fn hover_shows_inferred_fn_signature() {
-        let a = analyze(SRC, None, None, "t.crow");
+        let a = analyze(SRC, None, None, "t.co");
         // cursor on "add" at line 4 (0-based 3), col 8 → inside `add[2, 3]`
         let h = hover(&a, Position { line: 3, character: 9 }).expect("hover");
         assert!(h.contains("fn add[a: int, b: int] -> int"), "got: {}", h);
@@ -280,22 +280,22 @@ name = 'crow'
 
     #[test]
     fn hover_shows_var_type() {
-        let a = analyze(SRC, None, None, "t.crow");
+        let a = analyze(SRC, None, None, "t.co");
         let h = hover(&a, Position { line: 4, character: 1 }).expect("hover");
         assert_eq!(h, "name: str");
     }
 
     #[test]
     fn definition_finds_fn_decl_line() {
-        let a = analyze(SRC, None, None, "t.crow");
-        let uri: Uri = "file:///t.crow".parse().unwrap();
+        let a = analyze(SRC, None, None, "t.co");
+        let uri: Uri = "file:///t.co".parse().unwrap();
         let loc = definition(&a, Position { line: 3, character: 9 }, &uri).expect("definition");
         assert_eq!(loc.range.start.line, 0);
     }
 
     #[test]
     fn symbols_outline_fns_and_vars() {
-        let a = analyze(SRC, None, None, "t.crow");
+        let a = analyze(SRC, None, None, "t.co");
         let syms = document_symbols(&a);
         let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"add"));
@@ -381,7 +381,7 @@ mod param_fill_tests {
     use super::*;
 
     fn analyzed(src: &str) -> crate::lsp::analysis::Analysis {
-        crate::lsp::analysis::analyze(src, None, None, "t.crow")
+        crate::lsp::analysis::analyze(src, None, None, "t.co")
     }
 
     #[test]

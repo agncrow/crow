@@ -3,7 +3,7 @@
 Documentation from Markdown, rendered by the kernel so both execution modes write the same pages.
 
 
-Import with `use doc`. Documentation from Markdown, rendered by the kernel so the interpreter and compiled programs produce the same pages. The Crow Book is built with it (`docs/book/site.crow`).
+Import with `use doc`. Documentation from Markdown, rendered by the kernel so the interpreter and compiled programs produce the same pages. The Crow Book is built with it (`docs/book/site.co`).
 
 | Function | Description | Example |
 |----------|-------------|---|

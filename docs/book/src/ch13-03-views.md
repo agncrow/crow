@@ -5,7 +5,7 @@ chapter in this book:
 
 ```crow,norun
 --- Live trading dashboard: SQLite -> frames -> views
---- Seed first: crow run dashboard_seed.crow   Then: crow run dashboard.crow
+--- Seed first: crow run dashboard_seed.co   Then: crow run dashboard.co
 use web, ui, db, frame, math
 
 conn = db.connect['sqlite://trades.db']

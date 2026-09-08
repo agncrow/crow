@@ -687,7 +687,7 @@ body.nav-closed .doc-side{display:none!important}\
 .crow-run{margin:0.8rem 0}\
 .crow-run .crow-editor pre{margin:0}\
 .crow-run pre.gutter{flex:none;text-align:right;user-select:none;color:var(--crow-muted);padding-right:0.7rem;border-right:0;border-radius:6px 0 0 6px}\
-.crow-run pre.crow{flex:1 1 0;min-width:0;border-left:0;border-radius:0 6px 6px 0}\
+.crow-run pre.co{flex:1 1 0;min-width:0;border-left:0;border-radius:0 6px 6px 0}\
 .crow-run code[contenteditable]{display:block;outline:none;cursor:text;min-height:1.4em}\
 .crow-run .crow-toolbar button{font-size:0.85rem;padding:0.2rem 0.7rem}\
 .crow-run .crow-toolbar button.stop{margin-left:auto}\

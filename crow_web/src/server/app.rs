@@ -271,7 +271,7 @@ async fn default_welcome_handler() -> axum::response::Html<&'static str> {
   body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #0a0a0a; color: #e0e0e0; }
   .card { text-align: center; max-width: 480px; padding: 2rem; }
   h1 { font-size: 2.5rem; margin-bottom: 0.5rem; }
-  .crow { font-size: 4rem; }
+  .co { font-size: 4rem; }
   p { color: #888; line-height: 1.6; }
   code { background: #1a1a2e; padding: 2px 8px; border-radius: 4px; font-size: 0.9em; }
 </style>

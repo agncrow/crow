@@ -156,14 +156,14 @@ that reaches `sleep`, `shell`, or `input` through any chain of calls gets
 flagged with the path, and the interactive loop can apply the fix for you:
 
 ```text
-[1/1] scanner.crow:14 in refresh
+[1/1] scanner.co:14 in refresh
       'refresh' can freeze every connected client — sleep[] blocks the
       live loop (refresh → score_board → sleep)
       fix: schedule it off the loop: later[score_board]
 
       enter = recheck, s = skip, f = fix (later[]), q = quit > f
 
-  rewrote scanner.crow: score_board[] → later[score_board] — rechecking...
+  rewrote scanner.co: score_board[] → later[score_board] — rechecking...
   ✓ all good
 ```
 

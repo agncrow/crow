@@ -13,7 +13,7 @@ Look at what it made — two files:
 ```text
 hello_crow/
   crowfile
-  main.crow
+  main.co
 ```
 
 The `crowfile` is the project manifest. It is itself a Crow file — one
@@ -25,10 +25,10 @@ name = 'hello_crow'
 
 Later you'll add keys to it: `db = '...'` so the checker can read your
 database schema (chapter 11), `jobs = map[...]` for batch tasks, `deps`
-for packages. `main.crow` is the entry point, and it already runs:
+for packages. `main.co` is the entry point, and it already runs:
 
 ```bash
-crow run          # compile and run main.crow
+crow run          # compile and run main.co
 crow run -i       # the same program, interpreted — instant start
 crow build        # compile only; the binary lands in the project directory
 ```
@@ -42,7 +42,7 @@ Two more commands you'll use in every chapter from here on:
 
 ```bash
 crow check        # verify the project: your tests plus everything automatic
-crow fmt          # format every .crow file in the project
+crow fmt          # format every .co file in the project
 ```
 
 For a web project, `crow new myapp --web` adds a `views/` directory

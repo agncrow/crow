@@ -1,4 +1,4 @@
-view views_sim_render (views/sim.crow)
+view views_sim_render (views/sim.co)
   composed on: page /
   reads: views_sim_label
   always:

@@ -242,8 +242,8 @@ it. Every check after diffs against it.
 ```text
 $ crow check
   baseline — 95 unchanged, 1 changed (.crow/baseline/main)
-  [1/1] sim/session.crow in start_session
-        handler start_session changed (sim/session.crow, in what you edited):
+  [1/1] sim/session.co in start_session
+        handler start_session changed (sim/session.co, in what you edited):
           ~ …when (not (v2 «lte» → «lt» v1)) and v1.ok and v2.ok:
         fix: if intended, accept with a and the baseline moves; otherwise fix the cause — reaches page /
 ```

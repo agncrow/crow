@@ -1,3 +1,3 @@
-derive views_sim_label (views/sim.crow)
+derive views_sim_label (views/sim.co)
   reads: sim_clock_speed, sim_clock_head, sim_tape_marker
   read by: views_sim_render

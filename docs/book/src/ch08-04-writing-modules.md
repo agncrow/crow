@@ -1,11 +1,11 @@
 # Writing Your Own Modules
 
-A module is a `.crow` file of functions, structs, and constants. Your
+A module is a `.co` file of functions, structs, and constants. Your
 modules are always **qualified** — importing one reserves a single bare
 name (the prefix), and everything inside is reached through it:
 
 ```crow,ignore
---- geometry.crow ---
+--- geometry.co ---
 struct Circle [r]
 
 fn circle_area[c]
@@ -13,7 +13,7 @@ fn circle_area[c]
 ```
 
 ```crow,ignore
---- main.crow ---
+--- main.co ---
 use geometry
 
 c = geometry.Circle[2.0]

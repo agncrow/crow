@@ -347,7 +347,7 @@ mod tests {
         let lowered = crate::lower::lower_program(&stmts).unwrap();
         let mut ctx = crate::type_infer::TypeContext::new();
         ctx.infer_program(&lowered);
-        let (art, _) = crate::baseline::derive_artifacts(&lowered, &ctx, &BTreeMap::new(), "main.crow");
+        let (art, _) = crate::baseline::derive_artifacts(&lowered, &ctx, &BTreeMap::new(), "main.co");
         let (guard, node) = art.structure.wires["v"][0].clone();
         let mut w = Wire::new(&art);
         let svg = w.svg(&node, &guard, 600.0, false, true).expect("laid out");

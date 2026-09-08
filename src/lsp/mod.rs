@@ -137,7 +137,7 @@ fn open_or_change(state: &mut State, uri: &Uri, text: String) -> Vec<lsp_types::
     let label = path
         .file_name()
         .map(|f| f.to_string_lossy().to_string())
-        .unwrap_or_else(|| "file.crow".into());
+        .unwrap_or_else(|| "file.co".into());
     let analysis = analysis::analyze(&text, dir.as_deref(), state.db_url.as_deref(), &label);
     let diags = analysis.diagnostics.clone();
     state.docs.insert(uri.as_str().to_string(), analysis);
@@ -293,7 +293,7 @@ mod tests {
             .send(Message::Notification(N::new(
                 DidOpenTextDocument::METHOD.into(),
                 serde_json::json!({"textDocument": {
-                    "uri": "file:///demo.crow", "languageId": "crow",
+                    "uri": "file:///demo.co", "languageId": "crow",
                     "version": 1, "text": text}}),
             )))
             .unwrap();
@@ -315,7 +315,7 @@ mod tests {
                 RequestId::from(2),
                 HoverRequest::METHOD.into(),
                 serde_json::json!({
-                    "textDocument": {"uri": "file:///demo.crow"},
+                    "textDocument": {"uri": "file:///demo.co"},
                     "position": {"line": 4, "character": 5}}),
             )))
             .unwrap();

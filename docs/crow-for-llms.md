@@ -316,4 +316,4 @@ owns — the error tells you the fix. Rules of thumb:
 - `docs/language-spec.md` — the full specification, including every builtin and
   a long series of "Design Note: No X" sections explaining each deliberate
   omission (they answer "why can't I just…?").
-- `examples/` — runnable programs (`crow run file.crow`).
+- `examples/` — runnable programs (`crow run file.co`).

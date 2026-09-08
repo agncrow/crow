@@ -13,7 +13,7 @@
       {
         "id": "crow",
         "aliases": ["Crow"],
-        "extensions": [".crow"],
+        "extensions": [".co", ".crow"],
         "configuration": "./language-configuration.json"
       }
     ],

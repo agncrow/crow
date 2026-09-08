@@ -1,3 +1,3 @@
-derive sim_clock_head (sim/clock.crow)
+derive sim_clock_head (sim/clock.co)
   reads: sim_clock_anchor, sim_clock_base, sim_clock_playing, sim_clock_speed, now[]
   read by: sim_clock_faster, sim_tape_marker, views_sim_label

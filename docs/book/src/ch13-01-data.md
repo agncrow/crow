@@ -24,7 +24,7 @@ seeded 4 trades
 ```
 
 (The final line removes the file only so this book's test runner stays
-tidy — the real seed script, `examples/dashboard_seed.crow`, keeps it.)
+tidy — the real seed script, `examples/dashboard_seed.co`, keeps it.)
 
 `sqlite://trades.db` is a *file* this time, not `:memory:` — the data
 survives between runs, and the dashboard process will open the same file.

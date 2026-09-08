@@ -140,7 +140,7 @@ All 6 builtins work in `crow run -i` mode. Transactions use manual `BEGIN`/`COMM
 - 9 unit tests in `crow_db` crate (SQLite backend)
 - 8 interpreter tests (connect, exec, query, params, transact, bad URL)
 - 8 transpiler codegen tests
-- Integration example: `examples/db_demo.crow`
+- Integration example: `examples/db_demo.co`
 
 ## Example
 

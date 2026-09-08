@@ -198,7 +198,7 @@ blueprint chapter fall out of the same mechanism.
 ## 5. Worked example: the simulation page
 
 ```
---- sim/clock.crow
+--- sim/clock.co
 base = 0.0
 anchor = 0.0
 speed = 1.0
@@ -210,19 +210,19 @@ derive head
 fn set_speed[s]
     base, anchor, speed = head, now[], s
 
---- sim/tape.crow
+--- sim/tape.co
 derive bars[fresh = 300]
     b = query[ch, '... WHERE symbol = ? AND date = ?', [sym, day]]
     return with[with[b, 'rsi', rsi[b.c, 14]], 'cvd', cvd[b.c, b.vol]]
 
---- scanner.crow
+--- scanner.co
 derive universe
     return universe_for[pg, day]
 
 derive rows
     return rows_at[ch, day, head, universe.dataset_id]
 
---- sim/trading.crow
+--- sim/trading.co
 derive trades
     return query[book, 'SELECT ... WHERE session_id = ?', [session_id]]
 ```

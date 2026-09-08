@@ -5,7 +5,7 @@ pipeline the editor uses, so nothing you see in one place disagrees with
 another.
 
 ```text
-crow new name [--web --ml --db]  scaffold a project (a Crowfile, main.crow, css/)
+crow new name [--web --ml --db]  scaffold a project (a Crowfile, main.co, css/)
 crow run [-i] [file]             execute: compiled by default, -i interprets
 crow stop                        stop the served app started by crow run
 crow build [file]                compile to a native binary, ./main

@@ -830,7 +830,7 @@ The user doesn't change code — just the build flag.
 ## Full-Stack Compilation Pipeline
 
 ```
-app.crow (single source)
+app.co (single source)
     │
     ├── crow build ──→ Transpiler splits server/client code
     │                     │
@@ -866,7 +866,7 @@ SECRET_KEY=abc123
 ```
 
 ```
---- app.crow
+--- app.co
 use web
 use web.db
 
@@ -893,7 +893,7 @@ use math
 use math.nn
 use web
 
-model = load['model.crow']
+model = load['model.co']
 
 fn predict[req]
   x = tensor[req.json.data]
@@ -946,7 +946,7 @@ Arrow IPC is the standout for data science: Python (pandas/polars), R, Julia, an
 use web
 use math.nn
 
-model = load['model.crow']
+model = load['model.co']
 
 --- JSON (small, human-readable)
 fn predict_json[req]

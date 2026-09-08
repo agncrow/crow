@@ -1,4 +1,4 @@
-view sim_clock_transport (sim/clock.crow)
+view sim_clock_transport (sim/clock.co)
   composed on: page /
   always:
     row[gap = 's']

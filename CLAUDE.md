@@ -24,7 +24,7 @@ cargo test --workspace
 ./target/release/crow test --parity
 ./target/release/crow test --docs
 ./target/release/crow test --book
-./target/release/crow test tests/layout/conformance.crow
+./target/release/crow test tests/layout/conformance.co
 ```
 
 Use the release binary for the layout and site suites: the debug binary

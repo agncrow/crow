@@ -148,7 +148,7 @@ this module needs the *language* to move.
 - **Kernel unit tests** (geometry): scales, tz-correct ticks across DST
   boundaries, candle layout, budget enforcement — pure functions, exact
   assertions.
-- **Parity**: a `29_chart.crow` rendering to the html string in both
+- **Parity**: a `29_chart.co` rendering to the html string in both
   modes; byte-identical output is the bar (same discipline as everything
   else).
 - **`app[]` harness**: render a view containing a chart, assert on the

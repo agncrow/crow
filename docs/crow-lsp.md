@@ -43,13 +43,13 @@ vim.lsp.enable("crow")
 
 **Helix** (`~/.config/helix/languages.toml`)
 ```toml
-[language-server.crow]
+[language-server.co]
 command = "crow"
 args = ["lsp"]
 
 [[language]]
 name = "crow"
-scope = "source.crow"
+scope = "source.co"
 file-types = ["crow"]
 roots = ["crowfile"]
 language-servers = ["crow"]
