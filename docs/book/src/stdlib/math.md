@@ -153,7 +153,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 
 | Function | Description | Example |
 |---|---|---|
-| `seed[n]` | Set global RNG seed for reproducibility | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) |
+| `seed[n]` | Set the program's RNG seed: every later draw, tensors and the core `rand[]` alike, is repeatable and identical in both modes. Independent statements run in parallel (§14), so draws that must come in a fixed order are written in one expression or in statements that depend on each other | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) |
 | `rand[d1, d2, ...]` | Uniform random in [0, 1) | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) |
 | `randn[d1, d2, ...]` | Standard normal (mean=0, std=1) | [Math: tensors](../by-example/math.md) |
 | `normal[mean, std, d1, d2, ...]` | Normal with custom mean/std | [Math: random, signal, special, and sparse](../by-example/math-more.md) |

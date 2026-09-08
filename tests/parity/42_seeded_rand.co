@@ -1,0 +1,22 @@
+--- rand[] draws from the program's RNG, the one seed[n] seeds, so a
+--- seeded program draws the same numbers in both modes and twice over.
+--- Independent statements run in parallel (spec §14), so three draws
+--- that must come in order are written as one expression.
+use math as m
+
+m.seed[42]
+draws = [rand[], float[rand[10]], float[rand[1, 6]]]
+a = draws[0]
+b = int[draws[1]]
+c = int[draws[2]]
+log[a gte 0.0 and a lt 1.0]
+log[b gte 0 and b lt 10]
+log[c gte 1 and c lte 6]
+m.seed[42]
+again = [rand[], float[rand[10]], float[rand[1, 6]]]
+log[again[0] eq a]
+log[int[again[1]] eq b]
+log[int[again[2]] eq c]
+log[fmt[a, decimals = 6]]
+log[b]
+log[c]

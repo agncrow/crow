@@ -3963,45 +3963,17 @@ impl Interpreter {
             // --- System builtins ---
             "rand" => {
                 if args.len() > 2 { return Err("rand[] takes 0, 1, or 2 arguments".into()); }
+                // the program's RNG, the one seed[n] seeds (core.rs)
                 if args.is_empty() {
-                    // rand[] — random float between 0.0 and 1.0
-                    use std::collections::hash_map::DefaultHasher;
-                    use std::hash::{Hash, Hasher};
-                    let mut hasher = DefaultHasher::new();
-                    std::time::SystemTime::now().hash(&mut hasher);
-                    std::thread::current().id().hash(&mut hasher);
-                    let hash = hasher.finish();
-                    let val = (hash as f64) / (u64::MAX as f64);
-                    Ok(CrowValue::ok(Value::Float(val)))
+                    Ok(CrowValue::ok(Value::Float(crow_runtime::core::rand_float())))
                 } else if args.len() == 1 {
-                    // rand[n] — random int between 0 and n-1
                     match args[0].unwrap_or_propagate()? {
-                        Value::Int(n) => {
-                            use std::collections::hash_map::DefaultHasher;
-                            use std::hash::{Hash, Hasher};
-                            let mut hasher = DefaultHasher::new();
-                            std::time::SystemTime::now().hash(&mut hasher);
-                            std::thread::current().id().hash(&mut hasher);
-                            let hash = hasher.finish();
-                            let val = (hash % (*n as u64)) as i64;
-                            Ok(CrowValue::ok(Value::Int(val)))
-                        }
+                        Value::Int(n) => Ok(CrowValue::ok(Value::Int(crow_runtime::core::rand_int(*n)?))),
                         _ => Err("rand[n] requires an integer".into()),
                     }
                 } else {
-                    // rand[min, max] — random int between min and max (inclusive)
                     match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                        (Value::Int(min), Value::Int(max)) => {
-                            use std::collections::hash_map::DefaultHasher;
-                            use std::hash::{Hash, Hasher};
-                            let mut hasher = DefaultHasher::new();
-                            std::time::SystemTime::now().hash(&mut hasher);
-                            std::thread::current().id().hash(&mut hasher);
-                            let hash = hasher.finish();
-                            let range = (max - min + 1) as u64;
-                            let val = min + (hash % range) as i64;
-                            Ok(CrowValue::ok(Value::Int(val)))
-                        }
+                        (Value::Int(min), Value::Int(max)) => Ok(CrowValue::ok(Value::Int(crow_runtime::core::rand_between(*min, *max)?))),
                         _ => Err("rand[min, max] requires two integers".into()),
                     }
                 }

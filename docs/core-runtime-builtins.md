@@ -67,7 +67,7 @@ side only.
 | `set del` | `core::map_set`, `map_del`, moved in for `m = set[m, k, v]` | same, moved in | in place in both modes now | **runtime** |
 | `args` | skips `run -i file` | all args | equivalent | keep |
 | `input` | reads a line | reads a line, stamps `captured` | interpreter stamp to check | move |
-| `rand` | time hash, ignores `seed` | same text | both ignore `seed`; `rng.rs` exists | move (one RNG) |
+| `rand` | `core::rand_float/int/between` on the seeded RNG | same | `seed[n]` now governs every draw (parity 42) | **runtime** |
 | `time sleep env exit` | std | std | none | keep |
 | `read write exists mkdir ls rm mv cp` | std, error kinds `io` | to check | error texts | move (one `io`) |
 | `json encode` | `json_to_crow` / `crow_to_json` in the interpreter | `serde_json::Value` kept dynamic | number formatting in `encode` | move (one encoder) |
@@ -109,3 +109,11 @@ side only.
   once per item; scopes are now shared by reference count and cloned
   once per chunk of items, which took the benchmark's collect program
   from 111 s to under a second in the interpreter.
+- 2026-09-07, `rand`: `core::rand_float`, `rand_int`, `rand_between`
+  draw from the runtime's seeded RNG (`rng.rs`), so `seed[n]` governs
+  the core `rand[]` in both modes; the old time-hash was unseeded in
+  both. Parity 42 pins it, and found that three draws in three
+  independent statements are one wave and run in parallel, so their
+  order is not fixed: a seeded program is deterministic only where its
+  statements depend on each other. Evidence for dropping statement
+  waves in stage 4 (`core-rewrite-notes.md` §4, §8).
