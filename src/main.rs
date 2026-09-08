@@ -1,5 +1,7 @@
 mod ast;
 mod appbook;
+mod ir;
+mod lower_ir;
 mod baseline;
 mod checker;
 mod db_check;
@@ -2165,6 +2167,19 @@ fn cmd_fmt() {
 
 fn cmd_build() {
     let args: Vec<String> = std::env::args().collect();
+    // `crow build --ir file.co`: the program's one typed form, printed
+    // (docs/ir-design.md); nothing is compiled
+    if args.iter().any(|a| a == "--ir") {
+        let file = args.iter().skip(2).find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| parse_crowfile().entry);
+        match ir_of_file(&file, std::env::var("CROW_NO_DESCRIBE").is_err()) {
+            Ok(text) => print!("{}", text),
+            Err(e) => {
+                eprintln!("{}", e);
+                process::exit(1);
+            }
+        }
+        return;
+    }
     let (entry, cpu) = if args.len() > 2 {
         (args[2].clone(), None)
     } else if std::path::Path::new("crowfile").exists() {
@@ -3001,6 +3016,45 @@ mod extension_tests {
         assert_eq!(bytecode_path("dir/a.co"), "dir/a.coc");
         assert_eq!(source_of_bytecode("zz_no_such_file.coc"), "zz_no_such_file.co");
         assert_eq!(source_of_bytecode("zz_no_such_file.crowc"), "zz_no_such_file.co");
+    }
+}
+
+/// A program's IR, printed: the same front end as run, test and check,
+/// then the lowering of docs/ir-design.md §4.
+fn ir_of_file(entry: &str, describe: bool) -> Result<String, String> {
+    let source = read_file(entry);
+    let stmts = build(&source).map_err(|e| e.to_string())?;
+    let source_dir = std::path::Path::new(entry).parent().unwrap_or(std::path::Path::new("."));
+    let mut visited = std::collections::HashSet::new();
+    let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
+    let stmts = lower::lower_program(&stmts)?;
+    let mut ctx = infer_and_validate(&stmts, describe)?;
+    let name = std::path::Path::new(entry)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| entry.to_string());
+    let program = lower_ir::lower(&stmts, &mut ctx, &name)?;
+    Ok(ir::print(&program))
+}
+
+#[cfg(test)]
+mod ir_tests {
+    /// The IR must exist for every program the modes are held to agree on.
+    #[test]
+    fn every_parity_program_lowers_to_the_ir() {
+        let mut failures = Vec::new();
+        let mut count = 0;
+        for entry in std::fs::read_dir("tests/parity").unwrap() {
+            let p = entry.unwrap().path();
+            if p.extension().map_or(false, |x| x == "co") {
+                count += 1;
+                if let Err(e) = super::ir_of_file(&p.to_string_lossy(), false) {
+                    failures.push(format!("{}: {}", p.display(), e));
+                }
+            }
+        }
+        assert!(count > 40, "the corpus was not found");
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 }
 

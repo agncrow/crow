@@ -267,9 +267,13 @@ deleted in the same commit that makes the new path the default.
 1. **This record reviewed.** Then `ir.rs` (the types of §3, about a
    thousand lines) and a printer, so `crow build --ir` shows a
    program's form; the clock and the skip handler are the first
-   programs printed.
+   programs printed. *Built 2026-09-08: `src/ir.rs`.*
 2. **Lowering.** AST to IR using the three existing passes; the
    parity corpus is lowered and printed, and the printouts are read.
+   *Built 2026-09-08: `src/lower_ir.rs`; every parity program lowers
+   (a unit test keeps it so), and the clock fixture and finch's nav
+   part print as §10 has them, with the propagation and the float
+   conversion of a cell the sketch had elided.*
 3. **The IR interpreter**, behind `CROW_IR=1`, run against every gate
    until green; then it is `crow run -i` and `interpreter.rs` goes.
 4. **The Rust backend**, the same way; then `transpiler.rs` goes.
@@ -384,11 +388,17 @@ layout kernel, the harness verbs, the baseline and the book, the
 parity and book corpora, the escape hatches (raw SQL, `css/app.css`,
 shell, HTTP) as visible effects.
 
-## 12. Open questions, to settle while building
+## 12. Three more decisions (2026-09-08, Vijay: "go with your recommendation")
 
-- The printer's notation for the book's app chapter: should
-  `crow check --show` print the IR form instead of its own?
-- Whether `Json` cells become typed columns at the first `int[]` read
-  or stay dynamic until the second half.
-- How much of `lower.rs`, `type_infer.rs` and `validator.rs` folds into
-  the lowering pass once the IR exists, and in what order.
+- **`crow check --show` prints the IR's form** once the lowering is the
+  default (step 3 of §9), and the baseline's artifacts derive from the
+  IR from then on, so the stored artifacts change exactly once and the
+  app's book and the checker read one form.
+- **`Json` cells stay dynamic** until the typed-frames half (§8): the
+  IR keeps them as today's transpiler does, so no behaviour changes
+  with the IR itself.
+- **`lower.rs`, `type_infer.rs` and `validator.rs` stay as they are**
+  through steps 1 to 4; they fold into the lowering after the
+  transpiler is gone, starting with the type checker's single map of
+  variables by name, which the lowering replaces with a scoped
+  environment of its own.
