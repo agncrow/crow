@@ -589,4 +589,6 @@ weeks; the core stages are weeks each.
   (parity 49), the removed time builtins' teaching errors moved to the
   validator, resources and web stand-ins and `chart` ported.
 - **Next:** step 4, the Rust backend from the IR; then `transpiler.rs`
-  goes.
+  goes. The hand-off for it — where things stand, the emitter's shape,
+  what the IR must carry, the order of slices and their gates, the
+  gotchas — is written under step 4 in `ir-design.md` §9; start there.
