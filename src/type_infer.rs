@@ -1648,7 +1648,7 @@ impl TypeContext {
     }
 
     /// Infer a function's return type from its body.
-    fn infer_function_body(&mut self, name: &str, body: &[Stmt]) {
+    pub(crate) fn infer_function_body(&mut self, name: &str, body: &[Stmt]) {
         // Temporarily add param types as vars so body inference works
         let saved_vars = self.vars.clone();
         if let Some(sig) = self.functions.get(name) {
@@ -1730,7 +1730,7 @@ impl TypeContext {
     }
 
     /// Infer types from a statement (mainly assignments).
-    fn infer_stmt(&mut self, stmt: &Stmt) {
+    pub(crate) fn infer_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Assign { name, value } => {
                 let ty = self.infer_expr(value);

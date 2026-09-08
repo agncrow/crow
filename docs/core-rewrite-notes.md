@@ -552,4 +552,11 @@ weeks; the core stages are weeks each.
   runtime table, the IR interpreter's values, the Rust backend, the
   session layer, the gates and order, the clock and skip handlers in
   the form.
-- **Next:** review of `ir-design.md`; then `ir.rs` and the printer.
+- **2026-09-08, stage 4 steps 1 and 2 built:** `ir.rs` (the IR and its
+  printer) and `lower_ir.rs` (the lowering on the existing front end:
+  facts, derivations with read sets, functions classified pure, helper,
+  handler or view with their reachable effects, effects marked
+  answered or held, propagation explicit, int-to-float explicit,
+  parallel loops decided, last reads as moves). `crow build --ir
+  file.co` prints it; every parity program lowers, checked by a test.
+- **Next:** step 3, the IR interpreter behind `CROW_IR=1`.

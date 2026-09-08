@@ -3199,6 +3199,7 @@ crow new myapp --web --ml --db  --- all capabilities
 crow install                --- install deps from crowfile into crow_modules/
 crow build                  --- transpile to Rust and compile to native binary
 crow build file.co        --- transpile a specific file
+crow build --ir file.co   --- print the program's one typed form, the IR (docs/ir-design.md); nothing is compiled
 crow run                    --- transpile + compile + run main.co
 crow run file.co          --- transpile + compile + run a specific file
 crow run train              --- run a named job from the crowfile jobs map
