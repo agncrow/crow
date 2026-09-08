@@ -69,7 +69,7 @@ side only.
 | `input` | `core::read_line` | same, stamps `captured` | compiled trimmed all trailing whitespace where the interpreter trims the line ending only (fixed: line ending only) | **runtime** |
 | `rand` | `core::rand_float/int/between` on the seeded RNG | same | `seed[n]` now governs every draw (parity 42) | **runtime** |
 | `time sleep env exit` | std | std | none | keep |
-| `read write exists mkdir ls rm mv cp` | std, error kinds `io` | to check | error texts | move (one `io`) |
+| `read write exists mkdir ls rm mv cp` | `crow_runtime::io::fs_*` | same | compiled reasons dropped the path in six of eight (fixed: the path is named); compiled `ls` skipped unreadable entries silently (fixed: an error); compiled `rm` moved its path argument so the variable could not be used again (fixed) | **runtime** |
 | `json encode` | `json_to_crow` / `crow_to_json` in the interpreter | `serde_json::Value` kept dynamic | number formatting in `encode` | move (one encoder) |
 | `shell` | `core::shell` → map of status/stdout/stderr | `core::shell` → `CrowShell` record | none now | **runtime** |
 | `hash` | sha2/md5 | to check | none | keep |
@@ -125,3 +125,8 @@ side only.
   compiled `join` of an empty literal joins to nothing (it did not
   compile), and compiled `input` keeps trailing spaces as the
   interpreter does. Parity 44.
+- 2026-09-08, batch 3 (files): `crow_runtime::io::fs_read`, `fs_write`,
+  `fs_exists`, `fs_mkdir`, `fs_ls`, `fs_rm`, `fs_mv`, `fs_cp`, with the
+  reason texts that name the path; both modes call them. Found on the
+  way: six compiled reasons omitted the path, compiled `ls` skipped
+  unreadable entries, and compiled `rm` moved its argument. Parity 45.

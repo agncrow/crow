@@ -527,6 +527,8 @@ weeks; the core stages are weeks each.
 - **2026-09-08, stage 3 batch 2 (text) built:** `join`, `shell`,
   `input` in the runtime, compiled `str` of collections fixed
   (`core-runtime-builtins.md`, log; parity 44).
-- **Stage 3 next:** files as one `io`; JSON as one encoder; regex;
-  `min`/`max` mixing; the interpreter's frame `filter` and column
-  `sum` paths.
+- **2026-09-08, stage 3 batch 3 (files) built:** the eight file
+  builtins in `crow_runtime::io`, one meaning and one reason text
+  (`core-runtime-builtins.md`, log; parity 45).
+- **Stage 3 next:** JSON as one encoder; regex; `min`/`max` mixing; the
+  interpreter's frame `filter` and column `sum` paths.

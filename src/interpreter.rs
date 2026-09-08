@@ -3947,9 +3947,9 @@ impl Interpreter {
                 if args.len() != 1 { return Err("read[] takes exactly 1 argument".into()); }
                 match args[0].unwrap_or_propagate()? {
                     Value::Str(path) => {
-                        match std::fs::read_to_string(path) {
+                        match crow_runtime::io::fs_read(path) {
                             Ok(content) => Ok(CrowValue::ok(Value::Str(content))),
-                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot read '{}': {}", path, e), "io", &self.trace_entry())),
+                            Err(e) => Ok(CrowValue::error_with_kind(&e, "io", &self.trace_entry())),
                         }
                     }
                     _ => Err("read[] requires a string path".into()),
@@ -3959,9 +3959,9 @@ impl Interpreter {
                 if args.len() != 2 { return Err("write[] takes exactly 2 arguments".into()); }
                 match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
                     (Value::Str(path), Value::Str(content)) => {
-                        match std::fs::write(path, content) {
+                        match crow_runtime::io::fs_write(path, content) {
                             Ok(_) => Ok(CrowValue::done()),
-                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot write '{}': {}", path, e), "io", &self.trace_entry())),
+                            Err(e) => Ok(CrowValue::error_with_kind(&e, "io", &self.trace_entry())),
                         }
                     }
                     _ => Err("write[] requires a string path and string content".into()),
@@ -3971,7 +3971,7 @@ impl Interpreter {
             "exists" => {
                 if args.len() != 1 { return Err("exists[] takes exactly 1 argument".into()); }
                 match args[0].unwrap_or_propagate()? {
-                    Value::Str(path) => Ok(CrowValue::ok(Value::Bool(std::path::Path::new(path).exists()))),
+                    Value::Str(path) => Ok(CrowValue::ok(Value::Bool(crow_runtime::io::fs_exists(path)))),
                     _ => Err("exists[] requires a string path".into()),
                 }
             }
@@ -3979,9 +3979,9 @@ impl Interpreter {
                 if args.len() != 1 { return Err("mkdir[] takes exactly 1 argument".into()); }
                 match args[0].unwrap_or_propagate()? {
                     Value::Str(path) => {
-                        match std::fs::create_dir_all(path) {
+                        match crow_runtime::io::fs_mkdir(path) {
                             Ok(_) => Ok(CrowValue::done()),
-                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot mkdir '{}': {}", path, e), "io", &self.trace_entry())),
+                            Err(e) => Ok(CrowValue::error_with_kind(&e, "io", &self.trace_entry())),
                         }
                     }
                     _ => Err("mkdir[] requires a string path".into()),
@@ -3991,25 +3991,11 @@ impl Interpreter {
                 if args.len() != 1 { return Err("ls[] takes exactly 1 argument".into()); }
                 match args[0].unwrap_or_propagate()? {
                     Value::Str(path) => {
-                        match std::fs::read_dir(path) {
-                            Ok(entries) => {
-                                let mut names: Vec<CrowValue> = Vec::new();
-                                for entry in entries {
-                                    match entry {
-                                        Ok(e) => names.push(CrowValue::ok(Value::Str(e.file_name().to_string_lossy().to_string()))),
-                                        Err(e) => return Ok(CrowValue::error_with_kind(&format!("ls '{}': {}", path, e), "io", &self.trace_entry())),
-                                    }
-                                }
-                                names.sort_by(|a, b| {
-                                    if let (Value::Str(sa), Value::Str(sb)) = (&a.value, &b.value) {
-                                        sa.cmp(sb)
-                                    } else {
-                                        std::cmp::Ordering::Equal
-                                    }
-                                });
-                                Ok(CrowValue::ok(Value::Array(names)))
-                            }
-                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot ls '{}': {}", path, e), "io", &self.trace_entry())),
+                        match crow_runtime::io::fs_ls(path) {
+                            Ok(names) => Ok(CrowValue::ok(Value::Array(
+                                names.into_iter().map(|n| CrowValue::ok(Value::Str(n))).collect(),
+                            ))),
+                            Err(e) => Ok(CrowValue::error_with_kind(&e, "io", &self.trace_entry())),
                         }
                     }
                     _ => Err("ls[] requires a string path".into()),
@@ -4019,15 +4005,9 @@ impl Interpreter {
                 if args.len() != 1 { return Err("rm[] takes exactly 1 argument".into()); }
                 match args[0].unwrap_or_propagate()? {
                     Value::Str(path) => {
-                        let p = std::path::Path::new(path);
-                        let result = if p.is_dir() {
-                            std::fs::remove_dir_all(p)
-                        } else {
-                            std::fs::remove_file(p)
-                        };
-                        match result {
+                        match crow_runtime::io::fs_rm(path) {
                             Ok(_) => Ok(CrowValue::done()),
-                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot rm '{}': {}", path, e), "io", &self.trace_entry())),
+                            Err(e) => Ok(CrowValue::error_with_kind(&e, "io", &self.trace_entry())),
                         }
                     }
                     _ => Err("rm[] requires a string path".into()),
@@ -4037,9 +4017,9 @@ impl Interpreter {
                 if args.len() != 2 { return Err("mv[] takes exactly 2 arguments".into()); }
                 match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
                     (Value::Str(src), Value::Str(dst)) => {
-                        match std::fs::rename(src, dst) {
+                        match crow_runtime::io::fs_mv(src, dst) {
                             Ok(_) => Ok(CrowValue::done()),
-                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot mv '{}' to '{}': {}", src, dst, e), "io", &self.trace_entry())),
+                            Err(e) => Ok(CrowValue::error_with_kind(&e, "io", &self.trace_entry())),
                         }
                     }
                     _ => Err("mv[] requires two string paths".into()),
@@ -4049,9 +4029,9 @@ impl Interpreter {
                 if args.len() != 2 { return Err("cp[] takes exactly 2 arguments".into()); }
                 match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
                     (Value::Str(src), Value::Str(dst)) => {
-                        match std::fs::copy(src, dst) {
+                        match crow_runtime::io::fs_cp(src, dst) {
                             Ok(_) => Ok(CrowValue::done()),
-                            Err(e) => Ok(CrowValue::error_with_kind(&format!("cannot cp '{}' to '{}': {}", src, dst, e), "io", &self.trace_entry())),
+                            Err(e) => Ok(CrowValue::error_with_kind(&e, "io", &self.trace_entry())),
                         }
                     }
                     _ => Err("cp[] requires two string paths".into()),

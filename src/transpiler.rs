@@ -4086,36 +4086,45 @@ impl Transpiler {
                     }
                     // --- File I/O builtins ---
                     if name == "read" && arg_strs.len() == 1 {
+                        // the file builtins live once in crow_runtime::io
+                        self.needs_crow_runtime = true;
                         let trace = self.trace_format_expr();
-                        return format!("match std::fs::read_to_string(&*{}) {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![], captured: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: format!(\"cannot read '{{}}': {{}}\", &*{}, e), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }}", arg_strs[0], arg_strs[0], trace);
+                        return format!("{{ match crow_runtime::io::fs_read(&*{}) {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![], captured: STAMP }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e, kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], trace).replace("STAMP", "std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)");
                     }
                     if name == "write" && arg_strs.len() == 2 {
+                        self.needs_crow_runtime = true;
                         let trace = self.trace_format_expr();
-                        return format!("match std::fs::write(&*{}, &*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }}", arg_strs[0], arg_strs[1], trace);
+                        return format!("{{ match crow_runtime::io::fs_write(&*{}, &*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: STAMP }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e, kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], arg_strs[1], trace).replace("STAMP", "std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)");
                     }
                     // --- File system builtins ---
                     if name == "exists" && arg_strs.len() == 1 {
-                        return format!("std::path::Path::new(&*{}).exists()", arg_strs[0]);
+                        self.needs_crow_runtime = true;
+                        return format!("crow_runtime::io::fs_exists(&*{})", arg_strs[0]);
                     }
                     if name == "mkdir" && arg_strs.len() == 1 {
+                        self.needs_crow_runtime = true;
                         let trace = self.trace_format_expr();
-                        return format!("match std::fs::create_dir_all(&*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }}", arg_strs[0], trace);
+                        return format!("{{ match crow_runtime::io::fs_mkdir(&*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e, kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], trace);
                     }
                     if name == "ls" && arg_strs.len() == 1 {
+                        self.needs_crow_runtime = true;
                         let trace = self.trace_format_expr();
-                        return format!("match std::fs::read_dir(&*{}) {{ Ok(entries) => {{ let mut names: Vec<String> = entries.filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string())).collect(); names.sort(); CrowResult {{ ok: true, value: names, reason: String::new(), kind: String::new(), trace: vec![], captured: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) }} }}, Err(e) => CrowResult {{ ok: false, value: Vec::<String>::new(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }}", arg_strs[0], trace);
+                        return format!("{{ match crow_runtime::io::fs_ls(&*{}) {{ Ok(names) => CrowResult {{ ok: true, value: names, reason: String::new(), kind: String::new(), trace: vec![], captured: STAMP }}, Err(e) => CrowResult {{ ok: false, value: Vec::<String>::new(), reason: e, kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], trace).replace("STAMP", "std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)");
                     }
                     if name == "rm" && arg_strs.len() == 1 {
+                        self.needs_crow_runtime = true;
                         let trace = self.trace_format_expr();
-                        return format!("{{ let _s = {}; let _p = std::path::Path::new(&*_s); let _r = if _p.is_dir() {{ std::fs::remove_dir_all(_p) }} else {{ std::fs::remove_file(_p) }}; match _r {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], trace);
+                        return format!("{{ match crow_runtime::io::fs_rm(&*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: STAMP }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e, kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], trace).replace("STAMP", "std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)");
                     }
                     if name == "mv" && arg_strs.len() == 2 {
+                        self.needs_crow_runtime = true;
                         let trace = self.trace_format_expr();
-                        return format!("match std::fs::rename(&*{}, &*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }}", arg_strs[0], arg_strs[1], trace);
+                        return format!("{{ match crow_runtime::io::fs_mv(&*{}, &*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e, kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], arg_strs[1], trace);
                     }
                     if name == "cp" && arg_strs.len() == 2 {
+                        self.needs_crow_runtime = true;
                         let trace = self.trace_format_expr();
-                        return format!("match std::fs::copy(&*{}, &*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }}", arg_strs[0], arg_strs[1], trace);
+                        return format!("{{ match crow_runtime::io::fs_cp(&*{}, &*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e, kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], arg_strs[1], trace);
                     }
                     // --- JSON builtins ---
                     // json[map] in a web program is the JSON *response* (handled
@@ -7535,38 +7544,37 @@ mod tests {
     #[test]
     fn test_fs_exists_transpile() {
         let rust = transpile("e = exists['foo.txt']\n");
-        assert!(rust.contains("std::path::Path::new("), "should emit Path::new for exists\n{}", rust);
-        assert!(rust.contains(".exists()"), "should emit .exists()\n{}", rust);
+        assert!(rust.contains("crow_runtime::io::fs_exists("), "exists goes through the runtime\n{}", rust);
     }
 
     #[test]
     fn test_fs_mkdir_transpile() {
         let rust = transpile("mkdir['dir']\n");
-        assert!(rust.contains("std::fs::create_dir_all("), "should emit create_dir_all for mkdir\n{}", rust);
+        assert!(rust.contains("crow_runtime::io::fs_mkdir("), "mkdir goes through the runtime\n{}", rust);
     }
 
     #[test]
     fn test_fs_ls_transpile() {
         let rust = transpile("f = ls['.']\n");
-        assert!(rust.contains("std::fs::read_dir("), "should emit read_dir for ls\n{}", rust);
+        assert!(rust.contains("crow_runtime::io::fs_ls("), "ls goes through the runtime\n{}", rust);
     }
 
     #[test]
     fn test_fs_rm_transpile() {
         let rust = transpile("rm['file.txt']\n");
-        assert!(rust.contains("remove_dir_all") || rust.contains("remove_file"), "should emit remove for rm\n{}", rust);
+        assert!(rust.contains("crow_runtime::io::fs_rm(&*"), "rm goes through the runtime and borrows its path\n{}", rust);
     }
 
     #[test]
     fn test_fs_mv_transpile() {
         let rust = transpile("mv['a.txt', 'b.txt']\n");
-        assert!(rust.contains("std::fs::rename("), "should emit fs::rename for mv\n{}", rust);
+        assert!(rust.contains("crow_runtime::io::fs_mv("), "mv goes through the runtime\n{}", rust);
     }
 
     #[test]
     fn test_fs_cp_transpile() {
         let rust = transpile("cp['a.txt', 'b.txt']\n");
-        assert!(rust.contains("std::fs::copy("), "should emit fs::copy for cp\n{}", rust);
+        assert!(rust.contains("crow_runtime::io::fs_cp("), "cp goes through the runtime\n{}", rust);
     }
 
     // ===== env builtin =====

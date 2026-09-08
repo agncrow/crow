@@ -1,0 +1,28 @@
+--- The file builtins, one meaning in both modes: a round trip through
+--- write, exists, read, cp, mv, ls and rm, and the reasons a failure
+--- gives, which name the path.
+d = 'parity45_dir'
+mkdir[d]
+log[mkdir[d].ok]
+write['`d`/a.txt', 'hello']
+log[exists['`d`/a.txt']]
+log[read['`d`/a.txt']]
+cp['`d`/a.txt', '`d`/b.txt']
+mv['`d`/b.txt', '`d`/c.txt']
+log[exists['`d`/b.txt']]
+log[ls[d]]
+missing = read['`d`/missing.txt']
+log[missing.ok]
+log[missing.kind]
+log[missing.reason]
+gone = rm['`d`/missing.txt']
+log[gone.ok]
+log[gone.reason]
+nodir = ls['`d`/nope']
+log[nodir.reason]
+moved = mv['`d`/missing.txt', '`d`/x.txt']
+log[moved.reason]
+copied = cp['`d`/missing.txt', '`d`/x.txt']
+log[copied.reason]
+rm[d]
+log[exists[d]]

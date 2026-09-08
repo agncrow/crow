@@ -26,6 +26,60 @@ pub fn append_file(path: &str, content: &str) -> Result<(), String> {
         .map_err(|e| format!("append: {}", e))
 }
 
+// ── The core file builtins, once: read, write, exists, mkdir, ls, rm, mv,
+// cp. Both modes call these; the reason texts below are the ones a
+// program sees in `.reason`, so they live here and nowhere else.
+
+/// `read[path]`: the file's text.
+pub fn fs_read(path: &str) -> Result<String, String> {
+    std::fs::read_to_string(path).map_err(|e| format!("cannot read '{}': {}", path, e))
+}
+
+/// `write[path, content]`: create or overwrite.
+pub fn fs_write(path: &str, content: &str) -> Result<(), String> {
+    std::fs::write(path, content).map_err(|e| format!("cannot write '{}': {}", path, e))
+}
+
+/// `exists[path]`.
+pub fn fs_exists(path: &str) -> bool {
+    std::path::Path::new(path).exists()
+}
+
+/// `mkdir[path]`: every missing directory on the way; an existing one is fine.
+pub fn fs_mkdir(path: &str) -> Result<(), String> {
+    std::fs::create_dir_all(path).map_err(|e| format!("cannot mkdir '{}': {}", path, e))
+}
+
+/// `ls[path]`: the entry names, sorted; an entry that cannot be read is
+/// an error, not a gap.
+pub fn fs_ls(path: &str) -> Result<Vec<String>, String> {
+    let entries = std::fs::read_dir(path).map_err(|e| format!("cannot ls '{}': {}", path, e))?;
+    let mut names = Vec::new();
+    for entry in entries {
+        let e = entry.map_err(|e| format!("ls '{}': {}", path, e))?;
+        names.push(e.file_name().to_string_lossy().to_string());
+    }
+    names.sort();
+    Ok(names)
+}
+
+/// `rm[path]`: a file, or a directory with everything in it.
+pub fn fs_rm(path: &str) -> Result<(), String> {
+    let p = std::path::Path::new(path);
+    let r = if p.is_dir() { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) };
+    r.map_err(|e| format!("cannot rm '{}': {}", path, e))
+}
+
+/// `mv[src, dst]`.
+pub fn fs_mv(src: &str, dst: &str) -> Result<(), String> {
+    std::fs::rename(src, dst).map_err(|e| format!("cannot mv '{}' to '{}': {}", src, dst, e))
+}
+
+/// `cp[src, dst]`.
+pub fn fs_cp(src: &str, dst: &str) -> Result<(), String> {
+    std::fs::copy(src, dst).map(|_| ()).map_err(|e| format!("cannot cp '{}' to '{}': {}", src, dst, e))
+}
+
 /// Parse a CSV file into a Vec of BTreeMap<String, String>.
 /// First row is treated as headers. Each subsequent row becomes a map.
 pub fn parse_csv(path: &str) -> Result<Vec<BTreeMap<String, String>>, String> {
@@ -111,6 +165,33 @@ pub fn read_lines(path: &str) -> Result<Vec<String>, String> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn the_file_builtins_round_trip_and_name_the_path_in_errors() {
+        let dir = std::env::temp_dir().join(format!("crow_fs_{}", std::process::id()));
+        let d = dir.to_string_lossy().to_string();
+        fs_mkdir(&d).unwrap();
+        fs_mkdir(&d).unwrap();
+        let a = format!("{}/a.txt", d);
+        let b = format!("{}/b.txt", d);
+        let c = format!("{}/c.txt", d);
+        fs_write(&a, "hello").unwrap();
+        assert!(fs_exists(&a));
+        assert_eq!(fs_read(&a).unwrap(), "hello");
+        fs_cp(&a, &b).unwrap();
+        fs_mv(&b, &c).unwrap();
+        assert!(!fs_exists(&b));
+        assert_eq!(fs_ls(&d).unwrap(), vec!["a.txt".to_string(), "c.txt".to_string()]);
+        let missing = format!("{}/missing.txt", d);
+        let e = fs_read(&missing).unwrap_err();
+        assert!(e.starts_with(&format!("cannot read '{}': ", missing)), "{}", e);
+        assert!(fs_rm(&missing).unwrap_err().starts_with("cannot rm '"));
+        assert!(fs_ls(&missing).unwrap_err().starts_with("cannot ls '"));
+        assert!(fs_mv(&missing, &b).unwrap_err().starts_with("cannot mv '"));
+        assert!(fs_cp(&missing, &b).unwrap_err().starts_with("cannot cp '"));
+        fs_rm(&d).unwrap();
+        assert!(!fs_exists(&d));
+    }
 
     fn temp_file(name: &str, content: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir();
