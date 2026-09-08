@@ -1,5 +1,6 @@
 mod ast;
 mod appbook;
+mod builtins;
 mod ir;
 mod lower_ir;
 mod baseline;
