@@ -1463,28 +1463,7 @@ impl Interpreter {
         if iter_val.is_error() {
             return Ok(vec![iter_val]);
         }
-        let items = match &iter_val.value {
-            Value::Array(items) => items.clone(),
-            Value::NumArray(tensor) => {
-                if tensor.ndim() >= 2 {
-                    // Iterating a matrix yields its rows
-                    tensor.rows().into_iter()
-                        .map(|t| CrowValue::ok(Value::NumArray(t)))
-                        .collect()
-                } else {
-                    tensor.to_vec().into_iter()
-                        .map(|v| {
-                            if v == (v as i64) as f64 && v.is_finite() {
-                                CrowValue::ok(Value::Int(v as i64))
-                            } else {
-                                CrowValue::ok(Value::Float(v))
-                            }
-                        })
-                        .collect()
-                }
-            }
-            _ => return Err("for loop requires an array".to_string()),
-        };
+        let items = crate::ops::iter_items(&iter_val)?;
 
         // Sequential fallback (spec §12): if the body mutates a variable from
         // the outer scope, run in order on the real environment so the
@@ -1684,33 +1663,7 @@ impl Interpreter {
                     .iter()
                     .map(|e| self.eval_expr(e))
                     .collect::<Result<_, _>>()?;
-                // If all elements are numeric (Int or Float), create a NumArray
-                let all_numeric = !vals.is_empty() && vals.iter().all(|v| {
-                    v.ok && matches!(v.value, Value::Int(_) | Value::Float(_))
-                });
-                if all_numeric {
-                    let data: Vec<f64> = vals.iter().map(|v| match &v.value {
-                        Value::Int(n) => *n as f64,
-                        Value::Float(f) => *f,
-                        _ => unreachable!(),
-                    }).collect();
-                    let len = data.len();
-                    return Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))));
-                }
-                // Nested numeric literal: [[1, 2], [3, 4]] — all elements are
-                // tensors of equal shape → one shaped tensor (spec: unified arrays)
-                let all_tensors = !vals.is_empty() && vals.iter().all(|v| {
-                    v.ok && matches!(v.value, Value::NumArray(_))
-                });
-                if all_tensors {
-                    let tensors: Vec<CrowTensor> = vals.iter().map(|v| match &v.value {
-                        Value::NumArray(t) => t.clone(),
-                        _ => unreachable!(),
-                    }).collect();
-                    let stacked = CrowTensor::from_elements(&tensors)?;
-                    return Ok(CrowValue::ok(Value::NumArray(stacked)));
-                }
-                Ok(CrowValue::ok(Value::Array(vals)))
+                crate::ops::array_literal(vals)
             }
             Expr::Map(pairs) => {
                 let mut map = BTreeMap::new();
@@ -1727,26 +1680,7 @@ impl Interpreter {
             }
             Expr::ForExpr { var, iter, body } => {
                 let results = self.exec_for(var, iter, body)?;
-                // filter out 'done' results (from iterations that didn't produce a value)
-                let filtered: Vec<CrowValue> = results
-                    .into_iter()
-                    .filter(|v| !matches!(v.value, Value::Done))
-                    .collect();
-                // If all results are numeric, create NumArray
-                let all_numeric = !filtered.is_empty() && filtered.iter().all(|v| {
-                    v.ok && matches!(v.value, Value::Int(_) | Value::Float(_))
-                });
-                if all_numeric {
-                    let data: Vec<f64> = filtered.iter().map(|v| match &v.value {
-                        Value::Int(n) => *n as f64,
-                        Value::Float(f) => *f,
-                        _ => unreachable!(),
-                    }).collect();
-                    let len = data.len();
-                    Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))))
-                } else {
-                    Ok(CrowValue::ok(Value::Array(filtered)))
-                }
+                Ok(crate::ops::collect_loop(results))
             }
         }
     }

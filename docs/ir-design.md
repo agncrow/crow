@@ -276,6 +276,14 @@ deleted in the same commit that makes the new path the default.
    conversion of a cell the sketch had elided.*
 3. **The IR interpreter**, behind `CROW_IR=1`, run against every gate
    until green; then it is `crow run -i` and `interpreter.rs` goes.
+   *Started 2026-09-08: `src/ir_interp.rs` walks the IR over the
+   interpreter's values, calling the modules both walkers share:
+   `builtins.rs` (the sixty-four state-free builtins), `ops.rs` (the
+   operators, indexing, field access, literals and loop items) and the
+   module registry. `crow test --parity --ir` and `crow test --book
+   --ir` count what it runs identically; on the first run every parity
+   program did. Views, the harness, the live loop and the web builtins
+   are what remain before it can be the default.*
 4. **The Rust backend**, the same way; then `transpiler.rs` goes.
 5. **The session layer** with the three meanings; the harness; finch
    rewritten to them and its baseline re-accepted, whose diff is the
