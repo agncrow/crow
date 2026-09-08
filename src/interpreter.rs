@@ -203,16 +203,16 @@ const READER_FNS: &[&str] = &[
 
 
 
-fn html_escape_text(s: &str) -> String {
+pub(crate) fn html_escape_text(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
-fn html_escape_attr(s: &str) -> String {
+pub(crate) fn html_escape_attr(s: &str) -> String {
     s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 /// A node of the harness's own rendered HTML (well-formed by construction).
-struct HNode {
+pub(crate) struct HNode {
     tag: String,
     attrs: Vec<(String, String)>,
     children: Vec<HNode>,
@@ -225,7 +225,7 @@ fn html_unescape(s: &str) -> String {
 
 /// Parse the harness's rendered markup into a tree. Handles open/close tags,
 /// self-closing tags (charts' SVG), quoted attributes, and text.
-fn harness_parse_html(html: &str) -> HNode {
+pub(crate) fn harness_parse_html(html: &str) -> HNode {
     let mut root = HNode { tag: String::new(), attrs: vec![], children: vec![], text: String::new() };
     let mut stack: Vec<HNode> = vec![];
     let chars: Vec<char> = html.chars().collect();
@@ -312,7 +312,7 @@ fn hnode_matches(n: &HNode, tag: &str, class: &str) -> bool {
 
 /// Descendant selection: `steps[i]` must match an ancestor-or-self chain in
 /// document order; the last step's matches are collected as records.
-fn harness_select(n: &HNode, steps: &[(String, String)], depth: usize, out: &mut Vec<CrowValue>) {
+pub(crate) fn harness_select(n: &HNode, steps: &[(String, String)], depth: usize, out: &mut Vec<CrowValue>) {
     let normalized = harness_normalize_steps(steps);
     let steps = &normalized;
     for child in &n.children {
@@ -342,7 +342,7 @@ fn harness_select(n: &HNode, steps: &[(String, String)], depth: usize, out: &mut
 }
 
 /// The layout engine, written in Crow and shipped inside the compiler.
-const LAYOUT_ENGINE_SRC: &str = include_str!("modules/layout.co");
+pub(crate) const LAYOUT_ENGINE_SRC: &str = include_str!("modules/layout.co");
 
 /// One box the layout engine produced: where an element sits at a width.
 /// The tag and class travel for callers that draw by element kind; the
@@ -388,7 +388,7 @@ impl Interpreter {
 }
 
 /// A rendered node as the engine's LNode struct value.
-fn harness_to_lnode(n: &HNode) -> CrowValue {
+pub(crate) fn harness_to_lnode(n: &HNode) -> CrowValue {
     let mut attrs = std::collections::BTreeMap::new();
     let mut class = String::new();
     for (k, v) in &n.attrs {
@@ -453,7 +453,7 @@ fn harness_normalize_steps(steps: &[(String, String)]) -> Vec<(String, String)> 
     }).collect()
 }
 
-fn harness_path_matches(path: &str, steps: &[(String, String)]) -> bool {
+pub(crate) fn harness_path_matches(path: &str, steps: &[(String, String)]) -> bool {
     let steps = &harness_normalize_steps(steps);
     let nodes: Vec<(&str, &str)> = path.split('/').filter(|s| !s.is_empty()).map(|seg| {
         match seg.find('.') { Some(i) => (&seg[..i], &seg[i + 1..]), None => (seg, "") }

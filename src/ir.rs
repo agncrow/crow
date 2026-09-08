@@ -301,7 +301,8 @@ pub enum Expr {
     /// A user function as a value.
     FnRef(String, Ty),
     /// `propagates`: an error among the arguments is the call's value
-    /// (spec §10, auto-propagation); false for log, type, error, assert.
+    /// (spec §10, auto-propagation); false for log, type, error, assert,
+    /// and for a view, which renders an error argument as `error: reason`.
     Call { target: Target, args: Vec<Expr>, ty: Ty, propagates: bool },
     /// A call that reaches outside the program's values; `answered` when
     /// its value is used (runs when asked), held to commit otherwise.
@@ -322,6 +323,11 @@ pub enum Expr {
     /// The collecting loop; the body's last expression is what each
     /// iteration yields, an iteration that yields nothing is skipped.
     ForExpr { var: String, iter: Box<Expr>, body: Block, ty: Ty },
+    /// A call held for someone else to make: a control's handler with its
+    /// arguments (`click = set_speed[10.0]`), or the harness's
+    /// `click[a, set_speed[10.0]]`. The arguments are evaluated where the
+    /// call is written; the call happens when the event does.
+    Deferred { name: String, args: Vec<Expr> },
 }
 
 impl Expr {
@@ -352,6 +358,7 @@ impl Expr {
             Expr::Interp(_) => Ty::Str,
             Expr::RecordLit { name, .. } => Ty::Record(name.clone()),
             Expr::Tree { .. } => Ty::Node,
+            Expr::Deferred { .. } => Ty::Unit,
         }
     }
 }
@@ -648,6 +655,9 @@ pub fn expr(e: &Expr) -> String {
             block(&mut inner, body, 0);
             let lines: Vec<&str> = inner.lines().collect();
             format!("for {} in {} yield {{ {} }}", var, expr(iter), lines.join("; "))
+        }
+        Expr::Deferred { name, args } => {
+            format!("defer {}({})", name, args.iter().map(expr).collect::<Vec<_>>().join(", "))
         }
     }
 }

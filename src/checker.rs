@@ -484,6 +484,12 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
             // down, a top-level query that errors) is the finding, named as
             // such — not the "undefined variable" every later test would see
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // CROW_IR=1: the IR interpreter runs the block (ir-design.md
+                // §5), behind the flag until it is the default
+                if std::env::var("CROW_IR").is_ok() {
+                    let inputs: Vec<(String, CrowValue)> = block.params.iter().cloned().zip(combo.iter().cloned()).collect();
+                    return crate::ir_interp::run_test(&decls_clone, &inputs, &transformed).map(|_| CrowValue::done());
+                }
                 let mut interp = Interpreter::new();
                 interp.set_modules_preexpanded(true);
                 if let Err(e) = interp.run(&decls_clone) {
@@ -2115,6 +2121,11 @@ fn load_snapshots() -> BTreeMap<String, Vec<(String, String)>> {
 
 /// Save snapshots to disk.
 fn save_snapshots(snapshots: &BTreeMap<String, Vec<(String, String)>>) {
+    // the store is the project's, version-controlled; a unit test running
+    // the check pipeline from the crate root must not write into it
+    if cfg!(test) {
+        return;
+    }
     let dir = std::path::Path::new(SNAPSHOT_DIR);
     std::fs::create_dir_all(dir).ok();
     for (name, pairs) in snapshots {

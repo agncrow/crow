@@ -1812,7 +1812,23 @@ impl TypeContext {
         }
     }
 
-    pub fn infer_call_base(&self, name: &str, args: &[Expr], _callee: &Expr) -> CrowType {
+    pub fn infer_call_base(&self, name: &str, args: &[Expr], callee: &Expr) -> CrowType {
+        let arg_types: Vec<CrowType> = args.iter().map(|a| self.infer_expr(a)).collect();
+        self.infer_call_base_typed(name, args, callee, &arg_types)
+    }
+
+    /// The call's type given its arguments' types, inferred once by the
+    /// caller: a nested chain (a map literal is set[set[set[map[], …]]]
+    /// after lowering) is walked once per level, not twice — twice per
+    /// level doubled the work for every entry, and a 30-entry literal
+    /// never finished.
+    pub fn infer_call_base_typed(&self, name: &str, args: &[Expr], _callee: &Expr, arg_types: &[CrowType]) -> CrowType {
+        let arg_ty = |a: &Expr| -> CrowType {
+            match args.iter().position(|x| std::ptr::eq(x, a)) {
+                Some(i) => arg_types[i].clone(),
+                None => self.infer_expr(a),
+            }
+        };
         // Struct constructor
         if self.structs.contains_key(name) {
             return CrowType::Struct(name.to_string());
@@ -1828,7 +1844,7 @@ impl TypeContext {
         if let Some(sig) = self.functions.get(name) {
             if let Some(clones) = self.specializations.get(name) {
                 let call_sig: Vec<CrowType> = args.iter()
-                    .map(|a| match self.infer_expr(a) {
+                    .map(|a| match arg_ty(a) {
                         CrowType::Result(inner) => *inner,
                         CrowType::OptBoxStruct(n) => CrowType::Struct(n),
                         other => other,
@@ -1848,7 +1864,7 @@ impl TypeContext {
         // Module function dispatch (overlapping builtins: check arg type)
         let is_overlapping = matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max");
         if is_overlapping && self.registry.has_function(name) {
-            let arg_types: Vec<CrowType> = args.iter().map(|a| self.infer_expr(a)).collect();
+            let arg_types: Vec<CrowType> = args.iter().map(|a| arg_ty(a)).collect();
             let has_numarray = arg_types.iter().any(|t| matches!(t, CrowType::NumArray(_)));
             if has_numarray {
                 if let Some(t) = self.registry.type_of(name, args.len()) {
@@ -1858,7 +1874,7 @@ impl TypeContext {
         }
         // An element-wise math function over a plain number is a number
         if crate::modules::math::SCALAR_UNARY.contains(&name) && args.len() == 1 && self.registry.has_function(name) {
-            let t = self.infer_expr(&args[0]);
+            let t = arg_ty(&args[0]);
             let t = if let CrowType::Result(i) = t { *i } else { t };
             if matches!(t, CrowType::Int | CrowType::Float) { return CrowType::Float; }
         }
@@ -1866,7 +1882,7 @@ impl TypeContext {
         // builtin of the same name (sort[xs], join[parts, sep] with frame imported)
         let frame_core_fallback = self.registry.module_name_of(name) == Some("frame")
             && crate::checker::BUILTINS.contains(&name)
-            && !args.first().map(|a| { let t = self.infer_expr(a); let t = if let CrowType::Result(i) = t { *i } else { t }; matches!(t, CrowType::Frame | CrowType::FrameCol) }).unwrap_or(false);
+            && !args.first().map(|a| { let t = arg_ty(a); let t = if let CrowType::Result(i) = t { *i } else { t }; matches!(t, CrowType::Frame | CrowType::FrameCol) }).unwrap_or(false);
         // Non-overlapping module functions
         if !is_overlapping && !frame_core_fallback && self.registry.has_function(name) {
             // A name two modules export (stack, unique, load: frame + math)
@@ -1874,7 +1890,7 @@ impl TypeContext {
             // emitters use — so a qualified call that lowering made bare
             // keeps its type.
             if self.registry.providers_of(name).len() > 1 {
-                let arg0 = args.first().map(|a| self.infer_expr(a));
+                let arg0 = args.first().map(|a| arg_ty(a));
                 let arg0 = arg0.map(|t| if let CrowType::Result(i) = t { *i } else { t });
                 let pick = match arg0 {
                     Some(CrowType::Frame) | Some(CrowType::FrameCol) => Some("frame"),
@@ -1902,7 +1918,7 @@ impl TypeContext {
             // Math builtins (scalar)
             "abs" => {
                 if let Some(arg) = args.first() {
-                    let t = self.infer_expr(arg);
+                    let t = arg_ty(arg);
                     if let CrowType::Result(inner) = t { return *inner; }
                     return t;
                 }
@@ -1912,8 +1928,8 @@ impl TypeContext {
             "floor" | "ceil" | "round" => CrowType::Int,
             "min" | "max" => {
                 if args.len() >= 2 {
-                    let t1 = self.infer_expr(&args[0]);
-                    let t2 = self.infer_expr(&args[1]);
+                    let t1 = arg_ty(&args[0]);
+                    let t2 = arg_ty(&args[1]);
                     let t1u = if let CrowType::Result(inner) = t1 { *inner } else { t1 };
                     let t2u = if let CrowType::Result(inner) = t2 { *inner } else { t2 };
                     if t1u == CrowType::Float || t2u == CrowType::Float {
@@ -1930,7 +1946,7 @@ impl TypeContext {
             // Conversion builtins — fallible when parsing from string
             "int" => {
                 if let Some(arg) = args.first() {
-                    let arg_type = self.infer_expr(arg);
+                    let arg_type = arg_ty(arg);
                     let unwrapped = if let CrowType::Result(inner) = &arg_type { inner.as_ref() } else { &arg_type };
                     if matches!(unwrapped, CrowType::Str | CrowType::Json) {
                         return CrowType::Result(Box::new(CrowType::Int));
@@ -1940,7 +1956,7 @@ impl TypeContext {
             }
             "float" => {
                 if let Some(arg) = args.first() {
-                    let arg_type = self.infer_expr(arg);
+                    let arg_type = arg_ty(arg);
                     let unwrapped = if let CrowType::Result(inner) = &arg_type { inner.as_ref() } else { &arg_type };
                     if matches!(unwrapped, CrowType::Str | CrowType::Json) {
                         return CrowType::Result(Box::new(CrowType::Float));
@@ -1953,9 +1969,9 @@ impl TypeContext {
             "push" => {
                 // push[array, val] returns Array/NumArray with element type from val
                 if let Some(arg) = args.first() {
-                    let arr_type = self.infer_expr(arg);
+                    let arr_type = arg_ty(arg);
                     if args.len() == 2 {
-                        let val_type = self.infer_expr(&args[1]);
+                        let val_type = arg_ty(&args[1]);
                         let existing_inner = match &arr_type {
                             CrowType::Array(inner) => *inner.clone(),
                             CrowType::NumArray(inner) => *inner.clone(),
@@ -1980,7 +1996,7 @@ impl TypeContext {
                 if let Some(arg) = args.first() {
                     // Base type = with fallible args already unwrapped (the
                     // propagation block feeds these builtins plain values).
-                    let t = self.infer_expr(arg);
+                    let t = arg_ty(arg);
                     if let CrowType::Result(inner) = t {
                         return *inner;
                     }
@@ -1991,9 +2007,9 @@ impl TypeContext {
             "set" => {
                 // set[map, key, val] returns Map with value type from val arg
                 if let Some(arg) = args.first() {
-                    let map_type = self.infer_expr(arg);
+                    let map_type = arg_ty(arg);
                     if args.len() == 3 {
-                        let val_type = self.infer_expr(&args[2]);
+                        let val_type = arg_ty(&args[2]);
                         // A fallible value propagates out of the call (the map
                         // is built from the unwrapped value or not at all): the
                         // result is a fallible map of plain values, never a map
@@ -2020,7 +2036,7 @@ impl TypeContext {
             }
             "del" => {
                 if let Some(arg) = args.first() {
-                    return self.infer_expr(arg);
+                    return arg_ty(arg);
                 }
                 CrowType::Unknown
             }
@@ -2029,7 +2045,7 @@ impl TypeContext {
             "has" => CrowType::Bool,
             "values" => {
                 if let Some(arg) = args.first() {
-                    let map_type = self.infer_expr(arg);
+                    let map_type = arg_ty(arg);
                     if let CrowType::Map(inner) = map_type {
                         return CrowType::Array(inner);
                     }
@@ -2038,7 +2054,7 @@ impl TypeContext {
             }
             "slice" => {
                 if let Some(arg) = args.first() {
-                    let t = self.infer_expr(arg);
+                    let t = arg_ty(arg);
                     if let CrowType::Result(inner) = t { return *inner; }
                     return t;
                 }
@@ -2055,7 +2071,7 @@ impl TypeContext {
             "find" => {
                 // Dispatch: find[str, pattern] → Result(record with the groups);
                 // find[array, predicate] → Result(element)
-                let arg0 = args.first().map(|a| self.infer_expr(a)).unwrap_or(CrowType::Unknown);
+                let arg0 = args.first().map(|a| arg_ty(a)).unwrap_or(CrowType::Unknown);
                 match arg0 {
                     CrowType::Array(inner) => CrowType::Result(inner),
                     CrowType::NumArray(inner) => match inner.as_ref() {
@@ -2493,7 +2509,9 @@ impl TypeContext {
             }
             Expr::Call { callee, args } => {
                 if let Expr::Ident(name) = callee.as_ref() {
-                    let base = self.infer_call_base(name, args, callee);
+                    // every argument inferred once, here
+                    let arg_types: Vec<CrowType> = args.iter().map(|a| self.infer_expr(a)).collect();
+                    let base = self.infer_call_base_typed(name, args, callee, &arg_types);
                     // Auto-propagation: wrap in CrowResult if any arg is CrowResult
                     // a view renders what it is given: a failed argument shows
                     // its reason inside the tree, it never fails the view
@@ -2501,7 +2519,7 @@ impl TypeContext {
                         || crate::lower::UI_ELEMENTS.contains(&name.as_str())
                         || self.views.contains(name);
                     if !skip && !matches!(base, CrowType::Result(_) | CrowType::Void) {
-                        let has_result_arg = args.iter().any(|a| matches!(self.infer_expr(a), CrowType::Result(_)));
+                        let has_result_arg = arg_types.iter().any(|t| matches!(t, CrowType::Result(_)));
                         if has_result_arg {
                             return CrowType::Result(Box::new(base));
                         }
@@ -2756,4 +2774,23 @@ pub fn describe_with(url: &str, sql: &str) -> Result<Vec<(String, String)>, Stri
             Err(e) => Err(e.clone()),
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A map literal is a nested set[] chain after lowering; inferring each
+    /// level twice doubled the work per entry, and a 30-entry literal never
+    /// finished. Each argument is inferred once, so this is instant.
+    #[test]
+    fn a_large_map_literal_infers_in_one_pass() {
+        let entries: Vec<String> = (0..80).map(|i| format!("'k{}' = {}.5", i, i)).collect();
+        let src = format!("m = map[{}]\nlog[len[m]]\n", entries.join(", "));
+        let stmts = crate::build(&src).unwrap();
+        let stmts = crate::lower::lower_program(&stmts).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        assert_eq!(ctx.vars.get("m"), Some(&CrowType::Map(Box::new(CrowType::Float))));
+    }
 }

@@ -281,9 +281,39 @@ deleted in the same commit that makes the new path the default.
    `builtins.rs` (the sixty-four state-free builtins), `ops.rs` (the
    operators, indexing, field access, literals and loop items) and the
    module registry. `crow test --parity --ir` and `crow test --book
-   --ir` count what it runs identically; on the first run every parity
-   program did. Views, the harness, the live loop and the web builtins
-   are what remain before it can be the default.*
+   --ir` count what it runs identically. The first tally was worthless:
+   the runner put the interpreter flag after the file, so it compiled
+   the program and compared the compiled mode with itself; with the
+   flag in its place the walker ran 35 of 47 parity programs, and after
+   a day of fixes (qualified effects keep their module, bare module
+   names resolve at run time by the interpreter's own rule, function
+   values applied through indexing, regex `find`, `captured`, `grad`,
+   `later`, `transact`, specialised names, and a liveness slip that
+   moved a value read again in a branch) it runs all 47, and 115 of the
+   book's 130 blocks. The 15 left were views, `page` and the harness.
+   Later the same day the live layer followed: views render through
+   `ops::render_element` and `ops::render_input` (the element and
+   bound-input renderers both walkers share), the harness verbs (`app`,
+   `html`, `elements`, `change`, `click` with a deferred call,
+   `box`/`fits`/`style` with the layout engine lowered through the
+   same pipeline into the walker's functions), the served-mode mocks,
+   `icon` and `progress`, and test blocks: `CROW_IR=1 crow test
+   file.co` runs a block under the walker, lowered as the `Test` item
+   it is with its inputs bound at run time (lowered at the top of a ui
+   program its statements would become facts, evaluated before main —
+   the first attempt's stale render). Tallies: 48 of 48 parity
+   programs, 130 of 130 book blocks including their test blocks, the
+   layout conformance suite, all identical. Three older bugs surfaced
+   on the way, each fixed with a test: type inference inferred every
+   call argument twice, so a map literal's nested `set[]` chain cost
+   doubled per entry and the engine's 95-entry width tables never
+   finished (`crow build` on any 25-entry literal hung; arguments are
+   inferred once now); the compiler indexed a map by a `keys[]` loop
+   variable as `&&String` (parity 48); and the compile-error
+   translator turned `&String` into `stringing`. Left for later: the
+   engine does not compile as a standalone program through the old
+   transpiler (a `k.tag` on a list item and a `float` return), which
+   nothing needs — the Rust backend will compile it from the IR.*
 4. **The Rust backend**, the same way; then `transpiler.rs` goes.
 5. **The session layer** with the three meanings; the harness; finch
    rewritten to them and its baseline re-accepted, whose diff is the

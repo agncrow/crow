@@ -563,8 +563,22 @@ weeks; the core stages are weeks each.
   the operator, indexing and field semantics were moved out of the
   interpreter into `builtins.rs` and `ops.rs` first, so the IR
   interpreter (`ir_interp.rs`, behind `CROW_IR=1`) reimplements nothing
-  it can share. On its first run it ran all 47 parity programs
-  identically. `crow test --parity --ir` and `--book --ir` are the
-  advisory tallies until it is the default.
-- **Next:** views, the harness, the live loop and the web builtins in
-  the IR interpreter, guided by the book tally.
+  it can share. Its first tally (47 of 47) was an artefact of the runner
+  compiling instead of interpreting; the real first tally was 35 of 47,
+  and after the day's fixes it runs all 47 parity programs and 115 of
+  130 book blocks, the rest being views and the live layer. `crow test
+  --parity --ir` and `--book --ir` are the advisory tallies until it is
+  the default.
+- **2026-09-08, the live layer in the IR interpreter:** views, bound
+  inputs, the harness verbs, the mocks, `icon`, `progress`, the layout
+  engine (lowered through the same pipeline) and test blocks
+  (`CROW_IR=1 crow test file.co`, the block lowered as a `Test` with
+  its inputs bound at run time). Tallies: 48 of 48 parity, 130 of 130
+  book blocks with their test blocks, layout conformance 6 of 6. Three
+  older bugs fixed with tests on the way: inference inferred call
+  arguments twice (a 25-entry map literal hung `crow build`), the
+  compiler's map index by a `keys[]` loop variable, and the
+  compile-error translator's `stringing`.
+- **Next:** the IR interpreter as `crow run -i` (the step 3 gate: every
+  suite green under it, then `interpreter.rs` goes), then step 4, the
+  Rust backend from the IR.

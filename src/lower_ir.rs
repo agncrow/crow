@@ -628,9 +628,13 @@ impl<'a> Lowerer<'a> {
     }
 
     fn call(&mut self, callee: &A, args: &[A], ty: Ty) -> Result<Expr, String> {
-        // a variable indexed: xs[0], m['k'], r.symbol[0]
+        // a variable indexed: xs[0], m['k'], r.symbol[0] — except that
+        // inside a view an element name is the element (the vocabulary
+        // boundary, spec §12): a session named `a` outside does not turn
+        // the view's anchors into lookups
+        let element_in_view = |n: &str| self.in_ui && self.at == Where::In(FnKind::View) && crate::lower::UI_ELEMENTS.contains(&n);
         let indexes_value = match callee {
-            A::Ident(n) => (self.declared(n) || self.is_fact(n) || self.ctx.derives.contains(n)) && !self.ctx.functions.contains_key(n),
+            A::Ident(n) => (self.declared(n) || self.is_fact(n) || self.ctx.derives.contains(n)) && !self.ctx.functions.contains_key(n) && !element_in_view(n),
             A::FieldAccess { object, .. } => match object.as_ref() {
                 A::Ident(m) => !self.is_module(m) || self.declared(m),
                 _ => true,
@@ -673,6 +677,15 @@ impl<'a> Lowerer<'a> {
                                 A::Ident(n) | A::Str(n) => n.clone(),
                                 other => format!("{:?}", other),
                             };
+                            // an event attribute holds a handler, or a
+                            // handler with its arguments, to call later
+                            let is_event = matches!(key.as_str(), "click" | "input" | "submit" | "change" | "seek");
+                            if is_event {
+                                if let Some(d) = self.deferred(v)? {
+                                    attrs.push((key, d));
+                                    continue;
+                                }
+                            }
                             attrs.push((key, self.lower_expr(v)?));
                         }
                         continue;
@@ -683,10 +696,19 @@ impl<'a> Lowerer<'a> {
             return Ok(Expr::Tree { element: name, attrs, children });
         }
         // arguments: a fallible one reaches the callee as its payload, and
-        // an error among them is the call's value (`propagates`)
-        let propagates = !(module.is_none() && matches!(name.as_str(), "log" | "type" | "error" | "assert"));
+        // an error among them is the call's value (`propagates`); a view
+        // is the exception, like the elements it is made of: it renders
+        // what it is given (spec §10), so its arguments arrive as they are
+        let propagates = !(module.is_none() && (matches!(name.as_str(), "log" | "type" | "error" | "assert") || self.ctx.views.contains(&name)));
         let mut lowered = Vec::with_capacity(args.len());
-        for a in args {
+        for (i, a) in args.iter().enumerate() {
+            // the harness's click[a, h[x]] holds the handler call for the click
+            if module.is_none() && name == "click" && i == 1 {
+                if let Some(d) = self.deferred(a)? {
+                    lowered.push(d);
+                    continue;
+                }
+            }
             let x = self.lower_expr(a)?;
             if propagates && x.ty().is_result() {
                 let rty = x.ty();
@@ -699,8 +721,9 @@ impl<'a> Lowerer<'a> {
         if let Some(m) = module {
             let m = self.ctx.module_aliases.get(&m).cloned().unwrap_or(m);
             if is_effect(&name) {
+                // a qualified effect keeps its module: frame.load, db.query
                 self.direct_effects.entry(current).or_default().insert(name.clone());
-                return Ok(Expr::Effect { name, args: lowered, ty, answered: true, propagates });
+                return Ok(Expr::Effect { name: format!("{}.{}", m, name), args: lowered, ty, answered: true, propagates });
             }
             return Ok(Expr::Call { target: Target::Module(m, name), args: lowered, ty, propagates });
         }
@@ -716,10 +739,26 @@ impl<'a> Lowerer<'a> {
         if RUNTIME_TABLE.iter().any(|(b, _)| *b == name) {
             return Ok(Expr::Call { target: Target::Runtime(runtime_name(&name)), args: lowered, ty, propagates });
         }
-        if let Some(m) = self.ctx.registry.module_name_of(&name).map(|s| s.to_string()) {
-            return Ok(Expr::Call { target: Target::Module(m, name), args: lowered, ty, propagates });
-        }
+        // a bare name a loaded module provides resolves at run time, by the
+        // registry's own rule, as the interpreter resolves it
         Ok(Expr::Call { target: Target::Runtime(name), args: lowered, ty, propagates })
+    }
+
+    /// A user function called with arguments, as a call held for later,
+    /// when the expression is one.
+    fn deferred(&mut self, e: &A) -> Result<Option<Expr>, String> {
+        if let A::Call { callee, args } = e {
+            if let A::Ident(f) = callee.as_ref() {
+                if self.ctx.functions.contains_key(f) && !self.declared(f) {
+                    let mut lowered = Vec::with_capacity(args.len());
+                    for a in args {
+                        lowered.push(self.lower_expr(a)?);
+                    }
+                    return Ok(Some(Expr::Deferred { name: f.clone(), args: lowered }));
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// The specialised name of a user function called at these argument
@@ -1040,7 +1079,9 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
         }
         // this statement's own expressions, last read first; `x = f[x]`
         // redefines x before anyone reads it again, so the old x moves
-        // even when the statement sits in a loop
+        // even when the statement sits in a loop; the head of an if, a
+        // while or a for is read before its blocks, so what they read is
+        // still to come
         let mut seen: HashSet<String> = HashSet::new();
         let (live_here, allowed_here) = match s {
             Stmt::Set { var, .. } => {
@@ -1049,6 +1090,25 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
                 let mut a = allowed_set.clone();
                 a.insert(var.clone());
                 (l, a)
+            }
+            Stmt::If { then, els, .. } => {
+                let mut l = live.clone();
+                for b in then.iter() {
+                    stmt_reads(b, &mut l);
+                }
+                if let Some(e) = els {
+                    for b in e.iter() {
+                        stmt_reads(b, &mut l);
+                    }
+                }
+                (l, allowed_set.clone())
+            }
+            Stmt::While { body, .. } | Stmt::For { body, .. } => {
+                let mut l = live.clone();
+                for b in body.iter() {
+                    stmt_reads(b, &mut l);
+                }
+                (l, allowed_set.clone())
             }
             _ => (live.clone(), allowed_set.clone()),
         };
@@ -1166,6 +1226,11 @@ fn move_last_reads(e: &mut Expr, live: &HashSet<String>, allowed: &HashSet<Strin
             seen.extend(body_reads);
             move_last_reads(iter, live, allowed, seen);
         }
+        Expr::Deferred { args, .. } => {
+            for a in args.iter_mut().rev() {
+                move_last_reads(a, live, allowed, seen);
+            }
+        }
         _ => {}
     }
 }
@@ -1253,6 +1318,7 @@ fn expr_reads(e: &Expr, out: &mut HashSet<String>) {
             expr_reads(iter, out);
             body.iter().for_each(|s| stmt_reads(s, out));
         }
+        Expr::Deferred { args, .. } => args.iter().for_each(|a| expr_reads(a, out)),
         _ => {}
     }
 }

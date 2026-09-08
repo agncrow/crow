@@ -443,10 +443,14 @@ fn cmd_test_book() {
     // Check one block in its own directory; returns (passed, report lines).
     let check = |b: &Block, dir: &std::path::Path| -> (bool, String) {
         let run_mode = |mode_args: &[&str], file: &std::path::Path| -> (bool, String, String) {
+            // in --ir mode the compiled column is the IR interpreter, and a
+            // block's test blocks run under it too
+            let ir_here = ir_mode && (mode_args == ["run"] || mode_args == ["test"]);
+            let argv: Vec<&str> = if ir_here && mode_args == ["run"] { vec!["run", "-i"] } else { mode_args.to_vec() };
             let mut cmd = std::process::Command::new(&exe);
-            cmd.args(mode_args).arg(file).current_dir(dir).env("CROW_BUILD_PROFILE", "dev");
-            if ir_mode && mode_args == ["run"] {
-                cmd.args(["-i"]).env("CROW_IR", "1");
+            cmd.args(argv).arg(file).current_dir(dir).env("CROW_BUILD_PROFILE", "dev");
+            if ir_here {
+                cmd.env("CROW_IR", "1");
             }
             let out = cmd.output();
             match out {
@@ -824,10 +828,14 @@ fn cmd_test_parity() {
     // interpreted; advisory until the IR interpreter is the default
     let ir_mode = std::env::args().any(|a| a == "--ir");
     let run_mode = |mode_args: &[&str], file: &std::path::Path| -> (bool, String, String) {
+        // in --ir mode the compiled column is the IR interpreter instead:
+        // `crow run -i file` with CROW_IR=1, the flag before the file
+        let ir_here = ir_mode && mode_args == ["run"];
+        let argv: Vec<&str> = if ir_here { vec!["run", "-i"] } else { mode_args.to_vec() };
         let mut cmd = std::process::Command::new(&exe);
-        cmd.args(mode_args).arg(file).env("CROW_BUILD_PROFILE", "dev");
-        if ir_mode && mode_args == ["run"] {
-            cmd.args(["-i"]).env("CROW_IR", "1");
+        cmd.args(argv).arg(file).env("CROW_BUILD_PROFILE", "dev");
+        if ir_here {
+            cmd.env("CROW_IR", "1");
         }
         let out = cmd.output();
         match out {
@@ -2049,8 +2057,10 @@ fn translate_rust_compile_error(stderr: &str) -> String {
                     }
                 }
                 // Replace Rust types with Crow types
+                // `&str` before `String`: the other order turns `&String`
+                // into `stringing`
                 s = s.replace("i64", "int").replace("f64", "float")
-                     .replace("String", "string").replace("&str", "string")
+                     .replace("&str", "string").replace("String", "string")
                      .replace("bool", "bool").replace("usize", "int");
                 s
             })
@@ -4650,5 +4660,19 @@ fn rewrite_refs_expr(
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod compile_error_translation_tests {
+    /// `&str` is replaced before `String`: the other order turned the
+    /// `&String` in "the trait bound `String: Borrow<&String>`" into
+    /// `stringing`.
+    #[test]
+    fn a_reference_to_a_string_reads_as_a_string() {
+        let stderr = "error[E0277]: the trait bound `String: Borrow<&String>` is not satisfied\n  --> src/main.rs:65:32\n";
+        let out = super::translate_rust_compile_error(stderr);
+        assert!(out.contains("string: Borrow<&string>"), "{}", out);
+        assert!(!out.contains("stringing"), "{}", out);
     }
 }
