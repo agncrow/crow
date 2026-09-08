@@ -70,6 +70,7 @@ view primitives[]
         row[dropdown[summary['Actions'], stack[a['Help', href = '#'], a['Panel', href = '#']]], button['Save', class = 'primary'], gap = 'm'],
         modal[stack[h3['Help'], p['Click a bar to seek.']], open = show_help],
         row[select[['Pre-market 06:55–09:30', 'Open 09:30–10:30', 'Full day'], window], button['Go'], gap = 'm'],
+        row[h2['Scanner'], span['12 in gate of 24', color = 'muted'], gap = 'm', align = 'center', class = 'titled'],
         p['The end.', class = 'end'],
         gap = 'm', pad = 'm'
     ]
