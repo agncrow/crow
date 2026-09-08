@@ -440,3 +440,54 @@ measured numbers, until they are measured.
 **Order.** Benchmarks first, on today's runtime, so the rewrite has a
 before. Then the IR with the two sublanguages and uniqueness. Then the
 frame DSL on the IR. Then shapes, the ML rescope and the ONNX seam.
+
+## 9. Recommendation (2026-09-07)
+
+Asked for in plain words. **Rebuild the core, in stages, and decide
+three meanings first.** Not a big bang: each stage keeps every suite
+green and finch running, and the old path stays until the new one
+passes.
+
+**Why.** Every feature is built twice (122 builtin arms in the
+interpreter, a separate typed emission per builtin in the transpiler,
+two walkers), and every test runs against real databases. Both get
+worse with each feature added. Everything wanted next, faster frames,
+more data functions, tests that write nothing, less code in handlers,
+is cheaper after the fix and dearer before it.
+
+**Stages.**
+
+1. Decide the three meanings in the spec, with the clock and the skip
+   handler worked: effects commit when a handler ends; an error stops
+   the handler and reports; time is one moment per event. Days.
+2. Benchmarks on today's code, both modes, tracked like the parity
+   corpus: the 1 GB CSV, a large matmul, a training loop, finch under
+   twenty sessions, a derivation over a growing table. A week. Nothing
+   is "proven" without numbers, and the rewrite needs a before.
+3. One runtime for builtins: move the builtins into `crow_runtime` as
+   functions both the interpreter and generated code call, one at a
+   time, parity green at each step. Weeks. Removes the largest
+   duplication before any IR exists.
+4. The IR in the middle, in three moves: parser to IR; the interpreter
+   walks the IR and the AST walker retires; the Rust backend emits from
+   the IR and the transpiler retires. Uniqueness, the relational and
+   array sublanguages, and the transaction ride on this. Weeks each.
+5. Then the frame DSL written once on the IR; then tensor shapes, the
+   ML rescope, the ONNX seam.
+
+**Alongside, not waiting:** finch's query helpers become derivations
+(no language change); the checker proves control guards (B2).
+
+**Not to do:** write the frame DSL on the old core (twice, then
+ported); chase PyTorch's breadth; add language features during stage
+4 beyond bug fixes.
+
+**Risks.** A stalled rewrite: each stage ships alone. A slower IR
+interpreter: the benchmarks catch it. Meaning changes breaking finch:
+the baseline names exactly what changed.
+
+**What it buys, by the rating:** verification 6 to 9, tooling 6 to 8,
+performance 6 to 8, data 6 to 8 with the DSL, ML 5 to 7 with the
+rescope and ONNX; every handler smaller. Ecosystem unchanged; that is
+people and time. The whole programme is months of steady work, not
+weeks; the core stages are weeks each.
