@@ -112,6 +112,8 @@ pub struct Validator<'a> {
     /// Top-level (module) variable names — invisible inside functions
     /// (spec Design Note "No Ambient Mutability")
     module_vars: BTreeSet<String>,
+    /// the function being validated, named in its errors
+    current_fn: Option<String>,
     /// Nesting depth of function bodies currently being validated
     fn_depth: usize,
     /// `use ui` programs: top-level assignments are reactive state, which the
@@ -136,6 +138,7 @@ impl<'a> Validator<'a> {
             errors: Vec::new(),
             defined_vars: BTreeSet::new(),
             module_vars: BTreeSet::new(),
+            current_fn: None,
             fn_depth: 0,
             ui_mode: false,
             in_test_block: false,
@@ -367,7 +370,9 @@ impl<'a> Validator<'a> {
                 }
                 for p in params { self.defined_vars.insert(p.clone()); }
                 self.fn_depth += 1;
+                let outer_fn = self.current_fn.replace(name.clone());
                 for s in body { self.validate_stmt(s); }
+                self.current_fn = outer_fn;
                 self.fn_depth -= 1;
                 self.in_view = saved_in_view;
                 self.defined_vars = saved;
@@ -461,15 +466,16 @@ impl<'a> Validator<'a> {
                 if !self.defined_vars.contains(name)
                     && !BUILTINS.contains(&name.as_str())
                 {
+                    let in_fn = self.current_fn.clone().map(|f| format!("in {}: ", f)).unwrap_or_default();
                     if self.fn_depth > 0 && self.ctx.derives.contains(name) {
                         self.error(format!(
-                            "derivations are not visible inside functions — read '{}' in a view or handler, or make this function a derivation",
-                            name
+                            "{}derivations are not visible inside functions — read '{}' in a view or handler, or make this function a derivation",
+                            in_fn, name
                         ));
                     } else if self.fn_depth > 0 && self.module_vars.contains(name) {
                         self.error(format!(
-                            "module variables are not visible inside functions — pass '{}' as a parameter",
-                            name
+                            "{}module variables are not visible inside functions — pass '{}' as a parameter, or wire the function as a handler",
+                            in_fn, name
                         ));
                     } else {
                         self.error(format!("undefined variable '{}'", name));
@@ -1000,7 +1006,7 @@ mod tests {
     fn a_function_reading_a_derivation_is_told_to_derive() {
         let result = validate_source("use web, ui\nn = 1\nderive cfg\n    return n + 1\nfn band[]\n    return cfg * 2\nview render[]\n    return p['`band[]`']\npage['/', render]\n");
         let err = result.unwrap_err();
-        assert!(err.contains("derivations are not visible inside functions — read 'cfg' in a view or handler"), "{}", err);
+        assert!(err.contains("in band: derivations are not visible inside functions — read 'cfg' in a view or handler"), "{}", err);
     }
 
     #[test]

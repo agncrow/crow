@@ -1483,6 +1483,8 @@ pub fn compare(old: &BTreeMap<String, String>, art: &Artifacts) -> (Vec<Change>,
 /// The files git says changed since the last commit, relative to the
 /// repository root; empty outside a repository.
 pub fn git_changed_files(dir: &std::path::Path) -> Vec<String> {
+    // an entry in the current directory has an empty parent: that is here
+    let dir = if dir.as_os_str().is_empty() { std::path::Path::new(".") } else { dir };
     let mut out = Vec::new();
     for args in [vec!["diff", "--name-only", "HEAD"], vec!["ls-files", "--others", "--exclude-standard"]] {
         if let Ok(o) = std::process::Command::new("git").args(&args).current_dir(dir).output() {
@@ -1609,6 +1611,14 @@ mod tests {
         assert!(s.contains("@setup (main.crow)   binds win_from · button 'Start' → start"), "{}", s);
         assert!(s.contains("start (main.crow)   writes session_id, status"), "{}", s);
         assert!(s.contains("ending (main.crow)   written by ask_end, cancel_end, end_session · read by render, session_view"), "{}", s);
+    }
+
+    /// The entry's own directory is an empty path; git is asked from here.
+    #[test]
+    fn an_empty_directory_is_the_current_one() {
+        let here = git_changed_files(std::path::Path::new("."));
+        let empty = git_changed_files(std::path::Path::new(""));
+        assert_eq!(here, empty);
     }
 
     /// The store round-trips and the diff attributes removals.

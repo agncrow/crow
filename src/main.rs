@@ -2951,8 +2951,14 @@ fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool
         if derive_fixable { prompt_parts.push("d = derive (rewrite)"); }
         if later_fixable { prompt_parts.push("f = fix (later[])"); }
         prompt_parts.push("q = quit");
-        // No terminal (a script, CI, an editor): report and stop instead of waiting
+        // No terminal (a script, CI, an editor): report every finding, then stop
         if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            for (i, rest) in result.issues.iter().enumerate().skip(idx + 1) {
+                println!();
+                println!("  \x1b[1m[{}/{}]\x1b[0m \x1b[90m{}\x1b[0m", i + 1, total, format_location(filename, rest, &result.fn_lines));
+                println!("        {}", rest.summary());
+                println!("        \x1b[36mfix: {}\x1b[0m", rest.suggest());
+            }
             println!("\n        (no terminal — not waiting for input)");
             process::exit(1);
         }
@@ -3559,10 +3565,17 @@ fn validate_part_alone(path: &std::path::Path) -> Result<(), String> {
     let mut visited = std::collections::HashSet::new();
     let expanded = expand_module_imports(&stmts, &dir, &mut visited);
     let lowered = lower::lower_program(&expanded).map_err(|e| format!("{}: error: {}", rel, e))?;
+    let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
     infer_and_validate(&lowered, false).map(|_| ()).map_err(|e| {
         refine_error_lines(&source, &e)
             .lines()
-            .map(|l| format!("{}: {}", rel, l))
+            .map(|l| {
+                // an error inside an imported part's function belongs to that part
+                let owner = l.split_once("in ").and_then(|(_, rest)| rest.split(':').next()).and_then(|f| {
+                    parts.iter().filter(|(prefix, _)| f.starts_with(prefix.as_str())).max_by_key(|(prefix, _)| prefix.len()).map(|(_, file)| file.clone())
+                });
+                format!("{}: {}", owner.unwrap_or_else(|| rel.clone()), l)
+            })
             .collect::<Vec<_>>()
             .join("\n")
     })
