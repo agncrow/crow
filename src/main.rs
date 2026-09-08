@@ -950,6 +950,11 @@ fn cmd_test_bench() {
                     let built = stdout.lines().rev().find_map(|l| l.strip_prefix("build ok -> ./")).map(|s| s.trim().to_string());
                     match built {
                         Some(bin) => {
+                            // a freshly built binary's first run pays the
+                            // loader (a quarter second here); warm it once
+                            // at the quick sizes so the timed run is the
+                            // program, not the file system
+                            let _ = std::process::Command::new(format!("./{}", bin)).env("BENCH_QUICK", "1").output();
                             let r = timed(std::process::Command::new(format!("./{}", bin)));
                             let _ = std::fs::remove_file(&bin);
                             r

@@ -1,37 +1,37 @@
 # Benchmarks
 
-*Measured by `crow test --bench --write` on 2026-09-07, Apple M4 Max (aarch64), commit 38218e7. The interpreter is `crow run -i`; compiled is the release build `crow build` makes of the same program, timed from inside the program so a build is never counted. Sizes: full, 1000000 csv rows. The programs are in `tests/bench/`; `crow test --bench --quick` runs them at small sizes in CI so they cannot rot.*
+*Measured by `crow test --bench --write` on 2026-09-07, Apple M4 Max (aarch64), commit d7479c9. The interpreter is `crow run -i`; compiled is the release build `crow build` makes of the same program, timed from inside the program so a build is never counted. Sizes: full, 1000000 csv rows. The programs are in `tests/bench/`; `crow test --bench --quick` runs them at small sizes in CI so they cannot rot.*
 
 | Program | Section | Interpreter | Compiled | Compiled is |
 |---|---|---|---|---|
-| collect | push_loop | 5.7ms | 46µs | ×124.5 faster |
-| collect | for_collect | 147.9ms | 1.9ms | ×76.0 faster |
-| collect | map_set_loop | 14.3ms | 1.3ms | ×11.3 faster |
-| collect | join_split | 95.8ms | 9.4ms | ×10.2 faster |
-| collect | sort | 60.8ms | 511µs | ×119.0 faster |
-| collect | json_roundtrip | 32.8ms | 1.5ms | ×21.5 faster |
-| collect | whole program | 387.8ms | 158.9ms | ×2.4 faster |
-| frames | csv_load | 66.4ms | 73.6ms | ×1.1 slower |
-| frames | filter | 94.2ms | 17.2ms | ×5.5 faster |
-| frames | group | 11.7ms | 9.5ms | ×1.2 faster |
-| frames | sort | 142.3ms | 67.4ms | ×2.1 faster |
-| frames | join | 41.5ms | 29.7ms | ×1.4 faster |
-| frames | select | 53µs | 11µs | ×4.8 faster |
-| frames | column_sum | 41.3ms | 1.9ms | ×21.4 faster |
-| frames | csv_save | 42.9ms | 37.2ms | ×1.2 faster |
-| frames | whole program | 708.6ms | 666.2ms | ×1.1 faster |
-| tensors | matmul | 24.9ms | 24.6ms | ×1.0 faster |
-| tensors | elementwise_chain | 124.2ms | 139.4ms | ×1.1 slower |
-| tensors | dot | 15.8ms | 11.5ms | ×1.4 faster |
-| tensors | sum | 3.9ms | 3.8ms | ×1.0 faster |
-| tensors | argsort | 2.26s | 2.34s | ×1.0 slower |
-| tensors | gram | 10.1ms | 11.2ms | ×1.1 slower |
-| tensors | inverse_300 | 4.9ms | 4.5ms | ×1.1 faster |
-| tensors | whole program | 2.47s | 2.80s | ×1.1 slower |
-| train | linreg_gd | 160.0ms | 155.7ms | ×1.0 faster |
-| train | mlp_forward | 10.0ms | 9.4ms | ×1.1 faster |
-| train | grad_calls | 49.0ms | 33µs | ×1477.4 faster |
-| train | whole program | 232.7ms | 419.9ms | ×1.8 slower |
+| collect | push_loop | 6.1ms | 89µs | ×68.2 faster |
+| collect | for_collect | 109.7ms | 2.1ms | ×51.5 faster |
+| collect | map_set_loop | 13.7ms | 1.3ms | ×10.6 faster |
+| collect | join_split | 70.6ms | 9.7ms | ×7.3 faster |
+| collect | sort | 42.6ms | 476µs | ×89.4 faster |
+| collect | json_roundtrip | 40.4ms | 1.5ms | ×26.8 faster |
+| collect | whole program | 316.8ms | 26.2ms | ×12.1 faster |
+| frames | csv_load | 71.7ms | 73.8ms | ×1.0 slower |
+| frames | filter | 56.1ms | 17.5ms | ×3.2 faster |
+| frames | group | 13.2ms | 10.2ms | ×1.3 faster |
+| frames | sort | 105.2ms | 66.1ms | ×1.6 faster |
+| frames | join | 34.2ms | 30.5ms | ×1.1 faster |
+| frames | select | 47µs | 32µs | ×1.5 faster |
+| frames | column_sum | 18.9ms | 1.4ms | ×13.5 faster |
+| frames | csv_save | 39.2ms | 36.4ms | ×1.1 faster |
+| frames | whole program | 581.5ms | 437.8ms | ×1.3 faster |
+| tensors | matmul | 23.6ms | 22.9ms | ×1.0 faster |
+| tensors | elementwise_chain | 120.1ms | 116.4ms | ×1.0 faster |
+| tensors | dot | 14.9ms | 15.7ms | ×1.1 slower |
+| tensors | sum | 3.3ms | 3.6ms | ×1.1 slower |
+| tensors | argsort | 2.28s | 2.03s | ×1.1 faster |
+| tensors | gram | 9.2ms | 11.4ms | ×1.2 slower |
+| tensors | inverse_300 | 4.1ms | 4.2ms | ×1.0 slower |
+| tensors | whole program | 2.47s | 2.23s | ×1.1 faster |
+| train | linreg_gd | 175.3ms | 167.8ms | ×1.0 faster |
+| train | mlp_forward | 10.6ms | 8.2ms | ×1.3 faster |
+| train | grad_calls | 48.0ms | 39µs | ×1235.9 faster |
+| train | whole program | 245.3ms | 185.0ms | ×1.3 faster |
 
 ## Notes
 
@@ -51,7 +51,7 @@ were behind it, all found by the table, all gone by the third run:
 | join_split (200k) | 48.4 s | 96 ms | the same: a loop after a large array copied that array per item |
 | sort (20k) | 32.4 s | 61 ms | the same; the sort itself takes 80 µs |
 | json_roundtrip (5k) | 7.81 s | 33 ms | the same |
-| whole program | 111 s | 388 ms | |
+| whole program | 111 s | 317 ms | |
 
 The compiled program's `push` and `set` cloned too (7.1 ms and 1.19 s
 for the two loops); they take 46 µs and 1.3 ms now. Both modes call
@@ -72,10 +72,11 @@ one runtime function that takes the collection by value, and
   interpreter is slower for no runtime reason: `filter` (5×) and a
   column `sum` (21×) go through per-value paths the compiled program
   does not take.
-- **A compiled program starts slower than it runs**: the training
-  program's whole-process time is 420 ms against 233 ms interpreted,
-  while every section inside it is even. The GPU device is probed at
-  start; a program that never asks for it should not pay.
+- **A freshly built binary's first run pays the loader**, about
+  270 ms on this machine for any compiled program, hello world
+  included, and nothing after that: the first tables charged it to the
+  training and tensor programs' whole-process time. The runner now
+  warms each binary once at the quick sizes before timing it.
 - **Bugs the programs found**, each fixed with a test: `*` between two
   1-D tensors panicked (`try_matmul`); `len[]` of a parsed JSON value
   did not compile (`json::len`, parity 40); the compiled `slice`
