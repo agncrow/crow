@@ -697,15 +697,20 @@ fn lay_node[node, x, y, width, viewport, path]
                 if jus eq 'around'
                     extra = left / cnt_l
                     lead = extra / 2.0
-            --- the line's height first, from a probe of each child
+            --- the line's height first, from a probe of each child. A flex
+            --- item's cross size is its margin box — a heading's margins do
+            --- not collapse in a row as they do in a column — so the line is
+            --- as tall as the tallest margin box (Chrome: primitives .titled)
             row_h = 0.0
             for j in range[len[node.kids]]
                 if slots[j].line eq l
                     probe = lay_node[node.kids[j], cx, line_y, slots[j].w, viewport, here]
                     if len[probe] gt 0
-                        if probe[0].height gt row_h
-                            row_h = probe[0].height
-            --- then the placement, centred on the line when the row is
+                        mh = (probe[0].y - line_y) + probe[0].height + lay_margin_bottom[node.kids[j]]
+                        if mh gt row_h
+                            row_h = mh
+            --- then the placement, centred on the line when the row is: the
+            --- margin box is what centres, and the child adds its own top margin
             line_x = cx + lead
             for j in range[len[node.kids]]
                 if slots[j].line eq l
@@ -714,7 +719,7 @@ fn lay_node[node, x, y, width, viewport, path]
                         probe = lay_node[node.kids[j], line_x, line_y, slots[j].w, viewport, here]
                         kh = 0.0
                         if len[probe] gt 0
-                            kh = probe[0].height
+                            kh = (probe[0].y - line_y) + probe[0].height + lay_margin_bottom[node.kids[j]]
                         ky = line_y + (row_h - kh) / 2.0
                     kb = lay_node[node.kids[j], line_x, ky, slots[j].w, viewport, here]
                     if len[kb] gt 0
