@@ -85,7 +85,7 @@ d = a + b
 | Python | GIL, `multiprocessing`, `asyncio` | High | 3 |
 | Ruby | GVL, threads, Ractors | High | 3 |
 
-This is Crow's strongest differentiator. `for` loops are parallel by default. Independent assignments like `a = fetch['url1']` and `b = fetch['url2']` are automatically grouped into parallel waves. No annotations, no imports, no async/await. No other language on this list does this out of the box. `cpu[n]`/`gpu[n]` provide resource control.
+This is Crow's strongest differentiator. `for` loops are parallel by default, frame and tensor operations use every core inside themselves, and the search builtins (`any`, `all`, `find`) run in parallel with early exit. No annotations, no imports, no async/await. Statements themselves run in the order written (the spec's Design Note "Statements Run in Order" records why the earlier statement-level waves were dropped). `cpu[n]`/`gpu[n]` provide resource control.
 
 The gap: no async/await, no channels, no actor model. Crow's parallelism is data-parallel, not concurrent. Elixir and Go are far better for networked services, message passing, and fault-tolerant systems. Loses 1 point because automatic parallelism is ambitious and unproven at scale.
 

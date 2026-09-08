@@ -10,7 +10,6 @@ use crow_runtime::tensor::CrowTensor;
 
 use crate::ast::*;
 use crate::lexer::Lexer;
-use crate::parallel::{group_into_waves, stmt_writes};
 use crate::parser::Parser;
 use crate::value::*;
 
@@ -182,20 +181,6 @@ impl Env {
         self.set(name, value);
     }
 
-    fn update(&mut self, name: &str, value: CrowValue) -> bool {
-        // update in the scope where the variable exists
-        // When inside a function call (saved_stacks non-empty), don't
-        // cross into the global scope (index 0) — this prevents
-        // function-local assignments from clobbering global variables.
-        let stop_at = if self.saved_stacks.is_empty() { 0 } else { 1 };
-        for scope in self.scopes[stop_at..].iter_mut().rev() {
-            if scope.contains_key(name) {
-                Arc::make_mut(scope).insert(name.to_string(), value);
-                return true;
-            }
-        }
-        false
-    }
 }
 
 /// Signal for control flow
@@ -905,77 +890,16 @@ impl Interpreter {
         let lowered = self.lowerer.lower(stmts)?;
         let stmts: &[Stmt] = &lowered;
         self.prescan_views(stmts);
-        let waves = group_into_waves(stmts);
         let mut result = CrowValue::done();
 
-        for wave in &waves {
-            // Update current_line from the nearest preceding Line marker
-            if let Some(&first_idx) = wave.first() {
-                for j in (0..first_idx).rev() {
-                    if let Stmt::Line(n) = &stmts[j] {
-                        self.current_line = *n;
-                        break;
-                    }
-                }
-            }
-            if wave.len() == 1 {
-                // single statement - execute sequentially (no overhead)
-                match self.exec_stmt(&stmts[wave[0]]).map_err(|e| self.line_err(e))? {
-                    Signal::Return(val) => return Ok(val),
-                    Signal::Value(val) => result = val,
-                    Signal::Break | Signal::Continue | Signal::None => {}
-                }
-            } else {
-                // multiple independent statements - execute in parallel
-                let pairs: Vec<(usize, &Stmt)> = wave.iter().map(|&i| (i, &stmts[i])).collect();
-
-                let run_parallel = |pairs: &[(usize, &Stmt)]| -> Result<Vec<(usize, Signal, Vec<(String, CrowValue)>)>, String> {
-                    pairs.par_iter().map(|&(idx, stmt)| {
-                        let mut interp = self.clone();
-                        // Find the Line marker preceding this specific statement
-                        for j in (0..idx).rev() {
-                            if let Stmt::Line(n) = &stmts[j] {
-                                interp.current_line = *n;
-                                break;
-                            }
-                        }
-                        let signal = interp.exec_stmt(stmt).map_err(|e| interp.line_err(e))?;
-                        // collect written variables
-                        let writes = stmt_writes(stmt);
-                        let mut written_vars = vec![];
-                        for var_name in &writes {
-                            if let Some(val) = interp.env.get(var_name) {
-                                written_vars.push((var_name.clone(), val.clone()));
-                            }
-                        }
-                        Ok((idx, signal, written_vars))
-                    }).collect()
-                };
-
-                let results = if let Some(n) = self.cpu_count {
-                    let pool = rayon::ThreadPoolBuilder::new()
-                        .num_threads(n)
-                        .build()
-                        .map_err(|e| format!("failed to create thread pool: {}", e))?;
-                    pool.install(|| run_parallel(&pairs))?
-                } else {
-                    run_parallel(&pairs)?
-                };
-
-                // merge results back in statement order
-                for (_idx, signal, written_vars) in results {
-                    // merge written variables back into main environment
-                    for (name, val) in written_vars {
-                        if !self.env.update(&name, val.clone()) {
-                            self.env.set(&name, val);
-                        }
-                    }
-                    match signal {
-                        Signal::Return(val) => return Ok(val),
-                        Signal::Value(val) => result = val,
-                        Signal::Break | Signal::Continue | Signal::None => {}
-                    }
-                }
+        // Statements run in the order written, in both modes (spec §14,
+        // Design Note "Statements Run in Order"); a Line marker only
+        // moves current_line, inside exec_stmt.
+        for stmt in stmts {
+            match self.exec_stmt(stmt).map_err(|e| self.line_err(e))? {
+                Signal::Return(val) => return Ok(val),
+                Signal::Value(val) => result = val,
+                Signal::Break | Signal::Continue | Signal::None => {}
             }
         }
 

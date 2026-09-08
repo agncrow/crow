@@ -549,7 +549,7 @@ Because module variables were never visible, a local reusing a module name shado
 **Why it was rejected:**
 
 1. **Same reason closures were rejected.** Reading ambient state is capture — a hidden data dependency that makes a function's behavior depend on things not in its signature. Purity detection, auto-testing (`crow check`), and refactoring all rely on parameters telling the whole story.
-2. **Parallel-by-default requires it.** The wave scheduler orders statements by the reads and writes it can see at each call site. An ambient read inside a function is invisible to it, so `a = f[]` and `x = 2` would race whenever `f` secretly read `x`. Immutability-by-construction is the only zero-cost fix; the alternatives are interprocedural analysis or locks.
+2. **Parallel `for` requires it.** Iterations run concurrently, and the loop rule is sound because every read and write in the body is visible at the call site. An ambient read inside a function would be invisible, so an iteration calling `f[]` could race with another that writes what `f` secretly reads. Immutability-by-construction is the only zero-cost fix; the alternatives are interprocedural analysis or locks.
 3. **The permissive languages document the damage.** Python's `global`/`UnboundLocalError` is its most-asked scoping question; Julia re-fought its scope rules for two years; JavaScript needed strict mode to stop accidental globals. The concurrency-serious languages — Rust (no unsynchronized mutable statics), Erlang/Elixir (no shared mutable state at all) — sit exactly where Crow now sits.
 
 **What to use instead:** parameters in, return values out. For shared mutable state across events, use the explicit managed channels: ui `state`, the database, files.
@@ -2529,23 +2529,33 @@ log['`n` migrations applied']
 
 ## 14. Parallelism
 
-Crow is parallel by default. The runtime analyzes dependencies between statements and runs independent work in parallel automatically. No explicit threading, async/await, or channels needed.
+Crow is parallel where the work is: a `for` loop runs its iterations on every core, a frame or tensor operation uses every core inside itself, and a database query is parallel on its server. No explicit threading, async/await, or channels needed.
 
 
-### Automatic Parallelism
+### Statements Run in Order
 
-Independent statements run in parallel. The runtime waits only when a value is actually needed.
+Statements execute in the order they are written, in both modes. Two statements that look independent may still share something no variable names — the random generator, the clock, the output, a file, a table — and the order written is the order that happens:
 
 ```
-a = fetch['url1']
-b = fetch['url2']
-c = process['data']
-d = a + b             --- waits for a and b
-log[d]
-log[c]
+seed[1]
+a = rand[]                   --- the first number of the seeded sequence
+b = rand[]                   --- the second
+write['out.csv', text]
+df = frame.load['out.csv']   --- reads what the line above wrote
 ```
 
-`a`, `b`, and `c` run in parallel. `d` waits for `a` and `b` to resolve.
+Work that should overlap is written as a `for` over the pieces: ten fetches in a for-expression run at once (below).
+
+
+### Design Note: Statements Run in Order (a reversal)
+
+**What shipped first:** the runtime grouped independent assignments — statements sharing no variable — into waves and ran each wave in parallel, in both modes, so `a = fetch['url1']` and `b = fetch['url2']` overlapped with nothing written.
+
+**Evidence:** a seeded script drawing three numbers in three independent statements gave five different results in thirty runs; a `write` followed by a `load` of the same file was one wave, so the read could run before the write. The analysis saw variables only. The random generator, the clock, the output stream, files, tables, and every function that touches them were invisible to it, and a miss was a timing-dependent bug that no test catches reliably.
+
+**What was considered:** making the analysis exact by ending a wave at every statement that is not pure. That is a few days of work, and it leaves nothing worth running in parallel: what remains is pure arithmetic and the frame and tensor operations, which are parallel inside already. Keeping "unordered by default" with an explicit sequencing form was also considered; it asks every programmer to know which builtins carry hidden state, the opposite of never thinking about parallelism.
+
+**Why this design:** the programmer never thinks about order, because the order is the one written, as in every language they already know. Parallelism stays where the time goes — `for`, the kernels, the database — with nothing to write. `crow test --bench` is the measure of what the change costs, and the benchmark programs did not slow down when the waves went.
 
 
 ### For Loops
