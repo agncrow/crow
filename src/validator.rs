@@ -109,6 +109,13 @@ pub struct Validator<'a> {
     errors: Vec<String>,
     /// Variables known to be defined at the current point
     defined_vars: BTreeSet<String>,
+    /// The types of the current function's own variables: a local reusing
+    /// a module variable's name is a new binding (spec §7), so its type is
+    /// its own, not the module's.
+    local_types: std::collections::HashMap<String, CrowType>,
+    /// Inside a view or handler, where the module's reactive state is
+    /// visible and an assignment to it is judged against its type.
+    reactive_here: bool,
     /// Top-level (module) variable names — invisible inside functions
     /// (spec Design Note "No Ambient Mutability")
     module_vars: BTreeSet<String>,
@@ -137,6 +144,8 @@ impl<'a> Validator<'a> {
             ctx,
             errors: Vec::new(),
             defined_vars: BTreeSet::new(),
+            local_types: std::collections::HashMap::new(),
+            reactive_here: false,
             module_vars: BTreeSet::new(),
             current_fn: None,
             fn_depth: 0,
@@ -304,9 +313,15 @@ impl<'a> Validator<'a> {
                 }
                 self.validate_expr(value);
                 self.defined_vars.insert(name.clone());
-                // Check type-changing reassignment
+                // Check type-changing reassignment: inside a function, against
+                // the function's own binding of the name
                 let new_ty = self.ctx.infer_expr(value);
-                if let Some(existing_ty) = self.ctx.vars.get(name) {
+                let in_local_scope = self.fn_depth > 0 && !(self.reactive_here && self.module_vars.contains(name));
+                let existing = if in_local_scope { self.local_types.get(name).cloned() } else { self.ctx.vars.get(name).cloned() };
+                if in_local_scope && !matches!(new_ty, CrowType::Unknown) {
+                    self.local_types.entry(name.clone()).or_insert_with(|| new_ty.clone());
+                }
+                if let Some(existing_ty) = existing.as_ref() {
                     // Assignment into a typed variable is a consumption
                     // point: result[T] unwraps into T (the transpiler
                     // aborts the fn on error) — not a type change.
@@ -371,7 +386,12 @@ impl<'a> Validator<'a> {
                 for p in params { self.defined_vars.insert(p.clone()); }
                 self.fn_depth += 1;
                 let outer_fn = self.current_fn.replace(name.clone());
+                let saved_locals = std::mem::take(&mut self.local_types);
+                let saved_reactive = self.reactive_here;
+                self.reactive_here = reactive_exempt;
                 for s in body { self.validate_stmt(s); }
+                self.local_types = saved_locals;
+                self.reactive_here = saved_reactive;
                 self.current_fn = outer_fn;
                 self.fn_depth -= 1;
                 self.in_view = saved_in_view;
@@ -755,6 +775,19 @@ impl<'a> Validator<'a> {
         }
         if name == "append" {
             self.error("append was removed — use concat[a, b] (one merge operation)".to_string());
+            return;
+        }
+        // the time builtins the moment replaced (spec, Design Note on moments)
+        if name == "date" {
+            self.error("date[] was removed - a moment is a number: moment[y, m, d] (hour/minute/second/tz are named args)".to_string());
+            return;
+        }
+        if name == "elapsed" {
+            self.error("elapsed[] was removed - subtract moments: end - start is seconds".to_string());
+            return;
+        }
+        if name == "today" {
+            self.error("today[] was removed - use fmt[now[], time = 'date'] (tz = ... for a zone)".to_string());
             return;
         }
 

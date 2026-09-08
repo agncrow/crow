@@ -5,7 +5,8 @@
 //! drawn from its conditional tree alone.
 
 use crate::baseline::{Artifacts, WNode};
-use crate::interpreter::{Interpreter, LayoutBox};
+use crate::harness::LayoutBox;
+use crate::ir_interp::IrInterp;
 use std::collections::BTreeMap;
 
 /// One element as emitted, in document order, so a box can carry its text.
@@ -17,7 +18,7 @@ struct Emitted {
 
 pub struct Wire<'a> {
     art: &'a Artifacts,
-    interp: Interpreter,
+    interp: IrInterp,
 }
 
 const CONTAINERS: &[&str] = &["stack", "row", "grid", "overlay", "scroll", "modal", "drawer", "toast", "header", "nav", "footer", "main", "section", "div", "card", "details"];
@@ -60,7 +61,7 @@ fn options_of(v: &str, n: usize) -> Vec<String> {
 
 impl<'a> Wire<'a> {
     pub fn new(art: &'a Artifacts) -> Self {
-        Wire { art, interp: Interpreter::new() }
+        Wire { art, interp: IrInterp::new(&crate::type_infer::TypeContext::new().registry, "wireframe") }
     }
 
     /// The tree a sub-view shows under a parent's guard: among its paths
@@ -248,7 +249,7 @@ impl<'a> Wire<'a> {
             Err(e) => {
                 // an error inside the engine leaves the interpreter's scopes
                 // unwound: the next drawing gets a fresh one
-                self.interp = Interpreter::new();
+                self.interp = IrInterp::new(&crate::type_infer::TypeContext::new().registry, "wireframe");
                 return Err(e);
             }
         };

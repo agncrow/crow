@@ -1,6 +1,7 @@
-//! The builtins that need no interpreter state, once, for both walkers:
-//! the AST interpreter delegates here first, and the IR interpreter
-//! (ir-design.md §5) calls nothing else for these names. Each arm reads
+//! The builtins that need no interpreter state, in one place: the
+//! interpreter (`ir_interp.rs`, ir-design.md §5) calls nothing else for
+//! these names, and each arm calls the runtime the compiled mode links
+//! where it owns the operation. Each arm reads
 //! its arguments as values and answers a value; `trace` is the caller's
 //! position for the error values that carry one.
 
@@ -53,9 +54,7 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                     Value::Sparse(_) => "sparse".to_string(),
                     Value::Map(_) => "map".to_string(),
                     Value::Fn(_) => "fn".to_string(),
-                    Value::StructDef(sd) => sd.name.clone(),
                     Value::StructInstance(si) => si.name.clone(),
-                    Value::Module(m) => format!("module:{}", m.name),
                     Value::Dual(_, _) => "float".to_string(),
                     Value::GradFn(_) => "fn".to_string(),
                     Value::Frame(_) => "frame".to_string(),

@@ -6,7 +6,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::ast::*;
-use crate::interpreter::Interpreter;
 use crate::type_infer::{CrowType, FnSig, TypeContext};
 use crate::value::{CrowValue, Value};
 
@@ -470,32 +469,12 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
 
         'combos: for combo in &combos {
             counts.inputs_run += 1;
-            let mut program: Vec<Stmt> = Vec::new();
-            for (pname, val) in block.params.iter().zip(combo.iter()) {
-                program.push(Stmt::Assign {
-                    name: pname.clone(),
-                    value: value_to_expr(val),
-                });
-            }
-            program.extend(transformed.iter().cloned());
-
-            let decls_clone = decls.clone();
             // the declarations run first; one that fails (a database that is
             // down, a top-level query that errors) is the finding, named as
             // such — not the "undefined variable" every later test would see
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                // CROW_IR=1: the IR interpreter runs the block (ir-design.md
-                // §5), behind the flag until it is the default
-                if std::env::var("CROW_IR").is_ok() {
-                    let inputs: Vec<(String, CrowValue)> = block.params.iter().cloned().zip(combo.iter().cloned()).collect();
-                    return crate::ir_interp::run_test(&decls_clone, &inputs, &transformed).map(|_| CrowValue::done());
-                }
-                let mut interp = Interpreter::new();
-                interp.set_modules_preexpanded(true);
-                if let Err(e) = interp.run(&decls_clone) {
-                    return Err(format!("a declaration failed before the test ran: {}", e));
-                }
-                interp.run(&program)
+                let inputs: Vec<(String, CrowValue)> = block.params.iter().cloned().zip(combo.iter().cloned()).collect();
+                crate::ir_interp::run_test(&decls, &block.label, &inputs, &transformed)
             }));
             let failure = match result {
                 Ok(Ok(_)) => None,
@@ -622,6 +601,8 @@ pub fn run_determinism_probe(
         .filter(|s| matches!(s, Stmt::FnDecl { .. } | Stmt::StructDecl { .. }))
         .cloned()
         .collect();
+    // the declarations lowered once; every probe runs on a fresh walker
+    let Ok((program, pctx)) = crate::ir_interp::prepare(&decls, "check") else { return issues };
     for name in pure_fns {
         if recursive_fns.contains(name) {
             continue;
@@ -636,15 +617,11 @@ pub fn run_determinism_probe(
             continue;
         }
         for combo in generate_input_combos(sig).iter().take(2) {
-            let call = Expr::Call {
-                callee: Box::new(Expr::Ident(name.clone())),
-                args: combo.iter().map(value_to_expr).collect(),
-            };
-            let mut interp = Interpreter::new();
-            interp.set_modules_preexpanded(true);
-            let _ = interp.run(&decls);
-            let a = interp.eval_expr_pub(&call);
-            let b = interp.eval_expr_pub(&call);
+            let mut it = crate::ir_interp::IrInterp::new(&pctx.registry, "check");
+            it.load(&program);
+            let _ = it.run_main(&program);
+            let a = it.call(name, combo.clone());
+            let b = it.call(name, combo.clone());
             let (Ok(a), Ok(b)) = (a, b) else { continue };
             let (da, db) = (format!("{}", a.value), format!("{}", b.value));
             if da != db {
@@ -1974,6 +1951,10 @@ pub fn run_edge_cases(
     let prev_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
 
+    // the declarations lowered once, shared by every probe's thread
+    let prepared: Option<(Arc<crate::ir::Program>, crate::modules::ModuleRegistry)> =
+        crate::ir_interp::prepare(&decls_only, "check").ok().map(|(p, c)| (Arc::new(p), c.registry));
+
     for name in pure_fns {
         // Skip recursive functions — edge cases with boundary values cause stack overflow
         if recursive_fns.contains(name) { continue; }
@@ -1990,7 +1971,7 @@ pub fn run_edge_cases(
         for combo in &combos {
             let call_desc = format_call(name, combo);
             let fn_name = name.clone();
-            let decls_clone = decls_only.clone();
+            let prepared_clone = prepared.clone();
             let combo_clone = combo.clone();
 
             // Run in a thread with timeout to handle infinite loops
@@ -1999,15 +1980,12 @@ pub fn run_edge_cases(
             let (tx, rx) = std::sync::mpsc::channel();
             let handle = std::thread::spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let mut interp = Interpreter::new();
-                    interp.set_modules_preexpanded(true);
-                    interp.set_cancel_flag(cancel_clone);
-                    let _ = interp.run(&decls_clone);
-                    let call_expr = Expr::Call {
-                        callee: Box::new(Expr::Ident(fn_name)),
-                        args: combo_clone.iter().map(|v| value_to_expr(v)).collect(),
-                    };
-                    interp.eval_expr_pub(&call_expr)
+                    let (program, registry) = prepared_clone.ok_or_else(|| "the declarations do not lower".to_string())?;
+                    let mut it = crate::ir_interp::IrInterp::new(&registry, "check");
+                    it.set_cancel_flag(cancel_clone);
+                    it.load(&program);
+                    let _ = it.run_main(&program);
+                    it.call(&fn_name, combo_clone)
                 }));
                 let _ = tx.send(result);
             });
@@ -2065,29 +2043,6 @@ pub fn run_edge_cases(
     std::panic::set_hook(prev_hook);
 
     (issues, snapshots)
-}
-
-/// Convert a CrowValue back to an Expr for calling via the interpreter.
-fn value_to_expr(val: &CrowValue) -> Expr {
-    match &val.value {
-        Value::Int(n) => Expr::Int(*n),
-        Value::Float(f) => Expr::Float(*f),
-        Value::Str(s) => Expr::Str(s.clone()),
-        Value::Bool(b) => Expr::Bool(*b),
-        Value::Array(items) => {
-            Expr::Array(items.iter().map(|v| value_to_expr(v)).collect())
-        }
-        Value::NumArray(t) => {
-            Expr::Array(t.to_vec().iter().map(|v| {
-                if *v == (*v as i64) as f64 && v.is_finite() {
-                    Expr::Int(*v as i64)
-                } else {
-                    Expr::Float(*v)
-                }
-            }).collect())
-        }
-        _ => Expr::Str(format!("{}", val)),
-    }
 }
 
 // --- Regression snapshots ---

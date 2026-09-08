@@ -1,0 +1,9 @@
+--- a local reusing a module variable's name is a new binding (spec §7,
+--- Function Scope): its type is its own, so the gate does not read the
+--- function's `x = 1` as a change of the module's `x`
+fn f[]
+    x = 1
+    return x
+
+x = 'module'
+log[f[], x]

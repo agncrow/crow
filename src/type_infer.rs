@@ -214,6 +214,12 @@ pub struct StructSig {
     pub fields: Vec<(String, CrowType)>,
 }
 
+/// What `enter_body` saved: restored by `leave_body`.
+pub(crate) struct BodyScope {
+    saved_vars: BTreeMap<String, CrowType>,
+    outer_assigned: Option<std::collections::HashSet<String>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct TypeContext {
     pub vars: BTreeMap<String, CrowType>,
@@ -223,6 +229,13 @@ pub struct TypeContext {
     /// Names declared with `view` — UI-tree builders; the element vocabulary
     /// is active only inside their bodies
     pub views: std::collections::BTreeSet<String>,
+    /// While a function body is inferred: the names it has assigned so far
+    /// (its parameters to begin with). The first assignment of another
+    /// name binds a new local (spec §7), whatever the module calls it.
+    body_assigned: Option<std::collections::HashSet<String>>,
+    /// A `use ui` program: its top-level variables are reactive state,
+    /// which views and handlers see under their module names.
+    is_ui: bool,
     /// Fns referenced as values inside view bodies or page[] registrations —
     /// event handlers, which share the reactive-state exemption with views
     pub view_handlers: std::collections::BTreeSet<String>,
@@ -303,6 +316,8 @@ impl TypeContext {
             functions: BTreeMap::new(),
             call_signatures: BTreeMap::new(),
             views: std::collections::BTreeSet::new(),
+            body_assigned: None,
+            is_ui: false,
             view_handlers: std::collections::BTreeSet::new(),
             derives: std::collections::BTreeSet::new(),
             facts: std::collections::BTreeSet::new(),
@@ -324,6 +339,7 @@ impl TypeContext {
 
     /// Main entry point: run multi-pass type inference on a program.
     pub fn infer_program(&mut self, stmts: &[Stmt]) {
+        self.is_ui = self.is_ui || stmts.iter().any(|st| matches!(st, Stmt::Use { path, .. } if path == "ui" || path == "web.ui"));
         // Pass 1: collect struct and function declarations — and every
         // connection, so a helper scanned before the part that declares its
         // handle still describes its query against the right database
@@ -1648,19 +1664,37 @@ impl TypeContext {
     }
 
     /// Infer a function's return type from its body.
-    pub(crate) fn infer_function_body(&mut self, name: &str, body: &[Stmt]) {
-        // Temporarily add param types as vars so body inference works
+    /// Into a function's body: its parameters typed from its signature,
+    /// its first assignments new bindings (spec §7). The scope returned
+    /// goes back to `leave_body`; the lowerings type a body between the
+    /// two, as inference does.
+    pub(crate) fn enter_body(&mut self, name: &str) -> BodyScope {
         let saved_vars = self.vars.clone();
+        let mut assigned = std::collections::HashSet::new();
         if let Some(sig) = self.functions.get(name) {
             for (pname, pty) in &sig.params {
                 self.vars.insert(pname.clone(), pty.clone());
+                assigned.insert(pname.clone());
             }
         }
+        let outer_assigned = self.body_assigned.replace(assigned);
+        BodyScope { saved_vars, outer_assigned }
+    }
+
+    pub(crate) fn leave_body(&mut self, scope: BodyScope) {
+        self.vars = scope.saved_vars;
+        self.body_assigned = scope.outer_assigned;
+    }
+
+    pub(crate) fn infer_function_body(&mut self, name: &str, body: &[Stmt]) {
+        let scope = self.enter_body(name);
+        let saved_vars = scope.saved_vars.clone();
 
         // Infer body statements
         for stmt in body {
             self.infer_stmt(stmt);
         }
+        self.body_assigned = scope.outer_assigned;
 
         // Find return type
         let ret = self.find_return_type(body);
@@ -1734,8 +1768,23 @@ impl TypeContext {
         match stmt {
             Stmt::Assign { name, value } => {
                 let ty = self.infer_expr(value);
-                let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-                self.vars.insert(name.clone(), existing.unify(&ty));
+                // inside a function, the first assignment of a name that is
+                // neither a parameter nor a fact is a new binding: its type
+                // is its own, not the module variable's of the same name
+                let is_ui = self.is_ui;
+                let facts = &self.facts;
+                let fresh = match &mut self.body_assigned {
+                    // reactive state keeps its type through a handler's
+                    // assignment; every other module name is shadowed
+                    Some(assigned) => assigned.insert(name.clone()) && !(is_ui && facts.contains(name)),
+                    None => false,
+                };
+                if fresh {
+                    self.vars.insert(name.clone(), ty);
+                } else {
+                    let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
+                    self.vars.insert(name.clone(), existing.unify(&ty));
+                }
             }
             Stmt::MultiAssign { names, values } => {
                 for (name, value) in names.iter().zip(values.iter()) {
@@ -2792,5 +2841,18 @@ mod tests {
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
         assert_eq!(ctx.vars.get("m"), Some(&CrowType::Map(Box::new(CrowType::Float))));
+    }
+
+    /// A local reusing a module variable's name is a new binding (spec §7):
+    /// the function's type is its own, the module's variable keeps its type.
+    #[test]
+    fn a_local_shadowing_a_module_name_has_its_own_type() {
+        let src = "fn f[]\n    x = 1\n    return x\n\nx = 'module'\nlog[f[], x]\n";
+        let stmts = crate::build(src).unwrap();
+        let stmts = crate::lower::lower_program(&stmts).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        assert_eq!(ctx.functions.get("f").map(|s| s.return_type.clone()), Some(CrowType::Int));
+        assert_eq!(ctx.vars.get("x"), Some(&CrowType::Str));
     }
 }

@@ -78,7 +78,7 @@ variables win).
 | `crow check --strict` | Exit 1 on any finding (for CI). `--verbose` prints purity and snapshot details. |
 | `crow fix file.co --hazard N [--option M]` | Apply a fix from the check report (writes the migration, applies it, re-checks). |
 | `crow test --parity` | The interpreter–transpiler harness: every `tests/parity/*.co` runs in both modes and the outputs are diffed. |
-| `crow test --parity --ir`, `crow test --book --ir` | The AST interpreter against the IR interpreter on the same programs, both interpreted: an advisory tally of what the new walker already runs identically, until it becomes the default. In `--book --ir` a block's test blocks run under the IR interpreter too; `CROW_IR=1 crow test file.co` runs a file's test blocks there, and `CROW_IR_SHOW=1` prints the lowered test program. |
+| `CROW_IR_SHOW=1 crow test file.co` | Print each test block's lowered program — the declarations it sees, then the block as the `Test` item it is — as the interpreter runs it; `crow build --ir` prints a whole file the same way. |
 | `crow build --ir file.co` | Print the program's IR, the one typed form both execution modes will be built from (`docs/ir-design.md`): types decided once, effects marked answered or held, propagation explicit, last reads as moves. Nothing is compiled. |
 | `crow test --bench` | The benchmark programs in `tests/bench/` run in both modes (compiled as a release build) and each section's seconds are printed side by side; `--quick` runs small sizes, `--write` records the table in `docs/benchmarks.md` with the machine and the commit. |
 | `crow test --book` | Executes every code block in the book in both modes and compares printed output with the book's text. |

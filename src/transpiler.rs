@@ -1846,7 +1846,9 @@ impl Transpiler {
 
         // Save and reset declared vars for function scope
         let saved_declared = self.declared.clone();
-        let saved_vars = self.ctx.vars.clone();
+        // the body typed as inference types it (params, first assignments
+        // new bindings), restored when the function is emitted
+        let body_scope = self.ctx.enter_body(name);
         let saved_ref_params = self.current_ref_params.clone();
         let saved_mutated = self.mutated_vars.clone();
         let saved_fn_return_type = self.current_fn_return_type.clone();
@@ -1978,7 +1980,7 @@ impl Transpiler {
         }
 
         self.declared = saved_declared;
-        self.ctx.vars = saved_vars;
+        self.ctx.leave_body(body_scope);
         self.current_ref_params = saved_ref_params;
         self.mutated_vars = saved_mutated;
         self.current_fn_return_type = saved_fn_return_type;

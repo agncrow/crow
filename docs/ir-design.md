@@ -314,6 +314,42 @@ deleted in the same commit that makes the new path the default.
    engine does not compile as a standalone program through the old
    transpiler (a `k.tag` on a list item and a `float` return), which
    nothing needs — the Rust backend will compile it from the IR.*
+   *Built 2026-09-08, late: the IR interpreter is `crow run -i`, and
+   `interpreter.rs` (6,664 lines) is deleted. Its 381 behaviour tests
+   moved to `interp_tests.rs` and run through the walker; the checker's
+   probes (determinism, snapshots, test blocks), the REPL, `crow
+   check`'s try command, the crowfile reader and the wireframe tool run
+   on it through a small API (`prepare`, `run_script`, `Session`,
+   `call`, `layout_html`). The harness's own pieces (HTML parsing,
+   selectors, escapes, the engine's source, the box) are `harness.rs`.
+   The walker's function tables are shared references, its scopes are
+   copied on write, and a loop the lowering marked parallel runs in
+   chunks on clones of it, for the collecting form too; `x = push[move
+   x, v]` and the other in-place builtins grow the value in its slot,
+   as the compiled mode does. Everything found on the way was fixed
+   with a test: the validator judged a function's local against the
+   module variable of the same name, and inference and both lowerings
+   typed it that way (the type context's body scope now makes a body's
+   first assignment of a non-fact name a new binding, spec §7 — parity
+   49); the removed time builtins' teaching errors were the AST
+   walker's alone and are the validator's now, for both modes; the
+   resource statements `gpu[]`/`nodes[]`/`cpu[]` and the web module's
+   stand-ins (`cors`, `sessions`, `templates`, `render`, `cache`,
+   `limit`, `uploads`, `sse`, `ws`, `connect`, `send`, `recv`,
+   `close`, `static_dir`, `smtp`, `msgpack`, `arrow`, `bytes`,
+   `stream`) and `chart` were ported; a test block lowered without a
+   name was judged as one attached to a function. The gates: workspace
+   tests, parity 49 of 49, docs, book 130, layout, chart harness,
+   finch's baseline unchanged, and the benchmark: against the last
+   AST-interpreter binary on the same machine, every whole program is
+   level or faster (the collect program by a tenth, frames by a
+   twelfth); by section, the map-set loop, join/split and the push loop
+   are faster (the in-place path, and a string-building loop the old
+   effect test never let run in parallel — an interpolation reaches
+   only what its spans reach now), and two are slower at their sizes,
+   the plain collecting loop by an eighth and the small sort by a
+   fifth, which the typed values of §5 are the answer to, not this
+   walker.*
 4. **The Rust backend**, the same way; then `transpiler.rs` goes.
 5. **The session layer** with the three meanings; the harness; finch
    rewritten to them and its baseline re-accepted, whose diff is the

@@ -1,16 +1,19 @@
-//! The IR interpreter (docs/ir-design.md §5): walks the IR and decides
-//! nothing. Every operation goes through the modules both walkers share,
-//! `builtins`, `ops` and the module registry; values are the interpreter's
-//! `CrowValue` for now, and the typed, compact values of the design are
-//! the step after this walker is the default. `CROW_IR=1 crow run -i
-//! file.co` runs a program here; `crow test --parity --ir` counts the
-//! corpus programs it already runs identically.
+//! The interpreter (docs/ir-design.md §5): walks the IR and decides
+//! nothing. Every operation goes through `builtins`, `ops` and the module
+//! registry, the same code the compiled mode's runtime is built from;
+//! values are `CrowValue` for now, and the typed, compact values of the
+//! design are the step after the Rust backend. `crow run -i file.co` runs
+//! a program here; `crow test --parity` holds it to the compiled mode.
 
 use crate::ast::{BinOp, UnaryOp};
+use crate::harness::LayoutBox;
 use crate::ir::*;
 use crate::modules::ModuleRegistry;
 use crate::value::*;
-use std::collections::HashMap;
+use rayon::prelude::*;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 const READER_FNS: &[&str] = &["query", "read", "fetch", "recv", "input", "load", "env", "shell", "ls", "csv", "lines"];
 /// Scalar and tensor names both core and math answer: scalars go to the
@@ -24,15 +27,21 @@ enum Flow {
     Continue,
 }
 
+/// A scope is shared until written (a parallel loop clones the walker per
+/// chunk of items; the clone costs one reference per scope).
+type Scope = Arc<HashMap<String, CrowValue>>;
+
+#[derive(Clone)]
 struct Frame {
-    scopes: Vec<HashMap<String, CrowValue>>,
+    scopes: Vec<Scope>,
     fn_name: String,
 }
 
+#[derive(Clone)]
 pub struct IrInterp {
-    fns: HashMap<String, Fn>,
-    derives: HashMap<String, Derive>,
-    structs: HashMap<String, crate::ir::StructDef>,
+    fns: HashMap<String, Arc<Fn>>,
+    derives: HashMap<String, Arc<Derive>>,
+    structs: HashMap<String, Arc<crate::ir::StructDef>>,
     registry: ModuleRegistry,
     frames: Vec<Frame>,
     line: usize,
@@ -44,6 +53,60 @@ pub struct IrInterp {
     /// One per render, for derivations that read the clock.
     tick: u64,
     engine_loaded: bool,
+    /// Set by a caller that gives up on a run (the checker's timeouts):
+    /// loops and calls stop at their next step.
+    cancel: Option<Arc<AtomicBool>>,
+}
+
+/// The pipeline every runner shares: the front end's lowering, inference,
+/// then the lowering to the IR.
+pub fn prepare(stmts: &[crate::ast::Stmt], name: &str) -> Result<(Program, crate::type_infer::TypeContext), String> {
+    let stmts = crate::lower::lower_program(stmts)?;
+    let mut ctx = crate::type_infer::TypeContext::new();
+    ctx.describe_queries = false;
+    ctx.infer_program(&stmts);
+    // the gate every pipeline passes: what `crow run` refuses, this refuses
+    crate::validator::Validator::new(&ctx).validate(&stmts)?;
+    let program = crate::lower_ir::lower(&stmts, &mut ctx, name)?;
+    Ok((program, ctx))
+}
+
+/// A script run for its variables: the crowfile.
+pub fn run_script(stmts: &[crate::ast::Stmt], name: &str) -> Result<IrInterp, String> {
+    let (program, ctx) = prepare(stmts, name)?;
+    let mut it = IrInterp::new(&ctx.registry, name);
+    it.load(&program);
+    it.run_main(&program)?;
+    Ok(it)
+}
+
+/// A program fed a fragment at a time, each lowered against what came
+/// before: the REPL. A fragment's expression statement is its value.
+pub struct Session {
+    it: IrInterp,
+    ctx: crate::type_infer::TypeContext,
+}
+
+impl Session {
+    pub fn new() -> Self {
+        let ctx = crate::type_infer::TypeContext::new();
+        Session { it: IrInterp::new(&ctx.registry, "repl"), ctx }
+    }
+
+    pub fn feed(&mut self, stmts: &[crate::ast::Stmt]) -> Result<Option<CrowValue>, String> {
+        let stmts = crate::lower::lower_program(stmts)?;
+        self.ctx.infer_program(&stmts);
+        let known: HashSet<String> = self.it.frames[0].scopes[0].keys().cloned().collect();
+        let program = crate::lower_ir::lower_with_known(&stmts, &mut self.ctx, "repl", &known)?;
+        // a `use` in the fragment loaded its module into the context's registry
+        self.it.registry = self.ctx.registry.clone();
+        self.it.load(&program);
+        self.it.last_value = None;
+        self.it.run_main(&program)?;
+        let value = self.it.last().cloned();
+        self.it.last_value = None;
+        Ok(value)
+    }
 }
 
 /// Run a program: its facts get their defaults, then its main block runs.
@@ -58,18 +121,16 @@ pub fn run(program: &Program, registry: &ModuleRegistry, source_file: &str) -> R
 /// with its inputs bound. The block is lowered as the test it is, so its
 /// statements keep their order — lowered at the top of a ui program they
 /// would become facts, evaluated before main.
-pub fn run_test(decls: &[crate::ast::Stmt], params: &[(String, CrowValue)], body: &[crate::ast::Stmt]) -> Result<(), String> {
+pub fn run_test(decls: &[crate::ast::Stmt], label: &str, params: &[(String, CrowValue)], body: &[crate::ast::Stmt]) -> Result<(), String> {
     let mut all = decls.to_vec();
+    // named, so the gate reads it as the block it was in its file (an
+    // unnamed block is one attached to the function before it)
     all.push(crate::ast::Stmt::TestBlock {
-        name: None,
+        name: Some(label.to_string()),
         params: params.iter().map(|(p, _)| p.clone()).collect(),
         body: body.to_vec(),
     });
-    let stmts = crate::lower::lower_program(&all)?;
-    let mut ctx = crate::type_infer::TypeContext::new();
-    ctx.describe_queries = false;
-    ctx.infer_program(&stmts);
-    let program = crate::lower_ir::lower(&stmts, &mut ctx, "test")?;
+    let (program, ctx) = prepare(&all, "test")?;
     // CROW_IR_SHOW=1 prints the lowered test program, as `crow build --ir` does for a file
     if std::env::var("CROW_IR_SHOW").is_ok() {
         eprintln!("{}", crate::ir::print(&program));
@@ -78,11 +139,13 @@ pub fn run_test(decls: &[crate::ast::Stmt], params: &[(String, CrowValue)], body
     it.load(&program);
     it.run_main(&program).map_err(|e| format!("a declaration failed before the test ran: {}", e))?;
     let test = program.parts.iter().flat_map(|p| p.tests.iter()).last().ok_or("lowering: the test block is missing")?;
+    // the block runs at the program's top level, in a scope of its own: it
+    // sees the declarations' variables as a caller would, and its inputs
     let mut scope = HashMap::new();
     for (p, v) in params {
         scope.insert(p.clone(), v.clone());
     }
-    it.frames.push(Frame { scopes: vec![scope], fn_name: "test".to_string() });
+    it.frames[0].scopes.push(Arc::new(scope));
     match it.exec_stmts(&test.body) {
         Ok(_) => Ok(()),
         Err(e) => Err(it.with_line(e)),
@@ -90,7 +153,7 @@ pub fn run_test(decls: &[crate::ast::Stmt], params: &[(String, CrowValue)], body
 }
 
 impl IrInterp {
-    fn new(registry: &ModuleRegistry, source_file: &str) -> Self {
+    pub fn new(registry: &ModuleRegistry, source_file: &str) -> Self {
         let file = std::path::Path::new(source_file)
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
@@ -100,22 +163,39 @@ impl IrInterp {
             derives: HashMap::new(),
             structs: HashMap::new(),
             registry: registry.clone(),
-            frames: vec![Frame { scopes: vec![HashMap::new()], fn_name: String::new() }],
+            frames: vec![Frame { scopes: vec![Arc::new(HashMap::new())], fn_name: String::new() }],
             line: 0,
             file,
             last_value: None,
             in_view: 0,
             tick: 0,
             engine_loaded: false,
+            cancel: None,
         }
     }
 
     /// The facts' defaults, then main, part by part.
-    fn run_main(&mut self, program: &Program) -> Result<(), String> {
+    pub fn run_main(&mut self, program: &Program) -> Result<(), String> {
         for part in &program.parts {
+            // the part's resources: gpu[n] turns the kernels' device on,
+            // nodes[n] runs as the one rank of a cluster, cpu[n] bounds the
+            // parallel loops
+            if part.gpu.is_some() {
+                crow_runtime::gpu::set_gpu_enabled(true);
+            }
+            if let Some(n) = part.nodes {
+                if n >= 1 {
+                    crow_runtime::distributed::init(1);
+                }
+            }
+            if let Some(n) = part.cpu {
+                if n >= 1 {
+                    let _ = rayon::ThreadPoolBuilder::new().num_threads(n as usize).build_global();
+                }
+            }
             for fact in &part.facts {
                 let v = self.eval(&fact.default).map_err(|e| self.with_line(e))?;
-                self.frames[0].scopes[0].insert(fact.name.clone(), v);
+                self.set_fact(&fact.name, v);
             }
             if let Err(e) = self.exec_stmts(&part.main) {
                 return Err(self.with_line(e));
@@ -124,18 +204,86 @@ impl IrInterp {
         Ok(())
     }
 
-    fn load(&mut self, program: &Program) {
+    pub fn load(&mut self, program: &Program) {
         for part in &program.parts {
             for f in &part.fns {
-                self.fns.insert(f.name.clone(), f.clone());
+                self.fns.insert(f.name.clone(), Arc::new(f.clone()));
             }
             for d in &part.derives {
-                self.derives.insert(d.name.clone(), d.clone());
+                self.derives.insert(d.name.clone(), Arc::new(d.clone()));
             }
             for s in &part.structs {
-                self.structs.insert(s.name.clone(), s.clone());
+                self.structs.insert(s.name.clone(), Arc::new(s.clone()));
             }
         }
+    }
+
+    /// A top-level variable or fact, as the crowfile reader and the tools ask.
+    pub fn var(&self, name: &str) -> Option<&CrowValue> {
+        self.frames[0].scopes[0].get(name)
+    }
+
+    /// The value of the last expression statement run, as the REPL shows it.
+    pub fn last(&self) -> Option<&CrowValue> {
+        self.last_value.as_ref()
+    }
+
+    /// A function called by name with values, as the checker probes one.
+    pub fn call(&mut self, name: &str, args: Vec<CrowValue>) -> Result<CrowValue, String> {
+        self.call_user(name, args)
+    }
+
+    pub fn set_cancel_flag(&mut self, flag: Arc<AtomicBool>) {
+        self.cancel = Some(flag);
+    }
+
+    fn check_cancel(&self) -> Result<(), String> {
+        if self.cancel.as_ref().map_or(false, |f| f.load(Ordering::Relaxed)) {
+            return Err("execution cancelled".to_string());
+        }
+        Ok(())
+    }
+
+    fn set_fact(&mut self, name: &str, v: CrowValue) {
+        Arc::make_mut(&mut self.frames[0].scopes[0]).insert(name.to_string(), v);
+    }
+
+    /// Lay out an HTML fragment as the harness does — the same engine, the
+    /// same conversion — and return every element's box. The wireframes in
+    /// the app's book come from here with nothing rendered from state.
+    pub fn layout_html(&mut self, html: &str, viewport: f64, wide: bool) -> Result<Vec<LayoutBox>, String> {
+        self.ensure_engine()?;
+        let tree = crate::harness::harness_parse_html(html);
+        let root = crate::harness::harness_to_lnode(&tree);
+        let boxes = self.call_user("crow_layout", vec![root, CrowValue::ok(Value::Float(viewport)), CrowValue::ok(Value::Bool(wide))])?;
+        let list = match &boxes.value {
+            Value::Array(items) => items.clone(),
+            _ => Vec::new(),
+        };
+        let mut out = Vec::new();
+        for b in list {
+            if let Value::StructInstance(si) = &b.value {
+                let s = |k: &str| si.fields.get(k).map(|v| format!("{}", v.value)).unwrap_or_default();
+                let f = |k: &str| {
+                    si.fields.get(k).and_then(|v| match &v.value {
+                        Value::Float(x) => Some(*x),
+                        Value::Int(n) => Some(*n as f64),
+                        _ => None,
+                    }).unwrap_or(0.0)
+                };
+                out.push(LayoutBox {
+                    tag: s("tag"),
+                    class: s("class"),
+                    path: s("path"),
+                    x: f("x"),
+                    y: f("y"),
+                    width: f("width"),
+                    height: f("height"),
+                    overflow: matches!(si.fields.get("overflow").map(|v| &v.value), Some(Value::Bool(true))),
+                });
+            }
+        }
+        Ok(out)
     }
 
     /// The layout engine, Crow code lowered through the same pipeline and
@@ -144,7 +292,7 @@ impl IrInterp {
         if self.engine_loaded {
             return Ok(());
         }
-        let stmts = crate::build(crate::interpreter::LAYOUT_ENGINE_SRC).map_err(|e| format!("layout engine: {}", e))?;
+        let stmts = crate::build(crate::harness::LAYOUT_ENGINE_SRC).map_err(|e| format!("layout engine: {}", e))?;
         let stmts = crate::lower::lower_program(&stmts).map_err(|e| format!("layout engine: {}", e))?;
         let mut ctx = crate::type_infer::TypeContext::new();
         ctx.describe_queries = false;
@@ -179,7 +327,7 @@ impl IrInterp {
     // ── scopes ──────────────────────────────────────────────────────
 
     fn push_scope(&mut self) {
-        self.frames.last_mut().unwrap().scopes.push(HashMap::new());
+        self.frames.last_mut().unwrap().scopes.push(Arc::new(HashMap::new()));
     }
 
     fn pop_scope(&mut self) {
@@ -200,14 +348,14 @@ impl IrInterp {
         let frame = self.frames.last_mut().unwrap();
         for scope in frame.scopes.iter_mut().rev() {
             if scope.contains_key(name) {
-                return scope.get_mut(name);
+                return Arc::make_mut(scope).get_mut(name);
             }
         }
         None
     }
 
     fn bind(&mut self, name: &str, v: CrowValue) {
-        self.frames.last_mut().unwrap().scopes.last_mut().unwrap().insert(name.to_string(), v);
+        Arc::make_mut(self.frames.last_mut().unwrap().scopes.last_mut().unwrap()).insert(name.to_string(), v);
     }
 
     fn assign(&mut self, name: &str, v: CrowValue) {
@@ -265,13 +413,16 @@ impl IrInterp {
                 Ok(Flow::Next)
             }
             Stmt::Set { var, expr } => {
+                if self.assign_in_place(var, expr)? {
+                    return Ok(Flow::Next);
+                }
                 let v = self.eval(expr)?;
                 self.assign(var, v);
                 Ok(Flow::Next)
             }
             Stmt::Store { fact, expr } => {
                 let v = self.eval(expr)?;
-                self.frames[0].scopes[0].insert(fact.clone(), v);
+                self.set_fact(fact, v);
                 Ok(Flow::Next)
             }
             Stmt::SetPath { var, path, expr } => {
@@ -303,6 +454,7 @@ impl IrInterp {
             }
             Stmt::While { cond, body } => {
                 loop {
+                    self.check_cancel()?;
                     let c = self.eval(cond)?;
                     if c.is_error() {
                         return self.refuse(c);
@@ -318,13 +470,18 @@ impl IrInterp {
                 }
                 Ok(Flow::Next)
             }
-            Stmt::For { var, iter, body, .. } => {
+            Stmt::For { var, iter, body, parallel } => {
                 let it = self.eval(iter)?;
                 if it.is_error() {
                     return Ok(Flow::Next);
                 }
                 let items = crate::ops::iter_items(&it)?;
+                if *parallel && items.len() > 1 {
+                    self.run_parallel(&items, var, body, false)?;
+                    return Ok(Flow::Next);
+                }
                 for item in items {
+                    self.check_cancel()?;
                     self.push_scope();
                     self.bind(var, item);
                     let r = self.exec_stmts(body);
@@ -387,10 +544,7 @@ impl IrInterp {
                 let bare = name.rsplit('.').next().unwrap_or(name);
                 self.registry.get_constant(bare).ok_or_else(|| format!("unknown constant '{}'", name))?
             }
-            Expr::FnRef(name, _) => {
-                let params = self.fns.get(name).map(|f| f.params.iter().map(|(p, _)| p.clone()).collect()).unwrap_or_default();
-                CrowValue::ok(Value::Fn(FnValue { name: name.clone(), params, body: std::sync::Arc::new(vec![]) }))
-            }
+            Expr::FnRef(name, _) => CrowValue::ok(Value::Fn(FnValue { name: name.clone() })),
             Expr::Deferred { name, args } => {
                 let mut items = vec![self.eval(&Expr::FnRef(name.clone(), Ty::Unknown))?];
                 items.extend(self.eval_args(args)?);
@@ -576,14 +730,19 @@ impl IrInterp {
                 }
                 CrowValue::ok(Value::StructInstance(StructInstance { name: name.clone(), fields: vals }))
             }
-            Expr::ForExpr { var, iter, body, .. } => {
+            Expr::ForExpr { var, iter, body, parallel, .. } => {
                 let it = self.eval(iter)?;
                 if it.is_error() {
                     return Ok(CrowValue::ok(Value::Array(vec![it])));
                 }
                 let items = crate::ops::iter_items(&it)?;
+                if *parallel && items.len() > 1 {
+                    let results = self.run_parallel(&items, var, body, true)?;
+                    return Ok(crate::ops::collect_loop(results));
+                }
                 let mut results = Vec::with_capacity(items.len());
                 for item in items {
+                    self.check_cancel()?;
                     self.push_scope();
                     self.bind(var, item);
                     self.last_value = None;
@@ -600,6 +759,123 @@ impl IrInterp {
                 crate::ops::collect_loop(results)
             }
         })
+    }
+
+    /// `x = push[move x, v]` and the other in-place builtins on a list or a
+    /// map (ast::IN_PLACE_BUILTINS): the value is taken out of its slot and
+    /// the runtime's own function grows it, as the compiled mode does —
+    /// through the shared builtin table it would be copied first. Only a
+    /// shape the runtime handles totally takes this path; anything else
+    /// (a frame, a tensor, a module's function of the same name, a wrong
+    /// key type) goes the ordinary way.
+    fn assign_in_place(&mut self, var: &str, expr: &Expr) -> Result<bool, String> {
+        let (name, args) = match expr {
+            Expr::Call { target: Target::Runtime(name), args, .. } => (name.rsplit('.').next().unwrap_or(name), args),
+            _ => return Ok(false),
+        };
+        // the runtime table's names for the map builtins (ir::RUNTIME_TABLE)
+        let name = match name {
+            "map_set" => "set",
+            "map_del" => "del",
+            other => other,
+        };
+        if !crate::ast::IN_PLACE_BUILTINS.contains(&name) || !matches!(args.first(), Some(Expr::Move(v, _)) if v == var) {
+            return Ok(false);
+        }
+        if self.registry.has_function(name) && name != "sort" {
+            return Ok(false);
+        }
+        let rest = self.eval_args(&args[1..])?;
+        if rest.iter().any(|r| r.is_error()) {
+            return Ok(false);
+        }
+        let ok = match self.lookup(var) {
+            Some(cur) if !cur.is_error() => match (&cur.value, name) {
+                (Value::Array(_), "push") => rest.len() == 1,
+                (Value::Array(_), "pop") | (Value::Array(_), "reverse") | (Value::Array(_), "sort") => rest.is_empty(),
+                (Value::Array(_), "concat") => rest.len() == 1 && matches!(rest[0].value, Value::Array(_)),
+                (Value::Map(m), "set") => {
+                    rest.len() == 2 && matches!(rest[0].value, Value::Str(_)) && crate::builtins::check_map_homogeneous(m, &rest[1]).is_ok()
+                }
+                (Value::Map(_), "del") => rest.len() == 1 && matches!(rest[0].value, Value::Str(_)),
+                _ => false,
+            },
+            _ => false,
+        };
+        if !ok {
+            return Ok(false);
+        }
+        let taken = match self.slot(var) {
+            Some(slot) => std::mem::replace(slot, CrowValue::done()),
+            None => return Ok(false),
+        };
+        let mut rest = rest.into_iter();
+        let out = match (taken.value, name) {
+            (Value::Array(items), "push") => Value::Array(crow_runtime::core::push(items, rest.next().unwrap())),
+            (Value::Array(items), "pop") => Value::Array(crow_runtime::core::pop(items)),
+            (Value::Array(items), "reverse") => Value::Array(crow_runtime::core::reverse(items)),
+            (Value::Array(items), "sort") => Value::Array(crow_runtime::core::sort_by(items, crate::builtins::value_cmp)),
+            (Value::Array(items), "concat") => match rest.next().unwrap().value {
+                Value::Array(other) => Value::Array(crow_runtime::core::concat(items, &other)),
+                _ => unreachable!("checked above"),
+            },
+            (Value::Map(m), "set") => {
+                let key = match rest.next().unwrap().value {
+                    Value::Str(s) => s,
+                    _ => unreachable!("checked above"),
+                };
+                Value::Map(crow_runtime::core::map_set(m, key, rest.next().unwrap()))
+            }
+            (Value::Map(m), "del") => {
+                let key = match rest.next().unwrap().value {
+                    Value::Str(s) => s,
+                    _ => unreachable!("checked above"),
+                };
+                Value::Map(crow_runtime::core::map_del(m, &key))
+            }
+            _ => unreachable!("checked above"),
+        };
+        self.assign(var, CrowValue::ok(out));
+        Ok(true)
+    }
+
+    /// A parallel loop: one clone of the walker per chunk of items, its
+    /// scopes shared until written, each iteration in a scope of its own.
+    /// The lowering marked the loop parallel because its body writes no
+    /// outer variable or fact and reaches no effect, so nothing is lost
+    /// when the clones are dropped; a `return` inside is refused.
+    fn run_parallel(&mut self, items: &[CrowValue], var: &str, body: &[Stmt], collect: bool) -> Result<Vec<CrowValue>, String> {
+        self.check_cancel()?;
+        let threads = rayon::current_num_threads().max(1);
+        let chunk = (items.len() / (threads * 4)).max(1);
+        let base = &*self;
+        let chunks: Vec<Result<Vec<CrowValue>, String>> = items
+            .par_chunks(chunk)
+            .map(|part| {
+                let mut local = base.clone();
+                let mut out = Vec::with_capacity(if collect { part.len() } else { 0 });
+                for item in part {
+                    local.push_scope();
+                    local.bind(var, item.clone());
+                    local.last_value = None;
+                    let r = local.exec_stmts(body);
+                    let yielded = local.last_value.take();
+                    local.pop_scope();
+                    if let Flow::Return(_) = r? {
+                        return Err("cannot return from inside a for loop".to_string());
+                    }
+                    if collect {
+                        out.push(yielded.unwrap_or_else(CrowValue::done));
+                    }
+                }
+                Ok(out)
+            })
+            .collect();
+        let mut results = Vec::with_capacity(if collect { items.len() } else { 0 });
+        for c in chunks {
+            results.extend(c?);
+        }
+        Ok(results)
     }
 
     fn eval_args(&mut self, args: &[Expr]) -> Result<Vec<CrowValue>, String> {
@@ -741,6 +1017,149 @@ impl IrInterp {
                 Ok(CrowValue::ok(Value::Bool(true)))
             }
             "running" => Ok(CrowValue::ok(Value::Bool(false))),
+            // the resources as calls: gpu[n] turns the device on, nodes[n]
+            // runs as the one rank of a cluster, cpu[n] bounds the loops
+            "gpu" => {
+                if vals.len() > 1 {
+                    return Err("gpu[] takes 0 or 1 arguments".to_string());
+                }
+                if let Some(v) = vals.first() {
+                    match v.unwrap_or_propagate()? {
+                        Value::Int(n) if *n >= 1 => {}
+                        Value::Int(_) => return Err("gpu[] requires a positive integer".to_string()),
+                        _ => return Err("gpu[] requires an integer argument".to_string()),
+                    }
+                }
+                crow_runtime::gpu::set_gpu_enabled(true);
+                Ok(CrowValue::done())
+            }
+            "nodes" | "cpu" => {
+                if vals.len() != 1 {
+                    return Err(format!("{}[] takes exactly 1 argument", name));
+                }
+                let n = match vals[0].unwrap_or_propagate()? {
+                    Value::Int(n) if *n >= 1 => *n as usize,
+                    Value::Int(_) => return Err(format!("{}[] requires a positive integer", name)),
+                    _ => return Err(format!("{}[] requires an integer argument", name)),
+                };
+                if name == "nodes" {
+                    // one process, rank 0: no connections in the interpreter
+                    crow_runtime::distributed::init(1);
+                } else {
+                    let _ = rayon::ThreadPoolBuilder::new().num_threads(n).build_global();
+                }
+                Ok(CrowValue::done())
+            }
+            // the web module's builtins answer with stand-ins here: the
+            // served program is the compiled one, and a script that builds
+            // an app still runs to its end
+            "cors" | "sse" | "ws" | "static_dir" => {
+                let want = if name == "cors" { 1 } else { 3 };
+                if vals.len() < want {
+                    return Err(format!("{}[] takes {} arguments", name, want));
+                }
+                Ok(vals[0].clone())
+            }
+            "sessions" | "cache" => {
+                if name == "cache" && vals.is_empty() {
+                    return Err("cache[] requires at least 1 argument".into());
+                }
+                Ok(CrowValue::ok(Value::Map(std::collections::BTreeMap::new())))
+            }
+            "templates" => {
+                if vals.len() != 1 {
+                    return Err("templates[] takes 1 argument".into());
+                }
+                let glob = match vals[0].unwrap_or_propagate()? {
+                    Value::Str(s) => s.clone(),
+                    _ => String::new(),
+                };
+                let mut map = std::collections::BTreeMap::new();
+                map.insert("glob".to_string(), CrowValue::ok(Value::Str(glob)));
+                Ok(CrowValue::ok(Value::Map(map)))
+            }
+            "render" => {
+                if vals.len() != 3 {
+                    return Err("render[] takes 3 arguments (templates, name, data)".into());
+                }
+                let tname = match vals[1].unwrap_or_propagate()? {
+                    Value::Str(s) => s.clone(),
+                    _ => return Err("render[] name must be a string".into()),
+                };
+                Ok(CrowValue::ok(Value::Str(format!("[rendered: {}]", tname))))
+            }
+            "limit" => {
+                if vals.len() != 2 {
+                    return Err("limit[] takes 2 arguments (max, window)".into());
+                }
+                let mut map = std::collections::BTreeMap::new();
+                map.insert("max".to_string(), vals[0].clone());
+                map.insert("window".to_string(), vals[1].clone());
+                Ok(CrowValue::ok(Value::Map(map)))
+            }
+            "uploads" => {
+                if vals.len() != 1 {
+                    return Err("uploads[] takes 1 argument".into());
+                }
+                Ok(CrowValue::ok(Value::Array(vec![])))
+            }
+            "connect" => {
+                if vals.len() != 1 {
+                    return Err("connect[] takes 1 argument".into());
+                }
+                let url = match vals[0].unwrap_or_propagate()? {
+                    Value::Str(s) => s.clone(),
+                    _ => return Err("connect[] url must be a string".into()),
+                };
+                let mut map = std::collections::BTreeMap::new();
+                map.insert("url".to_string(), CrowValue::ok(Value::Str(url)));
+                map.insert("ok".to_string(), CrowValue::ok(Value::Bool(false)));
+                Ok(CrowValue::ok(Value::Map(map)))
+            }
+            "send" | "close" => {
+                let want = if name == "send" { 2 } else { 1 };
+                if vals.len() != want {
+                    return Err(format!("{}[] takes {} argument{}", name, want, if want == 1 { "" } else { "s" }));
+                }
+                Ok(CrowValue::ok(Value::Bool(true)))
+            }
+            "recv" => {
+                if vals.len() != 1 {
+                    return Err("recv[] takes 1 argument".into());
+                }
+                Ok(CrowValue::ok(Value::Str(String::new())))
+            }
+            "smtp" => {
+                if vals.len() != 4 {
+                    return Err("smtp[] takes 4 arguments".into());
+                }
+                let host = match vals[0].unwrap_or_propagate()? {
+                    Value::Str(s) => s.clone(),
+                    _ => return Err("smtp[] host must be a string".into()),
+                };
+                let mut map = std::collections::BTreeMap::new();
+                map.insert("host".to_string(), CrowValue::ok(Value::Str(host)));
+                map.insert("ok".to_string(), CrowValue::ok(Value::Bool(true)));
+                Ok(CrowValue::ok(Value::Map(map)))
+            }
+            "msgpack" | "arrow" | "bytes" | "stream" => {
+                if vals.len() != 1 {
+                    return Err(format!("{}[] takes 1 argument", name));
+                }
+                if name != "stream" {
+                    let _ = vals[0].unwrap_or_propagate()?;
+                }
+                let kind = match name {
+                    "msgpack" => "application/msgpack",
+                    "arrow" => "application/vnd.apache.arrow.stream",
+                    _ => "application/octet-stream",
+                };
+                let mut map = std::collections::BTreeMap::new();
+                map.insert("status".to_string(), CrowValue::ok(Value::Int(200)));
+                map.insert("type".to_string(), CrowValue::ok(Value::Str(kind.to_string())));
+                map.insert(if name == "stream" { "streaming" } else { "binary" }.to_string(), CrowValue::ok(Value::Bool(true)));
+                Ok(CrowValue::ok(Value::Map(map)))
+            }
             // progress[value, max] (lowered)
             "progress" if vals.len() == 2 => {
                 if self.in_view == 0 {
@@ -759,6 +1178,74 @@ impl IrInterp {
                     fmt_num(num(&vals[0]))
                 ))))
             }
+            // chart[frame, x, candles, lines, bars_y, marker, tz, height,
+            // panes, levels, points, seek] (lowered): the chart's markup
+            // from the kernel's renderer, as the compiled view draws it
+            "chart" if self.in_view > 0 && vals.len() == 12 => {
+                let Value::Frame(f) = &vals[0].value else {
+                    if vals[0].is_error() {
+                        return Ok(CrowValue::ok(Value::Str(format!("<p>chart error: {}</p>", vals[0].reason))));
+                    }
+                    return Err("chart[] takes a frame first".into());
+                };
+                let as_str = |v: &CrowValue| -> String { format!("{}", v.value) };
+                let str_list = |v: &CrowValue| -> Vec<String> {
+                    match &v.value {
+                        Value::Array(items) => items.iter().map(|i| format!("{}", i.value)).collect(),
+                        _ => vec![],
+                    }
+                };
+                let as_f64 = |v: &CrowValue| -> f64 {
+                    match &v.value {
+                        Value::Float(x) => *x,
+                        Value::Int(x) => *x as f64,
+                        _ => 0.0,
+                    }
+                };
+                let marker = as_f64(&vals[5]);
+                // panes = [['rsi'], ['cvd']]: one strip per inner list
+                let panes: Vec<Vec<String>> = match &vals[8].value {
+                    Value::Array(items) => items.iter().map(|i| str_list(i)).collect(),
+                    _ => vec![],
+                };
+                // levels = map[rsi = [30, 70], cvd = [0]]: reference lines,
+                // keyed by the column whose pane draws them
+                let mut levels: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
+                if let Value::Map(m) = &vals[9].value {
+                    for (k, v) in m.iter() {
+                        let row = match &v.value {
+                            Value::Array(xs) => xs.iter().map(as_f64).collect(),
+                            Value::NumArray(t) => t.to_vec(),
+                            Value::Int(_) | Value::Float(_) => vec![as_f64(v)],
+                            _ => vec![],
+                        };
+                        levels.insert(k.clone(), row);
+                    }
+                }
+                let points = match &vals[10].value {
+                    Value::Frame(pf) => Some(pf),
+                    _ => None,
+                };
+                let seek = match &vals[11].value {
+                    Value::Fn(func) => Some(func.name.clone()),
+                    _ => None,
+                };
+                let node = crow_web::view::CrowVNode::chart_from_frame(
+                    f,
+                    &as_str(&vals[1]),
+                    &str_list(&vals[2]),
+                    &str_list(&vals[3]),
+                    &as_str(&vals[4]),
+                    if marker <= 0.0 { f64::NAN } else { marker },
+                    &as_str(&vals[6]),
+                    as_f64(&vals[7]),
+                    &panes,
+                    &levels,
+                    points,
+                    seek.as_deref(),
+                );
+                Ok(CrowValue::ok(Value::Str(node.to_html())))
+            }
             // icon[name, size, color] (lowered): inline SVG from the kernel's set
             "icon" if vals.len() == 3 => {
                 if self.in_view == 0 {
@@ -769,7 +1256,6 @@ impl IrInterp {
                     .map(|svg| CrowValue::ok(Value::Str(svg)))
                     .map_err(|e| format!("icon: {}", e))
             }
-            "cpu" | "gpu" | "nodes" => Ok(CrowValue::done()),
             _ => Err(format!("the IR interpreter does not run '{}' yet", name)),
         }
     }
@@ -866,6 +1352,7 @@ impl IrInterp {
     }
 
     fn call_user(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
+        self.check_cancel()?;
         // a specialised name (first__1) is the one body to this walker
         let f = match self.fns.get(name) {
             Some(f) => f.clone(),
@@ -880,7 +1367,7 @@ impl IrInterp {
         // a view renders what it is given: a failed argument is its text
         if f.kind == FnKind::View {
             if let Some(bad) = vals.iter().find(|v| v.is_error()) {
-                return Ok(CrowValue::ok(Value::Str(format!("error: {}", crate::interpreter::html_escape_text(&bad.reason)))));
+                return Ok(CrowValue::ok(Value::Str(format!("error: {}", crate::harness::html_escape_text(&bad.reason)))));
             }
         }
         let mut scope = HashMap::new();
@@ -892,7 +1379,7 @@ impl IrInterp {
         if is_view {
             self.in_view += 1;
         }
-        self.frames.push(Frame { scopes: vec![scope], fn_name: name.to_string() });
+        self.frames.push(Frame { scopes: vec![Arc::new(scope)], fn_name: name.to_string() });
         let r = self.exec_stmts(&f.body);
         self.frames.pop();
         if is_view {
@@ -909,7 +1396,7 @@ impl IrInterp {
     /// versioned form comes with the session layer), stamped with its moment.
     fn derived(&mut self, name: &str) -> Result<CrowValue, String> {
         let d = self.derives.get(name).cloned().ok_or_else(|| format!("unknown derivation '{}'", name))?;
-        self.frames.push(Frame { scopes: vec![HashMap::new()], fn_name: name.to_string() });
+        self.frames.push(Frame { scopes: vec![Arc::new(HashMap::new())], fn_name: name.to_string() });
         let r = self.exec_stmts(&d.body);
         self.frames.pop();
         let mut v = match r? {
@@ -967,13 +1454,13 @@ impl IrInterp {
                     _ => return Err("elements[] selector must be a string like 'button', '.card', or 'div.stats .card'".into()),
                 };
                 let html = self.render_view(&f.name)?;
-                let tree = crate::interpreter::harness_parse_html(&html);
+                let tree = crate::harness::harness_parse_html(&html);
                 let steps = selector_steps(&selector);
                 if steps.is_empty() {
                     return Err("elements[] selector is empty".into());
                 }
                 let mut hits = Vec::new();
-                crate::interpreter::harness_select(&tree, &steps, 0, &mut hits);
+                crate::harness::harness_select(&tree, &steps, 0, &mut hits);
                 CrowValue::ok(Value::Array(hits))
             }
             "change" => {
@@ -997,7 +1484,7 @@ impl IrInterp {
                     (Value::Float(_), Value::Int(i)) => CrowValue::ok(Value::Float(*i as f64)),
                     _ => value,
                 };
-                self.frames[0].scopes[0].insert(var, value);
+                self.set_fact(&var, value);
                 CrowValue::done()
             }
             "click" => {
@@ -1027,7 +1514,7 @@ impl IrInterp {
                 let (f, session_width, session_wide) = app_view(&vals[0]).ok_or_else(|| format!("{}[] takes an app session first", name))?;
                 let arg1 = vals[1].clone();
                 let html = self.render_view(&f.name)?;
-                let tree = crate::interpreter::harness_parse_html(&html);
+                let tree = crate::harness::harness_parse_html(&html);
                 if name == "style" {
                     let selector = match &arg1.value {
                         Value::Str(s) => s.clone(),
@@ -1035,7 +1522,7 @@ impl IrInterp {
                     };
                     let steps = selector_steps(&selector);
                     let mut hits: Vec<CrowValue> = Vec::new();
-                    crate::interpreter::harness_select(&tree, &steps, 0, &mut hits);
+                    crate::harness::harness_select(&tree, &steps, 0, &mut hits);
                     let mut out = Vec::new();
                     for h in hits {
                         if let Value::Map(m) = &h.value {
@@ -1054,7 +1541,7 @@ impl IrInterp {
                 } else {
                     session_width
                 };
-                let root = crate::interpreter::harness_to_lnode(&tree);
+                let root = crate::harness::harness_to_lnode(&tree);
                 let boxes = self.call_user("crow_layout", vec![root, CrowValue::ok(Value::Float(viewport)), CrowValue::ok(Value::Bool(session_wide))])?;
                 let list = match &boxes.value {
                     Value::Array(items) => items.clone(),
@@ -1077,7 +1564,7 @@ impl IrInterp {
                     .filter(|b| {
                         if let Value::StructInstance(si) = &b.value {
                             let path = si.fields.get("path").map(|v| format!("{}", v.value)).unwrap_or_default();
-                            crate::interpreter::harness_path_matches(&path, &steps)
+                            crate::harness::harness_path_matches(&path, &steps)
                         } else {
                             false
                         }
@@ -1281,5 +1768,29 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
                 other => Err(format!("cannot index-assign into {}", other.type_name())),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(src: &str) -> Vec<crate::ast::Stmt> {
+        crate::build(src).unwrap()
+    }
+
+    /// A parallel loop clones the walker per chunk; the clone must share
+    /// the scopes (a per-item copy of every value was the benchmark's
+    /// finding against the AST walker) and a write must copy only the
+    /// scope it touches.
+    #[test]
+    fn a_clone_shares_its_scopes_until_written() {
+        let a = run_script(&parse("xs = for i in range[1000]\n    'item`i`'\ny = 1\n"), "t").unwrap();
+        let mut b = a.clone();
+        assert!(Arc::ptr_eq(&a.frames[0].scopes[0], &b.frames[0].scopes[0]));
+        b.bind("y", CrowValue::ok(Value::Int(2)));
+        assert!(!Arc::ptr_eq(&a.frames[0].scopes[0], &b.frames[0].scopes[0]));
+        assert!(matches!(a.var("y").unwrap().value, Value::Int(1)));
+        assert!(matches!(b.var("y").unwrap().value, Value::Int(2)));
     }
 }

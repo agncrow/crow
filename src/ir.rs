@@ -113,6 +113,7 @@ pub struct Part {
     pub uses: Vec<String>,
     pub cpu: Option<i64>,
     pub gpu: Option<i64>,
+    pub nodes: Option<i64>,
     pub structs: Vec<StructDef>,
     pub facts: Vec<Fact>,
     pub derives: Vec<Derive>,
@@ -322,7 +323,7 @@ pub enum Expr {
     Tree { element: String, attrs: Vec<(String, Expr)>, children: Vec<Expr> },
     /// The collecting loop; the body's last expression is what each
     /// iteration yields, an iteration that yields nothing is skipped.
-    ForExpr { var: String, iter: Box<Expr>, body: Block, ty: Ty },
+    ForExpr { var: String, iter: Box<Expr>, body: Block, ty: Ty, parallel: bool },
     /// A call held for someone else to make: a control's handler with its
     /// arguments (`click = set_speed[10.0]`), or the harness's
     /// `click[a, set_speed[10.0]]`. The arguments are evaluated where the
@@ -441,6 +442,9 @@ pub fn print(program: &Program) -> String {
         }
         if let Some(n) = part.gpu {
             let _ = writeln!(out, "  gpu {}", n);
+        }
+        if let Some(n) = part.nodes {
+            let _ = writeln!(out, "  nodes {}", n);
         }
         for s in &part.structs {
             let fields: Vec<String> = s.fields.iter().map(|(n, t)| format!("{}: {}", n, t)).collect();
@@ -650,11 +654,11 @@ pub fn expr(e: &Expr) -> String {
             };
             format!("tree {}{}[{}]", element, a, children.iter().map(expr).collect::<Vec<_>>().join(", "))
         }
-        Expr::ForExpr { var, iter, body, .. } => {
+        Expr::ForExpr { var, iter, body, parallel, .. } => {
             let mut inner = String::new();
             block(&mut inner, body, 0);
             let lines: Vec<&str> = inner.lines().collect();
-            format!("for {} in {} yield {{ {} }}", var, expr(iter), lines.join("; "))
+            format!("for {} in {} yield {{ {} }}{}", var, expr(iter), lines.join("; "), if *parallel { "  parallel" } else { "" })
         }
         Expr::Deferred { name, args } => {
             format!("defer {}({})", name, args.iter().map(expr).collect::<Vec<_>>().join(", "))

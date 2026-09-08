@@ -2,6 +2,9 @@ mod ast;
 mod appbook;
 mod builtins;
 mod ir;
+mod harness;
+#[cfg(test)]
+mod interp_tests;
 mod ir_interp;
 mod lower_ir;
 mod ops;
@@ -10,7 +13,6 @@ mod checker;
 mod db_check;
 mod derive;
 mod lsp;
-mod interpreter;
 mod lexer;
 mod lower;
 mod parallel;
@@ -24,7 +26,6 @@ mod formatter;
 mod modules;
 mod value;
 
-use interpreter::Interpreter;
 use lexer::Lexer;
 use parser::Parser;
 use std::process;
@@ -331,8 +332,6 @@ fn book_pages(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
 }
 
 fn cmd_test_book() {
-    // --ir: the AST interpreter against the IR interpreter, advisory
-    let ir_mode = std::env::args().any(|a| a == "--ir");
     let dir = std::path::Path::new("docs/book/src");
     if !dir.is_dir() {
         eprintln!("error: no docs/book/src/ directory found (run from the project root)");
@@ -443,15 +442,8 @@ fn cmd_test_book() {
     // Check one block in its own directory; returns (passed, report lines).
     let check = |b: &Block, dir: &std::path::Path| -> (bool, String) {
         let run_mode = |mode_args: &[&str], file: &std::path::Path| -> (bool, String, String) {
-            // in --ir mode the compiled column is the IR interpreter, and a
-            // block's test blocks run under it too
-            let ir_here = ir_mode && (mode_args == ["run"] || mode_args == ["test"]);
-            let argv: Vec<&str> = if ir_here && mode_args == ["run"] { vec!["run", "-i"] } else { mode_args.to_vec() };
             let mut cmd = std::process::Command::new(&exe);
-            cmd.args(argv).arg(file).current_dir(dir).env("CROW_BUILD_PROFILE", "dev");
-            if ir_here {
-                cmd.env("CROW_IR", "1");
-            }
+            cmd.args(mode_args).arg(file).current_dir(dir).env("CROW_BUILD_PROFILE", "dev");
             let out = cmd.output();
             match out {
                 Ok(o) => (o.status.success(), String::from_utf8_lossy(&o.stdout).to_string(), String::from_utf8_lossy(&o.stderr).to_string()),
@@ -530,10 +522,6 @@ fn cmd_test_book() {
     let _ = std::fs::remove_file(&lock);
     let elapsed = start.elapsed().as_secs_f32();
     println!();
-    if ir_mode {
-        println!("IR interpreter: {} of {} book blocks identical ({:.1}s)", total - failures, total, elapsed);
-        return;
-    }
     if failures == 0 {
         println!("\u{2713} {} book blocks verified in both modes ({:.1}s, {} workers)", total, elapsed, workers);
     } else {
@@ -824,19 +812,9 @@ fn cmd_test_parity() {
         eprintln!("error locating crow binary: {}", e);
         process::exit(1);
     });
-    // --ir: the AST interpreter against the IR interpreter, both
-    // interpreted; advisory until the IR interpreter is the default
-    let ir_mode = std::env::args().any(|a| a == "--ir");
     let run_mode = |mode_args: &[&str], file: &std::path::Path| -> (bool, String, String) {
-        // in --ir mode the compiled column is the IR interpreter instead:
-        // `crow run -i file` with CROW_IR=1, the flag before the file
-        let ir_here = ir_mode && mode_args == ["run"];
-        let argv: Vec<&str> = if ir_here { vec!["run", "-i"] } else { mode_args.to_vec() };
         let mut cmd = std::process::Command::new(&exe);
-        cmd.args(argv).arg(file).env("CROW_BUILD_PROFILE", "dev");
-        if ir_here {
-            cmd.env("CROW_IR", "1");
-        }
+        cmd.args(mode_args).arg(file).env("CROW_BUILD_PROFILE", "dev");
         let out = cmd.output();
         match out {
             Ok(o) => (
@@ -850,11 +828,7 @@ fn cmd_test_parity() {
 
     let start = std::time::Instant::now();
     let mut failures = 0;
-    if ir_mode {
-        println!("parity: {} files, AST interpreter vs IR interpreter (advisory)\n", files.len());
-    } else {
-        println!("parity: {} files, interpreter vs compiled\n", files.len());
-    }
+    println!("parity: {} files, interpreter vs compiled\n", files.len());
     for file in &files {
         let name = file.file_name().unwrap_or_default().to_string_lossy().to_string();
         let (i_ok, i_out, i_err) = run_mode(&["run", "-i"], file);
@@ -892,10 +866,6 @@ fn cmd_test_parity() {
     }
     let elapsed = start.elapsed().as_secs_f64();
     println!();
-    if ir_mode {
-        println!("IR interpreter: {} of {} files identical ({:.1}s)", files.len() - failures, files.len(), elapsed);
-        return;
-    }
     if failures == 0 {
         println!("✓ {} files match across both modes ({:.1}s)", files.len(), elapsed);
     } else {
@@ -1201,7 +1171,7 @@ fn cmd_repl() {
     use rustyline::DefaultEditor;
 
     println!("(o.o) crow {} — type help for commands, ctrl-c to exit", env!("CARGO_PKG_VERSION"));
-    let mut interpreter = Interpreter::new();
+    let mut session = ir_interp::Session::new();
     let mut accumulated_stmts: Vec<ast::Stmt> = Vec::new();
     let mut buffer = String::new();
     let mut in_block = false;
@@ -1246,7 +1216,7 @@ fn cmd_repl() {
                             continue;
                         }
                         "clear" => {
-                            interpreter = Interpreter::new();
+                            session = ir_interp::Session::new();
                             accumulated_stmts.clear();
                             println!("  session cleared");
                             continue;
@@ -1260,7 +1230,7 @@ fn cmd_repl() {
                     if trimmed.is_empty() || (!trimmed.starts_with(' ') && !trimmed.starts_with('\t')) {
                         in_block = false;
                         let source = std::mem::take(&mut buffer);
-                        repl_eval(&mut interpreter, &source, &mut accumulated_stmts);
+                        repl_eval(&mut session, &source, &mut accumulated_stmts);
                         if trimmed.is_empty() {
                             continue;
                         }
@@ -1291,7 +1261,7 @@ fn cmd_repl() {
                 }
 
                 // Single line - evaluate immediately
-                repl_eval(&mut interpreter, trimmed, &mut accumulated_stmts);
+                repl_eval(&mut session, trimmed, &mut accumulated_stmts);
             }
             Err(ReadlineError::Interrupted) => {
                 // Ctrl-C: exit
@@ -1355,7 +1325,7 @@ fn repl_check(stmts: &[ast::Stmt]) {
     }
 }
 
-fn repl_eval(interpreter: &mut Interpreter, source: &str, accumulated: &mut Vec<ast::Stmt>) {
+fn repl_eval(session: &mut ir_interp::Session, source: &str, accumulated: &mut Vec<ast::Stmt>) {
     let source = source.trim();
     if source.is_empty() {
         return;
@@ -1366,13 +1336,10 @@ fn repl_eval(interpreter: &mut Interpreter, source: &str, accumulated: &mut Vec<
             // Accumulate statements for :check
             accumulated.extend(stmts.clone());
 
-            match interpreter.run(&stmts) {
-                Ok(val) => {
-                    // Print result if it's not Done (void)
-                    if !matches!(val.value, value::Value::Done) {
-                        println!("{}", val);
-                    }
-                }
+            match session.feed(&stmts) {
+                // an expression statement's value is printed, a done is not
+                Ok(Some(val)) if !matches!(val.value, value::Value::Done) => println!("{}", val),
+                Ok(_) => {}
                 Err(e) => eprintln!("error: {}", e),
             }
         }
@@ -3486,13 +3453,13 @@ fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool
                     let prev_hook = std::panic::take_hook();
                     std::panic::set_hook(Box::new(|_| {}));
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        let mut interp = interpreter::Interpreter::new();
-                        // Load function declarations (ignore top-level errors)
-                        let _ = interp.run(&stmts);
+                        // the file with the call appended, run as one program
                         let call_src = format!("log[{}]", try_cmd);
                         match build(&call_src) {
                             Ok(call_stmts) => {
-                                match interp.run(&call_stmts) {
+                                let mut all = stmts.clone();
+                                all.extend(call_stmts);
+                                match ir_interp::run_script(&all, filename) {
                                     Ok(_) => None,
                                     Err(e) => Some(e),
                                 }
@@ -3572,50 +3539,11 @@ fn cmd_run_job(job_name: &str) {
 
 fn cmd_run_interpreted() {
     let config = parse_crowfile();
-
-    let compiled_path = bytecode_path(&config.entry);
-    let stmts = if std::path::Path::new(&compiled_path).exists() {
-        let bytes = std::fs::read(&compiled_path).unwrap_or_else(|e| {
-            eprintln!("error reading '{}': {}", compiled_path, e);
-            process::exit(1);
-        });
-        bincode::deserialize(&bytes).unwrap_or_else(|e| {
-            eprintln!("error loading bytecode '{}': {}", compiled_path, e);
-            process::exit(1);
-        })
-    } else {
-        let source = read_file(&config.entry);
-        match build(&source) {
-            Ok(stmts) => stmts,
-            Err(e) => {
-                eprintln!("{}", e);
-                process::exit(1);
-            }
-        }
-    };
-
-    let mut interpreter = Interpreter::new();
-    let entry_file = std::path::Path::new(&config.entry).file_name()
-        .map(|f| f.to_string_lossy().to_string())
-        .unwrap_or_else(|| config.entry.clone());
-    interpreter.set_source_file(&entry_file);
-    if let Some(dir) = std::path::Path::new(&config.entry).parent() {
-        if dir.as_os_str().len() > 0 {
-            interpreter.set_source_dir(dir.to_path_buf());
-        }
-    }
-    if let Some(n) = config.cpu {
-        interpreter.set_cpu_count(n);
-    }
-    if let Some(n) = config.gpu {
-        interpreter.set_gpu_count(n);
-    }
     if !config.deps.is_empty() {
         let modules_dir = std::path::PathBuf::from("crow_modules");
         if !modules_dir.exists() {
             eprintln!("warning: deps defined but 'crow_modules/' directory not found");
         }
-        interpreter.add_module_path(modules_dir);
         for (name, version) in &config.deps {
             let dep_file = std::path::PathBuf::from("crow_modules").join(format!("{}.co", name));
             let dep_dir = std::path::PathBuf::from("crow_modules").join(name).join("main.co");
@@ -3624,22 +3552,35 @@ fn cmd_run_interpreted() {
             }
         }
     }
-    if let Err(e) = interpreter.run(&stmts) {
-        eprintln!("runtime error: {}", e);
-        process::exit(1);
+    // the crowfile's cpu count bounds the parallel loops, as it does the
+    // compiled program's; its gpu setting turns the device on
+    if let Some(n) = config.cpu {
+        let _ = rayon::ThreadPoolBuilder::new().num_threads(n).build_global();
+    }
+    if config.gpu.is_some() {
+        crow_runtime::gpu::set_gpu_enabled(true);
+    }
+    // the bytecode when `crow compile` left one, else the entry's source;
+    // user modules and crow_modules/ deps are expanded on the way
+    let compiled_path = bytecode_path(&config.entry);
+    if std::path::Path::new(&compiled_path).exists() {
+        cmd_run_file_interpreted(&compiled_path);
+    } else {
+        cmd_run_file_interpreted(&config.entry);
     }
 }
 
 fn cmd_run_file_interpreted(filename: &str) {
-    let stmts = if is_bytecode(filename) {
+    let (stmts, source) = if is_bytecode(filename) {
         let bytes = std::fs::read(filename).unwrap_or_else(|e| {
             eprintln!("error reading '{}': {}", filename, e);
             process::exit(1);
         });
-        bincode::deserialize(&bytes).unwrap_or_else(|e| {
+        let stmts: Vec<ast::Stmt> = bincode::deserialize(&bytes).unwrap_or_else(|e| {
             eprintln!("error loading bytecode '{}': {}", filename, e);
             process::exit(1);
-        })
+        });
+        (stmts, String::new())
     } else {
         let source = read_file(filename);
         let stmts = match build(&source) {
@@ -3655,58 +3596,35 @@ fn cmd_run_file_interpreted(filename: &str) {
             .parent()
             .unwrap_or(std::path::Path::new("."));
         let mut visited = std::collections::HashSet::new();
-        let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
-        // Lower + validate exactly as the compiled path does — the two modes
-        // must reject the same programs (reservation, scope, ui rules)
-        // (user modules are already inlined; the interpreter must not
-        // dynamically re-load them — see set_modules_preexpanded below)
-        let lowered = match lower::lower_program(&stmts) {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("error: {}", e);
-                process::exit(1);
-            }
-        };
-        let mut ctx = match infer_and_validate(&lowered, false) {
-            Ok(ctx) => ctx,
-            Err(e) => {
-                eprintln!("{}", refine_error_lines(&source, &e));
-                process::exit(1);
-            }
-        };
-        // CROW_IR=1: the IR interpreter runs the program (ir-design.md §5),
-        // behind this flag until it passes every gate
-        if std::env::var("CROW_IR").is_ok() {
-            let name = std::path::Path::new(filename)
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| filename.to_string());
-            let program = lower_ir::lower(&lowered, &mut ctx, &name).unwrap_or_else(|e| {
-                eprintln!("{}", e);
-                process::exit(1);
-            });
-            if let Err(e) = ir_interp::run(&program, &ctx.registry, filename) {
-                eprintln!("runtime error: {}", e);
-                process::exit(1);
-            }
-            return;
-        }
-        stmts
+        (expand_module_imports(&stmts, source_dir, &mut visited), source)
     };
-
-    let mut interpreter = Interpreter::new();
-    interpreter.set_modules_preexpanded(true);
-    let base = source_of_bytecode(filename);
-    let source_file = std::path::Path::new(&base).file_name()
-        .map(|f| f.to_string_lossy().to_string())
-        .unwrap_or_else(|| base.clone());
-    interpreter.set_source_file(&source_file);
-    if let Some(dir) = std::path::Path::new(&base).parent() {
-        if dir.as_os_str().len() > 0 {
-            interpreter.set_source_dir(dir.to_path_buf());
+    // Lower + validate exactly as the compiled path does — the two modes
+    // must reject the same programs (reservation, scope, ui rules)
+    let lowered = match lower::lower_program(&stmts) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("error: {}", e);
+            process::exit(1);
         }
-    }
-    if let Err(e) = interpreter.run(&stmts) {
+    };
+    let mut ctx = match infer_and_validate(&lowered, false) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            eprintln!("{}", refine_error_lines(&source, &e));
+            process::exit(1);
+        }
+    };
+    // then the one typed form (ir-design.md), walked by the interpreter
+    let base = source_of_bytecode(filename);
+    let name = std::path::Path::new(&base)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| base.clone());
+    let program = lower_ir::lower(&lowered, &mut ctx, &name).unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        process::exit(1);
+    });
+    if let Err(e) = ir_interp::run(&program, &ctx.registry, &base) {
         eprintln!("runtime error: {}", e);
         process::exit(1);
     }
@@ -3722,9 +3640,8 @@ fn crowfile_db_url() -> Option<String> {
 pub(crate) fn crowfile_db_url_at(dir: &std::path::Path) -> Option<String> {
     let source = std::fs::read_to_string(dir.join("crowfile")).ok()?;
     let stmts = build(&source).ok()?;
-    let mut interpreter = Interpreter::new();
-    interpreter.run(&stmts).ok()?;
-    match interpreter.get_var("db") {
+    let it = ir_interp::run_script(&stmts, "crowfile").ok()?;
+    match it.var("db") {
         Some(val) => match &val.value {
             value::Value::Str(s) => Some(s.clone()),
             _ => None,
@@ -3744,13 +3661,15 @@ fn parse_crowfile() -> CrowfileConfig {
 
     match build(&crowfile_source) {
         Ok(stmts) => {
-            let mut interpreter = Interpreter::new();
-            if let Err(e) = interpreter.run(&stmts) {
-                eprintln!("error in crowfile: {}", e);
-                process::exit(1);
-            }
+            let it = match ir_interp::run_script(&stmts, "crowfile") {
+                Ok(it) => it,
+                Err(e) => {
+                    eprintln!("error in crowfile: {}", e);
+                    process::exit(1);
+                }
+            };
 
-            let entry = match interpreter.get_var("entry") {
+            let entry = match it.var("entry") {
                 Some(val) => match &val.value {
                     value::Value::Str(s) => s.clone(),
                     _ => {
@@ -3766,7 +3685,7 @@ fn parse_crowfile() -> CrowfileConfig {
                 }
             };
 
-            let cpu = interpreter.get_var("cpu").and_then(|val| {
+            let cpu = it.var("cpu").and_then(|val| {
                 if let value::Value::Int(n) = &val.value {
                     Some(*n as usize)
                 } else {
@@ -3774,7 +3693,7 @@ fn parse_crowfile() -> CrowfileConfig {
                 }
             });
 
-            let gpu = interpreter.get_var("gpu").and_then(|val| {
+            let gpu = it.var("gpu").and_then(|val| {
                 if let value::Value::Int(n) = &val.value {
                     Some(*n as usize)
                 } else {
@@ -3783,7 +3702,7 @@ fn parse_crowfile() -> CrowfileConfig {
             });
 
             // parse deps: [math = '1.0', http = '2.3']
-            let deps = interpreter.get_var("deps").map(|val| {
+            let deps = it.var("deps").map(|val| {
                 if let value::Value::Map(map) = &val.value {
                     map.iter().filter_map(|(name, v)| {
                         if let value::Value::Str(ver) = &v.value {
@@ -3798,7 +3717,7 @@ fn parse_crowfile() -> CrowfileConfig {
             }).unwrap_or_default();
 
             // parse [jobs] section: jobs = [train = 'jobs/train.co', ...]
-            let jobs = interpreter.get_var("jobs").map(|val| {
+            let jobs = it.var("jobs").map(|val| {
                 if let value::Value::Map(map) = &val.value {
                     map.iter().filter_map(|(name, v)| {
                         if let value::Value::Str(path) = &v.value {
