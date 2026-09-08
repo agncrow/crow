@@ -1,0 +1,53 @@
+--- Tensors: matmul, an element-wise chain, a reduction, argsort, a
+--- Gram matrix, and a 300×300 inverse.
+use math
+
+q = env['BENCH_QUICK']
+quick = q.ok
+d = 1000
+if quick
+    d = 200
+m = 10000000
+if quick
+    m = 200000
+
+seed[1]
+a = randn[d, d]
+b = randn[d, d]
+t0 = now[]
+c = a * b
+log['bench: matmul `now[] - t0`']
+log[c.shape]
+
+x = randn[m]
+t0 = now[]
+y = x * 2.0 + x .* x - 1.0
+log['bench: elementwise_chain `now[] - t0`']
+log[y.shape]
+
+t0 = now[]
+d2 = dot[x, x]
+log['bench: dot `now[] - t0`']
+log[d2 gt 0.0]
+
+t0 = now[]
+s = sum[y]
+log['bench: sum `now[] - t0`']
+log[s.ok]
+
+t0 = now[]
+order = argsort[x]
+log['bench: argsort `now[] - t0`']
+log[order.shape]
+
+t0 = now[]
+gram = transpose[a] * a
+log['bench: gram `now[] - t0`']
+log[gram.shape]
+
+small = randn[300, 300]
+spd = small * transpose[small] + eye[300]
+t0 = now[]
+inv_small = inv[spd]
+log['bench: inverse_300 `now[] - t0`']
+log[inv_small.shape]

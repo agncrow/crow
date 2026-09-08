@@ -3202,6 +3202,7 @@ crow test                   --- run the test blocks of the project (or: crow tes
 crow test --parity          --- run tests/parity/ in both modes and diff output
 crow test --book            --- execute every code block of the book in both modes
 crow test --docs            --- the docs cover every compiler name, and name nothing the compiler lacks
+crow test --bench           --- run tests/bench/ in both modes and print each section's seconds side by side (--quick: small sizes; --write: record docs/benchmarks.md)
 crow check                  --- automatic verification (uses crowfile; or: crow check file.co); records and diffs the app baseline
 crow check --accept         --- accept every baseline change at once (the loop's `a`, for a script or a deliberate sweep)
 crow check --show [name]    --- the app as a tree: pages, views under their guards, controls and handlers, facts; or one declaration's artifact

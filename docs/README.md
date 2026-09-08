@@ -24,6 +24,7 @@ Start here if you are new; jump to the reference if you already write Crow.
 | [db-module.md](db-module.md) | `use db` internals: backends, pooling, bulk insert, transactions, migrations. |
 | [frame-module.md](frame-module.md) | The frame (DataFrame) type: representation, benchmarks, operations. |
 | [math-library.md](math-library.md) | The math runtime: tensor layers, linear algebra, GPU, autograd. |
+| [benchmarks.md](benchmarks.md) | Measured, not estimated: the benchmark programs in both modes, with the machine and the commit; rewritten by `crow test --bench --write`, findings kept below the table. |
 
 ## Design records
 
@@ -33,6 +34,7 @@ These explain how Crow got here. They are kept for the reasoning; where a code s
 |---|---|
 | [design-review.md](design-review.md) | The July 2026 honest review — ratings, pushbacks, and the log of how each was resolved. |
 | [core-design.md](core-design.md) | **The core, design round: three meanings.** A handler is a transaction; a handler that meets an error stops and reports; one moment per event. Decided September 2026, spec-ready wording, worked on finch's clock and skip; built with the core rewrite. |
+| [core-runtime-builtins.md](core-runtime-builtins.md) | **One runtime for the builtins, the stage 3 tracker.** The audit of every builtin in both implementations, the divergences found, the shape of the shared functions, and the order of moving them. |
 | [app-baseline-design.md](app-baseline-design.md) | **The app baseline, design round.** What a program does, derived in a canonical form and diffed on every check: signatures, conditional trees, reach, the accept flow, kernel rules; rehearsal and the app chapter as the phases after. |
 | [rating-2026-09.md](rating-2026-09.md) | The September 2026 rating against the best comparator per dimension, and the prior art for the baseline design; each row is a workstream. |
 | [core-rewrite-notes.md](core-rewrite-notes.md) | **Notes toward a smaller core.** September 2026 discussion record: the paths finch's handlers carry and why, five language-level reductions, where whole-app complexity lives between parts, and a seven-concept kernel with one IR and two backends if the core were rewritten. Nothing decided. |

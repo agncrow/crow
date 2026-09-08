@@ -1,0 +1,46 @@
+--- Frames over the generated rows.csv (crow test --bench writes it):
+--- load, filter, group, sort, join, select, a column sum, save.
+use frame, math
+
+path = 'tests/bench/data/rows.csv'
+
+t0 = now[]
+df = frame.load[path]
+log['bench: csv_load `now[] - t0`']
+log[df.columns]
+
+t0 = now[]
+dear = filter[df, df.price gt 100.0]
+log['bench: filter `now[] - t0`']
+log[len[dear] gt 0]
+
+t0 = now[]
+by_sym = group[df, 'symbol', ['qty', 'sum'], ['price', 'mean'], ['pnl', 'max']]
+log['bench: group `now[] - t0`']
+log[len[by_sym]]
+
+t0 = now[]
+by_price = sort[df, 'price', desc = true]
+log['bench: sort `now[] - t0`']
+log[len[by_price] eq len[df]]
+
+sectors = with[with[frame.new[], 'symbol', ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'META', 'GOOG', 'TSLA', 'NFLX']], 'sector', ['tech', 'tech', 'chips', 'retail', 'social', 'search', 'autos', 'media']]
+t0 = now[]
+joined = join[df, sectors, 'symbol']
+log['bench: join `now[] - t0`']
+log[joined.columns]
+
+t0 = now[]
+narrow = select[df, ['symbol', 'qty', 'price']]
+log['bench: select `now[] - t0`']
+log[narrow.columns]
+
+t0 = now[]
+qty = sum[df.qty]
+log['bench: column_sum `now[] - t0`']
+log[qty gt 0]
+
+t0 = now[]
+save[narrow, 'tests/bench/data/narrow.csv']
+log['bench: csv_save `now[] - t0`']
+log[len[frame.load['tests/bench/data/narrow.csv']] eq len[df]]

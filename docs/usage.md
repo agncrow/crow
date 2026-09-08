@@ -78,6 +78,7 @@ variables win).
 | `crow check --strict` | Exit 1 on any finding (for CI). `--verbose` prints purity and snapshot details. |
 | `crow fix file.co --hazard N [--option M]` | Apply a fix from the check report (writes the migration, applies it, re-checks). |
 | `crow test --parity` | The interpreter–transpiler harness: every `tests/parity/*.co` runs in both modes and the outputs are diffed. |
+| `crow test --bench` | The benchmark programs in `tests/bench/` run in both modes (compiled as a release build) and each section's seconds are printed side by side; `--quick` runs small sizes, `--write` records the table in `docs/benchmarks.md` with the machine and the commit. |
 | `crow test --book` | Executes every code block in the book in both modes and compares printed output with the book's text. |
 | `crow test tests/layout/conformance.co` | The layout engine against a real browser: fixtures measured once in Chrome by `tests/layout/measure.py` (Playwright, developer-only) and checked in as CSV; the check itself needs no browser. Re-measure after a stylesheet or engine change. |
 | `crow test --docs` | Holds the documentation to the compiler: every builtin, module function, and element must be in the spec; every spec reference row must exist in the compiler; every module and core builtin must have a verified book example; every example file must be indexed. Runs in CI. |

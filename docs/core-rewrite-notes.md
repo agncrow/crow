@@ -491,3 +491,22 @@ performance 6 to 8, data 6 to 8 with the DSL, ML 5 to 7 with the
 rescope and ONNX; every handler smaller. Ecosystem unchanged; that is
 people and time. The whole programme is months of steady work, not
 weeks; the core stages are weeks each.
+
+## 10. Progress log
+
+- **2026-09-07, stage 1 done.** `core-design.md`: the three meanings in
+  spec-ready wording, worked on the clock and the skip handler, three
+  Design Notes, the spec sections each changes.
+- **2026-09-07, stage 2 built.** `crow test --bench [--quick] [--write]`
+  runs `tests/bench/{collect,frames,tensors,train}.co` in both modes
+  (compiled as a release build), compares every non-timing line as the
+  parity corpus does, prints the sections side by side and records
+  `docs/benchmarks.md` with the machine and the commit; CI runs the
+  quick sizes. First findings are in that file's Notes. Two bugs the
+  programs found on their first run were fixed with tests: `*` between
+  1-D tensors panicked (`try_matmul`), and `len[]` of a parsed JSON
+  value did not compile (`json::len`, parity 40). A third finding fixed
+  on the way: the extension rename had left `.crow/` being created as
+  `.co` and the legacy checks testing the new extension.
+- **Stage 3 next:** the builtin audit and the first batch into
+  `crow_runtime`.
