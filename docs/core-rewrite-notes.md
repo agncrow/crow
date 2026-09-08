@@ -524,5 +524,9 @@ weeks; the core stages are weeks each.
   search builtins stay. Spec §14 rewritten with a Design Note recording
   the reversal; parity 43 pins order; parity 42 is three plain
   statements again.
-- **Stage 3 next:** text and conversion (`join`, `str`, `input`,
-  `shell`); then files and JSON.
+- **2026-09-08, stage 3 batch 2 (text) built:** `join`, `shell`,
+  `input` in the runtime, compiled `str` of collections fixed
+  (`core-runtime-builtins.md`, log; parity 44).
+- **Stage 3 next:** files as one `io`; JSON as one encoder; regex;
+  `min`/`max` mixing; the interpreter's frame `filter` and column
+  `sum` paths.

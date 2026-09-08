@@ -3490,16 +3490,7 @@ impl Interpreter {
                         Ok(CrowValue::ok(Value::Str(parts.join(sep.as_str()))))
                     }
                     (Value::NumArray(t), Value::Str(sep)) => {
-                        let parts: Vec<String> = t.to_vec().iter()
-                            .map(|v| {
-                                if *v == (*v as i64) as f64 && v.is_finite() {
-                                    format!("{}", *v as i64)
-                                } else {
-                                    format!("{}", v)
-                                }
-                            })
-                            .collect();
-                        Ok(CrowValue::ok(Value::Str(parts.join(sep.as_str()))))
+                        Ok(CrowValue::ok(Value::Str(crow_runtime::core::join_floats(&t.to_vec(), sep))))
                     }
                     _ => Err("join[] requires an array and a string separator".into()),
                 }
@@ -3870,18 +3861,10 @@ impl Interpreter {
             }
             "input" => {
                 if args.len() > 1 { return Err("input[] takes at most one argument (a prompt)".into()); }
-                if let Some(p) = args.first() {
-                    print!("{}", p.value);
-                    use std::io::Write;
-                    let _ = std::io::stdout().flush();
-                }
-                let mut line = String::new();
-                match std::io::stdin().read_line(&mut line) {
-                    Ok(_) => {
-                        let trimmed = line.trim_end_matches('\n').trim_end_matches('\r').to_string();
-                        Ok(CrowValue::ok(Value::Str(trimmed)))
-                    }
-                    Err(e) => Ok(CrowValue::error_with_kind(&format!("input error: {}", e), "io", &self.trace_entry())),
+                let prompt = args.first().map(|p| format!("{}", p.value));
+                match crow_runtime::core::read_line(prompt.as_deref()) {
+                    Ok(line) => Ok(CrowValue::ok(Value::Str(line))),
+                    Err(e) => Ok(CrowValue::error_with_kind(&e, "io", &self.trace_entry())),
                 }
             }
             // --- System builtins ---
@@ -4100,15 +4083,15 @@ impl Interpreter {
                 if args.len() != 1 { return Err("shell[] takes exactly 1 argument".into()); }
                 match args[0].unwrap_or_propagate()? {
                     Value::Str(cmd) => {
-                        match std::process::Command::new("sh").arg("-c").arg(cmd).output() {
-                            Ok(output) => {
+                        match crow_runtime::core::shell(cmd) {
+                            Ok(sh) => {
                                 let mut map = std::collections::BTreeMap::new();
-                                map.insert("status".to_string(), CrowValue::ok(Value::Int(output.status.code().unwrap_or(-1) as i64)));
-                                map.insert("stdout".to_string(), CrowValue::ok(Value::Str(String::from_utf8_lossy(&output.stdout).trim_end().to_string())));
-                                map.insert("stderr".to_string(), CrowValue::ok(Value::Str(String::from_utf8_lossy(&output.stderr).trim_end().to_string())));
+                                map.insert("status".to_string(), CrowValue::ok(Value::Int(sh.status)));
+                                map.insert("stdout".to_string(), CrowValue::ok(Value::Str(sh.stdout)));
+                                map.insert("stderr".to_string(), CrowValue::ok(Value::Str(sh.stderr)));
                                 Ok(CrowValue::ok(Value::Map(map)))
                             }
-                            Err(e) => Ok(CrowValue::error_with_kind(&format!("shell failed: {}", e), "shell", &self.trace_entry())),
+                            Err(e) => Ok(CrowValue::error_with_kind(&e, "shell", &self.trace_entry())),
                         }
                     }
                     _ => Err("shell[] requires a string command".into()),

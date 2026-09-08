@@ -3623,9 +3623,14 @@ impl Transpiler {
                         return format!("({}).to_lowercase()", arg_strs[0]);
                     }
                     if name == "join" && arg_strs.len() == 2 {
+                        // an empty literal has no element type and joins to nothing
+                        if matches!(&args[0], Expr::Array(items) if items.is_empty()) {
+                            return format!("{{ let _ = &{}; String::new() }}", arg_strs[1]);
+                        }
                         let ty = self.ctx.infer_expr(&args[0]);
                         if matches!(ty, CrowType::NumArray(_)) {
-                            return format!("{}.to_vec().iter().map(|v| {{ let i = *v; if i == (i as i64) as f64 && i.is_finite() {{ (i as i64).to_string() }} else {{ i.to_string() }} }}).collect::<Vec<String>>().join(&{})", arg_strs[0], arg_strs[1]);
+                            self.needs_crow_runtime = true;
+                            return format!("crow_runtime::core::join_floats(&{}.to_vec(), &{})", arg_strs[0], arg_strs[1]);
                         }
                         return format!("{}.iter().map(|s| s.to_string()).collect::<Vec<String>>().join(&{})", arg_strs[0], arg_strs[1]);
                     }
@@ -3746,6 +3751,11 @@ impl Transpiler {
                             CrowType::Str => arg_strs[0].clone(),
                             // a JSON string prints bare, not with its quotes
                             CrowType::Json => format!("{{ let _j = &({}); match _j.as_str() {{ Some(s) => s.to_string(), None => _j.to_string() }} }}", arg_strs[0]),
+                            // a list or a map is the text log[] prints: the display kernel
+                            ref t if self.kernel_displayable(t) => {
+                                self.needs_crow_runtime = true;
+                                format!("{{ use crow_runtime::display::CrowDisplay as _; ({}).crow_fmt() }}", arg_strs[0])
+                            }
                             _ => format!("format!(\"{{}}\", {})", arg_strs[0]),
                         };
                     }
@@ -3920,11 +3930,12 @@ impl Transpiler {
                     // inside a view, `input` is the HTML element (emitted below)
                     let in_view = self.needs_ui && self.ctx.views.contains(&self.current_function_name);
                     if name == "input" && !in_view {
+                        // one runtime function reads the line (core.rs); the
+                        // answer is stamped as a reader
+                        self.needs_crow_runtime = true;
                         let trace = self.trace_format_expr();
-                        if arg_strs.len() == 1 {
-                            return format!("{{ print!(\"{{}}\", {}); use std::io::Write; std::io::stdout().flush().unwrap(); let mut _line = String::new(); match std::io::stdin().read_line(&mut _line) {{ Ok(_) => CrowResult {{ ok: true, value: _line.trim_end().to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], trace);
-                        }
-                        return format!("{{ let mut _line = String::new(); match std::io::stdin().read_line(&mut _line) {{ Ok(_) => CrowResult {{ ok: true, value: _line.trim_end().to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e.to_string(), kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", trace);
+                        let prompt = if arg_strs.len() == 1 { format!("Some(&format!(\"{{}}\", {}))", arg_strs[0]) } else { "None".to_string() };
+                        return format!("{{ match crow_runtime::core::read_line({}) {{ Ok(line) => CrowResult {{ ok: true, value: line, reason: String::new(), kind: String::new(), trace: vec![], captured: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e, kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", prompt, trace);
                     }
                     // --- System builtins ---
                     if name == "rand" {
@@ -4136,9 +4147,12 @@ impl Transpiler {
 
                     // --- Shell builtin ---
                     if name == "shell" && arg_strs.len() == 1 {
+                        // one runtime function runs the command (core.rs); the
+                        // answer is a CrowShell record, stamped as a reader
                         self.needs_shell_struct = true;
+                        self.needs_crow_runtime = true;
                         let trace = self.trace_format_expr();
-                        return format!("{{ let _cmd = &*{}; match std::process::Command::new(\"sh\").arg(\"-c\").arg(_cmd).output() {{ Ok(out) => CrowResult {{ ok: true, value: CrowShell {{ status: out.status.code().unwrap_or(-1) as i64, stdout: String::from_utf8_lossy(&out.stdout).trim_end().to_string(), stderr: String::from_utf8_lossy(&out.stderr).trim_end().to_string() }}, reason: String::new(), kind: String::new(), trace: vec![], captured: STAMP }}, Err(e) => CrowResult {{ ok: false, value: CrowShell {{ status: -1, stdout: String::new(), stderr: String::new() }}, reason: format!(\"shell failed: {{}}\", e), kind: \"shell\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], trace).replace("STAMP", "std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)");
+                        return format!("{{ match crow_runtime::core::shell(&*{}) {{ Ok(sh) => CrowResult {{ ok: true, value: CrowShell {{ status: sh.status, stdout: sh.stdout, stderr: sh.stderr }}, reason: String::new(), kind: String::new(), trace: vec![], captured: STAMP }}, Err(e) => CrowResult {{ ok: false, value: CrowShell {{ status: -1, stdout: String::new(), stderr: String::new() }}, reason: e, kind: \"shell\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], trace).replace("STAMP", "std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)");
                     }
                     // --- Hashing builtin ---
                     if name == "hash" && arg_strs.len() == 2 {
