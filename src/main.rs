@@ -2,6 +2,7 @@ mod ast;
 mod appbook;
 mod builtins;
 mod ir;
+mod ir_interp;
 mod lower_ir;
 mod ops;
 mod baseline;
@@ -330,6 +331,8 @@ fn book_pages(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
 }
 
 fn cmd_test_book() {
+    // --ir: the AST interpreter against the IR interpreter, advisory
+    let ir_mode = std::env::args().any(|a| a == "--ir");
     let dir = std::path::Path::new("docs/book/src");
     if !dir.is_dir() {
         eprintln!("error: no docs/book/src/ directory found (run from the project root)");
@@ -440,7 +443,12 @@ fn cmd_test_book() {
     // Check one block in its own directory; returns (passed, report lines).
     let check = |b: &Block, dir: &std::path::Path| -> (bool, String) {
         let run_mode = |mode_args: &[&str], file: &std::path::Path| -> (bool, String, String) {
-            let out = std::process::Command::new(&exe).args(mode_args).arg(file).current_dir(dir).env("CROW_BUILD_PROFILE", "dev").output();
+            let mut cmd = std::process::Command::new(&exe);
+            cmd.args(mode_args).arg(file).current_dir(dir).env("CROW_BUILD_PROFILE", "dev");
+            if ir_mode && mode_args == ["run"] {
+                cmd.args(["-i"]).env("CROW_IR", "1");
+            }
+            let out = cmd.output();
             match out {
                 Ok(o) => (o.status.success(), String::from_utf8_lossy(&o.stdout).to_string(), String::from_utf8_lossy(&o.stderr).to_string()),
                 Err(e) => (false, String::new(), format!("failed to spawn: {}", e)),
@@ -518,6 +526,10 @@ fn cmd_test_book() {
     let _ = std::fs::remove_file(&lock);
     let elapsed = start.elapsed().as_secs_f32();
     println!();
+    if ir_mode {
+        println!("IR interpreter: {} of {} book blocks identical ({:.1}s)", total - failures, total, elapsed);
+        return;
+    }
     if failures == 0 {
         println!("\u{2713} {} book blocks verified in both modes ({:.1}s, {} workers)", total, elapsed, workers);
     } else {
@@ -808,12 +820,16 @@ fn cmd_test_parity() {
         eprintln!("error locating crow binary: {}", e);
         process::exit(1);
     });
+    // --ir: the AST interpreter against the IR interpreter, both
+    // interpreted; advisory until the IR interpreter is the default
+    let ir_mode = std::env::args().any(|a| a == "--ir");
     let run_mode = |mode_args: &[&str], file: &std::path::Path| -> (bool, String, String) {
-        let out = std::process::Command::new(&exe)
-            .args(mode_args)
-            .arg(file)
-            .env("CROW_BUILD_PROFILE", "dev")
-            .output();
+        let mut cmd = std::process::Command::new(&exe);
+        cmd.args(mode_args).arg(file).env("CROW_BUILD_PROFILE", "dev");
+        if ir_mode && mode_args == ["run"] {
+            cmd.args(["-i"]).env("CROW_IR", "1");
+        }
+        let out = cmd.output();
         match out {
             Ok(o) => (
                 o.status.success(),
@@ -826,7 +842,11 @@ fn cmd_test_parity() {
 
     let start = std::time::Instant::now();
     let mut failures = 0;
-    println!("parity: {} files, interpreter vs compiled\n", files.len());
+    if ir_mode {
+        println!("parity: {} files, AST interpreter vs IR interpreter (advisory)\n", files.len());
+    } else {
+        println!("parity: {} files, interpreter vs compiled\n", files.len());
+    }
     for file in &files {
         let name = file.file_name().unwrap_or_default().to_string_lossy().to_string();
         let (i_ok, i_out, i_err) = run_mode(&["run", "-i"], file);
@@ -864,6 +884,10 @@ fn cmd_test_parity() {
     }
     let elapsed = start.elapsed().as_secs_f64();
     println!();
+    if ir_mode {
+        println!("IR interpreter: {} of {} files identical ({:.1}s)", files.len() - failures, files.len(), elapsed);
+        return;
+    }
     if failures == 0 {
         println!("✓ {} files match across both modes ({:.1}s)", files.len(), elapsed);
     } else {
@@ -3633,9 +3657,29 @@ fn cmd_run_file_interpreted(filename: &str) {
                 process::exit(1);
             }
         };
-        if let Err(e) = infer_and_validate(&lowered, false) {
-            eprintln!("{}", refine_error_lines(&source, &e));
-            process::exit(1);
+        let mut ctx = match infer_and_validate(&lowered, false) {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                eprintln!("{}", refine_error_lines(&source, &e));
+                process::exit(1);
+            }
+        };
+        // CROW_IR=1: the IR interpreter runs the program (ir-design.md §5),
+        // behind this flag until it passes every gate
+        if std::env::var("CROW_IR").is_ok() {
+            let name = std::path::Path::new(filename)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| filename.to_string());
+            let program = lower_ir::lower(&lowered, &mut ctx, &name).unwrap_or_else(|e| {
+                eprintln!("{}", e);
+                process::exit(1);
+            });
+            if let Err(e) = ir_interp::run(&program, &ctx.registry, filename) {
+                eprintln!("runtime error: {}", e);
+                process::exit(1);
+            }
+            return;
         }
         stmts
     };

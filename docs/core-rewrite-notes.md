@@ -559,4 +559,12 @@ weeks; the core stages are weeks each.
   answered or held, propagation explicit, int-to-float explicit,
   parallel loops decided, last reads as moves). `crow build --ir
   file.co` prints it; every parity program lowers, checked by a test.
-- **Next:** step 3, the IR interpreter behind `CROW_IR=1`.
+- **2026-09-08, stage 4 step 3 started:** the state-free builtins and
+  the operator, indexing and field semantics were moved out of the
+  interpreter into `builtins.rs` and `ops.rs` first, so the IR
+  interpreter (`ir_interp.rs`, behind `CROW_IR=1`) reimplements nothing
+  it can share. On its first run it ran all 47 parity programs
+  identically. `crow test --parity --ir` and `--book --ir` are the
+  advisory tallies until it is the default.
+- **Next:** views, the harness, the live loop and the web builtins in
+  the IR interpreter, guided by the book tally.

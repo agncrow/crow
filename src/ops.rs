@@ -822,3 +822,67 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
         _ => Err(format!("cannot access field '{}' on this value", field)),
     }
 }
+
+/// An array literal's value: all numbers make a tensor, all tensors of one
+/// shape make a shaped tensor (spec: unified arrays), anything else a list.
+pub fn array_literal(vals: Vec<CrowValue>) -> Result<CrowValue, String> {
+    let all_numeric = !vals.is_empty() && vals.iter().all(|v| v.ok && matches!(v.value, Value::Int(_) | Value::Float(_)));
+    if all_numeric {
+        let data: Vec<f64> = vals.iter().map(|v| match &v.value {
+            Value::Int(n) => *n as f64,
+            Value::Float(f) => *f,
+            _ => unreachable!(),
+        }).collect();
+        let len = data.len();
+        return Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))));
+    }
+    let all_tensors = !vals.is_empty() && vals.iter().all(|v| v.ok && matches!(v.value, Value::NumArray(_)));
+    if all_tensors {
+        let tensors: Vec<CrowTensor> = vals.iter().map(|v| match &v.value {
+            Value::NumArray(t) => t.clone(),
+            _ => unreachable!(),
+        }).collect();
+        let stacked = CrowTensor::from_elements(&tensors)?;
+        return Ok(CrowValue::ok(Value::NumArray(stacked)));
+    }
+    Ok(CrowValue::ok(Value::Array(vals)))
+}
+
+/// What a collecting loop yields: iterations that produced nothing are
+/// skipped, all numbers make a tensor, anything else a list.
+pub fn collect_loop(results: Vec<CrowValue>) -> CrowValue {
+    let filtered: Vec<CrowValue> = results.into_iter().filter(|v| !matches!(v.value, Value::Done)).collect();
+    let all_numeric = !filtered.is_empty() && filtered.iter().all(|v| v.ok && matches!(v.value, Value::Int(_) | Value::Float(_)));
+    if all_numeric {
+        let data: Vec<f64> = filtered.iter().map(|v| match &v.value {
+            Value::Int(n) => *n as f64,
+            Value::Float(f) => *f,
+            _ => unreachable!(),
+        }).collect();
+        let len = data.len();
+        return CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len])));
+    }
+    CrowValue::ok(Value::Array(filtered))
+}
+
+/// What a `for` walks: a list's items, a matrix's rows, a vector's numbers
+/// (whole ones as ints).
+pub fn iter_items(iter_val: &CrowValue) -> Result<Vec<CrowValue>, String> {
+    match &iter_val.value {
+        Value::Array(items) => Ok(items.clone()),
+        Value::NumArray(tensor) => {
+            if tensor.ndim() >= 2 {
+                Ok(tensor.rows().into_iter().map(|t| CrowValue::ok(Value::NumArray(t))).collect())
+            } else {
+                Ok(tensor.to_vec().into_iter().map(|v| {
+                    if v == (v as i64) as f64 && v.is_finite() {
+                        CrowValue::ok(Value::Int(v as i64))
+                    } else {
+                        CrowValue::ok(Value::Float(v))
+                    }
+                }).collect())
+            }
+        }
+        _ => Err("for loop requires an array".to_string()),
+    }
+}

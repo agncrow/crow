@@ -682,61 +682,44 @@ impl<'a> Lowerer<'a> {
             }
             return Ok(Expr::Tree { element: name, attrs, children });
         }
-        // arguments, with fallible ones propagated first
-        let no_propagation = module.is_none() && matches!(name.as_str(), "log" | "type" | "error" | "assert");
+        // arguments: a fallible one reaches the callee as its payload, and
+        // an error among them is the call's value (`propagates`)
+        let propagates = !(module.is_none() && matches!(name.as_str(), "log" | "type" | "error" | "assert"));
         let mut lowered = Vec::with_capacity(args.len());
-        let mut fallible: Vec<String> = Vec::new();
         for a in args {
             let x = self.lower_expr(a)?;
-            if !no_propagation && x.ty().is_result() {
+            if propagates && x.ty().is_result() {
                 let rty = x.ty();
-                let t = match &x {
-                    Expr::Local(v, _) => v.clone(),
-                    _ => {
-                        let t = self.fresh();
-                        self.pre.push(Stmt::Let { var: t.clone(), ty: rty.clone(), expr: x });
-                        self.scopes.last_mut().unwrap().insert(t.clone());
-                        t
-                    }
-                };
-                fallible.push(t.clone());
-                lowered.push(Expr::Convert {
-                    how: Convert::Unwrap,
-                    expr: Box::new(Expr::Local(t, rty.clone())),
-                    ty: rty.payload().clone(),
-                });
+                lowered.push(Expr::Convert { how: Convert::Unwrap, expr: Box::new(x), ty: rty.payload().clone() });
             } else {
                 lowered.push(x);
             }
-        }
-        if !fallible.is_empty() {
-            self.pre.push(Stmt::Propagate { values: fallible });
         }
         let current = self.current_fn.clone();
         if let Some(m) = module {
             let m = self.ctx.module_aliases.get(&m).cloned().unwrap_or(m);
             if is_effect(&name) {
                 self.direct_effects.entry(current).or_default().insert(name.clone());
-                return Ok(Expr::Effect { name, args: lowered, ty, answered: true });
+                return Ok(Expr::Effect { name, args: lowered, ty, answered: true, propagates });
             }
-            return Ok(Expr::Call { target: Target::Module(m, name), args: lowered, ty });
+            return Ok(Expr::Call { target: Target::Module(m, name), args: lowered, ty, propagates });
         }
         if self.ctx.functions.contains_key(&name) || self.ctx.specializations.contains_key(&name) {
             let resolved = self.specialised(&name, args);
             self.calls.entry(current).or_default().insert(resolved.clone());
-            return Ok(Expr::Call { target: Target::User(resolved), args: lowered, ty });
+            return Ok(Expr::Call { target: Target::User(resolved), args: lowered, ty, propagates });
         }
         if is_effect(&name) {
             self.direct_effects.entry(current).or_default().insert(name.clone());
-            return Ok(Expr::Effect { name, args: lowered, ty, answered: true });
+            return Ok(Expr::Effect { name, args: lowered, ty, answered: true, propagates });
         }
         if RUNTIME_TABLE.iter().any(|(b, _)| *b == name) {
-            return Ok(Expr::Call { target: Target::Runtime(runtime_name(&name)), args: lowered, ty });
+            return Ok(Expr::Call { target: Target::Runtime(runtime_name(&name)), args: lowered, ty, propagates });
         }
         if let Some(m) = self.ctx.registry.module_name_of(&name).map(|s| s.to_string()) {
-            return Ok(Expr::Call { target: Target::Module(m, name), args: lowered, ty });
+            return Ok(Expr::Call { target: Target::Module(m, name), args: lowered, ty, propagates });
         }
-        Ok(Expr::Call { target: Target::Runtime(name), args: lowered, ty })
+        Ok(Expr::Call { target: Target::Runtime(name), args: lowered, ty, propagates })
     }
 
     /// The specialised name of a user function called at these argument
@@ -1310,10 +1293,12 @@ mod tests {
     }
 
     #[test]
-    fn a_fallible_argument_is_propagated_before_the_call() {
+    fn a_fallible_argument_reaches_the_callee_as_its_payload() {
+        // the call propagates an error among its arguments (spec §10); the
+        // IR says so on the call and hoists nothing
         let ir = ir_of("r = read['x.txt']\nn = len[r]\nlog[n]\n");
         assert!(ir.contains("let r: Result(Str) = read!now(\"x.txt\")"), "{}", ir);
-        assert!(ir.contains("propagate r"), "{}", ir);
+        assert!(!ir.contains("propagate r"), "{}", ir);
         assert!(ir.contains("let n: Int = len(unwrap move r)"), "{}", ir);
     }
 

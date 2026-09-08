@@ -300,10 +300,12 @@ pub enum Expr {
     Constant(String, Ty),
     /// A user function as a value.
     FnRef(String, Ty),
-    Call { target: Target, args: Vec<Expr>, ty: Ty },
+    /// `propagates`: an error among the arguments is the call's value
+    /// (spec §10, auto-propagation); false for log, type, error, assert.
+    Call { target: Target, args: Vec<Expr>, ty: Ty, propagates: bool },
     /// A call that reaches outside the program's values; `answered` when
     /// its value is used (runs when asked), held to commit otherwise.
-    Effect { name: String, args: Vec<Expr>, ty: Ty, answered: bool },
+    Effect { name: String, args: Vec<Expr>, ty: Ty, answered: bool, propagates: bool },
     Convert { how: Convert, expr: Box<Expr>, ty: Ty },
     Binary { op: String, l: Box<Expr>, r: Box<Expr>, ty: Ty },
     Unary { op: String, expr: Box<Expr>, ty: Ty },
