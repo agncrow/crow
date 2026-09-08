@@ -886,3 +886,158 @@ pub fn iter_items(iter_val: &CrowValue) -> Result<Vec<CrowValue>, String> {
         _ => Err("for loop requires an array".to_string()),
     }
 }
+
+/// A view element rendered to markup from its evaluated arguments: an
+/// attribute map (scalar entries are attributes, event keys are wiring),
+/// markup children that pass through, text children escaped, a list that
+/// contributes each item, a frame that is a table's rows; layout
+/// attributes go through the kernel's table (crow_runtime::layout).
+pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> {
+    fn splice(inner: &mut String, items: &[CrowValue]) {
+        for it in items {
+            match &it.value {
+                Value::Str(s) if s.starts_with('<') && s.ends_with('>') => inner.push_str(s),
+                Value::Array(nested) => splice(inner, nested),
+                other => inner.push_str(&crate::interpreter::html_escape_text(&format!("{}", other))),
+            }
+        }
+    }
+    let mut inner = String::new();
+    let mut attrs: Vec<(String, String)> = Vec::new();
+    let (mut table_click, mut table_key, mut table_mark): (Option<String>, Option<String>, Option<String>) = (None, None, None);
+    let mut table_delta: Vec<String> = Vec::new();
+    let mut table_actions: Vec<(String, String)> = Vec::new();
+    let mut table_hide: Vec<String> = Vec::new();
+    for v in vals {
+        if v.is_error() {
+            // a view renders what it is given: a failed value shows its reason
+            inner.push_str(&format!("error: {}", v.reason));
+            continue;
+        }
+        match &v.value {
+            Value::Map(m) => {
+                for (k, val) in m.iter() {
+                    if name == "table" {
+                        match (k.as_str(), &val.value) {
+                            ("click", Value::Fn(f)) => {
+                                table_click = Some(f.name.clone());
+                                continue;
+                            }
+                            ("key", Value::Str(s)) => {
+                                table_key = Some(s.clone());
+                                continue;
+                            }
+                            ("mark", Value::Str(s)) => {
+                                table_mark = Some(s.clone());
+                                continue;
+                            }
+                            ("delta", Value::Array(items)) => {
+                                table_delta = items.iter().map(|i| format!("{}", i.value)).collect();
+                                continue;
+                            }
+                            ("actions", Value::Map(acts)) => {
+                                table_actions = acts
+                                    .iter()
+                                    .filter_map(|(label, h)| if let Value::Fn(hf) = &h.value { Some((label.clone(), hf.name.clone())) } else { None })
+                                    .collect();
+                                continue;
+                            }
+                            ("hide", Value::Array(items)) => {
+                                table_hide = items.iter().map(|i| format!("{}", i.value)).collect();
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+                    if matches!(k.as_str(), "click" | "input" | "submit" | "change" | "seek") {
+                        continue;
+                    }
+                    let s = match &val.value {
+                        Value::Str(s) => s.clone(),
+                        Value::Int(i) => i.to_string(),
+                        Value::Float(f) => f.to_string(),
+                        Value::Bool(b) => b.to_string(),
+                        _ => continue,
+                    };
+                    attrs.push((k.clone(), s));
+                }
+            }
+            Value::Str(s) if s.starts_with('<') && s.ends_with('>') => inner.push_str(s),
+            Value::Frame(f) if name == "table" => inner.push_str(&crow_runtime::layout::frame_table_html(
+                f,
+                table_click.as_deref(),
+                table_key.as_deref(),
+                table_mark.as_deref(),
+                &table_delta,
+                &table_actions,
+                &table_hide,
+            )),
+            Value::Array(items) => splice(&mut inner, items),
+            other => inner.push_str(&crate::interpreter::html_escape_text(&format!("{}", other))),
+        }
+    }
+    if name == "nav" {
+        if let Some((_, active)) = attrs.iter().find(|(k, _)| k == "active") {
+            inner = crow_runtime::layout::nav_active_html(&inner, active);
+        }
+    }
+    let rendered = crow_runtime::layout::render(name, &attrs);
+    if let Some(e) = rendered.errors.first() {
+        return Err(format!("{}: {}", name, e));
+    }
+    let mut out_attrs: Vec<(String, String)> = rendered.passthrough.clone();
+    if !rendered.class.is_empty() {
+        out_attrs.push(("class".to_string(), rendered.class.clone()));
+    }
+    if !rendered.style.is_empty() {
+        out_attrs.push(("style".to_string(), rendered.style.clone()));
+    }
+    out_attrs.extend(rendered.data.iter().cloned());
+    out_attrs.sort();
+    let attr_str: String = out_attrs.iter().map(|(k, v)| format!(" {}=\"{}\"", k, crate::interpreter::html_escape_attr(v))).collect();
+    Ok(format!("<{0}{2}>{1}</{0}>", rendered.tag, inner, attr_str))
+}
+
+/// A bound input rendered to markup: `field`, `slider`, `checkbox`,
+/// `toggle`, `radio`, `tabs`, `select`, given the variable's name (`key`)
+/// and the evaluated arguments.
+pub fn render_input(name: &str, key: &str, vals: &[CrowValue]) -> Result<String, String> {
+    use crow_web::view::CrowVNode;
+    let s = |v: &CrowValue| format!("{}", v.value);
+    let num = |v: &CrowValue| match &v.value {
+        Value::Int(n) => *n as f64,
+        Value::Float(f) => *f,
+        _ => 0.0,
+    };
+    let options = |v: &CrowValue| -> Result<Vec<String>, String> {
+        match &v.value {
+            Value::Array(items) => Ok(items.iter().map(|i| format!("{}", i.value)).collect()),
+            other => Err(format!("{}[] takes a list of options first, got {}", name, other.type_name())),
+        }
+    };
+    let node = match name {
+        "field" => {
+            let kind = match &vals[2].value {
+                Value::Str(k) if !k.is_empty() => k.clone(),
+                _ => match &vals[1].value {
+                    Value::Int(_) | Value::Float(_) => "number".to_string(),
+                    _ => "text".to_string(),
+                },
+            };
+            CrowVNode::field_typed(&s(&vals[0]), key, &s(&vals[1]), &kind, num(&vals[3]) as i64)
+        }
+        "slider" => CrowVNode::slider(&s(&vals[0]), key, &s(&vals[1]), num(&vals[2]), num(&vals[3]), num(&vals[4])),
+        "checkbox" | "toggle" => {
+            let on = match &vals[1].value {
+                Value::Bool(b) => *b,
+                Value::Int(n) => *n != 0,
+                Value::Str(t) => t == "true",
+                _ => false,
+            };
+            CrowVNode::check_input(&s(&vals[0]), key, on, name == "toggle")
+        }
+        "radio" | "tabs" => CrowVNode::choice_input(&options(&vals[0])?, key, &s(&vals[1]), name == "tabs"),
+        _ => CrowVNode::select_input(&options(&vals[0])?, key, &s(&vals[1])),
+    };
+    Ok(node.to_html())
+}

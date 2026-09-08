@@ -5058,8 +5058,11 @@ impl Transpiler {
                             return format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.{}(_idx) }}", idx, base_name, base_name, getter);
                         }
                         CrowType::Map(_) => {
-                            // Map lookup: map[key] → map[&key]
-                            return format!("{}[&{}].clone()", base_name, arg_strs.join(", "));
+                            // Map lookup: map[key] → map[&*key]; the deref
+                            // flattens a key that is already a reference (a
+                            // loop variable over keys[m]) to the one form
+                            // BTreeMap indexes by
+                            return format!("{}[&*({})].clone()", base_name, arg_strs.join(", "));
                         }
                         CrowType::Json => {
                             // JSON indexing: data["key"] or data[0] → data[key].clone()
@@ -5313,7 +5316,7 @@ impl Transpiler {
                         let getter = Self::cell_getter(&self.ctx.infer_expr(expr));
                         format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.{}(_idx) }}", idx, callee_str, callee_str, getter)
                     }
-                    CrowType::Map(_) => format!("{}[&{}].clone()", callee_str, arg_strs.join(", ")),
+                    CrowType::Map(_) => format!("{}[&*({})].clone()", callee_str, arg_strs.join(", ")),
                     CrowType::Json => {
                         let arg_type = self.ctx.infer_expr(&args[0]);
                         let idx_expr = match arg_type {

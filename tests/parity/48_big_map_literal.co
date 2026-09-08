@@ -1,0 +1,10 @@
+--- a large map literal is a nested set[] chain after lowering; the gate
+--- infers it in one pass (a 30-entry literal once took longer than anyone
+--- waited — every level was inferred twice, doubling the work per entry)
+widths = map['k0' = 0.0, 'k1' = 0.5, 'k2' = 1.0, 'k3' = 1.5, 'k4' = 2.0, 'k5' = 2.5, 'k6' = 3.0, 'k7' = 3.5, 'k8' = 4.0, 'k9' = 4.5, 'k10' = 5.0, 'k11' = 5.5, 'k12' = 6.0, 'k13' = 6.5, 'k14' = 7.0, 'k15' = 7.5, 'k16' = 8.0, 'k17' = 8.5, 'k18' = 9.0, 'k19' = 9.5, 'k20' = 10.0, 'k21' = 10.5, 'k22' = 11.0, 'k23' = 11.5, 'k24' = 12.0, 'k25' = 12.5, 'k26' = 13.0, 'k27' = 13.5, 'k28' = 14.0, 'k29' = 14.5, 'k30' = 15.0, 'k31' = 15.5, 'k32' = 16.0, 'k33' = 16.5, 'k34' = 17.0, 'k35' = 17.5, 'k36' = 18.0, 'k37' = 18.5, 'k38' = 19.0, 'k39' = 19.5]
+log[len[widths]]
+log[widths['k0'], widths['k17'], widths['k39']]
+total = 0.0
+for k in keys[widths]
+    total = total + widths[k]
+log[total]
