@@ -1,37 +1,37 @@
 # Benchmarks
 
-*Measured by `crow test --bench --write` on 2026-09-07, Apple M4 Max (aarch64), commit d7479c9. The interpreter is `crow run -i`; compiled is the release build `crow build` makes of the same program, timed from inside the program so a build is never counted. Sizes: full, 1000000 csv rows. The programs are in `tests/bench/`; `crow test --bench --quick` runs them at small sizes in CI so they cannot rot.*
+*Measured by `crow test --bench --write` on 2026-09-08, Apple M4 Max (aarch64), commit 215534f. The interpreter is `crow run -i`; compiled is the release build `crow build` makes of the same program, timed from inside the program so a build is never counted. Sizes: full, 1000000 csv rows. The programs are in `tests/bench/`; `crow test --bench --quick` runs them at small sizes in CI so they cannot rot.*
 
 | Program | Section | Interpreter | Compiled | Compiled is |
 |---|---|---|---|---|
-| collect | push_loop | 6.1ms | 89µs | ×68.2 faster |
-| collect | for_collect | 109.7ms | 2.1ms | ×51.5 faster |
-| collect | map_set_loop | 13.7ms | 1.3ms | ×10.6 faster |
-| collect | join_split | 70.6ms | 9.7ms | ×7.3 faster |
-| collect | sort | 42.6ms | 476µs | ×89.4 faster |
-| collect | json_roundtrip | 40.4ms | 1.5ms | ×26.8 faster |
-| collect | whole program | 316.8ms | 26.2ms | ×12.1 faster |
-| frames | csv_load | 71.7ms | 73.8ms | ×1.0 slower |
-| frames | filter | 56.1ms | 17.5ms | ×3.2 faster |
-| frames | group | 13.2ms | 10.2ms | ×1.3 faster |
-| frames | sort | 105.2ms | 66.1ms | ×1.6 faster |
-| frames | join | 34.2ms | 30.5ms | ×1.1 faster |
-| frames | select | 47µs | 32µs | ×1.5 faster |
-| frames | column_sum | 18.9ms | 1.4ms | ×13.5 faster |
-| frames | csv_save | 39.2ms | 36.4ms | ×1.1 faster |
-| frames | whole program | 581.5ms | 437.8ms | ×1.3 faster |
-| tensors | matmul | 23.6ms | 22.9ms | ×1.0 faster |
-| tensors | elementwise_chain | 120.1ms | 116.4ms | ×1.0 faster |
-| tensors | dot | 14.9ms | 15.7ms | ×1.1 slower |
-| tensors | sum | 3.3ms | 3.6ms | ×1.1 slower |
-| tensors | argsort | 2.28s | 2.03s | ×1.1 faster |
-| tensors | gram | 9.2ms | 11.4ms | ×1.2 slower |
-| tensors | inverse_300 | 4.1ms | 4.2ms | ×1.0 slower |
-| tensors | whole program | 2.47s | 2.23s | ×1.1 faster |
-| train | linreg_gd | 175.3ms | 167.8ms | ×1.0 faster |
-| train | mlp_forward | 10.6ms | 8.2ms | ×1.3 faster |
-| train | grad_calls | 48.0ms | 39µs | ×1235.9 faster |
-| train | whole program | 245.3ms | 185.0ms | ×1.3 faster |
+| collect | push_loop | 6.0ms | 17µs | ×356.4 faster |
+| collect | for_collect | 127.7ms | 1.8ms | ×70.9 faster |
+| collect | map_set_loop | 13.6ms | 1.3ms | ×10.3 faster |
+| collect | join_split | 66.9ms | 9.8ms | ×6.8 faster |
+| collect | sort | 3.4ms | 513µs | ×6.6 faster |
+| collect | json_roundtrip | 20.9ms | 1.6ms | ×13.3 faster |
+| collect | whole program | 269.1ms | 21.1ms | ×12.8 faster |
+| frames | csv_load | 64.8ms | 61.4ms | ×1.1 faster |
+| frames | filter | 76.3ms | 16.2ms | ×4.7 faster |
+| frames | group | 10.9ms | 9.4ms | ×1.2 faster |
+| frames | sort | 67.6ms | 65.4ms | ×1.0 faster |
+| frames | join | 33.2ms | 29.4ms | ×1.1 faster |
+| frames | select | 6µs | 2µs | ×3.1 faster |
+| frames | column_sum | 14.5ms | 1.5ms | ×9.6 faster |
+| frames | csv_save | 36.4ms | 33.8ms | ×1.1 faster |
+| frames | whole program | 542.7ms | 421.8ms | ×1.3 faster |
+| tensors | matmul | 8.6ms | 7.9ms | ×1.1 faster |
+| tensors | elementwise_chain | 42.0ms | 40.2ms | ×1.0 faster |
+| tensors | dot | 7.3ms | 7.4ms | ×1.0 slower |
+| tensors | sum | 1.3ms | 1.3ms | ×1.0 faster |
+| tensors | argsort | 1.14s | 1.14s | ×1.0 faster |
+| tensors | gram | 9.6ms | 8.7ms | ×1.1 faster |
+| tensors | inverse_300 | 3.3ms | 3.6ms | ×1.1 slower |
+| tensors | whole program | 1.29s | 1.29s | ×1.0 faster |
+| train | linreg_gd | 156.4ms | 148.2ms | ×1.1 faster |
+| train | mlp_forward | 8.6ms | 8.8ms | ×1.0 slower |
+| train | grad_calls | 48.7ms | 38µs | ×1276.5 faster |
+| train | whole program | 223.7ms | 162.5ms | ×1.4 faster |
 
 ## Notes
 
@@ -51,7 +51,7 @@ were behind it, all found by the table, all gone by the third run:
 | join_split (200k) | 48.4 s | 96 ms | the same: a loop after a large array copied that array per item |
 | sort (20k) | 32.4 s | 61 ms | the same; the sort itself takes 80 µs |
 | json_roundtrip (5k) | 7.81 s | 33 ms | the same |
-| whole program | 111 s | 317 ms | |
+| whole program | 111 s | 269 ms | |
 
 The compiled program's `push` and `set` cloned too (7.1 ms and 1.19 s
 for the two loops); they take 46 µs and 1.3 ms now. Both modes call

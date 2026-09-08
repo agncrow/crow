@@ -1,5 +1,7 @@
-/// Dependency analysis for automatic parallelism.
-/// Groups independent statements into waves that can run in parallel.
+//! What an expression reads: the variable names in it, including the
+//! ones inside interpolated strings. The checker and the transpiler use
+//! it. This module once grouped statements into parallel waves; the
+//! spec's Design Note "Statements Run in Order" records why that stopped.
 
 use std::collections::HashSet;
 use crate::ast::*;
@@ -98,82 +100,3 @@ pub fn stmt_reads(stmt: &Stmt) -> HashSet<String> {
         _ => HashSet::new(),
     }
 }
-
-/// Extract variables written by a statement
-pub fn stmt_writes(stmt: &Stmt) -> HashSet<String> {
-    let mut writes = HashSet::new();
-    match stmt {
-        Stmt::Assign { name, .. } => { writes.insert(name.clone()); }
-        Stmt::MultiAssign { names, .. } => {
-            for n in names { writes.insert(n.clone()); }
-        }
-        Stmt::FnDecl { name, .. } => { writes.insert(name.clone()); }
-        Stmt::StructDecl { name, .. } => { writes.insert(name.clone()); }
-        _ => {}
-    }
-    writes
-}
-
-/// Check if a statement is a "barrier" that must execute alone and sequentially.
-/// Only simple assignments (Assign, MultiAssign) can be parallelized.
-pub fn is_barrier(stmt: &Stmt) -> bool {
-    matches!(stmt,
-        Stmt::If { .. } | Stmt::For { .. } | Stmt::While { .. } |
-        Stmt::Return(_) | Stmt::Use { .. } |
-        Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::Resource { .. } |
-        Stmt::FieldAssign { .. } | Stmt::IndexAssign { .. } |
-        Stmt::ExprStmt(_)
-    )
-}
-
-/// Group statements into waves of independent work.
-/// Each wave contains statement indices that can safely run in parallel.
-pub fn group_into_waves(stmts: &[Stmt]) -> Vec<Vec<usize>> {
-    let mut waves: Vec<Vec<usize>> = vec![];
-    let mut current_wave: Vec<usize> = vec![];
-    let mut wave_reads: HashSet<String> = HashSet::new();
-    let mut wave_writes: HashSet<String> = HashSet::new();
-
-    for (i, stmt) in stmts.iter().enumerate() {
-        if matches!(stmt, Stmt::Line(_)) {
-            continue;
-        }
-        if is_barrier(stmt) {
-            if !current_wave.is_empty() {
-                waves.push(current_wave);
-                current_wave = vec![];
-            }
-            waves.push(vec![i]);
-            wave_reads = HashSet::new();
-            wave_writes = HashSet::new();
-            continue;
-        }
-
-        let reads = stmt_reads(stmt);
-        let writes = stmt_writes(stmt);
-
-        let raw = !reads.is_disjoint(&wave_writes);
-        let waw = !writes.is_disjoint(&wave_writes);
-        let war = !writes.is_disjoint(&wave_reads);
-
-        if raw || waw || war {
-            if !current_wave.is_empty() {
-                waves.push(current_wave);
-            }
-            current_wave = vec![i];
-            wave_reads = reads;
-            wave_writes = writes;
-        } else {
-            current_wave.push(i);
-            wave_reads.extend(reads);
-            wave_writes.extend(writes);
-        }
-    }
-
-    if !current_wave.is_empty() {
-        waves.push(current_wave);
-    }
-
-    waves
-}
-

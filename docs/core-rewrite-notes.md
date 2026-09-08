@@ -516,5 +516,13 @@ weeks; the core stages are weeks each.
 - **2026-09-07, `rand` on the seeded RNG** (`core-runtime-builtins.md`,
   log). Found on the way: statement waves make a seeded program's draw
   order depend on scheduling; parity 42 draws in one expression.
+- **2026-09-08, statement waves dropped** (Vijay's decision after the
+  measurement: five results in thirty runs of a seeded three-draw
+  script). Statements run in the order written in both modes; the wave
+  grouping, the interpreter's parallel top level and the transpiler's
+  `rayon::join` emitter are gone; parallel `for`, the kernels and the
+  search builtins stay. Spec §14 rewritten with a Design Note recording
+  the reversal; parity 43 pins order; parity 42 is three plain
+  statements again.
 - **Stage 3 next:** text and conversion (`join`, `str`, `input`,
   `shell`); then files and JSON.

@@ -117,3 +117,5 @@ side only.
   order is not fixed: a seeded program is deterministic only where its
   statements depend on each other. Evidence for dropping statement
   waves in stage 4 (`core-rewrite-notes.md` §4, §8).
+- 2026-09-08: statement waves dropped in both modes (spec §14, Design
+  Note "Statements Run in Order"); parity 43.

@@ -1,0 +1,28 @@
+--- Statements run in the order written (spec §14): a write is seen by
+--- the load after it, two logs come out in order, two seeded draws in
+--- two statements are the first and second of the sequence, and the
+--- ordinary in-order dependence of a total on its parts holds.
+use math as m
+
+write['order_probe.txt', 'first\nsecond\nthird\n']
+text = read['order_probe.txt']
+log[len[split[trim[text], '\n']]]
+rm['order_probe.txt']
+
+log['one']
+log['two']
+log['three']
+
+m.seed[7]
+p = rand[100]
+q = rand[100]
+m.seed[7]
+r = rand[100]
+s = rand[100]
+log[p eq r and q eq s]
+
+total = 0
+x = 5
+y = x * 2
+z = y + x
+log[z]
