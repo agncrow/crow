@@ -52,9 +52,9 @@ side only.
 | `abs sqrt floor ceil round` | own, with dual numbers for `grad` | Rust methods | `floor`/`ceil`/`round` return int in both | keep |
 | `min max` | own, int/float mixing | Rust methods | mixing rules must agree | move |
 | `split trim replace upper lower starts ends repeat` | Rust string methods | Rust string methods | none | keep |
-| `join` | formats int/float/bool items, tensor items | to check | item formatting is a display rule | move |
+| `join` | items by Display; tensor via `core::join_floats` | same | compiled join of an empty literal did not compile (fixed) | **runtime** |
 | `fmt` | `display::crow_fmt_*`, `moments::fmt_time` | same | none | runtime |
-| `int float str` | parse rules, error kinds | same rules, inline | `str` of a float goes through two Display impls | move (`str`) |
+| `int float str` | parse rules, error kinds; `str` is the text `log` prints | same; `str` of a list or map now goes through the display kernel | compiled `str` of a list or map did not compile (fixed) | keep |
 | `len` | array, tensor, chars, map, frame | typed; JSON via `json::len` | fixed 2026-09-07 (parity 40) | runtime |
 | `contains` | array by variant equality, tensor, substring | typed | none seen | keep |
 | `slice` | `core::slice`, `slice_str`, `slice_tensor` | same | compiled arrays panicked out of range, compiled tensors errored (fixed: clamped everywhere) | **runtime** |
@@ -66,12 +66,12 @@ side only.
 | `concat` | `core::concat` for lists; string, tensor as before | same | none | **runtime** |
 | `set del` | `core::map_set`, `map_del`, moved in for `m = set[m, k, v]` | same, moved in | in place in both modes now | **runtime** |
 | `args` | skips `run -i file` | all args | equivalent | keep |
-| `input` | reads a line | reads a line, stamps `captured` | interpreter stamp to check | move |
+| `input` | `core::read_line` | same, stamps `captured` | compiled trimmed all trailing whitespace where the interpreter trims the line ending only (fixed: line ending only) | **runtime** |
 | `rand` | `core::rand_float/int/between` on the seeded RNG | same | `seed[n]` now governs every draw (parity 42) | **runtime** |
 | `time sleep env exit` | std | std | none | keep |
 | `read write exists mkdir ls rm mv cp` | std, error kinds `io` | to check | error texts | move (one `io`) |
 | `json encode` | `json_to_crow` / `crow_to_json` in the interpreter | `serde_json::Value` kept dynamic | number formatting in `encode` | move (one encoder) |
-| `shell` | `sh -c`, map of status/stdout/stderr | to check | trailing newline trimming | move |
+| `shell` | `core::shell` → map of status/stdout/stderr | `core::shell` → `CrowShell` record | none now | **runtime** |
 | `hash` | sha2/md5 | to check | none | keep |
 | `find matches sub` | regex, groups map | to check | `find` with no match is an error value | move |
 | `now moment calendar parse_time` | `moments` | `moments` | none | runtime |
@@ -119,3 +119,9 @@ side only.
   waves in stage 4 (`core-rewrite-notes.md` §4, §8).
 - 2026-09-08: statement waves dropped in both modes (spec §14, Design
   Note "Statements Run in Order"); parity 43.
+- 2026-09-08, batch 2 (text): `core::join_floats`, `core::shell`,
+  `core::read_line`; compiled `str[]` of a list or map goes through
+  the display kernel as `log` does (it did not compile before), a
+  compiled `join` of an empty literal joins to nothing (it did not
+  compile), and compiled `input` keeps trailing spaces as the
+  interpreter does. Parity 44.

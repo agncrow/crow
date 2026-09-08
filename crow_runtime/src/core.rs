@@ -148,6 +148,51 @@ pub fn rand_between(min: i64, max: i64) -> Result<i64, String> {
     Ok(out)
 }
 
+/// `join[tensor, sep]`: a whole number prints without a decimal point,
+/// as it does in a list, everything else as the number is.
+pub fn join_floats(v: &[f64], sep: &str) -> String {
+    v.iter()
+        .map(|&x| if x == (x as i64) as f64 && x.is_finite() { (x as i64).to_string() } else { x.to_string() })
+        .collect::<Vec<String>>()
+        .join(sep)
+}
+
+/// What `shell[cmd]` answers: the exit status and what the command wrote,
+/// trailing whitespace trimmed from both streams.
+pub struct Shell {
+    pub status: i64,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// `shell[cmd]` through `sh -c`. Only a command that cannot start is an
+/// error; a non-zero exit is an answer, read from `.status`.
+pub fn shell(cmd: &str) -> Result<Shell, String> {
+    match std::process::Command::new("sh").arg("-c").arg(cmd).output() {
+        Ok(out) => Ok(Shell {
+            status: out.status.code().unwrap_or(-1) as i64,
+            stdout: String::from_utf8_lossy(&out.stdout).trim_end().to_string(),
+            stderr: String::from_utf8_lossy(&out.stderr).trim_end().to_string(),
+        }),
+        Err(e) => Err(format!("shell failed: {}", e)),
+    }
+}
+
+/// `input[]` / `input[prompt]`: one line from stdin without its line
+/// ending and nothing else removed; the prompt is written first.
+pub fn read_line(prompt: Option<&str>) -> Result<String, String> {
+    use std::io::Write;
+    if let Some(p) = prompt {
+        print!("{}", p);
+        let _ = std::io::stdout().flush();
+    }
+    let mut line = String::new();
+    match std::io::stdin().read_line(&mut line) {
+        Ok(_) => Ok(line.trim_end_matches('\n').trim_end_matches('\r').to_string()),
+        Err(e) => Err(format!("input error: {}", e)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,6 +254,22 @@ mod tests {
         assert!(rand_int(0).is_err());
         assert!(rand_between(3, 2).is_err());
         crate::rng::clear_seed();
+    }
+
+    #[test]
+    fn join_floats_prints_whole_numbers_bare() {
+        assert_eq!(join_floats(&[1.5, 2.0, 3.25], "|"), "1.5|2|3.25");
+        assert_eq!(join_floats(&[], ","), "");
+        assert_eq!(join_floats(&[-0.0, 1e21], " "), "0 1000000000000000000000");
+    }
+
+    #[test]
+    fn shell_reports_status_and_trims_the_streams() {
+        let sh = shell("printf 'out\n\n'; printf 'err \n' >&2; exit 3").unwrap();
+        assert_eq!(sh.status, 3);
+        assert_eq!(sh.stdout, "out");
+        assert_eq!(sh.stderr, "err");
+        assert_eq!(shell("exit 0").unwrap().status, 0);
     }
 
     #[test]
