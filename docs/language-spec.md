@@ -1217,8 +1217,8 @@ log[s]                     --- [1,2,3]
 
 | Function | Description |
 |----------|-------------|
-| `rand[]` | Random float between 0.0 and 1.0 |
-| `rand[n]` | Random int between 0 and n-1 |
+| `rand[]` | Random float in [0, 1) from the program's RNG; `seed[n]` (math) makes every draw repeatable, in both modes |
+| `rand[n]` | Random int between 0 and n-1 (n must be positive) |
 | `rand[min, max]` | Random int between min and max (inclusive) |
 | `time[]` | Current unix timestamp as float (seconds) |
 | `sleep[ms]` | Sleep for ms milliseconds (int) or seconds (float) |
@@ -1649,7 +1649,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 
 | Function | Description |
 |---|---|
-| `seed[n]` | Set global RNG seed for reproducibility |
+| `seed[n]` | Set the program's RNG seed: every later draw, tensors and the core `rand[]` alike, is repeatable and identical in both modes. Independent statements run in parallel (§14), so draws that must come in a fixed order are written in one expression or in statements that depend on each other |
 | `rand[d1, d2, ...]` | Uniform random in [0, 1) |
 | `randn[d1, d2, ...]` | Standard normal (mean=0, std=1) |
 | `normal[mean, std, d1, d2, ...]` | Normal with custom mean/std |

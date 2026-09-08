@@ -1370,7 +1370,7 @@ impl crate::display::CrowDisplay for CrowTensor {
 
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -1390,9 +1390,9 @@ mod tests {
 
     /// The seeded RNG is process-global (`crate::rng`), so tests that draw
     /// random numbers must not overlap: each holds this lock while it runs.
-    static RNG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    pub(crate) static RNG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    fn rng_lock() -> std::sync::MutexGuard<'static, ()> {
+    pub(crate) fn rng_lock() -> std::sync::MutexGuard<'static, ()> {
         RNG_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 

@@ -9,6 +9,8 @@
 
 use std::collections::BTreeMap;
 
+use rand::RngExt;
+
 /// `range[stop]`, `range[start, stop]`, `range[start, stop, step]`: the
 /// ints from `start` up to (or, with a negative step, down to) `stop`,
 /// exclusive. A zero step is refused.
@@ -118,6 +120,34 @@ pub fn map_del<T>(mut m: BTreeMap<String, T>, key: &str) -> BTreeMap<String, T> 
     m
 }
 
+/// `rand[]`: a float in [0, 1) from the program's RNG, the one `seed[n]`
+/// seeds, so a seeded program draws the same numbers in both modes.
+pub fn rand_float() -> f64 {
+    let mut out = 0.0;
+    crate::rng::with_rng(|r| out = r.random::<f64>());
+    out
+}
+
+/// `rand[n]`: an int in 0..n; `n` must be positive.
+pub fn rand_int(n: i64) -> Result<i64, String> {
+    if n <= 0 {
+        return Err(format!("rand[n] needs a positive n, got {}", n));
+    }
+    let mut out = 0;
+    crate::rng::with_rng(|r| out = r.random_range(0..n));
+    Ok(out)
+}
+
+/// `rand[min, max]`: an int in min..=max; `max` must not be below `min`.
+pub fn rand_between(min: i64, max: i64) -> Result<i64, String> {
+    if max < min {
+        return Err(format!("rand[min, max] needs min <= max, got {} and {}", min, max));
+    }
+    let mut out = 0;
+    crate::rng::with_rng(|r| out = r.random_range(min..=max));
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,6 +191,24 @@ mod tests {
         assert_eq!(sort_floats(vec![2.5, -1.0, 0.5]), vec![-1.0, 0.5, 2.5]);
         assert_eq!(sort_strs(vec!["pear".into(), "apple".into(), "fig".into()]), vec!["apple", "fig", "pear"]);
         assert_eq!(sort_by(vec![3, 1, 2], |a, b| b.cmp(a)), vec![3, 2, 1]);
+    }
+
+    #[test]
+    fn rand_follows_the_seed() {
+        // the tensor tests share the process-global RNG; seed and draw
+        // under the same guard the runtime's own tests use
+        let _guard = crate::tensor::tests::rng_lock();
+        crate::rng::set_seed(7);
+        let a = (rand_float(), rand_int(10).unwrap(), rand_between(1, 6).unwrap());
+        crate::rng::set_seed(7);
+        let b = (rand_float(), rand_int(10).unwrap(), rand_between(1, 6).unwrap());
+        assert_eq!(a, b);
+        assert!((0.0..1.0).contains(&a.0));
+        assert!((0..10).contains(&a.1));
+        assert!((1..=6).contains(&a.2));
+        assert!(rand_int(0).is_err());
+        assert!(rand_between(3, 2).is_err());
+        crate::rng::clear_seed();
     }
 
     #[test]

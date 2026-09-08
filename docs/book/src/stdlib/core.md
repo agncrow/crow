@@ -181,8 +181,8 @@ log[s]                     --- [1,2,3]
 
 | Function | Description | Example |
 |----------|-------------|---|
-| `rand[]` | Random float between 0.0 and 1.0 | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) |
-| `rand[n]` | Random int between 0 and n-1 | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) |
+| `rand[]` | Random float in [0, 1) from the program's RNG; `seed[n]` (math) makes every draw repeatable, in both modes | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) |
+| `rand[n]` | Random int between 0 and n-1 (n must be positive) | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) |
 | `rand[min, max]` | Random int between min and max (inclusive) | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) |
 | `time[]` | Current unix timestamp as float (seconds) | [Frames: `use frame`](../by-example/frames.md) · [Moments and freshness](../by-example/moments.md) · [The system: shell, environment, time, arguments](../by-example/system.md) |
 | `sleep[ms]` | Sleep for ms milliseconds (int) or seconds (float) | [The system: shell, environment, time, arguments](../by-example/system.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) |

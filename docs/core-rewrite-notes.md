@@ -513,5 +513,8 @@ weeks; the core stages are weeks each.
   moves the collection in (`core-runtime-builtins.md`, log). The
   interpreter's parallel `for` was cloning the whole interpreter per
   item; scopes are now reference-counted and the clone is per chunk.
-- **Stage 3 next:** batch 2, text and conversion (`join`, `str`,
-  `input`, `shell`); then files and JSON; then `rand` on the seeded RNG.
+- **2026-09-07, `rand` on the seeded RNG** (`core-runtime-builtins.md`,
+  log). Found on the way: statement waves make a seeded program's draw
+  order depend on scheduling; parity 42 draws in one expression.
+- **Stage 3 next:** text and conversion (`join`, `str`, `input`,
+  `shell`); then files and JSON.

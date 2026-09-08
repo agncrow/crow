@@ -4141,12 +4141,14 @@ impl Transpiler {
                     }
                     // --- System builtins ---
                     if name == "rand" {
+                        // the program's RNG, the one seed[n] seeds (core.rs)
+                        self.needs_crow_runtime = true;
                         if arg_strs.is_empty() {
-                            return "{ use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher}; let mut h = DefaultHasher::new(); std::time::SystemTime::now().hash(&mut h); std::thread::current().id().hash(&mut h); (h.finish() as f64) / (u64::MAX as f64) }".to_string();
+                            return "crow_runtime::core::rand_float()".to_string();
                         } else if arg_strs.len() == 1 {
-                            return format!("{{ use std::collections::hash_map::DefaultHasher; use std::hash::{{Hash, Hasher}}; let mut h = DefaultHasher::new(); std::time::SystemTime::now().hash(&mut h); std::thread::current().id().hash(&mut h); (h.finish() % ({} as u64)) as i64 }}", arg_strs[0]);
+                            return format!("crow_runtime::core::rand_int(({}) as i64).unwrap_or_else(|e| panic!(\"{{}}\", e))", arg_strs[0]);
                         } else if arg_strs.len() == 2 {
-                            return format!("{{ use std::collections::hash_map::DefaultHasher; use std::hash::{{Hash, Hasher}}; let mut h = DefaultHasher::new(); std::time::SystemTime::now().hash(&mut h); std::thread::current().id().hash(&mut h); let _min = {}; let _max = {}; _min + (h.finish() % ((_max - _min + 1) as u64)) as i64 }}", arg_strs[0], arg_strs[1]);
+                            return format!("crow_runtime::core::rand_between(({}) as i64, ({}) as i64).unwrap_or_else(|e| panic!(\"{{}}\", e))", arg_strs[0], arg_strs[1]);
                         }
                     }
                     if name == "time" && arg_strs.is_empty() {
