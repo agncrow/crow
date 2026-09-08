@@ -106,23 +106,6 @@ pub fn lower_program(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
 }
 
 impl Lowerer {
-    pub fn new() -> Self {
-        Lowerer {
-            fns: BTreeMap::new(),
-            structs: BTreeMap::new(),
-            current_line: 0,
-            in_view: false,
-        }
-    }
-
-    /// Lower a batch of statements. Signatures accumulate across calls, so a
-    /// persistent Lowerer (REPL, interpreter) resolves names from earlier
-    /// batches.
-    pub fn lower(&mut self, stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
-        self.collect_sigs(stmts);
-        self.lower_stmts(stmts)
-    }
-
     fn collect_sigs(&mut self, stmts: &[Stmt]) {
         for s in stmts {
             match s {

@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::Arc;
 
 use crow_runtime::frame::CrowFrame;
 use crow_runtime::tensor::CrowTensor;
@@ -101,16 +100,6 @@ impl CrowValue {
         self
     }
 
-    /// Adopt the older of two capture moments — a derived value is as old as
-    /// its oldest input (age flows like error metadata).
-    pub fn inherit_capture(&mut self, other: &CrowValue) {
-        self.captured = match (self.captured, other.captured) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (Some(a), None) => Some(a),
-            (None, Some(b)) => Some(b),
-            (None, None) => None,
-        };
-    }
 }
 
 /// The actual runtime values
@@ -124,9 +113,7 @@ pub enum Value {
     NumArray(CrowTensor),
     Map(BTreeMap<String, CrowValue>),
     Fn(FnValue),
-    StructDef(StructDef),
     StructInstance(StructInstance),
-    Module(ModuleValue),
     Sparse(CrowSparse), // sparse matrix (CSR format)
     Frame(CrowFrame), // column-oriented data frame
     DbConn(DbHandle), // database connection handle
@@ -136,29 +123,17 @@ pub enum Value {
     Done, // represents no value (from 'done' status)
 }
 
+/// A function as a value: its name and parameters; the walker holds the
+/// body under the name.
 #[derive(Debug, Clone)]
 pub struct FnValue {
     pub name: String,
-    pub params: Vec<String>,
-    pub body: Arc<Vec<crate::ast::Stmt>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct StructDef {
-    pub name: String,
-    pub fields: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct StructInstance {
     pub name: String,
     pub fields: BTreeMap<String, CrowValue>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ModuleValue {
-    pub name: String,
-    pub bindings: BTreeMap<String, CrowValue>,
 }
 
 impl Value {
@@ -182,9 +157,7 @@ impl Value {
             Value::NumArray(_) => "array",
             Value::Map(_) => "map",
             Value::Fn(_) => "fn",
-            Value::StructDef(_) => "struct",
             Value::StructInstance(_) => "struct_instance",
-            Value::Module(_) => "module",
             Value::Sparse(_) => "sparse",
             Value::Frame(_) => "frame",
             Value::DbConn(_) => "db",
@@ -194,20 +167,6 @@ impl Value {
         }
     }
 
-    /// Check if two values have compatible types for reassignment
-    pub fn type_compatible(&self, other: &Value) -> bool {
-        match (self, other) {
-            // int and float are compatible (Dual acts like float)
-            (Value::Int(_), Value::Float(_)) | (Value::Float(_), Value::Int(_)) => true,
-            (Value::Dual(_, _), Value::Float(_)) | (Value::Float(_), Value::Dual(_, _)) => true,
-            (Value::Dual(_, _), Value::Int(_)) | (Value::Int(_), Value::Dual(_, _)) => true,
-            (Value::Dual(_, _), Value::Dual(_, _)) => true,
-            // Array and NumArray are compatible (both are "array")
-            (Value::Array(_), Value::NumArray(_)) | (Value::NumArray(_), Value::Array(_)) => true,
-            // same variant is compatible
-            _ => std::mem::discriminant(self) == std::mem::discriminant(other),
-        }
-    }
 }
 
 impl fmt::Display for Value {
@@ -243,7 +202,6 @@ impl fmt::Display for Value {
                 write!(f, "]")
             }
             Value::Fn(func) => write!(f, "<fn {}>", func.name),
-            Value::StructDef(sd) => write!(f, "<struct {}>", sd.name),
             Value::StructInstance(si) => {
                 write!(f, "{}[", si.name)?;
                 for (i, (k, v)) in si.fields.iter().enumerate() {
@@ -259,7 +217,6 @@ impl fmt::Display for Value {
             Value::Frame(frame) => write!(f, "{}", frame),
             Value::DbConn(h) => write!(f, "<db:{}>", h.backend_name()),
             Value::GradFn(func) => write!(f, "<grad {}>", func.name),
-            Value::Module(m) => write!(f, "<module {}>", m.name),
             Value::Dual(real, _) => {
                 // Display as float (user never sees the derivative)
                 if *real == (*real as i64) as f64 && real.is_finite() {

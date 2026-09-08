@@ -1,12 +1,12 @@
-//! The operators, indexing and field access, once, for both walkers:
+//! The operators, indexing and field access, in one place:
 //! what `+` means between an int and a tensor, what `xs[-1]` is, what
-//! `df.price` reads. The AST interpreter calls these; the IR interpreter
-//! (ir-design.md §5) calls nothing else for them.
+//! `df.price` reads. The interpreter (`ir_interp.rs`, ir-design.md §5)
+//! calls nothing else for them; the compiled mode's runtime is built from
+//! the same kernels.
 
 use crate::ast::{BinOp, UnaryOp};
 use crate::value::*;
 use crow_runtime::tensor::CrowTensor;
-use std::collections::BTreeMap;
 
 pub fn binop(
     left: &CrowValue,
@@ -520,25 +520,6 @@ pub fn values_equal(a: &CrowValue, b: &CrowValue) -> bool {
 /// `Point[1, 2]`.
 pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, String> {
     match &callee.value {
-    Value::StructDef(sd) => {
-        let sd = sd.clone();
-        if sd.fields.len() != arg_vals.len() {
-            return Err(format!(
-                "{}[] expects {} fields, got {}",
-                sd.name,
-                sd.fields.len(),
-                arg_vals.len()
-            ));
-        }
-        let mut fields = BTreeMap::new();
-        for (name, val) in sd.fields.iter().zip(arg_vals) {
-            fields.insert(name.clone(), val);
-        }
-        Ok(CrowValue::ok(Value::StructInstance(StructInstance {
-            name: sd.name.clone(),
-            fields,
-        })))
-    }
     Value::Array(items) => {
         // array[index] - indexing
         if arg_vals.len() != 1 {
@@ -804,15 +785,6 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
                 )),
             }
         }
-        Value::Module(m) => {
-            match m.bindings.get(field) {
-                Some(val) => Ok(val.clone()),
-                None => Err(format!(
-                    "module '{}' has no member '{}'",
-                    m.name, field
-                )),
-            }
-        }
         Value::Map(m) => {
             match m.get(field) {
                 Some(val) => Ok(val.clone()),
@@ -898,7 +870,7 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
             match &it.value {
                 Value::Str(s) if s.starts_with('<') && s.ends_with('>') => inner.push_str(s),
                 Value::Array(nested) => splice(inner, nested),
-                other => inner.push_str(&crate::interpreter::html_escape_text(&format!("{}", other))),
+                other => inner.push_str(&crate::harness::html_escape_text(&format!("{}", other))),
             }
         }
     }
@@ -973,7 +945,7 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
                 &table_hide,
             )),
             Value::Array(items) => splice(&mut inner, items),
-            other => inner.push_str(&crate::interpreter::html_escape_text(&format!("{}", other))),
+            other => inner.push_str(&crate::harness::html_escape_text(&format!("{}", other))),
         }
     }
     if name == "nav" {
@@ -994,7 +966,7 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
     }
     out_attrs.extend(rendered.data.iter().cloned());
     out_attrs.sort();
-    let attr_str: String = out_attrs.iter().map(|(k, v)| format!(" {}=\"{}\"", k, crate::interpreter::html_escape_attr(v))).collect();
+    let attr_str: String = out_attrs.iter().map(|(k, v)| format!(" {}=\"{}\"", k, crate::harness::html_escape_attr(v))).collect();
     Ok(format!("<{0}{2}>{1}</{0}>", rendered.tag, inner, attr_str))
 }
 

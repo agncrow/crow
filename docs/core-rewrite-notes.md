@@ -579,6 +579,14 @@ weeks; the core stages are weeks each.
   arguments twice (a 25-entry map literal hung `crow build`), the
   compiler's map index by a `keys[]` loop variable, and the
   compile-error translator's `stringing`.
-- **Next:** the IR interpreter as `crow run -i` (the step 3 gate: every
-  suite green under it, then `interpreter.rs` goes), then step 4, the
-  Rust backend from the IR.
+- **2026-09-08, late — step 3 done:** the IR interpreter is `crow run
+  -i`; `interpreter.rs` is deleted, its 381 tests ported and green
+  through the walker; the checker, REPL, try, crowfile reader and
+  wireframe tool run on the walker; parallel loops, copy-on-write
+  scopes and in-place builtins keep the benchmark; found and fixed with
+  tests: a function's local shadowing a module name was typed as the
+  module's variable by the validator, inference and both lowerings
+  (parity 49), the removed time builtins' teaching errors moved to the
+  validator, resources and web stand-ins and `chart` ported.
+- **Next:** step 4, the Rust backend from the IR; then `transpiler.rs`
+  goes.

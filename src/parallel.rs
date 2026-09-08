@@ -7,8 +7,10 @@ use std::collections::HashSet;
 use crate::ast::*;
 
 /// Extract variable names read by string interpolation expressions like "hello {name}"
-pub fn str_interpolation_reads(s: &str) -> HashSet<String> {
-    let mut reads = HashSet::new();
+/// The expressions inside a string's interpolation spans, each parsed as
+/// the interpreter parses it: `'item`i` of `n`'` holds `i` and `n`.
+pub fn str_interpolation_spans(s: &str) -> Vec<Expr> {
+    let mut spans = Vec::new();
     let chars: Vec<char> = s.chars().collect();
     let mut i = 0;
     while i < chars.len() {
@@ -36,17 +38,24 @@ pub fn str_interpolation_reads(s: &str) -> HashSet<String> {
             }
             let expr_str: String = chars[start..i.min(chars.len())].iter().collect();
             i += 1;
-            // parse the interpolation expression and extract reads
             if let Ok(tokens) = crate::lexer::Lexer::new(&expr_str).tokenize() {
                 if let Ok(stmts) = crate::parser::Parser::new(tokens).parse() {
-                    if let Some(Stmt::ExprStmt(expr)) = stmts.iter().find(|s| !matches!(s, Stmt::Line(_))) {
-                        reads.extend(expr_reads(expr));
+                    if let Some(Stmt::ExprStmt(expr)) = stmts.into_iter().find(|s| !matches!(s, Stmt::Line(_))) {
+                        spans.push(expr);
                     }
                 }
             }
         } else {
             i += 1;
         }
+    }
+    spans
+}
+
+pub fn str_interpolation_reads(s: &str) -> HashSet<String> {
+    let mut reads = HashSet::new();
+    for expr in str_interpolation_spans(s) {
+        reads.extend(expr_reads(&expr));
     }
     reads
 }

@@ -7,8 +7,10 @@ both call it. This file is the audit and the worklist. Started
 
 ## How the duplication looks
 
-The interpreter dispatches on the builtin's name and the dynamic
-`Value` (`interpreter.rs`, 111 arms). The transpiler dispatches on the
+The interpreter dispatched on the builtin's name and the dynamic
+`Value` (`interpreter.rs`, 111 arms; since the IR interpreter became
+`crow run -i` the arms live in `builtins.rs` and `ops.rs`, and
+`interpreter.rs` is gone). The transpiler dispatches on the
 name and the inferred type and emits Rust text inline
 (`transpiler.rs`, 121 sites). Where the runtime already owns the
 operation (tensors, frames, moments, display, later) both sides call

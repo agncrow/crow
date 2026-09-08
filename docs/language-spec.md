@@ -3212,7 +3212,6 @@ crow book [--port N]        --- in the crow repository: serve the Crow Book with
                                 the app's book serves next to the app, on its serve port plus one (finch on 3100 → 3101)
 crow test                   --- run the test blocks of the project (or: crow test file.co)
 crow test --parity          --- run tests/parity/ in both modes and diff output
-crow test --parity --ir     --- the AST interpreter against the IR interpreter (advisory, until the IR interpreter is the default); also --book --ir, whose test blocks run under it; CROW_IR=1 crow test file.co runs a file's test blocks there
 crow test --book            --- execute every code block of the book in both modes
 crow test --docs            --- the docs cover every compiler name, and name nothing the compiler lacks
 crow test --bench           --- run tests/bench/ in both modes and print each section's seconds side by side (--quick: small sizes; --write: record docs/benchmarks.md)

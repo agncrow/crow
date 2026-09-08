@@ -16,8 +16,15 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 /// Lower a whole (expanded, lowered, inferred) program.
 pub fn lower(stmts: &[S], ctx: &mut TypeContext, part_name: &str) -> Result<Program, String> {
+    lower_with_known(stmts, ctx, part_name, &HashSet::new())
+}
+
+/// Lowering with names already bound by an earlier fragment (the REPL's
+/// session): a read of one is a local, an assignment to one is a `set`.
+pub fn lower_with_known(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &HashSet<String>) -> Result<Program, String> {
     let in_ui = stmts.iter().any(|s| matches!(s, S::Use { path, .. } if path == "ui" || path == "web.ui"));
     let mut l = Lowerer::new(ctx, in_ui);
+    l.scopes[0].extend(known.iter().cloned());
     let part = l.lower_part(stmts, part_name)?;
     Ok(Program { parts: vec![part] })
 }
@@ -92,6 +99,7 @@ impl<'a> Lowerer<'a> {
             uses: vec![],
             cpu: None,
             gpu: None,
+            nodes: None,
             structs: vec![],
             facts: vec![],
             derives: vec![],
@@ -111,10 +119,10 @@ impl<'a> Lowerer<'a> {
                 }
                 S::Resource { kind, count } => {
                     let n = if let A::Int(n) = count { *n } else { 0 };
-                    if kind == "gpu" {
-                        part.gpu = Some(n);
-                    } else {
-                        part.cpu = Some(n);
+                    match kind.as_str() {
+                        "gpu" => part.gpu = Some(n),
+                        "nodes" => part.nodes = Some(n),
+                        _ => part.cpu = Some(n),
                     }
                 }
                 S::StructDecl { name, fields } => {
@@ -213,7 +221,9 @@ impl<'a> Lowerer<'a> {
             FnKind::Pure
         };
         self.ctx.infer_function_body(name, body);
-        let saved = self.ctx.vars.clone();
+        // the body typed as inference types it: parameters from the
+        // signature, first assignments new bindings
+        let scope = self.ctx.enter_body(name);
         let sig = self.ctx.functions.get(name).cloned();
         let mut ps: Vec<(String, Ty)> = Vec::new();
         for p in params {
@@ -221,7 +231,6 @@ impl<'a> Lowerer<'a> {
                 .as_ref()
                 .and_then(|s| s.params.iter().find(|(n, _)| n == p).map(|(_, t)| t.clone()))
                 .unwrap_or(CrowType::Unknown);
-            self.ctx.vars.insert(p.clone(), t.clone());
             ps.push((p.clone(), ty_of(&t)));
         }
         for s in body {
@@ -234,7 +243,7 @@ impl<'a> Lowerer<'a> {
         self.scopes.push(params.iter().cloned().collect());
         let mut block = self.lower_block(body)?;
         self.scopes.pop();
-        self.ctx.vars = saved;
+        self.ctx.leave_body(scope);
         let param_set: HashSet<String> = params.iter().cloned().collect();
         place_moves_in(&mut block, &HashSet::new(), Some(&param_set));
         Ok(Fn { name: name.to_string(), params: ps, ret, body: block, kind, effects: vec![] })
@@ -477,6 +486,13 @@ impl<'a> Lowerer<'a> {
     }
 
     fn assign(&mut self, name: &str, expr: Expr) -> Stmt {
+        // an int assigned to a float variable is a float (spec §1): the
+        // conversion is explicit in the form
+        let expr = if matches!(self.ctx.vars.get(name), Some(CrowType::Float)) && expr.ty() == Ty::Int {
+            Expr::Convert { how: Convert::IntToFloat, expr: Box::new(expr), ty: Ty::Float }
+        } else {
+            expr
+        };
         if self.is_fact(name) && self.sees_facts() {
             return Stmt::Store { fact: name.to_string(), expr };
         }
@@ -595,11 +611,14 @@ impl<'a> Lowerer<'a> {
             A::Named { name, .. } => return Err(format!("lowering: a named argument ('{}') survived the lowering of named arguments", name)),
             A::ForExpr { var, iter, body } => {
                 let it = self.lower_expr(iter)?;
+                // the statement form's rule decides a collecting loop too
+                let outer: HashSet<String> = self.scopes.iter().flat_map(|s| s.iter().cloned()).collect();
+                let parallel = !assigns_any_of(body, &outer) && !reaches_effect(body, self.ctx) && !assigns_any(body, &self.ctx.facts);
                 self.scopes.push([var.clone()].into_iter().collect());
                 let mut b = self.lower_block(body)?;
                 self.scopes.pop();
                 place_moves_in(&mut b, &HashSet::new(), Some(&[var.clone()].into_iter().collect()));
-                Expr::ForExpr { var: var.clone(), iter: Box::new(it), body: b, ty }
+                Expr::ForExpr { var: var.clone(), iter: Box::new(it), body: b, ty, parallel }
             }
         })
     }
@@ -931,7 +950,8 @@ fn reaches_effect(body: &[S], ctx: &TypeContext) -> bool {
             A::Map(pairs) => pairs.iter().any(|(k, v)| in_expr(k, ctx) || in_expr(v, ctx)),
             A::Named { value, .. } => in_expr(value, ctx),
             A::ForExpr { iter, body, .. } => in_expr(iter, ctx) || reaches_effect(body, ctx),
-            A::Str(s) => s.contains('`'),
+            // an interpolation reaches what its spans reach
+            A::Str(s) => crate::parallel::str_interpolation_spans(s).iter().any(|e| in_expr(e, ctx)),
             _ => false,
         }
     }
