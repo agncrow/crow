@@ -4787,7 +4787,7 @@ impl Interpreter {
                 (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 * b))),
                 (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a * *b as f64))),
                 // tensor * tensor → matmul; tensor * scalar → scale
-                (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.matmul(b)))),
+                (Value::NumArray(a), Value::NumArray(b)) => a.try_matmul(b).map(|t| CrowValue::ok(Value::NumArray(t))),
                 (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(*b as f64)))),
                 (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(*b)))),
                 (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.mul_scalar(*a as f64)))),
@@ -6964,6 +6964,22 @@ mod tests {
             assert_eq!(t.shape(), &[2, 2]);
             assert!(t.to_vec().iter().all(|&v| (v - 3.0).abs() < 1e-10));
         } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn test_tensor_mul_of_vectors_is_an_error_not_a_panic() {
+        // `*` is matmul; two 1-D tensors have no product. The program stops
+        // with the reason (the benchmark's element-wise chain found a panic).
+        let src = "use math\nx = randn[3]\ny = x * x\n";
+        let mut lexer = crate::lexer::Lexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let mut interp = Interpreter::new();
+        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| interp.run(&stmts)))
+            .expect("must not panic")
+            .expect_err("expected a runtime error");
+        assert!(err.contains("2-D"), "{}", err);
     }
 
     #[test]

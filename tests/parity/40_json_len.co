@@ -1,0 +1,14 @@
+--- len[] of a parsed JSON value: array items, object keys, string
+--- characters, and a list of records encoded and parsed back. The
+--- compiled program keeps JSON as a dynamic value; the interpreter has
+--- already made arrays and maps of it. Both count the same.
+data = json['[1, 2, 3]']
+log[len[data]]
+obj = json['{"name": "crow", "n": 3}']
+log[len[obj]]
+s = json['"héllo"']
+log[len[s]]
+recs = for i in range[3]
+    map[id = float[i], price = float[i] * 1.5]
+back = json[encode[recs]]
+log[len[back]]

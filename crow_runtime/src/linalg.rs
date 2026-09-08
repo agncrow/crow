@@ -43,6 +43,23 @@ fn mat_to_tensor(m: &Mat<f64>) -> CrowTensor {
 // ── Linear algebra operations ───────────────────────────────────────────
 
 impl CrowTensor {
+    /// `*` between tensors, as both modes call it: the product, or the reason
+    /// there is none as a value the caller reports — a rank or shape
+    /// mismatch is a runtime error in a program, never a panic.
+    pub fn try_matmul(&self, other: &CrowTensor) -> Result<CrowTensor, String> {
+        let (a, b) = (self.shape(), other.shape());
+        if a.len() != 2 || b.len() != 2 {
+            return Err(format!(
+                "`*` between tensors is matrix multiplication and needs two 2-D tensors, got shapes {:?} and {:?} (use .* for an element-wise product)",
+                a, b
+            ));
+        }
+        if a[1] != b[0] {
+            return Err(format!("matmul: incompatible shapes [{},{}] × [{},{}]", a[0], a[1], b[0], b[1]));
+        }
+        Ok(self.matmul(other))
+    }
+
     /// Matrix multiplication: self (m×k) * other (k×n) → (m×n).
     /// Dispatches to GPU if both tensors are on GPU, otherwise uses CPU (faer).
     pub fn matmul(&self, other: &CrowTensor) -> CrowTensor {
@@ -306,6 +323,17 @@ impl CrowTensor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn try_matmul_reports_rank_and_shape_mismatches_as_values() {
+        let v = CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
+        let m = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let e = v.try_matmul(&v).unwrap_err();
+        assert!(e.contains("2-D") && e.contains(".*"), "{}", e);
+        let e = m.try_matmul(&CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3, 1])).unwrap_err();
+        assert!(e.contains("incompatible shapes"), "{}", e);
+        assert_eq!(m.try_matmul(&m).unwrap().shape(), &[2, 2]);
+    }
 
     fn approx_eq(a: f64, b: f64, tol: f64) {
         assert!((a - b).abs() < tol, "expected {} ≈ {}, diff = {}", a, b, (a - b).abs());
