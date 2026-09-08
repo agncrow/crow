@@ -34,6 +34,7 @@ These explain how Crow got here. They are kept for the reasoning; where a code s
 | [design-review.md](design-review.md) | The July 2026 honest review — ratings, pushbacks, and the log of how each was resolved. |
 | [app-baseline-design.md](app-baseline-design.md) | **The app baseline, design round.** What a program does, derived in a canonical form and diffed on every check: signatures, conditional trees, reach, the accept flow, kernel rules; rehearsal and the app chapter as the phases after. |
 | [rating-2026-09.md](rating-2026-09.md) | The September 2026 rating against the best comparator per dimension, and the prior art for the baseline design; each row is a workstream. |
+| [core-rewrite-notes.md](core-rewrite-notes.md) | **Notes toward a smaller core.** September 2026 discussion record: the paths finch's handlers carry and why, five language-level reductions, where whole-app complexity lives between parts, and a seven-concept kernel with one IR and two backends if the core were rewritten. Nothing decided. |
 | [roadmap.md](roadmap.md) | What is done and what remains, by priority. |
 | [discovered-features.md](discovered-features.md) | Language features mined from a real trading system's bug history, each written as a proposal; several have shipped. |
 | [automatic-verification.md](automatic-verification.md) | The original design of `crow check`: purity, edge cases, snapshots. |
