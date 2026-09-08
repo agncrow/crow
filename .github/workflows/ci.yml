@@ -33,6 +33,8 @@ jobs:
         run: ./target/release/crow test --docs
       - name: Parity corpus (both execution modes must agree)
         run: ./target/release/crow test --parity
+      - name: Benchmarks run in both modes (small sizes, no timing thresholds)
+        run: ./target/release/crow test --bench --quick
       - name: Book (every code block runs in both modes)
         run: ./target/release/crow test --book
       - name: Book site built by Crow (layout tested, pages written)

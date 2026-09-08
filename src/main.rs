@@ -204,6 +204,8 @@ fn main() {
         "test" => {
             if args.iter().any(|a| a == "--parity") {
                 cmd_test_parity();
+            } else if args.iter().any(|a| a == "--bench") {
+                cmd_test_bench();
             } else if args.iter().any(|a| a == "--book") {
                 cmd_test_book();
             } else if args.iter().any(|a| a == "--docs") {
@@ -865,6 +867,293 @@ fn cmd_test_parity() {
         process::exit(1);
     }
 }
+
+/// `crow test --bench [--quick] [--write]`: every `tests/bench/*.co` runs
+/// in both modes, the compiled one as the release build `crow build`
+/// makes, and the seconds each program reports with `bench: <section>
+/// <seconds>` lines are printed side by side; every other line the two
+/// modes print must agree, as in the parity corpus. `--quick` shrinks the
+/// sizes (the programs read BENCH_QUICK) and builds without optimisation:
+/// the smoke run CI does so the programs cannot rot. `--write` records the
+/// table in docs/benchmarks.md with the machine and the commit, keeping
+/// the hand-written notes below the table.
+fn cmd_test_bench() {
+    let args: Vec<String> = std::env::args().collect();
+    let quick = args.iter().any(|a| a == "--quick");
+    let write = args.iter().any(|a| a == "--write");
+    let dir = std::path::Path::new("tests/bench");
+    if !dir.is_dir() {
+        eprintln!("error: no tests/bench/ directory found (run from the project root)");
+        process::exit(1);
+    }
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.extension().map_or(false, |x| x == "co"))
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+    if files.is_empty() {
+        eprintln!("error: tests/bench/ contains no .co files");
+        process::exit(1);
+    }
+    let data = dir.join("data");
+    let _ = std::fs::create_dir_all(&data);
+    let rows = if quick { 20_000 } else { 1_000_000 };
+    write_bench_rows(&data.join("rows.csv"), rows);
+    if quick {
+        // Rust 2024: the environment is process-global, hence the block.
+        unsafe { std::env::set_var("CROW_BUILD_PROFILE", "dev"); }
+    }
+    let exe = std::env::current_exe().unwrap_or_else(|e| {
+        eprintln!("error locating crow binary: {}", e);
+        process::exit(1);
+    });
+    let timed = |mut cmd: std::process::Command| -> (bool, String, String, f64) {
+        if quick {
+            cmd.env("BENCH_QUICK", "1");
+        }
+        let start = std::time::Instant::now();
+        match cmd.output() {
+            Ok(o) => (
+                o.status.success(),
+                String::from_utf8_lossy(&o.stdout).to_string(),
+                String::from_utf8_lossy(&o.stderr).to_string(),
+                start.elapsed().as_secs_f64(),
+            ),
+            Err(e) => (false, String::new(), format!("failed to spawn: {}", e), 0.0),
+        }
+    };
+    println!(
+        "bench: {} programs, interpreter vs compiled{}\n",
+        files.len(),
+        if quick { " (quick sizes, unoptimised build)" } else { " (release build)" }
+    );
+    let mut table: Vec<(String, String, Option<f64>, Option<f64>)> = Vec::new();
+    let mut failures = 0;
+    for file in &files {
+        let name = file.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let path = file.to_string_lossy().to_string();
+        let mut icmd = std::process::Command::new(&exe);
+        icmd.args(["run", "-i"]).arg(&path);
+        let (i_ok, i_out, i_err, i_wall) = timed(icmd);
+        // `crow build` in a subprocess, so a program that fails to compile
+        // is one FAIL line and the run goes on; the binary it copies here
+        // is removed once timed.
+        let (c_ok, c_out, c_err, c_wall) = {
+            let mut bcmd = std::process::Command::new(&exe);
+            bcmd.arg("build").arg(&path);
+            match bcmd.output() {
+                Ok(o) if o.status.success() => {
+                    let stdout = String::from_utf8_lossy(&o.stdout).to_string();
+                    let built = stdout.lines().rev().find_map(|l| l.strip_prefix("build ok -> ./")).map(|s| s.trim().to_string());
+                    match built {
+                        Some(bin) => {
+                            let r = timed(std::process::Command::new(format!("./{}", bin)));
+                            let _ = std::fs::remove_file(&bin);
+                            r
+                        }
+                        None => (false, String::new(), "crow build printed no binary name".to_string(), 0.0),
+                    }
+                }
+                Ok(o) => (false, String::new(), String::from_utf8_lossy(&o.stderr).to_string(), 0.0),
+                Err(e) => (false, String::new(), format!("failed to spawn: {}", e), 0.0),
+            }
+        };
+        let mut ok = true;
+        if !i_ok {
+            ok = false;
+            println!("  FAIL  {}: interpreter exited with error: {}", name, i_err.lines().last().unwrap_or("(no stderr)"));
+        }
+        if !c_ok {
+            ok = false;
+            println!("  FAIL  {}: compiled exited with error: {}", name, c_err.lines().last().unwrap_or("(no stderr)"));
+        }
+        let checks = |s: &str| s.lines().filter(|l| !l.starts_with("bench: ")).map(|l| l.to_string()).collect::<Vec<_>>();
+        if i_ok && c_ok && checks(&i_out) != checks(&c_out) {
+            ok = false;
+            let (a, b) = (checks(&i_out), checks(&c_out));
+            let n = (0..a.len().max(b.len())).find(|&k| a.get(k) != b.get(k)).unwrap_or(0);
+            println!("  FAIL  {}: the modes disagree on a check line", name);
+            println!("        interpreter: {}", a.get(n).map(|s| s.as_str()).unwrap_or("<missing>"));
+            println!("        compiled:    {}", b.get(n).map(|s| s.as_str()).unwrap_or("<missing>"));
+        }
+        if ok {
+            println!("  ok    {}", name);
+        } else {
+            failures += 1;
+        }
+        let i_secs = bench_lines(&i_out);
+        let c_secs = bench_lines(&c_out);
+        let mut sections: Vec<String> = i_secs.iter().map(|(s, _)| s.clone()).collect();
+        for (s, _) in &c_secs {
+            if !sections.contains(s) {
+                sections.push(s.clone());
+            }
+        }
+        for s in sections {
+            let iv = i_secs.iter().find(|(k, _)| k == &s).map(|(_, v)| *v);
+            let cv = c_secs.iter().find(|(k, _)| k == &s).map(|(_, v)| *v);
+            table.push((name.clone(), s, iv, cv));
+        }
+        table.push((
+            name.clone(),
+            "whole program".to_string(),
+            if i_ok { Some(i_wall) } else { None },
+            if c_ok { Some(c_wall) } else { None },
+        ));
+    }
+    println!();
+    println!("  {:<10} {:<18} {:>12} {:>12}   {}", "program", "section", "interpreter", "compiled", "compiled is");
+    for (p, s, i, c) in &table {
+        println!(
+            "  {:<10} {:<18} {:>12} {:>12}   {}",
+            p,
+            s,
+            i.map(fmt_secs).unwrap_or_else(|| "—".into()),
+            c.map(fmt_secs).unwrap_or_else(|| "—".into()),
+            speedup(*i, *c)
+        );
+    }
+    if write {
+        write_benchmarks_doc(&table, quick, rows);
+        println!("\nrecorded in docs/benchmarks.md");
+    }
+    println!();
+    if failures == 0 {
+        println!("✓ {} programs ran in both modes", files.len());
+    } else {
+        println!("✗ {} of {} programs failed", failures, files.len());
+        process::exit(1);
+    }
+}
+
+fn bench_lines(out: &str) -> Vec<(String, f64)> {
+    out.lines()
+        .filter_map(|l| {
+            let rest = l.strip_prefix("bench: ")?;
+            let mut it = rest.split_whitespace();
+            let name = it.next()?.to_string();
+            let secs = it.next()?.parse::<f64>().ok()?;
+            Some((name, secs))
+        })
+        .collect()
+}
+
+fn fmt_secs(s: f64) -> String {
+    if s < 0.001 {
+        format!("{:.0}µs", s * 1e6)
+    } else if s < 1.0 {
+        format!("{:.1}ms", s * 1e3)
+    } else {
+        format!("{:.2}s", s)
+    }
+}
+
+fn speedup(i: Option<f64>, c: Option<f64>) -> String {
+    match (i, c) {
+        (Some(i), Some(c)) if c > 0.0 && i > 0.0 => {
+            let r = i / c;
+            if r >= 1.0 { format!("×{:.1} faster", r) } else { format!("×{:.1} slower", 1.0 / r) }
+        }
+        _ => String::new(),
+    }
+}
+
+/// The frame fixture: `rows` rows of five text and five numeric columns,
+/// deterministic, so a measurement is repeatable and the file need not be
+/// tracked.
+fn write_bench_rows(path: &std::path::Path, rows: usize) {
+    use std::io::Write;
+    let file = std::fs::File::create(path).unwrap_or_else(|e| {
+        eprintln!("error writing {}: {}", path.display(), e);
+        process::exit(1);
+    });
+    let mut w = std::io::BufWriter::new(file);
+    let symbols = ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOG", "TSLA", "NFLX"];
+    let venues = ["NYSE", "NASDAQ", "ARCA", "BATS"];
+    let _ = writeln!(w, "id,symbol,day,qty,price,side,venue,pnl,fee,note");
+    let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
+    for i in 1..=rows {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        let qty = (x % 500) as usize + 1;
+        let price = 20.0 + ((x >> 9) % 20000) as f64 / 100.0;
+        let pnl = (((x >> 21) % 40000) as f64 - 20000.0) / 100.0;
+        let _ = writeln!(
+            w,
+            "{},{},2026-09-{:02},{},{:.2},{},{},{:.2},{:.2},note {}",
+            i,
+            symbols[i % 8],
+            1 + i % 28,
+            qty,
+            price,
+            if i % 2 == 1 { "buy" } else { "sell" },
+            venues[i % 4],
+            pnl,
+            qty as f64 * 0.005,
+            i
+        );
+    }
+    let _ = w.flush();
+}
+
+fn write_benchmarks_doc(table: &[(String, String, Option<f64>, Option<f64>)], quick: bool, rows: usize) {
+    let path = std::path::Path::new("docs/benchmarks.md");
+    let notes = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| s.find("\n## Notes").map(|i| s[i..].to_string()))
+        .unwrap_or_else(|| "\n## Notes\n\nHand-written findings go here; the table above is rewritten by `crow test --bench --write`.\n".to_string());
+    let sh = |cmd: &str, args: &[&str]| {
+        std::process::Command::new(cmd)
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
+    };
+    let cpu = if cfg!(target_os = "macos") {
+        sh("sysctl", &["-n", "machdep.cpu.brand_string"])
+    } else {
+        std::fs::read_to_string("/proc/cpuinfo")
+            .ok()
+            .and_then(|s| s.lines().find(|l| l.starts_with("model name")).map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string()))
+            .unwrap_or_default()
+    };
+    let commit = sh("git", &["rev-parse", "--short", "HEAD"]);
+    let date = sh("date", &["+%Y-%m-%d"]);
+    let mut s = String::new();
+    s.push_str("# Benchmarks\n\n");
+    s.push_str(&format!(
+        "*Measured by `crow test --bench --write` on {}, {} ({}), commit {}. The interpreter is `crow run -i`; compiled is the {} of the same program, timed from inside the program so a build is never counted. Sizes: {}. The programs are in `tests/bench/`; `crow test --bench --quick` runs them at small sizes in CI so they cannot rot.*\n\n",
+        date,
+        cpu,
+        std::env::consts::ARCH,
+        commit,
+        if quick { "unoptimised build (`--quick`)" } else { "release build `crow build` makes" },
+        if quick { format!("quick, {} csv rows", rows) } else { format!("full, {} csv rows", rows) }
+    ));
+    s.push_str("| Program | Section | Interpreter | Compiled | Compiled is |\n|---|---|---|---|---|\n");
+    for (p, sec, i, c) in table {
+        s.push_str(&format!(
+            "| {} | {} | {} | {} | {} |\n",
+            p,
+            sec,
+            i.map(fmt_secs).unwrap_or_else(|| "—".into()),
+            c.map(fmt_secs).unwrap_or_else(|| "—".into()),
+            speedup(*i, *c)
+        ));
+    }
+    s.push_str(&notes);
+    std::fs::write(path, s).unwrap_or_else(|e| {
+        eprintln!("error writing docs/benchmarks.md: {}", e);
+        process::exit(1);
+    });
+}
+
 
 fn cmd_repl() {
     use rustyline::error::ReadlineError;

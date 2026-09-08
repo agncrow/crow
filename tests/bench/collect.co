@@ -1,0 +1,75 @@
+--- Collections and text: the accumulate-in-a-loop pattern, for as an
+--- expression, map building, join/split, sort, and a JSON round trip.
+--- Each section prints "bench: <name> <seconds>"; crow test --bench
+--- reads those lines in both modes. Everything else printed is a
+--- sanity check that must agree between the modes.
+q = env['BENCH_QUICK']
+quick = q.ok
+n = 10000
+if quick
+    n = 2000
+big = 1000000
+if quick
+    big = 50000
+text_n = 200000
+if quick
+    text_n = 50000
+json_n = 5000
+if quick
+    json_n = 2000
+
+--- push in a while loop: every push copies the list today
+t0 = now[]
+xs = []
+i = 0
+while i lt n
+    xs = push[xs, i]
+    i = i + 1
+log['bench: push_loop `now[] - t0`']
+log[len[xs]]
+
+--- for as an expression: the collecting form
+t0 = now[]
+ys = for i in range[big]
+    i * 2
+log['bench: for_collect `now[] - t0`']
+log[len[ys]]
+
+--- a map built one key at a time
+t0 = now[]
+m = map[]
+i = 0
+while i lt n
+    m = set[m, 'k`i`', i]
+    i = i + 1
+log['bench: map_set_loop `now[] - t0`']
+log[len[m]]
+
+--- text: interpolate, join, split
+t0 = now[]
+parts = for i in range[text_n]
+    'item`i`'
+s = join[parts, ',']
+back = split[s, ',']
+log['bench: join_split `now[] - t0`']
+log[len[back]]
+
+--- sort an array of ints (sized apart: the interpreter sort is slow, see docs/benchmarks.md)
+ns = 20000
+if quick
+    ns = 5000
+t0 = now[]
+zs = for i in range[ns]
+    (i * 7919) % 100003
+sorted_zs = sort[zs]
+log['bench: sort `now[] - t0`']
+log[sorted_zs[0] lte sorted_zs[1]]
+
+--- JSON: encode a list of records and parse it back
+t0 = now[]
+recs = for i in range[json_n]
+    map[id = float[i], price = float[i] * 1.5]
+text = encode[recs]
+back2 = json[text]
+log['bench: json_roundtrip `now[] - t0`']
+log[len[back2]]
