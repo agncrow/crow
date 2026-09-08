@@ -3,6 +3,7 @@ mod appbook;
 mod builtins;
 mod ir;
 mod lower_ir;
+mod ops;
 mod baseline;
 mod checker;
 mod db_check;
