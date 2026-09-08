@@ -199,6 +199,7 @@ pub struct Test {
 
 pub type Block = Vec<Stmt>;
 
+#[allow(dead_code)] // Stop and Line are read by the backends
 #[derive(Debug, Clone)]
 pub enum Stmt {
     /// First binding of a local.
@@ -237,6 +238,7 @@ pub enum PathStep {
 
 // ── Expressions ───────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum Const {
     Int(i64),
@@ -256,6 +258,7 @@ pub enum Target {
     Module(String, String),
 }
 
+#[allow(dead_code)] // the conversions the backends emit
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Convert {
     IntToFloat,
