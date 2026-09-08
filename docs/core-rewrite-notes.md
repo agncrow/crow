@@ -544,5 +544,12 @@ weeks; the core stages are weeks each.
   (needs typed columns); the interpreter's frame `filter` and column
   `sum` build a full value per row (needs typed columns and a compact
   boolean list).
-- **Next:** stage 4's first move, the IR's shape written into the spec
-  with the clock and the skip handler as worked cases.
+- **2026-09-08, stage 4 opened.** Vijay took the four recommendations:
+  status only where a value can fail; the IR interpreter first, behind
+  a flag; the three meanings one step after the IR; capabilities and
+  typed frames as the second half. `ir-design.md` is the record, for
+  review before code: types, declarations, statements, expressions, the
+  runtime table, the IR interpreter's values, the Rust backend, the
+  session layer, the gates and order, the clock and skip handlers in
+  the form.
+- **Next:** review of `ir-design.md`; then `ir.rs` and the printer.
