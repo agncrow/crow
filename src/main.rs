@@ -219,7 +219,10 @@ fn main() {
             }
         }
         "stop" => {
-            cmd_stop();
+            match args.get(2).map(|s| s.as_str()) {
+                Some("book") => cmd_stop_book(),
+                _ => cmd_stop(),
+            }
         }
         "book" => {
             cmd_book();
@@ -2025,14 +2028,19 @@ fn cmd_book() {
     use std::io::{Read, Write};
     use std::sync::{Arc, Mutex};
     let args: Vec<String> = std::env::args().collect();
-    let port: u16 = args.iter().position(|a| a == "--port")
-        .and_then(|i| args.get(i + 1)).and_then(|p| p.parse().ok()).unwrap_or(3008);
+    let chosen: Option<u16> = args.iter().position(|a| a == "--port")
+        .and_then(|i| args.get(i + 1)).and_then(|p| p.parse().ok());
     // The site is Crow's own: docs/book/site.crow renders every chapter
     // (use doc) with the runner built into each code block. Render it fresh
     // with the interpreter — well under a second — then serve the files.
     let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("crow"));
     let write_only = args.iter().any(|a| a == "--write");
     let site = std::path::Path::new("docs/book/site.crow");
+    // The language's book lives on 3008; an app's book lives next to the
+    // app, on its serve port plus one, so the two never collide and two
+    // apps' books do not either
+    let mut port: u16 = chosen.unwrap_or(3008);
+    let mut what = "the Crow Book".to_string();
     let book_dir = if site.exists() {
         // the Crow Book itself, rendered by its own site program
         let rendered = std::process::Command::new(&exe).args(["run", "-i", "docs/book/site.crow"]).status().map(|s| s.success()).unwrap_or(false);
@@ -2045,6 +2053,8 @@ fn cmd_book() {
     } else if std::path::Path::new("crowfile").exists() || std::path::Path::new("main.crow").exists() {
         // an app: its own book, derived from its source (app-baseline-design.md §8)
         let entry = if std::path::Path::new("crowfile").exists() { parse_crowfile().entry } else { "main.crow".to_string() };
+        if chosen.is_none() { port = serve_port_of(&read_file(&entry)).map(|p| p.saturating_add(1)).unwrap_or(3009); }
+        what = "the app's book".to_string();
         match build_app_book(&entry) {
             Ok(dir) => { println!("crow book: the app's book is written to {}", dir.display()); dir }
             Err(e) => { eprintln!("{}", e); process::exit(1); }
@@ -2056,9 +2066,15 @@ fn cmd_book() {
     if write_only { return; }
     let listener = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap_or_else(|e| {
         eprintln!("error: cannot listen on port {}: {}", port, e);
+        if e.kind() == std::io::ErrorKind::AddrInUse {
+            eprintln!("  a book may already be serving there — `crow stop book`, or pick another: crow book --port {}", port + 1);
+        }
         process::exit(1);
     });
-    println!("crow book: http://localhost:{}/  (every code block has ▶ Run — Ctrl-C to stop)", port);
+    // the pid, so `crow stop book` can find this server from the project
+    let _ = std::fs::create_dir_all(".crow");
+    let _ = std::fs::write(".crow/book.pid", std::process::id().to_string());
+    println!("crow book: http://localhost:{}/  — {} (Ctrl-C or `crow stop book` to stop)", port, what);
     let children: Arc<Mutex<std::collections::HashMap<String, u32>>> = Arc::new(Mutex::new(Default::default()));
 
     fn content_type(path: &std::path::Path) -> &'static str {
@@ -2211,6 +2227,36 @@ fn cmd_book() {
     }
 }
 
+/// The port an entry serves on: the first number in `serve[...]`.
+fn serve_port_of(source: &str) -> Option<u16> {
+    for line in source.lines() {
+        let t = line.trim_start();
+        if t.starts_with("---") { continue; }
+        if let Some(rest) = t.find("serve[").map(|i| &t[i + 6..]) {
+            let digits: String = rest.trim_start().chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let Ok(p) = digits.parse::<u16>() { return Some(p); }
+        }
+    }
+    None
+}
+
+/// `crow stop book`: the book this project is serving, by its pidfile.
+fn cmd_stop_book() {
+    if let Ok(pid_s) = std::fs::read_to_string(".crow/book.pid") {
+        if let Ok(pid) = pid_s.trim().parse::<i32>() {
+            let alive = unsafe { libc_kill(pid, 0) } == 0;
+            if alive {
+                unsafe { libc_kill(pid, 15) };
+                let _ = std::fs::remove_file(".crow/book.pid");
+                println!("stopped the book (pid {})", pid);
+                return;
+            }
+        }
+        let _ = std::fs::remove_file(".crow/book.pid");
+    }
+    println!("no book is serving from this project");
+}
+
 fn cmd_stop() {
     if let Ok(pid_s) = std::fs::read_to_string(".crow/app.pid") {
         if let Ok(pid) = pid_s.trim().parse::<i32>() {
@@ -2219,6 +2265,11 @@ fn cmd_stop() {
                 unsafe { libc_kill(pid, 15) };
                 let _ = std::fs::remove_file(".crow/app.pid");
                 println!("stopped (pid {})", pid);
+                if let Ok(b) = std::fs::read_to_string(".crow/book.pid") {
+                    if b.trim().parse::<i32>().map(|p| unsafe { libc_kill(p, 0) } == 0).unwrap_or(false) {
+                        println!("the book is still serving — `crow stop book` stops it");
+                    }
+                }
                 return;
             }
         }
@@ -3972,6 +4023,19 @@ fn project_root(source_dir: &std::path::Path) -> std::path::PathBuf {
             Some(p) => dir = p.to_path_buf(),
             None => return start.to_path_buf(),
         }
+    }
+}
+
+#[cfg(test)]
+mod book_port_tests {
+    use super::*;
+
+    /// An app's book lives next to the app: its serve port plus one.
+    #[test]
+    fn the_books_port_is_next_to_the_apps() {
+        assert_eq!(serve_port_of("use web, ui\nserve[3100, refresh = 1, wide = true]\npage['/', v]\n"), Some(3100));
+        assert_eq!(serve_port_of("--- serve[9999] in a comment does not count\nserve[ 3000 ]\n"), Some(3000));
+        assert_eq!(serve_port_of("use web\npage['/', v]\n"), None);
     }
 }
 

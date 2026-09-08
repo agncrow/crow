@@ -3187,9 +3187,11 @@ crow run file.crow          --- transpile + compile + run a specific file
 crow run train              --- run a named job from the crowfile jobs map
 crow run -i file.crow       --- run with interpreter (instant start, for exploring)
 crow stop                   --- stop the running app (pidfile, then project binary)
+crow stop book              --- stop the book this project is serving
 crow book [--port N]        --- in the crow repository: serve the Crow Book with every code block runnable in place;
                                 inside an app: derive and serve the app's own book — pages with trees and wireframes,
-                                a chapter per part, the data, the changes since the accepted baseline (--write: build only)
+                                a chapter per part, the data, the changes since the accepted baseline (--write: build only);
+                                the app's book serves next to the app, on its serve port plus one (finch on 3100 → 3101)
 crow test                   --- run the test blocks of the project (or: crow test file.crow)
 crow test --parity          --- run tests/parity/ in both modes and diff output
 crow test --book            --- execute every code block of the book in both modes

@@ -338,7 +338,10 @@ fn harness_select(n: &HNode, steps: &[(String, String)], depth: usize, out: &mut
 const LAYOUT_ENGINE_SRC: &str = include_str!("modules/layout.crow");
 
 /// One box the layout engine produced: where an element sits at a width.
+/// The tag and class travel for callers that draw by element kind; the
+/// wireframes pair boxes by path and read the geometry.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct LayoutBox {
     pub tag: String,
     pub class: String,

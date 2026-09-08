@@ -271,5 +271,8 @@ database is touched.
 ```text
 $ crow book
 crow book: the app's book is written to .crow/book/site
-crow book: http://localhost:3008/
+crow book: http://localhost:3101/  — the app's book (Ctrl-C or `crow stop book` to stop)
 ```
+
+The book serves next to the app, on its `serve` port plus one; `--port`
+chooses another. `crow stop book` stops it from anywhere in the project.
