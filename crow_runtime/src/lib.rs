@@ -7,6 +7,7 @@ pub mod json;
 pub mod later;
 pub mod layout;
 pub mod chart;
+pub mod core;
 pub mod moments;
 pub mod linalg;
 pub mod markdown;

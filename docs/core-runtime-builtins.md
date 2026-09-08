@@ -48,7 +48,7 @@ side only.
 
 | Builtin | Interpreter | Compiled | Divergence seen | Status |
 |---|---|---|---|---|
-| `range` | own loop | own loop | none | move (one generator) |
+| `range` | `core::range` | `core::range` | compiled `step_by` could not count down (fixed) | **runtime** |
 | `abs sqrt floor ceil round` | own, with dual numbers for `grad` | Rust methods | `floor`/`ceil`/`round` return int in both | keep |
 | `min max` | own, int/float mixing | Rust methods | mixing rules must agree | move |
 | `split trim replace upper lower starts ends repeat` | Rust string methods | Rust string methods | none | keep |
@@ -57,14 +57,14 @@ side only.
 | `int float str` | parse rules, error kinds | same rules, inline | `str` of a float goes through two Display impls | move (`str`) |
 | `len` | array, tensor, chars, map, frame | typed; JSON via `json::len` | fixed 2026-09-07 (parity 40) | runtime |
 | `contains` | array by variant equality, tensor, substring | typed | none seen | keep |
-| `slice` | clamps start and end, empty when start ≥ end; chars for strings | indexes directly for arrays: **panics out of range** | **yes** | move |
+| `slice` | `core::slice`, `slice_str`, `slice_tensor` | same | compiled arrays panicked out of range, compiled tensors errored (fixed: clamped everywhere) | **runtime** |
 | `keys values has` | BTreeMap | BTreeMap | none | keep |
-| `push` | **clones the list**; tensor via runtime | **clones the list**; tensor via runtime | none in meaning, both quadratic | move (in place) |
-| `pop` | empty list is an error value | **empty list is a silent no-op** | **yes** | move |
-| `sort` | mixed comparator, tensor via to_vec | `Vec::sort` (needs `Ord`), tensor via to_vec | float arrays that are not tensors would not compile; interpreter far too slow (benchmarks) | move |
-| `reverse` | list, tensor, string | same | none | keep |
-| `concat` | string, list, tensor with axis | same | none | keep |
-| `set del` | clones the map; homogeneity check | clones the map | none in meaning, both quadratic | move (in place) |
+| `push` | `core::push`, moved in for `x = push[x, v]` | same, moved in | in place in both modes now | **runtime** |
+| `pop` | `core::pop` | same | decided: an empty array stays empty (spec row) | **runtime** |
+| `sort` | `core::sort_by` with the value ordering | `core::sort_ints/floats/strs` by element type | the interpreter's slowness was the loop's environment copy, not the sort (see log) | **runtime** |
+| `reverse` | `core::reverse` for lists; tensor, string as before | same | none | **runtime** |
+| `concat` | `core::concat` for lists; string, tensor as before | same | none | **runtime** |
+| `set del` | `core::map_set`, `map_del`, moved in for `m = set[m, k, v]` | same, moved in | in place in both modes now | **runtime** |
 | `args` | skips `run -i file` | all args | equivalent | keep |
 | `input` | reads a line | reads a line, stamps `captured` | interpreter stamp to check | move |
 | `rand` | time hash, ignores `seed` | same text | both ignore `seed`; `rng.rs` exists | move (one RNG) |
@@ -95,3 +95,17 @@ side only.
 
 - 2026-09-07: audit written; `len` of JSON and `*` of vectors fixed on
   the way (parity 40, `try_matmul`).
+- 2026-09-07, batch 1 (collections): `crow_runtime::core` with
+  `range`, `push`, `pop`, `reverse`, `concat`, `slice`, `slice_str`,
+  `slice_tensor`, `sort_by`, `sort_ints/floats/strs`, `map_set`,
+  `map_del`; both modes call it; `x = push[x, v]` and the other
+  in-place shapes (`ast::IN_PLACE_BUILTINS`, `ast::in_place_call_on`)
+  move the collection into the call in both modes (the interpreter
+  takes it out of its variable for the call; the transpiler emits the
+  move); parity 41 pins the edges. Decisions: `pop` of an empty array
+  is the empty array; `slice` clamps everywhere; `range` counts down
+  with a negative step. On the way, the interpreter's real slowness:
+  a parallel `for` cloned the whole interpreter, environment included,
+  once per item; scopes are now shared by reference count and cloned
+  once per chunk of items, which took the benchmark's collect program
+  from 111 s to under a second in the interpreter.

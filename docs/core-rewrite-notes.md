@@ -508,5 +508,10 @@ weeks; the core stages are weeks each.
   value did not compile (`json::len`, parity 40). A third finding fixed
   on the way: the extension rename had left `.crow/` being created as
   `.co` and the legacy checks testing the new extension.
-- **Stage 3 next:** the builtin audit and the first batch into
-  `crow_runtime`.
+- **2026-09-07, stage 3 batch 1 built.** `crow_runtime::core` holds
+  the collection builtins once; both modes call it, and `x = push[x, v]`
+  moves the collection in (`core-runtime-builtins.md`, log). The
+  interpreter's parallel `for` was cloning the whole interpreter per
+  item; scopes are now reference-counted and the clone is per chunk.
+- **Stage 3 next:** batch 2, text and conversion (`join`, `str`,
+  `input`, `shell`); then files and JSON; then `rand` on the seeded RNG.

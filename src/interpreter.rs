@@ -14,14 +14,20 @@ use crate::parallel::{group_into_waves, stmt_writes};
 use crate::parser::Parser;
 use crate::value::*;
 
+/// One scope of variables. Reference-counted so that cloning an
+/// interpreter for a parallel loop shares every scope instead of copying
+/// every value in it; a write to a shared scope copies that scope first
+/// (`Arc::make_mut`), which in a loop body never happens to the global one.
+type Scope = Arc<HashMap<String, CrowValue>>;
+
 /// Environment: a stack of scopes for variable lookup
 #[derive(Debug, Clone)]
 struct Env {
-    scopes: Vec<HashMap<String, CrowValue>>,
+    scopes: Vec<Scope>,
     /// Saved scope stacks for function call isolation.
     /// When a function is called, non-global scopes are saved here
     /// so the function can only see globals + its own scope.
-    saved_stacks: Vec<Vec<HashMap<String, CrowValue>>>,
+    saved_stacks: Vec<Vec<Scope>>,
     /// `use ui` programs keep module variables visible inside functions —
     /// they are reactive state (see spec Design Note "No Ambient Mutability").
     ui_mode: bool,
@@ -32,7 +38,7 @@ struct Env {
 impl Env {
     fn new() -> Self {
         Env {
-            scopes: vec![HashMap::new()],
+            scopes: vec![Arc::new(HashMap::new())],
             saved_stacks: Vec::new(),
             ui_mode: false,
             exempt_frames: Vec::new(),
@@ -56,7 +62,7 @@ impl Env {
     }
 
     fn push_scope(&mut self) {
-        self.scopes.push(HashMap::new());
+        self.scopes.push(Arc::new(HashMap::new()));
     }
 
     fn pop_scope(&mut self) {
@@ -67,11 +73,11 @@ impl Env {
     /// Saves all non-global scopes and creates a fresh scope for the function.
     /// This prevents function-local variables from clobbering caller variables.
     fn push_call_scope(&mut self, exempt: bool) {
-        let saved: Vec<HashMap<String, CrowValue>> = self.scopes.drain(1..).collect();
+        let saved: Vec<Scope> = self.scopes.drain(1..).collect();
         self.saved_stacks.push(saved);
         self.exempt_frames.push(exempt);
         // Now scopes = [global] only; push a fresh function scope
-        self.scopes.push(HashMap::new());
+        self.scopes.push(Arc::new(HashMap::new()));
     }
 
     /// Pop an isolated function scope and restore the caller's scopes.
@@ -89,7 +95,7 @@ impl Env {
     /// module state whatever frame this is.
     fn set_local(&mut self, name: &str, value: CrowValue) {
         if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name.to_string(), value);
+            Arc::make_mut(scope).insert(name.to_string(), value);
         }
     }
 
@@ -108,7 +114,7 @@ impl Env {
             if !local_first {
                 if let Some(global) = self.scopes.first_mut() {
                     if global.contains_key(name) {
-                        global.insert(name.to_string(), value);
+                        Arc::make_mut(global).insert(name.to_string(), value);
                         return;
                     }
                 }
@@ -116,7 +122,7 @@ impl Env {
         }
         // set in the current (top) scope
         if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name.to_string(), value);
+            Arc::make_mut(scope).insert(name.to_string(), value);
         }
     }
 
@@ -155,10 +161,25 @@ impl Env {
                         return None;
                     }
                 }
-                return scope.get_mut(name);
+                return Arc::make_mut(scope).get_mut(name);
             }
         }
         None
+    }
+
+    /// Store an assignment: update the variable where it exists, or bind
+    /// it here when it is new. One move, no copy of the value, which is
+    /// what keeps `xs = push[xs, v]` in place after the runtime returns
+    /// the grown vector.
+    fn assign(&mut self, name: &str, value: CrowValue) {
+        let stop_at = if self.saved_stacks.is_empty() { 0 } else { 1 };
+        for scope in self.scopes[stop_at..].iter_mut().rev() {
+            if scope.contains_key(name) {
+                Arc::make_mut(scope).insert(name.to_string(), value);
+                return;
+            }
+        }
+        self.set(name, value);
     }
 
     fn update(&mut self, name: &str, value: CrowValue) -> bool {
@@ -169,7 +190,7 @@ impl Env {
         let stop_at = if self.saved_stacks.is_empty() { 0 } else { 1 };
         for scope in self.scopes[stop_at..].iter_mut().rev() {
             if scope.contains_key(name) {
-                scope.insert(name.to_string(), value);
+                Arc::make_mut(scope).insert(name.to_string(), value);
                 return true;
             }
         }
@@ -195,6 +216,18 @@ const READER_FNS: &[&str] = &[
     "csv", "lines",
 ];
 
+
+/// How `sort[]` orders the interpreter's values: ints, floats and strings
+/// by value, anything else as equal (the runtime does the sorting,
+/// core.rs; this is the ordering it is handed).
+fn value_cmp(a: &CrowValue, b: &CrowValue) -> std::cmp::Ordering {
+    match (a.unwrap_or_propagate().ok(), b.unwrap_or_propagate().ok()) {
+        (Some(Value::Int(x)), Some(Value::Int(y))) => x.cmp(y),
+        (Some(Value::Float(x)), Some(Value::Float(y))) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+        (Some(Value::Str(x)), Some(Value::Str(y))) => x.cmp(y),
+        _ => std::cmp::Ordering::Equal,
+    }
+}
 
 fn html_escape_text(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
@@ -1100,7 +1133,12 @@ impl Interpreter {
             // registered in the prescan; nothing runs until it is read
             Stmt::Derive { .. } => Ok(Signal::None),
             Stmt::Assign { name, value } => {
-                let val = self.eval_expr(value)?;
+                // `x = push[x, v]` and its kin: the collection is taken out
+                // of its variable for the call and grows in place (core.rs)
+                let val = match self.assign_in_place(name, value)? {
+                    Some(v) => v,
+                    None => self.eval_expr(value)?,
+                };
                 // Check for type-changing reassignment
                 if let Some(existing) = self.env.get(name) {
                     if !existing.value.type_compatible(&val.value)
@@ -1123,9 +1161,7 @@ impl Interpreter {
                     _ => val,
                 };
                 let changed = self.env.get(name).map(|e| !scalar_equal(&e.value, &val.value)).unwrap_or(true);
-                if !self.env.update(name, val.clone()) {
-                    self.env.set(name, val);
-                }
+                self.env.assign(name, val);
                 self.note_fact_write(name, changed);
                 Ok(Signal::None)
             }
@@ -1148,9 +1184,7 @@ impl Interpreter {
                         }
                     }
                     let changed = self.env.get(name).map(|e| !scalar_equal(&e.value, &val.value)).unwrap_or(true);
-                    if !self.env.update(name, val.clone()) {
-                        self.env.set(name, val);
-                    }
+                    self.env.assign(name, val);
                     self.note_fact_write(name, changed);
                 }
                 Ok(Signal::None)
@@ -1635,28 +1669,52 @@ impl Interpreter {
             return Ok(results);
         }
 
+        // One clone of the interpreter per chunk of items, not per item:
+        // the environment's scopes are shared (Arc) so the clone is cheap,
+        // and a chunk's iterations run in order on it, each in a scope of
+        // its own, so nothing leaks between them. A body that writes an
+        // outer variable took the sequential path above.
         let run_parallel = |items: &[CrowValue], interp: &Self, var: &str, body: &[Stmt]| -> Result<Vec<CrowValue>, String> {
-            items
-                .par_iter()
-                .map(|item| {
+            let threads = rayon::current_num_threads().max(1);
+            let chunk = (items.len() / (threads * 4)).max(1);
+            let chunks: Vec<Result<Vec<CrowValue>, String>> = items
+                .par_chunks(chunk)
+                .map(|part| {
                     let mut local = interp.clone();
-                    local.env.push_scope();
-                    local.env.set(var, item.clone());
-                    let mut last_val = CrowValue::done();
-                    for stmt in body {
-                        match local.exec_stmt(stmt)? {
-                            Signal::Return(_) => {
-                                return Err(
-                                    "cannot return from inside a for loop".to_string()
-                                );
+                    let mut out = Vec::with_capacity(part.len());
+                    for item in part {
+                        local.env.push_scope();
+                        local.env.set(var, item.clone());
+                        let mut last_val = CrowValue::done();
+                        let mut failed: Option<String> = None;
+                        for stmt in body {
+                            match local.exec_stmt(stmt) {
+                                Ok(Signal::Return(_)) => {
+                                    failed = Some("cannot return from inside a for loop".to_string());
+                                    break;
+                                }
+                                Ok(Signal::Value(val)) => last_val = val,
+                                Ok(Signal::None | Signal::Break | Signal::Continue) => {}
+                                Err(e) => {
+                                    failed = Some(e);
+                                    break;
+                                }
                             }
-                            Signal::Value(val) => last_val = val,
-                            Signal::None | Signal::Break | Signal::Continue => {}
                         }
+                        local.env.pop_scope();
+                        if let Some(e) = failed {
+                            return Err(e);
+                        }
+                        out.push(last_val);
                     }
-                    Ok(last_val)
+                    Ok(out)
                 })
-                .collect()
+                .collect();
+            let mut results = Vec::with_capacity(items.len());
+            for c in chunks {
+                results.extend(c?);
+            }
+            Ok(results)
         };
 
         match self.cpu_count {
@@ -2437,7 +2495,7 @@ impl Interpreter {
                         _ => value,
                     };
                     let changed = self.env.scopes.first().and_then(|sc| sc.get(&var)).map(|e| !scalar_equal(&e.value, &value.value)).unwrap_or(true);
-                    if let Some(scope) = self.env.scopes.first_mut() { scope.insert(var.clone(), value); }
+                    if let Some(scope) = self.env.scopes.first_mut() { Arc::make_mut(scope).insert(var.clone(), value); }
                     self.note_fact_write(&var, changed);
                     return Ok(CrowValue::done());
                 }
@@ -2983,7 +3041,7 @@ impl Interpreter {
         // The engine's functions belong to the global scope whichever call
         // frame first needs them — a test block's frame, or a clone running
         // one iteration of a parallel loop — so run it with the globals alone.
-        let saved_scopes: Vec<HashMap<String, CrowValue>> = self.env.scopes.drain(1..).collect();
+        let saved_scopes: Vec<Scope> = self.env.scopes.drain(1..).collect();
         let saved_stacks = std::mem::take(&mut self.env.saved_stacks);
         let saved_frames = std::mem::take(&mut self.env.exempt_frames);
         let r = self.run(&stmts);
@@ -3122,6 +3180,85 @@ impl Interpreter {
             }
             other => Err(format!("{}[] requires an array, got {}", name, other.type_name())),
         }
+    }
+
+    /// `x = push[x, v]`, `x = set[x, k, v]` and the other in-place shapes
+    /// (ast::IN_PLACE_BUILTINS): when the right-hand side reads `x` exactly
+    /// once as the collection argument, the other arguments are evaluated
+    /// first, then `x` is taken out of its variable and handed to the
+    /// runtime by value, so the collection grows in place instead of being
+    /// copied. Any other shape, or anything that could fail, returns `None`
+    /// and the ordinary path runs.
+    fn assign_in_place(&mut self, name: &str, value: &Expr) -> Result<Option<CrowValue>, String> {
+        if !crate::ast::in_place_call_on(value, name) || self.derives.contains_key(name) {
+            return Ok(None);
+        }
+        let (f, args) = match value {
+            Expr::Call { callee, args } => match callee.as_ref() {
+                Expr::Ident(f) => (f.as_str(), args),
+                _ => return Ok(None),
+            },
+            _ => return Ok(None),
+        };
+        // a user function or a module function of the same name wins, as
+        // it does in eval_call
+        if matches!(self.env.get(f), Some(v) if matches!(v.value, Value::Fn(_)))
+            || (self.registry.has_function(f) && f != "sort")
+        {
+            return Ok(None);
+        }
+        let rest: Vec<CrowValue> = args[1..].iter().map(|a| self.eval_expr(a)).collect::<Result<_, _>>()?;
+        if rest.iter().any(|r| r.is_error()) {
+            return Ok(None);
+        }
+        // the shape must be one the runtime handles totally; anything else
+        // (a frame, a tensor, a wrong key type) takes the ordinary path
+        {
+            let cur = match self.env.get(name) {
+                Some(v) if !v.is_error() => v,
+                _ => return Ok(None),
+            };
+            let ok = match (&cur.value, f) {
+                (Value::Array(_), "push") => rest.len() == 1,
+                (Value::Array(_), "pop") | (Value::Array(_), "reverse") | (Value::Array(_), "sort") => rest.is_empty(),
+                (Value::Array(_), "concat") => rest.len() == 1 && matches!(rest[0].value, Value::Array(_)),
+                (Value::Map(m), "set") => {
+                    rest.len() == 2
+                        && matches!(rest[0].value, Value::Str(_))
+                        && Self::check_map_homogeneous(m, &rest[1]).is_ok()
+                }
+                (Value::Map(_), "del") => rest.len() == 1 && matches!(rest[0].value, Value::Str(_)),
+                _ => false,
+            };
+            if !ok {
+                return Ok(None);
+            }
+        }
+        let taken = match self.env.get_mut(name) {
+            Some(slot) => std::mem::replace(slot, CrowValue::done()),
+            None => return Ok(None),
+        };
+        let mut rest = rest.into_iter();
+        let out = match (taken.value, f) {
+            (Value::Array(items), "push") => Value::Array(crow_runtime::core::push(items, rest.next().unwrap())),
+            (Value::Array(items), "pop") => Value::Array(crow_runtime::core::pop(items)),
+            (Value::Array(items), "reverse") => Value::Array(crow_runtime::core::reverse(items)),
+            (Value::Array(items), "sort") => Value::Array(crow_runtime::core::sort_by(items, value_cmp)),
+            (Value::Array(items), "concat") => match rest.next().unwrap().value {
+                Value::Array(other) => Value::Array(crow_runtime::core::concat(items, &other)),
+                _ => unreachable!("checked above"),
+            },
+            (Value::Map(m), "set") => {
+                let key = match rest.next().unwrap().value { Value::Str(s) => s, _ => unreachable!("checked above") };
+                Value::Map(crow_runtime::core::map_set(m, key, rest.next().unwrap()))
+            }
+            (Value::Map(m), "del") => {
+                let key = match rest.next().unwrap().value { Value::Str(s) => s, _ => unreachable!("checked above") };
+                Value::Map(crow_runtime::core::map_del(m, &key))
+            }
+            _ => unreachable!("checked above"),
+        };
+        Ok(Some(CrowValue::ok(out)))
     }
 
     fn call_builtin(
@@ -3282,20 +3419,10 @@ impl Interpreter {
                     }
                     _ => return Err("range[] takes 1, 2, or 3 arguments".to_string()),
                 };
-                let mut result = Vec::new();
-                if step > 0 {
-                    let mut i = start;
-                    while i < stop {
-                        result.push(CrowValue::ok(Value::Int(i)));
-                        i += step;
-                    }
-                } else {
-                    let mut i = start;
-                    while i > stop {
-                        result.push(CrowValue::ok(Value::Int(i)));
-                        i += step;
-                    }
-                }
+                let result = crow_runtime::core::range(start, stop, step)?
+                    .into_iter()
+                    .map(|i| CrowValue::ok(Value::Int(i)))
+                    .collect();
                 Ok(CrowValue::ok(Value::Array(result)))
             }
             // --- Math builtins ---
@@ -3616,13 +3743,7 @@ impl Interpreter {
                     Value::Array(items) => {
                         match (args[1].unwrap_or_propagate()?, args[2].unwrap_or_propagate()?) {
                             (Value::Int(start), Value::Int(end)) => {
-                                let s = (*start).max(0) as usize;
-                                let e = (*end as usize).min(items.len());
-                                if s >= e {
-                                    Ok(CrowValue::ok(Value::Array(vec![])))
-                                } else {
-                                    Ok(CrowValue::ok(Value::Array(items[s..e].to_vec())))
-                                }
+                                Ok(CrowValue::ok(Value::Array(crow_runtime::core::slice(items, *start, *end))))
                             }
                             _ => Err("slice[] requires integer start and end".into()),
                         }
@@ -3630,13 +3751,7 @@ impl Interpreter {
                     Value::NumArray(t) => {
                         match (args[1].unwrap_or_propagate()?, args[2].unwrap_or_propagate()?) {
                             (Value::Int(start), Value::Int(end)) => {
-                                let s = (*start).max(0) as usize;
-                                let e = (*end as usize).min(t.len());
-                                if s >= e {
-                                    Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(vec![], vec![0]))))
-                                } else {
-                                    Ok(CrowValue::ok(Value::NumArray(t.slice(0, s, e))))
-                                }
+                                Ok(CrowValue::ok(Value::NumArray(crow_runtime::core::slice_tensor(t, *start, *end))))
                             }
                             _ => Err("slice[] requires integer start and end".into()),
                         }
@@ -3644,15 +3759,7 @@ impl Interpreter {
                     Value::Str(s) => {
                         match (args[1].unwrap_or_propagate()?, args[2].unwrap_or_propagate()?) {
                             (Value::Int(start), Value::Int(end)) => {
-                                // character positions, so 'a—b' slices the same
-                                // in both modes and never lands inside a glyph
-                                let st = (*start).max(0) as usize;
-                                let en = (*end).max(0) as usize;
-                                if st >= en {
-                                    Ok(CrowValue::ok(Value::Str(String::new())))
-                                } else {
-                                    Ok(CrowValue::ok(Value::Str(s.chars().skip(st).take(en - st).collect())))
-                                }
+                                Ok(CrowValue::ok(Value::Str(crow_runtime::core::slice_str(s, *start, *end))))
                             }
                             _ => Err("slice[] requires integer start and end".into()),
                         }
@@ -3701,9 +3808,7 @@ impl Interpreter {
                 if args.len() != 2 { return Err("push[] takes exactly 2 arguments".into()); }
                 match args[0].unwrap_or_propagate()? {
                     Value::Array(items) => {
-                        let mut new_items = items.clone();
-                        new_items.push(args[1].clone());
-                        Ok(CrowValue::ok(Value::Array(new_items)))
+                        Ok(CrowValue::ok(Value::Array(crow_runtime::core::push(items.clone(), args[1].clone()))))
                     }
                     Value::NumArray(t) => {
                         // The element of a rank-N tensor is a rank-(N-1) slice:
@@ -3725,16 +3830,9 @@ impl Interpreter {
                 if args.len() != 1 { return Err("pop[] takes exactly 1 argument".into()); }
                 match args[0].unwrap_or_propagate()? {
                     Value::Array(items) => {
-                        if items.is_empty() {
-                            return Ok(CrowValue::error("pop from empty array", &self.trace_entry()));
-                        }
-                        let new_items = items[..items.len() - 1].to_vec();
-                        Ok(CrowValue::ok(Value::Array(new_items)))
+                        Ok(CrowValue::ok(Value::Array(crow_runtime::core::pop(items.clone()))))
                     }
                     Value::NumArray(t) => {
-                        if t.is_empty() {
-                            return Ok(CrowValue::error("pop from empty array", &self.trace_entry()));
-                        }
                         let mut data = t.to_vec();
                         data.pop();
                         let len = data.len();
@@ -3747,18 +3845,7 @@ impl Interpreter {
                 if args.len() < 1 || args.len() > 2 { return Err("sort[] takes 1 or 2 arguments".into()); }
                 match args[0].unwrap_or_propagate()? {
                     Value::Array(items) => {
-                        let mut new_items = items.clone();
-                        new_items.sort_by(|a, b| {
-                            let va = a.unwrap_or_propagate().ok();
-                            let vb = b.unwrap_or_propagate().ok();
-                            match (va, vb) {
-                                (Some(Value::Int(x)), Some(Value::Int(y))) => x.cmp(y),
-                                (Some(Value::Float(x)), Some(Value::Float(y))) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
-                                (Some(Value::Str(x)), Some(Value::Str(y))) => x.cmp(y),
-                                _ => std::cmp::Ordering::Equal,
-                            }
-                        });
-                        Ok(CrowValue::ok(Value::Array(new_items)))
+                        Ok(CrowValue::ok(Value::Array(crow_runtime::core::sort_by(items.clone(), value_cmp))))
                     }
                     Value::NumArray(t) => {
                         let mut data = t.to_vec();
@@ -3773,9 +3860,7 @@ impl Interpreter {
                 if args.len() != 1 { return Err("reverse[] takes exactly 1 argument".into()); }
                 match args[0].unwrap_or_propagate()? {
                     Value::Array(items) => {
-                        let mut new_items = items.clone();
-                        new_items.reverse();
-                        Ok(CrowValue::ok(Value::Array(new_items)))
+                        Ok(CrowValue::ok(Value::Array(crow_runtime::core::reverse(items.clone()))))
                     }
                     Value::NumArray(t) => {
                         let mut data = t.to_vec();
@@ -3808,9 +3893,7 @@ impl Interpreter {
                         if args.len() == 3 {
                             return Err("concat: axis applies to tensors only".into());
                         }
-                        let mut new_items = items.clone();
-                        new_items.extend(other.clone());
-                        Ok(CrowValue::ok(Value::Array(new_items)))
+                        Ok(CrowValue::ok(Value::Array(crow_runtime::core::concat(items.clone(), other))))
                     }
                     (Value::NumArray(a), Value::NumArray(b)) => {
                         let axis = if args.len() == 3 {
@@ -3833,9 +3916,7 @@ impl Interpreter {
                             _ => return Err("set[] key must be a string".into()),
                         };
                         Self::check_map_homogeneous(m, &args[2])?;
-                        let mut new_map = m.clone();
-                        new_map.insert(key_str, args[2].clone());
-                        Ok(CrowValue::ok(Value::Map(new_map)))
+                        Ok(CrowValue::ok(Value::Map(crow_runtime::core::map_set(m.clone(), key_str, args[2].clone()))))
                     }
                     _ => Err("set[] requires a map".into()),
                 }
@@ -3848,9 +3929,7 @@ impl Interpreter {
                             Value::Str(s) => s.clone(),
                             _ => return Err("del[] key must be a string".into()),
                         };
-                        let mut new_map = m.clone();
-                        new_map.remove(&key_str);
-                        Ok(CrowValue::ok(Value::Map(new_map)))
+                        Ok(CrowValue::ok(Value::Map(crow_runtime::core::map_del(m.clone(), &key_str))))
                     }
                     _ => Err("del[] requires a map".into()),
                 }
@@ -6964,6 +7043,26 @@ mod tests {
             assert_eq!(t.shape(), &[2, 2]);
             assert!(t.to_vec().iter().all(|&v| (v - 3.0).abs() < 1e-10));
         } else { panic!("expected NumArray"); }
+    }
+
+    #[test]
+    fn cloning_an_interpreter_shares_its_scopes_until_written() {
+        // A parallel loop clones the interpreter per chunk; the clone must
+        // share the environment (the benchmark found a per-item copy of
+        // every value in it) and a write must copy only the scope it touches.
+        let src = "xs = for i in range[1000]\n    'item`i`'\ny = 1\n";
+        let mut lexer = crate::lexer::Lexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let mut a = Interpreter::new();
+        a.run(&stmts).unwrap();
+        let mut b = a.clone();
+        assert!(Arc::ptr_eq(&a.env.scopes[0], &b.env.scopes[0]));
+        b.env.set("y", CrowValue::ok(Value::Int(2)));
+        assert!(!Arc::ptr_eq(&a.env.scopes[0], &b.env.scopes[0]));
+        assert!(matches!(a.env.get("y").unwrap().value, Value::Int(1)));
+        assert!(matches!(b.env.get("y").unwrap().value, Value::Int(2)));
     }
 
     #[test]

@@ -62,6 +62,10 @@ pub struct Transpiler {
     /// Whether the transpiled code uses regex
     pub needs_regex: bool,
     needs_find_struct: bool,
+    /// The variable being assigned when the right-hand side is
+    /// `x = push[x, …]` or another in-place shape: the emission moves `x`
+    /// into the runtime call instead of cloning it (core.rs).
+    move_target: Option<String>,
     /// moment[]/parse_time[] used — emit the Result<f64,String> → CrowResult bridge
     needs_time_result: bool,
     /// Top-level non-serializable handles (db connections) in ui programs:
@@ -145,6 +149,7 @@ impl Transpiler {
             binop_counter: 0,
             needs_regex: false,
             needs_find_struct: false,
+            move_target: None,
             pinned_module: None,
             static_handle_vars: std::collections::BTreeSet::new(),
             needs_shell_struct: false,
@@ -2494,7 +2499,20 @@ impl Transpiler {
                     ));
                     return;
                 }
+                // `x = push[x, v]` and its kin move `x` into the runtime call
+                // so the collection grows in place (core.rs); every other
+                // shape clones, as value semantics require
+                self.move_target = if self.declared.contains(name)
+                    && !self.static_handle_vars.contains(name)
+                    && !self.current_ref_params.contains(name)
+                    && crate::ast::in_place_call_on(value, name)
+                {
+                    Some(name.clone())
+                } else {
+                    None
+                };
                 let mut expr_str = self.owned_expr_str(value);
+                self.move_target = None;
                 let mut holds_markup = false;
                 // the columns a local reads are those of the value assigned
                 // here, in this function — not the last function's local of
@@ -3065,6 +3083,17 @@ impl Transpiler {
     /// Emit an expression as an OWNED value. A by-ref struct parameter used
     /// where ownership is required (array literal, struct field, return,
     /// assignment) must be cloned — call sites pass structs as &T.
+    /// The collection argument of an in-place builtin: moved when it is
+    /// the variable this statement assigns (`x = push[x, v]`), cloned
+    /// otherwise, so the source stays usable.
+    fn moved_or_cloned(&self, arg: &Expr, s: &str) -> String {
+        if matches!(arg, Expr::Ident(n) if self.move_target.as_deref() == Some(n.as_str())) {
+            s.to_string()
+        } else {
+            format!("{}.clone()", s)
+        }
+    }
+
     fn owned_expr_str(&mut self, e: &Expr) -> String {
         let s = self.expr_to_string(e);
         if let Expr::Ident(name) = e {
@@ -3604,12 +3633,19 @@ impl Transpiler {
 
                     // range[stop], range[start, stop], range[start, stop, step]
                     if name == "range" {
-                        return match arg_strs.len() {
-                            1 => format!("(0..{}).collect::<Vec<i64>>()", arg_strs[0]),
-                            2 => format!("({}..{}).collect::<Vec<i64>>()", arg_strs[0], arg_strs[1]),
-                            3 => format!("({}..{}).step_by(({}) as usize).collect::<Vec<i64>>()", arg_strs[0], arg_strs[1], arg_strs[2]),
-                            _ => "vec![]".to_string(),
+                        // one generator in the runtime: up, down, never a
+                        // zero step (core.rs)
+                        self.needs_crow_runtime = true;
+                        let (a, b, c) = match arg_strs.len() {
+                            1 => ("0".to_string(), arg_strs[0].clone(), "1".to_string()),
+                            2 => (arg_strs[0].clone(), arg_strs[1].clone(), "1".to_string()),
+                            3 => (arg_strs[0].clone(), arg_strs[1].clone(), arg_strs[2].clone()),
+                            _ => return "vec![]".to_string(),
                         };
+                        return format!(
+                            "crow_runtime::core::range(({}) as i64, ({}) as i64, ({}) as i64).unwrap_or_else(|e| panic!(\"{{}}\", e))",
+                            a, b, c
+                        );
                     }
 
                     // map[] — empty map constructor
@@ -3970,9 +4006,19 @@ impl Transpiler {
                     if name == "slice" && arg_strs.len() == 3 {
                         let ty = self.ctx.infer_expr(&args[0]);
                         return match ty {
-                            CrowType::NumArray(_) => format!("{}.slice(0, ({}) as usize, ({}) as usize)", arg_strs[0], arg_strs[1], arg_strs[2]),
-                            CrowType::Str => format!("{{ let _st = ({}).max(0) as usize; let _en = ({}).max(0) as usize; if _st >= _en {{ String::new() }} else {{ ({}).chars().skip(_st).take(_en - _st).collect::<String>() }} }}", arg_strs[1], arg_strs[2], arg_strs[0]),
-                            _ => format!("({})[({}) as usize..({}) as usize].to_vec()", arg_strs[0], arg_strs[1], arg_strs[2]),
+                            CrowType::NumArray(_) => {
+                                self.needs_crow_runtime = true;
+                                format!("crow_runtime::core::slice_tensor(&({}), ({}) as i64, ({}) as i64)", arg_strs[0], arg_strs[1], arg_strs[2])
+                            }
+                            CrowType::Str => {
+                                self.needs_crow_runtime = true;
+                                format!("crow_runtime::core::slice_str(&({}), ({}) as i64, ({}) as i64)", arg_strs[0], arg_strs[1], arg_strs[2])
+                            }
+                            _ => {
+                                // clamped, never out of range (core.rs)
+                                self.needs_crow_runtime = true;
+                                format!("crow_runtime::core::slice(&({}), ({}) as i64, ({}) as i64)", arg_strs[0], arg_strs[1], arg_strs[2])
+                            }
                         };
                     }
                     // Immutable collection builtins (return new values)
@@ -3987,28 +4033,44 @@ impl Transpiler {
                             }
                             return format!("{}.push_scalar({} as f64).unwrap_or_else(|e| panic!(\"{{}}\", e))", arg_strs[0], arg_strs[1]);
                         }
-                        return format!("{{ let mut tmp = {}.clone(); tmp.push({}); tmp }}", arg_strs[0], arg_strs[1]);
+                        self.needs_crow_runtime = true;
+                        let first = self.moved_or_cloned(&args[0], &arg_strs[0]);
+                        return format!("crow_runtime::core::push({}, {})", first, arg_strs[1]);
                     }
                     if name == "pop" && arg_strs.len() == 1 {
                         let ty = self.ctx.infer_expr(&args[0]);
                         if matches!(ty, CrowType::NumArray(_)) {
                             return format!("{{ let mut tmp = {}.to_vec(); tmp.pop(); crow_runtime::tensor::CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", arg_strs[0]);
                         }
-                        return format!("{{ let mut tmp = {}.clone(); tmp.pop(); tmp }}", arg_strs[0]);
+                        self.needs_crow_runtime = true;
+                        let first = self.moved_or_cloned(&args[0], &arg_strs[0]);
+                        return format!("crow_runtime::core::pop({})", first);
                     }
                     if name == "sort" {
                         let ty = self.ctx.infer_expr(&args[0]);
                         if matches!(ty, CrowType::NumArray(_)) {
                             return format!("{{ let mut tmp = {}.to_vec(); tmp.sort_by(|a, b| a.partial_cmp(b).unwrap()); crow_runtime::tensor::CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", arg_strs[0]);
                         }
-                        return format!("{{ let mut tmp = {}.clone(); tmp.sort(); tmp }}", arg_strs[0]);
+                        self.needs_crow_runtime = true;
+                        let first = self.moved_or_cloned(&args[0], &arg_strs[0]);
+                        let inner = match &ty { CrowType::Array(i) => i.as_ref().clone(), CrowType::Result(r) => match r.as_ref() { CrowType::Array(i) => i.as_ref().clone(), _ => CrowType::Unknown }, _ => CrowType::Unknown };
+                        return match inner {
+                            CrowType::Int => format!("crow_runtime::core::sort_ints({})", first),
+                            CrowType::Float => format!("crow_runtime::core::sort_floats({})", first),
+                            CrowType::Str => format!("crow_runtime::core::sort_strs({})", first),
+                            _ => format!("{{ let mut tmp = {}; tmp.sort(); tmp }}", first),
+                        };
                     }
                     if name == "reverse" && arg_strs.len() == 1 {
                         let ty = self.ctx.infer_expr(&args[0]);
                         return match ty {
                             CrowType::NumArray(_) => format!("{{ let mut tmp = {}.to_vec(); tmp.reverse(); crow_runtime::tensor::CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", arg_strs[0]),
                             CrowType::Str => format!("({}).chars().rev().collect::<String>()", arg_strs[0]),
-                            _ => format!("{{ let mut tmp = {}.clone(); tmp.reverse(); tmp }}", arg_strs[0]),
+                            _ => {
+                                self.needs_crow_runtime = true;
+                                let first = self.moved_or_cloned(&args[0], &arg_strs[0]);
+                                format!("crow_runtime::core::reverse({})", first)
+                            }
                         };
                     }
                     // concat: the single collection-merge operation (replaces
@@ -4028,7 +4090,9 @@ impl Transpiler {
                             };
                             return format!("{}.concat(&{}, {})", arg_strs[0], arg_strs[1], axis);
                         }
-                        return format!("{{ let mut tmp = {}.clone(); tmp.extend({}.iter().cloned()); tmp }}", arg_strs[0], arg_strs[1]);
+                        self.needs_crow_runtime = true;
+                        let first = self.moved_or_cloned(&args[0], &arg_strs[0]);
+                        return format!("crow_runtime::core::concat({}, &({}))", first, arg_strs[1]);
                     }
                     // --- Map builtins ---
                     if name == "keys" && arg_strs.len() == 1 {
@@ -4053,10 +4117,14 @@ impl Transpiler {
                             _ if matches!(&args[2], Expr::Ident(_)) => format!("({}).clone()", arg_strs[2]),
                             _ => arg_strs[2].clone(),
                         };
-                        return format!("{{ let mut tmp = {}.clone(); tmp.insert({}, {}); tmp }}", arg_strs[0], arg_strs[1], val);
+                        self.needs_crow_runtime = true;
+                        let first = self.moved_or_cloned(&args[0], &arg_strs[0]);
+                        return format!("crow_runtime::core::map_set({}, {}, {})", first, arg_strs[1], val);
                     }
                     if name == "del" && arg_strs.len() == 2 {
-                        return format!("{{ let mut tmp = {}.clone(); tmp.remove(&{}); tmp }}", arg_strs[0], arg_strs[1]);
+                        self.needs_crow_runtime = true;
+                        let first = self.moved_or_cloned(&args[0], &arg_strs[0]);
+                        return format!("crow_runtime::core::map_del({}, &{})", first, arg_strs[1]);
                     }
                     // --- CLI / IO builtins ---
                     if name == "args" && arg_strs.is_empty() {
