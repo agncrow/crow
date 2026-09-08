@@ -1179,7 +1179,7 @@ pub fn render_structure(art: &Artifacts, entry: &str) -> String {
     let count = |kind: &str| art.entries.keys().filter(|k| k.starts_with(&format!("{} ", kind))).count();
     out.push_str(&format!(
         "{} — {} part{} · {} fact{} · {} derivation{} · {} handler{} · {} view{} · {} page{}\n",
-        entry.trim_end_matches(".co"),
+        entry.trim_end_matches(".crow").trim_end_matches(".co"),
         s.parts.len().max(1), if s.parts.len() == 1 { "" } else { "s" },
         count("fact"), if count("fact") == 1 { "" } else { "s" },
         count("derive"), if count("derive") == 1 { "" } else { "s" },
@@ -1337,7 +1337,7 @@ const BASELINE_DIR: &str = ".crow/baseline";
 /// path with separators folded so two programs checked from one root
 /// keep their own baselines.
 pub fn store_dir(entry: &str) -> std::path::PathBuf {
-    let key: String = entry.trim_end_matches(".co").chars().map(|c| if c == '/' || c == '\\' || c == '.' { '-' } else { c }).collect();
+    let key: String = entry.trim_end_matches(".crow").trim_end_matches(".co").chars().map(|c| if c == '/' || c == '\\' || c == '.' { '-' } else { c }).collect();
     let key = key.trim_matches('-').to_string();
     std::path::Path::new(BASELINE_DIR).join(if key.is_empty() { "main".to_string() } else { key })
 }
