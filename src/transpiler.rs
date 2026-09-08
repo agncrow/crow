@@ -3285,7 +3285,7 @@ impl Transpiler {
                         return match op {
                             BinOp::Add => format!("{}.add(&{})", l, r),
                             BinOp::Sub => format!("{}.sub(&{})", l, r),
-                            BinOp::Mul => format!("{}.matmul(&{})", l, r),
+                            BinOp::Mul => format!("{}.try_matmul(&{}).unwrap_or_else(|e| panic!(\"{{}}\", e))", l, r),
                             BinOp::Div => panic!("use ./ for element-wise tensor division"),
                             BinOp::ElemMul => format!("{}.mul(&{})", l, r),
                             BinOp::ElemDiv => format!("{}.div(&{})", l, r),
@@ -3941,11 +3941,20 @@ impl Transpiler {
                             if matches!(inner.as_ref(), CrowType::Str) {
                                 return format!("(({}).value.chars().count() as i64)", arg_strs[0]);
                             }
+                            // a parsed JSON value: items, keys or characters (json.rs)
+                            if matches!(inner.as_ref(), CrowType::Json) {
+                                self.needs_crow_runtime = true;
+                                return format!("crow_runtime::json::len(&({}).value)", arg_strs[0]);
+                            }
                             return format!("(({}).value.len() as i64)", arg_strs[0]);
                         }
                         // strings count characters, as the interpreter does
                         if matches!(arg_type, CrowType::Str) {
                             return format!("(({}).chars().count() as i64)", arg_strs[0]);
+                        }
+                        if matches!(arg_type, CrowType::Json) {
+                            self.needs_crow_runtime = true;
+                            return format!("crow_runtime::json::len(&({}))", arg_strs[0]);
                         }
                         return format!("(({}).len() as i64)", arg_strs[0]);
                     }
@@ -7271,7 +7280,7 @@ mod tests {
     #[test]
     fn test_tensor_mul_is_matmul_transpile() {
         let rust = transpile("use math\nx = eye[2] * eye[2]\n");
-        assert!(rust.contains(".matmul("), "* on tensors should emit .matmul()\n{}", rust);
+        assert!(rust.contains(".try_matmul("), "* on tensors should emit .try_matmul()\n{}", rust);
     }
 
     // ===== Reduction tests: prod, argmax, argmin =====
