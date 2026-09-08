@@ -153,6 +153,46 @@ pub enum Expr {
     },
 }
 
+/// How many times `name` is read in `e`. A `for` expression or an
+/// interpolated string is opaque here and counts as many, so a caller that
+/// wants to move a variable into a call (`x = push[x, v]`) only does so
+/// when the whole right-hand side reads it exactly once and plainly.
+pub fn ident_count(e: &Expr, name: &str) -> usize {
+    match e {
+        Expr::Int(_) | Expr::Float(_) | Expr::Bool(_) => 0,
+        // an interpolated string is scanned at run time: only a name it
+        // mentions can be read through it
+        Expr::Str(s) => if s.contains('`') && s.contains(name) { 99 } else { 0 },
+        Expr::Ident(n) => if n == name { 1 } else { 0 },
+        Expr::BinOp { left, right, .. } => ident_count(left, name) + ident_count(right, name),
+        Expr::UnaryOp { expr, .. } => ident_count(expr, name),
+        Expr::Call { callee, args } => ident_count(callee, name) + args.iter().map(|a| ident_count(a, name)).sum::<usize>(),
+        Expr::FieldAccess { object, .. } => ident_count(object, name),
+        Expr::Array(items) => items.iter().map(|a| ident_count(a, name)).sum(),
+        Expr::Map(pairs) => pairs.iter().map(|(k, v)| ident_count(k, name) + ident_count(v, name)).sum(),
+        Expr::Named { value, .. } => ident_count(value, name),
+        Expr::ForExpr { .. } => 99,
+    }
+}
+
+/// The collection builtins that take their collection by value in the
+/// runtime (`crow_runtime::core`), so `x = f[x, …]` can move `x` in.
+pub const IN_PLACE_BUILTINS: &[&str] = &["push", "pop", "sort", "reverse", "concat", "set", "del"];
+
+/// `x = f[x, …]` with `f` one of the in-place builtins and `x` read once.
+pub fn in_place_call_on(value: &Expr, name: &str) -> bool {
+    if let Expr::Call { callee, args } = value {
+        if let Expr::Ident(f) = callee.as_ref() {
+            if IN_PLACE_BUILTINS.contains(&f.as_str())
+                && matches!(args.first(), Some(Expr::Ident(n)) if n == name)
+            {
+                return ident_count(value, name) == 1;
+            }
+        }
+    }
+    false
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BinOp {
     Add,

@@ -1049,7 +1049,7 @@ The functions available in every file without an import. These names are reserve
 | `log[value]` | Print a value to stdout |
 | `range[stop]` | Array of ints from 0 to stop (exclusive) |
 | `range[start, stop]` | Array of ints from start to stop (exclusive) |
-| `range[start, stop, step]` | Array of ints with custom step |
+| `range[start, stop, step]` | Array of ints with custom step; a negative step counts down (`range[5, 0, -2]` is `[5, 3, 1]`); a zero step is an error |
 | `map[]` | Create an empty map |
 | `assert[cond]` | Halt with error if condition is falsy |
 | `assert[cond, msg]` | Halt with custom error message |
@@ -1153,7 +1153,7 @@ type[error['x']]  --- 'error'
 |----------|-------------|
 | `len[x]` | Length of array, string, or map |
 | `push[arr, value]` | Return new array with value appended |
-| `pop[arr]` | Return new array without last element |
+| `pop[arr]` | Return new array without last element; an empty array stays empty |
 | `concat[a, b]` | Return new array merging two arrays |
 | `concat[a, b, axis]` | Concatenate two tensors along an axis |
 | `sort[arr]` | Return new sorted array |
@@ -1162,7 +1162,7 @@ type[error['x']]  --- 'error'
 | `any[arr, pred]` | True if any element passes the predicate (parallel, early exit) |
 | `all[arr, pred]` | True if every element passes (parallel, early exit) |
 | `find[arr, pred]` | First element passing the predicate; error-value if none |
-| `slice[arr, start, end]` | Extract subarray |
+| `slice[arr, start, end]` | Elements from `start` to `end` exclusive, both clamped to the array, empty when `start` is not before `end`; a string slices by character |
 
 ### Map Operations
 
@@ -1174,7 +1174,7 @@ type[error['x']]  --- 'error'
 | `set[m, key, value]` | Return new map with entry added/updated |
 | `del[m, key]` | Return new map with entry removed |
 
-**All builtins are immutable.** No builtin modifies its arguments. To update a variable, reassign: `nums = push[nums, 4]`. The transpiler optimizes `x = f[x]` patterns into in-place operations automatically.
+**All builtins are immutable.** No builtin modifies its arguments. To update a variable, reassign: `nums = push[nums, 4]`. Both modes turn `x = push[x, v]` (and `pop`, `sort`, `reverse`, `concat`, `set`, `del` in the same shape) into an in-place update: the collection is moved into the operation, not copied, when the right-hand side reads `x` exactly once.
 
 ### I/O
 
