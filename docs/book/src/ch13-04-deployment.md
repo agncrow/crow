@@ -3,7 +3,7 @@
 ## One Binary
 
 ```bash
-crow build dashboard.crow
+crow build dashboard.co
 ```
 
 The output is a single native executable containing the web server, the

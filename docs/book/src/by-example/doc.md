@@ -35,7 +35,7 @@ navigation with collapsible groups and the current page marked, `pager[]`
 gives the previous and next links, `plain[]` gives a chapter's words for
 a search index, and `document[]` wraps a body in a complete page with the
 kernel stylesheet, the runner, the sidebar behaviour, and search. The Crow Book itself is
-rendered this way by `docs/book/site.crow`, whose one view puts the menu
+rendered this way by `docs/book/site.co`, whose one view puts the menu
 and the chapter side by side with the layout vocabulary and whose
 `test layout[]` checks that arrangement at two widths without a browser.
 Because both renderers call the same kernel, `crow run -i` and the

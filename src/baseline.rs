@@ -1179,7 +1179,7 @@ pub fn render_structure(art: &Artifacts, entry: &str) -> String {
     let count = |kind: &str| art.entries.keys().filter(|k| k.starts_with(&format!("{} ", kind))).count();
     out.push_str(&format!(
         "{} — {} part{} · {} fact{} · {} derivation{} · {} handler{} · {} view{} · {} page{}\n",
-        entry.trim_end_matches(".crow"),
+        entry.trim_end_matches(".co"),
         s.parts.len().max(1), if s.parts.len() == 1 { "" } else { "s" },
         count("fact"), if count("fact") == 1 { "" } else { "s" },
         count("derive"), if count("derive") == 1 { "" } else { "s" },
@@ -1337,7 +1337,7 @@ const BASELINE_DIR: &str = ".crow/baseline";
 /// path with separators folded so two programs checked from one root
 /// keep their own baselines.
 pub fn store_dir(entry: &str) -> std::path::PathBuf {
-    let key: String = entry.trim_end_matches(".crow").chars().map(|c| if c == '/' || c == '\\' || c == '.' { '-' } else { c }).collect();
+    let key: String = entry.trim_end_matches(".co").chars().map(|c| if c == '/' || c == '\\' || c == '.' { '-' } else { c }).collect();
     let key = key.trim_matches('-').to_string();
     std::path::Path::new(BASELINE_DIR).join(if key.is_empty() { "main".to_string() } else { key })
 }
@@ -1514,7 +1514,7 @@ mod tests {
         let lowered = crate::lower::lower_program(&stmts).expect("lowers");
         let mut ctx = TypeContext::new();
         ctx.infer_program(&lowered);
-        derive_artifacts(&lowered, &ctx, &BTreeMap::new(), "main.crow")
+        derive_artifacts(&lowered, &ctx, &BTreeMap::new(), "main.co")
     }
 
     const APP: &str = "use web, ui\nsession_id = 0\nending = false\nstatus = ''\nwin_from = '06:55'\nwin_to = '09:30'\nfn say[msg]\n    status = msg\nfn start[]\n    t0 = win_from\n    t1 = win_to\n    if t1 lte t0\n        say['the window ends before it starts']\n        return\n    session_id = 1\n    say['started']\nfn ask_end[]\n    ending = true\nfn cancel_end[]\n    ending = false\nfn end_session[]\n    ending = false\n    session_id = 0\nview setup[]\n    return row[field['From', win_from], button['Start', click = start]]\nview session_view[]\n    return stack[p['`status`'], button['End session', click = ask_end], modal[button['End', click = end_session], button['Keep going', click = cancel_end], open = ending]]\nview render[]\n    if session_id gt 0\n        return session_view[]\n    return setup[]\npage['/', render]\n";
@@ -1605,12 +1605,12 @@ mod tests {
     #[test]
     fn the_structure_is_the_app_as_a_tree() {
         let (a, _) = artifacts(APP);
-        let s = render_structure(&a, "main.crow");
-        assert!(s.contains("page / → @render (main.crow)"), "{}", s);
-        assert!(s.contains("when (session_id gt 0):\n    @session_view (main.crow)   button 'End session' → ask_end · button 'End' → end_session · button 'Keep going' → cancel_end"), "{}", s);
-        assert!(s.contains("@setup (main.crow)   binds win_from · button 'Start' → start"), "{}", s);
-        assert!(s.contains("start (main.crow)   writes session_id, status"), "{}", s);
-        assert!(s.contains("ending (main.crow)   written by ask_end, cancel_end, end_session · read by render, session_view"), "{}", s);
+        let s = render_structure(&a, "main.co");
+        assert!(s.contains("page / → @render (main.co)"), "{}", s);
+        assert!(s.contains("when (session_id gt 0):\n    @session_view (main.co)   button 'End session' → ask_end · button 'End' → end_session · button 'Keep going' → cancel_end"), "{}", s);
+        assert!(s.contains("@setup (main.co)   binds win_from · button 'Start' → start"), "{}", s);
+        assert!(s.contains("start (main.co)   writes session_id, status"), "{}", s);
+        assert!(s.contains("ending (main.co)   written by ask_end, cancel_end, end_session · read by render, session_view"), "{}", s);
     }
 
     /// The entry's own directory is an empty path; git is asked from here.
@@ -1625,7 +1625,7 @@ mod tests {
     #[test]
     fn the_store_round_trips_and_compare_reports_changes() {
         let (a, _) = artifacts(APP);
-        let entry = format!("scratch_baseline_{}.crow", std::process::id());
+        let entry = format!("scratch_baseline_{}.co", std::process::id());
         let dir = store_dir(&entry);
         let _ = std::fs::remove_dir_all(&dir);
         save_all(&entry, &a);

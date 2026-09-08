@@ -159,11 +159,11 @@ Point `crow check` at your development database and it reads *both sides*
 of the story — your code's assumptions and the schema's actual guarantees:
 
 ```bash
-crow check trading.crow --db 'sqlite://dev.db'
+crow check trading.co --db 'sqlite://dev.db'
 ```
 
 ```text
-trading.crow:7-9 — two programs can pass this check at the same time
+trading.co:7-9 — two programs can pass this check at the same time
 
   what can happen:
     1. program A runs the query (line 7) — the check passes
@@ -179,7 +179,7 @@ trading.crow:7-9 — two programs can pass this check at the same time
         CREATE UNIQUE INDEX one_active_per_symbol ON trades(symbol) WHERE status = 'active';
 ```
 
-`crow fix trading.crow --hazard 1 --option 1` applies the first option:
+`crow fix trading.co --hazard 1 --option 1` applies the first option:
 writes the migration, applies it to the dev database, and re-checks to
 confirm the hazard is gone. After that, the losing program's insert comes
 back as an ordinary error value with `kind = 'conflict'` — loud, at the

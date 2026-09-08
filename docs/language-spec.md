@@ -1404,7 +1404,7 @@ use views.home
 use web, ui
 ```
 
-Dot-separated paths map to directories: `use views.home` loads `views/home.crow`, and its exports are reached qualified through the last segment — `home.render`, `home.message`. Slash paths (`use lib/utils` → `utils.helper[...]`) work the same way. This is how you import view files, library modules, etc.
+Dot-separated paths map to directories: `use views.home` loads `views/home.co`, and its exports are reached qualified through the last segment — `home.render`, `home.message`. Slash paths (`use lib/utils` → `utils.helper[...]`) work the same way. This is how you import view files, library modules, etc.
 
 Comma-separated imports expand at parse time: `use web, ui` is equivalent to writing `use web` and `use ui` on separate lines.
 
@@ -1466,24 +1466,30 @@ Rules:
 
 ### User Modules: File Structure
 
-Each file is a module. The file path is the module path, rooted at the project: the nearest directory above the entry file that holds a `crowfile`, or the entry file's own directory when there is none. So `views/sim.crow` reaches `sim/clock.crow` with `use sim.clock` whichever file is the entry. A part is validated alone as it is expanded — its own names unprefixed, its imports inlined — so a name the part reserves by what it imports (`derive progress` beside `use ui`), or a handler nothing in the part wires, is refused whichever file is the entry, under the part's path: `crow test part.crow` and `crow run main.crow` see the same part.
+A source file ends in `.co`. (A `.crow` file is still read this release, with a note the first time one is met, so a tree can be renamed at leisure; bytecode is `.coc`.) Each file is a module. The file path is the module path, rooted at the project: the nearest directory above the entry file that holds a `crowfile`, or the entry file's own directory when there is none. So `views/sim.co` reaches `sim/clock.co` with `use sim.clock` whichever file is the entry. A part is validated alone as it is expanded — its own names unprefixed, its imports inlined — so a name the part reserves by what it imports (`derive progress` beside `use ui`), or a handler nothing in the part wires, is refused whichever file is the entry, under the part's path: `crow test part.co` and `crow run main.co` see the same part.
+
+#### Design Note: The Extension Is `.co`
+
+**What was considered:** `.crow` (the name, four letters), `.cw`, `.w`, `.cr`, `.o`, `.ro`, `.caw`, `.co`.
+
+**Why `.co`:** two letters that say themselves, the head of the name, and no language owns it — its only other users are a few 3D and colour-profile data formats that never meet an editor's language mode or GitHub's detection. `.cr` is Crystal's, `.w` is OpenEdge's and CWEB's, `.o` is every compiled object file on Unix, `.cw` cannot be said aloud, `.ro` reads as read-only. `.crow` was fine and unambiguous; it lost to brevity in a file tree of short part names (`scan.co`, `nav.co`). The bytecode file follows: `.coc`. The Markdown fence language stays `crow`, since that names the language, not the file. Decided September 2026, while the tree was one repository and one app.
 
 ```
---- file: myapp/utils.crow
+--- file: myapp/utils.co
 
 fn double[x]
     return x * 2
 ```
 
 ```
---- file: main.crow
+--- file: main.co
 
 use myapp/utils
 
 result = utils.double[5]    --- 10
 ```
 
-**A module is a part.** It may hold facts, derivations, handlers, views and `test` blocks, not only functions — the clock of a simulation, its tape, its blotter — and the page that composes them imports each one. The front end expands every module file once, whichever files import it: its names take the module's path as a prefix (`sim/clock.crow`'s `head` is `sim_clock_head` inside the program) and every importer's qualified spelling — `clock.head`, or an alias's — is rewritten to that name, in code and inside interpolation spans. A module reached through two importers is one copy with one state. A handler in one part may assign another part's fact by its qualified name (`session.day = d`), and the validator judges it like any fact write. A part's `test` blocks run with `crow test sim/clock.crow`, with the parts it imports inlined; `crow check main.crow` checks the whole app. A module's top-level statements other than declarations are not part of the program.
+**A module is a part.** It may hold facts, derivations, handlers, views and `test` blocks, not only functions — the clock of a simulation, its tape, its blotter — and the page that composes them imports each one. The front end expands every module file once, whichever files import it: its names take the module's path as a prefix (`sim/clock.co`'s `head` is `sim_clock_head` inside the program) and every importer's qualified spelling — `clock.head`, or an alias's — is rewritten to that name, in code and inside interpolation spans. A module reached through two importers is one copy with one state. A handler in one part may assign another part's fact by its qualified name (`session.day = d`), and the validator judges it like any fact write. A part's `test` blocks run with `crow test sim/clock.co`, with the parts it imports inlined; `crow check main.co` checks the whole app. A module's top-level statements other than declarations are not part of the program.
 
 
 ## 13. Standard Library
@@ -1910,7 +1916,7 @@ log[bad.reason]        --- error message
 
 ### doc
 
-Import with `use doc`. Documentation from Markdown, rendered by the kernel so the interpreter and compiled programs produce the same pages. The Crow Book is built with it (`docs/book/site.crow`).
+Import with `use doc`. Documentation from Markdown, rendered by the kernel so the interpreter and compiled programs produce the same pages. The Crow Book is built with it (`docs/book/site.co`).
 
 | Function | Description |
 |----------|-------------|
@@ -2083,11 +2089,11 @@ page['/', render]
 Views compose: a view calls other views (components) and ordinary functions freely. A module can export views — importers reach them qualified, like any module name:
 
 ```
---- cards.crow
+--- cards.co
 view card[title, body_text]
     div[h2[title], p[body_text]]
 
---- main.crow
+--- main.co
 use cards as c
 
 view render[]
@@ -2260,7 +2266,7 @@ tokens    --crow-bg  --crow-surface  --crow-text  --crow-muted
           --crow-border  --crow-accent  --crow-up  --crow-down
 ```
 
-Use the classes as ordinary attributes — `div[..., class = 'card']`. To restyle, put plain CSS in `css/app.css` in the project; it is inlined after the defaults, and overriding a token (`:root { --crow-accent: #c60; }`) recolors every element and chart that uses it. `crow check` flags unknown `--crow-*` names with a did-you-mean. CSS never appears inside `.crow` files. Design: `style-module-design.md`. Where this is going — a closed layout vocabulary with an engine written in Crow, so tests can state where things are and what colour they have without a browser — is `ui-engine-design.md`.
+Use the classes as ordinary attributes — `div[..., class = 'card']`. To restyle, put plain CSS in `css/app.css` in the project; it is inlined after the defaults, and overriding a token (`:root { --crow-accent: #c60; }`) recolors every element and chart that uses it. `crow check` flags unknown `--crow-*` names with a did-you-mean. CSS never appears inside `.co` files. Design: `style-module-design.md`. Where this is going — a closed layout vocabulary with an engine written in Crow, so tests can state where things are and what colour they have without a browser — is `ui-engine-design.md`.
 
 #### Core (Server)
 
@@ -2610,7 +2616,7 @@ gpu = 1
 ```
 
 ```
---- file: main.crow
+--- file: main.co
 
 fn task_a[]
     for x in items
@@ -2702,13 +2708,13 @@ In interpreter mode, `nodes[n]` always simulates single-process (rank 0) — no 
 #### CLI: crow launch
 
 ```
-crow launch <n> <file.crow>
+crow launch <n> <file.co>
 ```
 
 Builds the binary via `crow build`, then spawns `n` processes with the correct environment variables. All processes run on `127.0.0.1` with base port `29500`. Output from all ranks is interleaved to stdout/stderr.
 
 ```
-crow launch 4 train.crow     --- build + run on 4 processes
+crow launch 4 train.co     --- build + run on 4 processes
 ```
 
 #### Backend Detection
@@ -2730,7 +2736,7 @@ gpu_backend = 'vulkan'
 
 #### Decoupled from Language Version
 
-New GPU vendors, new CUDA versions, or new backends are **toolchain updates** (`crow update`), not language changes. The `.crow` source files never change. This follows the same model as LLVM — Rust and Swift don't change when LLVM adds a new target.
+New GPU vendors, new CUDA versions, or new backends are **toolchain updates** (`crow update`), not language changes. The `.co` source files never change. This follows the same model as LLVM — Rust and Swift don't change when LLVM adds a new target.
 
 The language specifies *intent*. The toolchain handles *implementation*.
 
@@ -3004,8 +3010,8 @@ Specialization propagates through call chains and works with recursion and struc
 
 | Mode | Command | Role |
 |------|---------|------|
-| Transpiler | `crow run file.crow` | **Primary.** Compiles to native Rust. This is the authority on valid Crow programs. |
-| Interpreter | `crow run -i file.crow` | **Dev tool.** Runs code directly for quick iteration. Slower, but convenient. |
+| Transpiler | `crow run file.co` | **Primary.** Compiles to native Rust. This is the authority on valid Crow programs. |
+| Interpreter | `crow run -i file.co` | **Dev tool.** Runs code directly for quick iteration. Slower, but convenient. |
 | REPL | `crow` | **Interactive.** Explore and test code interactively. Uses the interpreter. |
 
 The transpiler is the source of truth for what a valid program is: it infers a concrete type for every value. Both modes run the same front end (parse → expand → lower → infer → validate), so they reject the same invalid programs with the same messages.
@@ -3026,10 +3032,10 @@ A Crow program can be a single file or a full project. No restructuring is neede
 
 #### Single File (No Project)
 
-Any `.crow` file is a valid program:
+Any `.co` file is a valid program:
 
 ```
-crow run hello.crow
+crow run hello.co
 ```
 
 #### Project Structure
@@ -3040,40 +3046,40 @@ A project is a directory with a `crowfile` at the root. Create one with `crow ne
 crow new myapp
 ```
 
-Full project structure (all optional except `crowfile` and `main.crow`):
+Full project structure (all optional except `crowfile` and `main.co`):
 
 ```
 myapp/
   crowfile                    --- project identity + config
-  main.crow                   --- default entry point (crow run)
+  main.co                   --- default entry point (crow run)
 
   jobs/                       --- batch tasks (crow run <name>)
-    train.crow                --- crow run train
-    migrate.crow              --- crow run migrate
-    sync.crow                 --- crow run sync
+    train.co                --- crow run train
+    migrate.co              --- crow run migrate
+    sync.co                 --- crow run sync
 
-  views/                       --- web views (imported and wired in main.crow)
-    home.crow                 --- use views.home → page['/', home.render]
-    dashboard.crow            --- use views.dashboard → page['/dashboard', ...]
-    accounts.crow             --- /accounts
+  views/                       --- web views (imported and wired in main.co)
+    home.co                 --- use views.home → page['/', home.render]
+    dashboard.co            --- use views.dashboard → page['/dashboard', ...]
+    accounts.co             --- /accounts
 
   components/                 --- reusable UI functions
-    nav.crow
-    chart.crow
+    nav.co
+    chart.co
 
-  layout.crow                 --- shared UI wrapper for all pages
+  layout.co                 --- shared UI wrapper for all pages
 
   lib/                        --- shared code (organized however you want)
-    accounts.crow
+    accounts.co
     ml/
-      features.crow
-      model.crow
+      features.co
+      model.co
 
   db/
-    schema.crow               --- source of truth for tables
+    schema.co               --- source of truth for tables
 
   tests/                      --- integration tests
-    accounts_test.crow
+    accounts_test.co
 
   config/                     --- configuration files
   models/                     --- trained model artifacts
@@ -3085,38 +3091,38 @@ myapp/
 | Folder/File | Purpose | Auto-discovered? |
 |---|---|---|
 | `crowfile` | Project identity, entry points, deps | Required for projects |
-| `main.crow` | Default entry point. `crow run` runs this | Yes — convention |
+| `main.co` | Default entry point. `crow run` runs this | Yes — convention |
 | `views/` | Web views. Import with `use views.X`, wire with `page[]` | Explicit |
-| `layout.crow` | Shared UI wrapper for all pages | **Yes** — auto-applied |
-| `db/schema.crow` | Table definitions, auto-migrations | **Yes** — auto-discovered |
+| `layout.co` | Shared UI wrapper for all pages | **Yes** — auto-applied |
+| `db/schema.co` | Table definitions, auto-migrations | **Yes** — auto-discovered |
 | `jobs/` | Batch tasks. `crow run <name>` | **Yes** — listed in crowfile |
 | `tests/` | Integration tests. `crow test` | **Yes** — auto-discovered |
 | `lib/` | Your code, any organization | No — import with `use` |
 | `components/` | Reusable UI functions | No — import with `use` |
 | `config/` | Configuration files | No — import with `use` |
 
-Only three magic folders: `views/`, `db/`, `tests/`. Plus `layout.crow` and `main.crow` by convention. Everything else is just files you import.
+Only three magic folders: `views/`, `db/`, `tests/`. Plus `layout.co` and `main.co` by convention. Everything else is just files you import.
 
 #### Entry Points
 
-`main.crow` is the long-running entry point (e.g., web server). `jobs/` contains batch tasks that run and exit.
+`main.co` is the long-running entry point (e.g., web server). `jobs/` contains batch tasks that run and exit.
 
 ```
-crow run              --- runs main.crow (long-running)
-crow run train        --- runs jobs/train.crow (batch, exits)
-crow run migrate      --- runs jobs/migrate.crow (batch, exits)
+crow run              --- runs main.co (long-running)
+crow run train        --- runs jobs/train.co (batch, exits)
+crow run migrate      --- runs jobs/migrate.co (batch, exits)
 ```
 
-Rule: **`main.crow` is the thing that stays running. Everything else runs and exits.**
+Rule: **`main.co` is the thing that stays running. Everything else runs and exits.**
 
 #### Growth Path
 
 | Stage | What you have |
 |---|---|
-| Day 1 | `hello.crow` — one file, no project |
-| Week 1 | `crow new myapp` — `crowfile` + `main.crow` |
+| Day 1 | `hello.co` — one file, no project |
+| Week 1 | `crow new myapp` — `crowfile` + `main.co` |
 | Week 2 | Add `views/`, `lib/` — split code out |
-| Month 1 | Add `db/schema.crow`, `jobs/train.crow` |
+| Month 1 | Add `db/schema.co`, `jobs/train.co` |
 | Month 6 | Full project — multiple entry points, lib files, pages, components |
 
 No restructuring at any step. You just add files.
@@ -3130,24 +3136,24 @@ Every Crow project has a `crowfile` at the root. It is a plain Crow file — the
 --- crowfile
 
 name = 'myapp'
-entry = 'main.crow'                 --- optional: main.crow is the default
+entry = 'main.co'                 --- optional: main.co is the default
 db = 'sqlite://dev.db'              --- optional: lets crow check read the schema
 cpu = 4                             --- optional: default thread count
 
 deps = map[utils = './libs/utils', http = '2.3']
-jobs = map[train = 'jobs/train.crow', migrate = 'jobs/migrate.crow']
+jobs = map[train = 'jobs/train.co', migrate = 'jobs/migrate.co']
 ```
 
 | Key | Meaning |
 |-----|---------|
 | `name` | Project name (written by `crow new`) |
-| `entry` | Entry point for `crow run`; defaults to `main.crow` |
+| `entry` | Entry point for `crow run`; defaults to `main.co` |
 | `db` | Database url used by `crow check` and the editor for schema-aware checks |
 | `cpu`, `gpu` | Default resource counts (integers) — see Resource Control |
 | `deps` | Map of dependency name → version, git url, or local path (`crow install`) |
 | `jobs` | Map of job name → file, run with `crow run <name>` |
 
-`crow new` writes only `name`; add keys as you need them. No need to list `main.crow` — it is the default entry point by convention.
+`crow new` writes only `name`; add keys as you need them. No need to list `main.co` — it is the default entry point by convention.
 
 Dependencies can be:
 
@@ -3160,13 +3166,13 @@ Dependencies can be:
 
 ### File Extension
 
-Crow source files use the `.crow` extension.
+Crow source files use the `.co` extension.
 
 ```
-main.crow
-lib/accounts.crow
-views/dashboard.crow
-jobs/train.crow
+main.co
+lib/accounts.co
+views/dashboard.co
+jobs/train.co
 ```
 
 
@@ -3174,45 +3180,45 @@ jobs/train.crow
 
 ```
 crow                        --- start interactive REPL
-crow new myapp              --- create new project (crowfile + main.crow)
-crow new myapp --web        --- create web project (+ views/home.crow)
-crow new myapp --ml         --- create ML project (+ jobs/train.crow, lib/model.crow)
-crow new myapp --db         --- create DB project (+ db/schema.crow, jobs/migrate.crow)
+crow new myapp              --- create new project (crowfile + main.co)
+crow new myapp --web        --- create web project (+ views/home.co)
+crow new myapp --ml         --- create ML project (+ jobs/train.co, lib/model.co)
+crow new myapp --db         --- create DB project (+ db/schema.co, jobs/migrate.co)
 crow new myapp --web --ml --db  --- all capabilities
 crow install                --- install deps from crowfile into crow_modules/
 crow build                  --- transpile to Rust and compile to native binary
-crow build file.crow        --- transpile a specific file
-crow run                    --- transpile + compile + run main.crow
-crow run file.crow          --- transpile + compile + run a specific file
+crow build file.co        --- transpile a specific file
+crow run                    --- transpile + compile + run main.co
+crow run file.co          --- transpile + compile + run a specific file
 crow run train              --- run a named job from the crowfile jobs map
-crow run -i file.crow       --- run with interpreter (instant start, for exploring)
+crow run -i file.co       --- run with interpreter (instant start, for exploring)
 crow stop                   --- stop the running app (pidfile, then project binary)
 crow stop book              --- stop the book this project is serving
 crow book [--port N]        --- in the crow repository: serve the Crow Book with every code block runnable in place;
                                 inside an app: derive and serve the app's own book — pages with trees and wireframes,
                                 a chapter per part, the data, the changes since the accepted baseline (--write: build only);
                                 the app's book serves next to the app, on its serve port plus one (finch on 3100 → 3101)
-crow test                   --- run the test blocks of the project (or: crow test file.crow)
+crow test                   --- run the test blocks of the project (or: crow test file.co)
 crow test --parity          --- run tests/parity/ in both modes and diff output
 crow test --book            --- execute every code block of the book in both modes
 crow test --docs            --- the docs cover every compiler name, and name nothing the compiler lacks
-crow check                  --- automatic verification (uses crowfile; or: crow check file.crow); records and diffs the app baseline
+crow check                  --- automatic verification (uses crowfile; or: crow check file.co); records and diffs the app baseline
 crow check --accept         --- accept every baseline change at once (the loop's `a`, for a script or a deliberate sweep)
 crow check --show [name]    --- the app as a tree: pages, views under their guards, controls and handlers, facts; or one declaration's artifact
 crow check --db <url>       --- + schema-aware database checks (or db = '…' in the crowfile)
 crow check --strict         --- exit 1 on any finding (CI)
-crow fix file.crow --hazard N [--option M]   --- apply a fix from the check report
-crow fmt                    --- format project (uses crowfile; or: crow fmt file.crow)
+crow fix file.co --hazard N [--option M]   --- apply a fix from the check report
+crow fmt                    --- format project (uses crowfile; or: crow fmt file.co)
 crow fmt --check            --- check if formatting needed (exit 1 if not)
 crow fmt --fix-interpolation  --- migrate {expr} strings to `expr`
 crow fmt --fix-views        --- migrate ui-building fns to view declarations
 crow lsp                    --- language server over stdio (see crow-lsp.md)
-crow launch 4 file.crow     --- build + run on 4 distributed processes
+crow launch 4 file.co     --- build + run on 4 distributed processes
 ```
 
-`crow test` runs the `test` blocks you wrote (see Verification). `crow test --parity` is the interpreter–transpiler parity harness: every `tests/parity/*.crow` file runs in both execution modes and any difference in output (or exit status) is a failure — this enforces the parity rule mechanically. `crow test --book` does the same for every code block in the book. `crow test --docs` reads the compiler's own name tables and fails if a builtin, module function, or element is missing from this specification, if a reference row here names something the compiler doesn't have, if a module or core builtin has no verified example in the book, or if an example file is not indexed — so the language and its documentation cannot drift apart. `crow check` runs your test blocks plus everything automatic — edge cases, determinism contracts, live-loop hazards, and (with a database url) the schema-aware concurrency checks documented in `crow-check.md`.
+`crow test` runs the `test` blocks you wrote (see Verification). `crow test --parity` is the interpreter–transpiler parity harness: every `tests/parity/*.co` file runs in both execution modes and any difference in output (or exit status) is a failure — this enforces the parity rule mechanically. `crow test --book` does the same for every code block in the book. `crow test --docs` reads the compiler's own name tables and fails if a builtin, module function, or element is missing from this specification, if a reference row here names something the compiler doesn't have, if a module or core builtin has no verified example in the book, or if an example file is not indexed — so the language and its documentation cannot drift apart. `crow check` runs your test blocks plus everything automatic — edge cases, determinism contracts, live-loop hazards, and (with a database url) the schema-aware concurrency checks documented in `crow-check.md`.
 
-`crow build` transpiles `.crow` source files to Rust and compiles to a native binary. `crow run` builds and then executes the binary.
+`crow build` transpiles `.co` source files to Rust and compiles to a native binary. `crow run` builds and then executes the binary.
 
 **`.env` auto-loading:** Both `crow run` and `crow build` automatically load a `.env` file from the current directory if it exists. Each line should be `KEY=VALUE`. Lines starting with `#` are comments. Quoted values (`'...'` or `"..."`) are unquoted. Real environment variables take priority over `.env` values — the file only sets variables that aren't already set.
 

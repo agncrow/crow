@@ -1,6 +1,6 @@
 # Hello, World!
 
-Create a file named `hello.crow`:
+Create a file named `hello.co`:
 
 ```crow
 log['hello, world']
@@ -15,7 +15,7 @@ Run it compiled — Crow transpiles to Rust, builds a native binary, and
 executes it:
 
 ```bash
-crow run hello.crow
+crow run hello.co
 ```
 
 ```text
@@ -25,7 +25,7 @@ hello, world
 Or run it interpreted for instant startup while you're iterating:
 
 ```bash
-crow run -i hello.crow
+crow run -i hello.co
 ```
 
 The two modes are guaranteed to agree — the project's test suite diffs

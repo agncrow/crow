@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Frame benchmark: Pandas vs Polars — same operations as bench_frame.crow."""
+"""Frame benchmark: Pandas vs Polars — same operations as bench_frame.co."""
 import time
 import sys
 

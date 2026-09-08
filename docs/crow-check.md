@@ -7,9 +7,9 @@ enforces, and reports **concurrency hazards** — the class of bug where code is
 correct alone but wrong the moment two copies of it run.
 
 ```
-crow check app.crow --db 'sqlite://dev.db'      --- live introspection
-crow check app.crow --db migrations://migrations --- offline: schema from .sql files
-crow check app.crow --strict                     --- exit 1 on any finding (CI)
+crow check app.co --db 'sqlite://dev.db'      --- live introspection
+crow check app.co --db migrations://migrations --- offline: schema from .sql files
+crow check app.co --strict                     --- exit 1 on any finding (CI)
 ```
 
 The url can also live in the crowfile: `db = 'sqlite://dev.db'`.
@@ -102,7 +102,7 @@ are documented as reviewable proposals in `discovered-features.md`.
 Each hazard's menu is executable:
 
 ```
-crow fix app.crow --hazard 1 --option 1 [--db url]
+crow fix app.co --hazard 1 --option 1 [--db url]
 ```
 
 - **constraint options** write `migrations/NNNN_name.sql`, apply it to the

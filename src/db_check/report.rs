@@ -382,7 +382,7 @@ mod tests {
     fn h(kind: HazardKind, span: (usize, usize)) -> Hazard {
         Hazard {
             kind,
-            file: "trading.crow".into(),
+            file: "trading.co".into(),
             span,
         }
     }
@@ -419,7 +419,7 @@ if len[open_trades] eq 0
             (13, 15),
         );
         let expected = "\
-trading.crow:13-15 — two programs can pass this check at the same time
+trading.co:13-15 — two programs can pass this check at the same time
 
    13 │ open_trades = query[conn, 'SELECT id FROM trades WHERE symbol = ? AND status = ?', [sym, 'active']]
    14 │ if len[open_trades] eq 0
@@ -442,7 +442,7 @@ trading.crow:13-15 — two programs can pass this check at the same time
   [2] fuse the check and the write into one atomic statement
   [3] run the check and the write in a retrying serializable transaction
 
-  apply: crow fix trading.crow --hazard 1 --option 1
+  apply: crow fix trading.co --hazard 1 --option 1
   accept as-is: put `--- crow: single-writer` on the line above line 13
 ";
         assert_eq!(render_hazard(&hz, 1, TRADING_SRC), expected);
@@ -462,11 +462,11 @@ exec[conn, 'UPDATE accounts SET balance = ? WHERE id = ?', [bal, acct]]
                 read_line: 1,
                 write_line: 3,
             },
-            file: "bank.crow".into(),
+            file: "bank.co".into(),
             span: (1, 3),
         };
         let expected = "\
-bank.crow:1-3 — concurrent updates to 'balance' can vanish here
+bank.co:1-3 — concurrent updates to 'balance' can vanish here
 
     1 │ row = query[conn, 'SELECT balance FROM accounts WHERE id = ?', [acct]]
     2 │ bal = row.balance[0] + amount
@@ -484,7 +484,7 @@ bank.crow:1-3 — concurrent updates to 'balance' can vanish here
         UPDATE … SET balance = balance + ? WHERE …
   [2] run the read and the write in a retrying serializable transaction
 
-  apply: crow fix bank.crow --hazard 1 --option 1
+  apply: crow fix bank.co --hazard 1 --option 1
   accept as-is: put `--- crow: single-writer` on the line above line 1
 ";
         assert_eq!(render_hazard(&hz, 1, src), expected);
@@ -503,11 +503,11 @@ exec[conn, 'UPDATE rooms SET checked_out = 1 WHERE room = ?', [room_no]]
                 write_line: 1,
                 gate_line: 9,
             },
-            file: "hotel.crow".into(),
+            file: "hotel.co".into(),
             span: (1, 1),
         };
         let expected = "\
-hotel.crow:1 — 'checked_out' only ever moves one way
+hotel.co:1 — 'checked_out' only ever moves one way
 
     1 │ exec[conn, 'UPDATE rooms SET checked_out = 1 WHERE room = ?', [room_no]]
 
@@ -535,11 +535,11 @@ name = u.name[0]
                 column: "email".into(),
                 access_line: 2,
             },
-            file: "app.crow".into(),
+            file: "app.co".into(),
             span: (1, 2),
         };
         let expected = "\
-app.crow:1-2 — this code assumes one matching row; the schema allows many
+app.co:1-2 — this code assumes one matching row; the schema allows many
 
     1 │ u = query[conn, 'SELECT name FROM users WHERE email = ?', [email]]
     2 │ name = u.name[0]
@@ -552,7 +552,7 @@ app.crow:1-2 — this code assumes one matching row; the schema allows many
         CREATE UNIQUE INDEX unique_users_email ON users(email);
   [2] handle multiple rows explicitly (sort and choose, or aggregate)
 
-  apply: crow fix app.crow --hazard 1 --option 1
+  apply: crow fix app.co --hazard 1 --option 1
   accept as-is: put `--- crow: single-writer` on the line above line 1
 ";
         assert_eq!(render_hazard(&hz, 1, src), expected);
@@ -569,11 +569,11 @@ exec[conn, 'UPDATE accounts SET balance = balance + ? WHERE id = ?', [amt, to_id
                 tables: vec!["accounts".into()],
                 write_lines: vec![1, 2],
             },
-            file: "transfer.crow".into(),
+            file: "transfer.co".into(),
             span: (1, 2),
         };
         let expected = "\
-transfer.crow:1-2 — these writes succeed or fail separately
+transfer.co:1-2 — these writes succeed or fail separately
 
     1 │ exec[conn, 'UPDATE accounts SET balance = balance - ? WHERE id = ?', [amt, from_id]]
     2 │ exec[conn, 'UPDATE accounts SET balance = balance + ? WHERE id = ?', [amt, to_id]]
@@ -583,7 +583,7 @@ transfer.crow:1-2 — these writes succeed or fail separately
   fixes, safest first:
   [1] run them inside transact[…] so they succeed or fail together
 
-  apply: crow fix transfer.crow --hazard 1 --option 1
+  apply: crow fix transfer.co --hazard 1 --option 1
   accept as-is: put `--- crow: single-writer` on the line above line 1
 ";
         assert_eq!(render_hazard(&hz, 1, src), expected);
@@ -598,11 +598,11 @@ transfer.crow:1-2 — these writes succeed or fail separately
                 column: "nmae".into(),
                 suggestion: Some("name".into()),
             },
-            file: "app.crow".into(),
+            file: "app.co".into(),
             span: (1, 1),
         };
         let expected = "\
-app.crow:1 — column 'users.nmae' does not exist
+app.co:1 — column 'users.nmae' does not exist
 
     1 │ df = query[conn, 'SELECT nmae FROM users']
   did you mean 'name'?

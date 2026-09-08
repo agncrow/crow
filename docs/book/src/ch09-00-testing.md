@@ -31,7 +31,7 @@ strips them from the binary entirely. They run when you ask for
 verification:
 
 ```text
-$ crow test pricing.crow
+$ crow test pricing.co
 
   ✓ 1 block pass — 3 truths, 1 law, 5 inputs run
 ```
@@ -49,7 +49,7 @@ When a truth fails, you see both sides:
 ```text
   ⚠ 1 failing of 1 block
 
-  pricing.crow:5
+  pricing.co:5
      fee tests — line 6: assert failed: eq
     left:  0.1
     right: 1.0

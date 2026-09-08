@@ -13,7 +13,7 @@ crow check
 
   12 functions checked, 2 need review
 
-  [1/2] src/parser.crow > get_middle crashes on empty list (line 3)
+  [1/2] src/parser.co > get_middle crashes on empty list (line 3)
         items[mid] — but items is empty
         try: get_middle[[]]
 
@@ -84,7 +84,7 @@ all done? "✓ no issues found"
 | Hide stats by default | Coverage, branch counts, etc. only shown with `-v` |
 | No jargon | Edge cases are generated but aren't counted unless `-v` is used. |
 | One line when green | `✓ 12 functions checked, no issues found` |
-| Module context | `src/parser.crow > get_middle` — not just `get_middle` |
+| Module context | `src/parser.co > get_middle` — not just `get_middle` |
 
 ---
 
@@ -183,10 +183,10 @@ crow check
 
   2 issues found
 
-  [1/2] src/utils.crow > process has unused variable (line 3)
+  [1/2] src/utils.co > process has unused variable (line 3)
         y = 20 — assigned but never read
 
-  [2/2] src/utils.crow > categorize has unreachable code (line 12)
+  [2/2] src/utils.co > categorize has unreachable code (line 12)
         return 'D' — after return 'C', can never execute
 
   enter = recheck, s = skip >
@@ -205,7 +205,7 @@ while low lte high
 When the compiler can't prove termination, it warns but doesn't block:
 
 ```
-  [1/1] src/math.crow > collatz — while loop may not terminate (line 3)
+  [1/1] src/math.co > collatz — while loop may not terminate (line 3)
         loop variable 'n' has no guaranteed convergence
 ```
 
@@ -296,7 +296,7 @@ crow check
 
   1 issue found
 
-  [1/1] src/utils.crow > get_middle crashes on empty list (line 3)
+  [1/1] src/utils.co > get_middle crashes on empty list (line 3)
         items[mid] — but items is empty
         try: get_middle[[]]
 
@@ -345,7 +345,7 @@ crow check
 
   1 issue found
 
-  [1/1] src/search.crow > binary_search behavior changed (line 8)
+  [1/1] src/search.co > binary_search behavior changed (line 8)
         binary_search[[1, 1, 1], 1] was 1, now 0
         try: binary_search[[1, 1, 1], 1]
 

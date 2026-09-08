@@ -716,7 +716,7 @@ native = ['kernels/flash_attention.rs']
 ```
 
 ```
---- main.crow
+--- main.co
 out = flash_attention[q, k, v]     --- calls the Rust kernel
 ```
 

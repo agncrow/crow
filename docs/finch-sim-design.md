@@ -8,7 +8,7 @@ findings in §12.**
 Dogfood app #2: **the finch trading application rebuilt in Crow**, at
 `~/code/crow_projects/finch` — the whole app, page by page, starting with
 the Simulation page (historical replay of the VWAP scanner with paper
-trading). Each page is a view module (`views/sim.crow` first; scanner,
+trading). Each page is a view module (`views/sim.co` first; scanner,
 dashboard, history follow) behind one `serve[]`. This document designs the
 simulation page. Not a translation: a re-architecture under Crow's
 doctrine, using the app to field-test what
@@ -319,9 +319,9 @@ value's reason should survive every surface it reaches.
 ## 13. M1 results (2026-07-27) — the app serves; compiled mode taught us plenty
 
 `crow_projects/finch` serves the simulation page compiled (`crow build
-main.crow`, port 3100): derived-clock controls, session start, NBBO
+main.co`, port 3100): derived-clock controls, session start, NBBO
 buy/sell against the invariant-guarded book, live blotter. Single-file
-`main.crow` for now (see fix 1). Getting there surfaced a second fix
+`main.co` for now (see fix 1). Getting there surfaced a second fix
 list — all compiled-mode, all found by this app:
 
 1. **Module-scoped reactive state is broken in both modes** (top
@@ -360,7 +360,7 @@ list — all compiled-mode, all found by this app:
    interpreter no-op mocks, so `crow run -i` never serves (harness-only).
 
 **M1 addendum (2026-07-28):** F-11 shipped (deferred calls in event
-position) — the speed handlers collapsed to one; main.crow is 198
+position) — the speed handlers collapsed to one; main.co is 198
 lines. New finding: `crow build` printed "build ok" while its inner
 cargo invocation had not recompiled the changed crow_web dependency —
 the copied binary was stale. Needs a build-freshness guarantee (fix
@@ -433,7 +433,7 @@ Nothing on the page polls, refreshes, or holds a copy of anything.
 - The acceptance test is a test block, not a screenshot: `app[sim, width
   = 1280, wide = true, density = 'compact']`, start, seek, buy, sell, end,
   and the sessions list shows the row. Screenshots are for the reader.
-- Modules: `views/shell.crow`, `views/sim.crow`, `scanner.crow`; module
+- Modules: `views/shell.co`, `views/sim.co`, `scanner.co`; module
   state now survives both modes.
 - Gaps this is likely to surface, in order of likelihood: the
   stringified SQL parameters (`'`session_id`'`) that stand in for
@@ -450,14 +450,14 @@ no button that exists to compensate for a missing derivation.
 
 ### 14.5 What the reimplementation taught Crow (2026-09-07)
 
-The page is now parts: `sim/session.crow` (day, symbol, window, size,
-the open session, what the page last said), `sim/clock.crow` (four
-anchors and a window; `head` derived), `sim/tape.crow` (`bars` five
-minutes old at most, `so_far` at the play-head), `sim/scan.crow` (the
-scanner at the play-head), `sim/trading.crow` (fills, `trades`, the
-blotter), `sim/history.crow` (sessions and bookmarks as lists of rows,
-delete behind a `modal`), `views/shell.crow` (nav and the data chip),
-`views/sim.crow` (the page), and `main.crow` is six lines. Every part
+The page is now parts: `sim/session.co` (day, symbol, window, size,
+the open session, what the page last said), `sim/clock.co` (four
+anchors and a window; `head` derived), `sim/tape.co` (`bars` five
+minutes old at most, `so_far` at the play-head), `sim/scan.co` (the
+scanner at the play-head), `sim/trading.co` (fills, `trades`, the
+blotter), `sim/history.co` (sessions and bookmarks as lists of rows,
+delete behind a `modal`), `views/shell.co` (nav and the data chip),
+`views/sim.co` (the page), and `main.co` is six lines. Every part
 carries its facts, derivations, handlers, views and tests; nothing polls,
 refreshes or holds a copy. What had to change in Crow to get there, in
 the order it surfaced:
@@ -469,8 +469,8 @@ the order it surfaced:
   prefixes; module paths resolved from the importing file's directory,
   not the project's. Now a module file is expanded once under its path
   (`sim_clock_`), rooted at the crowfile, and `session.day = d` in another
-  part's handler writes the session's fact. `crow test sim/clock.crow`
-  runs a part's tests with its imports inlined; `crow check main.crow`
+  part's handler writes the session's fact. `crow test sim/clock.co`
+  runs a part's tests with its imports inlined; `crow check main.co`
   checks the whole app.
 - **Every view renders from the session.** Only the page's root view had
   the state; a part's view reading its own facts had nothing to read
@@ -566,7 +566,7 @@ in for the live config. Everything else is built, in this order.
 | 2 | Bookmarks: count, a label, open in replay, delete | BookmarksCard | built (2026-09-07): a label field beside Bookmark, a table with open-on-click and Delete; pinning is not in the schema yet |
 | 3 | Two modes: Scanner Replay (the day's universe, Max symbols) and Practice (one symbol) | mode tabs | built (2026-09-07): `tabs[modes, mode]` over the `mode` fact; the practice setup is one typed symbol; `mode_code` records the mode with the session |
 | 4 | Window start and end as times; random symbol/date over the last N months | setup | built (2026-09-07): `field[..., type = 'time']` for From and To; `random_pick` draws a day from the last N months (the `ranges` select) and a symbol from that day's universe |
-| 5 | Next in-gate episode (this symbol, any symbol); skip current stock | ReplayControlBar, next-in-gate routes | built (2026-09-07): `sim/nav.crow` — a ClickHouse window query finds the next episode after the play-head, any symbol or this one; Skip records the symbol and hops to the next in-gate stock, as the bar's Skip does |
+| 5 | Next in-gate episode (this symbol, any symbol); skip current stock | ReplayControlBar, next-in-gate routes | built (2026-09-07): `sim/nav.co` — a ClickHouse window query finds the next episode after the play-head, any symbol or this one; Skip records the symbol and hops to the next in-gate stock, as the bar's Skip does |
 | 6 | Next RSI(14, 3m) > 70 crossing | ReplayControlBar | built (2026-09-07): kernel `rsi` over 3-minute bars, the first crossing above 70 after the play-head, any symbol or this one; hops are not bounded by the window's end, as in Python |
 | 7 | Scanner table filters: in-gate only, RSI > 70 charts only; per-symbol mini charts | ScannerReplayMode | to build |
 | 8 | Patterns: Flag / Pennant, VWAP Launch, Burst Ignition, VWAP Power Cross, Ascending Staircase, Leg Scalp, B2e Surge, Mid-day Grinder, EVT Fade — chips select which are searched | patterns/ (9 detectors, ~3.1k lines) | to build — Crow modules of pure functions over bar frames, with truths and laws |

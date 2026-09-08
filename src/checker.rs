@@ -2384,7 +2384,7 @@ mod tests {
 
     #[test]
     fn chart_element_renders_in_the_harness() {
-        let src = std::fs::read_to_string("tests/chart_harness.crow").unwrap();
+        let src = std::fs::read_to_string("tests/chart_harness.co").unwrap();
         let stmts = crate::build(&src).unwrap();
         let (issues, counts) = run_test_blocks(&stmts);
         // the candle chart, and the study with panes, points and a seek target

@@ -34,7 +34,7 @@ It installs whatever is missing and skips whatever is present, in order:
 `./install.sh --dev` builds from the checkout in place instead — for
 working on Crow itself, since compiled programs then link against your
 working tree. `--quick` skips the proof; `--uninstall` removes the binary
-and `~/.crow` and leaves Rust alone. On Windows, run it inside WSL.
+and `~/.co` and leaves Rust alone. On Windows, run it inside WSL.
 
 If this was your first Rust install, open a new terminal (rustup put
 `~/.cargo/bin` on your `PATH` through your shell profile), then verify:

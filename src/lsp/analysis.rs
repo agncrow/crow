@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn clean_file_has_no_diagnostics() {
-        let a = analyze("x = 1\nlog['`x`']\n", None, None, "t.crow");
+        let a = analyze("x = 1\nlog['`x`']\n", None, None, "t.co");
         assert!(a.diagnostics.is_empty(), "got {:?}", a.diagnostics);
     }
 
@@ -222,7 +222,7 @@ mod tests {
         // Line 1 is unparseable; line 3 uses an undefined variable. Both
         // must be reported — that's what lenient parsing buys.
         let src = "fn = = broken\nx = 1\nlog[undefined_thing]\n";
-        let a = analyze(src, None, None, "t.crow");
+        let a = analyze(src, None, None, "t.co");
         assert!(
             a.diagnostics.len() >= 2,
             "expected parse error AND validator error, got {:?}",
@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn validator_line_prefix_is_stripped() {
-        let a = analyze("log[nope]\n", None, None, "t.crow");
+        let a = analyze("log[nope]\n", None, None, "t.co");
         assert_eq!(a.diagnostics.len(), 1);
         let msg = &a.diagnostics[0].message;
         assert!(
@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn undefined_var_flagged_even_with_use_db() {
         let src = "x = 1\n\nfn broken[ = =\n\nlog[not_defined_anywhere]\n";
-        let a = analyze(src, None, None, "t.crow");
+        let a = analyze(src, None, None, "t.co");
         assert!(
             a.diagnostics
                 .iter()
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn db_hazards_surface_as_warnings() {
-        let src = std::fs::read_to_string("tests/db_check/write_skew.crow").unwrap();
+        let src = std::fs::read_to_string("tests/db_check/write_skew.co").unwrap();
         let ddl = std::fs::read_to_string("tests/db_check/write_skew.schema.sql").unwrap();
         let db_path = std::env::temp_dir().join("crow_lsp_test_ws.db");
         let _ = std::fs::remove_file(&db_path);
@@ -270,7 +270,7 @@ mod tests {
         }
         drop(db);
 
-        let a = analyze(&src, None, Some(&url), "write_skew.crow");
+        let a = analyze(&src, None, Some(&url), "write_skew.co");
         let warn = a
             .diagnostics
             .iter()
@@ -288,7 +288,7 @@ mod tests {
     #[test]
     fn statements_after_broken_one_still_typecheck() {
         let src = "fn = = broken\ny = 'hello'\n";
-        let a = analyze(src, None, None, "t.crow");
+        let a = analyze(src, None, None, "t.co");
         // y should still be known to inference despite line 1 being broken.
         assert!(a.ctx.vars.contains_key("y"), "vars: {:?}", a.ctx.vars.keys());
     }

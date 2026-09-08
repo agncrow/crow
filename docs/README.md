@@ -45,4 +45,4 @@ These explain how Crow got here. They are kept for the reasoning; where a code s
 | [ui-engine-design.md](ui-engine-design.md) | The layout engine design: a closed layout vocabulary, one engine in Crow, CSS as the wire format, exact UI tests without a browser (decided in principle, not built). |
 | [finch-sim-design.md](finch-sim-design.md) | The second dogfood app — a trading simulator rebuilt in Crow. |
 
-`docs/book/site.crow` renders the book with Crow itself (`use doc`): `crow run -i docs/book/site.crow` writes a static site to `docs/book/crow-site`. See `docs/usage.md`, "Building the book with Crow".
+`docs/book/site.co` renders the book with Crow itself (`use doc`): `crow run -i docs/book/site.co` writes a static site to `docs/book/crow-site`. See `docs/usage.md`, "Building the book with Crow".

@@ -26,7 +26,7 @@ pub struct Input<'a> {
 const BOOK_DIR: &str = ".crow/book";
 
 fn slug(file: &str) -> String {
-    file.trim_end_matches(".crow").chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>().trim_matches('-').to_string()
+    file.trim_end_matches(".co").chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>().trim_matches('-').to_string()
 }
 
 fn decl(key: &str) -> &str { key.split(' ').nth(1).unwrap_or(key) }
@@ -296,7 +296,7 @@ entries = for i in range[len[toc]]
     map[t = toc.title[i], p = replace[path, '.md', '.html'], x = doc.plain[read['`src``path`']]]
 write['`out`search.json', encode[entries]]
 "#, src = src.display(), out = site.display(), name = input.name.replace('\'', "\\'"));
-    let site_path = PathBuf::from(BOOK_DIR).join("site.crow");
+    let site_path = PathBuf::from(BOOK_DIR).join("site.co");
     std::fs::write(&site_path, site_crow).map_err(|e| e.to_string())?;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let status = std::process::Command::new(&exe).args(["run", "-i", site_path.to_str().unwrap_or("")]).status().map_err(|e| e.to_string())?;

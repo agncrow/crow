@@ -127,7 +127,7 @@ Goal: `page['/', render, handle]` with `serve[3000]` runs a LiveView counter in 
 - [x] **`page[]` / `serve[]` API** — implicit app, `serve[port]` deferred to end of main
 - [x] **`state.get` / `state.set`** — type-inferred: `state.get['count', 0]` → `get_i64()`
 - [x] **`use web, ui`** — comma-separated multi-import syntax
-- [x] **Counter example** — `examples/counter.crow`
+- [x] **Counter example** — `examples/counter.co`
 
 ##### Phase 2: Reactive Data & Two-Way Binding ✅
 

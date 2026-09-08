@@ -351,7 +351,7 @@ mod tests {
 
     #[test]
     fn lost_update_fusion_rewrites_canonically() {
-        let src = std::fs::read_to_string("tests/db_check/lost_update.crow").unwrap();
+        let src = std::fs::read_to_string("tests/db_check/lost_update.co").unwrap();
         let hazard = Hazard {
             kind: HazardKind::LostUpdate {
                 table: "accounts".into(),
@@ -359,7 +359,7 @@ mod tests {
                 read_line: 8,
                 write_line: 10,
             },
-            file: "lost_update.crow".into(),
+            file: "lost_update.co".into(),
             span: (8, 10),
         };
         let fused = fuse_lost_update(&src, &hazard).unwrap();
@@ -371,7 +371,7 @@ mod tests {
 
     #[test]
     fn transact_wrap_rewrites_contiguous_writes() {
-        let src = std::fs::read_to_string("tests/db_check/unpaired.crow").unwrap();
+        let src = std::fs::read_to_string("tests/db_check/unpaired.co").unwrap();
         let wrapped = wrap_in_transact(&src, &[9, 10]).unwrap();
         assert!(wrapped.contains("fn run_together[t]"));
         assert!(wrapped.contains("exec[t, 'UPDATE accounts SET balance = balance - ?"));

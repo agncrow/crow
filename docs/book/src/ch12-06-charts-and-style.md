@@ -235,12 +235,12 @@ an ordinary HTML attribute.
 The full version of that dashboard — three cards, an alert badge in an
 `overlay`, a control `row` that turns into a stack on phones, a
 scrolling tape — lives in the repository as
-[`examples/layout_dashboard.crow`](https://github.com/agncrow/crow/blob/main/examples/layout_dashboard.crow).
+[`examples/layout_dashboard.co`](https://github.com/agncrow/crow/blob/main/examples/layout_dashboard.co).
 Three commands, in the order you'd use them:
 
 ```text
-crow test examples/layout_dashboard.crow    # the layout truths, no browser
-crow run  examples/layout_dashboard.crow    # serve it on http://localhost:3000
+crow test examples/layout_dashboard.co    # the layout truths, no browser
+crow run  examples/layout_dashboard.co    # serve it on http://localhost:3000
 crow stop                                   # from the same directory
 ```
 
@@ -287,7 +287,7 @@ token there and every element and chart that uses it follows:
 ```
 
 `crow check` flags a misspelled `--crow-*` token with a did-you-mean.
-CSS never appears inside a `.crow` file: the view says *what*, the
+CSS never appears inside a `.co` file: the view says *what*, the
 stylesheet says *how it looks*, and the boundary is the file extension.
 
 That's all of it. Next: the final project puts the whole stack together.

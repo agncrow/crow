@@ -37,14 +37,14 @@ jobs:
         run: ./target/release/crow test --book
       - name: Book site built by Crow (layout tested, pages written)
         run: |
-          ./target/release/crow test docs/book/site.crow
-          ./target/release/crow run -i docs/book/site.crow
+          ./target/release/crow test docs/book/site.co
+          ./target/release/crow run -i docs/book/site.co
       - name: Layout engine agrees with the browser (fixtures measured once, checked without one)
-        run: ./target/release/crow test tests/layout/conformance.crow
+        run: ./target/release/crow test tests/layout/conformance.co
       - name: Layout example
-        run: ./target/release/crow test examples/layout_dashboard.crow
+        run: ./target/release/crow test examples/layout_dashboard.co
       - name: Parts (a page composed of modules with facts, derivations and views)
-        run: ./target/release/crow test tests/parts/views/sim.crow && ./target/release/crow test tests/parts/sim/clock.crow && ./target/release/crow check tests/parts/main.crow < /dev/null
+        run: ./target/release/crow test tests/parts/views/sim.co && ./target/release/crow test tests/parts/sim/clock.co && ./target/release/crow check tests/parts/main.co < /dev/null
       - name: The app's book (derived from the parts fixture, with wireframes)
         run: cd tests/parts && ../../target/release/crow book --write && test -f .crow/book/site/pages.html && grep -q '<svg' .crow/book/site/pages.html
       - name: Disk used by the run

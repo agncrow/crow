@@ -253,9 +253,9 @@ mod tests {
     use super::*;
 
     /// Build an in-memory schema from a fixture's .schema.sql and run the
-    /// 1f verification detectors over its .crow program.
+    /// 1f verification detectors over its .co program.
     fn verify_fixture(name: &str) -> Vec<Hazard> {
-        let src = std::fs::read_to_string(format!("tests/db_check/{}.crow", name)).unwrap();
+        let src = std::fs::read_to_string(format!("tests/db_check/{}.co", name)).unwrap();
         let ddl =
             std::fs::read_to_string(format!("tests/db_check/{}.schema.sql", name)).unwrap();
         let db = crow_db::connect("sqlite://:memory:", None).unwrap();
@@ -265,7 +265,7 @@ mod tests {
         let sch = schema::introspect(&db).unwrap();
         let stmts = crate::build(&src).unwrap();
         let facts = sql_facts::collect(&stmts);
-        catalog::verify(&facts, &sch, &format!("{}.crow", name))
+        catalog::verify(&facts, &sch, &format!("{}.co", name))
     }
 
     #[test]
@@ -292,7 +292,7 @@ mod tests {
 
     /// Full run (verify + slices) against a fixture with optional extra DDL.
     fn full_check(name: &str, extra_ddl: &str) -> Vec<Hazard> {
-        let src = std::fs::read_to_string(format!("tests/db_check/{}.crow", name)).unwrap();
+        let src = std::fs::read_to_string(format!("tests/db_check/{}.co", name)).unwrap();
         let ddl =
             std::fs::read_to_string(format!("tests/db_check/{}.schema.sql", name)).unwrap();
         let db = crow_db::connect("sqlite://:memory:", None).unwrap();
@@ -306,7 +306,7 @@ mod tests {
         let sch = schema::introspect(&db).unwrap();
         let stmts = crate::build(&src).unwrap();
         let facts = sql_facts::collect(&stmts);
-        suppress(detect(&stmts, &facts, &sch, &format!("{}.crow", name)), &src)
+        suppress(detect(&stmts, &facts, &sch, &format!("{}.co", name)), &src)
     }
 
     #[test]
@@ -433,13 +433,13 @@ mod tests {
     #[test]
     fn offline_schema_from_migration_sql() {
         let ddl = std::fs::read_to_string("tests/db_check/write_skew.schema.sql").unwrap();
-        let src = std::fs::read_to_string("tests/db_check/write_skew.crow").unwrap();
+        let src = std::fs::read_to_string("tests/db_check/write_skew.co").unwrap();
         let stmts = crate::build(&src).unwrap();
         let facts = sql_facts::collect(&stmts);
 
         // Without the constraint: hazard fires from parsed DDL alone.
         let sch = schema::from_sql(&ddl).unwrap();
-        let hazards = detect(&stmts, &facts, &sch, "write_skew.crow");
+        let hazards = detect(&stmts, &facts, &sch, "write_skew.co");
         assert!(
             hazards
                 .iter()
@@ -453,7 +453,7 @@ mod tests {
             ddl
         );
         let sch2 = schema::from_sql(&ddl2).unwrap();
-        let hazards2 = detect(&stmts, &facts, &sch2, "write_skew.crow");
+        let hazards2 = detect(&stmts, &facts, &sch2, "write_skew.co");
         assert!(
             !hazards2
                 .iter()
@@ -474,7 +474,7 @@ mod tests {
 
     #[test]
     fn suppression_pragma_silences() {
-        let src = std::fs::read_to_string("tests/db_check/write_skew.crow").unwrap();
+        let src = std::fs::read_to_string("tests/db_check/write_skew.co").unwrap();
         // Insert the pragma right above the query line.
         let suppressed_src = src.replace(
             "open_trades = query",
@@ -489,7 +489,7 @@ mod tests {
         let stmts = crate::build(&suppressed_src).unwrap();
         let facts = sql_facts::collect(&stmts);
         let hazards = suppress(
-            detect(&stmts, &facts, &sch, "write_skew.crow"),
+            detect(&stmts, &facts, &sch, "write_skew.co"),
             &suppressed_src,
         );
         assert!(
