@@ -2053,7 +2053,7 @@ impl TypeContext {
             "matches" => CrowType::Bool,
             "any" | "all" => CrowType::Bool,
             "find" => {
-                // Dispatch: find[str, pattern] → regex result struct;
+                // Dispatch: find[str, pattern] → Result(record with the groups);
                 // find[array, predicate] → Result(element)
                 let arg0 = args.first().map(|a| self.infer_expr(a)).unwrap_or(CrowType::Unknown);
                 match arg0 {
@@ -2062,7 +2062,7 @@ impl TypeContext {
                         CrowType::NumArray(_) => CrowType::Result(inner),
                         _ => CrowType::Result(inner),
                     },
-                    _ => CrowType::Struct("CrowFindResult".to_string()),
+                    _ => CrowType::Result(Box::new(CrowType::Struct("CrowFindResult".to_string()))),
                 }
             }
             "sub" => CrowType::Str,

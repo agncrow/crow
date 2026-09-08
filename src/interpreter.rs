@@ -4151,27 +4151,19 @@ impl Interpreter {
                     Value::Str(p) => p.clone(),
                     _ => return Err("find[] second argument must be a string pattern".into()),
                 };
-                match regex::Regex::new(&pattern) {
-                    Ok(re) => {
-                        if let Some(caps) = re.captures(&s) {
-                            let groups: Vec<CrowValue> = caps.iter()
-                                .map(|m| match m {
-                                    Some(m) => CrowValue::ok(Value::Str(m.as_str().to_string())),
-                                    None => CrowValue::ok(Value::Str(String::new())),
-                                })
-                                .collect();
-                            let mut map = std::collections::BTreeMap::new();
-                            map.insert("ok".to_string(), CrowValue::ok(Value::Bool(true)));
-                            map.insert("groups".to_string(), CrowValue::ok(Value::Array(groups)));
-                            Ok(CrowValue::ok(Value::Map(map)))
-                        } else {
-                            let mut map = std::collections::BTreeMap::new();
-                            map.insert("ok".to_string(), CrowValue::ok(Value::Bool(false)));
-                            map.insert("groups".to_string(), CrowValue::ok(Value::Array(vec![])));
-                            Ok(CrowValue::ok(Value::Map(map)))
-                        }
+                // a record with the groups, or an error value: no match (no
+                // kind), an invalid pattern (kind 'regex'); m.ok is the
+                // value's own status, as everywhere
+                match crow_runtime::text::find(&s, &pattern) {
+                    Ok(Some(groups)) => {
+                        let mut map = std::collections::BTreeMap::new();
+                        map.insert("groups".to_string(), CrowValue::ok(Value::Array(
+                            groups.into_iter().map(|m| CrowValue::ok(Value::Str(m))).collect(),
+                        )));
+                        Ok(CrowValue::ok(Value::Map(map)))
                     }
-                    Err(e) => Ok(CrowValue::error_with_kind(&format!("invalid regex: {}", e), "regex", &self.trace_entry())),
+                    Ok(None) => Ok(CrowValue::error("no match", &self.trace_entry())),
+                    Err(e) => Ok(CrowValue::error_with_kind(&e, "regex", &self.trace_entry())),
                 }
             }
             "matches" => {
@@ -4184,9 +4176,9 @@ impl Interpreter {
                     Value::Str(p) => p.clone(),
                     _ => return Err("matches[] second argument must be a string pattern".into()),
                 };
-                match regex::Regex::new(&pattern) {
-                    Ok(re) => Ok(CrowValue::ok(Value::Bool(re.is_match(&s)))),
-                    Err(e) => Ok(CrowValue::error_with_kind(&format!("invalid regex: {}", e), "regex", &self.trace_entry())),
+                match crow_runtime::text::matches(&s, &pattern) {
+                    Ok(b) => Ok(CrowValue::ok(Value::Bool(b))),
+                    Err(e) => Ok(CrowValue::error_with_kind(&e, "regex", &self.trace_entry())),
                 }
             }
             "sub" => {
@@ -4203,9 +4195,9 @@ impl Interpreter {
                     Value::Str(r) => r.clone(),
                     _ => return Err("sub[] third argument must be a string replacement".into()),
                 };
-                match regex::Regex::new(&pattern) {
-                    Ok(re) => Ok(CrowValue::ok(Value::Str(re.replace_all(&s, replacement.as_str()).to_string()))),
-                    Err(e) => Ok(CrowValue::error_with_kind(&format!("invalid regex: {}", e), "regex", &self.trace_entry())),
+                match crow_runtime::text::sub(&s, &pattern, &replacement) {
+                    Ok(out) => Ok(CrowValue::ok(Value::Str(out))),
+                    Err(e) => Ok(CrowValue::error_with_kind(&e, "regex", &self.trace_entry())),
                 }
             }
             // --- Date/time builtins ---
@@ -4606,31 +4598,15 @@ impl Interpreter {
         }
         match &val.value {
             Value::Int(n) => Ok(serde_json::Value::Number(serde_json::Number::from(*n))),
-            Value::Float(f) => {
-                match serde_json::Number::from_f64(*f) {
-                    Some(n) => Ok(serde_json::Value::Number(n)),
-                    None => Err(format!("cannot encode float {} to JSON", f)),
-                }
-            }
+            // JSON has no NaN or infinity: those encode as null (json.rs)
+            Value::Float(f) => Ok(crow_runtime::json::float_to_json(*f)),
             Value::Str(s) => Ok(serde_json::Value::String(s.clone())),
             Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
             Value::Array(items) => {
                 let arr: Result<Vec<serde_json::Value>, String> = items.iter().map(|v| self.crow_to_json(v)).collect();
                 Ok(serde_json::Value::Array(arr?))
             }
-            Value::NumArray(t) => {
-                let arr: Vec<serde_json::Value> = t.to_vec().iter().map(|v| {
-                    if *v == (*v as i64) as f64 && v.is_finite() {
-                        serde_json::Value::Number(serde_json::Number::from(*v as i64))
-                    } else {
-                        match serde_json::Number::from_f64(*v) {
-                            Some(n) => serde_json::Value::Number(n),
-                            None => serde_json::Value::Null,
-                        }
-                    }
-                }).collect();
-                Ok(serde_json::Value::Array(arr))
-            }
+            Value::NumArray(t) => Ok(crow_runtime::json::tensor_to_json(t)),
             Value::Map(map) => {
                 let mut obj = serde_json::Map::new();
                 for (k, v) in map {
@@ -7818,14 +7794,15 @@ mod tests {
 
     #[test]
     fn test_find_ok() {
+        // a record with the whole match then each group; a miss is an error value
         let val = get_var("m = find['abc123', '([a-z]+)([0-9]+)']", "m");
-        match &val.value {
-            Value::Map(m) => {
-                let ok = m.get("ok").unwrap();
-                assert_eq!(format!("{}", ok.value), "true");
-            }
-            _ => panic!("expected map"),
-        }
+        assert!(val.ok);
+        assert_eq!(format!("{}", val.value), "[groups = ['abc123', 'abc', '123']]");
+        let miss = get_var("m = find['abc', '[0-9]+']", "m");
+        assert!(!miss.ok);
+        assert_eq!(miss.reason, "no match");
+        let bad = get_var("m = find['abc', '(']", "m");
+        assert_eq!(bad.kind, "regex");
     }
 
     #[test]

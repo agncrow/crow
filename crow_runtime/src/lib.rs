@@ -20,4 +20,5 @@ pub mod special;
 pub mod stats;
 pub mod ta;
 pub mod tensor;
+pub mod text;
 

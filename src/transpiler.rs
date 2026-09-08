@@ -1624,11 +1624,11 @@ impl Transpiler {
         if self.needs_find_struct {
             self.emit_line("");
             self.emit_line("#[derive(Clone, Debug)]");
-            self.emit_line("struct CrowFindResult { ok: bool, groups: Vec<String> }");
+            self.emit_line("struct CrowFindResult { groups: Vec<String> }");
             // Display like the interpreter's map: [groups = [...], ok = true]
             self.needs_crow_runtime = true;
             self.emit_line("impl crow_runtime::display::CrowDisplay for CrowFindResult {");
-            self.emit_line("    fn crow_repr(&self) -> String { use crow_runtime::display::CrowDisplay as _; format!(\"[groups = {}, ok = {}]\", self.groups.crow_repr(), self.ok.crow_repr()) }");
+            self.emit_line("    fn crow_repr(&self) -> String { use crow_runtime::display::CrowDisplay as _; format!(\"[groups = {}]\", self.groups.crow_repr()) }");
             self.emit_line("}");
         }
         if self.needs_shell_struct {
@@ -4140,9 +4140,7 @@ impl Transpiler {
                         // numbers as ints to match the interpreter's output
                         let arg_ty = self.ctx.infer_expr(&args[0]);
                         let arg_inner = match &arg_ty { CrowType::Result(i) => i.as_ref().clone(), o => o.clone() };
-                        if matches!(arg_inner, CrowType::NumArray(_)) {
-                            return format!("{{ let _vals: Vec<serde_json::Value> = {}.to_vec().iter().map(|&_f| if _f == (_f as i64) as f64 && _f.is_finite() {{ serde_json::json!(_f as i64) }} else {{ serde_json::json!(_f) }}).collect(); CrowResult {{ ok: true, value: serde_json::to_string(&_vals).unwrap_or_default(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }}", arg_strs[0]);
-                        }
+
                         // An array of fallible elements encodes each one the way the
                         // interpreter does: an ok element as its payload, an error as null.
                         if let CrowType::Array(el) = &arg_inner {
@@ -4150,6 +4148,12 @@ impl Transpiler {
                                 let src = if matches!(arg_ty, CrowType::Result(_)) { format!("({}).value", arg_strs[0]) } else { format!("({})", arg_strs[0]) };
                                 return format!("{{ let _vals: Vec<serde_json::Value> = {}.iter().map(|_e| if _e.ok {{ serde_json::to_value(&_e.value).unwrap_or(serde_json::Value::Null) }} else {{ serde_json::Value::Null }}).collect(); CrowResult {{ ok: true, value: serde_json::to_string(&_vals).unwrap_or_default(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }}", src);
                             }
+                        }
+                        // one encoding for every native value, in the runtime
+                        // (json.rs): a tensor is a list wherever it sits
+                        if self.json_encodable(&arg_inner) {
+                            self.needs_crow_runtime = true;
+                            return format!("CrowResult {{ ok: true, value: {{ use crow_runtime::json::ToJson as _; ({}).to_json().to_string() }}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", arg_strs[0]);
                         }
                         return format!("CrowResult {{ ok: true, value: serde_json::to_string(&{}).unwrap_or_default(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", arg_strs[0]);
                     }
@@ -4213,17 +4217,23 @@ impl Transpiler {
 
                     // --- Regex builtins ---
                     if name == "matches" && arg_strs.len() == 2 {
-                        self.needs_regex = true;
-                        return format!("regex::Regex::new(&*{}).unwrap().is_match(&*{})", arg_strs[1], arg_strs[0]);
+                        // the runtime compiles the pattern (text.rs); an invalid
+                        // one stops the program with its reason
+                        self.needs_crow_runtime = true;
+                        return format!("crow_runtime::text::matches(&*{}, &*{}).unwrap_or_else(|e| panic!(\"{{}}\", e))", arg_strs[0], arg_strs[1]);
                     }
                     if name == "find" && arg_strs.len() == 2 {
-                        self.needs_regex = true;
+                        // a record with the groups, or an error value: no match
+                        // (no kind) or an invalid pattern (kind 'regex'), as the
+                        // interpreter answers
+                        self.needs_crow_runtime = true;
                         self.needs_find_struct = true;
-                        return format!("{{ let _re = regex::Regex::new(&*{}).unwrap(); let _s = &*{}; if let Some(_caps) = _re.captures(&_s) {{ let _groups: Vec<String> = _caps.iter().map(|m| m.map_or(String::new(), |m| m.as_str().to_string())).collect(); CrowFindResult {{ ok: true, groups: _groups }} }} else {{ CrowFindResult {{ ok: false, groups: Vec::new() }} }} }}", arg_strs[1], arg_strs[0]);
+                        let trace = self.trace_format_expr();
+                        return format!("{{ match crow_runtime::text::find(&*{}, &*{}) {{ Ok(Some(_g)) => CrowResult {{ ok: true, value: CrowFindResult {{ groups: _g }}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Ok(None) => CrowResult {{ ok: false, value: CrowFindResult {{ groups: Vec::new() }}, reason: \"no match\".to_string(), kind: String::new(), trace: vec![{}], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: CrowFindResult {{ groups: Vec::new() }}, reason: e, kind: \"regex\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}", arg_strs[0], arg_strs[1], trace, trace);
                     }
                     if name == "sub" && arg_strs.len() == 3 {
-                        self.needs_regex = true;
-                        return format!("regex::Regex::new(&*{}).unwrap().replace_all(&*{}, &*{}).to_string()", arg_strs[1], arg_strs[0], arg_strs[2]);
+                        self.needs_crow_runtime = true;
+                        return format!("crow_runtime::text::sub(&*{}, &*{}, &*{}).unwrap_or_else(|e| panic!(\"{{}}\", e))", arg_strs[0], arg_strs[1], arg_strs[2]);
                     }
                     // --- Date/time builtins ---
                     if name == "now" && arg_strs.is_empty() {
@@ -6090,6 +6100,16 @@ impl Transpiler {
 
     /// Arrays whose element types the shared display kernel
     /// (crow_runtime::display::CrowDisplay) can format.
+    /// A type the runtime's `ToJson` covers: scalars, strings, tensors,
+    /// parsed JSON, and lists and maps of those.
+    fn json_encodable(&self, ty: &CrowType) -> bool {
+        match ty {
+            CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Bool | CrowType::NumArray(_) | CrowType::Json => true,
+            CrowType::Array(inner) | CrowType::Map(inner) => self.json_encodable(inner),
+            _ => false,
+        }
+    }
+
     fn kernel_displayable(&self, ty: &CrowType) -> bool {
         match ty {
             CrowType::Array(inner) => match inner.as_ref() {
@@ -6630,7 +6650,7 @@ mod tests {
     fn test_encode_builtin() {
         let src = "items = json['[1,2,3]']\ns = encode[items]\nlog[s]\n";
         let rust = transpile(src);
-        assert!(rust.contains("serde_json::to_string"), "encode[] should use serde_json::to_string\n{}", rust);
+        assert!(rust.contains(".to_json()"), "encode[] goes through the runtime's ToJson\n{}", rust);
     }
 
     #[test]
@@ -8113,10 +8133,13 @@ mod tests {
     }
 
     #[test]
-    fn test_find_emits_struct_result() {
-        // Regression: compiled find[] previously emitted an uncompilable mixed-type map
+    fn test_find_answers_a_record_or_an_error_value() {
+        // find[text, pattern] is a record with the groups on a match and an
+        // error value otherwise, so m.ok is the value's own status
         let rust = transpile("m = find['abc', '[a-z]+']\nlog[m.ok]\n");
-        assert!(rust.contains("CrowFindResult"), "find should use the synthetic struct\n{}", rust);
+        assert!(rust.contains("crow_runtime::text::find("), "find goes through the runtime\n{}", rust);
+        assert!(rust.contains("\"no match\""), "no match is an error value\n{}", rust);
+        assert!(rust.contains("struct CrowFindResult { groups: Vec<String> }"), "the record has the groups only\n{}", rust);
     }
 
     #[test]

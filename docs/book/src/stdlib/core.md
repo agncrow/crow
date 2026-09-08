@@ -161,7 +161,7 @@ type[error['x']]  --- 'error'
 | Function | Description | Example |
 |----------|-------------|---|
 | `json[str]` | Parse JSON string into a Crow value (error-value on failure) | [JSON](../by-example/json.md) · [Web: a JSON route](../by-example/web.md) |
-| `encode[value]` | Encode a Crow value as a JSON string | [JSON](../by-example/json.md) |
+| `encode[value]` | Encode a Crow value as a JSON string; a whole float prints as an int, a NaN or infinite float as `null`, an error value as `null` | [JSON](../by-example/json.md) |
 
 JSON type mapping: objects → maps, arrays → arrays, strings → str, numbers → int/float, booleans → bool, `null` → error-value. Parsed JSON is dynamic data — the map homogeneity rule applies to maps you construct, not to values parsed from JSON (open-schema data is exactly what `json[]` is for). JSON `null` maps to an error-value with `ok: false` and `reason: 'null'`, which auto-propagates through the error-value system (section 10).
 
@@ -219,7 +219,7 @@ log[h]    --- '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824'
 | Function | Description | Example |
 |----------|-------------|---|
 | `matches[s, pattern]` | Check if string matches regex pattern (returns bool) | [Regular expressions](../by-example/regex.md) |
-| `find[s, pattern]` | Find first match with capture groups. Returns map with `ok` (bool) and `groups` (array) | [Regular expressions](../by-example/regex.md) · [Searching with any, all, and find](../ch06-02-search-builtins.md) |
+| `find[s, pattern]` | The first match, as a record whose `groups` holds the whole match followed by each capture group. No match is an error value (`.ok` false, reason `no match`), as `find[arr, pred]` answers; an invalid pattern is one with kind `'regex'` | [Regular expressions](../by-example/regex.md) · [Searching with any, all, and find](../ch06-02-search-builtins.md) |
 | `sub[s, pattern, replacement]` | Replace all regex matches with replacement string | [Regular expressions](../by-example/regex.md) |
 
 ```
@@ -228,6 +228,7 @@ matches['hello', '[a-z]+']       --- true
 m = find['2024-01-15', '([0-9]+)-([0-9]+)-([0-9]+)']
 log[m.ok]        --- true
 log[m.groups]    --- ['2024-01-15', '2024', '01', '15']
+log[m.groups[1]] --- 2024
 
 sub['hello world', 'world', 'crow']  --- 'hello crow'
 ```

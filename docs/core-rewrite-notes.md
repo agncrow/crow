@@ -530,5 +530,19 @@ weeks; the core stages are weeks each.
 - **2026-09-08, stage 3 batch 3 (files) built:** the eight file
   builtins in `crow_runtime::io`, one meaning and one reason text
   (`core-runtime-builtins.md`, log; parity 45).
-- **Stage 3 next:** JSON as one encoder; regex; `min`/`max` mixing; the
-  interpreter's frame `filter` and column `sum` paths.
+- **2026-09-08, stage 3 batches 4 and 5 (JSON, regex) built:** one
+  encoder (`json::ToJson`) and one regex module (`text`);
+  `find[text, pattern]` redefined as the groups or an error value
+  (`core-runtime-builtins.md`, log; parity 46, 47). `min`/`max` were
+  already one meaning.
+- **2026-09-08, stage 3's builtin batches complete.** Every row of the
+  audit is `runtime`, `keep` or `n/a`. Three residuals are recorded in
+  the tracker and wait for the IR's typed values: the compiled
+  `matches`/`sub` halt on an invalid pattern where the interpreter
+  answers an error value (needs `Result` typing); `.ok` on a list is
+  per element in the interpreter and not in the compiled program
+  (needs typed columns); the interpreter's frame `filter` and column
+  `sum` build a full value per row (needs typed columns and a compact
+  boolean list).
+- **Next:** stage 4's first move, the IR's shape written into the spec
+  with the clock and the skip handler as worked cases.

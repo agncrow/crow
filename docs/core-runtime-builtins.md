@@ -70,10 +70,10 @@ side only.
 | `rand` | `core::rand_float/int/between` on the seeded RNG | same | `seed[n]` now governs every draw (parity 42) | **runtime** |
 | `time sleep env exit` | std | std | none | keep |
 | `read write exists mkdir ls rm mv cp` | `crow_runtime::io::fs_*` | same | compiled reasons dropped the path in six of eight (fixed: the path is named); compiled `ls` skipped unreadable entries silently (fixed: an error); compiled `rm` moved its path argument so the variable could not be used again (fixed) | **runtime** |
-| `json encode` | `json_to_crow` / `crow_to_json` in the interpreter | `serde_json::Value` kept dynamic | number formatting in `encode` | move (one encoder) |
+| `json encode` | `crow_to_json` on values, floats and tensors via `json::float_to_json` / `tensor_to_json` | `json::ToJson` for every native type | compiled `encode` wrote a tensor inside a map or list in its internal `{shape, data}` form (fixed: a list everywhere); a NaN encoded as `null` compiled but was an error interpreted (decided: `null`); a matrix now encodes as rows in both | **runtime** |
 | `shell` | `core::shell` → map of status/stdout/stderr | `core::shell` → `CrowShell` record | none now | **runtime** |
 | `hash` | sha2/md5 | to check | none | keep |
-| `find matches sub` | regex, groups map | to check | `find` with no match is an error value | move |
+| `find matches sub` | `crow_runtime::text` | same | `find[text, pattern]` answered a record with an `ok` key the interpreter could never read (`.ok` is every value's status, so a miss still read as ok): decided, the record keeps `groups` and a miss is an error value, so `m.ok` is the status in both modes; an invalid pattern halts the compiled `matches`/`sub` with the reason where the interpreter answers an error value (residual, needs `Result` typing) | **runtime** |
 | `now moment calendar parse_time` | `moments` | `moments` | none | runtime |
 | `error ok reason kind trace` | value struct | `CrowResult` | none | keep |
 | `log` | `display` | `display` | none | runtime |
@@ -130,3 +130,29 @@ side only.
   reason texts that name the path; both modes call them. Found on the
   way: six compiled reasons omitted the path, compiled `ls` skipped
   unreadable entries, and compiled `rm` moved its argument. Parity 45.
+- 2026-09-08, batch 4 (JSON): `json::float_to_json`, `tensor_to_json`
+  and the `ToJson` trait; compiled `encode` of a map or list holding
+  tensors wrote their internal form; a NaN or infinite float encodes as
+  `null` in both modes; a matrix as its rows. Parity 46.
+- 2026-09-08, batch 5 (regex): `crow_runtime::text::{matches, find,
+  sub}`; `find[text, pattern]` answers a record with `groups` or an
+  error value (its `ok` key was unreadable in the interpreter, where
+  `.ok` is every value's status, so a miss read as ok); compiled
+  `matches` and `sub` report an invalid pattern with the runtime's
+  reason instead of a bare unwrap. Parity 47. To decide with the IR's
+  typed columns: `.ok` on a list is per element in the interpreter (a
+  string column's validity) and in the compiled program only for a
+  `Vec<String>`, `true` for any other list, and the status for a
+  `Result` holding a list.
+- 2026-09-08, the interpreter's frame paths, read and left for the IR:
+  a column read (`df.price`) builds one full value per row, so a
+  million-row column costs about 120 MB of values before any work is
+  done, and a comparison against it builds a second list of full
+  values as the mask, which `filter` then converts back to booleans.
+  That is the whole of the 5× on `filter` and the 20× on a column
+  `sum`. Reading numeric columns as tensors would fix the cost but
+  change the type of every int cell to float, which flows into SQL
+  parameters (a Postgres int column refuses a float); a compact
+  boolean list needs a value the interpreter does not have. Both are
+  what typed columns in the IR give by construction (stage 4), so the
+  interpreter keeps its representation until then.

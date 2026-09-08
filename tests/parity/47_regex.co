@@ -1,0 +1,18 @@
+--- matches[], find[] and sub[] agree in both modes: find answers a
+--- record whose groups hold the whole match then each group, an error
+--- value when nothing matches, unicode groups, and a replacement with
+--- group references.
+log[matches['crow-2026', '^[a-z]+-[0-9]+$']]
+log[matches['Crow', '^[a-z]+$']]
+m = find['order 42 of 7', '([0-9]+) of ([0-9]+)']
+log[m.ok]
+log[m.groups]
+log[m.groups[1]]
+none = find['no digits here', '[0-9]+']
+log[none.ok]
+log[none.reason]
+u = find['naïve café', '(\\w+) (\\w+)']
+log[u.groups[2]]
+log[sub['a1b22c333', '[0-9]+', '#']]
+log[sub['2026-09-08', '([0-9]+)-([0-9]+)-([0-9]+)', '$3/$2/$1']]
+log[sub['unchanged', 'zzz', '!']]
