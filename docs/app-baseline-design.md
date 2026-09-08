@@ -197,8 +197,9 @@ rehearsal (B3) supplies declared data the same drawing becomes exact.
 **Rendering.** `crow book` writes Markdown under `.crow/book/src/`, a
 summary, and a `site.crow` with the Crow Book's own page shell (menu,
 pager, search, the kernel stylesheet); runs it with the interpreter;
-serves `.crow/book/site/` on the book's port. `crow book --write` builds
-without serving, for CI. The Markdown and the wireframes are derived on
+serves `.crow/book/site/` next to the app, on its `serve` port plus one
+(`--port` overrides), and records its pid so `crow stop book` stops it.
+`crow book --write` builds without serving, for CI. The Markdown and the wireframes are derived on
 every start, so the book is never stale; the runner's `▶ Run` stays
 available on any code block a part's own documentation carries.
 
