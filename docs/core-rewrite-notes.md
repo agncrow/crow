@@ -344,3 +344,99 @@ send mail and then branch on the reply). Time as an input means `now[]`
 inside a long handler is the event's moment, not the instant. A
 capability line per part is added ceremony, one line. These are the
 three semantic changes named in §4, restated as costs.
+
+## 8. Data, ML, performance: what the kernel moves and what it does not
+
+Written 2026-09-07. Vijay asked how the kernel (§4, §7) helps the low
+rows of rating-2026-09.md (data 6, math and ML 5, performance 6) and
+whether the design should change because of them.
+
+**The straight answer.** The kernel was designed for correctness and
+complexity. On its own it moves data by nothing, ML by nothing,
+performance by about one point. Three of its pieces are the foundations
+those rows need (values with unique ownership, one IR, derivations as
+the lazy boundary), but the rows move only if the rewrite is scoped to
+carry a compute sublanguage, and only alongside work no kernel replaces:
+measurements and library breadth.
+
+**What is true today, checked.**
+
+| Fact | Where |
+|---|---|
+| Frame runtime, columnar, columns shared by `Arc` | `crow_runtime/src/frame.rs`, 2.0k lines |
+| Frame functions in the spec | 17 (Polars: hundreds) |
+| Tensor: strided view over `Arc` storage; faer for linear algebra; wgpu for GPU; functional `grad[f]` | `tensor.rs` 2.2k, `linalg.rs`, `gpu.rs` |
+| Neural-net module | `nn.rs`, 263 lines |
+| Math, stats, signal, sparse, ta, distributed functions in the spec | 141 |
+| Benchmark suite in the repo | none |
+| Performance table in `math-library.md` | an estimate ("~0.5ms"), never measured |
+| Benchmark in `frame-module.md` (csv 31.6s vs Polars 0.18s) | predates columnar storage; stale |
+| Spec §14 "parallel by default": statement-level waves + parallel `for` | the waves are what §4 drops |
+
+**Performance (6; reachable 8).** The row says "unproven under load"
+and no design can prove anything: a benchmark suite is a prerequisite,
+measured in both modes and tracked like the parity corpus. Candidates:
+the 1 GB CSV, a 1000×1000 matmul, a training loop of the nn module,
+finch under twenty concurrent sessions, a derivation over a growing
+bars table. What the kernel then gives: (a) uniqueness, so loops that
+collect stop copying (the largest single win, in both modes); (b) one
+IR, so there is one optimizer: fusion of element-wise tensor chains,
+loop fusion, hoisting of invariant reads, and a place to decide
+parallelism from data size instead of statement position; (c) the
+transaction, so an event's store writes commit as one batch; (d)
+incremental derivations, so a changed row does not rerun a query.
+Dropping statement waves costs nothing measurable that a parallel
+`for`, parallel frame and tensor kernels, and fetches batched at
+commit do not give back, and it removes a source of nondeterminism
+that the parity suite has to police. That is a spec change and needs
+a Design Note.
+
+**Data (6; reachable 8).** The gap is breadth and lazy execution.
+Polars' edge is a lazy plan fused into one pass over columns. Crow
+already has the lazy boundary: `derive`. A derived frame is a plan
+executed on read; with a relational sublanguage in the IR, `filter`
+then `select` then `group` fuses into one pass, and Crow gets Polars'
+lazy API without a second API. Incremental derivations over appends
+(a window over a growing table) are something Polars does not do.
+Frame schemas as static types at part boundaries extend what typed
+query cells already do and let the Rust backend emit typed columns.
+Breadth is a library workstream (the frame DSL, first in the July fix
+plan); the rewrite helps it in one decisive way: every frame function
+is written once against the IR instead of twice against two walkers.
+
+**Math and ML (5; reachable 7, never 10).** PyTorch's ten is breadth
+and ecosystem: pretrained models, CUDA kernels, loaders, distributed
+training. Crow should not aim there. The kernel's help: immutable
+tensors with unique-ownership updates fit functional autograd; the IR
+fuses element-wise chains (the XLA win); capabilities bind compute
+(threads, GPU, a remote worker) without touching the program; time as
+input plus derivations make streaming features natural. Three
+decisions: (1) shapes in the IR type, at least rank and literal dims,
+so fusion and checking have something to work with; (2) rescope the
+row to "ML on the data the app already has", tabular and time-series:
+linear and logistic models, trees, small nets, TA features, rated
+against scikit-learn and statsmodels rather than PyTorch; (3) one
+interop seam, ONNX inference through a capability, so models trained
+elsewhere run inside Crow. That is the largest gain per line and it is
+a capability, so it fits the kernel as designed.
+
+**Design changes to §4, four.**
+
+1. The IR is not scalar-only: it carries a relational sublanguage
+   (filter, select, group, join, window, sort over typed columns) and
+   an array sublanguage (shaped tensor ops), so it can fuse and check.
+2. `derive` is the lazy-plan boundary: a derived frame or tensor
+   compiles to a fused plan run on read, incremental over appends.
+3. Capabilities cover compute devices and model sources, not only
+   stores, mail and the clock.
+4. Parallelism is explicit and provable: parallel `for`, internal
+   parallel kernels, effects batched at commit; statement waves go,
+   with a Design Note; a benchmark suite joins the acceptance suite.
+
+**What does not move by design.** The ecosystem row. Breadth of frame
+and ML functions, which is library work whichever core exists. The
+measured numbers, until they are measured.
+
+**Order.** Benchmarks first, on today's runtime, so the rewrite has a
+before. Then the IR with the two sublanguages and uniqueness. Then the
+frame DSL on the IR. Then shapes, the ML rescope and the ONNX seam.
