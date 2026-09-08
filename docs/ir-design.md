@@ -351,6 +351,101 @@ deleted in the same commit that makes the new path the default.
    fifth, which the typed values of §5 are the answer to, not this
    walker.*
 4. **The Rust backend**, the same way; then `transpiler.rs` goes.
+   *Hand-off, 2026-09-08 night, for the session that starts it — read
+   this before anything else.*
+
+   *Where things stand.* Steps 1–3 are done and committed (3944c4c):
+   `ir.rs` is the form, `lower_ir.rs` produces it from the front end,
+   `ir_interp.rs` walks it as `crow run -i`, and `interpreter.rs` is
+   gone. `transpiler.rs` (8,285 lines, 267 unit tests) still compiles
+   programs from the AST with its own inference passes; it is the only
+   consumer left of the AST after validation. The runtime crates the
+   generated code links are the ones the walker calls
+   (`crow_runtime::{core, frame, display, io, tensor, stats, layout,
+   moments, later, text, json, distributed, sparse, gpu}`,
+   `crow_web::{view, live, server, session, rate, mail, docs, cors,
+   core}`, `crow_db::{connect, DbHandle}`), so the backend emits calls
+   into what exists; it invents no runtime.
+
+   *The shape.* One file, `src/emit_rs.rs`: `pub fn emit(program:
+   &Program, source_file: &str) -> Crate` where `Crate` holds the
+   `main.rs` text and what the crate needs (`rayon`, `serde_json`,
+   `crow_runtime` with its `arrow` feature, `crow_web`, `crow_db`),
+   decided from the program's `uses`, `Fn.effects` and types instead
+   of the transpiler's `needs_*` flags. `transpile_and_compile` in
+   `main.rs` swaps `Transpiler::new(ctx).transpile(&stmts)` for
+   `lower_ir::lower` then `emit_rs::emit`; the `.crow_build` crate, the
+   runtime crates by path, `--release` for `crow build` and
+   `CROW_BUILD_PROFILE=dev` for the runners all stay. The emitter is
+   the printing of each node kind of §3 and the type map of §6
+   (`to_rust_type` today), nothing else: no `infer_expr`, no name
+   chains. `Move(x)` prints `x`; `Local(x)` of a non-copy type prints
+   `x.clone()`; `Convert` prints the cast or the unwrap; `Propagate`
+   prints the early return of the error in a function and the halt at
+   the top level; `Stop` prints the handler's stop; a held `Effect`
+   prints in place until the session layer (step 5) gives it a log;
+   `For … parallel` prints the rayon chunk loop the walker's
+   `run_parallel` mirrors and `ForExpr … parallel` its collecting
+   form; `Tree` prints `crow_web::view` construction; a `Call` to a
+   `Target::Runtime` prints through `RUNTIME_TABLE` (31 entries:
+   `push`→`crow_runtime::core::push` …) and a `Target::Module` through
+   the registry's Rust names, which `lower_ir` should record on the
+   node (the walker resolves bare module names at run time by the
+   registry rule; the emitter cannot, so resolve them at lowering and
+   print the resolution).
+
+   *What the IR must carry that the transpiler computes for itself.*
+   Put these into the lowering, not the emitter: which parameters pass
+   by reference (`compute_by_ref_params`: non-copy, never mutated),
+   which locals are `mut` (a `Set` on a `Let`), which structs are
+   `Copy`, the recursive-struct-with-sentinel case (`OptBoxStruct`),
+   the functions `grad` differentiates (`emit_dual_function`: a
+   duplicate over `CrowDual`), `later` targets, the filter shape of a
+   collecting loop (`is_filter_pattern` → an iterator filter), the
+   search builtins that need rayon, the database calls' parameter
+   guarding (`db_params_to_json_guarded`, `cell_getter` from
+   `describe`), and the per-type display of `log`
+   (`emit_log_call` → `crow_runtime::display`). Each is a field on the
+   node or the declaration, printed by `crow build --ir`, so the walker
+   and the emitter read the same decision.
+
+   *Order of work, each slice gated by the parity programs it covers,
+   behind `CROW_RS=1` until every gate is green (the pattern of step 3:
+   `crow test --parity --rs` as the advisory tally, and put the flag
+   before the file in the runner — the first tally of step 3 was an
+   artefact of the flag after it).* (a) Scripts: scalars, strings and
+   interpolation, lists, maps, structs, functions, loops, results and
+   propagation, the state-free builtins — parity 01 to 20, 26, 41,
+   43–49. (b) The runtime modules: frames, tensors, json, text, io,
+   moments, regex, rand — the rest of the parity suite and
+   `tests/bench`. (c) `use ui` programs: facts as `CrowLiveState`
+   (`state.get`/`state.set`, the transpiler's state preamble), views
+   through `crow_web::view::CrowVNode` and `children_of`, handlers,
+   derivations as `__derive_x(state)` with `DeriveSpec`, `page`/`serve`
+   through `crow_web::live::configure`, the web extras (cors, sessions,
+   rate, mail, docs, static, arrow/msgpack/bytes/stream, ws/sse), and
+   the database through `crow_db` — the book's ui chapters and finch's
+   baseline are the gates; test blocks never compile (the walker runs
+   them). (d) Delete `transpiler.rs` in the commit that makes the
+   emitter the default; port the 267 unit tests that check generated
+   code's shape to the emitter and drop the ones the parity suite
+   already proves; then fold `lower.rs`, `type_infer.rs` and
+   `validator.rs` as §12 decided.
+
+   *Gotchas kept from step 3.* The book runner's worker caches
+   (`$TMPDIR/crow_book_test/w*/.crow_build/target`) can rot (a missing
+   libsqlite3-sys `bindgen.rs` shows as "does not build" on database
+   blocks): wipe them and rerun. `crow build` from the repo root
+   creates 0-byte sqlite files named by the program (the compiler asks
+   the database): build scratch programs in a scratch directory.
+   Debug-mode unit tests lower every parity program: a literal nested
+   more than about a hundred deep overflows the test thread's stack.
+   For an A/B against the last committed binary, `git worktree add
+   <scratch>/crow_ab <commit>` and `cargo build --release` there, then
+   run both binaries back to back; remove the worktree after.
+   `CROW_IR_SHOW=1 crow test file.co` prints a test block's lowered
+   program. The benchmark's columns compare within a recording, not
+   across recordings.*
 5. **The session layer** with the three meanings; the harness; finch
    rewritten to them and its baseline re-accepted, whose diff is the
    measure of what the meanings delete.
