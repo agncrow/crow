@@ -193,9 +193,7 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
             if args.len() != 2 { return Err("split[] takes exactly 2 arguments".into()); }
             match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
                 (Value::Str(s), Value::Str(delim)) => {
-                    let parts: Vec<CrowValue> = s.split(delim.as_str())
-                        .map(|p| CrowValue::ok(Value::Str(p.to_string())))
-                        .collect();
+                    let parts: Vec<CrowValue> = crow_runtime::text::split(s, delim).into_iter().map(|p| CrowValue::ok(Value::Str(p))).collect();
                     Ok(CrowValue::ok(Value::Array(parts)))
                 }
                 _ => Err("split[] requires two strings".into()),
@@ -204,30 +202,28 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
         "trim" => {
             if args.len() != 1 { return Err("trim[] takes exactly 1 argument".into()); }
             match args[0].unwrap_or_propagate()? {
-                Value::Str(s) => Ok(CrowValue::ok(Value::Str(s.trim().to_string()))),
+                Value::Str(s) => Ok(CrowValue::ok(Value::Str(crow_runtime::text::trim(s)))),
                 _ => Err("trim[] requires a string".into()),
             }
         }
         "replace" => {
             if args.len() != 3 { return Err("replace[] takes exactly 3 arguments".into()); }
             match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?, args[2].unwrap_or_propagate()?) {
-                (Value::Str(s), Value::Str(old), Value::Str(new)) => {
-                    Ok(CrowValue::ok(Value::Str(s.replace(old.as_str(), new.as_str()))))
-                }
+                (Value::Str(s), Value::Str(old), Value::Str(new)) => Ok(CrowValue::ok(Value::Str(crow_runtime::text::replace(s, old, new)))),
                 _ => Err("replace[] requires three strings".into()),
             }
         }
         "upper" => {
             if args.len() != 1 { return Err("upper[] takes exactly 1 argument".into()); }
             match args[0].unwrap_or_propagate()? {
-                Value::Str(s) => Ok(CrowValue::ok(Value::Str(s.to_uppercase()))),
+                Value::Str(s) => Ok(CrowValue::ok(Value::Str(crow_runtime::text::upper(s)))),
                 _ => Err("to_upper[] requires a string".into()),
             }
         }
         "lower" => {
             if args.len() != 1 { return Err("lower[] takes exactly 1 argument".into()); }
             match args[0].unwrap_or_propagate()? {
-                Value::Str(s) => Ok(CrowValue::ok(Value::Str(s.to_lowercase()))),
+                Value::Str(s) => Ok(CrowValue::ok(Value::Str(crow_runtime::text::lower(s)))),
                 _ => Err("to_lower[] requires a string".into()),
             }
         }
@@ -255,28 +251,21 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
         "starts" => {
             if args.len() != 2 { return Err("starts[] takes exactly 2 arguments".into()); }
             match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                (Value::Str(s), Value::Str(prefix)) => {
-                    Ok(CrowValue::ok(Value::Bool(s.starts_with(prefix.as_str()))))
-                }
+                (Value::Str(s), Value::Str(prefix)) => Ok(CrowValue::ok(Value::Bool(crow_runtime::text::starts(s, prefix)))),
                 _ => Err("starts_with[] requires two strings".into()),
             }
         }
         "ends" => {
             if args.len() != 2 { return Err("ends[] takes exactly 2 arguments".into()); }
             match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                (Value::Str(s), Value::Str(suffix)) => {
-                    Ok(CrowValue::ok(Value::Bool(s.ends_with(suffix.as_str()))))
-                }
+                (Value::Str(s), Value::Str(suffix)) => Ok(CrowValue::ok(Value::Bool(crow_runtime::text::ends(s, suffix)))),
                 _ => Err("ends_with[] requires two strings".into()),
             }
         }
         "repeat" => {
             if args.len() != 2 { return Err("repeat[] takes exactly 2 arguments".into()); }
             match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                (Value::Str(s), Value::Int(n)) => {
-                    if *n < 0 { return Err("repeat[] count cannot be negative".into()); }
-                    Ok(CrowValue::ok(Value::Str(s.repeat(*n as usize))))
-                }
+                (Value::Str(s), Value::Int(n)) => Ok(CrowValue::ok(Value::Str(crow_runtime::text::repeat(s, *n)?))),
                 _ => Err("repeat[] requires a string and an int".into()),
             }
         }
