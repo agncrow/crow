@@ -1,0 +1,27 @@
+--- A collecting loop run in parallel whose body yields on some paths
+--- only, after statements of its own. The compiled program did not build
+--- it (a closure's `if` without `else` yields nothing); each iteration
+--- now gathers what it yields, and the results keep their input order.
+out = for x in [1, 2, 3]
+    y = x * 2
+    if y gt 2
+        y
+log[out]
+
+words = for w in ['a', 'bb', 'ccc']
+    n = len[w]
+    if n gt 1
+        '`w`:`n`'
+    else
+        if n eq 1
+            w
+log[words]
+
+evens = for i in range[400]
+    sq = i * i
+    if i % 2 eq 0
+        sq
+log[len[evens]]
+log[evens[0]]
+log[evens[1]]
+log[evens[199]]

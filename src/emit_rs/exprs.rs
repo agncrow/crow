@@ -903,6 +903,37 @@ impl Emitter {
             return format!("{}.{}().filter_map({} {{ if {} {{ Some({}) }} else {{ None }} }}).collect::<Vec<{}>>()", iter_str, method, param, c, v, vt.to_rust_type());
         }
 
+        // a body that yields on some paths only, run in parallel: each
+        // iteration gathers what it yields (none or one) and the lists are
+        // joined in input order; a sequential one gathered in a loop above
+        if !always_yields(body) {
+            let list = match whole.ty() {
+                Ty::List(item) => Ty::List(item),
+                _ => Ty::List(Box::new(Ty::Unknown)),
+            };
+            let list_ty = crow_type(&list);
+            let one = format!("_yielded_{}", self.binop_counter);
+            self.binop_counter += 1;
+            let saved_out = std::mem::take(&mut self.out);
+            let saved_indent = self.indent;
+            self.indent = saved_indent + 1;
+            self.push_scope();
+            self.declare(var, elem);
+            self.line(&format!("let mut {}: {} = Vec::new();", one, list_ty.to_rust_type()));
+            self.declare(&one, list_ty.clone());
+            self.closure_depth += 1;
+            for s in yielding(body, &one, &list) {
+                self.emit_stmt(&s);
+            }
+            self.closure_depth -= 1;
+            self.line(&one);
+            self.pop_scope();
+            let closure_body = std::mem::replace(&mut self.out, saved_out);
+            self.indent = saved_indent;
+            let pad = "    ".repeat(self.indent);
+            return format!("{}.{}().flat_map_iter({} {{\n{}{}}}).collect::<{}>()", iter_str, method, param, closure_body, pad, list_ty.to_rust_type());
+        }
+
         // the body's statements, then its last value
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
