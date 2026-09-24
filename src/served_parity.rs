@@ -262,12 +262,20 @@ fn drive(exe: &std::path::Path, mode: &[&str], file: &std::path::Path, port: u16
         let _ = ws.close(None);
         Ok(pages)
     })();
-    let _ = std::process::Command::new("kill").arg("-TERM").arg("--").arg(format!("-{}", child.id())).output();
+    // `crow run` alone is stopped, as a person stops it: the program it
+    // runs stops with it (a signal to crow run is handed on), and the port
+    // is free before the next mode takes it
+    let _ = std::process::Command::new("kill").arg("-TERM").arg(child.id().to_string()).output();
     let _ = child.wait();
-    // the port is free before the next mode takes it
     let free_by = Instant::now() + Duration::from_secs(10);
     while std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() && Instant::now() < free_by {
         std::thread::sleep(Duration::from_millis(100));
+    }
+    let kept_serving = std::net::TcpStream::connect(("127.0.0.1", port)).is_ok();
+    // whatever is left of the group goes, so the next mode can serve
+    let _ = std::process::Command::new("kill").arg("-KILL").arg("--").arg(format!("-{}", child.id())).output();
+    if kept_serving && result.is_ok() {
+        return Err("stopping `crow run` left its program serving".to_string());
     }
     result
 }
