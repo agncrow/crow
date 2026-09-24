@@ -7,6 +7,7 @@ mod harness;
 mod interp_tests;
 mod ir_interp;
 mod lower_ir;
+mod emit_rs;
 mod ops;
 mod baseline;
 mod checker;
@@ -22,7 +23,6 @@ mod served;
 mod served_parity;
 mod sql_types;
 mod token;
-mod transpiler;
 mod type_infer;
 mod validator;
 mod wireframe;
@@ -315,8 +315,9 @@ fn print_usage() {
 }
 
 /// Run every tests/parity/*.co file through both execution modes and diff
-/// their stdout. The transpiler and interpreter must agree on every program
-/// (design rule 11); this makes drift a test failure instead of a discipline.
+/// their stdout. The compiled program and the interpreter must agree on
+/// every program (design rule 11); this makes drift a test failure instead
+/// of a discipline.
 
 /// Execute every fenced `crow` code block in docs/book/src/*.md through both
 /// execution modes. The book can never rot: a block either runs (and the two
@@ -1804,17 +1805,27 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         eprintln!("{}", note);
     }
 
-    // Transpile to Rust
-    let mut transpiler = transpiler::Transpiler::new(ctx);
-    transpiler.set_shown_names(shown);
     let entry_file = std::path::Path::new(entry).file_name()
         .map(|f| f.to_string_lossy().to_string())
         .unwrap_or_else(|| entry.to_string());
-    transpiler.set_source_file(&entry_file);
-    if let Some(n) = cpu {
-        transpiler.set_cpu_count(n);
+    // The Rust backend: the program lowered to the IR the interpreter runs,
+    // then printed as Rust
+    let mut ctx = ctx;
+    let name = std::path::Path::new(&entry_file).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| entry_file.clone());
+    let program = lower_ir::lower(&stmts, &mut ctx, &name).unwrap_or_else(|e| {
+        eprintln!("error: {}", e);
+        process::exit(1);
+    });
+    let emitted = emit_rs::emit(&program, ctx.registry.clone(), &entry_file, shown, cpu).unwrap_or_else(|e| {
+        eprintln!("error: {}", e);
+        process::exit(1);
+    });
+    let rust_source = emitted.source.clone();
+    // `crow build --rs file.co`: the Rust the program compiles to, printed
+    if PRINT_RS.load(std::sync::atomic::Ordering::SeqCst) {
+        print!("{}", rust_source);
+        process::exit(0);
     }
-    let rust_source = transpiler.transpile(&stmts);
 
     // Create build directory
     let build_dir = std::path::PathBuf::from(".crow_build");
@@ -1827,29 +1838,29 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     // Write Cargo.toml
     let project_name = package_name(entry);
     let mut dep_list: Vec<String> = Vec::new();
-    if transpiler.needs_rayon {
+    if emitted.needs_rayon {
         dep_list.push("rayon = \"1.11\"".to_string());
     }
-    if transpiler.needs_serde_json {
+    if emitted.needs_serde_json {
         dep_list.push("serde_json = \"1\"".to_string());
     }
-    if transpiler.needs_crow_runtime {
+    if emitted.needs_crow_runtime {
         let runtime_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_runtime");
-        if transpiler.web_features.contains("arrow_ipc") {
+        if emitted.web_features.contains("arrow_ipc") {
             dep_list.push(format!("crow_runtime = {{ path = \"{}\", features = [\"arrow\"] }}", runtime_path));
         } else {
             dep_list.push(format!("crow_runtime = {{ path = \"{}\" }}", runtime_path));
         }
     }
-    if transpiler.needs_regex {
+    if emitted.needs_regex {
         dep_list.push("regex = \"1\"".to_string());
     }
-    if transpiler.needs_chrono {
+    if emitted.needs_chrono {
         dep_list.push("chrono = \"0.4\"".to_string());
     }
-    if transpiler.needs_crow_web {
+    if emitted.needs_crow_web {
         let web_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_web");
-        let features: Vec<&str> = transpiler.web_features.iter().map(|s| s.as_str()).collect();
+        let features: Vec<&str> = emitted.web_features.iter().map(|s| s.as_str()).collect();
         let features_str = features.join("\", \"");
         dep_list.push(format!(
             "crow_web = {{ path = \"{}\", features = [\"{}\"] }}",
@@ -1858,17 +1869,17 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         // crow_web needs tokio for async runtime
         dep_list.push("tokio = { version = \"1\", features = [\"full\"] }".to_string());
         // msgpack[] needs rmp-serde in the generated project
-        if transpiler.web_features.contains("msgpack") {
+        if emitted.web_features.contains("msgpack") {
             dep_list.push("rmp-serde = \"1\"".to_string());
         }
         // stream[] needs tokio-stream in the generated project
-        if transpiler.web_features.contains("stream") {
+        if emitted.web_features.contains("stream") {
             dep_list.push("tokio-stream = \"0.1\"".to_string());
         }
     }
-    if transpiler.needs_crow_db {
+    if emitted.needs_crow_db {
         let db_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_db");
-        let features: Vec<&str> = transpiler.db_features.iter().map(|s| s.as_str()).collect();
+        let features: Vec<&str> = emitted.db_features.iter().map(|s| s.as_str()).collect();
         let features_str = features.join("\", \"");
         dep_list.push(format!(
             "crow_db = {{ path = \"{}\", features = [\"{}\"] }}",
@@ -1901,7 +1912,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     let existing_source = std::fs::read_to_string(&main_rs_path).unwrap_or_default();
     let source_changed = existing_source != rust_source;
 
-    // Write transpiled Rust source (always, so cargo can detect dep changes)
+    // Write the generated Rust source (always, so cargo can detect dep changes)
     if source_changed {
         std::fs::write(&main_rs_path, &rust_source).unwrap_or_else(|e| {
             eprintln!("error writing main.rs: {}", e);
@@ -2211,8 +2222,17 @@ fn cmd_fmt() {
     }
 }
 
+/// `crow build --rs`: print the generated Rust instead of compiling it.
+static PRINT_RS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn cmd_build() {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--rs") {
+        PRINT_RS.store(true, std::sync::atomic::Ordering::SeqCst);
+        let file = args.iter().skip(2).find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| parse_crowfile().entry);
+        transpile_and_compile(&file, true, None, false);
+        return;
+    }
     // `crow build --ir file.co`: the program's one typed form, printed
     // (docs/ir-design.md); nothing is compiled
     if args.iter().any(|a| a == "--ir") {
@@ -2378,7 +2398,7 @@ fn run_binary(binary: &std::path::Path, extra_args: &[String]) {
 /// docs/book/book, `POST /run` executes a block with this same binary
 /// (interpreter, compiler, or `crow test`) in a scratch directory, and
 /// `POST /stop` kills it. No new dependencies: the compiler already ships
-/// the interpreter, the transpiler, and the runner; this just puts a
+/// the interpreter, the Rust backend, and the runner; this just puts a
 /// button in front of them.
 fn cmd_book() {
     use std::io::{Read, Write};
@@ -4360,7 +4380,7 @@ fn expand_into(
                         body,
                     });
                 }
-                // Pass through nested Use statements so the transpiler
+                // Pass through nested Use statements so the compiler
                 // registers those module names too
                 ast::Stmt::Use { .. } => {
                     ex.hoisted.push(mod_stmt.clone());
@@ -4370,7 +4390,7 @@ fn expand_into(
         }
         ex.done.insert(canon, local_names.clone());
         imported.push((spelling, local_names));
-        // Keep the original statement (including Use, so transpiler knows about it)
+        // Keep the original statement (including Use, so the compiler knows about it)
         expanded.push(stmt.clone());
     }
     // Rewrite qualified refs in the importing file: home.render → home_render

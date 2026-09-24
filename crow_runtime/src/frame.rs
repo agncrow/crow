@@ -151,7 +151,7 @@ impl CrowFrame {
         self.data.iter().map(|c| c.dtype_name()).collect()
     }
 
-    /// Get column values as formatted strings (for transpiler column access).
+    /// Get column values as formatted strings (column access in generated code).
     /// Missing values are represented as "nan".
     pub fn col_as_strings(&self, name: &str) -> Option<Vec<String>> {
         let idx = self.col_index(name)?;

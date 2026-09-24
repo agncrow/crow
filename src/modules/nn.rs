@@ -103,7 +103,7 @@ fn emit_nn_rust(name: &str, arg_strs: &[String]) -> Result<String, String> {
         "crossentropy" => format!("crow_runtime::nn::crossentropy(&{}, &{})", arg_strs[0], arg_strs[1]),
         "bce" => format!("crow_runtime::nn::bce(&{}, &{})", arg_strs[0], arg_strs[1]),
         "linear" => format!("crow_runtime::nn::linear(&{}, &{}, &{})", arg_strs[0], arg_strs[1], arg_strs[2]),
-        _ => return Err(format!("{}: unknown nn function for transpiler", name)),
+        _ => return Err(format!("{}: unknown nn function for the Rust backend", name)),
     };
     Ok(result)
 }

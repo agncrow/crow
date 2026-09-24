@@ -80,7 +80,7 @@ fn emit_io_rust(name: &str, arg_strs: &[String]) -> Result<String, String> {
     let result = match name {
         "csv" => format!("{{ match crow_runtime::io::parse_csv(&{}) {{ Ok(rows) => {{ let arr: Vec<std::collections::BTreeMap<String, String>> = rows.into_iter().map(|r| r).collect(); CrowResult {{ value: arr, ok: true, reason: String::new(), kind: String::new(), trace: vec![], captured: crow_runtime::moments::now() }} }}, Err(e) => CrowResult {{ value: vec![], ok: false, reason: e, kind: \"io\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0]),
         "lines" => format!("{{ match crow_runtime::io::read_lines(&{}) {{ Ok(ls) => CrowResult {{ value: ls, ok: true, reason: String::new(), kind: String::new(), trace: vec![], captured: crow_runtime::moments::now() }}, Err(e) => CrowResult {{ value: vec![], ok: false, reason: e, kind: \"io\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0]),
-        _ => return Err(format!("{}: unknown io function for transpiler", name)),
+        _ => return Err(format!("{}: unknown io function for the Rust backend", name)),
     };
     Ok(result)
 }

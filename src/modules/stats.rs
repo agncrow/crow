@@ -197,7 +197,7 @@ fn emit_stats_rust(name: &str, arg_strs: &[String]) -> Result<String, String> {
         }
         "kstest" => format!("{{ let (_d, _p) = crow_runtime::stats::kstest(&{}, &{}); let mut _m = std::collections::BTreeMap::new(); _m.insert(\"d\".to_string(), _d); _m.insert(\"p\".to_string(), _p); _m }}", arg_strs[0], arg_strs[1]),
         "fit" => format!("{{ let _params = crow_runtime::stats::fit(&{}, &{}); let mut _m = std::collections::BTreeMap::new(); for (_k, _v) in _params {{ _m.insert(_k, _v); }} _m }}", arg_strs[0], arg_strs[1]),
-        _ => return Err(format!("{}: unknown stats function for transpiler", name)),
+        _ => return Err(format!("{}: unknown stats function for the Rust backend", name)),
     };
     Ok(result)
 }

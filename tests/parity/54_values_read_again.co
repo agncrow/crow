@@ -1,0 +1,28 @@
+--- A value read again after a call that can fail used it. The compiled
+--- program moved the text into int[] and float[], and a failing condition
+--- into `not` and assert[], so the next read did not build; and a loop
+--- whose condition can fail tested it once, before the first pass, so it
+--- never ended in either mode.
+s = '5'
+n = int[s]
+log['`s` is `n`']
+x = '2.5'
+f = float[x]
+log['`x` is `f`']
+
+big = int[s] gt 3
+if not big
+    log['small']
+assert[big]
+log[big]
+
+fn count_down[from]
+    k = 0
+    t = from
+    while int[t] gt 0
+        k = k + 1
+        t = '`int[t] - 1`'
+    return k
+
+log[count_down['3']]
+log[count_down['x']]

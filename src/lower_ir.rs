@@ -33,12 +33,14 @@ pub fn ty_of(t: &CrowType) -> Ty {
     match t {
         CrowType::Int => Ty::Int,
         CrowType::Float => Ty::Float,
-        CrowType::Str | CrowType::Markup => Ty::Str,
+        CrowType::Str => Ty::Str,
+        CrowType::Markup => Ty::Markup,
         CrowType::Bool => Ty::Bool,
         CrowType::Array(inner) => Ty::List(Box::new(ty_of(inner))),
-        CrowType::NumArray(_) => Ty::Tensor,
+        CrowType::NumArray(inner) => Ty::Tensor(Box::new(ty_of(inner))),
         CrowType::Map(inner) => Ty::Map(Box::new(ty_of(inner))),
-        CrowType::Struct(n) | CrowType::OptBoxStruct(n) => Ty::Record(n.clone()),
+        CrowType::Struct(n) => Ty::Record(n.clone()),
+        CrowType::OptBoxStruct(n) => Ty::OptRecord(n.clone()),
         CrowType::Frame => Ty::Frame(None),
         CrowType::FrameCol => Ty::Column(Box::new(Ty::Unknown)),
         CrowType::Json => Ty::Json,
@@ -46,10 +48,50 @@ pub fn ty_of(t: &CrowType) -> Ty {
         CrowType::Fn(ps, r) => Ty::Fn(ps.iter().map(ty_of).collect(), Box::new(ty_of(r))),
         CrowType::DbHandle => Ty::Handle("db".into()),
         CrowType::DbTx => Ty::Handle("tx".into()),
-        CrowType::WebApp | CrowType::WebResponse | CrowType::WebRequest | CrowType::WebDb => Ty::Handle("web".into()),
+        CrowType::WebApp => Ty::Handle("web.app".into()),
+        CrowType::WebResponse => Ty::Handle("web.response".into()),
+        CrowType::WebRequest => Ty::Handle("web.request".into()),
+        CrowType::WebDb => Ty::Handle("web.db".into()),
         CrowType::Sparse => Ty::Handle("sparse".into()),
         CrowType::Void => Ty::Unit,
         CrowType::Unknown => Ty::Unknown,
+    }
+}
+
+/// The inference type an IR type came from: the Rust backend reads the
+/// type tables (Rust names, defaults) through it.
+pub fn crow_type(t: &Ty) -> CrowType {
+    match t {
+        Ty::Int => CrowType::Int,
+        Ty::Float => CrowType::Float,
+        Ty::Bool => CrowType::Bool,
+        Ty::Str => CrowType::Str,
+        Ty::Markup => CrowType::Markup,
+        Ty::Unit => CrowType::Void,
+        Ty::List(inner) => CrowType::Array(Box::new(crow_type(inner))),
+        Ty::Map(inner) => CrowType::Map(Box::new(crow_type(inner))),
+        Ty::Tensor(inner) => CrowType::NumArray(Box::new(crow_type(inner))),
+        Ty::Frame(_) => CrowType::Frame,
+        Ty::Column(_) => CrowType::FrameCol,
+        Ty::Json => CrowType::Json,
+        Ty::Record(n) => CrowType::Struct(n.clone()),
+        Ty::OptRecord(n) => CrowType::OptBoxStruct(n.clone()),
+        Ty::Result(inner) => CrowType::Result(Box::new(crow_type(inner))),
+        Ty::Fn(ps, r) => CrowType::Fn(ps.iter().map(crow_type).collect(), Box::new(crow_type(r))),
+        Ty::Handle(k) => match k.as_str() {
+            "db" => CrowType::DbHandle,
+            "tx" => CrowType::DbTx,
+            "sparse" => CrowType::Sparse,
+            "web.app" => CrowType::WebApp,
+            "web.response" => CrowType::WebResponse,
+            "web.request" => CrowType::WebRequest,
+            "web.db" => CrowType::WebDb,
+            _ => CrowType::Unknown,
+        },
+        // a view's tree has no inference type of its own: the backends
+        // hold it as a node
+        Ty::Node => CrowType::Unknown,
+        Ty::Unknown => CrowType::Unknown,
     }
 }
 
@@ -136,6 +178,15 @@ impl<'a> Lowerer<'a> {
                 S::FnDecl { name, params, body, is_view, .. } => {
                     let f = self.lower_fn(name, params, body, *is_view)?;
                     part.fns.push(f);
+                    // a function called at several signatures is one function
+                    // per signature, each typed by its own (F2): the Rust
+                    // backend compiles each
+                    let clones: Vec<String> = self.ctx.specializations.get(name).map(|v| v.iter().map(|(_, m)| m.clone()).collect()).unwrap_or_default();
+                    for clone in clones {
+                        let clone_body = self.ctx.functions.get(&clone).map(|sig| sig.body.clone()).unwrap_or_else(|| body.clone());
+                        let f = self.lower_fn(&clone, params, &clone_body, *is_view)?;
+                        part.fns.push(f);
+                    }
                 }
                 S::Derive { name, fresh, body } => {
                     let d = self.lower_derive(name, *fresh, body)?;
@@ -186,6 +237,41 @@ impl<'a> Lowerer<'a> {
                 }
             }
             f.effects = effects.into_iter().collect();
+        }
+        // what the live layer memoizes each derivation by, and the tables
+        // each function writes, recorded here so the Rust backend reads the
+        // same decisions the interpreter does
+        {
+            let facts = crate::derive::fact_names(stmts);
+            let derive_names = self.ctx.derives.clone();
+            let bodies: BTreeMap<String, Vec<S>> = self
+                .ctx
+                .functions
+                .iter()
+                .filter(|(n, _)| !derive_names.contains(*n))
+                .map(|(n, sig)| (n.clone(), sig.body.clone()))
+                .collect();
+            let owned = crate::derive::owned_tables(stmts, &bodies);
+            let mut specs: BTreeMap<String, crate::derive::ReadSet> = BTreeMap::new();
+            for st in stmts {
+                if let S::Derive { name, body, .. } = st {
+                    specs.insert(name.clone(), crate::derive::read_set(body, &facts, &derive_names, &bodies, &owned));
+                }
+            }
+            let written = crate::derive::written_facts(&bodies, &facts);
+            crate::derive::mark_shared(&mut specs, &written);
+            for d in &mut part.derives {
+                if let Some(rs) = specs.get(&d.name) {
+                    d.spec = rs.clone();
+                }
+            }
+            for f in &mut part.fns {
+                if let Some(body) = bodies.get(&f.name) {
+                    let reach = crate::derive::called_fns(body, &bodies);
+                    let reach_bodies: BTreeMap<String, Vec<S>> = reach.iter().filter_map(|n| bodies.get(n).map(|b| (n.clone(), b.clone()))).collect();
+                    f.tables_written = crate::derive::owned_tables(body, &reach_bodies).into_iter().collect();
+                }
+            }
         }
         // a derivation reads the clock when anything it calls does
         for d in &mut part.derives {
@@ -246,7 +332,7 @@ impl<'a> Lowerer<'a> {
         self.ctx.leave_body(scope);
         let param_set: HashSet<String> = params.iter().cloned().collect();
         place_moves_in(&mut block, &HashSet::new(), Some(&param_set));
-        Ok(Fn { name: name.to_string(), params: ps, ret, body: block, kind, effects: vec![] })
+        Ok(Fn { name: name.to_string(), params: ps, ret, body: block, kind, effects: vec![], tables_written: vec![] })
     }
 
     fn lower_derive(&mut self, name: &str, fresh: f64, body: &[S]) -> Result<Derive, String> {
@@ -274,7 +360,7 @@ impl<'a> Lowerer<'a> {
             }
         }
         reads.clock = clock;
-        Ok(Derive { name: name.to_string(), ty, body: block, reads, fresh })
+        Ok(Derive { name: name.to_string(), ty, body: block, reads, fresh, spec: Default::default() })
     }
 
     fn lower_test(&mut self, name: Option<String>, params: &[String], body: &[S]) -> Result<Test, String> {
@@ -314,7 +400,11 @@ impl<'a> Lowerer<'a> {
     }
 
     fn declared(&self, name: &str) -> bool {
-        self.scopes.iter().any(|s| s.contains(name))
+        // a function sees its parameters and its own locals: the program's
+        // top-level names are invisible inside it (spec, No Ambient
+        // Mutability), so an assignment there binds a new local
+        let own_only = matches!(self.at, Where::In(_) | Where::Derive);
+        self.scopes.iter().enumerate().any(|(i, s)| !(own_only && i == 0) && s.contains(name))
     }
 
     fn is_fact(&self, name: &str) -> bool {
@@ -330,6 +420,12 @@ impl<'a> Lowerer<'a> {
             S::Line(n) => vec![Stmt::Line(*n)],
             S::Assign { name, value } => {
                 let expr = self.lower_expr(value)?;
+                // the columns a local reads are those of the value assigned
+                // here, in this function — not the last function's local of
+                // the same name (inference keeps one map by name)
+                if let Some(schema) = self.ctx.frame_schema_of(value) {
+                    self.ctx.frame_schemas.insert(name.clone(), schema);
+                }
                 vec![self.assign(name, expr)]
             }
             S::MultiAssign { names, values } => {
@@ -419,12 +515,24 @@ impl<'a> Lowerer<'a> {
             }
             S::While { condition, body } => {
                 let cond = self.lower_cond(condition)?;
-                let mut prelude = std::mem::take(&mut self.pre);
+                let prelude = std::mem::take(&mut self.pre);
                 self.scopes.push(HashSet::new());
                 let b = self.lower_block(body)?;
                 self.scopes.pop();
-                prelude.push(Stmt::While { cond, body: b });
-                prelude
+                if prelude.is_empty() {
+                    vec![Stmt::While { cond, body: b }]
+                } else {
+                    // a condition that had to be propagated first is
+                    // evaluated again before each test, as it is written
+                    let mut each = prelude;
+                    each.push(Stmt::If {
+                        cond: Expr::Unary { op: "not".to_string(), expr: Box::new(cond), ty: Ty::Bool },
+                        then: vec![Stmt::Break],
+                        els: None,
+                    });
+                    each.extend(b);
+                    vec![Stmt::While { cond: Expr::Const(Const::Bool(true), Ty::Bool), body: each }]
+                }
             }
             S::For { var, iter, body } => {
                 let it = self.lower_expr(iter)?;
@@ -432,7 +540,9 @@ impl<'a> Lowerer<'a> {
                 let outer: HashSet<String> = self.scopes.iter().flat_map(|s| s.iter().cloned()).collect();
                 let parallel = !assigns_any_of(body, &outer) && !reaches_effect(body, self.ctx) && !assigns_any(body, &self.ctx.facts);
                 self.scopes.push([var.clone()].into_iter().collect());
+                let saved = self.bind_loop_var(var, &it.ty());
                 let b = self.lower_block(body)?;
+                self.unbind_loop_var(var, saved);
                 self.scopes.pop();
                 prelude.push(Stmt::For { var: var.clone(), iter: it, body: b, parallel });
                 prelude
@@ -500,11 +610,52 @@ impl<'a> Lowerer<'a> {
             return Stmt::Set { var: name.to_string(), expr };
         }
         self.scopes.last_mut().unwrap().insert(name.to_string());
-        let ty = match self.ctx.vars.get(name) {
-            Some(t) if !matches!(t, CrowType::Unknown) => ty_of(t),
-            _ => expr.ty(),
+        // a local is its first value's type (a node's value is its markup);
+        // only a value whose type is not known yet takes the type inference
+        // settled on across its assignments. A later fallible value is
+        // unwrapped where it is assigned. What reads the local from here on
+        // is typed by the local as declared.
+        let expr_ty = expr.ty();
+        let ty = if matches!(expr_ty, Ty::Node) {
+            Ty::Markup
+        } else if format!("{:?}", expr_ty).contains("Unknown") {
+            match self.ctx.vars.get(name) {
+                Some(t) if !matches!(t, CrowType::Unknown) => ty_of(t),
+                _ => expr_ty,
+            }
+        } else {
+            expr_ty
         };
+        if !matches!(ty, Ty::Unknown) {
+            self.ctx.vars.insert(name.to_string(), crow_type(&ty));
+        }
         Stmt::Let { var: name.to_string(), ty, expr }
+    }
+
+    /// While a loop's body is lowered, its variable has the element type
+    /// of what it iterates (inference typed the body in a copy of its
+    /// context, so the lowering's context has not seen the variable).
+    fn bind_loop_var(&mut self, var: &str, iter_ty: &Ty) -> Option<CrowType> {
+        let saved = self.ctx.vars.get(var).cloned();
+        let elem = match iter_ty.payload() {
+            Ty::List(t) | Ty::Tensor(t) => crow_type(t),
+            _ => CrowType::Unknown,
+        };
+        if !matches!(elem, CrowType::Unknown) {
+            self.ctx.vars.insert(var.to_string(), elem);
+        }
+        saved
+    }
+
+    fn unbind_loop_var(&mut self, var: &str, saved: Option<CrowType>) {
+        match saved {
+            Some(t) => {
+                self.ctx.vars.insert(var.to_string(), t);
+            }
+            None => {
+                self.ctx.vars.remove(var);
+            }
+        }
     }
 
     fn fresh(&mut self) -> String {
@@ -535,7 +686,9 @@ impl<'a> Lowerer<'a> {
     // ── expressions ─────────────────────────────────────────────────
 
     fn lower_expr(&mut self, e: &A) -> Result<Expr, String> {
-        let cty = self.ctx.infer_expr(e);
+        // markup told apart from text: a view places the one as markup and
+        // the other as text (the interpreter carries the same on its values)
+        let cty = self.ctx.infer_expr_full(e);
         let ty = ty_of(&cty);
         Ok(match e {
             A::Int(n) => Expr::Const(Const::Int(*n), Ty::Int),
@@ -618,7 +771,9 @@ impl<'a> Lowerer<'a> {
                 let outer: HashSet<String> = self.scopes.iter().flat_map(|s| s.iter().cloned()).collect();
                 let parallel = !assigns_any_of(body, &outer) && !reaches_effect(body, self.ctx) && !assigns_any(body, &self.ctx.facts);
                 self.scopes.push([var.clone()].into_iter().collect());
+                let saved = self.bind_loop_var(var, &it.ty());
                 let mut b = self.lower_block(body)?;
+                self.unbind_loop_var(var, saved);
                 self.scopes.pop();
                 place_moves_in(&mut b, &HashSet::new(), Some(&[var.clone()].into_iter().collect()));
                 Expr::ForExpr { var: var.clone(), iter: Box::new(it), body: b, ty, parallel }

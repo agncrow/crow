@@ -37,7 +37,7 @@ repository root points assistants here.
 10. **Builtin naming.** Short, single-word, lowercase, no prefixes or
     suffixes: `int` not `to_int`, `len` not `length`. If it needs an
     underscore, it's too long.
-11. **Interpreter–transpiler parity.** Every feature works identically in
+11. **Interpreter–compiler parity.** Every feature works identically in
     `crow run -i` and `crow run`. New behavior gets a program in
     `tests/parity/`; `crow test --parity` diffs the two modes.
 12. **One kernel, both modes.** Logic both modes need (chart geometry,
@@ -54,7 +54,7 @@ repository root points assistants here.
     implemented" path in a feature marked done is a bug.
 16. **No syntax split between frontend and backend.** A file that uses
     `use ui` is still plain Crow on every line: no DSL, no Rust names
-    leaking through. The transpiler maps Crow calls to the backend
+    leaking through. The compiler maps Crow calls to the backend
     (`state.get['key', 0]`, never `get_i64`).
 
 ## Documentation rules

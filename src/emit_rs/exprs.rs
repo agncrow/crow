@@ -1,0 +1,1174 @@
+//! Expressions.
+
+use super::program::map_literal_pairs;
+use super::*;
+
+/// A string as a Rust literal: `"…".to_string()`.
+pub(crate) fn rust_str_lit(s: &str) -> String {
+    let mut out = String::new();
+    for ch in s.chars() {
+        match ch {
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\r' => out.push_str("\\r"),
+            c => out.push(c),
+        }
+    }
+    format!("\"{}\".to_string()", out)
+}
+
+/// A string as a format string piece: braces doubled, escapes kept.
+fn fmt_piece(s: &str) -> String {
+    let mut out = String::new();
+    for ch in s.chars() {
+        match ch {
+            '{' => out.push_str("{{"),
+            '}' => out.push_str("}}"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\r' => out.push_str("\\r"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// The builtins whose own value is a result, whatever their arguments.
+const FALLIBLE_BUILTINS: &[&str] = &[
+    "error", "hash", "shell", "find", "input", "read", "write", "mkdir", "ls", "rm", "mv", "cp", "captured", "moment", "parse_time", "env", "json", "encode",
+];
+
+impl Emitter {
+    pub(crate) fn expr(&mut self, e: &Expr) -> String {
+        match e {
+            Expr::Const(c, _) => self.constant(c),
+            Expr::Local(v, _) | Expr::Move(v, _) => self.local(v),
+            Expr::Load(f, _) => self.load(f),
+            Expr::Derived(d, _) => {
+                if self.declared(d) {
+                    d.clone()
+                } else {
+                    format!("__derive_{}(state)", d)
+                }
+            }
+            Expr::Constant(name, _) => {
+                let bare = name.rsplit('.').next().unwrap_or(name);
+                match bare {
+                    "pi" => "std::f64::consts::PI".to_string(),
+                    "e" => "std::f64::consts::E".to_string(),
+                    "inf" => "f64::INFINITY".to_string(),
+                    "nan" => "f64::NAN".to_string(),
+                    _ => name.replace('.', "_"),
+                }
+            }
+            Expr::FnRef(name, _) => self.fn_ref(name),
+            Expr::Call { .. } | Expr::Effect { .. } => self.call(e),
+            Expr::Convert { how, expr, .. } => match how {
+                Convert::IntToFloat => {
+                    let inner = self.expr(expr);
+                    if self.emitting_dual {
+                        inner
+                    } else {
+                        format!("(({}) as f64)", inner)
+                    }
+                }
+                Convert::Unwrap => {
+                    let inner = self.expr(expr);
+                    if matches!(self.tt(expr), CrowType::Result(_)) {
+                        format!("({}).value", inner)
+                    } else {
+                        inner
+                    }
+                }
+                Convert::ToStr => {
+                    let inner = self.expr(expr);
+                    format!("format!(\"{{}}\", {})", inner)
+                }
+                Convert::ToTensor | Convert::ToList => self.expr(expr),
+            },
+            Expr::Binary { op, l, r, .. } => self.binary(op, l, r),
+            Expr::Unary { op, expr, .. } => self.unary(op, expr),
+            Expr::Index { base, indices, .. } => self.index(base, indices, e),
+            Expr::Field { base, name, .. } => self.field(base, name),
+            Expr::Meta { base, which } => self.meta(base, *which),
+            Expr::Interp(pieces) => self.interp(pieces),
+            Expr::ListLit(items, ty) => self.list_lit(items, ty),
+            Expr::MapLit(pairs, _) => self.map_lit(pairs),
+            Expr::RecordLit { name, fields } => self.record_lit(name, fields),
+            Expr::Tree { element, attrs, children } => self.tree(element, attrs, children),
+            Expr::ForExpr { var, iter, body, .. } => self.for_expr(var, iter, body),
+            Expr::Deferred { name, .. } => format!("compile_error!(\"a held call to '{}' outside an event attribute\")", name),
+        }
+    }
+
+    fn constant(&self, c: &Const) -> String {
+        match c {
+            Const::Int(n) => {
+                if self.emitting_dual {
+                    format!("CrowDual::from({}_i64)", n)
+                } else {
+                    format!("{}_i64", n)
+                }
+            }
+            Const::Float(f) => {
+                let s = format!("{}", f);
+                let lit = if s.contains('.') || s.contains('e') || s.contains("inf") || s.contains("NaN") {
+                    if s == "inf" {
+                        "f64::INFINITY".to_string()
+                    } else if s == "-inf" {
+                        "f64::NEG_INFINITY".to_string()
+                    } else if s == "NaN" {
+                        "f64::NAN".to_string()
+                    } else if s.contains('e') && !s.contains('.') {
+                        format!("{}_f64", s.replacen('e', ".0e", 1))
+                    } else {
+                        format!("{}_f64", s)
+                    }
+                } else {
+                    format!("{}.0_f64", s)
+                };
+                if self.emitting_dual {
+                    format!("CrowDual::from({})", lit)
+                } else {
+                    lit
+                }
+            }
+            Const::Bool(b) => b.to_string(),
+            Const::Str(s) => rust_str_lit(s),
+            Const::Unit => "()".to_string(),
+        }
+    }
+
+    fn local(&self, v: &str) -> String {
+        if self.static_handle_vars.contains(v) && !self.declared(v) {
+            return format!("__crow_handle_{}.get().unwrap().clone()", v);
+        }
+        v.to_string()
+    }
+
+    fn load(&self, f: &str) -> String {
+        if self.static_handle_vars.contains(f) {
+            return format!("__crow_handle_{}.get().unwrap().clone()", f);
+        }
+        f.to_string()
+    }
+
+    fn fn_ref(&self, name: &str) -> String {
+        let specialized = self.fns.keys().any(|k| k.rsplit_once("__").map_or(false, |(b, s)| b == name && s.chars().all(|c| c.is_ascii_digit())));
+        if specialized {
+            return format!(
+                "compile_error!(\"'{}' is used at multiple type signatures and cannot be passed as a value — a function value has one type. Wrap it in a single-type function\")",
+                name
+            );
+        }
+        Self::rust_fn_name(name)
+    }
+
+    /// An expression as an owned value: a non-copy variable read where a
+    /// value is kept (an assignment, a list, a return) is cloned, so the
+    /// variable stays usable; a by-reference parameter too.
+    pub(crate) fn owned_expr(&mut self, e: &Expr) -> String {
+        let s = self.expr(e);
+        if let Expr::Local(name, ty) | Expr::Move(name, ty) = e {
+            if self.ref_params.contains(name) {
+                return format!("{}.clone()", s);
+            }
+            if self.static_handle_vars.contains(name) && !self.declared(name) {
+                return s;
+            }
+            let mut t = self.local_ty(name).unwrap_or_else(|| crow_type(ty));
+            if matches!(t, CrowType::Unknown) && self.reactive_event_handlers.contains(&self.cur_fn) {
+                t = CrowType::Str;
+            }
+            let non_copy = matches!(
+                t.text(),
+                CrowType::Str | CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Map(_) | CrowType::Struct(_) | CrowType::Frame | CrowType::Json | CrowType::Result(_)
+            );
+            if non_copy {
+                return format!("{}.clone()", s);
+            }
+        }
+        // a derivation read at the top of the function is a local too; read
+        // anywhere else it is a fresh value
+        let local_read = match e {
+            Expr::Load(name, ty) => Some((name, ty)),
+            Expr::Derived(name, ty) if self.declared(name) => Some((name, ty)),
+            _ => None,
+        };
+        if let Some((name, ty)) = local_read {
+            if self.static_handle_vars.contains(name) {
+                return s;
+            }
+            let t = self.local_ty(name).unwrap_or_else(|| crow_type(ty));
+            if matches!(t.text(), CrowType::Str | CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Map(_) | CrowType::Struct(_) | CrowType::Frame | CrowType::Json | CrowType::Result(_)) {
+                return format!("{}.clone()", s);
+            }
+        }
+        s
+    }
+
+    /// The collection argument of an in-place builtin: moved when it is the
+    /// variable this statement assigns, cloned otherwise.
+    pub(crate) fn moved_or_cloned(&self, arg: &Expr, s: &str) -> String {
+        if matches!(Emitter::raw(arg), Expr::Local(n, _) | Expr::Move(n, _) if self.move_target.as_deref() == Some(n.as_str())) {
+            s.to_string()
+        } else {
+            format!("{}.clone()", s)
+        }
+    }
+
+    // ── operators ───────────────────────────────────────────────────
+
+    fn operand(&mut self, e: &Expr) -> String {
+        let s = self.expr(e);
+        if matches!(e, Expr::Binary { .. }) {
+            format!("({})", s)
+        } else {
+            s
+        }
+    }
+
+    fn binary(&mut self, op: &str, left: &Expr, right: &Expr) -> String {
+        // an int made a float for a float operand: when the int can fail, the
+        // operator unwraps it and converts the value
+        let strip = |e: &Expr, me: &Emitter| -> Expr {
+            match e {
+                Expr::Convert { how: Convert::IntToFloat, expr, .. } if matches!(me.tt(expr), CrowType::Result(_)) => expr.as_ref().clone(),
+                other => other.clone(),
+            }
+        };
+        let left = &strip(left, self);
+        let right = &strip(right, self);
+        if matches!(op, "eq" | "ne") {
+            if let Some(s) = self.optbox_comparison(left, op, right) {
+                return s;
+            }
+        }
+        let l = self.operand(left);
+        let r = self.operand(right);
+        let lt = self.tt(left);
+        let rt = self.tt(right);
+        let l_res = matches!(lt, CrowType::Result(_));
+        let r_res = matches!(rt, CrowType::Result(_));
+        let lti = Self::inner(&lt);
+        let rti = Self::inner(&rt);
+        let op_str = match op {
+            "add" => "+",
+            "sub" => "-",
+            "mul" => "*",
+            "div" => "/",
+            "mod" => "%",
+            "pow" => "pow",
+            "elemmul" => ".*",
+            "elemdiv" => "./",
+            "elempow" => ".^",
+            "eq" => "==",
+            "ne" => "!=",
+            "gt" => ">",
+            "lt" => "<",
+            "gte" => ">=",
+            "lte" => "<=",
+            "and" => "&&",
+            "or" => "||",
+            other => other,
+        };
+        if l_res || r_res {
+            // an operator's value is its failed operand, unchanged
+            let ctr = self.binop_counter;
+            self.binop_counter += 1;
+            let result_type = match op {
+                "eq" | "ne" | "gt" | "lt" | "gte" | "lte" | "and" | "or" => CrowType::Bool,
+                "mod" => CrowType::Int,
+                _ => lti.unify(&rti),
+            };
+            let default_val = result_type.default_rust_value();
+            let l_val = if l_res { format!("_binl_{}.value", ctr) } else { l.clone() };
+            let r_val = if r_res { format!("_binr_{}.value", ctr) } else { r.clone() };
+            let inner_expr = match (&lti, &rti) {
+                (CrowType::Int, CrowType::Float) => format!("({}) as f64 {} {}", l_val, op_str, r_val),
+                (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l_val, op_str, r_val),
+                _ if op == "pow" => {
+                    if lti == CrowType::Float || rti == CrowType::Float {
+                        format!("(({}) as f64).powf(({}) as f64)", l_val, r_val)
+                    } else {
+                        format!("({}).pow(({}) as u32)", l_val, r_val)
+                    }
+                }
+                _ => format!("{} {} {}", l_val, op_str, r_val),
+            };
+            let mut result = format!("CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", inner_expr);
+            if r_res {
+                let err = format!(
+                    "CrowResult {{ ok: false, value: {}, reason: _binr_{c}.reason.clone(), kind: _binr_{c}.kind.clone(), trace: _binr_{c}.trace.clone(), captured: 0.0 }}",
+                    default_val,
+                    c = ctr
+                );
+                result = format!("{{ let _binr_{c} = {}.clone(); if !_binr_{c}.ok {{ {} }} else {{ {} }} }}", r, err, result, c = ctr);
+            }
+            if l_res {
+                let err = format!(
+                    "CrowResult {{ ok: false, value: {}, reason: _binl_{c}.reason.clone(), kind: _binl_{c}.kind.clone(), trace: _binl_{c}.trace.clone(), captured: 0.0 }}",
+                    default_val,
+                    c = ctr
+                );
+                result = format!("{{ let _binl_{c} = {}.clone(); if !_binl_{c}.ok {{ {} }} else {{ {} }} }}", l, err, result, c = ctr);
+            }
+            return result;
+        }
+        let l_sparse = matches!(lti, CrowType::Sparse);
+        let r_sparse = matches!(rti, CrowType::Sparse);
+        if l_sparse && r_sparse && op == "add" {
+            return format!("{}.add(&{})", l, r);
+        }
+        if l_sparse && matches!(rti, CrowType::NumArray(_)) && op == "mul" {
+            return format!("{}.matmul_dense(&{})", l, r);
+        }
+        let col_bridge = matches!(op, "elemmul" | "elemdiv" | "elempow" | "add" | "sub");
+        let (l, lti) = if matches!(lti, CrowType::FrameCol) && col_bridge { (format!("({}).to_tensor()", l), CrowType::NumArray(Box::new(CrowType::Float))) } else { (l, lti) };
+        let (r, rti) = if matches!(rti, CrowType::FrameCol) && col_bridge { (format!("({}).to_tensor()", r), CrowType::NumArray(Box::new(CrowType::Float))) } else { (r, rti) };
+        let l_t = matches!(lti, CrowType::NumArray(_));
+        let r_t = matches!(rti, CrowType::NumArray(_));
+        let cmp = matches!(op, "gt" | "lt" | "gte" | "lte" | "eq" | "ne");
+        if l_t && r_t {
+            return match op {
+                "add" => format!("{}.add(&{})", l, r),
+                "sub" => format!("{}.sub(&{})", l, r),
+                "mul" => format!("{}.try_matmul(&{}).unwrap_or_else(|e| panic!(\"{{}}\", e))", l, r),
+                "div" => "compile_error!(\"use ./ for element-wise tensor division\")".to_string(),
+                "elemmul" => format!("{}.mul(&{})", l, r),
+                "elemdiv" => format!("{}.div(&{})", l, r),
+                "elempow" => format!("{}.pow(&{})", l, r),
+                "eq" => format!("{} == {}", l, r),
+                "ne" => format!("{} != {}", l, r),
+                _ => format!("{} {} {}", l, op_str, r),
+            };
+        }
+        if l_t && matches!(rti, CrowType::Int | CrowType::Float) {
+            return match op {
+                "add" => format!("{}.add_scalar({} as f64)", l, r),
+                "sub" => format!("{}.sub_scalar({} as f64)", l, r),
+                "mul" | "elemmul" => format!("{}.mul_scalar({} as f64)", l, r),
+                "div" | "elemdiv" => format!("{}.mul_scalar(1.0 / ({} as f64))", l, r),
+                "elempow" => format!("{}.map(|x| x.powf({} as f64))", l, r),
+                _ if cmp => format!("{{ let _s = {} as f64; {}.to_vec().iter().map(|&_v| _v {} _s).collect::<Vec<bool>>() }}", r, l, op_str),
+                _ => format!("{} {} {}", l, op_str, r),
+            };
+        }
+        if r_t && matches!(lti, CrowType::Int | CrowType::Float) {
+            if cmp {
+                return format!("{{ let _s = {} as f64; {}.to_vec().iter().map(|&_v| _s {} _v).collect::<Vec<bool>>() }}", l, r, op_str);
+            }
+            return match op {
+                "add" => format!("{}.add_scalar({} as f64)", r, l),
+                "sub" => format!("({}).neg().add_scalar({} as f64)", r, l),
+                "mul" | "elemmul" => format!("{}.mul_scalar({} as f64)", r, l),
+                "div" | "elemdiv" => format!("{{ let _t = &{}; crow_runtime::tensor::CrowTensor::from_vec(_t.to_vec().iter().map(|&v| ({} as f64) / v).collect(), _t.shape().to_vec()) }}", r, l),
+                _ => format!("{} {} {}", l, op_str, r),
+            };
+        }
+        let bool_list = |t: &CrowType| matches!(t, CrowType::Array(i) if matches!(i.as_ref(), CrowType::Bool));
+        if matches!(op, "and" | "or") && bool_list(&lti) && bool_list(&rti) {
+            return format!("{}.iter().zip({}.iter()).map(|(_a, _b)| *_a {} *_b).collect::<Vec<bool>>()", l, r, op_str);
+        }
+        if matches!(lti, CrowType::FrameCol) && matches!(rti, CrowType::Str) {
+            if cmp {
+                return format!("{}.compare_str(&{}, \"{}\")", l, r, op);
+            }
+            return format!("{} {} {}", l, op_str, r);
+        }
+        let str_list = matches!(&lti, CrowType::Array(i) if matches!(i.as_ref(), CrowType::Str));
+        if (matches!(lti, CrowType::FrameCol) || str_list) && matches!(rti, CrowType::Int | CrowType::Float) {
+            if cmp {
+                if matches!(lti, CrowType::FrameCol) {
+                    return format!("{}.compare({} as f64, \"{}\")", l, r, op);
+                }
+                return format!("crow_runtime::frame::col_compare(&{}, {} as f64, \"{}\")", l, r, op);
+            }
+            let arith = match op {
+                "add" | "sub" | "mul" | "div" => op,
+                _ => return format!("{} {} {}", l, op_str, r),
+            };
+            if matches!(lti, CrowType::FrameCol) {
+                return format!("{}.arithmetic({} as f64, \"{}\")", l, r, arith);
+            }
+            return format!("crow_runtime::frame::col_arithmetic(&{}, {} as f64, \"{}\")", l, r, arith);
+        }
+        if self.emitting_dual {
+            if op == "pow" {
+                return format!("({}).powf({})", l, r);
+            }
+            return format!("{} {} {}", l, op_str, r);
+        }
+        if op == "pow" {
+            if lti == CrowType::Float || rti == CrowType::Float {
+                return format!("(({}) as f64).powf(({}) as f64)", l, r);
+            }
+            return format!("({}).pow(({}) as u32)", l, r);
+        }
+        match (&lti, &rti) {
+            (CrowType::Int, CrowType::Float) => format!("({}) as f64 {} {}", l, op_str, r),
+            (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l, op_str, r),
+            _ => format!("{} {} {}", l, op_str, r),
+        }
+    }
+
+    fn unary(&mut self, op: &str, e: &Expr) -> String {
+        let inner = self.operand(e);
+        let ty = Self::inner(&self.tt(e));
+        match op {
+            "neg" => {
+                if matches!(ty, CrowType::NumArray(_)) {
+                    format!("{}.neg()", inner)
+                } else {
+                    format!("(-{})", inner)
+                }
+            }
+            _ => {
+                if matches!(&ty, CrowType::Array(i) if matches!(i.as_ref(), CrowType::Bool)) {
+                    format!("{}.iter().map(|_b| !*_b).collect::<Vec<bool>>()", inner)
+                } else if matches!(self.tt(e), CrowType::Result(_)) {
+                    let on_error = self.refuse("_c");
+                    format!("(!({{ let _c = &({}); if !_c.ok {{ {} }} _c.value }}))", inner, on_error)
+                } else {
+                    format!("(!({}))", inner)
+                }
+            }
+        }
+    }
+
+    /// `tree.left eq 0` on a recursive link: is the link empty?
+    fn optbox_comparison(&mut self, left: &Expr, op: &str, right: &Expr) -> Option<String> {
+        let (field_side, zero_side) = if matches!(right, Expr::Const(Const::Int(0), _)) {
+            (left, right)
+        } else if matches!(left, Expr::Const(Const::Int(0), _)) {
+            (right, left)
+        } else {
+            return None;
+        };
+        let _ = zero_side;
+        if let Expr::Field { base, name, .. } = field_side {
+            if let CrowType::Struct(sname) = self.tt(base) {
+                let is_opt = self.structs.get(&sname).map_or(false, |d| d.fields.iter().any(|(f, t)| f == name && matches!(t, Ty::OptRecord(_))));
+                if is_opt {
+                    let obj = self.expr(base);
+                    return match op {
+                        "eq" => Some(format!("{}.{}.is_none()", obj, Self::rust_field(name))),
+                        "ne" => Some(format!("{}.{}.is_some()", obj, Self::rust_field(name))),
+                        _ => None,
+                    };
+                }
+            }
+        }
+        None
+    }
+
+    // ── indexing, fields, meta ──────────────────────────────────────
+
+    fn index(&mut self, base: &Expr, indices: &[Expr], whole: &Expr) -> String {
+        // state.get['key', default] and state.set['key', value]: a render or
+        // a handler given the state reads and writes it by the value's type
+        if let Expr::Field { base: obj, name, .. } = base {
+            if self.needs_ui && indices.len() == 2 && matches!(name.as_str(), "get" | "set") && matches!(Emitter::raw(obj), Expr::Local(..) | Expr::Move(..)) {
+                let o = self.expr(obj);
+                let k = self.expr(&indices[0]);
+                let v = self.expr(&indices[1]);
+                if name == "set" {
+                    self.needs_serde_json = true;
+                    return format!("{}.set(&{}, serde_json::json!({}))", o, k, v);
+                }
+                match self.tt(&indices[1]) {
+                    CrowType::Int => return format!("{}.get_i64(&{}, {})", o, k, v),
+                    CrowType::Float => return format!("{}.get_f64(&{}, {})", o, k, v),
+                    CrowType::Str => return format!("{}.get_str(&{}, &{})", o, k, v),
+                    CrowType::Bool => return format!("{}.get_bool(&{}, {})", o, k, v),
+                    _ => {}
+                }
+            }
+        }
+        let bty = self.tt(base);
+        let is_result = matches!(bty, CrowType::Result(_));
+        let inner = Self::inner(&bty);
+        let raw_base = self.expr(base);
+        let b = if is_result { format!("{}.value", raw_base) } else { raw_base };
+        let idx_strs: Vec<String> = indices.iter().map(|i| self.expr(i)).collect();
+        let idx = idx_strs.first().cloned().unwrap_or_default();
+        match &inner {
+            CrowType::NumArray(el) => {
+                if matches!(indices.first().map(|x| self.tt(x)), Some(CrowType::NumArray(_))) {
+                    return format!("{}.gather(&{})", b, idx);
+                }
+                if matches!(el.as_ref(), CrowType::NumArray(_)) {
+                    return format!("{{ let _i = {}; let _rows = {}.shape()[0] as i64; let _idx = if _i < 0 {{ (_rows + _i) as usize }} else {{ _i as usize }}; {}.index0(_idx) }}", idx, b, b);
+                }
+                let cast = if matches!(el.as_ref(), CrowType::Int) { " as i64" } else { "" };
+                format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.get_flat(_idx){} }}", idx, b, b, cast)
+            }
+            CrowType::Array(el) => {
+                let suffix = if Self::is_copy_type(el) { "" } else { ".clone()" };
+                format!("{}[{{ let _i = {}; if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }} }}]{}", b, idx, b, suffix)
+            }
+            CrowType::Str | CrowType::Markup => {
+                format!("{{ let _s: Vec<char> = {}.chars().collect(); let _i = {}; let _idx = if _i < 0 {{ (_s.len() as i64 + _i) as usize }} else {{ _i as usize }}; _s[_idx].to_string() }}", b, idx)
+            }
+            CrowType::FrameCol => {
+                let getter = Self::cell_getter(&Self::inner(&self.tt(whole)));
+                format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.{}(_idx) }}", idx, b, b, getter)
+            }
+            CrowType::Map(_) => {
+                self.needs_crow_runtime = true;
+                format!("crow_runtime::core::map_key(&{}, &*({}))", b, idx_strs.join(", "))
+            }
+            CrowType::Json => {
+                let ie = match indices.first().map(|x| self.tt(x)) {
+                    Some(CrowType::Int) => format!("{} as usize", idx),
+                    _ => format!("&*{}", idx),
+                };
+                format!("{}[{}].clone()", b, ie)
+            }
+            CrowType::Fn(ps, _) => {
+                let casted: Vec<String> = idx_strs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| if matches!(ps.get(i), Some(CrowType::Float)) && matches!(indices.get(i).map(|x| self.tt(x)), Some(CrowType::Int)) { format!("{} as f64", s) } else { s.clone() })
+                    .collect();
+                format!("{}({})", b, casted.join(", "))
+            }
+            _ => format!("{}({})", b, idx_strs.join(", ")),
+        }
+    }
+
+    pub(crate) fn cell_getter(t: &CrowType) -> &'static str {
+        match t {
+            CrowType::Int => "get_i64",
+            CrowType::Float => "get_f64",
+            CrowType::Bool => "get_bool",
+            _ => "get_str",
+        }
+    }
+
+    fn field(&mut self, base: &Expr, field: &str) -> String {
+        let obj = self.expr(base);
+        let oty = self.tt(base);
+        // a recursive link: unwrap the box
+        if let CrowType::OptBoxStruct(sname) = &oty {
+            let is_copy = self.structs.get(sname).and_then(|s| s.fields.iter().find(|(f, _)| f == field).map(|(_, t)| matches!(t, Ty::Int | Ty::Float | Ty::Bool))).unwrap_or(false);
+            let suffix = if is_copy { "" } else { ".clone()" };
+            return format!("{}.as_ref().expect(\"field access on an empty (0) node\").{}{}", obj, field, suffix);
+        }
+        if let CrowType::Result(inner) = &oty {
+            if let CrowType::Struct(sname) = inner.as_ref() {
+                let is_copy = self.structs.get(sname).and_then(|s| s.fields.iter().find(|(f, _)| f == field).map(|(_, t)| matches!(t, Ty::Int | Ty::Float | Ty::Bool))).unwrap_or(false);
+                let suffix = if is_copy { "" } else { ".clone()" };
+                if matches!(sname.as_str(), "CrowShell" | "CrowFindResult") {
+                    let suffix = if field == "status" { "" } else { ".clone()" };
+                    return format!("{}.value.{}{}", obj, field, suffix);
+                }
+                return format!("{}.value.{}{}", obj, Self::rust_field(field), suffix);
+            }
+            if matches!(inner.as_ref(), CrowType::Map(_)) {
+                self.needs_crow_runtime = true;
+                return format!("crow_runtime::core::map_key(&{}.value, \"{}\")", obj, field);
+            }
+        }
+        let oinner = Self::inner(&oty);
+        if matches!(oinner, CrowType::Json) {
+            let o = if matches!(oty, CrowType::Result(_)) { format!("{}.value", obj) } else { obj.clone() };
+            return format!("{}.get(\"{}\").cloned().unwrap_or(serde_json::Value::Null)", o, field);
+        }
+        if field == "len" {
+            if matches!(oty, CrowType::Frame) {
+                return format!("({}.nrows() as i64)", obj);
+            }
+            if matches!(oty, CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Str | CrowType::FrameCol) {
+                return format!("({}.len() as i64)", obj);
+            }
+        }
+        if matches!(field, "year" | "month" | "day" | "hour" | "minute" | "second" | "offset") && matches!(oty, CrowType::Str) {
+            return format!("crow_runtime::frame::datetime_field(&{}, \"{}\").unwrap_or(0)", obj, field);
+        }
+        if matches!(oinner, CrowType::NumArray(_)) {
+            let t = if matches!(oty, CrowType::Result(_)) { format!("{}.value.clone()", obj) } else { obj.clone() };
+            match field {
+                "shape" => return format!("{}.shape().iter().map(|&s| s as i64).collect::<Vec<i64>>()", t),
+                "dtype" => return "\"float\".to_string()".to_string(),
+                "device" => return format!("if {}.is_gpu() {{ \"gpu\".to_string() }} else {{ \"cpu\".to_string() }}", t),
+                "grad" => return "\"none\".to_string()".to_string(),
+                _ => {}
+            }
+        }
+        if matches!(oinner, CrowType::Frame) {
+            let f = if matches!(oty, CrowType::Result(_)) { format!("{}.value.clone()", obj) } else { obj.clone() };
+            return match field {
+                "shape" => format!("vec![{f}.nrows() as i64, {f}.ncols() as i64]", f = f),
+                "columns" => format!("{}.columns.iter().map(|c: &String| c.clone()).collect::<Vec<String>>()", f),
+                "dtypes" => format!("{}.dtypes().iter().map(|d: &&str| d.to_string()).collect::<Vec<String>>()", f),
+                _ => format!("{}.col_native(\"{}\").unwrap_or_else(|| panic!(\"column '{}' not found\"))", f, field, field),
+            };
+        }
+        if matches!(oty, CrowType::Map(_)) {
+            self.needs_crow_runtime = true;
+            return format!("crow_runtime::core::map_key(&{}, \"{}\")", obj, field);
+        }
+        if let CrowType::Struct(sname) = &oty {
+            if matches!(sname.as_str(), "CrowShell" | "CrowFindResult" | "CrowElapsed") {
+                return format!("{}.{}", obj, field);
+            }
+        }
+        format!("{}.{}", obj, Self::rust_field(field))
+    }
+
+    fn meta(&mut self, base: &Expr, which: Meta) -> String {
+        let obj = self.expr(base);
+        let oty = self.tt(base);
+        let name = match which {
+            Meta::Ok | Meta::Valid => "ok",
+            Meta::Reason => "reason",
+            Meta::Kind => "kind",
+            Meta::Trace => "trace",
+        };
+        if matches!(oty, CrowType::Result(_)) {
+            return match name {
+                "ok" => format!("{}.ok", obj),
+                "trace" => format!("{}.trace.clone()", obj),
+                other => format!("{}.{}.clone()", obj, other),
+            };
+        }
+        if which == Meta::Valid || (name == "ok" && matches!(oty, CrowType::FrameCol)) {
+            return format!("{}.ok()", obj);
+        }
+        if let CrowType::Struct(_) = oty {
+            return format!("{}.{}", obj, Self::rust_field(name));
+        }
+        match name {
+            "ok" => "true".to_string(),
+            "trace" => "Vec::<String>::new()".to_string(),
+            _ => "String::new()".to_string(),
+        }
+    }
+
+    // ── text ────────────────────────────────────────────────────────
+
+    fn interp(&mut self, pieces: &[Piece]) -> String {
+        let mut fmt = String::new();
+        let mut args: Vec<String> = Vec::new();
+        let mut fallible: Vec<(String, String)> = Vec::new();
+        for p in pieces {
+            match p {
+                Piece::Text(t) => fmt.push_str(&fmt_piece(t)),
+                Piece::Expr(x) => {
+                    let mut rust = self.expr(x);
+                    let ty = self.tt(x);
+                    let inner = Self::inner(&ty);
+                    if matches!(ty, CrowType::Result(_)) {
+                        let b = format!("_ip{}", fallible.len());
+                        fallible.push((b.clone(), format!("({}).clone()", rust)));
+                        rust = format!("{}.value", b);
+                    }
+                    match &inner {
+                        CrowType::FrameCol => {
+                            fmt.push_str("{:?}");
+                            args.push(format!("{}.to_strings()", rust));
+                        }
+                        t if self.kernel_displayable(t) => {
+                            self.needs_crow_runtime = true;
+                            fmt.push_str("{}");
+                            args.push(format!("{{ use crow_runtime::display::CrowDisplay as _; ({}).crow_fmt() }}", rust));
+                        }
+                        CrowType::Array(_) | CrowType::Map(_) | CrowType::Struct(_) => {
+                            fmt.push_str("{:?}");
+                            args.push(rust);
+                        }
+                        _ => {
+                            fmt.push_str("{}");
+                            args.push(rust);
+                        }
+                    }
+                }
+            }
+        }
+        if args.is_empty() {
+            let raw: String = pieces.iter().filter_map(|p| if let Piece::Text(t) = p { Some(t.clone()) } else { None }).collect();
+            return rust_str_lit(&raw);
+        }
+        if fallible.is_empty() {
+            return format!("format!(\"{}\", {})", fmt, args.join(", "));
+        }
+        let binds: String = fallible.iter().map(|(b, e)| format!("let {} = {}; ", b, e)).collect();
+        let trace = self.trace_format_expr();
+        let mut out = format!("{{ {}", binds);
+        for (b, _) in &fallible {
+            out.push_str(&format!(
+                "if !{b}.ok {{ let mut _err = CrowResult {{ ok: false, value: String::new(), reason: {b}.reason.clone(), kind: {b}.kind.clone(), trace: {b}.trace.clone(), captured: 0.0 }}; _err.trace.push({trace}); _err }} else ",
+                b = b,
+                trace = trace
+            ));
+        }
+        out.push_str(&format!("{{ CrowResult {{ ok: true, value: format!(\"{}\", {}), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }} }}", fmt, args.join(", ")));
+        out
+    }
+
+    // ── literals ────────────────────────────────────────────────────
+
+    fn list_lit(&mut self, items: &[Expr], ty: &Ty) -> String {
+        let lt = crow_type(ty).text();
+        if let CrowType::NumArray(_) = &lt {
+            if !items.is_empty() {
+                let elem_is_tensor = items.iter().any(|i| matches!(self.tt(i), CrowType::NumArray(_)));
+                self.needs_crow_runtime = true;
+                if elem_is_tensor {
+                    let elems: Vec<String> = items.iter().map(|i| self.expr(i)).collect();
+                    return format!("crow_runtime::tensor::CrowTensor::from_elements(&[{}]).unwrap_or_else(|e| panic!(\"{{}}\", e))", elems.join(", "));
+                }
+                let vals: Vec<String> = items.iter().map(|i| format!("{} as f64", self.expr(i))).collect();
+                return format!("crow_runtime::tensor::CrowTensor::from_vec(vec![{}], vec![{}])", vals.join(", "), items.len());
+            }
+        }
+        let mut inner_type = CrowType::Unknown;
+        for i in items {
+            inner_type = inner_type.unify(&self.tt(i));
+        }
+        let vals: Vec<String> = if let CrowType::Fn(_, _) = &inner_type {
+            let ft = inner_type.to_rust_type();
+            items.iter().map(|i| format!("{} as {}", self.expr(i), ft)).collect()
+        } else if self.in_view() && !items.is_empty() && items.iter().all(|i| self.makes_node(i)) {
+            items.iter().map(|i| format!("({}).to_html()", self.expr(i))).collect()
+        } else {
+            items.iter().map(|i| self.owned_expr(i)).collect()
+        };
+        if items.is_empty() {
+            if let CrowType::Array(inner) = &lt {
+                if !matches!(inner.as_ref(), CrowType::Unknown) {
+                    return format!("Vec::<{}>::new()", inner.to_rust_type());
+                }
+            }
+            return "vec![]".to_string();
+        }
+        format!("vec![{}]", vals.join(", "))
+    }
+
+    fn map_lit(&mut self, pairs: &[(String, Expr)]) -> String {
+        if pairs.is_empty() {
+            return "BTreeMap::new()".to_string();
+        }
+        let val_types: Vec<CrowType> = pairs.iter().map(|(_, v)| self.tt(v)).collect();
+        let mut val_type = CrowType::Unknown;
+        for t in &val_types {
+            val_type = val_type.unify(t);
+        }
+        let mixed = val_types.iter().any(|t| t != &val_type && *t != CrowType::Unknown);
+        let entries: Vec<String> = if let CrowType::Fn(_, _) = &val_type {
+            let ft = val_type.to_rust_type();
+            pairs.iter().map(|(k, v)| format!("({}, {} as {})", rust_str_lit(k), self.expr(v), ft)).collect()
+        } else if mixed {
+            pairs
+                .iter()
+                .zip(val_types.iter())
+                .map(|((k, v), vt)| {
+                    let s = self.expr(v);
+                    let s = if matches!(vt, CrowType::Str) { s } else { format!("{}.to_string()", s) };
+                    format!("({}, {})", rust_str_lit(k), s)
+                })
+                .collect()
+        } else {
+            pairs.iter().map(|(k, v)| format!("({}, {})", rust_str_lit(k), self.expr(v))).collect()
+        };
+        format!("BTreeMap::from([{}])", entries.join(", "))
+    }
+
+    fn record_lit(&mut self, name: &str, fields: &[Expr]) -> String {
+        let def = match self.structs.get(name) {
+            Some(d) => d.clone(),
+            None => return format!("compile_error!(\"unknown struct '{}'\")", name),
+        };
+        let mut inits = Vec::new();
+        for ((fname, fty), e) in def.fields.iter().zip(fields.iter()) {
+            let val = self.expr(e);
+            let is_ref = matches!(Emitter::raw(e), Expr::Local(n, _) | Expr::Move(n, _) if self.ref_params.contains(n));
+            let owned = if is_ref { format!("{}.clone()", val) } else { val };
+            if let Ty::OptRecord(_) = fty {
+                if matches!(Emitter::raw(e), Expr::Const(Const::Int(0), _)) {
+                    inits.push(format!("{}: None", Self::rust_field(fname)));
+                } else {
+                    inits.push(format!("{}: Some(Box::new({}))", Self::rust_field(fname), owned));
+                }
+            } else {
+                inits.push(format!("{}: {}", Self::rust_field(fname), owned));
+            }
+        }
+        format!("{} {{ {} }}", name, inits.join(", "))
+    }
+
+    // ── the collecting loop ─────────────────────────────────────────
+
+    /// A body whose last statement is an `if` with no `else` ending in a
+    /// value: a filter.
+    fn filter_parts(body: &[Stmt]) -> Option<(&Expr, &Expr)> {
+        let last = body.iter().rev().find(|s| !matches!(s, Stmt::Line(_)))?;
+        if let Stmt::If { cond, then, els: None } = last {
+            let last_then = then.iter().rev().find(|s| !matches!(s, Stmt::Line(_)))?;
+            if let Stmt::Do(v) = last_then {
+                // only when the if holds nothing else
+                let others = then.iter().filter(|s| !matches!(s, Stmt::Line(_))).count();
+                let before = body.iter().filter(|s| !matches!(s, Stmt::Line(_))).count();
+                if others == 1 && before == 1 {
+                    return Some((cond, v));
+                }
+            }
+        }
+        None
+    }
+
+    fn for_expr(&mut self, var: &str, iter: &Expr, body: &[Stmt]) -> String {
+        let iter_str = self.expr(iter);
+        let forced_sequential = self.cpu_count.map_or(false, |n| n <= 1);
+        let use_par = !forced_sequential && !self.collect_is_sequential(var, body);
+        if use_par {
+            self.needs_rayon = true;
+        }
+        let method = if use_par { "par_iter" } else { "iter" };
+        let it = self.tt(iter);
+        let is_tensor = matches!(it, CrowType::NumArray(_));
+        let elem = match &it {
+            CrowType::Array(inner) | CrowType::NumArray(inner) => inner.as_ref().clone(),
+            _ => CrowType::Unknown,
+        };
+        let is_copy = Self::is_copy_type(&elem);
+        let iter_str = if is_tensor {
+            if matches!(elem, CrowType::NumArray(_)) {
+                format!("{}.rows()", iter_str)
+            } else if matches!(elem, CrowType::Int) {
+                format!("{}.to_vec().iter().map(|&v| v as i64).collect::<Vec<i64>>()", iter_str)
+            } else {
+                format!("{}.to_vec()", iter_str)
+            }
+        } else {
+            iter_str
+        };
+        let param = if is_copy { format!("|&{}|", var) } else { format!("|{}|", var) };
+
+        if let Some((cond, val)) = Self::filter_parts(body) {
+            self.push_scope();
+            self.declare(var, elem.clone());
+            let c = self.expr(cond);
+            let c = self.guard_condition(cond, c);
+            let mut v = self.expr(val);
+            let mut vt = self.tt(val);
+            if self.makes_node(val) {
+                v = format!("({}).to_html()", v);
+                vt = CrowType::Str;
+            }
+            self.pop_scope();
+            return format!("{}.{}().filter_map({} {{ if {} {{ Some({}) }} else {{ None }} }}).collect::<Vec<{}>>()", iter_str, method, param, c, v, vt.to_rust_type());
+        }
+
+        // the body's statements, then its last value
+        let saved_out = std::mem::take(&mut self.out);
+        let saved_indent = self.indent;
+        self.indent = saved_indent + 1;
+        self.push_scope();
+        self.declare(var, elem);
+        let last = body.iter().rposition(|s| !matches!(s, Stmt::Line(_)));
+        let (init, last_expr) = match last {
+            Some(i) if matches!(body[i], Stmt::Do(_)) => (&body[..i], Some(&body[i])),
+            _ => (body, None),
+        };
+        self.closure_depth += 1;
+        for s in init {
+            self.emit_stmt(s);
+        }
+        self.closure_depth -= 1;
+        let mut last_type = CrowType::Unknown;
+        if let Some(Stmt::Do(e)) = last_expr {
+            let mut s = self.expr(e);
+            last_type = self.tt(e);
+            if self.makes_node(e) {
+                s = format!("({}).to_html()", s);
+                last_type = CrowType::Str;
+            }
+            let pad = "    ".repeat(self.indent);
+            self.out.push_str(&format!("{}{}\n", pad, s));
+        }
+        self.pop_scope();
+        let closure_body = std::mem::replace(&mut self.out, saved_out);
+        self.indent = saved_indent;
+        let pad = "    ".repeat(self.indent);
+        format!("{}.{}().map({} {{\n{}{}}}).collect::<Vec<{}>>()", iter_str, method, param, closure_body, pad, last_type.to_rust_type())
+    }
+
+    /// A collecting loop runs in order when its body writes an outer
+    /// variable or a fact, or reaches an effect.
+    fn collect_is_sequential(&self, var: &str, body: &[Stmt]) -> bool {
+        let mut writes_outer = false;
+        super::program::visit_stmts(body, &mut |s| match s {
+            Stmt::Set { var: v, .. } | Stmt::SetPath { var: v, .. } => {
+                if v != var && self.declared(v) {
+                    writes_outer = true;
+                }
+            }
+            Stmt::Store { .. } => writes_outer = true,
+            _ => {}
+        });
+        if writes_outer {
+            return true;
+        }
+        let mut effect = false;
+        super::program::visit_block(body, &mut |e| match e {
+            Expr::Effect { .. } => effect = true,
+            Expr::Call { target: Target::User(n), .. } => {
+                if let Some(f) = self.fns.get(n) {
+                    if !f.effects.is_empty() || matches!(f.kind, FnKind::Handler | FnKind::Helper) {
+                        effect = true;
+                    }
+                }
+            }
+            Expr::Call { target: Target::Runtime(n), .. } if matches!(n.as_str(), "later" | "running" | "notice" | "sign_in" | "sign_out" | "download") => effect = true,
+            _ => {}
+        });
+        effect
+    }
+
+    // ── calls ───────────────────────────────────────────────────────
+
+    /// Does a call's own value (before an argument's error propagates
+    /// through it) already carry a status?
+    fn base_is_result(&self, name: &str, target: &Target, raw_args: &[Expr]) -> bool {
+        match target {
+            Target::User(n) => self.fns.get(n).map_or(false, |f| matches!(f.ret, Ty::Result(_))),
+            Target::Module(m, f) => self.registry.type_of_in(m, f, raw_args.len()).map_or(false, |t| matches!(t, CrowType::Result(_))),
+            Target::Runtime(_) => {
+                if name == "set" {
+                    return false;
+                }
+                if matches!(name, "int" | "float") {
+                    return matches!(raw_args.first().map(|a| Self::inner(&self.tt(a))), Some(CrowType::Str) | Some(CrowType::Json));
+                }
+                if self.registry.has_function(name) && !matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max") {
+                    if let Some(t) = self.registry.type_of(name, raw_args.len()) {
+                        return matches!(t, CrowType::Result(_));
+                    }
+                }
+                FALLIBLE_BUILTINS.contains(&name)
+            }
+        }
+    }
+
+    fn call(&mut self, e: &Expr) -> String {
+        let (mut target, args, _propagates) = match e {
+            Expr::Call { target, args, propagates, .. } => (target.clone(), args.clone(), *propagates),
+            Expr::Effect { name, args, propagates, .. } => {
+                let t = match name.split_once('.') {
+                    Some((m, f)) => Target::Module(m.to_string(), f.to_string()),
+                    None => Target::Runtime(name.clone()),
+                };
+                (t, args.clone(), *propagates)
+            }
+            _ => unreachable!(),
+        };
+        // a qualified call to a registry module is its bare call, pinned
+        let mut pinned: Option<String> = None;
+        if let Target::Module(m, f) = &target {
+            if matches!(m.as_str(), "math" | "io" | "frame" | "doc" | "chart" | "math.stats" | "math.nn") && self.registry.has_function(f) {
+                pinned = Some(m.clone());
+                target = Target::Runtime(f.clone());
+            }
+        }
+        let name = match &target {
+            Target::Runtime(p) => RUNTIME_TABLE.iter().find(|(_, r)| *r == p.as_str()).map(|(b, _)| b.to_string()).unwrap_or_else(|| p.clone()),
+            Target::User(n) => n.clone(),
+            Target::Module(_, f) => f.clone(),
+        };
+        let raw_args: Vec<Expr> = args.iter().map(|a| Emitter::raw(a).clone()).collect();
+        let current_pin = self.pinned_module.clone();
+        let saved_pin = std::mem::replace(&mut self.pinned_module, pinned.or(current_pin));
+
+        let user = matches!(target, Target::User(_));
+        let ref_flags: Vec<bool> = match &target {
+            Target::User(n) => match (self.by_ref_params.get(n), self.fns.get(n)) {
+                (Some(set), Some(f)) => f.params.iter().map(|(p, _)| set.contains(p)).collect(),
+                _ => vec![false; raw_args.len()],
+            },
+            _ => vec![false; raw_args.len()],
+        };
+        let mut arg_strs: Vec<String> = Vec::with_capacity(raw_args.len());
+        for (i, a) in raw_args.iter().enumerate() {
+            if ref_flags.get(i).copied().unwrap_or(false) {
+                if let Some(s) = self.optbox_ref(a) {
+                    arg_strs.push(s);
+                } else if let Expr::Local(v, _) | Expr::Move(v, _) = a {
+                    if self.ref_params.contains(v) {
+                        arg_strs.push(v.clone());
+                    } else {
+                        arg_strs.push(format!("&{}", v));
+                    }
+                } else {
+                    let s = self.expr(a);
+                    arg_strs.push(format!("&{}", s));
+                }
+            } else if let Some(s) = self.optbox_value(a) {
+                arg_strs.push(s);
+            } else {
+                let local_read = match a {
+                    Expr::Local(..) | Expr::Move(..) | Expr::Load(..) => true,
+                    Expr::Derived(d, _) => self.declared(d),
+                    _ => false,
+                };
+                let needs_clone = user
+                    && local_read
+                    && matches!(
+                        Self::inner(&self.tt(a)),
+                        CrowType::NumArray(_) | CrowType::Array(_) | CrowType::Map(_) | CrowType::Str | CrowType::Markup | CrowType::Frame | CrowType::Struct(_) | CrowType::DbHandle
+                    );
+                let s = self.expr(a);
+                arg_strs.push(if needs_clone && !(matches!(a, Expr::Load(n, _) if self.static_handle_vars.contains(n))) { format!("{}.clone()", s) } else { s });
+            }
+        }
+
+        // an argument's error is the call's value (spec, auto-propagation)
+        let skip = matches!(name.as_str(), "log" | "assert" | "cpu" | "gpu" | "nodes" | "type" | "error" | "captured" | "running")
+            || (self.needs_ui && (name == "chart" || name == "table" || crate::lower::UI_ELEMENTS.contains(&name.as_str())))
+            || name == "len"
+            || (self.needs_crow_web && name == "arrow");
+        if !skip {
+            let result_idx: Vec<usize> = raw_args.iter().enumerate().filter(|(_, a)| matches!(self.tt(a), CrowType::Result(_))).map(|(i, _)| i).collect();
+            if !result_idx.is_empty() {
+                let orig: Vec<String> = result_idx.iter().map(|&i| arg_strs[i].clone()).collect();
+                // a view renders a failed argument as its reason
+                if let Target::User(v) = &target {
+                    if self.views.contains(v) {
+                        let mut bound = arg_strs.clone();
+                        let mut pre = String::new();
+                        let mut checks: Vec<String> = Vec::new();
+                        for (k, &i) in result_idx.iter().enumerate() {
+                            pre.push_str(&format!("let _va{} = &({}); ", k, orig[k]));
+                            checks.push(format!("if !_va{k}.ok {{ CrowVNode::text(&format!(\"error: {{}}\", _va{k}.reason)) }} else", k = k));
+                            bound[i] = format!("_va{}.value.clone()", k);
+                        }
+                        let call = self.user_call(v, &raw_args, bound);
+                        self.pinned_module = saved_pin;
+                        return format!("{{ {}{} {{ {} }} }}", pre, checks.join(" "), call);
+                    }
+                }
+                let mut unwrapped = arg_strs.clone();
+                for &i in &result_idx {
+                    unwrapped[i] = format!("_prop_{}.value.clone()", i);
+                }
+                let inner_expr = self.dispatch(&target, &name, &raw_args, &unwrapped, e);
+                let full = self.tt(e);
+                let inner_type = match Self::inner(&full) {
+                    CrowType::Map(v) => CrowType::Map(Box::new(Self::inner(&v))),
+                    CrowType::Array(v) => CrowType::Array(Box::new(Self::inner(&v))),
+                    o => o,
+                };
+                let already = self.base_is_result(&name, &target, &raw_args);
+                const HELD: &[&str] = &["query", "exec", "insert", "transact", "read", "write", "fetch", "shell", "mail", "later", "notice", "sign_in", "download"];
+                let stop_as = (self.reactive_epilogue.is_some() && HELD.contains(&name.as_str())).then(|| self.shown_fn_name());
+                self.pinned_module = saved_pin;
+                return self.propagation_block(&result_idx, &orig, &inner_expr, &inner_type, already, stop_as);
+            }
+        }
+        let out = self.dispatch(&target, &name, &raw_args, &arg_strs, e);
+        self.pinned_module = saved_pin;
+        out
+    }
+
+    fn propagation_block(&self, idx: &[usize], orig: &[String], inner: &str, inner_type: &CrowType, already: bool, stop_as: Option<String>) -> String {
+        let default_val = inner_type.default_rust_value();
+        let trace = self.trace_format_expr();
+        let error_result = |i: usize| -> String {
+            if let Some(who) = &stop_as {
+                return format!("{{ state.stop(format!(\"{} stopped: {{}}\", _prop_{}.reason)); return; }}", who, i);
+            }
+            format!(
+                "{{ let mut _err = CrowResult {{ ok: false, value: {}, reason: _prop_{i}.reason.clone(), kind: _prop_{i}.kind.clone(), trace: _prop_{i}.trace.clone(), captured: 0.0 }}; _err.trace.push({}); _err }}",
+                default_val,
+                trace,
+                i = i
+            )
+        };
+        let mut result = if already {
+            inner.to_string()
+        } else {
+            format!("CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", inner)
+        };
+        for (pos, &i) in idx.iter().enumerate().rev() {
+            result = format!("{{ let _prop_{i} = {}.clone(); if !_prop_{i}.ok {{ {} }} else {{ {} }} }}", orig[pos], error_result(i), result, i = i);
+        }
+        result
+    }
+
+    /// A struct field that is a recursive link, handed by reference.
+    fn optbox_ref(&mut self, e: &Expr) -> Option<String> {
+        if let Expr::Field { base, name, .. } = e {
+            if let CrowType::Struct(s) = self.tt(base) {
+                if self.structs.get(&s).map_or(false, |d| d.fields.iter().any(|(f, t)| f == name && matches!(t, Ty::OptRecord(_)))) {
+                    let obj = self.expr(base);
+                    return Some(format!("{}.{}.as_ref().unwrap()", obj, Self::rust_field(name)));
+                }
+            }
+        }
+        None
+    }
+
+    /// A struct field that is a recursive link, handed by value.
+    fn optbox_value(&mut self, e: &Expr) -> Option<String> {
+        if let Expr::Field { base, name, .. } = e {
+            if let CrowType::Struct(s) = self.tt(base) {
+                if self.structs.get(&s).map_or(false, |d| d.fields.iter().any(|(f, t)| f == name && matches!(t, Ty::OptRecord(_)))) {
+                    let obj = self.expr(base);
+                    return Some(format!("*{}.{}.as_ref().unwrap().clone()", obj, Self::rust_field(name)));
+                }
+            }
+        }
+        None
+    }
+
+    /// A call, by what it names.
+    fn dispatch(&mut self, target: &Target, name: &str, args: &[Expr], arg_strs: &[String], whole: &Expr) -> String {
+        match target {
+            Target::User(n) => self.user_call(n, args, arg_strs.to_vec()),
+            Target::Module(m, f) => self.module_call(m, f, args, arg_strs, whole),
+            Target::Runtime(_) => match self.builtin(name, args, arg_strs, whole) {
+                Some(s) => s,
+                None => format!("{}({})", name, arg_strs.join(", ")),
+            },
+        }
+    }
+
+    /// A user function's call: a view's or an element's tree handed to it
+    /// is its markup; a handler calling a helper hands it the state and
+    /// reads back what it wrote; a view calling a view hands it the state.
+    pub(crate) fn user_call(&mut self, name: &str, args: &[Expr], mut arg_strs: Vec<String>) -> String {
+        for (i, a) in args.iter().enumerate() {
+            if self.makes_node(a) {
+                if let Some(s) = arg_strs.get_mut(i) {
+                    *s = format!("({}).to_html()", s);
+                }
+            }
+        }
+        let cur = self.cur_fn.clone();
+        let helper_call = self.reactive_event_handlers.contains(name) && self.reactive_event_handlers.contains(&cur);
+        let threads = helper_call || (self.reactive_render_fns.contains(name) && (self.reactive_render_fns.contains(&cur) || self.reactive_event_handlers.contains(&cur)));
+        let all = if threads {
+            let mut v = vec!["state".to_string()];
+            v.extend(arg_strs.iter().cloned());
+            v
+        } else {
+            arg_strs.clone()
+        };
+        if helper_call {
+            let flush = self.flush_before();
+            let reloads = self.reload_after(name);
+            let stop = self.stop_check();
+            if !reloads.is_empty() || !flush.is_empty() || !stop.is_empty() {
+                return format!("{{ {} let _r = {}({}); {}{} _r }}", flush, Self::rust_fn_name(name), all.join(", "), stop, reloads);
+            }
+        }
+        // a helper outside the handler class that a render calls with no state
+        let _ = map_literal_pairs;
+        format!("{}({})", Self::rust_fn_name(name), all.join(", "))
+    }
+}

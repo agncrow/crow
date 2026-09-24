@@ -220,8 +220,8 @@ impl Parser {
         self.skip_newlines();
         let mut body = self.parse_block()?;
         // Implicit return: the last expression statement in a function body is
-        // the return value. Desugar here so the interpreter, type inference,
-        // and transpiler all see the same explicit AST.
+        // the return value. Desugar here so type inference and the lowerings
+        // all see the same explicit AST.
         if let Some(last_expr_pos) = body.iter().rposition(|s| !matches!(s, Stmt::Line(_))) {
             if matches!(body[last_expr_pos], Stmt::ExprStmt(_)) {
                 if let Stmt::ExprStmt(e) = body.remove(last_expr_pos) {

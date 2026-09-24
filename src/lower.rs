@@ -1,7 +1,7 @@
 //! AST lowering: resolves named arguments into plain positional calls.
 //!
 //! Runs once, after parsing (and module expansion), before type inference,
-//! validation, interpretation, or transpilation. Downstream code never sees
+//! validation, interpretation, or compilation. Downstream code never sees
 //! `Expr::Named` — this is the single implementation of named-argument
 //! semantics for both execution modes (shared-kernel principle, see
 //! docs/design-review.md pushback 6).
@@ -66,6 +66,19 @@ pub fn map_literal_pairs(e: &Expr) -> Option<Vec<(String, Expr)>> {
             }
             _ => return None,
         }
+    }
+}
+
+/// `chart[..., seek = handler]` after lowering: twelve positional args with
+/// the handler's name in the last slot. Every pass that discovers event
+/// handlers asks this so the seek target counts as one.
+pub(crate) fn chart_seek_handler<'a>(callee: &Expr, args: &'a [Expr]) -> Option<&'a str> {
+    match callee {
+        Expr::Ident(n) if n == "chart" && args.len() == 12 => match &args[11] {
+            Expr::Ident(f) => Some(f.as_str()),
+            _ => None,
+        },
+        _ => None,
     }
 }
 

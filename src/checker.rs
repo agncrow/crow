@@ -1615,7 +1615,7 @@ fn find_undefined_vars_in_fn(
         for el in crate::lower::UI_ELEMENTS {
             defined.insert(el.to_string());
         }
-        // Live elements the transpiler handles outside the core list.
+        // Live elements the Rust backend handles outside the core list.
         for live in ["field", "slider", "checkbox", "toggle", "radio", "tabs", "select", "progress", "icon"] {
             defined.insert(live.to_string());
         }

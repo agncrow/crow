@@ -1,4 +1,4 @@
-/// Type inference engine for the Crow -> Rust transpiler.
+/// Type inference: the front end both modes share, before the IR.
 
 use std::collections::BTreeMap;
 use crate::ast::*;
@@ -565,7 +565,7 @@ impl TypeContext {
                     }
                     Expr::Call { callee, args } => {
                         // chart[..., seek = jump]: the seek target is a handler
-                        if let Some(f) = crate::transpiler::chart_seek_handler(callee, args) {
+                        if let Some(f) = crate::lower::chart_seek_handler(callee, args) {
                             if fns.contains_key(f) {
                                 out.insert(f.to_string());
                             }
@@ -699,7 +699,7 @@ impl TypeContext {
             // later[f] targets scheduled from views/handlers are deferred
             // handler halves: they read/write reactive state off the loop,
             // so they join the handler class (validator exemption, interp
-            // exempt frames, transpiler state signature). Fixpoint covers
+            // exempt frames, the Rust backend's state signature). Fixpoint covers
             // later-chains (handler → later f → later g).
             loop {
                 let mut added = false;
@@ -749,7 +749,7 @@ impl TypeContext {
             fn seek_expr(e: &Expr, out: &mut Vec<String>, widgets: &mut Vec<String>) {
                 match e {
                     Expr::Call { callee, args } => {
-                        if let Some(f) = crate::transpiler::chart_seek_handler(callee, args) {
+                        if let Some(f) = crate::lower::chart_seek_handler(callee, args) {
                             out.push(f.to_string());
                         }
                         if matches!(callee.as_ref(), Expr::Ident(n) if n == "widget") {
@@ -1252,7 +1252,7 @@ impl TypeContext {
                         let mut normalized_sig: Vec<CrowType> = Vec::with_capacity(arg_types.len());
                         for (i, at) in arg_types.iter().enumerate() {
                             // Normalize types for function params:
-                            // - OptBoxStruct -> Struct (transpiler unwraps before passing)
+                            // - OptBoxStruct -> Struct (the Rust backend unwraps before passing)
                             // - Result<T> -> T (auto-propagation unwraps at call site)
                             let normalized = match at {
                                 CrowType::OptBoxStruct(n) => CrowType::Struct(n.clone()),
@@ -2013,11 +2013,6 @@ impl TypeContext {
             .find(|(csig, _)| Self::same_signature(csig, &call_sig))
             .or_else(|| clones.first())
             .map(|(_, m)| m.clone())
-    }
-
-    pub fn infer_call_base(&self, name: &str, args: &[Expr], callee: &Expr) -> CrowType {
-        let arg_types: Vec<CrowType> = args.iter().map(|a| self.infer_expr(a)).collect();
-        self.infer_call_base_typed(name, args, callee, &arg_types)
     }
 
     /// The call's type given its arguments' types, inferred once by the

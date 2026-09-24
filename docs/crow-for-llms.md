@@ -284,7 +284,7 @@ page['/', render]
 **UI trees are built in `view` blocks, not `fn`.** Inside a view the HTML
 element vocabulary (`div`, `p`, `a`, `form`, `button`…) is active with exact
 HTML names; outside views those are ordinary names you can use freely
-(`p = 0.95` is fine). The transpiler manages the app instance — no `app`
+(`p = 0.95` is fine). Crow manages the app instance — no `app`
 variable. `count` is reactive state: only views and event handlers see it;
 handlers are passed by **name** (`click = inc`), never as lambdas.
 

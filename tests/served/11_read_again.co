@@ -1,0 +1,19 @@
+--- A value that can fail, shown twice in one view, and a text a handler
+--- converts and then reads again: the compiled program moved the value
+--- into the first place that used it, so the second did not build.
+use web, ui
+
+amount = '12'
+note = ''
+
+fn double[]
+    n = int[amount]
+    note = '`amount` doubled is `n * 2`'
+
+view render[]
+    r = read['no_such_file.txt']
+    k = int[amount]
+    return stack[p[r], p[r], p[k], p[k], p[note], button['Double', click = double]]
+
+serve[3411]
+page['/', render]

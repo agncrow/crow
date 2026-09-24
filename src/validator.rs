@@ -1,5 +1,5 @@
 /// Validation pass for Crow programs.
-/// Runs after type inference, before transpilation.
+/// Runs after type inference, before either mode lowers the program.
 /// Catches user errors and reports them in Crow terms.
 
 use std::collections::BTreeSet;
@@ -132,7 +132,7 @@ pub struct Validator<'a> {
     /// Nesting depth of function bodies currently being validated
     fn_depth: usize,
     /// `use ui` programs: top-level assignments are reactive state, which the
-    /// ui transpiler rewrites into state.get/state.set inside render/handler
+    /// Rust backend reads and writes through the session state inside render/handler
     /// functions — the documented exception to function-scope isolation.
     ui_mode: bool,
     /// Inside a `test` block — harness builtins (app, click) are callable.
@@ -350,8 +350,8 @@ impl<'a> Validator<'a> {
                 }
                 if let Some(existing_ty) = existing.as_ref() {
                     // Assignment into a typed variable is a consumption
-                    // point: result[T] unwraps into T (the transpiler
-                    // aborts the fn on error) — not a type change.
+                    // point: result[T] unwraps into T (the function
+                    // stops on the error) — not a type change.
                     let unwraps = matches!(&new_ty, CrowType::Result(inner)
                         if existing_ty.compatible(inner)
                             || (matches!(existing_ty, CrowType::Float)

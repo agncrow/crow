@@ -14,7 +14,7 @@ they find. It looks like Python, compiles to Rust, and makes three promises:
    error tells you what to write instead.
 
 The language ships as a single binary containing an interpreter (for
-immediate feedback), a Rust transpiler (for production speed), tensors,
+immediate feedback), a compiler to Rust (for production speed), tensors,
 data frames, a database layer, and a reactive web framework. The final
 chapter of this book builds a live dashboard using all of them.
 

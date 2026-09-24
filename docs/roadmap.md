@@ -6,7 +6,7 @@ What's done, what's remaining, and in what order.
 
 | Area | Details |
 |------|---------|
-| Core language | Lexer, parser, AST, interpreter, transpiler, checker, formatter, REPL |
+| Core language | Lexer, parser, AST, IR, IR interpreter, Rust backend from the IR, checker, formatter, REPL |
 | Type system | Dynamic with inference — int, float, str, bool, array, map, tensor, frame, function, error |
 | Modules | `math`, `math.stats`, `math.nn`, `io`, `frame`, `web` (17 sub-modules), `db` (SQLite, PostgreSQL, ClickHouse) |
 | Math (~107 functions) | Creation (9), element-wise (12), trig (7), hyperbolic (3), reductions (9), sorting/selection (6), shape (3), linalg (15), random (12), signal (12), special (5), complex (6), sparse (3) |

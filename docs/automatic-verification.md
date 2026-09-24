@@ -305,7 +305,7 @@ crow check
 
 ### How it generates inputs
 
-The system uses the transpiler's type inference — by the time Crow code is transpiled to Rust, parameter types are known. It then generates boundary values for each type using the table above. All combinations of boundary values across parameters are tested (capped at ~50 combinations per function to stay fast).
+The system uses the compiler's type inference — once a program has been checked, every parameter's type is known. It then generates boundary values for each type using the table above. All combinations of boundary values across parameters are tested (capped at ~50 combinations per function to stay fast).
 
 ---
 

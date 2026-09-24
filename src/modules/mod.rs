@@ -31,8 +31,8 @@ pub trait CrowModule: Send + Sync {
     /// Interpret a function call. Called by the interpreter.
     fn call(&self, name: &str, args: &[CrowValue]) -> Result<CrowValue, String>;
 
-    /// Emit Rust code for a function call. Called by the transpiler.
-    /// `arg_strs` are the already-transpiled argument expressions.
+    /// Emit Rust code for a function call. Called by the Rust backend.
+    /// `arg_strs` are the argument expressions, already printed.
     /// `arg_types` are the inferred types of each argument.
     fn emit_rust(&self, name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String>;
 
@@ -190,7 +190,7 @@ impl ModuleRegistry {
         self.modules[idx].call(name, args)
     }
 
-    /// Emit Rust for a module function (transpiler, bare call).
+    /// Emit Rust for a module function (the Rust backend, bare call).
     pub fn emit_rust(&self, name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String> {
         if let Some(msg) = self.ambiguity(name) {
             return Err(msg);

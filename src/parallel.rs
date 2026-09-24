@@ -1,5 +1,5 @@
 //! What an expression reads: the variable names in it, including the
-//! ones inside interpolated strings. The checker and the transpiler use
+//! ones inside interpolated strings. The checker and the IR lowering use
 //! it. This module once grouped statements into parallel waves; the
 //! spec's Design Note "Statements Run in Order" records why that stopped.
 

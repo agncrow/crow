@@ -3,7 +3,7 @@
 //! each such name the program declares — every declaration and every read,
 //! inside interpolation spans too — to one Rust accepts (`move` → `move_`,
 //! longer when that is taken). It runs after the gate, so errors speak in
-//! the program's own names, and the transpiler prints the program's name
+//! the program's own names, and the Rust backend prints the program's name
 //! wherever a name reaches the reader (a trace, a handler's stop). Field
 //! names, map keys and named-argument names are never renamed: they are
 //! columns, keys and attributes, not Rust identifiers. The interpreter

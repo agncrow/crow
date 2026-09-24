@@ -46,7 +46,7 @@ x = 'hello'     --- error: cannot reassign from int to string
 
 ### Types
 
-Crow is statically typed with full type inference — you never write type annotations, but every variable has a concrete type determined at compile time. The transpiler infers types from usage; if a type cannot be determined, the program is invalid.
+Crow is statically typed with full type inference — you never write type annotations, but every variable has a concrete type determined at compile time. The compiler infers types from usage; if a type cannot be determined, the program is invalid.
 
 The built-in types are:
 
@@ -2324,7 +2324,7 @@ serve[3000]
 page['/', home.render]
 ```
 
-The transpiler manages the application instance implicitly — no `app` variable needed. `page[path, view]` registers a LiveView page rendered by a view; event handlers are bound inside the view (`click = inc`), so there is no separate handler argument. `serve[port]` starts the server (`serve[port, refresh = N, budget = M]` adds periodic re-rendering and a latency budget — see Background Work). `page[path, view, url = ['day', 'sym']]` puts those facts in the page's address: a session starts from the values in the query string (`/?day=2026-09-04&sym=IMRN`), each read in its fact's shape, and the address follows them as they change (`history.replaceState`), so a reload or a shared link opens the same view — a fact of a part is named by its path, `url = ['session.day']`, and appears by its last name. The look of the whole app is set there too: `serve[port, theme = 'dark', density = 'compact', accent = '#3b82f6', wide = true]` — `theme` is `'light'`, `'dark'`, or `'system'` (the default, following the reader's setting), `density = 'compact'` tightens the element defaults for dense screens, `accent` overrides the accent token with a hex colour, and `wide = true` lets the page use the full window instead of the reading column. A wrong value is a startup error naming the choices. The order in source doesn't matter: the transpiler always emits `serve[]` after all routes are registered.
+Crow manages the application instance implicitly — no `app` variable needed. `page[path, view]` registers a LiveView page rendered by a view; event handlers are bound inside the view (`click = inc`), so there is no separate handler argument. `serve[port]` starts the server (`serve[port, refresh = N, budget = M]` adds periodic re-rendering and a latency budget — see Background Work). `page[path, view, url = ['day', 'sym']]` puts those facts in the page's address: a session starts from the values in the query string (`/?day=2026-09-04&sym=IMRN`), each read in its fact's shape, and the address follows them as they change (`history.replaceState`), so a reload or a shared link opens the same view — a fact of a part is named by its path, `url = ['session.day']`, and appears by its last name. The look of the whole app is set there too: `serve[port, theme = 'dark', density = 'compact', accent = '#3b82f6', wide = true]` — `theme` is `'light'`, `'dark'`, or `'system'` (the default, following the reader's setting), `density = 'compact'` tightens the element defaults for dense screens, `accent` overrides the accent token with a hex colour, and `wide = true` lets the page use the full window instead of the reading column. A wrong value is a startup error naming the choices. The order in source doesn't matter: the server starts only after every route is registered.
 
 If no routes are registered, `serve[]` shows a default welcome page so the user always sees something.
 
@@ -2748,7 +2748,7 @@ All arithmetic operations (`+`, `-`, `*`, `/`) and these math builtins are diffe
 
 #### Implementation
 
-Uses forward-mode AD with dual numbers. Each number carries a value and a derivative component. For N parameters, N forward passes compute the full gradient. The `grad` builtin works identically in both the interpreter and transpiler.
+Uses forward-mode AD with dual numbers. Each number carries a value and a derivative component. For N parameters, N forward passes compute the full gradient. The `grad` builtin works identically in both modes.
 
 
 ### Distributed Support
@@ -2766,7 +2766,7 @@ When `nodes[n]` is called, the runtime initializes distributed mode using TCP-ba
 1. **Process discovery**: Each process reads `CROW_RANK`, `CROW_WORLD_SIZE`, `CROW_MASTER_ADDR`, and `CROW_MASTER_PORT` from environment variables.
 2. **Ring topology**: Processes form a ring — each connects to the next rank via TCP.
 3. **Available operations**: `allreduce_mean` (ring allreduce), `broadcast`, `barrier`, `shard` (split data by rank).
-4. **Finalize**: The transpiler auto-inserts `finalize()` at end of main to clean up connections.
+4. **Finalize**: The compiled program calls `finalize()` at the end of main to clean up connections.
 
 In interpreter mode, `nodes[n]` always simulates single-process (rank 0) — no TCP connections are made.
 
@@ -3157,7 +3157,7 @@ structs and frames.
 
 ## 17. Type System
 
-Crow is **statically typed with inference**. No type annotations are needed — the transpiler infers concrete types from how values are used.
+Crow is **statically typed with inference**. No type annotations are needed — the compiler infers concrete types from how values are used.
 
 
 ### Rules
@@ -3165,12 +3165,12 @@ Crow is **statically typed with inference**. No type annotations are needed — 
 - Every variable has exactly one type throughout its scope
 - Types are inferred from assignment: `x = 5` makes `x` an `int`
 - Function parameter and return types are inferred from call sites
-- If the transpiler cannot determine a type, the program is invalid
+- If the compiler cannot determine a type, the program is invalid
 
 
 ### Call-Site Inference (No Generics Needed)
 
-Crow has no generics, no type parameters, and no type annotations — but you can still write functions that work across different types. The transpiler infers concrete types from each call site, effectively specializing the function for the types used.
+Crow has no generics, no type parameters, and no type annotations — but you can still write functions that work across different types. The compiler infers concrete types from each call site, effectively specializing the function for the types used.
 
 ```
 fn filter[items, f]
@@ -3189,9 +3189,9 @@ evens = filter[[1, 2, 3, 4], is_even]         --- items: array[int], f: fn[int] 
 positives = filter[[-1, 0, 3], is_positive]    --- same types, different function
 ```
 
-This works because `filter[[1, 2, 3, 4], is_even]` tells the transpiler that `items` is an array of ints and `f` is a function taking an int and returning a bool. No annotations needed — the call site *is* the type information.
+This works because `filter[[1, 2, 3, 4], is_even]` tells the compiler that `items` is an array of ints and `f` is a function taking an int and returning a bool. No annotations needed — the call site *is* the type information.
 
-When one function is called with *different* type signatures, the transpiler **monomorphizes** it — generating one specialized native version per signature, invisibly:
+When one function is called with *different* type signatures, the compiler **monomorphizes** it — generating one specialized native version per signature, invisibly:
 
 ```
 fn first[arr]
@@ -3212,7 +3212,7 @@ Specialization propagates through call chains and works with recursion and struc
 | Interpreter | `crow run -i file.co` | **Dev tool.** Runs code directly for quick iteration. Slower, but convenient. |
 | REPL | `crow` | **Interactive.** Explore and test code interactively. Uses the interpreter. |
 
-The transpiler is the source of truth for what a valid program is: it infers a concrete type for every value. Both modes run the same front end (parse → expand → lower → infer → validate), so they reject the same invalid programs with the same messages.
+The compiler's front end is the source of truth for what a valid program is: it infers a concrete type for every value. Both modes run the same front end (parse → expand → lower → infer → validate) and then the same intermediate form, which the interpreter walks and the Rust backend prints, so they reject the same invalid programs with the same messages.
 
 **The parity promise:** both modes are required to produce identical output. This is enforced mechanically — `crow test --parity` runs `tests/parity/` through both modes and diffs stdout, and `crow test --book` does the same for every code block in the book. A disagreement between the modes is a bug in Crow, never a semantics to learn. Interpret while exploring (instant start, the REPL, `crow test`); compile when shipping (`crow build` produces the binary without running it).
 
@@ -3387,6 +3387,7 @@ crow install                --- install deps from crowfile into crow_modules/
 crow build                  --- transpile to Rust and compile to native binary
 crow build file.co        --- transpile a specific file
 crow build --ir file.co   --- print the program's one typed form, the IR (docs/ir-design.md); nothing is compiled
+crow build --rs file.co   --- print the Rust the program compiles to, printed from the IR; nothing is compiled
 crow run                    --- transpile + compile + run main.co
 crow run file.co          --- transpile + compile + run a specific file (a dev build: the runtime crates optimized, the program not)
 crow run train              --- run a named job from the crowfile jobs map
@@ -3417,7 +3418,7 @@ crow lsp                    --- language server over stdio (see crow-lsp.md)
 crow launch 4 file.co     --- build + run on 4 distributed processes
 ```
 
-`crow test` runs the `test` blocks you wrote (see Verification). `crow test --parity` is the interpreter–transpiler parity harness: every `tests/parity/*.co` file runs in both execution modes and any difference in output (or exit status) is a failure — this enforces the parity rule mechanically. `crow test --book` does the same for every code block in the book. `crow test --docs` reads the compiler's own name tables and fails if a builtin, module function, or element is missing from this specification, if a reference row here names something the compiler doesn't have, if a module or core builtin has no verified example in the book, or if an example file is not indexed — so the language and its documentation cannot drift apart. `crow check` runs your test blocks plus everything automatic — edge cases, determinism contracts, live-loop hazards, and (with a database url) the schema-aware concurrency checks documented in `crow-check.md`.
+`crow test` runs the `test` blocks you wrote (see Verification). `crow test --parity` is the parity harness: every `tests/parity/*.co` file runs in both execution modes and any difference in output (or exit status) is a failure — this enforces the parity rule mechanically. `crow test --book` does the same for every code block in the book. `crow test --docs` reads the compiler's own name tables and fails if a builtin, module function, or element is missing from this specification, if a reference row here names something the compiler doesn't have, if a module or core builtin has no verified example in the book, or if an example file is not indexed — so the language and its documentation cannot drift apart. `crow check` runs your test blocks plus everything automatic — edge cases, determinism contracts, live-loop hazards, and (with a database url) the schema-aware concurrency checks documented in `crow-check.md`.
 
 `crow build` transpiles `.co` source files to Rust and compiles to a native binary. `crow run` builds and then executes the binary.
 
@@ -3605,7 +3606,7 @@ Three options were evaluated:
 
 **Decision:** Error. Map arithmetic requires every leaf to be numeric (tensor, int, float). If any leaf is a string, bool, or other non-numeric type, it's an error.
 
-- **Compile time:** The transpiler checks map literal leaf types and rejects at compile time when types are statically known.
+- **Compile time:** The compiler checks map leaf types and rejects the program when they are statically known, in both modes and with the same message.
 - **Runtime:** The interpreter checks before applying arithmetic and errors on non-numeric leaves.
 
 ```
@@ -3859,7 +3860,7 @@ x = x + 1
 total = total + item
 ```
 
-The explicit form is clear, consistent, and only a few characters longer. The transpiler can optimize `x = x + op` patterns into in-place operations automatically — the sugar adds no performance benefit.
+The explicit form is clear, consistent, and only a few characters longer. The compiler can optimize `x = x + op` patterns into in-place operations automatically — the sugar adds no performance benefit.
 
 
 ### No Destructuring

@@ -258,7 +258,7 @@ number in a `test` block, or an attribute in the view, and run again.
 
 On this page, the shorter example above has the same buttons: with
 `crow book` running, press **▶ Run** for the interpreter, **⚙ Compile**
-for the transpiler, **✓ Test** for its `test layout[]` block — the file
+for the native build, **✓ Test** for its `test layout[]` block — the file
 is served and tested from the book without leaving it.
 
 ## Styling: seven classes, eight tokens

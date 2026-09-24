@@ -49,7 +49,7 @@ The tradeoff: no lambdas, no pattern matching, no sum types. Languages like Elix
 | Zig | Static | Yes (comptime) | Yes (unions) | No | 8 |
 | Rust | Static | Yes (powerful) | Yes (enums) | Yes (core feature) | 9 |
 
-Crow has no explicit generics or sum types, but its call-site type inference effectively monomorphizes functions — you can write `fn filter[items, f]` and it works across types because the transpiler infers concrete types from each call site. This is similar to C++ templates or Julia's specialization, but with zero syntax overhead. Less expressive than Rust or Elixir for modeling complex domains, but more capable than Go for higher-order abstractions.
+Crow has no explicit generics or sum types, but its call-site type inference effectively monomorphizes functions — you can write `fn filter[items, f]` and it works across types because the compiler infers concrete types from each call site. This is similar to C++ templates or Julia's specialization, but with zero syntax overhead. Less expressive than Rust or Elixir for modeling complex domains, but more capable than Go for higher-order abstractions.
 
 Where Crow loses points: no generics, no sum types, `.kind` is a free-form string. But for the target audience (data science, scripting), this is the right tradeoff.
 
