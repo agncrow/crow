@@ -206,6 +206,21 @@ fn handed(e: &Expr) -> Vec<String> {
     }
 }
 
+/// A lowered value's type as inference's rules read a child's
+/// (`infer_expr`): markup is text there.
+fn read(x: &Expr) -> CrowType {
+    full(x).text()
+}
+
+/// A lowered value's type with markup told apart (`infer_expr_full`): a
+/// tree is markup.
+fn full(x: &Expr) -> CrowType {
+    match x.ty() {
+        Ty::Node => CrowType::Markup,
+        t => crow_type(&t),
+    }
+}
+
 pub fn ty_of(t: &CrowType) -> Ty {
     match t {
         CrowType::Int => Ty::Int,
@@ -871,11 +886,11 @@ impl<'a> Lowerer<'a> {
 
     // ── expressions ─────────────────────────────────────────────────
 
+    /// An expression lowered and typed: each node is typed from its
+    /// lowered children by inference's rules, markup told apart from text (a
+    /// view places the one as markup and the other as text, as the
+    /// interpreter's values do).
     fn lower_expr(&mut self, e: &A) -> Result<Expr, String> {
-        // markup told apart from text: a view places the one as markup and
-        // the other as text (the interpreter carries the same on its values)
-        let cty = self.ctx.infer_expr_full(e);
-        let ty = ty_of(&cty);
         Ok(match e {
             A::Int(n) => Expr::Const(Const::Int(*n), Ty::Int),
             A::Float(f) => Expr::Const(Const::Float(*f), Ty::Float),
@@ -887,10 +902,14 @@ impl<'a> Lowerer<'a> {
                     Expr::Const(Const::Str(s.clone()), Ty::Str)
                 }
             }
-            A::Ident(name) => self.ident(name, ty),
+            A::Ident(name) => {
+                let ty = ty_of(&self.ctx.ident_type(name));
+                self.ident(name, ty)
+            }
             A::BinOp { left, op, right } => {
                 let mut l = self.lower_expr(left)?;
                 let mut r = self.lower_expr(right)?;
+                let ty = ty_of(&self.ctx.binop_type(op, read(&l), read(&r)));
                 let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow | BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte);
                 if arithmetic {
                     match (l.ty().payload(), r.ty().payload()) {
@@ -903,9 +922,10 @@ impl<'a> Lowerer<'a> {
             }
             A::UnaryOp { op, expr } => {
                 let x = self.lower_expr(expr)?;
+                let ty = ty_of(&self.ctx.unary_type(op, read(&x)));
                 Expr::Unary { op: format!("{:?}", op).to_lowercase(), expr: Box::new(x), ty }
             }
-            A::Call { callee, args } => self.call(callee, args, ty)?,
+            A::Call { callee, args } => self.call(callee, args)?,
             A::FieldAccess { object, field } => {
                 match field.as_str() {
                     "ok" | "reason" | "kind" | "trace" => {
@@ -924,10 +944,12 @@ impl<'a> Lowerer<'a> {
                     _ => {
                         if let A::Ident(m) = object.as_ref() {
                             if self.is_module(m) && !self.declared(m) {
+                                let ty = ty_of(&self.qualified_type(object, field));
                                 return Ok(Expr::Constant(format!("{}.{}", m, field), ty));
                             }
                         }
                         let base = self.lower_expr(object)?;
+                        let ty = ty_of(&self.ctx.field_type(object, read(&base), field));
                         Expr::Field { base: Box::new(base), name: field.clone(), ty }
                     }
                 }
@@ -937,6 +959,7 @@ impl<'a> Lowerer<'a> {
                 for i in items {
                     out.push(self.lower_expr(i)?);
                 }
+                let ty = ty_of(&TypeContext::array_type(out.iter().map(full)));
                 Expr::ListLit(out, ty)
             }
             A::Map(pairs) => {
@@ -948,6 +971,7 @@ impl<'a> Lowerer<'a> {
                     };
                     out.push((key, self.lower_expr(v)?));
                 }
+                let ty = ty_of(&TypeContext::map_type(out.iter().map(|(_, v)| read(v))));
                 Expr::MapLit(out, ty)
             }
             A::Named { name, .. } => return Err(format!("lowering: a named argument ('{}') survived the lowering of named arguments", name)),
@@ -959,6 +983,7 @@ impl<'a> Lowerer<'a> {
                 // What the iterable hoisted waits while the body is lowered,
                 // or the body's first statement would take it.
                 let it = self.lower_expr(iter)?;
+                let ty = ty_of(&self.ctx.for_type(var, read(&it), body));
                 let before = std::mem::take(&mut self.pre);
                 self.scopes.push([var.clone()].into_iter().collect());
                 let saved = self.bind_loop_var(var, &it.ty());
@@ -997,7 +1022,7 @@ impl<'a> Lowerer<'a> {
         Expr::Local(name.to_string(), ty)
     }
 
-    fn call(&mut self, callee: &A, args: &[A], ty: Ty) -> Result<Expr, String> {
+    fn call(&mut self, callee: &A, args: &[A]) -> Result<Expr, String> {
         // a variable indexed: xs[0], m['k'], r.symbol[0] — except that
         // inside a view an element name is the element (the vocabulary
         // boundary, spec §12): a session named `a` outside does not turn
@@ -1017,6 +1042,8 @@ impl<'a> Lowerer<'a> {
             for a in args {
                 idx.push(self.lower_expr(a)?);
             }
+            let arg_types: Vec<CrowType> = idx.iter().map(read).collect();
+            let ty = self.call_type(callee, args, &arg_types, Some(read(&base)));
             return Ok(Expr::Index { base: Box::new(base), indices: idx, ty });
         }
         let (module, name) = match callee {
@@ -1080,15 +1107,19 @@ impl<'a> Lowerer<'a> {
         // what it is given (spec §10), so its arguments arrive as they are
         let propagates = !(module.is_none() && (matches!(name.as_str(), "log" | "type" | "error" | "assert") || self.ctx.views.contains(&name)));
         let mut lowered = Vec::with_capacity(args.len());
+        let mut arg_types = Vec::with_capacity(args.len());
         for (i, a) in args.iter().enumerate() {
             // the harness's click[a, h[x]] holds the handler call for the click
             if module.is_none() && name == "click" && i == 1 {
                 if let Some(d) = self.deferred(a)? {
+                    // typed as the call it holds
+                    arg_types.push(self.ctx.infer_expr(a));
                     lowered.push(d);
                     continue;
                 }
             }
             let x = self.lower_expr(a)?;
+            arg_types.push(read(&x));
             if propagates && x.ty().is_result() {
                 let rty = x.ty();
                 lowered.push(Expr::Convert { how: Convert::Unwrap, expr: Box::new(x), ty: rty.payload().clone() });
@@ -1096,6 +1127,7 @@ impl<'a> Lowerer<'a> {
                 lowered.push(x);
             }
         }
+        let ty = self.call_type(callee, args, &arg_types, None);
         let current = self.current_fn.clone();
         if let Some(m) = module {
             let m = self.ctx.module_aliases.get(&m).cloned().unwrap_or(m);
@@ -1121,6 +1153,56 @@ impl<'a> Lowerer<'a> {
         // a bare name a loaded module provides resolves at run time, by the
         // registry's own rule, as the interpreter resolves it
         Ok(Expr::Call { target: Target::Runtime(name), args: lowered, ty, propagates })
+    }
+
+    /// A call's type by inference's rules, from its arguments' types (each
+    /// as lowered, before a failure among them is unwrapped) and, when the
+    /// callee was lowered as a value, the callee's. The rule is picked by the
+    /// callee's form, as the walk picks it.
+    fn call_type(&self, callee: &A, args: &[A], arg_types: &[CrowType], callee_type: Option<CrowType>) -> Ty {
+        // a cell of a column whose type the database told us: frame.col[i]
+        if let A::FieldAccess { object, field } = callee {
+            if let (Some(t), [index]) = (self.ctx.column_type(object, field), arg_types) {
+                if !matches!(index, CrowType::NumArray(_) | CrowType::Array(_)) {
+                    return ty_of(&t);
+                }
+            }
+        }
+        let t = match callee {
+            A::Ident(name) => self.ctx.named_call_type(name, args, callee, arg_types),
+            _ => {
+                let module = match callee {
+                    A::FieldAccess { object, field } => match object.as_ref() {
+                        A::Ident(m) => self.ctx.module_call_type(m, field, arg_types),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                match module {
+                    Some(t) => t,
+                    None => {
+                        // indexing, or a function value applied: the callee
+                        // as lowered, or a module's value it names (m.f[x])
+                        let callee_type = match (callee_type, callee) {
+                            (Some(t), _) => t,
+                            (None, A::FieldAccess { object, field }) => self.qualified_type(object, field),
+                            (None, _) => CrowType::Unknown,
+                        };
+                        self.ctx.index_type(callee_type, arg_types.first().cloned())
+                    }
+                }
+            }
+        };
+        ty_of(&t)
+    }
+
+    /// The type of a value a module names, `m.x`.
+    fn qualified_type(&self, object: &A, field: &str) -> CrowType {
+        let object_type = match object {
+            A::Ident(m) => self.ctx.ident_type(m).text(),
+            _ => CrowType::Unknown,
+        };
+        self.ctx.field_type(object, object_type, field)
     }
 
     /// A user function called with arguments, as a call held for later,
