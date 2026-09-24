@@ -637,9 +637,19 @@ weeks; the core stages are weeks each.
   once, block by block: a later variable of an ended name is renamed apart
   (`x__s2`, shown as `x` in every message), and a read after its block is
   refused before the program runs, saying what to write instead.
-- **Next:** the fold's later steps. The lowering types each expression
-  from its own scoped environment and the IR children's types, instead of
-  asking the type checker. Validation moves into the lowering, and then
-  named arguments, deleting `validator.rs` and `lower.rs`. Last, the type
-  checker's whole-program analyses (specialisation, frame schemas,
-  signatures) become the lowering's pre-pass, deleting `type_infer.rs`.
+- **2026-09-24, the fold's second step: the lowering types bottom-up.**
+  The type checker's rule for each kind of node is now a function of its
+  children's types (`binop_type`, `named_call_type`, `field_type`, …), and
+  the lowering types each IR node from its lowered children with those
+  rules. It used to ask the type checker to walk the whole subtree again
+  at every node. The check that nothing moved: the IR and the emitted Rust
+  of every tracked program, every doc block and finch (640 files) are
+  byte for byte what they were, as are 3,492 mutants of them. A per-node
+  comparison found one node typed differently, a record built from a
+  value that can fail (`[LSlot[kw, li]]` in the layout module): it is the
+  record the list holds, where the walk called it a failed record.
+- **Next:** the fold's later steps. Validation moves into the lowering,
+  and then named arguments, deleting `validator.rs` and `lower.rs`. Last,
+  the type checker's whole-program analyses (specialisation, frame
+  schemas, signatures) become the lowering's pre-pass, deleting
+  `type_infer.rs`.

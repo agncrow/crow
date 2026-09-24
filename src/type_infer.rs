@@ -2684,45 +2684,7 @@ impl TypeContext {
             Expr::FieldAccess { object, field } => self.field_type(object, self.infer_expr(object), field),
             Expr::Array(items) => Self::array_type(items.iter().map(|i| self.infer_expr_full(i))),
             Expr::Map(pairs) => Self::map_type(pairs.iter().map(|(_, v)| self.infer_expr(v))),
-            Expr::ForExpr { var, iter, body } => {
-                // Determine element type from iterator
-                let iter_type = Self::walked(self.infer_expr(iter));
-                let _elem_type = match &iter_type {
-                    CrowType::Array(inner) | CrowType::NumArray(inner) => *inner.clone(),
-                    _ => CrowType::Unknown,
-                };
-
-                // Infer the yield type from the body's last expression, with
-                // the loop variable bound — otherwise a body like f[10]
-                // (f = loop var holding a fn) infers Unknown. A trailing if
-                // (the filter pattern) yields from inside its branches.
-                fn body_yield_type(ctx: &TypeContext, body: &[Stmt]) -> CrowType {
-                    match body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
-                        Some(Stmt::ExprStmt(e)) => ctx.infer_expr_full(e),
-                        Some(Stmt::If { then_body, else_body, .. }) => {
-                            let t = body_yield_type(ctx, then_body);
-                            match else_body {
-                                Some(eb) => t.unify(&body_yield_type(ctx, eb)),
-                                None => t,
-                            }
-                        }
-                        _ => CrowType::Unknown,
-                    }
-                }
-                let last_type = if _elem_type != CrowType::Unknown {
-                    let mut sub = self.clone();
-                    sub.vars.insert(var.clone(), _elem_type.clone());
-                    body_yield_type(&sub, body)
-                } else {
-                    body_yield_type(self, body)
-                };
-
-                // If the body type is still unknown, leave it unknown — a
-                // later inference pass settles it. (Falling back to the
-                // element type is wrong whenever the body maps elements to a
-                // different type, e.g. calling fns held in the array.)
-                CrowType::Array(Box::new(last_type))
-            }
+            Expr::ForExpr { var, iter, body } => self.for_type(var, self.infer_expr(iter), body),
         }
     }
 
@@ -3052,6 +3014,47 @@ impl TypeContext {
             }
         }
         CrowType::Unknown
+    }
+
+    /// A collecting loop's type from its list's: the list of what its body
+    /// yields, typed with the loop variable bound to an element.
+    pub(crate) fn for_type(&self, var: &str, iter_type: CrowType, body: &[Stmt]) -> CrowType {
+        // Determine element type from iterator
+        let elem = match Self::walked(iter_type) {
+            CrowType::Array(inner) | CrowType::NumArray(inner) => *inner,
+            _ => CrowType::Unknown,
+        };
+
+        // Infer the yield type from the body's last expression, with
+        // the loop variable bound — otherwise a body like f[10]
+        // (f = loop var holding a fn) infers Unknown. A trailing if
+        // (the filter pattern) yields from inside its branches.
+        fn body_yield_type(ctx: &TypeContext, body: &[Stmt]) -> CrowType {
+            match body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
+                Some(Stmt::ExprStmt(e)) => ctx.infer_expr_full(e),
+                Some(Stmt::If { then_body, else_body, .. }) => {
+                    let t = body_yield_type(ctx, then_body);
+                    match else_body {
+                        Some(eb) => t.unify(&body_yield_type(ctx, eb)),
+                        None => t,
+                    }
+                }
+                _ => CrowType::Unknown,
+            }
+        }
+        let last_type = if elem != CrowType::Unknown {
+            let mut sub = self.clone();
+            sub.vars.insert(var.to_string(), elem);
+            body_yield_type(&sub, body)
+        } else {
+            body_yield_type(self, body)
+        };
+
+        // If the body type is still unknown, leave it unknown — a
+        // later inference pass settles it. (Falling back to the
+        // element type is wrong whenever the body maps elements to a
+        // different type, e.g. calling fns held in the array.)
+        CrowType::Array(Box::new(last_type))
     }
 
     /// A list literal's type from its items': numbers make a tensor, and
