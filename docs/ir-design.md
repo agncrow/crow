@@ -253,6 +253,10 @@ the same layer with the effect log recorded instead of performed.
 
 ## 8. The second half
 
+*The decisions and first steps: `second-half-design.md` (2026-09-24).
+What the interpreter's values and the compiled facts become:
+`typed-values-design.md`.*
+
 After the IR and the session layer pass the suite:
 
 - **Capabilities.** A part declares what it needs; the app binds; a
@@ -695,7 +699,9 @@ and `reload_after` write-through, the per-builtin emission chain, the
 `Value` type with status on every value. Where that stands on
 2026-09-23: both files are gone; the write-through, the per-builtin
 printing (now `emit_rs/builtins.rs`) and `Value` remain until the
-session layer's meanings and §8's typed values replace them.
+session layer's meanings and §8's typed values replace them. The plan
+for all three, with its open decisions, is `typed-values-design.md`
+(2026-09-24).
 
 Kept: the parser, the three front-end passes, every runtime crate, the
 layout kernel, the harness verbs, the baseline and the book, the
