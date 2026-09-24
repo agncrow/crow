@@ -1,0 +1,26 @@
+--- A page drawn from values that failed: a control given one renders its
+--- reason in place of the control, and a derivation that loops over a list
+--- that failed is refused like a condition, so its value is the error.
+use web, ui
+
+pick = 'a'
+note = ''
+
+derive options
+    r = read['no_such_file.txt']
+    return split[r, ',']
+
+derive lengths
+    r = read['no_such_file.txt']
+    out = for i in range[len[r]]
+        i
+    return out
+
+fn look[]
+    note = 'looked'
+
+view render[]
+    return stack[select[options, pick], p[len[lengths]], p[note], button['Look', click = look]]
+
+serve[3412]
+page['/', render]

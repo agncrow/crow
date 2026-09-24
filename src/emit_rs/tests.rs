@@ -93,6 +93,41 @@ fn a_collection_keeps_a_clone_of_a_variable() {
     assert!(rust.contains("crow_runtime::core::map_set(m, (k).clone(), 1_i64)"), "{}", rust);
 }
 
+/// A control renders what it is given, as an element and a view do: a
+/// failed argument is its reason in place of the control (it was a result
+/// where the page wanted a node, and the program did not build)
+#[test]
+fn a_control_renders_a_failed_argument_as_its_reason() {
+    let src = "use web, ui\n\npick = 'a'\n\nderive options\n    r = read['missing.txt']\n    return split[r, ',']\n\nview render[]\n    return stack[select[options, pick]]\n\nserve[3996]\npage['/', render]\n";
+    let rust = transpile(src);
+    let start = rust.find("fn render(state").expect("render");
+    let rest = &rust[start..];
+    let render = &rest[..rest.find("\n}\n").unwrap()];
+    assert!(render.contains("CrowVNode::text(&format!(\"error: {}\", _va0.reason))"), "{}", render);
+}
+
+/// A loop over a list that can fail is refused like a condition: the
+/// function returns the error before the loop, and the loop walks the value
+#[test]
+fn a_loop_over_a_list_that_can_fail_returns_the_error_first() {
+    let rust = transpile("fn count[s]\n    n = 0\n    for i in range[int[s]]\n        n = n + 1\n    return n\nlog[count['3']]\n");
+    let start = rust.find("fn count(").expect("count");
+    let rest = &rust[start..];
+    let body = &rest[..rest.find("\n}\n").unwrap()];
+    assert!(body.contains("-> CrowResult<i64>"), "{}", body);
+    let refused = body.find("return CrowResult { ok: false").expect("refused before the loop");
+    let looped = body.find(".value.iter()").expect("the loop walks the value");
+    assert!(refused < looped, "{}", body);
+}
+
+/// A loop over an error at the top level halts with the interpreter's
+/// words: `cannot loop over an error value`, not the branch's
+#[test]
+fn a_top_level_loop_over_an_error_halts_with_the_loop_message() {
+    let rust = transpile("for i in range[int['x']]\n    log[i]\n");
+    assert!(rust.contains("runtime error: line 1: cannot loop over an error value — {}"), "{}", rust);
+}
+
 /// A branch on an error at the top level halts with the interpreter's
 /// words and the line (spec, Errors in Conditions); the compiled program
 /// said `error: cannot branch…` and no line
@@ -545,8 +580,14 @@ fn test_comparison_operators_transpile() {
 
 #[test]
 fn test_logical_operators_transpile() {
-    let rust = transpile("x = true and false\n");
-    assert!(rust.contains("&&"), "and should map to &&\n{}", rust);
+    // both sides are evaluated, the left first (spec, Logical): Rust's
+    // `&` and `|` on booleans, never the short-circuiting `&&` and `||`
+    let rust = transpile("x = true and false\ny = x or true\n");
+    assert!(rust.contains("true & false"), "and evaluates both sides\n{}", rust);
+    assert!(rust.contains("x | true"), "or evaluates both sides\n{}", rust);
+    for l in rust.lines().filter(|l| l.contains("let x") || l.contains("let y")) {
+        assert!(!l.contains("&&") && !l.contains("||"), "{}", l);
+    }
 }
 
 #[test]

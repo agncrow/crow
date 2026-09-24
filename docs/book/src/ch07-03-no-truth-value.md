@@ -51,3 +51,8 @@ cannot convert 'xyz' to int
 happy path. Feed it garbage and it *returns* the garbage's story, at the
 exact moment the garbage mattered. The failure detonates at the decision,
 not at the origin, and never silently.
+
+A loop is a decision too. An error has no items to walk, so a `for` over a
+list that failed is refused the same way: `for i in range[len[r]]` inside a
+function hands `r`'s error back when `r` failed, and at the top level it
+halts with `cannot loop over an error value`.

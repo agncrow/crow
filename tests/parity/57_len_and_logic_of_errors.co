@@ -1,0 +1,72 @@
+--- len[] of an error is the error, as every call's is (spec,
+--- Auto-Propagation); the compiled program said 0. And `and` / `or`
+--- evaluate both sides, the left first: an error on either side is the
+--- value, so a guard that must not touch a failed value is its own `if`.
+--- A loop over a list that failed is refused like a condition.
+r = read['no_such_file.txt']
+n = len[r]
+log[n.ok]
+log[n.reason]
+write['parity57.txt', 'some text']
+fine = read['parity57.txt']
+log[len[fine] gt 0]
+
+fn size[path]
+    t = read[path]
+    return len[t]
+
+s = size['no_such_file.txt']
+log[s.ok]
+
+fn guarded[path]
+    t = read[path]
+    if not t.ok or len[t] eq 0
+        return 'empty or unreadable'
+    return 'has text'
+
+g = guarded['no_such_file.txt']
+log[g.ok]
+log[guarded['parity57.txt']]
+
+fn guarded_apart[path]
+    t = read[path]
+    if not t.ok
+        return 'unreadable'
+    if len[t] eq 0
+        return 'empty'
+    return 'has text'
+
+log[guarded_apart['no_such_file.txt']]
+
+fn noisy[x]
+    log['noisy `x`']
+    return x gt 0
+
+--- a loop over a list that failed is refused like a condition: the
+--- function hands the error back (the top level halts: an interpreter test)
+fn count_chars[path]
+    t = read[path]
+    n = 0
+    for i in range[len[t]]
+        n = n + 1
+    return n
+
+fn collect_chars[path]
+    t = read[path]
+    out = for i in range[len[t]]
+        i
+    return len[out]
+
+log[count_chars['no_such_file.txt'].ok]
+log[collect_chars['no_such_file.txt'].ok]
+log[count_chars['parity57.txt']]
+log[collect_chars['parity57.txt']]
+
+a = false and noisy[1]
+log[a]
+b = true or noisy[2]
+log[b]
+bad = int['x']
+c = bad gt 0 and noisy[3]
+log[c.ok]
+rm['parity57.txt']

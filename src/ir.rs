@@ -241,12 +241,32 @@ pub enum Stmt {
     Do(Expr),
     /// The spec's auto-propagation, made visible: if any named value is an
     /// error, a function returns it, a handler stops, the top level halts.
-    Propagate { values: Vec<String> },
+    /// `at` is the decision the error reached, a branch or a loop's list.
+    Propagate { values: Vec<String>, at: Decision },
     /// A handler meets an error at a fact or an effect: commits nothing and
     /// reports (core-design.md §2; emitted once the session layer lands).
     Stop { value: String },
     /// A source line, for traces and the checker; not executed.
     Line(usize),
+}
+
+/// The decision an error value reached and was refused at (spec, Errors
+/// in Conditions): an error has no truth value to branch on and no items
+/// to walk.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Decision {
+    Branch,
+    Loop,
+}
+
+impl Decision {
+    /// How the top level's halt names it: `cannot branch on an error value`.
+    pub fn verb(self) -> &'static str {
+        match self {
+            Decision::Branch => "branch on",
+            Decision::Loop => "loop over",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -832,8 +852,9 @@ fn block(out: &mut String, b: &Block, depth: usize) {
             Stmt::Do(e) => {
                 let _ = writeln!(out, "{}{}", pad, expr(e));
             }
-            Stmt::Propagate { values } => {
-                let _ = writeln!(out, "{}propagate {}", pad, values.join(", "));
+            Stmt::Propagate { values, at } => {
+                let at = if *at == Decision::Loop { " (a loop's list)" } else { "" };
+                let _ = writeln!(out, "{}propagate {}{}", pad, values.join(", "), at);
             }
             Stmt::Stop { value } => {
                 let _ = writeln!(out, "{}stop {}", pad, value);

@@ -272,12 +272,15 @@ impl Emitter {
             "lt" => "<",
             "gte" => ">=",
             "lte" => "<=",
-            "and" => "&&",
-            "or" => "||",
+            // both sides are evaluated, the left first: no short-circuit
+            "and" => "&",
+            "or" => "|",
             other => other,
         };
         if l_res || r_res {
-            // an operator's value is its failed operand, unchanged
+            // an operator's value is its failed operand, unchanged; both
+            // operands are evaluated, the left first, and the left's error
+            // decides before the right's, as in the interpreter
             let ctr = self.binop_counter;
             self.binop_counter += 1;
             let result_type = match op {
@@ -286,8 +289,8 @@ impl Emitter {
                 _ => lti.unify(&rti),
             };
             let default_val = result_type.default_rust_value();
-            let l_val = if l_res { format!("_binl_{}.value", ctr) } else { l.clone() };
-            let r_val = if r_res { format!("_binr_{}.value", ctr) } else { r.clone() };
+            let l_val = if l_res { format!("_binl_{}.value", ctr) } else { format!("(*_binl_{})", ctr) };
+            let r_val = if r_res { format!("_binr_{}.value", ctr) } else { format!("(*_binr_{})", ctr) };
             let inner_expr = match (&lti, &rti) {
                 (CrowType::Int, CrowType::Float) => format!("({}) as f64 {} {}", l_val, op_str, r_val),
                 (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l_val, op_str, r_val),
@@ -307,7 +310,7 @@ impl Emitter {
                     default_val,
                     c = ctr
                 );
-                result = format!("{{ let _binr_{c} = {}.clone(); if !_binr_{c}.ok {{ {} }} else {{ {} }} }}", r, err, result, c = ctr);
+                result = format!("if !_binr_{c}.ok {{ {} }} else {{ {} }}", err, result, c = ctr);
             }
             if l_res {
                 let err = format!(
@@ -315,9 +318,9 @@ impl Emitter {
                     default_val,
                     c = ctr
                 );
-                result = format!("{{ let _binl_{c} = {}.clone(); if !_binl_{c}.ok {{ {} }} else {{ {} }} }}", l, err, result, c = ctr);
+                result = format!("if !_binl_{c}.ok {{ {} }} else {{ {} }}", err, result, c = ctr);
             }
-            return result;
+            return format!("{{ let _binl_{c} = &({}); let _binr_{c} = &({}); {} }}", l, r, result, c = ctr);
         }
         let l_sparse = matches!(lti, CrowType::Sparse);
         let r_sparse = matches!(rti, CrowType::Sparse);
@@ -494,11 +497,24 @@ impl Emitter {
         let inner = Self::inner(&bty);
         let raw_base = self.expr(base);
         let b = if is_result { format!("{}.value", raw_base) } else { raw_base };
-        let idx_strs: Vec<String> = indices.iter().map(|i| self.expr(i)).collect();
+        // an index that failed halts with its reason, as in the interpreter;
+        // one that did not is its value
+        let idx_strs: Vec<String> = indices
+            .iter()
+            .map(|i| {
+                let s = self.expr(i);
+                if matches!(self.tt(i), CrowType::Result(_)) {
+                    format!("{{ let _ix = &({}); if !_ix.ok {{ panic!(\"{{}}\", _ix.reason); }} _ix.value.clone() }}", s)
+                } else {
+                    s
+                }
+            })
+            .collect();
         let idx = idx_strs.first().cloned().unwrap_or_default();
+        let idx_ty = indices.first().map(|x| Self::inner(&self.tt(x)));
         match &inner {
             CrowType::NumArray(el) => {
-                if matches!(indices.first().map(|x| self.tt(x)), Some(CrowType::NumArray(_))) {
+                if matches!(idx_ty, Some(CrowType::NumArray(_))) {
                     return format!("{}.gather(&{})", b, idx);
                 }
                 if matches!(el.as_ref(), CrowType::NumArray(_)) {
@@ -523,7 +539,7 @@ impl Emitter {
                 format!("crow_runtime::core::map_key(&{}, &*({}))", b, idx_strs.join(", "))
             }
             CrowType::Json => {
-                let ie = match indices.first().map(|x| self.tt(x)) {
+                let ie = match idx_ty.clone() {
                     Some(CrowType::Int) => format!("{} as usize", idx),
                     _ => format!("&*{}", idx),
                 };
@@ -823,6 +839,20 @@ impl Emitter {
     }
 
     fn for_expr(&mut self, var: &str, iter: &Expr, body: &[Stmt], parallel: bool, whole: &Expr) -> String {
+        // a list that can fail is refused where the loop starts, like a
+        // condition (a function hands it back, a handler stops, the top
+        // level halts), and the loop walks its value
+        if let CrowType::Result(_) = self.tt(iter) {
+            let list = format!("_list_{}", self.binop_counter);
+            self.binop_counter += 1;
+            let printed = self.expr(iter);
+            let lty = self.tt(iter);
+            let on_error = self.refuse_at(&list, Decision::Loop);
+            self.declare(&list, lty);
+            let value = Expr::Convert { how: Convert::Unwrap, expr: Box::new(Expr::Local(list.clone(), iter.ty())), ty: iter.ty().payload().clone() };
+            let walked = self.for_expr(var, &value, body, parallel, whole);
+            return format!("{{ let {l} = &({p}); if !{l}.ok {{ {e} }} {w} }}", l = list, p = printed, e = on_error, w = walked);
+        }
         // in parallel as the lowering decided, unless cpu[1] asked for one core
         let forced_sequential = self.cpu_count.map_or(false, |n| n <= 1);
         let use_par = !forced_sequential && parallel;
@@ -1029,15 +1059,21 @@ impl Emitter {
         // an argument's error is the call's value (spec, auto-propagation)
         let skip = matches!(name.as_str(), "log" | "assert" | "cpu" | "gpu" | "nodes" | "type" | "error" | "captured" | "running")
             || (self.needs_ui && (name == "chart" || name == "table" || crate::lower::UI_ELEMENTS.contains(&name.as_str())))
-            || name == "len"
             || (self.needs_crow_web && name == "arrow");
         if !skip {
             let result_idx: Vec<usize> = raw_args.iter().enumerate().filter(|(_, a)| matches!(self.tt(a), CrowType::Result(_))).map(|(i, _)| i).collect();
             if !result_idx.is_empty() {
                 let orig: Vec<String> = result_idx.iter().map(|&i| arg_strs[i].clone()).collect();
-                // a view renders a failed argument as its reason
-                if let Target::User(v) = &target {
-                    if self.views.contains(v) {
+                // a view, or a control, renders a failed argument as its reason
+                let renders = match &target {
+                    Target::User(v) => self.views.contains(v),
+                    Target::Runtime(_) => {
+                        self.in_view() && crate::lower::is_ui_control(&name, raw_args.first().map_or(false, |x| matches!(Self::inner(&self.tt(x)), CrowType::Frame)))
+                    }
+                    Target::Module(..) => false,
+                };
+                if renders {
+                    {
                         let mut bound = arg_strs.clone();
                         let mut pre = String::new();
                         let mut checks: Vec<String> = Vec::new();
@@ -1046,7 +1082,10 @@ impl Emitter {
                             checks.push(format!("if !_va{k}.ok {{ CrowVNode::text(&format!(\"error: {{}}\", _va{k}.reason)) }} else", k = k));
                             bound[i] = format!("_va{}.value.clone()", k);
                         }
-                        let call = self.user_call(v, &raw_args, bound);
+                        let call = match &target {
+                            Target::User(v) => self.user_call(v, &raw_args, bound),
+                            _ => self.dispatch(&target, &name, &raw_args, &bound, e),
+                        };
                         self.pinned_module = saved_pin;
                         return format!("{{ {}{} {{ {} }} }}", pre, checks.join(" "), call);
                     }
@@ -1177,6 +1216,8 @@ impl Emitter {
 fn leaves(body: &[Stmt]) -> bool {
     let mut out = false;
     visit_stmts(body, &mut |s| out |= matches!(s, Stmt::Return(_) | Stmt::Propagate { .. } | Stmt::Stop { .. }));
+    // a collecting loop inside over a list that can fail refuses it there
+    visit_block(body, &mut |e| out |= matches!(e, Expr::ForExpr { iter, .. } if iter.ty().is_result()));
     out
 }
 
