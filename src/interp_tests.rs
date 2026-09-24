@@ -650,6 +650,13 @@ mod tests {
         assert_eq!(format!("{}", val.value), "");
     }
 
+    /// The runtime's refusal, the same text the compiled program stops with
+    #[test]
+    fn a_negative_repeat_is_refused() {
+        let err = run("n = int['-2']\nx = repeat['ab', n]\n").err().unwrap_or_default();
+        assert!(err.contains("repeat[] count cannot be negative (got -2)"), "{}", err);
+    }
+
     #[test]
     fn test_fmt_width_replaces_pad() {
         let val = get_var("x = fmt['ab', width = 5]\n", "x");

@@ -676,8 +676,18 @@ fn test_math_sqrt_transpile() {
 
 #[test]
 fn test_string_upper_transpile() {
+    // the one implementation both modes call
     let rust = transpile("x = upper['hello']\n");
-    assert!(rust.contains("to_uppercase"), "should use to_uppercase\n{}", rust);
+    assert!(rust.contains("crow_runtime::text::upper("), "should call the runtime's upper\n{}", rust);
+}
+
+/// A negative count is refused by the runtime's message, as the
+/// interpreter refuses it, where `repeat(n as usize)` made the count huge
+#[test]
+fn repeat_goes_through_the_runtime() {
+    let rust = transpile("n = int['-2']\nx = repeat['ab', n]\nlog[x]\n");
+    assert!(rust.contains("crow_runtime::text::repeat(") && rust.contains("as i64"), "{}", rust);
+    assert!(!rust.contains("as usize"), "{}", rust);
 }
 
 #[test]

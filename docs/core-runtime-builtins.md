@@ -52,8 +52,8 @@ side only.
 |---|---|---|---|---|
 | `range` | `core::range` | `core::range` | compiled `step_by` could not count down (fixed) | **runtime** |
 | `abs sqrt floor ceil round` | own, with dual numbers for `grad` | Rust methods | `floor`/`ceil`/`round` return int in both | keep |
-| `min max` | own, int/float mixing | Rust methods | mixing rules must agree | move |
-| `split trim replace upper lower starts ends repeat` | Rust string methods | Rust string methods | none | keep |
+| `min max` | own, int/float mixing | Rust methods | the rules agree (checked 2026-09-24): two ints give an int, a float on either side a float | keep |
+| `split trim replace upper lower starts ends repeat` | `crow_runtime::text` | same | compiled `repeat` with a negative count made the count huge (`n as usize`) and died of a capacity overflow, where the interpreter refused it (fixed: the runtime refuses it, one message) | **runtime** |
 | `join` | items by Display; tensor via `core::join_floats` | same | compiled join of an empty literal did not compile (fixed) | **runtime** |
 | `fmt` | `display::crow_fmt_*`, `moments::fmt_time` | same | none | runtime |
 | `int float str` | parse rules, error kinds; `str` is the text `log` prints | same; `str` of a list or map now goes through the display kernel | compiled `str` of a list or map did not compile (fixed) | keep |
@@ -146,6 +146,13 @@ side only.
   string column's validity) and in the compiled program only for a
   `Vec<String>`, `true` for any other list, and the status for a
   `Result` holding a list.
+- 2026-09-24, batch 6 (text): `crow_runtime::text::{split, trim,
+  replace, upper, lower, starts, ends, repeat}`, rows in the runtime
+  table (`text.trim`, …), both modes calling them. The audit had these
+  as the same in both, and they were, except that `repeat` with a
+  negative count died in the compiled program with Rust's capacity
+  overflow, where the interpreter refused it: one message now,
+  `repeat[] count cannot be negative (got -2)`, from the runtime.
 - 2026-09-22, decided by the IR's typed columns: `.ok` is a value's
   status, a list's included (the spec's "Non-fallible values always have
   `ok` of `true`"); a frame column's `.ok` is its rows' validity. The

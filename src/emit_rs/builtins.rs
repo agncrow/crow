@@ -293,6 +293,13 @@ impl Emitter {
 
     // ── the builtins ────────────────────────────────────────────────
 
+    /// A call of the shared runtime's function at `path` (below
+    /// `crow_runtime::`), with its arguments as printed.
+    pub(crate) fn runtime(&mut self, path: &str, args: &[String]) -> String {
+        self.needs_crow_runtime = true;
+        format!("crow_runtime::{}({})", path, args.join(", "))
+    }
+
     pub(crate) fn builtin(&mut self, name: &str, args: &[Expr], a: &[String], whole: &Expr) -> Option<String> {
         let n = a.len();
         let ty0 = args.first().map(|x| self.tt(x)).unwrap_or(CrowType::Unknown);
@@ -375,11 +382,12 @@ impl Emitter {
                 }
             }
             // text
-            "split" if n == 2 => format!("({}).split(&{}).map(|s| s.to_string()).collect::<Vec<String>>()", a[0], a[1]),
-            "trim" if n == 1 => format!("({}).trim().to_string()", a[0]),
-            "replace" if n == 3 => format!("({}).replace(&{}, &{})", a[0], a[1], a[2]),
-            "upper" if n == 1 => format!("({}).to_uppercase()", a[0]),
-            "lower" if n == 1 => format!("({}).to_lowercase()", a[0]),
+            // text: one implementation, crow_runtime::text, for both modes
+            "split" if n == 2 => self.runtime("text::split", &[format!("&({})", a[0]), format!("&({})", a[1])]),
+            "trim" if n == 1 => self.runtime("text::trim", &[format!("&({})", a[0])]),
+            "replace" if n == 3 => self.runtime("text::replace", &[format!("&({})", a[0]), format!("&({})", a[1]), format!("&({})", a[2])]),
+            "upper" if n == 1 => self.runtime("text::upper", &[format!("&({})", a[0])]),
+            "lower" if n == 1 => self.runtime("text::lower", &[format!("&({})", a[0])]),
             "join" if n == 2 => {
                 if Self::is_empty_list(&args[0]) {
                     format!("{{ let _ = &{}; String::new() }}", a[1])
@@ -390,9 +398,9 @@ impl Emitter {
                     format!("{}.iter().map(|s| s.to_string()).collect::<Vec<String>>().join(&{})", a[0], a[1])
                 }
             }
-            "starts" if n == 2 => format!("({}).starts_with(&*{})", a[0], a[1]),
-            "ends" if n == 2 => format!("({}).ends_with(&*{})", a[0], a[1]),
-            "repeat" if n == 2 => format!("({}).repeat(({}) as usize)", a[0], a[1]),
+            "starts" if n == 2 => self.runtime("text::starts", &[format!("&({})", a[0]), format!("&({})", a[1])]),
+            "ends" if n == 2 => self.runtime("text::ends", &[format!("&({})", a[0]), format!("&({})", a[1])]),
+            "repeat" if n == 2 => format!("{}.unwrap_or_else(|e| panic!(\"{{}}\", e))", self.runtime("text::repeat", &[format!("&({})", a[0]), format!("({}) as i64", a[1])])),
             "captured" if n == 1 => {
                 self.needs_crow_runtime = true;
                 if matches!(ty0, CrowType::Result(_)) {

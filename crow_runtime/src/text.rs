@@ -1,6 +1,58 @@
-//! Regular expressions, once: `matches`, `find`, `sub`. Both modes call
-//! these; an invalid pattern is an error with the reason the regex crate
-//! gives, and only the caller decides whether that stops the program.
+//! Text, once: the string builtins and the regular expressions. Both modes
+//! call these (the Rust backend prints the call, the interpreter calls it
+//! with its values' strings), so a builtin means the same in both. An
+//! invalid pattern is an error with the reason the regex crate gives, and
+//! only the caller decides whether that stops the program.
+
+/// `split[text, separator]`: the pieces between each separator.
+#[inline]
+pub fn split(s: &str, sep: &str) -> Vec<String> {
+    s.split(sep).map(|p| p.to_string()).collect()
+}
+
+/// `trim[text]`: without the whitespace at either end.
+#[inline]
+pub fn trim(s: &str) -> String {
+    s.trim().to_string()
+}
+
+/// `replace[text, old, new]`: every `old` replaced by `new`.
+#[inline]
+pub fn replace(s: &str, old: &str, new: &str) -> String {
+    s.replace(old, new)
+}
+
+/// `upper[text]`.
+#[inline]
+pub fn upper(s: &str) -> String {
+    s.to_uppercase()
+}
+
+/// `lower[text]`.
+#[inline]
+pub fn lower(s: &str) -> String {
+    s.to_lowercase()
+}
+
+/// `starts[text, prefix]`.
+#[inline]
+pub fn starts(s: &str, prefix: &str) -> bool {
+    s.starts_with(prefix)
+}
+
+/// `ends[text, suffix]`.
+#[inline]
+pub fn ends(s: &str, suffix: &str) -> bool {
+    s.ends_with(suffix)
+}
+
+/// `repeat[text, n]`: the text `n` times; a negative count is refused.
+pub fn repeat(s: &str, n: i64) -> Result<String, String> {
+    if n < 0 {
+        return Err(format!("repeat[] count cannot be negative (got {})", n));
+    }
+    Ok(s.repeat(n as usize))
+}
 
 fn compile(pattern: &str) -> Result<regex::Regex, String> {
     regex::Regex::new(pattern).map_err(|e| format!("invalid regex: {}", e))
@@ -29,6 +81,19 @@ pub fn sub(s: &str, pattern: &str, replacement: &str) -> Result<String, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_string_builtins() {
+        assert_eq!(split("a,b,,c", ","), vec!["a", "b", "", "c"]);
+        assert_eq!(trim("  crow \n"), "crow");
+        assert_eq!(replace("a-b-c", "-", "+"), "a+b+c");
+        assert_eq!(upper("straße"), "STRASSE");
+        assert_eq!(lower("ÉCOLE"), "école");
+        assert!(starts("crow", "cr") && ends("crow", "ow"));
+        assert_eq!(repeat("ab", 3).unwrap(), "ababab");
+        assert_eq!(repeat("ab", 0).unwrap(), "");
+        assert_eq!(repeat("ab", -1).unwrap_err(), "repeat[] count cannot be negative (got -1)");
+    }
 
     #[test]
     fn matches_find_and_sub() {
