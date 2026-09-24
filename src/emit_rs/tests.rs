@@ -128,6 +128,16 @@ fn a_top_level_loop_over_an_error_halts_with_the_loop_message() {
     assert!(rust.contains("runtime error: line 1: cannot loop over an error value — {}"), "{}", rust);
 }
 
+/// A parallel collecting loop that yields on some paths only, after
+/// statements of its own, gathers per iteration and joins the lists in
+/// input order (a closure's `if` without `else` did not build)
+#[test]
+fn a_parallel_loop_that_skips_gathers_per_iteration() {
+    let rust = transpile("out = for x in [1, 2, 3]\n    y = x * 2\n    if y gt 2\n        y\nlog[out]\n");
+    assert!(rust.contains(".par_iter().flat_map_iter(|&x| {"), "{}", rust);
+    assert!(rust.contains("= crow_runtime::core::push(_yielded_"), "{}", rust);
+}
+
 /// A branch on an error at the top level halts with the interpreter's
 /// words and the line (spec, Errors in Conditions); the compiled program
 /// said `error: cannot branch…` and no line
