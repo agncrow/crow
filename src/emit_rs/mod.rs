@@ -299,7 +299,7 @@ impl Emitter {
                 Some(t) if !matches!(t, CrowType::Unknown) => t,
                 _ => crow_type(&e.ty()),
             },
-            Expr::Convert { how: Convert::Unwrap, expr, ty } => {
+            Expr::Convert { how: Convert::Unwrap | Convert::Known, expr, ty } => {
                 let inner = self.tt_full(expr);
                 match inner {
                     CrowType::Result(i) => *i,

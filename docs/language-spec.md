@@ -940,7 +940,7 @@ log[r.reason]            --- cannot convert 'abc' to int
 
 The same holds when a function hands back an error of another shape — `if not b.ok` / `return b` in a function whose value is a number, where `b` is a frame: the caller receives the error with its reason, kind and trace, and the value is the function's default. A handler has no caller to hand an error to. **A handler stops when an error value reaches a decision, a fact, or an effect** — an `if` or `while` condition, the list a `for` walks, an assignment to reactive state, or an argument of `query`, `exec`, `insert`, `transact`, `read`, `write`, `fetch`, `shell`, `later`, `notice` or `sign_in` — and nothing it did lands: its fact writes are discarded, its database writes are rolled back, its held effects are dropped. The reason reaches the reader as the session's notice (`apply stopped: …`) and the served program's log. A local that holds an error and is guarded later computes as it always has: `.ok`, `.reason`, `.kind` and `.trace` never propagate, so `if not r.ok` is how a handler does something other than stop. In the harness, `click[a, apply]` evaluates to that error value and the session's facts are as they were before the click. A fact never holds an error: a derivation, which is a belief, may; a fact, which the reader acts on, keeps its last good value.
 
-**Design Note: a loop over an error is refused.** Considered: running such a loop zero times, which the interpreter did for the statement form (the collecting form made a one-item list of the error). Decided (Vijay, 2026-09-23): refused like a condition, so an error never vanishes into an empty loop. A function whose loop walks a list that can fail can fail itself, as one with a condition that can: a guard that has made the list good is written as its own `if`, and the type still says the list could fail.
+**Design Note: a loop over an error is refused.** Considered: running such a loop zero times, which the interpreter did for the statement form (the collecting form made a one-item list of the error). Decided (Vijay, 2026-09-23): refused like a condition, so an error never vanishes into an empty loop. A function whose loop walks a list that can fail can fail itself, as one with a condition that can; a guard before the loop narrows (below), so a guarded loop is an ordinary one.
 
 The metadata fields `.ok`, `.reason`, `.kind`, `.trace` never propagate — they are always readable, so the guard idiom is always available and is the one bridge from error-space back to decisions:
 
@@ -953,6 +953,18 @@ else if age gte 18
 ```
 
 Checking is optional: the happy path needs nothing, and unguarded errors fail loudly at the decision instead of silently taking a branch. (Frame masks are unrelated: missing cells excluded by `filter` are validity-bitmap missingness, not error-values.)
+
+**A guard narrows.** After `if not x.ok` with no `else`, whose branch always leaves (it ends in `return`, `break` or `continue`), `x` is known good for the rest of the block: reading it reads its value, which cannot fail. `if not a.ok or not b.ok` narrows both. Assigning `x` again ends it, and so does the end of the block; a loop's body does not inherit a name the body assigns, since an earlier pass through it may have made the value fail again.
+
+```
+fn size[path]
+    t = read[path]
+    if not t.ok
+        return 0
+    return len[t]            --- t is known good: len[t] is a number, not a result
+```
+
+So a function whose only failures are guarded is not typed as able to fail, and a loop over `range[len[t]]` after the guard is an ordinary loop.
 
 #### Design Note: Errors Have No Truth Value
 

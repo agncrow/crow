@@ -1027,6 +1027,15 @@ impl<'a> Lowerer<'a> {
             },
             _ => return Err("lowering: a call through an expression".into()),
         };
+        // a read a guard narrowed (lower.rs): the value, never its failure
+        if module.is_none() && name == crate::lower::KNOWN && args.len() == 1 {
+            let x = self.lower_expr(&args[0])?;
+            if x.ty().is_result() {
+                let payload = x.ty().payload().clone();
+                return Ok(Expr::Convert { how: Convert::Known, expr: Box::new(x), ty: payload });
+            }
+            return Ok(x);
+        }
         // a struct constructor
         if module.is_none() && self.ctx.structs.contains_key(&name) {
             let mut fields = Vec::new();

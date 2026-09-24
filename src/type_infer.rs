@@ -2383,6 +2383,8 @@ impl TypeContext {
             // the page's signed-in reader: a map of strings the runtime
             // provides, set by two effects held to the handler's commit
             "__reader" => CrowType::Map(Box::new(CrowType::Str)),
+            // a read a guard narrowed (lower.rs): the value, never its failure
+            "__known" => arg_types.first().cloned().map(Self::walked).unwrap_or(CrowType::Unknown),
             "sign_in" | "sign_out" | "download" => CrowType::Void,
             // the files a test's session was handed, as maps of name and text
             "downloads" => CrowType::Array(Box::new(CrowType::Map(Box::new(CrowType::Str)))),
@@ -2473,6 +2475,9 @@ impl TypeContext {
     /// known: a literal query (described by the database), a function that
     /// returns one, or a frame operation over a known frame.
     pub fn frame_schema_of(&mut self, e: &Expr) -> Option<BTreeMap<String, CrowType>> {
+        if let Some(v) = read_var(e) {
+            return self.frame_schemas.get(v).cloned();
+        }
         match e {
             Expr::Ident(v) => self.frame_schemas.get(v).cloned(),
             Expr::Call { callee, args } => {
@@ -2633,7 +2638,7 @@ impl TypeContext {
         if let Expr::Call { callee, args } = expr {
             if args.len() == 1 {
                 if let Expr::FieldAccess { object, field } = callee.as_ref() {
-                    if let Expr::Ident(v) = object.as_ref() {
+                    if let Some(v) = read_var(object) {
                         if let Some(t) = self.frame_schemas.get(v).and_then(|s| s.get(field)) {
                             if !matches!(self.infer_expr(&args[0]), CrowType::NumArray(_) | CrowType::Array(_)) {
                                 return t.clone();
@@ -2801,7 +2806,7 @@ impl TypeContext {
                     // Auto-propagation: wrap in CrowResult if any arg is CrowResult
                     // a view renders what it is given: a failed argument shows
                     // its reason inside the tree, it never fails the view
-                    let skip = matches!(name.as_str(), "log" | "assert" | "type" | "cpu" | "gpu" | "error" | "table" | "chart")
+                    let skip = matches!(name.as_str(), "log" | "assert" | "type" | "cpu" | "gpu" | "error" | "table" | "chart" | "__known")
                         || crate::lower::UI_ELEMENTS.contains(&name.as_str())
                         || (self.in_view && crate::lower::is_ui_control(name, matches!(arg_types.first().cloned().map(Self::walked), Some(CrowType::Frame))))
                         || self.views.contains(name);
@@ -3119,6 +3124,17 @@ fn describe_on(key: &str, url: &str, ddl: &[String], sql: &str) -> Result<Vec<(S
             Err(e) => Err(e.clone()),
         }
     })
+}
+
+/// The variable an expression reads, seen through a guard's narrowing:
+/// `__known[x]` reads x's value, and what is known of x (a frame's schema)
+/// holds for it.
+fn read_var(e: &Expr) -> Option<&str> {
+    match e {
+        Expr::Ident(v) => Some(v),
+        Expr::Call { callee, args } if matches!(callee.as_ref(), Expr::Ident(k) if k == crate::lower::KNOWN) && args.len() == 1 => read_var(&args[0]),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

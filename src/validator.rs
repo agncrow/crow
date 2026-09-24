@@ -86,7 +86,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     // Regex
     "find", "matches", "sub", "any", "all",
     "later", "running", "notice", "__notice_text", "__notice_at",
-    "sign_in", "sign_out", "__reader", "download",
+    "sign_in", "sign_out", "__reader", "__known", "download",
     "test",
     // Date/time
     "now", "moment", "calendar", "parse_time", "captured", "chart",
@@ -977,6 +977,7 @@ impl<'a> Validator<'a> {
             "sign_in" => argc == 1,
             "download" => argc == 2,
             "sign_out" | "__reader" => argc == 0,
+            "__known" => argc == 1,
             "chart" => argc == 12,
             "push" | "append" => argc == 2,
             "pop" | "sort" | "reverse" => argc == 1,

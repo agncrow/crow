@@ -1,0 +1,59 @@
+--- A guard narrows: after `if not x.ok` whose branch leaves, x is its
+--- value for the rest of the block. Assigning it again ends that, a loop
+--- that assigns it does not inherit it, and the end of the block ends it.
+--- A wrong narrowing shows here: the compiled program reads a narrowed
+--- value's payload, so a name narrowed too far reads differently there.
+fn count[path]
+    t = read[path]
+    if not t.ok
+        return 0
+    n = 0
+    for i in range[len[t]]
+        n = n + 1
+    return n
+
+fn both[a, b]
+    x = int[a]
+    y = int[b]
+    if not x.ok or not y.ok
+        return -1
+    return x + y
+
+fn again[s]
+    x = int[s]
+    if not x.ok
+        return 'bad'
+    y = x + 1
+    x = int['nope']
+    return '`y` `x.ok`'
+
+fn loop_reads[s]
+    x = int[s]
+    if not x.ok
+        return 'bad'
+    seen = []
+    i = 0
+    while i lt 2
+        seen = push[seen, x.ok]
+        x = int['nope']
+        i = i + 1
+    return '`seen`'
+
+fn scoped[s, check]
+    x = int[s]
+    if check
+        if not x.ok
+            return 'bad'
+        log['inside: `x`']
+    return '`x.ok`'
+
+write['parity59.txt', 'four']
+log[count['parity59.txt']]
+log[count['no_such_file.txt']]
+rm['parity59.txt']
+log[both['2', '3']]
+log[both['2', 'q']]
+log[again['4']]
+log[loop_reads['4']]
+log[scoped['7', true]]
+log[scoped['q', false]]
