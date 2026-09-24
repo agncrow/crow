@@ -482,6 +482,12 @@ impl Emitter {
     /// with a value hands the error back, a void function returns, the top
     /// level halts. `v` names the failed value.
     pub(crate) fn refuse(&self, v: &str) -> String {
+        self.refuse_at(v, Decision::Branch)
+    }
+
+    /// `refuse` for a decision of either kind: the top level's halt names
+    /// it (`cannot loop over an error value`).
+    pub(crate) fn refuse_at(&self, v: &str, at: Decision) -> String {
         if self.reactive_epilogue.is_some() {
             format!("{{ state.stop(format!(\"{} stopped: {{}}\", {v}.reason)); return; }}", self.shown_fn_name(), v = v)
         } else if self.returns_unit && !self.cur_fn.is_empty() {
@@ -505,12 +511,13 @@ impl Emitter {
             } else {
                 // a function whose value is not a result cannot hand the error
                 // back: the program halts with the reason, as a decision does
-                format!("panic!(\"cannot branch on an error value — {{}}\", {v}.reason);", v = v)
+                format!("panic!(\"cannot {} an error value — {{}}\", {v}.reason);", at.verb(), v = v)
             }
         } else {
             format!(
-                "{{ eprintln!(\"runtime error: line {}: cannot branch on an error value — {{}}\", {v}.reason); std::process::exit(1); }}",
+                "{{ eprintln!(\"runtime error: line {}: cannot {} an error value — {{}}\", {v}.reason); std::process::exit(1); }}",
                 self.current_line,
+                at.verb(),
                 v = v
             )
         }
@@ -622,10 +629,10 @@ impl Emitter {
             Stmt::Break => self.line("break;"),
             Stmt::Continue => self.line("continue;"),
             Stmt::Do(e) => self.emit_do(e),
-            Stmt::Propagate { values } => {
+            Stmt::Propagate { values, at } => {
                 for v in values {
                     if matches!(self.local_ty(v), Some(CrowType::Result(_))) {
-                        let on_error = self.refuse("_c");
+                        let on_error = self.refuse_at("_c", *at);
                         self.line(&format!("{{ let _c = &{}; if !_c.ok {{ {} }} }}", v, on_error));
                     }
                 }

@@ -306,6 +306,24 @@ if x eq 1 or x eq 2
     log['one or two']
 ```
 
+`and` and `or` evaluate both sides, the left first: there is no short-circuit. A call on the right runs even when the left side already decides, and an error on either side is the value, because an error has no truth value (Errors in Conditions). A guard that must not touch a failed value is its own `if`:
+
+```
+if not r.ok
+    return 'unreadable'
+if len[r] eq 0              --- r is known good here
+    return 'empty'
+```
+
+`if not r.ok or len[r] eq 0` is not that guard: when `r` failed, `len[r]` is the error, so the condition is the error and the decision is refused.
+
+
+### Design Note: `and` and `or` Evaluate Both Sides
+
+**Considered:** short-circuiting, as most languages do: `or` skipping its right side when the left is true, `and` when the left is false, so `not r.ok or len[r] eq 0` would work as a guard.
+
+**Decision (Vijay, 2026-09-23):** both sides are evaluated. Every operator treats an error the same way, and `and` and `or` are operators like the rest: an error on either side is the value, and nothing is evaluated conditionally except by `if` and `while`. The guard that must not touch a failed value is written as the `if` it is, and reads the same in both modes. The compiled program had short-circuited plain booleans, so `false and check[x]` ran `check` in the interpreter only; now both modes run it.
+
 
 ### Then Chaining
 
@@ -903,10 +921,10 @@ else
 
 ### Errors in Conditions
 
-**An error has no truth value.** A comparison with an error-value operand does not produce true or false — it propagates the error, like every other operator. And a branch cannot be taken on an error: when an `if` or `while` condition evaluates to an error-value, the decision is refused —
+**An error has no truth value, and no items to walk.** A comparison with an error-value operand does not produce true or false — it propagates the error, like every other operator. And a branch cannot be taken on an error, nor a loop run over one: when an `if` or `while` condition evaluates to an error-value, or the list a `for` walks does (`for i in range[len[r]]` when `r` failed), the decision is refused —
 
 - **inside a function**: the function immediately returns the error to its caller (auto-propagation, trace appended) — the same rule as error arguments, applied to decisions
-- **at top level**: the program halts: `runtime error: line N: cannot branch on an error value — <reason>`
+- **at top level**: the program halts: `runtime error: line N: cannot branch on an error value — <reason>`, or `cannot loop over an error value` for a loop
 
 ```
 fn check[s]
@@ -920,7 +938,9 @@ log[r.ok]                --- false — the parse error propagated out
 log[r.reason]            --- cannot convert 'abc' to int
 ```
 
-The same holds when a function hands back an error of another shape — `if not b.ok` / `return b` in a function whose value is a number, where `b` is a frame: the caller receives the error with its reason, kind and trace, and the value is the function's default. A handler has no caller to hand an error to. **A handler stops when an error value reaches a decision, a fact, or an effect** — an `if` or `while` condition, an assignment to reactive state, or an argument of `query`, `exec`, `insert`, `transact`, `read`, `write`, `fetch`, `shell`, `later`, `notice` or `sign_in` — and nothing it did lands: its fact writes are discarded, its database writes are rolled back, its held effects are dropped. The reason reaches the reader as the session's notice (`apply stopped: …`) and the served program's log. A local that holds an error and is guarded later computes as it always has: `.ok`, `.reason`, `.kind` and `.trace` never propagate, so `if not r.ok` is how a handler does something other than stop. In the harness, `click[a, apply]` evaluates to that error value and the session's facts are as they were before the click. A fact never holds an error: a derivation, which is a belief, may; a fact, which the reader acts on, keeps its last good value.
+The same holds when a function hands back an error of another shape — `if not b.ok` / `return b` in a function whose value is a number, where `b` is a frame: the caller receives the error with its reason, kind and trace, and the value is the function's default. A handler has no caller to hand an error to. **A handler stops when an error value reaches a decision, a fact, or an effect** — an `if` or `while` condition, the list a `for` walks, an assignment to reactive state, or an argument of `query`, `exec`, `insert`, `transact`, `read`, `write`, `fetch`, `shell`, `later`, `notice` or `sign_in` — and nothing it did lands: its fact writes are discarded, its database writes are rolled back, its held effects are dropped. The reason reaches the reader as the session's notice (`apply stopped: …`) and the served program's log. A local that holds an error and is guarded later computes as it always has: `.ok`, `.reason`, `.kind` and `.trace` never propagate, so `if not r.ok` is how a handler does something other than stop. In the harness, `click[a, apply]` evaluates to that error value and the session's facts are as they were before the click. A fact never holds an error: a derivation, which is a belief, may; a fact, which the reader acts on, keeps its last good value.
+
+**Design Note: a loop over an error is refused.** Considered: running such a loop zero times, which the interpreter did for the statement form (the collecting form made a one-item list of the error). Decided (Vijay, 2026-09-23): refused like a condition, so an error never vanishes into an empty loop. A function whose loop walks a list that can fail can fail itself, as one with a condition that can: a guard that has made the list good is written as its own `if`, and the type still says the list could fail.
 
 The metadata fields `.ok`, `.reason`, `.kind`, `.trace` never propagate — they are always readable, so the guard idiom is always available and is the one bridge from error-space back to decisions:
 
@@ -1020,9 +1040,9 @@ log[result.reason]          --- 'cannot convert ...'
 log[result.trace]           --- ['main.validate:5', 'main:6', ...]
 ```
 
-**Exception:** `log[]` does not propagate — it prints error-values directly for debugging.
+**Exception:** `log[]` does not propagate — it prints error-values directly for debugging. `len[]` is no exception: the length of an error is the error.
 
-**Exception:** elements and views render what they are given. An error-value handed to an element or a `view` renders as the text `error: reason` in place of that child; the tree is never wrapped in a Result. A page with one failed part is still a page.
+**Exception:** elements, controls and views render what they are given. An error-value handed to an element renders as the text `error: reason` in place of that child, and one handed to a control (`field`, `select`, `slider`, `checkbox`, `toggle`, `radio`, `tabs`, `progress`, `icon`) or a `view` renders as that text in place of the control or the view; the tree is never wrapped in a Result. A page with one failed part is still a page.
 
 **Collections:** a `map[...]` built with a fallible value is a fallible map of plain values (the map is built from the unwrapped value or not at all), and `encode[]` of an array of fallible values writes each ok element's payload and `null` for each error.
 

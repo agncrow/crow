@@ -482,28 +482,17 @@ impl Emitter {
                 _ => format!("format!(\"{{}}\", {})", a[0]),
             },
             // collections
-            "len" if n == 1 => {
-                if matches!(ty0, CrowType::Frame) {
-                    format!("(({}).nrows() as i64)", a[0])
-                } else if let CrowType::Result(inner) = &ty0 {
-                    match inner.as_ref() {
-                        CrowType::Frame => format!("(({}).value.nrows() as i64)", a[0]),
-                        CrowType::Str => format!("(({}).value.chars().count() as i64)", a[0]),
-                        CrowType::Json => {
-                            self.needs_crow_runtime = true;
-                            format!("crow_runtime::json::len(&({}).value)", a[0])
-                        }
-                        _ => format!("(({}).value.len() as i64)", a[0]),
-                    }
-                } else if matches!(ty0, CrowType::Str) {
-                    format!("(({}).chars().count() as i64)", a[0])
-                } else if matches!(ty0, CrowType::Json) {
+            // a value that can fail arrives as its payload: the call hands
+            // its error on before len runs (spec, Auto-Propagation)
+            "len" if n == 1 => match in0 {
+                CrowType::Frame => format!("(({}).nrows() as i64)", a[0]),
+                CrowType::Str => format!("(({}).chars().count() as i64)", a[0]),
+                CrowType::Json => {
                     self.needs_crow_runtime = true;
                     format!("crow_runtime::json::len(&({}))", a[0])
-                } else {
-                    format!("(({}).len() as i64)", a[0])
                 }
-            }
+                _ => format!("(({}).len() as i64)", a[0]),
+            },
             "contains" if n == 2 => match ty0 {
                 CrowType::NumArray(_) => format!("{}.to_vec().contains(&({} as f64))", a[0], a[1]),
                 CrowType::Str => format!("({}).contains(&*{})", a[0], a[1]),

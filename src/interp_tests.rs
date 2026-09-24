@@ -2948,6 +2948,18 @@ mod tests {
         assert!(matches!(&get_var(src, "good").value, Value::Array(items) if items.len() == 2));
     }
 
+    /// A loop over a list that failed is refused like a condition (Vijay's
+    /// choice): a function hands the error back, the top level halts
+    #[test]
+    fn a_loop_over_a_failed_list_is_refused_like_a_condition() {
+        let src = "fn count[s]\n    n = 0\n    for i in range[int[s]]\n        n = n + 1\n    return n\nbad = count['x']\ngood = count['3']\n";
+        let bad = get_var(src, "bad");
+        assert!(bad.is_error() && bad.reason.contains("'x'"), "{:?}", bad);
+        assert!(matches!(get_var(src, "good").value, Value::Int(3)));
+        let halted = run("for i in range[int['x']]\n    log['never']\n").err().expect("the top level halts");
+        assert!(halted.contains("cannot loop over an error value"), "{}", halted);
+    }
+
     #[test]
     fn test_error_condition_in_while_refused() {
         let result = std::panic::catch_unwind(|| {

@@ -39,6 +39,17 @@ pub const UI_ELEMENTS: &[&str] = &[
     "widget",
 ];
 
+/// The controls a view draws that are builtins, not elements: like an
+/// element or a view, each renders what it is given, and a failed argument
+/// is its reason in place of the control (spec, Auto-Propagation).
+pub const UI_CONTROLS: &[&str] = &["field", "select", "slider", "checkbox", "toggle", "radio", "tabs", "progress", "icon"];
+
+/// Whether a call in a view is one of the controls: `select` of a frame
+/// is the frame module's column selection, not the control.
+pub(crate) fn is_ui_control(name: &str, first_is_frame: bool) -> bool {
+    UI_CONTROLS.contains(&name) && !(name == "select" && first_is_frame)
+}
+
 /// The pairs of a map literal as the lowering leaves it: `map[k = v, …]`
 /// becomes a chain of `set[…]` calls over `map[]`; a bare `Expr::Map` is
 /// read too. `None` for anything else (a variable, a call with dynamic keys).

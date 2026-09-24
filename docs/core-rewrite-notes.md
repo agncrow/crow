@@ -601,6 +601,21 @@ weeks; the core stages are weeks each.
   both ways behaves the same. The record, with the one
   decision still made twice (loop parallelism) and an older parity gap
   (`len` of an error), is under step 4 in `ir-design.md` §9.
-- **Next:** make the loop-parallelism decision the IR's alone; then
-  fold `lower.rs`, `type_infer.rs` and `validator.rs` as §12 of
-  `ir-design.md` decided.
+- **2026-09-23, step 4's two open items closed.** Loop parallelism is
+  the IR's decision alone, by Vijay's rule "no side effects, then
+  parallel" (spec §14, For Loops): the lowering decides once every
+  function's reach is known, and both backends only read the flag. The
+  interpreter runs a loop over a pure function 3.4 times faster, and a
+  seeded loop of `rand[]` draws the same numbers on every run again.
+  `len` of an error is the error in both modes, and `and`/`or` evaluate
+  both sides in both modes, Vijay's choice of the spec as written over
+  short-circuiting (Design Note "`and` and `or` Evaluate Both Sides").
+  A `for` over a list that failed is refused like a condition, his choice
+  over running it zero times, and controls render a failed argument as
+  its reason.
+  Found on the way and fixed with tests: a collecting loop could not
+  hand back an error from its condition (parity 55), and `push[]` and
+  `set[]` took a variable by move (parity 56). The record is under step
+  4 in `ir-design.md` §9.
+- **Next:** fold `lower.rs`, `type_infer.rs` and `validator.rs` as §12
+  of `ir-design.md` decided.

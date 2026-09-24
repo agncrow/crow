@@ -32,6 +32,28 @@ if not fail.ok
 will retry
 ```
 
+The guard is its own `if`. `and` and `or` evaluate both sides, so a
+condition that touches a failed value on either side is itself the
+error:
+
+```crow
+text = read['no_such_file.txt']
+if not text.ok
+    log['unreadable']
+else if len[text] eq 0
+    log['empty']
+else
+    log['`len[text]` characters']
+```
+
+```text
+unreadable
+```
+
+Written as `if not text.ok or len[text] eq 0`, the same check is refused
+when the read fails: `len[text]` is then the error, and so is the whole
+condition.
+
 ## When to Check
 
 The idiom that falls out of this chapter: **check `.ok` at boundaries —

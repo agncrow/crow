@@ -559,12 +559,31 @@ deleted in the same commit that makes the new path the default.
    same); each of those places now borrows the value (parity 54, served
    11). And the lowering had hoisted a failing `while` condition out of
    the loop, so it was tested once and the walker never left the loop;
-   now it is tested before every pass (parity 54). Still open, and
-   older than the emitter: `len` of an
-   error is the error in the interpreter and `0` compiled (`r =
-   read['missing']`, `log[len[r]]`), because `len` is on the list of
-   calls that do not propagate; the fix belongs with the typing of a
-   failing call's value, not in the printing.
+   now it is tested before every pass (parity 54). Older than the
+   emitter, and fixed on 2026-09-23: `len` of an error was the error in
+   the interpreter and `0` compiled, because inference and the emitter
+   kept `len` off the calls that hand an error on. It is typed and printed
+   like every call now (parity 57). Fixing it showed that the modes also
+   disagreed on `and` and `or`: the compiled program short-circuited
+   plain booleans with Rust's `&&` and `||`, and with a failing operand
+   it evaluated the right side only when the left succeeded, while the
+   interpreter evaluates both sides, the left first. Vijay chose the
+   interpreter's rule, the spec's as written (Design Note "`and` and `or`
+   Evaluate Both Sides"): the emitter prints `&` and `|`, and binds both
+   operands before either's error decides. A guard such as `if not r.ok
+   or len[r] eq 0` is refused when `r` failed, in both modes; the guard
+   is its own `if`. With `len` typed honestly, finch's
+   `for i in range[len[u]]` became a loop over a list that can fail, and
+   what that does was unspecified: the interpreter ran the statement
+   form zero times and made the collecting form a one-item list of the
+   error, and the emitter could not print either. Vijay chose to refuse
+   it like a condition: the lowering binds the list, a `Propagate` that
+   names the loop (`Decision::Loop`) refuses it, the loop walks the value,
+   and inference widens the function's type as it does for a failing
+   condition (parity 57). Controls (`select`, `field` and the rest) now
+   render a failed argument as its reason, as elements and views do
+   (served 12), and an index that failed halts in the compiled program as
+   it does in the interpreter.
 5. **The session layer** with the three meanings; the harness; finch
    rewritten to them and its baseline re-accepted, whose diff is the
    measure of what the meanings delete.

@@ -165,6 +165,9 @@ impl LoopOrder {
                 || match e {
                     Expr::Call { target: Target::User(n), .. } => self.ordered.contains(n) || !self.known.contains(n),
                     Expr::Index { base, .. } => matches!(base.ty(), Ty::Fn(..)) && self.through_values,
+                    // a collecting loop over a list that can fail refuses it
+                    // where it starts: it can leave the function
+                    Expr::ForExpr { iter, .. } => iter.ty().is_result(),
                     _ => false,
                 }
                 || handed(e).iter().any(|n| self.ordered.contains(n) || !self.known.contains(n));
@@ -709,7 +712,9 @@ impl<'a> Lowerer<'a> {
                 }
             }
             S::For { var, iter, body } => {
+                // a list that can fail is refused like a condition
                 let it = self.lower_expr(iter)?;
+                let it = self.decided(it, Decision::Loop);
                 let mut prelude = std::mem::take(&mut self.pre);
                 self.scopes.push([var.clone()].into_iter().collect());
                 let saved = self.bind_loop_var(var, &it.ty());
@@ -748,6 +753,13 @@ impl<'a> Lowerer<'a> {
     /// in Conditions), then decided on its payload.
     fn lower_cond(&mut self, c: &A) -> Result<Expr, String> {
         let e = self.lower_expr(c)?;
+        Ok(self.decided(e, Decision::Branch))
+    }
+
+    /// What a decision reads: a value that can fail is refused first when it
+    /// failed (a function hands it back, a handler stops, the top level
+    /// halts), and the decision reads its payload.
+    fn decided(&mut self, e: Expr, at: Decision) -> Expr {
         if e.ty().is_result() {
             let ty = e.ty();
             let t = match &e {
@@ -759,14 +771,14 @@ impl<'a> Lowerer<'a> {
                     t
                 }
             };
-            self.pre.push(Stmt::Propagate { values: vec![t.clone()] });
-            return Ok(Expr::Convert {
+            self.pre.push(Stmt::Propagate { values: vec![t.clone()], at });
+            return Expr::Convert {
                 how: Convert::Unwrap,
                 expr: Box::new(Expr::Local(t, ty.clone())),
                 ty: ty.payload().clone(),
-            });
+            };
         }
-        Ok(e)
+        e
     }
 
     fn assign(&mut self, name: &str, expr: Expr) -> Stmt {
@@ -940,12 +952,21 @@ impl<'a> Lowerer<'a> {
             }
             A::Named { name, .. } => return Err(format!("lowering: a named argument ('{}') survived the lowering of named arguments", name)),
             A::ForExpr { var, iter, body } => {
+                // a list that can fail is refused where the loop starts, like
+                // a condition: an expression has no statement before it to
+                // hold the refusal (a fact's default has none), so both
+                // backends refuse a list typed as able to fail right there.
+                // What the iterable hoisted waits while the body is lowered,
+                // or the body's first statement would take it.
                 let it = self.lower_expr(iter)?;
+                let before = std::mem::take(&mut self.pre);
                 self.scopes.push([var.clone()].into_iter().collect());
                 let saved = self.bind_loop_var(var, &it.ty());
                 let mut b = self.lower_block(body)?;
                 self.unbind_loop_var(var, saved);
                 self.scopes.pop();
+                let left = std::mem::replace(&mut self.pre, before);
+                self.pre.extend(left);
                 place_moves_in(&mut b, &HashSet::new(), Some(&[var.clone()].into_iter().collect()));
                 // decided with the statement form's rule (decide_loops)
                 Expr::ForExpr { var: var.clone(), iter: Box::new(it), body: b, ty, parallel: false }
@@ -1578,7 +1599,7 @@ fn stmt_reads(s: &Stmt, out: &mut HashSet<String>) {
             body.iter().for_each(|x| stmt_reads(x, out));
         }
         Stmt::Return(Some(e)) => expr_reads(e, out),
-        Stmt::Propagate { values } => out.extend(values.iter().cloned()),
+        Stmt::Propagate { values, .. } => out.extend(values.iter().cloned()),
         Stmt::Stop { value } => {
             out.insert(value.clone());
         }
@@ -1665,7 +1686,8 @@ mod tests {
         let ir = ir_of("r = read['x.txt']\nn = len[r]\nlog[n]\n");
         assert!(ir.contains("let r: Result(Str) = read!now(\"x.txt\")"), "{}", ir);
         assert!(!ir.contains("propagate r"), "{}", ir);
-        assert!(ir.contains("let n: Int = len(unwrap move r)"), "{}", ir);
+        // len[] of an error is the error, as every call's is: the value can fail
+        assert!(ir.contains("let n: Result(Int) = len(unwrap move r)"), "{}", ir);
     }
 
     #[test]
@@ -1738,6 +1760,20 @@ mod tests {
         let loud = ir_of("fn keep[items, f]\n    out = for x in items\n        if f[x]\n            x\n    return out\nfn loud[x]\n    log[x]\n    return true\nlog[keep[[1, 2, 3], loud]]\nrows = for r in [[1, 2], [3]]\n    any[r, loud]\nlog[rows]\n");
         assert!(!loop_line(&loud, "f[").ends_with("parallel"), "{}", loud);
         assert!(!loop_line(&loud, "any(").ends_with("parallel"), "{}", loud);
+    }
+
+    /// A loop's list that can fail is refused first, like a condition: the
+    /// statement form's refusal comes before it, and the loop walks the
+    /// value; a collecting loop, an expression, keeps the list and is
+    /// refused where it starts, and a loop around it runs in order
+    #[test]
+    fn a_loop_over_a_list_that_can_fail_is_refused_first() {
+        let ir = ir_of("fn f[s]\n    for i in range[int[s]]\n        log[i]\n    out = for j in range[int[s]]\n        j * 2\n    return out\nlog[f['2']]\nys = for k in [1, 2]\n    zs = for m in range[int['3']]\n        m\n    len[zs]\nlog[ys]\n");
+        assert_eq!(ir.matches("(a loop's list)").count(), 1, "{}", ir);
+        assert!(ir.contains("for i in unwrap"), "{}", ir);
+        let collecting = loop_line(&ir, "for j in");
+        assert!(!collecting.contains("propagate") && !collecting.contains("unwrap t"), "refused where it starts: {}", collecting);
+        assert!(!loop_line(&ir, "for k in").ends_with("parallel"), "a loop around one runs in order: {}", ir);
     }
 
     /// A body that can leave the function (an error handed back from a

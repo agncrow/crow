@@ -1126,7 +1126,7 @@ impl TypeContext {
             Stmt::For { var, iter, body } => {
                 self.collect_call_types_expr(iter);
                 // Infer loop variable type from iterator
-                let iter_type = self.infer_expr(iter);
+                let iter_type = Self::walked(self.infer_expr(iter));
                 match &iter_type {
                     CrowType::Array(inner) | CrowType::NumArray(inner) => {
                         self.vars.insert(var.clone(), *inner.clone());
@@ -1397,7 +1397,7 @@ impl TypeContext {
             Expr::ForExpr { var, iter, body } => {
                 self.collect_call_types_expr(iter);
                 // Infer loop variable type from iterator
-                let iter_type = self.infer_expr(iter);
+                let iter_type = Self::walked(self.infer_expr(iter));
                 match &iter_type {
                     CrowType::Array(inner) | CrowType::NumArray(inner) => {
                         self.vars.insert(var.clone(), *inner.clone());
@@ -1751,9 +1751,9 @@ impl TypeContext {
         }
     }
 
-    /// Does any if/while condition in this body infer to a Result type?
-    /// (Such conditions can propagate errors out of the function.) A
-    /// collecting loop's body counts: its conditions leave the function too.
+    /// Does any if/while condition in this body, or any loop's list, infer
+    /// to a Result type? (Such decisions can propagate errors out of the
+    /// function.) A collecting loop counts, its body's conditions too.
     fn body_has_result_condition(&mut self, stmts: &[Stmt]) -> bool {
         for s in stmts {
             if self.loops_have_result_condition(s) {
@@ -1781,8 +1781,9 @@ impl TypeContext {
                         return true;
                     }
                 }
-                Stmt::For { body, .. } => {
-                    if self.body_has_result_condition(body) {
+                Stmt::For { var, iter, body } => {
+                    // a list that can fail is refused like a condition
+                    if self.loop_list_can_fail(var, iter, body) {
                         return true;
                     }
                 }
@@ -1790,6 +1791,40 @@ impl TypeContext {
             }
         }
         false
+    }
+
+    /// Whether a loop can hand an error out of its function: its list can
+    /// fail (the loop refuses it, as a condition is refused), or a decision
+    /// in its body can, read with the loop's variable typed as an item.
+    fn loop_list_can_fail(&mut self, var: &str, iter: &Expr, body: &[Stmt]) -> bool {
+        let list = self.infer_expr(iter);
+        if matches!(list, CrowType::Result(_)) {
+            return true;
+        }
+        let elem = match Self::walked(list) {
+            CrowType::Array(t) | CrowType::NumArray(t) => *t,
+            _ => CrowType::Unknown,
+        };
+        let saved = self.vars.insert(var.to_string(), elem);
+        let found = self.body_has_result_condition(body);
+        match saved {
+            Some(t) => {
+                self.vars.insert(var.to_string(), t);
+            }
+            None => {
+                self.vars.remove(var);
+            }
+        }
+        found
+    }
+
+    /// What a loop walks: a list that can fail is refused before the loop
+    /// runs (spec, Errors in Conditions), so its items are the value's.
+    fn walked(t: CrowType) -> CrowType {
+        match t {
+            CrowType::Result(inner) => *inner,
+            other => other,
+        }
     }
 
     /// The collecting loops in a statement's own expressions, each body
@@ -1809,26 +1844,7 @@ impl TypeContext {
 
     fn expr_loops_have_result_condition(&mut self, e: &Expr) -> bool {
         match e {
-            Expr::ForExpr { var, iter, body } => {
-                if self.expr_loops_have_result_condition(iter) {
-                    return true;
-                }
-                let elem = match self.infer_expr(iter) {
-                    CrowType::Array(t) | CrowType::NumArray(t) => *t,
-                    _ => CrowType::Unknown,
-                };
-                let saved = self.vars.insert(var.clone(), elem);
-                let found = self.body_has_result_condition(body);
-                match saved {
-                    Some(t) => {
-                        self.vars.insert(var.clone(), t);
-                    }
-                    None => {
-                        self.vars.remove(var);
-                    }
-                }
-                found
-            }
+            Expr::ForExpr { var, iter, body } => self.expr_loops_have_result_condition(iter) || self.loop_list_can_fail(var, iter, body),
             Expr::Call { callee, args } => self.expr_loops_have_result_condition(callee) || args.iter().any(|a| self.expr_loops_have_result_condition(a)),
             Expr::BinOp { left, right, .. } => self.expr_loops_have_result_condition(left) || self.expr_loops_have_result_condition(right),
             Expr::UnaryOp { expr, .. } => self.expr_loops_have_result_condition(expr),
@@ -1983,7 +1999,7 @@ impl TypeContext {
                 for s in body { self.infer_stmt(s); }
             }
             Stmt::For { var, iter, body } => {
-                let iter_type = self.infer_expr(iter);
+                let iter_type = Self::walked(self.infer_expr(iter));
                 match &iter_type {
                     CrowType::Array(inner) | CrowType::NumArray(inner) => {
                         self.vars.insert(var.clone(), *inner.clone());
@@ -2785,8 +2801,9 @@ impl TypeContext {
                     // Auto-propagation: wrap in CrowResult if any arg is CrowResult
                     // a view renders what it is given: a failed argument shows
                     // its reason inside the tree, it never fails the view
-                    let skip = matches!(name.as_str(), "log" | "assert" | "type" | "cpu" | "gpu" | "error" | "len" | "table" | "chart")
+                    let skip = matches!(name.as_str(), "log" | "assert" | "type" | "cpu" | "gpu" | "error" | "table" | "chart")
                         || crate::lower::UI_ELEMENTS.contains(&name.as_str())
+                        || (self.in_view && crate::lower::is_ui_control(name, matches!(arg_types.first().cloned().map(Self::walked), Some(CrowType::Frame))))
                         || self.views.contains(name);
                     if !skip && !matches!(base, CrowType::Result(_) | CrowType::Void) {
                         let has_result_arg = arg_types.iter().any(|t| matches!(t, CrowType::Result(_)));
@@ -2987,7 +3004,7 @@ impl TypeContext {
             }
             Expr::ForExpr { var, iter, body } => {
                 // Determine element type from iterator
-                let iter_type = self.infer_expr(iter);
+                let iter_type = Self::walked(self.infer_expr(iter));
                 let _elem_type = match &iter_type {
                     CrowType::Array(inner) | CrowType::NumArray(inner) => *inner.clone(),
                     _ => CrowType::Unknown,
