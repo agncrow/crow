@@ -2643,11 +2643,10 @@ impl TypeContext {
         if let Expr::Call { callee, args } = expr {
             if args.len() == 1 {
                 if let Expr::FieldAccess { object, field } = callee.as_ref() {
-                    if let Some(v) = read_var(object) {
-                        if let Some(t) = self.frame_schemas.get(v).and_then(|s| s.get(field)) {
-                            if !matches!(self.infer_expr(&args[0]), CrowType::NumArray(_) | CrowType::Array(_)) {
-                                return t.clone();
-                            }
+                    if let Some(t) = self.column_type(object, field) {
+                        // a cell, not a gather by a list of indices
+                        if !matches!(self.infer_expr(&args[0]), CrowType::NumArray(_) | CrowType::Array(_)) {
+                            return t;
                         }
                     }
                 }
@@ -2662,356 +2661,29 @@ impl TypeContext {
             }
             // Lowering resolves named args before inference; type is the value's
             Expr::Named { value, .. } => self.infer_expr_full(value),
-            Expr::Ident(name) => {
-                // User variables shadow module constants (matches codegen +
-                // interpreter scoping: environment first, then constants)
-                if let Some(ty) = self.vars.get(name) {
-                    return ty.clone();
-                }
-                // Module constants: pi, e, inf, nan
-                if self.registry.has_constant(name) {
-                    return CrowType::Float;
-                }
-                // A derivation's name is its value, wherever it is read — as
-                // a call argument too — never a function reference
-                if self.derives.contains(name) {
-                    return self.functions.get(name).map(|s| s.return_type.clone()).unwrap_or(CrowType::Unknown);
-                }
-                // Check if it's a known function name — return as CrowType::Fn
-                if let Some(sig) = self.functions.get(name) {
-                    let param_types: Vec<CrowType> = sig.params.iter().map(|(_, t)| t.clone()).collect();
-                    return CrowType::Fn(param_types, Box::new(sig.return_type.clone()));
-                }
-                CrowType::Unknown
-            }
-            Expr::BinOp { left, op, right } => {
-                let lt = self.infer_expr(left);
-                let rt = self.infer_expr(right);
-                // Check if either operand is CrowResult (for auto-propagation)
-                let has_result = matches!(&lt, CrowType::Result(_)) || matches!(&rt, CrowType::Result(_));
-                // Unwrap to get inner types for determining result type
-                let lt_inner = if let CrowType::Result(inner) = &lt { *inner.clone() } else { lt };
-                let rt_inner = if let CrowType::Result(inner) = &rt { *inner.clone() } else { rt };
-                // Check if either side is a frame column (FrameCol or legacy Array(Str))
-                let is_frame_col = |t: &CrowType| matches!(t, CrowType::FrameCol) || matches!(t, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Str));
-                let result_type = match op {
-                    BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt
-                    | BinOp::Gte | BinOp::Lte | BinOp::And | BinOp::Or => {
-                        // Boolean-mask semantics: comparisons on frame columns and
-                        // logical ops on boolean arrays are element-wise → Array(Bool)
-                        let is_bool_mask = |t: &CrowType| matches!(t, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Bool));
-                        // Tensor vs scalar comparisons broadcast to masks too
-                        let tensor_vs_scalar = (matches!(lt_inner, CrowType::NumArray(_))
-                            && matches!(rt_inner, CrowType::Int | CrowType::Float))
-                            || (matches!(rt_inner, CrowType::NumArray(_))
-                                && matches!(lt_inner, CrowType::Int | CrowType::Float));
-                        if is_frame_col(&lt_inner) || is_frame_col(&rt_inner)
-                            || is_bool_mask(&lt_inner) || is_bool_mask(&rt_inner)
-                            || tensor_vs_scalar
-                        {
-                            CrowType::Array(Box::new(CrowType::Bool))
-                        } else {
-                            CrowType::Bool
-                        }
-                    }
-                    BinOp::Mod => CrowType::Int,
-                    BinOp::Pow => {
-                        // ^ returns Float if either operand is Float, else Int
-                        if lt_inner == CrowType::Float || rt_inner == CrowType::Float {
-                            CrowType::Float
-                        } else {
-                            CrowType::Int
-                        }
-                    }
-                    BinOp::ElemMul | BinOp::ElemDiv | BinOp::ElemPow => {
-                        // Element-wise tensor ops return NumArray; frame
-                        // columns bridge into tensors
-                        if matches!(&lt_inner, CrowType::FrameCol)
-                            || matches!(&rt_inner, CrowType::FrameCol)
-                        {
-                            CrowType::NumArray(Box::new(CrowType::Float))
-                        } else if matches!(&lt_inner, CrowType::NumArray(_)) {
-                            lt_inner.clone()
-                        } else if matches!(&rt_inner, CrowType::NumArray(_)) {
-                            rt_inner.clone()
-                        } else {
-                            lt_inner.unify(&rt_inner)
-                        }
-                    }
-                    BinOp::Mul => {
-                        // Frame column arithmetic with scalar → FrameCol
-                        if is_frame_col(&lt_inner) && matches!(&rt_inner, CrowType::Int | CrowType::Float) {
-                            CrowType::FrameCol
-                        } else if is_frame_col(&rt_inner) && matches!(&lt_inner, CrowType::Int | CrowType::Float) {
-                            CrowType::FrameCol
-                        // sparse * dense → NumArray (matmul result)
-                        } else if matches!(&lt_inner, CrowType::Sparse) && matches!(&rt_inner, CrowType::NumArray(_)) {
-                            CrowType::NumArray(Box::new(CrowType::Float))
-                        // * on tensor-tensor is matmul (returns NumArray)
-                        } else if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
-                            CrowType::NumArray(Box::new(CrowType::Float))
-                        } else {
-                            lt_inner.unify(&rt_inner)
-                        }
-                    }
-                    BinOp::Add => {
-                        // Frame column arithmetic → FrameCol
-                        if (is_frame_col(&lt_inner) && matches!(&rt_inner, CrowType::Int | CrowType::Float))
-                            || (is_frame_col(&rt_inner) && matches!(&lt_inner, CrowType::Int | CrowType::Float)) {
-                            CrowType::FrameCol
-                        // sparse + sparse → Sparse
-                        } else if matches!(&lt_inner, CrowType::Sparse) && matches!(&rt_inner, CrowType::Sparse) {
-                            CrowType::Sparse
-                        } else if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
-                            CrowType::NumArray(Box::new(CrowType::Float))
-                        } else {
-                            lt_inner.unify(&rt_inner)
-                        }
-                    }
-                    BinOp::Sub | BinOp::Div => {
-                        // Frame column arithmetic → FrameCol
-                        if (is_frame_col(&lt_inner) && matches!(&rt_inner, CrowType::Int | CrowType::Float))
-                            || (is_frame_col(&rt_inner) && matches!(&lt_inner, CrowType::Int | CrowType::Float)) {
-                            CrowType::FrameCol
-                        // scalar - tensor, tensor - scalar, etc. → NumArray
-                        } else if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
-                            CrowType::NumArray(Box::new(CrowType::Float))
-                        } else {
-                            lt_inner.unify(&rt_inner)
-                        }
-                    }
-                };
-                // If either operand was CrowResult, wrap the result type
-                if has_result {
-                    CrowType::Result(Box::new(result_type))
-                } else {
-                    result_type
-                }
-            }
-            Expr::UnaryOp { op, expr: e } => {
-                match op {
-                    UnaryOp::Not => {
-                        // not on a boolean mask negates element-wise → Array(Bool)
-                        let inner = self.infer_expr(e);
-                        let inner = if let CrowType::Result(i) = inner { *i } else { inner };
-                        if matches!(&inner, CrowType::Array(i) if matches!(i.as_ref(), CrowType::Bool)) {
-                            CrowType::Array(Box::new(CrowType::Bool))
-                        } else {
-                            CrowType::Bool
-                        }
-                    }
-                    UnaryOp::Neg => self.infer_expr(e),
-                }
-            }
+            Expr::Ident(name) => self.ident_type(name),
+            Expr::BinOp { left, op, right } => self.binop_type(op, self.infer_expr(left), self.infer_expr(right)),
+            Expr::UnaryOp { op, expr: e } => self.unary_type(op, self.infer_expr(e)),
             Expr::Call { callee, args } => {
+                // every argument inferred once, here
+                let arg_types: Vec<CrowType> = args.iter().map(|a| self.infer_expr(a)).collect();
                 if let Expr::Ident(name) = callee.as_ref() {
-                    // every argument inferred once, here
-                    let arg_types: Vec<CrowType> = args.iter().map(|a| self.infer_expr(a)).collect();
-                    let base = self.infer_call_base_typed(name, args, callee, &arg_types);
-                    // Auto-propagation: wrap in CrowResult if any arg is CrowResult
-                    // a view renders what it is given: a failed argument shows
-                    // its reason inside the tree, it never fails the view
-                    let skip = matches!(name.as_str(), "log" | "assert" | "type" | "cpu" | "gpu" | "error" | "table" | "chart" | "__known")
-                        || crate::lower::UI_ELEMENTS.contains(&name.as_str())
-                        || (self.in_view && crate::lower::is_ui_control(name, matches!(arg_types.first().cloned().map(Self::walked), Some(CrowType::Frame))))
-                        || self.views.contains(name);
-                    if !skip && !matches!(base, CrowType::Result(_) | CrowType::Void) {
-                        let has_result_arg = arg_types.iter().any(|t| matches!(t, CrowType::Result(_)));
-                        if has_result_arg {
-                            return CrowType::Result(Box::new(base));
-                        }
-                    }
-                    return base;
+                    return self.named_call_type(name, args, callee, &arg_types);
                 }
                 // Module call: module.func[args] or module.Struct[args]
                 if let Expr::FieldAccess { object, field } = callee.as_ref() {
-                    if let Expr::Ident(_mod_name) = object.as_ref() {
-                        // web.new[] → WebApp
-                        if _mod_name == "web" && field == "new" {
-                            return CrowType::WebApp;
-                        }
-                        // Registry-module prefixed call (math.zeros[...],
-                        // or via alias: m.zeros after `use math as m`)
-                        let _real_mod = self
-                            .module_aliases
-                            .get(_mod_name.as_str())
-                            .cloned()
-                            .unwrap_or_else(|| _mod_name.to_string());
-                        if matches!(_real_mod.as_str(), "math" | "io" | "frame" | "db" | "doc" | "chart" | "math.stats" | "math.nn")
-                            && self.registry.has_function(field)
-                        {
-                            if let Some(t) = self.registry.type_of_in(&_real_mod, field, args.len()) {
-                                // auto-propagation applies to qualified calls too:
-                                // a fallible argument makes the result fallible
-                                if !matches!(t, CrowType::Result(_) | CrowType::Void)
-                                    && args.iter().any(|a| matches!(self.infer_expr(a), CrowType::Result(_)))
-                                {
-                                    return CrowType::Result(Box::new(t));
-                                }
-                                return t;
-                            }
-                        }
-                        let prefixed = format!("{}_{}", _mod_name, field);
-                        // Module struct constructor
-                        if self.structs.contains_key(&prefixed) {
-                            return CrowType::Struct(prefixed);
-                        }
-                        // Module function call
-                        if let Some(sig) = self.functions.get(&prefixed) {
-                            return sig.return_type.clone();
+                    if let Expr::Ident(module) = object.as_ref() {
+                        if let Some(t) = self.module_call_type(module, field, &arg_types) {
+                            return t;
                         }
                     }
                 }
                 // Array/Map/Json indexing or indirect function call
-                let callee_type = self.infer_expr(callee);
-                match callee_type {
-                    CrowType::Array(inner) => *inner,
-                    CrowType::NumArray(inner) => {
-                        // Advanced indexing: tensor[tensor] → tensor (gather)
-                        if !args.is_empty() {
-                            let idx_type = self.infer_expr(&args[0]);
-                            if matches!(idx_type, CrowType::NumArray(_)) {
-                                return CrowType::NumArray(inner);
-                            }
-                        }
-                        *inner
-                    }
-                    CrowType::FrameCol => CrowType::Str, // col[i] → string
-                    CrowType::Map(inner) => *inner,
-                    CrowType::Json => CrowType::Json,
-                    CrowType::Fn(_, ret) => *ret,
-                    _ => CrowType::Unknown,
-                }
+                self.index_type(self.infer_expr(callee), arg_types.into_iter().next())
             }
-            Expr::FieldAccess { object, field } => {
-                let obj_type = self.infer_expr(object);
-                // Json object field access stays Json (dynamic values)
-                {
-                    let inner = match &obj_type { CrowType::Result(i) => i.as_ref().clone(), o => o.clone() };
-                    if matches!(inner, CrowType::Json)
-                        && !matches!(field.as_str(), "ok" | "reason" | "kind" | "trace")
-                    {
-                        return CrowType::Json;
-                    }
-                }
-                // .ok on a frame column → its rows' validity; every other
-                // value's .ok is its own status, a list's included
-                if field == "ok" && matches!(&obj_type, CrowType::FrameCol) {
-                    return CrowType::Array(Box::new(CrowType::Bool));
-                }
-                // DateTime properties on strings → Int
-                if matches!(&obj_type, CrowType::Str) {
-                    match field.as_str() {
-                        "year" | "month" | "day" | "hour" | "minute" | "second" | "offset" => return CrowType::Int,
-                        _ => {}
-                    }
-                }
-                // Error-value metadata fields
-                match field.as_str() {
-                    "ok" => return CrowType::Bool,
-                    "reason" | "kind" => return CrowType::Str,
-                    "trace" => return CrowType::Array(Box::new(CrowType::Str)),
-                    _ => {}
-                }
-                // Map dot-access: m.key reads a value of the map's value type
-                {
-                    let inner = match &obj_type { CrowType::Result(i) => i.as_ref().clone(), o => o.clone() };
-                    if let CrowType::Map(v) = inner {
-                        return *v;
-                    }
-                }
-                // NumArray properties (also handle Result(NumArray))
-                let is_numarray = matches!(obj_type, CrowType::NumArray(_))
-                    || matches!(&obj_type, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::NumArray(_)));
-                if is_numarray {
-                    match field.as_str() {
-                        "shape" => return CrowType::Array(Box::new(CrowType::Int)),
-                        "dtype" | "device" | "grad" => return CrowType::Str,
-                        "len" => return CrowType::Int,
-                        _ => {}
-                    }
-                }
-                // Frame properties
-                let is_frame = matches!(obj_type, CrowType::Frame)
-                    || matches!(&obj_type, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Frame));
-                if is_frame {
-                    match field.as_str() {
-                        "shape" => return CrowType::Array(Box::new(CrowType::Int)),
-                        "columns" | "dtypes" => return CrowType::Array(Box::new(CrowType::Str)),
-                        _ => return CrowType::FrameCol, // column access by name → typed column
-                    }
-                }
-                // FrameCol properties
-                if matches!(obj_type, CrowType::FrameCol) {
-                    match field.as_str() {
-                        "ok" => return CrowType::Array(Box::new(CrowType::Bool)),
-                        _ => return CrowType::Unknown,
-                    }
-                }
-                // Auto-unwrap: field access on Result(Struct) reads the value's
-                // field; OptBoxStruct (recursive struct link) unwraps the box
-                let struct_obj = match &obj_type {
-                    CrowType::Struct(n) | CrowType::OptBoxStruct(n) => Some(n.clone()),
-                    CrowType::Result(inner) => match inner.as_ref() {
-                        CrowType::Struct(n) => Some(n.clone()),
-                        _ => None,
-                    },
-                    _ => None,
-                };
-                if let Some(name) = struct_obj {
-                    if let Some(sig) = self.structs.get(&name) {
-                        for (fname, ftype) in &sig.fields {
-                            if fname == field {
-                                return ftype.clone();
-                            }
-                        }
-                    }
-                }
-                // Module variable access: module.var → look up module_var
-                if let Expr::Ident(mod_name) = object.as_ref() {
-                    let prefixed = format!("{}_{}", mod_name, field);
-                    if let Some(t) = self.vars.get(&prefixed) {
-                        return t.clone();
-                    }
-                    // Also check if it's a module function reference
-                    if let Some(sig) = self.functions.get(&prefixed) {
-                        let param_types: Vec<CrowType> = sig.params.iter().map(|(_, t)| t.clone()).collect();
-                        return CrowType::Fn(param_types, Box::new(sig.return_type.clone()));
-                    }
-                }
-                CrowType::Unknown
-            }
-            Expr::Array(items) => {
-                if items.is_empty() {
-                    CrowType::Array(Box::new(CrowType::Unknown))
-                } else {
-                    let mut inner = CrowType::Unknown;
-                    for item in items {
-                        inner = inner.unify(&self.infer_expr_full(item));
-                    }
-                    // All-numeric array literals become NumArray (backed by CrowTensor).
-                    // Nested numeric literals build higher-rank tensors: the inner
-                    // type of a rank-2 tensor is the rank-1 row tensor.
-                    if matches!(inner, CrowType::Int | CrowType::Float) {
-                        CrowType::NumArray(Box::new(inner))
-                    } else if matches!(inner, CrowType::NumArray(_)) {
-                        CrowType::NumArray(Box::new(inner))
-                    } else {
-                        CrowType::Array(Box::new(inner))
-                    }
-                }
-            }
-            Expr::Map(pairs) => {
-                if pairs.is_empty() {
-                    CrowType::Map(Box::new(CrowType::Unknown))
-                } else {
-                    let mut vtype = CrowType::Unknown;
-                    for (_, v) in pairs {
-                        vtype = vtype.unify(&self.infer_expr(v));
-                    }
-                    CrowType::Map(Box::new(vtype))
-                }
-            }
+            Expr::FieldAccess { object, field } => self.field_type(object, self.infer_expr(object), field),
+            Expr::Array(items) => Self::array_type(items.iter().map(|i| self.infer_expr_full(i))),
+            Expr::Map(pairs) => Self::map_type(pairs.iter().map(|(_, v)| self.infer_expr(v))),
             Expr::ForExpr { var, iter, body } => {
                 // Determine element type from iterator
                 let iter_type = Self::walked(self.infer_expr(iter));
@@ -3052,6 +2724,367 @@ impl TypeContext {
                 CrowType::Array(Box::new(last_type))
             }
         }
+    }
+
+    // ── typing rules: a node's type from its children's ────────────────
+    //
+    // Each rule takes the types of a node's children, as `infer_expr` gives
+    // them (text, not markup), so the walk above and the lowering, which
+    // types each IR node from its children's IR types, read one set of rules.
+
+    /// A name read as a value: a variable, a module constant, a
+    /// derivation's value, or a function held as a value.
+    pub(crate) fn ident_type(&self, name: &str) -> CrowType {
+        // User variables shadow module constants (matches codegen +
+        // interpreter scoping: environment first, then constants)
+        if let Some(ty) = self.vars.get(name) {
+            return ty.clone();
+        }
+        // Module constants: pi, e, inf, nan
+        if self.registry.has_constant(name) {
+            return CrowType::Float;
+        }
+        // A derivation's name is its value, wherever it is read — as
+        // a call argument too — never a function reference
+        if self.derives.contains(name) {
+            return self.functions.get(name).map(|s| s.return_type.clone()).unwrap_or(CrowType::Unknown);
+        }
+        // Check if it's a known function name — return as CrowType::Fn
+        if let Some(sig) = self.functions.get(name) {
+            let param_types: Vec<CrowType> = sig.params.iter().map(|(_, t)| t.clone()).collect();
+            return CrowType::Fn(param_types, Box::new(sig.return_type.clone()));
+        }
+        CrowType::Unknown
+    }
+
+    /// The type the database told us for a frame's column, `frame.col`:
+    /// the type of each of its cells.
+    pub(crate) fn column_type(&self, object: &Expr, field: &str) -> Option<CrowType> {
+        let v = read_var(object)?;
+        self.frame_schemas.get(v).and_then(|s| s.get(field)).cloned()
+    }
+
+    /// An operator's type from its operands'.
+    pub(crate) fn binop_type(&self, op: &BinOp, lt: CrowType, rt: CrowType) -> CrowType {
+        // Check if either operand is CrowResult (for auto-propagation)
+        let has_result = matches!(&lt, CrowType::Result(_)) || matches!(&rt, CrowType::Result(_));
+        // Unwrap to get inner types for determining result type
+        let lt_inner = if let CrowType::Result(inner) = &lt { *inner.clone() } else { lt };
+        let rt_inner = if let CrowType::Result(inner) = &rt { *inner.clone() } else { rt };
+        // Check if either side is a frame column (FrameCol or legacy Array(Str))
+        let is_frame_col = |t: &CrowType| matches!(t, CrowType::FrameCol) || matches!(t, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Str));
+        let result_type = match op {
+            BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt
+            | BinOp::Gte | BinOp::Lte | BinOp::And | BinOp::Or => {
+                // Boolean-mask semantics: comparisons on frame columns and
+                // logical ops on boolean arrays are element-wise → Array(Bool)
+                let is_bool_mask = |t: &CrowType| matches!(t, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Bool));
+                // Tensor vs scalar comparisons broadcast to masks too
+                let tensor_vs_scalar = (matches!(lt_inner, CrowType::NumArray(_))
+                    && matches!(rt_inner, CrowType::Int | CrowType::Float))
+                    || (matches!(rt_inner, CrowType::NumArray(_))
+                        && matches!(lt_inner, CrowType::Int | CrowType::Float));
+                if is_frame_col(&lt_inner) || is_frame_col(&rt_inner)
+                    || is_bool_mask(&lt_inner) || is_bool_mask(&rt_inner)
+                    || tensor_vs_scalar
+                {
+                    CrowType::Array(Box::new(CrowType::Bool))
+                } else {
+                    CrowType::Bool
+                }
+            }
+            BinOp::Mod => CrowType::Int,
+            BinOp::Pow => {
+                // ^ returns Float if either operand is Float, else Int
+                if lt_inner == CrowType::Float || rt_inner == CrowType::Float {
+                    CrowType::Float
+                } else {
+                    CrowType::Int
+                }
+            }
+            BinOp::ElemMul | BinOp::ElemDiv | BinOp::ElemPow => {
+                // Element-wise tensor ops return NumArray; frame
+                // columns bridge into tensors
+                if matches!(&lt_inner, CrowType::FrameCol)
+                    || matches!(&rt_inner, CrowType::FrameCol)
+                {
+                    CrowType::NumArray(Box::new(CrowType::Float))
+                } else if matches!(&lt_inner, CrowType::NumArray(_)) {
+                    lt_inner.clone()
+                } else if matches!(&rt_inner, CrowType::NumArray(_)) {
+                    rt_inner.clone()
+                } else {
+                    lt_inner.unify(&rt_inner)
+                }
+            }
+            BinOp::Mul => {
+                // Frame column arithmetic with scalar → FrameCol
+                if is_frame_col(&lt_inner) && matches!(&rt_inner, CrowType::Int | CrowType::Float) {
+                    CrowType::FrameCol
+                } else if is_frame_col(&rt_inner) && matches!(&lt_inner, CrowType::Int | CrowType::Float) {
+                    CrowType::FrameCol
+                // sparse * dense → NumArray (matmul result)
+                } else if matches!(&lt_inner, CrowType::Sparse) && matches!(&rt_inner, CrowType::NumArray(_)) {
+                    CrowType::NumArray(Box::new(CrowType::Float))
+                // * on tensor-tensor is matmul (returns NumArray)
+                } else if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
+                    CrowType::NumArray(Box::new(CrowType::Float))
+                } else {
+                    lt_inner.unify(&rt_inner)
+                }
+            }
+            BinOp::Add => {
+                // Frame column arithmetic → FrameCol
+                if (is_frame_col(&lt_inner) && matches!(&rt_inner, CrowType::Int | CrowType::Float))
+                    || (is_frame_col(&rt_inner) && matches!(&lt_inner, CrowType::Int | CrowType::Float)) {
+                    CrowType::FrameCol
+                // sparse + sparse → Sparse
+                } else if matches!(&lt_inner, CrowType::Sparse) && matches!(&rt_inner, CrowType::Sparse) {
+                    CrowType::Sparse
+                } else if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
+                    CrowType::NumArray(Box::new(CrowType::Float))
+                } else {
+                    lt_inner.unify(&rt_inner)
+                }
+            }
+            BinOp::Sub | BinOp::Div => {
+                // Frame column arithmetic → FrameCol
+                if (is_frame_col(&lt_inner) && matches!(&rt_inner, CrowType::Int | CrowType::Float))
+                    || (is_frame_col(&rt_inner) && matches!(&lt_inner, CrowType::Int | CrowType::Float)) {
+                    CrowType::FrameCol
+                // scalar - tensor, tensor - scalar, etc. → NumArray
+                } else if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
+                    CrowType::NumArray(Box::new(CrowType::Float))
+                } else {
+                    lt_inner.unify(&rt_inner)
+                }
+            }
+        };
+        // If either operand was CrowResult, wrap the result type
+        if has_result {
+            CrowType::Result(Box::new(result_type))
+        } else {
+            result_type
+        }
+    }
+
+    /// A unary operator's type from its operand's.
+    pub(crate) fn unary_type(&self, op: &UnaryOp, t: CrowType) -> CrowType {
+        match op {
+            UnaryOp::Not => {
+                // not on a boolean mask negates element-wise → Array(Bool)
+                let inner = if let CrowType::Result(i) = t { *i } else { t };
+                if matches!(&inner, CrowType::Array(i) if matches!(i.as_ref(), CrowType::Bool)) {
+                    CrowType::Array(Box::new(CrowType::Bool))
+                } else {
+                    CrowType::Bool
+                }
+            }
+            UnaryOp::Neg => t,
+        }
+    }
+
+    /// A call by name's type from its arguments' types, an argument's
+    /// failure made the call's (auto-propagation) unless the callee renders
+    /// what it is given.
+    pub(crate) fn named_call_type(&self, name: &str, args: &[Expr], callee: &Expr, arg_types: &[CrowType]) -> CrowType {
+        let base = self.infer_call_base_typed(name, args, callee, arg_types);
+        // Auto-propagation: wrap in CrowResult if any arg is CrowResult
+        // a view renders what it is given: a failed argument shows
+        // its reason inside the tree, it never fails the view
+        let skip = matches!(name, "log" | "assert" | "type" | "cpu" | "gpu" | "error" | "table" | "chart" | "__known")
+            || crate::lower::UI_ELEMENTS.contains(&name)
+            || (self.in_view && crate::lower::is_ui_control(name, matches!(arg_types.first().cloned().map(Self::walked), Some(CrowType::Frame))))
+            || self.views.contains(name);
+        if !skip && !matches!(base, CrowType::Result(_) | CrowType::Void) {
+            let has_result_arg = arg_types.iter().any(|t| matches!(t, CrowType::Result(_)));
+            if has_result_arg {
+                return CrowType::Result(Box::new(base));
+            }
+        }
+        base
+    }
+
+    /// A call through a module's name (`math.zeros[…]`, `m.f[…]` after
+    /// `use m`): its type, when the module is known.
+    pub(crate) fn module_call_type(&self, module: &str, field: &str, arg_types: &[CrowType]) -> Option<CrowType> {
+        // web.new[] → WebApp
+        if module == "web" && field == "new" {
+            return Some(CrowType::WebApp);
+        }
+        // Registry-module prefixed call (math.zeros[...],
+        // or via alias: m.zeros after `use math as m`)
+        let real = self.module_aliases.get(module).cloned().unwrap_or_else(|| module.to_string());
+        if matches!(real.as_str(), "math" | "io" | "frame" | "db" | "doc" | "chart" | "math.stats" | "math.nn") && self.registry.has_function(field) {
+            if let Some(t) = self.registry.type_of_in(&real, field, arg_types.len()) {
+                // auto-propagation applies to qualified calls too:
+                // a fallible argument makes the result fallible
+                if !matches!(t, CrowType::Result(_) | CrowType::Void) && arg_types.iter().any(|a| matches!(a, CrowType::Result(_))) {
+                    return Some(CrowType::Result(Box::new(t)));
+                }
+                return Some(t);
+            }
+        }
+        let prefixed = format!("{}_{}", module, field);
+        // Module struct constructor
+        if self.structs.contains_key(&prefixed) {
+            return Some(CrowType::Struct(prefixed));
+        }
+        // Module function call
+        self.functions.get(&prefixed).map(|sig| sig.return_type.clone())
+    }
+
+    /// An index's type (`xs[i]`, `m[k]`, a function value applied) from the
+    /// indexed value's type and the first index's.
+    pub(crate) fn index_type(&self, callee_type: CrowType, index: Option<CrowType>) -> CrowType {
+        match callee_type {
+            CrowType::Array(inner) => *inner,
+            CrowType::NumArray(inner) => {
+                // Advanced indexing: tensor[tensor] → tensor (gather)
+                if matches!(index, Some(CrowType::NumArray(_))) {
+                    return CrowType::NumArray(inner);
+                }
+                *inner
+            }
+            CrowType::FrameCol => CrowType::Str, // col[i] → string
+            CrowType::Map(inner) => *inner,
+            CrowType::Json => CrowType::Json,
+            CrowType::Fn(_, ret) => *ret,
+            _ => CrowType::Unknown,
+        }
+    }
+
+    /// A field's type (`x.f`) from the object's type; a frame's schema and a
+    /// module's variables are looked up by the object's name.
+    pub(crate) fn field_type(&self, object: &Expr, obj_type: CrowType, field: &str) -> CrowType {
+        // Json object field access stays Json (dynamic values)
+        {
+            let inner = match &obj_type { CrowType::Result(i) => i.as_ref().clone(), o => o.clone() };
+            if matches!(inner, CrowType::Json)
+                && !matches!(field, "ok" | "reason" | "kind" | "trace")
+            {
+                return CrowType::Json;
+            }
+        }
+        // .ok on a frame column → its rows' validity; every other
+        // value's .ok is its own status, a list's included
+        if field == "ok" && matches!(&obj_type, CrowType::FrameCol) {
+            return CrowType::Array(Box::new(CrowType::Bool));
+        }
+        // DateTime properties on strings → Int
+        if matches!(&obj_type, CrowType::Str) {
+            match field {
+                "year" | "month" | "day" | "hour" | "minute" | "second" | "offset" => return CrowType::Int,
+                _ => {}
+            }
+        }
+        // Error-value metadata fields
+        match field {
+            "ok" => return CrowType::Bool,
+            "reason" | "kind" => return CrowType::Str,
+            "trace" => return CrowType::Array(Box::new(CrowType::Str)),
+            _ => {}
+        }
+        // Map dot-access: m.key reads a value of the map's value type
+        {
+            let inner = match &obj_type { CrowType::Result(i) => i.as_ref().clone(), o => o.clone() };
+            if let CrowType::Map(v) = inner {
+                return *v;
+            }
+        }
+        // NumArray properties (also handle Result(NumArray))
+        let is_numarray = matches!(obj_type, CrowType::NumArray(_))
+            || matches!(&obj_type, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::NumArray(_)));
+        if is_numarray {
+            match field {
+                "shape" => return CrowType::Array(Box::new(CrowType::Int)),
+                "dtype" | "device" | "grad" => return CrowType::Str,
+                "len" => return CrowType::Int,
+                _ => {}
+            }
+        }
+        // Frame properties
+        let is_frame = matches!(obj_type, CrowType::Frame)
+            || matches!(&obj_type, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Frame));
+        if is_frame {
+            match field {
+                "shape" => return CrowType::Array(Box::new(CrowType::Int)),
+                "columns" | "dtypes" => return CrowType::Array(Box::new(CrowType::Str)),
+                _ => return CrowType::FrameCol, // column access by name → typed column
+            }
+        }
+        // FrameCol properties
+        if matches!(obj_type, CrowType::FrameCol) {
+            match field {
+                "ok" => return CrowType::Array(Box::new(CrowType::Bool)),
+                _ => return CrowType::Unknown,
+            }
+        }
+        // Auto-unwrap: field access on Result(Struct) reads the value's
+        // field; OptBoxStruct (recursive struct link) unwraps the box
+        let struct_obj = match &obj_type {
+            CrowType::Struct(n) | CrowType::OptBoxStruct(n) => Some(n.clone()),
+            CrowType::Result(inner) => match inner.as_ref() {
+                CrowType::Struct(n) => Some(n.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(name) = struct_obj {
+            if let Some(sig) = self.structs.get(&name) {
+                for (fname, ftype) in &sig.fields {
+                    if fname == field {
+                        return ftype.clone();
+                    }
+                }
+            }
+        }
+        // Module variable access: module.var → look up module_var
+        if let Expr::Ident(mod_name) = object {
+            let prefixed = format!("{}_{}", mod_name, field);
+            if let Some(t) = self.vars.get(&prefixed) {
+                return t.clone();
+            }
+            // Also check if it's a module function reference
+            if let Some(sig) = self.functions.get(&prefixed) {
+                let param_types: Vec<CrowType> = sig.params.iter().map(|(_, t)| t.clone()).collect();
+                return CrowType::Fn(param_types, Box::new(sig.return_type.clone()));
+            }
+        }
+        CrowType::Unknown
+    }
+
+    /// A list literal's type from its items': numbers make a tensor, and
+    /// nested numeric rows a tensor of higher rank.
+    pub(crate) fn array_type(items: impl Iterator<Item = CrowType>) -> CrowType {
+        let mut any = false;
+        let mut inner = CrowType::Unknown;
+        for t in items {
+            any = true;
+            inner = inner.unify(&t);
+        }
+        if !any {
+            return CrowType::Array(Box::new(CrowType::Unknown));
+        }
+        // All-numeric array literals become NumArray (backed by CrowTensor).
+        // Nested numeric literals build higher-rank tensors: the inner
+        // type of a rank-2 tensor is the rank-1 row tensor.
+        if matches!(inner, CrowType::Int | CrowType::Float) {
+            CrowType::NumArray(Box::new(inner))
+        } else if matches!(inner, CrowType::NumArray(_)) {
+            CrowType::NumArray(Box::new(inner))
+        } else {
+            CrowType::Array(Box::new(inner))
+        }
+    }
+
+    /// A map literal's type from its values'.
+    pub(crate) fn map_type(values: impl Iterator<Item = CrowType>) -> CrowType {
+        let mut vtype = CrowType::Unknown;
+        for t in values {
+            vtype = vtype.unify(&t);
+        }
+        CrowType::Map(Box::new(vtype))
     }
 }
 
