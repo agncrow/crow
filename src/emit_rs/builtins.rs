@@ -232,6 +232,10 @@ impl Emitter {
                 CrowType::Result(i) => (i.as_ref().clone(), true),
                 o => (o.clone(), false),
             };
+            // an error with no value (error[…]) is never good: its reason
+            if is_result && matches!(inner, CrowType::Void) {
+                return format!("println!(\"error: {{}}\", ({}).reason)", arg);
+            }
             if matches!(inner, CrowType::FrameCol) {
                 self.needs_crow_runtime = true;
                 return format!("{{ use crow_runtime::display::CrowDisplay as _; println!(\"{{}}\", ({}).crow_fmt()) }}", arg);
@@ -717,10 +721,9 @@ impl Emitter {
             "error" if n == 1 || n == 2 => {
                 let tr = self.trace_format_expr();
                 let kind = if n == 2 { format!("{}.to_string()", a[1]) } else { "String::new()".to_string() };
-                let default = match (&self.cur_ret, self.tt(whole)) {
-                    (Some(CrowType::Result(inner)), _) if !self.cur_fn.is_empty() => inner.default_rust_value(),
-                    _ => "String::new()".to_string(),
-                };
+                // the value an error never has, of the type it is used as (a
+                // `return` of it to a function of another type rewraps it)
+                let default = Self::inner(&self.tt(whole)).default_rust_value();
                 format!("CrowResult {{ ok: false, value: {}, reason: {}.to_string(), kind: {}, trace: vec![{}], captured: 0.0 }}", default, a[0], kind, tr)
             }
             "type" if n == 1 => {

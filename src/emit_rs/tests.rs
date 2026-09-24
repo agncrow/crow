@@ -152,6 +152,16 @@ fn a_narrowed_read_is_the_value() {
     assert!(!body.contains("_prop_"), "nothing propagates: {}", body);
 }
 
+/// An error made by error[…] has no value: comparing it with a number
+/// hands its error on, and the value path is unreachable (it was typed as
+/// text, and comparing text with a number did not build)
+#[test]
+fn an_error_without_a_value_meets_a_number() {
+    let rust = transpile("e = error['boom']\nc = e gt 0\nlog[c.ok]\n");
+    assert!(rust.contains("let e: CrowResult<()> = CrowResult { ok: false, value: ()"), "{}", rust);
+    assert!(rust.contains("unreachable!()"), "{}", rust);
+}
+
 /// A branch on an error at the top level halts with the interpreter's
 /// words and the line (spec, Errors in Conditions); the compiled program
 /// said `error: cannot branch…` and no line

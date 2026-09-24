@@ -975,7 +975,7 @@ So a function whose only failures are guarded is not typed as able to fail, and 
 
 ### Creating Errors
 
-Use the `error[]` builtin to create custom error-values:
+Use the `error[]` builtin to create custom error-values. An error made this way has no value, only its reason and kind, so whatever it meets hands it on: `error['boom'] gt 0` is that error, in both modes.
 
 ```
 fn validate[age]
