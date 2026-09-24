@@ -1,0 +1,15 @@
+view board_cards_boards_view (board/cards.co)
+  composed on: page /
+  reads: board_cards_boards, board_cards_new_board, reader
+  when (__reader[].role eq 'admin'):
+    stack[gap = 's']
+      h2[] 'Boards'
+      table[action 'Open' → board_cards_open_board, hide = ['id'], key = 'id'] board_cards_boards
+      row[align = 'end', gap = 'm']
+        field[binds board_cards_new_board, type = 'text'] 'New board'
+        button[click → board_cards_make_board] 'Make'
+  when (not (__reader[].role eq 'admin')):
+    stack[gap = 's']
+      h2[] 'Boards'
+      table[action 'Open' → board_cards_open_board, hide = ['id'], key = 'id'] board_cards_boards
+      p[color = 'muted', size = 's'] 'boards are made by an admin'

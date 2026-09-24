@@ -1,0 +1,1 @@
+[{"open": "/?day=2026-09-01"}, {"event": "end_session"}, {"ask": "end_session"}, {"event": "__cancel"}, {"ask": "end_session"}, {"event": "__confirm"}, {"event": "next_day"}]

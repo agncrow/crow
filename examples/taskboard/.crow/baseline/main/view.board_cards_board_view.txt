@@ -1,0 +1,10 @@
+view board_cards_board_view (board/cards.co)
+  composed on: page /
+  reads: board_cards_cards, board_cards_new_card
+  always:
+    stack[gap = 's']
+      h2[] 'Cards'
+      table[action 'Advance' → board_cards_advance, action 'Open' → board_cards_open_card, hide = ['id'], key = 'id', page = 25] board_cards_cards
+      row[align = 'end', gap = 'm']
+        field[binds board_cards_new_card, type = 'text'] 'New card'
+        button[click → board_cards_add_card] 'Add'

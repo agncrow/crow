@@ -35,6 +35,8 @@ pub const UI_ELEMENTS: &[&str] = &[
     "details", "summary", "dropdown", "modal", "drawer", "toast",
     // a rule between siblings
     "divider",
+    // the one way out of the vocabulary: the program's own module draws it
+    "widget",
 ];
 
 /// The pairs of a map literal as the lowering leaves it: `map[k = v, …]`
@@ -92,14 +94,36 @@ pub struct Lowerer {
     current_line: usize,
     /// Lowering inside a `view` body — ui element named-args resolve here
     in_view: bool,
+    /// The program imports web: `reader` is the page's signed-in reader
+    web: bool,
+}
+
+thread_local! {
+    /// Whether the program lowered last on this thread uses web: the
+    /// interpolations parsed from its strings later are lowered as it was.
+    static PROGRAM_WEB: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 pub fn lower_program(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
+    let web = stmts.iter().any(|s| matches!(s, Stmt::Use { path, alias: None } if path == "web" || path.starts_with("web.")));
+    PROGRAM_WEB.with(|w| w.set(web));
+    lower_with(stmts, web)
+}
+
+/// An expression parsed from a string's interpolation, lowered as the
+/// program around it was — its `reader` is the page's when the program
+/// uses web, as it is outside the string.
+pub fn lower_fragment(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
+    lower_with(stmts, PROGRAM_WEB.with(|w| w.get()))
+}
+
+fn lower_with(stmts: &[Stmt], web: bool) -> Result<Vec<Stmt>, String> {
     let mut l = Lowerer {
         fns: BTreeMap::new(),
         structs: BTreeMap::new(),
         current_line: 0,
-            in_view: false,
+        in_view: false,
+        web,
     };
     l.collect_sigs(stmts);
     l.lower_stmts(stmts)
@@ -402,10 +426,22 @@ impl Lowerer {
                     // comfortable), accent ('' = the theme's), wide (false).
                     Some("serve") if !self.fns.contains_key("serve") => {
                         let params: Vec<String> =
-                            ["port", "refresh", "budget", "theme", "density", "accent", "wide"].iter().map(|s| s.to_string()).collect();
+                            ["port", "refresh", "budget", "theme", "density", "accent", "wide", "keep", "uploads"].iter().map(|s| s.to_string()).collect();
                         let defaults: Vec<Option<Expr>> =
-                            vec![None, Some(Expr::Int(0)), Some(Expr::Int(0)), Some(Expr::Str(String::new())), Some(Expr::Str(String::new())), Some(Expr::Str(String::new())), Some(Expr::Bool(false))];
+                            vec![None, Some(Expr::Int(0)), Some(Expr::Int(0)), Some(Expr::Str(String::new())), Some(Expr::Str(String::new())), Some(Expr::Str(String::new())), Some(Expr::Bool(false)), Some(Expr::Bool(false)), Some(Expr::Int(10))];
                         let resolved = self.resolve_args("serve", &params, &defaults, args)?;
+                        Expr::Call { callee: Box::new(callee), args: resolved }
+                    }
+                    // page[path, view, url = ['day', 'sym']]: the facts the page's
+                    // address carries, lowered as a third argument that is a list
+                    // (a name there is page's older handler form)
+                    Some("page") if !self.fns.contains_key("page") && has_named => {
+                        let params: Vec<String> = ["path", "view", "url"].iter().map(|s| s.to_string()).collect();
+                        let defaults: Vec<Option<Expr>> = vec![None, None, Some(Expr::Array(vec![]))];
+                        let resolved = self.resolve_args("page", &params, &defaults, args)?;
+                        if !matches!(resolved.get(2), Some(Expr::Array(_))) {
+                            return Err(self.err("page[…, url = …] takes a list of fact names: url = ['day', 'sym']".to_string()));
+                        }
                         Expr::Call { callee: Box::new(callee), args: resolved }
                     }
                     Some(name) if self.fns.contains_key(name) => {
@@ -455,10 +491,20 @@ impl Lowerer {
                 op: op.clone(),
                 expr: Box::new(self.lower_expr(e)?),
             },
+            // the session's notice reads as a record the runtime provides:
+            // `notice.text` and `notice.at` (core-design.md §1.4)
+            Expr::FieldAccess { object, field }
+                if matches!(object.as_ref(), Expr::Ident(n) if n == "notice") && (field == "text" || field == "at") =>
+            {
+                Expr::Call { callee: Box::new(Expr::Ident(format!("__notice_{}", field))), args: vec![] }
+            }
             Expr::FieldAccess { object, field } => Expr::FieldAccess {
                 object: Box::new(self.lower_expr(object)?),
                 field: field.clone(),
             },
+            // the page's signed-in reader reads as a record the runtime
+            // provides; nothing in the program declares or assigns it
+            Expr::Ident(n) if self.web && n == "reader" => Expr::Call { callee: Box::new(Expr::Ident("__reader".to_string())), args: vec![] },
             Expr::Array(items) => Expr::Array(
                 items.iter().map(|i| self.lower_expr(i)).collect::<Result<_, _>>()?,
             ),

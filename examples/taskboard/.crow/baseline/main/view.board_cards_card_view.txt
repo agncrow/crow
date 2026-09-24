@@ -1,0 +1,20 @@
+view board_cards_card_view (board/cards.co)
+  composed on: page /
+  reads: board_cards_card, board_cards_card_id, board_cards_comment, board_cards_files, board_cards_talk, board_cards_upload
+  when (board_cards_card_id eq 0):
+    p[color = 'muted'] 'open a card to see what was said and attached'
+  when (len[board_cards_card] eq 0) and (not (board_cards_card_id eq 0)):
+    p[color = 'muted'] 'that card is gone'
+  when (not (board_cards_card_id eq 0)) and (not (len[board_cards_card] eq 0)):
+    stack[gap = 's']
+      h2[] board_cards_card.title[0]
+      p[color = 'muted'] '`board_cards_card.status[0]` · added by `board_cards_card.owner[0]`'
+      widget[on = set[map[], 'rate', board_cards_set_stars], props = set[map[], 'stars', board_cards_card.stars[0]]] 'stars'
+      table[] board_cards_talk
+      row[align = 'end', gap = 'm']
+        field[binds board_cards_comment, type = 'text'] 'Comment'
+        button[click → board_cards_post] 'Post'
+      table[action 'Download' → board_cards_take_file, hide = ['id'], key = 'id'] board_cards_files
+      row[align = 'end', gap = 'm']
+        field[binds board_cards_upload, type = 'file'] 'Attach'
+        button[click → board_cards_attach] 'Attach'

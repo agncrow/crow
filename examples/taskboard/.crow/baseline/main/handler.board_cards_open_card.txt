@@ -1,0 +1,5 @@
+handler board_cards_open_card (board/cards.co)
+  inputs: $1
+  wired: board_cards_board_view table action 'Open'
+  always:
+    board_cards_card_id := $1

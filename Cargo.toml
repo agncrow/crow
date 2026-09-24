@@ -21,7 +21,9 @@ sha2 = "0.10.9"
 md-5 = "0.10.6"
 chrono = "0.4.44"
 crow_db = { version = "0.1.0", path = "crow_db", features = ["postgres", "sqlite", "clickhouse"] }
-crow_web = { version = "0.1.0", path = "crow_web", default-features = false }
+crow_web = { version = "0.1.0", path = "crow_web", default-features = false, features = ["live", "http"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+tungstenite = "0.28.0"
 sqlparser = "0.62.0"
 lsp-server = "0.10.0"
 lsp-types = "0.97.0"

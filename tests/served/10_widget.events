@@ -1,0 +1,10 @@
+[
+  {"expect": "data-crow-widget=\"map\""},
+  {"expect": "data-crow-props=\"{&quot;city&quot;:&quot;London&quot;}\""},
+  {"event": "choose", "value": "[\"Paris\"]"},
+  {"expect": "place Paris"},
+  {"expect": "data-crow-props=\"{&quot;city&quot;:&quot;Paris&quot;}\""},
+  {"expect": "zoom 4"},
+  {"event": "set_zoom", "value": "[7]"},
+  {"expect": "zoom 8"}
+]

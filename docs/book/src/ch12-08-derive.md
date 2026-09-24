@@ -116,6 +116,12 @@ Declaring `fresh` is the relaxation, never the other way round. A
 derivation that reads `now[]` recomputes every tick too, which is how a
 play-head derived from the clock stays honest.
 
+A recompute never holds the page. A derivation that queries is computed
+off the render: the tick renders at once with the value it has, and again
+when the new value lands, and until its first value it reads as "loading"
+(chapter 12.4 has the rules). In `crow test` every event settles before
+the next line, so a test always reads the landed value.
+
 ## One value for the app, or one per session
 
 Who holds a derivation is inferred from what it reads. A fact a session
@@ -129,7 +135,8 @@ Database handles are not facts, and neither are `fetch`/`poll`
 bindings, so `query[conn, …]` over a table nobody's handler touches is
 shared. A table write in any session reaches every session's
 derivations over that table: when one reader buys, the blotter of
-another reader watching the same book follows on their next tick.
+another reader watching the same book follows at once — the write wakes
+every page that read the table, with no refresh tick and no code.
 
 `crow check` prints the read set and the holder of each derivation, so
 the split is never a guess:

@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Builtins whose call is an effect on the world outside the program.
 const EFFECTS: &[&str] = &[
     "exec", "insert", "transact", "later", "fetch", "shell", "write", "save", "mail", "send", "post", "put", "delete", "remove",
+    "notice", "sign_in", "sign_out", "download",
 ];
 /// Events a control declares in a view.
 const EVENTS: &[&str] = &["click", "input", "submit", "change", "seek"];

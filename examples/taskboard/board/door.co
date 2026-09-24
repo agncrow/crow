@@ -1,0 +1,59 @@
+--- The door: people sign in with a name and a password checked against its
+--- stored hash, and out again. Until they do, the board shows nothing else.
+use web, ui, db
+use board.store
+
+book = db.connect['sqlite://taskboard.db']
+name = ''
+password = ''
+
+fn log_in[]
+    found = query[book, 'SELECT role, hash FROM people WHERE name = ?', [name]]
+    if len[found] eq 0
+        notice['no one called `name`']
+        return
+    if hash[password, found.hash[0]] ne found.hash[0]
+        notice['wrong password']
+        return
+    sign_in[map[name = name, role = found.role[0]]]
+    store.note[book, name, 'signed in']
+    password = ''
+
+fn log_out[]
+    store.note[book, reader.name, 'signed out']
+    sign_out[]
+
+view door[]
+    if has[reader, 'name']
+        return row[span['signed in as `reader.name` (`reader.role`)', color = 'muted'], button['Sign out', click = log_out], gap = 'm', align = 'center']
+    return row[
+        field['Name', name, type = 'text'],
+        field['Password', password, type = 'password'],
+        button['Sign in', click = log_in, class = 'primary'],
+        gap = 'm', align = 'end'
+    ]
+
+--- A name no one has and a wrong password are refused, and the reader is
+--- told which; the right password signs them in and the door says who;
+--- signing out shows the door again.
+test the_door_lets_people_in_and_out[]
+    store.setup[store.book]
+    a = app[door]
+    change[a, 'name', 'nobody']
+    click[a, log_in]
+    assert[notice.text eq 'no one called nobody']
+    change[a, 'name', 'ada']
+    change[a, 'password', 'wrong']
+    click[a, log_in]
+    assert[len[reader] eq 0]
+    assert[notice.text eq 'wrong password']
+    change[a, 'password', 'lovelace']
+    click[a, log_in]
+    assert[reader.name eq 'ada']
+    assert[reader.role eq 'admin']
+    assert[a.password eq '']
+    assert[contains[html[a], 'signed in as ada (admin)']]
+    assert[len[elements[a, 'input']] eq 0]
+    click[a, log_out]
+    assert[len[reader] eq 0]
+    assert[len[elements[a, 'input']] eq 2]

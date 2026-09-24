@@ -1,0 +1,7 @@
+[
+  {"expect": "no file yet"},
+  {"expect": "data-crow-upload=\"__field:upload\""},
+  {"upload": "__field:upload", "file": "fixtures/trades.csv"},
+  {"expect": "trades.csv (20 bytes): symbol,qty IMRN,100"},
+  {"expect": "<span class=\"crow-file\">trades.csv</span>"}
+]

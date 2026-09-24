@@ -1,18 +1,60 @@
 # Slow Work and the Live Loop
 
-A live Crow app is one loop serving every connected browser. Every click
-runs a handler on that loop; every update renders views on it. That design
-is why reactive state needs no locks — one loop, one writer — but it comes
-with a law: **anything slow on the loop freezes everyone**. A handler that
-spends two seconds querying a remote database doesn't just delay the person
-who clicked; every other client's clicks and renders wait in line behind it.
+A live Crow app serves every reader's page from the server, and each page
+has its own loop: a click runs a handler, then the page renders again. Two
+kinds of slow work can get in its way — a query a view needs, and a handler
+that takes a while — and Crow treats them differently.
 
-This is not a Crow quirk. It's the law of every interactive system — the
-browser's main thread, Python's asyncio, a phone app's UI thread — and in
-most of them, staying responsive is a discipline you must remember. In Crow
-it's a verb.
+## Slow data is the runtime's job
 
-## The frozen version
+A derivation that queries a database is computed off the render. When its
+value is stale, the page renders at once with the value it has, and renders
+again when the new value lands; a view still waiting on one is dimmed after
+a moment, so the reader can see that part is catching up. A click never
+waits for a query it did not cause. A query it did cause — the rows its own
+handler just inserted — is part of its answer:
+
+```crow,norun
+use web, ui, db
+
+book = db.connect['sqlite://book.db']
+sym = 'IMRN'
+
+derive trades
+    return query[book, 'SELECT id, px FROM trades WHERE symbol = ?', [sym]]
+
+fn buy[]
+    exec[book, 'INSERT INTO trades (symbol, px) VALUES (?, ?)', [sym, 1.79]]
+
+view render[]
+    return stack[table[trades], button['Buy', click = buy]]
+
+page['/', render]
+serve[3000]
+```
+
+Pressing Buy answers with the new row already in the table: the handler
+wrote `trades`, so the derivation over it is recomputed before that render.
+Changing `sym` answers at once with the old rows, dimmed, and the new ones
+arrive a query later. You wrote nothing for either.
+
+Before its first value, a derivation that queries reads as an error of kind
+`'pending'` with the reason `loading` — a view that renders a failed read
+in place shows "loading", and the page appears at once instead of waiting
+for its slowest query. `running[trades]` is true while it recomputes, for a
+spinner of your own.
+
+Nothing one reader does holds another. Handlers and renders run on worker
+threads, never on the threads that carry the sockets; database handles are
+pools; a derivation shared by every page is computed once, however many
+pages ask for it together. And a write reaches every reader: when one page
+inserts a row, every other page that read that table renders again with it.
+
+## Slow handlers
+
+A handler runs off the page's loop too. While it works the page stays live
+— the clock ticks, landed values render — and the button that started it
+shows it is working, disabled, with nothing written in the program for it:
 
 ```crow,norun
 use web, ui
@@ -34,16 +76,20 @@ page['/', render]
 serve[3000]
 ```
 
-Click refresh, and for two seconds the whole app holds its breath. `crow
-check` will tell you so — this is the *blocking in view* finding — and its
-fix line teaches the verb this chapter is about.
+Click refresh: for two seconds the button is disabled and marked busy, and
+the rest of the page carries on. What waits is the session's *other*
+clicks — events are applied one at a time, in order, so a second click
+lands after the first handler ends, and a second click on the running
+handler is dropped as the double-click it is. `crow check` points this out
+— the *blocking in view* finding — because when the reader should be free
+to keep clicking while the work runs, there is a verb for it.
 
 ## later: the kitchen
 
 `later[fn]` runs a named fn off the loop and returns immediately. The fn
 does its slow work in the background; the reactive state it writes is
-applied back on the loop, one schedule at a time, and every client
-re-renders when the results land:
+applied back on the loop, one schedule at a time, and the page re-renders
+when the results land:
 
 ```crow,ignore
 fn refresh[]
@@ -52,11 +98,12 @@ fn refresh[]
 ```
 
 The click now takes a millisecond: `refresh` sets `status`, schedules
-`load_book`, and returns — your screen shows "loading" instantly and
-everyone else's app stays live. Two seconds later the work finishes,
-`status` updates, and every connected screen re-renders. Think of the
-loop as a waiter and `later` as handing the slow order to the kitchen: the
-waiter keeps waiting tables, and the dish comes out when it's ready.
+`load_book`, and returns — your screen shows "loading" instantly, and the
+reader can go on clicking. Two seconds later the work finishes, `status`
+updates, and the page re-renders. Think of the loop as a waiter and
+`later` as handing the slow order to the kitchen: the waiter keeps waiting
+tables, and the dish comes out when it's ready. The schedule is made when
+`refresh` commits — a handler that stops never leaves work running.
 
 Three rules make this safe, and you get all of them without writing
 anything:
@@ -68,9 +115,9 @@ anything:
 2. **Impatience is harmless.** A second `later[load_book]` while the
    first is still running is skipped. Hammering the refresh button cannot
    stack five queries.
-3. **Failure is a value.** If a query inside the fn fails, the state var
-   it writes holds an ordinary error value, and a view can render its
-   `.reason` — the same error story as everywhere else in Crow.
+3. **Failure stops it cleanly.** If a query inside the fn fails at a
+   decision, the fn stops as a handler does: nothing it wrote lands, the
+   page keeps its last good values, and the notice says why.
 
 For the impatient-user experience there's `running[fn]`, true while a
 schedule is in flight — disable the button, show a spinner:
@@ -157,8 +204,8 @@ flagged with the path, and the interactive loop can apply the fix for you:
 
 ```text
 [1/1] scanner.co:14 in refresh
-      'refresh' can freeze every connected client — sleep[] blocks the
-      live loop (refresh → score_board → sleep)
+      'refresh' holds the session's other clicks until it ends — sleep[]
+      blocks it (refresh → score_board → sleep)
       fix: schedule it off the loop: later[score_board]
 
       enter = recheck, s = skip, f = fix (later[]), q = quit > f

@@ -17,6 +17,10 @@ mod lexer;
 mod lower;
 mod parallel;
 mod parser;
+mod rust_names;
+mod served;
+mod served_parity;
+mod sql_types;
 mod token;
 mod transpiler;
 mod type_infer;
@@ -210,6 +214,8 @@ fn main() {
         "test" => {
             if args.iter().any(|a| a == "--parity") {
                 cmd_test_parity();
+            } else if args.iter().any(|a| a == "--served") {
+                process::exit(served_parity::run());
             } else if args.iter().any(|a| a == "--bench") {
                 cmd_test_bench();
             } else if args.iter().any(|a| a == "--book") {
@@ -301,6 +307,7 @@ fn print_usage() {
     eprintln!("  crow fmt --fix-views      migrate ui-building fns to view declarations");
     eprintln!("  crow launch 4 file.co  build + run on 4 distributed processes");
     eprintln!("  crow test --parity     run tests/parity/ in both modes, diff output");
+    eprintln!("  crow test --served     serve tests/served/ and the example apps in both modes, drive each page, compare");
     eprintln!("  crow test --book       execute every code block of the book in both modes");
     eprintln!("  crow test --docs       check the docs cover every compiler name (and nothing more)");
     eprintln!("  crow check --verbose   verbose output with purity and snapshot details");
@@ -329,6 +336,13 @@ fn book_pages(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
         }
     }
     out
+}
+
+/// Write a book block to its worker's file, or say why it cannot be.
+fn write_book_block(dir: &std::path::Path, code: &str) -> Result<std::path::PathBuf, String> {
+    let path = dir.join("block.co");
+    std::fs::write(&path, code).map_err(|e| format!("cannot write {}: {}", path.display(), e))?;
+    Ok(path)
 }
 
 fn cmd_test_book() {
@@ -420,8 +434,13 @@ fn cmd_test_book() {
     // this harness slow — and reported in book order.
     // The root is persistent so each worker's cargo cache survives between
     // runs (a cold cache is a minute of dependency builds per worker); a lock
-    // file refuses a second run while one is in progress.
-    let root = std::env::temp_dir().join("crow_book_test");
+    // file refuses a second run while one is in progress. It lives under the
+    // project's `target/`, not the system's temp directory: macOS deletes
+    // temp files nobody has read for three days, which takes a build
+    // script's output (libsqlite3-sys's `bindgen.rs`) from under a cache
+    // cargo still believes is fresh, and every block that links it then
+    // fails to build.
+    let root = std::env::current_dir().unwrap_or_default().join("target").join("crow_book_test");
     let _ = std::fs::create_dir_all(&root);
     let lock = root.join("lock");
     if let Ok(pid) = std::fs::read_to_string(&lock) {
@@ -451,8 +470,12 @@ fn cmd_test_book() {
             }
         };
         let label = format!("{}:{}", b.file, b.line);
-        let path = dir.join("block.co");
-        let _ = std::fs::write(&path, &b.code);
+        // a block that cannot be written fails: running the last block's
+        // file in its place ran a page that serves, and the suite hung
+        let path = match write_book_block(dir, &b.code) {
+            Ok(p) => p,
+            Err(e) => return (false, format!("  FAIL  {} ({})\n", label, e)),
+        };
         match b.mode {
             Mode::Ignore => (true, String::new()),
             Mode::Run => {
@@ -648,9 +671,18 @@ fn cmd_test_docs() {
         "stream",                                           // handler contract undocumented
         "app", "click",                                     // test-harness names (used in test blocks, not run blocks)
     ];
+    // names a program reads as values, not calls: used when read at all
+    const READ_AS_VALUES: &[&str] = &["reader"];
+    let read_as_value = |n: &str| {
+        blocks.match_indices(n).any(|(i, _)| {
+            let before = blocks[..i].chars().next_back().map_or(true, |c| !(c.is_alphanumeric() || c == '_'));
+            let after = blocks[i + n.len()..].chars().next().map_or(true, |c| !(c.is_alphanumeric() || c == '_'));
+            before && after
+        })
+    };
     for (table, names) in &tables {
         let uncalled: Vec<&str> = names.iter().copied()
-            .filter(|n| !SPEC_ONLY.contains(n) && !blocks.contains(&format!("{}[", n)))
+            .filter(|n| !SPEC_ONLY.contains(n) && !blocks.contains(&format!("{}[", n)) && !(READ_AS_VALUES.contains(n) && read_as_value(n)))
             .collect();
         if uncalled.is_empty() {
             println!("  ok    {:10} every name is used in a verified block", table);
@@ -1750,13 +1782,31 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     // Type inference and validation. The compiler may ask the program's
     // databases what each literal query returns, so frame cells are typed
     // natively.
-    let ctx = infer_and_validate(&stmts, std::env::var("CROW_NO_DESCRIBE").is_err()).unwrap_or_else(|e| {
+    let ctx = infer_and_validate(&stmts, describing()).unwrap_or_else(|e| {
         eprintln!("{}", refine_error_lines(&source, &e));
         process::exit(1);
     });
+    // A name Rust reserves (`move`, `impl`) is a Crow name like any other:
+    // the compiled program renames each one it declares, after the gate has
+    // spoken in the program's own names, and prints the program's name
+    // wherever one reaches the reader
+    let (stmts, ctx, shown) = match rust_names::rename_rust_keywords(&stmts) {
+        None => (stmts, ctx, std::collections::BTreeMap::new()),
+        Some((renamed, shown)) => {
+            let ctx = infer_and_validate(&renamed, describing()).unwrap_or_else(|e| {
+                eprintln!("{}", refine_error_lines(&source, &e));
+                process::exit(1);
+            });
+            (renamed, ctx, shown)
+        }
+    };
+    for note in &ctx.describe_notes {
+        eprintln!("{}", note);
+    }
 
     // Transpile to Rust
     let mut transpiler = transpiler::Transpiler::new(ctx);
+    transpiler.set_shown_names(shown);
     let entry_file = std::path::Path::new(entry).file_name()
         .map(|f| f.to_string_lossy().to_string())
         .unwrap_or_else(|| entry.to_string());
@@ -1775,7 +1825,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     });
 
     // Write Cargo.toml
-    let project_name = strip_source_ext(entry).replace('/', "_");
+    let project_name = package_name(entry);
     let mut dep_list: Vec<String> = Vec::new();
     if transpiler.needs_rayon {
         dep_list.push("rayon = \"1.11\"".to_string());
@@ -1793,10 +1843,6 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     }
     if transpiler.needs_regex {
         dep_list.push("regex = \"1\"".to_string());
-    }
-    if transpiler.needs_sha2 {
-        dep_list.push("sha2 = \"0.10\"".to_string());
-        dep_list.push("md-5 = \"0.10\"".to_string());
     }
     if transpiler.needs_chrono {
         dep_list.push("chrono = \"0.4\"".to_string());
@@ -1838,10 +1884,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     } else {
         format!("\n[dependencies]\n{}\n", dep_list.join("\n"))
     };
-    let cargo_toml = format!(
-        "[workspace]\n\n[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{}\n[profile.release]\nopt-level = 3\nlto = true\n",
-        project_name, deps
-    );
+    let cargo_toml = generated_cargo_toml(&project_name, &deps);
     std::fs::write(build_dir.join("Cargo.toml"), &cargo_toml).unwrap_or_else(|e| {
         eprintln!("error writing Cargo.toml: {}", e);
         process::exit(1);
@@ -2174,7 +2217,7 @@ fn cmd_build() {
     // (docs/ir-design.md); nothing is compiled
     if args.iter().any(|a| a == "--ir") {
         let file = args.iter().skip(2).find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| parse_crowfile().entry);
-        match ir_of_file(&file, std::env::var("CROW_NO_DESCRIBE").is_err()) {
+        match ir_of_file(&file, describing()) {
             Ok(text) => print!("{}", text),
             Err(e) => {
                 eprintln!("{}", e);
@@ -2436,6 +2479,11 @@ fn cmd_book() {
                 body.extend_from_slice(&tmp[..n]);
             }
             let path = target.split('?').next().unwrap_or("/").to_string();
+            // the runner executes code: only the book's own page reaches it
+            if !book_request_allowed(&head, &method, port) {
+                respond(&mut stream, "403 Forbidden", "text/plain; charset=utf-8", b"forbidden: the book answers its own page on this machine");
+                return;
+            }
 
             if method == "POST" && path == "/run" {
                 let req: serde_json::Value = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
@@ -2538,6 +2586,41 @@ fn cmd_book() {
             }
         });
     }
+}
+
+/// A request the book server may act on. It must name this machine as its
+/// host — a page on another site cannot, even through a DNS name it points
+/// here (rebinding) — and a POST must come from the book's own page, as
+/// JSON. A page elsewhere can send a simple POST to localhost without
+/// asking the browser; a JSON body makes the browser ask first, and nothing
+/// here says yes. The runner executes code, so a page you visit must never
+/// reach it.
+fn book_request_allowed(head: &str, method: &str, port: u16) -> bool {
+    let header = |name: &str| {
+        head.lines()
+            .skip(1)
+            .filter_map(|l| l.split_once(':'))
+            .find(|(k, _)| k.trim().eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.trim().to_string())
+    };
+    let this_machine = |authority: &str| {
+        [format!("127.0.0.1:{}", port), format!("localhost:{}", port), format!("[::1]:{}", port)]
+            .iter()
+            .any(|a| a.eq_ignore_ascii_case(authority))
+    };
+    if !header("host").map(|h| this_machine(&h)).unwrap_or(false) {
+        return false;
+    }
+    if method == "POST" {
+        let own_page = header("origin")
+            .and_then(|o| o.strip_prefix("http://").map(|a| this_machine(a)))
+            .unwrap_or(false);
+        let json = header("content-type")
+            .map(|c| c.to_ascii_lowercase().starts_with("application/json"))
+            .unwrap_or(false);
+        return own_page && json;
+    }
+    true
 }
 
 /// The port an entry serves on: the first number in `serve[...]`.
@@ -2885,7 +2968,7 @@ fn cmd_test_blocks(filename: &str) {
     };
     // The validator gates the harness as it gates run and build: a part
     // whose tests pass is a part the program accepts
-    if let Err(e) = infer_and_validate(&stmts, false) {
+    if let Err(e) = infer_and_validate(&stmts, describing()) {
         eprintln!("{}", refine_error_lines(&source, &e));
         process::exit(1);
     }
@@ -2921,7 +3004,7 @@ fn derive_app(filename: &str) -> Result<(baseline::Artifacts, Vec<baseline::Rule
     let mut visited = std::collections::HashSet::new();
     let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
     let lowered = lower::lower_program(&stmts).map_err(|e| format!("error: {}", e))?;
-    let ctx = infer_and_validate(&lowered, false).map_err(|e| refine_error_lines(&source, &e))?;
+    let ctx = infer_and_validate(&lowered, describing()).map_err(|e| refine_error_lines(&source, &e))?;
     let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
     let (artifacts, rules) = baseline::derive_artifacts(&lowered, &ctx, &parts, filename);
     let (changes, summary) = match baseline::load(filename) {
@@ -2985,7 +3068,14 @@ fn strip_source_ext(path: &str) -> &str {
     path.strip_suffix(".co").or_else(|| path.strip_suffix(".crow")).unwrap_or(path)
 }
 fn bytecode_path(entry: &str) -> String { format!("{}.coc", strip_source_ext(entry)) }
+/// The source a path names: a bytecode path's `.co` (or legacy `.crow`)
+/// beside it; any other path is the source already. (After the `.co`
+/// rename it appended `.co` to a source too, and every interpreter trace
+/// named `main.co` where the compiled program names `main`.)
 fn source_of_bytecode(path: &str) -> String {
+    if !is_bytecode(path) {
+        return path.to_string();
+    }
     let base = path.strip_suffix(".coc").or_else(|| path.strip_suffix(".crowc")).unwrap_or(path);
     let co = format!("{}.co", base);
     if std::path::Path::new(&co).exists() || !std::path::Path::new(&format!("{}.crow", base)).exists() { co } else { format!("{}.crow", base) }
@@ -3019,6 +3109,8 @@ mod extension_tests {
         assert_eq!(bytecode_path("dir/a.co"), "dir/a.coc");
         assert_eq!(source_of_bytecode("zz_no_such_file.coc"), "zz_no_such_file.co");
         assert_eq!(source_of_bytecode("zz_no_such_file.crowc"), "zz_no_such_file.co");
+        assert_eq!(source_of_bytecode("main.co"), "main.co");
+        assert_eq!(source_of_bytecode("dir/a.crow"), "dir/a.crow");
     }
 }
 
@@ -3032,6 +3124,9 @@ fn ir_of_file(entry: &str, describe: bool) -> Result<String, String> {
     let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
     let stmts = lower::lower_program(&stmts)?;
     let mut ctx = infer_and_validate(&stmts, describe)?;
+    for note in &ctx.describe_notes {
+        eprintln!("{}", note);
+    }
     let name = std::path::Path::new(entry)
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
@@ -3064,13 +3159,82 @@ mod ir_tests {
 /// Type inference and validation of an expanded, lowered program: the gate
 /// every pipeline passes — run, run -i, test and check — so the two modes
 /// and the tools refuse the same programs with the same message.
+/// The manifest of a program's build crate. A dev build (`crow run`, the
+/// runners) optimizes the runtime crates and libraries a little and leaves
+/// the program itself unoptimized, so a rebuild stays fast while a page's
+/// render machinery runs near release speed; a release build (`crow
+/// build`) optimizes everything.
+/// The generated crate's name for a program's path: cargo takes letters,
+/// digits, `_` and `-`, and not a leading digit — `01_counter.co` builds as
+/// `app_01_counter`.
+fn package_name(entry: &str) -> String {
+    let flat: String = strip_source_ext(entry).chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect();
+    if flat.chars().next().map_or(true, |c| c.is_ascii_digit() || c == '-') {
+        format!("app_{}", flat)
+    } else {
+        flat
+    }
+}
+
+fn generated_cargo_toml(project_name: &str, deps: &str) -> String {
+    format!(
+        "[workspace]\n\n[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{}\n[profile.dev.package.\"*\"]\nopt-level = 1\n\n[profile.release]\nopt-level = 3\nlto = true\n",
+        project_name, deps
+    )
+}
+
+/// Whether the gate asks the program's databases what its query literals
+/// return. Every pipeline — run, run -i, test, check, the book, each part
+/// alone — passes the same answer, so a program refused for its columns'
+/// types is refused by all of them; `CROW_NO_DESCRIBE` turns it off.
+fn describing() -> bool {
+    std::env::var("CROW_NO_DESCRIBE").is_err()
+}
+
 fn infer_and_validate(lowered: &[ast::Stmt], describe: bool) -> Result<type_infer::TypeContext, String> {
     let mut ctx = type_infer::TypeContext::new();
     ctx.describe_queries = describe;
     ctx.infer_program(lowered);
-    let mut v = validator::Validator::new(&ctx);
-    v.validate(lowered)?;
-    Ok(ctx)
+    let refused = {
+        let mut v = validator::Validator::new(&ctx);
+        match v.validate(lowered) {
+            Ok(()) => None,
+            Err(_) => Some(attribute_to_parts(&v.errors_with_owners())),
+        }
+    };
+    match refused {
+        Some(e) => Err(e),
+        None => Ok(ctx),
+    }
+}
+
+/// An error found in an imported part belongs to that part: it is named by
+/// the part's file and its line refined against the part's own text. The
+/// entry's errors are left as they are, for the caller to refine against
+/// the entry.
+fn attribute_to_parts(errors: &[(String, Option<String>)]) -> String {
+    let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
+    let files = EXPANSION_FILES.with(|f| f.borrow().clone());
+    errors
+        .iter()
+        .map(|(msg, owner)| {
+            let prefix = owner.as_ref().and_then(|o| {
+                parts.keys().filter(|prefix| o.starts_with(prefix.as_str())).max_by_key(|prefix| prefix.len())
+            });
+            match prefix {
+                Some(prefix) => {
+                    let refined = files
+                        .get(prefix)
+                        .and_then(|path| std::fs::read_to_string(path).ok())
+                        .map(|source| refine_error_lines(&source, msg))
+                        .unwrap_or_else(|| msg.clone());
+                    format!("{}: {}", parts[prefix], refined)
+                }
+                None => msg.clone(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn run_check_pipeline(filename: &str) -> checker::CheckResult {
@@ -3092,7 +3256,7 @@ fn run_check_pipeline(filename: &str) -> checker::CheckResult {
     // Validated before it is checked: `crow check` refuses what `crow run`
     // refuses, with the same message
     let (lowered, lctx) = match lower::lower_program(&stmts) {
-        Ok(lowered) => match infer_and_validate(&lowered, false) {
+        Ok(lowered) => match infer_and_validate(&lowered, describing()) {
             Ok(lctx) => (lowered, lctx),
             Err(e) => {
                 eprintln!("{}", refine_error_lines(&source, &e));
@@ -3197,6 +3361,9 @@ fn print_check_summary(result: &checker::CheckResult, verbose: bool) {
 fn format_location(filename: &str, issue: &checker::Issue, fn_lines: &std::collections::BTreeMap<String, usize>) -> String {
     let func = issue.func();
     let line = issue.line();
+    // a part's declaration is on a line of the part's own file
+    let part = file_of_declaration(func);
+    let filename = part.as_deref().unwrap_or(filename);
 
     // For issues with a direct line number, use that
     if line > 0 {
@@ -3217,6 +3384,18 @@ fn format_location(filename: &str, issue: &checker::Issue, fn_lines: &std::colle
     }
 
     filename.to_string()
+}
+
+/// The part file a declaration came from, by its module prefix (the
+/// longest that fits); none for the entry file's own.
+fn file_of_declaration(name: &str) -> Option<String> {
+    EXPANSION_PARTS.with(|p| {
+        p.borrow()
+            .iter()
+            .filter(|(prefix, _)| name.starts_with(prefix.as_str()))
+            .max_by_key(|(prefix, _)| prefix.len())
+            .map(|(_, file)| file.clone())
+    })
 }
 
 /// `crow check --show`: the app as a tree; `--show name`: one declaration's
@@ -3607,13 +3786,14 @@ fn cmd_run_file_interpreted(filename: &str) {
             process::exit(1);
         }
     };
-    let mut ctx = match infer_and_validate(&lowered, false) {
+    let mut ctx = match infer_and_validate(&lowered, describing()) {
         Ok(ctx) => ctx,
         Err(e) => {
             eprintln!("{}", refine_error_lines(&source, &e));
             process::exit(1);
         }
     };
+    let serves = serve_line(&lowered).is_some();
     // then the one typed form (ir-design.md), walked by the interpreter
     let base = source_of_bytecode(filename);
     let name = std::path::Path::new(&base)
@@ -3624,10 +3804,43 @@ fn cmd_run_file_interpreted(filename: &str) {
         eprintln!("{}", e);
         process::exit(1);
     });
+    if serves {
+        // a program that serves pages: its main runs, then the interpreter
+        // renders and handles for the live runtime's sessions
+        let template = match ir_interp::run_to_serve(&program, &ctx.registry, &base) {
+            Ok(it) => it,
+            Err(e) => {
+                eprintln!("runtime error: {}", e);
+                process::exit(1);
+            }
+        };
+        if let Err(e) = served::serve(template) {
+            eprintln!("error: {}", e);
+            process::exit(1);
+        }
+        return;
+    }
     if let Err(e) = ir_interp::run(&program, &ctx.registry, &base) {
         eprintln!("runtime error: {}", e);
         process::exit(1);
     }
+}
+
+/// The line of a program's top-level `serve[…]`, when it serves pages.
+fn serve_line(stmts: &[ast::Stmt]) -> Option<usize> {
+    let mut line = 0;
+    for s in stmts {
+        match s {
+            ast::Stmt::Line(n) => line = *n,
+            ast::Stmt::ExprStmt(ast::Expr::Call { callee, .. }) => match callee.as_ref() {
+                ast::Expr::Ident(n) if n == "serve" => return Some(line),
+                ast::Expr::FieldAccess { field, .. } if field == "serve" => return Some(line),
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Lenient lookup of the optional `db = 'url'` variable in the crowfile.
@@ -3918,6 +4131,10 @@ thread_local! {
     /// module prefix (`sim_session_`) → the part's project-relative file
     static EXPANSION_PARTS: std::cell::RefCell<std::collections::BTreeMap<String, String>> =
         std::cell::RefCell::new(std::collections::BTreeMap::new());
+    /// module prefix → the part's file on disk, read back to refine an
+    /// error's line against the part's own text
+    static EXPANSION_FILES: std::cell::RefCell<std::collections::BTreeMap<String, std::path::PathBuf>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
 }
 
 /// Validate one part as the entry of its own program: parsed, its imports
@@ -3942,15 +4159,17 @@ fn validate_part_alone(path: &std::path::Path) -> Result<(), String> {
     let expanded = expand_module_imports(&stmts, &dir, &mut visited);
     let lowered = lower::lower_program(&expanded).map_err(|e| format!("{}: error: {}", rel, e))?;
     let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
-    infer_and_validate(&lowered, false).map(|_| ()).map_err(|e| {
+    infer_and_validate(&lowered, describing()).map(|_| ()).map_err(|e| {
         refine_error_lines(&source, &e)
             .lines()
             .map(|l| {
-                // an error inside an imported part's function belongs to that part
-                let owner = l.split_once("in ").and_then(|(_, rest)| rest.split(':').next()).and_then(|f| {
-                    parts.iter().filter(|(prefix, _)| f.starts_with(prefix.as_str())).max_by_key(|(prefix, _)| prefix.len()).map(|(_, file)| file.clone())
-                });
-                format!("{}: {}", owner.unwrap_or_else(|| rel.clone()), l)
+                // the gate names an imported part's errors by its file; the
+                // rest are this part's own
+                if parts.values().any(|file| l.starts_with(&format!("{}: ", file))) {
+                    l.to_string()
+                } else {
+                    format!("{}: {}", rel, l)
+                }
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -4059,6 +4278,9 @@ fn expand_into(
             let root = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
             let rel = canon.strip_prefix(&root).map(|p| p.display().to_string()).unwrap_or_else(|_| file_path.display().to_string());
             p.borrow_mut().insert(format!("{}_", prefix), rel);
+        });
+        EXPANSION_FILES.with(|f| {
+            f.borrow_mut().insert(format!("{}_", prefix), canon.clone());
         });
         // Collect the module's own top-level names, then rewrite both the
         // declarations AND every reference inside module bodies — a module
@@ -4422,11 +4644,55 @@ mod book_port_tests {
     use super::*;
 
     /// An app's book lives next to the app: its serve port plus one.
+    /// The book's runner executes code, and a page on any site could reach
+    /// it: a simple POST from `https://evil.example` ran a program while
+    /// `crow book` served. Only the book's own page, on this machine, as
+    /// JSON, is answered; a host name other than this machine is refused
+    /// for every request (DNS rebinding).
+    #[test]
+    fn only_the_books_own_page_reaches_the_runner() {
+        let req = |method: &str, headers: &[(&str, &str)]| {
+            let mut head = format!("{} /run HTTP/1.1\r\n", method);
+            for (k, v) in headers {
+                head.push_str(&format!("{}: {}\r\n", k, v));
+            }
+            head + "\r\n"
+        };
+        let own = [("Host", "localhost:3008"), ("Origin", "http://localhost:3008"), ("Content-Type", "application/json")];
+        assert!(book_request_allowed(&req("POST", &own), "POST", 3008));
+        assert!(book_request_allowed(&req("POST", &[("Host", "127.0.0.1:3008"), ("Origin", "http://127.0.0.1:3008"), ("Content-Type", "application/json")]), "POST", 3008));
+        assert!(!book_request_allowed(&req("POST", &[("Host", "localhost:3008"), ("Origin", "https://evil.example"), ("Content-Type", "text/plain")]), "POST", 3008), "a page on another site");
+        assert!(!book_request_allowed(&req("POST", &[("Host", "localhost:3008"), ("Origin", "http://localhost:3008"), ("Content-Type", "text/plain")]), "POST", 3008), "a simple POST, which a browser sends from anywhere without asking");
+        assert!(!book_request_allowed(&req("POST", &[("Host", "localhost:3008"), ("Content-Type", "application/json")]), "POST", 3008), "no origin");
+        assert!(book_request_allowed(&req("GET", &[("Host", "localhost:3008")]), "GET", 3008));
+        assert!(!book_request_allowed(&req("GET", &[("Host", "rebound.example:3008")]), "GET", 3008), "a name that points here from elsewhere");
+        assert!(!book_request_allowed(&req("POST", &[("Host", "localhost:3009"), ("Origin", "http://localhost:3009"), ("Content-Type", "application/json")]), "POST", 3008), "another port's page");
+    }
+
     #[test]
     fn the_books_port_is_next_to_the_apps() {
         assert_eq!(serve_port_of("use web, ui\nserve[3100, refresh = 1, wide = true]\npage['/', v]\n"), Some(3100));
         assert_eq!(serve_port_of("--- serve[9999] in a comment does not count\nserve[ 3000 ]\n"), Some(3000));
         assert_eq!(serve_port_of("use web\npage['/', v]\n"), None);
+    }
+}
+
+#[cfg(test)]
+mod build_crate_tests {
+    use super::*;
+
+    /// A dev build (`crow run`) optimizes the runtime crates and libraries,
+    /// not the program: a page's render machinery ran unoptimized under
+    /// `crow run`, while a rebuild compiles only the program
+    #[test]
+    fn a_dev_build_optimizes_the_runtime_crates() {
+        assert_eq!(package_name("01_counter.co"), "app_01_counter", "a leading digit is not a crate name");
+        assert_eq!(package_name("tests/parity/50_ok.co"), "tests_parity_50_ok");
+        assert_eq!(package_name("my app.co"), "my_app");
+        let toml = generated_cargo_toml("main", "[dependencies]\n");
+        assert!(toml.contains("[profile.dev.package.\"*\"]\nopt-level = 1"), "{}", toml);
+        assert!(toml.contains("[profile.release]\nopt-level = 3\nlto = true"), "{}", toml);
+        assert!(toml.starts_with("[workspace]\n\n[package]\nname = \"main\""), "{}", toml);
     }
 }
 
@@ -4447,6 +4713,39 @@ mod validation_gate_tests {
         let lowered = lower::lower_program(&build(fine).unwrap()).unwrap();
         assert!(infer_and_validate(&lowered, false).is_ok());
     }
+
+    /// `crow run -i` serves a program that calls `serve`: its main runs and
+    /// records the page and the serve it asks for, which the live runtime
+    /// then serves with the interpreter rendering. A script has no `serve`.
+    /// A book block the runner cannot write is a failure with the reason,
+    /// never a run of whatever the worker's file held before
+    #[test]
+    fn a_book_block_that_cannot_be_written_fails() {
+        let dir = std::env::temp_dir().join(format!("crow_book_block_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let e = write_book_block(&dir, "log['x']\n").unwrap_err();
+        assert!(e.contains("cannot write"), "{}", e);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = write_book_block(&dir, "log['x']\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "log['x']\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_interpreter_serves_what_the_program_asks_for() {
+        let app = "use web, ui\nn = 1\nview render[]\n    return p['`n`']\n\nserve[3100, refresh = 1, keep = true]\npage['/', render, url = ['n']]\n";
+        let lowered = lower::lower_program(&build(app).unwrap()).unwrap();
+        assert_eq!(serve_line(&lowered), Some(6));
+        let script = lower::lower_program(&build("x = 1\nlog[x]\n").unwrap()).unwrap();
+        assert_eq!(serve_line(&script), None);
+        // main runs and records the page and the serve it asks for
+        let (program, ctx) = ir_interp::prepare(&build(app).unwrap(), "app").unwrap();
+        let it = ir_interp::run_to_serve(&program, &ctx.registry, "app.co").unwrap();
+        let (path, view, url) = it.page_config.clone().expect("page recorded");
+        assert_eq!((path.as_str(), view.as_str(), url), ("/", "render", vec!["n".to_string()]));
+        let serve = it.serve_config.clone().expect("serve recorded");
+        assert_eq!(serve.len(), 9, "the lowered serve: port, refresh, budget, theme, density, accent, wide, keep, uploads");
+    }
 }
 
 #[cfg(test)]
@@ -4466,6 +4765,55 @@ mod module_parts_tests {
         let path = std::fs::canonicalize(dir.join("sim/clock.co")).unwrap();
         let err = validate_part_alone(&path).unwrap_err();
         assert!(err.contains("sim/clock.co: line 5: 'progress' is a ui builtin"), "{}", err);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The gate names an error found in an imported part by the part's
+    /// file, its line refined against the part's own text; the entry's own
+    /// errors are left for the caller to refine against the entry. (A
+    /// thirteen-file app used to be told only "line 60".)
+    #[test]
+    fn an_error_in_a_part_names_the_parts_file() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_attr_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sim")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(dir.join("sim/part.co"), "use web, ui\n\nn = 3\n\nderive d\n    return n * 2\n\nview panel[]\n    return p['`d`']\n").unwrap();
+        let stmts = build("use web, ui\nuse sim.part\n\nview render[]\n    return part.panel[]\n\npage['/', render]\n").unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let _ = expand_module_imports(&stmts, &dir, &mut visited);
+        let text = attribute_to_parts(&[
+            ("line 6: boom".to_string(), Some("sim_part_d".to_string())),
+            ("line 4: bang".to_string(), Some("render".to_string())),
+        ]);
+        assert_eq!(text, "sim/part.co: line 6: boom\nline 4: bang");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Every gate types a query's columns as the build does: a part whose
+    /// derivation gives a local an integer cell and then text is refused
+    /// when validated alone, as `crow test` and `crow check` see it — they
+    /// used to validate without asking the database, and passed what `crow
+    /// build` refused (finch's session part). Asking never creates a SQLite
+    /// file that is not there: only the program makes its database.
+    #[test]
+    fn every_gate_types_query_columns_as_the_build_does() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_describe_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sim")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        let url = format!("sqlite://{}", dir.join("book.db").display());
+        crow_db::connect(&url, Some(1)).unwrap().exec("CREATE TABLE nums (n INTEGER)", &[]).unwrap();
+        std::fs::write(dir.join("sim/rows.co"), format!("use web, ui, db\n\nbook = db.connect['{}']\n\nderive first\n    r = query[book, 'SELECT n FROM nums']\n    x = r.n[0]\n    x = 'a'\n    return x\n\nview panel[]\n    return p['`first`']\n", url)).unwrap();
+        let path = std::fs::canonicalize(dir.join("sim/rows.co")).unwrap();
+        let err = validate_part_alone(&path).unwrap_err();
+        assert!(err.contains("sim/rows.co: line 8: cannot reassign 'x' from int to str"), "{}", err);
+
+        let missing = dir.join("missing.db");
+        std::fs::write(dir.join("sim/fresh.co"), format!("use web, ui, db\n\nbook = db.connect['sqlite://{}']\n\nderive first\n    return query[book, 'SELECT n FROM nums']\n\nview panel[]\n    return table[first]\n", missing.display())).unwrap();
+        let path = std::fs::canonicalize(dir.join("sim/fresh.co")).unwrap();
+        assert!(validate_part_alone(&path).is_ok());
+        assert!(!missing.exists(), "describing created the database file");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

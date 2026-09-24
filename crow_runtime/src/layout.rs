@@ -222,8 +222,58 @@ pub fn render(tag: &str, attrs: &[(String, String)]) -> Rendered {
 /// sending the row's key to its handler; `hide` keeps columns out of the
 /// table while they stay in the frame (a key column, a helper). A numeric
 /// key travels as a number, a text key as a string.
-pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: Option<&str>, mark: Option<&str>, delta: &[String], actions: &[(String, String)], hide: &[String]) -> String {
+/// A click that asks first (`confirm = 'text'`): the element offers the
+/// question, not the handler — `__ask` carries the handler, the arguments
+/// its click froze and the text — and the runtime's dialog offers the
+/// handler only while it is open, so the answer cannot be skipped. Both
+/// modes wire an element through here.
+pub fn confirm_wiring(events: Vec<(String, String)>, confirm: Option<&str>) -> Vec<(String, String)> {
+    let Some(text) = confirm else { return events };
+    let Some(handler) = events.iter().find(|(k, _)| k == "data-crow-click").map(|(_, v)| v.clone()) else { return events };
+    let args = events.iter().find(|(k, _)| k == "data-crow-args").map(|(_, v)| v.clone());
+    let mut out: Vec<(String, String)> = events.into_iter().filter(|(k, _)| k != "data-crow-click" && k != "data-crow-args").collect();
+    out.push(("data-crow-click".to_string(), "__ask".to_string()));
+    out.push(("data-crow-args".to_string(), ask_args(&handler, args.as_deref(), text)));
+    out
+}
+
+/// The question a confirmed click sends: the handler, its frozen arguments
+/// (as the text its click would have sent) and what to ask.
+pub fn ask_args(handler: &str, args: Option<&str>, text: &str) -> String {
+    serde_json::json!([handler, args, text]).to_string()
+}
+
+/// `table[frame, page = n]`: the page size, which paged table of the render
+/// this is, and the page its session is on (clamped to the frame's pages).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Paging {
+    pub size: usize,
+    pub index: usize,
+    pub at: usize,
+}
+
+/// The most rows a table draws without `page` — as a chart has a point
+/// budget, never a silent cut.
+pub const TABLE_BUDGET: usize = 1000;
+
+pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: Option<&str>, mark: Option<&str>, delta: &[String], actions: &[(String, String)], hide: &[String], confirm: &[(String, String)], page: Option<Paging>) -> String {
     use crate::frame::Column;
+    let total = f.nrows();
+    if page.is_none() && total > TABLE_BUDGET {
+        return format!(
+            "<tbody><tr><td class=\"crow-refused\">table: {} rows — a table shows at most {} at a time: table[frame, page = 50]</td></tr></tbody>",
+            total, TABLE_BUDGET
+        );
+    }
+    // the rows this page shows
+    let (first, last) = match page {
+        Some(p) => {
+            let pages = total.div_ceil(p.size.max(1)).max(1);
+            let at = p.at.min(pages - 1);
+            (at * p.size, ((at + 1) * p.size).min(total))
+        }
+        None => (0, total),
+    };
     let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
     let numeric: Vec<bool> = f.data.iter().map(|c| matches!(c.as_ref(), Column::Int(_) | Column::Float(_))).collect();
     let is_delta: Vec<bool> = f.columns.iter().map(|c| delta.iter().any(|d| d == c)).collect();
@@ -241,7 +291,12 @@ pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: O
         let cell = f.data[key_i].fmt_cell(r, f.validity[key_i][r]);
         if numeric[key_i] && f.validity[key_i][r] { format!("[{}]", cell.trim()) } else { format!("[&quot;{}&quot;]", esc(&cell.replace('"', "\\\""))) }
     };
-    for r in 0..f.nrows() {
+    // the same arguments as the page sends them back, before escaping
+    let raw_key_json = |r: usize| -> String {
+        let cell = f.data[key_i].fmt_cell(r, f.validity[key_i][r]);
+        if numeric[key_i] && f.validity[key_i][r] { format!("[{}]", cell.trim()) } else { serde_json::json!([cell]).to_string() }
+    };
+    for r in first..last {
         let mut tr = String::from("<tr");
         if let Some(i) = mark_i {
             if f.data[i].truthy(r) && f.validity[i][r] { tr.push_str(" class=\"marked\""); }
@@ -270,7 +325,15 @@ pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: O
         if !actions.is_empty() && f.ncols() > 0 {
             tr.push_str("<td class=\"actions\">");
             for (label, h) in actions {
-                tr.push_str(&format!("<button data-crow-click=\"{}\" data-crow-args=\"{}\">{}</button>", esc(h), key_json(r), esc(label)));
+                match confirm.iter().find(|(l, _)| l == label) {
+                    // an action that asks first offers the question
+                    Some((_, text)) => tr.push_str(&format!(
+                        "<button data-crow-click=\"__ask\" data-crow-args=\"{}\">{}</button>",
+                        esc(&ask_args(h, Some(&raw_key_json(r)), text)),
+                        esc(label)
+                    )),
+                    None => tr.push_str(&format!("<button data-crow-click=\"{}\" data-crow-args=\"{}\">{}</button>", esc(h), key_json(r), esc(label))),
+                }
             }
             tr.push_str("</td>");
         }
@@ -278,6 +341,23 @@ pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: O
         out.push_str(&tr);
     }
     out.push_str("</tbody>");
+    // the pager: which rows, and the pages either side
+    if let Some(p) = page {
+        let at = first / p.size.max(1);
+        let span = shown.len() + usize::from(!actions.is_empty());
+        let step = |label: &str, to: Option<usize>| match to {
+            Some(n) => format!("<button data-crow-args=\"[{},{}]\" data-crow-click=\"__page\">{}</button>", p.index, n, label),
+            None => format!("<button disabled=\"\">{}</button>", label),
+        };
+        let shown_rows = if total == 0 { "0 of 0".to_string() } else { format!("{}–{} of {}", first + 1, last, total) };
+        out.push_str(&format!(
+            "<tfoot><tr><td class=\"crow-pager\" colspan=\"{}\">{}<span>{}</span>{}</td></tr></tfoot>",
+            span.max(1),
+            step("Previous", at.checked_sub(1)),
+            shown_rows,
+            step("Next", (last < total).then_some(at + 1))
+        ));
+    }
     out
 }
 
@@ -432,6 +512,9 @@ pre,code{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:0.9em}
 table{border-collapse:collapse;width:100%;font-size:0.92rem}
 th{text-align:left;font-weight:600;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.08em;color:var(--crow-muted);border-bottom:1px solid var(--crow-border);padding:0.45rem 0.9rem 0.45rem 0}
 td{border-bottom:1px solid var(--crow-border);padding:0.5rem 0.9rem 0.5rem 0;font-variant-numeric:tabular-nums}
+td.crow-pager{border-bottom:0;text-align:right;color:var(--crow-muted)}
+td.crow-pager span{margin:0 0.75rem}
+td.crow-refused{color:var(--crow-down)}
 .controls{display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;margin:0.9rem 0}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.6rem;margin:1.1rem 0}
 .card{background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px;padding:0.75rem 0.9rem}
@@ -539,6 +622,26 @@ pub const RESPONSIVE_CSS: &str = "\
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn numbers(n: usize) -> crate::frame::CrowFrame {
+        crate::frame::CrowFrame::new(vec!["n".to_string()], vec![crate::frame::Column::Int((0..n as i64).collect())], vec![vec![true; n]])
+    }
+
+    /// A paged table draws its page and says which; past its last page it
+    /// shows the last; a table over the budget without a page is refused
+    #[test]
+    fn a_big_table_pages_and_a_bigger_one_is_refused() {
+        let page = |at| Some(Paging { size: 50, index: 0, at });
+        let html = frame_table_html(&numbers(120), None, None, None, &[], &[], &[], &[], page(1));
+        assert!(html.contains("<td class=\"num\">50</td>") && !html.contains("<td class=\"num\">49</td>"), "{}", html);
+        assert!(html.contains("<span>51–100 of 120</span>"), "{}", html);
+        assert!(html.contains("data-crow-args=\"[0,0]\"") && html.contains("data-crow-args=\"[0,2]\""), "{}", html);
+        let last = frame_table_html(&numbers(120), None, None, None, &[], &[], &[], &[], page(9));
+        assert!(last.contains("<span>101–120 of 120</span>") && last.contains("<button disabled=\"\">Next</button>"), "{}", last);
+        let refused = frame_table_html(&numbers(1001), None, None, None, &[], &[], &[], &[], None);
+        assert!(refused.contains("table: 1001 rows — a table shows at most 1000 at a time"), "{}", refused);
+        assert!(!frame_table_html(&numbers(1000), None, None, None, &[], &[], &[], &[], None).contains("crow-refused"));
+    }
     #[test]
     fn containers_render_as_divs_with_their_rule() {
         let r = render("stack", &[("gap".into(), "m".into()), ("pad".into(), "l".into())]);

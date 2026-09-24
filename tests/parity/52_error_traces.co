@@ -1,0 +1,27 @@
+--- A trace names the file by its stem and each function an error passed
+--- through: a call that receives an error adds its place, a branch refused
+--- in a function adds its place, and an operator hands its failed operand
+--- on unchanged. (The interpreter named the file `52_error_traces.co`, and
+--- the compiled program added a place for every operator.)
+x = int['a']
+y = x + 1
+log[y.trace]
+fn f[v]
+    return v * 2
+r = f[int['b']]
+log[r.trace]
+fn g[s]
+    n = int[s]
+    m = n + 1
+    return m
+log[g['c'].trace]
+fn check[s]
+    n = int[s]
+    if n gt 5
+        return 'big'
+    return 'small'
+log[check['d'].trace]
+fn wrap[s]
+    return check[s]
+log[wrap['e'].trace]
+log[check['9']]

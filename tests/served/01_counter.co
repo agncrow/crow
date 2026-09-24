@@ -1,0 +1,28 @@
+--- A counter, a bound field, and a derivation over them.
+use web, ui
+
+count = 0
+name = ''
+
+derive greeting
+    if name eq ''
+        return 'nobody yet'
+    return 'hello `name`'
+
+fn inc[]
+    count = count + 1
+
+fn add[n]
+    count = count + n
+
+view render[]
+    return stack[
+        p['count `count`'],
+        p[greeting],
+        field['Name', name, type = 'text'],
+        button['+', click = inc],
+        button['+10', click = add[10]]
+    ]
+
+serve[3401]
+page['/', render]

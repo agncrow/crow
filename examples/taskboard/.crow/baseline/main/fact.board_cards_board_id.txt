@@ -1,0 +1,4 @@
+fact board_cards_board_id (board/cards.co)
+  type: int
+  written by: board_cards_open_board
+  read by: board_cards_add_card, board_cards_cards

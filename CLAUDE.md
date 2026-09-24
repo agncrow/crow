@@ -22,6 +22,7 @@ them by number. The short version:
 ```
 cargo test --workspace
 ./target/release/crow test --parity
+./target/release/crow test --served
 ./target/release/crow test --docs
 ./target/release/crow test --book
 ./target/release/crow test tests/layout/conformance.co

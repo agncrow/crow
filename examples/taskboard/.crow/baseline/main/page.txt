@@ -1,0 +1,1 @@
+page / → board_page_render

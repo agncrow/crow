@@ -96,6 +96,43 @@ pub(crate) fn harness_parse_html(html: &str) -> HNode {
     root
 }
 
+/// A parsed page written back out in one canonical form — attributes
+/// sorted, text trimmed, the marks that only say when it was drawn
+/// (`data-crow-stale`, `data-crow-busy`, `aria-busy`) left out — so two
+/// renderers' pages compare by what they show and wire.
+pub(crate) fn harness_canonical(n: &HNode) -> String {
+    fn walk(n: &HNode, out: &mut String) {
+        if n.tag.is_empty() {
+            let t = n.text.split_whitespace().collect::<Vec<_>>().join(" ");
+            out.push_str(&html_escape_text(&t));
+            return;
+        }
+        let mut attrs: Vec<&(String, String)> = n.attrs.iter()
+            .filter(|(k, _)| !matches!(k.as_str(), "data-crow-stale" | "data-crow-busy" | "aria-busy"))
+            .collect();
+        attrs.sort();
+        out.push('<');
+        out.push_str(&n.tag);
+        for (k, v) in attrs {
+            out.push_str(&format!(" {}=\"{}\"", k, html_escape_attr(v)));
+        }
+        out.push('>');
+        for c in &n.children {
+            walk(c, out);
+        }
+        out.push_str(&format!("</{}>", n.tag));
+    }
+    let mut out = String::new();
+    if n.tag.is_empty() {
+        for c in &n.children {
+            walk(c, &mut out);
+        }
+    } else {
+        walk(n, &mut out);
+    }
+    out
+}
+
 fn hnode_text(n: &HNode) -> String {
     if n.tag.is_empty() { return n.text.clone(); }
     n.children.iter().map(hnode_text).collect::<Vec<_>>().join("")

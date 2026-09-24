@@ -1,0 +1,12 @@
+view board_door_door (board/door.co)
+  composed on: page /
+  reads: board_door_name, board_door_password, reader
+  when (not has[__reader[], 'name']):
+    row[align = 'end', gap = 'm']
+      field[binds board_door_name, type = 'text'] 'Name'
+      field[binds board_door_password, type = 'password'] 'Password'
+      button[class = 'primary', click → board_door_log_in] 'Sign in'
+  when has[__reader[], 'name']:
+    row[align = 'center', gap = 'm']
+      span[color = 'muted'] 'signed in as `reader.name` (`reader.role`)'
+      button[click → board_door_log_out] 'Sign out'

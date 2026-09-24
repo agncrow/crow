@@ -16,12 +16,51 @@ fn zone(tz: &str) -> Result<Tz, String> {
         .map_err(|_| format!("unknown timezone '{}' — use an IANA name like 'America/New_York' or 'UTC'", tz))
 }
 
-/// Current moment: seconds since the epoch.
-pub fn now() -> f64 {
+thread_local! {
+    /// The moment the current event began, while one runs on this thread.
+    static EVENT: std::cell::Cell<Option<f64>> = const { std::cell::Cell::new(None) };
+}
+
+/// The wall clock: seconds since the epoch.
+pub fn clock() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0)
+}
+
+/// Current moment: inside an event of a live program (a click, a render, a
+/// tick, a scheduled function) the moment that event began, the same for
+/// every read inside it; anywhere else the wall clock.
+pub fn now() -> f64 {
+    EVENT.with(|e| e.get()).unwrap_or_else(clock)
+}
+
+/// Run `f` as one event that began at `moment`: every `now()` inside it
+/// reads `moment` (core-design.md §3).
+pub fn at<T>(moment: f64, f: impl FnOnce() -> T) -> T {
+    let saved = EVENT.with(|e| e.replace(Some(moment)));
+    struct Restore(Option<f64>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let saved = self.0;
+            EVENT.with(|e| e.set(saved));
+        }
+    }
+    let _restore = Restore(saved);
+    f()
+}
+
+/// Hold this thread's clock at `moment` until told otherwise (`None`
+/// releases it): the test harness, whose clock is the test's for a whole
+/// test block (`change[a, 'now', t]` moves it).
+pub fn hold(moment: Option<f64>) {
+    EVENT.with(|e| e.set(moment));
+}
+
+/// The moment of the event running on this thread, if one is.
+pub fn event_moment() -> Option<f64> {
+    EVENT.with(|e| e.get())
 }
 
 /// Build a moment from calendar components in a named timezone.
@@ -144,6 +183,18 @@ pub fn fmt_time(t: f64, style: &str, tz: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn an_event_reads_one_moment() {
+        let t = 1_788_000_000.25;
+        at(t, || {
+            assert_eq!(now(), t);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            assert_eq!(now(), t, "time does not move inside an event");
+        });
+        assert!(now() > t, "outside the event the clock runs");
+    }
+
     use super::*;
 
     #[test]

@@ -48,9 +48,12 @@ markup. Hand that markup to `document[]` from `use doc` (Crow by Example, and th
 have a complete page without a server — the book you are reading is built
 exactly this way. Two rules make this safe:
 
-- **Markup passes through, text is escaped.** A string that starts and
-  ends with a tag is treated as markup inside `stack[...]` or any element;
-  anything else is text and is escaped.
+- **Text is text.** Markup is what a view, an element or `doc` makes, and
+  it stays markup however it travels — held in a local, collected by a
+  `for`, handed to another view. Every other string is text and is
+  escaped, whatever it holds: a reader who types `<img src=x
+  onerror=…>` into a field sees those characters, on their page and on
+  everyone else's, and nothing runs.
 - **A failed argument renders, it does not propagate.** Elements render
   what they are given (chapter 12.5), and so does a view: an error value
   handed to a view shows as `error: reason` in place of the tree. A page

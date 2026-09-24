@@ -61,9 +61,15 @@ impl CrowApp {
         self
     }
 
-    /// Start the server (`serve[app, port]` in Crow).
+    /// Start the server (`serve[app, port]` in Crow). It listens on this
+    /// machine only, unless `CROW_HOST` names another interface.
     pub async fn serve(self, port: u16) -> Result<(), Box<dyn std::error::Error>> {
-        let addr = format!("0.0.0.0:{}", port);
+        let host = listen_host(std::env::var("CROW_HOST").ok());
+        let addr = if host.contains(':') && !host.starts_with('[') {
+            format!("[{}]:{}", host, port)
+        } else {
+            format!("{}:{}", host, port)
+        };
         let listener = match tokio::net::TcpListener::bind(&addr).await {
             Ok(l) => l,
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
@@ -82,6 +88,7 @@ impl CrowApp {
         // Add a default welcome fallback so new projects don't show a blank page
         let router = self.router.fallback(default_welcome_handler);
         println!("crow server listening on http://{}", addr);
+        tokio::spawn(stop_on_signal());
         axum::serve(listener, router).await?;
         Ok(())
     }
@@ -194,6 +201,17 @@ impl Default for CrowApp {
     }
 }
 
+/// Where a served app listens: this machine, unless `CROW_HOST` names
+/// another interface — a container or a server behind a proxy sets
+/// `CROW_HOST=0.0.0.0`. An app is never reachable from the network by
+/// accident: its handlers act on its data.
+pub fn listen_host(crow_host: Option<String>) -> String {
+    crow_host
+        .map(|h| h.trim().to_string())
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| "127.0.0.1".to_string())
+}
+
 /// Convert Crow path syntax (`:id`) to axum 0.8 path syntax (`{id}`).
 ///
 /// Axum 0.8 uses `{param}` for capture groups instead of `:param`.
@@ -287,6 +305,37 @@ async fn default_welcome_handler() -> axum::response::Html<&'static str> {
 }
 
 
+/// Told to stop (`crow stop`, a rebuild, Ctrl-C): what the program started
+/// on its databases stops with it — a query nobody will read is not left
+/// running on the server — and then the process ends.
+async fn stop_on_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+    #[cfg(unix)]
+    {
+        let mut term = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(t) => t,
+            Err(_) => {
+                let _ = ctrl_c.await;
+                return stop_now().await;
+            }
+        };
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = ctrl_c.await;
+    }
+    stop_now().await;
+}
+
+async fn stop_now() {
+    let _ = tokio::task::spawn_blocking(crow_runtime::cancel::shutdown).await;
+    std::process::exit(0);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,6 +345,16 @@ mod tests {
 
     fn hello_handler(_req: CrowRequest) -> CrowResponse {
         CrowResponse::json(serde_json::json!({"message": "hello"}))
+    }
+
+    /// A served app listens on this machine unless told otherwise: it used
+    /// to listen on every interface, so anyone on the network reached its
+    /// handlers
+    #[test]
+    fn an_app_listens_on_this_machine_unless_told() {
+        assert_eq!(listen_host(None), "127.0.0.1");
+        assert_eq!(listen_host(Some("  ".into())), "127.0.0.1");
+        assert_eq!(listen_host(Some("0.0.0.0".into())), "0.0.0.0");
     }
 
     fn echo_param_handler(req: CrowRequest) -> CrowResponse {

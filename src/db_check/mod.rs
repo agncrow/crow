@@ -151,6 +151,19 @@ pub fn run(file: &str, source: &str, db_url: Option<&str>) -> Result<RunResult, 
     let total_sql_calls = facts.calls.len();
     let mut hazards = Vec::new();
     let mut schema_checked = false;
+    // Only the program makes its database: a SQLite file that does not
+    // exist yet is not created by checking against it (opening would make
+    // an empty one, and every table would read as missing)
+    let unmade = db_url
+        .and_then(|u| u.strip_prefix("sqlite://"))
+        .map_or(false, |p| p != ":memory:" && !std::path::Path::new(p).exists());
+    if unmade && total_sql_calls > 0 {
+        eprintln!(
+            "  note: {} does not exist yet — its schema checks run once the program has made it",
+            db_url.unwrap_or_default()
+        );
+    }
+    let db_url = if unmade { None } else { db_url };
     match db_url {
         Some(url) => {
             // Offline mode: read the schema from migration files instead of
@@ -460,6 +473,22 @@ mod tests {
                 .any(|h| matches!(h.kind, HazardKind::WriteSkew { .. })),
             "offline partial unique index should silence the hazard"
         );
+    }
+
+    /// Checking against a SQLite database the program has not made yet
+    /// leaves no empty file behind, and reports no table as missing
+    #[test]
+    fn a_database_not_made_yet_is_not_made_by_checking() {
+        let dir = std::env::temp_dir().join(format!("crow_db_check_unmade_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("board.db");
+        let url = format!("sqlite://{}", path.display());
+        let src = format!("use db\nc = connect['{}']\nrows = query[c, 'SELECT id FROM cards']\n", url);
+        let result = run("board.co", &src, Some(&url)).unwrap();
+        assert!(!path.exists(), "checking made {}", path.display());
+        assert!(!result.schema_checked && result.hazards.is_empty(), "{:?}", result.hazards);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -1,0 +1,8 @@
+handler board_cards_post (board/cards.co)
+  wired: board_cards_card_view button 'Post'
+  when (board_cards_comment eq ''):
+    nothing
+  when (not (board_cards_comment eq '')):
+    board_cards_comment := ''
+    effect exec board_cards_book 'INSERT INTO comments (card, author, body) VALUES (?, ?, ?)' [board_cards_card_id, __reader[].name, board_cards_comment]
+    calls board_store_note[board_cards_book, __reader[].name, 'commented on card `board_cards_card_id`']

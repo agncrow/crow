@@ -44,7 +44,9 @@ impl CrowModule for DocModule {
     fn type_of(&self, name: &str, _arg_count: usize) -> CrowType {
         match name {
             "chapters" => CrowType::Frame,
-            "markdown" | "menu" | "pager" | "plain" | "document" => CrowType::Str,
+            // markup a view places as markup; the words and a whole page are text
+            "markdown" | "menu" | "pager" => CrowType::Markup,
+            "plain" | "document" => CrowType::Str,
             _ => CrowType::Unknown,
         }
     }
@@ -62,7 +64,7 @@ fn call_doc(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
         "markdown" => {
             if args.len() != 1 { return Err("markdown: takes 1 argument — markdown[text]".into()); }
             let md = to_str(&args[0], name, "the text")?;
-            Ok(CrowValue::ok(Value::Str(crow_runtime::markdown::to_html(md))))
+            Ok(CrowValue::markup(crow_runtime::markdown::to_html(md)))
         }
         "chapters" => {
             if args.len() != 1 { return Err("chapters: takes 1 argument — chapters[summary_text]".into()); }
@@ -76,7 +78,7 @@ fn call_doc(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
                 other => return Err(format!("menu: the first argument is the chapters frame, got {}", other.type_name())),
             };
             let current = to_str(&args[1], name, "the current path")?;
-            Ok(CrowValue::ok(Value::Str(crow_runtime::markdown::menu_from_frame(f, current))))
+            Ok(CrowValue::markup(crow_runtime::markdown::menu_from_frame(f, current)))
         }
         "pager" => {
             if args.len() != 2 { return Err("pager: takes 2 arguments — pager[chapters, current_path]".into()); }
@@ -85,7 +87,7 @@ fn call_doc(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
                 other => return Err(format!("pager: the first argument is the chapters frame, got {}", other.type_name())),
             };
             let current = to_str(&args[1], name, "the current path")?;
-            Ok(CrowValue::ok(Value::Str(crow_runtime::markdown::pager_from_frame(f, current))))
+            Ok(CrowValue::markup(crow_runtime::markdown::pager_from_frame(f, current)))
         }
         "plain" => {
             if args.len() != 1 { return Err("plain: takes 1 argument — plain[markdown_text]".into()); }

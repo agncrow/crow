@@ -1,0 +1,47 @@
+--- A handler lands as one or not at all: a stop lands nothing and says
+--- why, a helper's stop stops its handler, a notice and a schedule land
+--- when the handler commits.
+use web, ui
+
+count = 0
+
+fn buy[]
+    count = count + 1
+    notice['bought']
+    px = float['no quote within 2s']
+    if px gt 1.0
+        count = count + 10
+
+fn helper_fails[]
+    px = float['helper failed']
+    if px gt 1.0
+        count = 99
+
+fn outer[]
+    count = count + 1
+    helper_fails[]
+    count = count + 100
+
+fn save[]
+    count = count + 1
+    notice['saved `count`']
+
+fn later_work[]
+    count = count + 1000
+
+fn schedules[]
+    later[later_work]
+    count = count + 1
+
+view render[]
+    return stack[
+        p['`count`'],
+        p['said: `notice.text`'],
+        button['Buy', click = buy],
+        button['Outer', click = outer],
+        button['Save', click = save],
+        button['Schedule', click = schedules]
+    ]
+
+serve[3402]
+page['/', render]

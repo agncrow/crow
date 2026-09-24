@@ -56,7 +56,65 @@ pub struct IrInterp {
     /// Set by a caller that gives up on a run (the checker's timeouts):
     /// loops and calls stop at their next step.
     cancel: Option<Arc<AtomicBool>>,
+    /// Every fact's name: what a harness session holds.
+    pub(crate) fact_names: Vec<String>,
+    /// The harness's sessions, each with its own facts, as the server gives
+    /// each page. The active session's facts are the globals; the others
+    /// wait here until a verb acts on them.
+    sessions: HashMap<u64, HashMap<String, CrowValue>>,
+    /// The session the test acted on last, whose facts the globals hold.
+    active_session: Option<u64>,
+    /// The facts as the first session found them: where every later
+    /// session starts, as a new page starts from the declared values.
+    session_start: HashMap<String, CrowValue>,
+    next_session: u64,
+    /// Each harness session's clock: it starts when the test's first
+    /// session opens and moves only when the test moves it.
+    session_clock: HashMap<u64, f64>,
+    /// Each harness session's notice and the moment it landed (0: no session).
+    pub(crate) session_notice: HashMap<u64, (String, f64)>,
+    /// Each session's signed-in reader (empty: nobody signed in).
+    pub(crate) session_reader: HashMap<u64, std::collections::BTreeMap<String, CrowValue>>,
+    /// The sign-in or sign-out the last committed handler made — the served
+    /// page hands it to the runtime, which keeps the cookie.
+    pub(crate) session_sign: Option<Option<std::collections::BTreeMap<String, String>>>,
+    /// The page each paged table of the served session shows (by its place
+    /// among the render's paged tables); a test sees the first pages.
+    pub(crate) session_pages: HashMap<usize, usize>,
+    /// Paged tables drawn so far in the render under way.
+    paged_tables: usize,
+    /// The files each session's handlers handed its reader, in order.
+    pub(crate) session_downloads: HashMap<u64, Vec<(String, Vec<u8>)>>,
+    /// While the harness runs a handler: the effects held to its commit.
+    held: Option<Vec<HeldEffect>>,
+    /// Whether the view being rendered read `notice` (a page that does not
+    /// gets the runtime's toast, as the served page does).
+    pub(crate) notice_read: bool,
+    /// Whether a render adds the harness's own toast for a page that shows
+    /// no notice — the test's page; a served page gets the runtime's.
+    pub(crate) harness_toast: bool,
+    /// What `page[…]` asked for: the path, the view, the url facts.
+    pub(crate) page_config: Option<(String, String, Vec<String>)>,
+    /// What `serve[…]` asked for, as its lowered arguments.
+    pub(crate) serve_config: Option<Vec<CrowValue>>,
+    /// Why the last transaction stopped, when it did.
+    pub(crate) last_stop: Option<String>,
 }
+
+/// An effect a handler held to its commit (core-design.md §1.2).
+#[derive(Clone)]
+enum HeldEffect {
+    Notice(String, f64),
+    Later(CrowValue, Vec<CrowValue>),
+    /// sign_in[record] (Some) or sign_out[] (None)
+    Sign(Option<std::collections::BTreeMap<String, CrowValue>>),
+    /// download[value, name]: the file's name and bytes
+    Download(String, Vec<u8>),
+}
+
+/// How a stop travels out of a handler, through every helper, to the
+/// harness verb that ran it: an error the walker never shows.
+const STOP: &str = "\u{1}stop\u{1}";
 
 /// The pipeline every runner shares: the front end's lowering, inference,
 /// then the lowering to the IR.
@@ -116,6 +174,16 @@ pub fn run(program: &Program, registry: &ModuleRegistry, source_file: &str) -> R
     it.run_main(program)
 }
 
+/// Run a program that serves pages: its facts get their defaults and its
+/// main runs, recording what `page` and `serve` ask for; the interpreter
+/// that ran it is the template every session's render and handler copy.
+pub fn run_to_serve(program: &Program, registry: &ModuleRegistry, source_file: &str) -> Result<IrInterp, String> {
+    let mut it = IrInterp::new(registry, source_file);
+    it.load(program);
+    it.run_main(program)?;
+    Ok(it)
+}
+
 /// A test block's one input, run as the checker runs it: the program's
 /// declarations first (a failure there is named as such), then the block
 /// with its inputs bound. The block is lowered as the test it is, so its
@@ -146,7 +214,10 @@ pub fn run_test(decls: &[crate::ast::Stmt], label: &str, params: &[(String, Crow
         scope.insert(p.clone(), v.clone());
     }
     it.frames[0].scopes.push(Arc::new(scope));
-    match it.exec_stmts(&test.body) {
+    let result = it.exec_stmts(&test.body);
+    // the test's clock ends with the test
+    crow_runtime::moments::hold(None);
+    match result {
         Ok(_) => Ok(()),
         Err(e) => Err(it.with_line(e)),
     }
@@ -171,6 +242,24 @@ impl IrInterp {
             tick: 0,
             engine_loaded: false,
             cancel: None,
+            fact_names: Vec::new(),
+            sessions: HashMap::new(),
+            active_session: None,
+            session_start: HashMap::new(),
+            next_session: 0,
+            session_clock: HashMap::new(),
+            session_notice: HashMap::new(),
+            session_reader: HashMap::new(),
+            session_sign: None,
+            session_pages: HashMap::new(),
+            paged_tables: 0,
+            session_downloads: HashMap::new(),
+            held: None,
+            notice_read: false,
+            page_config: None,
+            serve_config: None,
+            last_stop: None,
+            harness_toast: true,
         }
     }
 
@@ -196,6 +285,9 @@ impl IrInterp {
             for fact in &part.facts {
                 let v = self.eval(&fact.default).map_err(|e| self.with_line(e))?;
                 self.set_fact(&fact.name, v);
+                if !self.fact_names.contains(&fact.name) {
+                    self.fact_names.push(fact.name.clone());
+                }
             }
             if let Err(e) = self.exec_stmts(&part.main) {
                 return Err(self.with_line(e));
@@ -244,8 +336,33 @@ impl IrInterp {
         Ok(())
     }
 
-    fn set_fact(&mut self, name: &str, v: CrowValue) {
+    pub(crate) fn set_fact(&mut self, name: &str, v: CrowValue) {
         Arc::make_mut(&mut self.frames[0].scopes[0]).insert(name.to_string(), v);
+    }
+
+    /// The facts as the globals hold them now.
+    fn fact_values(&self) -> HashMap<String, CrowValue> {
+        self.fact_names.iter()
+            .filter_map(|n| self.frames[0].scopes[0].get(n).map(|v| (n.clone(), v.clone())))
+            .collect()
+    }
+
+    /// Make a harness session the one the globals hold: the session that
+    /// held them keeps its facts, and this one's come back.
+    fn activate(&mut self, id: u64) {
+        if self.active_session == Some(id) {
+            return;
+        }
+        let Some(facts) = self.sessions.remove(&id) else { return };
+        if let Some(prev) = self.active_session {
+            let held = self.fact_values();
+            self.sessions.insert(prev, held);
+        }
+        for (name, v) in facts {
+            self.set_fact(&name, v);
+        }
+        self.active_session = Some(id);
+        crow_runtime::moments::hold(self.session_clock.get(&id).copied());
     }
 
     /// Lay out an HTML fragment as the harness does — the same engine, the
@@ -392,6 +509,15 @@ impl IrInterp {
     /// An error where a decision is needed: a function hands it to its
     /// caller, the top level halts with the reason (spec §10).
     fn refuse(&mut self, err: CrowValue) -> Result<Flow, String> {
+        // a handler, or a helper acting for it, meets an error at a decision:
+        // the whole click stops and nothing it did lands (core-design.md §2)
+        if self.held.is_some() {
+            let name = self.frames.last().map(|f| f.fn_name.clone()).unwrap_or_default();
+            let acting = self.fns.get(&name).map_or(false, |f| matches!(f.kind, FnKind::Handler | FnKind::Helper));
+            if acting {
+                return Err(format!("{}{}\u{1}{}\u{1}{}", STOP, name, err.reason, err.kind));
+            }
+        }
         if self.in_function() {
             let mut e = err;
             e.append_trace(&self.trace_entry());
@@ -422,6 +548,13 @@ impl IrInterp {
             }
             Stmt::Store { fact, expr } => {
                 let v = self.eval(expr)?;
+                // a fact never holds an error: the handler stops instead,
+                // and the fact keeps its last value (core-design.md §2.3)
+                if v.is_error() && self.held.is_some() {
+                    if let Err(e) = self.refuse(v.clone()) {
+                        return Err(e);
+                    }
+                }
                 self.set_fact(fact, v);
                 Ok(Flow::Next)
             }
@@ -555,11 +688,19 @@ impl IrInterp {
                 for (k, v) in attrs {
                     map.insert(k.clone(), self.eval(v)?);
                 }
+                // a paged table: which one it is in this render, and its page
+                if element == "table" && map.contains_key("page") {
+                    let index = self.paged_tables;
+                    self.paged_tables += 1;
+                    let at = self.session_pages.get(&index).copied().unwrap_or(0);
+                    map.insert("__page_index".to_string(), CrowValue::ok(Value::Int(index as i64)));
+                    map.insert("__page_at".to_string(), CrowValue::ok(Value::Int(at as i64)));
+                }
                 let mut vals = vec![CrowValue::ok(Value::Map(map))];
                 for c in children {
                     vals.push(self.eval(c)?);
                 }
-                CrowValue::ok(Value::Str(crate::ops::render_element(element, &vals)?))
+                CrowValue::markup(crate::ops::render_element(element, &vals)?)
             }
             // assert[a op b]: a failed comparison reports both operands
             Expr::Call { target: Target::Runtime(name), args, .. }
@@ -593,7 +734,7 @@ impl IrInterp {
                     _ => "unknown".to_string(),
                 };
                 let vals = self.eval_args(args)?;
-                CrowValue::ok(Value::Str(crate::ops::render_input(name, &key, &vals)?))
+                CrowValue::markup(crate::ops::render_input(name, &key, &vals)?)
             }
             Expr::Call { target, args, propagates, .. } => {
                 let vals = self.eval_args(args)?;
@@ -671,9 +812,20 @@ impl IrInterp {
             }
             Expr::Field { base, name, .. } => {
                 let b = self.eval(base)?;
-                // an app session reads the reactive state, which only this walker holds
-                if let Value::App(..) = &b.value {
-                    return self.frames[0].scopes[0].get(name).cloned().ok_or_else(|| format!("no reactive state named '{}'", name));
+                // an app session reads its own reactive state: the globals
+                // while it is the active one, its waiting copy otherwise
+                if let Value::App(_, _, _, id) = &b.value {
+                    // a derivation, as that session sees it
+                    if self.derives.contains_key(name.as_str()) {
+                        self.activate(*id);
+                        return self.derived(name);
+                    }
+                    let waiting = if self.active_session == Some(*id) { None } else { self.sessions.get(id) };
+                    return waiting
+                        .and_then(|facts| facts.get(name))
+                        .or_else(|| self.frames[0].scopes[0].get(name))
+                        .cloned()
+                        .ok_or_else(|| format!("no reactive state named '{}'", name));
                 }
                 crate::ops::field(b, name)?
             }
@@ -684,6 +836,7 @@ impl IrInterp {
                     Meta::Reason => "reason",
                     Meta::Kind => "kind",
                     Meta::Trace => "trace",
+                    Meta::Valid => return crate::ops::valid(b),
                 };
                 crate::ops::field(b, name)?
             }
@@ -917,10 +1070,13 @@ impl IrInterp {
     /// (sort[xs], join[parts, sep]); then the builtins; then what only a
     /// walker can do.
     fn bare_call(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
+        if let Some(stop) = self.effect_refused(name, &vals) {
+            return stop;
+        }
         if name == "transact" {
             return self.transact(vals);
         }
-        if matches!(name, "serve" | "page" | "fetch" | "poll" | "app" | "html" | "elements" | "change" | "click" | "box" | "fits" | "style") {
+        if matches!(name, "serve" | "page" | "fetch" | "poll" | "app" | "html" | "elements" | "change" | "click" | "box" | "fits" | "style" | "downloads") {
             return self.harness(name, vals);
         }
         // a scalar name both core and math answer goes to the core builtin
@@ -1007,14 +1163,100 @@ impl IrInterp {
             }
             "later" => {
                 // the interpreter runs the work inline: immediate is a legal
-                // schedule (spec §15)
+                // schedule (spec §15) — after the handler that asked commits
                 if vals.is_empty() {
                     return Err("later[] needs a function: later[work] or later[work, args…]".into());
                 }
                 let f = vals[0].clone();
                 let rest: Vec<CrowValue> = vals[1..].to_vec();
-                let _ = self.call_value(&f, rest)?;
+                if let Some(held) = self.held.as_mut() {
+                    held.push(HeldEffect::Later(f, rest));
+                } else {
+                    let _ = self.call_value(&f, rest)?;
+                }
                 Ok(CrowValue::ok(Value::Bool(true)))
+            }
+            // the page's signed-in reader: the session's, a map of strings
+            "__reader" => {
+                let id = self.active_session.unwrap_or(0);
+                Ok(CrowValue::ok(Value::Map(self.session_reader.get(&id).cloned().unwrap_or_default())))
+            }
+            // sign_in[record] / sign_out[]: held to the handler's commit
+            "sign_in" | "sign_out" => {
+                let record = if name == "sign_in" {
+                    let m = match vals.first().map(|v| &v.value) {
+                        Some(Value::Map(m)) => m.clone(),
+                        _ => return Err("sign_in[] takes the reader as a map of strings: sign_in[map[id = '42', name = 'Ada']]".into()),
+                    };
+                    let mut strings = std::collections::BTreeMap::new();
+                    for (k, v) in &m {
+                        match &v.value {
+                            Value::Str(s) => {
+                                strings.insert(k.clone(), s.clone());
+                            }
+                            other => return Err(format!("sign_in[]: the reader's '{}' is {}; the reader is a map of strings", k, other.type_name())),
+                        }
+                    }
+                    crow_runtime::signin::check(&strings)?;
+                    Some(m)
+                } else {
+                    None
+                };
+                match self.held.as_mut() {
+                    Some(held) => held.push(HeldEffect::Sign(record)),
+                    None => {
+                        let id = self.active_session.unwrap_or(0);
+                        self.session_reader.insert(id, record.unwrap_or_default());
+                    }
+                }
+                Ok(CrowValue::done())
+            }
+            // download[value, name]: the value's bytes, held to the commit
+            "download" => {
+                let name = match vals.get(1).map(|v| &v.value) {
+                    Some(Value::Str(s)) => s.clone(),
+                    _ => return Err("download[] takes the value and the name to save it under: download[trades, 'trades.csv']".into()),
+                };
+                let bytes = match vals.first().map(|v| &v.value) {
+                    Some(Value::Frame(f)) => f.to_csv().map_err(|e| format!("download: {}", e))?.into_bytes(),
+                    Some(Value::Str(s)) => s.clone().into_bytes(),
+                    Some(Value::Map(m)) => match m.get("path").map(|p| &p.value) {
+                        Some(Value::Str(p)) => std::fs::read(p).map_err(|e| format!("download: {}", e))?,
+                        _ => return Err("download: a file to hand on is a picked file, with a path".into()),
+                    },
+                    Some(other) => format!("{}", other).into_bytes(),
+                    None => Vec::new(),
+                };
+                match self.held.as_mut() {
+                    Some(held) => held.push(HeldEffect::Download(name, bytes)),
+                    None => {
+                        let id = self.active_session.unwrap_or(0);
+                        self.session_downloads.entry(id).or_default().push((name, bytes));
+                    }
+                }
+                Ok(CrowValue::done())
+            }
+            "notice" => {
+                let text = match vals.first().map(|v| &v.value) {
+                    Some(Value::Str(s)) => s.clone(),
+                    Some(other) => format!("{}", other),
+                    None => return Err("notice[] takes the text to tell the reader".into()),
+                };
+                let at = crow_runtime::moments::now();
+                match self.held.as_mut() {
+                    Some(held) => held.push(HeldEffect::Notice(text, at)),
+                    None => {
+                        let id = self.active_session.unwrap_or(0);
+                        self.session_notice.insert(id, (text, at));
+                    }
+                }
+                Ok(CrowValue::done())
+            }
+            "__notice_text" | "__notice_at" => {
+                self.notice_read = true;
+                let id = self.active_session.unwrap_or(0);
+                let (text, at) = self.session_notice.get(&id).cloned().unwrap_or((String::new(), 0.0));
+                Ok(if name == "__notice_text" { CrowValue::ok(Value::Str(text)) } else { CrowValue::ok(Value::Float(at)) })
             }
             "running" => Ok(CrowValue::ok(Value::Bool(false))),
             // the resources as calls: gpu[n] turns the device on, nodes[n]
@@ -1172,11 +1414,11 @@ impl IrInterp {
                 };
                 let fmt_num = |x: f64| if (x - x.round()).abs() < 1e-9 { format!("{}", x.round() as i64) } else { format!("{}", x) };
                 let max = num(&vals[1]);
-                Ok(CrowValue::ok(Value::Str(format!(
+                Ok(CrowValue::markup(format!(
                     "<progress class=\"crow-progress\" max=\"{}\" value=\"{}\"></progress>",
                     fmt_num(if max > 0.0 { max } else { 1.0 }),
                     fmt_num(num(&vals[0]))
-                ))))
+                )))
             }
             // chart[frame, x, candles, lines, bars_y, marker, tz, height,
             // panes, levels, points, seek] (lowered): the chart's markup
@@ -1184,7 +1426,8 @@ impl IrInterp {
             "chart" if self.in_view > 0 && vals.len() == 12 => {
                 let Value::Frame(f) = &vals[0].value else {
                     if vals[0].is_error() {
-                        return Ok(CrowValue::ok(Value::Str(format!("<p>chart error: {}</p>", vals[0].reason))));
+                        // the reason is text, as the compiled chart writes it
+                        return Ok(CrowValue::markup(crate::harness::html_escape_text(&format!("chart error: {}", vals[0].reason))));
                     }
                     return Err("chart[] takes a frame first".into());
                 };
@@ -1244,7 +1487,7 @@ impl IrInterp {
                     points,
                     seek.as_deref(),
                 );
-                Ok(CrowValue::ok(Value::Str(node.to_html())))
+                Ok(CrowValue::markup(node.to_html()))
             }
             // icon[name, size, color] (lowered): inline SVG from the kernel's set
             "icon" if vals.len() == 3 => {
@@ -1253,7 +1496,7 @@ impl IrInterp {
                 }
                 let s = |v: &CrowValue| format!("{}", v.value);
                 crow_runtime::layout::icon_html(&s(&vals[0]), &s(&vals[1]), &s(&vals[2]))
-                    .map(|svg| CrowValue::ok(Value::Str(svg)))
+                    .map(CrowValue::markup)
                     .map_err(|e| format!("icon: {}", e))
             }
             _ => Err(format!("the IR interpreter does not run '{}' yet", name)),
@@ -1320,6 +1563,9 @@ impl IrInterp {
     }
 
     fn module_call(&mut self, module: &str, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
+        if let Some(stop) = self.effect_refused(name, &vals) {
+            return stop;
+        }
         if name == "transact" && module == "db" {
             return self.transact(vals);
         }
@@ -1367,7 +1613,7 @@ impl IrInterp {
         // a view renders what it is given: a failed argument is its text
         if f.kind == FnKind::View {
             if let Some(bad) = vals.iter().find(|v| v.is_error()) {
-                return Ok(CrowValue::ok(Value::Str(format!("error: {}", crate::harness::html_escape_text(&bad.reason)))));
+                return Ok(CrowValue::markup(format!("error: {}", crate::harness::html_escape_text(&bad.reason))));
             }
         }
         let mut scope = HashMap::new();
@@ -1396,9 +1642,12 @@ impl IrInterp {
     /// versioned form comes with the session layer), stamped with its moment.
     fn derived(&mut self, name: &str) -> Result<CrowValue, String> {
         let d = self.derives.get(name).cloned().ok_or_else(|| format!("unknown derivation '{}'", name))?;
+        // the reader's line is still the line reading it
+        let saved_line = self.line;
         self.frames.push(Frame { scopes: vec![Arc::new(HashMap::new())], fn_name: name.to_string() });
         let r = self.exec_stmts(&d.body);
         self.frames.pop();
+        self.line = saved_line;
         let mut v = match r? {
             Flow::Return(v) => v,
             _ => CrowValue::done(),
@@ -1407,24 +1656,151 @@ impl IrInterp {
         Ok(v)
     }
 
+    /// An effect a handler calls with an error among its arguments — a
+    /// parameter list included — stops the handler: an error never reaches
+    /// the world outside the session (core-design.md §2.1).
+    fn effect_refused(&mut self, name: &str, vals: &[CrowValue]) -> Option<Result<CrowValue, String>> {
+        const EFFECTS: &[&str] = &["query", "exec", "insert", "transact", "read", "write", "fetch", "shell", "mail", "later", "notice", "sign_in", "download"];
+        if self.held.is_none() || !EFFECTS.contains(&name) {
+            return None;
+        }
+        let err = vals.iter().find_map(|v| {
+            if v.is_error() {
+                return Some(v.clone());
+            }
+            match &v.value {
+                Value::Array(items) => items.iter().find(|i| i.is_error()).cloned(),
+                _ => None,
+            }
+        })?;
+        match self.refuse(err) {
+            Err(e) => Some(Err(e)),
+            _ => None,
+        }
+    }
+
+    /// One handler as one transaction on the active session (core-design.md
+    /// §1): its writes land as one when it ends, then its held effects in
+    /// program order; when it stops, nothing it did lands and the reason is
+    /// the session's notice. Returns what `click` evaluates to: the
+    /// handler's value, or the error it stopped on.
+    pub(crate) fn transaction(&mut self, name: &str, args: Vec<CrowValue>) -> Result<CrowValue, String> {
+        let id = self.active_session.unwrap_or(0);
+        self.last_stop = None;
+        let before = self.fact_values();
+        let outer = self.held.replace(Vec::new());
+        let saved_view = self.in_view;
+        self.in_view = 0;
+        crow_runtime::txn::begin();
+        let mut r = self.call_user(name, args);
+        self.in_view = saved_view;
+        // its database writes commit with it, or roll back when it stopped;
+        // a commit the database refuses is a stop too
+        let stopped = matches!(&r, Err(e) if e.starts_with(STOP));
+        if let Err(e) = crow_runtime::txn::finish(!stopped && r.is_ok()) {
+            if !stopped {
+                r = Err(format!("{}{}\u{1}{}\u{1}{}", STOP, name, e, "db"));
+            }
+        }
+        let held = std::mem::replace(&mut self.held, outer).unwrap_or_default();
+        match r {
+            Err(e) if e.starts_with(STOP) => {
+                let mut parts = e[STOP.len()..].splitn(3, '\u{1}');
+                let who = parts.next().unwrap_or(name).to_string();
+                let reason = parts.next().unwrap_or("").to_string();
+                let kind = parts.next().unwrap_or("").to_string();
+                for (n, v) in before {
+                    self.set_fact(&n, v);
+                }
+                let told = format!("{} stopped: {}", who, reason);
+                self.last_stop = Some(told.clone());
+                self.session_notice.insert(id, (told, crow_runtime::moments::now()));
+                Ok(CrowValue::error_with_kind(&reason, &kind, &self.trace_entry()))
+            }
+            Err(e) => Err(e),
+            Ok(v) => {
+                self.session_sign = None;
+                for effect in held {
+                    match effect {
+                        HeldEffect::Notice(text, at) => {
+                            self.session_notice.insert(id, (text, at));
+                        }
+                        HeldEffect::Download(name, bytes) => {
+                            self.session_downloads.entry(id).or_default().push((name, bytes));
+                        }
+                        HeldEffect::Sign(record) => {
+                            let strings = record.as_ref().map(|m| {
+                                m.iter().map(|(k, v)| (k.clone(), match &v.value { Value::Str(s) => s.clone(), other => format!("{}", other) })).collect()
+                            });
+                            self.session_reader.insert(id, record.unwrap_or_default());
+                            self.session_sign = Some(strings);
+                        }
+                        HeldEffect::Later(f, rest) => {
+                            // a scheduled function is a transaction of its own
+                            if let Value::Fn(fv) = &f.value {
+                                let fname = fv.name.clone();
+                                let _ = self.transaction(&fname, rest)?;
+                            }
+                        }
+                    }
+                }
+                Ok(v)
+            }
+        }
+    }
+
     // ── the harness and the live layer's mocks ─────────────────────
 
     /// A session's view rendered to markup.
-    fn render_view(&mut self, view: &str) -> Result<String, String> {
+    pub(crate) fn render_view(&mut self, view: &str) -> Result<String, String> {
         self.tick += 1;
+        self.notice_read = false;
+        self.paged_tables = 0;
         let r = self.call_user(view, Vec::new())?;
-        Ok(match &r.value {
+        let html = match &r.value {
             Value::Str(s) => s.clone(),
             other => format!("{}", other),
-        })
+        };
+        // a page that shows no notice of its own gets the runtime's toast,
+        // as the served page does, while the notice is fresh
+        if !self.notice_read && self.harness_toast {
+            let id = self.active_session.unwrap_or(0);
+            if let Some((text, at)) = self.session_notice.get(&id) {
+                if !text.is_empty() && crow_runtime::moments::now() - at < 4.0 {
+                    let toast = format!("<div class=\"crow-notice\" role=\"status\">{}</div>", crate::harness::html_escape_text(text));
+                    return Ok(match html.rfind("</") {
+                        Some(i) if html.ends_with('>') => format!("{}{}{}", &html[..i], toast, &html[i..]),
+                        _ => format!("<div>{}{}</div>", html, toast),
+                    });
+                }
+            }
+        }
+        Ok(html)
     }
 
     fn harness(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
-        let app_view = |v: &CrowValue| -> Option<(FnValue, f64, bool)> {
-            if let Value::App(f, w, wide) = &v.value { Some((f.clone(), *w, *wide)) } else { None }
+        let app_view = |v: &CrowValue| -> Option<(FnValue, f64, bool, u64)> {
+            if let Value::App(f, w, wide, id) = &v.value { Some((f.clone(), *w, *wide, *id)) } else { None }
         };
         Ok(match name {
-            "serve" | "page" => CrowValue::done(),
+            // recorded for `crow run -i`, which serves what they ask for
+            "page" => {
+                let path = vals.first().map(|v| format!("{}", v.value)).unwrap_or_else(|| "/".to_string());
+                let view = match vals.get(1).map(|v| &v.value) {
+                    Some(Value::Fn(f)) => f.name.clone(),
+                    _ => return Err("page[] takes a path and a view: page['/', render]".into()),
+                };
+                let url = match vals.get(2).map(|v| &v.value) {
+                    Some(Value::Array(items)) => items.iter().map(|i| format!("{}", i.value)).collect(),
+                    _ => Vec::new(),
+                };
+                self.page_config = Some((path, view, url));
+                CrowValue::done()
+            }
+            "serve" => {
+                self.serve_config = Some(vals);
+                CrowValue::done()
+            }
             "fetch" | "poll" => CrowValue::ok(Value::Map(std::collections::BTreeMap::new())),
             "app" => {
                 let f = match vals.first().map(|v| &v.value) {
@@ -1441,14 +1817,49 @@ impl IrInterp {
                         _ => return Err("app[] takes a view name, then width = 390 and wide = true".into()),
                     }
                 }
-                CrowValue::ok(Value::App(f, width, wide))
+                self.next_session += 1;
+                let id = self.next_session;
+                if self.active_session.is_none() {
+                    // the first session is the test's own state: it takes the
+                    // facts as they are, and every later session starts where
+                    // this one started; the test's clock starts now and moves
+                    // only when the test moves it
+                    self.session_start = self.fact_values();
+                    self.active_session = Some(id);
+                    let start = crow_runtime::moments::clock();
+                    self.session_clock.insert(id, start);
+                    crow_runtime::moments::hold(Some(start));
+                } else {
+                    self.sessions.insert(id, self.session_start.clone());
+                    let start = self.session_clock.values().copied().fold(f64::INFINITY, f64::min);
+                    self.session_clock.insert(id, start);
+                }
+                CrowValue::ok(Value::App(f, width, wide, id))
+            }
+            // downloads[a]: the files the session was handed, as a reader's
+            // browser saved them
+            "downloads" => {
+                let (_, _, _, id) = vals.first().and_then(app_view).ok_or("downloads[] takes an app session: downloads[a]")?;
+                let list = self.session_downloads.get(&id).cloned().unwrap_or_default();
+                let items = list
+                    .into_iter()
+                    .map(|(name, bytes)| {
+                        let mut m = std::collections::BTreeMap::new();
+                        m.insert("name".to_string(), CrowValue::ok(Value::Str(name)));
+                        m.insert("text".to_string(), CrowValue::ok(Value::Str(String::from_utf8_lossy(&bytes).to_string())));
+                        CrowValue::ok(Value::Map(m))
+                    })
+                    .collect();
+                CrowValue::ok(Value::Array(items))
             }
             "html" => {
-                let (f, _, _) = vals.first().and_then(app_view).ok_or("html[] takes an app session: html[a]")?;
+                let (f, _, _, id) = vals.first().and_then(app_view).ok_or("html[] takes an app session: html[a]")?;
+                self.activate(id);
                 CrowValue::ok(Value::Str(self.render_view(&f.name)?))
             }
             "elements" => {
-                let (f, _, _) = vals.first().and_then(app_view).ok_or("elements[] takes an app session and a selector: elements[a, 'button']")?;
+                let (f, _, _, id) = vals.first().and_then(app_view).ok_or("elements[] takes an app session and a selector: elements[a, 'button']")?;
+                self.activate(id);
                 let selector = match vals.get(1).map(|v| &v.value) {
                     Some(Value::Str(s)) => s.clone(),
                     _ => return Err("elements[] selector must be a string like 'button', '.card', or 'div.stats .card'".into()),
@@ -1464,14 +1875,36 @@ impl IrInterp {
                 CrowValue::ok(Value::Array(hits))
             }
             "change" => {
-                if vals.len() != 3 || !matches!(vals[0].value, Value::App(..)) {
-                    return Err("change[] first argument must be an app session: change[a, 'min_qty', 5]".into());
-                }
+                let id = match (vals.len(), &vals.first().map(|v| &v.value)) {
+                    (3, Some(Value::App(_, _, _, id))) => *id,
+                    _ => return Err("change[] first argument must be an app session: change[a, 'min_qty', 5]".into()),
+                };
+                self.activate(id);
                 let var = match &vals[1].value {
                     Value::Str(s) => s.clone(),
                     _ => return Err("change[] names the reactive variable as a string: change[a, 'min_qty', 5]".into()),
                 };
                 let value = vals[2].clone();
+                // a reader who signed in, as a handler's sign_in would say
+                if var == "reader" {
+                    let m = match &value.value {
+                        Value::Map(m) if m.values().all(|v| matches!(v.value, Value::Str(_))) => m.clone(),
+                        other => return Err(format!("change[a, 'reader', record] takes the reader as a map of strings, not {}", other.type_name())),
+                    };
+                    self.session_reader.insert(id, m);
+                    return Ok(CrowValue::done());
+                }
+                // time is an input: the session's clock is set as a field is
+                if var == "now" {
+                    let t = match &value.value {
+                        Value::Float(f) => *f,
+                        Value::Int(n) => *n as f64,
+                        other => return Err(format!("change[a, 'now', t] takes a moment — a number of seconds — not {}", other.type_name())),
+                    };
+                    self.session_clock.insert(id, t);
+                    crow_runtime::moments::hold(Some(t));
+                    return Ok(CrowValue::done());
+                }
                 let current = self.frames[0].scopes[0].get(&var).cloned().ok_or_else(|| format!("change[]: no reactive variable named '{}' (reactive state is a top-level assignment)", var))?;
                 let compatible = match (&current.value, &value.value) {
                     (Value::Int(_), Value::Int(_)) | (Value::Float(_), Value::Float(_)) | (Value::Float(_), Value::Int(_)) | (Value::Int(_), Value::Float(_)) | (Value::Str(_), Value::Str(_)) | (Value::Bool(_), Value::Bool(_)) => true,
@@ -1488,30 +1921,27 @@ impl IrInterp {
                 CrowValue::done()
             }
             "click" => {
-                if vals.len() != 2 || !matches!(vals[0].value, Value::App(..)) {
-                    return Err("click[] first argument must be an app session: click[a, go]".into());
-                }
-                let saved_view = self.in_view;
-                self.in_view = 0;
-                let r = match &vals[1].value {
-                    Value::Fn(f) => {
-                        let name = f.name.clone();
-                        self.call_user(&name, Vec::new())
-                    }
+                let id = match (vals.len(), &vals.first().map(|v| &v.value)) {
+                    (2, Some(Value::App(_, _, _, id))) => *id,
+                    _ => return Err("click[] first argument must be an app session: click[a, go]".into()),
+                };
+                self.activate(id);
+                let (name, args) = match &vals[1].value {
+                    Value::Fn(f) => (f.name.clone(), Vec::new()),
                     Value::Array(items) if matches!(items.first().map(|v| &v.value), Some(Value::Fn(_))) => {
                         let name = if let Value::Fn(f) = &items[0].value { f.name.clone() } else { unreachable!() };
-                        self.call_user(&name, items[1..].to_vec())
+                        (name, items[1..].to_vec())
                     }
-                    _ => Err("click[] second argument must be a handler name or call: click[a, go] or click[a, go[x]]".to_string()),
+                    _ => return Err("click[] second argument must be a handler name or call: click[a, go] or click[a, go[x]]".to_string()),
                 };
-                self.in_view = saved_view;
-                r?
+                self.transaction(&name, args)?
             }
             "box" | "fits" | "style" => {
                 if vals.len() != 2 {
                     return Err(format!("{}[] takes an app session and a selector or width", name));
                 }
-                let (f, session_width, session_wide) = app_view(&vals[0]).ok_or_else(|| format!("{}[] takes an app session first", name))?;
+                let (f, session_width, session_wide, id) = app_view(&vals[0]).ok_or_else(|| format!("{}[] takes an app session first", name))?;
+                self.activate(id);
                 let arg1 = vals[1].clone();
                 let html = self.render_view(&f.name)?;
                 let tree = crate::harness::harness_parse_html(&html);

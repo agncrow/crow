@@ -1,0 +1,38 @@
+--- A name Rust reserves is a Crow name like any other: a variable, a
+--- function, a parameter, loop variables, struct fields, map keys, an
+--- interpolation span, and a trace through a function called `match`. The
+--- compiled program failed to build on the first of them.
+struct Order [type, move]
+
+fn impl[ref]
+    loop = ref + 1
+    return loop
+
+fn match[s]
+    n = int[s]
+    if n gt 5
+        return 'big'
+    return 'small'
+
+yield = impl[41]
+log[yield]
+const = [1, 2, 3]
+total = 0
+for final in const
+    total = total + final
+log[total]
+where = for mut in const
+    mut * 2
+log[where]
+o = Order['limit', 3]
+log[o.type]
+log[o.move]
+o.move = 4
+log[o]
+m = map[move = 1, type = 2]
+log[m.move]
+log['`yield` and `total`, `impl[1]`']
+r = match['abc']
+log[r.ok]
+log[r.trace]
+log[match['9']]

@@ -869,6 +869,8 @@ x.trace           --- []
 
 Non-fallible values always have `ok` of `true`, `reason` and `kind` are `''`, and `trace` is `[]`.
 
+A list is a value like any other: `names.ok` is `true` for a list that did not fail, whatever it holds, so `if not listing.ok` guards a listing that failed and nothing else. The one per-row reading is a frame column's: `df.age.ok` is its cells' validity, `false` where a cell is missing (see frame).
+
 
 ### Auto Unwrap
 
@@ -918,7 +920,7 @@ log[r.ok]                --- false — the parse error propagated out
 log[r.reason]            --- cannot convert 'abc' to int
 ```
 
-The same holds when a function hands back an error of another shape — `if not b.ok` / `return b` in a function whose value is a number, where `b` is a frame: the caller receives the error with its reason, kind and trace, and the value is the function's default. A handler has no caller to hand an error to: when a condition in a handler meets an error, the handler stops, the facts it wrote so far land, and the served program logs the reason (`crow live: handler 'apply' stopped: …`); in the harness, `click[a, apply]` evaluates to that error value.
+The same holds when a function hands back an error of another shape — `if not b.ok` / `return b` in a function whose value is a number, where `b` is a frame: the caller receives the error with its reason, kind and trace, and the value is the function's default. A handler has no caller to hand an error to. **A handler stops when an error value reaches a decision, a fact, or an effect** — an `if` or `while` condition, an assignment to reactive state, or an argument of `query`, `exec`, `insert`, `transact`, `read`, `write`, `fetch`, `shell`, `later`, `notice` or `sign_in` — and nothing it did lands: its fact writes are discarded, its database writes are rolled back, its held effects are dropped. The reason reaches the reader as the session's notice (`apply stopped: …`) and the served program's log. A local that holds an error and is guarded later computes as it always has: `.ok`, `.reason`, `.kind` and `.trace` never propagate, so `if not r.ok` is how a handler does something other than stop. In the harness, `click[a, apply]` evaluates to that error value and the session's facts are as they were before the click. A fact never holds an error: a derivation, which is a belief, may; a fact, which the reader acts on, keeps its last good value.
 
 The metadata fields `.ok`, `.reason`, `.kind`, `.trace` never propagate — they are always readable, so the guard idiom is always available and is the one bridge from error-space back to decisions:
 
@@ -1024,7 +1026,7 @@ log[result.trace]           --- ['main.validate:5', 'main:6', ...]
 
 **Collections:** a `map[...]` built with a fallible value is a fallible map of plain values (the map is built from the unwrapped value or not at all), and `encode[]` of an array of fallible values writes each ok element's payload and `null` for each error.
 
-Errors also propagate through operators (`+`, `-`, etc.) and unary operations. If either operand of a binary op is an error, the result is that error.
+Errors also propagate through operators (`+`, `-`, etc.) and unary operations. If either operand of a binary op is an error, the result is that error, its trace unchanged: a call that receives an error, and a branch refused inside a function, are the places a trace records. A trace names the file by its stem (`main.check:14`), in both modes.
 
 
 ### Error Messages
@@ -1243,12 +1245,15 @@ log[r.status]    --- 0
 
 | Function | Description |
 |----------|-------------|
-| `hash[s, algo]` | Hash string with algorithm. Supported: `'sha256'`, `'sha512'`, `'md5'` |
+| `hash[s, algo]` | Hash string with algorithm. Supported: `'sha256'`, `'sha512'`, `'md5'`, and `'password'` |
+| `hash[s, stored]` | Hash `s` the way the password hash `stored` was made — its algorithm, cost and salt — so `hash[attempt, stored] eq stored` checks a password |
 
 ```
 h = hash['hello', 'sha256']
 log[h]    --- '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824'
 ```
+
+`hash[pw, 'password']` is for storing a password: a salted, deliberately slow hash (Argon2id), written as one string that carries its algorithm, cost and salt (`$argon2id$v=19$m=19456,t=2,p=1$…`). Its salt is random, so hashing the same password twice gives two different strings; checking a password therefore hashes the attempt with the stored string in place of the algorithm and compares the two. The fast hashes (`sha256`, `sha512`, `md5`) are for fingerprints and checksums, never for passwords: they can be guessed at billions a second.
 
 ### Regex
 
@@ -1278,7 +1283,7 @@ date type exists.
 
 | Function | Description |
 |----------|-------------|
-| `now[]` | The current moment (epoch seconds) |
+| `now[]` | The current moment (epoch seconds) — in a live program, the moment the current event began |
 | `moment[y, m, d, hour = 0, minute = 0, second = 0, tz = 'UTC']` | Build a moment from calendar components in a named timezone |
 | `calendar[t, tz = 'UTC']` | Calendar components of a moment: `year month day hour minute second weekday` (weekday 1 = Monday) |
 | `parse_time[text, tz = 'UTC']` | Parse RFC3339, or `'YYYY-MM-DD[ HH:MM[:SS]]'` read in the named zone |
@@ -1296,6 +1301,8 @@ if print_time lt open_bell - 10.0
 c = calendar[open_bell, tz = 'UTC']
 log[c.hour]                                                       --- 13
 ```
+
+**One moment per event.** In a script `now[]` is the clock at the call. In a live program it is the moment the current event began — a click or a change from the page, a render, a `refresh` tick, a `later` schedule — everywhere inside it: a handler and every helper it calls, a render and every view and derivation in it. Time advances between events, never inside one, so `base, anchor = head, now[]` reads one clock twice and gets one answer, and two rows a handler stamps with `now[]` share a stamp. In the test harness the clock is the test's: it starts at the moment the first `app[…]` opened and moves only when the test moves it with `change[a, 'now', t]`.
 
 Timezones are IANA names (`'America/New_York'`, `'Europe/London'`, `'UTC'`)
 and are **always explicit** — the default everywhere is UTC. Invalid dates,
@@ -1467,7 +1474,7 @@ Rules:
 
 ### User Modules: File Structure
 
-A source file ends in `.co`. (A `.crow` file is still read this release, with a note the first time one is met, so a tree can be renamed at leisure; bytecode is `.coc`.) Each file is a module. The file path is the module path, rooted at the project: the nearest directory above the entry file that holds a `crowfile`, or the entry file's own directory when there is none. So `views/sim.co` reaches `sim/clock.co` with `use sim.clock` whichever file is the entry. A part is validated alone as it is expanded — its own names unprefixed, its imports inlined — so a name the part reserves by what it imports (`derive progress` beside `use ui`), or a handler nothing in the part wires, is refused whichever file is the entry, under the part's path: `crow test part.co` and `crow run main.co` see the same part.
+A source file ends in `.co`. (A `.crow` file is still read this release, with a note the first time one is met, so a tree can be renamed at leisure; bytecode is `.coc`.) Each file is a module. The file path is the module path, rooted at the project: the nearest directory above the entry file that holds a `crowfile`, or the entry file's own directory when there is none. So `views/sim.co` reaches `sim/clock.co` with `use sim.clock` whichever file is the entry. A part is validated alone as it is expanded — its own names unprefixed, its imports inlined — so a name the part reserves by what it imports (`derive progress` beside `use ui`), or a handler nothing in the part wires, is refused whichever file is the entry, under the part's path: `crow test part.co` and `crow run main.co` see the same part. Any error found in a part — alone or in the whole program — names the part and its own line (`sim/session.co: line 60: …`), never a line of the entry.
 
 #### Design Note: The Extension Is `.co`
 
@@ -1928,7 +1935,7 @@ Import with `use doc`. Documentation from Markdown, rendered by the kernel so th
 | `plain[text]` | The words of a chapter with markup removed and whitespace collapsed — what a search index holds |
 | `document[title, body]` | A complete HTML page: the kernel stylesheet (tokens, elements, responsive rules) plus the documentation rules, then the body |
 
-Strings that start and end with a tag pass through a view as markup, so a rendered chapter or a menu can be a child of `stack[...]` or `row[...]`; anything else is text and is escaped. A view's tree handed to `document[...]` is its markup in both modes.
+`markdown`, `menu` and `pager` make markup, which a view places as markup, so a rendered chapter or a menu can be a child of `stack[...]` or `row[...]`; every other string is text and is escaped (§ Views: *Text is text*). A view's tree handed to `document[...]` is its markup in both modes.
 
 ```
 use web, ui, doc
@@ -2035,7 +2042,7 @@ rich_old = filter[df, df.age gt 50 and df.salary gt 100000]
 others = filter[df, not (df.name eq 'alice')]
 ```
 
-Missing values compare as `false` — they are excluded by any filter.
+Missing values compare as `false` — they are excluded by any filter. A column's `.ok` is its rows' validity — `true` where the cell is present, `false` where it is missing — so `filter[df, df.age.ok]` keeps the complete rows. (Every other value's `.ok` is its own status: a list that did not fail is ok.)
 
 Dynamic column names need no special syntax — a string variable works everywhere a column name does:
 
@@ -2085,7 +2092,7 @@ page['/', render]
 
 **Inside a view, the standard HTML element vocabulary is active** — plus the vocabulary's own elements: the containers `stack`, `row`, `grid`, `overlay`, `scroll`, the layers `modal`, `drawer`, `toast`, and `details`, `summary`, `dropdown`, `divider` (Revealing and framing, below) — `div`, `span`, `p`, `h1`, `h2`, `h3`, `h4`, `h5`, `h6`, `button`, `ul`, `ol`, `li`, `form`, `a`, `nav`, `header`, `footer`, `section`, `tr`, `td`, `th`, `thead`, `tbody`, `option`, `textarea`, `label`, `pre`, `code`, `input`, `img`, `table` — with their exact HTML names. **Outside a view, those names don't exist**: `p = 0.95`, `fn add[a, b]`, and `form = req.body` are ordinary code in any ui program, and `use ui` reserves nothing in your file. Calling an element outside a view is an error that points at the fix.
 
-**A child that is a list contributes each item.** Markup passes through, anything else is text — so `rows = for s in sessions` over a view, then `stack[h2['Sessions'], rows]`, renders one row per session. This is how a page shows many of something with their own controls; `table[frame]` is for cells that are values. **Boolean attributes follow state**: `button['Start', disabled = starting]` writes `disabled=""` when true and nothing when false, for `disabled`, `hidden`, `readonly`, `required`, `checked`, `selected`, `multiple`, `autofocus`.
+**A child that is a list contributes each item.** Markup a view or an element made is markup, anything else is text — so `rows = for s in sessions` over a view, then `stack[h2['Sessions'], rows]`, renders one row per session. This is how a page shows many of something with their own controls; `table[frame]` is for cells that are values. **A click can ask first**: `button['End session', click = end_session, confirm = 'End this session?']` shows the question in a dialog the runtime draws, and runs the handler only when the reader says yes. The server enforces it — the button offers the question, not the handler, and the dialog's own button offers the handler while the dialog is open — so the handler cannot be reached without the answer. On a table the question is a map from action to text: `actions = map[Delete = delete_session], confirm = map[Delete = 'Delete this session?']`. **Boolean attributes follow state**: `button['Start', disabled = starting]` writes `disabled=""` when true and nothing when false, for `disabled`, `hidden`, `readonly`, `required`, `checked`, `selected`, `multiple`, `autofocus`.
 
 Views compose: a view calls other views (components) and ordinary functions freely. A module can export views — importers reach them qualified, like any module name:
 
@@ -2115,7 +2122,7 @@ Top-level variables in a ui program are reactive state (see Function Scope). Thr
 |---|---|
 | `fetch[url]` | Reactive state loaded once by HTTP GET when the page connects |
 | `poll[url, seconds]` | Reactive state re-fetched every `seconds`; every reader re-renders when it changes |
-| `field[label, var, type = '', lines = 0]` | A labeled input two-way bound to reactive variable `var` (inside a view). `type` is the input's kind — `'text'`, `'number'`, `'date'`, `'time'`, `'password'` — and defaults to `'number'` for an int or float variable; `lines = 3` makes it a textarea |
+| `field[label, var, type = '', lines = 0]` | A labeled input two-way bound to reactive variable `var` (inside a view). `type` is the input's kind — `'text'`, `'number'`, `'date'`, `'time'`, `'password'`, `'file'` — and defaults to `'number'` for an int or float variable; `lines = 3` makes it a textarea |
 | `slider[label, var, min = 0, max = 100, step = 1]` | A range input bound to a number |
 | `checkbox[label, var]` | A checkbox bound to a bool |
 | `toggle[label, var]` | A switch bound to a bool — the same binding as `checkbox`, drawn as a toggle |
@@ -2126,6 +2133,8 @@ Top-level variables in a ui program are reactive state (see Function Scope). Thr
 | `icon[name, size = 'm', color = '']` | An icon from the closed set (below), sized by the type scale, colored by a token |
 
 Inputs are state: the reader's change lands in the variable, the handlers read it, and the next render draws it. There is no "value of the input" apart from the variable.
+
+**Files in and out.** A file is an input like any other: `field['Trades', upload, type = 'file']` binds `upload`, declared `upload = map[]`. When the reader picks a file the page sends it to the server, and `upload` becomes a map of strings — `name` (the file's name on the reader's computer), `type` (its media type), `size` (its bytes, as text) and `path`, where the server keeps the copy — so a handler reads it as it reads any file: `csv[upload.path]`, `read[upload.path]`. The copy is the session's, kept under `.crow/uploads/` (a directory that ignores itself in version control) and removed when the session ends; a handler that keeps a file copies it (`cp[upload.path, …]`). A file bigger than the app allows — 10 MB, or `serve[…, uploads = 50]` in megabytes — is refused before it is sent, and the reader is told the limit. The other way, `download[value, name]` hands the reader's browser a file: a frame as CSV, a string as text, or a picked file (a map with a `path`) as that file's bytes, saved under `name`. It is an effect held to the handler's commit, as `notice` is, so a handler that stops sends nothing. In a test, `change[a, 'upload', map[name = 'trades.csv', type = 'text/csv', size = '120', path = 'fixtures/trades.csv']]` stands for a file the reader picked, and `downloads[a]` is the list of what the session was handed, each a map of `name` and `text`.
 
 #### Derivations — `derive`
 
@@ -2151,19 +2160,27 @@ view render[]
 
 1. a handler wrote a fact it reads;
 2. a derivation it reads recomputed and its value changed — an equal number, string or bool cuts the chain (frames always propagate);
-3. an `exec` in this program wrote a table it reads;
-4. it reads `now[]` and a tick of `serve refresh` passed;
+3. a statement in this program wrote a table it reads — an `exec`, an `insert`, or a `query` whose statement writes (`INSERT … RETURNING id` reads back the row it wrote, and the table is written all the same);
+4. it reads `now[]` and a tick of `serve refresh` passed — a click's render is not a tick, so a click recomputes only what it moved;
 5. it reads a table this program never writes — an external source — and its freshness window elapsed. `fresh = N` is seconds; the default `fresh = 0` means *as fresh as the loop*: recomputed every tick, which is what a query inside a view did before. Declaring `fresh` is the relaxation.
 
 A derivation that fails — a query error — holds the error value; readers see `.ok` and `.reason` and a view renders the reason in place. `captured[x]` on a derivation is the moment it last ran. Derivations live in `use ui` programs with a page: they are reactive state; in the test harness `html[a]` is a tick and `click[a, h]` marks what the handler wrote. Design: `derive-design.md`.
 
 **Who holds a derivation is inferred from what it reads.** A fact is a top-level variable; a database or socket handle is not one, and neither is a `fetch`/`poll` binding. A derivation that reads a fact a session writes — assigned by a handler or a helper a handler calls, or bound to an input like `field` or `select` — or another derivation held per session, is computed per session. One that reads only constants, tables and the clock — the day's universe, the latest bar in a table — is computed once for the app and shared by every session, and a table write in any session reaches every session's derivations over that table. `crow check` prints each derivation's read set and who holds it.
 
+**A render never waits for a query it does not need.** A derivation that reaches out — its read set includes a table or an external source — is computed off the render in a served page: a render reads its latest value, and when that value is stale the runtime starts a recompute on a worker thread and the render goes ahead with what it has; the page renders again when the new value lands. Staleness has a cause, and the cause decides what waits. A derivation over a table the current event wrote is recomputed before that event's render, so a click's own writes are on the page in its answer — after `buy`, the blotter shows the trade. One that is stale because time moved, because a fact it reads changed, or because another session wrote its table shows its last value until the recompute lands. A handler that reads a derivation always gets the recomputed value; a derivation over facts and the clock alone is computed where it is read.
+
+Before its first value, a derivation whose value can be an error — a query's frame, anything that can fail — reads as an error of kind `'pending'` with the reason `loading`, which a view renders in place like any failed read; one that cannot fail is computed where it is first read. One recompute of a derivation is in flight at a time for each holder — the session, or the app for a shared one, so readers arriving together run a shared query once — and a value whose inputs moved while it was computed is dropped and computed once more with the latest inputs. `running[x]` is true while a recompute of `x` is in flight. The root element of a view that read a value still being recomputed carries `data-crow-stale`, and the default stylesheet dims it after 300 ms, so a fast recompute never flashes. In the test harness every event settles before the next line runs: the handler's writes, then every recompute they made stale, so a test reads the page a reader sees once the data is in.
+
+**A write reaches every reader.** When a handler writes a table, every session whose page read a derivation over that table renders again, recomputing it off the render: a reader sees another reader's change without waiting for a refresh tick, and without a line of code to publish it. A write made outside the program — another service, a person at a SQL prompt — is seen through `fresh` and the ticks, as above.
+
 **Rows keep their identity through `id`.** The live client patches the page in place: an element with an `id` is matched to the element with that `id` in the previous render, so a row rendered from data — `p['`s.name`', id = 's-`s.id`']` — moves when its list is reordered and is dropped when its item is gone, while its neighbours are untouched. Elements without an `id` match by position. A node that survives a render keeps its focus, caret and scroll, so the field a reader is typing in is never rebuilt under them.
 
 **The checker teaches the form.** A top-level variable assigned from a query and read by a view (a launch-time snapshot), and a query against a remote database inside a view, are errors in `crow check`; `d` in the check loop rewrites the first into `derive x` and hoists the second above its view as `derive rows[fresh = 60]`.
 
 #### Tables over frames
+
+**A big table pages.** `table[frame, page = 50]` shows fifty rows at a time, says which (`1–50 of 12000`) and offers the previous and the next page; the frame stays on the server and only the page shown is drawn, so a hundred thousand rows cost the reader one page. Each paged table keeps its place for its session: new rows arriving keep the reader on their page, and a frame that shrinks brings them to its last one. A table of more than 1,000 rows without `page` is refused, as a chart over its point budget is — in its place the view shows `table: 12000 rows — a table shows at most 1000 at a time: table[frame, page = 50]`, never a silent cut. A test sees the first page.
 
 `table[frame]` renders a frame's rows. Numeric columns are typed: their cells carry the class `num` and the stylesheet right-aligns them with tabular figures. Six named arguments make it interactive and legible: `click = handler` sends the row's key to the handler when a row is clicked (`fn focus[symbol]`), `key = 'col'` names the column whose cell is sent (the first column by default; a numeric key travels as a number, a text key as a string), `mark = 'col'` names a column whose truthy cells put the class `marked` on their row, tinted by the stylesheet, `delta = ['pnl', 'pct']` names columns whose cells are colored by sign (`up` / `down`), `actions = map[Replay = replay, Delete = ask_delete]` adds a trailing cell of buttons to every row, each sending the row's key to its handler, and `hide = ['id']` keeps columns out of the table that stay in the frame — the key column, a helper. In the test harness `click[a, ask_delete[3]]` presses a row's button.
 
@@ -2175,11 +2192,36 @@ A bound input keeps its variable's type: text typed into a field bound to an int
 
 #### Handlers and their helpers
 
-A view sees reactive state, a handler moves it, and a function a handler calls that assigns a module-level variable is a handler too — it joins the handler class in both renderers, so `fn restart[]` may call `fn rewind_to[t]` and the write lands in state. A pure helper (one that assigns no module variable) keeps its own scope. A helper a handler calls sees what the handler has written so far, and the handler sees what the helper wrote when it returns, in both modes. A helper that reads state and assigns none is a derivation, not a function: `derive band` computes the price band from the scanner's config, and the handlers read `band`. A function reading a derivation is refused with that advice — by `crow run`, `crow test` and `crow check` alike, which pass every program through the same validator before doing anything else. Reactive state may be an array, a map, or a frame; the compiled program keeps it as JSON between renders.
+A view sees reactive state, a handler moves it, and a function a handler calls that assigns a module-level variable is a handler too — it joins the handler class in both renderers, so `fn restart[]` may call `fn rewind_to[t]` and the write lands in state. A pure helper (one that assigns no module variable) keeps its own scope. A helper a handler calls sees what the handler has written so far, and the handler sees what the helper wrote when it returns, in both modes — derivations included: a derivation the handler reads after a write to what it reads, its own or a helper's, is the recomputed one (`clock.jump[t]`, then `clock.head` is `t`). A helper that reads state and assigns none is a derivation, not a function: `derive band` computes the price band from the scanner's config, and the handlers read `band`. A function reading a derivation is refused with that advice — by `crow run`, `crow test` and `crow check` alike, which pass every program through the same validator before doing anything else. Reactive state may be an array, a map, or a frame; the compiled program keeps it as JSON between renders.
+
+**A handler is a transaction.** It runs on a working copy of the session's facts, sees its own writes at once — as a helper it calls does — and when it ends its writes land as one; a render never sees a handler halfway, and two sessions never see each other's copies. Effects follow one rule, decided from the text: **an effect whose answer the handler uses runs when asked; one whose answer it does not use runs when the handler commits, in program order.** `r = query[…]`, `n = shell['wc -l x']` and `row = query[book, 'INSERT … RETURNING id']` answer at once; `notice['saved']` and `later[reload]` wait for the commit, and a stop drops them. Database writes run in a transaction: the first write a handler makes through a connection begins one on it, every later read and write on that connection is inside it, and it commits when the handler does and rolls back when it stops — `RETURNING` answers inside it. A handler that writes two databases commits them in program order; the language promises no atomicity across stores, and ClickHouse, which has no transactions, keeps a write the moment it is made.
+
+**The notice.** `notice[text]` tells the reader something: an effect held to the commit, so a handler that stops never leaves a message saying it succeeded. The session keeps one notice, with the moment it landed; `notice` reads as a record with `text` and `at`, provided by the runtime like a derivation, so a view writes `toast[notice.text]`. A handler's stop is delivered the same way (`skip_symbol stopped: clickhouse query error: …`). A page that reads no `notice` gets the runtime's own toast, which fades after a few seconds; the program keeps no flag and clears nothing.
+
+**Who the reader is.** `reader` is the page's signed-in reader: a map of strings, empty until someone signs in. A handler signs the reader in with `sign_in[record]` and out with `sign_out[]` — effects held to the handler's commit, like `notice`, so a handler that stops signs nobody in:
+
+```
+fn log_in[]
+    found = query[book, 'SELECT id, role, hash FROM people WHERE name = ?', [name]]
+    if len[found] eq 0
+        notice['no one called `name`']
+        return
+    if hash[password, found.hash[0]] ne found.hash[0]
+        notice['wrong password']
+        return
+    sign_in[map[id = str[found.id[0]], name = name, role = found.role[0]]]
+
+fn log_out[]
+    sign_out[]
+```
+
+Signing in sets `reader` for the session and gives the browser a cookie, so the reader is signed in on every page and tab they open next — after a restart too — for thirty days, or until they sign out. Signing out clears `reader` and the cookie, and ends that sign-in everywhere: every session holding it, another tab included, is signed out and redrawn at once, and the cookie is refused if it is ever sent again. A tab already open when someone signs in shows it the next time it opens the page. The program never sees the cookie: the runtime reads it when a page opens and fills `reader`. Nothing on the page can write `reader` — no input binds it and no handler assigns it; in a test, `change[a, 'reader', record]` stands for a reader who signed in. Authorization is ordinary code in the handler that needs it: `if reader.role ne 'admin'`. A signed-out reader has no `role`: reading it is an error, and a handler that meets one stops — nothing it did lands, and the reader is told why — so the check fails closed (in a test, `click` reports the error); `has[reader, 'role']` asks first. A derivation that reads `reader` is computed per session; a plain function is handed the reader as a parameter (`is_admin[reader]`), as it is handed a module variable. The record travels in the cookie, so it stays small: at most 1 KB — an id, a name, a role; look the rest up. The cookie is `HttpOnly`, `SameSite=Lax`, and `Secure` when the page came over https through a proxy (`X-Forwarded-Proto: https`). It is signed with the app's secret: `CROW_SECRET` (at least 32 characters) when set, otherwise a key the runtime writes to `.crow/keys/` on first use, a directory that ignores itself in version control. Changing the secret signs everyone out. Passwords are stored as `hash[password, 'password']` and checked with `hash[attempt, stored] eq stored` (### Hashing).
+
+**A handler runs off the page's loop.** While it runs the page stays live — refresh ticks render and landed values render, from the committed facts — and `running[h]`, true while a `later` schedule of `h` is in flight, is also true while `h` runs as a handler: every element that offers `h` renders `disabled` with `aria-busy="true"`, so a button shows it is working with no flag in the program. Events are applied one at a time, in arrival order, bound inputs included: a change that arrives while a handler runs waits its turn, and the browser keeps showing what the reader typed. A second click on the handler that is running is dropped, as `later` skips a schedule in flight. `later[f]` is the one way to say the session's other clicks need not wait for this work (Design Note: *Handlers and later*).
 
 #### Views render wherever they are called
 
-A `view` returns its markup from any call site — a `page[]`, the test harness, another view, or a program writing pages to disk (`doc.document[title, chapter[...]]`). Inside an element, a string child that starts and ends with a tag passes through as markup; any other string is text and is escaped. Both renderers apply the same rule.
+A `view` returns its markup from any call site — a `page[]`, the test harness, another view, or a program writing pages to disk (`doc.document[title, chapter[...]]`). **Text is text.** Markup is what a view, an element, a chart, an icon, a bound input, or `doc`'s `markdown`, `menu` and `pager` make; it stays markup however it travels — held in a local, collected by a `for`, put in a list, handed to another view as an argument. Every other string is text and is escaped, whatever it holds: a reader who types `<img src=x onerror=…>` into a field sees those characters on every page that shows them, never an image and never a script. A view given markup in one call and text in another is compiled once for each. Both renderers apply the same rule.
 
 ### Layout — the vocabulary
 
@@ -2223,8 +2265,11 @@ The vocabulary's own elements beyond the containers, each earning its place by a
 | `divider[]` | A rule between siblings: horizontal in a `stack`, vertical in a `row` |
 | `nav[a[...], ..., active = path]` | A navigation row; the link whose `href` equals `active` gets `aria-current="page"` and the stylesheet's active look |
 | `header[...]` | The app's bar: a surface with a border holding its name, its `nav` and a status chip, laid out as a row (`gap`, `justify`, `align` as on any row) |
+| `widget[name, props = value, on = map[event = handler]]` | A piece of the page the program's own JavaScript draws — a map, a rich editor, a calendar: the module `widgets/name.js` (below) |
 
 Three attributes any element takes: `tip = 'text'` is the browser's tooltip, `fit = 'cover'` (or `'contain'`) sizes an `img` into its box together with `aspect`, and `open` as above. The layers take no room in the flow and are hidden until opened; the layout engine lays an open layer out as a stack where it sits.
+
+**One way out of the vocabulary: `widget`.** The vocabulary is closed, so a map, a rich-text editor or a calendar is a widget: `widget['map', props = map[lat = 51.5, lng = -0.1], on = map[pick = choose]]` draws the module `widgets/map.js` of the program's folder — plain JavaScript that exports `mount(el, props, send)` and, optionally, `update(el, props)`. The page loads the module once, calls `mount` with the element and the props (the value, as JSON), and calls `update` with the same element whenever a render changes them; the element's contents are the module's, and no render touches them. `send('pick', value)` runs the handler `on` names for `pick` — `fn choose[place]` receives `value` — through the offers like any click: a page offers exactly the events its widgets name, and a handler takes a widget's value as it takes a field's, so it checks what it is given. A module name is letters, digits, `_` and `-`; the server serves only `widgets/*.js`. In a test a widget is its element, and `click[a, choose['Paris']]` stands for what it would send. There is no other client code.
 
 **The icon set**, closed like the rest of the vocabulary: `check x plus minus chevron_down chevron_up chevron_left chevron_right arrow_up arrow_down arrow_left arrow_right search menu more settings user home calendar clock refresh play pause stop upload download trash edit copy link external info warning error success star filter sort chart table bell mail lock eye eye_off dollar bookmark flag tag circle dot loader`. An unknown name is an error that lists them. Icons are inline SVG in the current text color, so `color = 'muted'` and the theme both apply.
 
@@ -2279,7 +2324,7 @@ serve[3000]
 page['/', home.render]
 ```
 
-The transpiler manages the application instance implicitly — no `app` variable needed. `page[path, view]` registers a LiveView page rendered by a view; event handlers are bound inside the view (`click = inc`), so there is no separate handler argument. `serve[port]` starts the server (`serve[port, refresh = N, budget = M]` adds periodic re-rendering and a latency budget — see Background Work). The look of the whole app is set there too: `serve[port, theme = 'dark', density = 'compact', accent = '#3b82f6', wide = true]` — `theme` is `'light'`, `'dark'`, or `'system'` (the default, following the reader's setting), `density = 'compact'` tightens the element defaults for dense screens, `accent` overrides the accent token with a hex colour, and `wide = true` lets the page use the full window instead of the reading column. A wrong value is a startup error naming the choices. The order in source doesn't matter: the transpiler always emits `serve[]` after all routes are registered.
+The transpiler manages the application instance implicitly — no `app` variable needed. `page[path, view]` registers a LiveView page rendered by a view; event handlers are bound inside the view (`click = inc`), so there is no separate handler argument. `serve[port]` starts the server (`serve[port, refresh = N, budget = M]` adds periodic re-rendering and a latency budget — see Background Work). `page[path, view, url = ['day', 'sym']]` puts those facts in the page's address: a session starts from the values in the query string (`/?day=2026-09-04&sym=IMRN`), each read in its fact's shape, and the address follows them as they change (`history.replaceState`), so a reload or a shared link opens the same view — a fact of a part is named by its path, `url = ['session.day']`, and appears by its last name. The look of the whole app is set there too: `serve[port, theme = 'dark', density = 'compact', accent = '#3b82f6', wide = true]` — `theme` is `'light'`, `'dark'`, or `'system'` (the default, following the reader's setting), `density = 'compact'` tightens the element defaults for dense screens, `accent` overrides the accent token with a hex colour, and `wide = true` lets the page use the full window instead of the reading column. A wrong value is a startup error naming the choices. The order in source doesn't matter: the transpiler always emits `serve[]` after all routes are registered.
 
 If no routes are registered, `serve[]` shows a default welcome page so the user always sees something.
 
@@ -2372,6 +2417,13 @@ If the port is already in use, the server prints a friendly error: `error: port 
 | Function | Description |
 |---|---|
 | `page[path, view]` | Add a LiveView page (server-rendered with live updates via WebSocket) |
+| `download[value, name]` | Hand the reader's browser a file when the handler commits: a frame as CSV, a string as text, a picked file's bytes |
+
+**A page and its session.** The page request renders the reader's session once, and the page's socket adopts that session — its facts, its derivations and the render already on screen — so a page loads with one render. **A session outlives its connection.** When the socket closes — a laptop sleeps, the network drops, a rebuild restarts nothing but the page — the server keeps the session for ten minutes, and the page, which holds the session's token for its tab, resumes it on reconnect: the same facts, a replay still where it was, sent its render at once. A waiting session keeps its facts and its derivations' last values, so it comes back without a flash of loading; at most a thousand sessions wait at once. The token is a credential and is treated as one: it travels only over the socket, it is good once, and every resume replaces it, so a copied token resumes nothing after its tab has. Reloading the tab resumes it too; a second tab is a session of its own. A socket that brings no live token — a session past its ten minutes, a server that restarted — starts a fresh session and is sent its render at once: the page never keeps showing a session the server no longer holds. `serve[…, keep = true]` keeps sessions across a restart as well: each session's facts are written to `.crow/sessions/` as they change, and a tab that comes back to a restarted program finds its session there for the same ten minutes; a fact whose name or type changed since starts from its declared value, which the log says. The directory ignores itself in version control. While the socket is down the page dims, says *reconnecting…* and takes no input, so a click is never silently lost. Events that arrive while a render runs are applied together and answered by one render: a slider dragged across its range is one render, not one per step. A render sends what changed, not the page: the server reads the render as the browser builds it — a chart's marks and a table's rows included — compares it with the render the page holds, matching elements by `id` and then by position as the page does, and sends the changes (a text, an attribute, an element added, gone or replaced) when they are smaller than the page, the whole page when they are not. A moving play-head on a chart is a few attributes, not the drawing again, and a row added to a list whose items carry ids is one row. Each change names the element it expects to find; a page that meets one it cannot place — its shape changed under it — asks for the whole page back, and a field being typed in keeps the reader's draft. Markup the browser would have to repair (a block inside a paragraph, a row outside a table, a tag closed by its parent's end tag) is sent as whole pages, and the server log says which repair, once. Handlers and renders run on worker threads, never on the threads that carry the sockets, so a session's slow work delays only its own page. A clicked element is marked `data-crow-busy` the moment it is clicked, before the server answers, and the mark clears when the answer to that click arrives — the reader sees the click taken in the same frame, with no program code in the browser.
+
+**A page sends only what it was offered.** A session accepts a click only when a render it sent carried that handler with exactly those arguments (`click = set_speed[10.0]` offers `set_speed` with `10.0`, a table row its key), a bound input or select only when a render drew it, and a form only when a render drew it. A helper no element names, a fact no input binds, and the button of a closed modal or a hidden element are refused — a confirmation's second step is accepted only after its first opened it. A refusal changes nothing and is logged: `crow live: refused 'name' — the page did not offer it`. The socket opens only from the app's own page (a page on another site is refused before it can send anything), and a served app listens on this machine only; set `CROW_HOST=0.0.0.0` where the network must reach it — a container, a server behind a proxy.
+
+Both modes serve pages. `crow run file.co` compiles and serves; `crow run -i file.co` serves from the interpreter at once, with no Rust compile between an edit and the page — the live runtime keeps the sessions (their facts, the commit, the notice, the questions, the address, the reconnects) in both, and only who renders the views and runs the handlers differs. One difference is of timing, not of meaning: the interpreter computes a derivation where it is read, so a page served by it waits for its queries, where the compiled page shows the last value and catches up. `crow test --served` drives every page in `tests/served/`, and every app under `examples/` with a `main.events` script beside its `main.co` (served from a fresh copy, so its database starts empty in each mode), with the same events in both modes and compares the pages they settle on.
 
 #### Static Files (`use web.static`)
 
@@ -2438,7 +2490,9 @@ conn = connect['postgres://user:pass@host/mydb', 20]
 
 Note: `connect` is also exported by `web.ws`. If both `use db` and `use web` are active, bare `connect[...]` is ambiguous — use `db.connect[...]` or `web.connect[...]`.
 
-A connection is not the program's lifetime. When the server closes it — ClickHouse drops an idle native connection after an hour, and a restart drops every one — the next query reopens it and runs, and the server log says so; Postgres connections are pooled, and sqlite is a file.
+A connection is not the program's lifetime. When the server closes it — ClickHouse drops an idle native connection after an hour, and a restart drops every one — the next query reopens it and runs, and the server log says so; Postgres and ClickHouse connections are pooled, so queries from different sessions run side by side, and sqlite is a file. Every `connect` to one Postgres or ClickHouse URL in a program is one handle: parts that each connect to the same server share its pool.
+
+**A query nobody waits for is stopped.** A background recompute whose session has gone, or whose inputs moved while it ran, stops its query on the server (ClickHouse and Postgres); so does every query in flight when a served program is told to stop — `crow stop`, a rebuild, Ctrl-C. A program killed outright cannot stop anything; the next run that connects to a ClickHouse server on the same machine stops the queries the dead run left behind, and the log says so. Each ClickHouse statement carries a leading comment naming the machine, the process and a number, which is how it is found again.
 
 #### Query & Execute
 
@@ -2465,7 +2519,7 @@ log[n]
 
 **List parameters.** An array bound as a parameter stands for a list: its `?` becomes `(?, ?, …)` with one placeholder per element, on every backend. Write `WHERE id IN ?` and pass `[[1, 3]]`; an empty list matches nothing.
 
-**Typed cells in compiled programs.** The compiler asks the program's databases what each literal query returns — a `prepare` on Postgres, `DESCRIBE` on ClickHouse — and types every column: `rows.price[0]` is a float, `rows.n[0]` an int, in the compiled program as it always was in the interpreter. Connections bound to a literal URL (`pg = db.connect['postgres://…']`) are asked in declaration order; `?` placeholders and interpolated spans stand in as NULL. A database that cannot be reached at compile time is skipped and the build says so once; the cells of that query then read as text, the pre-typing behaviour. Frames derived through `select`, `filter`, `sort`, `head`, `tail`, `fill`, `stack`, and `join` keep their column types. On sqlite, a computed column (`count(*)`, `round(...)`) is typed by stepping the SELECT once with null parameters, and the cells of a `RETURNING` clause — `query[book, 'INSERT ... RETURNING id', [...]]`, the way to read back a row the database numbered — are typed from the table's declared columns; asking never runs a write. Set `CROW_NO_DESCRIBE=1` to build without asking.
+**Typed cells in compiled programs.** The compiler asks the program's databases what each literal query returns — a `prepare` on Postgres, `DESCRIBE` on ClickHouse — and types every column: `rows.price[0]` is a float, `rows.n[0]` an int, in the compiled program as it always was in the interpreter. Connections bound to a literal URL (`pg = db.connect['postgres://…']`) are asked in declaration order; `?` placeholders and interpolated spans stand in as NULL. A database that cannot be reached at compile time is skipped and the build says so once; the cells of that query then read as text, the pre-typing behaviour. Frames derived through `select`, `filter`, `sort`, `head`, `tail`, `fill`, `stack`, and `join` keep their column types. On sqlite, a computed column (`count(*)`, `round(...)`) is typed by stepping the SELECT once with null parameters; when no row comes back — `WHERE session_id = ?`, an empty table — it is typed from the statement itself, by the declared types of the columns it reads and SQLite's rules (`round`, `avg` and arithmetic on a `REAL` are floats, `count` and comparisons ints, `||` and `datetime` text; a parameter or `NULL` alone stays text). The cells of a `RETURNING` clause — `query[book, 'INSERT ... RETURNING id', [...]]`, the way to read back a row the database numbered — are typed from the table's declared columns; asking never runs a write, and never creates a sqlite file that is not there yet. Every command asks the same way — `crow run`, `crow run -i`, `crow test`, `crow check` and the app's book — so a program refused for its columns' types (a local given an int cell, then text) is refused by all of them. Set `CROW_NO_DESCRIBE=1` to build without asking.
 
 
 #### Bulk Insert
@@ -2525,7 +2579,7 @@ log['`n` migrations applied']
 |---|---|---|
 | SQLite | 1 | File-based, concurrent writes lock |
 | PostgreSQL | 10 | Standard for web/data apps |
-| ClickHouse | 10 | Native protocol |
+| ClickHouse | 4 | Native protocol; opened as queries need them. One query already runs on every core of the server, so more at once contend rather than help |
 
 
 ## 14. Parallelism
@@ -2773,19 +2827,20 @@ fn refresh[]
 |------|---------|
 | `later[f]` | run `f` off the current loop; returns immediately |
 | `later[f, a, b]` | scripts/servers: capture `a, b` by value, pass to `f` |
-| `running[f]` | is a schedule of `f` still in flight? (spinners, disabled buttons) |
+| `running[f]` | is a schedule of `f` still in flight? (spinners, disabled buttons); for a derivation, is a recompute of it in flight? |
 
 Semantics, in order of importance:
 
 1. **State is the only mailbox.** In live apps the fn reads and writes
    reactive state; its writes are applied on the loop between renders, one
-   schedule at a time — state never mutates concurrently, and landing
-   writes re-render every client. In scripts (function-scope isolation
+   schedule at a time, as one — state never mutates concurrently, and
+   landing writes re-render the page. In scripts (function-scope isolation
    applies) the fn communicates through its arguments and the database.
 2. **Skip-if-running.** A second `later[f]` while `f` is in flight is a
    no-op. Double-clicks and overlapping polls cannot stack.
-3. **Errors are values.** A failing query inside the fn lands in state as
-   an ordinary error value; views render its `.reason`.
+3. **A failure stops it.** A failing query inside the fn stops it as it
+   stops a handler: nothing it wrote lands, the state keeps its last
+   value, and the notice says why.
 4. **Nothing vanishes at exit.** A script waits for in-flight work before
    ending.
 5. **The interpreter runs the work inline.** `later` promises
@@ -2865,8 +2920,135 @@ both modes satisfy the same contract, tests see the simplest legal
 schedule. Deferred deliberately: automatic offload of slow handlers (the
 no-verb endgame — needs the decision-span machinery), cancel-and-restart
 for typeahead-shaped work, a render latency budget on `serve`, and durable
-jobs.
+jobs. *Delivered with the session layer (session-layer-design.md §3.4):*
+a derivation that queries is computed off the render and a superseded one
+is stopped — the automatic offload, for derivations, and the
+cancel-and-restart; handlers follow in the layer's next phase.
 
+
+### Design Note: Effects Commit When the Handler Ends
+
+**What was considered:** leaving effects immediate (the rule before the
+session layer); making every effect deferred, including reads (rejected:
+`RETURNING`, a shell status, a query the handler branches on all need an
+answer, and a handler that cannot read is not a handler); two-phase
+commit across stores (rejected: three databases with three transaction
+models cannot promise it, and pretending would be the worst kind of
+promise).
+
+**Why this design:** one rule, decidable from the text, that a reader can
+apply without the runtime: needed the answer, it ran; did not, it waits.
+Elm's commands and Redux's thunks return effects as values but make the
+handler write them as data; here the handler's text is unchanged and the
+runtime does the holding. Design: `core-design.md` §1.
+
+### Design Note: A Fact Never Holds an Error
+
+**What was considered:** errors landing in facts (the rule before, and
+`later`'s); a per-fact choice.
+
+**Why this design:** a fact is what the reader acts on. An error in a
+fact is a page that lost its data to a string, and a handler that
+half-succeeded. Stopping keeps the last good value and tells the reader
+why; derivations, which are beliefs, keep holding errors, so a page with
+one failed part is still a page. Design: `core-design.md` §2.
+
+### Design Note: One Moment Per Event
+
+**What was considered:** a wall-clock read per call (the rule before); a
+frozen clock for the whole process (rejected: `refresh` and derivations
+over `now[]` need it to move); a `clock` capability only (deferred:
+capabilities bind what a part needs; the per-event moment is what the
+binding delivers).
+
+**Why this design:** an event is one thing that happened at one time.
+Two readings inside it are two answers to one question. Tests set it
+with the verb that sets any input, because it is one. Design:
+`core-design.md` §3.
+
+### Design Note: Handlers and later
+
+**What was considered:** dropping `later` once handlers run off the loop
+(rejected: a thirty-second import would hold every other click of the
+session); a second kind of handler (rejected: two ways to handle an
+event).
+
+**Why this design:** a programmer never chooses where a handler runs; the
+runtime does, invisibly. The only choice left is whether the session's
+other clicks should wait for this work, and `later[f]` is the one way to
+say they should not. Design: `session-layer-design.md` §3.3.
+
+### Design Note: Text Is Text
+
+**What was considered:** keeping the old rule — a string that begins with
+`<` and ends with `>` is markup — which made composing views free (a view
+returned a string, and a string that looked like markup was placed as
+markup); rejected: whatever a reader types or a database holds can look
+like markup, and a page placed it as markup, so one reader's text ran as
+script in every other reader's page. A `raw[s]` for markup built by hand
+(deferred: nothing in the corpus builds markup from strings; if it is
+needed, it gets a name that says what it does).
+
+**Why this design:** markup has a source — a view, an element, `doc` —
+and only what came from one is markup. The interpreter carries the
+source with the value; the compiler carries it in the type (`markup`, a
+string wherever a string is read), and compiles a view once for markup
+and once for text when it is given both, so the two modes place every
+child alike. Reading a string never makes it markup.
+
+### Design Note: One Widget Element
+
+**What was considered:** growing the vocabulary for each thing a page
+might draw (rejected: a map, an editor, a chart library — every one a
+language change, and never enough); script tags or inline JavaScript in
+views (rejected: two ways to put code on the page, and text a reader
+wrote could become one of them); widgets that write facts directly
+(rejected: the page would write state no handler checked).
+
+**Why this design:** one element and one module shape. The module draws;
+everything it tells the program arrives as an event the page offered, to
+a handler, like a click — so the session's rules (one event at a time, a
+transaction, a notice) hold for widgets too. Design:
+`session-layer-design.md` §4.4.
+
+### Design Note: Files Are Inputs and Effects
+
+**What was considered:** an `upload` element and an event carrying the
+file's bytes (rejected: a second way to bind a value, and a socket that
+carries megabytes between clicks); a file record as a struct the runtime
+declares (rejected: the reader's map of strings is already the shape a
+record the runtime fills takes, and a program declares `upload =
+map[]` as it declares any fact); `download` as a response a handler
+returns (rejected: handlers return nothing to the page; everything a
+handler does to the page is an effect held to its commit).
+
+**Why this design:** a file field is a field whose value is a map; the
+bytes travel beside the socket, by a one-time ticket, as a sign-in's
+cookie does, and are limited before they are sent. A download is an
+effect like `notice`: a handler that stops hands the reader nothing.
+
+### Design Note: The Runtime Says Who the Reader Is
+
+**What was considered:** a `reader` fact the program declares and a login
+handler assigns (rejected: anything a handler can assign, a bug can
+assign, and nothing would keep a bound input or a stray event away from
+it); handing the program the cookie, or `web.auth`'s `sign` and `verify`,
+to build sessions itself (rejected: every app would rebuild the same
+security-critical plumbing, and most would get one part wrong); a record
+type for `reader` (rejected: the runtime reads it from a cookie before the
+program runs and cannot know the program's struct; maps are the one
+shape that crosses that line, and the values are strings because
+identity is — an id, a name, a role); a built-in users table and login
+page (rejected: who may sign in, and how, is the app's; only the password
+hash is not, so it is `hash[pw, 'password']`); a sign-in carried over the
+socket (rejected: a socket cannot set an `HttpOnly` cookie, and a cookie
+script can read is one a script can steal — the page fetches it from the
+server with a one-time ticket instead).
+
+**Why this design:** the reader is a fact the runtime provides, like the
+clock: read everywhere, written by two effects, and checked by ordinary
+code. Signing out ends the sign-in everywhere because that is what a
+person means on a shared computer. Design: `session-layer-design.md` §4.1.
 
 ## 16. Verification: test Blocks
 
@@ -2913,15 +3095,18 @@ test refresh_flow[]
     assert[contains[html[a], 'count: 1']]
 ```
 
-A named test is a scenario and reads the program back: the facts and derivations, as the harness's clicks left them — `assert[session_id gt 0]`, `assert[len[rows] gt 0]`. An attached test (`test[p]` after a fn) sees what a caller of that fn sees and nothing of the program's state; its inputs are generated.
+A named test is a scenario and reads the program back: the facts and derivations, as the harness's clicks left them — `assert[session_id gt 0]`, `assert[len[rows] gt 0]`. Each session holds its own facts, as each served page does: the first `app[…]` takes the facts as the test has them, and every later one starts from where the first started. A bare fact name reads the session a verb acted on last, so a one-session test reads its session directly; `a.name` reads any session's — a fact, or a derivation as that session sees it (`len[bob.cards]`). An attached test (`test[p]` after a fn) sees what a caller of that fn sees and nothing of the program's state; its inputs are generated.
 
 | Harness | Meaning |
 |---------|---------|
-| `app[view]` | a headless session rendering `view` against the program's reactive state |
-| `click[a, handler]` | run `handler` on the session (deferred calls: `click[a, set_speed[10.0]]`) |
+| `app[view]` | a headless session rendering `view` against its own copy of the program's reactive state |
+| `click[a, handler]` | run `handler` on the session as one transaction (deferred calls: `click[a, set_speed[10.0]]`); when it stops, `click` evaluates to the error and the session is as it was |
 | `html[a]` | the rendered view as one HTML string |
 | `elements[a, sel]` | matching elements as records — `tag`, `text`, `class`, and every attribute (`href`, `name`, …) as keys; `sel` is `tag`, `.class`, `tag.class`, or a space-separated descendant chain (`'div.controls button'`) |
 | `change[a, 'var', value]` | what typing into a bound `field` does: set the reactive variable, so the next render and handler see it |
+| `change[a, 'now', t]` | set the session's clock: `now[]` in its handlers, renders and derivations is `t` until the test moves it again |
+| `change[a, 'reader', record]` | a reader who signed in: the session's `reader` is `record` (`map[]` signs them out), as if a handler had called `sign_in` |
+| `downloads[a]` | what the session's handlers handed the reader with `download`, in order: maps of `name` and `text` (a frame's CSV, a string, a file's contents) |
 | `app[view, width = 390, wide = true]` | a session at a viewport width (default 1280) — responsive rules are testable at every named width; `wide = true` lays the page out across the whole window, as `serve[..., wide = true]` serves it, instead of the reading column |
 | `box[a, sel]` | the layout engine's boxes for matching elements: `x y width height overflow`, plus `tag class path` |
 | `style[a, sel]` | resolved tokens: `background color size weight` |
@@ -2935,8 +3120,10 @@ columns) is not a tree property and is not what a unit test checks.
 
 Background work scheduled with `later[]` runs inline in tests, so a
 handler's eventual state is observable on the next line — no waiting, no
-flakiness. Two sessions are two independent apps, which is how event
-interleavings are tested deterministically.
+flakiness. Two sessions are two independent pages, which is how event
+interleavings are tested deterministically: one session's handler never
+touches another's facts, and a table one writes is the table the other
+reads, as in the served program (session-layer-design.md §3.1).
 
 **Verification never creates methods.** Test bodies call production
 functions — that is what verification is — but no function exists in the
@@ -3201,7 +3388,7 @@ crow build                  --- transpile to Rust and compile to native binary
 crow build file.co        --- transpile a specific file
 crow build --ir file.co   --- print the program's one typed form, the IR (docs/ir-design.md); nothing is compiled
 crow run                    --- transpile + compile + run main.co
-crow run file.co          --- transpile + compile + run a specific file
+crow run file.co          --- transpile + compile + run a specific file (a dev build: the runtime crates optimized, the program not)
 crow run train              --- run a named job from the crowfile jobs map
 crow run -i file.co       --- run with interpreter (instant start, for exploring)
 crow stop                   --- stop the running app (pidfile, then project binary)
@@ -3209,7 +3396,8 @@ crow stop book              --- stop the book this project is serving
 crow book [--port N]        --- in the crow repository: serve the Crow Book with every code block runnable in place;
                                 inside an app: derive and serve the app's own book — pages with trees and wireframes,
                                 a chapter per part, the data, the changes since the accepted baseline (--write: build only);
-                                the app's book serves next to the app, on its serve port plus one (finch on 3100 → 3101)
+                                the app's book serves next to the app, on its serve port plus one (finch on 3100 → 3101);
+                                its runner answers only the book's own page on this machine
 crow test                   --- run the test blocks of the project (or: crow test file.co)
 crow test --parity          --- run tests/parity/ in both modes and diff output
 crow test --book            --- execute every code block of the book in both modes
@@ -3337,6 +3525,8 @@ Every error names the source and both fixes: rename your definition, or import t
 **4. Fields are exempt.** Struct fields, map keys, JSON fields, and frame columns live inside their containers, not in the file's namespace — `account.sum`, `row.type`, `df.mean` are always fine. The one exception: the four error-metadata names (`ok`, `reason`, `kind`, `trace`) are a fixed vocabulary on *every* value, so struct fields may not use them.
 
 **5. Vocabulary zones are language-owned.** `view` blocks activate the HTML element vocabulary — the only zone, granted because HTML is an external, universal, unchangeable vocabulary that could not be renamed, reserved, or qualified without wrecking either learnability or ordinary code. User modules cannot define zones (that mechanism is a macro system, and Crow rejects macros); they export functions and views instead, reached by prefix — exactly how JSX fixes lowercase tags while components are imported references.
+
+**6. The backend's words are not reserved.** Crow compiles to Rust, but Rust's keywords are not Crow's: a name Crow does not reserve — `move`, `impl`, `match`, `loop`, `final` — is yours as a variable, function, parameter, loop variable or struct field, in both modes. The compiled program renames it for Rust behind the scenes and still names it as you wrote it in a trace.
 
 **Why not shadowing (Python/Go-style)?** Because Crow's brackets unify calling and indexing, shadowing produces *silent wrong answers*: `range = [10, 20, 30]` then `range[0]` — delete the assignment during a refactor and the same expression silently becomes `range(0)` = `[]`. MATLAB, the one mainstream language sharing this syntax collision, chose shadowing — and it has been a documented footgun for forty years. Languages where shadowing is safe (Python, Go, Julia) are exactly the ones whose call syntax is distinct from indexing. Crow's is not, so a collision must be an error, at the earliest possible moment, with the fix in the message.
 

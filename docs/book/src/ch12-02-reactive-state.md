@@ -1,8 +1,8 @@
 # Reactive State and Events
 
-Top-level variables in a ui program are **reactive state**. Views read
-them; event handlers change them; every change re-renders the page for
-every connected browser. Here is the whole loop:
+Top-level variables in a ui program are **reactive state**, and every
+reader's page holds its own copy. Views read them; event handlers change
+them; every change re-renders that reader's page. Here is the whole loop:
 
 ```crow,norun
 use web, ui
@@ -26,9 +26,11 @@ serve[3000]
 page['/', render]
 ```
 
-Click `+` in any browser tab: `inc` runs *on the server*, `count`
-changes, and every open tab shows the new value. You wrote no JavaScript,
-no fetch calls, no socket code.
+Click `+`: `inc` runs *on the server*, `count` changes, and the page
+shows the new value. A second tab has a `count` of its own — each page is
+its own session, and what pages share is the database (the two-users
+example in the testing chapter shows both). You wrote no JavaScript, no
+fetch calls, no socket code.
 
 Events bind by **name** — `click = inc` — the functions-as-values idea
 from chapter 4, never a lambda. And notice what `count` is: the one
@@ -40,6 +42,285 @@ it's a managed channel.
 Data sources compose the same way: `prices = poll['/api/prices', 5]`
 declares state that refreshes every five seconds and re-renders whatever
 reads it.
+
+## The page and its connection
+
+The browser holds a socket to the server, and the server holds your
+session. Several things follow.
+
+**A dropped connection says so, and your session waits for you.** When
+the socket closes — the laptop slept, the network dropped — the page
+dims, shows *reconnecting…* and takes no clicks until it is back. The
+server keeps your session for ten minutes: when the tab reconnects (or
+you reload it) you are back where you were, a replay still running, sent
+the page's render first so you never click on a page the server no
+longer holds. A second tab is a session of its own. `serve[…, keep =
+true]` keeps sessions across a restart of the program too — what a
+rebuild would otherwise throw away.
+
+**A render sends what changed.** After the first page, the server sends
+the page only what a render changed — a text, an attribute, a row added
+or gone — not the page again. A chart whose play-head moves is sent the
+play-head, a few bytes, not the drawing; a list whose items carry an `id`
+gains one row when one item is added at its top. The server sends the
+whole page when that is smaller, and when your markup is one the browser
+would have to repair — a `div` inside a `p`, a row outside a table — and
+it says so in the log, once, so you can fix the markup. A field you are
+typing in keeps what you typed while the page around it changes.
+
+**A click shows it was taken.** The element you press is marked busy
+(`data-crow-busy`) the instant you press it, and unmarked when the server's
+answer to that click arrives — over a slow network the page still shows
+the click in the same frame.
+
+**A page can send only what it was offered.** The server accepts a click
+only when a render it sent carried that handler with exactly those
+arguments — `button['10x', click = set_speed[10.0]]` offers `set_speed`
+with `10.0` and nothing else — and a bound value only for an input it
+drew. A handler no button names, a helper, a variable no input binds, and
+the button of a closed modal are refused and logged, so a confirmation's
+second step cannot be sent without its first. The socket opens only from
+the app's own page, and a served app listens on this machine only; set
+`CROW_HOST=0.0.0.0` when a server must be reachable from the network.
+
+## A click is one transaction
+
+A handler's writes land together when it ends, or not at all. It works on
+its own copy of the session's facts — a render never sees it halfway — and
+its database writes are one transaction, committed with it. When an error
+reaches a decision, a fact or a database call, the handler **stops**:
+nothing it did lands, and the reader is told why through the session's
+*notice*:
+
+```crow
+use web, ui
+
+saved = 0
+
+fn save[]
+    saved = saved + 1
+    notice['saved `saved`']
+
+fn broken[]
+    saved = saved + 100
+    px = float['no quote']
+    if px gt 1.0
+        saved = 0
+
+view panel[]
+    return stack[
+        p['saved `saved`'],
+        p['`notice.text`'],
+        button['Save', click = save],
+        button['Broken', click = broken]
+    ]
+
+test one_transaction[]
+    a = app[panel]
+    click[a, save]
+    assert[a.saved eq 1]
+    assert[contains[html[a], 'saved 1']]
+    r = click[a, broken]
+    assert[not r.ok]
+    assert[a.saved eq 1]
+    assert[contains[html[a], 'broken stopped: cannot convert']]
+
+page['/', panel]
+log['panel defined']
+```
+
+```text
+panel defined
+```
+
+`notice[text]` waits for the commit, so a handler that stops never says it
+succeeded. `notice.text` and `notice.at` read the latest one; a page that
+shows no notice of its own gets the runtime's toast, which fades by itself.
+While a handler runs, the button that started it is disabled and marked
+busy, and `running[save]` is true — the page shows the work without a flag
+in your program. Inside one click `now[]` is one moment, however many
+times it is read.
+
+## The address and the questions
+
+Two things every app ends up building by hand come with the page. The
+address can carry facts — `page['/', render, url = ['day']]` starts a
+session from `/?day=2026-09-04` and keeps the address in step as `day`
+changes, so a reload or a shared link opens the same view. And a click
+can ask first:
+
+```crow
+use web, ui
+
+ended = 0
+
+fn end_session[]
+    ended = ended + 1
+
+view panel[]
+    return stack[
+        p['ended `ended`'],
+        button['End session', click = end_session, confirm = 'End this session?']
+    ]
+
+test the_button_asks_first[]
+    a = app[panel]
+    b = elements[a, 'button'][0]
+    assert[b['data-crow-click'] eq '__ask']
+    click[a, end_session]
+    assert[a.ended eq 1]
+
+page['/', panel, url = ['ended']]
+log['panel defined']
+```
+
+```text
+panel defined
+```
+
+The button offers the question, not the handler: the runtime shows the
+dialog, and only its Confirm button reaches `end_session`, so the step
+cannot be skipped by sending the click directly. On a table the questions
+sit beside the actions: `actions = map[Delete = delete_session], confirm =
+map[Delete = 'Delete this session?']`. In a test `click[a, end_session]`
+runs the handler itself — the question is the page's, not the program's.
+
+## Who the reader is
+
+A page knows who is reading it through `reader`: a map of strings, empty
+until someone signs in. A handler signs the reader in with
+`sign_in[record]` and out with `sign_out[]`. Passwords are stored with
+`hash[password, 'password']` — salted and deliberately slow — and checked
+by hashing the attempt the way the stored one was made:
+
+```crow
+use web, ui, db
+
+book = db.connect['sqlite://:memory:']
+name = ''
+password = ''
+
+fn setup[]
+    exec[book, 'CREATE TABLE IF NOT EXISTS people (name TEXT, role TEXT, hash TEXT)']
+    exec[book, 'INSERT INTO people VALUES (?, ?, ?)', ['ada', 'admin', hash['lovelace', 'password']]]
+
+fn log_in[]
+    found = query[book, 'SELECT role, hash FROM people WHERE name = ?', [name]]
+    if len[found] eq 0
+        notice['no one called `name`']
+        return
+    if hash[password, found.hash[0]] ne found.hash[0]
+        notice['wrong password']
+        return
+    sign_in[map[name = name, role = found.role[0]]]
+
+fn log_out[]
+    sign_out[]
+
+derive greeting
+    if has[reader, 'name']
+        return 'hello `reader.name`'
+    return 'hello stranger'
+
+view door[]
+    return stack[
+        p[greeting],
+        field['Name', name, type = 'text'],
+        field['Password', password, type = 'password'],
+        button['Log in', click = log_in],
+        button['Log out', click = log_out]
+    ]
+
+test ada_signs_in_and_out[]
+    a = app[door]
+    click[a, setup]
+    change[a, 'name', 'ada']
+    change[a, 'password', 'lovelace']
+    click[a, log_in]
+    assert[reader.role eq 'admin']
+    assert[elements[a, 'p'][0].text eq 'hello ada']
+    click[a, log_out]
+    assert[len[reader] eq 0]
+
+page['/', door]
+log['door defined']
+```
+
+```text
+door defined
+```
+
+Signing in gives the browser a cookie, so the reader is signed in on
+every page and tab they open next, and after a restart, for thirty days.
+Signing out clears it and ends that sign-in everywhere: another tab still
+open is signed out at once, and the old cookie is refused if it ever
+comes back. The program never touches the cookie, and nothing on the page
+can write `reader` — no field binds it, no handler assigns it.
+
+Deciding who may do what is ordinary code in the handler: `if reader.role
+ne 'admin'`. A signed-out reader has no `role`, and reading it is an
+error that stops the handler, so a forgotten check fails closed. In a
+test, `change[a, 'reader', map[name = 'bob', role = 'member']]` stands for
+someone who signed in, without a password. The cookie is signed with the
+app's secret — `CROW_SECRET`, or a key the runtime writes to
+`.crow/keys/` the first time it needs one.
+
+## Files, and tables too big to show
+
+A file is an input: `field['Trades', upload, type = 'file']` binds
+`upload`, declared `upload = map[]`. When the reader picks a file the page
+sends it, and `upload` holds its `name`, `type`, `size` and the `path` of
+the server's copy — read it like any file. The other way, `download[value,
+name]` hands the reader's browser a file when the handler commits: a
+frame as CSV, a string as text. And a table that could grow past a screen
+pages: `table[frame, page = 50]` draws fifty rows at a time, with the
+count and the previous and next pages under it.
+
+```crow
+use web, ui, frame
+
+upload = map[]
+
+derive trades
+    if has[upload, 'path']
+        return frame.load[upload.path]
+    return frame.new[]
+
+fn export[]
+    download[trades, 'trades.csv']
+
+view desk[]
+    return stack[
+        field['Trades', upload, type = 'file'],
+        table[trades, page = 50],
+        button['Export', click = export]
+    ]
+
+test a_file_in_and_out[]
+    write['desk_trades.csv', 'symbol,qty\nIMRN,100\nFFIE,300\n']
+    a = app[desk]
+    change[a, 'upload', map[name = 'trades.csv', type = 'text/csv', size = '29', path = 'desk_trades.csv']]
+    assert[len[elements[a, 'tbody tr']] eq 2]
+    click[a, export]
+    assert[downloads[a][0].name eq 'trades.csv']
+    assert[contains[downloads[a][0].text, 'IMRN,100']]
+
+page['/', desk]
+log['desk defined']
+```
+
+```text
+desk defined
+```
+
+The file travels beside the page's connection, never through it, and a
+file bigger than the app allows — 10 MB, or `serve[…, uploads = 50]` in
+megabytes — is refused before it is sent, with the limit named. The
+server's copy belongs to the session and goes when the session does; a
+handler that wants to keep it copies it. A table of more than 1,000 rows
+without `page` is refused in place, as an over-budget chart is: the page
+says how many rows there are and how to page them, rather than quietly
+cutting some off.
 
 ## Sliders, helpers, and bigger state
 

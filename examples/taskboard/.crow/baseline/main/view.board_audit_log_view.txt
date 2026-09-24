@@ -1,0 +1,7 @@
+view board_audit_log_view (board/audit.co)
+  composed on: page /
+  reads: board_audit_entries
+  always:
+    stack[gap = 's']
+      h2[] 'What happened'
+      table[page = 10] board_audit_entries

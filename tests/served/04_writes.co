@@ -1,0 +1,32 @@
+--- A table the handlers write: a click's own write is in its answer, and
+--- a write that stops rolls back.
+use web, ui, db
+
+book = db.connect['sqlite://:memory:']
+exec[book, 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)']
+
+draft = 'first'
+
+derive notes
+    return query[book, 'SELECT id, body FROM notes ORDER BY id']
+
+fn add[]
+    exec[book, 'INSERT INTO notes (body) VALUES (?)', [draft]]
+
+fn add_then_stop[]
+    exec[book, 'INSERT INTO notes (body) VALUES (?)', ['doomed']]
+    px = float['no']
+    if px gt 1.0
+        draft = 'never'
+
+view render[]
+    return stack[
+        p['notes: `len[notes]`'],
+        table[notes],
+        field['Note', draft, type = 'text'],
+        button['Add', click = add],
+        button['Doomed', click = add_then_stop]
+    ]
+
+serve[3404]
+page['/', render]

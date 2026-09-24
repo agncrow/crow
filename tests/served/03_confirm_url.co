@@ -1,0 +1,21 @@
+--- A click that asks first, and a fact in the page's address.
+use web, ui
+
+day = '2026-09-04'
+ended = 0
+
+fn end_session[]
+    ended = ended + 1
+
+fn next_day[]
+    day = '2026-09-05'
+
+view render[]
+    return stack[
+        p['day `day` ended `ended`'],
+        button['End', click = end_session, confirm = 'End this session?'],
+        button['Next day', click = next_day]
+    ]
+
+serve[3403]
+page['/', render, url = ['day']]

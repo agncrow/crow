@@ -33,7 +33,7 @@ pub fn ty_of(t: &CrowType) -> Ty {
     match t {
         CrowType::Int => Ty::Int,
         CrowType::Float => Ty::Float,
-        CrowType::Str => Ty::Str,
+        CrowType::Str | CrowType::Markup => Ty::Str,
         CrowType::Bool => Ty::Bool,
         CrowType::Array(inner) => Ty::List(Box::new(ty_of(inner))),
         CrowType::NumArray(_) => Ty::Tensor,
@@ -572,6 +572,9 @@ impl<'a> Lowerer<'a> {
                     "ok" | "reason" | "kind" | "trace" => {
                         let base = self.lower_expr(object)?;
                         let which = match field.as_str() {
+                            // a frame column's `.ok` is its rows' validity;
+                            // any other value's is its own status
+                            "ok" if matches!(base.ty().payload(), Ty::Column(_)) => Meta::Valid,
                             "ok" => Meta::Ok,
                             "reason" => Meta::Reason,
                             "kind" => Meta::Kind,
@@ -783,17 +786,7 @@ impl<'a> Lowerer<'a> {
     /// The specialised name of a user function called at these argument
     /// types, when it has one.
     fn specialised(&self, name: &str, args: &[A]) -> String {
-        let specs = match self.ctx.specializations.get(name) {
-            Some(s) => s,
-            None => return name.to_string(),
-        };
-        let arg_types: Vec<CrowType> = args.iter().map(|a| self.ctx.infer_expr(a)).collect();
-        for (params, mangled) in specs {
-            if params.len() == arg_types.len() && params.iter().zip(&arg_types).all(|(p, a)| p.compatible(a)) {
-                return mangled.clone();
-            }
-        }
-        specs.first().map(|(_, m)| m.clone()).unwrap_or_else(|| name.to_string())
+        self.ctx.specialization_for(name, args).unwrap_or_else(|| name.to_string())
     }
 
     /// An interpolated string's pieces, each expression parsed as the
@@ -845,7 +838,7 @@ impl<'a> Lowerer<'a> {
                 let tokens = lexer.tokenize()?;
                 let mut parser = crate::parser::Parser::new(tokens);
                 let stmts = parser.parse()?;
-                let stmts = crate::lower::lower_program(&stmts).unwrap_or(stmts);
+                let stmts = crate::lower::lower_fragment(&stmts).unwrap_or(stmts);
                 let expr = stmts.iter().find_map(|st| if let S::ExprStmt(e) = st { Some(e.clone()) } else { None });
                 match expr {
                     Some(e) => pieces.push(Piece::Expr(self.lower_expr(&e)?)),

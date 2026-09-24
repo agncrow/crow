@@ -11,14 +11,14 @@ Import with `use frame`. Column-oriented DataFrames for tabular data. See `docs/
 |---|---|---|
 | `new[]` | The empty frame (`frame.new[]`, since `new` reads best qualified); add columns with `with` | [Frames: `use frame`](../by-example/frames.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `with[frame, col, values]` | A frame with one more (or replaced) column: `values` is an array, a tensor, or a scalar repeated for every row; the length must match the rows (error-value otherwise) | [Frames: `use frame`](../by-example/frames.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
-| `load[path]` | Load CSV → frame (error-value on failure) | [Databases: `use db`](../by-example/db.md) · [Frames: `use frame`](../by-example/frames.md) · [Web: responses and submodules](../by-example/web-more.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) |
-| `save[frame, path]` | Write frame → CSV | [Frames: `use frame`](../by-example/frames.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `load[path]` | Load CSV → frame (error-value on failure) | [Databases: `use db`](../by-example/db.md) · [Frames: `use frame`](../by-example/frames.md) · [Web: responses and submodules](../by-example/web-more.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
+| `save[frame, path]` | Write frame → CSV | [Frames: `use frame`](../by-example/frames.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `select[frame, cols]` | Pick columns: `select[df, ['name', 'age']]` | [Frames: `use frame`](../by-example/frames.md) |
 | `filter[frame, mask]` | Keep rows where mask is true: `filter[df, df.age gt 50]` | [Frames: `use frame`](../by-example/frames.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [Views and Live Updates](../ch13-03-views.md) |
 | `sort[frame, col]` | Sort ascending: `sort[df, 'age']`. Descending: `sort[df, 'age', desc = true]` | [Arrays](../by-example/arrays.md) · [Frames: `use frame`](../by-example/frames.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [Views and Live Updates](../ch13-03-views.md) |
 | `group[frame, col, aggs...]` | Group + aggregate: `group[df, 'dept', ['salary', 'mean'], ['age', 'max']]` | [Frames: `use frame`](../by-example/frames.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
 | `join[f1, f2, key]` | Join on key column: `join[df1, df2, 'id']`. Type: `join[df1, df2, 'id', 'left']` | [Frames: `use frame`](../by-example/frames.md) · [Strings](../by-example/strings.md) · [Strings and Interpolation](../ch03-03-strings.md) |
-| `stack[f1, f2]` | Stack frames vertically | [Frames: `use frame`](../by-example/frames.md) · [Math: tensors](../by-example/math.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [View Blocks](../ch12-01-views.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Derivations](../ch12-08-derive.md) |
+| `stack[f1, f2]` | Stack frames vertically | [Frames: `use frame`](../by-example/frames.md) · [Math: tensors](../by-example/math.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [View Blocks](../ch12-01-views.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Derivations](../ch12-08-derive.md) |
 | `head[frame, n]` / `tail[frame, n]` | First/last n rows (returns a frame) | [Frames: `use frame`](../by-example/frames.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) |
 | `fill[frame, col, value]` | Fill missing values in a column | [Frames: `use frame`](../by-example/frames.md) |
 | `unique[frame, col]` | Unique values of a column: `unique[df, 'symbol']` | [Frames: `use frame`](../by-example/frames.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) |
@@ -47,7 +47,7 @@ rich_old = filter[df, df.age gt 50 and df.salary gt 100000]
 others = filter[df, not (df.name eq 'alice')]
 ```
 
-Missing values compare as `false` — they are excluded by any filter.
+Missing values compare as `false` — they are excluded by any filter. A column's `.ok` is its rows' validity — `true` where the cell is present, `false` where it is missing — so `filter[df, df.age.ok]` keeps the complete rows. (Every other value's `.ok` is its own status: a list that did not fail is ok.)
 
 Dynamic column names need no special syntax — a string variable works everywhere a column name does:
 

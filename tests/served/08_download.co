@@ -1,0 +1,16 @@
+--- download[value, name]: a frame as its CSV and a string as it is, each
+--- fetched by the page once, when the handler commits.
+use web, ui, frame
+
+fn export[]
+    f = with[frame.new[], 'n', range[1, 4]]
+    download[f, 'numbers.csv']
+
+fn note[]
+    download['hello there', 'note.txt']
+
+view render[]
+    return stack[button['Export', click = export], button['Note', click = note]]
+
+serve[3408]
+page['/', render]

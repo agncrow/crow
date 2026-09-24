@@ -14,7 +14,7 @@ Import with `use doc`. Documentation from Markdown, rendered by the kernel so th
 | `plain[text]` | The words of a chapter with markup removed and whitespace collapsed — what a search index holds | [Documentation: `use doc`](../by-example/doc.md) · [Web: responses and submodules](../by-example/web-more.md) |
 | `document[title, body]` | A complete HTML page: the kernel stylesheet (tokens, elements, responsive rules) plus the documentation rules, then the body | [Documentation: `use doc`](../by-example/doc.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [View Blocks](../ch12-01-views.md) |
 
-Strings that start and end with a tag pass through a view as markup, so a rendered chapter or a menu can be a child of `stack[...]` or `row[...]`; anything else is text and is escaped. A view's tree handed to `document[...]` is its markup in both modes.
+`markdown`, `menu` and `pager` make markup, which a view places as markup, so a rendered chapter or a menu can be a child of `stack[...]` or `row[...]`; every other string is text and is escaped (§ Views: *Text is text*). A view's tree handed to `document[...]` is its markup in both modes.
 
 ```
 use web, ui, doc

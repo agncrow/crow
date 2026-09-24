@@ -1,0 +1,54 @@
+--- Who the reader is: a password checked against its stored hash, a
+--- sign-in that holds when the page is opened again, an admin-only action
+--- that fails closed for nobody, and a sign-out.
+use web, ui, db
+
+book = db.connect['sqlite://:memory:']
+name = ''
+password = ''
+wiped = 0
+
+fn setup[]
+    exec[book, 'CREATE TABLE IF NOT EXISTS people (name TEXT, role TEXT, hash TEXT)']
+    exec[book, 'DELETE FROM people']
+    exec[book, 'INSERT INTO people VALUES (?, ?, ?)', ['ada', 'admin', hash['lovelace', 'password']]]
+
+fn log_in[]
+    found = query[book, 'SELECT role, hash FROM people WHERE name = ?', [name]]
+    if len[found] eq 0
+        notice['no one called `name`']
+        return
+    if hash[password, found.hash[0]] ne found.hash[0]
+        notice['wrong password']
+        return
+    sign_in[map[name = name, role = found.role[0]]]
+
+fn log_out[]
+    sign_out[]
+
+fn wipe[]
+    if reader.role ne 'admin'
+        notice['admins only']
+        return
+    wiped = wiped + 1
+    notice['wiped']
+
+derive greeting
+    if has[reader, 'name']
+        return 'hello `reader.name`'
+    return 'hello stranger'
+
+view render[]
+    return stack[
+        p[greeting],
+        field['Name', name, type = 'text'],
+        field['Password', password, type = 'password'],
+        button['Set up', click = setup],
+        button['Log in', click = log_in],
+        button['Log out', click = log_out],
+        button['Wipe', click = wipe],
+        p['wiped `wiped`']
+    ]
+
+serve[3406]
+page['/', render]

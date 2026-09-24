@@ -82,8 +82,8 @@ Note: `sort[t]` is a core builtin (not in the math module) that works on both ar
 
 | Function | Returns | Example |
 |---|---|---|
-| `stack[tensors]` | Stack tensors along new axis 0 (NumArray) | [Frames: `use frame`](../by-example/frames.md) · [Math: tensors](../by-example/math.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [View Blocks](../ch12-01-views.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Derivations](../ch12-08-derive.md) |
-| `stack[tensors, axis]` | Stack tensors along new axis (NumArray) | [Frames: `use frame`](../by-example/frames.md) · [Math: tensors](../by-example/math.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [View Blocks](../ch12-01-views.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Derivations](../ch12-08-derive.md) |
+| `stack[tensors]` | Stack tensors along new axis 0 (NumArray) | [Frames: `use frame`](../by-example/frames.md) · [Math: tensors](../by-example/math.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [View Blocks](../ch12-01-views.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Derivations](../ch12-08-derive.md) |
+| `stack[tensors, axis]` | Stack tensors along new axis (NumArray) | [Frames: `use frame`](../by-example/frames.md) · [Math: tensors](../by-example/math.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [View Blocks](../ch12-01-views.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Derivations](../ch12-08-derive.md) |
 
 Note: `concat[a, b, axis]` is a core builtin (not in the math module) — one merge operation for all arrays and tensors. It replaced the former `append`.
 
@@ -192,7 +192,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | `erf[x]` | Error function erf(x), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `bessel[x, n]` | Bessel function J_n(x), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `factorial[x]` | Factorial x! = Γ(x+1), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
-| `choose[n, k]` | Binomial coefficient C(n,k), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
+| `choose[n, k]` | Binomial coefficient C(n,k), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 
 ### Complex Numbers
 
@@ -249,7 +249,7 @@ x = solve[s2, [10, 12, 14]]
 
 | Function | Description | Example |
 |---|---|---|
-| `load[path]` | Load numeric CSV file directly into a 2D tensor (error-value on failure) | [Databases: `use db`](../by-example/db.md) · [Frames: `use frame`](../by-example/frames.md) · [Web: responses and submodules](../by-example/web-more.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) |
+| `load[path]` | Load numeric CSV file directly into a 2D tensor (error-value on failure) | [Databases: `use db`](../by-example/db.md) · [Frames: `use frame`](../by-example/frames.md) · [Web: responses and submodules](../by-example/web-more.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
 
 `load[path]` reads a CSV file with a header row and parses all values as floats into a 2D tensor (rows × columns). This is much faster than `csv[path]` (io module) for numeric data because it avoids creating intermediate string maps.
 

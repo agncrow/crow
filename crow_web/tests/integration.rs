@@ -743,7 +743,7 @@ mod live_integration {
 // ── View: VNode diffing + components ────────────────────────────────
 
 mod view_integration {
-    use crow_web::view::{CrowComponent, CrowVNode, VPatch};
+    use crow_web::view::{CrowComponent, CrowVNode};
     use std::collections::HashMap;
 
     #[test]
@@ -764,9 +764,11 @@ mod view_integration {
             ]),
         ]);
 
-        let patches = CrowVNode::diff(&old, &new);
-        assert!(!patches.is_empty());
-        assert!(patches.iter().any(|p| matches!(p, VPatch::InsertChild { index: 2, .. })));
+        let patches = CrowVNode::changes(&old, &new);
+        assert!(patches.iter().any(|p| p["op"] == "insert" && p["index"] == 2), "{:?}", patches);
+        let mut page = old.clone();
+        page.apply(&patches).expect("the changes fit the page");
+        assert_eq!(page.to_html(), new.to_html());
     }
 
     #[test]
@@ -815,9 +817,9 @@ mod view_integration {
     fn diff_type_mismatch_replaces() {
         let old = CrowVNode::text("hello");
         let new = CrowVNode::el("span", HashMap::new(), vec![CrowVNode::text("hello")]);
-        let patches = CrowVNode::diff(&old, &new);
+        let patches = CrowVNode::changes(&old, &new);
         assert_eq!(patches.len(), 1);
-        assert!(matches!(&patches[0], VPatch::Replace { .. }));
+        assert_eq!(patches[0]["op"], "replace");
     }
 
     #[test]
@@ -894,9 +896,9 @@ mod view_integration {
         let v2 = render(&state);
         assert!(v2.to_html().contains("Hello, Bob"));
 
-        // Diff should detect changes
-        let patches = CrowVNode::diff(&v1, &v2);
-        assert!(!patches.is_empty());
+        // the render's changes carry the new greeting
+        let patches = CrowVNode::changes(&v1, &v2);
+        assert!(patches.iter().any(|p| p["text"] == "Hello, Bob"), "{:?}", patches);
     }
 }
 

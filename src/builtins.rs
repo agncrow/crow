@@ -845,25 +845,11 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                 Value::Str(a) => a.clone(),
                 _ => return Err("hash[] second argument must be a string algorithm".into()),
             };
-            let hex = match algo.as_str() {
-                "sha256" => {
-                    use sha2::Digest;
-                    let result = sha2::Sha256::digest(s.as_bytes());
-                    format!("{:x}", result)
-                }
-                "sha512" => {
-                    use sha2::Digest;
-                    let result = sha2::Sha512::digest(s.as_bytes());
-                    format!("{:x}", result)
-                }
-                "md5" => {
-                    use md5::Digest;
-                    let result = md5::Md5::digest(s.as_bytes());
-                    format!("{:x}", result)
-                }
-                _ => return Ok(CrowValue::error_with_kind(&format!("unsupported hash algorithm '{}' (use sha256, sha512, or md5)", algo), "hash", trace)),
-            };
-            Ok(CrowValue::ok(Value::Str(hex)))
+            // one implementation for both modes (crow_runtime::hash)
+            match crow_runtime::hash::hash(&s, &algo) {
+                Ok(h) => Ok(CrowValue::ok(Value::Str(h))),
+                Err(e) => Ok(CrowValue::error_with_kind(&e, "hash", trace)),
+            }
         }
         "matches" => {
             if args.len() != 2 { return Err("matches[] takes exactly 2 arguments (string, pattern)".into()); }

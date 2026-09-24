@@ -277,6 +277,13 @@ finch's move to parts is the remaining item.
    rule. Is there a case for a different default on remote sources?
 3. May a handler read a derivation? Proposed yes (`set_speed` reads
    `head`). It reads the value as of the handler's start.
+   *Decided otherwise, 2026-09-22:* the spec's rule 1 holds inside a
+   handler too — a read after a write to what the derivation reads, the
+   handler's own or a helper's, sees the write. The interpreter always
+   did; the compiled handler read each derivation once at its start, and
+   finch's hops announced the time they jumped from. It now flushes the
+   handler's writes and reads the derivation again before each statement
+   that reads it (the memo makes an unchanged one free).
 4. Early cutoff on frames: content equality is a full scan. Proposed:
    cutoff for scalars and strings in v1, frames always propagate.
 5. Should a derivation over a source this app writes *also* accept

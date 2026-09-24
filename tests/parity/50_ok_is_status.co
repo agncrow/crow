@@ -1,0 +1,26 @@
+--- .ok is a value's status: true for every value that did not fail, a
+--- list included, so `if not listing.ok` guards a listing that failed and
+--- nothing else (the interpreter mapped .ok over a list's elements, and a
+--- migration job refused a directory it had read). A frame column's .ok is
+--- its rows' validity, a missing cell reading false.
+use frame
+names = ['x', 'y']
+log[names.ok]
+nums = [1, 2, 3]
+log[nums.ok]
+listing = ls['tests/parity/lib']
+log[listing.ok]
+if not listing.ok
+    log['refused a listing that was read']
+none = ls['tests/parity/nope']
+log[none.ok]
+write['parity50.csv', 'a,b,s\n1,,x\n2,3,\n']
+df = load['parity50.csv']
+log[df.a.ok]
+log[df.b.ok]
+log[df.s.ok]
+log[len[filter[df, df.b.ok]]]
+rm['parity50.csv']
+f = frame.new[]
+f = with[f, 'p', [1.5, 2.5]]
+log[f.p.ok]

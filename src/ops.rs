@@ -630,23 +630,31 @@ pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, 
     }
 }
 
+/// `.ok` of a frame column: each row's validity, a missing cell false — the
+/// mask `filter[df, df.col.ok]` keeps the complete rows with. A column that
+/// failed to read is its error, as any field of an error value is.
+pub fn valid(obj: CrowValue) -> Result<CrowValue, String> {
+    if obj.is_error() {
+        return Ok(obj);
+    }
+    match &obj.value {
+        Value::Array(items) => Ok(CrowValue::ok(Value::Array(
+            items.iter().map(|item| CrowValue::ok(Value::Bool(item.ok))).collect(),
+        ))),
+        _ => Ok(CrowValue::ok(Value::Bool(obj.ok))),
+    }
+}
+
 /// A field of a value: the status fields on anything, `len`, the datetime
 /// parts of a text, a tensor's shape, a frame's properties and columns, a
 /// struct's or a map's member, a module's binding.
 pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
 
-    // special fields: .ok, .reason, .kind, .trace — always work, even on errors
+    // special fields: .ok, .reason, .kind, .trace — always work, even on errors.
+    // `.ok` is the value's own status: a list that did not fail is ok,
+    // whatever it holds (a frame column's rows are `valid`).
     match field {
         "ok" => {
-            // If the outer CrowValue is ok and holds an Array, map .ok over each element
-            if obj.ok {
-                if let Value::Array(items) = &obj.value {
-                    let bools: Vec<CrowValue> = items.iter()
-                        .map(|item| CrowValue::ok(Value::Bool(item.ok)))
-                        .collect();
-                    return Ok(CrowValue::ok(Value::Array(bools)));
-                }
-            }
             return Ok(CrowValue::ok(Value::Bool(obj.ok)));
         }
         "reason" => {
@@ -864,11 +872,47 @@ pub fn iter_items(iter_val: &CrowValue) -> Result<Vec<CrowValue>, String> {
 /// markup children that pass through, text children escaped, a list that
 /// contributes each item, a frame that is a table's rows; layout
 /// attributes go through the kernel's table (crow_runtime::layout).
+/// `widget[name, props = value, on = map[event = handler]]`: the element the
+/// program's own module draws — one shape for both modes.
+fn render_widget(vals: &[CrowValue]) -> String {
+    let mut module = String::new();
+    let mut props = serde_json::Value::Null;
+    let mut on: Vec<(String, String)> = Vec::new();
+    for v in vals {
+        match &v.value {
+            Value::Map(m) => {
+                for (k, val) in m {
+                    match (k.as_str(), &val.value) {
+                        ("props", _) => props = crate::builtins::crow_to_json("", val).unwrap_or(serde_json::Value::Null),
+                        ("on", Value::Map(evs)) => {
+                            for (event, h) in evs {
+                                if let Value::Fn(f) = &h.value {
+                                    on.push((event.clone(), f.name.clone()));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Value::Str(s) => module = s.clone(),
+            _ => {}
+        }
+    }
+    let pairs: Vec<(&str, &str)> = on.iter().map(|(e, h)| (e.as_str(), h.as_str())).collect();
+    crow_web::view::CrowVNode::widget(&module, &props, &pairs).to_html()
+}
+
 pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> {
+    if name == "widget" {
+        return Ok(render_widget(vals));
+    }
+    // markup a view, an element or `doc` made is placed as markup; every
+    // other string is text, escaped, whatever it holds
     fn splice(inner: &mut String, items: &[CrowValue]) {
         for it in items {
             match &it.value {
-                Value::Str(s) if s.starts_with('<') && s.ends_with('>') => inner.push_str(s),
+                Value::Str(s) if it.markup => inner.push_str(s),
                 Value::Array(nested) => splice(inner, nested),
                 other => inner.push_str(&crate::harness::html_escape_text(&format!("{}", other))),
             }
@@ -880,6 +924,14 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
     let mut table_delta: Vec<String> = Vec::new();
     let mut table_actions: Vec<(String, String)> = Vec::new();
     let mut table_hide: Vec<String> = Vec::new();
+    let mut table_confirm: Vec<(String, String)> = Vec::new();
+    // table[frame, page = 50]: the page size, and — from the session the
+    // interpreter renders for — which paged table this is and its page
+    let (mut table_page, mut page_index, mut page_at): (Option<i64>, usize, usize) = (None, 0, 0);
+    // the wiring, as the compiled page writes it: the handler a click, an
+    // input or a form calls, and the arguments a click froze
+    let mut events: Vec<(String, String)> = Vec::new();
+    let mut confirm: Option<String> = None;
     for v in vals {
         if v.is_error() {
             // a view renders what it is given: a failed value shows its reason
@@ -918,10 +970,48 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
                                 table_hide = items.iter().map(|i| format!("{}", i.value)).collect();
                                 continue;
                             }
+                            ("confirm", Value::Map(texts)) => {
+                                table_confirm = texts.iter().map(|(label, t)| (label.clone(), format!("{}", t.value))).collect();
+                                continue;
+                            }
+                            ("page", Value::Int(n)) => {
+                                table_page = Some(*n);
+                                continue;
+                            }
+                            ("__page_index", Value::Int(n)) => {
+                                page_index = (*n).max(0) as usize;
+                                continue;
+                            }
+                            ("__page_at", Value::Int(n)) => {
+                                page_at = (*n).max(0) as usize;
+                                continue;
+                            }
                             _ => {}
                         }
                     }
-                    if matches!(k.as_str(), "click" | "input" | "submit" | "change" | "seek") {
+                    if k == "confirm" {
+                        confirm = Some(format!("{}", val.value));
+                        continue;
+                    }
+                    if matches!(k.as_str(), "click" | "input" | "submit" | "change") {
+                        let attr = format!("data-crow-{}", k);
+                        match &val.value {
+                            Value::Fn(f) => events.push((attr, f.name.clone())),
+                            Value::Array(items) if matches!(items.first().map(|i| &i.value), Some(Value::Fn(_))) => {
+                                if let Value::Fn(f) = &items[0].value {
+                                    let frozen: Vec<serde_json::Value> = items[1..]
+                                        .iter()
+                                        .map(|i| crate::builtins::crow_to_json("", i).unwrap_or(serde_json::Value::Null))
+                                        .collect();
+                                    events.push((attr, f.name.clone()));
+                                    events.push(("data-crow-args".to_string(), serde_json::Value::Array(frozen).to_string()));
+                                }
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+                    if k == "seek" {
                         continue;
                     }
                     let s = match &val.value {
@@ -934,7 +1024,7 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
                     attrs.push((k.clone(), s));
                 }
             }
-            Value::Str(s) if s.starts_with('<') && s.ends_with('>') => inner.push_str(s),
+            Value::Str(s) if v.markup => inner.push_str(s),
             Value::Frame(f) if name == "table" => inner.push_str(&crow_runtime::layout::frame_table_html(
                 f,
                 table_click.as_deref(),
@@ -943,6 +1033,8 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
                 &table_delta,
                 &table_actions,
                 &table_hide,
+                &table_confirm,
+                table_page.map(|size| crow_runtime::layout::Paging { size: size.max(1) as usize, index: page_index, at: page_at }),
             )),
             Value::Array(items) => splice(&mut inner, items),
             other => inner.push_str(&crate::harness::html_escape_text(&format!("{}", other))),
@@ -965,6 +1057,7 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
         out_attrs.push(("style".to_string(), rendered.style.clone()));
     }
     out_attrs.extend(rendered.data.iter().cloned());
+    out_attrs.extend(crow_runtime::layout::confirm_wiring(events, confirm.as_deref()));
     out_attrs.sort();
     let attr_str: String = out_attrs.iter().map(|(k, v)| format!(" {}=\"{}\"", k, crate::harness::html_escape_attr(v))).collect();
     Ok(format!("<{0}{2}>{1}</{0}>", rendered.tag, inner, attr_str))
@@ -996,7 +1089,12 @@ pub fn render_input(name: &str, key: &str, vals: &[CrowValue]) -> Result<String,
                     _ => "text".to_string(),
                 },
             };
-            CrowVNode::field_typed(&s(&vals[0]), key, &s(&vals[1]), &kind, num(&vals[3]) as i64)
+            // a file field shows the name of the file picked
+            let current = match (&vals[1].value, kind.as_str()) {
+                (Value::Map(m), "file") => m.get("name").map(|v| format!("{}", v.value)).unwrap_or_default(),
+                _ => s(&vals[1]),
+            };
+            CrowVNode::field_typed(&s(&vals[0]), key, &current, &kind, num(&vals[3]) as i64)
         }
         "slider" => CrowVNode::slider(&s(&vals[0]), key, &s(&vals[1]), num(&vals[2]), num(&vals[3]), num(&vals[4])),
         "checkbox" | "toggle" => {
