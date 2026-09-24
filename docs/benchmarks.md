@@ -1,37 +1,38 @@
 # Benchmarks
 
-*Measured by `crow test --bench --write` on 2026-09-08, Apple M4 Max (aarch64), commit 372080f. The interpreter is `crow run -i`; compiled is the release build `crow build` makes of the same program, timed from inside the program so a build is never counted. Sizes: full, 1000000 csv rows. The programs are in `tests/bench/`; `crow test --bench --quick` runs them at small sizes in CI so they cannot rot.*
+*Measured by `crow test --bench --write` on 2026-09-23, Apple M4 Max (aarch64), commit b5d5008. The interpreter is `crow run -i`; compiled is the release build `crow build` makes of the same program, timed from inside the program so a build is never counted. Sizes: full, 1000000 csv rows. The programs are in `tests/bench/`; `crow test --bench --quick` runs them at small sizes in CI so they cannot rot.*
 
 | Program | Section | Interpreter | Compiled | Compiled is |
 |---|---|---|---|---|
-| collect | push_loop | 6.0ms | 18µs | ×333.1 faster |
-| collect | for_collect | 121.7ms | 2.1ms | ×57.4 faster |
-| collect | map_set_loop | 9.4ms | 1.3ms | ×7.2 faster |
-| collect | join_split | 37.1ms | 10.1ms | ×3.7 faster |
-| collect | sort | 3.6ms | 461µs | ×7.9 faster |
-| collect | json_roundtrip | 21.0ms | 2.4ms | ×8.7 faster |
-| collect | whole program | 216.3ms | 23.9ms | ×9.1 faster |
-| frames | csv_load | 69.3ms | 59.4ms | ×1.2 faster |
-| frames | filter | 58.6ms | 15.8ms | ×3.7 faster |
-| frames | group | 13.9ms | 8.9ms | ×1.6 faster |
-| frames | sort | 65.4ms | 65.3ms | ×1.0 faster |
-| frames | join | 27.2ms | 31.6ms | ×1.2 slower |
-| frames | select | 6µs | 4µs | ×1.5 faster |
-| frames | column_sum | 26.8ms | 1.7ms | ×15.8 faster |
-| frames | csv_save | 39.8ms | 33.8ms | ×1.2 faster |
-| frames | whole program | 501.0ms | 399.0ms | ×1.3 faster |
-| tensors | matmul | 9.8ms | 8.6ms | ×1.1 faster |
-| tensors | elementwise_chain | 33.5ms | 40.1ms | ×1.2 slower |
-| tensors | dot | 7.9ms | 9.8ms | ×1.2 slower |
-| tensors | sum | 1.5ms | 2.4ms | ×1.6 slower |
-| tensors | argsort | 1.39s | 1.91s | ×1.4 slower |
-| tensors | gram | 8.4ms | 8.1ms | ×1.0 faster |
-| tensors | inverse_300 | 4.4ms | 3.2ms | ×1.4 faster |
-| tensors | whole program | 1.54s | 2.07s | ×1.3 slower |
-| train | linreg_gd | 163.0ms | 162.5ms | ×1.0 faster |
-| train | mlp_forward | 8.8ms | 9.0ms | ×1.0 slower |
-| train | grad_calls | 74.4ms | 39µs | ×1904.0 faster |
-| train | whole program | 255.9ms | 179.3ms | ×1.4 faster |
+| collect | push_loop | 5.9ms | 21µs | ×282.6 faster |
+| collect | for_collect | 154.2ms | 2.7ms | ×58.0 faster |
+| collect | for_fn | 238.4ms | 1.9ms | ×127.5 faster |
+| collect | map_set_loop | 10.0ms | 1.3ms | ×7.6 faster |
+| collect | join_split | 43.0ms | 9.5ms | ×4.5 faster |
+| collect | sort | 4.7ms | 570µs | ×8.2 faster |
+| collect | json_roundtrip | 18.6ms | 2.4ms | ×7.7 faster |
+| collect | whole program | 496.0ms | 26.5ms | ×18.7 faster |
+| frames | csv_load | 64.0ms | 60.6ms | ×1.1 faster |
+| frames | filter | 57.4ms | 15.8ms | ×3.6 faster |
+| frames | group | 11.4ms | 9.2ms | ×1.2 faster |
+| frames | sort | 66.0ms | 64.3ms | ×1.0 faster |
+| frames | join | 26.2ms | 29.1ms | ×1.1 slower |
+| frames | select | 6µs | 3µs | ×1.9 faster |
+| frames | column_sum | 24.4ms | 1.5ms | ×16.9 faster |
+| frames | csv_save | 34.9ms | 34.2ms | ×1.0 faster |
+| frames | whole program | 466.7ms | 397.8ms | ×1.2 faster |
+| tensors | matmul | 10.1ms | 8.8ms | ×1.2 faster |
+| tensors | elementwise_chain | 38.8ms | 29.0ms | ×1.3 faster |
+| tensors | dot | 8.0ms | 7.8ms | ×1.0 faster |
+| tensors | sum | 1.5ms | 1.4ms | ×1.0 faster |
+| tensors | argsort | 1.27s | 1.30s | ×1.0 slower |
+| tensors | gram | 8.2ms | 9.1ms | ×1.1 slower |
+| tensors | inverse_300 | 4.9ms | 3.0ms | ×1.7 faster |
+| tensors | whole program | 1.42s | 1.44s | ×1.0 slower |
+| train | linreg_gd | 176.4ms | 164.6ms | ×1.1 faster |
+| train | mlp_forward | 8.8ms | 9.1ms | ×1.0 slower |
+| train | grad_calls | 74.4ms | 36µs | ×2066.0 faster |
+| train | whole program | 269.1ms | 179.9ms | ×1.5 faster |
 
 ## Notes
 
@@ -44,7 +45,7 @@
   892.6 ms before, 259.4 ms after (×3.4); compiled 1.6 ms and 1.5 ms,
   unchanged, since it ran such loops in parallel already. Every other
   section moved within the run-to-run noise of a recording. The table
-  above predates the section; the next `--write` adds its row.
+  above is the recording at b5d5008, the first with the section.
 - **2026-09-08, the IR interpreter is the interpreter.** The
   interpreter column is the IR walker (`ir_interp.rs`) from this
   recording on; the AST interpreter is deleted. Against the last AST
