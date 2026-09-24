@@ -30,7 +30,6 @@ mod served_parity;
 mod sql_types;
 mod token;
 mod type_infer;
-mod validator;
 mod wireframe;
 mod formatter;
 mod modules;
@@ -577,9 +576,9 @@ fn cmd_test_docs() {
         process::exit(1);
     });
     let mut tables: Vec<(&str, Vec<&str>)> = vec![
-        ("core", validator::CORE_RESERVED.to_vec()),
-        ("web", validator::WEB_RESERVED.iter().chain(validator::WEB_EXTRA_FUNCTIONS.iter()).copied().collect()),
-        ("ui", validator::UI_RESERVED.iter().copied().filter(|n| *n != "today").collect()),
+        ("core", lower_ir::CORE_RESERVED.to_vec()),
+        ("web", lower_ir::WEB_RESERVED.iter().chain(lower_ir::WEB_EXTRA_FUNCTIONS.iter()).copied().collect()),
+        ("ui", lower_ir::UI_RESERVED.iter().copied().filter(|n| *n != "today").collect()),
         ("element", lower::UI_ELEMENTS.to_vec()),
         ("math", modules::math::MATH_FUNCTIONS.to_vec()),
         ("math.stats", modules::stats::STATS_FUNCTIONS.to_vec()),
@@ -3221,17 +3220,13 @@ fn infer_and_validate(lowered: &[ast::Stmt], describe: bool) -> Result<type_infe
     let mut ctx = type_infer::TypeContext::new();
     ctx.describe_queries = describe;
     ctx.infer_program(lowered);
-    let refused = {
-        let mut v = validator::Validator::new(&ctx);
-        match v.validate(lowered) {
-            Ok(()) => None,
-            Err(_) => Some(attribute_to_parts(&v.errors_with_owners())),
-        }
-    };
-    match refused {
+    // the lowering refuses what is not a program (lower_ir/checks.rs); it
+    // runs here on a copy of the context, for the callers that only ask
+    match lower_ir::check(lowered, &ctx) {
+        Ok(()) => Ok(ctx),
         // a message names a variable as the program wrote it
-        Some(e) => Err(lower::shown(&e)),
-        None => Ok(ctx),
+        Err(lower_ir::Refusal::Invalid(errors)) => Err(lower::shown(&attribute_to_parts(&errors))),
+        Err(refusal) => Err(refusal.message()),
     }
 }
 

@@ -15,9 +15,10 @@ crow check app.co --strict                     --- exit 1 on any finding (CI)
 The url can also live in the crowfile: `db = 'sqlite://dev.db'`.
 Findings are advisory by default — they print, teach, and never block.
 
-Before any of it runs, the program passes the validator `crow run` passes
-it through — scope, reservation and `ui` rules — so `crow check` and
-`crow test` refuse what `crow run` refuses, with the same message.
+Before any of it runs, the program passes the checks `crow run` passes it
+through — scope, reservation and `ui` rules, made as the program is
+lowered — so `crow check` and `crow test` refuse what `crow run` refuses,
+with the same message.
 
 ## The baseline
 

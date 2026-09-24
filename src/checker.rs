@@ -1605,7 +1605,7 @@ fn find_undefined_vars_in_fn(
     // registry provides (db/web/frame/... exports) and, in views/handlers,
     // the HTML element vocabulary.
     for b in BUILTINS { defined.insert(b.to_string()); }
-    for b in crate::validator::BUILTINS { defined.insert(b.to_string()); }
+    for b in crate::lower_ir::BUILTINS { defined.insert(b.to_string()); }
     for b in stdlib_names() { defined.insert(b.clone()); }
     if reactive_readers(ctx).contains(name) {
         // the signed-in reader, where the gate lets a web program read it

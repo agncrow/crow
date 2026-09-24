@@ -58,7 +58,7 @@ fn a_handler_loop_reads_its_derivations_before_the_loop() {
 /// clock tile, a build error)
 #[test]
 fn a_derivation_read_up_front_is_cloned_into_a_call() {
-    let src = "use web, ui\n\nbase = 'x'\n\nderive label\n    return base + '!'\n\nview stat[name, value]\n    return p['`name`: `value`']\n\nview render[]\n    tiles = [stat['a', label]]\n    if len[tiles] gt 0\n        tiles = [stat['a', label], stat['b', label]]\n    return stack[tiles]\n\nserve[3996]\npage['/', render]\n";
+    let src = "use web, ui\n\nbase = 'x'\n\nderive label\n    return '`base`!'\n\nview stat[name, value]\n    return p['`name`: `value`']\n\nview render[]\n    tiles = [stat['a', label]]\n    if len[tiles] gt 0\n        tiles = [stat['a', label], stat['b', label]]\n    return stack[tiles]\n\nserve[3996]\npage['/', render]\n";
     let rust = transpile(src);
     let start = rust.find("fn render(state").expect("render is a view");
     let rest = &rust[start..];
@@ -1443,13 +1443,13 @@ fn test_env_two_arg_transpile() {
 
 #[test]
 fn test_web_new_transpile() {
-    let rust = transpile("use web\napp = web.new[]\n");
+    let rust = transpile("use web\nsite = web.new[]\n");
     assert!(rust.contains("CrowApp::new()"), "should emit CrowApp::new()\n{}", rust);
 }
 
 #[test]
 fn test_web_imports() {
-    let rust = transpile("use web\napp = web.new[]\n");
+    let rust = transpile("use web\nsite = web.new[]\n");
     assert!(rust.contains("use crow_web::server::CrowApp;"), "should import CrowApp\n{}", rust);
     assert!(rust.contains("use crow_web::core::{CrowRequest, CrowResponse};"), "should import CrowRequest/CrowResponse\n{}", rust);
     assert!(rust.contains("use std::sync::Arc;"), "should import Arc\n{}", rust);
@@ -1457,14 +1457,14 @@ fn test_web_imports() {
 
 #[test]
 fn test_web_async_main() {
-    let rust = transpile("use web\napp = web.new[]\n");
+    let rust = transpile("use web\nsite = web.new[]\n");
     assert!(rust.contains("#[tokio::main]"), "should emit #[tokio::main]\n{}", rust);
     assert!(rust.contains("async fn main()"), "should emit async fn main\n{}", rust);
 }
 
 #[test]
 fn test_web_route_transpile() {
-    let rust = transpile("use web\nfn handler[req]\n    return text['hello']\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+    let rust = transpile("use web\nfn handler[req]\n    return text['hello']\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
     assert!(rust.contains(".route("), "should emit .route()\n{}", rust);
     assert!(rust.contains("Arc::new("), "should wrap handler in Arc\n{}", rust);
 }
@@ -1478,31 +1478,31 @@ fn test_web_serve_transpile() {
 
 #[test]
 fn test_web_text_response() {
-    let rust = transpile("use web\nfn handler[req]\n    return text['hello']\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+    let rust = transpile("use web\nfn handler[req]\n    return text['hello']\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
     assert!(rust.contains("CrowResponse::text("), "should emit CrowResponse::text()\n{}", rust);
 }
 
 #[test]
 fn test_web_html_response() {
-    let rust = transpile("use web\nfn handler[req]\n    return html['<h1>hi</h1>']\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+    let rust = transpile("use web\nfn handler[req]\n    return html['<h1>hi</h1>']\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
     assert!(rust.contains("CrowResponse::html("), "should emit CrowResponse::html()\n{}", rust);
 }
 
 #[test]
 fn test_web_redirect_response() {
-    let rust = transpile("use web\nfn handler[req]\n    return redirect['/home']\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+    let rust = transpile("use web\nfn handler[req]\n    return redirect['/home']\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
     assert!(rust.contains("CrowResponse::redirect("), "should emit CrowResponse::redirect()\n{}", rust);
 }
 
 #[test]
 fn test_web_respond_response() {
-    let rust = transpile("use web\nfn handler[req]\n    return respond[404, 'not found']\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+    let rust = transpile("use web\nfn handler[req]\n    return respond[404, 'not found']\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
     assert!(rust.contains("CrowResponse::respond("), "should emit CrowResponse::respond()\n{}", rust);
 }
 
 #[test]
 fn test_web_handler_types() {
-    let rust = transpile("use web\nfn handler[req]\n    return text['hello']\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+    let rust = transpile("use web\nfn handler[req]\n    return text['hello']\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
     // Handler should have CrowRequest param and CrowResponse return
     assert!(rust.contains("crow_web::core::CrowRequest"), "handler param should be CrowRequest\n{}", rust);
     assert!(rust.contains("crow_web::core::CrowResponse"), "handler return should be CrowResponse\n{}", rust);
@@ -1519,19 +1519,19 @@ fn test_web_no_async_without_web() {
 
 #[test]
 fn test_web_cors_permissive() {
-    let rust = transpile("use web\nuse web.cors\napp = web.new[]\napp = cors[app]\n");
+    let rust = transpile("use web\nuse web.cors\nsite = web.new[]\nsite = cors[site]\n");
     assert!(rust.contains(".cors_permissive()"), "should emit cors_permissive()\n{}", rust);
 }
 
 #[test]
 fn test_web_cors_with_origins() {
-    let rust = transpile("use web\nuse web.cors\napp = web.new[]\norigins = ['http://localhost']\napp = cors[app, origins]\n");
+    let rust = transpile("use web\nuse web.cors\nsite = web.new[]\norigins = ['http://localhost']\nsite = cors[site, origins]\n");
     assert!(rust.contains(".cors(CrowCors::origins("), "should emit cors with origins\n{}", rust);
 }
 
 #[test]
 fn test_web_cors_import() {
-    let rust = transpile("use web\nuse web.cors\napp = web.new[]\napp = cors[app]\n");
+    let rust = transpile("use web\nuse web.cors\nsite = web.new[]\nsite = cors[site]\n");
     assert!(rust.contains("use crow_web::cors::CrowCors;"), "should import CrowCors\n{}", rust);
 }
 
@@ -1555,7 +1555,7 @@ fn test_web_templates() {
 
 #[test]
 fn test_web_render() {
-    let rust = transpile("use web\nuse web.template\nt = templates['./t/**/*']\nfn handler[req]\n    data = map[name = 'crow']\n    return html[render[t, 'index', data]]\napp = web.new[]\napp = route[app, '/', handler]\n");
+    let rust = transpile("use web\nuse web.template\nfn handler[req]\n    t = templates['./t/**/*']\n    data = map[name = 'crow']\n    return html[render[t, 'index', data]]\nsite = web.new[]\nsite = route[site, '/', handler]\n");
     assert!(rust.contains(".render("), "should emit .render()\n{}", rust);
 }
 
@@ -1585,19 +1585,19 @@ fn test_web_limit_import() {
 
 #[test]
 fn test_web_sse() {
-    let rust = transpile("use web\nuse web.sse\nfn events[req]\n    return text['data']\napp = web.new[]\napp = sse[app, '/events', events]\n");
+    let rust = transpile("use web\nuse web.sse\nfn events[req]\n    return text['data']\nsite = web.new[]\nsite = sse[site, '/events', events]\n");
     assert!(rust.contains(".sse_route("), "should emit .sse_route()\n{}", rust);
 }
 
 #[test]
 fn test_web_ws() {
-    let rust = transpile("use web\nuse web.ws\nfn handler[req]\n    return text['ok']\napp = web.new[]\napp = ws[app, '/ws', handler]\n");
+    let rust = transpile("use web\nuse web.ws\nfn handler[req]\n    return text['ok']\nsite = web.new[]\nsite = ws[site, '/ws', handler]\n");
     assert!(rust.contains(".ws_route("), "should emit .ws_route()\n{}", rust);
 }
 
 #[test]
 fn test_web_static_dir() {
-    let rust = transpile("use web\nuse web.static\napp = web.new[]\napp = static_dir[app, '/assets', './public']\n");
+    let rust = transpile("use web\nuse web.static\nsite = web.new[]\nsite = static_dir[site, '/assets', './public']\n");
     assert!(rust.contains(".static_dir("), "should emit .static_dir()\n{}", rust);
 }
 
@@ -1641,7 +1641,7 @@ fn test_web_docs() {
 
 #[test]
 fn test_web_uploads() {
-    let rust = transpile("use web\nuse web.upload\nfn handler[req]\n    files = uploads[req]\n    return text['ok']\napp = web.new[]\napp = route[app, '/upload', handler]\n");
+    let rust = transpile("use web\nuse web.upload\nfn handler[req]\n    files = uploads[req]\n    return text['ok']\nsite = web.new[]\nsite = route[site, '/upload', handler]\n");
     assert!(rust.contains(".uploads()"), "should emit .uploads()\n{}", rust);
 }
 
@@ -1702,28 +1702,28 @@ fn test_db_insert() {
 
 #[test]
 fn test_web_msgpack_response() {
-    let rust = transpile("use web\nfn handler[req]\n    m = map[]\n    return msgpack[m]\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+    let rust = transpile("use web\nfn handler[req]\n    m = map[]\n    return msgpack[m]\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
     assert!(rust.contains("CrowResponse::msgpack("), "should emit CrowResponse::msgpack()\n{}", rust);
     assert!(rust.contains("rmp_serde::to_vec"), "should use rmp_serde\n{}", rust);
 }
 
 #[test]
 fn test_web_arrow_response() {
-    let rust = transpile("use web\nuse frame\nfn handler[req]\n    f = load['data.csv']\n    return arrow[f]\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+    let rust = transpile("use web\nuse frame\nfn handler[req]\n    f = load['data.csv']\n    return arrow[f]\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
     assert!(rust.contains("CrowResponse::arrow_ipc("), "should emit CrowResponse::arrow_ipc()\n{}", rust);
     assert!(rust.contains("to_arrow_ipc"), "should use to_arrow_ipc\n{}", rust);
 }
 
 #[test]
 fn test_web_bytes_response() {
-    let rust = transpile("use web\nfn handler[req]\n    return bytes['binary data']\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+    let rust = transpile("use web\nfn handler[req]\n    return bytes['binary data']\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
     assert!(rust.contains("CrowResponse::binary("), "should emit CrowResponse::binary()\n{}", rust);
     assert!(rust.contains("application/octet-stream"), "should set octet-stream content-type\n{}", rust);
 }
 
 #[test]
 fn test_web_stream_response() {
-    let rust = transpile("use web\nfn sender[send]\n    send['chunk1']\n\nfn handler[req]\n    return stream[sender]\n\napp = web.new[]\napp = route[app, '/', handler]\n");
+    let rust = transpile("use web\nfn sender[emit]\n    emit['chunk1']\n\nfn handler[req]\n    return stream[sender]\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
     assert!(rust.contains("mpsc::channel"), "should use mpsc channel for streaming\n{}", rust);
     assert!(rust.contains("Body::from_stream"), "should use Body::from_stream\n{}", rust);
 }
@@ -1732,14 +1732,14 @@ fn test_web_stream_response() {
 
 #[test]
 fn test_ui_imports() {
-    let rust = transpile("use web\nuse ui\napp = web.new[]\n");
+    let rust = transpile("use web\nuse ui\nsite = web.new[]\n");
     assert!(rust.contains("use crow_web::view::CrowVNode;"), "should import CrowVNode\n{}", rust);
     assert!(rust.contains("use crow_web::live::{CrowLiveView, CrowLiveState};"), "should import CrowLiveView/CrowLiveState\n{}", rust);
 }
 
 #[test]
 fn test_ui_div_text() {
-    let rust = transpile("use web\nuse ui\nx = div[h1['hello']]\n");
+    let rust = transpile("use web\nuse ui\nview v[]\n    return div[h1['hello']]\n");
     assert!(rust.contains("CrowVNode::div(vec![CrowVNode::h1(vec![CrowVNode::text("), "should emit CrowVNode::div with h1 child\n{}", rust);
 }
 
@@ -1778,7 +1778,7 @@ fn test_ui_page_2arg_noop_handler() {
 
 #[test]
 fn test_ui_nested_elements() {
-    let rust = transpile("use web\nuse ui\nx = div[span['a'], p['b']]\n");
+    let rust = transpile("use web\nuse ui\nview v[]\n    return div[span['a'], p['b']]\n");
     assert!(rust.contains("CrowVNode::div(vec![CrowVNode::span("), "should emit nested elements\n{}", rust);
     assert!(rust.contains("CrowVNode::p(vec![CrowVNode::text("), "should emit p element\n{}", rust);
 }
@@ -1952,8 +1952,10 @@ fn test_implicit_return_gives_fn_return_type() {
 
 #[test]
 fn test_user_variable_shadows_module_constant() {
-    // Regression: `e = eye[2]` then `log[e]` must reference the variable, not Euler's e
-    let rust = transpile("use math\ne = eye[2]\nlog[e]\n");
+    // Regression: `e = m.eye[2]` then `log[e]` must reference the variable,
+    // not Euler's e (a bare `use math` reserves the name; a qualified one
+    // leaves it free)
+    let rust = transpile("use math as m\ne = m.eye[2]\nlog[e]\n");
     assert!(!rust.contains("consts::E"), "user variable must shadow constant\n{}", rust);
 }
 
@@ -2027,7 +2029,7 @@ fn a_plain_functions_local_does_not_widen_a_fact() {
 /// facts it wrote so far land, and the reason is logged
 #[test]
 fn a_handlers_fallible_condition_stops_the_handler() {
-    let rust = transpile("use web, ui\nn = 0\ntext = ''\nfn apply[]\n    v = int[text]\n    if v gt 5\n        n = n + 1\nview render[]\n    return stack[field['Text', text], button['Go', click = apply], p['`n`']]\npage['/', render]\n");
+    let rust = transpile("use web, ui\nn = 0\nentry = ''\nfn apply[]\n    v = int[entry]\n    if v gt 5\n        n = n + 1\nview render[]\n    return stack[field['Text', entry], button['Go', click = apply], p['`n`']]\npage['/', render]\n");
     assert!(rust.contains("stopped: {}\", _c.reason)"), "{}", rust);
     assert!(!rust.contains("return CrowResult { ok: false, value: ()"), "{}", rust);
 }
@@ -2036,7 +2038,7 @@ fn a_handlers_fallible_condition_stops_the_handler() {
 /// a result: both stop the handler; neither returns an error from it
 #[test]
 fn a_handlers_consumed_result_stops_the_handler_too() {
-    let rust = transpile("use web, ui\nn = 0\ntext = ''\nfn apply[]\n    v = int[text]\n    if v gt 5\n        n = n + 1\n    n = int[text]\nview render[]\n    return stack[field['Text', text], button['Go', click = apply], p['`n`']]\npage['/', render]\n");
+    let rust = transpile("use web, ui\nn = 0\nentry = ''\nfn apply[]\n    v = int[entry]\n    if v gt 5\n        n = n + 1\n    n = int[entry]\nview render[]\n    return stack[field['Text', entry], button['Go', click = apply], p['`n`']]\npage['/', render]\n");
     assert!(!rust.contains("value: Default::default()"), "{}", rust);
     assert!(rust.matches("stopped: {}\"").count() >= 2, "{}", rust);
 }

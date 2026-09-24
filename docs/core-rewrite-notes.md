@@ -648,8 +648,47 @@ weeks; the core stages are weeks each.
   comparison found one node typed differently, a record built from a
   value that can fail (`[LSlot[kw, li]]` in the layout module): it is the
   record the list holds, where the walk called it a failed record.
-- **Next:** the fold's later steps. Validation moves into the lowering,
-  and then named arguments, deleting `validator.rs` and `lower.rs`. Last,
-  the type checker's whole-program analyses (specialisation, frame
-  schemas, signatures) become the lowering's pre-pass, deleting
-  `type_infer.rs`.
+- **2026-09-24, the fold's third step: the lowering checks.** The checks
+  `validator.rs` made in a walk of its own are made where the lowering
+  meets each node (`lower_ir/checks.rs`), and the validator is deleted.
+  Names are judged by the lowering's scopes, the ones the program is
+  lowered with, so the two cannot disagree. `crow check`, `crow test` and
+  the language server lower a copy of the program to ask. Checks that
+  compare types still read them as the signatures were inferred: the
+  lowering knows a body's types more precisely, but some of that is a
+  guess. A cell of a column no database described is text until the
+  program runs, a parameter given one is typed by it, and finch built
+  without its databases was refused on such a guess. When frames are typed,
+  those checks read the lowering's types too. Checked by 3,492 mutants of
+  every program and doc block, run through the old compiler and the new
+  one. Every difference was reviewed, and the IR and emitted Rust of every
+  valid program are unchanged, with and without the databases.
+  What changed, each with a test: a name read inside an interpolation is
+  checked like any other read, where it used to fail only at run time,
+  or at Rust's compile; a harness call's arguments are reported once, not
+  twice; `m.pi` under `use math as m` is the constant, not an undefined
+  `m` (parity 62); a function held in a parameter is called with its
+  arity, and a field read from a function's own record is checked;
+  and an error inside a function is no longer also blamed on the `+`
+  that uses its result.
+- **Where the fold stops, and the question it leaves.** Two passes are
+  left before the lowering: `lower.rs` (named arguments, map literals,
+  element attributes, block scopes, guards) and `type_infer.rs`
+  (signatures, frame schemas, specialisations, and the types of each
+  body's locals). Both run before the lowering because inference needs
+  what they give it. A call's parameters are typed from its arguments
+  only once named arguments are in place, and two blocks' `x` can have
+  two types only once their names are apart. So `lower.rs` cannot move
+  into the lowering while inference runs first: moving it would move
+  files, not fold passes. What remains is one design question. Should
+  signatures be found by lowering bodies? That would mean lowering
+  every function with provisional signatures, reading return types from
+  its returns and parameter types from its call sites, repeating until
+  nothing changes, then lowering once more. It would type locals in the
+  lowering's scoped environment, retire `infer_stmt` and the renaming
+  of block names, and delete `type_infer.rs`'s walker. The typing rules
+  are already shared (the second step), so the drift left to remove is
+  in statement-level typing: how a local's type settles across its
+  assignments, a variable widened to a float, a condition that can
+  fail making a function's value fallible. That is a rewrite of
+  inference, not a move, and it waits for a decision.

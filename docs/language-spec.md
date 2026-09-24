@@ -106,7 +106,7 @@ m = matches[s, '[a-z]`2,4`']             --- regex: fully raw
 ```
 
 Rules:
-- `` `expr` `` evaluates any Crow expression and splices its value.
+- `` `expr` `` evaluates any Crow expression and splices its value. Its names are read like any others: an undefined one, or a module variable read inside a function, is refused before the program runs.
 - Inside an interpolation you are still inside the string — quotes stay escaped: `'up: `upper[\'hi\']`'`.
 - An unterminated or empty backtick span is an error (never silent).
 - For repeated formatting, name it: `fn money[x]` + `'P&L: `money[pnl]`'` (see Formatting).
@@ -1072,10 +1072,10 @@ Errors also propagate through operators (`+`, `-`, etc.) and unary operations. I
 
 ### Error Messages
 
-Runtime errors include line numbers for easy debugging:
+Errors include line numbers. What is not a program — an undefined name, a builtin's name taken, a call with the wrong number of arguments — is refused before anything runs, every such error at once; what fails while the program runs stops it with the line it failed on:
 
 ```
-runtime error: line 3: undefined variable 'z'
+line 3: undefined variable 'z'
 runtime error: line 7: assertion failed: expected positive
 ```
 
@@ -1538,7 +1538,7 @@ use myapp/utils
 result = utils.double[5]    --- 10
 ```
 
-**A module is a part.** It may hold facts, derivations, handlers, views and `test` blocks, not only functions — the clock of a simulation, its tape, its blotter — and the page that composes them imports each one. The front end expands every module file once, whichever files import it: its names take the module's path as a prefix (`sim/clock.co`'s `head` is `sim_clock_head` inside the program) and every importer's qualified spelling — `clock.head`, or an alias's — is rewritten to that name, in code and inside interpolation spans. A module reached through two importers is one copy with one state. A handler in one part may assign another part's fact by its qualified name (`session.day = d`), and the validator judges it like any fact write. A part's `test` blocks run with `crow test sim/clock.co`, with the parts it imports inlined; `crow check main.co` checks the whole app. A module's top-level statements other than declarations are not part of the program.
+**A module is a part.** It may hold facts, derivations, handlers, views and `test` blocks, not only functions — the clock of a simulation, its tape, its blotter — and the page that composes them imports each one. The front end expands every module file once, whichever files import it: its names take the module's path as a prefix (`sim/clock.co`'s `head` is `sim_clock_head` inside the program) and every importer's qualified spelling — `clock.head`, or an alias's — is rewritten to that name, in code and inside interpolation spans. A module reached through two importers is one copy with one state. A handler in one part may assign another part's fact by its qualified name (`session.day = d`), and it is checked like any fact write. A part's `test` blocks run with `crow test sim/clock.co`, with the parts it imports inlined; `crow check main.co` checks the whole app. A module's top-level statements other than declarations are not part of the program.
 
 
 ## 13. Standard Library
@@ -2233,7 +2233,7 @@ A bound input keeps its variable's type: text typed into a field bound to an int
 
 #### Handlers and their helpers
 
-A view sees reactive state, a handler moves it, and a function a handler calls that assigns a module-level variable is a handler too — it joins the handler class in both renderers, so `fn restart[]` may call `fn rewind_to[t]` and the write lands in state. A pure helper (one that assigns no module variable) keeps its own scope. A helper a handler calls sees what the handler has written so far, and the handler sees what the helper wrote when it returns, in both modes — derivations included: a derivation the handler reads after a write to what it reads, its own or a helper's, is the recomputed one (`clock.jump[t]`, then `clock.head` is `t`). A helper that reads state and assigns none is a derivation, not a function: `derive band` computes the price band from the scanner's config, and the handlers read `band`. A function reading a derivation is refused with that advice — by `crow run`, `crow test` and `crow check` alike, which pass every program through the same validator before doing anything else. Reactive state may be an array, a map, or a frame; the compiled program keeps it as JSON between renders.
+A view sees reactive state, a handler moves it, and a function a handler calls that assigns a module-level variable is a handler too — it joins the handler class in both renderers, so `fn restart[]` may call `fn rewind_to[t]` and the write lands in state. A pure helper (one that assigns no module variable) keeps its own scope. A helper a handler calls sees what the handler has written so far, and the handler sees what the helper wrote when it returns, in both modes — derivations included: a derivation the handler reads after a write to what it reads, its own or a helper's, is the recomputed one (`clock.jump[t]`, then `clock.head` is `t`). A helper that reads state and assigns none is a derivation, not a function: `derive band` computes the price band from the scanner's config, and the handlers read `band`. A function reading a derivation is refused with that advice — by `crow run`, `crow test` and `crow check` alike, which pass every program through the same checks before doing anything else. Reactive state may be an array, a map, or a frame; the compiled program keeps it as JSON between renders.
 
 **A handler is a transaction.** It runs on a working copy of the session's facts, sees its own writes at once — as a helper it calls does — and when it ends its writes land as one; a render never sees a handler halfway, and two sessions never see each other's copies. Effects follow one rule, decided from the text: **an effect whose answer the handler uses runs when asked; one whose answer it does not use runs when the handler commits, in program order.** `r = query[…]`, `n = shell['wc -l x']` and `row = query[book, 'INSERT … RETURNING id']` answer at once; `notice['saved']` and `later[reload]` wait for the commit, and a stop drops them. Database writes run in a transaction: the first write a handler makes through a connection begins one on it, every later read and write on that connection is inside it, and it commits when the handler does and rolls back when it stops — `RETURNING` answers inside it. A handler that writes two databases commits them in program order; the language promises no atomicity across stores, and ClickHouse, which has no transactions, keeps a write the moment it is made.
 

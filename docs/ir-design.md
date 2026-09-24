@@ -26,14 +26,15 @@ programs that only carry it out.
 
 ```
 source ─ lexer ─ parser ─▶ AST
-                            │  lower.rs      named arguments → positional (exists)
-                            │  type_infer.rs types, schemas, specialisations (exists)
-                            │  validator.rs  scope, purity, wiring (exists)
+                            │  lower.rs      named arguments → positional,
+                            │                block scopes, guards
+                            │  type_infer.rs signatures, schemas, specialisations
                             ▼
-                          lowering ─▶ IR      (new: ir.rs, lower_ir.rs)
-                                       │
+                          lowering ─▶ IR      (ir.rs, lower_ir.rs: each node typed
+                                       │       from its children; what is not a
+                                       │       program refused, lower_ir/checks.rs)
                           ┌────────────┴────────────┐
-                    ir_interp.rs               ir_rust.rs
+                    ir_interp.rs               emit_rs/
                     walks the IR               prints Rust from the IR
                     `crow run -i`, tests,      `crow run`, `crow build`
                     check, book, harness
@@ -42,10 +43,13 @@ source ─ lexer ─ parser ─▶ AST
                                   (every operation, once)
 ```
 
-The three existing front-end passes stay: they already decide types
-once. What changes is that their decisions are written into the IR and
-never re-derived downstream. The interpreter and the transpiler are
-deleted when their replacements pass the acceptance suite (§9).
+The front-end passes decide types once, and their decisions are written
+into the IR and never re-derived downstream. The interpreter and the
+transpiler were deleted when their replacements passed the acceptance
+suite (§9). The fold (core-rewrite-notes §10) moves the passes into the
+lowering one at a time: it types each node from its children with the
+type checker's rules, and it makes the checks the validator made, so a
+program is judged by the scopes and types it is lowered with.
 
 ## 3. The IR
 
@@ -711,4 +715,9 @@ shell, HTTP) as visible effects.
   through steps 1 to 4; they fold into the lowering after the
   transpiler is gone, starting with the type checker's single map of
   variables by name, which the lowering replaces with a scoped
-  environment of its own.
+  environment of its own. *2026-09-24: names are resolved with their
+  blocks, the lowering types each node with the type checker's rules,
+  and `validator.rs` is gone: its checks are made as the program is
+  lowered (`lower_ir/checks.rs`). `lower.rs` and `type_infer.rs` stay
+  until inference itself is redesigned, for the reason
+  core-rewrite-notes §10 gives.*
