@@ -9,6 +9,11 @@ pub enum CrowType {
     Float,
     Bool,
     Str,
+    /// Markup a view, an element or `doc` made: a string everywhere a
+    /// string is read, and the one kind of string a view places as markup.
+    /// Every other string is text (`infer_expr` reads it as `Str`; only
+    /// `infer_expr_full` and the placing of children tell them apart).
+    Markup,
     Array(Box<CrowType>),
     Map(Box<CrowType>),
     Struct(String),
@@ -50,7 +55,7 @@ impl CrowType {
             CrowType::Int => "i64".into(),
             CrowType::Float => "f64".into(),
             CrowType::Bool => "bool".into(),
-            CrowType::Str => "String".into(),
+            CrowType::Str | CrowType::Markup => "String".into(),
             CrowType::Array(inner) => format!("Vec<{}>", inner.to_rust_type()),
             CrowType::Map(inner) => format!("std::collections::BTreeMap<String, {}>", inner.to_rust_type()),
             CrowType::Struct(name) => name.clone(),
@@ -83,7 +88,7 @@ impl CrowType {
             CrowType::Int => "0_i64".into(),
             CrowType::Float => "0.0_f64".into(),
             CrowType::Bool => "false".into(),
-            CrowType::Str => "String::new()".into(),
+            CrowType::Str | CrowType::Markup => "String::new()".into(),
             CrowType::Array(inner) => format!("Vec::<{}>::new()", inner.to_rust_type()),
             CrowType::Map(inner) => format!("std::collections::BTreeMap::<String, {}>::new()", inner.to_rust_type()),
             CrowType::Struct(name) => format!("unsafe {{ std::mem::zeroed::<{}>() }}", name),
@@ -106,6 +111,30 @@ impl CrowType {
         }
     }
 
+    /// The type as every string reader sees it: markup is a string.
+    pub fn text(&self) -> CrowType {
+        match self {
+            CrowType::Markup => CrowType::Str,
+            CrowType::Array(t) => CrowType::Array(Box::new(t.text())),
+            CrowType::Map(t) => CrowType::Map(Box::new(t.text())),
+            CrowType::Result(t) => CrowType::Result(Box::new(t.text())),
+            CrowType::Fn(p, r) => CrowType::Fn(p.iter().map(|t| t.text()).collect(), Box::new(r.text())),
+            other => other.clone(),
+        }
+    }
+
+    /// Whether markup is anywhere in the type: two call signatures that
+    /// differ only here are two specializations (a view given markup, and
+    /// the same view given text).
+    pub fn has_markup(&self) -> bool {
+        match self {
+            CrowType::Markup => true,
+            CrowType::Array(t) | CrowType::Map(t) | CrowType::Result(t) => t.has_markup(),
+            CrowType::Fn(p, r) => p.iter().any(|t| t.has_markup()) || r.has_markup(),
+            _ => false,
+        }
+    }
+
     /// Human-readable Crow type name for error messages.
     pub fn crow_name(&self) -> String {
         match self {
@@ -113,6 +142,7 @@ impl CrowType {
             CrowType::Float => "float".into(),
             CrowType::Bool => "bool".into(),
             CrowType::Str => "str".into(),
+            CrowType::Markup => "markup".into(),
             CrowType::Array(inner) => format!("array[{}]", inner.crow_name()),
             CrowType::NumArray(_) => "array".into(),
             CrowType::Sparse => "sparse".into(),
@@ -146,6 +176,8 @@ impl CrowType {
             (CrowType::Unknown, _) | (_, CrowType::Unknown) => true,
             (CrowType::Void, _) | (_, CrowType::Void) => true,
             (CrowType::Int, CrowType::Float) | (CrowType::Float, CrowType::Int) => true,
+            // markup is a string wherever a string is read
+            (CrowType::Markup, CrowType::Str) | (CrowType::Str, CrowType::Markup) => true,
             (CrowType::Array(a), CrowType::Array(b)) => a.compatible(b),
             (CrowType::Map(a), CrowType::Map(b)) => a.compatible(b),
             (CrowType::Result(a), CrowType::Result(b)) => a.compatible(b),
@@ -171,6 +203,8 @@ impl CrowType {
         match (self, other) {
             (CrowType::Unknown, t) | (t, CrowType::Unknown) => t.clone(),
             (CrowType::Int, CrowType::Float) | (CrowType::Float, CrowType::Int) => CrowType::Float,
+            // markup mixed with text is text: nothing a string holds makes it markup
+            (CrowType::Markup, CrowType::Str) | (CrowType::Str, CrowType::Markup) => CrowType::Str,
             (CrowType::NumArray(a), CrowType::NumArray(b)) => CrowType::NumArray(Box::new(a.unify(b))),
             (CrowType::Array(a), CrowType::Array(b)) => CrowType::Array(Box::new(a.unify(b))),
             (CrowType::Map(a), CrowType::Map(b)) => CrowType::Map(Box::new(a.unify(b))),
@@ -218,6 +252,7 @@ pub struct StructSig {
 pub(crate) struct BodyScope {
     saved_vars: BTreeMap<String, CrowType>,
     outer_assigned: Option<std::collections::HashSet<String>>,
+    outer_in_view: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -233,6 +268,9 @@ pub struct TypeContext {
     /// (its parameters to begin with). The first assignment of another
     /// name binds a new local (spec §7), whatever the module calls it.
     body_assigned: Option<std::collections::HashSet<String>>,
+    /// While a view's body is inferred: an element's name is the element,
+    /// whose value is markup
+    in_view: bool,
     /// A `use ui` program: its top-level variables are reactive state,
     /// which views and handlers see under their module names.
     is_ui: bool,
@@ -263,15 +301,25 @@ pub struct TypeContext {
     /// in declaration order — the compiler asks these databases what a
     /// query returns.
     pub conn_urls: Vec<(String, String)>,
+    /// The tables the program makes itself (`exec[conn, 'CREATE TABLE …']`):
+    /// a SQLite database that does not exist yet, or lacks one of them, is
+    /// described from these
+    pub ddl: Vec<String>,
     /// Frame variables whose columns are known: from a described query,
     /// or derived through select/filter/sort/join from one.
     pub frame_schemas: BTreeMap<String, BTreeMap<String, CrowType>>,
     /// Functions whose returned frame has known columns.
     pub fn_frame_schemas: BTreeMap<String, BTreeMap<String, CrowType>>,
-    /// Ask the databases at compile time (the transpiler); the interpreter
-    /// reads cells natively and never needs to.
+    /// Ask the program's databases what its query literals return. Every
+    /// pipeline's gate asks the same way (`CROW_NO_DESCRIBE` turns it off),
+    /// so a program refused for a query's column types is refused by run,
+    /// run -i, test and check alike.
     pub describe_queries: bool,
     describe_cache: BTreeMap<String, Option<BTreeMap<String, CrowType>>>,
+    /// Queries no database could type, as notes: the compiled program reads
+    /// their cells as text, so the build prints them; the interpreter types
+    /// cells from the rows and has nothing to say.
+    pub describe_notes: Vec<String>,
     current_fn_name: Option<String>,
 }
 
@@ -317,6 +365,7 @@ impl TypeContext {
             call_signatures: BTreeMap::new(),
             views: std::collections::BTreeSet::new(),
             body_assigned: None,
+            in_view: false,
             is_ui: false,
             view_handlers: std::collections::BTreeSet::new(),
             derives: std::collections::BTreeSet::new(),
@@ -329,10 +378,12 @@ impl TypeContext {
             current_fn_params: Vec::new(),
             registry: crate::modules::ModuleRegistry::new(),
             conn_urls: Vec::new(),
+            ddl: Vec::new(),
             frame_schemas: BTreeMap::new(),
             fn_frame_schemas: BTreeMap::new(),
             describe_queries: false,
             describe_cache: BTreeMap::new(),
+            describe_notes: Vec::new(),
             current_fn_name: None,
         }
     }
@@ -340,6 +391,46 @@ impl TypeContext {
     /// Main entry point: run multi-pass type inference on a program.
     pub fn infer_program(&mut self, stmts: &[Stmt]) {
         self.is_ui = self.is_ui || stmts.iter().any(|st| matches!(st, Stmt::Use { path, .. } if path == "ui" || path == "web.ui"));
+        // the tables the program makes, wherever it makes them
+        {
+            fn in_expr(e: &Expr, out: &mut Vec<String>) {
+                if let Expr::Call { callee, args } = e {
+                    let is_exec = match callee.as_ref() {
+                        Expr::Ident(n) => n == "exec",
+                        Expr::FieldAccess { field, .. } => field == "exec",
+                        _ => false,
+                    };
+                    if is_exec {
+                        if let Some(Expr::Str(sql)) = args.get(1) {
+                            if sql.trim_start().to_ascii_uppercase().starts_with("CREATE") && !out.contains(sql) {
+                                out.push(sql.clone());
+                            }
+                        }
+                    }
+                    for a in args {
+                        in_expr(a, out);
+                    }
+                }
+            }
+            fn in_stmts(stmts: &[Stmt], out: &mut Vec<String>) {
+                for st in stmts {
+                    match st {
+                        Stmt::ExprStmt(e) | Stmt::Return(Some(e)) | Stmt::Assign { value: e, .. } => in_expr(e, out),
+                        Stmt::FnDecl { body, .. } | Stmt::Derive { body, .. } | Stmt::TestBlock { body, .. } | Stmt::For { body, .. } | Stmt::While { body, .. } => in_stmts(body, out),
+                        Stmt::If { then_body, else_body, .. } => {
+                            in_stmts(then_body, out);
+                            if let Some(eb) = else_body {
+                                in_stmts(eb, out);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            let mut ddl = std::mem::take(&mut self.ddl);
+            in_stmts(stmts, &mut ddl);
+            self.ddl = ddl;
+        }
         // Pass 1: collect struct and function declarations — and every
         // connection, so a helper scanned before the part that declares its
         // handle still describes its query against the right database
@@ -591,8 +682,12 @@ impl TypeContext {
             // the module's reactive state: every top-level assignment
             let module_vars: std::collections::BTreeSet<String> = stmts.iter().filter_map(|s| if let Stmt::Assign { name, .. } = s { Some(name.clone()) } else { None }).collect();
             self.facts = module_vars.clone();
+            // a function that assigns reactive state — or tells the reader
+            // something with notice[], which the session keeps — acts for
+            // the session and joins the handler class
             fn assigns_any(stmts: &[Stmt], names: &std::collections::BTreeSet<String>) -> bool {
                 stmts.iter().any(|st| match st {
+                    Stmt::ExprStmt(Expr::Call { callee, .. }) if matches!(callee.as_ref(), Expr::Ident(n) if n == "notice" || n == "sign_in" || n == "sign_out" || n == "download") => true,
                     Stmt::Assign { name, .. } => names.contains(name),
                     Stmt::MultiAssign { names: ns, .. } => ns.iter().any(|n| names.contains(n)),
                     Stmt::If { then_body, else_body, .. } => assigns_any(then_body, names) || else_body.as_ref().map_or(false, |eb| assigns_any(eb, names)),
@@ -648,47 +743,72 @@ impl TypeContext {
 
             // A seek handler receives the clicked bucket's moment: its
             // first parameter is a float whether or not a call site says so.
-            fn seek_expr(e: &Expr, out: &mut Vec<String>) {
+            // A widget's handler receives what its module sends, as a field's
+            // handler receives its text: a parameter nothing else types is a
+            // string.
+            fn seek_expr(e: &Expr, out: &mut Vec<String>, widgets: &mut Vec<String>) {
                 match e {
                     Expr::Call { callee, args } => {
                         if let Some(f) = crate::transpiler::chart_seek_handler(callee, args) {
                             out.push(f.to_string());
                         }
-                        seek_expr(callee, out);
-                        for a in args { seek_expr(a, out); }
+                        if matches!(callee.as_ref(), Expr::Ident(n) if n == "widget") {
+                            for a in args {
+                                let Expr::Map(pairs) = a else { continue };
+                                for (k, v) in pairs {
+                                    if matches!(k, Expr::Ident(s) | Expr::Str(s) if s == "on") {
+                                        for (_, h) in crate::lower::map_literal_pairs(v).unwrap_or_default() {
+                                            if let Expr::Ident(f) = h {
+                                                widgets.push(f);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        seek_expr(callee, out, widgets);
+                        for a in args { seek_expr(a, out, widgets); }
                     }
-                    Expr::BinOp { left, right, .. } => { seek_expr(left, out); seek_expr(right, out); }
-                    Expr::UnaryOp { expr, .. } => seek_expr(expr, out),
-                    Expr::FieldAccess { object, .. } => seek_expr(object, out),
-                    Expr::Array(items) => for i in items { seek_expr(i, out); },
-                    Expr::Map(pairs) => for (k, v) in pairs { seek_expr(k, out); seek_expr(v, out); },
-                    Expr::Named { value, .. } => seek_expr(value, out),
-                    Expr::ForExpr { iter, body, .. } => { seek_expr(iter, out); seek_stmts(body, out); }
+                    Expr::BinOp { left, right, .. } => { seek_expr(left, out, widgets); seek_expr(right, out, widgets); }
+                    Expr::UnaryOp { expr, .. } => seek_expr(expr, out, widgets),
+                    Expr::FieldAccess { object, .. } => seek_expr(object, out, widgets),
+                    Expr::Array(items) => for i in items { seek_expr(i, out, widgets); },
+                    Expr::Map(pairs) => for (k, v) in pairs { seek_expr(k, out, widgets); seek_expr(v, out, widgets); },
+                    Expr::Named { value, .. } => seek_expr(value, out, widgets),
+                    Expr::ForExpr { iter, body, .. } => { seek_expr(iter, out, widgets); seek_stmts(body, out, widgets); }
                     _ => {}
                 }
             }
-            fn seek_stmts(stmts: &[Stmt], out: &mut Vec<String>) {
+            fn seek_stmts(stmts: &[Stmt], out: &mut Vec<String>, widgets: &mut Vec<String>) {
                 for st in stmts {
                     match st {
-                        Stmt::Assign { value, .. } => seek_expr(value, out),
-                        Stmt::ExprStmt(e) | Stmt::Return(Some(e)) => seek_expr(e, out),
+                        Stmt::Assign { value, .. } => seek_expr(value, out, widgets),
+                        Stmt::ExprStmt(e) | Stmt::Return(Some(e)) => seek_expr(e, out, widgets),
                         Stmt::If { condition, then_body, else_body } => {
-                            seek_expr(condition, out);
-                            seek_stmts(then_body, out);
-                            if let Some(eb) = else_body { seek_stmts(eb, out); }
+                            seek_expr(condition, out, widgets);
+                            seek_stmts(then_body, out, widgets);
+                            if let Some(eb) = else_body { seek_stmts(eb, out, widgets); }
                         }
-                        Stmt::For { body, .. } | Stmt::While { body, .. } => seek_stmts(body, out),
-                        Stmt::FnDecl { body, .. } => seek_stmts(body, out),
+                        Stmt::For { body, .. } | Stmt::While { body, .. } => seek_stmts(body, out, widgets),
+                        Stmt::FnDecl { body, .. } => seek_stmts(body, out, widgets),
                         _ => {}
                     }
                 }
             }
             let mut seeks = Vec::new();
-            seek_stmts(stmts, &mut seeks);
+            let mut widgets = Vec::new();
+            seek_stmts(stmts, &mut seeks, &mut widgets);
             for f in seeks {
                 if let Some(sig) = self.functions.get_mut(&f) {
                     if let Some(p) = sig.params.first_mut() {
                         p.1 = CrowType::Float;
+                    }
+                }
+            }
+            for f in widgets {
+                if let Some(sig) = self.functions.get_mut(&f) {
+                    for p in sig.params.iter_mut().filter(|p| matches!(p.1, CrowType::Unknown)) {
+                        p.1 = CrowType::Str;
                     }
                 }
             }
@@ -896,8 +1016,9 @@ impl TypeContext {
     fn collect_call_types_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Assign { name, value } => {
-                // Track local variable types during call-site scanning
-                let ty = self.infer_expr(value);
+                // Track local variable types during call-site scanning (a
+                // local holding a view's markup is markup)
+                let ty = self.infer_expr_full(value);
                 let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
                 self.vars.insert(name.clone(), existing.unify(&ty));
                 self.collect_call_types_expr(value);
@@ -943,6 +1064,8 @@ impl TypeContext {
                 let saved_vars = self.vars.clone();
                 let saved_fn_params = self.current_fn_params.clone();
                 let saved_fn_name = self.current_fn_name.replace(name.clone());
+                // inside a view an element is markup, at the calls it makes too
+                let saved_in_view = std::mem::replace(&mut self.in_view, self.views.contains(name));
                 if let Some(sig) = self.functions.get(name) {
                     self.current_fn_params = sig.params.iter().map(|(n, _)| n.clone()).collect();
                     for (pname, pty) in &sig.params.clone() {
@@ -980,6 +1103,7 @@ impl TypeContext {
 
                 self.current_fn_params = saved_fn_params;
                 self.current_fn_name = saved_fn_name;
+                self.in_view = saved_in_view;
                 self.vars = saved_vars;
                 for (m, t) in refined { self.vars.insert(m, t); }
             }
@@ -1033,8 +1157,10 @@ impl TypeContext {
         match expr {
             Expr::Call { callee, args } => {
                 if let Expr::Ident(name) = callee.as_ref() {
+                    // markup told apart from text: a view given markup and the
+                    // same view given text are two specializations
                     let arg_types: Vec<CrowType> = args.iter()
-                        .map(|a| self.infer_expr(a))
+                        .map(|a| self.infer_expr_full(a))
                         .collect();
 
                     // table[frame, click = h, key = 'id', actions = map[…]]: the
@@ -1144,9 +1270,7 @@ impl TypeContext {
                             && normalized_sig.iter().all(Self::type_is_concrete)
                         {
                             let entry = self.call_signatures.entry(name.clone()).or_default();
-                            let dup = entry.iter().any(|existing| {
-                                existing.iter().zip(&normalized_sig).all(|(a, b)| a.compatible(b))
-                            });
+                            let dup = entry.iter().any(|existing| Self::same_signature(existing, &normalized_sig));
                             if !dup {
                                 entry.push(normalized_sig);
                             }
@@ -1480,7 +1604,7 @@ impl TypeContext {
                 if let Ok(tokens) = lexer.tokenize() {
                     let mut parser = crate::parser::Parser::new(tokens);
                     if let Ok(stmts) = parser.parse() {
-                        let stmts = crate::lower::lower_program(&stmts).unwrap_or(stmts);
+                        let stmts = crate::lower::lower_fragment(&stmts).unwrap_or(stmts);
                         if let Some(crate::ast::Stmt::ExprStmt(expr)) = stmts.iter().find(|s| !matches!(s, Stmt::Line(_))) {
                             if matches!(self.infer_expr(expr), CrowType::Result(_)) { return true; }
                         }
@@ -1525,6 +1649,7 @@ impl TypeContext {
                 if let Ok(tokens) = lexer.tokenize() {
                     let mut parser = crate::parser::Parser::new(tokens);
                     if let Ok(stmts) = parser.parse() {
+                        let stmts = crate::lower::lower_fragment(&stmts).unwrap_or(stmts);
                         if let Some(crate::ast::Stmt::ExprStmt(expr)) = stmts.iter().find(|s| !matches!(s, Stmt::Line(_))) {
                             self.collect_call_types_expr(expr);
                         }
@@ -1678,12 +1803,14 @@ impl TypeContext {
             }
         }
         let outer_assigned = self.body_assigned.replace(assigned);
-        BodyScope { saved_vars, outer_assigned }
+        let outer_in_view = std::mem::replace(&mut self.in_view, self.views.contains(name));
+        BodyScope { saved_vars, outer_assigned, outer_in_view }
     }
 
     pub(crate) fn leave_body(&mut self, scope: BodyScope) {
         self.vars = scope.saved_vars;
         self.body_assigned = scope.outer_assigned;
+        self.in_view = scope.outer_in_view;
     }
 
     pub(crate) fn infer_function_body(&mut self, name: &str, body: &[Stmt]) {
@@ -1695,6 +1822,7 @@ impl TypeContext {
             self.infer_stmt(stmt);
         }
         self.body_assigned = scope.outer_assigned;
+        self.in_view = scope.outer_in_view;
 
         // Find return type
         let ret = self.find_return_type(body);
@@ -1736,7 +1864,7 @@ impl TypeContext {
         for stmt in stmts {
             match stmt {
                 Stmt::Return(Some(e)) => {
-                    ret = ret.unify(&self.infer_expr(e));
+                    ret = ret.unify(&self.infer_expr_full(e));
                 }
                 Stmt::Return(None) => {
                     ret = ret.unify(&CrowType::Void);
@@ -1767,7 +1895,7 @@ impl TypeContext {
     pub(crate) fn infer_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Assign { name, value } => {
-                let ty = self.infer_expr(value);
+                let ty = self.infer_expr_full(value);
                 // inside a function, the first assignment of a name that is
                 // neither a parameter nor a fact is a new binding: its type
                 // is its own, not the module variable's of the same name
@@ -1861,6 +1989,32 @@ impl TypeContext {
         }
     }
 
+    /// Whether a call at `b` reaches the specialization made for `a`: every
+    /// argument fits, and markup meets markup — a view given markup is not
+    /// the same view given text.
+    pub fn same_signature(a: &[CrowType], b: &[CrowType]) -> bool {
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && x.has_markup() == y.has_markup())
+    }
+
+    /// The specialization of `name` a call with these arguments reaches,
+    /// the one rule the inference, the compiler and the interpreter share.
+    pub fn specialization_for(&self, name: &str, args: &[Expr]) -> Option<String> {
+        let clones = self.specializations.get(name)?;
+        let call_sig: Vec<CrowType> = args
+            .iter()
+            .map(|a| match self.infer_expr_full(a) {
+                CrowType::Result(inner) => *inner,
+                CrowType::OptBoxStruct(n) => CrowType::Struct(n),
+                other => other,
+            })
+            .collect();
+        clones
+            .iter()
+            .find(|(csig, _)| Self::same_signature(csig, &call_sig))
+            .or_else(|| clones.first())
+            .map(|(_, m)| m.clone())
+    }
+
     pub fn infer_call_base(&self, name: &str, args: &[Expr], callee: &Expr) -> CrowType {
         let arg_types: Vec<CrowType> = args.iter().map(|a| self.infer_expr(a)).collect();
         self.infer_call_base_typed(name, args, callee, &arg_types)
@@ -1882,30 +2036,29 @@ impl TypeContext {
         if self.structs.contains_key(name) {
             return CrowType::Struct(name.to_string());
         }
+        // Inside a view an element, a chart, an icon or a bound input is
+        // markup (a `select` of two arguments is the bound input there, as
+        // both backends read it)
+        if self.in_view
+            && (crate::lower::UI_ELEMENTS.contains(&name)
+                || matches!(name, "chart" | "icon" | "progress" | "field" | "slider" | "checkbox" | "toggle" | "radio" | "tabs")
+                || (name == "select" && args.len() == 2))
+        {
+            return CrowType::Markup;
+        }
         // A view's tree is markup at every boundary a type can see — the
         // interpreter's views return strings, and compiled ones render to
-        // one wherever a string is expected (a list, a module argument).
+        // one wherever a string is expected (a list, a module argument) —
+        // and markup, never text, where it is placed as a child.
         if self.views.contains(name) {
-            return CrowType::Str;
+            return CrowType::Markup;
         }
         // User-defined function call (specialization-aware: a monomorphized
         // callee's return type depends on this call's argument types)
         if let Some(sig) = self.functions.get(name) {
-            if let Some(clones) = self.specializations.get(name) {
-                let call_sig: Vec<CrowType> = args.iter()
-                    .map(|a| match arg_ty(a) {
-                        CrowType::Result(inner) => *inner,
-                        CrowType::OptBoxStruct(n) => CrowType::Struct(n),
-                        other => other,
-                    })
-                    .collect();
-                if let Some((_, mangled)) = clones.iter().find(|(csig, _)| {
-                    csig.len() == call_sig.len()
-                        && csig.iter().zip(&call_sig).all(|(a, b)| a.compatible(b))
-                }) {
-                    if let Some(clone_sig) = self.functions.get(mangled) {
-                        return clone_sig.return_type.clone();
-                    }
+            if let Some(mangled) = self.specialization_for(name, args) {
+                if let Some(clone_sig) = self.functions.get(&mangled) {
+                    return clone_sig.return_type.clone();
                 }
             }
             return sig.return_type.clone();
@@ -1990,6 +2143,8 @@ impl TypeContext {
             }
             // String builtins
             "trim" | "upper" | "lower" | "replace" | "join" | "repeat" | "fmt" => CrowType::Str,
+            // an algorithm it does not know, or a stored hash it cannot read
+            "hash" => CrowType::Result(Box::new(CrowType::Str)),
             "split" => CrowType::Array(Box::new(CrowType::Str)),
             "starts" | "ends" | "contains" => CrowType::Bool,
             // Conversion builtins — fallible when parsing from string
@@ -2159,6 +2314,17 @@ impl TypeContext {
             // running[] for in-flight status)
             "later" => CrowType::Void,
             "running" => CrowType::Bool,
+            // the session's notice: an effect held to the handler's commit,
+            // and the record the runtime keeps (notice.text, notice.at)
+            "notice" => CrowType::Void,
+            // the page's signed-in reader: a map of strings the runtime
+            // provides, set by two effects held to the handler's commit
+            "__reader" => CrowType::Map(Box::new(CrowType::Str)),
+            "sign_in" | "sign_out" | "download" => CrowType::Void,
+            // the files a test's session was handed, as maps of name and text
+            "downloads" => CrowType::Array(Box::new(CrowType::Map(Box::new(CrowType::Str)))),
+            "__notice_text" => CrowType::Str,
+            "__notice_at" => CrowType::Float,
             "env" => CrowType::Result(Box::new(CrowType::Str)),
             "exit" => CrowType::Int,
             // JSON builtins
@@ -2327,7 +2493,7 @@ impl TypeContext {
         let mut reasons = Vec::new();
         let mut found: Option<BTreeMap<String, CrowType>> = None;
         for (var, url) in candidates {
-            match crate::type_infer::describe_with(&url, &scrubbed) {
+            match crate::type_infer::describe_with_tables(&url, &scrubbed, &self.ddl) {
                 Ok(cols) => {
                     let mut schema = BTreeMap::new();
                     for (n, kind) in cols {
@@ -2344,7 +2510,7 @@ impl TypeContext {
         }
         if found.is_none() && !reasons.is_empty() {
             let head: String = sql.chars().take(60).collect();
-            eprintln!("note: the columns of `{}…` could not be typed at compile time — cells read as text ({})", head, reasons.join("; "));
+            self.describe_notes.push(format!("note: the columns of `{}…` could not be typed at compile time — cells read as text ({})", head, reasons.join("; ")));
         }
         if std::env::var("CROW_DEBUG_SCHEMAS").is_ok() {
             eprintln!("DESCRIBE {:?} via {:?} for `{}…`", found, handle, sql.chars().take(50).collect::<String>());
@@ -2391,7 +2557,15 @@ impl TypeContext {
         }
     }
 
+    /// An expression's type as every reader of strings sees it: markup is
+    /// a string. Placing a child is the one place that asks for more
+    /// (`infer_expr_full`).
     pub fn infer_expr(&self, expr: &Expr) -> CrowType {
+        self.infer_expr_full(expr).text()
+    }
+
+    /// An expression's type, markup told apart from text.
+    pub fn infer_expr_full(&self, expr: &Expr) -> CrowType {
         // a cell of a column whose type the database told us: frame.col[i]
         if let Expr::Call { callee, args } = expr {
             if args.len() == 1 {
@@ -2414,7 +2588,7 @@ impl TypeContext {
                 if self.string_has_fallible_span(s) { CrowType::Result(Box::new(CrowType::Str)) } else { CrowType::Str }
             }
             // Lowering resolves named args before inference; type is the value's
-            Expr::Named { value, .. } => self.infer_expr(value),
+            Expr::Named { value, .. } => self.infer_expr_full(value),
             Expr::Ident(name) => {
                 // User variables shadow module constants (matches codegen +
                 // interpreter scoping: environment first, then constants)
@@ -2646,12 +2820,10 @@ impl TypeContext {
                         return CrowType::Json;
                     }
                 }
-                // .ok on FrameCol or Array(Str) → Array(Bool) (validity bitmap)
-                if field == "ok" {
-                    if matches!(&obj_type, CrowType::FrameCol)
-                        || matches!(&obj_type, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Str)) {
-                        return CrowType::Array(Box::new(CrowType::Bool));
-                    }
+                // .ok on a frame column → its rows' validity; every other
+                // value's .ok is its own status, a list's included
+                if field == "ok" && matches!(&obj_type, CrowType::FrameCol) {
+                    return CrowType::Array(Box::new(CrowType::Bool));
                 }
                 // DateTime properties on strings → Int
                 if matches!(&obj_type, CrowType::Str) {
@@ -2741,7 +2913,7 @@ impl TypeContext {
                 } else {
                     let mut inner = CrowType::Unknown;
                     for item in items {
-                        inner = inner.unify(&self.infer_expr(item));
+                        inner = inner.unify(&self.infer_expr_full(item));
                     }
                     // All-numeric array literals become NumArray (backed by CrowTensor).
                     // Nested numeric literals build higher-rank tensors: the inner
@@ -2780,7 +2952,7 @@ impl TypeContext {
                 // (the filter pattern) yields from inside its branches.
                 fn body_yield_type(ctx: &TypeContext, body: &[Stmt]) -> CrowType {
                     match body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
-                        Some(Stmt::ExprStmt(e)) => ctx.infer_expr(e),
+                        Some(Stmt::ExprStmt(e)) => ctx.infer_expr_full(e),
                         Some(Stmt::If { then_body, else_body, .. }) => {
                             let t = body_yield_type(ctx, then_body);
                             match else_body {
@@ -2813,13 +2985,73 @@ thread_local! {
     static DESCRIBE_HANDLES: std::cell::RefCell<std::collections::HashMap<String, Result<crow_db::DbHandle, String>>> = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
-/// Describe a statement against a database URL, keeping one connection per URL for the build.
-pub fn describe_with(url: &str, sql: &str) -> Result<Vec<(String, String)>, String> {
+/// Describe a statement against a database URL, keeping one connection per
+/// URL for the build. A SQLite file that does not exist yet is not created
+/// by asking: only the program makes its database. For a program that makes
+/// its own tables, a SQLite database that
+/// does not exist yet — or one missing a table the statement reads — is
+/// described from a scratch copy the program's `CREATE` statements build,
+/// so a new app's columns are typed on its first build as on every later one.
+pub fn describe_with_tables(url: &str, sql: &str, ddl: &[String]) -> Result<Vec<(String, String)>, String> {
+    let sqlite_path = url.strip_prefix("sqlite://");
+    let missing = sqlite_path.map_or(false, |p| p == ":memory:" || !std::path::Path::new(p).exists());
+    if missing {
+        if ddl.is_empty() {
+            return Err(format!("{} does not exist yet", url));
+        }
+        return describe_on(&format!("{}#program", url), "sqlite://:memory:", ddl, sql);
+    }
+    match describe_on(url, url, &[], sql) {
+        Err(e) if sqlite_path.is_some() && !ddl.is_empty() && e.contains("no such table") => describe_on(&format!("{}#program", url), "sqlite://:memory:", ddl, sql),
+        other => other,
+    }
+}
+
+/// Describe on the build's connection for `key` (opened on `url`, built from
+/// `ddl` when it is new).
+fn describe_on(key: &str, url: &str, ddl: &[String], sql: &str) -> Result<Vec<(String, String)>, String> {
     DESCRIBE_HANDLES.with(|h| {
         let mut map = h.borrow_mut();
-        let handle = map.entry(url.to_string()).or_insert_with(|| crow_db::connect(url, Some(1)));
+        let handle = map.entry(key.to_string()).or_insert_with(|| {
+            let db = crow_db::connect(url, Some(1))?;
+            for statement in ddl {
+                let _ = db.exec(statement, &[]);
+            }
+            Ok(db)
+        });
         match handle {
-            Ok(db) => db.describe(sql),
+            Ok(db) => {
+                let mut cols = db.describe(sql)?;
+                // SQLite types no computed column, and a statement whose
+                // parameters match no row shows none: type those from the
+                // statement and the tables' declared columns
+                if url.starts_with("sqlite://") && cols.iter().any(|(_, k)| k == "unknown") {
+                    let columns_of = |table: &str| -> Vec<(String, String)> {
+                        let frame = match db.query(&format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\"")), &[]) {
+                            Ok(f) => f,
+                            Err(_) => return Vec::new(),
+                        };
+                        let text = |name: &str| -> Vec<String> {
+                            frame.columns.iter().position(|c| c == name)
+                                .and_then(|i| match frame.data[i].as_ref() { crow_runtime::frame::Column::Str(v) => Some(v.clone()), _ => None })
+                                .unwrap_or_default()
+                        };
+                        text("name").into_iter().zip(text("type")).collect()
+                    };
+                    if let Some(kinds) = crate::sql_types::select_kinds(sql, &columns_of) {
+                        if kinds.len() == cols.len() {
+                            for ((_, k), typed) in cols.iter_mut().zip(kinds) {
+                                if k == "unknown" {
+                                    if let Some(t) = typed {
+                                        *k = t;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(cols)
+            }
             Err(e) => Err(e.clone()),
         }
     })
@@ -2828,6 +3060,59 @@ pub fn describe_with(url: &str, sql: &str) -> Result<Vec<(String, String)>, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A SQLite computed column is typed from the statement when no row
+    /// answers the describe probe — finch's blotter P&L read as text in the
+    /// compiled program while the interpreter read a number
+    #[test]
+    fn a_sqlite_computed_column_is_typed_without_a_row() {
+        let dir = std::env::temp_dir().join(format!("crow_describe_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("book.db");
+        let _ = std::fs::remove_file(&path);
+        let url = format!("sqlite://{}", path.display());
+        crow_db::connect(&url, Some(1)).unwrap().exec("CREATE TABLE trades (session_id INTEGER, shares INTEGER, entry_px REAL, exit_px REAL)", &[]).unwrap();
+        let cols = describe_with_tables(&url, "SELECT shares, round((exit_px - entry_px) * shares, 2) AS pnl FROM trades WHERE session_id = ?", &[]).unwrap();
+        assert_eq!(cols, vec![("shares".to_string(), "int".to_string()), ("pnl".to_string(), "float".to_string())]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A new app makes its own SQLite tables when it starts: before its
+    /// database exists, its first build types the columns from its own
+    /// CREATE statements (a first build read them as text, a second as
+    /// numbers, and the interpreter as numbers) — and asking creates nothing
+    #[test]
+    fn a_program_s_own_tables_type_its_first_build() {
+        let dir = std::env::temp_dir().join(format!("crow_describe_own_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("new.db");
+        let _ = std::fs::remove_file(&path);
+        let src = format!(
+            "use db\nbook = db.connect['sqlite://{}']\nexec[book, 'CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY, title TEXT, stars INTEGER)']\nrows = query[book, 'SELECT id, title, stars FROM cards']\nlog[rows.stars[0]]\n",
+            path.display()
+        );
+        let stmts = crate::lower::lower_program(&crate::build(&src).unwrap()).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.describe_queries = true;
+        ctx.infer_program(&stmts);
+        let schema = ctx.frame_schemas.get("rows").cloned().unwrap_or_default();
+        assert_eq!(schema.get("stars"), Some(&CrowType::Int), "{:?}", schema);
+        assert_eq!(schema.get("title"), Some(&CrowType::Str));
+        assert!(!path.exists(), "describing creates no database");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A widget's handler takes what the module sends as a field's handler
+    /// takes its text: its untyped parameter is a string, so `int[z]` parses
+    /// it (a compiled build cast the string and did not compile)
+    #[test]
+    fn a_widget_handler_takes_text() {
+        let src = "use web, ui\nzoom = 3\nfn set_zoom[z]\n    zoom = int[z]\nview v[]\n    return widget['map', props = map[z = zoom], on = map[zoom = set_zoom]]\n";
+        let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        assert_eq!(ctx.functions["set_zoom"].params[0].1, CrowType::Str);
+    }
 
     /// A map literal is a nested set[] chain after lowering; inferring each
     /// level twice doubled the work per entry, and a 30-entry literal never

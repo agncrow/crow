@@ -6,6 +6,11 @@ tree, run a handler, render again, and state truths about what you see.
 UI tests are ordinary named `test` blocks (chapter 9), run by `crow test`,
 stripped from every build.
 
+Both `crow run app.co` (compiled) and `crow run -i app.co` (the
+interpreter, with no compile between an edit and the page) serve it, and
+they serve the same page: `crow test --served` drives a set of pages in
+both modes with the same clicks and compares what they settle on.
+
 ## The harness
 
 Five verbs, valid only inside test blocks:
@@ -21,7 +26,8 @@ Five verbs, valid only inside test blocks:
 | `style[s, selector]` | resolved colour and type tokens — `background color size weight` |
 | `fits[s, width]` | true when nothing overflows at that width |
 
-Reactive state reads as fields of the session: `s.status`, `s.min_qty`.
+Reactive state reads as fields of the session: `s.status`, `s.min_qty`,
+and a derivation as that session sees it: `len[s.orders]`.
 
 A selector is a tag (`'button'`), a class (`'.card'`), both
 (`'div.stats'`), or a space-separated chain that must nest
@@ -160,29 +166,87 @@ log['quote defined']
 quote defined
 ```
 
-## Two users at once
+## Time is an input
 
-Two sessions are two independent apps. That is how you test the awkward
-orderings — one person resets while another is still typing — with no
-threads to wrangle:
+Inside a test the clock is yours: it starts when the first `app[…]` opens
+and moves only when you move it, the way a field changes when you type in
+it. A handler that stamps `now[]` stamps the moment you set:
 
 ```crow
 use web, ui
 
+stamped = 0.0
+
+fn stamp[]
+    stamped = now[]
+
+view clock[]
+    return p['stamped `stamped`']
+
+test the_test_sets_the_clock[]
+    a = app[clock]
+    change[a, 'now', 1000.0]
+    click[a, stamp]
+    assert[a.stamped eq 1000.0]
+    change[a, 'now', 1060.0]
+    click[a, stamp]
+    assert[a.stamped eq 1060.0]
+
+page['/', clock]
+log['clock defined']
+```
+
+```text
+clock defined
+```
+
+A click that stops — an error at a decision, a fact, a database call —
+evaluates to that error, and the session is exactly as it was before the
+click: `r = click[a, apply]`, then `assert[not r.ok]`.
+
+## Two users at once
+
+Two sessions are two independent pages, each with its own reactive
+state — exactly what two browser tabs get from the server. That is how
+you test the awkward orderings — one person resets while another is
+still typing — with no threads to wrangle:
+
+```crow
+use web, ui, db
+
+book = db.connect['sqlite://:memory:']
 min_qty = 0
+
+fn setup[]
+    exec[book, 'CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, qty INTEGER)']
+
+derive orders
+    return query[book, 'SELECT qty FROM orders ORDER BY id']
 
 fn reset[]
     min_qty = 0
 
+fn order[]
+    exec[book, 'INSERT INTO orders (qty) VALUES (?)', [min_qty]]
+
 view panel[]
-    return p['min `min_qty`']
+    return stack[
+        p['min `min_qty`'],
+        p['orders: `len[orders]`'],
+        button['Reset', click = reset],
+        button['Order', click = order]
+    ]
 
 test two_people[]
     alice = app[panel]
     bob = app[panel]
+    click[alice, setup]
     change[alice, 'min_qty', 25]
     click[bob, reset]
-    assert[elements[alice, 'p'][0].text eq 'min 0']
+    assert[alice.min_qty eq 25]
+    change[bob, 'min_qty', 10]
+    click[bob, order]
+    assert[elements[alice, 'p'][1].text eq 'orders: 1']
 
 page['/', panel]
 log['panel defined']
@@ -192,9 +256,9 @@ log['panel defined']
 panel defined
 ```
 
-Both sessions see the same reactive state, exactly as two browser tabs
-do — Bob's reset is Alice's reset. If your app needs per-user state, that
-is a design decision the test just made visible.
+Bob's reset is his own: Alice still has 25. What the two share is the
+database — the order Bob places is in Alice's list the next time her
+page renders. Per-user state is the default; shared state is a table.
 
 ## What kind of mistake, which truth
 

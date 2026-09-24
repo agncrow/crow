@@ -846,10 +846,6 @@ pub fn col_arithmetic(col: &[String], scalar: f64, op: &str) -> Vec<String> {
     }).collect()
 }
 
-/// Vectorized validity: return true for each non-"nan" value.
-pub fn col_ok(col: &[String]) -> Vec<bool> {
-    col.iter().map(|s| s != "nan").collect()
-}
 
 /// Convert frame columns to a flat f64 vector in row-major order.
 /// Only numeric (Int, Float) columns are accepted. Returns (data, nrows, ncols).
@@ -1571,9 +1567,22 @@ fn gather_column(col: &Column, valid: &[bool], indices: &[Option<usize>]) -> (Co
 impl CrowFrame {
     /// Save frame to CSV. Parallel per-column string building, then interleave rows.
     pub fn save(&self, path: &str) -> Result<(), String> {
-        use std::io::{Write, BufWriter};
         let file = std::fs::File::create(path).map_err(|e| format!("save: {}", e))?;
-        let mut w = BufWriter::with_capacity(8 * 1024 * 1024, file);
+        self.write_csv(file)
+    }
+
+    /// The frame as CSV text, as `save` writes it — what `download` hands
+    /// the reader for a frame.
+    pub fn to_csv(&self) -> Result<String, String> {
+        let mut out = Vec::new();
+        self.write_csv(&mut out)?;
+        String::from_utf8(out).map_err(|e| format!("save: {}", e))
+    }
+
+    /// The frame as CSV into any writer.
+    pub fn write_csv<W: std::io::Write>(&self, out: W) -> Result<(), String> {
+        use std::io::{Write, BufWriter};
+        let mut w = BufWriter::with_capacity(8 * 1024 * 1024, out);
         // Header
         writeln!(w, "{}", self.columns.join(",")).map_err(|e| format!("save: {}", e))?;
 

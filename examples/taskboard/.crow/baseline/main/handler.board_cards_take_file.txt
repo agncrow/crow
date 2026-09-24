@@ -1,0 +1,8 @@
+handler board_cards_take_file (board/cards.co)
+  inputs: $1
+  wired: board_cards_card_view table action 'Download'
+  reads v1 = query[board_cards_book, 'SELECT name, path FROM attachments WHERE id = ?', [$1]]
+  when (len[v1] eq 0):
+    nothing
+  when (not (len[v1] eq 0)):
+    effect download set[map[], 'path', v1.path[0]] v1.name[0]

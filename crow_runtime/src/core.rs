@@ -35,6 +35,15 @@ pub fn range(start: i64, stop: i64, step: i64) -> Result<Vec<i64>, String> {
 }
 
 /// `push[arr, x]`: the array with `x` at the end.
+/// `m.key` / `m[key]`: the value, or the error both modes stop on — the
+/// interpreter's words, so a page reads the same in either.
+pub fn map_key<T: Clone>(m: &std::collections::BTreeMap<String, T>, key: &str) -> T {
+    match m.get(key) {
+        Some(v) => v.clone(),
+        None => panic!("map has no key '{}'", key),
+    }
+}
+
 pub fn push<T>(mut v: Vec<T>, x: T) -> Vec<T> {
     v.push(x);
     v

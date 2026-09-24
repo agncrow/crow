@@ -6,20 +6,84 @@
 
 use std::sync::Arc;
 use crow_runtime::frame::{CrowFrame, Column};
-use crate::{CrowDb, DbTx};
+use crate::{CrowDb, DbTx, stop_requested};
 use tokio::runtime::Runtime;
 use klickhouse::{Client, ClientOptions, Value, RawRow};
 use tokio_stream::StreamExt;
 
-/// ClickHouse database — wraps a klickhouse Client + tokio runtime.
+/// How many connections a handle keeps at most. ClickHouse already runs one
+/// query on every core of the server, so more at once add little and, on a
+/// table of many parts, contend: measured on finch's 143,575-part table, two
+/// warm queries at once each took under a second, four cold ones 35 s.
+const POOL: usize = 4;
+
+/// ClickHouse database — a pool of klickhouse connections + a tokio runtime.
 pub struct CrowClickhouseDb {
-    /// The live connection. A connection is not the program's lifetime:
-    /// the server closes an idle one (an hour by default) and a restart
-    /// drops every one, so it is reopened when found closed
-    client: std::sync::Mutex<Client>,
+    /// The connections, opened as queries need them. One connection runs
+    /// one query at a time, so queries from different sessions each take
+    /// their own. A connection is not the program's lifetime: the server
+    /// closes an idle one (an hour by default) and a restart drops every
+    /// one, so each is reopened when found closed
+    pool: Vec<std::sync::Mutex<Option<Client>>>,
+    /// operations running on each connection now
+    busy: Vec<std::sync::atomic::AtomicUsize>,
     rt: Arc<Runtime>,
     addr: String,
     options: ClientOptions,
+}
+
+/// This machine's name, as a query tag carries it.
+fn host_name() -> &'static str {
+    static HOST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HOST.get_or_init(|| {
+        let raw = std::process::Command::new("hostname")
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        let clean: String = raw.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-').collect();
+        if clean.is_empty() { "local".to_string() } else { clean }
+    })
+}
+
+/// Every statement this process sends carries a tag — the machine, the
+/// process, a number — so it can be stopped on the server: when the work
+/// that asked for it is cancelled, when the program stops, and, for a server
+/// on this machine, when a later run finds it left behind.
+fn tag() -> String {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    format!("crow {} {} {}", host_name(), std::process::id(), n)
+}
+
+/// The LIKE pattern for every statement of process `pid` on this machine.
+fn process_pattern(pid: u32) -> String {
+    format!("/* crow {} {} %", host_name(), pid)
+}
+
+/// Stop the statements whose text matches `pattern`, on a connection of its
+/// own — the ones running them are busy.
+async fn kill_matching(addr: &str, options: &ClientOptions, pattern: &str) {
+    let sql = format!("KILL QUERY WHERE query LIKE '{}' ASYNC", pattern.replace('\'', ""));
+    if let Ok(client) = Client::connect(addr, options.clone()).await {
+        let _ = client.execute(sql.as_str()).await;
+    }
+}
+
+/// Whether a server address is this machine.
+fn is_local(addr: &str) -> bool {
+    let host = addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(addr).trim_matches(|c| c == '[' || c == ']');
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
+}
+
+/// Whether a process on this machine is alive.
+fn process_alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(true)
 }
 
 /// An error from the transport rather than the query: the server hung up
@@ -89,8 +153,62 @@ impl CrowClickhouseDb {
             tcp_nodelay: true,
         };
 
+        // the first connection is opened now, so a wrong address fails here
         let client = Self::open(&rt, &addr, options.clone())?;
-        Ok(Self { client: std::sync::Mutex::new(client), rt: Arc::new(rt), addr, options })
+        let mut pool: Vec<std::sync::Mutex<Option<Client>>> = (0..POOL).map(|_| std::sync::Mutex::new(None)).collect();
+        pool[0] = std::sync::Mutex::new(Some(client.clone()));
+        let busy = (0..POOL).map(|_| std::sync::atomic::AtomicUsize::new(0)).collect();
+        let db = Self { pool, busy, rt: Arc::new(rt), addr, options };
+        db.sweep_left_behind(&client);
+        // when the program stops, what it started stops with it
+        let (addr, options) = (db.addr.clone(), db.options.clone());
+        crow_runtime::cancel::on_shutdown(Box::new(move || {
+            let (addr, options) = (addr.clone(), options.clone());
+            let _ = std::thread::spawn(move || {
+                if let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                    rt.block_on(kill_matching(&addr, &options, &process_pattern(std::process::id())));
+                }
+            })
+            .join();
+        }));
+        Ok(db)
+    }
+
+    /// Statements an earlier run of a program on this machine left running —
+    /// its process is gone, the server is still at them — are stopped when a
+    /// new run connects: a rebuilt app does not inherit its predecessor's
+    /// queries. Only for a server on this machine, where a process number
+    /// means something.
+    fn sweep_left_behind(&self, client: &Client) {
+        if !is_local(&self.addr) {
+            return;
+        }
+        let me = std::process::id();
+        let sql = format!(
+            "SELECT DISTINCT toUInt32OrZero(extract(query, '^/[*] crow {} ([0-9]+) ')) AS pid FROM system.processes WHERE query LIKE '/* crow {} %'",
+            host_name(), host_name()
+        );
+        let pids: Vec<u32> = Self::off_runtime(|| self.rt.block_on(async {
+            let mut out = Vec::new();
+            if let Ok(mut stream) = client.query_raw(sql.as_str()).await {
+                while let Some(Ok(block)) = stream.next().await {
+                    for (_, values) in block.column_data.into_iter() {
+                        for v in values {
+                            if let Some(n) = value_to_i64(&v) {
+                                out.push(n as u32);
+                            }
+                        }
+                    }
+                }
+            }
+            out
+        }));
+        for pid in pids {
+            if pid != 0 && pid != me && !process_alive(pid) {
+                eprintln!("crow db: stopping queries a finished run (process {}) left running on {}", pid, self.addr);
+                Self::off_runtime(|| self.rt.block_on(kill_matching(&self.addr, &self.options, &process_pattern(pid))));
+            }
+        }
     }
 
     /// Connect and ping.
@@ -106,25 +224,50 @@ impl CrowClickhouseDb {
         Ok(client)
     }
 
-    /// The connection to use now — reopened first when the server has
-    /// closed it.
-    fn client(&self) -> Result<Client, String> {
-        let mut guard = self.client.lock().map_err(|e| e.to_string())?;
-        if guard.is_closed() {
-            eprintln!("crow db: the clickhouse connection to {} was closed; reconnecting", self.addr);
-            *guard = Self::open(&self.rt, &self.addr, self.options.clone())?;
-        }
-        Ok(guard.clone())
+    /// The connection an operation takes: an open one that is idle, else a
+    /// new one while the pool has room, else the least busy.
+    fn checkout(&self) -> usize {
+        use std::sync::atomic::Ordering::SeqCst;
+        let opened: Vec<bool> = self.pool.iter().map(|m| m.lock().map(|g| g.is_some()).unwrap_or(false)).collect();
+        let busy: Vec<usize> = self.busy.iter().map(|b| b.load(SeqCst)).collect();
+        let pick = (0..POOL)
+            .find(|&i| opened[i] && busy[i] == 0)
+            .or_else(|| (0..POOL).find(|&i| !opened[i]))
+            .unwrap_or_else(|| (0..POOL).min_by_key(|&i| busy[i]).unwrap_or(0));
+        self.busy[pick].fetch_add(1, SeqCst);
+        pick
     }
 
-    /// Run an operation on the connection; if the server dropped it under
-    /// the operation, reconnect and run it once more.
+    /// Connection `i` — opened now if it never was, reopened first when the
+    /// server has closed it.
+    fn client(&self, i: usize) -> Result<Client, String> {
+        let mut guard = self.pool[i].lock().map_err(|e| e.to_string())?;
+        match guard.as_ref() {
+            Some(c) if !c.is_closed() => return Ok(c.clone()),
+            Some(_) => eprintln!("crow db: the clickhouse connection to {} was closed; reconnecting", self.addr),
+            None => {}
+        }
+        let fresh = Self::open(&self.rt, &self.addr, self.options.clone())?;
+        *guard = Some(fresh.clone());
+        Ok(fresh)
+    }
+
+    /// Run an operation on a connection of the pool; if the server dropped
+    /// it under the operation, reconnect and run it once more.
     fn with_client<T>(&self, op: impl Fn(Client) -> Result<T, String>) -> Result<T, String> {
-        match op(self.client()?) {
+        struct Release<'a>(&'a std::sync::atomic::AtomicUsize);
+        impl Drop for Release<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let i = self.checkout();
+        let _release = Release(&self.busy[i]);
+        match op(self.client(i)?) {
             Err(e) if is_transport_error(&e) => {
                 eprintln!("crow db: the clickhouse connection to {} was lost ({}); reconnecting", self.addr, e);
                 let fresh = Self::open(&self.rt, &self.addr, self.options.clone())?;
-                *self.client.lock().map_err(|e| e.to_string())? = fresh.clone();
+                *self.pool[i].lock().map_err(|e| e.to_string())? = Some(fresh.clone());
                 op(fresh)
             }
             other => other,
@@ -389,8 +532,15 @@ impl CrowDb for CrowClickhouseDb {
             &sql_owned
         };
 
+        let flag = crow_runtime::cancel::current();
+        if crow_runtime::cancel::stopped(&flag) {
+            return Err("cancelled: nobody waits for this query any more".to_string());
+        }
+        let tag = tag();
+        let tagged = format!("/* {} */ {}", tag, sql);
         self.with_client(|client| Self::off_runtime(|| self.rt.block_on(async {
-            let mut stream = client.query_raw(sql).await
+            let run = async {
+            let mut stream = client.query_raw(tagged.as_str()).await
                 .map_err(|e| format!("clickhouse query error: {}", trim_server_error(&e.to_string())))?;
 
             let mut all_col_names: Vec<String> = Vec::new();
@@ -421,6 +571,14 @@ impl CrowDb for CrowClickhouseDb {
             }
 
             blocks_to_frame(all_col_names, all_col_data)
+            };
+            tokio::select! {
+                result = run => result,
+                _ = stop_requested(flag.clone()) => {
+                    kill_matching(&self.addr, &self.options, &format!("%/* {} */%", tag)).await;
+                    Err("cancelled: nobody waits for this query any more".to_string())
+                }
+            }
         })))
     }
 
@@ -433,11 +591,23 @@ impl CrowDb for CrowClickhouseDb {
             &sql_owned
         };
 
+        let flag = crow_runtime::cancel::current();
+        let tag = tag();
+        let tagged = format!("/* {} */ {}", tag, sql);
         self.with_client(|client| Self::off_runtime(|| self.rt.block_on(async {
-            client.execute(sql).await
-                .map_err(|e| format!("clickhouse exec error: {}", trim_server_error(&e.to_string())))?;
-            // ClickHouse native protocol doesn't return affected row counts
-            Ok(0)
+            let run = async {
+                client.execute(tagged.as_str()).await
+                    .map_err(|e| format!("clickhouse exec error: {}", trim_server_error(&e.to_string())))?;
+                // ClickHouse native protocol doesn't return affected row counts
+                Ok(0)
+            };
+            tokio::select! {
+                result = run => result,
+                _ = stop_requested(flag.clone()) => {
+                    kill_matching(&self.addr, &self.options, &format!("%/* {} */%", tag)).await;
+                    Err("cancelled: the program is stopping".to_string())
+                }
+            }
         })))
     }
 

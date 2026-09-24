@@ -1,0 +1,24 @@
+--- widget: the program's own module draws a piece of the page; the page
+--- offers exactly the events its widgets name, and what a widget sends
+--- reaches its handler, as a click does.
+use web, ui
+
+place = 'London'
+zoom = 3
+
+fn choose[p]
+    place = p
+
+--- a module may send a number: the handler reads it as one, in both modes
+fn set_zoom[z]
+    zoom = int[z]
+
+view render[]
+    return stack[
+        p['place `place`'],
+        p['zoom `zoom + 1`'],
+        widget['map', props = map[city = place], on = map[pick = choose, zoom = set_zoom]]
+    ]
+
+serve[3410]
+page['/', render]

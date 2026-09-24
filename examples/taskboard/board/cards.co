@@ -1,0 +1,204 @@
+--- Boards and their cards. Anyone signed in adds, moves, rates and discusses
+--- cards and attaches files to them; only an admin makes boards. Every table
+--- write reaches every reader whose page shows that table.
+use web, ui, db
+use board.store
+
+book = db.connect['sqlite://taskboard.db']
+board_id = 1
+card_id = 0
+new_board = ''
+new_card = ''
+comment = ''
+upload = map[]
+
+derive boards
+    return query[book, 'SELECT id, name FROM boards ORDER BY id']
+
+derive cards
+    return query[book, 'SELECT id, title, status, owner, stars FROM cards WHERE board = ? ORDER BY id', [board_id]]
+
+derive card
+    return query[book, 'SELECT id, title, status, owner, stars FROM cards WHERE id = ?', [card_id]]
+
+derive talk
+    return query[book, 'SELECT author, body FROM comments WHERE card = ? ORDER BY id', [card_id]]
+
+derive files
+    return query[book, 'SELECT id, name FROM attachments WHERE card = ? ORDER BY id', [card_id]]
+
+fn make_board[]
+    if reader.role ne 'admin'
+        notice['only an admin makes boards']
+        return
+    if new_board eq ''
+        return
+    exec[book, 'INSERT INTO boards (name) VALUES (?)', [new_board]]
+    store.note[book, reader.name, 'made the board `new_board`']
+    new_board = ''
+
+fn open_board[id]
+    board_id = id
+    card_id = 0
+
+fn add_card[]
+    if new_card eq ''
+        return
+    exec[book, 'INSERT INTO cards (board, title, status, owner, stars) VALUES (?, ?, ?, ?, 0)', [board_id, new_card, 'todo', reader.name]]
+    store.note[book, reader.name, 'added `new_card`']
+    new_card = ''
+
+fn advance[id]
+    found = query[book, 'SELECT title, status FROM cards WHERE id = ?', [id]]
+    if len[found] eq 0
+        return
+    step = 'done'
+    if found.status[0] eq 'todo'
+        step = 'doing'
+    exec[book, 'UPDATE cards SET status = ? WHERE id = ?', [step, id]]
+    store.note[book, reader.name, 'moved `found.title[0]` to `step`']
+
+fn open_card[id]
+    card_id = id
+
+fn set_stars[n]
+    stars = int[n]
+    exec[book, 'UPDATE cards SET stars = ? WHERE id = ?', [stars, card_id]]
+    store.note[book, reader.name, 'gave card `card_id` `stars` stars']
+
+fn post[]
+    if comment eq ''
+        return
+    exec[book, 'INSERT INTO comments (card, author, body) VALUES (?, ?, ?)', [card_id, reader.name, comment]]
+    store.note[book, reader.name, 'commented on card `card_id`']
+    comment = ''
+
+--- A picked file is the session's until it is attached: the board keeps a
+--- copy under a name of its own, never the name the reader's computer gave.
+fn attach[]
+    if not has[upload, 'path']
+        notice['pick a file first']
+        return
+    row = query[book, 'INSERT INTO attachments (card, name, path) VALUES (?, ?, ?) RETURNING id', [card_id, upload.name, '']]
+    kept = 'files/attachment-`row.id[0]`'
+    mkdir['files']
+    cp[upload.path, kept]
+    exec[book, 'UPDATE attachments SET path = ? WHERE id = ?', [kept, row.id[0]]]
+    store.note[book, reader.name, 'attached `upload.name` to card `card_id`']
+    upload = map[]
+
+fn take_file[id]
+    found = query[book, 'SELECT name, path FROM attachments WHERE id = ?', [id]]
+    if len[found] eq 0
+        return
+    download[map[path = found.path[0]], found.name[0]]
+
+view boards_view[]
+    make = p['boards are made by an admin', color = 'muted', size = 's']
+    if reader.role eq 'admin'
+        make = row[field['New board', new_board, type = 'text'], button['Make', click = make_board], gap = 'm', align = 'end']
+    return stack[h2['Boards'], table[boards, key = 'id', actions = map[Open = open_board], hide = ['id']], make, gap = 's']
+
+view board_view[]
+    return stack[
+        h2['Cards'],
+        table[cards, key = 'id', actions = map[Advance = advance, Open = open_card], hide = ['id'], page = 25],
+        row[field['New card', new_card, type = 'text'], button['Add', click = add_card], gap = 'm', align = 'end'],
+        gap = 's'
+    ]
+
+view card_view[]
+    if card_id eq 0
+        return p['open a card to see what was said and attached', color = 'muted']
+    c = card
+    if len[c] eq 0
+        return p['that card is gone', color = 'muted']
+    return stack[
+        h2[c.title[0]],
+        p['`c.status[0]` · added by `c.owner[0]`', color = 'muted'],
+        widget['stars', props = map[stars = c.stars[0]], on = map[rate = set_stars]],
+        table[talk],
+        row[field['Comment', comment, type = 'text'], button['Post', click = post], gap = 'm', align = 'end'],
+        table[files, key = 'id', actions = map[Download = take_file], hide = ['id']],
+        row[field['Attach', upload, type = 'file'], button['Attach', click = attach], gap = 'm', align = 'end'],
+        gap = 's'
+    ]
+
+--- Only an admin makes a board: a member's page has no field for one, and
+--- a member who makes one anyway is told so and nothing lands.
+test only_an_admin_makes_a_board[]
+    store.setup[store.book]
+    bob = app[boards_view]
+    change[bob, 'reader', map[name = 'bob', role = 'member']]
+    before = len[bob.boards]
+    assert[len[elements[bob, 'input']] eq 0]
+    change[bob, 'new_board', 'Mine']
+    click[bob, make_board]
+    assert[notice.text eq 'only an admin makes boards']
+    assert[len[bob.boards] eq before]
+    ada = app[boards_view]
+    change[ada, 'reader', map[name = 'ada', role = 'admin']]
+    change[ada, 'new_board', 'Autumn']
+    click[ada, make_board]
+    assert[ada.new_board eq '']
+    assert[len[bob.boards] eq before + 1]
+    assert[contains[html[bob], 'Autumn']]
+
+--- Two readers on one board: a card one adds is on the other's page, and
+--- each sees the other move it along.
+test two_readers_share_a_board[]
+    store.setup[store.book]
+    ada = app[board_view]
+    change[ada, 'reader', map[name = 'ada', role = 'admin']]
+    change[ada, 'new_board', 'Sprint']
+    click[ada, make_board]
+    made = ada.boards
+    id = made.id[len[made] - 1]
+    click[ada, open_board[id]]
+    bob = app[board_view]
+    change[bob, 'reader', map[name = 'bob', role = 'member']]
+    click[bob, open_board[id]]
+    assert[len[bob.cards] eq 0]
+    change[bob, 'new_card', 'Write the docs']
+    click[bob, add_card]
+    assert[len[ada.cards] eq 1]
+    assert[contains[html[ada], 'Write the docs']]
+    first = ada.cards.id[0]
+    assert[ada.cards.owner[0] eq 'bob']
+    click[ada, advance[first]]
+    assert[bob.cards.status[0] eq 'doing']
+    click[bob, advance[first]]
+    assert[ada.cards.status[0] eq 'done']
+
+--- A card holds what was said and attached: stars, a comment, and a file
+--- kept under the board's own name and handed back whole.
+test a_card_keeps_its_talk_and_files[]
+    store.setup[store.book]
+    ada = app[card_view]
+    change[ada, 'reader', map[name = 'ada', role = 'admin']]
+    assert[contains[html[ada], 'open a card']]
+    change[ada, 'new_board', 'Files']
+    click[ada, make_board]
+    id = ada.boards.id[len[ada.boards] - 1]
+    click[ada, open_board[id]]
+    change[ada, 'new_card', 'Budget']
+    click[ada, add_card]
+    click[ada, open_card[ada.cards.id[0]]]
+    assert[elements[ada, 'h2'][0].text eq 'Budget']
+    assert[len[elements[ada, '.crow-widget']] eq 1]
+    click[ada, set_stars[4]]
+    assert[ada.card.stars[0] eq 4]
+    change[ada, 'comment', 'Numbers by Friday']
+    click[ada, post]
+    assert[ada.talk.body[0] eq 'Numbers by Friday']
+    assert[ada.comment eq '']
+    click[ada, attach]
+    assert[notice.text eq 'pick a file first']
+    change[ada, 'upload', map[name = 'budget.csv', type = 'text/csv', size = '32', path = 'fixtures/budget.csv']]
+    click[ada, attach]
+    assert[ada.files.name[0] eq 'budget.csv']
+    assert[len[ada.upload] eq 0]
+    click[ada, take_file[ada.files.id[0]]]
+    got = downloads[ada]
+    assert[got[0].name eq 'budget.csv']
+    assert[got[0].text eq read['fixtures/budget.csv']]

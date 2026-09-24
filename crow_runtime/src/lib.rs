@@ -1,11 +1,13 @@
 pub mod display;
 pub mod distributed;
 pub mod frame;
+pub mod hash;
 pub mod gpu;
 pub mod io;
 pub mod json;
 pub mod later;
 pub mod layout;
+pub mod cancel;
 pub mod chart;
 pub mod core;
 pub mod moments;
@@ -15,10 +17,13 @@ pub mod nn;
 pub mod pool;
 pub mod rng;
 pub mod signal;
+pub mod signin;
 pub mod sparse;
 pub mod special;
+pub mod sql;
 pub mod stats;
 pub mod ta;
+pub mod txn;
 pub mod tensor;
 pub mod text;
 

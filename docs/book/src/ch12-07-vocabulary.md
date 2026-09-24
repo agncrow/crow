@@ -229,3 +229,66 @@ test each_row_carries_its_actions[]
 
 page['/', records]
 ```
+
+## One way out: widgets
+
+The vocabulary is closed on purpose, which means a map, a rich-text
+editor or a calendar cannot be written with it. Those are widgets: a
+piece of the page your own JavaScript draws. `widget['map', props = …,
+on = map[pick = choose]]` draws the module `widgets/map.js` in your
+program's folder. The module exports two functions:
+
+```js
+// widgets/map.js
+export function mount(el, props, send) {
+  const b = document.createElement('button');
+  b.textContent = 'Pick Paris (showing ' + props.city + ')';
+  b.onclick = () => send('pick', 'Paris');
+  el.appendChild(b);
+}
+
+export function update(el, props) {
+  el.querySelector('button').textContent = 'Pick Paris (showing ' + props.city + ')';
+}
+```
+
+The page loads the module once and calls `mount` with the element and
+the props, as JSON. Whenever a render changes the props it calls
+`update`, and the element's insides stay the module's. `send('pick',
+value)` runs the handler that `on` names for `pick`, the way a click
+would: the page offers exactly the events its widgets name, and the
+handler receives the value, so it checks what it is given. In a test a
+widget is its element, and a click on the handler stands for what the
+widget would send:
+
+```crow
+use web, ui
+
+place = 'London'
+
+fn choose[city]
+    place = city
+
+view atlas[]
+    return stack[
+        p['showing `place`'],
+        widget['map', props = map[city = place], on = map[pick = choose]]
+    ]
+
+test the_map_s_pick_moves_the_page[]
+    a = app[atlas]
+    click[a, choose['Paris']]
+    assert[elements[a, 'p'][0].text eq 'showing Paris']
+    assert[elements[a, 'div.crow-widget'][0]['data-crow-props'] eq '{"city":"Paris"}']
+
+page['/', atlas]
+log['atlas defined']
+```
+
+```text
+atlas defined
+```
+
+There is no other way to put code on a page: no script tags, no inline
+handlers.
+

@@ -11,6 +11,7 @@ are the programs to read once you know the basics.
 |---|---|
 | `dashboard.co` + `dashboard_seed.co` | The book's final project — a live SQLite-backed trading dashboard: views, reactive state, frames, `fmt`. Seed first, then run. |
 | `counter.co` | The smallest LiveView app: one reactive variable, two handlers, one view. |
+| `taskboard/` | The second reference app, a team's task board, built as parts from the element vocabulary and one widget. People sign in against stored password hashes (`reader`, `sign_in`, `hash`); an admin makes boards; everyone adds, moves, rates and discusses cards, and sees the others' changes as they land; files go in through a file field and out with `download`; a paged log records who did what. From its folder, `crow run main.co` serves it on port 3300 (sign in as `ada`/`lovelace` or `bob`/`builder`), `crow test board/cards.co` (and `door.co`, `page.co`) runs its harness tests, and `crow test --served` from the repository root drives it in both modes. |
 | `layout_dashboard.co` | The layout vocabulary: `stack` / `row` / `grid` / `overlay` / `scroll` with literal attributes instead of CSS, a phone rule, and `test` blocks that check positions, sizes, colours and overflow with `box[]`, `style[]`, `fits[]` — no browser. `crow test` it, then `crow run` it. |
 | `db_demo.co` | `use db` end to end on in-memory SQLite: create, insert, query, transactions. |
 | `ml_demo.co` | A small neural network with `grad`, `use math.nn`, and tensors. |

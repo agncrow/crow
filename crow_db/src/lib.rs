@@ -25,6 +25,19 @@ pub mod clickhouse;
 
 pub mod migrate;
 
+/// Resolves when the work under `flag` — or the whole program — should
+/// stop: a driver that can stop a running query on its server races the
+/// query against this and stops it.
+#[cfg(any(feature = "clickhouse", feature = "postgres"))]
+pub(crate) async fn stop_requested(flag: Option<Arc<std::sync::atomic::AtomicBool>>) {
+    loop {
+        if crow_runtime::cancel::stopped(&flag) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
+
 /// Operations available inside a transaction — exec and query only.
 /// No Send + Sync requirement (transaction handles are single-threaded).
 pub trait DbTx {
@@ -103,6 +116,90 @@ pub trait CrowDb: Send + Sync {
     fn describe(&self, _sql: &str) -> Result<Vec<(String, String)>, String> {
         Err(format!("{}: describe is not supported", self.backend_name()))
     }
+
+    /// Open a transaction for a handler's scope on a connection of its own.
+    /// `None` for a backend without transactions (ClickHouse): its writes
+    /// land as they are made.
+    fn begin_scope(&self) -> Option<Result<Box<dyn ScopeTx>, String>> {
+        None
+    }
+}
+
+/// A transaction a handler opened on one connection, held for the
+/// handler's length: its reads see its writes, and it ends as one.
+pub trait ScopeTx: Send {
+    fn query(&mut self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String>;
+    fn exec(&mut self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String>;
+    fn finish(self: Box<Self>, commit: bool) -> Result<(), String>;
+}
+
+thread_local! {
+    /// The transactions the handler running on this thread opened, by handle,
+    /// in the order it opened them — `None` outside a handler.
+    static SCOPE: std::cell::RefCell<Option<Vec<(usize, Box<dyn ScopeTx>)>>> = const { std::cell::RefCell::new(None) };
+}
+
+thread_local! {
+    /// The tables written through any handle on this thread since the last
+    /// `take_written`: what an interpreted handler wrote, for the live
+    /// runtime to wake the readers of (a compiled handler knows statically).
+    static WRITTEN: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn note_written(sql: &str) {
+    let (_, tables) = crow_runtime::sql::tables_of_sql(sql);
+    if !tables.is_empty() {
+        WRITTEN.with(|w| w.borrow_mut().extend(tables));
+    }
+}
+
+/// The tables written on this thread since the last call, each once.
+pub fn take_written() -> Vec<String> {
+    let mut out = WRITTEN.with(|w| std::mem::take(&mut *w.borrow_mut()));
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn scope_begin() {
+    SCOPE.with(|s| *s.borrow_mut() = Some(Vec::new()));
+}
+
+fn scope_finish(commit: bool) -> Result<(), String> {
+    let txs = SCOPE.with(|s| s.borrow_mut().take()).unwrap_or_default();
+    let mut first_error = None;
+    for (_, tx) in txs {
+        // a commit that fails rolls the rest back: the handler lands nothing more
+        let ok = commit && first_error.is_none();
+        if let Err(e) = tx.finish(ok) {
+            first_error.get_or_insert(e);
+        }
+    }
+    match first_error {
+        Some(e) => Err(format!("the database refused the commit: {}", e)),
+        None => Ok(()),
+    }
+}
+
+/// One cell of a frame as a statement parameter: null when missing.
+fn cell_json(frame: &CrowFrame, col: usize, row: usize) -> serde_json::Value {
+    use crow_runtime::frame::Column;
+    if !frame.validity[col][row] {
+        return serde_json::Value::Null;
+    }
+    match frame.data[col].as_ref() {
+        Column::Int(v) => serde_json::json!(v[row]),
+        Column::Float(v) => serde_json::json!(v[row]),
+        Column::Str(v) => serde_json::json!(v[row]),
+        Column::Bool(v) => serde_json::json!(v[row]),
+        Column::DateTime(v, _) => serde_json::json!(v[row]),
+    }
+}
+
+/// Whether a statement writes: what opens a handler's transaction.
+fn writes(sql: &str) -> bool {
+    let first = sql.trim_start().split(|c: char| c.is_whitespace() || c == '(').next().unwrap_or("").to_ascii_uppercase();
+    matches!(first.as_str(), "INSERT" | "UPDATE" | "DELETE" | "REPLACE" | "UPSERT" | "MERGE" | "CREATE" | "DROP" | "ALTER")
 }
 
 /// Thread-safe database handle — wraps a trait object.
@@ -113,11 +210,44 @@ pub struct DbHandle {
 
 impl DbHandle {
     pub fn new(db: impl CrowDb + 'static) -> Self {
+        crow_runtime::txn::register(crow_runtime::txn::Hooks { begin: scope_begin, finish: scope_finish });
         DbHandle { inner: Arc::new(db) }
+    }
+
+    /// Run `f` on this handle's transaction when a handler is running on
+    /// this thread: its first write opens one, and every read after that is
+    /// inside it. `None` outside a handler, for a read before any write, and
+    /// for a backend without transactions.
+    fn in_scope<T>(&self, write: bool, f: impl FnOnce(&mut dyn ScopeTx) -> Result<T, String>) -> Option<Result<T, String>> {
+        let key = Arc::as_ptr(&self.inner) as *const () as usize;
+        SCOPE.with(|s| {
+            let mut s = s.borrow_mut();
+            let txs = s.as_mut()?;
+            if let Some((_, tx)) = txs.iter_mut().find(|(k, _)| *k == key) {
+                return Some(f(tx.as_mut()));
+            }
+            if !write {
+                return None;
+            }
+            match self.inner.begin_scope()? {
+                Ok(mut tx) => {
+                    let r = f(tx.as_mut());
+                    txs.push((key, tx));
+                    Some(r)
+                }
+                Err(e) => Some(Err(e)),
+            }
+        })
     }
 
     pub fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
         let (sql, params) = expand_array_params(sql, params);
+        if writes(&sql) {
+            note_written(&sql);
+        }
+        if let Some(r) = self.in_scope(writes(&sql), |tx| tx.query(&sql, &params)) {
+            return r;
+        }
         self.inner.query(&sql, &params)
     }
 
@@ -128,10 +258,35 @@ impl DbHandle {
 
     pub fn exec(&self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
         let (sql, params) = expand_array_params(sql, params);
+        note_written(&sql);
+        if let Some(r) = self.in_scope(true, |tx| tx.exec(&sql, &params)) {
+            return r;
+        }
         self.inner.exec(&sql, &params)
     }
 
     pub fn insert(&self, table: &str, frame: &CrowFrame) -> Result<i64, String> {
+        WRITTEN.with(|w| w.borrow_mut().push(table.to_string()));
+        // inside a handler the rows go into its transaction, one by one
+        let rows = |tx: &mut dyn ScopeTx| -> Result<i64, String> {
+            if frame.nrows() == 0 {
+                return Ok(0);
+            }
+            let sql = format!(
+                "INSERT INTO {} ({}) VALUES ({})",
+                table,
+                frame.columns.join(", "),
+                vec!["?"; frame.ncols()].join(", ")
+            );
+            for r in 0..frame.nrows() {
+                let params: Vec<serde_json::Value> = (0..frame.ncols()).map(|c| cell_json(frame, c, r)).collect();
+                tx.exec(&sql, &params)?;
+            }
+            Ok(frame.nrows() as i64)
+        };
+        if let Some(r) = self.in_scope(true, rows) {
+            return r;
+        }
         self.inner.insert(table, frame)
     }
 
@@ -160,6 +315,27 @@ impl std::fmt::Debug for DbHandle {
 /// - `postgres://user:pass@host/db` → PostgreSQL
 /// - `clickhouse://user:pass@host:port/db` → ClickHouse (native TCP)
 pub fn connect(url: &str, pool_size: Option<usize>) -> Result<DbHandle, String> {
+    // One handle per server and process: parts that each connect to the
+    // same Postgres or ClickHouse share its pool, so the program's queries
+    // to one server are bounded by one pool, not one per declaration. A
+    // sqlite file is one connection already, and `:memory:` is a new
+    // database each time by design.
+    static SHARED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(String, Option<usize>), DbHandle>>> =
+        std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let shared = !url.starts_with("sqlite://");
+    if shared {
+        if let Some(h) = SHARED.lock().unwrap_or_else(|p| p.into_inner()).get(&(url.to_string(), pool_size)) {
+            return Ok(h.clone());
+        }
+    }
+    let handle = open_handle(url, pool_size)?;
+    if shared {
+        SHARED.lock().unwrap_or_else(|p| p.into_inner()).insert((url.to_string(), pool_size), handle.clone());
+    }
+    Ok(handle)
+}
+
+fn open_handle(url: &str, pool_size: Option<usize>) -> Result<DbHandle, String> {
     if url.starts_with("sqlite://") {
         #[cfg(feature = "sqlite")]
         {
@@ -187,7 +363,7 @@ pub fn connect(url: &str, pool_size: Option<usize>) -> Result<DbHandle, String> 
     } else if url.starts_with("clickhouse://") {
         #[cfg(feature = "clickhouse")]
         {
-            let _ = pool_size; // klickhouse manages its own connection
+            let _ = pool_size; // the driver keeps its own pool (clickhouse.rs, POOL)
             let db = clickhouse::CrowClickhouseDb::connect(url)?;
             Ok(DbHandle::new(db))
         }

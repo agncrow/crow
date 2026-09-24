@@ -3180,6 +3180,231 @@ mod tests {
         assert!(counts.blocks >= 1);
     }
 
+    /// Harness issues for a program's test blocks.
+    fn harness_issues(src: &str) -> Vec<String> {
+        let stmts = crate::build(src).unwrap();
+        let (issues, counts) = crate::checker::run_test_blocks(&stmts);
+        assert!(counts.blocks >= 1, "no test block ran");
+        issues.iter().map(|i| format!("{:?}", i)).collect()
+    }
+
+    const TWO_PEOPLE: &str = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\nmin_qty = 0\nfn setup[]\n    exec[book, 'CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, qty INTEGER)']\nderive orders\n    return query[book, 'SELECT qty FROM orders ORDER BY id']\nfn reset[]\n    min_qty = 0\nfn order[]\n    exec[book, 'INSERT INTO orders (qty) VALUES (?)', [min_qty]]\nview panel[]\n    return stack[p['min `min_qty`'], p['orders: `len[orders]`'], button['Reset', click = reset], button['Order', click = order]]\n";
+
+    /// widget[name, props = …, on = map[event = handler]]: one element the
+    /// program's module draws — its props as JSON, its events by handler;
+    /// in a test a click stands for what the widget would send
+    #[test]
+    fn a_widget_is_one_element_and_its_events_are_handlers() {
+        let src = "use web, ui\nplace = 'London'\nfn choose[p]\n    place = p\nview v[]\n    return stack[p[place], widget['map', props = map[city = place], on = map[pick = choose]]]\ntest t[]\n    a = app[v]\n    w = elements[a, 'div.crow-widget'][0]\n    assert[w['data-crow-widget'] eq 'map']\n    assert[w['data-crow-props'] eq '{\"city\":\"London\"}']\n    assert[w['data-crow-on'] eq '{\"pick\":\"choose\"}']\n    click[a, choose['Paris']]\n    assert[elements[a, 'div.crow-widget'][0]['data-crow-props'] eq '{\"city\":\"Paris\"}']\n";
+        let issues = harness_issues(src);
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    #[test]
+    fn a_widget_event_names_a_handler() {
+        let refused = |src: &str| -> String {
+            let stmts = crate::build(src).expect("parses");
+            let lowered = crate::lower::lower_program(&stmts).expect("lowers");
+            crate::infer_and_validate(&lowered, false).err().unwrap_or_default()
+        };
+        let e = refused("use web, ui\nview v[]\n    return widget['map', props = map[a = 1], on = map[pick = 'choose']]\n");
+        assert!(e.contains("names a handler"), "{}", e);
+        let ok = refused("use web, ui\nx = ''\nfn choose[p]\n    x = p\nview v[]\n    return widget['map', props = map[a = 1], on = map[pick = choose]]\n");
+        assert!(ok.is_empty(), "{}", ok);
+    }
+
+    /// download[value, name] hands the reader a file when the handler
+    /// commits: a frame as its CSV, a string as it is; a handler that stops
+    /// hands them nothing
+    #[test]
+    fn a_handler_hands_the_reader_files() {
+        let src = "use web, ui, frame\nn = 0\nfn export[]\n    f = with[frame.new[], 'n', range[1, 3]]\n    download[f, 'numbers.csv']\n    download['hello', 'note.txt']\nfn broken[]\n    download['never', 'lost.txt']\n    x = float['no']\n    if x gt 1.0\n        n = 1\nview v[]\n    return stack[button['Export', click = export], button['Broken', click = broken]]\ntest t[]\n    a = app[v]\n    click[a, export]\n    got = downloads[a]\n    assert[len[got] eq 2]\n    assert[got[0].name eq 'numbers.csv']\n    assert[got[0].text eq 'n\\n1\\n2\\n']\n    assert[got[1].text eq 'hello']\n    r = click[a, broken]\n    assert[not r.ok]\n    assert[len[downloads[a]] eq 2]\n";
+        let issues = harness_issues(src);
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    /// A page that knows who its reader is: people with stored password
+    /// hashes, a sign-in that checks one, an admin-only action, a sign-out,
+    /// and a derivation over the reader
+    const SIGN_IN: &str = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\nname = ''\npassword = ''\nwiped = 0\nfn setup[]\n    exec[book, 'CREATE TABLE IF NOT EXISTS people (name TEXT, role TEXT, hash TEXT)']\n    exec[book, 'INSERT INTO people VALUES (?, ?, ?)', ['ada', 'admin', hash['lovelace', 'password']]]\n    exec[book, 'INSERT INTO people VALUES (?, ?, ?)', ['bob', 'member', hash['builder', 'password']]]\nfn log_in[]\n    found = query[book, 'SELECT role, hash FROM people WHERE name = ?', [name]]\n    if len[found] eq 0\n        notice['no one called `name`']\n        return\n    if hash[password, found.hash[0]] ne found.hash[0]\n        notice['wrong password']\n        return\n    sign_in[map[name = name, role = found.role[0]]]\nfn log_out[]\n    sign_out[]\nfn wipe[]\n    if reader.role ne 'admin'\n        notice['admins only']\n        return\n    wiped = wiped + 1\nderive greeting\n    if has[reader, 'name']\n        return 'hello `reader.name`'\n    return 'hello stranger'\nview panel[]\n    return stack[p[greeting], field['Name', name, type = 'text'], field['Password', password, type = 'password'], button['Log in', click = log_in], button['Log out', click = log_out], button['Wipe', click = wipe]]\n";
+
+    #[test]
+    fn a_reader_signs_in_with_a_password_and_out_again() {
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[panel]\n    click[a, setup]\n    assert[len[reader] eq 0]\n    assert[elements[a, 'p'][0].text eq 'hello stranger']\n    change[a, 'name', 'ada']\n    change[a, 'password', 'wrong']\n    click[a, log_in]\n    assert[len[reader] eq 0]\n    assert[notice.text eq 'wrong password']\n    change[a, 'password', 'lovelace']\n    click[a, log_in]\n    assert[reader.name eq 'ada']\n    assert[reader.role eq 'admin']\n    assert[elements[a, 'p'][0].text eq 'hello ada']\n    click[a, log_out]\n    assert[len[reader] eq 0]\n    assert[elements[a, 'p'][0].text eq 'hello stranger']\n", SIGN_IN));
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    #[test]
+    fn authorization_is_ordinary_code_in_the_handler() {
+        // a member may not, an admin may (a signed-out reader has no role: a
+        // served page stops the handler on it — tests/served/06_sign_in)
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[panel]\n    click[a, setup]\n    change[a, 'reader', map[name = 'bob', role = 'member']]\n    click[a, wipe]\n    assert[wiped eq 0]\n    assert[notice.text eq 'admins only']\n    change[a, 'reader', map[name = 'ada', role = 'admin']]\n    click[a, wipe]\n    assert[wiped eq 1]\n", SIGN_IN));
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    #[test]
+    fn each_session_has_its_own_reader() {
+        let issues = harness_issues(&format!("{}test t[]\n    alice = app[panel]\n    click[alice, setup]\n    bob = app[panel]\n    change[alice, 'reader', map[name = 'alice']]\n    assert[elements[alice, 'p'][0].text eq 'hello alice']\n    assert[elements[bob, 'p'][0].text eq 'hello stranger']\n", SIGN_IN));
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    #[test]
+    fn nothing_but_sign_in_writes_the_reader() {
+        // a handler that makes itself an admin is refused, in both modes (the
+        // front end they share)
+        let refused = |src: &str| -> String {
+            let stmts = crate::build(src).expect("parses");
+            let lowered = crate::lower::lower_program(&stmts).expect("lowers");
+            crate::infer_and_validate(&lowered, false).err().unwrap_or_default()
+        };
+        let e = refused("use web, ui\nfn become[]\n    reader = map[role = 'admin']\nview v[]\n    return button['x', click = become]\n");
+        assert!(e.contains("'reader' is the page's signed-in reader"), "{}", e);
+        // sign_in outside a handler, and a record that is not strings
+        let e = refused("use web, ui\nview v[]\n    sign_in[map[id = '1']]\n    return p['x']\n");
+        assert!(e.contains("sign_in[] signs the page's reader in"), "{}", e);
+        let e = refused("use web, ui\nfn go[]\n    sign_in[map[id = 1]]\nview v[]\n    return button['x', click = go]\n");
+        assert!(e.contains("map of strings"), "{}", e);
+        // a program without `use web` keeps `reader` as a name of its own
+        let ok = refused("reader = 3\nlog[reader]\n");
+        assert!(ok.is_empty(), "{}", ok);
+        // a plain function is handed the reader, as it is handed a module
+        // variable: it cannot read the page's itself
+        let e = refused("use web, ui\nfn is_admin[]\n    return reader.role eq 'admin'\nview v[]\n    return p['`is_admin[]`']\n");
+        assert!(e.contains("a plain function takes it as a parameter"), "{}", e);
+        let ok = refused("use web, ui\nfn is_admin[r]\n    return r.role eq 'admin'\nview v[]\n    return p['`is_admin[reader]`']\n");
+        assert!(ok.is_empty(), "{}", ok);
+    }
+
+    /// Text a reader types is text wherever a view places it — a child, a
+    /// view's argument, an item of a list — and markup a view or an element
+    /// made is markup however it travels (the old rule placed any string
+    /// that began and ended with a tag as markup: a reader's text ran as
+    /// script in every other reader's page)
+    #[test]
+    fn text_a_reader_types_stays_text() {
+        let src = "use web, ui\nnote = ''\nview card[title, body]\n    return stack[h3[title], body]\nview panel[]\n    held = p['held']\n    parts = for w in ['a', 'b']\n        span[w]\n    return stack[p[note], card['t', note], card['m', p['made']], [note], parts, held]\ntest t[]\n    a = app[panel]\n    change[a, 'note', '<img src=x onerror=alert(1)>']\n    h = html[a]\n    assert[not contains[h, '<img']]\n    assert[contains[h, '&lt;img src=x onerror=alert(1)&gt;']]\n    assert[len[elements[a, 'img']] eq 0]\n    assert[contains[h, '<p>made</p>']]\n    assert[contains[h, '<p>held</p>']]\n    assert[len[elements[a, 'span']] eq 2]\n";
+        let issues = harness_issues(src);
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    #[test]
+    fn two_sessions_keep_their_own_facts() {
+        // the server gives every page its own facts; so does the harness
+        let issues = harness_issues(&format!("{}test t[]\n    alice = app[panel]\n    click[alice, setup]\n    bob = app[panel]\n    change[alice, 'min_qty', 25]\n    click[bob, reset]\n    assert[alice.min_qty eq 25]\n    assert[bob.min_qty eq 0]\n    assert[elements[alice, 'p'][0].text eq 'min 25']\n", TWO_PEOPLE));
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    /// A session's derivations read as its fields, each as that session
+    /// sees it: the same rows, filtered by each session's own fact
+    #[test]
+    fn a_session_reads_its_own_derivations() {
+        let src = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\nmin_qty = 0\nfn setup[]\n    exec[book, 'CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, qty INTEGER)']\n    exec[book, 'INSERT INTO orders (qty) VALUES (5), (50)']\nderive big\n    return query[book, 'SELECT qty FROM orders WHERE qty > ? ORDER BY id', [min_qty]]\nview panel[]\n    return stack[table[big], button['Setup', click = setup]]\ntest t[]\n    alice = app[panel]\n    click[alice, setup]\n    bob = app[panel]\n    change[bob, 'min_qty', 10]\n    assert[len[alice.big] eq 2]\n    assert[len[bob.big] eq 1]\n    assert[bob.big.qty[0] eq 50]\n    assert[alice.big.qty[0] eq 5]\n";
+        let issues = harness_issues(src);
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    /// A failed truth names its own line, not the last line of the
+    /// derivation it read
+    #[test]
+    fn a_failed_truth_names_its_own_line() {
+        let issues = harness_issues("use web, ui\nx = 1\nderive twice\n    y = x * 2\n    return y\nview v[]\n    return p['x']\ntest t[]\n    a = app[v]\n    z = 1\n    assert[a.twice eq 5]\n");
+        assert!(issues.len() == 1 && issues[0].contains("line 11"), "{:?}", issues);
+    }
+
+    #[test]
+    fn one_session_does_not_reset_another() {
+        // the old shared state made Bob's reset Alice's: that must now fail
+        let issues = harness_issues(&format!("{}test t[]\n    alice = app[panel]\n    click[alice, setup]\n    bob = app[panel]\n    change[alice, 'min_qty', 25]\n    click[bob, reset]\n    assert[alice.min_qty eq 0]\n", TWO_PEOPLE));
+        assert!(issues.len() == 1 && issues[0].contains("assert failed"), "Bob's reset reached Alice's session: {:?}", issues);
+    }
+
+    #[test]
+    fn a_table_write_reaches_every_session() {
+        let issues = harness_issues(&format!("{}test t[]\n    alice = app[panel]\n    click[alice, setup]\n    bob = app[panel]\n    change[bob, 'min_qty', 10]\n    click[bob, order]\n    assert[elements[alice, 'p'][1].text eq 'orders: 1']\n    assert[elements[alice, 'p'][0].text eq 'min 0']\n", TWO_PEOPLE));
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    #[test]
+    fn bare_fact_names_read_the_session_acted_on_last() {
+        let issues = harness_issues(&format!("{}test t[]\n    alice = app[panel]\n    click[alice, setup]\n    bob = app[panel]\n    change[alice, 'min_qty', 25]\n    assert[min_qty eq 25]\n    change[bob, 'min_qty', 7]\n    assert[min_qty eq 7]\n    h = html[alice]\n    assert[min_qty eq 25]\n", TWO_PEOPLE));
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    #[test]
+    fn a_later_session_starts_from_the_declared_facts() {
+        let issues = harness_issues(&format!("{}test t[]\n    alice = app[panel]\n    click[alice, setup]\n    change[alice, 'min_qty', 25]\n    carol = app[panel]\n    assert[carol.min_qty eq 0]\n    assert[elements[carol, 'p'][0].text eq 'min 0']\n    assert[alice.min_qty eq 25]\n", TWO_PEOPLE));
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    const STAMPS: &str = "use web, ui\nstamp = 0.0\nfn mark[]\n    stamp = now[]\nview v[]\n    return stack[p['`stamp`'], button['Mark', click = mark]]\n";
+
+    #[test]
+    fn the_test_sets_the_moment_a_handler_reads() {
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    change[a, 'now', 1000.5]\n    click[a, mark]\n    assert[a.stamp eq 1000.5]\n    assert[now[] eq 1000.5]\n", STAMPS));
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    #[test]
+    fn the_harness_clock_moves_only_when_the_test_moves_it() {
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    click[a, mark]\n    first = a.stamp\n    sleep[5]\n    click[a, mark]\n    assert[a.stamp eq first]\n    change[a, 'now', first + 60.0]\n    click[a, mark]\n    assert[a.stamp eq first + 60.0]\n", STAMPS));
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    #[test]
+    fn each_session_keeps_its_own_clock() {
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    b = app[v]\n    change[a, 'now', 100.0]\n    change[b, 'now', 200.0]\n    click[a, mark]\n    click[b, mark]\n    assert[a.stamp eq 100.0]\n    assert[b.stamp eq 200.0]\n", STAMPS));
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    const TXN: &str = "use web, ui\ncount = 0\nfn buy[]\n    count = count + 1\n    notice['bought']\n    px = float['no quote within 2s']\n    if px gt 1.0\n        count = count + 10\nfn helper_fails[]\n    px = float['helper failed']\n    if px gt 1.0\n        count = 99\nfn outer[]\n    count = count + 1\n    helper_fails[]\n    count = count + 100\nfn ok_notice[]\n    count = count + 1\n    notice['saved `count`']\nfn later_work[]\n    count = count + 1000\nfn schedules[]\n    later[later_work]\n    count = count + 1\nfn schedules_then_stops[]\n    later[later_work]\n    px = float['stopped after scheduling']\n    if px gt 1.0\n        count = 5\nview v[]\n    return stack[p['`count`'], p['said: `notice.text`'], button['a', click = buy], button['b', click = outer], button['c', click = ok_notice], button['d', click = schedules], button['e', click = schedules_then_stops]]\n";
+
+    #[test]
+    fn a_handler_that_stops_lands_nothing_and_says_why() {
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    r = click[a, buy]\n    assert[not r.ok]\n    assert[r.reason eq 'cannot convert \\'no quote within 2s\\' to float']\n    assert[a.count eq 0]\n    assert[contains[html[a], 'said: buy stopped: cannot convert']]\n", TXN));
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    #[test]
+    fn a_helper_that_stops_stops_its_handler() {
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    click[a, outer]\n    assert[a.count eq 0]\n    assert[contains[html[a], 'helper_fails stopped: cannot convert']]\n", TXN));
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    #[test]
+    fn a_notice_and_a_schedule_land_when_the_handler_commits() {
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    click[a, ok_notice]\n    assert[a.count eq 1]\n    assert[contains[html[a], 'said: saved 1']]\n    click[a, schedules]\n    assert[a.count eq 1002]\n    click[a, schedules_then_stops]\n    assert[a.count eq 1002]\n", TXN));
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    const ROLLBACK: &str = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\nseen = 0\nfn setup[]\n    exec[book, 'CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY, v TEXT)']\nderive rows\n    return query[book, 'SELECT v FROM t ORDER BY id']\nfn add_then_stop[]\n    exec[book, 'INSERT INTO t (v) VALUES (?)', ['doomed']]\n    px = float['no quote']\n    if px gt 1.0\n        exec[book, 'INSERT INTO t (v) VALUES (?)', ['never']]\nfn add[]\n    exec[book, 'INSERT INTO t (v) VALUES (?)', ['kept']]\n    r = query[book, 'SELECT count(*) AS n FROM t']\n    seen = r.n[0]\nview v[]\n    return stack[p['rows: `len[rows]`'], button['s', click = setup], button['x', click = add_then_stop], button['a', click = add]]\n";
+
+    #[test]
+    fn a_handler_that_stops_rolls_its_database_writes_back() {
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    click[a, setup]\n    r = click[a, add_then_stop]\n    assert[not r.ok]\n    assert[len[rows] eq 0]\n    click[a, add]\n    assert[len[rows] eq 1]\n    assert[a.seen eq 1]\n", ROLLBACK));
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    const REACHES: &str = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\ncount = 0\nprice = 1.5\nfn setup[]\n    exec[book, 'CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY, v REAL)']\nderive rows\n    return query[book, 'SELECT v FROM t']\nfn bad_effect[]\n    count = count + 1\n    px = float['no price']\n    exec[book, 'INSERT INTO t (v) VALUES (?)', [px]]\nfn bad_fact[]\n    count = count + 1\n    price = float['no price']\nview v[]\n    return stack[p['rows: `len[rows]`'], p['`count` `price`'], button['s', click = setup], button['e', click = bad_effect], button['f', click = bad_fact]]\n";
+
+    #[test]
+    fn an_error_reaching_an_effect_or_a_fact_stops_the_handler() {
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    click[a, setup]\n    r = click[a, bad_effect]\n    assert[not r.ok]\n    assert[a.count eq 0]\n    assert[len[rows] eq 0]\n    q = click[a, bad_fact]\n    assert[not q.ok]\n    assert[a.price eq 1.5]\n    assert[a.count eq 0]\n    assert[contains[html[a], 'bad_fact stopped: cannot convert']]\n", REACHES));
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    #[test]
+    fn buttons_carry_their_wiring_and_a_confirmed_click_asks_first() {
+        let src = "use web, ui\nended = 0\nn = 0\nfn end_session[]\n    ended = ended + 1\nfn go[]\n    n = n + 1\nfn put[x]\n    n = x\nview v[]\n    return stack[button['End', click = end_session, confirm = 'End this session?'], button['Go', click = go], button['Seven', click = put[7]]]\ntest t[]\n    a = app[v]\n    b = elements[a, 'button']\n    assert[b[0]['data-crow-click'] eq '__ask']\n    assert[contains[b[0]['data-crow-args'], 'End this session?']]\n    assert[b[1]['data-crow-click'] eq 'go']\n    assert[b[2]['data-crow-args'] eq '[7]']\n    click[a, end_session]\n    assert[a.ended eq 1]\n";
+        let issues = harness_issues(src);
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    #[test]
+    fn notice_is_said_by_something_acting_for_a_session() {
+        let err = crate::build("x = 1\nnotice['hello']\n").and_then(|stmts| crate::ir_interp::prepare(&stmts, "t").map(|_| ())).err().unwrap_or_default();
+        assert!(err.contains("notice[] tells a page's reader something"), "{}", err);
+    }
+
     #[test]
     fn test_removed_time_builtins_teach() {
         for (src, want) in [

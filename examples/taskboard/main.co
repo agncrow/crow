@@ -1,0 +1,12 @@
+--- A team's task board — Crow's second reference app (session-layer-design.md
+--- §4.5). People sign in; boards hold cards; cards hold comments, files and
+--- stars; every reader sees another's change as it lands; a log records who
+--- did what. Built from the element vocabulary and one widget.
+use web, ui
+use board.store
+use board.page
+
+store.setup[store.book]
+
+serve[3300]
+page['/', page.render]

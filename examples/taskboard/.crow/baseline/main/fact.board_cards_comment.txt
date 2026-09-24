@@ -1,0 +1,5 @@
+fact board_cards_comment (board/cards.co)
+  type: str
+  written by: board_cards_post
+  bound by: board_cards_card_view
+  read by: board_cards_card_view, board_cards_post, board_page_render

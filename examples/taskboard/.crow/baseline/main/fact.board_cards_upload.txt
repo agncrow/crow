@@ -1,0 +1,5 @@
+fact board_cards_upload (board/cards.co)
+  type: map(unknown)
+  written by: board_cards_attach
+  bound by: board_cards_card_view
+  read by: board_cards_attach, board_cards_card_view, board_page_render

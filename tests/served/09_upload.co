@@ -1,0 +1,17 @@
+--- A file field: the reader picks a file, the page sends it beside the
+--- socket, and the field's variable holds it — its name, type, size and
+--- the path of the server's copy, which a derivation reads.
+use web, ui
+
+upload = map[]
+
+derive contents
+    if has[upload, 'path']
+        return '`upload.name` (`upload.size` bytes): `read[upload.path]`'
+    return 'no file yet'
+
+view render[]
+    return stack[field['Trades', upload, type = 'file'], p[contents]]
+
+serve[3409]
+page['/', render]

@@ -1,0 +1,30 @@
+--- The page: the door until someone signs in, then the boards, the cards of
+--- the board open, the card open, and the log.
+use web, ui
+use board.store
+use board.door
+use board.cards
+use board.audit
+
+view render[]
+    body = door.door[]
+    if has[reader, 'name']
+        body = stack[door.door[], cards.boards_view[], cards.board_view[], cards.card_view[], audit.log_view[], gap = 'l']
+    return stack[h1['Task board'], body, gap = 'l', pad = 'l']
+
+--- The page is the door until someone signs in; then the boards, the open
+--- board, the open card and the log; signing out is written in the log.
+test the_page_is_the_door_until_someone_signs_in[]
+    store.setup[store.book]
+    a = app[render]
+    assert[len[elements[a, 'h2']] eq 0]
+    assert[contains[html[a], 'Password']]
+    change[a, 'reader', map[name = 'bob', role = 'member']]
+    assert[elements[a, 'h2'][0].text eq 'Boards']
+    assert[contains[html[a], 'What happened']]
+    assert[contains[html[a], 'boards are made by an admin']]
+    click[a, door.log_out]
+    assert[len[reader] eq 0]
+    assert[len[elements[a, 'h2']] eq 0]
+    assert[audit.entries.who[0] eq 'bob']
+    assert[audit.entries.what[0] eq 'signed out']

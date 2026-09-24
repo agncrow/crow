@@ -1,0 +1,11 @@
+[
+  {"expect": "<span>1–50 of 120</span>"},
+  {"expect": "table: 1500 rows — a table shows at most 1000 at a time: table[frame, page = 50]"},
+  {"absent": "<td class=\"num\">50</td>"},
+  {"event": "__page", "value": "[0,1]"},
+  {"expect": "<span>51–100 of 120</span>"},
+  {"expect": "<td class=\"num\">50</td>"},
+  {"event": "__page", "value": "[0,2]"},
+  {"expect": "<span>101–120 of 120</span>"},
+  {"absent": "data-crow-args=\"[0,3]\""}
+]

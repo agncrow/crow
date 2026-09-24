@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use crow_runtime::frame::{CrowFrame, Column};
-use crate::{CrowDb, DbTx};
+use crate::{CrowDb, DbTx, ScopeTx, stop_requested};
 use tokio::runtime::Runtime;
 use deadpool_postgres::{Config, Pool, ManagerConfig, RecyclingMethod};
 use tokio_postgres::NoTls;
@@ -199,7 +199,104 @@ impl CrowPostgresDb {
     }
 }
 
+/// Statements running now, by number: what the program stops when it is
+/// told to stop, so a query nobody will read is not left on the server.
+static RUNNING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, tokio_postgres::CancelToken>>> =
+    std::sync::LazyLock::new(|| {
+        crow_runtime::cancel::on_shutdown(Box::new(|| {
+            let tokens: Vec<tokio_postgres::CancelToken> =
+                RUNNING.lock().unwrap_or_else(|p| p.into_inner()).values().cloned().collect();
+            if tokens.is_empty() {
+                return;
+            }
+            let _ = std::thread::spawn(move || {
+                if let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                    rt.block_on(async {
+                        for t in tokens {
+                            let _ = t.cancel_query(NoTls).await;
+                        }
+                    });
+                }
+            })
+            .join();
+        }));
+        std::sync::Mutex::new(std::collections::HashMap::new())
+    });
+
+/// A statement's place in RUNNING for as long as it runs.
+struct Running(u64);
+
+impl Running {
+    fn start(token: tokio_postgres::CancelToken) -> Running {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        RUNNING.lock().unwrap_or_else(|p| p.into_inner()).insert(n, token);
+        Running(n)
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        RUNNING.lock().unwrap_or_else(|p| p.into_inner()).remove(&self.0);
+    }
+}
+
+/// A handler's transaction on Postgres: one pooled connection, begun, held
+/// until the handler ends.
+struct PgScope {
+    client: Option<deadpool_postgres::Object>,
+    rt: Arc<Runtime>,
+}
+
+impl ScopeTx for PgScope {
+    fn query(&mut self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
+        let client = self.client.as_ref().ok_or("the transaction has ended")?;
+        let (pg_params, pg_types) = json_to_pg_params(params);
+        let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = pg_params.iter().map(|b| b.as_ref()).collect();
+        let rt = self.rt.clone();
+        CrowPostgresDb::off_runtime(|| rt.block_on(async {
+            let stmt = client.prepare_typed(&numbered_placeholders(sql), &pg_types).await
+                .map_err(|e| format!("postgres query error: {}", describe(e)))?;
+            let rows = client.query(&stmt, &param_refs).await
+                .map_err(|e| format!("postgres query error: {}", describe(e)))?;
+            rows_to_frame(&rows)
+        }))
+    }
+
+    fn exec(&mut self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
+        let client = self.client.as_ref().ok_or("the transaction has ended")?;
+        let (pg_params, pg_types) = json_to_pg_params(params);
+        let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = pg_params.iter().map(|b| b.as_ref()).collect();
+        let rt = self.rt.clone();
+        CrowPostgresDb::off_runtime(|| rt.block_on(async {
+            let stmt = client.prepare_typed(&numbered_placeholders(sql), &pg_types).await
+                .map_err(|e| format!("postgres exec error: {}", describe(e)))?;
+            let n = client.execute(&stmt, &param_refs).await
+                .map_err(|e| format!("postgres exec error: {}", describe(e)))?;
+            Ok(n as i64)
+        }))
+    }
+
+    fn finish(mut self: Box<Self>, commit: bool) -> Result<(), String> {
+        let client = self.client.take().ok_or("the transaction has ended")?;
+        let end = if commit { "COMMIT" } else { "ROLLBACK" };
+        let rt = self.rt.clone();
+        CrowPostgresDb::off_runtime(|| rt.block_on(async {
+            client.batch_execute(end).await.map_err(|e| format!("postgres {}: {}", end.to_lowercase(), describe(e)))
+        }))
+    }
+}
+
 impl CrowDb for CrowPostgresDb {
+    fn begin_scope(&self) -> Option<Result<Box<dyn ScopeTx>, String>> {
+        let rt = self.rt.clone();
+        Some(Self::off_runtime(|| self.rt.block_on(async {
+            let client = self.pool.get().await.map_err(|e| format!("postgres pool error: {}", e))?;
+            client.batch_execute("BEGIN").await.map_err(|e| format!("postgres begin: {}", describe(e)))?;
+            Ok(Box::new(PgScope { client: Some(client), rt }) as Box<dyn ScopeTx>)
+        })))
+    }
+
     fn describe(&self, sql: &str) -> Result<Vec<(String, String)>, String> {
         Self::off_runtime(|| self.rt.block_on(async {
             let client = self.pool.get().await
@@ -215,14 +312,28 @@ impl CrowDb for CrowPostgresDb {
         let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
             pg_params.iter().map(|b| b.as_ref()).collect();
 
+        let flag = crow_runtime::cancel::current();
+        if crow_runtime::cancel::stopped(&flag) {
+            return Err("cancelled: nobody waits for this query any more".to_string());
+        }
         Self::off_runtime(|| self.rt.block_on(async {
             let client = self.pool.get().await
                 .map_err(|e| format!("postgres pool error: {}", e))?;
-            let stmt = client.prepare_typed(&numbered_placeholders(sql), &pg_types).await
-                .map_err(|e| format!("postgres query error: {}", describe(e)))?;
-            let rows = client.query(&stmt, &param_refs).await
-                .map_err(|e| format!("postgres query error: {}", describe(e)))?;
-            rows_to_frame(&rows)
+            let _running = Running::start(client.cancel_token());
+            let run = async {
+                let stmt = client.prepare_typed(&numbered_placeholders(sql), &pg_types).await
+                    .map_err(|e| format!("postgres query error: {}", describe(e)))?;
+                let rows = client.query(&stmt, &param_refs).await
+                    .map_err(|e| format!("postgres query error: {}", describe(e)))?;
+                rows_to_frame(&rows)
+            };
+            tokio::select! {
+                result = run => result,
+                _ = stop_requested(flag.clone()) => {
+                    let _ = client.cancel_token().cancel_query(NoTls).await;
+                    Err("cancelled: nobody waits for this query any more".to_string())
+                }
+            }
         }))
     }
 
@@ -231,14 +342,25 @@ impl CrowDb for CrowPostgresDb {
         let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
             pg_params.iter().map(|b| b.as_ref()).collect();
 
+        let flag = crow_runtime::cancel::current();
         Self::off_runtime(|| self.rt.block_on(async {
             let client = self.pool.get().await
                 .map_err(|e| format!("postgres pool error: {}", e))?;
-            let stmt = client.prepare_typed(&numbered_placeholders(sql), &pg_types).await
-                .map_err(|e| format!("postgres exec error: {}", describe(e)))?;
-            let n = client.execute(&stmt, &param_refs).await
-                .map_err(|e| format!("postgres exec error: {}", describe(e)))?;
-            Ok(n as i64)
+            let _running = Running::start(client.cancel_token());
+            let run = async {
+                let stmt = client.prepare_typed(&numbered_placeholders(sql), &pg_types).await
+                    .map_err(|e| format!("postgres exec error: {}", describe(e)))?;
+                let n = client.execute(&stmt, &param_refs).await
+                    .map_err(|e| format!("postgres exec error: {}", describe(e)))?;
+                Ok(n as i64)
+            };
+            tokio::select! {
+                result = run => result,
+                _ = stop_requested(flag.clone()) => {
+                    let _ = client.cancel_token().cancel_query(NoTls).await;
+                    Err("cancelled: the program is stopping".to_string())
+                }
+            }
         }))
     }
 

@@ -19,6 +19,9 @@ pub struct CrowValue {
     /// or None for values computed here and now. Flows like error metadata:
     /// a derived value is as old as its oldest input (see age[]).
     pub captured: Option<f64>,
+    /// Markup a view, an element or `doc` made: the one kind of string a
+    /// view places as markup. Every other string is text, whatever it holds.
+    pub markup: bool,
 }
 
 impl CrowValue {
@@ -30,6 +33,7 @@ impl CrowValue {
             kind: String::new(),
             trace: Vec::new(),
             captured: None,
+            markup: false,
         }
     }
 
@@ -41,6 +45,7 @@ impl CrowValue {
             kind: String::new(),
             trace: Vec::new(),
             captured: None,
+            markup: false,
         }
     }
 
@@ -52,6 +57,7 @@ impl CrowValue {
             kind: String::new(),
             trace: vec![trace_entry.to_string()],
             captured: None,
+            markup: false,
         }
     }
 
@@ -66,7 +72,16 @@ impl CrowValue {
             kind: kind.to_string(),
             trace,
             captured: None,
+            markup: false,
         }
+    }
+
+    /// Markup a view, an element or `doc` made — placed as markup when it
+    /// is a child of an element.
+    pub fn markup(html: String) -> Self {
+        let mut v = CrowValue::ok(Value::Str(html));
+        v.markup = true;
+        v
     }
 
     #[inline(always)]
@@ -118,7 +133,7 @@ pub enum Value {
     Frame(CrowFrame), // column-oriented data frame
     DbConn(DbHandle), // database connection handle
     Dual(f64, f64), // dual number for autograd: (real, derivative)
-    App(FnValue, f64, bool),   // headless app session for test blocks (the view, its viewport width, the wide look)
+    App(FnValue, f64, bool, u64),   // headless app session for test blocks (the view, its viewport width, the wide look, which session)
     GradFn(FnValue), // gradient function wrapping a user function
     Done, // represents no value (from 'done' status)
 }
@@ -172,7 +187,7 @@ impl Value {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Value::App(a, _, _) => write!(f, "app[{}]", a.name),
+            Value::App(a, ..) => write!(f, "app[{}]", a.name),
             Value::Int(n) => write!(f, "{}", n),
             Value::Float(n) => write!(f, "{}", n),
             Value::Str(s) => write!(f, "{}", s),

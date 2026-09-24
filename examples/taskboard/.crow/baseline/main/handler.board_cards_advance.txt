@@ -1,0 +1,12 @@
+handler board_cards_advance (board/cards.co)
+  inputs: $1
+  wired: board_cards_board_view table action 'Advance'
+  reads v1 = query[board_cards_book, 'SELECT title, status FROM cards WHERE id = ?', [$1]]
+  when (len[v1] eq 0):
+    nothing
+  when (not (len[v1] eq 0)) and (not (v1.status[0] eq 'todo')):
+    effect exec board_cards_book 'UPDATE cards SET status = ? WHERE id = ?' ['done', $1]
+    calls board_store_note[board_cards_book, __reader[].name, 'moved `v1.title[0]` to `'done'`']
+  when (not (len[v1] eq 0)) and (v1.status[0] eq 'todo'):
+    effect exec board_cards_book 'UPDATE cards SET status = ? WHERE id = ?' ['doing', $1]
+    calls board_store_note[board_cards_book, __reader[].name, 'moved `v1.title[0]` to `'doing'`']

@@ -22,6 +22,12 @@ rustfft = "6.4.1"
 ryu = "1.0.23"
 sprs = "0.11.4"
 wgpu = "28.0.0"
+# hash[]: the digests and the password hash, for both modes
+sha2 = "0.10"
+md-5 = "0.10"
+argon2 = "0.5"
+# salts, secrets and tickets come from the operating system
+getrandom = "0.3"
 
 [features]
 arrow = ["dep:arrow"]

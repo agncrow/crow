@@ -1,0 +1,23 @@
+[
+  {"event": "setup"},
+  {"expect": "hello stranger"},
+  {"event": "wipe"},
+  {"expect": "wipe stopped: map has no key 'role'"},
+  {"expect": "wiped 0"},
+  {"event": "__field:name", "value": "ada"},
+  {"event": "__field:password", "value": "wrong"},
+  {"event": "log_in"},
+  {"expect": "wrong password"},
+  {"expect": "hello stranger"},
+  {"event": "__field:password", "value": "lovelace"},
+  {"event": "log_in"},
+  {"expect": "hello ada"},
+  {"open": "/"},
+  {"expect": "hello ada"},
+  {"event": "wipe"},
+  {"expect": "wiped 1"},
+  {"event": "log_out"},
+  {"expect": "hello stranger"},
+  {"open": "/"},
+  {"expect": "hello stranger"}
+]

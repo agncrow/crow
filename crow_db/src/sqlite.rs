@@ -3,29 +3,104 @@
 //! Uses `rusqlite` with file-based or in-memory databases.
 //! Pool size is always 1 (SQLite uses file-level locking).
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use crow_runtime::frame::{CrowFrame, Column};
-use crate::{CrowDb, DbTx};
+use crate::{CrowDb, DbTx, ScopeTx};
+
+/// How long a statement waits for another connection's write to finish
+/// before the database is reported locked: a handler's transaction holds
+/// the file's write lock until the handler ends.
+const BUSY: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// SQLite database — wraps a single `rusqlite::Connection` behind a Mutex.
 pub struct CrowSqliteDb {
-    conn: Mutex<rusqlite::Connection>,
+    conn: Arc<Mutex<rusqlite::Connection>>,
+    /// the file, which a handler's transaction opens a connection of its
+    /// own to; none for `:memory:`, whose one connection is the database
+    path: Option<String>,
 }
 
 impl CrowSqliteDb {
     /// Open (or create) a SQLite database file.
     pub fn open(path: &str) -> Result<Self, String> {
-        rusqlite::Connection::open(path)
-            .map(|conn| Self { conn: Mutex::new(conn) })
-            .map_err(|e| e.to_string())
+        let conn = rusqlite::Connection::open(path).map_err(|e| e.to_string())?;
+        conn.busy_timeout(BUSY).map_err(|e| e.to_string())?;
+        let path = if path == ":memory:" || path.is_empty() { None } else { Some(path.to_string()) };
+        Ok(Self { conn: Arc::new(Mutex::new(conn)), path })
     }
 
     /// Open an in-memory SQLite database.
     pub fn memory() -> Result<Self, String> {
         rusqlite::Connection::open_in_memory()
-            .map(|conn| Self { conn: Mutex::new(conn) })
+            .map(|conn| Self { conn: Arc::new(Mutex::new(conn)), path: None })
             .map_err(|e| e.to_string())
     }
+}
+
+/// A handler's transaction on SQLite: a connection of its own to the file,
+/// begun with the write lock taken; or, for `:memory:`, the one connection.
+enum SqliteScope {
+    Own(rusqlite::Connection),
+    Shared(Arc<Mutex<rusqlite::Connection>>),
+}
+
+impl SqliteScope {
+    fn with<T>(&mut self, f: impl FnOnce(&rusqlite::Connection) -> Result<T, String>) -> Result<T, String> {
+        match self {
+            SqliteScope::Own(c) => f(c),
+            SqliteScope::Shared(c) => {
+                let guard = c.lock().map_err(|e| e.to_string())?;
+                f(&guard)
+            }
+        }
+    }
+}
+
+impl ScopeTx for SqliteScope {
+    fn query(&mut self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
+        self.with(|c| query_on(c, sql, params))
+    }
+
+    fn exec(&mut self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
+        self.with(|c| exec_on(c, sql, params))
+    }
+
+    fn finish(mut self: Box<Self>, commit: bool) -> Result<(), String> {
+        let end = if commit { "COMMIT" } else { "ROLLBACK" };
+        self.with(|c| c.execute_batch(end).map_err(|e| e.to_string()))
+    }
+}
+
+/// A statement's rows on one connection.
+fn query_on(conn: &rusqlite::Connection, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
+    let params_ = json_to_sql_params(params);
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params_.iter().map(|b| b.as_ref()).collect();
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let col_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+    let ncols = col_names.len();
+    let mut raw_rows: Vec<Vec<rusqlite::types::Value>> = Vec::new();
+    let mut rows = stmt.query(param_refs.as_slice()).map_err(|e| e.to_string())?;
+    while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+        let mut raw_row = Vec::with_capacity(ncols);
+        for i in 0..ncols {
+            let val: rusqlite::types::Value = row.get(i).map_err(|e| e.to_string())?;
+            raw_row.push(val);
+        }
+        raw_rows.push(raw_row);
+    }
+    if raw_rows.is_empty() {
+        let data: Vec<Column> = (0..ncols).map(|_| Column::Str(Vec::new())).collect();
+        let validity: Vec<Vec<bool>> = (0..ncols).map(|_| Vec::new()).collect();
+        return Ok(CrowFrame::new(col_names, data, validity));
+    }
+    build_frame_from_rows(&col_names, &raw_rows)
+}
+
+/// A statement's affected rows on one connection.
+fn exec_on(conn: &rusqlite::Connection, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
+    let params_ = json_to_sql_params(params);
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params_.iter().map(|b| b.as_ref()).collect();
+    conn.execute(sql, param_refs.as_slice()).map(|n| n as i64).map_err(|e| e.to_string())
 }
 
 /// Convert serde_json::Value params to rusqlite ToSql boxes.
@@ -105,49 +180,36 @@ impl CrowDb for CrowSqliteDb {
                 }
             }
         }
-        Ok(kinds.into_iter().map(|(n, k)| (n, k.unwrap_or_else(|| "str".to_string()))).collect())
+        // a column neither declared nor seen in a row — a computed column of
+        // a statement whose parameters match nothing, or of an empty table —
+        // is `unknown`: the compiler types it from the statement itself
+        Ok(kinds.into_iter().map(|(n, k)| (n, k.unwrap_or_else(|| "unknown".to_string()))).collect())
     }
 
     fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let params_ = json_to_sql_params(params);
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-            params_.iter().map(|b| b.as_ref()).collect();
-
-        let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
-        let col_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
-        let ncols = col_names.len();
-
-        // Collect all rows as rusqlite::types::Value
-        let mut raw_rows: Vec<Vec<rusqlite::types::Value>> = Vec::new();
-        let mut rows = stmt.query(param_refs.as_slice()).map_err(|e| e.to_string())?;
-        while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-            let mut raw_row = Vec::with_capacity(ncols);
-            for i in 0..ncols {
-                let val: rusqlite::types::Value = row.get(i).map_err(|e| e.to_string())?;
-                raw_row.push(val);
-            }
-            raw_rows.push(raw_row);
-        }
-
-        let nrows = raw_rows.len();
-        if nrows == 0 {
-            let data: Vec<Column> = (0..ncols).map(|_| Column::Str(Vec::new())).collect();
-            let validity: Vec<Vec<bool>> = (0..ncols).map(|_| Vec::new()).collect();
-            return Ok(CrowFrame::new(col_names, data, validity));
-        }
-
-        build_frame_from_rows(&col_names, &raw_rows)
+        query_on(&conn, sql, params)
     }
 
     fn exec(&self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let params_ = json_to_sql_params(params);
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-            params_.iter().map(|b| b.as_ref()).collect();
-        conn.execute(sql, param_refs.as_slice())
-            .map(|n| n as i64)
-            .map_err(|e| e.to_string())
+        exec_on(&conn, sql, params)
+    }
+
+    fn begin_scope(&self) -> Option<Result<Box<dyn ScopeTx>, String>> {
+        Some(match &self.path {
+            Some(path) => (|| {
+                let conn = rusqlite::Connection::open(path).map_err(|e| e.to_string())?;
+                conn.busy_timeout(BUSY).map_err(|e| e.to_string())?;
+                // the write lock now, so two handlers never deadlock mid-way
+                conn.execute_batch("BEGIN IMMEDIATE").map_err(|e| e.to_string())?;
+                Ok(Box::new(SqliteScope::Own(conn)) as Box<dyn ScopeTx>)
+            })(),
+            None => (|| {
+                self.conn.lock().map_err(|e| e.to_string())?.execute_batch("BEGIN").map_err(|e| e.to_string())?;
+                Ok(Box::new(SqliteScope::Shared(self.conn.clone())) as Box<dyn ScopeTx>)
+            })(),
+        })
     }
 
     fn insert(&self, table: &str, frame: &CrowFrame) -> Result<i64, String> {
@@ -363,7 +425,10 @@ fn base64_encode(data: &[u8]) -> String {
 }
 
 /// The cell kind a declared sqlite column type stands for.
-fn kind_of_decl(t: &str) -> Option<String> {
+/// The kind a declared SQLite column type gives its cells, by SQLite's
+/// affinity rules: the one mapping describe and the compiler's statement
+/// typer share.
+pub fn kind_of_decl(t: &str) -> Option<String> {
     let t = t.to_ascii_uppercase();
     let k = if t.contains("INT") {
         "int"
@@ -398,6 +463,50 @@ fn returning_target(sql: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn count(h: &crate::DbHandle) -> i64 {
+        match h.query("SELECT count(*) AS n FROM t", &[]).unwrap().data[0].as_ref() {
+            Column::Int(v) => v[0],
+            other => panic!("expected Int column, got {:?}", other),
+        }
+    }
+
+    /// A handler's writes are one transaction on a connection of its own:
+    /// it reads what it wrote, nobody else does until it commits, and a
+    /// stop rolls it back (core-design.md §1.2)
+    #[test]
+    fn a_handler_writes_in_a_transaction_of_its_own() {
+        let path = std::env::temp_dir().join(format!("crow_scope_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let h = crate::DbHandle::new(CrowSqliteDb::open(path.to_str().unwrap()).unwrap());
+        h.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)", &[]).unwrap();
+
+        crow_runtime::txn::begin();
+        h.exec("INSERT INTO t (v) VALUES (?)", &[serde_json::json!("doomed")]).unwrap();
+        assert_eq!(count(&h), 1, "the handler reads its own write");
+        let other = std::thread::spawn({
+            let h = h.clone();
+            move || count(&h)
+        })
+        .join()
+        .unwrap();
+        assert_eq!(other, 0, "another session does not see an uncommitted write");
+        crow_runtime::txn::finish(false).unwrap();
+        assert_eq!(count(&h), 0, "a stop rolls the write back");
+
+        crow_runtime::txn::begin();
+        h.exec("INSERT INTO t (v) VALUES (?)", &[serde_json::json!("kept")]).unwrap();
+        // another session's write waits for the handler's, then lands
+        let writer = std::thread::spawn({
+            let h = h.clone();
+            move || h.exec("INSERT INTO t (v) VALUES (?)", &[serde_json::json!("after")])
+        });
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        crow_runtime::txn::finish(true).unwrap();
+        writer.join().unwrap().unwrap();
+        assert_eq!(count(&h), 2, "the commit and the waiting write both landed");
+        let _ = std::fs::remove_file(&path);
+    }
+
     /// A RETURNING clause's cells are typed from the table's declaration —
     /// and asking never runs the statement
     #[test]
@@ -414,6 +523,17 @@ mod tests {
         assert_eq!(returning_target("UPDATE t SET a = 1 WHERE id = ? RETURNING a"), Some("t".to_string()));
         assert_eq!(returning_target("DELETE FROM \"t\" WHERE id = ? RETURNING id"), Some("t".to_string()));
         assert_eq!(returning_target("SELECT 1"), None);
+    }
+
+    /// A computed column of a statement whose parameters match no row has
+    /// no declared type and no value to look at: describe says `unknown`,
+    /// not text, and the compiler types it from the statement
+    #[test]
+    fn a_computed_column_with_no_row_is_unknown() {
+        let db = CrowSqliteDb::memory().unwrap();
+        db.exec("CREATE TABLE trades (session_id INTEGER, shares INTEGER, entry_px REAL, exit_px REAL)", &[]).unwrap();
+        let d = db.describe("SELECT shares, round((exit_px - entry_px) * shares, 2) AS pnl FROM trades WHERE session_id = ?").unwrap();
+        assert_eq!(d, vec![("shares".to_string(), "int".to_string()), ("pnl".to_string(), "unknown".to_string())]);
     }
 
     #[test]

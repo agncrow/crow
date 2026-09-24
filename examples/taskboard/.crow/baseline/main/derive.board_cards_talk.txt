@@ -1,0 +1,4 @@
+derive board_cards_talk (board/cards.co)
+  reads: board_cards_card_id
+  tables: comments
+  read by: board_cards_card_view, board_page_render

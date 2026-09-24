@@ -1,0 +1,5 @@
+fact board_cards_new_card (board/cards.co)
+  type: str
+  written by: board_cards_add_card
+  bound by: board_cards_board_view
+  read by: board_cards_add_card, board_cards_board_view, board_page_render

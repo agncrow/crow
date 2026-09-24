@@ -1,0 +1,30 @@
+--- Text a reader types stays text, wherever a view places it; markup a
+--- view makes stays markup, however it travels: held in a local, in a
+--- list, passed to another view, or made by doc.
+use web, ui, doc
+
+note = ''
+
+view badge[label]
+    return span[label, class = 'badge']
+
+view card[title, body]
+    return stack[h3[title], body, class = 'card']
+
+view render[]
+    parts = for w in ['one', 'two']
+        badge[w]
+    held = p['held in a local']
+    return stack[
+        field['Note', note, type = 'text'],
+        p[note],
+        card['as text', note],
+        card['as markup', p['a paragraph']],
+        parts,
+        held,
+        [note, 'plain'],
+        doc.markdown['**bold** and *leaning*']
+    ]
+
+serve[3405]
+page['/', render]

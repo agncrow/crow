@@ -37,7 +37,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     "shell",
     "serve", "route", "page",
     "later", "running",
-    "app", "html", "click", "elements", "change", "box", "fits", "style",
+    "app", "html", "click", "elements", "change", "box", "fits", "style", "downloads",
     "fmt",
     "now", "moment", "calendar", "parse_time", "captured", "chart",
 ];
@@ -108,7 +108,7 @@ impl Issue {
                 format!("{} ({}): {}", subject, file, detail),
             Issue::BlockingInView { view, builtin, path, .. } =>
                 format!(
-                    "'{}' can freeze every connected client — {}[] blocks the live loop ({})",
+                    "'{}' holds the session's other clicks until it ends — {}[] blocks it ({})",
                     view, builtin, path.join(" → ")
                 ),
             Issue::StaleSnapshot { view, var, source_line, .. } =>
@@ -1399,6 +1399,12 @@ fn collect_callees_from_expr(expr: &Expr, callees: &mut BTreeSet<String>) {
         Expr::Call { callee, args } => {
             if let Expr::Ident(name) = callee.as_ref() {
                 callees.insert(name.clone());
+                // a password hash is salted with fresh random bytes, so
+                // `hash[x, 'password']` — or an algorithm only named at run
+                // time — draws as rand does
+                if name == "hash" && !matches!(args.get(1), Some(Expr::Str(a)) if a != "password") {
+                    callees.insert("rand".to_string());
+                }
             }
             collect_callees_from_expr(callee, callees);
             for a in args { collect_callees_from_expr(a, callees); }
@@ -1599,8 +1605,13 @@ fn find_undefined_vars_in_fn(
     // registry provides (db/web/frame/... exports) and, in views/handlers,
     // the HTML element vocabulary.
     for b in BUILTINS { defined.insert(b.to_string()); }
+    for b in crate::validator::BUILTINS { defined.insert(b.to_string()); }
     for b in stdlib_names() { defined.insert(b.clone()); }
     if reactive_readers(ctx).contains(name) {
+        // the signed-in reader, where the gate lets a web program read it
+        if ctx.bare_modules.iter().any(|m| m == "web" || m.starts_with("web.")) {
+            defined.insert("reader".to_string());
+        }
         for el in crate::lower::UI_ELEMENTS {
             defined.insert(el.to_string());
         }
@@ -2528,6 +2539,18 @@ mod tests {
         let (_, ctx) = parse_and_infer("fn greet[name]\n    log['hi {name}']\n");
         let pure = find_pure_functions(&ctx);
         assert!(!pure.contains("greet"), "greet calls log, should be impure");
+    }
+
+    /// A password hash is salted afresh each call; a digest is not
+    #[test]
+    fn a_password_hash_is_not_pure() {
+        let src = "fn digest[pw]\n    return hash[pw, 'password']\nfn sum[pw]\n    return hash[pw, 'sha256']\nlog[sum[digest['a']]]\n";
+        let stmts = crate::build(src).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        let pure = find_pure_functions(&ctx);
+        assert!(!pure.contains("digest"), "a salted hash is random");
+        assert!(pure.contains("sum"), "a digest is pure");
     }
 
     #[test]

@@ -115,8 +115,9 @@ pub fn written_facts(fns: &BTreeMap<String, Vec<Stmt>>, facts: &BTreeSet<String>
 /// derivation over sources, constants and the clock alone is computed once
 /// for the app.
 pub fn mark_shared(specs: &mut BTreeMap<String, ReadSet>, written: &BTreeSet<String>) {
+    // `reader` is written by the runtime, per session, whoever signs in
     let mut shared: BTreeSet<String> = specs.iter()
-        .filter(|(_, rs)| rs.facts.iter().all(|f| !written.contains(f)))
+        .filter(|(_, rs)| rs.facts.iter().all(|f| f != "reader" && !written.contains(f)))
         .map(|(n, _)| n.clone())
         .collect();
     loop {
@@ -183,7 +184,7 @@ pub fn interpolation_exprs(s: &str) -> Vec<Expr> {
             if span.trim().is_empty() { continue; }
             if let Ok(tokens) = crate::lexer::Lexer::new(&span).tokenize() {
                 if let Ok(stmts) = crate::parser::Parser::new(tokens).parse() {
-                    let stmts = crate::lower::lower_program(&stmts).unwrap_or(stmts);
+                    let stmts = crate::lower::lower_fragment(&stmts).unwrap_or(stmts);
                     for st in stmts {
                         if let Stmt::ExprStmt(e) = st { out.push(e); }
                     }
@@ -208,6 +209,9 @@ fn walk_expr(e: &Expr, facts: &BTreeSet<String>, derives: &BTreeSet<String>, fns
         Expr::Call { callee, args } => {
             if let Expr::Ident(n) = callee.as_ref() {
                 if n == "now" { rs.now = true; }
+                // the signed-in reader is a fact the runtime keeps: a
+                // derivation over it follows sign-ins, and is the session's
+                if n == "__reader" { rs.facts.insert("reader".to_string()); }
                 // query[conn, 'sql', ...]: the tables the literal reads
                 if n == "query" {
                     if let Some(Expr::Str(sql)) = args.get(1) {
@@ -235,44 +239,9 @@ fn walk_expr(e: &Expr, facts: &BTreeSet<String>, derives: &BTreeSet<String>, fns
     }
 }
 
-/// The tables a SQL literal reads and writes: (reads, writes). A regex
-/// over FROM / JOIN / INSERT INTO / UPDATE / DELETE FROM — every dialect
-/// Crow talks to agrees on those words.
-pub fn tables_of_sql(sql: &str) -> (Vec<String>, Vec<String>) {
-    let mut reads = Vec::new();
-    let mut writes = Vec::new();
-    let words: Vec<&str> = sql.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == ',' || c == ';').filter(|w| !w.is_empty()).collect();
-    let clean = |w: &str| w.trim_matches(|c: char| c == '`' || c == '"' || c == '\'').to_string();
-    let mut i = 0;
-    while i < words.len() {
-        let w = words[i].to_ascii_uppercase();
-        match w.as_str() {
-            "FROM" | "JOIN" => {
-                if let Some(t) = words.get(i + 1) {
-                    let t = clean(t);
-                    // FROM (SELECT …) is a subquery, not a table
-                    let keyword = matches!(t.to_ascii_uppercase().as_str(), "SELECT" | "VALUES" | "WITH");
-                    if !keyword && !t.is_empty() && !t.starts_with('?') && !t.starts_with('\'') && t.chars().next().map_or(false, |c| c.is_alphabetic()) {
-                        // DELETE FROM t writes; a FROM after DELETE is the target
-                        if i > 0 && words[i - 1].eq_ignore_ascii_case("DELETE") { writes.push(t); } else { reads.push(t); }
-                    }
-                }
-            }
-            "INTO" => {
-                if i > 0 && words[i - 1].eq_ignore_ascii_case("INSERT") {
-                    if let Some(t) = words.get(i + 1) { let t = clean(t); if !t.is_empty() { writes.push(t); } }
-                }
-            }
-            "UPDATE" => {
-                if let Some(t) = words.get(i + 1) { let t = clean(t); if !t.is_empty() { writes.push(t); } }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    reads.sort(); reads.dedup(); writes.sort(); writes.dedup();
-    (reads, writes)
-}
+/// The tables a SQL literal reads and writes: (reads, writes) — the one
+/// reader the compiler and the database layer share.
+pub use crow_runtime::sql::tables_of_sql;
 
 /// The functions a body calls, transitively (names in `fns` only).
 pub fn called_fns(body: &[Stmt], fns: &BTreeMap<String, Vec<Stmt>>) -> BTreeSet<String> {
@@ -317,7 +286,9 @@ pub fn called_fns(body: &[Stmt], fns: &BTreeMap<String, Vec<Stmt>>) -> BTreeSet<
     out
 }
 
-/// Every table the program writes (exec / insert literals anywhere).
+/// Every table the program writes: exec and insert literals anywhere, and
+/// a query whose statement writes — `INSERT … RETURNING id` reads back the
+/// row it wrote, and the table it wrote is written all the same.
 pub fn owned_tables(stmts: &[Stmt], fns: &BTreeMap<String, Vec<Stmt>>) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     fn walk(stmts: &[Stmt], out: &mut BTreeSet<String>) {
@@ -337,7 +308,7 @@ pub fn owned_tables(stmts: &[Stmt], fns: &BTreeMap<String, Vec<Stmt>>) -> BTreeS
         match e {
             Expr::Call { callee, args } => {
                 if let Expr::Ident(n) = callee.as_ref() {
-                    if n == "exec" || n == "insert" {
+                    if n == "exec" || n == "insert" || n == "query" {
                         if let Some(Expr::Str(sql)) = args.get(1) { for t in tables_of_sql(sql).1 { out.insert(t); } }
                         if n == "insert" { if let Some(Expr::Str(t)) = args.get(1) { out.insert(t.clone()); } }
                     }
@@ -363,6 +334,16 @@ pub fn owned_tables(stmts: &[Stmt], fns: &BTreeMap<String, Vec<Stmt>>) -> BTreeS
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_query_that_inserts_writes_its_table() {
+        let src = "fn start[book]\n    r = query[book, 'INSERT INTO sessions (day) VALUES (?) RETURNING id', ['2026-09-04']]\n    return r\n";
+        let stmts = crate::build(src).unwrap();
+        let written = owned_tables(&stmts, &BTreeMap::new());
+        assert!(written.contains("sessions"), "INSERT … RETURNING through query writes its table: {:?}", written);
+        let reads_only = crate::build("fn rows[book]\n    return query[book, 'SELECT id FROM sessions']\n").unwrap();
+        assert!(owned_tables(&reads_only, &BTreeMap::new()).is_empty(), "a query that only reads writes nothing");
+    }
+
     #[test]
     fn sql_tables_read_and_written() {
         let (r, w) = tables_of_sql("SELECT a FROM trades t JOIN sessions s ON s.id = t.session_id WHERE x = ?");

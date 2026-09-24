@@ -1,0 +1,10 @@
+--- The record of who did what, newest first. It only grows, so it pages.
+use web, ui, db
+
+book = db.connect['sqlite://taskboard.db']
+
+derive entries
+    return query[book, 'SELECT who, what FROM audit ORDER BY id DESC']
+
+view log_view[]
+    return stack[h2['What happened'], table[entries, page = 10], gap = 's']

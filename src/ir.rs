@@ -278,6 +278,9 @@ pub enum Meta {
     Reason,
     Kind,
     Trace,
+    /// `.ok` of a frame column: its rows' validity, a missing cell false.
+    /// Every other value's `.ok` is its own status, a list's included.
+    Valid,
 }
 
 #[derive(Debug, Clone)]
@@ -355,6 +358,7 @@ impl Expr {
                 Meta::Ok => Ty::Bool,
                 Meta::Reason | Meta::Kind => Ty::Str,
                 Meta::Trace => Ty::List(Box::new(Ty::Str)),
+                Meta::Valid => Ty::List(Box::new(Ty::Bool)),
             },
             Expr::Interp(_) => Ty::Str,
             Expr::RecordLit { name, .. } => Ty::Record(name.clone()),
@@ -416,7 +420,7 @@ pub fn runtime_name(builtin: &str) -> String {
 /// lower to `Expr::Effect`; the session layer performs them.
 pub const EFFECTS: &[&str] = &[
     "query", "exec", "insert", "transact", "migrate", "connect", "read", "write", "mkdir", "ls",
-    "rm", "mv", "cp", "fetch", "poll", "shell", "mail", "later", "notice", "now", "time",
+    "rm", "mv", "cp", "fetch", "poll", "shell", "mail", "later", "notice", "sign_in", "sign_out", "download", "now", "time",
     "input", "env", "sleep", "exit", "log", "csv", "lines", "load", "save", "send", "recv",
     "serve", "page", "route", "listen", "args",
 ];
@@ -626,6 +630,7 @@ pub fn expr(e: &Expr) -> String {
                 Meta::Reason => "reason",
                 Meta::Kind => "kind",
                 Meta::Trace => "trace",
+                Meta::Valid => "valid",
             };
             format!("{}.{}", expr(base), w)
         }

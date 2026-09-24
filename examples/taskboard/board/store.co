@@ -1,0 +1,21 @@
+--- The board's database: who may sign in, the boards, their cards, what was
+--- said and attached, and a record of what everyone did. The tables are made
+--- here; the first people are seeded with stored password hashes.
+use db
+
+book = db.connect['sqlite://taskboard.db']
+
+fn setup[c]
+    exec[c, 'CREATE TABLE IF NOT EXISTS people (name TEXT PRIMARY KEY, role TEXT, hash TEXT)']
+    exec[c, 'CREATE TABLE IF NOT EXISTS boards (id INTEGER PRIMARY KEY, name TEXT)']
+    exec[c, 'CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY, board INTEGER, title TEXT, status TEXT, owner TEXT, stars INTEGER)']
+    exec[c, 'CREATE TABLE IF NOT EXISTS comments (id INTEGER PRIMARY KEY, card INTEGER, author TEXT, body TEXT)']
+    exec[c, 'CREATE TABLE IF NOT EXISTS attachments (id INTEGER PRIMARY KEY, card INTEGER, name TEXT, path TEXT)']
+    exec[c, 'CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY, who TEXT, what TEXT)']
+    exec[c, 'INSERT OR IGNORE INTO people VALUES (?, ?, ?)', ['ada', 'admin', hash['lovelace', 'password']]]
+    exec[c, 'INSERT OR IGNORE INTO people VALUES (?, ?, ?)', ['bob', 'member', hash['builder', 'password']]]
+    exec[c, 'INSERT OR IGNORE INTO boards (id, name) VALUES (1, ?)', ['Launch']]
+
+--- Everything that changes the board is written down, by whom.
+fn note[c, who, what]
+    exec[c, 'INSERT INTO audit (who, what) VALUES (?, ?)', [who, what]]

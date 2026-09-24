@@ -1,0 +1,11 @@
+handler board_door_log_in (board/door.co)
+  wired: board_door_door button 'Sign in'
+  reads v1 = query[board_door_book, 'SELECT role, hash FROM people WHERE name = ?', [board_door_name]]
+  when (hash[board_door_password, v1.hash[0]] neq v1.hash[0]) and (not (len[v1] eq 0)):
+    effect notice 'wrong password'
+  when (len[v1] eq 0):
+    effect notice 'no one called `board_door_name`'
+  when (not (hash[board_door_password, v1.hash[0]] neq v1.hash[0])) and (not (len[v1] eq 0)):
+    board_door_password := ''
+    effect sign_in set[set[map[], 'name', board_door_name], 'role', v1.role[0]]
+    calls board_store_note[board_door_book, board_door_name, 'signed in']

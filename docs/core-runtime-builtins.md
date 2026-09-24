@@ -146,6 +146,15 @@ side only.
   string column's validity) and in the compiled program only for a
   `Vec<String>`, `true` for any other list, and the status for a
   `Result` holding a list.
+- 2026-09-22, decided by the IR's typed columns: `.ok` is a value's
+  status, a list's included (the spec's "Non-fallible values always have
+  `ok` of `true`"); a frame column's `.ok` is its rows' validity. The
+  lowering picks by static type (`Meta::Valid` for a `Ty::Column`, else
+  `Meta::Ok`), the interpreter's `ops::field("ok")` stopped mapping over
+  lists (`ops::valid` does it for columns), and the compiled program
+  dropped its `Vec<String>` branch (`col_ok` is gone). finch's migration
+  job had refused a directory it had read (`if not listing.ok` on
+  `[true]`). Parity 50.
 - 2026-09-08, the interpreter's frame paths, read and left for the IR:
   a column read (`df.price`) builds one full value per row, so a
   million-row column costs about 120 MB of values before any work is

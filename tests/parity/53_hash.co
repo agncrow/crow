@@ -1,0 +1,11 @@
+--- hash[]: the digests, a password stored and checked the one way both
+--- modes share, and an algorithm nobody knows — an error, not a crash
+log[hash['hello', 'sha256']]
+log[hash['hello', 'md5']]
+stored = hash['correct horse', 'password']
+log[starts[stored, '$argon2id$v=19$']]
+log[hash['correct horse', stored] eq stored]
+log[hash['battery staple', stored] eq stored]
+bad = hash['x', 'crc']
+log[bad.ok]
+log[bad.reason]

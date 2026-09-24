@@ -1,0 +1,12 @@
+[
+  {"expect": "<span class=\"badge\">one</span>"},
+  {"expect": "<p>held in a local</p>"},
+  {"expect": "<p>a paragraph</p>"},
+  {"expect": "<strong>bold</strong>"},
+  {"event": "__field:note", "value": "<b>not bold</b>"},
+  {"expect": "<p>&lt;b&gt;not bold&lt;/b&gt;</p>"},
+  {"absent": "<b>not bold</b>"},
+  {"event": "__field:note", "value": "<img src=x onerror=alert(1)>"},
+  {"absent": "<img"},
+  {"expect": "&lt;img src=x onerror=alert(1)&gt;"}
+]

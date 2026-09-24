@@ -1,0 +1,15 @@
+--- A big table pages: fifty rows at a time, saying which, with the page
+--- before and the page after; a table past the row budget without `page`
+--- is refused in its place, never cut.
+use web, ui, frame
+
+view render[]
+    many = with[frame.new[], 'n', range[120]]
+    huge = with[frame.new[], 'n', range[1500]]
+    return stack[
+        table[many, page = 50],
+        table[huge]
+    ]
+
+serve[3407]
+page['/', render]

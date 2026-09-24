@@ -27,7 +27,7 @@ pub(crate) const CORE_RESERVED: &[&str] = &[
     "shell",
     "hash",
     "find", "matches", "sub", "any", "all",
-    "later", "running",
+    "later", "running", "notice",
     "test",
     "now", "moment", "calendar", "parse_time", "captured", "chart",
     "cpu", "gpu", "nodes",
@@ -42,6 +42,7 @@ pub(crate) const WEB_RESERVED: &[&str] = &[
     "cors", "sessions", "templates", "cache", "limit",
     "uploads", "sse", "ws", "connect", "send", "recv", "close",
     "page", "static_dir", "smtp", "msgpack", "arrow", "bytes", "stream",
+    "reader", "sign_in", "sign_out", "download", "downloads",
 ];
 
 /// Web builtins the compiler implements but deliberately does NOT reserve
@@ -52,7 +53,7 @@ pub(crate) const WEB_EXTRA_FUNCTIONS: &[&str] = &["msgpack", "arrow", "bytes", "
 /// Reserved only in files that import ui
 pub(crate) const UI_RESERVED: &[&str] = &["fetch", "poll", "field", "slider", "checkbox", "toggle", "radio", "tabs", "progress", "icon", "today"];
 
-const BUILTINS: &[&str] = &[
+pub(crate) const BUILTINS: &[&str] = &[
     "log", "assert", "type",
     // Math
     "abs", "sqrt", "floor", "ceil", "round", "min", "max",
@@ -84,7 +85,8 @@ const BUILTINS: &[&str] = &[
     "hash",
     // Regex
     "find", "matches", "sub", "any", "all",
-    "later", "running",
+    "later", "running", "notice", "__notice_text", "__notice_at",
+    "sign_in", "sign_out", "__reader", "download",
     "test",
     // Date/time
     "now", "moment", "calendar", "parse_time", "captured", "chart",
@@ -107,6 +109,12 @@ const BUILTINS: &[&str] = &[
 pub struct Validator<'a> {
     ctx: &'a TypeContext,
     errors: Vec<String>,
+    /// For each error, the top-level declaration it was found in. After
+    /// module expansion a part's declarations carry its prefix, so the
+    /// caller can say which file an error belongs to.
+    owners: Vec<Option<String>>,
+    /// The top-level declaration being validated
+    current_decl: Option<String>,
     /// Variables known to be defined at the current point
     defined_vars: BTreeSet<String>,
     /// The types of the current function's own variables: a local reusing
@@ -143,6 +151,8 @@ impl<'a> Validator<'a> {
         Validator {
             ctx,
             errors: Vec::new(),
+            owners: Vec::new(),
+            current_decl: None,
             defined_vars: BTreeSet::new(),
             local_types: std::collections::HashMap::new(),
             reactive_here: false,
@@ -212,6 +222,7 @@ impl<'a> Validator<'a> {
                 Stmt::Assign { name, .. } => {
                     if !self.defined_vars.contains(name) {
                         self.current_line = prescan_line;
+                        self.current_decl = Some(name.clone());
                         self.check_reserved(name, "variable");
                     }
                     self.defined_vars.insert(name.clone());
@@ -221,6 +232,7 @@ impl<'a> Validator<'a> {
                     for n in names {
                         if !self.defined_vars.contains(n) {
                             self.current_line = prescan_line;
+                            self.current_decl = Some(n.clone());
                             self.check_reserved(n, "variable");
                         }
                         self.defined_vars.insert(n.clone());
@@ -231,8 +243,17 @@ impl<'a> Validator<'a> {
             }
         }
         self.current_line = 0;
+        self.current_decl = None;
 
         for stmt in stmts {
+            // errors are owned by the declaration they are found in; a line
+            // marker belongs to the statement after it, and an attached test
+            // (`test[p]` after a fn) to the fn it follows
+            match stmt {
+                Stmt::Line(_) => {}
+                Stmt::TestBlock { name: None, .. } => {}
+                _ => self.current_decl = declared_name(stmt),
+            }
             self.validate_stmt(stmt);
         }
 
@@ -298,8 +319,14 @@ impl<'a> Validator<'a> {
                 if let Some(v) = first_fact_write(body, &self.module_vars) {
                     self.error(format!("derive {} writes '{}' — a derivation computes a value; only handlers write facts", name, v));
                 }
+                // a derivation's locals are its own, as a function's are: two
+                // derivations may each bind `out` to a different type
                 self.fn_depth += 1;
+                let outer_fn = self.current_fn.replace(name.clone());
+                let saved_locals = std::mem::take(&mut self.local_types);
                 for s in body { self.validate_stmt(s); }
+                self.local_types = saved_locals;
+                self.current_fn = outer_fn;
                 self.fn_depth -= 1;
                 self.defined_vars = saved;
                 self.defined_vars.insert(name.clone());
@@ -633,6 +660,13 @@ impl<'a> Validator<'a> {
             .bare_import_lines
             .keys()
             .any(|p| p == "web" || p.starts_with("web."));
+        if web_bare && name == "reader" {
+            self.error(format!(
+                "'reader' is the page's signed-in reader, which sign_in and sign_out set — rename the {}",
+                what
+            ));
+            return;
+        }
         if web_bare && WEB_RESERVED.contains(&name) {
             self.error(format!(
                 "'{}' is a web builtin (use web) — rename the {}",
@@ -659,7 +693,7 @@ impl<'a> Validator<'a> {
     fn validate_call(&mut self, name: &str, args: &[Expr]) {
         // Test-harness builtins exist only inside test blocks (which never
         // reach a build) — accept them there, reject them anywhere else.
-        if matches!(name, "app" | "click" | "elements" | "change" | "box" | "fits" | "style") {
+        if matches!(name, "app" | "click" | "elements" | "change" | "box" | "fits" | "style" | "downloads") {
             if self.in_test_block {
                 for a in args {
                     self.validate_expr(a);
@@ -715,6 +749,23 @@ impl<'a> Validator<'a> {
                 }
                 for e in crow_runtime::layout::render(name, &literal).errors {
                     self.error(format!("{}: {}", name, e));
+                }
+                // a widget's events each name a handler
+                if name == "widget" {
+                    for (k, v) in pairs {
+                        if !matches!(k, Expr::Ident(s) | Expr::Str(s) if s == "on") {
+                            continue;
+                        }
+                        let named = crate::lower::map_literal_pairs(v).unwrap_or_default();
+                        for (event, h) in &named {
+                            if !matches!(h, Expr::Ident(f) if self.ctx.functions.contains_key(f)) {
+                                self.error(format!("widget: on = map[{} = …] names a handler — a function the widget's event runs: on = map[{} = choose]", event, event));
+                            }
+                        }
+                        if named.is_empty() && !matches!(v, Expr::Map(p) if p.is_empty()) {
+                            self.error("widget: on is a map from each event the widget sends to its handler: on = map[pick = choose]".to_string());
+                        }
+                    }
                 }
             }
             // Inside a view the element wins over a module function of the
@@ -793,6 +844,53 @@ impl<'a> Validator<'a> {
 
         // Known builtin? Check arg count
         if BUILTINS.contains(&name) {
+            // the notice is the session's: only something acting for a
+            // session — a handler, or a function a handler calls — can say it
+            if name == "notice" && !self.current_fn.as_ref().map_or(false, |f| self.ctx.view_handlers.contains(f)) {
+                self.error("notice[] tells a page's reader something: call it in a handler, or in a function a handler calls".to_string());
+            }
+            // signing in and out is a session's: a handler does it
+            if name == "download" && !self.current_fn.as_ref().map_or(false, |f| self.ctx.view_handlers.contains(f)) {
+                self.error("download[] hands the page's reader a file: call it in a handler, or in a function a handler calls".to_string());
+            }
+            if matches!(name, "sign_in" | "sign_out") && !self.current_fn.as_ref().map_or(false, |f| self.ctx.view_handlers.contains(f)) {
+                self.error(format!("{}[] signs the page's reader {}: call it in a handler, or in a function a handler calls", name, if name == "sign_in" { "in" } else { "out" }));
+            }
+            // a file field binds a map: the runtime puts the file's name,
+            // type, size and path there
+            if name == "field" && args.len() == 4 && matches!(&args[2], Expr::Str(k) if k == "file") {
+                let t = match self.ctx.infer_expr(&args[1]) {
+                    CrowType::Result(inner) => *inner,
+                    other => other,
+                };
+                if !matches!(t, CrowType::Map(_) | CrowType::Unknown) {
+                    self.error(format!("a file field binds a map, which holds the file picked — declare it `name = map[]` (got {})", t.crow_name()));
+                }
+            }
+            // the reader is the page's, as a module variable is the module's:
+            // a plain function takes it as a parameter
+            if name == "__reader" && self.fn_depth > 0 && !self.in_test_block {
+                if let Some(f) = self.current_fn.clone() {
+                    let live = self.ctx.views.contains(&f) || self.ctx.derives.contains(&f) || self.ctx.view_handlers.contains(&f);
+                    if !live {
+                        self.error(format!(
+                            "in {}: reader is the page's signed-in reader — read it in a view, a derivation or a handler; a plain function takes it as a parameter: {}[reader]",
+                            f, f
+                        ));
+                    }
+                }
+            }
+            // the reader is a map of strings: it travels in a cookie, read
+            // before the program runs
+            if name == "sign_in" && args.len() == 1 {
+                let t = match self.ctx.infer_expr(&args[0]) {
+                    CrowType::Result(inner) => *inner,
+                    other => other,
+                };
+                if !matches!(&t, CrowType::Map(inner) if matches!(inner.as_ref(), CrowType::Str | CrowType::Unknown)) && !matches!(t, CrowType::Unknown) {
+                    self.error(format!("sign_in[] takes the reader as a map of strings — an id, a name, a role: sign_in[map[id = '42', name = 'Ada']] (got {})", t.crow_name()));
+                }
+            }
             self.check_builtin_args(name, argc);
             return;
         }
@@ -874,6 +972,11 @@ impl<'a> Validator<'a> {
             "calendar" | "parse_time" => argc == 2,
             "now" => argc == 0,
             "captured" => argc == 1,
+            "notice" => argc == 1,
+            "__notice_text" | "__notice_at" => argc == 0,
+            "sign_in" => argc == 1,
+            "download" => argc == 2,
+            "sign_out" | "__reader" => argc == 0,
             "chart" => argc == 12,
             "push" | "append" => argc == 2,
             "pop" | "sort" | "reverse" => argc == 1,
@@ -912,7 +1015,7 @@ impl<'a> Validator<'a> {
             "elapsed" => argc == 2,
             // Web
             "route" => (2..=4).contains(&argc), // route[path, handler] / +method / legacy app-first
-            "serve" => argc == 1 || argc == 7,   // serve[port] (pre-lower) or serve[port, refresh, budget, theme, density, accent, wide]
+            "serve" => argc == 1 || argc == 9,   // serve[port] (pre-lower) or serve[port, refresh, budget, theme, density, accent, wide, keep, uploads]
             "respond" => argc == 2,
             "redirect" | "html" | "text" => argc == 1,
             "msgpack" | "arrow" | "bytes" | "stream" => argc == 1,
@@ -995,6 +1098,27 @@ impl<'a> Validator<'a> {
 
     fn error(&mut self, msg: String) {
         self.errors.push(format!("line {}: {}", self.current_line, msg));
+        self.owners.push(self.current_decl.clone());
+    }
+
+    /// Each error with the top-level declaration it was found in, in the
+    /// order `validate` reported them.
+    pub fn errors_with_owners(&self) -> Vec<(String, Option<String>)> {
+        self.errors.iter().cloned().zip(self.owners.iter().cloned()).collect()
+    }
+}
+
+/// The name a top-level statement declares, which module expansion prefixes
+/// with its part's path.
+fn declared_name(stmt: &Stmt) -> Option<String> {
+    match stmt {
+        Stmt::FnDecl { name, .. }
+        | Stmt::Derive { name, .. }
+        | Stmt::StructDecl { name, .. }
+        | Stmt::Assign { name, .. } => Some(name.clone()),
+        Stmt::MultiAssign { names, .. } => names.first().cloned(),
+        Stmt::TestBlock { name, .. } => name.clone(),
+        _ => None,
     }
 }
 
@@ -1040,6 +1164,36 @@ mod tests {
         let result = validate_source("use web, ui\nn = 1\nderive cfg\n    return n + 1\nfn band[]\n    return cfg * 2\nview render[]\n    return p['`band[]`']\npage['/', render]\n");
         let err = result.unwrap_err();
         assert!(err.contains("in band: derivations are not visible inside functions — read 'cfg' in a view or handler"), "{}", err);
+    }
+
+    /// A derivation's locals are its own, as a function's are: two
+    /// derivations may each bind `out` to a different type (finch's session
+    /// part: the universe's symbols beside its dataset ids), while one
+    /// derivation still cannot change a local's type
+    #[test]
+    fn two_derivations_keep_their_own_locals() {
+        let result = validate_source("use web, ui\nn = 3\nderive names\n    out = for i in range[n]\n        'a`i`'\n    return out\nderive ids\n    out = for i in range[n]\n        i\n    return out\nview render[]\n    return p['`len[names]` `len[ids]`']\npage['/', render]\n");
+        assert!(result.is_ok(), "{:?}", result);
+        let result = validate_source("use web, ui\nderive d\n    x = 1\n    x = 'a'\n    return x\nview render[]\n    return p['`d`']\npage['/', render]\n");
+        let err = result.unwrap_err();
+        assert!(err.contains("cannot reassign 'x' from int to str"), "{}", err);
+    }
+
+    /// Each error keeps the top-level declaration it was found in: after
+    /// module expansion that name carries the part's prefix, which is how
+    /// the gate names the part's file
+    #[test]
+    fn an_error_is_owned_by_its_declaration() {
+        let src = "use web, ui\nn = 1\nderive d\n    x = 1\n    x = 'a'\n    return x\nview render[]\n    return p['`d` `n`']\npage['/', render]\n";
+        let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        let mut validator = Validator::new(&ctx);
+        assert!(validator.validate(&stmts).is_err());
+        let owned = validator.errors_with_owners();
+        assert_eq!(owned.len(), 1, "{:?}", owned);
+        assert!(owned[0].0.contains("cannot reassign 'x'"), "{:?}", owned);
+        assert_eq!(owned[0].1.as_deref(), Some("d"));
     }
 
     #[test]

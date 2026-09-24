@@ -25,14 +25,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Unit tests
         run: cargo test --workspace
-      - name: Live runtime tests (the feature the workspace run leaves off)
-        run: cargo test -p crow_web --features live
+      - name: Live runtime and server tests (the features the workspace run leaves off)
+        run: cargo test -p crow_web --features live,http
       - name: Build crow
         run: cargo build --release
       - name: Docs cover the compiler (and nothing more)
         run: ./target/release/crow test --docs
       - name: Parity corpus (both execution modes must agree)
         run: ./target/release/crow test --parity
+      - name: Served pages match across both modes
+        run: ./target/release/crow test --served
       - name: Benchmarks run in both modes (small sizes, no timing thresholds)
         run: ./target/release/crow test --bench --quick
       - name: Book (every code block runs in both modes)
@@ -47,6 +49,13 @@ jobs:
         run: ./target/release/crow test examples/layout_dashboard.co
       - name: Parts (a page composed of modules with facts, derivations and views)
         run: ./target/release/crow test tests/parts/views/sim.co && ./target/release/crow test tests/parts/sim/clock.co && ./target/release/crow check tests/parts/main.co < /dev/null
+      - name: The task board, the second reference app (its harness tests, then its check against the accepted baseline; `--served` above drives it in both modes)
+        run: |
+          cd examples/taskboard
+          ../../target/release/crow test board/door.co
+          ../../target/release/crow test board/cards.co
+          ../../target/release/crow test board/page.co
+          ../../target/release/crow check main.co < /dev/null
       - name: The app's book (derived from the parts fixture, with wireframes)
         run: cd tests/parts && ../../target/release/crow book --write && test -f .crow/book/site/pages.html && grep -q '<svg' .crow/book/site/pages.html
       - name: Disk used by the run

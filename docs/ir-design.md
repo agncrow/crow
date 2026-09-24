@@ -218,6 +218,14 @@ benchmark stays.
 
 ## 7. The session layer (one step after the IR)
 
+*Design and plan, decided 2026-09-23 after measuring finch:
+`session-layer-design.md` — what the layer adds beyond the list below
+(derivations and handlers off the loop, one session's facts in both the
+harness and the server, writes that reach every reader, sessions that
+outlive a connection, the URL, confirmation, patches, then sign-in,
+files, big tables and widgets) and the order to build it in. It moves
+the session layer ahead of step 4.*
+
 `crow_runtime::session` implements `core-design.md` for both backends:
 
 - **Facts**: a versioned store per app and per session; a handler runs
@@ -431,6 +439,25 @@ deleted in the same commit that makes the new path the default.
    code's shape to the emitter and drop the ones the parity suite
    already proves; then fold `lower.rs`, `type_infer.rs` and
    `validator.rs` as §12 decided.
+
+   *What the emitter must not inherit (building finch, 2026-09-22).*
+   Four compiled-only bugs were fixed in `transpiler.rs`; the emitter
+   must print the same meanings. A handler reads a derivation at the
+   point of use, after its writes land (`refresh_derivations`: the
+   transpiler flushes the handler's own writes and reads the derivation
+   again before each statement that reads it; a snapshot at the
+   handler's start announced stale values). A Crow name Rust reserves
+   (`move`, `impl`, `match`) is renamed for Rust after the gate
+   (`rust_names.rs`; struct fields are written raw, `r#type`), and a trace
+   still names it as written. An operator hands a failed operand on with
+   its trace unchanged; only a call receiving an error and a branch
+   refused in a function add a place, and a top-level halt reads
+   `runtime error: line N: cannot branch on an error value — …`. And
+   sqlite's computed columns are typed from the statement when the
+   describe probe returns no row (`sql_types.rs`). Parity 50–52 hold the
+   script-level ones; the handler read is pinned by the transpiler test
+   `a_handler_reads_a_derivation_after_a_write` and needs its emitter
+   twin.
 
    *Gotchas kept from step 3.* The book runner's worker caches
    (`$TMPDIR/crow_book_test/w*/.crow_build/target`) can rot (a missing
