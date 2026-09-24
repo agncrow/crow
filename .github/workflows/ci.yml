@@ -27,6 +27,8 @@ jobs:
         run: cargo test --workspace
       - name: Live runtime and server tests (the features the workspace run leaves off)
         run: cargo test -p crow_web --features live,http
+      - name: Free the unit tests' build (every later step runs the release binary)
+        run: rm -rf target/debug && df -h / | tail -1
       - name: Build crow
         run: cargo build --release
       - name: Docs cover the compiler (and nothing more)
@@ -37,6 +39,8 @@ jobs:
         run: ./target/release/crow test --served
       - name: Benchmarks run in both modes (small sizes, no timing thresholds)
         run: ./target/release/crow test --bench --quick
+      - name: Free the suites' shared build (the book's workers build their own)
+        run: rm -rf .crow_build && df -h / | tail -1
       - name: Book (every code block runs in both modes)
         run: ./target/release/crow test --book
       - name: Book site built by Crow (layout tested, pages written)
