@@ -99,6 +99,9 @@ pub struct IrInterp {
     pub(crate) serve_config: Option<Vec<CrowValue>>,
     /// Why the last transaction stopped, when it did.
     pub(crate) last_stop: Option<String>,
+    /// A collecting loop's body handed the function its value (a return, an
+    /// error handed back from a condition): what the function returns.
+    returning: Option<CrowValue>,
 }
 
 /// An effect a handler held to its commit (core-design.md §1.2).
@@ -115,6 +118,10 @@ enum HeldEffect {
 /// How a stop travels out of a handler, through every helper, to the
 /// harness verb that ran it: an error the walker never shows.
 const STOP: &str = "\u{1}stop\u{1}";
+
+/// How a return from inside a collecting loop, an expression, travels to
+/// the function it leaves; the value waits in `returning`.
+const RETURN: &str = "\u{1}return\u{1}";
 
 /// The pipeline every runner shares: the front end's lowering, inference,
 /// then the lowering to the IR.
@@ -259,6 +266,7 @@ impl IrInterp {
             page_config: None,
             serve_config: None,
             last_stop: None,
+            returning: None,
             harness_toast: true,
         }
     }
@@ -903,7 +911,12 @@ impl IrInterp {
                     let yielded = self.last_value.take();
                     self.pop_scope();
                     match r? {
-                        Flow::Return(_) => return Err("cannot return from inside a for loop".to_string()),
+                        // the function returns from here: an expression
+                        // cannot, so the value travels to its call
+                        Flow::Return(v) => {
+                            self.returning = Some(v);
+                            return Err(RETURN.to_string());
+                        }
                         Flow::Break => break,
                         _ => {}
                     }
@@ -1627,6 +1640,7 @@ impl IrInterp {
         }
         self.frames.push(Frame { scopes: vec![Arc::new(scope)], fn_name: name.to_string() });
         let r = self.exec_stmts(&f.body);
+        let r = self.returned(r);
         self.frames.pop();
         if is_view {
             self.in_view -= 1;
@@ -1638,6 +1652,15 @@ impl IrInterp {
         }
     }
 
+    /// A body's outcome, with a return from inside one of its collecting
+    /// loops taken as the body's own.
+    fn returned(&mut self, r: Result<Flow, String>) -> Result<Flow, String> {
+        match r {
+            Err(e) if e == RETURN => Ok(Flow::Return(self.returning.take().unwrap_or_else(CrowValue::done))),
+            other => other,
+        }
+    }
+
     /// A derivation, recomputed on every read for now (the memoized,
     /// versioned form comes with the session layer), stamped with its moment.
     fn derived(&mut self, name: &str) -> Result<CrowValue, String> {
@@ -1646,6 +1669,7 @@ impl IrInterp {
         let saved_line = self.line;
         self.frames.push(Frame { scopes: vec![Arc::new(HashMap::new())], fn_name: name.to_string() });
         let r = self.exec_stmts(&d.body);
+        let r = self.returned(r);
         self.frames.pop();
         self.line = saved_line;
         let mut v = match r? {

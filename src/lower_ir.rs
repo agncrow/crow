@@ -26,7 +26,181 @@ pub fn lower_with_known(stmts: &[S], ctx: &mut TypeContext, part_name: &str, kno
     let mut l = Lowerer::new(ctx, in_ui);
     l.scopes[0].extend(known.iter().cloned());
     let part = l.lower_part(stmts, part_name)?;
-    Ok(Program { parts: vec![part] })
+    let mut program = Program { parts: vec![part] };
+    decide_loops(&mut program);
+    Ok(program)
+}
+
+// ── loops: in parallel or in order ──────────────────────────────────
+
+/// Decides every loop of the program at once, now that each function's
+/// kind and reach are known: a loop runs its iterations in parallel when
+/// nothing its body does can show the order they ran in (spec §14, For
+/// Loops). Both modes read the flag; neither decides for itself.
+fn decide_loops(program: &mut Program) {
+    for part in &mut program.parts {
+        let order = LoopOrder::of(part);
+        let decide = |var: &str, body: &Block| !order.keeps_order(var, body);
+        for f in &mut part.fns {
+            set_loops(&mut f.body, &decide);
+        }
+        for d in &mut part.derives {
+            set_loops(&mut d.body, &decide);
+        }
+        for t in &mut part.tests {
+            set_loops(&mut t.body, &decide);
+        }
+        for fact in &mut part.facts {
+            set_loops_expr(&mut fact.default, &decide);
+        }
+        set_loops(&mut part.main, &decide);
+    }
+}
+
+/// What keeps a loop in order, program-wide: the functions a call to
+/// which does, and whether a call through a function value might.
+struct LoopOrder {
+    known: BTreeSet<String>,
+    ordered: BTreeSet<String>,
+    through_values: bool,
+}
+
+impl LoopOrder {
+    fn of(part: &Part) -> LoopOrder {
+        let known: BTreeSet<String> = part.fns.iter().map(|f| f.name.clone()).collect();
+        let mut ordered: BTreeSet<String> = BTreeSet::new();
+        // each function's callees (a function handed to a call counts: the
+        // callee may call it) and whether it calls through a value
+        let mut calls: BTreeMap<String, (BTreeSet<String>, bool)> = BTreeMap::new();
+        for f in &part.fns {
+            let mut here = false;
+            let mut callees: BTreeSet<String> = BTreeSet::new();
+            let mut through = false;
+            visit_block(&f.body, &mut |e| {
+                here |= shows_order(e);
+                match e {
+                    Expr::Call { target: Target::User(n), .. } => {
+                        callees.insert(n.clone());
+                    }
+                    Expr::Index { base, .. } if matches!(base.ty(), Ty::Fn(..)) => through = true,
+                    _ => {}
+                }
+                callees.extend(handed(e));
+            });
+            visit_stmts(&f.body, &mut |s| here |= matches!(s, Stmt::Store { .. }));
+            if here || !f.effects.is_empty() || matches!(f.kind, FnKind::Handler | FnKind::Helper | FnKind::View) {
+                ordered.insert(f.name.clone());
+            }
+            calls.insert(f.name.clone(), (callees, through));
+        }
+        // every function the program holds as a value: a call through one
+        // may reach any of them
+        let mut values: BTreeSet<String> = BTreeSet::new();
+        let mut note = |e: &Expr| {
+            if let Expr::FnRef(n, _) = e {
+                values.insert(n.clone());
+            }
+        };
+        for f in &part.fns {
+            visit_block(&f.body, &mut note);
+        }
+        for d in &part.derives {
+            visit_block(&d.body, &mut note);
+        }
+        for t in &part.tests {
+            visit_block(&t.body, &mut note);
+        }
+        for fact in &part.facts {
+            visit_expr(&fact.default, &mut note);
+        }
+        visit_block(&part.main, &mut note);
+        loop {
+            let through_values = values.iter().any(|v| ordered.contains(v) || !known.contains(v));
+            let mut grew = false;
+            for (name, (callees, through)) in &calls {
+                if ordered.contains(name) {
+                    continue;
+                }
+                if callees.iter().any(|c| ordered.contains(c) || !known.contains(c)) || (*through && through_values) {
+                    ordered.insert(name.clone());
+                    grew = true;
+                }
+            }
+            if !grew {
+                return LoopOrder { known, ordered, through_values };
+            }
+        }
+    }
+
+    /// Whether a loop binding `var` over `body` must run in order: the body
+    /// writes a variable from outside it or a fact, leaves the function (a
+    /// return, a propagated error, a handler's stop: the first in input
+    /// order decides), or reaches something whose order shows.
+    fn keeps_order(&self, var: &str, body: &Block) -> bool {
+        // the iteration's own names: the loop's variable, what the body
+        // binds, and the variables of loops inside it
+        let mut own: BTreeSet<String> = BTreeSet::new();
+        own.insert(var.to_string());
+        visit_stmts(body, &mut |s| match s {
+            Stmt::Let { var, .. } | Stmt::For { var, .. } => {
+                own.insert(var.clone());
+            }
+            _ => {}
+        });
+        visit_block(body, &mut |e| {
+            if let Expr::ForExpr { var, .. } = e {
+                own.insert(var.clone());
+            }
+        });
+        let mut order = false;
+        visit_stmts(body, &mut |s| {
+            order |= match s {
+                Stmt::Set { var, .. } | Stmt::SetPath { var, .. } => !own.contains(var),
+                Stmt::Store { .. } | Stmt::Return(_) | Stmt::Propagate { .. } | Stmt::Stop { .. } => true,
+                _ => false,
+            }
+        });
+        visit_block(body, &mut |e| {
+            order |= shows_order(e)
+                || match e {
+                    Expr::Call { target: Target::User(n), .. } => self.ordered.contains(n) || !self.known.contains(n),
+                    Expr::Index { base, .. } => matches!(base.ty(), Ty::Fn(..)) && self.through_values,
+                    _ => false,
+                }
+                || handed(e).iter().any(|n| self.ordered.contains(n) || !self.known.contains(n));
+        });
+        order
+    }
+}
+
+/// A node whose order shows by itself: an effect, a draw from the seeded
+/// generator, an assertion, a look at background work, or a paged table
+/// (the render numbers them in order).
+fn shows_order(e: &Expr) -> bool {
+    match e {
+        Expr::Effect { .. } => true,
+        Expr::Call { target: Target::Runtime(_) | Target::Module(..), .. } => {
+            let n = call_name(e).unwrap_or_default();
+            is_effect(&n) || DRAWS.contains(&n.as_str()) || matches!(n.as_str(), "assert" | "running")
+        }
+        Expr::Tree { element, attrs, .. } => element == "table" && attrs.iter().any(|(k, _)| k == "page"),
+        _ => false,
+    }
+}
+
+/// The functions a call hands over as values (`any[xs, is_bad]`): the
+/// callee may call them.
+fn handed(e: &Expr) -> Vec<String> {
+    match e {
+        Expr::Call { args, .. } | Expr::Effect { args, .. } => args
+            .iter()
+            .filter_map(|a| match a {
+                Expr::FnRef(n, _) => Some(n.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 pub fn ty_of(t: &CrowType) -> Ty {
@@ -537,14 +711,14 @@ impl<'a> Lowerer<'a> {
             S::For { var, iter, body } => {
                 let it = self.lower_expr(iter)?;
                 let mut prelude = std::mem::take(&mut self.pre);
-                let outer: HashSet<String> = self.scopes.iter().flat_map(|s| s.iter().cloned()).collect();
-                let parallel = !assigns_any_of(body, &outer) && !reaches_effect(body, self.ctx) && !assigns_any(body, &self.ctx.facts);
                 self.scopes.push([var.clone()].into_iter().collect());
                 let saved = self.bind_loop_var(var, &it.ty());
                 let b = self.lower_block(body)?;
                 self.unbind_loop_var(var, saved);
                 self.scopes.pop();
-                prelude.push(Stmt::For { var: var.clone(), iter: it, body: b, parallel });
+                // in parallel or in order: decided once every function is
+                // known (decide_loops)
+                prelude.push(Stmt::For { var: var.clone(), iter: it, body: b, parallel: false });
                 prelude
             }
             S::Return(None) => vec![Stmt::Return(None)],
@@ -767,16 +941,14 @@ impl<'a> Lowerer<'a> {
             A::Named { name, .. } => return Err(format!("lowering: a named argument ('{}') survived the lowering of named arguments", name)),
             A::ForExpr { var, iter, body } => {
                 let it = self.lower_expr(iter)?;
-                // the statement form's rule decides a collecting loop too
-                let outer: HashSet<String> = self.scopes.iter().flat_map(|s| s.iter().cloned()).collect();
-                let parallel = !assigns_any_of(body, &outer) && !reaches_effect(body, self.ctx) && !assigns_any(body, &self.ctx.facts);
                 self.scopes.push([var.clone()].into_iter().collect());
                 let saved = self.bind_loop_var(var, &it.ty());
                 let mut b = self.lower_block(body)?;
                 self.unbind_loop_var(var, saved);
                 self.scopes.pop();
                 place_moves_in(&mut b, &HashSet::new(), Some(&[var.clone()].into_iter().collect()));
-                Expr::ForExpr { var: var.clone(), iter: Box::new(it), body: b, ty, parallel }
+                // decided with the statement form's rule (decide_loops)
+                Expr::ForExpr { var: var.clone(), iter: Box::new(it), body: b, ty, parallel: false }
             }
         })
     }
@@ -1024,10 +1196,6 @@ fn assigns_any(body: &[S], names: &BTreeSet<String>) -> bool {
     })
 }
 
-fn assigns_any_of(body: &[S], names: &HashSet<String>) -> bool {
-    let set: BTreeSet<String> = names.iter().cloned().collect();
-    assigns_any(body, &set)
-}
 
 fn root_ident(e: &A) -> Option<&str> {
     match e {
@@ -1078,42 +1246,6 @@ fn facts_written_by_fns(stmts: &[S], facts: &BTreeSet<String>) -> BTreeSet<Strin
         }
     }
     out
-}
-
-fn reaches_effect(body: &[S], ctx: &TypeContext) -> bool {
-    fn in_expr(e: &A, ctx: &TypeContext) -> bool {
-        match e {
-            A::Call { callee, args } => {
-                let here = match callee.as_ref() {
-                    A::Ident(n) => is_effect(n) || ctx.functions.contains_key(n),
-                    A::FieldAccess { field, .. } => is_effect(field),
-                    _ => false,
-                };
-                here || args.iter().any(|a| in_expr(a, ctx))
-            }
-            A::BinOp { left, right, .. } => in_expr(left, ctx) || in_expr(right, ctx),
-            A::UnaryOp { expr, .. } => in_expr(expr, ctx),
-            A::FieldAccess { object, .. } => in_expr(object, ctx),
-            A::Array(items) => items.iter().any(|i| in_expr(i, ctx)),
-            A::Map(pairs) => pairs.iter().any(|(k, v)| in_expr(k, ctx) || in_expr(v, ctx)),
-            A::Named { value, .. } => in_expr(value, ctx),
-            A::ForExpr { iter, body, .. } => in_expr(iter, ctx) || reaches_effect(body, ctx),
-            // an interpolation reaches what its spans reach
-            A::Str(s) => crate::parallel::str_interpolation_spans(s).iter().any(|e| in_expr(e, ctx)),
-            _ => false,
-        }
-    }
-    body.iter().any(|s| match s {
-        S::Assign { value, .. } => in_expr(value, ctx),
-        S::MultiAssign { values, .. } => values.iter().any(|v| in_expr(v, ctx)),
-        S::FieldAssign { value, .. } => in_expr(value, ctx),
-        S::IndexAssign { index, value, .. } => in_expr(index, ctx) || in_expr(value, ctx),
-        S::ExprStmt(e) | S::Return(Some(e)) => in_expr(e, ctx),
-        S::If { condition, then_body, else_body } => in_expr(condition, ctx) || reaches_effect(then_body, ctx) || else_body.as_ref().map_or(false, |b| reaches_effect(b, ctx)),
-        S::For { iter, body, .. } => in_expr(iter, ctx) || reaches_effect(body, ctx),
-        S::While { condition, body } => in_expr(condition, ctx) || reaches_effect(body, ctx),
-        _ => false,
-    })
 }
 
 fn reads_of_expr(e: &A, names: &mut BTreeSet<String>, clock: &mut bool) {
@@ -1560,5 +1692,59 @@ mod tests {
         let ir = ir_of("total = 0\nfor x in [1, 2, 3]\n    total = total + x\nfor y in [1, 2]\n    z = y * 2\nlog[total]\n");
         assert!(ir.contains("for x in [1, 2, 3]\n"), "{}", ir);
         assert!(ir.contains("for y in [1, 2]  parallel"), "{}", ir);
+    }
+
+    /// The printed line of the loop whose body mentions `needle`.
+    fn loop_line<'a>(ir: &'a str, needle: &str) -> &'a str {
+        ir.lines().find(|l| l.contains(" for ") && l.contains(needle)).unwrap_or_else(|| panic!("no loop over {} in\n{}", needle, ir))
+    }
+
+    /// One rule for both modes (spec §14, For Loops): a loop over a
+    /// function runs in parallel when the function has no side effects,
+    /// however deep they are, and in order when it has one
+    #[test]
+    fn a_loop_over_a_function_is_parallel_only_without_side_effects() {
+        let ir = ir_of("fn sq[x]\n    return x * x\nfn say[x]\n    log[x]\n    return x\nfn relay[x]\n    return say[x]\nxs = for i in [1, 2, 3]\n    sq[i]\nys = for i in [1, 2, 3]\n    relay[i]\nlog[xs]\nlog[ys]\n");
+        assert!(loop_line(&ir, "call sq(").ends_with("parallel"), "{}", ir);
+        assert!(!loop_line(&ir, "call relay(").ends_with("parallel"), "{}", ir);
+    }
+
+    /// A seeded program's draws repeat only in the order written: a loop
+    /// that draws runs in order (it ran in parallel, and three runs of a
+    /// seeded script gave three answers)
+    #[test]
+    fn a_loop_that_draws_runs_in_order() {
+        let ir = ir_of("use math\nseed[1]\nxs = for i in [1, 2, 3]\n    rand[]\nys = for i in [1, 2]\n    randn[2]\nlog[xs]\nlog[ys]\n");
+        assert!(!loop_line(&ir, "rand()").ends_with("parallel"), "{}", ir);
+        assert!(!loop_line(&ir, "randn").ends_with("parallel"), "{}", ir);
+    }
+
+    /// A view renders in order (the page's stale marks and paged tables
+    /// are kept in render order); plain elements are values
+    #[test]
+    fn a_loop_that_renders_a_view_runs_in_order() {
+        let ir = ir_of("use web, ui\n\nitems = ['a', 'b']\n\nview item[x]\n    return p[x]\n\nview render[]\n    plain = for x in items\n        span[x]\n    viewed = for x in items\n        item[x]\n    return stack[plain, viewed]\n\nserve[3996]\npage['/', render]\n");
+        assert!(loop_line(&ir, "span").ends_with("parallel"), "{}", ir);
+        assert!(!loop_line(&ir, "call item(").ends_with("parallel"), "{}", ir);
+    }
+
+    /// A call through a function value reaches any function the program
+    /// holds as a value; handing one to a builtin is a call of it too
+    #[test]
+    fn a_function_value_counts_by_what_it_could_be() {
+        let pure = ir_of("fn keep[items, f]\n    out = for x in items\n        if f[x]\n            x\n    return out\nfn even[x]\n    return x % 2 eq 0\nlog[keep[[1, 2, 3], even]]\nrows = for r in [[1, 2], [3]]\n    any[r, even]\nlog[rows]\n");
+        assert!(loop_line(&pure, "f[").ends_with("parallel"), "{}", pure);
+        assert!(loop_line(&pure, "any(").ends_with("parallel"), "{}", pure);
+        let loud = ir_of("fn keep[items, f]\n    out = for x in items\n        if f[x]\n            x\n    return out\nfn loud[x]\n    log[x]\n    return true\nlog[keep[[1, 2, 3], loud]]\nrows = for r in [[1, 2], [3]]\n    any[r, loud]\nlog[rows]\n");
+        assert!(!loop_line(&loud, "f[").ends_with("parallel"), "{}", loud);
+        assert!(!loop_line(&loud, "any(").ends_with("parallel"), "{}", loud);
+    }
+
+    /// A body that can leave the function (an error handed back from a
+    /// condition) runs in order: the first failure in input order decides
+    #[test]
+    fn a_loop_that_can_return_an_error_runs_in_order() {
+        let ir = ir_of("fn f[xs]\n    out = for x in xs\n        if int[x] gt 0\n            x\n    return len[out]\nlog[f[['1', '2']]]\n");
+        assert!(!loop_line(&ir, "for x in").ends_with("parallel"), "{}", ir);
     }
 }

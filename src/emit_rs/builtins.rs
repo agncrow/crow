@@ -117,6 +117,17 @@ impl Emitter {
     }
 
     /// A module function by the registry: `math.zeros`, `frame.load`.
+    /// An argument a collection keeps (a pushed value, a map's key or
+    /// value): a variable read is cloned, so the variable stays usable and a
+    /// loop's borrowed variable becomes a value of its own.
+    pub(crate) fn kept(arg: &Expr, printed: &str) -> String {
+        if matches!(Emitter::raw(arg), Expr::Local(..) | Expr::Move(..) | Expr::Load(..)) {
+            format!("({}).clone()", printed)
+        } else {
+            printed.to_string()
+        }
+    }
+
     fn registry_call(&mut self, name: &str, args: &[Expr], arg_strs: &[String]) -> String {
         let mut arg_types: Vec<CrowType> = args.iter().map(|x| self.tt(x)).collect();
         let mut strs = arg_strs.to_vec();
@@ -516,7 +527,10 @@ impl Emitter {
                 } else {
                     self.needs_crow_runtime = true;
                     let first = self.moved_or_cloned(&args[0], &a[0]);
-                    format!("crow_runtime::core::push({}, {})", first, a[1])
+                    // the list keeps the value: a variable read stays usable
+                    // (a loop's variable is borrowed from what it walks)
+                    let item = Self::kept(&args[1], &a[1]);
+                    format!("crow_runtime::core::push({}, {})", first, item)
                 }
             }
             "push" if n == 2 => format!("{}.push({})", a[0], a[1]),
@@ -577,12 +591,12 @@ impl Emitter {
                 let vt = self.tt(&args[2]);
                 let val = match vt {
                     CrowType::Fn(_, _) => format!("{} as {}", a[2], vt.to_rust_type()),
-                    _ if matches!(Emitter::raw(&args[2]), Expr::Local(..) | Expr::Move(..) | Expr::Load(..)) => format!("({}).clone()", a[2]),
-                    _ => a[2].clone(),
+                    _ => Self::kept(&args[2], &a[2]),
                 };
                 self.needs_crow_runtime = true;
                 let first = self.moved_or_cloned(&args[0], &a[0]);
-                format!("crow_runtime::core::map_set({}, {}, {})", first, a[1], val)
+                let key = Self::kept(&args[1], &a[1]);
+                format!("crow_runtime::core::map_set({}, {}, {})", first, key, val)
             }
             "del" if n == 2 => {
                 self.needs_crow_runtime = true;

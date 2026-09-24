@@ -540,41 +540,6 @@ impl Emitter {
         self.pop_scope();
     }
 
-    /// Does a loop body need to run in order: it writes a variable from
-    /// outside it or a fact, or reaches an effect (a user function counts
-    /// by what it reaches)? The IR's own `parallel` flag is stricter (any
-    /// user call keeps the walker's loop in order), so this is still decided
-    /// twice; making the flag this rule is the follow-up in ir-design.md §9.
-    fn loop_is_sequential(&self, var: &str, body: &[Stmt]) -> bool {
-        let mut writes_outer = false;
-        visit_stmts(body, &mut |s| match s {
-            Stmt::Set { var: v, .. } | Stmt::SetPath { var: v, .. } => {
-                if v != var && self.declared(v) {
-                    writes_outer = true;
-                }
-            }
-            Stmt::Store { .. } => writes_outer = true,
-            _ => {}
-        });
-        if writes_outer {
-            return true;
-        }
-        let mut effect = false;
-        visit_block(body, &mut |e| match e {
-            Expr::Effect { .. } => effect = true,
-            Expr::Call { target: Target::User(n), .. } => {
-                if let Some(f) = self.fns.get(n) {
-                    if !f.effects.is_empty() || matches!(f.kind, FnKind::Handler | FnKind::Helper) {
-                        effect = true;
-                    }
-                }
-            }
-            Expr::Call { target: Target::Runtime(n), .. } if matches!(n.as_str(), "later" | "running" | "notice" | "sign_in" | "sign_out" | "download" | "assert") => effect = true,
-            _ => {}
-        });
-        effect
-    }
-
     pub(crate) fn emit_stmt(&mut self, s: &Stmt) {
         if !matches!(s, Stmt::While { .. }) {
             let exprs: Vec<Expr> = match s {
@@ -897,7 +862,7 @@ impl Emitter {
         }
     }
 
-    fn emit_for(&mut self, var: &str, iter: &Expr, body: &[Stmt], _parallel: bool) {
+    fn emit_for(&mut self, var: &str, iter: &Expr, body: &[Stmt], parallel: bool) {
         let iter_str = self.expr(iter);
         let iter_ty = self.tt(iter);
         let is_tensor = matches!(iter_ty, CrowType::NumArray(_));
@@ -906,8 +871,9 @@ impl Emitter {
             _ => CrowType::Unknown,
         };
         let is_copy = Self::is_copy_type(&elem);
+        // in parallel as the lowering decided, unless cpu[1] asked for one core
         let forced_sequential = self.cpu_count.map_or(false, |n| n <= 1);
-        let use_par = !forced_sequential && !self.loop_is_sequential(var, body);
+        let use_par = !forced_sequential && parallel;
         let actual = if is_tensor {
             if matches!(elem, CrowType::NumArray(_)) {
                 format!("{}.rows()", iter_str)

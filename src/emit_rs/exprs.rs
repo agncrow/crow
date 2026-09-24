@@ -100,7 +100,7 @@ impl Emitter {
             Expr::MapLit(pairs, _) => self.map_lit(pairs),
             Expr::RecordLit { name, fields } => self.record_lit(name, fields),
             Expr::Tree { element, attrs, children } => self.tree(element, attrs, children),
-            Expr::ForExpr { var, iter, body, .. } => self.for_expr(var, iter, body),
+            Expr::ForExpr { var, iter, body, parallel, .. } => self.for_expr(var, iter, body, *parallel, e),
             Expr::Deferred { name, .. } => format!("compile_error!(\"a held call to '{}' outside an event attribute\")", name),
         }
     }
@@ -822,10 +822,18 @@ impl Emitter {
         None
     }
 
-    fn for_expr(&mut self, var: &str, iter: &Expr, body: &[Stmt]) -> String {
-        let iter_str = self.expr(iter);
+    fn for_expr(&mut self, var: &str, iter: &Expr, body: &[Stmt], parallel: bool, whole: &Expr) -> String {
+        // in parallel as the lowering decided, unless cpu[1] asked for one core
         let forced_sequential = self.cpu_count.map_or(false, |n| n <= 1);
-        let use_par = !forced_sequential && !self.collect_is_sequential(var, body);
+        let use_par = !forced_sequential && parallel;
+        // a body that can leave the function (a return, an error handed
+        // back, a handler's stop) or that yields on some paths only gathers
+        // in a loop: a closure can neither return from the function nor
+        // skip an iteration (the lowering never marks the first parallel)
+        if !use_par && (leaves(body) || (!always_yields(body) && Self::filter_parts(body).is_none())) {
+            return self.gathering_loop(var, iter, body, whole);
+        }
+        let iter_str = self.expr(iter);
         if use_par {
             self.needs_rayon = true;
         }
@@ -899,36 +907,27 @@ impl Emitter {
         format!("{}.{}().map({} {{\n{}{}}}).collect::<Vec<{}>>()", iter_str, method, param, closure_body, pad, last_type.to_rust_type())
     }
 
-    /// A collecting loop runs in order when its body writes an outer
-    /// variable or a fact, or reaches an effect.
-    fn collect_is_sequential(&self, var: &str, body: &[Stmt]) -> bool {
-        let mut writes_outer = false;
-        super::program::visit_stmts(body, &mut |s| match s {
-            Stmt::Set { var: v, .. } | Stmt::SetPath { var: v, .. } => {
-                if v != var && self.declared(v) {
-                    writes_outer = true;
-                }
-            }
-            Stmt::Store { .. } => writes_outer = true,
-            _ => {}
-        });
-        if writes_outer {
-            return true;
-        }
-        let mut effect = false;
-        super::program::visit_block(body, &mut |e| match e {
-            Expr::Effect { .. } => effect = true,
-            Expr::Call { target: Target::User(n), .. } => {
-                if let Some(f) = self.fns.get(n) {
-                    if !f.effects.is_empty() || matches!(f.kind, FnKind::Handler | FnKind::Helper) {
-                        effect = true;
-                    }
-                }
-            }
-            Expr::Call { target: Target::Runtime(n), .. } if matches!(n.as_str(), "later" | "running" | "notice" | "sign_in" | "sign_out" | "download") => effect = true,
-            _ => {}
-        });
-        effect
+    /// A collecting loop as a loop that gathers into a list: each value
+    /// the body yields is pushed, and the loop is the statement form's.
+    fn gathering_loop(&mut self, var: &str, iter: &Expr, body: &[Stmt], whole: &Expr) -> String {
+        let list = match whole.ty() {
+            Ty::List(item) => Ty::List(item),
+            _ => Ty::List(Box::new(Ty::Unknown)),
+        };
+        let list_ty = crow_type(&list);
+        let acc = format!("_gathered_{}", self.binop_counter);
+        self.binop_counter += 1;
+        let each = Stmt::For { var: var.to_string(), iter: iter.clone(), body: yielding(body, &acc, &list), parallel: false };
+        let saved_out = std::mem::take(&mut self.out);
+        let saved_indent = self.indent;
+        self.indent = saved_indent + 1;
+        self.line(&format!("let mut {}: {} = Vec::new();", acc, list_ty.to_rust_type()));
+        self.declare(&acc, list_ty);
+        self.emit_stmt(&each);
+        self.line(&acc);
+        let inner = std::mem::replace(&mut self.out, saved_out);
+        self.indent = saved_indent;
+        format!("{{\n{}{}}}", inner, "    ".repeat(self.indent))
     }
 
     // ── calls ───────────────────────────────────────────────────────
@@ -1171,4 +1170,48 @@ impl Emitter {
         let _ = map_literal_pairs;
         format!("{}({})", Self::rust_fn_name(name), all.join(", "))
     }
+}
+
+/// Whether a collecting loop's body can leave the function: a return, an
+/// error handed back from a condition, a handler's stop.
+fn leaves(body: &[Stmt]) -> bool {
+    let mut out = false;
+    visit_stmts(body, &mut |s| out |= matches!(s, Stmt::Return(_) | Stmt::Propagate { .. } | Stmt::Stop { .. }));
+    out
+}
+
+/// Whether every pass through a collecting loop's body yields a value: it
+/// ends in one, or in a branch whose every arm does.
+fn always_yields(body: &[Stmt]) -> bool {
+    match body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
+        Some(Stmt::Do(_)) => true,
+        Some(Stmt::If { then, els: Some(e), .. }) => always_yields(then) && always_yields(e),
+        _ => false,
+    }
+}
+
+/// A collecting loop's body with each value it yields pushed onto `acc`:
+/// the last statement yields, or the last of each arm of a final branch.
+fn yielding(body: &[Stmt], acc: &str, list: &Ty) -> Block {
+    let last = body.iter().rposition(|s| !matches!(s, Stmt::Line(_)));
+    body.iter()
+        .enumerate()
+        .map(|(i, s)| match s {
+            Stmt::Do(e) if Some(i) == last => Stmt::Set {
+                var: acc.to_string(),
+                expr: Expr::Call {
+                    target: Target::Runtime("core.push".to_string()),
+                    args: vec![Expr::Move(acc.to_string(), list.clone()), e.clone()],
+                    ty: list.clone(),
+                    propagates: false,
+                },
+            },
+            Stmt::If { cond, then, els } if Some(i) == last => Stmt::If {
+                cond: cond.clone(),
+                then: yielding(then, acc, list),
+                els: els.as_ref().map(|b| yielding(b, acc, list)),
+            },
+            other => other.clone(),
+        })
+        .collect()
 }

@@ -387,11 +387,11 @@ else
 
 ### for
 
-`for` loops run in parallel by default. Order of results is always preserved — iterations may run in any order, but results are collected in the original order.
+`for` loops run their iterations in parallel when nothing the body does can show the order they ran in, and in order when something can (section 14). Results are always collected in the original order.
 
 ```
 for x in [1, 2, 3]
-    log[x]
+    log[x]              --- prints 1, 2, 3: output keeps a loop in order
 ```
 
 When a `for` loop is used as a statement (not assigned to a variable), the results of each iteration are discarded. The loop runs only for its side effects:
@@ -1657,7 +1657,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 
 | Function | Description |
 |---|---|
-| `seed[n]` | Set the program's RNG seed: every later draw, tensors and the core `rand[]` alike, is repeatable and identical in both modes. Independent statements run in parallel (§14), so draws that must come in a fixed order are written in one expression or in statements that depend on each other |
+| `seed[n]` | Set the program's RNG seed: every later draw, tensors and the core `rand[]` alike, is repeatable and identical in both modes. Statements run in the order written, and a loop that draws runs in order (§14), so a seeded program draws the same numbers on every run |
 | `rand[d1, d2, ...]` | Uniform random in [0, 1) |
 | `randn[d1, d2, ...]` | Standard normal (mean=0, std=1) |
 | `normal[mean, std, d1, d2, ...]` | Normal with custom mean/std |
@@ -2615,22 +2615,38 @@ Work that should overlap is written as a `for` over the pieces: ten fetches in a
 
 ### For Loops
 
-`for` loops run iterations in parallel by default using `rayon::par_iter`.
+A `for` loop runs its iterations in parallel when nothing its body does can show the order they ran in, and in order when something can. Both modes decide the same way, once, from the program; a collecting `for` keeps its results in input order either way.
+
+A loop runs **in order** when its body:
+
+- writes a variable from outside the loop, or a fact;
+- reaches an effect: output, files, the database, the network, the clock, `later`, `notice`, `download`, a sign-in;
+- draws from the random generator (`rand`, and `randn`, `shuffle` and the other draws of `math`), so a seeded program draws the same numbers on every run;
+- renders a view or a paged table, which a page numbers in the order it draws them;
+- asserts, or asks whether background work is `running`;
+- can leave the function: a `return`, or an error handed back from a condition, where the first failure in input order decides;
+- calls a function that does any of these, however deep. A function handed to a builtin (`any[xs, check]`) counts as called, and a call through a variable counts as a call of any function the program holds as a value.
+
+Everything else runs **in parallel** on every core: arithmetic, text, lists, maps, records, frames and tensors, reads of facts and derivations, elements, and calls to functions that do only these.
 
 ```
 for x in items
-    process[x]        --- each iteration runs in parallel
-```
-
-Output order inside a parallel `for` is unspecified — `log[]` calls from different iterations may interleave in any order. When order matters, collect results with `for`-as-expression (results are always in input order) and log afterward.
-
-If the loop body mutates a variable from the outer scope, Crow automatically falls back to sequential execution for safety:
-
-```
+    process[x]         --- parallel when process only computes
 total = 0
 for x in items
-    total = total + x  --- sequential: mutates outer 'total'
+    total = total + x  --- in order: writes the outer 'total'
+for x in items
+    log[x]             --- in order: output is an effect
 ```
+
+`cpu[1]` runs every loop on one core.
+
+
+### Design Note: When a Loop Runs in Parallel
+
+**What shipped first:** each mode decided for itself. The interpreter ran a loop in order as soon as its body called a function the program defined; the compiled program ran it in parallel unless the function reached an effect. Neither looked at the random generator, rendering, or a way out of the function, so a seeded loop of `rand[]` drew different numbers on every run, and two views rendering at once could mix up the page's marks.
+
+**Why this design:** "no side effects, then parallel" is the rule a reader can predict, and it is decided once, where every function's reach is known, so the modes cannot drift: the IR carries the answer (`crow build --ir` shows `parallel` on each loop that has it) and both backends only read it. The cost is a loop over a function that logs or draws running on one core, and the idiom that keeps it parallel is the one the book teaches anyway: compute in the loop, print after.
 
 
 ### While Loops

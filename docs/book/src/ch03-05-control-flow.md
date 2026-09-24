@@ -69,9 +69,9 @@ log[total]
 ```
 
 But `for` is bigger than this in Crow: it's an *expression* that collects
-values, and it runs its iterations **in parallel** — which is why we won't
-print from inside a loop body (output order is unspecified). That story
-deserves its own chapter, and it's chapter 6.
+values, and when its body only computes, it runs its iterations **in
+parallel** on every core. That story deserves its own chapter, and it's
+chapter 6.
 
 ```crow
 doubled = for n in [1, 2, 3]

@@ -5,7 +5,7 @@ to:
 
 ```crow,norun
 cpu[8]      --- cap the next loops at 8 threads
-cpu[1]      --- force sequential (ordered side effects)
+cpu[1]      --- one core: every loop in order
 gpu[]       --- enable GPU execution for tensor work
 nodes[4]    --- distribute across machines (cluster runs)
 ```

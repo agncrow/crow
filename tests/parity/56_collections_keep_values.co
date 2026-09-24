@@ -1,0 +1,22 @@
+--- A list or a map keeps its own copy of what it is given: the variable
+--- stays usable, and a loop's variable is copied in. The compiled program
+--- moved the text into push[] and set[] (a read after it did not build) and
+--- handed a loop's borrowed text to them (a type error).
+name = 'x'
+names = push[[], name]
+log[name]
+log[names]
+
+out = []
+for w in ['a', 'b']
+    out = push[out, w]
+log[out]
+
+m = map[]
+for k in ['p', 'q']
+    m = set[m, k, len[k]]
+log[keys[m]]
+key = 'r'
+m = set[m, key, 2]
+log[key]
+log[m]

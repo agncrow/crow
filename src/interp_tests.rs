@@ -2935,6 +2935,19 @@ mod tests {
         assert!(matches!(&val.value, Value::Str(s) if s == "big"));
     }
 
+    /// A condition refused inside a collecting loop hands the error back
+    /// from the function, as it does anywhere else in it: the loop is an
+    /// expression, and the walker stopped with "cannot return from inside a
+    /// for loop" instead
+    #[test]
+    fn a_collecting_loop_hands_back_an_error_from_its_condition() {
+        let src = "fn parse_all[xs]\n    out = for x in xs\n        if int[x] gt 0\n            x\n    return out\nr = parse_all[['1', 'a', 'b']]\ngood = parse_all[['1', '2']]\n";
+        let r = get_var(src, "r");
+        assert!(r.is_error(), "{:?}", r);
+        assert!(r.reason.contains("'a'"), "the first failure in input order: {}", r.reason);
+        assert!(matches!(&get_var(src, "good").value, Value::Array(items) if items.len() == 2));
+    }
+
     #[test]
     fn test_error_condition_in_while_refused() {
         let result = std::panic::catch_unwind(|| {
