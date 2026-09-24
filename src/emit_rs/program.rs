@@ -249,6 +249,8 @@ impl Emitter {
                     }
                 });
             }
+            // a part the test harness drives is a page program with no page
+            let has_page = has_page || self.test_control;
             self.has_page_routes = has_page;
             for r in self.live_render_fns.clone() {
                 if self.fns.get(&r).map_or(false, |f| f.params.is_empty()) {
@@ -636,6 +638,9 @@ impl Emitter {
         if !self.reactive_event_handlers.is_empty() {
             self.emit_handle_dispatch();
         }
+        if self.test_control && self.has_page_routes {
+            self.emit_test_tables();
+        }
         self.emit_main();
         self.emit_synthetic_types();
 
@@ -826,6 +831,76 @@ impl Emitter {
         }
     }
 
+    /// For the test harness (`crow test --compiled`): each view without
+    /// parameters by name, and each derivation by name as JSON — a failed
+    /// one as its reason, a value with no JSON form as none.
+    fn emit_test_tables(&mut self) {
+        self.needs_serde_json = true;
+        self.line("#[allow(unused_variables, dead_code)]");
+        self.line("fn __crow_view(state: &CrowLiveState, name: &str) -> Option<CrowVNode> {");
+        self.indent += 1;
+        self.line("match name {");
+        self.indent += 1;
+        let views: Vec<String> = self.views.iter().cloned().collect();
+        for v in views {
+            if self.fns.get(&v).map_or(false, |f| f.params.is_empty()) && self.reactive_render_fns.contains(&v) {
+                self.line(&format!("\"{}\" => Some({}(state)),", v, Self::rust_fn_name(&v)));
+            }
+        }
+        self.line("_ => None,");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+        self.line("#[allow(unused_variables, dead_code)]");
+        self.line("fn __crow_derived(state: &CrowLiveState, name: &str) -> Option<serde_json::Value> {");
+        self.indent += 1;
+        self.line("match name {");
+        self.indent += 1;
+        fn as_json(t: &CrowType, v: &str) -> Option<String> {
+            match t {
+                CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Markup | CrowType::Bool | CrowType::Json | CrowType::Frame => {
+                    Some(format!("serde_json::to_value(&{}).unwrap_or(serde_json::Value::Null)", v))
+                }
+                CrowType::NumArray(_) => Some(format!("crow_runtime::json::ToJson::to_json(&{})", v)),
+                CrowType::Array(i) | CrowType::Map(i) if matches!(i.as_ref(), CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Markup | CrowType::Bool | CrowType::Json) => {
+                    Some(format!("serde_json::to_value(&{}).unwrap_or(serde_json::Value::Null)", v))
+                }
+                _ => None,
+            }
+        }
+        let derives: Vec<(String, Ty)> = self.part.derives.iter().map(|d| (d.name.clone(), d.ty.clone())).collect();
+        for (d, ty) in derives {
+            let rt = crow_type(&ty);
+            let read = format!("__derive_{}(state)", d);
+            match &rt {
+                CrowType::Result(inner) => {
+                    if let Some(value) = as_json(inner, "_r.value") {
+                        self.line(&format!(
+                            "\"{}\" => {{ let _r = {}; Some(if _r.ok {{ serde_json::json!({{ \"ok\": true, \"value\": {} }}) }} else {{ serde_json::json!({{ \"ok\": false, \"reason\": _r.reason, \"kind\": _r.kind }}) }}) }},",
+                            d, read, value
+                        ));
+                    }
+                }
+                other => {
+                    if let Some(value) = as_json(other, &read) {
+                        if matches!(other, CrowType::NumArray(_)) {
+                            self.needs_crow_runtime = true;
+                        }
+                        self.line(&format!("\"{}\" => Some(serde_json::json!({{ \"ok\": true, \"value\": {} }})),", d, value));
+                    }
+                }
+            }
+        }
+        self.line("_ => None,");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+    }
+
     /// The live loop's one entry for events: each handler by name, its
     /// frozen arguments read as its parameters' types.
     fn emit_handle_dispatch(&mut self) {
@@ -955,6 +1030,15 @@ impl Emitter {
             let (serve, other): (Vec<Stmt>, Vec<Stmt>) = main.into_iter().partition(|s| matches!(s, Stmt::Do(e) if call_name(e).as_deref() == Some("serve")));
             let other: Vec<Stmt> = other.into_iter().filter(|s| !matches!(s, Stmt::Store { .. })).collect();
             self.emit_block(&other);
+            if self.test_control {
+                // the harness's routes beside the pages, on the port the
+                // test gave (CROW_PORT)
+                let handle = if self.reactive_event_handlers.is_empty() { "|_: &mut CrowLiveState, _: &str, _: Option<&str>| {}" } else { "__crow_handle" };
+                self.line(&format!("__crow_app = __crow_app.merge(crow_web::live::test_control::router(__crow_state.clone(), __crow_view, {}, __crow_derived));", handle));
+                if serve.is_empty() {
+                    self.line("__crow_app.serve(0).await.unwrap();");
+                }
+            }
             self.emit_block(&serve);
         } else {
             // facts outside a page program are plain values, set first as

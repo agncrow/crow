@@ -289,6 +289,25 @@ page renders. Per-user state is the default; shared state is a table.
   test yet; put the logic that depends on them in a function that takes
   the data as a parameter, and test that.
 
+## Against the compiled program
+
+`crow test` runs a block in the interpreter, and the apps it opens with
+it. `crow test --compiled app.co` runs the same blocks with every app they
+open compiled: the program is built once, each run that opens an app
+starts it fresh, and `click`, `change`, `html`, `elements`, `box`, a
+session's facts and derivations all reach the compiled program. The block
+itself, its truths and the functions it calls directly, still runs in the
+interpreter. So a handler the compiled program runs differently fails the
+test that exercises it, with the same message. A handler a test clicks
+with arguments (`click[a, begin[1000.0, 100.0, 1050.0]]`) is typed by
+them when nothing in the program types it. Blocks that open no app run as
+they always do, and nothing is built for them.
+
+```text
+$ crow test --compiled sim/clock.co
+  ✓ 2 blocks pass, the apps they opened compiled (1 run) — 0 truths, 1 law, 51 inputs run
+```
+
 `crow test` runs these blocks; `crow check` runs them plus the live-loop
 hazards; `crow run` and `crow build` ignore them. Next: the two things
 every dashboard needs that you haven't written yet — a chart, and a page

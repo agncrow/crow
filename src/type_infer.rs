@@ -637,14 +637,24 @@ impl TypeContext {
                     }
                 }
             }
-            // click[a, f] inside a test block names f as a handler: the
-            // harness drives handlers, so they get the reactive exemption.
+            // click[a, f] inside a test block names f as a handler, and
+            // click[a, f[x]] too, with the arguments it is given: the harness
+            // drives handlers, so they get the reactive exemption, and a
+            // compiled program dispatches them.
             fn collect_click_handlers(stmts: &[Stmt], out: &mut std::collections::BTreeSet<String>) {
                 fn walk(e: &Expr, out: &mut std::collections::BTreeSet<String>) {
                     if let Expr::Call { callee, args } = e {
                         if matches!(callee.as_ref(), Expr::Ident(n) if n == "click") && args.len() == 2 {
-                            if let Expr::Ident(h) = &args[1] {
-                                out.insert(h.clone());
+                            match &args[1] {
+                                Expr::Ident(h) => {
+                                    out.insert(h.clone());
+                                }
+                                Expr::Call { callee: h, .. } => {
+                                    if let Expr::Ident(h) = h.as_ref() {
+                                        out.insert(h.clone());
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                         for a in args {
@@ -838,6 +848,14 @@ impl TypeContext {
 
         }
 
+        // what only a test's click types, last, and the bodies again
+        if self.type_clicked_handlers(stmts) {
+            let fn_entries: Vec<(String, Vec<Stmt>)> = self.functions.iter().map(|(n, sig)| (n.clone(), sig.body.clone())).collect();
+            for (name, body) in &fn_entries {
+                self.infer_function_body(name, body);
+            }
+        }
+
         // F2: monomorphize functions used at multiple type signatures
         self.specialize_functions();
 
@@ -854,6 +872,61 @@ impl TypeContext {
                 eprintln!("FN {} params={:?} ret={:?}", n, sig.params, sig.return_type);
             }
         }
+    }
+
+    /// A handler a test clicks with arguments (`click[a, h[4]]`) takes
+    /// their types for the parameters nothing in the program types: the
+    /// click may be the only call it has, and a compiled program dispatches
+    /// it by them. The program's own evidence (a view's call, a table's
+    /// action, a widget's text) comes first. Whether any parameter moved.
+    fn type_clicked_handlers(&mut self, stmts: &[Stmt]) -> bool {
+        fn walk(e: &Expr, out: &mut Vec<(String, Vec<Expr>)>) {
+            if let Expr::Call { callee, args } = e {
+                if matches!(callee.as_ref(), Expr::Ident(n) if n == "click") && args.len() == 2 {
+                    if let Expr::Call { callee: h, args: hargs } = &args[1] {
+                        if let Expr::Ident(h) = h.as_ref() {
+                            out.push((h.clone(), hargs.clone()));
+                        }
+                    }
+                }
+                for a in args {
+                    walk(a, out);
+                }
+            }
+        }
+        fn clicked_calls(stmts: &[Stmt], in_test: bool, out: &mut Vec<(String, Vec<Expr>)>) {
+            for st in stmts {
+                match st {
+                    Stmt::TestBlock { body, .. } => clicked_calls(body, true, out),
+                    Stmt::ExprStmt(e) | Stmt::Return(Some(e)) | Stmt::Assign { value: e, .. } if in_test => walk(e, out),
+                    Stmt::If { then_body, else_body, .. } if in_test => {
+                        clicked_calls(then_body, true, out);
+                        if let Some(eb) = else_body {
+                            clicked_calls(eb, true, out);
+                        }
+                    }
+                    Stmt::For { body, .. } | Stmt::While { body, .. } if in_test => clicked_calls(body, true, out),
+                    _ => {}
+                }
+            }
+        }
+        let mut calls = Vec::new();
+        clicked_calls(stmts, false, &mut calls);
+        let mut moved = false;
+        for (h, args) in calls {
+            let types: Vec<CrowType> = args.iter().map(|a| self.infer_expr(a)).collect();
+            if let Some(sig) = self.functions.get_mut(&h) {
+                if sig.params.len() == types.len() {
+                    for (p, t) in sig.params.iter_mut().zip(types) {
+                        if matches!(p.1, CrowType::Unknown) && !matches!(t, CrowType::Unknown) {
+                            p.1 = t;
+                            moved = true;
+                        }
+                    }
+                }
+            }
+        }
+        moved
     }
 
     /// Propagate types from indirect function calls back to original function declarations.
@@ -3229,6 +3302,31 @@ mod tests {
     #[test]
     fn a_widget_handler_takes_text() {
         let src = "use web, ui\nzoom = 3\nfn set_zoom[z]\n    zoom = int[z]\nview v[]\n    return widget['map', props = map[z = zoom], on = map[zoom = set_zoom]]\n";
+        let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        assert_eq!(ctx.functions["set_zoom"].params[0].1, CrowType::Str);
+    }
+
+    /// A handler a test clicks with arguments is a handler, as one clicked
+    /// by name is, and the arguments type the parameters nothing else types:
+    /// the compiled program dispatches it by them (`crow test --compiled`)
+    #[test]
+    fn a_handler_a_test_clicks_with_arguments_is_typed_by_them() {
+        let src = "use web, ui\nbase = 0.0\nfn begin[start]\n    base = start\nview v[]\n    return p['`base`']\npage['/', v]\ntest t[]\n    a = app[v]\n    click[a, begin[1000.0]]\n";
+        let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        assert!(ctx.view_handlers.contains("begin"));
+        assert_eq!(ctx.functions["begin"].params[0].1, CrowType::Float);
+    }
+
+    /// The program's own evidence types a handler before a test's click
+    /// does: a widget sends text, so its handler takes text however a test
+    /// clicks it
+    #[test]
+    fn a_widget_handler_takes_text_whatever_a_test_clicks() {
+        let src = "use web, ui\nzoom = 3\nfn set_zoom[z]\n    zoom = int[z]\nview v[]\n    return widget['map', props = map[z = zoom], on = map[zoom = set_zoom]]\npage['/', v]\ntest t[]\n    a = app[v]\n    click[a, set_zoom[4]]\n";
         let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);

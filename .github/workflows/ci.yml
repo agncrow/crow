@@ -63,6 +63,13 @@ jobs:
           ../../target/release/crow test board/cards.co
           ../../target/release/crow test board/page.co
           ../../target/release/crow check main.co < /dev/null
+      - name: The task board's tests against the compiled program (each app a test opens is the compiled one)
+        run: |
+          cd examples/taskboard
+          ../../target/release/crow test --compiled board/door.co
+          ../../target/release/crow test --compiled board/cards.co
+          ../../target/release/crow test --compiled board/page.co
+          rm -rf .crow_build && df -h / | tail -1
       - name: The app's book (derived from the parts fixture, with wireframes)
         run: cd tests/parts && ../../target/release/crow book --write && test -f .crow/book/site/pages.html && grep -q '<svg' .crow/book/site/pages.html
       - name: Disk used by the run

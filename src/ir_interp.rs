@@ -102,6 +102,11 @@ pub struct IrInterp {
     /// A collecting loop's body handed the function its value (a return, an
     /// error handed back from a condition): what the function returns.
     returning: Option<CrowValue>,
+    /// `crow test --compiled`: the compiled program this run drives,
+    /// started at its first `app[]`, and each harness session's session
+    /// there (compiled_harness.rs).
+    remote: Option<Arc<crate::compiled_harness::RemoteApp>>,
+    remote_sessions: HashMap<u64, u64>,
 }
 
 /// An effect a handler held to its commit (core-design.md §1.2).
@@ -261,6 +266,8 @@ impl IrInterp {
             session_pages: HashMap::new(),
             paged_tables: 0,
             session_downloads: HashMap::new(),
+            remote: None,
+            remote_sessions: HashMap::new(),
             held: None,
             notice_read: false,
             page_config: None,
@@ -831,6 +838,9 @@ impl IrInterp {
                 // an app session reads its own reactive state: the globals
                 // while it is the active one, its waiting copy otherwise
                 if let Value::App(_, _, _, id) = &b.value {
+                    if let Some(rid) = self.remote_sessions.get(id).copied() {
+                        return self.remote_read(rid, name);
+                    }
                     // a derivation, as that session sees it
                     if self.derives.contains_key(name.as_str()) {
                         self.activate(*id);
@@ -1680,6 +1690,9 @@ impl IrInterp {
     /// A derivation, recomputed on every read for now (the memoized,
     /// versioned form comes with the session layer), stamped with its moment.
     fn derived(&mut self, name: &str) -> Result<CrowValue, String> {
+        if let Some(rid) = self.active_session.and_then(|id| self.remote_sessions.get(&id).copied()) {
+            return self.remote_read(rid, name);
+        }
         let d = self.derives.get(name).cloned().ok_or_else(|| format!("unknown derivation '{}'", name))?;
         // the reader's line is still the line reading it
         let saved_line = self.line;
@@ -1789,6 +1802,135 @@ impl IrInterp {
         }
     }
 
+    // ── the harness against the compiled program ───────────────────
+
+    fn remote(&self) -> Result<Arc<crate::compiled_harness::RemoteApp>, String> {
+        self.remote.clone().ok_or_else(|| "no compiled program is running".to_string())
+    }
+
+    /// A harness session opened on the compiled program too: it starts from
+    /// the facts the test holds now, at the session's moment.
+    fn remote_open(&mut self, view: &str, id: u64) -> Result<(), String> {
+        if self.remote.is_none() {
+            self.remote = Some(Arc::new(crate::compiled_harness::RemoteApp::start()?));
+        }
+        let facts: serde_json::Map<String, serde_json::Value> = self
+            .fact_values()
+            .into_iter()
+            .filter(|(_, v)| crate::served::is_data(v))
+            .map(|(k, v)| (k, crate::served::fact_to_json(&v)))
+            .collect();
+        let now = self.session_clock.get(&id).copied();
+        let answer = self.remote()?.post("open", serde_json::json!({ "view": view, "facts": facts, "now": now }))?;
+        let rid = answer.get("session").and_then(|v| v.as_u64()).ok_or("the compiled program opened no session")?;
+        self.remote_sessions.insert(id, rid);
+        self.activate(id);
+        self.remote_pull(id)
+    }
+
+    /// The compiled session's facts, copied into the globals, and its notice
+    /// and reader into the session's: its session is the active one, as a
+    /// local session's would be.
+    fn remote_pull(&mut self, id: u64) -> Result<(), String> {
+        let rid = self.remote_sessions.get(&id).copied().ok_or("not a compiled session")?;
+        self.activate(id);
+        let answer = self.remote()?.post("facts", serde_json::json!({ "session": rid }))?;
+        match answer.get("notice").and_then(|n| n.get("text").and_then(|t| t.as_str()).map(|t| (t.to_string(), n.get("at").and_then(|a| a.as_f64()).unwrap_or(0.0)))) {
+            Some(notice) => {
+                self.session_notice.insert(id, notice);
+            }
+            None => {
+                self.session_notice.remove(&id);
+            }
+        }
+        if let Some(serde_json::Value::Object(reader)) = answer.get("reader") {
+            let record: std::collections::BTreeMap<String, CrowValue> =
+                reader.iter().map(|(k, v)| (k.clone(), CrowValue::ok(Value::Str(v.as_str().unwrap_or_default().to_string())))).collect();
+            self.session_reader.insert(id, record);
+        }
+        if let Some(serde_json::Value::Object(facts)) = answer.get("facts") {
+            for name in self.fact_names.clone() {
+                if let (Some(j), Some(declared)) = (facts.get(&name), self.frames[0].scopes[0].get(&name).cloned()) {
+                    if crate::served::is_data(&declared) {
+                        self.set_fact(&name, crate::served::json_to_fact(j, &declared));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A handler run by the compiled program as one event: a stop is the
+    /// click's error value, as the interpreter's transaction answers it.
+    fn remote_click(&mut self, id: u64, handler: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
+        let rid = self.remote_sessions.get(&id).copied().ok_or("not a compiled session")?;
+        let args: Vec<serde_json::Value> = args.iter().map(crate::served::fact_to_json).collect();
+        let answer = self.remote()?.post("event", serde_json::json!({ "session": rid, "event": handler, "args": args }))?;
+        self.remote_pull(id)?;
+        if answer.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+            let told = answer.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let reason = told.strip_prefix(&format!("{} stopped: ", handler)).unwrap_or(&told).to_string();
+            self.last_stop = Some(told);
+            return Ok(CrowValue::error_with_kind(&reason, "", &self.trace_entry()));
+        }
+        Ok(CrowValue::done())
+    }
+
+    /// A fact or a derivation as the compiled session holds it.
+    fn remote_read(&mut self, rid: u64, name: &str) -> Result<CrowValue, String> {
+        let answer = self.remote()?.post("read", serde_json::json!({ "session": rid, "name": name }))?;
+        if let Some(j) = answer.get("fact") {
+            return Ok(match self.frames[0].scopes[0].get(name).cloned() {
+                Some(declared) => crate::served::json_to_fact(j, &declared),
+                None => crate::builtins::json_to_crow("", j),
+            });
+        }
+        let d = answer.get("derived").ok_or_else(|| format!("the compiled program has no '{}'", name))?;
+        if d.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+            let reason = d.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+            let kind = d.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            return Ok(CrowValue::error_with_kind(reason, kind, &self.trace_entry()));
+        }
+        let value = d.get("value").cloned().unwrap_or(serde_json::Value::Null);
+        let ty = self.derives.get(name).map(|d| d.ty.payload().clone()).unwrap_or(Ty::Unknown);
+        Ok(match ty {
+            Ty::Frame(_) => match serde_json::from_value::<crow_runtime::frame::CrowFrame>(value.clone()) {
+                Ok(f) => CrowValue::ok(Value::Frame(f)),
+                Err(_) => crate::builtins::json_to_crow("", &value),
+            },
+            Ty::Float => CrowValue::ok(Value::Float(value.as_f64().unwrap_or(0.0))),
+            _ => crate::builtins::json_to_crow("", &value),
+        })
+    }
+
+    fn remote_downloads(&mut self, rid: u64) -> Result<Vec<(String, Vec<u8>)>, String> {
+        let answer = self.remote()?.post("downloads", serde_json::json!({ "session": rid }))?;
+        Ok(answer
+            .get("files")
+            .and_then(|f| f.as_array())
+            .map(|files| {
+                files
+                    .iter()
+                    .map(|f| {
+                        let name = f.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let text = f.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        (name, text.into_bytes())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// A session's page: rendered here, or by the compiled program.
+    fn session_html(&mut self, view: &str, id: u64) -> Result<String, String> {
+        if let Some(rid) = self.remote_sessions.get(&id).copied() {
+            let answer = self.remote()?.post("html", serde_json::json!({ "session": rid }))?;
+            return Ok(answer.get("html").and_then(|h| h.as_str()).unwrap_or("").to_string());
+        }
+        self.activate(id);
+        self.render_view(view)
+    }
+
     // ── the harness and the live layer's mocks ─────────────────────
 
     /// A session's view rendered to markup.
@@ -1859,6 +2001,7 @@ impl IrInterp {
                 }
                 self.next_session += 1;
                 let id = self.next_session;
+                let opens_remote = crate::compiled_harness::active();
                 if self.active_session.is_none() {
                     // the first session is the test's own state: it takes the
                     // facts as they are, and every later session starts where
@@ -1874,13 +2017,19 @@ impl IrInterp {
                     let start = self.session_clock.values().copied().fold(f64::INFINITY, f64::min);
                     self.session_clock.insert(id, start);
                 }
+                if opens_remote {
+                    self.remote_open(&f.name, id)?;
+                }
                 CrowValue::ok(Value::App(f, width, wide, id))
             }
             // downloads[a]: the files the session was handed, as a reader's
             // browser saved them
             "downloads" => {
                 let (_, _, _, id) = vals.first().and_then(app_view).ok_or("downloads[] takes an app session: downloads[a]")?;
-                let list = self.session_downloads.get(&id).cloned().unwrap_or_default();
+                let list = match self.remote_sessions.get(&id).copied() {
+                    Some(rid) => self.remote_downloads(rid)?,
+                    None => self.session_downloads.get(&id).cloned().unwrap_or_default(),
+                };
                 let items = list
                     .into_iter()
                     .map(|(name, bytes)| {
@@ -1894,17 +2043,15 @@ impl IrInterp {
             }
             "html" => {
                 let (f, _, _, id) = vals.first().and_then(app_view).ok_or("html[] takes an app session: html[a]")?;
-                self.activate(id);
-                CrowValue::ok(Value::Str(self.render_view(&f.name)?))
+                CrowValue::ok(Value::Str(self.session_html(&f.name, id)?))
             }
             "elements" => {
                 let (f, _, _, id) = vals.first().and_then(app_view).ok_or("elements[] takes an app session and a selector: elements[a, 'button']")?;
-                self.activate(id);
                 let selector = match vals.get(1).map(|v| &v.value) {
                     Some(Value::Str(s)) => s.clone(),
                     _ => return Err("elements[] selector must be a string like 'button', '.card', or 'div.stats .card'".into()),
                 };
-                let html = self.render_view(&f.name)?;
+                let html = self.session_html(&f.name, id)?;
                 let tree = crate::harness::harness_parse_html(&html);
                 let steps = selector_steps(&selector);
                 if steps.is_empty() {
@@ -1931,6 +2078,11 @@ impl IrInterp {
                         Value::Map(m) if m.values().all(|v| matches!(v.value, Value::Str(_))) => m.clone(),
                         other => return Err(format!("change[a, 'reader', record] takes the reader as a map of strings, not {}", other.type_name())),
                     };
+                    if let Some(rid) = self.remote_sessions.get(&id).copied() {
+                        let record: serde_json::Map<String, serde_json::Value> =
+                            m.iter().map(|(k, v)| (k.clone(), serde_json::Value::String(format!("{}", v.value)))).collect();
+                        self.remote()?.post("reader", serde_json::json!({ "session": rid, "record": record }))?;
+                    }
                     self.session_reader.insert(id, m);
                     return Ok(CrowValue::done());
                 }
@@ -1943,6 +2095,9 @@ impl IrInterp {
                     };
                     self.session_clock.insert(id, t);
                     crow_runtime::moments::hold(Some(t));
+                    if let Some(rid) = self.remote_sessions.get(&id).copied() {
+                        self.remote()?.post("clock", serde_json::json!({ "session": rid, "now": t }))?;
+                    }
                     return Ok(CrowValue::done());
                 }
                 let current = self.frames[0].scopes[0].get(&var).cloned().ok_or_else(|| format!("change[]: no reactive variable named '{}' (reactive state is a top-level assignment)", var))?;
@@ -1957,6 +2112,11 @@ impl IrInterp {
                     (Value::Float(_), Value::Int(i)) => CrowValue::ok(Value::Float(*i as f64)),
                     _ => value,
                 };
+                if let Some(rid) = self.remote_sessions.get(&id).copied() {
+                    self.remote()?.post("field", serde_json::json!({ "session": rid, "name": var, "value": crate::served::fact_to_json(&value) }))?;
+                    self.remote_pull(id)?;
+                    return Ok(CrowValue::done());
+                }
                 self.set_fact(&var, value);
                 CrowValue::done()
             }
@@ -1974,6 +2134,9 @@ impl IrInterp {
                     }
                     _ => return Err("click[] second argument must be a handler name or call: click[a, go] or click[a, go[x]]".to_string()),
                 };
+                if self.remote_sessions.contains_key(&id) {
+                    return self.remote_click(id, &name, &args);
+                }
                 self.transaction(&name, args)?
             }
             "box" | "fits" | "style" => {
@@ -1981,9 +2144,8 @@ impl IrInterp {
                     return Err(format!("{}[] takes an app session and a selector or width", name));
                 }
                 let (f, session_width, session_wide, id) = app_view(&vals[0]).ok_or_else(|| format!("{}[] takes an app session first", name))?;
-                self.activate(id);
                 let arg1 = vals[1].clone();
-                let html = self.render_view(&f.name)?;
+                let html = self.session_html(&f.name, id)?;
                 let tree = crate::harness::harness_parse_html(&html);
                 if name == "style" {
                     let selector = match &arg1.value {

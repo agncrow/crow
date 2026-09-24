@@ -182,7 +182,7 @@ fn transpile(source: &str) -> String {
     let mut ctx = TypeContext::new();
     ctx.infer_program(&stmts);
     let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").expect("lowering to the IR failed");
-    crate::emit_rs::emit(&program, ctx.registry.clone(), "t.co", Default::default(), None).expect("emitting failed").source
+    crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false).expect("emitting failed").source
 }
 
 #[test]
@@ -1739,6 +1739,24 @@ fn test_web_stream_response() {
 }
 
 // --- UI / LiveView tests ---
+
+/// `crow test --compiled`: a part with no page is built as a page program
+/// that answers the harness — its views and derivations by name, the routes
+/// merged, serving on the port the test gives; a plain build has none of it
+#[test]
+fn a_test_build_answers_the_harness() {
+    let src = "use web, ui\nn = 0\nfn inc[]\n    n = n + 1\nderive twice\n    return n * 2\nview v[]\n    return stack[p['`n` `twice`'], button['+', click = inc]]\n";
+    let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
+    let mut ctx = crate::type_infer::TypeContext::new();
+    ctx.infer_program(&stmts);
+    let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").unwrap();
+    let rust = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, true).expect("emitting failed").source;
+    assert!(rust.contains("fn __crow_view(") && rust.contains("\"v\" => Some(v(state)),"), "{}", rust);
+    assert!(rust.contains("fn __crow_derived(") && rust.contains("\"twice\" =>"), "{}", rust);
+    assert!(rust.contains("crow_web::live::test_control::router(") && rust.contains("__crow_app.serve(0)"), "{}", rust);
+    let plain = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false).map(|e| e.source).unwrap_or_default();
+    assert!(!plain.contains("test_control"), "{}", plain);
+}
 
 #[test]
 fn test_ui_imports() {
