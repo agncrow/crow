@@ -16,6 +16,24 @@ pub struct RunResult {
     pub hazards: Vec<Hazard>,
     pub sql_calls: usize,
     pub schema_checked: bool,
+    /// Queries on another database than the checked one, not checked.
+    pub other_db: usize,
+}
+
+/// What the whole program says about a file the checks read alone — a part,
+/// whose connections and handlers may be declared in another part.
+#[derive(Default, Clone)]
+pub struct Program {
+    /// Every connection the file can reach, as it spells it: its own by
+    /// name, another part's through the part's name (`store.book`), each
+    /// with its url.
+    pub conns: Vec<(String, String)>,
+    /// How many databases the program talks to: with more than one, a query
+    /// whose connection cannot be told is not checked against any of them.
+    pub databases: usize,
+    /// The file's handlers: a handler is one transaction, so its writes
+    /// land together or not at all (the session layer).
+    pub handlers: std::collections::BTreeSet<String>,
 }
 
 
@@ -143,14 +161,31 @@ fn connection_urls(stmts: &[crate::ast::Stmt]) -> Vec<(String, String)> {
 /// `--db` or the crowfile `db` variable; without it only the checks that
 /// need no schema run (injection flags).
 pub fn run(file: &str, source: &str, db_url: Option<&str>) -> Result<RunResult, String> {
+    let result = run_in(file, source, db_url, &Program::default())?;
+    if result.other_db > 0 {
+        eprintln!("{}", other_db_note(result.other_db, db_url.unwrap_or_default()));
+    }
+    Ok(result)
+}
+
+/// The note for the queries a check left to another database.
+pub fn other_db_note(n: usize, url: &str) -> String {
+    format!("  note: {} quer{} on other connections not checked against '{}' (multi-database program)", n, if n == 1 { "y" } else { "ies" }, url)
+}
+
+/// `run` for a file of a program, with what the program says about it.
+pub fn run_in(file: &str, source: &str, db_url: Option<&str>, program: &Program) -> Result<RunResult, String> {
     // Lenient parse: db checks should still cover the healthy statements of
     // a file that has an unrelated syntax error (the LSP lives in that state).
     let tokens = crate::lexer::Lexer::new(source).tokenize()?;
     let (stmts, _parse_errors) = crate::parser::Parser::new(tokens).parse_lenient();
-    let facts = sql_facts::collect(&stmts);
+    let mut facts = sql_facts::collect(&stmts);
+    // a handler's writes are transactional, as transact[…]'s are
+    facts.transact_fns.extend(program.handlers.iter().cloned());
     let total_sql_calls = facts.calls.len();
     let mut hazards = Vec::new();
     let mut schema_checked = false;
+    let mut other_db = 0usize;
     // Only the program makes its database: a SQLite file that does not
     // exist yet is not created by checking against it (opening would make
     // an empty one, and every table would read as missing)
@@ -181,28 +216,23 @@ pub fn run(file: &str, source: &str, db_url: Option<&str>) -> Result<RunResult, 
             // connections (and conns not statically resolvable) are out of
             // scope — checking a ClickHouse query against the sqlite schema
             // reports fictions.
-            let conn_urls = connection_urls(&stmts);
+            let mut conn_urls = connection_urls(&stmts);
+            conn_urls.extend(program.conns.iter().cloned());
             let checked: std::collections::BTreeSet<String> = conn_urls
                 .iter()
                 .filter(|(_, u)| u.as_str() == url)
                 .map(|(v, _)| v.clone())
                 .collect();
-            let facts = if conn_urls.len() > 1 {
+            // two names for one database are not two databases
+            let distinct: std::collections::BTreeSet<&str> = conn_urls.iter().map(|(_, u)| u.as_str()).collect();
+            let facts = if distinct.len() > 1 || program.databases > 1 {
                 let mut scoped = facts;
                 let before = scoped.calls.len();
                 scoped.calls.retain(|c| match &c.conn_var {
                     Some(v) => checked.contains(v),
                     None => true,
                 });
-                let skipped = before - scoped.calls.len();
-                if skipped > 0 {
-                    eprintln!(
-                        "  note: {} quer{} on other connections not checked against '{}' (multi-database file)",
-                        skipped,
-                        if skipped == 1 { "y" } else { "ies" },
-                        url
-                    );
-                }
+                other_db = before - scoped.calls.len();
                 scoped
             } else {
                 facts
@@ -228,6 +258,7 @@ pub fn run(file: &str, source: &str, db_url: Option<&str>) -> Result<RunResult, 
         hazards,
         sql_calls: total_sql_calls,
         schema_checked,
+        other_db,
     })
 }
 
@@ -441,6 +472,46 @@ mod tests {
             "expected unpaired-writes, got {:?}",
             kinds_of(&hazards)
         );
+    }
+
+    /// A sqlite file holding the accounts table, for a check that reads a
+    /// file of a program (`run_in`).
+    fn accounts_db(name: &str) -> String {
+        let path = std::env::temp_dir().join(format!("crow_db_check_{}_{}.db", name, std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let url = format!("sqlite://{}", path.display());
+        let db = crow_db::connect(&url, None).unwrap();
+        db.exec("CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance REAL NOT NULL DEFAULT 0)", &[]).unwrap();
+        url
+    }
+
+    /// A handler is one transaction (the session layer): its two writes
+    /// land together or not at all, so they are not reported as separate
+    #[test]
+    fn a_handlers_writes_land_together() {
+        let url = accounts_db("handler");
+        let src = "use db\nconn = connect['sqlite://x.db']\nfn transfer[]\n    exec[conn, 'UPDATE accounts SET balance = balance - 1 WHERE id = 1']\n    exec[conn, 'UPDATE accounts SET balance = balance + 1 WHERE id = 2']\n";
+        let plain = run_in("p.co", src, Some(&url), &Program::default()).unwrap();
+        assert!(plain.hazards.iter().any(|h| matches!(h.kind, HazardKind::UnpairedWrites { .. })), "{:?}", kinds_of(&plain.hazards));
+        let program = Program { handlers: ["transfer".to_string()].into_iter().collect(), ..Default::default() };
+        let handled = run_in("p.co", src, Some(&url), &program).unwrap();
+        assert!(!handled.hazards.iter().any(|h| matches!(h.kind, HazardKind::UnpairedWrites { .. })), "{:?}", kinds_of(&handled.hazards));
+    }
+
+    /// A part reaches another part's connection through the part's name
+    /// (`store.book`): its queries are checked against that database, and in
+    /// a program of several databases a query on a connection the file
+    /// cannot tell is left alone rather than checked against the wrong one
+    #[test]
+    fn a_parts_queries_are_checked_on_the_connection_they_use() {
+        let url = accounts_db("parts");
+        let src = "use db\nuse board.store\nfn close[]\n    exec[store.book, 'DELETE FROM acounts WHERE id = 1']\nfn config[conn]\n    return query[conn, 'SELECT x FROM elsewhere']\n";
+        let program = Program { conns: vec![("store.book".to_string(), url.clone()), ("pg".to_string(), "postgres://elsewhere".to_string())], databases: 2, ..Default::default() };
+        let r = run_in("board/cards.co", src, Some(&url), &program).unwrap();
+        let kinds = kinds_of(&r.hazards);
+        assert!(kinds.iter().any(|k| k.contains("UnknownTable") && k.contains("acounts")), "{:?}", kinds);
+        assert!(!kinds.iter().any(|k| k.contains("elsewhere")), "{:?}", kinds);
+        assert_eq!(r.other_db, 1);
     }
 
     #[test]

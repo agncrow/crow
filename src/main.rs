@@ -3536,6 +3536,59 @@ fn cmd_show(filename: &str, name: Option<&str>) {
     }
 }
 
+/// What the whole program says about each of its files, for the database
+/// checks that read a file alone: the connections it reaches as it spells
+/// them (its own, and a part's through the part's name), how many databases
+/// the program talks to, and its handlers. `files` are the program's files
+/// by name, the entry's first; each part is named as `EXPANSION_PARTS`
+/// names it.
+fn db_programs(filename: &str, files: &[(String, String)]) -> std::collections::BTreeMap<String, db_check::Program> {
+    let mut out = std::collections::BTreeMap::new();
+    let Ok(stmts) = build(&read_file(filename)) else { return out };
+    let source_dir = std::path::Path::new(filename).parent().unwrap_or(std::path::Path::new("."));
+    let mut visited = std::collections::HashSet::new();
+    let expanded = expand_module_imports(&stmts, source_dir, &mut visited);
+    let Ok(lowered) = lower::lower_program(&expanded) else { return out };
+    let mut ctx = type_infer::TypeContext::new();
+    ctx.describe_queries = false;
+    ctx.infer_program(&lowered);
+    let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
+    let databases = ctx.conn_urls.iter().map(|(_, u)| u.clone()).collect::<std::collections::BTreeSet<_>>().len();
+    // a name a part declares carries the part's prefix; the entry's carry none
+    let prefix_of = |name: &str| -> String { parts.keys().filter(|p| name.starts_with(p.as_str())).max_by_key(|p| p.len()).cloned().unwrap_or_default() };
+    let by_file: std::collections::BTreeMap<&str, &str> = parts.iter().map(|(p, rel)| (rel.as_str(), p.as_str())).collect();
+    for (name, source) in files {
+        let own = if name == filename { "" } else { by_file.get(name.as_str()).copied().unwrap_or("") };
+        let mut program = db_check::Program { databases, ..Default::default() };
+        for (conn, url) in &ctx.conn_urls {
+            if prefix_of(conn) == own {
+                program.conns.push((conn[own.len()..].to_string(), url.clone()));
+            }
+        }
+        // a part imported by name reaches its connections through that name
+        if let Ok(stmts) = build(source) {
+            for st in &stmts {
+                if let ast::Stmt::Use { path, alias } = st {
+                    let prefix = format!("{}_", path.replace(['.', '/'], "_"));
+                    let spelled = alias.clone().unwrap_or_else(|| path.rsplit(['.', '/']).next().unwrap_or(path).to_string());
+                    for (conn, url) in &ctx.conn_urls {
+                        if prefix_of(conn) == prefix {
+                            program.conns.push((format!("{}.{}", spelled, &conn[prefix.len()..]), url.clone()));
+                        }
+                    }
+                }
+            }
+        }
+        for h in &ctx.view_handlers {
+            if prefix_of(h) == own {
+                program.handlers.insert(h[own.len()..].to_string());
+            }
+        }
+        out.insert(name.clone(), program);
+    }
+    out
+}
+
 fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool, accept_all: bool) {
     use std::io::{self, Write, BufRead};
 
@@ -3557,36 +3610,64 @@ fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool
     }
     print_check_summary(&result, verbose);
 
-    // Schema-aware database checks (Level 1). Advisory unless --strict.
-    let source = read_file(filename);
+    // Schema-aware database checks (Level 1): the entry and every part it
+    // imports, each against its own lines — an app keeps its queries in its
+    // parts. Advisory unless --strict.
     let resolved_db = db_url.or_else(crowfile_db_url);
-    match db_check::run(filename, &source, resolved_db.as_deref()) {
-        Ok(db_result) => {
-            if let Some(report) =
-                db_check::report::render_all(&db_result.hazards, &source)
-            {
-                let n = db_result.hazards.len();
-                println!(
-                    "\n  database checks: \x1b[33m{} finding{}\x1b[0m\n",
-                    n,
-                    if n == 1 { "" } else { "s" }
-                );
-                println!("{}", report);
-                if strict {
-                    process::exit(1);
+    let mut files: Vec<(String, String)> = vec![(filename.to_string(), read_file(filename))];
+    let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
+    let paths = EXPANSION_FILES.with(|f| f.borrow().clone());
+    for (prefix, rel) in &parts {
+        if let Some(source) = paths.get(prefix).and_then(|p| std::fs::read_to_string(p).ok()) {
+            files.push((rel.clone(), source));
+        }
+    }
+    let programs = db_programs(filename, &files);
+    let (mut calls, mut checked, mut findings, mut other_db) = (0usize, false, 0usize, 0usize);
+    let mut reports: Vec<(String, String)> = Vec::new();
+    let mut skipped: Option<String> = None;
+    for (name, source) in &files {
+        let program = programs.get(name).cloned().unwrap_or_default();
+        match db_check::run_in(name, source, resolved_db.as_deref(), &program) {
+            Ok(db_result) => {
+                calls += db_result.sql_calls;
+                checked |= db_result.schema_checked;
+                other_db += db_result.other_db;
+                if let Some(report) = db_check::report::render_all(&db_result.hazards, source) {
+                    findings += db_result.hazards.len();
+                    reports.push((name.clone(), report));
                 }
-            } else if db_result.schema_checked {
-                println!("  \x1b[32m✓ database checks clean\x1b[0m — {} SQL call{} verified against schema",
-                    db_result.sql_calls, if db_result.sql_calls == 1 { "" } else { "s" });
-            } else if db_result.sql_calls > 0 {
-                println!(
-                    "  \x1b[90m{} SQL call{} found — pass --db <url> (or set db = '…' in crowfile) for schema-aware checks\x1b[0m",
-                    db_result.sql_calls,
-                    if db_result.sql_calls == 1 { "" } else { "s" }
-                );
+            }
+            Err(e) => {
+                skipped.get_or_insert(e);
             }
         }
-        Err(e) => println!("  \x1b[90mdatabase checks skipped: {}\x1b[0m", e),
+    }
+    if other_db > 0 {
+        eprintln!("{}", db_check::other_db_note(other_db, resolved_db.as_deref().unwrap_or_default()));
+    }
+    if findings > 0 {
+        println!("\n  database checks: \x1b[33m{} finding{}\x1b[0m\n", findings, if findings == 1 { "" } else { "s" });
+        for (name, report) in &reports {
+            // a part's findings are named by its file
+            if name != filename {
+                println!("  \x1b[90m{}\x1b[0m", name);
+            }
+            println!("{}", report);
+        }
+        if strict {
+            process::exit(1);
+        }
+    } else if let Some(e) = skipped.filter(|_| calls == 0) {
+        println!("  \x1b[90mdatabase checks skipped: {}\x1b[0m", e);
+    } else if checked {
+        println!("  \x1b[32m✓ database checks clean\x1b[0m — {} SQL call{} verified against schema", calls, if calls == 1 { "" } else { "s" });
+    } else if calls > 0 {
+        println!(
+            "  \x1b[90m{} SQL call{} found — pass --db <url> (or set db = '…' in crowfile) for schema-aware checks\x1b[0m",
+            calls,
+            if calls == 1 { "" } else { "s" }
+        );
     }
 
     if result.issues.is_empty() {

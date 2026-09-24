@@ -168,8 +168,15 @@ fn walk_expr(
                             func,
                             assign_to,
                         );
-                        if let Some(Expr::Ident(cv)) = args.first() {
-                            call.conn_var = Some(cv.clone());
+                        match args.first() {
+                            Some(Expr::Ident(cv)) => call.conn_var = Some(cv.clone()),
+                            // another part's connection, as this file spells it
+                            Some(Expr::FieldAccess { object, field }) => {
+                                if let Expr::Ident(m) = object.as_ref() {
+                                    call.conn_var = Some(format!("{}.{}", m, field));
+                                }
+                            }
+                            _ => {}
                         }
                         facts.calls.push(call);
                     }
