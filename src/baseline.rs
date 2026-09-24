@@ -210,6 +210,8 @@ fn canon(e: &Expr, env: &Env) -> String {
             UnaryOp::Not => format!("(not {})", canon(expr, env)),
             UnaryOp::Neg => format!("(-{})", canon(expr, env)),
         },
+        // a read a guard narrowed reads as the name the program wrote
+        Expr::Call { callee, args } if matches!(callee.as_ref(), Expr::Ident(k) if k == crate::lower::KNOWN) && args.len() == 1 => canon(&args[0], env),
         Expr::Call { callee, args } => {
             let c = canon(callee, env);
             let a: Vec<String> = args.iter().map(|x| canon(x, env)).collect();

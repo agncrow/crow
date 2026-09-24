@@ -303,6 +303,9 @@ pub enum Convert {
     IntToFloat,
     /// The payload of a result, after a Propagate covered the error.
     Unwrap,
+    /// The payload of a result a guard made known good (spec, Errors in
+    /// Conditions): no error reaches here, so nothing propagates from it.
+    Known,
     /// Value to text, as `str[]` does: the text `log` prints.
     ToStr,
     /// A list of numbers to a tensor, or back.
@@ -908,6 +911,7 @@ pub fn expr(e: &Expr) -> String {
         Expr::Convert { how, expr: inner, .. } => match how {
             Convert::IntToFloat => format!("float({})", expr(inner)),
             Convert::Unwrap => format!("unwrap {}", expr(inner)),
+            Convert::Known => format!("known {}", expr(inner)),
             Convert::ToStr => format!("str({})", expr(inner)),
             Convert::ToTensor => format!("tensor({})", expr(inner)),
             Convert::ToList => format!("list({})", expr(inner)),

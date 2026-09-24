@@ -20,7 +20,7 @@
 //!   `button['+', click = inc]` → `button[[click = inc], '+']`.
 
 use crate::ast::{Expr, Stmt};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// HTML element constructors that accept trailing named attributes.
 pub const UI_ELEMENTS: &[&str] = &[
@@ -150,7 +150,198 @@ fn lower_with(stmts: &[Stmt], web: bool) -> Result<Vec<Stmt>, String> {
         web,
     };
     l.collect_sigs(stmts);
-    l.lower_stmts(stmts)
+    let lowered = l.lower_stmts(stmts)?;
+    Ok(narrowed(lowered, &BTreeSet::new()))
+}
+
+// ── a guard narrows ─────────────────────────────────────────────────
+
+/// The hidden builtin a narrowed read becomes: `__known[x]` is `x`'s value,
+/// typed as its payload (the IR's unwrap).
+pub const KNOWN: &str = "__known";
+
+/// A guard narrows (spec, Errors in Conditions): after `if not x.ok` with
+/// no `else`, whose branch always leaves (`return`, `break`, `continue`),
+/// `x` is known good for the rest of its block, and `if not a.ok or not
+/// b.ok` narrows both. Its reads there become `__known[x]`, here, once, so
+/// every pass after this one (inference, the checker, both backends) reads
+/// the same type. An assignment to `x` ends it, and a loop does not carry
+/// a name its body assigns into the body (the last pass may have made it
+/// fail again).
+fn narrowed(stmts: Vec<Stmt>, outer: &BTreeSet<String>) -> Vec<Stmt> {
+    let mut known = outer.clone();
+    let mut out = Vec::with_capacity(stmts.len());
+    for s in stmts {
+        let s = narrow_stmt(s, &known);
+        for n in assigned(std::slice::from_ref(&s)) {
+            known.remove(&n);
+        }
+        known.extend(guarded(&s));
+        out.push(s);
+    }
+    out
+}
+
+/// The names a guard statement makes known good for the rest of its block.
+fn guarded(s: &Stmt) -> Vec<String> {
+    if let Stmt::If { condition, then_body, else_body: None } = s {
+        let leaves = matches!(then_body.iter().rev().find(|x| !matches!(x, Stmt::Line(_))), Some(Stmt::Return(_) | Stmt::Break | Stmt::Continue));
+        let mut names = Vec::new();
+        if leaves && failed_checks(condition, &mut names) {
+            return names;
+        }
+    }
+    Vec::new()
+}
+
+/// `not x.ok`, or an `or` of them: the names each checks.
+fn failed_checks(e: &Expr, out: &mut Vec<String>) -> bool {
+    match e {
+        Expr::UnaryOp { op: crate::ast::UnaryOp::Not, expr } => match expr.as_ref() {
+            Expr::FieldAccess { object, field } if field == "ok" => match object.as_ref() {
+                Expr::Ident(n) => {
+                    out.push(n.clone());
+                    true
+                }
+                // already known good: nothing more to narrow
+                Expr::Call { callee, args } if matches!(callee.as_ref(), Expr::Ident(k) if k == KNOWN) && args.len() == 1 => true,
+                _ => false,
+            },
+            _ => false,
+        },
+        Expr::BinOp { op: crate::ast::BinOp::Or, left, right } => failed_checks(left, out) && failed_checks(right, out),
+        _ => false,
+    }
+}
+
+/// What a loop's body inherits: not the names the body assigns, nor the
+/// loop's own variable.
+fn loop_known(known: &BTreeSet<String>, body: &[Stmt], var: Option<&str>) -> BTreeSet<String> {
+    let written = assigned(body);
+    known.iter().filter(|n| !written.contains(*n) && Some(n.as_str()) != var).cloned().collect()
+}
+
+fn narrow_stmt(s: Stmt, known: &BTreeSet<String>) -> Stmt {
+    let e = |x: Expr| narrow_expr(x, known);
+    match s {
+        Stmt::Assign { name, value } => Stmt::Assign { name, value: e(value) },
+        Stmt::MultiAssign { names, values } => Stmt::MultiAssign { names, values: values.into_iter().map(e).collect() },
+        // a function, a derivation and a test block start with nothing known
+        Stmt::FnDecl { name, params, defaults, body, is_view } => Stmt::FnDecl { name, params, defaults, body: narrowed(body, &BTreeSet::new()), is_view },
+        Stmt::Derive { name, fresh, body } => Stmt::Derive { name, fresh, body: narrowed(body, &BTreeSet::new()) },
+        Stmt::TestBlock { name, params, body } => Stmt::TestBlock { name, params, body: narrowed(body, &BTreeSet::new()) },
+        Stmt::Return(v) => Stmt::Return(v.map(e)),
+        Stmt::ExprStmt(x) => Stmt::ExprStmt(e(x)),
+        Stmt::If { condition, then_body, else_body } => Stmt::If {
+            condition: e(condition),
+            then_body: narrowed(then_body, known),
+            else_body: else_body.map(|b| narrowed(b, known)),
+        },
+        Stmt::For { var, iter, body } => {
+            let inner = loop_known(known, &body, Some(&var));
+            Stmt::For { var, iter: e(iter), body: narrowed(body, &inner) }
+        }
+        // the condition is tested again after every pass through the body
+        Stmt::While { condition, body } => {
+            let inner = loop_known(known, &body, None);
+            Stmt::While { condition: narrow_expr(condition, &inner), body: narrowed(body, &inner) }
+        }
+        // the object of an assignment is a place, not a read
+        Stmt::FieldAssign { object, field, value } => Stmt::FieldAssign { object, field, value: e(value) },
+        Stmt::IndexAssign { object, index, value } => Stmt::IndexAssign { object, index: e(index), value: e(value) },
+        Stmt::Resource { kind, count } => Stmt::Resource { kind, count: e(count) },
+        other => other,
+    }
+}
+
+fn narrow_expr(e: Expr, known: &BTreeSet<String>) -> Expr {
+    let n = |x: Box<Expr>| Box::new(narrow_expr(*x, known));
+    match e {
+        Expr::Ident(name) if known.contains(&name) => Expr::Call { callee: Box::new(Expr::Ident(KNOWN.to_string())), args: vec![Expr::Ident(name)] },
+        Expr::BinOp { op, left, right } => Expr::BinOp { op, left: n(left), right: n(right) },
+        Expr::UnaryOp { op, expr } => Expr::UnaryOp { op, expr: n(expr) },
+        // a function's name is not a value to narrow
+        Expr::Call { callee, args } => {
+            let callee = if matches!(callee.as_ref(), Expr::Ident(_)) { callee } else { n(callee) };
+            Expr::Call { callee, args: args.into_iter().map(|a| narrow_expr(a, known)).collect() }
+        }
+        Expr::FieldAccess { object, field } => Expr::FieldAccess { object: n(object), field },
+        Expr::Array(items) => Expr::Array(items.into_iter().map(|a| narrow_expr(a, known)).collect()),
+        // a key is a name (an attribute's, a field's), not a read
+        Expr::Map(pairs) => Expr::Map(pairs.into_iter().map(|(k, v)| (k, narrow_expr(v, known))).collect()),
+        Expr::Named { name, value } => Expr::Named { name, value: n(value) },
+        Expr::ForExpr { var, iter, body } => {
+            let inner = loop_known(known, &body, Some(&var));
+            Expr::ForExpr { var, iter: n(iter), body: narrowed(body, &inner) }
+        }
+        other => other,
+    }
+}
+
+/// Every name a block assigns, inside its nested blocks and collecting
+/// loops too (a function's body is its own).
+fn assigned(stmts: &[Stmt]) -> BTreeSet<String> {
+    fn in_expr(e: &Expr, out: &mut BTreeSet<String>) {
+        match e {
+            Expr::BinOp { left, right, .. } => {
+                in_expr(left, out);
+                in_expr(right, out);
+            }
+            Expr::UnaryOp { expr, .. } => in_expr(expr, out),
+            Expr::Call { callee, args } => {
+                in_expr(callee, out);
+                args.iter().for_each(|a| in_expr(a, out));
+            }
+            Expr::FieldAccess { object, .. } => in_expr(object, out),
+            Expr::Array(items) => items.iter().for_each(|a| in_expr(a, out)),
+            Expr::Map(pairs) => pairs.iter().for_each(|(_, v)| in_expr(v, out)),
+            Expr::Named { value, .. } => in_expr(value, out),
+            Expr::ForExpr { iter, body, .. } => {
+                in_expr(iter, out);
+                in_stmts(body, out);
+            }
+            _ => {}
+        }
+    }
+    fn in_stmts(stmts: &[Stmt], out: &mut BTreeSet<String>) {
+        for s in stmts {
+            match s {
+                Stmt::Assign { name, value } => {
+                    out.insert(name.clone());
+                    in_expr(value, out);
+                }
+                Stmt::MultiAssign { names, values } => {
+                    out.extend(names.iter().cloned());
+                    values.iter().for_each(|v| in_expr(v, out));
+                }
+                Stmt::Return(Some(e)) | Stmt::ExprStmt(e) => in_expr(e, out),
+                Stmt::If { condition, then_body, else_body } => {
+                    in_expr(condition, out);
+                    in_stmts(then_body, out);
+                    if let Some(b) = else_body {
+                        in_stmts(b, out);
+                    }
+                }
+                Stmt::For { iter, body, .. } => {
+                    in_expr(iter, out);
+                    in_stmts(body, out);
+                }
+                Stmt::While { condition, body } => {
+                    in_expr(condition, out);
+                    in_stmts(body, out);
+                }
+                Stmt::FieldAssign { value, .. } => in_expr(value, out),
+                Stmt::IndexAssign { index, value, .. } => {
+                    in_expr(index, out);
+                    in_expr(value, out);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut out = BTreeSet::new();
+    in_stmts(stmts, &mut out);
+    out
 }
 
 impl Lowerer {
@@ -825,5 +1016,87 @@ mod tests {
     fn test_indirect_call_named_arg_errors() {
         let err = lower_src("r = unknown_fn[1, a = 2]\n").unwrap_err();
         assert!(err.contains("does not accept named arguments"), "{}", err);
+    }
+
+    /// The narrowed reads of a lowered body, as the names they read.
+    fn known_reads(stmts: &[Stmt]) -> Vec<String> {
+        fn in_expr(e: &Expr, out: &mut Vec<String>) {
+            match e {
+                Expr::Call { callee, args } => {
+                    if matches!(callee.as_ref(), Expr::Ident(k) if k == KNOWN) {
+                        if let Some(Expr::Ident(n)) = args.first() {
+                            out.push(n.clone());
+                        }
+                    }
+                    args.iter().for_each(|a| in_expr(a, out));
+                }
+                Expr::BinOp { left, right, .. } => {
+                    in_expr(left, out);
+                    in_expr(right, out);
+                }
+                Expr::UnaryOp { expr, .. } => in_expr(expr, out),
+                Expr::FieldAccess { object, .. } => in_expr(object, out),
+                _ => {}
+            }
+        }
+        fn in_stmts(stmts: &[Stmt], out: &mut Vec<String>) {
+            for s in stmts {
+                match s {
+                    Stmt::Assign { value, .. } | Stmt::ExprStmt(value) | Stmt::Return(Some(value)) => in_expr(value, out),
+                    Stmt::If { condition, then_body, else_body } => {
+                        in_expr(condition, out);
+                        in_stmts(then_body, out);
+                        if let Some(b) = else_body {
+                            in_stmts(b, out);
+                        }
+                    }
+                    Stmt::While { condition, body } => {
+                        in_expr(condition, out);
+                        in_stmts(body, out);
+                    }
+                    Stmt::For { iter, body, .. } => {
+                        in_expr(iter, out);
+                        in_stmts(body, out);
+                    }
+                    Stmt::FnDecl { body, .. } => in_stmts(body, out),
+                    _ => {}
+                }
+            }
+        }
+        let mut out = Vec::new();
+        in_stmts(stmts, &mut out);
+        out
+    }
+
+    /// A guard narrows (spec, Errors in Conditions): reads after it are
+    /// the value; the guard's own check, a read before it, and every read
+    /// after an assignment are not
+    #[test]
+    fn a_guard_narrows_the_rest_of_its_block() {
+        let stmts = lower_src("fn f[s]\n    x = int[s]\n    a = x\n    if not x.ok\n        return 0\n    b = x + 1\n    x = int['q']\n    c = x\n    return b\n").unwrap();
+        assert_eq!(known_reads(&stmts), vec!["x".to_string()], "only `b = x + 1` reads a narrowed x");
+    }
+
+    /// `or` of checks narrows each name; a branch that does not leave
+    /// narrows nothing, nor does an `else`
+    #[test]
+    fn only_a_guard_that_leaves_narrows() {
+        let both = lower_src("fn f[a, b]\n    if not a.ok or not b.ok\n        return 0\n    return a + b\n").unwrap();
+        assert_eq!(known_reads(&both), vec!["a".to_string(), "b".to_string()]);
+        let stays = lower_src("fn f[a]\n    if not a.ok\n        log['bad']\n    return a\n").unwrap();
+        assert!(known_reads(&stays).is_empty());
+        let with_else = lower_src("fn f[a]\n    if not a.ok\n        return 0\n    else\n        log['ok']\n    return a\n").unwrap();
+        assert!(known_reads(&with_else).is_empty());
+    }
+
+    /// A loop whose body assigns a name does not inherit its narrowing,
+    /// even for reads before the assignment (an earlier pass made it fail);
+    /// the end of a block ends a narrowing made in it
+    #[test]
+    fn a_narrowing_stays_in_its_block() {
+        let looped = lower_src("fn f[s]\n    x = int[s]\n    if not x.ok\n        return 0\n    while x gt 0\n        y = x\n        x = int['q']\n    return 1\n").unwrap();
+        assert!(known_reads(&looped).is_empty(), "{:?}", known_reads(&looped));
+        let nested = lower_src("fn f[s, c]\n    x = int[s]\n    if c\n        if not x.ok\n            return 0\n        y = x\n    return x\n").unwrap();
+        assert_eq!(known_reads(&nested), vec!["x".to_string()], "only the read inside the inner block");
     }
 }

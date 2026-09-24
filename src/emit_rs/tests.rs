@@ -138,6 +138,20 @@ fn a_parallel_loop_that_skips_gathers_per_iteration() {
     assert!(rust.contains("= crow_runtime::core::push(_yielded_"), "{}", rust);
 }
 
+/// A guard narrows: after `if not t.ok` / `return`, t is its value, so
+/// the function is not typed as able to fail and len[t] is a number read
+/// from the value, with nothing to propagate
+#[test]
+fn a_narrowed_read_is_the_value() {
+    let rust = transpile("fn count[path]\n    t = read[path]\n    if not t.ok\n        return 0\n    return len[t]\nlog[count['x.txt']]\n");
+    let start = rust.find("fn count(").expect("count");
+    let rest = &rust[start..];
+    let body = &rest[..rest.find("\n}\n").unwrap()];
+    assert!(body.contains(") -> i64 {"), "{}", body);
+    assert!(body.contains("(t).value"), "{}", body);
+    assert!(!body.contains("_prop_"), "nothing propagates: {}", body);
+}
+
 /// A branch on an error at the top level halts with the interpreter's
 /// words and the line (spec, Errors in Conditions); the compiled program
 /// said `error: cannot branch…` and no line

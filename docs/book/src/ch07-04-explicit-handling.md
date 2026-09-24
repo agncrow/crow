@@ -54,6 +54,25 @@ Written as `if not text.ok or len[text] eq 0`, the same check is refused
 when the read fails: `len[text]` is then the error, and so is the whole
 condition.
 
+Inside a function, a guard whose branch leaves also *narrows*: after
+`if not text.ok` ending in `return`, `text` is known good for the rest of
+the block, so `len[text]` there is a plain number, and the function is not
+typed as able to fail:
+
+```crow
+fn size_of[path]
+    text = read[path]
+    if not text.ok
+        return 0
+    return len[text]
+
+log[size_of['no_such_file.txt']]
+```
+
+```text
+0
+```
+
 ## When to Check
 
 The idiom that falls out of this chapter: **check `.ok` at boundaries —

@@ -783,7 +783,7 @@ impl IrInterp {
                     },
                     // a CrowValue is its own payload; an error reached here is
                     // the caller's to propagate
-                    Convert::Unwrap | Convert::ToStr | Convert::ToTensor | Convert::ToList => v,
+                    Convert::Unwrap | Convert::Known | Convert::ToStr | Convert::ToTensor | Convert::ToList => v,
                 }
             }
             Expr::Binary { op, l, r, .. } => {

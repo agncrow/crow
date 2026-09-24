@@ -84,6 +84,22 @@ impl Emitter {
                         inner
                     }
                 }
+                // a value a guard made known good: its payload, copied out
+                // unless this is the variable's last read (a move)
+                Convert::Known => {
+                    let inner = self.expr(expr);
+                    match self.tt(expr) {
+                        CrowType::Result(p) => {
+                            let reread = matches!(expr.as_ref(), Expr::Local(..) | Expr::Derived(..) | Expr::Load(..));
+                            if reread && !Self::is_copy_type(&p) {
+                                format!("({}).value.clone()", inner)
+                            } else {
+                                format!("({}).value", inner)
+                            }
+                        }
+                        _ => inner,
+                    }
+                }
                 Convert::ToStr => {
                     let inner = self.expr(expr);
                     format!("format!(\"{{}}\", {})", inner)

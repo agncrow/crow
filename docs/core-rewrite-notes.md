@@ -617,5 +617,16 @@ weeks; the core stages are weeks each.
   hand back an error from its condition (parity 55), and `push[]` and
   `set[]` took a variable by move (parity 56). The record is under step
   4 in `ir-design.md` §9.
+- **2026-09-24, a guard narrows.** After `if not x.ok` whose branch
+  leaves, `x` is its value for the rest of the block (spec, Errors in
+  Conditions), so guarded code is not typed as able to fail: finch's
+  `symbols` is a list again, not a failing list. Done once, before
+  inference, as a rewrite in `lower.rs`: a narrowed read becomes the
+  hidden `__known[x]`, which inference types as the value and the lowering
+  makes `Convert::Known`. That node is new in the IR: known good, so nothing
+  propagates from it, unlike `Unwrap`. Every pass reads the same type, where
+  threading the narrowing through each of inference's walks would have let
+  them drift. The fold below replaces the rewrite with the scoped
+  environment's own narrowing.
 - **Next:** fold `lower.rs`, `type_infer.rs` and `validator.rs` as §12
   of `ir-design.md` decided.
