@@ -936,7 +936,17 @@ Found on the way:
   previous block's file instead: a page that serves, which never
   exits. A block the runner cannot write now fails, with the reason.
 
-Not built:
-- The database check reads only the entry file, so an app whose queries
-  live in parts has them unchecked: the board's, and finch's.
-- Stopping `crow run` with a signal leaves its compiled program serving.
+Not built at the time, both built 2026-09-24:
+- The database check read only the entry file, so an app whose queries
+  live in parts had them unchecked: the board's, and finch's. It reads
+  every part now, with the program's connections and handlers (the
+  board's 20 queries and finch's 17 are checked). Checking finch's parts
+  found two false findings, both fixed. One was a query on a connection
+  handed in as a parameter, checked against the wrong database. The other
+  was a handler's two writes reported as separate, though a handler is
+  one transaction.
+- Stopping `crow run` with a signal left its compiled program serving.
+  `crow run` now hands SIGINT, SIGTERM and SIGHUP on to the program (and
+  to cargo while it builds), then waits for it and exits as it did. The
+  served suite stops `crow run` alone and fails if the program keeps
+  serving.

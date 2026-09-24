@@ -15,6 +15,16 @@ crow check app.co --strict                     --- exit 1 on any finding (CI)
 The url can also live in the crowfile: `db = 'sqlite://dev.db'`.
 Findings are advisory by default — they print, teach, and never block.
 
+The checks read the entry and every part it imports, each against its own
+lines, so an app that keeps its queries in its parts has them all checked;
+a part's finding is named by its file. What a file cannot say alone, the
+program says: a connection another part declares, reached as `store.book`,
+is checked against its own database. In a program with several databases,
+a query whose connection a file cannot tell (a function's parameter) is
+left alone rather than checked against the wrong one, and counted in a
+note. A handler is one transaction (every write in it lands together or not
+at all), so two writes in a handler are not reported as separate.
+
 Before any of it runs, the program passes the checks `crow run` passes it
 through — scope, reservation and `ui` rules, made as the program is
 lowered — so `crow check` and `crow test` refuse what `crow run` refuses,
