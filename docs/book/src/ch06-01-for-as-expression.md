@@ -48,13 +48,17 @@ log[fahrenheit]
 [32, 70.7, 212]
 ```
 
-The *results* arrive in input order — collection is deterministic. What
-is **not** deterministic is side-effect order: `log[...]` inside a loop
-body prints in whatever order iterations finish. The idiom is the one
-you've been seeing all book: **compute in the loop, collect the values,
-print after.** (Accumulating into an outer variable — `total = total + n`
-— is detected and runs sequentially, so it stays correct; it just
-forfeits the parallelism.)
+The *results* arrive in input order — collection is deterministic. The
+iterations run in parallel only when nothing in the body can show the
+order they ran in. A body that prints, writes a file or a fact, draws a
+random number, renders a view, or accumulates into an outer variable
+(`total = total + n`) runs in order, so it stays correct and just
+forfeits the parallelism. A function you call counts by what it does,
+however deep: a loop over a function that only computes runs on every
+core, one over a function that logs runs in order. `crow build --ir`
+shows which loops run in parallel. The idiom that keeps a loop parallel
+is the one you've been seeing all book: **compute in the loop, collect
+the values, print after.**
 
-`cpu[8]` before a loop caps its thread count; `cpu[1]` forces sequential
-when you need ordered effects.
+`cpu[8]` before a loop caps its thread count; `cpu[1]` runs every loop on
+one core.

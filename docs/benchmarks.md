@@ -35,6 +35,16 @@
 
 ## Notes
 
+- **2026-09-23, one rule for parallel loops.** A loop runs in parallel
+  when nothing its body does can show the order (spec §14, For Loops),
+  decided once in the lowering. Before, the interpreter kept any loop
+  that called a function the program defined in order. The new
+  `for_fn` section of `collect` (a million items through a pure
+  function), both binaries back to back on the full sizes: interpreter
+  892.6 ms before, 259.4 ms after (×3.4); compiled 1.6 ms and 1.5 ms,
+  unchanged, since it ran such loops in parallel already. Every other
+  section moved within the run-to-run noise of a recording. The table
+  above predates the section; the next `--write` adds its row.
 - **2026-09-08, the IR interpreter is the interpreter.** The
   interpreter column is the IR walker (`ir_interp.rs`) from this
   recording on; the AST interpreter is deleted. Against the last AST

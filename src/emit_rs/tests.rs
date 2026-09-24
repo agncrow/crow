@@ -67,6 +67,32 @@ fn a_derivation_read_up_front_is_cloned_into_a_call() {
     assert_eq!(render.matches("\"a\".to_string(), label.clone())").count(), 2, "cloned at each call:\n{}", render);
 }
 
+/// A collecting loop whose condition can hand an error back gathers in a
+/// loop inside the function, which returns the error: a closure cannot
+/// return from the function (it did not build), and the function's value
+/// is a result because the loop's condition can fail
+#[test]
+fn a_collecting_loop_that_can_return_gathers_in_a_loop() {
+    let rust = transpile("fn parse_all[xs]\n    out = for x in xs\n        if int[x] gt 0\n            x\n    return out\nlog[parse_all[['1', 'a']]]\n");
+    let start = rust.find("fn parse_all(").expect("parse_all");
+    let rest = &rust[start..];
+    let body = &rest[..rest.find("\n}\n").unwrap()];
+    assert!(body.contains("-> CrowResult<Vec<String>>"), "{}", body);
+    assert!(body.contains("for x in xs.iter() {"), "a loop, not a closure:\n{}", body);
+    assert!(body.contains("return CrowResult { ok: false"), "the error goes back:\n{}", body);
+    assert!(!body.contains(".map(|"), "{}", body);
+}
+
+/// What a list or a map keeps is its own: a variable read is cloned into
+/// push[] and into set[]'s key, so the variable stays usable and a loop's
+/// borrowed variable becomes a value
+#[test]
+fn a_collection_keeps_a_clone_of_a_variable() {
+    let rust = transpile("out = []\nfor w in ['a', 'b']\n    out = push[out, w]\nm = map[]\nfor k in ['p', 'q']\n    m = set[m, k, 1]\nlog[out]\nlog[m]\n");
+    assert!(rust.contains("crow_runtime::core::push(out, (w).clone())"), "{}", rust);
+    assert!(rust.contains("crow_runtime::core::map_set(m, (k).clone(), 1_i64)"), "{}", rust);
+}
+
 /// A branch on an error at the top level halts with the interpreter's
 /// words and the line (spec, Errors in Conditions); the compiled program
 /// said `error: cannot branch…` and no line

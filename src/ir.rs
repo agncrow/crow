@@ -230,8 +230,9 @@ pub enum Stmt {
     Store { fact: String, expr: Expr },
     If { cond: Expr, then: Block, els: Option<Block> },
     While { cond: Expr, body: Block },
-    /// `parallel` when the body writes no outer variable and reaches no
-    /// effect; decided here, not by the runtime.
+    /// `parallel` when nothing the body does can show the order its
+    /// iterations ran in (spec §14, For Loops): decided once by the
+    /// lowering, read by both backends.
     For { var: String, iter: Expr, body: Block, parallel: bool },
     Return(Option<Expr>),
     Break,
@@ -343,6 +344,7 @@ pub enum Expr {
     Tree { element: String, attrs: Vec<(String, Expr)>, children: Vec<Expr> },
     /// The collecting loop; the body's last expression is what each
     /// iteration yields, an iteration that yields nothing is skipped.
+    /// `parallel` as for the statement form.
     ForExpr { var: String, iter: Box<Expr>, body: Block, ty: Ty, parallel: bool },
     /// A call held for someone else to make: a control's handler with its
     /// arguments (`click = set_speed[10.0]`), or the harness's
@@ -453,6 +455,251 @@ pub const EFFECTS: &[&str] = &[
 
 pub fn is_effect(name: &str) -> bool {
     EFFECTS.contains(&name)
+}
+
+/// The builtins that draw from the program's random generator, or seed
+/// it: a seeded program's draws repeat only in the order written, so a
+/// loop that draws runs in order (spec §14, For Loops).
+pub const DRAWS: &[&str] = &[
+    "rand", "seed", "randn", "normal", "uniform", "poisson", "bernoulli", "gamma_dist", "beta_dist", "exponential", "shuffle", "choice",
+    "permutation",
+];
+
+// ── walking the IR ──────────────────────────────────────────────────
+
+pub fn visit_block(b: &[Stmt], f: &mut dyn FnMut(&Expr)) {
+    for s in b {
+        visit_stmt(s, f);
+    }
+}
+
+pub fn visit_stmt(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
+    match s {
+        Stmt::Let { expr, .. } | Stmt::Set { expr, .. } | Stmt::Store { expr, .. } | Stmt::Do(expr) => visit_expr(expr, f),
+        Stmt::SetPath { path, expr, .. } => {
+            for p in path {
+                if let PathStep::Index(i) = p {
+                    visit_expr(i, f);
+                }
+            }
+            visit_expr(expr, f);
+        }
+        Stmt::If { cond, then, els } => {
+            visit_expr(cond, f);
+            visit_block(then, f);
+            if let Some(e) = els {
+                visit_block(e, f);
+            }
+        }
+        Stmt::While { cond, body } => {
+            visit_expr(cond, f);
+            visit_block(body, f);
+        }
+        Stmt::For { iter, body, .. } => {
+            visit_expr(iter, f);
+            visit_block(body, f);
+        }
+        Stmt::Return(Some(e)) => visit_expr(e, f),
+        _ => {}
+    }
+}
+
+pub fn visit_expr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+    f(e);
+    match e {
+        Expr::Call { args, .. } | Expr::Effect { args, .. } | Expr::Deferred { args, .. } => {
+            for a in args {
+                visit_expr(a, f);
+            }
+        }
+        Expr::Convert { expr, .. } | Expr::Unary { expr, .. } => visit_expr(expr, f),
+        Expr::Binary { l, r, .. } => {
+            visit_expr(l, f);
+            visit_expr(r, f);
+        }
+        Expr::Index { base, indices, .. } => {
+            visit_expr(base, f);
+            for i in indices {
+                visit_expr(i, f);
+            }
+        }
+        Expr::Field { base, .. } | Expr::Meta { base, .. } => visit_expr(base, f),
+        Expr::Interp(pieces) => {
+            for p in pieces {
+                if let Piece::Expr(x) = p {
+                    visit_expr(x, f);
+                }
+            }
+        }
+        Expr::ListLit(items, _) => {
+            for i in items {
+                visit_expr(i, f);
+            }
+        }
+        Expr::MapLit(pairs, _) => {
+            for (_, v) in pairs {
+                visit_expr(v, f);
+            }
+        }
+        Expr::RecordLit { fields, .. } => {
+            for x in fields {
+                visit_expr(x, f);
+            }
+        }
+        Expr::Tree { attrs, children, .. } => {
+            for (_, a) in attrs {
+                visit_expr(a, f);
+            }
+            for c in children {
+                visit_expr(c, f);
+            }
+        }
+        Expr::ForExpr { iter, body, .. } => {
+            visit_expr(iter, f);
+            visit_block(body, f);
+        }
+        _ => {}
+    }
+}
+
+/// Every statement in a block, nested blocks included.
+pub fn visit_stmts(b: &[Stmt], f: &mut dyn FnMut(&Stmt)) {
+    for s in b {
+        f(s);
+        match s {
+            Stmt::If { then, els, .. } => {
+                visit_stmts(then, f);
+                if let Some(e) = els {
+                    visit_stmts(e, f);
+                }
+            }
+            Stmt::While { body, .. } | Stmt::For { body, .. } => visit_stmts(body, f),
+            _ => {}
+        }
+        // a collecting loop's body is statements too
+        let mut inner: Vec<Block> = Vec::new();
+        visit_stmt(s, &mut |e| {
+            if let Expr::ForExpr { body, .. } = e {
+                inner.push(body.clone());
+            }
+        });
+        for b in inner {
+            visit_stmts(&b, f);
+        }
+    }
+}
+
+/// A call's name as the program wrote it: a runtime table path reads as
+/// its builtin (`core.push` → `push`), an effect as its name.
+pub fn call_name(e: &Expr) -> Option<String> {
+    match e {
+        Expr::Call { target: Target::Runtime(path), .. } => {
+            Some(RUNTIME_TABLE.iter().find(|(_, r)| *r == path.as_str()).map(|(b, _)| b.to_string()).unwrap_or_else(|| path.clone()))
+        }
+        Expr::Call { target: Target::User(n), .. } => Some(n.clone()),
+        Expr::Call { target: Target::Module(_, n), .. } => Some(n.clone()),
+        Expr::Effect { name, .. } => Some(name.rsplit('.').next().unwrap_or(name).to_string()),
+        _ => None,
+    }
+}
+
+/// Sets every loop's `parallel` flag in a block, nested loops included,
+/// to what `decide` says of its variable and body.
+pub fn set_loops(b: &mut Block, decide: &dyn std::ops::Fn(&str, &Block) -> bool) {
+    for s in b.iter_mut() {
+        set_loops_stmt(s, decide);
+    }
+}
+
+fn set_loops_stmt(s: &mut Stmt, decide: &dyn std::ops::Fn(&str, &Block) -> bool) {
+    match s {
+        Stmt::Let { expr, .. } | Stmt::Set { expr, .. } | Stmt::Store { expr, .. } | Stmt::Do(expr) => set_loops_expr(expr, decide),
+        Stmt::SetPath { path, expr, .. } => {
+            for p in path.iter_mut() {
+                if let PathStep::Index(i) = p {
+                    set_loops_expr(i, decide);
+                }
+            }
+            set_loops_expr(expr, decide);
+        }
+        Stmt::If { cond, then, els } => {
+            set_loops_expr(cond, decide);
+            set_loops(then, decide);
+            if let Some(e) = els {
+                set_loops(e, decide);
+            }
+        }
+        Stmt::While { cond, body } => {
+            set_loops_expr(cond, decide);
+            set_loops(body, decide);
+        }
+        Stmt::For { var, iter, body, parallel } => {
+            set_loops_expr(iter, decide);
+            *parallel = decide(var, body);
+            set_loops(body, decide);
+        }
+        Stmt::Return(Some(e)) => set_loops_expr(e, decide),
+        _ => {}
+    }
+}
+
+/// `set_loops` inside an expression: a collecting loop anywhere in it.
+pub fn set_loops_expr(e: &mut Expr, decide: &dyn std::ops::Fn(&str, &Block) -> bool) {
+    match e {
+        Expr::Call { args, .. } | Expr::Effect { args, .. } | Expr::Deferred { args, .. } => {
+            for a in args.iter_mut() {
+                set_loops_expr(a, decide);
+            }
+        }
+        Expr::Convert { expr, .. } | Expr::Unary { expr, .. } => set_loops_expr(expr, decide),
+        Expr::Binary { l, r, .. } => {
+            set_loops_expr(l, decide);
+            set_loops_expr(r, decide);
+        }
+        Expr::Index { base, indices, .. } => {
+            set_loops_expr(base, decide);
+            for i in indices.iter_mut() {
+                set_loops_expr(i, decide);
+            }
+        }
+        Expr::Field { base, .. } | Expr::Meta { base, .. } => set_loops_expr(base, decide),
+        Expr::Interp(pieces) => {
+            for p in pieces.iter_mut() {
+                if let Piece::Expr(x) = p {
+                    set_loops_expr(x, decide);
+                }
+            }
+        }
+        Expr::ListLit(items, _) => {
+            for i in items.iter_mut() {
+                set_loops_expr(i, decide);
+            }
+        }
+        Expr::MapLit(pairs, _) => {
+            for (_, v) in pairs.iter_mut() {
+                set_loops_expr(v, decide);
+            }
+        }
+        Expr::RecordLit { fields, .. } => {
+            for x in fields.iter_mut() {
+                set_loops_expr(x, decide);
+            }
+        }
+        Expr::Tree { attrs, children, .. } => {
+            for (_, a) in attrs.iter_mut() {
+                set_loops_expr(a, decide);
+            }
+            for c in children.iter_mut() {
+                set_loops_expr(c, decide);
+            }
+        }
+        Expr::ForExpr { var, iter, body, parallel, .. } => {
+            set_loops_expr(iter, decide);
+            *parallel = decide(var, body);
+            set_loops(body, decide);
+        }
+        _ => {}
+    }
 }
 
 // ── The printer ───────────────────────────────────────────────────────

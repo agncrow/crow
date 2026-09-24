@@ -1752,9 +1752,13 @@ impl TypeContext {
     }
 
     /// Does any if/while condition in this body infer to a Result type?
-    /// (Such conditions can propagate errors out of the function.)
-    fn body_has_result_condition(&self, stmts: &[Stmt]) -> bool {
+    /// (Such conditions can propagate errors out of the function.) A
+    /// collecting loop's body counts: its conditions leave the function too.
+    fn body_has_result_condition(&mut self, stmts: &[Stmt]) -> bool {
         for s in stmts {
+            if self.loops_have_result_condition(s) {
+                return true;
+            }
             match s {
                 Stmt::If { condition, then_body, else_body } => {
                     if matches!(self.infer_expr(condition), CrowType::Result(_)) {
@@ -1786,6 +1790,54 @@ impl TypeContext {
             }
         }
         false
+    }
+
+    /// The collecting loops in a statement's own expressions, each body
+    /// read with its variable typed as an element of what it walks.
+    fn loops_have_result_condition(&mut self, s: &Stmt) -> bool {
+        let exprs: Vec<&Expr> = match s {
+            Stmt::Assign { value, .. } | Stmt::FieldAssign { value, .. } => vec![value],
+            Stmt::MultiAssign { values, .. } => values.iter().collect(),
+            Stmt::IndexAssign { index, value, .. } => vec![index, value],
+            Stmt::ExprStmt(e) | Stmt::Return(Some(e)) => vec![e],
+            Stmt::If { condition, .. } | Stmt::While { condition, .. } => vec![condition],
+            Stmt::For { iter, .. } => vec![iter],
+            _ => vec![],
+        };
+        exprs.into_iter().any(|e| self.expr_loops_have_result_condition(e))
+    }
+
+    fn expr_loops_have_result_condition(&mut self, e: &Expr) -> bool {
+        match e {
+            Expr::ForExpr { var, iter, body } => {
+                if self.expr_loops_have_result_condition(iter) {
+                    return true;
+                }
+                let elem = match self.infer_expr(iter) {
+                    CrowType::Array(t) | CrowType::NumArray(t) => *t,
+                    _ => CrowType::Unknown,
+                };
+                let saved = self.vars.insert(var.clone(), elem);
+                let found = self.body_has_result_condition(body);
+                match saved {
+                    Some(t) => {
+                        self.vars.insert(var.clone(), t);
+                    }
+                    None => {
+                        self.vars.remove(var);
+                    }
+                }
+                found
+            }
+            Expr::Call { callee, args } => self.expr_loops_have_result_condition(callee) || args.iter().any(|a| self.expr_loops_have_result_condition(a)),
+            Expr::BinOp { left, right, .. } => self.expr_loops_have_result_condition(left) || self.expr_loops_have_result_condition(right),
+            Expr::UnaryOp { expr, .. } => self.expr_loops_have_result_condition(expr),
+            Expr::FieldAccess { object, .. } => self.expr_loops_have_result_condition(object),
+            Expr::Array(items) => items.iter().any(|i| self.expr_loops_have_result_condition(i)),
+            Expr::Map(pairs) => pairs.iter().any(|(k, v)| self.expr_loops_have_result_condition(k) || self.expr_loops_have_result_condition(v)),
+            Expr::Named { value, .. } => self.expr_loops_have_result_condition(value),
+            _ => false,
+        }
     }
 
     /// Infer a function's return type from its body.

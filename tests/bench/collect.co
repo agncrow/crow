@@ -35,6 +35,17 @@ ys = for i in range[big]
 log['bench: for_collect `now[] - t0`']
 log[len[ys]]
 
+--- for over a function: each item through a function with no side
+--- effects, which both modes run in parallel (spec §14, For Loops)
+fn score[k]
+    return (k * 7919) % 100003 + k % 7
+
+t0 = now[]
+scores = for i in range[big]
+    score[i]
+log['bench: for_fn `now[] - t0`']
+log[len[scores]]
+
 --- a map built one key at a time
 t0 = now[]
 m = map[]

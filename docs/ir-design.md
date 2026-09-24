@@ -114,9 +114,12 @@ Stmt ::= Let   { var, ty, expr }                    -- first binding
        | Line(n)                                    -- source line, for traces and the checker
 ```
 
-`For` is parallel when the body writes no outer variable and calls
-nothing with an effect; the lowering decides, not the runtime. Order
-of statements is the order written (spec §14).
+`For` is parallel when nothing its body does can show the order its
+iterations ran in (spec §14, For Loops): no write to an outer variable
+or a fact, no way out of the function, no effect, draw, render or
+assertion, directly or through a function it calls. The lowering
+decides once every function is known, not the runtime. Order of
+statements is the order written (spec §14).
 
 `Propagate` is the spec's auto-propagation made visible: before a call
 whose arguments include a result, the lowering emits `Propagate` for
@@ -523,20 +526,26 @@ deleted in the same commit that makes the new path the default.
    filter form of a collecting loop, the database calls' parameter
    guard, the per-type display of `log` — are made over the IR in
    `program.rs`'s `analyse`, not recorded on it; the walker needs none of
-   them. One decision both modes make is still made twice: whether a
-   loop runs in parallel. The lowering's `parallel` flag keeps a loop in
-   order when its body calls any user function; the emitter's
-   `loop_is_sequential` keeps it in order only when the body writes an
-   outer variable or a fact or reaches an effect, a user function
-   counting by what it reaches, so a loop over a pure function runs in
-   parallel compiled and in order interpreted. The output is the same
-   either way. (The transpiler ran nearly every loop in parallel,
-   logging bodies included, so their lines came in scheduling order.)
-   The follow-up: compute the emitter's rule in the lowering once the
-   functions' effects are known, print from the flag, and measure the
-   walker. Its parallel loop clones the walker per chunk and drops the
-   clones, so a view called from such a loop must record nothing the
-   walker keeps.
+   them. Whether a loop runs in parallel was the one decision both modes
+   made each for itself; since 2026-09-23 it is the IR's alone
+   (`decide_loops` in `lower_ir.rs`, run once every function's kind and
+   reach are known, Vijay's rule: no side effects, then parallel). A loop
+   runs in order when its body writes an outer variable or a fact, leaves
+   the function, reaches an effect, draws from the seeded generator,
+   renders a view or a paged table, asserts, or calls — or hands to a
+   builtin, or calls through a value — a function that does; the emitter
+   prints `par_iter` exactly where the flag says so and the walker runs
+   its chunks exactly there. Three older bugs came out with it: a seeded
+   loop of `rand[]` drew differently on every run (parity 55); a
+   collecting loop inside a function could not hand back an error from
+   its condition, the walker stopping with "cannot return from inside a
+   for loop" and the compiled program not building (the walker now
+   unwinds to the call, the emitter gathers such a loop in a `for`, and
+   inference reads a collecting loop's conditions when it types the
+   function; parity 55); and `push[]` and `set[]` took a variable's text
+   by move, so reading it again, or pushing a loop's variable, did not
+   build (parity 56). The interpreter runs a loop over a pure function
+   3.4 times faster (`collect`'s new `for_fn` section, 893 ms to 259 ms).
 
    *Found on the way.* A derivation read into a local at the top of a
    view was moved into the first call that took it and gone for the
