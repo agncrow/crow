@@ -16,12 +16,12 @@ use crow_web::view::CrowVNode;
 /// Whether a fact is data a session holds, rather than a resource every
 /// session shares (a database handle) or a function: resources stay the
 /// template's, never copied into a session.
-fn is_data(v: &CrowValue) -> bool {
+pub(crate) fn is_data(v: &CrowValue) -> bool {
     !matches!(v.value, Value::DbConn(_) | Value::Fn(_) | Value::GradFn(_) | Value::App(..))
 }
 
 /// A fact as the session keeps it: JSON, a frame by its own shape.
-fn fact_to_json(v: &CrowValue) -> serde_json::Value {
+pub(crate) fn fact_to_json(v: &CrowValue) -> serde_json::Value {
     match &v.value {
         Value::Frame(f) => serde_json::to_value(f).unwrap_or(serde_json::Value::Null),
         _ => crate::builtins::crow_to_json("", v).unwrap_or(serde_json::Value::Null),
@@ -29,7 +29,7 @@ fn fact_to_json(v: &CrowValue) -> serde_json::Value {
 }
 
 /// A fact back from the session, in the shape the program declared it.
-fn json_to_fact(j: &serde_json::Value, declared: &CrowValue) -> CrowValue {
+pub(crate) fn json_to_fact(j: &serde_json::Value, declared: &CrowValue) -> CrowValue {
     match &declared.value {
         Value::Frame(_) => match serde_json::from_value::<crow_runtime::frame::CrowFrame>(j.clone()) {
             Ok(f) => CrowValue::ok(Value::Frame(f)),

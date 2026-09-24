@@ -28,6 +28,7 @@ use crate::view::CrowVNode;
 
 pub mod files;
 pub mod signin;
+pub mod test_control;
 
 /// Internal action type for the WebSocket event loop.
 enum LiveAction {
@@ -1186,8 +1187,10 @@ impl CrowLiveState {
 
     /// Render `render` against this session as a page render does.
     pub fn render_with<R: Fn(&CrowLiveState) -> CrowVNode>(&self, render: &R) -> CrowVNode {
-        // a render is one event: every view and derivation in it reads one moment
-        crow_runtime::moments::at(crow_runtime::moments::clock(), || {
+        // a render is one event: every view and derivation in it reads one
+        // moment, the event's it runs inside (a test's held clock), else now
+        let moment = crow_runtime::moments::event_moment().unwrap_or_else(crow_runtime::moments::clock);
+        crow_runtime::moments::at(moment, || {
             self.begin_render();
             let vnode = render(self);
             self.end_render();

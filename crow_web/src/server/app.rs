@@ -64,6 +64,8 @@ impl CrowApp {
     /// Start the server (`serve[app, port]` in Crow). It listens on this
     /// machine only, unless `CROW_HOST` names another interface.
     pub async fn serve(self, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+        // `crow test --compiled` starts the program on a port of its own
+        let port = std::env::var("CROW_PORT").ok().and_then(|p| p.trim().parse::<u16>().ok()).unwrap_or(port);
         let host = listen_host(std::env::var("CROW_HOST").ok());
         let addr = if host.contains(':') && !host.starts_with('[') {
             format!("[{}]:{}", host, port)

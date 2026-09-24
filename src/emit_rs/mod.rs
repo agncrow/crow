@@ -38,16 +38,19 @@ pub struct Emitted {
     pub db_features: BTreeSet<String>,
 }
 
-/// Emit a lowered program as `main.rs`.
-pub fn emit(
+/// Emit a lowered program as `main.rs`; for `crow test --compiled`
+/// (`test_control`) a program that also answers the test harness.
+pub fn emit_with(
     program: &Program,
     registry: crate::modules::ModuleRegistry,
     source_file: &str,
     shown_names: BTreeMap<String, String>,
     cpu: Option<usize>,
+    test_control: bool,
 ) -> Result<Emitted, String> {
     let part = program.parts.first().cloned().ok_or("an empty program")?;
     let mut e = Emitter::new(part, registry, source_file, shown_names);
+    e.test_control = test_control;
     if let Some(n) = cpu {
         e.cpu_count = Some(n);
     }
@@ -116,6 +119,9 @@ pub(crate) struct Emitter {
     pub(crate) reactive_render_fns: HashSet<String>,
     pub(crate) reactive_event_handlers: BTreeSet<String>,
     pub(crate) has_page_routes: bool,
+    /// `crow test --compiled`: the program answers the test harness over
+    /// HTTP (`crow_web::live::test_control`), a part without a page too.
+    pub(crate) test_control: bool,
     pub(crate) has_noapp_web: bool,
     /// facts: name → (type, the Rust default)
     pub(crate) reactive_vars: BTreeMap<String, (CrowType, String)>,
@@ -193,6 +199,7 @@ impl Emitter {
             reactive_render_fns: HashSet::new(),
             reactive_event_handlers: BTreeSet::new(),
             has_page_routes: false,
+            test_control: false,
             has_noapp_web: false,
             reactive_vars: BTreeMap::new(),
             static_handle_vars: BTreeSet::new(),

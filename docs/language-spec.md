@@ -3189,7 +3189,13 @@ beyond calling the program lives inside the block.
 
 `test` blocks never run in production: `crow build` strips them, `crow run`
 ignores them. `crow test` runs them; `crow check` runs them plus everything
-automatic — determinism contracts, edge cases, database hazards.
+automatic — determinism contracts, edge cases, database hazards. `crow test
+--compiled` runs them with every app they open (`app[view]`) compiled: the
+block runs in the interpreter, and its harness verbs reach the compiled
+program, started fresh for each run that opens one, so both modes answer
+the same test. A handler a test clicks with arguments is a handler, as one
+clicked by name is, and its arguments type the parameters nothing in the
+program types.
 
 
 ### Design Note: Verification Is Part of the Function

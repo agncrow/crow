@@ -26,6 +26,7 @@ mod parallel;
 mod parser;
 mod rust_names;
 mod served;
+mod compiled_harness;
 mod served_parity;
 mod sql_types;
 mod token;
@@ -313,6 +314,7 @@ fn print_usage() {
     eprintln!("  crow launch 4 file.co  build + run on 4 distributed processes");
     eprintln!("  crow test --parity     run tests/parity/ in both modes, diff output");
     eprintln!("  crow test --served     serve tests/served/ and the example apps in both modes, drive each page, compare");
+    eprintln!("  crow test --compiled file.co  run the test blocks with the apps they open compiled");
     eprintln!("  crow test --book       execute every code block of the book in both modes");
     eprintln!("  crow test --docs       check the docs cover every compiler name (and nothing more)");
     eprintln!("  crow check --verbose   verbose output with purity and snapshot details");
@@ -1821,7 +1823,8 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         eprintln!("error: {}", e);
         process::exit(1);
     });
-    let emitted = emit_rs::emit(&program, ctx.registry.clone(), &entry_file, shown, cpu).unwrap_or_else(|e| {
+    let test_control = TEST_CONTROL.load(std::sync::atomic::Ordering::SeqCst);
+    let emitted = emit_rs::emit_with(&program, ctx.registry.clone(), &entry_file, shown, cpu, test_control).unwrap_or_else(|e| {
         eprintln!("error: {}", e);
         process::exit(1);
     });
@@ -1840,8 +1843,9 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         process::exit(1);
     });
 
-    // Write Cargo.toml
-    let project_name = package_name(entry);
+    // Write Cargo.toml; a test build is a binary of its own beside the
+    // program's, sharing the dependencies already built
+    let project_name = if test_control { format!("{}_test", package_name(entry)) } else { package_name(entry) };
     let mut dep_list: Vec<String> = Vec::new();
     if emitted.needs_rayon {
         dep_list.push("rayon = \"1.11\"".to_string());
@@ -2229,6 +2233,10 @@ fn cmd_fmt() {
 
 /// `crow build --rs`: print the generated Rust instead of compiling it.
 static PRINT_RS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `crow test --compiled`: the program is built to answer the test harness
+/// (`crow_web::live::test_control`), under a name of its own.
+static TEST_CONTROL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn cmd_build() {
     let args: Vec<String> = std::env::args().collect();
@@ -2997,14 +3005,28 @@ fn cmd_test_blocks(filename: &str) {
         eprintln!("{}", refine_error_lines(&source, &e));
         process::exit(1);
     }
+    // `crow test --compiled`: the apps the blocks open are the compiled
+    // program (compiled_harness.rs); the blocks themselves run here
+    let compiled = std::env::args().any(|a| a == "--compiled");
+    if compiled && compiled_harness::opens_an_app(&stmts) {
+        TEST_CONTROL.store(true, std::sync::atomic::Ordering::SeqCst);
+        let binary = transpile_and_compile(filename, true, None, false);
+        compiled_harness::use_binary(std::fs::canonicalize(&binary).unwrap_or(binary));
+    }
     let (issues, counts) = checker::run_test_blocks(&stmts);
     if counts.blocks == 0 {
         println!("  no test blocks in {} — add `test` after a fn, or `test name[]` anywhere", filename);
         return;
     }
     if issues.is_empty() {
-        println!("\n  \x1b[32m✓ {} block{} pass\x1b[0m — {} truth{}, {} law{}, {} input{} run",
-            counts.blocks, if counts.blocks == 1 { "" } else { "s" },
+        // the blocks ran here; what they opened with `app[]` ran compiled
+        let against = match (compiled, compiled_harness::started()) {
+            (false, _) => String::new(),
+            (true, 0) => ", none opening an app to compile".to_string(),
+            (true, n) => format!(", the apps they opened compiled ({} run{})", n, if n == 1 { "" } else { "s" }),
+        };
+        println!("\n  \x1b[32m✓ {} block{} pass\x1b[0m{} — {} truth{}, {} law{}, {} input{} run",
+            counts.blocks, if counts.blocks == 1 { "" } else { "s" }, against,
             counts.truths, if counts.truths == 1 { "" } else { "s" },
             counts.laws, if counts.laws == 1 { "" } else { "s" },
             counts.inputs_run, if counts.inputs_run == 1 { "" } else { "s" });

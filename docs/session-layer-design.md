@@ -701,7 +701,26 @@ against the compiled program. It needs the harness verbs in Rust and the
 layout engine (written in Crow) compiled with the test; the served
 parity suite covers the risk it was for — a compiled handler that
 disagrees with the interpreter — for every page in the corpus, and the
-full compiled harness stays on the list after phase I.
+full compiled harness stays on the list after phase I. *Built
+2026-09-24, without either:* `crow test --compiled` runs a block in the
+interpreter and the app it opens compiled. The program is built once
+with `crow_web::live::test_control` routes, which answer only under
+`CROW_TEST_CONTROL`, beside a table of its views and derivations by name.
+Each run that opens an app starts it fresh on a port of its own
+(`CROW_PORT`). Each verb is one request answered once it has settled: a
+handler as one event and one transaction, the scheduled work done, and a
+page re-rendered while a derivation is still being computed in the
+background. After every verb the session's facts, notice and reader are
+copied into the test, and a derivation the test reads is asked of the
+compiled program. The layout verbs lay out the compiled page's HTML with
+the engine as it is. Found on the way: a handler a test clicked with
+arguments (`click[a, begin[…]]`) was not a handler, as one clicked by
+name is, so the compiled program could not dispatch it. It is one now,
+typed by those arguments where nothing in the program types it (the
+program's evidence first: a widget's handler still takes text). A render
+now reads the moment of the event it runs in, so a test's held clock
+reaches compiled views. Every test block of the task board, the parts
+fixture and finch passes both ways.
 
 **Phase E — built 2026-09-23.** A render goes to the page as the changes
 from the render the page holds (`CrowVNode::changes`; the page's
