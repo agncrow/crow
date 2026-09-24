@@ -63,7 +63,7 @@ fn with_session(template: &IrInterp, state: &CrowLiveState) -> IrInterp {
     it
 }
 
-/// The fact a `page[…, url = …]` name means, as the transpiler resolves it.
+/// The fact a `page[…, url = …]` name means, as the Rust backend resolves it.
 fn url_fact(template: &IrInterp, written: &str) -> Option<String> {
     let flat = written.replace('.', "_");
     if template.fact_names.contains(&flat) {

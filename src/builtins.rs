@@ -991,7 +991,7 @@ pub fn value_cmp(a: &CrowValue, b: &CrowValue) -> std::cmp::Ordering {
 
 /// Maps are dictionaries: every value must have the same type
 /// (spec Design Note "Maps Are Dictionaries, Not Records"). This is the
-/// runtime check matching what the transpiler's typed maps always enforced.
+/// runtime check matching what the compiled program's typed maps enforce.
 pub fn check_map_homogeneous(
     map: &std::collections::BTreeMap<String, CrowValue>,
     new_val: &CrowValue,

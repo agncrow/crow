@@ -473,6 +473,89 @@ deleted in the same commit that makes the new path the default.
    `CROW_IR_SHOW=1 crow test file.co` prints a test block's lowered
    program. The benchmark's columns compare within a recording, not
    across recordings.*
+
+   *Done, 2026-09-23.* The Rust backend is `src/emit_rs/`, six files
+   and about 5,200 lines against the transpiler's 6,700, with its 270
+   unit tests ported and one added: `mod.rs` holds the emitter's state
+   and its typing helpers, `program.rs` the whole-program analyses and
+   the crate's layout, `stmts.rs` functions, handlers, derivations and
+   statements, `exprs.rs` expressions and calls, `builtins.rs` the
+   builtins and modules, `ui.rs` trees and controls. `crow build`,
+   `crow run` and every runner compile through it, and `crow build --rs
+   file.co` prints the Rust. `transpiler.rs` is deleted, and with it the
+   `CROW_RS` switch, three helpers only it used (`ident_count`,
+   `in_place_call_on`, `infer_call_base`) and `CrowLiveViewLegacy`, a
+   runtime type no generated program had used since the no-app web API;
+   `chart_seek_handler` moved to `lower.rs`.
+
+   *How it was built: fidelity first.* The emitter prints the Rust the
+   transpiler printed, keyed on the IR's types instead of types
+   re-inferred from the AST, so the generated programs kept their shape
+   and every gate compared like with like. A local is typed by the
+   emitter's own declaration of it (the IR's type of a variable is the
+   union of its bindings, `Result(Frame)` where the first binding made a
+   `Frame`); a call's argument is read through its `Convert::Unwrap`;
+   propagation is decided as the transpiler decided it. Finch built
+   both ways prints the same 135 items with the same signatures and the
+   same 22 derivation specs; the bodies differ in clones, and in branch
+   conditions hoisted into temporaries, and driven through every handler
+   in a browser the two builds behave alike, the emitter's as fast or
+   faster on every click.
+
+   *What moved into the lowering.* A derivation's memo key
+   (`Derive.spec`: the read set, and whether it is shared) and the
+   tables each function writes (`Fn.tables_written`), so the walker and
+   the emitter read one decision; `Ty::Markup`, `Ty::Tensor(elem)` and
+   `Ty::OptRecord`, so the IR's types map one to one onto the compiled
+   program's (`lower_ir::crow_type` is the inverse of `ty_of`); each
+   specialization clone lowered as its own `Fn`; a `while` whose
+   condition needs a prelude lowered as `while true` with the prelude and
+   a break. Four lowering bugs the emitter exposed, each pinned by the
+   parity program that found it: a function's assignment to a name the
+   top level also uses is a local of its own, not a `Set` of the top
+   level's (parity 14); a loop variable's type is bound while its body
+   lowers (18); an interpolation with a failing span is a `Result(Str)`
+   (33); a new local's type is its first value's (36).
+
+   *What the emitter still decides itself.* Decisions only Rust needs —
+   which parameters pass by reference, which locals are `mut`, which
+   structs are `Copy`, the dual-number copies `grad` differentiates, the
+   filter form of a collecting loop, the database calls' parameter
+   guard, the per-type display of `log` — are made over the IR in
+   `program.rs`'s `analyse`, not recorded on it; the walker needs none of
+   them. One decision both modes make is still made twice: whether a
+   loop runs in parallel. The lowering's `parallel` flag keeps a loop in
+   order when its body calls any user function; the emitter's
+   `loop_is_sequential` keeps it in order only when the body writes an
+   outer variable or a fact or reaches an effect, a user function
+   counting by what it reaches, so a loop over a pure function runs in
+   parallel compiled and in order interpreted. The output is the same
+   either way. (The transpiler ran nearly every loop in parallel,
+   logging bodies included, so their lines came in scheduling order.)
+   The follow-up: compute the emitter's rule in the lowering once the
+   functions' effects are known, print from the flag, and measure the
+   walker. Its parallel loop clones the walker per chunk and drops the
+   clones, so a view called from such a loop must record nothing the
+   walker keeps.
+
+   *Found on the way.* A derivation read into a local at the top of a
+   view was moved into the first call that took it and gone for the
+   second (finch's clock tile; the emitter test
+   `a_derivation_read_up_front_is_cloned_into_a_call`). An int widened to
+   a float around a failing operand is unwrapped before the widening
+   (parity 39). Two older bugs, found while checking the step's own
+   fixes: the compiled program moved a value into `int[]`, `float[]`,
+   `not`, `assert[]`, a view's child or a view's argument, so reading it
+   again did not build (`n = int[s]` then `log[s]`; the transpiler did the
+   same); each of those places now borrows the value (parity 54, served
+   11). And the lowering had hoisted a failing `while` condition out of
+   the loop, so it was tested once and the walker never left the loop;
+   now it is tested before every pass (parity 54). Still open, and
+   older than the emitter: `len` of an
+   error is the error in the interpreter and `0` compiled (`r =
+   read['missing']`, `log[len[r]]`), because `len` is on the list of
+   calls that do not propagate; the fix belongs with the typing of a
+   failing call's value, not in the printing.
 5. **The session layer** with the three meanings; the harness; finch
    rewritten to them and its baseline re-accepted, whose diff is the
    measure of what the meanings delete.
@@ -577,7 +660,10 @@ together or not at all.
 Deleted: `interpreter.rs` and `transpiler.rs`, the parity suite's role
 as a meaning check (it stays as a regression suite), the `flush_before`
 and `reload_after` write-through, the per-builtin emission chain, the
-`Value` type with status on every value.
+`Value` type with status on every value. Where that stands on
+2026-09-23: both files are gone; the write-through, the per-builtin
+printing (now `emit_rs/builtins.rs`) and `Value` remain until the
+session layer's meanings and §8's typed values replace them.
 
 Kept: the parser, the three front-end passes, every runtime crate, the
 layout kernel, the harness verbs, the baseline and the book, the

@@ -847,7 +847,7 @@ fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String
     }
 }
 
-// ===== Transpiler emission =====
+// ===== Rust emission =====
 
 fn emit_math_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String> {
     if SCALAR_UNARY.contains(&name) && arg_strs.len() == 1 {
@@ -1067,7 +1067,7 @@ fn emit_math_rust_continued(name: &str, arg_strs: &[String]) -> Result<String, S
         "spmv" => format!("{}.matmul_dense(&{})", arg_strs[0], arg_strs[1]),
         // I/O
         "load" => format!("{{ match crow_runtime::io::load_csv_numeric(&{}) {{ Ok((data, nrows, ncols)) => CrowResult {{ value: CrowTensor::from_vec(data, vec![nrows, ncols]), ok: true, reason: String::new(), kind: String::new(), trace: vec![], captured: crow_runtime::moments::now() }}, Err(e) => CrowResult {{ value: CrowTensor::zeros(vec![0]), ok: false, reason: e, kind: \"load\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0]),
-        _ => return Err(format!("{}: unknown math function for transpiler", name)),
+        _ => return Err(format!("{}: unknown math function for the Rust backend", name)),
     };
     Ok(result)
 }

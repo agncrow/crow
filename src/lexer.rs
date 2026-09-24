@@ -249,7 +249,7 @@ impl Lexer {
                 let op = ch;
                 format!(
                     "Crow has no augmented assignment ('{op}=') ({at}) — write it \
-                     out: x = x {op} 1. (The transpiler still optimizes this to an \
+                     out: x = x {op} 1. (The compiler still optimizes this to an \
                      in-place update.)"
                 )
             }

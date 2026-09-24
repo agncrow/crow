@@ -168,8 +168,10 @@ fn crow_value_to_json_params(v: &CrowValue) -> Result<Vec<serde_json::Value>, St
 }
 
 fn emit_db_rust(_name: &str, _arg_strs: &[String], _arg_types: &[CrowType]) -> Result<String, String> {
-    // TODO: implement transpiler codegen in Step 7
-    Err("db transpiler codegen not yet implemented".into())
+    // the Rust backend prints database calls itself (emit_rs/builtins.rs:
+    // the parameter guard, the typed cells); one reaching the registry is
+    // a backend gap, reported where it is printed
+    Err(format!("db.{}: the Rust backend prints database calls itself, and missed this one", _name))
 }
 
 fn db_type_of(name: &str) -> CrowType {

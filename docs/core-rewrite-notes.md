@@ -588,7 +588,19 @@ weeks; the core stages are weeks each.
   module's variable by the validator, inference and both lowerings
   (parity 49), the removed time builtins' teaching errors moved to the
   validator, resources and web stand-ins and `chart` ported.
-- **Next:** step 4, the Rust backend from the IR; then `transpiler.rs`
-  goes. The hand-off for it — where things stand, the emitter's shape,
-  what the IR must carry, the order of slices and their gates, the
-  gotchas — is written under step 4 in `ir-design.md` §9; start there.
+- **2026-09-23, step 4 done:** the Rust backend prints the IR
+  (`src/emit_rs/`), `crow build` and `crow run` compile through it, and
+  `transpiler.rs` is deleted, its 270 unit tests ported. The IR now
+  carries what the emitter needs that the walker also reads (derivation
+  memo keys, tables written, markup and tensor element types,
+  specialization clones), and four lowering bugs the emitter exposed are
+  fixed (parity 14, 18, 33, 36), with two older ones found on the way: a
+  value moved into `int[]` and five other places could not be read again
+  compiled, and a failing `while` condition was tested once (parity 54,
+  served 11). Every gate is green on the final binary, and finch built
+  both ways behaves the same. The record, with the one
+  decision still made twice (loop parallelism) and an older parity gap
+  (`len` of an error), is under step 4 in `ir-design.md` §9.
+- **Next:** make the loop-parallelism decision the IR's alone; then
+  fold `lower.rs`, `type_infer.rs` and `validator.rs` as §12 of
+  `ir-design.md` decided.

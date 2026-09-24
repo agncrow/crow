@@ -457,7 +457,7 @@ fn emit_frame_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> R
             }}; crow_runtime::frame::format_datetime(_m, _new_o) }}",
             arg_strs[0], arg_strs[1], arg_strs[1]
         ),
-        _ => return Err(format!("{}: transpiler not yet implemented for frame function", name)),
+        _ => return Err(format!("{}: the Rust backend has no printing for frame function", name)),
     };
     Ok(result)
 }

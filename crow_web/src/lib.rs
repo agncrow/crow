@@ -1,7 +1,7 @@
 //! crow_web — Crow's modular web framework.
 //!
 //! One crate with Cargo feature flags per module.
-//! `use web.X` in Crow source triggers the transpiler to enable only
+//! `use web.X` in Crow source makes the Rust backend enable only
 //! the `X` feature — minimal binary, minimal compile time.
 //!
 //! ## Architecture

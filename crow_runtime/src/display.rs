@@ -1,7 +1,7 @@
 //! Shared display formatting for Crow values.
 //!
 //! This is the single source of truth for how values print. The interpreter's
-//! `Value::Display` and the transpiler's `log[]` codegen must both follow these
+//! `Value::Display` and the Rust backend's `log[]` printing must both follow these
 //! rules so both execution modes produce identical output:
 //!
 //! - top-level strings print bare, strings inside containers print single-quoted

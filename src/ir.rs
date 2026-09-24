@@ -19,10 +19,14 @@ pub enum Ty {
     Bool,
     Str,
     Unit,
+    /// Text that is markup (a view's, an element's, `doc`'s): a string
+    /// everywhere a string is read, placed as markup by a view.
+    Markup,
     List(Box<Ty>),
     Map(Box<Ty>),
-    /// A tensor; rank is known at run time, the dtype is f64 today.
-    Tensor,
+    /// A tensor of its element type (Int or Float); rank is known at run
+    /// time, the storage is f64 today.
+    Tensor(Box<Ty>),
     /// A frame, with its columns and their types when `describe` or a
     /// literal knew them.
     Frame(Option<Vec<(String, Ty)>>),
@@ -32,10 +36,14 @@ pub enum Ty {
     Json,
     /// A struct, or a runtime record (shell, find).
     Record(String),
+    /// A struct field that holds either a struct of its own kind or the
+    /// empty sentinel 0: a recursive link.
+    OptRecord(String),
     /// A value that can fail: status lives only here (ir-design.md §3.1).
     Result(Box<Ty>),
     Fn(Vec<Ty>, Box<Ty>),
-    /// A connection or another handle the runtime owns: "db", "web", "tx", "sparse".
+    /// A connection or another handle the runtime owns: "db", "tx",
+    /// "sparse", "web.app", "web.request", "web.response", "web.db".
     Handle(String),
     /// A view tree.
     Node,
@@ -63,10 +71,11 @@ impl std::fmt::Display for Ty {
             Ty::Float => write!(f, "Float"),
             Ty::Bool => write!(f, "Bool"),
             Ty::Str => write!(f, "Str"),
+            Ty::Markup => write!(f, "Markup"),
             Ty::Unit => write!(f, "Unit"),
             Ty::List(t) => write!(f, "List({})", t),
             Ty::Map(t) => write!(f, "Map({})", t),
-            Ty::Tensor => write!(f, "Tensor"),
+            Ty::Tensor(t) => write!(f, "Tensor({})", t),
             Ty::Frame(None) => write!(f, "Frame"),
             Ty::Frame(Some(cols)) => {
                 write!(f, "Frame{{")?;
@@ -81,6 +90,7 @@ impl std::fmt::Display for Ty {
             Ty::Column(t) => write!(f, "Column({})", t),
             Ty::Json => write!(f, "Json"),
             Ty::Record(n) => write!(f, "Record({})", n),
+            Ty::OptRecord(n) => write!(f, "OptRecord({})", n),
             Ty::Result(t) => write!(f, "Result({})", t),
             Ty::Fn(ps, r) => {
                 write!(f, "Fn(")?;
@@ -153,6 +163,10 @@ pub struct Derive {
     pub body: Block,
     pub reads: ReadSet,
     pub fresh: f64,
+    /// What the runtime memoizes it by, as the live layer reads it: the
+    /// facts, derivations and tables it reads, the clock, whether a table
+    /// is outside the app, and whether one value serves every session.
+    pub spec: crate::derive::ReadSet,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -187,6 +201,9 @@ pub struct Fn {
     pub kind: FnKind,
     /// What the function can do, transitively: the effect names it reaches.
     pub effects: Vec<String>,
+    /// The tables it writes, itself or through what it calls: a handler
+    /// wakes their readers when it commits.
+    pub tables_written: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -360,7 +377,16 @@ impl Expr {
                 Meta::Trace => Ty::List(Box::new(Ty::Str)),
                 Meta::Valid => Ty::List(Box::new(Ty::Bool)),
             },
-            Expr::Interp(_) => Ty::Str,
+            // text with a span that can fail is itself fallible: a failed
+            // span is the string's value (spec: errors propagate through
+            // interpolation)
+            Expr::Interp(pieces) => {
+                if pieces.iter().any(|p| matches!(p, Piece::Expr(x) if x.ty().is_result())) {
+                    Ty::Result(Box::new(Ty::Str))
+                } else {
+                    Ty::Str
+                }
+            }
             Expr::RecordLit { name, .. } => Ty::Record(name.clone()),
             Expr::Tree { .. } => Ty::Node,
             Expr::Deferred { .. } => Ty::Unit,
