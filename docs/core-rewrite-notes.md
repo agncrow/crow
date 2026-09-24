@@ -628,5 +628,18 @@ weeks; the core stages are weeks each.
   threading the narrowing through each of inference's walks would have let
   them drift. The fold below replaces the rewrite with the scoped
   environment's own narrowing.
-- **Next:** fold `lower.rs`, `type_infer.rs` and `validator.rs` as §12
-  of `ir-design.md` decided.
+- **2026-09-24, the fold's first step: names resolved with their blocks.**
+  The type checker kept one type per variable name for a whole function.
+  So two blocks setting `x` to an int and to text were refused as a type
+  change, although the spec makes them different variables, and a read
+  after the block that set a name failed at run time in the interpreter
+  and at Rust's compile in the other mode. `lower.rs` now resolves names
+  once, block by block: a later variable of an ended name is renamed apart
+  (`x__s2`, shown as `x` in every message), and a read after its block is
+  refused before the program runs, saying what to write instead.
+- **Next:** the fold's later steps. The lowering types each expression
+  from its own scoped environment and the IR children's types, instead of
+  asking the type checker. Validation moves into the lowering, and then
+  named arguments, deleting `validator.rs` and `lower.rs`. Last, the type
+  checker's whole-program analyses (specialisation, frame schemas,
+  signatures) become the lowering's pre-pass, deleting `type_infer.rs`.

@@ -147,6 +147,15 @@ if true
 log[y]        --- error — y is not in scope
 ```
 
+Reading `y` there is refused before the program runs, in both modes, with what to write instead: set `y` before the block and assign it inside. Two blocks may each set a variable of the same name, and a name set again after its block has ended is a new variable. They are different variables and may hold different types:
+
+```
+if ok
+    x = 1
+else
+    x = 'one'     --- a different x
+```
+
 
 ## 2. Comments
 

@@ -131,7 +131,7 @@ pub fn prepare(stmts: &[crate::ast::Stmt], name: &str) -> Result<(Program, crate
     ctx.describe_queries = false;
     ctx.infer_program(&stmts);
     // the gate every pipeline passes: what `crow run` refuses, this refuses
-    crate::validator::Validator::new(&ctx).validate(&stmts)?;
+    crate::validator::Validator::new(&ctx).validate(&stmts).map_err(|e| crate::lower::shown(&e))?;
     let program = crate::lower_ir::lower(&stmts, &mut ctx, name)?;
     Ok((program, ctx))
 }
