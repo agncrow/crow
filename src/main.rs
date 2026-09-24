@@ -1,3 +1,9 @@
+// The interpreter is shared across a parallel loop's threads, so the
+// compiler proves it `Sync` through every field, down to wgpu's device types
+// behind the GPU kernels; on Linux (the Vulkan backend) that proof is deeper
+// than the default limit of 128 (E0275 in CI, not on macOS).
+#![recursion_limit = "256"]
+
 mod ast;
 mod appbook;
 mod builtins;
