@@ -130,8 +130,8 @@ pub fn prepare(stmts: &[crate::ast::Stmt], name: &str) -> Result<(Program, crate
     let mut ctx = crate::type_infer::TypeContext::new();
     ctx.describe_queries = false;
     ctx.infer_program(&stmts);
-    // the gate every pipeline passes: what `crow run` refuses, this refuses
-    crate::validator::Validator::new(&ctx).validate(&stmts).map_err(|e| crate::lower::shown(&e))?;
+    // the gate every pipeline passes: the lowering refuses what `crow run`
+    // refuses
     let program = crate::lower_ir::lower(&stmts, &mut ctx, name)?;
     Ok((program, ctx))
 }

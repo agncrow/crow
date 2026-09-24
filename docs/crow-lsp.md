@@ -3,12 +3,13 @@
 `crow lsp` speaks the Language Server Protocol over stdio. Every editor with
 an LSP client gets live Crow support from the same binary that compiles the
 code — diagnostics come from the real pipeline (parse → expand → lower →
-infer → validate), so the editor never disagrees with the compiler.
+infer → lower to the IR, which checks), so the editor never disagrees
+with the compiler.
 
 ## What it does
 
-- **Diagnostics as you type** — parse errors, validator errors (the same
-  teaching messages `crow run` prints), with one broken statement never
+- **Diagnostics as you type** — parse errors, the lowering's checks (the
+  same teaching messages `crow run` prints), with one broken statement never
   hiding the rest of the file (the parser recovers per statement).
 - **Database hazards, live** — when the workspace crowfile sets
   `db = 'sqlite://dev.db'`, the schema-aware checks run on every edit:

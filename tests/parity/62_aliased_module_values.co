@@ -1,0 +1,10 @@
+--- A module imported under an alias is reached through it for its values
+--- as for its functions (spec §12, Aliased Imports): `m.pi` is the
+--- constant. The check refused it as an undefined variable `m`, while
+--- `m.sqrt[…]` was accepted.
+use math as m
+
+log[m.pi]
+log[m.sqrt[16.0]]
+r = 2.0
+log[m.pi * r * r]

@@ -86,9 +86,10 @@ pub fn analyze(
     let mut ctx = TypeContext::new();
     ctx.infer_program(&stmts);
 
-    let mut v = crate::validator::Validator::new(&ctx);
-    if let Err(e) = v.validate(&stmts) {
-        // The validator accumulates "line N: message" entries, one per line.
+    // the lowering refuses what is not a program, one "line N: message"
+    // entry per error
+    if let Err(refusal) = crate::lower_ir::check(&stmts, &ctx) {
+        let e = refusal.message();
         for entry in e.lines().filter(|l| !l.trim().is_empty()) {
             let (line, _) = extract_line_col(entry);
             // Point inside multi-line statements at the actual line.

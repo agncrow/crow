@@ -1,18 +1,21 @@
 //! Lowering: the parser's tree to the IR (docs/ir-design.md §4).
 //!
-//! The three front-end passes have already run: named arguments are
-//! positional (`lower.rs`), types are inferred (`type_infer.rs`) and the
-//! program is valid (`validator.rs`). This pass writes their decisions
-//! into the IR and adds the ones the IR makes explicit: which calls are
-//! effects and whether their answer is used, where a result is
-//! propagated, where an int becomes a float, which read is a variable's
-//! last, which loops are parallel, which functions are handlers and
-//! what each function can do.
+//! Two front-end passes have already run: named arguments are positional
+//! (`lower.rs`) and the program's signatures are inferred
+//! (`type_infer.rs`). This pass types each node from its children, refuses
+//! what is not a program (`checks.rs`), and writes the decisions into the
+//! IR, adding the ones the IR makes explicit: which calls are effects and
+//! whether their answer is used, where a result is propagated, where an
+//! int becomes a float, which read is a variable's last, which loops are
+//! parallel, which functions are handlers and what each function can do.
 
 use crate::ast::{BinOp, Expr as A, Stmt as S};
 use crate::ir::*;
 use crate::type_infer::{CrowType, TypeContext};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+
+mod checks;
+pub(crate) use checks::{BUILTINS, CORE_RESERVED, UI_RESERVED, WEB_EXTRA_FUNCTIONS, WEB_RESERVED};
 
 /// Lower a whole (expanded, lowered, inferred) program.
 pub fn lower(stmts: &[S], ctx: &mut TypeContext, part_name: &str) -> Result<Program, String> {
@@ -22,11 +25,52 @@ pub fn lower(stmts: &[S], ctx: &mut TypeContext, part_name: &str) -> Result<Prog
 /// Lowering with names already bound by an earlier fragment (the REPL's
 /// session): a read of one is a local, an assignment to one is a `set`.
 pub fn lower_with_known(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &HashSet<String>) -> Result<Program, String> {
+    lower_checked(stmts, ctx, part_name, known).map_err(|r| r.message())
+}
+
+/// Why a program was not lowered.
+pub enum Refusal {
+    /// What the program got wrong, each error with the top-level
+    /// declaration it was found in: after module expansion a part's
+    /// declarations carry its prefix, so a caller can say which file an
+    /// error belongs to.
+    Invalid(Vec<(String, Option<String>)>),
+    /// A form the lowering has no IR for.
+    Unlowered(String),
+}
+
+impl Refusal {
+    /// The refusal as printed: every error, one per line, each variable
+    /// named as the program wrote it.
+    pub fn message(&self) -> String {
+        match self {
+            Refusal::Invalid(errors) => crate::lower::shown(&errors.iter().map(|(m, _)| m.as_str()).collect::<Vec<_>>().join("\n")),
+            Refusal::Unlowered(e) => e.clone(),
+        }
+    }
+}
+
+/// Whether a program is one: lowered in a copy of its context and thrown
+/// away, for the callers that only ask (`crow check`, the harness, the
+/// language server).
+pub fn check(stmts: &[S], ctx: &TypeContext) -> Result<(), Refusal> {
+    let mut ctx = ctx.clone();
+    lower_checked(stmts, &mut ctx, "check", &HashSet::new()).map(|_| ())
+}
+
+fn lower_checked(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &HashSet<String>) -> Result<Program, Refusal> {
     let in_ui = stmts.iter().any(|s| matches!(s, S::Use { path, .. } if path == "ui" || path == "web.ui"));
     let mut l = Lowerer::new(ctx, in_ui);
     l.scopes[0].extend(known.iter().cloned());
-    let part = l.lower_part(stmts, part_name)?;
-    let mut program = Program { parts: vec![part] };
+    l.prescan(stmts, known);
+    l.v.types = Some(l.ctx.clone());
+    let part = l.lower_part(stmts, part_name);
+    // what the program got wrong comes first: a form the lowering cannot
+    // take is usually one of those errors seen from the other side
+    if !l.v.errors.is_empty() {
+        return Err(Refusal::Invalid(std::mem::take(&mut l.v.errors)));
+    }
+    let mut program = Program { parts: vec![part.map_err(Refusal::Unlowered)?] };
     decide_loops(&mut program);
     Ok(program)
 }
@@ -308,6 +352,8 @@ struct Lowerer<'a> {
     calls: BTreeMap<String, BTreeSet<String>>,
     direct_effects: BTreeMap<String, BTreeSet<String>>,
     current_fn: String,
+    /// What the checks keep (`checks.rs`).
+    v: checks::Checks,
 }
 
 impl<'a> Lowerer<'a> {
@@ -322,6 +368,7 @@ impl<'a> Lowerer<'a> {
             calls: BTreeMap::new(),
             direct_effects: BTreeMap::new(),
             current_fn: String::new(),
+            v: checks::Checks::default(),
         }
     }
 
@@ -344,6 +391,13 @@ impl<'a> Lowerer<'a> {
         let fact_names: BTreeSet<String> = self.ctx.facts.clone();
         let written: BTreeSet<String> = facts_written_by_fns(stmts, &fact_names);
         for s in stmts {
+            // an error is owned by the declaration it is found in; a line
+            // marker belongs to the statement after it, and an attached test
+            // (`test[p]` after a fn) to the fn it follows
+            match s {
+                S::Line(_) | S::TestBlock { name: None, .. } => {}
+                _ => self.v.decl = checks::declared_name(s),
+            }
             match s {
                 S::Use { path, alias } => {
                     part.uses.push(match alias {
@@ -360,6 +414,7 @@ impl<'a> Lowerer<'a> {
                     }
                 }
                 S::StructDecl { name, fields } => {
+                    self.check_struct(name, fields);
                     let sig = self.ctx.structs.get(name).cloned();
                     let fields = match sig {
                         Some(sig) => sig.fields.iter().map(|(n, t)| (n.clone(), ty_of(t))).collect(),
@@ -368,30 +423,42 @@ impl<'a> Lowerer<'a> {
                     part.structs.push(StructDef { name: name.clone(), fields });
                 }
                 S::FnDecl { name, params, body, is_view, .. } => {
+                    self.check_reserved(name, if *is_view { "view" } else { "function" });
+                    for p in params {
+                        self.check_reserved(p, "parameter");
+                    }
                     let f = self.lower_fn(name, params, body, *is_view)?;
                     part.fns.push(f);
                     // a function called at several signatures is one function
                     // per signature, each typed by its own (F2): the Rust
-                    // backend compiles each
+                    // backend compiles each. Its body was checked as the
+                    // function's.
                     let clones: Vec<String> = self.ctx.specializations.get(name).map(|v| v.iter().map(|(_, m)| m.clone()).collect()).unwrap_or_default();
                     for clone in clones {
                         let clone_body = self.ctx.functions.get(&clone).map(|sig| sig.body.clone()).unwrap_or_else(|| body.clone());
-                        let f = self.lower_fn(&clone, params, &clone_body, *is_view)?;
+                        let f = self.muted(|l| l.lower_fn(&clone, params, &clone_body, *is_view))?;
                         part.fns.push(f);
                     }
                 }
                 S::Derive { name, fresh, body } => {
+                    self.check_derive(name, body);
                     let d = self.lower_derive(name, *fresh, body)?;
                     part.derives.push(d);
                 }
                 S::TestBlock { name, params, body } => {
+                    self.v.attached_test = name.is_none();
                     let t = self.lower_test(name.clone(), params, body)?;
+                    self.v.attached_test = false;
                     part.tests.push(t);
                 }
                 S::Assign { name, value } if self.in_ui && fact_names.contains(name) && !self.declared(name) => {
                     self.at = Where::Top;
                     self.current_fn = "<main>".to_string();
+                    if self.ctx.derives.contains(name) {
+                        self.refuse(format!("'{}' is derived — it follows what it reads; change those facts instead of assigning it", name));
+                    }
                     let default = self.lower_expr(value)?;
+                    self.check_assign(name, &self.seen_type(value));
                     self.flush_pre_into(&mut part.main);
                     let ty = self.ctx.vars.get(name).map(ty_of).unwrap_or_else(|| default.ty());
                     self.scopes[0].insert(name.clone());
@@ -518,9 +585,16 @@ impl<'a> Lowerer<'a> {
         let ret = if kind == FnKind::View { Ty::Node } else { ret };
         self.at = Where::In(kind);
         self.current_fn = name.to_string();
+        // a view or handler of a ui program sees its reactive state, the
+        // sanctioned exception to function-scope isolation
+        self.v.reactive = self.v.ui_mode && matches!(kind, FnKind::View | FnKind::Handler);
+        self.v.local_types.clear();
+        self.v.stored.clear();
         self.scopes.push(params.iter().cloned().collect());
-        let mut block = self.lower_block(body)?;
+        let block = self.lower_block(body);
         self.scopes.pop();
+        self.v.reactive = false;
+        let mut block = block?;
         self.ctx.leave_body(scope);
         let param_set: HashSet<String> = params.iter().cloned().collect();
         place_moves_in(&mut block, &HashSet::new(), Some(&param_set));
@@ -534,6 +608,9 @@ impl<'a> Lowerer<'a> {
         }
         self.at = Where::Derive;
         self.current_fn = name.to_string();
+        // a derivation's locals are its own, as a function's are
+        self.v.local_types.clear();
+        self.v.stored.clear();
         self.scopes.push(HashSet::new());
         let mut block = self.lower_block(body)?;
         self.scopes.pop();
@@ -609,81 +686,59 @@ impl<'a> Lowerer<'a> {
 
     fn lower_stmt(&mut self, s: &S) -> Result<Vec<Stmt>, String> {
         Ok(match s {
-            S::Line(n) => vec![Stmt::Line(*n)],
+            S::Line(n) => {
+                self.v.line = *n;
+                vec![Stmt::Line(*n)]
+            }
             S::Assign { name, value } => {
+                if self.ctx.derives.contains(name) {
+                    self.refuse(format!("'{}' is derived — it follows what it reads; change those facts instead of assigning it", name));
+                }
+                if !self.defined(name) {
+                    self.check_reserved(name, "variable");
+                }
                 let expr = self.lower_expr(value)?;
+                self.check_assign(name, &self.seen_type(value));
                 // the columns a local reads are those of the value assigned
                 // here, in this function — not the last function's local of
                 // the same name (inference keeps one map by name)
                 if let Some(schema) = self.ctx.frame_schema_of(value) {
                     self.ctx.frame_schemas.insert(name.clone(), schema);
                 }
-                vec![self.assign(name, expr)]
+                let stmt = self.assign(name, expr);
+                if matches!(stmt, Stmt::Store { .. }) {
+                    self.v.stored.insert(name.clone());
+                }
+                vec![stmt]
             }
             S::MultiAssign { names, values } => {
-                let mut out = Vec::new();
-                if values.len() == 1 && names.len() > 1 {
-                    // one value unpacked into several names
-                    let e = self.lower_expr(&values[0])?;
-                    let t = self.fresh();
-                    let ty = e.ty();
-                    out.push(Stmt::Let { var: t.clone(), ty: ty.clone(), expr: e });
-                    self.scopes.last_mut().unwrap().insert(t.clone());
-                    for (i, n) in names.iter().enumerate() {
-                        let item = Expr::Index {
-                            base: Box::new(Expr::Local(t.clone(), ty.clone())),
-                            indices: vec![Expr::Const(Const::Int(i as i64), Ty::Int)],
-                            ty: match &ty {
-                                Ty::List(inner) => (**inner).clone(),
-                                _ => Ty::Unknown,
-                            },
-                        };
-                        out.push(self.assign(n, item));
+                // each new name checked against the names taken, after the
+                // values it is given
+                let new: Vec<String> = names.iter().filter(|n| !self.defined(n)).cloned().collect();
+                let out = self.multi_assign(names, values)?;
+                for st in &out {
+                    if let Stmt::Store { fact, .. } = st {
+                        self.v.stored.insert(fact.clone());
                     }
-                } else {
-                    let targets: BTreeSet<String> = names.iter().cloned().collect();
-                    let mut reads = BTreeSet::new();
-                    let mut clock = false;
-                    for v in values {
-                        let mut r = BTreeSet::new();
-                        reads_of_expr(v, &mut r, &mut clock);
-                        reads.extend(r);
-                    }
-                    if reads.is_disjoint(&targets) {
-                        for (n, v) in names.iter().zip(values) {
-                            let e = self.lower_expr(v)?;
-                            let stmt = self.assign(n, e);
-                            self.flush_pre_into(&mut out);
-                            out.push(stmt);
-                        }
-                    } else {
-                        let mut temps = Vec::new();
-                        for v in values {
-                            let e = self.lower_expr(v)?;
-                            let t = self.fresh();
-                            let ty = e.ty();
-                            self.flush_pre_into(&mut out);
-                            out.push(Stmt::Let { var: t.clone(), ty: ty.clone(), expr: e });
-                            self.scopes.last_mut().unwrap().insert(t.clone());
-                            temps.push((t, ty));
-                        }
-                        for (n, (t, ty)) in names.iter().zip(temps) {
-                            out.push(self.assign(n, Expr::Local(t, ty)));
-                        }
-                    }
+                }
+                for n in &new {
+                    self.check_reserved(n, "variable");
                 }
                 out
             }
             S::FieldAssign { object, field, value } => {
+                // the target is checked before its value, then lowered after
+                self.check_target(object);
                 let expr = self.lower_expr(value)?;
-                let (var, mut path) = self.path_of(object)?;
+                let (var, mut path) = self.muted_target(object)?;
                 path.push(PathStep::Field(field.clone()));
                 vec![Stmt::SetPath { var, path, expr }]
             }
             S::IndexAssign { object, index, value } => {
+                self.check_target(object);
                 let expr = self.lower_expr(value)?;
                 let idx = self.lower_expr(index)?;
-                let (var, mut path) = self.path_of(object)?;
+                let (var, mut path) = self.muted_target(object)?;
                 path.push(PathStep::Index(idx));
                 vec![Stmt::SetPath { var, path, expr }]
             }
@@ -727,6 +782,7 @@ impl<'a> Lowerer<'a> {
                 }
             }
             S::For { var, iter, body } => {
+                self.check_reserved(var, "loop variable");
                 // a list that can fail is refused like a condition
                 let it = self.lower_expr(iter)?;
                 let it = self.decided(it, Decision::Loop);
@@ -762,6 +818,63 @@ impl<'a> Lowerer<'a> {
             S::Use { path, .. } => return Err(format!("lowering: use '{}' inside a body", path)),
             S::Resource { .. } => vec![],
         })
+    }
+
+    /// Several names assigned at once: one value unpacked into them, or a
+    /// value each, all read before any is written when they read each other.
+    fn multi_assign(&mut self, names: &[String], values: &[A]) -> Result<Vec<Stmt>, String> {
+        let mut out = Vec::new();
+        if values.len() == 1 && names.len() > 1 {
+            // one value unpacked into several names
+            let e = self.lower_expr(&values[0])?;
+            let t = self.fresh();
+            let ty = e.ty();
+            out.push(Stmt::Let { var: t.clone(), ty: ty.clone(), expr: e });
+            self.scopes.last_mut().unwrap().insert(t.clone());
+            for (i, n) in names.iter().enumerate() {
+                let item = Expr::Index {
+                    base: Box::new(Expr::Local(t.clone(), ty.clone())),
+                    indices: vec![Expr::Const(Const::Int(i as i64), Ty::Int)],
+                    ty: match &ty {
+                        Ty::List(inner) => (**inner).clone(),
+                        _ => Ty::Unknown,
+                    },
+                };
+                out.push(self.assign(n, item));
+            }
+        } else {
+            let targets: BTreeSet<String> = names.iter().cloned().collect();
+            let mut reads = BTreeSet::new();
+            let mut clock = false;
+            for v in values {
+                let mut r = BTreeSet::new();
+                reads_of_expr(v, &mut r, &mut clock);
+                reads.extend(r);
+            }
+            if reads.is_disjoint(&targets) {
+                for (n, v) in names.iter().zip(values) {
+                    let e = self.lower_expr(v)?;
+                    let stmt = self.assign(n, e);
+                    self.flush_pre_into(&mut out);
+                    out.push(stmt);
+                }
+            } else {
+                let mut temps = Vec::new();
+                for v in values {
+                    let e = self.lower_expr(v)?;
+                    let t = self.fresh();
+                    let ty = e.ty();
+                    self.flush_pre_into(&mut out);
+                    out.push(Stmt::Let { var: t.clone(), ty: ty.clone(), expr: e });
+                    self.scopes.last_mut().unwrap().insert(t.clone());
+                    temps.push((t, ty));
+                }
+                for (n, (t, ty)) in names.iter().zip(temps) {
+                    out.push(self.assign(n, Expr::Local(t, ty)));
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// A condition: a fallible one is propagated first (spec §10, Errors
@@ -864,20 +977,40 @@ impl<'a> Lowerer<'a> {
         format!("t{}", self.temp)
     }
 
+    /// An assignment target's path, its variable and fields already
+    /// checked (`check_target`); an index's expressions are checked as they
+    /// are lowered.
+    fn muted_target(&mut self, object: &A) -> Result<(String, Vec<PathStep>), String> {
+        match object {
+            A::Ident(_) | A::FieldAccess { .. } => self.muted(|l| l.path_of(object)),
+            _ => self.path_of(object),
+        }
+    }
+
     fn path_of(&mut self, object: &A) -> Result<(String, Vec<PathStep>), String> {
         match object {
-            A::Ident(n) => Ok((n.clone(), vec![])),
+            A::Ident(n) => {
+                self.check_ident(n);
+                Ok((n.clone(), vec![]))
+            }
             A::FieldAccess { object, field } => {
                 let (v, mut p) = self.path_of(object)?;
+                let object_type = self.ctx.infer_expr(object);
+                self.check_field(&object_type, field);
                 p.push(PathStep::Field(field.clone()));
                 Ok((v, p))
             }
             A::Call { callee, args } => {
-                let (v, mut p) = self.path_of(callee)?;
+                // a name indexed is checked as the call it is written as
+                let (v, mut p) = match callee.as_ref() {
+                    A::Ident(_) => self.muted(|l| l.path_of(callee))?,
+                    _ => self.path_of(callee)?,
+                };
                 for a in args {
                     let i = self.lower_expr(a)?;
                     p.push(PathStep::Index(i));
                 }
+                self.check_callee(callee, args);
                 Ok((v, p))
             }
             _ => Err("lowering: an assignment target must be a variable, a field or an index".into()),
@@ -903,12 +1036,14 @@ impl<'a> Lowerer<'a> {
                 }
             }
             A::Ident(name) => {
+                self.check_ident(name);
                 let ty = ty_of(&self.ctx.ident_type(name));
                 self.ident(name, ty)
             }
             A::BinOp { left, op, right } => {
                 let mut l = self.lower_expr(left)?;
                 let mut r = self.lower_expr(right)?;
+                self.check_binop(op, self.seen_type(left), self.seen_type(right));
                 let ty = ty_of(&self.ctx.binop_type(op, read(&l), read(&r)));
                 let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow | BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte);
                 if arithmetic {
@@ -927,9 +1062,12 @@ impl<'a> Lowerer<'a> {
             }
             A::Call { callee, args } => self.call(callee, args)?,
             A::FieldAccess { object, field } => {
+                // `m.x` where `m` is no variable names what a part declares:
+                // `m` is not read as one
+                let member = matches!(object.as_ref(), A::Ident(m) if self.names_module_member(m, field));
                 match field.as_str() {
                     "ok" | "reason" | "kind" | "trace" => {
-                        let base = self.lower_expr(object)?;
+                        let base = if member { self.muted(|l| l.lower_expr(object))? } else { self.lower_expr(object)? };
                         let which = match field.as_str() {
                             // a frame column's `.ok` is its rows' validity;
                             // any other value's is its own status
@@ -948,7 +1086,10 @@ impl<'a> Lowerer<'a> {
                                 return Ok(Expr::Constant(format!("{}.{}", m, field), ty));
                             }
                         }
-                        let base = self.lower_expr(object)?;
+                        let base = if member { self.muted(|l| l.lower_expr(object))? } else { self.lower_expr(object)? };
+                        if !member {
+                            self.check_field(&read(&base), field);
+                        }
                         let ty = ty_of(&self.ctx.field_type(object, read(&base), field));
                         Expr::Field { base: Box::new(base), name: field.clone(), ty }
                     }
@@ -965,6 +1106,9 @@ impl<'a> Lowerer<'a> {
             A::Map(pairs) => {
                 let mut out = Vec::with_capacity(pairs.len());
                 for (k, v) in pairs {
+                    if let A::Ident(n) = k {
+                        self.check_ident(n);
+                    }
                     let key = match k {
                         A::Ident(n) | A::Str(n) => n.clone(),
                         other => format!("{:?}", other),
@@ -1037,12 +1181,19 @@ impl<'a> Lowerer<'a> {
             _ => true,
         };
         if indexes_value {
-            let base = self.lower_expr(callee)?;
+            // a name or `m.x` indexed is checked as the call it is written
+            // as, after its arguments
+            let base = match callee {
+                A::Ident(_) => self.muted(|l| l.lower_expr(callee))?,
+                A::FieldAccess { object, .. } if matches!(object.as_ref(), A::Ident(_)) => self.muted(|l| l.lower_expr(callee))?,
+                _ => self.lower_expr(callee)?,
+            };
             let mut idx = Vec::new();
             for a in args {
                 idx.push(self.lower_expr(a)?);
             }
             let arg_types: Vec<CrowType> = idx.iter().map(read).collect();
+            self.check_callee(callee, args);
             let ty = self.call_type(callee, args, &arg_types, Some(read(&base)));
             return Ok(Expr::Index { base: Box::new(base), indices: idx, ty });
         }
@@ -1057,6 +1208,7 @@ impl<'a> Lowerer<'a> {
         // a read a guard narrowed (lower.rs): the value, never its failure
         if module.is_none() && name == crate::lower::KNOWN && args.len() == 1 {
             let x = self.lower_expr(&args[0])?;
+            self.check_call(&name, args);
             if x.ty().is_result() {
                 let payload = x.ty().payload().clone();
                 return Ok(Expr::Convert { how: Convert::Known, expr: Box::new(x), ty: payload });
@@ -1069,6 +1221,7 @@ impl<'a> Lowerer<'a> {
             for a in args {
                 fields.push(self.lower_expr(a)?);
             }
+            self.check_call(&name, args);
             return Ok(Expr::RecordLit { name, fields });
         }
         // a ui element with its attributes first (lower.rs put them there)
@@ -1079,6 +1232,9 @@ impl<'a> Lowerer<'a> {
                 if i == 0 {
                     if let A::Map(pairs) = a {
                         for (k, v) in pairs {
+                            if let A::Ident(n) = k {
+                                self.check_ident(n);
+                            }
                             let key = match k {
                                 A::Ident(n) | A::Str(n) => n.clone(),
                                 other => format!("{:?}", other),
@@ -1099,6 +1255,7 @@ impl<'a> Lowerer<'a> {
                 }
                 children.push(self.lower_expr(a)?);
             }
+            self.check_call(&name, args);
             return Ok(Expr::Tree { element: name, attrs, children });
         }
         // arguments: a fallible one reaches the callee as its payload, and
@@ -1127,6 +1284,7 @@ impl<'a> Lowerer<'a> {
                 lowered.push(x);
             }
         }
+        self.check_callee(callee, args);
         let ty = self.call_type(callee, args, &arg_types, None);
         let current = self.current_fn.clone();
         if let Some(m) = module {
@@ -1196,6 +1354,20 @@ impl<'a> Lowerer<'a> {
         ty_of(&t)
     }
 
+    /// A call's own checks, made after its arguments': a name called is
+    /// checked as a call by name, `m.f[…]` as a module's.
+    fn check_callee(&mut self, callee: &A, args: &[A]) {
+        match callee {
+            A::Ident(n) => self.check_call(n, args),
+            A::FieldAccess { object, field } => {
+                if let A::Ident(m) = object.as_ref() {
+                    self.check_module_call(m, field);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// The type of a value a module names, `m.x`.
     fn qualified_type(&self, object: &A, field: &str) -> CrowType {
         let object_type = match object {
@@ -1215,6 +1387,7 @@ impl<'a> Lowerer<'a> {
                     for a in args {
                         lowered.push(self.lower_expr(a)?);
                     }
+                    self.check_call(f, args);
                     return Ok(Some(Expr::Deferred { name: f.clone(), args: lowered }));
                 }
             }
