@@ -17,7 +17,10 @@ jobs:
     steps:
       - name: Free disk space (the suites compile dozens of programs)
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          # toolchains no step uses: the suites need Rust and nothing else
+          # (no browser, Python or Node)
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/local/share/boost \
+            /usr/local/.ghcup /usr/share/swift /usr/lib/jvm /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
           sudo docker image prune -af > /dev/null 2>&1 || true
           df -h / | tail -1
       - uses: actions/checkout@v4
@@ -34,15 +37,15 @@ jobs:
       - name: Docs cover the compiler (and nothing more)
         run: ./target/release/crow test --docs
       - name: Parity corpus (both execution modes must agree)
-        run: ./target/release/crow test --parity
+        run: ./target/release/crow test --parity && df -h / | tail -1
       - name: Served pages match across both modes
-        run: ./target/release/crow test --served
+        run: ./target/release/crow test --served && df -h / | tail -1
       - name: Benchmarks run in both modes (small sizes, no timing thresholds)
         run: ./target/release/crow test --bench --quick
       - name: Free the suites' shared build (the book's workers build their own)
         run: rm -rf .crow_build && df -h / | tail -1
       - name: Book (every code block runs in both modes)
-        run: ./target/release/crow test --book
+        run: ./target/release/crow test --book && df -h / | tail -1
       - name: Book site built by Crow (layout tested, pages written)
         run: |
           ./target/release/crow test docs/book/site.co
