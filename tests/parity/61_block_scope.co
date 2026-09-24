@@ -1,0 +1,37 @@
+--- Variables belong to the block they are set in (spec §1, Scope): two
+--- blocks may each set a variable of the same name, of different types,
+--- and a variable set again after its block ended is a new one. The
+--- checker kept one type per name and refused the second as a type change.
+fn describe[c]
+    if c
+        x = 1
+        log['int `x + 1`']
+    else
+        x = 'one'
+        log['text `x`!']
+    return 0
+
+describe[true]
+describe[false]
+
+for i in [1, 2]
+    v = i * 10
+    log[v]
+for w in ['a', 'b']
+    v = '`w``w`'
+    log[v]
+
+fn afterwards[]
+    if true
+        t = 5
+        log[t]
+    t = 'five'
+    return t
+
+log[afterwards[]]
+
+total = 0
+for n in [1, 2, 3]
+    step = n * 2
+    total = total + step
+log[total]

@@ -151,7 +151,318 @@ fn lower_with(stmts: &[Stmt], web: bool) -> Result<Vec<Stmt>, String> {
     };
     l.collect_sigs(stmts);
     let lowered = l.lower_stmts(stmts)?;
-    Ok(narrowed(lowered, &BTreeSet::new()))
+    let scoped = scoped(lowered)?;
+    Ok(narrowed(scoped, &BTreeSet::new()))
+}
+
+// ── names, scoped ───────────────────────────────────────────────────
+
+/// Variables are scoped to the block they are bound in (spec §1, Scope):
+/// a name bound again after its block has ended is a new variable, and a
+/// read of it there is refused. The passes after this one keep a
+/// variable's type by its name, so each later binding of a name whose
+/// earlier binding's block has ended gets a name of its own (`x__s2`);
+/// messages print the name the program wrote (`shown`). Names visible
+/// beyond a block (the top level's, functions, structs, modules) are never
+/// renamed.
+fn scoped(stmts: Vec<Stmt>) -> Result<Vec<Stmt>, String> {
+    let mut globals: BTreeSet<String> = BTreeSet::new();
+    for s in &stmts {
+        match s {
+            Stmt::Assign { name, .. } => {
+                globals.insert(name.clone());
+            }
+            Stmt::MultiAssign { names, .. } => globals.extend(names.iter().cloned()),
+            Stmt::FnDecl { name, .. } | Stmt::StructDecl { name, .. } | Stmt::Derive { name, .. } => {
+                globals.insert(name.clone());
+            }
+            Stmt::Use { path, alias } => {
+                globals.insert(alias.clone().unwrap_or_else(|| path.clone()));
+            }
+            _ => {}
+        }
+    }
+    let mut namer = Namer::new(&globals, &[]);
+    namer.block(stmts, false)
+}
+
+/// The suffix a renamed binding carries, and the name a message prints.
+const SCOPED: &str = "__s";
+
+/// A name as the program wrote it: `x__s2` is `x`, in every message.
+pub fn shown(msg: &str) -> String {
+    let mut out = String::with_capacity(msg.len());
+    let mut rest = msg;
+    while let Some(i) = rest.find(SCOPED) {
+        let after = &rest[i + SCOPED.len()..];
+        let digits = after.chars().take_while(|c| c.is_ascii_digit()).count();
+        let before_ok = i > 0 && rest[..i].chars().last().map_or(false, |c| c.is_alphanumeric() || c == '_');
+        if digits > 0 && before_ok && !after[digits..].starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+            out.push_str(&rest[..i]);
+            rest = &after[digits..];
+        } else {
+            out.push_str(&rest[..i + SCOPED.len()]);
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+struct Namer<'a> {
+    globals: &'a BTreeSet<String>,
+    /// per open block: the name written → the variable it is now
+    scopes: Vec<BTreeMap<String, String>>,
+    /// how many variables of each written name this body has had
+    seen: BTreeMap<String, usize>,
+    /// names whose variable's block has ended (a read of one is refused)
+    closed: BTreeSet<String>,
+    line: usize,
+}
+
+impl<'a> Namer<'a> {
+    fn new(globals: &'a BTreeSet<String>, params: &[String]) -> Self {
+        let mut top = BTreeMap::new();
+        let mut seen = BTreeMap::new();
+        for p in params {
+            top.insert(p.clone(), p.clone());
+            seen.insert(p.clone(), 1);
+        }
+        Namer { globals, scopes: vec![top], seen, closed: BTreeSet::new(), line: 0 }
+    }
+
+    fn visible(&self, name: &str) -> Option<&String> {
+        self.scopes.iter().rev().find_map(|s| s.get(name))
+    }
+
+    /// A binding: the variable already in scope, or a new one, named apart
+    /// when an earlier one of the same name has ended.
+    fn bind(&mut self, name: &str) -> String {
+        if self.globals.contains(name) {
+            return name.to_string();
+        }
+        if let Some(v) = self.visible(name) {
+            return v.clone();
+        }
+        let n = self.seen.entry(name.to_string()).or_insert(0);
+        *n += 1;
+        let v = if *n == 1 { name.to_string() } else { format!("{}{}{}", name, SCOPED, n) };
+        self.scopes.last_mut().unwrap().insert(name.to_string(), v.clone());
+        v
+    }
+
+    fn read(&self, name: &str) -> Result<String, String> {
+        if let Some(v) = self.visible(name) {
+            return Ok(v.clone());
+        }
+        if self.closed.contains(name) && !self.globals.contains(name) {
+            return Err(format!(
+                "line {}: '{}' is not in scope here: it was set inside a block that has ended. A variable belongs to the block it is set in: set it before the block ({} = …) to use it after",
+                self.line, name, name
+            ));
+        }
+        Ok(name.to_string())
+    }
+
+    fn open(&mut self) {
+        self.scopes.push(BTreeMap::new());
+    }
+
+    fn close(&mut self) {
+        if let Some(ended) = self.scopes.pop() {
+            for name in ended.into_keys() {
+                if self.visible(&name).is_none() {
+                    self.closed.insert(name);
+                }
+            }
+        }
+    }
+
+    /// A block's statements; `own` opens a scope of its own for them.
+    fn block(&mut self, stmts: Vec<Stmt>, own: bool) -> Result<Vec<Stmt>, String> {
+        if own {
+            self.open();
+        }
+        let mut out = Vec::with_capacity(stmts.len());
+        for s in stmts {
+            out.push(self.stmt(s)?);
+        }
+        if own {
+            self.close();
+        }
+        Ok(out)
+    }
+
+    fn stmt(&mut self, s: Stmt) -> Result<Stmt, String> {
+        Ok(match s {
+            Stmt::Line(n) => {
+                self.line = n;
+                Stmt::Line(n)
+            }
+            Stmt::Assign { name, value } => {
+                let value = self.expr(value)?;
+                Stmt::Assign { name: self.bind(&name), value }
+            }
+            Stmt::MultiAssign { names, values } => {
+                let values = values.into_iter().map(|v| self.expr(v)).collect::<Result<Vec<_>, _>>()?;
+                Stmt::MultiAssign { names: names.iter().map(|n| self.bind(n)).collect(), values }
+            }
+            // a function, a derivation and a test block are bodies of their own
+            Stmt::FnDecl { name, params, defaults, body, is_view } => {
+                let mut inner = Namer::new(self.globals, &params);
+                Stmt::FnDecl { name, params, defaults, body: inner.block(body, false)?, is_view }
+            }
+            Stmt::Derive { name, fresh, body } => {
+                let mut inner = Namer::new(self.globals, &[]);
+                Stmt::Derive { name, fresh, body: inner.block(body, false)? }
+            }
+            Stmt::TestBlock { name, params, body } => {
+                let mut inner = Namer::new(self.globals, &params);
+                Stmt::TestBlock { name, params, body: inner.block(body, false)? }
+            }
+            Stmt::Return(v) => Stmt::Return(v.map(|x| self.expr(x)).transpose()?),
+            Stmt::ExprStmt(x) => Stmt::ExprStmt(self.expr(x)?),
+            Stmt::If { condition, then_body, else_body } => Stmt::If {
+                condition: self.expr(condition)?,
+                then_body: self.block(then_body, true)?,
+                else_body: else_body.map(|b| self.block(b, true)).transpose()?,
+            },
+            Stmt::While { condition, body } => Stmt::While { condition: self.expr(condition)?, body: self.block(body, true)? },
+            Stmt::For { var, iter, body } => {
+                let iter = self.expr(iter)?;
+                self.open();
+                let var = self.bind(&var);
+                let body = self.block(body, false)?;
+                self.close();
+                Stmt::For { var, iter, body }
+            }
+            // the object of an assignment is the variable in scope
+            Stmt::FieldAssign { object, field, value } => {
+                let value = self.expr(value)?;
+                Stmt::FieldAssign { object: self.expr(object)?, field, value }
+            }
+            Stmt::IndexAssign { object, index, value } => {
+                let index = self.expr(index)?;
+                let value = self.expr(value)?;
+                Stmt::IndexAssign { object: self.expr(object)?, index, value }
+            }
+            Stmt::Resource { kind, count } => Stmt::Resource { kind, count: self.expr(count)? },
+            other => other,
+        })
+    }
+
+    fn expr(&mut self, e: Expr) -> Result<Expr, String> {
+        Ok(match e {
+            Expr::Ident(n) => Expr::Ident(self.read(&n)?),
+            Expr::Str(s) if s.contains('`') => Expr::Str(self.spans(&s)?),
+            Expr::BinOp { op, left, right } => Expr::BinOp { op, left: Box::new(self.expr(*left)?), right: Box::new(self.expr(*right)?) },
+            Expr::UnaryOp { op, expr } => Expr::UnaryOp { op, expr: Box::new(self.expr(*expr)?) },
+            // a function's name is not a variable
+            Expr::Call { callee, args } => {
+                let callee = match *callee {
+                    Expr::Ident(n) => Expr::Ident(self.visible(&n).cloned().unwrap_or(n)),
+                    other => self.expr(other)?,
+                };
+                Expr::Call { callee: Box::new(callee), args: args.into_iter().map(|a| self.expr(a)).collect::<Result<Vec<_>, _>>()? }
+            }
+            Expr::FieldAccess { object, field } => Expr::FieldAccess { object: Box::new(self.expr(*object)?), field },
+            Expr::Array(items) => Expr::Array(items.into_iter().map(|a| self.expr(a)).collect::<Result<Vec<_>, _>>()?),
+            // a key is a name (an attribute's, a field's), not a read
+            Expr::Map(pairs) => Expr::Map(pairs.into_iter().map(|(k, v)| Ok((k, self.expr(v)?))).collect::<Result<Vec<_>, String>>()?),
+            Expr::Named { name, value } => Expr::Named { name, value: Box::new(self.expr(*value)?) },
+            Expr::ForExpr { var, iter, body } => {
+                let iter = self.expr(*iter)?;
+                self.open();
+                let var = self.bind(&var);
+                let body = self.block(body, false)?;
+                self.close();
+                Expr::ForExpr { var, iter: Box::new(iter), body }
+            }
+            other => other,
+        })
+    }
+
+    /// A string's interpolation spans, their variables renamed where the
+    /// variable in scope was: each span is lexed, and a name token that is
+    /// a read (not a field after `.`, nor a named argument before `=`) is
+    /// spliced by its column.
+    fn spans(&self, s: &str) -> Result<String, String> {
+        let chars: Vec<char> = s.chars().collect();
+        let mut out = String::with_capacity(s.len());
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '`' {
+                out.push(chars[i]);
+                out.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+            if chars[i] != '`' {
+                out.push(chars[i]);
+                i += 1;
+                continue;
+            }
+            // a span: up to its closing backtick, quote-aware
+            let start = i + 1;
+            let mut j = start;
+            let mut in_str = false;
+            while j < chars.len() {
+                let c = chars[j];
+                if in_str {
+                    if c == '\\' && j + 1 < chars.len() {
+                        j += 2;
+                        continue;
+                    }
+                    if c == '\'' {
+                        in_str = false;
+                    }
+                } else if c == '\'' {
+                    in_str = true;
+                } else if c == '`' {
+                    break;
+                }
+                j += 1;
+            }
+            let span: String = chars[start..j.min(chars.len())].iter().collect();
+            out.push('`');
+            out.push_str(&self.span(&span)?);
+            if j < chars.len() {
+                out.push('`');
+            }
+            i = j + 1;
+        }
+        Ok(out)
+    }
+
+    fn span(&self, span: &str) -> Result<String, String> {
+        let tokens = match crate::lexer::Lexer::new(span).tokenize() {
+            Ok(t) => t,
+            Err(_) => return Ok(span.to_string()),
+        };
+        let chars: Vec<char> = span.chars().collect();
+        // (column, length, replacement), spliced from the end
+        let mut edits: Vec<(usize, usize, String)> = Vec::new();
+        for (k, t) in tokens.iter().enumerate() {
+            if let crate::token::Token::Ident(n) = &t.token {
+                let after_dot = k > 0 && matches!(tokens[k - 1].token, crate::token::Token::Dot);
+                let named = matches!(tokens.get(k + 1).map(|x| &x.token), Some(crate::token::Token::Assign));
+                if after_dot || named {
+                    continue;
+                }
+                let v = self.read(n)?;
+                if &v != n && t.col >= 1 {
+                    edits.push((t.col - 1, n.chars().count(), v));
+                }
+            }
+        }
+        let mut text: Vec<char> = chars;
+        for (col, len, v) in edits.into_iter().rev() {
+            if col + len <= text.len() && text[col..col + len].iter().collect::<String>() != v {
+                text.splice(col..col + len, v.chars());
+            }
+        }
+        Ok(text.into_iter().collect())
+    }
 }
 
 // ── a guard narrows ─────────────────────────────────────────────────
@@ -1087,6 +1398,39 @@ mod tests {
         assert!(known_reads(&stays).is_empty());
         let with_else = lower_src("fn f[a]\n    if not a.ok\n        return 0\n    else\n        log['ok']\n    return a\n").unwrap();
         assert!(known_reads(&with_else).is_empty());
+    }
+
+    /// Variables belong to their block (spec §1, Scope): a name set again
+    /// after its block ended is a variable of its own, renamed apart for
+    /// the passes after, inside interpolation too; a name still in scope is
+    /// the same variable, and top-level names and parameters are never
+    /// renamed
+    #[test]
+    fn a_block_ends_its_variables() {
+        let stmts = lower_src("fn f[c]\n    if c\n        x = 1\n    else\n        x = 'one'\n        log['`x`!']\n    n = 0\n    while n lt 2\n        n = n + 1\n    return c\n").unwrap();
+        let body = stmts.iter().find_map(|s| match s {
+            Stmt::FnDecl { body, .. } => Some(body.clone()),
+            _ => None,
+        }).expect("the function");
+        let text = format!("{:?}", body);
+        assert!(text.contains("name: \"x\"") && text.contains("name: \"x__s2\""), "{}", text);
+        assert!(text.contains("`x__s2`!"), "the span reads the renamed variable: {}", text);
+        assert!(!text.contains("n__s") && !text.contains("c__s"), "an update and a parameter keep their names: {}", text);
+    }
+
+    /// A read after the block that set the variable ended is refused, with
+    /// the line and what to write instead
+    #[test]
+    fn a_read_after_its_block_is_refused() {
+        let err = lower_src("x = 10\nif true\n    y = 20\nlog[y]\n").unwrap_err();
+        assert!(err.contains("line 4") && err.contains("'y' is not in scope here") && err.contains("y = …"), "{}", err);
+    }
+
+    /// A message names a variable as the program wrote it
+    #[test]
+    fn a_renamed_variable_is_shown_as_written() {
+        assert_eq!(shown("cannot reassign 'x__s2' from int to str"), "cannot reassign 'x' from int to str");
+        assert_eq!(shown("keep __s2 and a__sb"), "keep __s2 and a__sb");
     }
 
     /// A loop whose body assigns a name does not inherit its narrowing,

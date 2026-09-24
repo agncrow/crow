@@ -36,7 +36,25 @@ else
 B
 ```
 
-There is no ternary expression: use an `if`/`else` statement.
+There is no ternary expression: use an `if`/`else` statement, and set
+the variable before it. A variable set inside a branch belongs to that
+branch and ends with it, so a value the rest of the program reads is set
+first and changed inside:
+
+```crow
+n = 42
+size = 'small'
+if n gt 10
+    size = 'big'
+log[size]
+```
+
+```text
+big
+```
+
+Reading a variable after the branch that set it ended is refused before
+the program runs, with the line and this fix.
 
 ## while
 

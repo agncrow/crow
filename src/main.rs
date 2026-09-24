@@ -3229,7 +3229,8 @@ fn infer_and_validate(lowered: &[ast::Stmt], describe: bool) -> Result<type_infe
         }
     };
     match refused {
-        Some(e) => Err(e),
+        // a message names a variable as the program wrote it
+        Some(e) => Err(lower::shown(&e)),
         None => Ok(ctx),
     }
 }
