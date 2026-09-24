@@ -319,7 +319,14 @@ impl Emitter {
                 }
                 _ => format!("{} {} {}", l_val, op_str, r_val),
             };
-            let mut result = format!("CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", inner_expr);
+            // an operand that has no value (an `error[…]`) always fails:
+            // its error is the operator's value, and there is no other
+            let valueless = (l_res && matches!(lti, CrowType::Void)) || (r_res && matches!(rti, CrowType::Void));
+            let mut result = if valueless {
+                "unreachable!()".to_string()
+            } else {
+                format!("CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", inner_expr)
+            };
             if r_res {
                 let err = format!(
                     "CrowResult {{ ok: false, value: {}, reason: _binr_{c}.reason.clone(), kind: _binr_{c}.kind.clone(), trace: _binr_{c}.trace.clone(), captured: 0.0 }}",
@@ -699,6 +706,13 @@ impl Emitter {
                         let b = format!("_ip{}", fallible.len());
                         fallible.push((b.clone(), format!("({}).clone()", rust)));
                         rust = format!("{}.value", b);
+                    }
+                    // an error with no value (error[…]): the text is its
+                    // error, and the value it would show never comes
+                    if matches!(inner, CrowType::Void) {
+                        fmt.push_str("{}");
+                        args.push("\"\"".to_string());
+                        continue;
                     }
                     match &inner {
                         CrowType::FrameCol => {
@@ -1139,7 +1153,12 @@ impl Emitter {
                 }
                 let mut unwrapped = arg_strs.clone();
                 for &i in &result_idx {
-                    unwrapped[i] = format!("_prop_{}.value.clone()", i);
+                    // a value that has none (an `error[…]`) never reaches the call
+                    unwrapped[i] = if matches!(Self::inner(&self.tt(&raw_args[i])), CrowType::Void) {
+                        "unreachable!()".to_string()
+                    } else {
+                        format!("_prop_{}.value.clone()", i)
+                    };
                 }
                 let inner_expr = self.dispatch(&target, &name, &raw_args, &unwrapped, e);
                 let full = self.tt(e);

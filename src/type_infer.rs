@@ -1254,8 +1254,11 @@ impl TypeContext {
                             // Normalize types for function params:
                             // - OptBoxStruct -> Struct (the Rust backend unwraps before passing)
                             // - Result<T> -> T (auto-propagation unwraps at call site)
+                            // - an error with no value (error[…]) says nothing of the
+                            //   parameter: that call never reaches the body
                             let normalized = match at {
                                 CrowType::OptBoxStruct(n) => CrowType::Struct(n.clone()),
+                                CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Void) => CrowType::Unknown,
                                 CrowType::Result(inner) => *inner.clone(),
                                 other => other.clone(),
                             };
@@ -2177,7 +2180,9 @@ impl TypeContext {
         match name {
             "log" | "cpu" | "gpu" | "assert" => CrowType::Void,
             "type" => CrowType::Str,
-            "error" => CrowType::Result(Box::new(CrowType::Str)),
+            // an error has no value, only a reason: a failed nothing, which
+            // any value it meets decides the type of (unify)
+            "error" => CrowType::Result(Box::new(CrowType::Void)),
             "map" => CrowType::Map(Box::new(CrowType::Unknown)),
             "range" => CrowType::Array(Box::new(CrowType::Int)),
             // Math builtins (scalar)

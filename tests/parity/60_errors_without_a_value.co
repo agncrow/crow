@@ -1,0 +1,29 @@
+--- An error made by error[…] has no value, only its reason and kind:
+--- whatever it meets (a comparison, arithmetic, a call) hands it on. The
+--- compiled program typed it as text, so comparing one with a number did
+--- not build, and printing one needed a value to print.
+e = error['boom']
+c = e gt 0
+log[c.ok]
+log[c.reason]
+log[e]
+log[e.ok]
+
+fn double[x]
+    return x * 2
+
+log[double[4]]
+d = double[e]
+log[d.ok]
+log[d.reason]
+
+fn check[n]
+    if n lt 0
+        return error['negative', 'range']
+    return n * 10
+
+log[check[3]]
+r = check[-1]
+log[r.kind]
+t = r + 1
+log[t.reason]
