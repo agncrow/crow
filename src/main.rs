@@ -1939,10 +1939,16 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     if quiet {
         cmd.stdout(std::process::Stdio::null())
            .stderr(std::process::Stdio::piped());
-        let output = cmd.output().unwrap_or_else(|e| {
+        let child = cmd.spawn().unwrap_or_else(|e| {
             eprintln!("error running cargo: {}", e);
             process::exit(1);
         });
+        let handed = hand_signals_to(child.id());
+        let output = child.wait_with_output().unwrap_or_else(|e| {
+            eprintln!("error running cargo: {}", e);
+            process::exit(1);
+        });
+        drop(handed);
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let translated = translate_rust_compile_error(&stderr);
@@ -1950,10 +1956,16 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
             process::exit(1);
         }
     } else {
-        let status = cmd.status().unwrap_or_else(|e| {
+        let mut child = cmd.spawn().unwrap_or_else(|e| {
             eprintln!("error running cargo: {}", e);
             process::exit(1);
         });
+        let handed = hand_signals_to(child.id());
+        let status = child.wait().unwrap_or_else(|e| {
+            eprintln!("error running cargo: {}", e);
+            process::exit(1);
+        });
+        drop(handed);
         if !status.success() {
             eprintln!("compilation failed");
             process::exit(1);
@@ -2378,6 +2390,7 @@ fn run_binary(binary: &std::path::Path, extra_args: &[String]) {
             eprintln!("error running binary: {}", e);
             process::exit(1);
         });
+    let handed = hand_signals_to(child.id());
     // Record the app's pid so `crow stop` can find it from any terminal.
     // Ownership rule: never clobber a LIVE instance's pidfile (a run that
     // dies on port collision must not erase the survivor's record), and
@@ -2395,6 +2408,7 @@ fn run_binary(binary: &std::path::Path, extra_args: &[String]) {
         eprintln!("error running binary: {}", e);
         process::exit(1);
     });
+    drop(handed);
     if std::fs::read_to_string(".crow/app.pid")
         .map(|p| p.trim() == child.id().to_string())
         .unwrap_or(false)
@@ -2748,6 +2762,61 @@ fn cmd_stop() {
 unsafe extern "C" {
     #[link_name = "kill"]
     fn libc_kill(pid: i32, sig: i32) -> i32;
+    #[link_name = "signal"]
+    fn libc_signal(sig: i32, handler: usize) -> usize;
+}
+
+/// The program `crow run` is running, which a signal to `crow run` is
+/// handed on to.
+static RUNNING_CHILD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+extern "C" fn hand_on_signal(sig: i32) {
+    let pid = RUNNING_CHILD.load(std::sync::atomic::Ordering::SeqCst);
+    if pid > 0 {
+        // kill() is safe inside a signal handler
+        unsafe {
+            libc_kill(pid, sig);
+        }
+    }
+}
+
+const HANDED_SIGNALS: [i32; 3] = [1, 2, 15]; // SIGHUP, SIGINT, SIGTERM
+
+/// While a child crow started runs — the program `crow run` runs, the cargo
+/// a build runs — a signal to crow is handed on to it, as a signal to the
+/// program would stop it: `kill <pid of crow run>` used to end `crow run`
+/// alone and leave its compiled program serving. crow then waits for the
+/// child and exits as it did. When the guard goes, a signal is crow's own
+/// again.
+struct HandedSignals;
+
+#[cfg(unix)]
+fn hand_signals_to(child: u32) -> HandedSignals {
+    RUNNING_CHILD.store(child as i32, std::sync::atomic::Ordering::SeqCst);
+    for sig in HANDED_SIGNALS {
+        unsafe {
+            libc_signal(sig, hand_on_signal as extern "C" fn(i32) as usize);
+        }
+    }
+    HandedSignals
+}
+
+#[cfg(not(unix))]
+fn hand_signals_to(_child: u32) -> HandedSignals {
+    HandedSignals
+}
+
+impl Drop for HandedSignals {
+    fn drop(&mut self) {
+        RUNNING_CHILD.store(0, std::sync::atomic::Ordering::SeqCst);
+        #[cfg(unix)]
+        for sig in HANDED_SIGNALS {
+            // SIG_DFL
+            unsafe {
+                libc_signal(sig, 0);
+            }
+        }
+    }
 }
 
 /// Record a deliberate render-time remote read: insert the acknowledgment
