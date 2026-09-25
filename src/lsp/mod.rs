@@ -37,6 +37,7 @@ pub fn run_server() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
         }),
         hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
+        references_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
         ..Default::default()
     };
@@ -221,6 +222,16 @@ fn handle_request(state: &State, req: lsp_server::Request) -> Response {
                 .and_then(|d| features::definition(d, pos, &uri))
                 .map(GotoDefinitionResponse::Scalar);
             Response::new_ok(req.id, loc)
+        }
+        lsp_types::request::References::METHOD => {
+            let p: lsp_types::ReferenceParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return Response::new_err(req.id, -32602, e.to_string()),
+            };
+            let uri = p.text_document_position.text_document.uri;
+            let pos = p.text_document_position.position;
+            let refs = state.docs.get(uri.as_str()).map(|d| features::references(d, pos, &uri)).unwrap_or_default();
+            Response::new_ok(req.id, refs)
         }
         DocumentSymbolRequest::METHOD => {
             let p: lsp_types::DocumentSymbolParams = match serde_json::from_value(req.params) {

@@ -20,7 +20,14 @@ with the compiler.
   and keywords, with inferred signatures as detail.
 - **Hover** — inferred types (`name: str`, `fn add[a: int, b: int] -> int`),
   struct fields.
-- **Go to definition** and **document outline**.
+- **Signature help** inside a call's brackets, the active parameter marked.
+- **Go to definition** — in the file, and across parts: on `calc.total`
+  it opens the part `use lib.calc` names at `total`'s declaration, on
+  `calc` the part itself.
+- **Find references** — every read and write of the name in the file, its
+  declaration included; a part's name only where the part qualifies it,
+  and never a record's field of the same name (`p.f` is not `f`).
+- **Document outline.**
 
 ## Editor setup
 
