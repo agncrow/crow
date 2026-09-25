@@ -60,6 +60,11 @@ fn call_db(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             } else {
                 None
             };
+            // in a rehearsal nothing connects: the rehearsal's own database
+            // answers (rehearsal.rs)
+            if crate::rehearsal::active().is_some() {
+                return Ok(CrowValue::ok(Value::DbConn(crate::rehearsal::connect(url))));
+            }
             let handle = crow_db::connect(url, pool_size)?;
             Ok(CrowValue::ok(Value::DbConn(handle)))
         }

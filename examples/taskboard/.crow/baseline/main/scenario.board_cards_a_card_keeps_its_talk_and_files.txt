@@ -1,0 +1,41 @@
+scenario board_cards_a_card_keeps_its_talk_and_files (board/cards.co)
+  stopped: line 201: download: No such file or directory (os error 2)
+  wrote:
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS people (name TEXT PRIMARY KEY, role TEXT, hash TEXT)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS boards (id INTEGER PRIMARY KEY, name TEXT)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY, board INTEGER, title TEXT, status TEXT, owner TEXT, stars INTEGER)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS comments (id INTEGER PRIMARY KEY, card INTEGER, author TEXT, body TEXT)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS attachments (id INTEGER PRIMARY KEY, card INTEGER, name TEXT, path TEXT)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY, who TEXT, what TEXT)
+    sqlite://taskboard.db INSERT OR IGNORE INTO people VALUES (?, ?, ?) ["ada","admin","<password hash>"]
+    sqlite://taskboard.db INSERT OR IGNORE INTO people VALUES (?, ?, ?) ["bob","member","<password hash>"]
+    sqlite://taskboard.db INSERT OR IGNORE INTO boards (id, name) VALUES (1, ?) ["Launch"]
+    sqlite://taskboard.db INSERT INTO boards (name) VALUES (?) ["Files"]
+    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["ada","made the board Files"]
+    sqlite://taskboard.db INSERT INTO cards (board, title, status, owner, stars) VALUES (?, ?, ?, ?, 0) [3,"Budget","todo","ada"]
+    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["ada","added Budget"]
+    sqlite://taskboard.db UPDATE cards SET stars = ? WHERE id = ? [4,1]
+    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["ada","gave card 1 4 stars"]
+    sqlite://taskboard.db INSERT INTO comments (card, author, body) VALUES (?, ?, ?) [1,"ada","Numbers by Friday"]
+    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["ada","commented on card 1"]
+    sqlite://taskboard.db INSERT INTO attachments (card, name, path) VALUES (?, ?, ?) RETURNING id [1,"budget.csv",""]
+    mkdir["files"]
+    cp["fixtures/budget.csv", "files/attachment-1"]
+    sqlite://taskboard.db UPDATE attachments SET path = ? WHERE id = ? ["files/attachment-1",1]
+    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["ada","attached budget.csv to card 1"]
+  answered with generated rows:
+    SELECT id, name FROM boards ORDER BY id
+    SELECT id, title, status, owner, stars FROM cards WHERE board = ? ORDER BY id
+    SELECT id, title, status, owner, stars FROM cards WHERE id = ?
+    SELECT author, body FROM comments WHERE card = ? ORDER BY id
+    SELECT id, name FROM attachments WHERE card = ? ORDER BY id
+    INSERT INTO attachments (card, name, path) VALUES (?, ?, ?) RETURNING id
+    SELECT name, path FROM attachments WHERE id = ?
+  did not hold on rehearsal data:
+    test:187: title1 eq Budget
+    test:190: 1 eq 4
+    test:193: body1 eq Numbers by Friday
+    test:199: name1 eq budget.csv
+  changed:
+    board_id = 3
+    card_id = 1

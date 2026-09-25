@@ -1,0 +1,4 @@
+scenario views_sim_the_page_composes_its_parts (views/sim.co)
+  ran to its end
+  changed:
+    sim_clock_anchor = 1767225600

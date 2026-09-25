@@ -1,0 +1,20 @@
+scenario board_door_the_door_lets_people_in_and_out (board/door.co)
+  stopped: line 52: map has no key 'name'
+  wrote:
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS people (name TEXT PRIMARY KEY, role TEXT, hash TEXT)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS boards (id INTEGER PRIMARY KEY, name TEXT)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY, board INTEGER, title TEXT, status TEXT, owner TEXT, stars INTEGER)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS comments (id INTEGER PRIMARY KEY, card INTEGER, author TEXT, body TEXT)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS attachments (id INTEGER PRIMARY KEY, card INTEGER, name TEXT, path TEXT)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY, who TEXT, what TEXT)
+    sqlite://taskboard.db INSERT OR IGNORE INTO people VALUES (?, ?, ?) ["ada","admin","<password hash>"]
+    sqlite://taskboard.db INSERT OR IGNORE INTO people VALUES (?, ?, ?) ["bob","member","<password hash>"]
+    sqlite://taskboard.db INSERT OR IGNORE INTO boards (id, name) VALUES (1, ?) ["Launch"]
+  answered with generated rows:
+    SELECT role, hash FROM people WHERE name = ?
+  did not hold on rehearsal data:
+    test:44: log_in stopped: unsupported hash algorithm 'hash1' (use sha256, sha512, md5, password, or a stored password hash) eq no one called nobody
+    test:49: log_in stopped: unsupported hash algorithm 'hash1' (use sha256, sha512, md5, password, or a stored password hash) eq wrong password
+  changed:
+    name = ada
+    password = lovelace

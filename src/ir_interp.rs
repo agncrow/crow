@@ -250,6 +250,57 @@ pub fn run_to_serve(program: &Program, registry: &ModuleRegistry, source_file: &
 /// with its inputs bound. The block is lowered as the test it is, so its
 /// statements keep their order — lowered at the top of a ui program they
 /// would become facts, evaluated before main.
+/// The moment a rehearsal's clock stands at: 2026-01-01 00:00 UTC, the
+/// same on every run, so what a scenario stamps is the same.
+pub const REHEARSAL_EPOCH: f64 = 1767225600.0;
+
+/// A named test run as a scenario (B3): in a rehearsal, with the clock at
+/// `REHEARSAL_EPOCH` until the test moves it. Whether it ran to its end
+/// (or why it stopped), each fact whose value it changed, as
+/// `name = value`, sorted, and the mail its sessions would have sent.
+pub fn run_scenario(decls: &[crate::ast::Stmt], label: &str, body: &[crate::ast::Stmt]) -> (Result<(), String>, Vec<String>, Vec<String>) {
+    let mut all = decls.to_vec();
+    all.push(crate::ast::Stmt::TestBlock { name: Some(label.to_string()), params: vec![], body: body.to_vec() });
+    let (program, ctx) = match prepare(&all, "test") {
+        Ok(p) => p,
+        Err(e) => return (Err(e), vec![], vec![]),
+    };
+    let mut it = IrInterp::new(&ctx.registry, "test");
+    it.testing = true;
+    it.load(&program);
+    crow_runtime::moments::hold(Some(REHEARSAL_EPOCH));
+    if let Err(e) = it.run_main(&program) {
+        crow_runtime::moments::hold(None);
+        return (Err(format!("a declaration failed before the test ran: {}", e)), vec![], vec![]);
+    }
+    let before = it.fact_values();
+    let Some(test) = program.parts.iter().flat_map(|p| p.tests.iter()).last() else {
+        crow_runtime::moments::hold(None);
+        return (Err("lowering: the test block is missing".into()), vec![], vec![]);
+    };
+    it.frames[0].scopes.push(Arc::new(HashMap::new()));
+    let result = it.exec_stmts(&test.body).map(|_| ()).map_err(|e| it.with_line(e));
+    crow_runtime::moments::hold(None);
+    let after = it.fact_values();
+    let mut changed: Vec<String> = after
+        .iter()
+        .filter(|(n, v)| before.get(*n).map_or(true, |b| format!("{}", b.value) != format!("{}", v.value) || b.ok != v.ok))
+        .map(|(n, v)| {
+            let text = if v.ok { format!("{}", v.value) } else { format!("error: {}", v.reason) };
+            let text: String = if text.chars().count() > 160 { format!("{}…", text.chars().take(160).collect::<String>()) } else { text };
+            format!("{} = {}", n, text)
+        })
+        .collect();
+    changed.sort();
+    let mut ids: Vec<&u64> = it.session_mails.keys().collect();
+    ids.sort();
+    let mailed: Vec<String> = ids
+        .into_iter()
+        .flat_map(|id| it.session_mails[id].iter().map(|(m, _)| format!("to {}: {}", m.to, m.subject)))
+        .collect();
+    (result, changed, mailed)
+}
+
 pub fn run_test(decls: &[crate::ast::Stmt], label: &str, params: &[(String, CrowValue)], body: &[crate::ast::Stmt]) -> Result<(), String> {
     let mut all = decls.to_vec();
     // named, so the gate reads it as the block it was in its file (an
@@ -801,6 +852,9 @@ impl IrInterp {
                 if matches!(full.value, Value::Bool(false)) {
                     let lv = self.eval(l)?;
                     let rv = self.eval(r)?;
+                    if crate::rehearsal::unheld(format!("{}: {} {} {}", self.trace_entry(), lv.value, op, rv.value)) {
+                        return Ok(CrowValue::done());
+                    }
                     return Err(format!("assert failed: {}\n    left:  {}\n    right: {}", op, lv.value, rv.value));
                 }
                 CrowValue::done()
@@ -1342,6 +1396,10 @@ impl IrInterp {
     fn bare_call(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
         if let Some(stop) = self.effect_refused(name, &vals) {
             return stop;
+        }
+        // in a rehearsal what reaches past the program is recorded, not run
+        if let Some(v) = crate::rehearsal::outside(name, &vals) {
+            return Ok(v);
         }
         if name == "transact" {
             return self.transact(vals);
@@ -2291,7 +2349,9 @@ impl IrInterp {
                     // only when the test moves it
                     self.session_start = self.fact_values();
                     self.active_session = Some(id);
-                    let start = crow_runtime::moments::clock();
+                    // a rehearsal's clock stands still at its epoch until
+                    // the test moves it, so a scenario stamps the same
+                    let start = if crate::rehearsal::active().is_some() { REHEARSAL_EPOCH } else { crow_runtime::moments::clock() };
                     self.session_clock.insert(id, start);
                     crow_runtime::moments::hold(Some(start));
                 } else {

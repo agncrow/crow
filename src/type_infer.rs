@@ -2932,12 +2932,12 @@ impl TypeContext {
         for (var, url) in candidates {
             match crate::type_infer::describe_with_tables(&url, &scrubbed, &self.ddl) {
                 Ok(cols) => {
+                    schema_record::write(&var, &scrubbed, &cols);
                     let mut schema = BTreeMap::new();
                     for (n, kind) in cols {
                         let t = match kind.as_str() { "int" => CrowType::Int, "float" | "datetime" => CrowType::Float, "bool" => CrowType::Bool, _ => CrowType::Str };
                         schema.insert(n, t);
                     }
-                    schema_record::write(&var, &scrubbed, &schema);
                     found = Some(schema);
                     break;
                 }
@@ -3751,36 +3751,40 @@ mod tests {
 /// What a program's databases answered about its statements, kept in the
 /// project's `.crow/schema`: one file per statement and the connection it
 /// was asked on, named by a hash of both (an FNV-1a, the same on every
-/// machine and release), holding the statement and its columns' types. A
-/// build reads it when no database answers — a server down, a machine
-/// without the data — so the program is typed as it was.
+/// machine and release), holding the statement and its columns — name and
+/// kind (`int` `float` `str` `bool` `datetime`), in the statement's order.
+/// A build reads it when no database answers — a server down, a machine
+/// without the data — so the program is typed as it was; a rehearsal
+/// generates rows from it.
 pub(crate) mod schema_record {
     use super::CrowType;
     use std::collections::BTreeMap;
 
-    fn file_for(var: &str, sql: &str) -> Option<std::path::PathBuf> {
-        let dir = crate::schema_dir()?;
+    /// The FNV-1a hash of the parts, a stable file name
+    pub(crate) fn fnv(parts: &[&str]) -> String {
         let mut h: u64 = 0xcbf29ce484222325;
-        for b in var.bytes().chain(std::iter::once(b'\n')).chain(sql.bytes()) {
-            h ^= b as u64;
-            h = h.wrapping_mul(0x100000001b3);
+        for (i, p) in parts.iter().enumerate() {
+            if i > 0 {
+                h ^= b'\n' as u64;
+                h = h.wrapping_mul(0x100000001b3);
+            }
+            for b in p.bytes() {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x100000001b3);
+            }
         }
-        Some(dir.join(format!("{:016x}.json", h)))
+        format!("{:016x}", h)
     }
 
-    fn kind(t: &CrowType) -> &'static str {
-        match t {
-            CrowType::Int => "int",
-            CrowType::Float => "float",
-            CrowType::Bool => "bool",
-            _ => "str",
-        }
+    fn file_for(var: &str, sql: &str) -> Option<std::path::PathBuf> {
+        let dir = crate::schema_dir()?;
+        Some(dir.join(format!("{}.json", fnv(&[var, sql]))))
     }
 
     /// Keep what `var` answered for `sql` (written only when it changed).
-    pub(crate) fn write(var: &str, sql: &str, schema: &BTreeMap<String, CrowType>) {
+    pub(crate) fn write(var: &str, sql: &str, columns: &[(String, String)]) {
         let Some(path) = file_for(var, sql) else { return };
-        let columns: BTreeMap<String, &str> = schema.iter().map(|(n, t)| (n.clone(), kind(t))).collect();
+        let columns: Vec<[&str; 2]> = columns.iter().map(|(n, k)| [n.as_str(), k.as_str()]).collect();
         let text = match serde_json::to_string_pretty(&serde_json::json!({ "via": var, "sql": sql, "columns": columns })) {
             Ok(t) => t + "\n",
             Err(_) => return,
@@ -3794,21 +3798,35 @@ pub(crate) mod schema_record {
         let _ = std::fs::write(&path, text);
     }
 
+    /// A record's statement and columns, from its file's text.
+    pub(crate) fn parse(text: &str) -> Option<(String, Vec<(String, String)>)> {
+        let j: serde_json::Value = serde_json::from_str(text).ok()?;
+        let sql = j.get("sql")?.as_str()?.to_string();
+        let cols = j
+            .get("columns")?
+            .as_array()?
+            .iter()
+            .filter_map(|c| {
+                let pair = c.as_array()?;
+                Some((pair.first()?.as_str()?.to_string(), pair.get(1)?.as_str()?.to_string()))
+            })
+            .collect();
+        Some((sql, cols))
+    }
+
     /// What `var` answered for `sql` when it last could, if it is kept.
     pub(crate) fn read(var: &str, sql: &str) -> Option<BTreeMap<String, CrowType>> {
-        let text = std::fs::read_to_string(file_for(var, sql)?).ok()?;
-        let j: serde_json::Value = serde_json::from_str(&text).ok()?;
-        let cols = j.get("columns")?.as_object()?;
+        let (_, cols) = parse(&std::fs::read_to_string(file_for(var, sql)?).ok()?)?;
         Some(
-            cols.iter()
+            cols.into_iter()
                 .map(|(n, k)| {
                     let t = match k.as_str() {
-                        Some("int") => CrowType::Int,
-                        Some("float") => CrowType::Float,
-                        Some("bool") => CrowType::Bool,
+                        "int" => CrowType::Int,
+                        "float" | "datetime" => CrowType::Float,
+                        "bool" => CrowType::Bool,
                         _ => CrowType::Str,
                     };
-                    (n.clone(), t)
+                    (n, t)
                 })
                 .collect(),
         )
