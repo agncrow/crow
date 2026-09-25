@@ -2545,6 +2545,19 @@ impl TypeContext {
                 }
                 CrowType::Unknown
             }
+            // the two joined: the first's form (a list, a tensor, text), items
+            // from both — an empty `[]` takes its items from what it is
+            // joined with
+            "concat" if args.len() >= 2 => {
+                let first = Self::walked(arg_ty(&args[0]));
+                let second = Self::walked(arg_ty(&args[1]));
+                match (&first, &second) {
+                    (CrowType::Array(a), CrowType::Array(b) | CrowType::NumArray(b)) => CrowType::Array(Box::new(a.unify(b))),
+                    (CrowType::NumArray(a), CrowType::NumArray(b) | CrowType::Array(b)) => CrowType::NumArray(Box::new(a.unify(b))),
+                    (CrowType::Unknown, _) => second,
+                    _ => first,
+                }
+            }
             "pop" | "sort" | "reverse" | "concat" => {
                 if let Some(arg) = args.first() {
                     // Base type = with fallible args already unwrapped (the

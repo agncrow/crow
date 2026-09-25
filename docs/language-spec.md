@@ -1211,7 +1211,7 @@ type[error['x']]  --- 'error'
 | `len[x]` | Length of array, string, or map |
 | `push[arr, value]` | Return new array with value appended |
 | `pop[arr]` | Return new array without last element; an empty array stays empty |
-| `concat[a, b]` | Return new array merging two arrays |
+| `concat[a, b]` | Return new array merging two arrays: `a`'s items, then `b`'s. An empty `a` takes its items from `b` (`idx = []`, then `idx = concat[idx, [i]]` makes a list of ints) |
 | `concat[a, b, axis]` | Concatenate two tensors along an axis |
 | `sort[arr]` | Return new sorted array |
 | `reverse[arr]` | Return new reversed array |
