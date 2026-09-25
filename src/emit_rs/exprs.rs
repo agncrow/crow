@@ -657,6 +657,8 @@ impl Emitter {
             CrowType::Int => "get_i64",
             CrowType::Float => "get_f64",
             CrowType::Bool => "get_bool",
+            // a column nothing typed: the cell as the value it is
+            CrowType::Json => "get_json",
             _ => "get_str",
         }
     }
@@ -753,6 +755,15 @@ impl Emitter {
         }
         if let CrowType::Struct(_) = oty {
             return format!("{}.{}", obj, Self::rust_field(name));
+        }
+        // a dynamic value that is JSON null is an error value, reason 'null'
+        if matches!(oty, CrowType::Json) {
+            return match name {
+                "ok" => format!("!({}).is_null()", obj),
+                "reason" => format!("(if ({}).is_null() {{ \"null\".to_string() }} else {{ String::new() }})", obj),
+                "trace" => "Vec::<String>::new()".to_string(),
+                _ => format!("(if ({}).is_null() {{ \"parse\".to_string() }} else {{ String::new() }})", obj),
+            };
         }
         match name {
             "ok" => "true".to_string(),

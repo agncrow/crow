@@ -245,6 +245,22 @@ impl CrowColumn {
         }
     }
 
+    /// A cell as the dynamic value it is, for a column whose type nothing
+    /// told the compiler: a number, text or a flag; a moment in seconds; a
+    /// missing cell (or a float that is not finite) null.
+    pub fn get_json(&self, idx: usize) -> serde_json::Value {
+        if !self.valid.get(idx).copied().unwrap_or(false) {
+            return serde_json::Value::Null;
+        }
+        match self.data.as_ref() {
+            Column::Int(v) => serde_json::json!(v[idx]),
+            Column::Float(v) => crate::json::float_to_json(v[idx]),
+            Column::Str(v) => serde_json::Value::String(v[idx].clone()),
+            Column::Bool(v) => serde_json::Value::Bool(v[idx]),
+            Column::DateTime(ms, _) => crate::json::float_to_json(ms[idx] as f64 / 1000.0),
+        }
+    }
+
     /// A cell as a bool: numbers are true when non-zero, strings when
     /// `true` or `1`; a missing cell is false.
     pub fn get_bool(&self, idx: usize) -> bool {

@@ -1,0 +1,19 @@
+--- A frame loaded from a file the program writes as it runs has columns no
+--- compiler can know: their cells are dynamic, as a parsed document's
+--- values are, and `float[]`, `int[]` and `str[]` read them as one type.
+--- The compiled program read them as text while the interpreter read
+--- numbers, so the same arithmetic meant two things; a missing one is
+--- JSON's null, an error value, in both modes.
+use frame
+write['parity90.csv', 'sym,px,qty\nAB,1.5,2\nCD,2.5,\n']
+df = load['parity90.csv']
+rm['parity90.csv']
+total = 0.0
+for i in range[len[df]]
+    q = int[df.qty[i]]
+    if q.ok
+        total = total + float[df.px[i]] * float[q]
+log[total]
+log[str[df.sym[1]]]
+log[df.qty[1].ok]
+log[df.px[0]]

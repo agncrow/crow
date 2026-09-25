@@ -411,6 +411,11 @@ impl Emitter {
         for fact in &self.part.facts {
             check(&fact.ty);
         }
+        // and every expression's own type: a cell of a column nothing typed
+        // is dynamic where it is read (`log[f.px[i]]`), bound to no local
+        for b in self.all_blocks() {
+            visit_block(&b, &mut |e| check(&e.ty()));
+        }
         if tensor {
             self.needs_crow_runtime = true;
         }
@@ -743,7 +748,8 @@ impl Emitter {
             "fn crow_json_display(v: &serde_json::Value) -> String {",
             "    match v {",
             "        serde_json::Value::String(s) => s.clone(),",
-            "        serde_json::Value::Null => \"null\".to_string(),",
+            // a JSON null is an error value (spec, json[]), shown as one
+            "        serde_json::Value::Null => \"error: null\".to_string(),",
             "        serde_json::Value::Array(items) => format!(\"[{}]\", items.iter().map(crow_json_repr).collect::<Vec<_>>().join(\", \")),",
             "        serde_json::Value::Object(m) => format!(\"[{}]\", m.iter().map(|(k, v)| format!(\"{} = {}\", k, crow_json_repr(v))).collect::<Vec<_>>().join(\", \")),",
             "        other => other.to_string(),",

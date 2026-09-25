@@ -1,0 +1,14 @@
+--- The frames the standard modules build have fixed columns, typed as they
+--- are built: a chapter's title is text and its depth an int, a MACD's
+--- columns are floats — no int[], float[] or str[] is needed to read them.
+use doc, chart
+toc = doc.chapters['# Sample\n\n- [One](one.md)\n  - [Two](two.md)\n- [Three](three.md)']
+for i in range[len[toc]]
+    entry = map[t = toc.title[i], p = replace[toc.path[i], '.md', '.html']]
+    title = entry['t']
+    page = entry['p']
+    depth = toc.depth[i] + 1
+    log['`title` `page` at depth `depth`']
+m = chart.macd[[1.0, 2.0, 4.0, 3.0, 5.0, 6.0, 8.0, 7.0], 2, 4, 2]
+log[round[m.hist[7] * 1000.0]]
+log[m.line[7] gt m.signal[7]]

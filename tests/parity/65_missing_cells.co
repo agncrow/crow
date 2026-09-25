@@ -1,7 +1,9 @@
 --- A frame's missing cell: a column shows it as nan, its .ok says it is
 --- missing, and read one at a time it is its column's placeholder, as a
 --- filter reads it: NaN in a number column, so it compares as false. A
---- left join leaves cells missing. (The interpreter read a missing cell
+--- left join leaves cells missing. A column no compiler can type (a file
+--- loaded as the program runs) has dynamic cells, and a missing one is
+--- JSON's null, an error value. (The interpreter read a missing cell
 --- as an error, so a collecting loop over one dropped the row; compiled, a
 --- comparison with a cell read did not build.)
 use frame

@@ -98,8 +98,13 @@ through `select`, `filter`, `sort`, `head`, `tail`, `fill`, `stack` and
 `join`; `group` now gives its key and a float per aggregate, and a frame
 handed to a function keeps its columns there when every call agrees
 (`param_frame_schemas`, found at the call sites each round and put in
-view when the body is read and lowered). Parity 89. Decisions 1 and 3
-(unknown cells dynamic; a nullable column's cells fallible) come next.
+view when the body is read and lowered). Parity 89. *Decision 1 built (2026-09-25):* a cell of a column nothing
+typed is `Json` in both modes — the interpreter's missing one JSON's null,
+the compiled program's cell read with `get_json` — so arithmetic on it is
+refused until `int[]`, `float[]` or `str[]` says what it is (parity 90;
+the compiled program's JSON null, shown and tested as the error value the
+spec says it is, came with it). Decision 3 (a nullable column's cells
+fallible) comes next.
 
 ## 3. Shapes
 
