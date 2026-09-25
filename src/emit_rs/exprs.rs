@@ -952,7 +952,7 @@ impl Emitter {
             self.binop_counter += 1;
             let printed = self.expr(iter);
             let lty = self.tt(iter);
-            let on_error = self.refuse_at(&list, Decision::Loop);
+            let on_error = self.refuse_at(&list, &Decision::Loop);
             self.declare(&list, lty);
             let value = Expr::Convert { how: Convert::Unwrap, expr: Box::new(Expr::Local(list.clone(), iter.ty())), ty: iter.ty().payload().clone() };
             let walked = self.for_expr(var, &value, body, parallel, whole);

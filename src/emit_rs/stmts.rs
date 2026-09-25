@@ -493,12 +493,12 @@ impl Emitter {
     /// with a value hands the error back, a void function returns, the top
     /// level halts. `v` names the failed value.
     pub(crate) fn refuse(&self, v: &str) -> String {
-        self.refuse_at(v, Decision::Branch)
+        self.refuse_at(v, &Decision::Branch)
     }
 
-    /// `refuse` for a decision of either kind: the top level's halt names
-    /// it (`cannot loop over an error value`).
-    pub(crate) fn refuse_at(&self, v: &str, at: Decision) -> String {
+    /// `refuse` for a refusal of any kind: a halt names it (`cannot loop
+    /// over an error value`).
+    pub(crate) fn refuse_at(&self, v: &str, at: &Decision) -> String {
         if self.reactive_epilogue.is_some() {
             format!("{{ state.stop(format!(\"{} stopped: {{}}\", {v}.reason)); return; }}", self.shown_fn_name(), v = v)
         } else if self.returns_unit && !self.cur_fn.is_empty() {
@@ -521,17 +521,22 @@ impl Emitter {
                 )
             } else {
                 // a function whose value is not a result cannot hand the error
-                // back: the program halts with the reason, as a decision does
-                format!("panic!(\"cannot {} an error value — {{}}\", {v}.reason);", at.verb(), v = v)
+                // back: the program halts with the reason, as the top level does
+                self.halt_at(v, at)
             }
         } else {
-            format!(
-                "{{ eprintln!(\"runtime error: line {}: cannot {} an error value — {{}}\", {v}.reason); std::process::exit(1); }}",
-                self.current_line,
-                at.verb(),
-                v = v
-            )
+            self.halt_at(v, at)
         }
+    }
+
+    /// The program stops on a refused error, naming the line and the reason.
+    fn halt_at(&self, v: &str, at: &Decision) -> String {
+        format!(
+            "{{ eprintln!(\"runtime error: line {}: {} — {{}}\", {v}.reason); std::process::exit(1); }}",
+            self.current_line,
+            at.refusal(),
+            v = v
+        )
     }
 
     /// A condition that is a result: an error refuses, a value decides.
@@ -643,7 +648,7 @@ impl Emitter {
             Stmt::Propagate { values, at } => {
                 for v in values {
                     if matches!(self.local_ty(v), Some(CrowType::Result(_))) {
-                        let on_error = self.refuse_at("_c", *at);
+                        let on_error = self.refuse_at("_c", at);
                         self.line(&format!("{{ let _c = &{}; if !_c.ok {{ {} }} }}", v, on_error));
                     }
                 }
@@ -746,22 +751,12 @@ impl Emitter {
         let new_ty = self.tt(expr);
         if let Some(existing) = self.local_ty(var) {
             let existing = existing.text();
-            // a result assigned into a typed variable is a consumption point:
-            // the value lands, an error stops a handler, returns from a
-            // function, or renders in a view
+            // a result assigned into a variable whose first value could not
+            // fail: the lowering refuses the error first (spec, Reassignment);
+            // one whose type only this backend knew is refused the same way
             if let CrowType::Result(inner) = &new_ty {
                 if existing.compatible(inner) || (matches!(existing, CrowType::Float) && matches!(inner.as_ref(), CrowType::Int)) {
-                    let abort = if self.reactive_epilogue.is_some() {
-                        format!("{{ state.stop(format!(\"{} stopped: {{}}\", _asg.reason)); return; }}", self.shown_fn_name())
-                    } else if let (Some(CrowType::Result(ret)), false) = (&self.cur_ret, self.cur_fn.is_empty()) {
-                        // the function's own default: a struct's is its
-                        // crow_default, not Rust's Default
-                        format!("return CrowResult {{ ok: false, value: {}, reason: _asg.reason.clone(), kind: _asg.kind.clone(), trace: _asg.trace.clone(), captured: 0.0 }};", ret.default_rust_value())
-                    } else if self.in_view() {
-                        "return CrowVNode::text(&format!(\"error: {}\", _asg.reason));".to_string()
-                    } else {
-                        "return;".to_string()
-                    };
+                    let abort = self.refuse_at("_asg", &Decision::Assign(var.to_string()));
                     let cast = if matches!(existing, CrowType::Float) && matches!(inner.as_ref(), CrowType::Int) { " as f64" } else { "" };
                     self.line(&format!("{{ let _asg = {}; if !_asg.ok {{ {} }} {} = _asg.value{}; }}", text, abort, var, cast));
                     return;

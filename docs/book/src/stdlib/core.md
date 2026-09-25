@@ -98,7 +98,7 @@ log['P&L: `money[pnl]`']
 | Function | Description | Example |
 |----------|-------------|---|
 | `int[value]` | Convert to int (error-value on failure) | [JSON](../by-example/json.md) · [Numbers and conversion](../by-example/numbers.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) · [Data Types](../ch03-02-data-types.md) · [Every Value Has Status](../ch07-01-every-value-has-status.md) · [Propagation](../ch07-02-propagation.md) · [Errors Have No Truth Value](../ch07-03-no-truth-value.md) · [Handling Errors Explicitly](../ch07-04-explicit-handling.md) |
-| `float[value]` | Convert to float (error-value on failure) | [Numbers and conversion](../by-example/numbers.md) · [Data Types](../ch03-02-data-types.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
+| `float[value]` | Convert to float (error-value on failure) | [Numbers and conversion](../by-example/numbers.md) · [Data Types](../ch03-02-data-types.md) · [Errors Have No Truth Value](../ch07-03-no-truth-value.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
 | `str[value]` | Convert to string | [Numbers and conversion](../by-example/numbers.md) · [Data Types](../ch03-02-data-types.md) |
 | `type[value]` | Type name as string: `'int'`, `'float'`, `'str'`, `'bool'`, `'array'`, `'map'`, `'fn'`, `'none'`, `'error'`, or struct name | [Numbers and conversion](../by-example/numbers.md) |
 

@@ -56,3 +56,32 @@ A loop is a decision too. An error has no items to walk, so a `for` over a
 list that failed is refused the same way: `for i in range[len[r]]` inside a
 function hands `r`'s error back when `r` failed, and at the top level it
 halts with `cannot loop over an error value`.
+
+An error could also slip past in a variable. A variable whose first value
+could not fail never holds an error: a later value that fails is refused
+right where it is assigned, the same way a decision refuses one.
+
+```crow
+fn add_up[items]
+    acc = 0.0
+    for s in items
+        acc = acc + float[s]
+    return acc
+
+log[add_up[['1.5', '2']]]
+bad = add_up[['1.5', 'two']]
+log[bad.ok]
+log[bad.reason]
+```
+
+```text
+3.5
+false
+cannot convert 'two' to float
+```
+
+`acc` began as a plain number, so the failed item never lands in it:
+`add_up` hands the error back at that line. At the top level the program
+halts there with `cannot assign an error value to 'acc'`. When you want to
+keep a failure and look at it, give it a name of its own whose first value
+can fail: `r = float[s]`, then `if not r.ok`.

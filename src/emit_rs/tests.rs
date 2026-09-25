@@ -171,6 +171,20 @@ fn a_top_level_branch_on_an_error_halts_with_the_line() {
     assert!(rust.contains("runtime error: line 2: cannot branch on an error value — {}"), "{}", rust);
 }
 
+/// A failed value assigned to a variable whose first value could not fail
+/// is refused there: a function whose only failure it is can fail, and the
+/// top level halts naming the variable (compiled returned from main
+/// silently)
+#[test]
+fn a_plain_variable_refuses_a_failed_value() {
+    let rust = transpile("fn parse[s]\n    x = 1.0\n    x = float[s]\n    return 1\nlog[parse['2']]\ny = 1.0\ny = float['q']\nlog[y]\n");
+    let start = rust.find("fn parse(").expect("parse");
+    let rest = &rust[start..];
+    let body = &rest[..rest.find("\n}\n").unwrap()];
+    assert!(body.contains("-> CrowResult<i64>"), "{}", body);
+    assert!(rust.contains("runtime error: line 7: cannot assign an error value to 'y' — {}"), "{}", rust);
+}
+
 /// Helper: parse Crow source, infer, lower to the IR, emit Rust
 fn transpile(source: &str) -> String {
     let mut lexer = Lexer::new(source);

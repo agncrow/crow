@@ -1021,7 +1021,9 @@ impl<'a> Lowerer<'a> {
                         _ => Ty::Unknown,
                     },
                 };
-                out.push(self.assign(n, item));
+                let stmt = self.assign(n, item);
+                self.flush_pre_into(&mut out);
+                out.push(stmt);
             }
         } else {
             let targets: BTreeSet<String> = names.iter().cloned().collect();
@@ -1051,7 +1053,9 @@ impl<'a> Lowerer<'a> {
                     temps.push((t, ty));
                 }
                 for (n, (t, ty)) in names.iter().zip(temps) {
-                    out.push(self.assign(n, Expr::Local(t, ty)));
+                    let stmt = self.assign(n, Expr::Local(t, ty));
+                    self.flush_pre_into(&mut out);
+                    out.push(stmt);
                 }
             }
         }
@@ -1091,6 +1095,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn assign(&mut self, name: &str, expr: Expr) -> Stmt {
+        let expr = if self.declared(name) && !(self.is_fact(name) && self.sees_facts()) { self.held_by(name, expr) } else { expr };
         // an int assigned to a float variable is a float (spec §1): the
         // conversion is explicit in the form
         let expr = if matches!(self.ctx.vars.get(name), Some(CrowType::Float)) && expr.ty() == Ty::Int {
@@ -1125,6 +1130,53 @@ impl<'a> Lowerer<'a> {
             self.ctx.vars.insert(name.to_string(), crow_type(&ty));
         }
         Stmt::Let { var: name.to_string(), ty, expr }
+    }
+
+    /// A value that can fail, assigned to a variable whose first value
+    /// could not: the variable holds no error (spec, Reassignment), so a
+    /// failed value is refused where it is assigned, as a decision refuses
+    /// one, and its payload lands.
+    fn held_by(&mut self, name: &str, expr: Expr) -> Expr {
+        let payload = match expr.ty() {
+            Ty::Result(p) => *p,
+            _ => return expr,
+        };
+        let held = match self.ctx.vars.get(name) {
+            Some(t) => t.clone(),
+            None => return expr,
+        };
+        if matches!(held, CrowType::Result(_)) || format!("{:?}", held).contains("Unknown") || !held.compatible(&crow_type(&payload)) {
+            return expr;
+        }
+        let at = Decision::Assign(name.to_string());
+        // `xs = push[xs, float[s]]`: the list holds no error, so only an item
+        // can fail; the item is refused before the call, and the list still
+        // grows where it lies
+        if let Expr::Call { target: Target::Runtime(path), args, ty: _, propagates } = &expr {
+            let own = matches!(args.first(), Some(Expr::Local(v, _)) if v == name);
+            if own && in_place_builtin(path) {
+                let mut out = vec![args[0].clone()];
+                let mut failing = Vec::new();
+                for a in &args[1..] {
+                    match a {
+                        Expr::Convert { how: Convert::Unwrap, expr: inner, ty } if inner.ty().is_result() => {
+                            let t = self.fresh();
+                            self.pre.push(Stmt::Let { var: t.clone(), ty: inner.ty(), expr: (**inner).clone() });
+                            self.scopes.last_mut().unwrap().insert(t.clone());
+                            // known good once refused: nothing propagates from it
+                            out.push(Expr::Convert { how: Convert::Known, expr: Box::new(Expr::Local(t.clone(), inner.ty())), ty: ty.clone() });
+                            failing.push(t);
+                        }
+                        other => out.push(other.clone()),
+                    }
+                }
+                if !failing.is_empty() {
+                    self.pre.push(Stmt::Propagate { values: failing, at });
+                    return Expr::Call { target: Target::Runtime(path.clone()), args: out, ty: payload, propagates: *propagates };
+                }
+            }
+        }
+        self.decided(expr, at)
     }
 
     /// While a loop's body is lowered, its variable has the element type

@@ -2967,6 +2967,20 @@ mod tests {
         assert!(halted.contains("cannot loop over an error value"), "{}", halted);
     }
 
+    /// A variable whose first value could not fail holds no error: a
+    /// failed value is refused where it is assigned, as a decision refuses
+    /// one — a function hands it back, the top level halts naming the
+    /// variable (the interpreter kept the error in the variable and ran on)
+    #[test]
+    fn a_plain_variable_refuses_a_failed_value() {
+        let src = "fn parse[s]\n    x = 1.0\n    x = float[s]\n    return 1\nbad = parse['y']\ngood = parse['2']\n";
+        let bad = get_var(src, "bad");
+        assert!(bad.is_error() && bad.reason.contains("'y'"), "{:?}", bad);
+        assert!(matches!(get_var(src, "good").value, Value::Int(1)));
+        let halted = run("x = 1.0\nx = float['y']\nlog['never']\n").err().expect("the top level halts");
+        assert!(halted.contains("cannot assign an error value to 'x' — cannot convert 'y' to float"), "{}", halted);
+    }
+
     #[test]
     fn test_error_condition_in_while_refused() {
         let result = std::panic::catch_unwind(|| {
