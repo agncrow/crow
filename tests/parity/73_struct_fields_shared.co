@@ -1,0 +1,14 @@
+--- A struct literal naming one list in several fields: each field holds
+--- its own copy (compiled, the list was moved into the first field and the
+--- program did not build).
+struct Tape [h, l, c]
+
+fn tape[]
+    cs = []
+    for i in range[3]
+        cs = push[cs, float[i] + 0.5]
+    return Tape[cs, cs, cs]
+
+t = tape[]
+log[t.h]
+log[t.c]

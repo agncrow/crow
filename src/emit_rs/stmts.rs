@@ -708,6 +708,10 @@ impl Emitter {
         }
         if format!("{:?}", t).contains("Unknown") {
             let declared = crow_type(ty);
+            // a first binding that cannot fail is not a result because a
+            // later one can (`ts = []`, then `ts = push[ts, float[x]]`): the
+            // later is a consumption point, and the variable holds values
+            let declared = if matches!(t, CrowType::Result(_)) { declared } else { Self::inner(&declared) };
             if !format!("{:?}", declared).contains("Unknown") || matches!(t, CrowType::Unknown) {
                 t = declared;
             }

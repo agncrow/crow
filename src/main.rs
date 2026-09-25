@@ -4962,6 +4962,25 @@ mod module_parts_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A part that never imports web may name a parameter `close`: the
+    /// whole program carries the entry's imports, and a part is held to its
+    /// own (finch's pattern parts were refused through a ui app)
+    #[test]
+    fn a_part_is_not_held_to_the_entrys_reservations() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_resv_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(dir.join("lib/calc.co"), "fn total[close]\n    return close * 2.0\n").unwrap();
+        let stmts = build("use web, ui\nuse lib.calc\nn = 0\nview v[]\n    return p['`calc.total[2.0]` `n`']\npage['/', v]\n").unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let stmts = expand_module_imports(&stmts, &dir, &mut visited);
+        let lowered = lower::lower_program(&stmts).unwrap();
+        let checked = infer_and_validate(&lowered, false);
+        assert!(checked.is_ok(), "{:?}", checked.err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The gate names an error found in an imported part by the part's
     /// file, its line refined against the part's own text; the entry's own
     /// errors are left for the caller to refine against the entry. (A

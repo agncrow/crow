@@ -98,7 +98,9 @@ impl CrowType {
             CrowType::Str | CrowType::Markup => "String::new()".into(),
             CrowType::Array(inner) => format!("Vec::<{}>::new()", inner.to_rust_type()),
             CrowType::Map(inner) => format!("std::collections::BTreeMap::<String, {}>::new()", inner.to_rust_type()),
-            CrowType::Struct(name) => format!("unsafe {{ std::mem::zeroed::<{}>() }}", name),
+            // each generated struct has its own default, field by field (a
+            // zeroed struct holding a list is undefined, and Rust refuses it)
+            CrowType::Struct(name) => format!("{}::crow_default()", name),
             CrowType::OptBoxStruct(_) => "None".into(),
             CrowType::Fn(_, _) => "panic!(\"unreachable\")".into(),
             CrowType::Result(inner) => format!("CrowResult {{ ok: false, value: {}, reason: String::new(), kind: String::new(), trace: vec![] }}", inner.default_rust_value()),
@@ -231,9 +233,11 @@ impl CrowType {
             }
             // Result unification
             (CrowType::Result(a), CrowType::Result(b)) => CrowType::Result(Box::new(a.unify(b))),
-            // Result(T) + U => Result(U): the non-error return tells us the actual value type
-            (CrowType::Result(_), other) => CrowType::Result(Box::new(other.clone())),
-            (other, CrowType::Result(_)) => CrowType::Result(Box::new(other.clone())),
+            // Result(T) + U => Result(U): the non-error return tells us the
+            // actual value type — unified with T, so what either side knows
+            // stays (a list of unknown items and a result of floats is a
+            // result of floats; an error with no value adds nothing)
+            (CrowType::Result(inner), other) | (other, CrowType::Result(inner)) => CrowType::Result(Box::new(other.unify(inner))),
             // Fn unification
             (CrowType::Fn(p1, r1), CrowType::Fn(p2, r2)) if p1.len() == p2.len() => {
                 let params: Vec<CrowType> = p1.iter().zip(p2.iter()).map(|(a, b)| a.unify(b)).collect();

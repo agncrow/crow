@@ -1,0 +1,17 @@
+--- A script's function assigning a local named like a top-level variable:
+--- a script has no facts, so the function is plain and its local its own
+--- (it was taken for a helper writing a fact, and its check read the
+--- top-level variable's type, refusing `s = s + x`).
+struct P [x]
+
+fn sum_range[xs, a, b]
+    s = 0.0
+    for k in range[a, b]
+        s = s + xs[k]
+    return s
+
+fn mk[]
+    return P[sum_range[[1.0, 2.0, 4.0], 0, 3]]
+
+s = mk[]
+log[s.x]

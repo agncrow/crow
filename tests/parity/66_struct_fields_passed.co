@@ -1,0 +1,18 @@
+--- A struct's list handed from a function's parameter to another
+--- function: the compiled program moved it out of the borrowed struct and
+--- did not build. The struct keeps its lists after the call.
+struct Bars [ts, c]
+
+fn total[xs]
+    s = 0.0
+    for x in xs
+        s = s + x
+    return s
+
+fn both[b]
+    return total[b.ts] + total[b.c]
+
+b = Bars[[1.0, 2.0], [3.0, 4.0]]
+log[both[b]]
+log[b.ts]
+log[b.c]

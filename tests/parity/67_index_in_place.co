@@ -1,0 +1,20 @@
+--- A local list is measured and indexed where it lies (the interpreter
+--- copied it for every `len[xs]` and `xs[i]`, so a loop over a growing
+--- list was quadratic), and an index that reads the list itself — whose
+--- last read there moves it — still sees it.
+fn last[xs]
+    return xs[len[xs] - 1]
+
+ys = []
+for i in range[5]
+    ys = push[ys, i * 2]
+log[last[ys]]
+log[len[ys]]
+r = ['c', 'a', 'b']
+log[r[len[r] - 1]]
+seen = []
+k = 0
+while len[seen] lt 4
+    seen = push[seen, r[k % len[r]]]
+    k = k + 1
+log[seen]

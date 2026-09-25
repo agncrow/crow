@@ -344,51 +344,7 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
     }
     counts.blocks = blocks.len();
 
-    // Declarations only — the boundary: tests see what callers see. Literal
-    // top-level assigns ride along: they are reactive-state defaults, which
-    // app[]-harness scenarios read and handlers write.
-    fn is_literal(e: &Expr) -> bool {
-        match e {
-            Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Bool(_) => true,
-            Expr::Array(items) => items.iter().all(is_literal),
-            // a default built from literals by a constructor — map[...] (a
-            // set[] chain after lowering), frame.new[], with[...] — is a literal too
-            Expr::Call { callee, args } => {
-                let name = match callee.as_ref() {
-                    Expr::Ident(n) => n.as_str(),
-                    Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if m == "frame") => field.as_str(),
-                    _ => return false,
-                };
-                matches!(name, "map" | "set" | "new" | "with") && args.iter().all(is_literal)
-            }
-            _ => false,
-        }
-    }
-    // A connection is a declaration of a resource, not a computation: a
-    // view that reads at render (--- crow: remote-render) needs it to exist
-    // for app[] to render at all, exactly as it does for the served page.
-    // A mailer is one too: making it sends nothing.
-    fn is_connect(e: &Expr) -> bool {
-        match e {
-            Expr::Call { callee, .. } => match callee.as_ref() {
-                Expr::Ident(n) => n == "connect" || n == "smtp",
-                Expr::FieldAccess { object, field } => field == "connect" && matches!(object.as_ref(), Expr::Ident(m) if m == "db"),
-                _ => false,
-            },
-            _ => false,
-        }
-    }
-    let decls: Vec<Stmt> = stmts
-        .iter()
-        .filter(|s| match s {
-            Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::Use { .. } => true,
-            // a derivation is a declaration: what a value is, from what
-            Stmt::Derive { .. } => true,
-            Stmt::Assign { value, .. } => is_literal(value) || is_connect(value),
-            _ => false,
-        })
-        .cloned()
-        .collect();
+    let decls = declarations(stmts);
 
     let prev_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
@@ -597,11 +553,7 @@ pub fn run_determinism_probe(
     recursive_fns: &BTreeSet<String>,
 ) -> Vec<Issue> {
     let mut issues = Vec::new();
-    let decls: Vec<Stmt> = stmts
-        .iter()
-        .filter(|s| matches!(s, Stmt::FnDecl { .. } | Stmt::StructDecl { .. }))
-        .cloned()
-        .collect();
+    let decls: Vec<Stmt> = declarations(stmts);
     // the declarations lowered once; every probe runs on a fresh walker
     let Ok((program, pctx)) = crate::ir_interp::prepare(&decls, "check") else { return issues };
     for name in pure_fns {
@@ -1582,6 +1534,58 @@ fn check_unreachable(name: &str, stmts: &[Stmt], issues: &mut Vec<Issue>) {
 /// Find undefined variable references in a function body.
 /// A variable is undefined if it is read but not a parameter, not assigned before use,
 /// not a builtin, and not a user-defined function or struct name.
+/// A program's declarations — the boundary tests and probes see: its
+/// functions, structs, imports and derivations, and the top-level values
+/// that are declarations too (a literal default, a connection, a mailer);
+/// never top-level code, which could do something.
+pub(crate) fn declarations(stmts: &[Stmt]) -> Vec<Stmt> {
+    // Declarations only — the boundary: tests see what callers see. Literal
+    // top-level assigns ride along: they are reactive-state defaults, which
+    // app[]-harness scenarios read and handlers write.
+    fn is_literal(e: &Expr) -> bool {
+        match e {
+            Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Bool(_) => true,
+            Expr::Array(items) => items.iter().all(is_literal),
+            // a default built from literals by a constructor — map[...] (a
+            // set[] chain after lowering), frame.new[], with[...] — is a literal too
+            Expr::Call { callee, args } => {
+                let name = match callee.as_ref() {
+                    Expr::Ident(n) => n.as_str(),
+                    Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if m == "frame") => field.as_str(),
+                    _ => return false,
+                };
+                matches!(name, "map" | "set" | "new" | "with") && args.iter().all(is_literal)
+            }
+            _ => false,
+        }
+    }
+    // A connection is a declaration of a resource, not a computation: a
+    // view that reads at render (--- crow: remote-render) needs it to exist
+    // for app[] to render at all, exactly as it does for the served page.
+    // A mailer is one too: making it sends nothing.
+    fn is_connect(e: &Expr) -> bool {
+        match e {
+            Expr::Call { callee, .. } => match callee.as_ref() {
+                Expr::Ident(n) => n == "connect" || n == "smtp",
+                Expr::FieldAccess { object, field } => field == "connect" && matches!(object.as_ref(), Expr::Ident(m) if m == "db"),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+    stmts
+        .iter()
+        .filter(|s| match s {
+            Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::Use { .. } => true,
+            // a derivation is a declaration: what a value is, from what
+            Stmt::Derive { .. } => true,
+            Stmt::Assign { value, .. } => is_literal(value) || is_connect(value),
+            _ => false,
+        })
+        .cloned()
+        .collect()
+}
+
 /// Full stdlib export vocabulary, built once — keeps the undefined-variable
 /// check in agreement with what the registry actually provides (db, frame,
 /// web, …) instead of the frozen BUILTINS list.
@@ -1954,10 +1958,11 @@ pub fn run_edge_cases(
     let mut issues = Vec::new();
     let mut snapshots: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
 
-    // Filter to only fn/struct declarations — skip top-level code to avoid side effects
-    let decls_only: Vec<Stmt> = stmts.iter().filter(|s| matches!(s,
-        Stmt::FnDecl { .. } | Stmt::StructDecl { .. }
-    )).cloned().collect();
+    // The declarations as tests see them — skip top-level code to avoid
+    // side effects. Without the imports, derivations and facts a function
+    // or a view reads, the program did not lower and every probe was
+    // skipped (a ui app's views read its facts and derivations).
+    let decls_only: Vec<Stmt> = declarations(stmts);
 
     // Suppress panic output during edge case testing
     let prev_hook = std::panic::take_hook();
@@ -2230,9 +2235,13 @@ pub fn run_check(
     let (test_issues, test_counts) = run_test_blocks(stmts);
     issues.extend(test_issues);
 
-    // 1a3. Layer-0 contract: determinism of pure fns.
+    // 1a3. Layer-0 contract: determinism of pure fns — as the edge cases
+    // below, never a view, a handler or a derivation (rendering a view reads
+    // derivations, which ask the databases, twice per probe)
     let recursive_for_probe = find_recursive_functions(ctx);
-    issues.extend(run_determinism_probe(ctx, stmts, &pure_fns, &recursive_for_probe));
+    let reactive_for_probe = reactive_readers(ctx);
+    let probed: BTreeSet<String> = pure_fns.iter().filter(|f| !reactive_for_probe.contains(*f)).cloned().collect();
+    issues.extend(run_determinism_probe(ctx, stmts, &probed, &recursive_for_probe));
 
     // 1b. Views/handlers reaching blocking builtins freeze the live loop.
     issues.extend(find_blocking_in_views(ctx, &fn_lines));
@@ -2713,6 +2722,21 @@ mod tests {
     }
 
     // === Full pipeline ===
+
+    /// The probes see a program's declarations as its tests do — imports,
+    /// derivations and facts included, so a ui app's declarations lower and
+    /// its pure functions are probed — but never probe a view: rendering one
+    /// computes the derivations it reads (a clock here, the databases in
+    /// finch) twice per probe. The view is not reported nondeterministic
+    /// and the pure function is probed.
+    #[test]
+    fn the_probes_lower_a_ui_app_and_leave_its_views_alone() {
+        let src = "use web, ui\nn = 0\nderive stamp\n    return fmt[now[], time = 'iso']\nfn half[x]\n    return x / 2.0\nlog[half[4.0]]\nview v[]\n    return p['`stamp` `n`']\npage['/', v]\n";
+        let (stmts, ctx) = parse_and_infer(src);
+        let result = run_check(&stmts, &ctx, false);
+        assert!(!result.issues.iter().any(|i| matches!(i, Issue::Nondeterministic { .. })), "{:?}", result.issues);
+        assert!(result.edge_cases_generated > 0, "the pure function was not probed");
+    }
 
     #[test]
     fn test_run_check_clean_program() {
