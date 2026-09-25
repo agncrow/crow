@@ -92,7 +92,14 @@ unknown columns.
    correct when every column's type is known.
 
 **First step.** Schemas through `select`, `filter` and `sort`, with a
-parity program whose cells are typed without a database.
+parity program whose cells are typed without a database. *Built
+(2026-09-25):* the type inference already carried a variable's columns
+through `select`, `filter`, `sort`, `head`, `tail`, `fill`, `stack` and
+`join`; `group` now gives its key and a float per aggregate, and a frame
+handed to a function keeps its columns there when every call agrees
+(`param_frame_schemas`, found at the call sites each round and put in
+view when the body is read and lowered). Parity 89. Decisions 1 and 3
+(unknown cells dynamic; a nullable column's cells fallible) come next.
 
 ## 3. Shapes
 
