@@ -1,0 +1,24 @@
+--- A list holds an item that failed: a collecting loop keeps it, a list
+--- literal holds it, and both show it by its reason; the list's own .ok
+--- is true, and push of a failed value is that failure. (The interpreter
+--- dropped a failed item from a collecting loop and showed one in a
+--- literal as `done`; compiled, the loop's list printed Rust's debug form
+--- and the literal did not build.)
+nums = for s in ['1', 'b', '3']
+    int[s]
+log[nums]
+log[nums.ok]
+log[len[nums]]
+log[nums[1].ok]
+log[nums[1].reason]
+mixed = [1, int['x'], 3]
+log[mixed]
+words = for s in ['a', 'b']
+    if s eq 'b'
+        error['no b']
+    else
+        s
+log[words]
+pushed = push[[1], int['q']]
+log[pushed]
+log[pushed.ok]

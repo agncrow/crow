@@ -862,7 +862,10 @@ impl TypeContext {
         // until types stabilize (handles cross-function type propagation)
         // A derivation's name reads as a variable of the type its body returns
         self.sync_derive_types();
-        for _round in 0..5 {
+        // five rounds at least, as ever; then more while a signature still
+        // moves — a chain of derivations learns one link a round
+        for round in 0..16 {
+            let before: Vec<(String, CrowType, Vec<(String, CrowType)>)> = self.functions.iter().map(|(n, s)| (n.clone(), s.return_type.clone(), s.params.clone())).collect();
             self.sync_derive_types();
             // Scan call sites with function-local variable context
             for stmt in stmts {
@@ -879,8 +882,13 @@ impl TypeContext {
             for (name, body) in &fn_entries {
                 self.infer_function_body(name, body);
             }
-
+            let after: Vec<(String, CrowType, Vec<(String, CrowType)>)> = self.functions.iter().map(|(n, s)| (n.clone(), s.return_type.clone(), s.params.clone())).collect();
+            if round >= 4 && before == after {
+                break;
+            }
         }
+        // what the last round learned, where the top level reads it
+        self.sync_derive_types();
 
         // what only a test's click types, last, and the bodies again
         if self.type_clicked_handlers(stmts) {
@@ -892,6 +900,7 @@ impl TypeContext {
 
         // F2: monomorphize functions used at multiple type signatures
         self.specialize_functions();
+        self.sync_derive_types();
 
         // Pass 4: infer top-level variables
         for stmt in stmts {
@@ -1182,8 +1191,11 @@ impl TypeContext {
                 for s in body { self.collect_call_types_stmt(s); }
                 // A module-level variable assigned in this body (reactive
                 // state written by a handler) keeps the refined type: an
-                // empty default learns its element type from the handler
-                let module_vars: Vec<String> = saved_vars.keys().cloned().collect();
+                // empty default learns its element type from the handler.
+                // Only a ui program's facts: anywhere else a body's first
+                // assignment is a local of its own (spec §7), and a local
+                // named like a module variable says nothing about it.
+                let module_vars: Vec<String> = saved_vars.keys().filter(|m| self.is_ui && self.facts.contains(*m)).cloned().collect();
                 let mut refined: Vec<(String, CrowType)> = Vec::new();
                 for m in &module_vars {
                     if let (Some(before), Some(after)) = (saved_vars.get(m), self.vars.get(m)) {
@@ -2254,10 +2266,18 @@ impl TypeContext {
             if matches!(t, CrowType::Int | CrowType::Float) { return CrowType::Float; }
         }
         // A frame function whose first argument is not a frame is the core
-        // builtin of the same name (sort[xs], join[parts, sep] with frame imported)
+        // builtin of the same name (sort[xs], join[parts, sep] with frame
+        // imported). While that argument's type is not known yet (a
+        // derivation or a function read before its body was typed: unknown,
+        // or nothing until inference knows), neither is the call's: a later
+        // round decides, where a guess would stick in what returns it
+        let arg0 = args.first().map(|a| Self::walked(arg_ty(a)));
         let frame_core_fallback = self.registry.module_name_of(name) == Some("frame")
             && crate::checker::BUILTINS.contains(&name)
-            && !args.first().map(|a| { let t = arg_ty(a); let t = if let CrowType::Result(i) = t { *i } else { t }; matches!(t, CrowType::Frame | CrowType::FrameCol) }).unwrap_or(false);
+            && !matches!(arg0, Some(CrowType::Frame | CrowType::FrameCol));
+        if frame_core_fallback && matches!(arg0, Some(CrowType::Unknown | CrowType::Void)) {
+            return CrowType::Unknown;
+        }
         // Non-overlapping module functions
         if !is_overlapping && !frame_core_fallback && self.registry.has_function(name) {
             // A name two modules export (stack, unique, load: frame + math)
@@ -2350,7 +2370,9 @@ impl TypeContext {
                 if let Some(arg) = args.first() {
                     let arr_type = arg_ty(arg);
                     if args.len() == 2 {
-                        let val_type = arg_ty(&args[1]);
+                        // a value that can fail is handed on as the call's
+                        // error, never pushed: the items are its value's
+                        let val_type = Self::walked(arg_ty(&args[1]));
                         let existing_inner = match &arr_type {
                             CrowType::Array(inner) => *inner.clone(),
                             CrowType::NumArray(inner) => *inner.clone(),
@@ -3358,6 +3380,34 @@ mod tests {
         ctx.infer_program(&stmts);
         assert!(ctx.view_handlers.contains("begin"));
         assert_eq!(ctx.functions["begin"].params[0].1, CrowType::Float);
+    }
+
+    /// A frame function over a value not typed yet is not guessed to be
+    /// the core builtin of its name: `join` of two derivations a function
+    /// builds is a frame join (it was typed as text joining, in the first
+    /// round, and the guess stuck in the derivation's type)
+    #[test]
+    fn a_join_of_derivations_is_a_frame_join() {
+        let src = "use web, ui, frame\nn = 0\nfn make[]\n    return with[frame.new[], 'k', [1, 2]]\nderive a\n    return make[]\nderive b\n    return make[]\nderive both\n    return join[a, b, 'k']\nview v[]\n    return p['`len[both]` `n`']\n";
+        let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        let both = ctx.vars.get("both").cloned().map(TypeContext::walked);
+        assert_eq!(both, Some(CrowType::Frame), "{:?}", ctx.vars.get("both"));
+    }
+
+    /// A function's local is its own: one named like a module variable
+    /// the program assigns from the function's value does not type it (the
+    /// call-site scan read the local as the module variable, and the
+    /// assignment was refused as a type change)
+    #[test]
+    fn a_functions_local_is_not_the_module_variable_of_its_name() {
+        let src = "fn last[xs]\n    r = push[xs, 1.0]\n    return r[0]\nr = last[[2.0]]\nlog[r]\n";
+        let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        assert_eq!(ctx.vars.get("r"), Some(&CrowType::Float));
+        assert!(crate::lower_ir::check(&stmts, &ctx).is_ok());
     }
 
     /// A function that sends mail for a handler holds it for the handler's

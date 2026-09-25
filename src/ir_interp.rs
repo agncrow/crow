@@ -839,10 +839,28 @@ impl IrInterp {
                 };
                 crate::ops::unaryop(&o, &v)?
             }
-            Expr::Index { base, indices, .. } => {
+            Expr::Index { base, indices, ty } => {
                 let b = self.eval(base)?;
                 if b.is_error() {
                     return Ok(b);
+                }
+                // a frame column's cell: a missing one reads as its column's
+                // placeholder, as the runtime's getters give it and the IR
+                // types it (a number, not an error)
+                if matches!(base.ty(), Ty::Column(_)) {
+                    let mut idx = Vec::with_capacity(indices.len());
+                    for i in indices {
+                        idx.push(self.eval(i)?);
+                    }
+                    let cell = crate::ops::index(&b, idx)?;
+                    return Ok(match (cell.ok || cell.kind != "missing", ty) {
+                        (true, _) => cell,
+                        (false, Ty::Float) => CrowValue::ok(Value::Float(f64::NAN)),
+                        (false, Ty::Int) => CrowValue::ok(Value::Int(0)),
+                        (false, Ty::Bool) => CrowValue::ok(Value::Bool(false)),
+                        (false, Ty::Str) => CrowValue::ok(Value::Str("nan".to_string())),
+                        (false, _) => cell,
+                    });
                 }
                 let mut idx = Vec::with_capacity(indices.len());
                 for i in indices {

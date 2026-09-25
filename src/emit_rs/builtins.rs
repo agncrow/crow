@@ -531,6 +531,17 @@ impl Emitter {
                     // the list keeps the value: a variable read stays usable
                     // (a loop's variable is borrowed from what it walks)
                     let item = Self::kept(&args[1], &a[1]);
+                    // into a list whose items can fail: a propagating push
+                    // hands over the value, a gathering one (a collecting
+                    // loop's) the item as it was yielded
+                    let item = match &ty0 {
+                        CrowType::Array(it) if matches!(it.as_ref(), CrowType::Result(_)) => {
+                            let gathered = matches!(whole, Expr::Call { propagates: false, .. });
+                            let from = if gathered { self.tt(&args[1]) } else { Self::inner(&self.tt(&args[1])) };
+                            self.as_item(item, &from, it)
+                        }
+                        _ => item,
+                    };
                     format!("crow_runtime::core::push({}, {})", first, item)
                 }
             }

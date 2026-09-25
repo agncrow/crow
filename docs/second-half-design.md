@@ -73,10 +73,21 @@ unknown columns.
    the named columns, `filter` and `sort` keep all of them, `join` unions
    the two, and `group` gives the keys and the aggregates. The lowering
    types these the way it types every node (the second step of the fold).
-3. *Fusion.* A relational sublanguage in the IR (`filter`, `select`,
+3. *A missing cell.* Read one at a time, a missing cell is its
+   column's placeholder in both modes (`NaN`, `nan`, `0`, `false`; the
+   spec, frame), because the IR types a cell as its column's type. For
+   a number that is honest, since NaN compares as false as a filter does;
+   for an int or a bool it is a guess of the kind the error rules refuse
+   elsewhere. *Recommendation:* when frames are typed, a column the
+   schema says can be missing (a nullable database column, a left join's
+   right side) types its cells `Result`, so a missing one is an error in
+   both modes and `.ok` guards it; a column that cannot be missing keeps
+   plain cells. Until then the placeholder stands, and parity 65 holds
+   both modes to it.
+4. *Fusion.* A relational sublanguage in the IR (`filter`, `select`,
    `group`, `join`, `window`, `sort` over typed columns), fused into one
    pass by the Rust backend, with `derive` as the lazy boundary.
-   *Recommendation:* after the two above, and after the interpreter's
+   *Recommendation:* after the first two above, and after the interpreter's
    typed columns (`typed-values-design.md`), because a fusion is only
    correct when every column's type is known.
 

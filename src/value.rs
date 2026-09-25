@@ -202,7 +202,7 @@ impl fmt::Display for Value {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    item.value.fmt_repr(f)?;
+                    item.fmt_item(f)?;
                 }
                 write!(f, "]")
             }
@@ -216,7 +216,7 @@ impl fmt::Display for Value {
                         write!(f, ", ")?;
                     }
                     write!(f, "{} = ", k)?;
-                    v.value.fmt_repr(f)?;
+                    v.fmt_item(f)?;
                 }
                 write!(f, "]")
             }
@@ -228,7 +228,7 @@ impl fmt::Display for Value {
                         write!(f, ", ")?;
                     }
                     write!(f, "{} = ", k)?;
-                    v.value.fmt_repr(f)?;
+                    v.fmt_item(f)?;
                 }
                 write!(f, "]")
             }
@@ -246,6 +246,21 @@ impl fmt::Display for Value {
                 }
             }
             Value::Done => write!(f, "done"),
+        }
+    }
+}
+
+impl CrowValue {
+    /// An item of a list, a map or a struct as the container shows it: a
+    /// string quoted, an error by its reason
+    fn fmt_item(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.ok {
+            self.value.fmt_repr(f)
+        } else if self.kind == "missing" {
+            // a frame column's missing cell, as the display kernel shows it
+            write!(f, "nan")
+        } else {
+            write!(f, "error: {}", self.reason)
         }
     }
 }
