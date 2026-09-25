@@ -3610,6 +3610,22 @@ impl TypeContext {
 
 thread_local! {
     static DESCRIBE_HANDLES: std::cell::RefCell<std::collections::HashMap<String, Result<crow_db::DbHandle, String>>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    /// What each database answered for each statement, and when: a test
+    /// file's programs, each lowered alone, ask again about the same
+    /// statements within seconds (a run of finch's nav.co sent 147
+    /// describes for 19 queries), and a server that is asked less is a
+    /// server under less load. An answer is kept a minute, so a long-lived
+    /// process (the language server) sees a changed table soon.
+    static DESCRIBE_ANSWERS: std::cell::RefCell<std::collections::HashMap<(String, String), (std::time::Instant, Vec<(String, String)>)>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// How long a database's answer about a statement is kept
+const DESCRIBE_KEPT: std::time::Duration = std::time::Duration::from_secs(60);
+
+#[cfg(test)]
+thread_local! {
+    /// How many times this thread asked a database to describe a statement
+    static DESCRIBES_ASKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Describe a statement against a database URL, keeping one connection per
@@ -3637,6 +3653,21 @@ pub fn describe_with_tables(url: &str, sql: &str, ddl: &[String]) -> Result<Vec<
 /// Describe on the build's connection for `key` (opened on `url`, built from
 /// `ddl` when it is new).
 fn describe_on(key: &str, url: &str, ddl: &[String], sql: &str) -> Result<Vec<(String, String)>, String> {
+    let asked = (key.to_string(), sql.to_string());
+    if let Some(cols) = DESCRIBE_ANSWERS.with(|a| a.borrow().get(&asked).filter(|(at, _)| at.elapsed() < DESCRIBE_KEPT).map(|(_, c)| c.clone())) {
+        return Ok(cols);
+    }
+    let answer = describe_asking(key, url, ddl, sql);
+    if let Ok(cols) = &answer {
+        DESCRIBE_ANSWERS.with(|a| a.borrow_mut().insert(asked, (std::time::Instant::now(), cols.clone())));
+    }
+    answer
+}
+
+/// Ask the database (see `describe_on`, which keeps the answers).
+fn describe_asking(key: &str, url: &str, ddl: &[String], sql: &str) -> Result<Vec<(String, String)>, String> {
+    #[cfg(test)]
+    DESCRIBES_ASKED.with(|n| n.set(n.get() + 1));
     DESCRIBE_HANDLES.with(|h| {
         let mut map = h.borrow_mut();
         let handle = map.entry(key.to_string()).or_insert_with(|| {
@@ -3775,6 +3806,26 @@ mod tests {
         let cols = describe_with_tables(&url, "SELECT shares, round((exit_px - entry_px) * shares, 2) AS pnl FROM trades WHERE session_id = ?", &[]).unwrap();
         // (no column is declared NOT NULL: each can hold NULL)
         assert_eq!(cols, vec![("shares".to_string(), "int?".to_string()), ("pnl".to_string(), "float?".to_string())]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A statement described twice within the minute is asked once: the
+    /// second program lowered in a process (each test block's) takes the
+    /// first's answer
+    #[test]
+    fn a_statement_is_described_once_a_minute() {
+        let dir = std::env::temp_dir().join(format!("crow_describe_kept_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("kept.db");
+        let _ = std::fs::remove_file(&path);
+        let url = format!("sqlite://{}", path.display());
+        crow_db::connect(&url, Some(1)).unwrap().exec("CREATE TABLE bars (sym TEXT NOT NULL, px REAL)", &[]).unwrap();
+        let before = DESCRIBES_ASKED.with(|n| n.get());
+        let first = describe_with_tables(&url, "SELECT sym, px FROM bars WHERE sym = ?", &[]).unwrap();
+        let second = describe_with_tables(&url, "SELECT sym, px FROM bars WHERE sym = ?", &[]).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first, vec![("sym".to_string(), "str".to_string()), ("px".to_string(), "float?".to_string())]);
+        assert_eq!(DESCRIBES_ASKED.with(|n| n.get()) - before, 1, "the second describe asked again");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
