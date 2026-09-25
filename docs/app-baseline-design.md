@@ -162,7 +162,7 @@ They are findings, not errors, like the live-loop hazards.
 | Phase | Ships | Status |
 |---|---|---|
 | B1 | Artifacts for facts, derivations, handlers (signatures), views (conditional trees), pages; the baseline store; the diff with cause, reach and the git split; accept in the check loop; the four kernel rules; finch as the acceptance case | this round |
-| B2 | The reachable state machine over abstract facts (small domains: booleans, options, zero-or-a-session), so "Buy is enabled with no session" is a state, not only a path; layout bounds per view at each width from the engine | next |
+| B2 | The reachable state machine over abstract facts (small domains: booleans, options, zero-or-a-session), so "Buy is enabled with no session" is a state, not only a path; layout bounds per view at each width from the engine | built (2026-09-25): `src/states.rs`, a `states <page>` artifact — each control with when it is offered, over literal-or-`*` values, zero or a session, the signed-in `reader`; and a `layout <page>` artifact — each state's height at 1280 and 390 and what runs past the width, from the engine |
 | B3 | Rehearsal: reads answered from declared data generated from each query's described schema or from a recorded fixture; writes and calls recorded as effects; `now[]` frozen; the transition snapshots per scenario | after B2 |
 | B4 | The app's book in `crow book`: overview, pages with trees and wireframes, a chapter per part, data, changes (§8) | this round, ahead of B2 and B3 at Vijay's ask |
 

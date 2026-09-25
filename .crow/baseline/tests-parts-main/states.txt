@@ -1,0 +1,5 @@
+states / (views_sim_render)
+  no guard reads a fact: one state
+  button '10x' → sim_clock_faster: always
+  button '1x' → views_sim_slow: always
+  button 'Play' → sim_clock_play: always

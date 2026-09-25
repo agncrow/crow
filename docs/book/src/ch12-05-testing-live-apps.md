@@ -340,6 +340,27 @@ and the baseline travels with your change; without a terminal, an
 unaccepted change fails the check, so CI blocks on it. Nothing runs and
 nothing is written: the artifacts come from the source alone.
 
+Each page also has its **states**: every state the handlers can bring it
+to, from the declared facts, with each control said once with when it is
+offered.
+
+```text
+states / (board_page_render)
+  button 'Sign in' → board_door_log_in: when reader = 'nobody'
+  button 'Attach' → board_cards_attach: when board_cards_card_id = * · reader = 'someone'
+  ...
+```
+
+A fact takes the few values the program gives it — a literal, or `*`
+for some other — and `reader` is the signed-in reader. A button that
+becomes reachable where it was not, a field left on screen after its
+session ended, is that control's line changing.
+
+And each page has its **layout**: every state laid out by the engine at
+desktop and phone widths, with its height and anything that runs past
+the width (`390: 185 high, past the width: button 'Sign in' by 181`), so
+a row that no longer fits a phone shows in the check.
+
 ## The app's book
 
 `crow book`, run inside the app, serves a book derived from the source on

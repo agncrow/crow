@@ -1,0 +1,7 @@
+layout / (board_page_render)
+  when has[__reader[], 'name']:
+    1280: 1555 high
+    390: 1555 high
+  when (not has[__reader[], 'name']):
+    1280: 185 high
+    390: 185 high, past the width: button 'Sign in' by 181 · input '‹password›' by 87

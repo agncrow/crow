@@ -1,0 +1,4 @@
+layout / (views_sim_render)
+  always:
+    1280: 148 high
+    390: 148 high
