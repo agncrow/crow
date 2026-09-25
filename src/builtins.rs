@@ -940,6 +940,9 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                 } else {
                     "assertion failed".to_string()
                 };
+                if crate::rehearsal::unheld(format!("{}: {}", trace, msg)) {
+                    return Ok(CrowValue::done());
+                }
                 return Err(msg);
             }
             Ok(CrowValue::done())

@@ -25,6 +25,7 @@ mod lexer;
 mod lower;
 mod parallel;
 mod parser;
+mod rehearsal;
 mod rust_names;
 mod served;
 mod compiled_harness;
@@ -3114,6 +3115,86 @@ fn cmd_test_blocks(filename: &str) {
     process::exit(1);
 }
 
+/// The app's scenarios (app-baseline-design.md §9, B3): each named test in
+/// its files that opens the app (`app[…]` — a test of pure functions leaves
+/// no state, and is a truth `crow test` runs), run in a rehearsal — no connection opened, queries answered
+/// from `.crow/fixtures` or from rows generated from `.crow/schema`, the
+/// clock at the rehearsal's epoch and the random draws seeded. Each is an
+/// artifact saying how it ended, what it wrote, which statements were
+/// answered with generated rows, which assertions did not hold on that
+/// data, and the facts it changed; key → (file, text).
+fn scenario_artifacts(entry: &str, parts: &std::collections::BTreeMap<String, String>) -> std::collections::BTreeMap<String, (String, String)> {
+    let entry_dir = std::path::Path::new(entry).parent().unwrap_or(std::path::Path::new("."));
+    let root = project_root(entry_dir);
+    let mut files: Vec<String> = parts.values().cloned().collect();
+    let entry_rel = std::fs::canonicalize(entry)
+        .ok()
+        .and_then(|p| p.strip_prefix(&root).ok().map(|r| r.display().to_string()))
+        .unwrap_or_else(|| entry.to_string());
+    files.push(entry_rel);
+    files.sort();
+    files.dedup();
+    let mut out = std::collections::BTreeMap::new();
+    for file in files {
+        let path = root.join(&file);
+        let Ok(source) = std::fs::read_to_string(&path) else { continue };
+        let Ok(parsed) = build(&source) else { continue };
+        if !parsed.iter().any(|s| matches!(s, ast::Stmt::TestBlock { name: Some(_), .. })) {
+            continue;
+        }
+        let dir = path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+        let stmts = expand_module_imports(&parsed, &dir, &mut std::collections::HashSet::new());
+        let decls = checker::declarations(&stmts);
+        let stem = file.trim_end_matches(".co").replace('/', "_");
+        fn opens_app(stmts: &[ast::Stmt]) -> bool {
+            let mut found = false;
+            for st in stmts {
+                let mut st = st.clone();
+                visit_exprs_mut(&mut st, &mut |e| {
+                    if matches!(e, ast::Expr::Call { callee, .. } if matches!(callee.as_ref(), ast::Expr::Ident(n) if n == "app")) {
+                        found = true;
+                    }
+                });
+            }
+            found
+        }
+        for st in &stmts {
+            let ast::Stmt::TestBlock { name: Some(name), params, body } = st else { continue };
+            if !params.is_empty() || !opens_app(body) {
+                continue;
+            }
+            let r = rehearsal::begin(&root);
+            crow_runtime::rng::set_seed(0);
+            let (result, changed_facts, mailed) = ir_interp::run_scenario(&decls, &format!("test {}", name), body);
+            crow_runtime::rng::clear_seed();
+            rehearsal::end();
+            let short = |l: &str| -> String { if l.chars().count() > 200 { format!("{}…", l.chars().take(200).collect::<String>()) } else { l.to_string() } };
+            // the store reads a key back from the first line, up to ` (`
+            let key = format!("scenario {}_{}", stem, name);
+            let mut text = format!("{} ({})\n", key, file);
+            match &result {
+                Ok(()) => text.push_str("  ran to its end\n"),
+                Err(e) => text.push_str(&format!("  stopped: {}\n", short(e.lines().next().unwrap_or("")))),
+            }
+            let section = |text: &mut String, title: &str, lines: &[String]| {
+                if !lines.is_empty() {
+                    text.push_str(&format!("  {}:\n", title));
+                    for l in lines {
+                        text.push_str(&format!("    {}\n", short(l)));
+                    }
+                }
+            };
+            section(&mut text, "wrote", &r.effects.lock().map(|e| e.clone()).unwrap_or_default());
+            section(&mut text, "mailed", &mailed);
+            section(&mut text, "answered with generated rows", &r.generated.lock().map(|g| g.clone()).unwrap_or_default());
+            section(&mut text, "did not hold on rehearsal data", &r.unheld.lock().map(|u| u.clone()).unwrap_or_default());
+            section(&mut text, "changed", &changed_facts);
+            out.insert(key, (file.clone(), text));
+        }
+    }
+    out
+}
+
 /// Everything the app's book needs, derived from the entry: the artifacts
 /// and rules, the diff against the accepted baseline, the lowered program
 /// (for the tests' steps) and the parts' files.
@@ -3393,6 +3474,10 @@ fn run_check_pipeline(filename: &str) -> checker::CheckResult {
     let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
     let (mut artifacts, rules) = baseline::derive_artifacts(&lowered, &lctx, &parts, filename);
     wireframe::layout_artifacts(&mut artifacts, filename, source.contains("wide = true"));
+    for (key, (file, text)) in scenario_artifacts(filename, &parts) {
+        artifacts.files.insert(key.clone(), file);
+        artifacts.entries.insert(key, text);
+    }
     let changed = baseline::git_changed_files(source_dir);
     let dir = baseline::store_dir(filename).display().to_string();
     match baseline::load(filename) {
@@ -5510,6 +5595,45 @@ mod module_parts_tests {
         let cols = ctx.frame_schemas.get("r").cloned().unwrap_or_default();
         assert_eq!(cols.get("px"), Some(&type_infer::CrowType::Float), "{:?}\n{}", cols, text);
         assert!(ctx.describe_notes.iter().any(|n| n.contains("typed from .crow/schema")), "{:?}", ctx.describe_notes);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A named test that opens the app runs as a scenario in a rehearsal
+    /// (B3): nothing connects — a sqlite file that is not there stays not
+    /// there, a ClickHouse that is not up answers from rows generated from
+    /// what it answered at build time — a write is recorded with its
+    /// payload, and an assertion that depends on real data is reported
+    #[test]
+    fn a_named_test_rehearses_with_no_connection() {
+        let dir = std::env::temp_dir().join(format!("crow_rehearsal_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".crow/schema")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'rehearsal'\n").unwrap();
+        let db = dir.join("never.db");
+        let sql = "SELECT sym, px FROM bars WHERE d = ?";
+        std::fs::write(
+            dir.join(".crow/schema").join(format!("{}.json", type_infer::schema_record::fnv(&["ch", sql]))),
+            serde_json::json!({ "via": "ch", "sql": sql, "columns": [["sym", "str"], ["px", "float"]] }).to_string(),
+        )
+        .unwrap();
+        let src = format!(
+            "use web, ui, db\nbook = connect['sqlite://{}']\nch = connect['clickhouse://127.0.0.1:1/none']\nsaid = ''\nn = 0\nfn save[]\n    exec[book, 'INSERT INTO notes (text) VALUES (?)', ['hello']]\n    r = query[ch, '{}', ['x']]\n    n = len[r]\n    w = write['{}', 'a note']\n    said = 'saved `len[r]`'\nview v[]\n    return stack[p['`said`'], button['save', click = save]]\npage['/', v]\ntest saving_writes_a_note[]\n    a = app[v]\n    click[a, save]\n    assert[n eq 7, 'real data has seven']\n",
+            db.display(),
+            sql,
+            dir.join("out.txt").display()
+        );
+        let main = dir.join("main.co");
+        std::fs::write(&main, src).unwrap();
+        let out = scenario_artifacts(&main.display().to_string(), &std::collections::BTreeMap::new());
+        let (file, text) = out.get("scenario main_saving_writes_a_note").cloned().unwrap_or_else(|| panic!("{:?}", out.keys().collect::<Vec<_>>()));
+        assert_eq!(file, "main.co");
+        assert!(text.contains("ran to its end"), "{}", text);
+        assert!(text.contains(&format!("wrote:\n    sqlite://{} INSERT INTO notes (text) VALUES (?) [\"hello\"]", db.display())), "{}", text);
+        assert!(text.contains("answered with generated rows:\n    SELECT sym, px FROM bars WHERE d = ?"), "{}", text);
+        assert!(text.contains("did not hold on rehearsal data:") && text.contains("real data has seven"), "{}", text);
+        assert!(text.contains("n = 3") && text.contains("said = saved 3"), "{}", text);
+        assert!(!db.exists(), "the rehearsal opened the sqlite file");
+        assert!(text.contains("write[") && !dir.join("out.txt").exists(), "{}", text);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

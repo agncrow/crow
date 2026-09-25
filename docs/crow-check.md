@@ -64,6 +64,28 @@ and 390 wide, with its height and every element that runs past the width
 — `390: 4733 high, past the width: button 'End session' by 256` — so a
 row that stops fitting a phone, or a page that changes shape, is a diff.
 
+A named test that opens the app is a **scenario**: `crow check` runs it
+in a *rehearsal* and keeps what it did. In a rehearsal nothing connects —
+`connect` hands back a database of the rehearsal's own. A query is
+answered from a fixture recorded on purpose, `.crow/fixtures/<hash>.json`
+(`{"sql", "columns": [[name, kind]…], "rows": [[…]…]}`, the hash an
+FNV-1a of the statement), else from three rows generated from the columns
+the database answered at build time (`.crow/schema`, the record every
+build keeps): 1, 2, 3 for an int, 1.0, 2.0, 3.0 for a float, `name1`… for
+text, true, false, true for a flag. A write — `exec`, `insert`, a
+migration, a statement through `query` that changes rows — is recorded
+with its payload and the program sees success; a shell command and a file
+written, moved or removed are recorded instead of run; mail is recorded
+as the harness records it, and `fetch` answers nothing, as in any test. The clock stands at 2026-01-01 00:00 UTC until the
+test moves it, and random draws are seeded, so a scenario comes out the
+same on every run. An assertion that does not hold is reported, not
+failed — the data was the rehearsal's. The scenario's file says how it
+ended, what it wrote and mailed, which statements were answered with
+generated rows, which assertions did not hold, and every fact it changed,
+so a handler that starts writing somewhere new, or leaves a fact
+different, is a diff. A test of pure functions leaves no state and is not
+a scenario; `crow test` runs it, and every test, against the real data.
+
 The first check records the baseline. Every check after diffs against
 it, per declaration, and reports each difference with its cause (the
 part's file), its reach (the views and pages it can affect, through the
@@ -73,8 +95,9 @@ with `a` in the loop and the baseline moves; `crow check --accept`
 accepts every change at once. Without a terminal an unaccepted change
 exits non-zero, so CI blocks on it and the accepted baseline travels
 with the change in review. New declarations are recorded; removed ones
-are reported. Nothing runs, nothing is written, nothing is called: the
-artifacts come from the source alone.
+are reported. Nothing is written and nothing is called: the artifacts
+come from the source alone, and the scenarios from rehearsals that
+connect to nothing.
 
 `crow book`, run inside the app, is the same material as a book: each
 page with its composition tree and wireframes, a chapter per part, the
@@ -93,8 +116,7 @@ maintain: a `modal`, `drawer` or `toast` whose `open` fact no handler
 sets true, or none sets false; a `disabled` fact no handler writes; a
 control whose handler writes nothing and performs nothing; a function
 that assigns a fact but is wired by nothing and called by nothing. The
-design and the phase after this one (rehearsal with declared data) are
-in `app-baseline-design.md`.
+design is `app-baseline-design.md`.
 
 ## The hazard catalog
 

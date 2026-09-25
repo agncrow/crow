@@ -1,0 +1,21 @@
+scenario board_cards_only_an_admin_makes_a_board (board/cards.co)
+  ran to its end
+  wrote:
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS people (name TEXT PRIMARY KEY, role TEXT, hash TEXT)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS boards (id INTEGER PRIMARY KEY, name TEXT)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY, board INTEGER, title TEXT, status TEXT, owner TEXT, stars INTEGER)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS comments (id INTEGER PRIMARY KEY, card INTEGER, author TEXT, body TEXT)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS attachments (id INTEGER PRIMARY KEY, card INTEGER, name TEXT, path TEXT)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY, who TEXT, what TEXT)
+    sqlite://taskboard.db INSERT OR IGNORE INTO people VALUES (?, ?, ?) ["ada","admin","<password hash>"]
+    sqlite://taskboard.db INSERT OR IGNORE INTO people VALUES (?, ?, ?) ["bob","member","<password hash>"]
+    sqlite://taskboard.db INSERT OR IGNORE INTO boards (id, name) VALUES (1, ?) ["Launch"]
+    sqlite://taskboard.db INSERT INTO boards (name) VALUES (?) ["Autumn"]
+    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["ada","made the board Autumn"]
+  answered with generated rows:
+    SELECT id, name FROM boards ORDER BY id
+  did not hold on rehearsal data:
+    test:144: 3 eq 4
+    test:145: assertion failed
+  changed:
+    new_board = Mine

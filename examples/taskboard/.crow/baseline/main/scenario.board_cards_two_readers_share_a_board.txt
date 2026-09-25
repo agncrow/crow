@@ -1,0 +1,33 @@
+scenario board_cards_two_readers_share_a_board (board/cards.co)
+  ran to its end
+  wrote:
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS people (name TEXT PRIMARY KEY, role TEXT, hash TEXT)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS boards (id INTEGER PRIMARY KEY, name TEXT)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY, board INTEGER, title TEXT, status TEXT, owner TEXT, stars INTEGER)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS comments (id INTEGER PRIMARY KEY, card INTEGER, author TEXT, body TEXT)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS attachments (id INTEGER PRIMARY KEY, card INTEGER, name TEXT, path TEXT)
+    sqlite://taskboard.db CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY, who TEXT, what TEXT)
+    sqlite://taskboard.db INSERT OR IGNORE INTO people VALUES (?, ?, ?) ["ada","admin","<password hash>"]
+    sqlite://taskboard.db INSERT OR IGNORE INTO people VALUES (?, ?, ?) ["bob","member","<password hash>"]
+    sqlite://taskboard.db INSERT OR IGNORE INTO boards (id, name) VALUES (1, ?) ["Launch"]
+    sqlite://taskboard.db INSERT INTO boards (name) VALUES (?) ["Sprint"]
+    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["ada","made the board Sprint"]
+    sqlite://taskboard.db INSERT INTO cards (board, title, status, owner, stars) VALUES (?, ?, ?, ?, 0) [3,"Write the docs","todo","bob"]
+    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["bob","added Write the docs"]
+    sqlite://taskboard.db UPDATE cards SET status = ? WHERE id = ? ["done",1]
+    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["ada","moved title1 to done"]
+    sqlite://taskboard.db UPDATE cards SET status = ? WHERE id = ? ["done",1]
+    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["bob","moved title1 to done"]
+  answered with generated rows:
+    SELECT id, name FROM boards ORDER BY id
+    SELECT id, title, status, owner, stars FROM cards WHERE board = ? ORDER BY id
+    SELECT title, status FROM cards WHERE id = ?
+  did not hold on rehearsal data:
+    test:161: 3 eq 0
+    test:164: 3 eq 1
+    test:165: assertion failed
+    test:167: owner1 eq bob
+    test:169: status1 eq doing
+    test:171: status1 eq done
+  changed:
+    board_id = 3
