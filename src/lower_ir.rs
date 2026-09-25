@@ -710,7 +710,9 @@ impl<'a> Lowerer<'a> {
             FnKind::View
         } else if self.ctx.view_handlers.contains(name) {
             FnKind::Handler
-        } else if assigns_any(body, &self.ctx.facts) {
+        } else if self.in_ui && assigns_any(body, &self.ctx.facts) {
+            // (a script has no facts: its function's first assignment of a
+            // name is a local, whatever the top level calls)
             FnKind::Helper
         } else {
             FnKind::Pure
@@ -741,7 +743,15 @@ impl<'a> Lowerer<'a> {
         self.v.local_types.clear();
         self.v.stored.clear();
         self.scopes.push(params.iter().cloned().collect());
+        // a plain function sees no module variable: the checks' snapshot of
+        // the program's types keeps the top level out of its body, so a local
+        // named like one is not taken for it (`s = s + x` in a helper beside
+        // a top-level `s` was refused as a type change)
+        let hidden = if kind == FnKind::Pure { self.v.types.as_mut().map(|t| std::mem::take(&mut t.vars)) } else { None };
         let block = self.lower_block(body);
+        if let (Some(vars), Some(t)) = (hidden, self.v.types.as_mut()) {
+            t.vars = vars;
+        }
         self.scopes.pop();
         self.v.reactive = false;
         let mut block = block?;

@@ -1,0 +1,12 @@
+--- A list begun empty and grown by a value that can fail: the list's items
+--- are the value's type, and a failure is the function's (compiled, the
+--- empty start was taken for text and the program did not build).
+fn nums[xs]
+    ts = []
+    for s in xs
+        ts = push[ts, float[s]]
+    return ts
+
+log[nums[['1.5', '2.5']]]
+log[nums[['1.5', 'x']]]
+log[len[nums[['7', '8', '9']]]]

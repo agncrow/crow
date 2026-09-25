@@ -376,7 +376,13 @@ impl<'a> Lowerer<'a> {
             ));
             return;
         }
-        // Web/ui builtin names reserve under their imports
+        // Web/ui builtin names reserve under their imports — a part's own:
+        // the whole program carries the entry's imports, and each part was
+        // validated alone under its (a part that never imports web may name
+        // a parameter `close`)
+        if self.v.decl.as_deref().map_or(false, |d| crate::file_of_declaration(d).is_some()) {
+            return;
+        }
         let web_bare = self.v.bare_import_lines.keys().any(|p| p == "web" || p.starts_with("web."));
         if web_bare && name == "reader" {
             self.refuse(format!("'reader' is the page's signed-in reader, which sign_in and sign_out set — rename the {}", what));

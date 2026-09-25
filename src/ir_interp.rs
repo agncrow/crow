@@ -135,6 +135,19 @@ enum HeldEffect {
 /// password is never part of a value a program can print.
 static MAILERS: std::sync::LazyLock<std::sync::Mutex<Vec<crow_web::mail::CrowMailer>>> = std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));
 
+/// A frame column's cell as read: a missing one is its column's
+/// placeholder, as the runtime's getters give it and the IR types it.
+fn placeholder(cell: CrowValue, ty: &Ty) -> CrowValue {
+    match (cell.ok || cell.kind != "missing", ty) {
+        (true, _) => cell,
+        (false, Ty::Float) => CrowValue::ok(Value::Float(f64::NAN)),
+        (false, Ty::Int) => CrowValue::ok(Value::Int(0)),
+        (false, Ty::Bool) => CrowValue::ok(Value::Bool(false)),
+        (false, Ty::Str) => CrowValue::ok(Value::Str("nan".to_string())),
+        (false, _) => cell,
+    }
+}
+
 /// How a mailer sends one message, from wherever it is asked.
 pub(crate) fn mail_sender(mailer: usize, mail: &crow_web::live::SentMail) -> crow_web::live::MailSender {
     let m = mail.clone();
@@ -788,6 +801,19 @@ impl IrInterp {
                 }
                 CrowValue::markup(crate::ops::render_input(name, &key, &vals)?)
             }
+            // the length of a local, read where it lies: a list is not
+            // copied to be measured (a loop over a growing list was quadratic)
+            Expr::Call { target: Target::Runtime(name), args, .. }
+                if name == "len" && args.len() == 1 && matches!(&args[0], Expr::Local(..)) && !self.registry.has_function("len") =>
+            {
+                let Expr::Local(v, _) = &args[0] else { unreachable!() };
+                let trace = self.trace_entry();
+                let b = self.lookup(v).ok_or_else(|| format!("undefined variable '{}'", v))?;
+                if b.is_error() {
+                    return Ok(b.clone());
+                }
+                crate::builtins::call("len", std::slice::from_ref(b), &trace).unwrap_or_else(|| Err("len[] is not a builtin".into()))?
+            }
             Expr::Call { target, args, propagates, .. } => {
                 let vals = self.eval_args(args)?;
                 if *propagates {
@@ -840,6 +866,27 @@ impl IrInterp {
                 crate::ops::unaryop(&o, &v)?
             }
             Expr::Index { base, indices, ty } => {
+                // a local list, map, text or frame is indexed where it lies:
+                // reading it copied it first, and a loop over a growing list
+                // was quadratic (its indices cannot touch it, so they go first)
+                if let Expr::Local(v, _) = base.as_ref() {
+                    // (not when an index reads the list itself: its last read
+                    // there moves it, `r[len(move r) - 1]`)
+                    let mut mentioned = false;
+                    for i in indices {
+                        crate::ir::visit_expr(i, &mut |e| mentioned |= matches!(e, Expr::Local(n, _) | Expr::Move(n, _) if n == v));
+                    }
+                    let in_place = !mentioned && matches!(self.lookup(v), Some(b) if b.ok && matches!(b.value, Value::Array(_) | Value::NumArray(_) | Value::Map(_) | Value::Str(_) | Value::Frame(_)));
+                    if in_place {
+                        let mut idx = Vec::with_capacity(indices.len());
+                        for i in indices {
+                            idx.push(self.eval(i)?);
+                        }
+                        let b = self.lookup(v).ok_or_else(|| format!("undefined variable '{}'", v))?;
+                        let cell = crate::ops::index(b, idx)?;
+                        return Ok(if matches!(base.ty(), Ty::Column(_)) { placeholder(cell, ty) } else { cell });
+                    }
+                }
                 let b = self.eval(base)?;
                 if b.is_error() {
                     return Ok(b);
@@ -853,14 +900,7 @@ impl IrInterp {
                         idx.push(self.eval(i)?);
                     }
                     let cell = crate::ops::index(&b, idx)?;
-                    return Ok(match (cell.ok || cell.kind != "missing", ty) {
-                        (true, _) => cell,
-                        (false, Ty::Float) => CrowValue::ok(Value::Float(f64::NAN)),
-                        (false, Ty::Int) => CrowValue::ok(Value::Int(0)),
-                        (false, Ty::Bool) => CrowValue::ok(Value::Bool(false)),
-                        (false, Ty::Str) => CrowValue::ok(Value::Str("nan".to_string())),
-                        (false, _) => cell,
-                    });
+                    return Ok(placeholder(cell, ty));
                 }
                 let mut idx = Vec::with_capacity(indices.len());
                 for i in indices {

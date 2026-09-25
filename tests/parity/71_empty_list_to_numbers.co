@@ -1,0 +1,11 @@
+--- A function that takes numbers, given a numeric literal at one call and
+--- an empty list at another: the empty list is no numbers (compiled, it
+--- did not fit the parameter the literal typed, and did not build).
+fn total[xs]
+    s = 0.0
+    for x in xs
+        s = s + x
+    return s
+
+log[total[[1.5, 2.5]]]
+log[total[[]]]

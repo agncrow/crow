@@ -425,6 +425,40 @@ impl Emitter {
         found
     }
 
+    /// Every function the compiled program can run: what its top level,
+    /// its facts, its derivations and its views and handlers call, name or
+    /// hand on, and what those call in turn.
+    fn reached_functions(&self) -> BTreeSet<String> {
+        let mut todo: Vec<String> = Vec::new();
+        let note = |e: &Expr, todo: &mut Vec<String>| match e {
+            Expr::Call { target: Target::User(n), .. } | Expr::FnRef(n, _) => todo.push(n.clone()),
+            Expr::Deferred { name, .. } => todo.push(name.clone()),
+            _ => {}
+        };
+        visit_block(&self.part.main, &mut |e| note(e, &mut todo));
+        for fact in &self.part.facts {
+            visit_expr(&fact.default, &mut |e| note(e, &mut todo));
+        }
+        for d in &self.part.derives {
+            visit_block(&d.body, &mut |e| note(e, &mut todo));
+        }
+        for f in self.fns.values() {
+            if f.kind != FnKind::Pure || self.views.contains(&f.name) || self.reactive_event_handlers.contains(&f.name) || self.web_handlers.contains(&f.name) {
+                todo.push(f.name.clone());
+            }
+        }
+        let mut reached: BTreeSet<String> = BTreeSet::new();
+        while let Some(n) = todo.pop() {
+            if !reached.insert(n.clone()) {
+                continue;
+            }
+            if let Some(f) = self.fns.get(&n) {
+                visit_block(&f.body, &mut |e| note(e, &mut todo));
+            }
+        }
+        reached
+    }
+
     pub(crate) fn struct_is_copy(&self, name: &str) -> bool {
         self.structs.get(name).map_or(false, |s| s.fields.iter().all(|(_, t)| matches!(t, Ty::Int | Ty::Float | Ty::Bool)))
     }
@@ -604,12 +638,19 @@ impl Emitter {
             .filter_map(|n| n.rsplit_once("__").filter(|(_, s)| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())).map(|(b, _)| b.to_string()))
             .collect();
         let names: Vec<String> = self.fns.keys().cloned().collect();
+        let reached = self.reached_functions();
         for n in &names {
             if specialized.contains(n) {
                 continue;
             }
             let f = self.fns.get(n).unwrap().clone();
-            let has_unknown = f.params.iter().any(|(_, t)| matches!(t, Ty::Unknown));
+            // a parameter of no known type would be text in Rust; and a pure
+            // function nothing the program runs calls (a shared part's, in a
+            // part's test app) is not compiled — its types came from no call,
+            // or from a query nothing could describe, and could meet a kernel
+            // that takes numbers
+            let has_unknown = f.params.iter().any(|(_, t)| matches!(t, Ty::Unknown))
+                || (!reached.contains(n) && (f.kind == FnKind::Pure || f.params.iter().any(|(_, t)| unknown_inside(t))));
             let is_callback = self.live_render_fns.contains(n)
                 || self.live_handle_fns.contains(n)
                 || self.reactive_render_fns.contains(n)
@@ -750,10 +791,19 @@ impl Emitter {
         self.line(&format!("struct {} {{", s.name));
         self.indent += 1;
         for (f, t) in &s.fields {
-            self.line(&format!("{}: {},", Self::rust_field(f), crow_type(t).to_rust_type()));
+            let rust = crow_type(t).to_rust_type();
+            // a tensor, a frame or a column field is the runtime's type
+            if rust.contains("crow_runtime::") {
+                self.needs_crow_runtime = true;
+            }
+            self.line(&format!("{}: {},", Self::rust_field(f), rust));
         }
         self.indent -= 1;
         self.line("}");
+        // the value an error of this struct's type carries: each field's default
+        let defaults: Vec<String> = s.fields.iter().map(|(f, t)| format!("{}: {}", Self::rust_field(f), crow_type(t).default_rust_value())).collect();
+        self.line("#[allow(dead_code)]");
+        self.line(&format!("impl {} {{ fn crow_default() -> Self {{ {} {{ {} }} }} }}", s.name, s.name, defaults.join(", ")));
         self.line("");
         if self.struct_kernel_displayable(&s.name) {
             self.needs_crow_runtime = true;
@@ -1241,5 +1291,15 @@ impl Emitter {
         self.line("impl PartialEq for CrowDual { fn eq(&self, other: &Self) -> bool { self.real == other.real } }");
         self.line("impl PartialOrd for CrowDual { fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> { self.real.partial_cmp(&other.real) } }");
         self.line("");
+    }
+}
+
+/// Whether a type holds one not known: text in Rust, for a list's or a
+/// map's items as for a value.
+fn unknown_inside(t: &Ty) -> bool {
+    match t {
+        Ty::Unknown => true,
+        Ty::List(i) | Ty::Map(i) | Ty::Result(i) => unknown_inside(i),
+        _ => false,
     }
 }

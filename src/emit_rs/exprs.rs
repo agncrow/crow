@@ -862,7 +862,10 @@ impl Emitter {
         };
         let mut inits = Vec::new();
         for ((fname, fty), e) in def.fields.iter().zip(fields.iter()) {
-            let val = self.expr(e);
+            // a variable read before its last use is copied into the field
+            // (`Tape[ts, cs, cs, cs, vs]` moved `cs` three times); the last,
+            // a move, hands it over
+            let val = if matches!(Emitter::raw(e), Expr::Local(..)) { self.owned_expr(e) } else { self.expr(e) };
             let is_ref = matches!(Emitter::raw(e), Expr::Local(n, _) | Expr::Move(n, _) if self.ref_params.contains(n));
             let owned = if is_ref { format!("{}.clone()", val) } else { val };
             if let Ty::OptRecord(_) = fty {
@@ -1119,6 +1122,9 @@ impl Emitter {
         };
         let raw_args: Vec<Expr> = args.iter().map(|a| Emitter::raw(a).clone()).collect();
         let current_pin = self.pinned_module.clone();
+        // a module's function named like an element (`frame.stack`) is the
+        // module's: it propagates, where the element renders a failed child
+        let from_module = pinned.is_some();
         let saved_pin = std::mem::replace(&mut self.pinned_module, pinned.or(current_pin));
 
         let user = matches!(target, Target::User(_));
@@ -1150,6 +1156,9 @@ impl Emitter {
                 let local_read = match a {
                     Expr::Local(..) | Expr::Move(..) | Expr::Load(..) => true,
                     Expr::Derived(d, _) => self.declared(d),
+                    // a field of a local (a struct parameter is borrowed:
+                    // its list is cloned, never moved out of it)
+                    Expr::Field { base, .. } => matches!(Emitter::raw(base), Expr::Local(..) | Expr::Move(..) | Expr::Load(..)),
                     _ => false,
                 };
                 let needs_clone = user
@@ -1168,7 +1177,7 @@ impl Emitter {
         // gathering what an iteration yielded, errors included)
         let skip = (!propagates && matches!(target, Target::Runtime(_)))
             || matches!(name.as_str(), "log" | "assert" | "cpu" | "gpu" | "nodes" | "type" | "error" | "captured" | "running")
-            || (self.needs_ui && (name == "chart" || name == "table" || crate::lower::UI_ELEMENTS.contains(&name.as_str())))
+            || (self.needs_ui && !from_module && (name == "chart" || name == "table" || crate::lower::UI_ELEMENTS.contains(&name.as_str())))
             || (self.needs_crow_web && name == "arrow");
         if !skip {
             let result_idx: Vec<usize> = raw_args.iter().enumerate().filter(|(_, a)| matches!(self.tt(a), CrowType::Result(_))).map(|(i, _)| i).collect();
@@ -1205,6 +1214,9 @@ impl Emitter {
                     // a value that has none (an `error[…]`) never reaches the call
                     unwrapped[i] = if matches!(Self::inner(&self.tt(&raw_args[i])), CrowType::Void) {
                         "unreachable!()".to_string()
+                    } else if ref_flags.get(i).copied().unwrap_or(false) {
+                        // a struct the callee borrows is lent, not copied
+                        format!("&_prop_{}.value", i)
                     } else {
                         format!("_prop_{}.value.clone()", i)
                     };
@@ -1295,10 +1307,19 @@ impl Emitter {
     /// is its markup; a handler calling a helper hands it the state and
     /// reads back what it wrote; a view calling a view hands it the state.
     pub(crate) fn user_call(&mut self, name: &str, args: &[Expr], mut arg_strs: Vec<String>) -> String {
+        let params: Vec<Ty> = self.fns.get(name).map(|f| f.params.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default();
         for (i, a) in args.iter().enumerate() {
             if self.makes_node(a) {
                 if let Some(s) = arg_strs.get_mut(i) {
                     *s = format!("({}).to_html()", s);
+                }
+            }
+            // an empty list where the function takes numbers as a tensor (a
+            // numeric literal at another call typed the parameter)
+            if matches!(Emitter::raw(a), Expr::ListLit(items, _) if items.is_empty()) && matches!(params.get(i), Some(Ty::Tensor(_))) {
+                self.needs_crow_runtime = true;
+                if let Some(s) = arg_strs.get_mut(i) {
+                    *s = "crow_runtime::tensor::CrowTensor::from_vec(vec![], vec![0])".to_string();
                 }
             }
         }

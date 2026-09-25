@@ -1623,6 +1623,19 @@ fn test_web_smtp_import() {
     assert!(rust.contains("use crow_web::mail::CrowMailer;"), "should import CrowMailer\n{}", rust);
 }
 
+/// A function nothing the program runs calls, whose list parameter holds
+/// items of no known type, is left out: its list would be text in Rust,
+/// and a kernel that takes numbers refused it (a shared part's scanner in
+/// a part's test app). Called with numbers, it is compiled.
+#[test]
+fn an_unreached_function_of_unknown_items_is_left_out() {
+    let src = "use chart\nfn inner[xs]\n    r = rsi[xs, 14]\n    return r[0]\nfn outer[b]\n    xs = []\n    xs = push[xs, b]\n    return inner[xs]\n";
+    let rust = transpile(&format!("{}log[1]\n", src));
+    assert!(!rust.contains("fn inner("), "{}", rust);
+    let rust = transpile(&format!("{}log[inner[[1.0, 2.0]]]\n", src));
+    assert!(rust.contains("fn inner("), "{}", rust);
+}
+
 /// A handler's mail waits for the session's commit, one whose answer is
 /// read is sent when asked, and the mailer is a process-wide static like a
 /// connection, never a session's fact.

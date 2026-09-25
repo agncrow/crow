@@ -1,0 +1,21 @@
+--- A struct a fallible function returns, handed to a function that
+--- borrows it: compiled, the unwrapped value was passed where a borrow was
+--- expected and did not build, and the error's placeholder struct was
+--- zero-filled, which Rust refuses at run time for a struct holding a
+--- list. A struct of numbers links the runtime it names.
+struct Bag [items]
+struct Point [xy]
+
+fn count[b]
+    return len[b.items]
+
+fn make[s]
+    n = int[s]
+    if n gt 5
+        return error['too many: `n`']
+    return Bag[['a', 'b']]
+
+log[count[make['3']]]
+log[count[make['9']]]
+p = Point[[1.5, 2.5]]
+log[p.xy]
