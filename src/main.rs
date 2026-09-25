@@ -4331,7 +4331,8 @@ fn expand_module_imports(
         }
     }
     let mut ex = ModuleExpansion::default();
-    let body = expand_into(stmts, source_dir, &mut ex, visited);
+    let mut body = expand_into(stmts, source_dir, &mut ex, visited);
+    separate_part_locals(&mut body, &mut ex.hoisted);
     let hoisted = ex.hoisted.len();
     let mut all = ex.hoisted;
     all.extend(body);
@@ -4368,10 +4369,345 @@ fn expand_module_imports(
             process::exit(1);
         }
     }
+    // an entry that does not import ui keeps its top-level variables plain
+    // however its parts' state is held: a script that imports a part runs
+    // its top level in order (set last, after each part validated alone
+    // set it for itself)
+    let is_ui = |s: &ast::Stmt| matches!(s, ast::Stmt::Use { path, .. } if path == "ui" || path == "web.ui");
+    let plain = !stmts.iter().any(is_ui) && out.iter().any(is_ui);
+    PLAIN_ENTRY.with(|p| p.set(plain));
     out
 }
 
+/// A top-level name of an entry file that does not import ui, in a program
+/// whose parts do: a plain variable of the entry's top level, not state.
+pub(crate) fn plain_entry_name(name: &str) -> bool {
+    PLAIN_ENTRY.with(|p| p.get()) && part_prefix_of_declaration(name).is_none()
+}
+
+/// Each part is validated alone, so nothing in a part's bodies can mean a
+/// name the entry binds at its top level. A local, loop variable or
+/// parameter that a part's function, view or derivation binds under such a
+/// name is renamed with the part's prefix as a suffix (`c` in
+/// `sim/session.co` becomes `c__sim_session`), so no later stage — the
+/// types, the facts, the runtime's scopes — takes the one for the other.
+/// A keyword argument naming a renamed parameter follows it.
+fn separate_part_locals(entry: &mut [ast::Stmt], hoisted: &mut [ast::Stmt]) {
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut top: BTreeSet<String> = BTreeSet::new();
+    top_level_names(entry, &mut top);
+    if top.is_empty() {
+        return;
+    }
+    let mut params_renamed: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+    for st in hoisted.iter_mut() {
+        let decl = match st {
+            ast::Stmt::FnDecl { name, .. } | ast::Stmt::Derive { name, .. } | ast::Stmt::Assign { name, .. } => name.clone(),
+            ast::Stmt::MultiAssign { names, .. } => names.first().cloned().unwrap_or_default(),
+            _ => continue,
+        };
+        let Some(prefix) = part_prefix_of_declaration(&decl) else { continue };
+        let mut bound: BTreeSet<String> = BTreeSet::new();
+        match &*st {
+            ast::Stmt::FnDecl { params, body, .. } => {
+                bound.extend(params.iter().cloned());
+                bound_names(body, &mut bound);
+            }
+            ast::Stmt::Derive { body, .. } => bound_names(body, &mut bound),
+            ast::Stmt::Assign { value, .. } => bound_names_expr(value, &mut bound),
+            ast::Stmt::MultiAssign { values, .. } => values.iter().for_each(|v| bound_names_expr(v, &mut bound)),
+            _ => {}
+        }
+        let suffix = prefix.trim_end_matches('_').to_string();
+        let map: BTreeMap<String, String> = bound
+            .into_iter()
+            .filter(|n| top.contains(n))
+            .map(|n| {
+                let new = format!("{}__{}", n, suffix);
+                (n, new)
+            })
+            .collect();
+        if map.is_empty() {
+            continue;
+        }
+        match st {
+            ast::Stmt::FnDecl { name, params, body, .. } => {
+                let mut renamed = BTreeMap::new();
+                for p in params.iter_mut() {
+                    if let Some(new) = map.get(p) {
+                        renamed.insert(p.clone(), new.clone());
+                        *p = new.clone();
+                    }
+                }
+                body.iter_mut().for_each(|s| rename_locals(s, &map));
+                if !renamed.is_empty() {
+                    params_renamed.insert(name.clone(), renamed);
+                }
+            }
+            ast::Stmt::Derive { body, .. } => body.iter_mut().for_each(|s| rename_locals(s, &map)),
+            ast::Stmt::Assign { value, .. } => rename_locals_expr(value, &map),
+            ast::Stmt::MultiAssign { values, .. } => values.iter_mut().for_each(|v| rename_locals_expr(v, &map)),
+            _ => {}
+        }
+    }
+    if params_renamed.is_empty() {
+        return;
+    }
+    for st in entry.iter_mut().chain(hoisted.iter_mut()) {
+        visit_exprs_mut(st, &mut |e| {
+            if let ast::Expr::Call { callee, args } = e {
+                if let ast::Expr::Ident(f) = callee.as_ref() {
+                    if let Some(renamed) = params_renamed.get(f) {
+                        for a in args.iter_mut() {
+                            if let ast::Expr::Named { name, .. } = a {
+                                if let Some(new) = renamed.get(name) {
+                                    *name = new.clone();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
+/// The names a file binds at its top level: its variables (in the top
+/// level's loops and branches too), functions, structs and derivations.
+fn top_level_names(stmts: &[ast::Stmt], out: &mut std::collections::BTreeSet<String>) {
+    for st in stmts {
+        match st {
+            ast::Stmt::Assign { name, .. }
+            | ast::Stmt::FnDecl { name, .. }
+            | ast::Stmt::StructDecl { name, .. }
+            | ast::Stmt::Derive { name, .. } => {
+                out.insert(name.clone());
+            }
+            ast::Stmt::MultiAssign { names, .. } => out.extend(names.iter().cloned()),
+            ast::Stmt::For { var, body, .. } => {
+                out.insert(var.clone());
+                top_level_names(body, out);
+            }
+            ast::Stmt::While { body, .. } => top_level_names(body, out),
+            ast::Stmt::If { then_body, else_body, .. } => {
+                top_level_names(then_body, out);
+                if let Some(e) = else_body {
+                    top_level_names(e, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The names a body binds: what it assigns and the variables of its loops.
+fn bound_names(stmts: &[ast::Stmt], out: &mut std::collections::BTreeSet<String>) {
+    for st in stmts {
+        match st {
+            ast::Stmt::Assign { name, value } => {
+                out.insert(name.clone());
+                bound_names_expr(value, out);
+            }
+            ast::Stmt::MultiAssign { names, values } => {
+                out.extend(names.iter().cloned());
+                values.iter().for_each(|v| bound_names_expr(v, out));
+            }
+            ast::Stmt::For { var, iter, body } => {
+                out.insert(var.clone());
+                bound_names_expr(iter, out);
+                bound_names(body, out);
+            }
+            ast::Stmt::While { condition, body } => {
+                bound_names_expr(condition, out);
+                bound_names(body, out);
+            }
+            ast::Stmt::If { condition, then_body, else_body } => {
+                bound_names_expr(condition, out);
+                bound_names(then_body, out);
+                if let Some(e) = else_body {
+                    bound_names(e, out);
+                }
+            }
+            ast::Stmt::Return(Some(e)) | ast::Stmt::ExprStmt(e) => bound_names_expr(e, out),
+            _ => {}
+        }
+    }
+}
+
+/// The variables of the `for` expressions inside an expression, and what
+/// their bodies assign.
+fn bound_names_expr(e: &ast::Expr, out: &mut std::collections::BTreeSet<String>) {
+    match e {
+        ast::Expr::ForExpr { var, iter, body } => {
+            out.insert(var.clone());
+            bound_names_expr(iter, out);
+            bound_names(body, out);
+        }
+        ast::Expr::BinOp { left, right, .. } => {
+            bound_names_expr(left, out);
+            bound_names_expr(right, out);
+        }
+        ast::Expr::UnaryOp { expr, .. } => bound_names_expr(expr, out),
+        ast::Expr::Call { callee, args } => {
+            bound_names_expr(callee, out);
+            args.iter().for_each(|a| bound_names_expr(a, out));
+        }
+        ast::Expr::FieldAccess { object, .. } => bound_names_expr(object, out),
+        ast::Expr::Array(items) => items.iter().for_each(|i| bound_names_expr(i, out)),
+        ast::Expr::Map(pairs) => pairs.iter().for_each(|(_, v)| bound_names_expr(v, out)),
+        ast::Expr::Named { value, .. } => bound_names_expr(value, out),
+        _ => {}
+    }
+}
+
+/// Rename a body's bindings and every read of them, strings' spans
+/// included; keyword names, fields and map keys are not variables.
+fn rename_locals(st: &mut ast::Stmt, map: &std::collections::BTreeMap<String, String>) {
+    let to = |n: &mut String| {
+        if let Some(new) = map.get(n.as_str()) {
+            *n = new.clone();
+        }
+    };
+    match st {
+        ast::Stmt::Assign { name, value } => {
+            rename_locals_expr(value, map);
+            to(name);
+        }
+        ast::Stmt::MultiAssign { names, values } => {
+            values.iter_mut().for_each(|v| rename_locals_expr(v, map));
+            names.iter_mut().for_each(to);
+        }
+        ast::Stmt::Return(Some(e)) | ast::Stmt::ExprStmt(e) => rename_locals_expr(e, map),
+        ast::Stmt::If { condition, then_body, else_body } => {
+            rename_locals_expr(condition, map);
+            then_body.iter_mut().for_each(|s| rename_locals(s, map));
+            if let Some(eb) = else_body {
+                eb.iter_mut().for_each(|s| rename_locals(s, map));
+            }
+        }
+        ast::Stmt::For { var, iter, body } => {
+            rename_locals_expr(iter, map);
+            to(var);
+            body.iter_mut().for_each(|s| rename_locals(s, map));
+        }
+        ast::Stmt::While { condition, body } => {
+            rename_locals_expr(condition, map);
+            body.iter_mut().for_each(|s| rename_locals(s, map));
+        }
+        ast::Stmt::FieldAssign { object, value, .. } => {
+            rename_locals_expr(object, map);
+            rename_locals_expr(value, map);
+        }
+        ast::Stmt::IndexAssign { object, index, value } => {
+            rename_locals_expr(object, map);
+            rename_locals_expr(index, map);
+            rename_locals_expr(value, map);
+        }
+        ast::Stmt::Resource { count, .. } => rename_locals_expr(count, map),
+        _ => {}
+    }
+}
+
+fn rename_locals_expr(e: &mut ast::Expr, map: &std::collections::BTreeMap<String, String>) {
+    match e {
+        ast::Expr::Ident(n) => {
+            if let Some(new) = map.get(n.as_str()) {
+                *n = new.clone();
+            }
+        }
+        // a string's spans read the names as the body does
+        ast::Expr::Str(_) => rewrite_refs_expr(e, map, &std::collections::HashSet::new()),
+        ast::Expr::BinOp { left, right, .. } => {
+            rename_locals_expr(left, map);
+            rename_locals_expr(right, map);
+        }
+        ast::Expr::UnaryOp { expr, .. } => rename_locals_expr(expr, map),
+        ast::Expr::Call { callee, args } => {
+            rename_locals_expr(callee, map);
+            args.iter_mut().for_each(|a| rename_locals_expr(a, map));
+        }
+        ast::Expr::FieldAccess { object, .. } => rename_locals_expr(object, map),
+        ast::Expr::Array(items) => items.iter_mut().for_each(|i| rename_locals_expr(i, map)),
+        ast::Expr::Map(pairs) => pairs.iter_mut().for_each(|(_, v)| rename_locals_expr(v, map)),
+        ast::Expr::Named { value, .. } => rename_locals_expr(value, map),
+        ast::Expr::ForExpr { var, iter, body } => {
+            rename_locals_expr(iter, map);
+            if let Some(new) = map.get(var.as_str()) {
+                *var = new.clone();
+            }
+            body.iter_mut().for_each(|s| rename_locals(s, map));
+        }
+        _ => {}
+    }
+}
+
+/// Every expression in a statement, bodies and tests included, children
+/// before their parent.
+fn visit_exprs_mut(st: &mut ast::Stmt, f: &mut dyn FnMut(&mut ast::Expr)) {
+    fn expr(e: &mut ast::Expr, f: &mut dyn FnMut(&mut ast::Expr)) {
+        match e {
+            ast::Expr::BinOp { left, right, .. } => {
+                expr(left, f);
+                expr(right, f);
+            }
+            ast::Expr::UnaryOp { expr: inner, .. } => expr(inner, f),
+            ast::Expr::Call { callee, args } => {
+                expr(callee, f);
+                args.iter_mut().for_each(|a| expr(a, f));
+            }
+            ast::Expr::FieldAccess { object, .. } => expr(object, f),
+            ast::Expr::Array(items) => items.iter_mut().for_each(|i| expr(i, f)),
+            ast::Expr::Map(pairs) => pairs.iter_mut().for_each(|(k, v)| {
+                expr(k, f);
+                expr(v, f);
+            }),
+            ast::Expr::Named { value, .. } => expr(value, f),
+            ast::Expr::ForExpr { iter, body, .. } => {
+                expr(iter, f);
+                body.iter_mut().for_each(|s| visit_exprs_mut(s, f));
+            }
+            _ => {}
+        }
+        f(e);
+    }
+    match st {
+        ast::Stmt::Assign { value, .. } | ast::Stmt::ExprStmt(value) | ast::Stmt::Return(Some(value)) => expr(value, f),
+        ast::Stmt::MultiAssign { values, .. } => values.iter_mut().for_each(|v| expr(v, f)),
+        ast::Stmt::FnDecl { body, .. } | ast::Stmt::Derive { body, .. } | ast::Stmt::TestBlock { body, .. } => {
+            body.iter_mut().for_each(|s| visit_exprs_mut(s, f))
+        }
+        ast::Stmt::If { condition, then_body, else_body } => {
+            expr(condition, f);
+            then_body.iter_mut().for_each(|s| visit_exprs_mut(s, f));
+            if let Some(eb) = else_body {
+                eb.iter_mut().for_each(|s| visit_exprs_mut(s, f));
+            }
+        }
+        ast::Stmt::For { iter, body, .. } => {
+            expr(iter, f);
+            body.iter_mut().for_each(|s| visit_exprs_mut(s, f));
+        }
+        ast::Stmt::While { condition, body } => {
+            expr(condition, f);
+            body.iter_mut().for_each(|s| visit_exprs_mut(s, f));
+        }
+        ast::Stmt::FieldAssign { object, value, .. } => {
+            expr(object, f);
+            expr(value, f);
+        }
+        ast::Stmt::IndexAssign { object, index, value } => {
+            expr(object, f);
+            expr(index, f);
+            expr(value, f);
+        }
+        ast::Stmt::Resource { count, .. } => expr(count, f),
+        _ => {}
+    }
+}
+
 thread_local! {
+    /// The entry being expanded imports no ui while a part does
+    static PLAIN_ENTRY: std::cell::Cell<bool> = std::cell::Cell::new(false);
     static VALIDATED_PARTS: std::cell::RefCell<std::collections::HashSet<std::path::PathBuf>> =
         std::cell::RefCell::new(std::collections::HashSet::new());
     /// module prefix (`sim_session_`) → the part's project-relative file
@@ -5072,8 +5408,8 @@ mod module_parts_tests {
         let program = lower_ir::lower(&lowered, &mut ctx, "parts").unwrap();
         let text = ir::print(&program);
         assert!(text.contains("pure lib_calc_spread("), "a plain function, not a handler:\n{}", text);
-        assert!(text.contains("let ch: List(Float) = []"), "{}", text);
-        assert!(text.contains("secs: Float"), "{}", text);
+        assert!(text.contains("let ch__lib_calc: List(Float) = []"), "{}", text);
+        assert!(text.contains("secs__lib_calc: Float"), "{}", text);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -5097,7 +5433,59 @@ mod module_parts_tests {
         let mut ctx = checked.unwrap();
         let program = lower_ir::lower(&lowered, &mut ctx, "parts").unwrap();
         let text = ir::print(&program);
-        assert!(text.contains("let fills: List(Float) = []"), "{}", text);
+        assert!(text.contains("let fills__lib_walk: List(Float) = []"), "{}", text);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Nothing in a part's bodies is the entry's top-level name of the same
+    /// spelling: a derivation's local `c` beside the entry's `c` was refused
+    /// as writing a fact, a handler's local `r` was typed as the entry's
+    /// text, and a handler's parameter `s` typed the entry's `s` (in a
+    /// check script importing finch's parts, and silently wrong where the
+    /// types agreed). A keyword naming a renamed parameter follows it.
+    #[test]
+    fn a_parts_locals_are_not_the_entrys_names() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_locals_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(
+            dir.join("lib/state.co"),
+            "use web, ui\nbase = 2\nderive doubled\n    c = base * 2\n    return c\nfn reset[]\n    r = 3\n    base = r\nfn set_to[s]\n    base = s\nview show[]\n    return row[p['`doubled`'], button['reset', click = reset], button['four', click = set_to[4]]]\n",
+        )
+        .unwrap();
+        let stmts = build("use web, ui\nuse lib.state\nc = 5\nr = 'text'\ns = 'hello'\nfn seven[]\n    state.set_to[s = 7]\nview v[]\n    return stack[p['`c` `r` `s`'], state.show[], button['seven', click = seven]]\npage['/', v]\n").unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let stmts = expand_module_imports(&stmts, &dir, &mut visited);
+        let lowered = lower::lower_program(&stmts).unwrap();
+        let checked = infer_and_validate(&lowered, false);
+        assert!(checked.is_ok(), "{:?}", checked.err());
+        let mut ctx = checked.unwrap();
+        let program = lower_ir::lower(&lowered, &mut ctx, "parts").unwrap();
+        let text = ir::print(&program);
+        assert!(text.contains("let c__lib_state: Int"), "{}", text);
+        assert!(text.contains("let r__lib_state: Int"), "{}", text);
+        assert!(text.contains("s__lib_state: Int"), "{}", text);
+        assert!(text.contains("fact c: Int") && text.contains("fact r: Str") && text.contains("fact s: Str"), "{}", text);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An entry that does not import ui is a script, whatever its parts
+    /// import: its top level runs in order (a check script importing
+    /// finch's session part computed `n = len[xs]` after the loop that
+    /// filled `xs` as 0, its variables having become state)
+    #[test]
+    fn a_script_importing_a_ui_part_runs_its_top_level_in_order() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_script_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(dir.join("lib/state.co"), "use web, ui\nbase = 2\nfn twice[x]\n    return x * 2\nview show[]\n    return p['`base`']\n").unwrap();
+        let stmts = build("use lib.state\nxs = []\nfor i in range[3]\n    xs = push[xs, state.twice[i]]\nn = len[xs]\nlog['`n`']\n").unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let stmts = expand_module_imports(&stmts, &dir, &mut visited);
+        let it = ir_interp::run_script(&stmts, "parts").unwrap();
+        assert!(matches!(it.var("n").map(|v| &v.value), Some(crate::value::Value::Int(3))), "{:?}", it.var("n"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

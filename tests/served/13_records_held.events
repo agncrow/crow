@@ -1,0 +1,7 @@
+[
+  {"expect": "<p>orders 0 shares 0:</p>"},
+  {"event": "buy", "value": "[\"MNTS\"]"},
+  {"expect": "<p>orders 1 shares 100: MNTS</p>"},
+  {"event": "buy", "value": "[\"BMR\"]"},
+  {"expect": "<p>orders 2 shares 200: MNTS BMR</p>"}
+]

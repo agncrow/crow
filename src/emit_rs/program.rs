@@ -356,8 +356,13 @@ impl Emitter {
         }
 
         // a struct parameter a function never reassigns passes by reference
+        // (a handler's are its own: it may be sent them as an event's
+        // arguments, so it takes them by value, and so do its callers)
         let names: Vec<String> = self.fns.keys().cloned().collect();
         for n in names {
+            if self.reactive_event_handlers.contains(&n) || self.live_handle_fns.contains(&n) {
+                continue;
+            }
             let f = self.fns.get(&n).unwrap().clone();
             let mut refs = HashSet::new();
             for (p, t) in &f.params {
@@ -483,19 +488,12 @@ impl Emitter {
                 continue;
             }
         }
-        // a later top-level assignment is the default, as the last one written
-        let mut last_value: BTreeMap<String, Expr> = BTreeMap::new();
-        for s in &self.part.main {
-            if let Stmt::Store { fact, expr } = s {
-                last_value.insert(fact.clone(), expr.clone());
-            }
-        }
         let facts = self.part.facts.clone();
         for fact in facts {
             if self.static_handle_vars.contains(&fact.name) || self.data_source_vars.contains(&fact.name) {
                 continue;
             }
-            let value = last_value.get(&fact.name).cloned().unwrap_or_else(|| fact.default.clone());
+            let value = fact.default.clone();
             let declared = crow_type(&fact.ty).text();
             let vty = self.tt(&value);
             let ty = if matches!(declared, CrowType::Unknown) { vty.clone() } else { declared };
@@ -588,8 +586,9 @@ impl Emitter {
         }
         self.line("");
 
-        // the records a fact holds are kept as JSON by the session
-        self.serde_records = self.records_in_facts();
+        // the records a fact holds are kept as JSON by the session, and a
+        // handler's record arguments arrive as JSON
+        self.serde_records = self.records_as_json();
         let result_serde = self.part.structs.iter().any(|s| self.serde_records.contains(&s.name) && s.fields.iter().any(|(_, t)| t.is_result()));
         if !self.serde_records.is_empty() {
             self.needs_serde_json = true;
@@ -795,7 +794,7 @@ impl Emitter {
     }
 
     /// The records a fact holds, and the records their fields hold.
-    fn records_in_facts(&self) -> BTreeSet<String> {
+    fn records_as_json(&self) -> BTreeSet<String> {
         fn records(t: &Ty, out: &mut Vec<String>) {
             match t {
                 Ty::Record(n) | Ty::OptRecord(n) => out.push(n.clone()),
@@ -807,6 +806,14 @@ impl Emitter {
         for f in &self.part.facts {
             records(&f.ty, &mut todo);
         }
+        for h in &self.reactive_event_handlers {
+            if let Some(f) = self.fns.get(h) {
+                for (_, t) in &f.params {
+                    records(t, &mut todo);
+                }
+            }
+        }
+
         let mut seen = BTreeSet::new();
         while let Some(n) = todo.pop() {
             if seen.insert(n.clone()) {
@@ -1067,12 +1074,16 @@ impl Emitter {
         for h in self.reactive_event_handlers.clone() {
             let rust = Self::rust_fn_name(&h);
             let params: Vec<(String, Ty)> = self.fns.get(&h).map(|f| f.params.clone()).unwrap_or_default();
-            let callable = params.iter().all(|(_, t)| matches!(t, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Unknown));
+            // a list, a tensor, a frame or a record arrives as JSON its own
+            // serde reads (a test clicks a handler with one as it clicks any)
+            let by_serde = |t: &Ty| matches!(t, Ty::List(_) | Ty::Map(_) | Ty::Tensor(_) | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_));
+            let callable = params.iter().all(|(_, t)| matches!(t, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Unknown) || by_serde(t));
             if params.is_empty() {
                 self.line(&format!("\"{}\" => {}(state),", h, rust));
             } else if !callable {
-                // a helper taking a frame or a list: only other handlers call it
+                // a helper taking a handle or a function: only other handlers call it
             } else {
+                let mut decoded: Vec<(String, String)> = Vec::new();
                 let extracts: Vec<String> = params
                     .iter()
                     .enumerate()
@@ -1080,15 +1091,26 @@ impl Emitter {
                         Ty::Int => format!("_a[{i}].as_i64().or_else(|| _a[{i}].as_f64().map(|x| x as i64)).or_else(|| _a[{i}].as_str().and_then(|s| s.trim().parse::<i64>().ok())).unwrap_or(0)", i = i),
                         Ty::Float => format!("_a[{i}].as_f64().or_else(|| _a[{i}].as_str().and_then(|s| s.trim().parse::<f64>().ok())).unwrap_or(0.0)", i = i),
                         Ty::Bool => format!("_a[{i}].as_bool().or_else(|| _a[{i}].as_str().map(|s| s == \"true\")).unwrap_or(false)", i = i),
+                        t if by_serde(t) => {
+                            decoded.push((format!("_p{}", i), format!("serde_json::from_value::<{}>(_a[{}].clone()).ok()", crow_type(t).to_rust_type(), i)));
+                            format!("_p{}", i)
+                        }
                         _ => format!("_a[{i}].as_str().map(|s| s.to_string()).unwrap_or_else(|| _a[{i}].to_string())", i = i),
                     })
                     .collect();
+                let call = format!("{}(state, {});", rust, extracts.join(", "));
+                let call = if decoded.is_empty() {
+                    call
+                } else {
+                    let names: Vec<String> = decoded.iter().map(|(n, _)| format!("Some({})", n)).collect();
+                    let values: Vec<String> = decoded.iter().map(|(_, v)| v.clone()).collect();
+                    format!("if let ({},) = ({},) {{ {} }}", names.join(", "), values.join(", "), call)
+                };
                 self.line(&format!(
-                    "\"{}\" => {{ if let Some(_v) = _value {{ if let Ok(_a) = serde_json::from_str::<Vec<serde_json::Value>>(_v) {{ if _a.len() == {} {{ {}(state, {}); }} }} }} }},",
+                    "\"{}\" => {{ if let Some(_v) = _value {{ if let Ok(_a) = serde_json::from_str::<Vec<serde_json::Value>>(_v) {{ if _a.len() == {} {{ {} }} }} }} }},",
                     h,
                     params.len(),
-                    rust,
-                    extracts.join(", ")
+                    call
                 ));
             }
         }

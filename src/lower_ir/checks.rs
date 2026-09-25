@@ -155,6 +155,8 @@ pub(super) struct Checks {
     /// The facts the current function has written: a name assigned is
     /// one it has from then on.
     pub stored: BTreeSet<String>,
+    /// The line each fact is declared on: where its first value is given.
+    pub fact_lines: HashMap<String, usize>,
     /// The program's types as its signatures were inferred, before any
     /// body was lowered: what a check comparing types reads (`seen_type`).
     pub types: Option<TypeContext>,
@@ -167,6 +169,22 @@ impl<'a> Lowerer<'a> {
             return;
         }
         self.v.errors.push((format!("line {}: {}", self.v.line, msg), self.v.decl.clone()));
+    }
+
+    /// A statement of a ui program's top level, after a fact's declaration,
+    /// that assigns the fact. A fact gets one value at the top level: the
+    /// declarations are computed before the top level runs and a test runs
+    /// only them, so a later change reached the rest of the top level under
+    /// `crow run` and no session, no test, and no declaration after it.
+    pub(super) fn check_top_write(&mut self, name: &str) {
+        if !matches!(self.at, Where::Top) || !self.is_fact(name) {
+            return;
+        }
+        let line = self.v.fact_lines.get(name).copied().unwrap_or(0);
+        self.refuse(format!(
+            "'{}' is state, declared on line {}: it gets one value at the top level, which every session starts from, and handlers move it after that — give it its whole value where it is declared (a function can build it), or derive it",
+            name, line
+        ));
     }
 
     /// Lowers with the checks muted: `f` lowers what is checked elsewhere.
@@ -408,11 +426,7 @@ impl<'a> Lowerer<'a> {
     /// An assignment: a derivation is not assigned, and a variable keeps the
     /// type it was first given.
     pub(super) fn check_assign(&mut self, name: &str, new_ty: &CrowType) {
-        // in a part's function the part's own module variables carry its
-        // prefix: a name without it is a local, whatever another file holds
-        // under it
-        let foreign = self.v.decl.as_deref().and_then(crate::part_prefix_of_declaration).map_or(false, |p| !name.starts_with(p.as_str()));
-        let in_local_scope = self.in_fn().is_some() && !(self.v.reactive && self.v.module_vars.contains(name) && !foreign);
+        let in_local_scope = self.in_fn().is_some() && !(self.v.reactive && self.v.module_vars.contains(name));
         let existing = if in_local_scope { self.v.local_types.get(name).cloned() } else { self.ctx.vars.get(name).cloned() };
         if in_local_scope && !matches!(new_ty, CrowType::Unknown) {
             self.v.local_types.entry(name.to_string()).or_insert_with(|| new_ty.clone());
@@ -962,6 +976,26 @@ mod tests {
     fn a_function_reading_a_derivation_is_told_to_derive() {
         let err = check_source("use web, ui\nn = 1\nderive cfg\n    return n + 1\nfn band[]\n    return cfg * 2\nview render[]\n    return p['`band[]`']\npage['/', render]\n").unwrap_err();
         assert!(err.contains("in band: derivations are not visible inside functions — read 'cfg' in a view or handler"), "{}", err);
+    }
+
+    /// A fact gets one value at the top level of a ui program: a loop that
+    /// pushed into it or a second assignment reached the rest of the top
+    /// level under `crow run` and no session, no test, and no declaration
+    /// after it (`n = len[xs]` after the loop was 0 in both modes). A loop
+    /// of the top level may bind its own names (the book's site does), and
+    /// a program without ui may assign its variables again.
+    #[test]
+    fn a_fact_gets_one_value_at_the_top_level() {
+        let err = check_source("use web, ui\nxs = []\nfor i in range[3]\n    xs = push[xs, i]\nview render[]\n    return p['`len[xs]`']\npage['/', render]\n").unwrap_err();
+        assert!(err.contains("line 4: 'xs' is state, declared on line 2: it gets one value at the top level"), "{}", err);
+        let err = check_source("use web, ui\ncount = 5\ncount = 6\nview render[]\n    return p['`count`']\npage['/', render]\n").unwrap_err();
+        assert!(err.contains("line 3: 'count' is state, declared on line 2"), "{}", err);
+        let err = check_source("use web, ui\ncfg = map[a = 1]\ncfg['a'] = 2\nview render[]\n    return p['`cfg.a`']\npage['/', render]\n").unwrap_err();
+        assert!(err.contains("'cfg' is state, declared on line 2"), "{}", err);
+        let ok = check_source("use web, ui\nxs = [1, 2]\nfor x in xs\n    y = x * 2\n    log[y]\nview render[]\n    return p['`len[xs]`']\npage['/', render]\n");
+        assert!(ok.is_ok(), "{:?}", ok);
+        let ok = check_source("count = 5\ncount = 6\nlog[count]\n");
+        assert!(ok.is_ok(), "{:?}", ok);
     }
 
     /// A derivation's locals are its own, as a function's are: two

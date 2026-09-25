@@ -600,6 +600,7 @@ impl<'a> Lowerer<'a> {
                     self.flush_pre_into(&mut part.main);
                     let ty = self.ctx.vars.get(name).map(ty_of).unwrap_or_else(|| default.ty());
                     self.scopes[0].insert(name.clone());
+                    self.v.fact_lines.insert(name.clone(), self.v.line);
                     part.facts.push(Fact { name: name.clone(), ty, default, session: written.contains(name) });
                 }
                 other => {
@@ -873,15 +874,13 @@ impl<'a> Lowerer<'a> {
                 vec![Stmt::Line(*n)]
             }
             S::Assign { name, value } => {
-                // in a part's function a name without the part's prefix is a
-                // local, whatever another file derives under it
-                let foreign = self.in_fn().is_some() && self.v.decl.as_deref().and_then(crate::part_prefix_of_declaration).map_or(false, |p| !name.starts_with(p.as_str()));
-                if self.ctx.derives.contains(name) && !foreign {
+                if self.ctx.derives.contains(name) {
                     self.refuse(format!("'{}' is derived — it follows what it reads; change those facts instead of assigning it", name));
                 }
                 if !self.defined(name) {
                     self.check_reserved(name, "variable");
                 }
+                self.check_top_write(name);
                 let expr = self.lower_expr(value)?;
                 self.check_assign(name, &self.seen_type(value));
                 // the columns a local reads are those of the value assigned
@@ -900,6 +899,9 @@ impl<'a> Lowerer<'a> {
                 // each new name checked against the names taken, after the
                 // values it is given
                 let new: Vec<String> = names.iter().filter(|n| !self.defined(n)).cloned().collect();
+                for n in names {
+                    self.check_top_write(n);
+                }
                 let out = self.multi_assign(names, values)?;
                 for st in &out {
                     if let Stmt::Store { fact, .. } = st {
@@ -914,6 +916,9 @@ impl<'a> Lowerer<'a> {
             S::FieldAssign { object, field, value } => {
                 // the target is checked before its value, then lowered after
                 self.check_target(object);
+                if let Some(root) = target_root(object) {
+                    self.check_top_write(&root);
+                }
                 let expr = self.lower_expr(value)?;
                 let (var, mut path) = self.muted_target(object)?;
                 path.push(PathStep::Field(field.clone()));
@@ -921,6 +926,9 @@ impl<'a> Lowerer<'a> {
             }
             S::IndexAssign { object, index, value } => {
                 self.check_target(object);
+                if let Some(root) = target_root(object) {
+                    self.check_top_write(&root);
+                }
                 let expr = self.lower_expr(value)?;
                 let idx = self.lower_expr(index)?;
                 let (var, mut path) = self.muted_target(object)?;
@@ -1465,9 +1473,25 @@ impl<'a> Lowerer<'a> {
         }
         // a struct constructor
         if module.is_none() && self.ctx.structs.contains_key(&name) {
+            let declared: Vec<Ty> = self.ctx.structs.get(&name).map(|s| s.fields.iter().map(|(_, t)| ty_of(t)).collect()).unwrap_or_default();
             let mut fields = Vec::new();
-            for a in args {
-                fields.push(self.lower_expr(a)?);
+            for (i, a) in args.iter().enumerate() {
+                let value = self.lower_expr(a)?;
+                // a list of numbers is held as a list or as a tensor: a
+                // field holds the form its record was settled on, so a value
+                // in the other is converted (`[h]` beside a list pushed to)
+                let how = match (declared.get(i).map(|t| t.payload()), value.ty()) {
+                    (Some(Ty::List(_)), Ty::Tensor(_)) => Some(Convert::ToList),
+                    (Some(Ty::Tensor(_)), Ty::List(_)) => Some(Convert::ToTensor),
+                    _ => None,
+                };
+                fields.push(match how {
+                    Some(how) => {
+                        let ty = declared[i].payload().clone();
+                        Expr::Convert { how, expr: Box::new(value), ty }
+                    }
+                    None => value,
+                });
             }
             self.check_call(&name, args);
             return Ok(Expr::RecordLit { name, fields });
@@ -1782,6 +1806,16 @@ fn root_ident(e: &A) -> Option<&str> {
 }
 
 /// The facts any function's body writes: those are per session.
+/// The variable a field or index assignment writes into: `a` of `a.b[0]`.
+fn target_root(object: &A) -> Option<String> {
+    match object {
+        A::Ident(n) => Some(n.clone()),
+        A::FieldAccess { object, .. } => target_root(object),
+        A::Call { callee, .. } => target_root(callee),
+        _ => None,
+    }
+}
+
 fn facts_written_by_fns(stmts: &[S], facts: &BTreeSet<String>) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     fn walk(body: &[S], facts: &BTreeSet<String>, out: &mut BTreeSet<String>) {

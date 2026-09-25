@@ -49,7 +49,7 @@ pub struct ReadSet {
 /// lives in its reactive state, applied by both modes.
 pub fn fact_names(stmts: &[Stmt]) -> BTreeSet<String> {
     stmts.iter().filter_map(|s| match s {
-        Stmt::Assign { name, value } if !is_handle_or_source(value) => Some(name.clone()),
+        Stmt::Assign { name, value } if !is_handle_or_source(value) && !crate::plain_entry_name(name) => Some(name.clone()),
         _ => None,
     }).collect()
 }

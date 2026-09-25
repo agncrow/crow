@@ -68,7 +68,9 @@ pub struct CrowTensor {
 }
 
 /// A tensor crosses a serialized boundary — reactive state, a JSON
-/// response — as its shape and its values in row-major order.
+/// response — as its shape and its values in row-major order; it is read
+/// back from that, or from a list of numbers (a vector) or a list of equal
+/// rows (a matrix), as the interpreter writes one.
 impl serde::Serialize for CrowTensor {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
@@ -82,12 +84,32 @@ impl serde::Serialize for CrowTensor {
 impl<'de> serde::Deserialize<'de> for CrowTensor {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         #[derive(serde::Deserialize)]
-        struct Wire { shape: Vec<usize>, data: Vec<f64> }
-        let w = Wire::deserialize(d)?;
-        if w.data.len() != CrowTensor::numel(&w.shape) {
-            return Err(serde::de::Error::custom("tensor shape does not match its data"));
+        #[serde(untagged)]
+        enum Wire {
+            Shaped { shape: Vec<usize>, data: Vec<f64> },
+            Vector(Vec<f64>),
+            Rows(Vec<Vec<f64>>),
         }
-        Ok(CrowTensor::from_vec(w.data, w.shape))
+        match Wire::deserialize(d)? {
+            Wire::Shaped { shape, data } => {
+                if data.len() != CrowTensor::numel(&shape) {
+                    return Err(serde::de::Error::custom("tensor shape does not match its data"));
+                }
+                Ok(CrowTensor::from_vec(data, shape))
+            }
+            Wire::Vector(data) => {
+                let n = data.len();
+                Ok(CrowTensor::from_vec(data, vec![n]))
+            }
+            Wire::Rows(rows) => {
+                let cols = rows.first().map_or(0, |r| r.len());
+                if rows.iter().any(|r| r.len() != cols) {
+                    return Err(serde::de::Error::custom("a tensor's rows are not the same length"));
+                }
+                let n = rows.len();
+                Ok(CrowTensor::from_vec(rows.into_iter().flatten().collect(), vec![n, cols]))
+            }
+        }
     }
 }
 

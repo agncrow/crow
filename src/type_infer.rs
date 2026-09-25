@@ -218,6 +218,12 @@ impl CrowType {
             (CrowType::Markup, CrowType::Str) | (CrowType::Str, CrowType::Markup) => CrowType::Str,
             (CrowType::NumArray(a), CrowType::NumArray(b)) => CrowType::NumArray(Box::new(a.unify(b))),
             (CrowType::Array(a), CrowType::Array(b)) => CrowType::Array(Box::new(a.unify(b))),
+            // numbers held as a list meet numbers held as a tensor: the
+            // first form stays (the lowering converts the other where they
+            // meet), and what either knows of the items is kept (an empty
+            // list and a tensor of floats are floats)
+            (CrowType::Array(a), CrowType::NumArray(b)) => CrowType::Array(Box::new(a.unify(b))),
+            (CrowType::NumArray(a), CrowType::Array(b)) => CrowType::NumArray(Box::new(a.unify(b))),
             (CrowType::Map(a), CrowType::Map(b)) => CrowType::Map(Box::new(a.unify(b))),
             (CrowType::Void, t) | (t, CrowType::Void) => t.clone(),
             // Int + Struct => OptBoxStruct (recursive struct with sentinel)
@@ -265,7 +271,6 @@ pub struct StructSig {
 pub(crate) struct BodyScope {
     saved_vars: BTreeMap<String, CrowType>,
     outer_assigned: Option<std::collections::HashSet<String>>,
-    outer_prefix: Option<String>,
     outer_in_view: bool,
 }
 
@@ -286,9 +291,6 @@ pub struct TypeContext {
     /// index into one (`got[0]`) is indexing, however early in the
     /// fixpoint its value's type is still unknown
     top_values: std::collections::HashSet<String>,
-    /// The module prefix of the part whose function body is being typed:
-    /// its own reactive state carries it, so a name without it is a local.
-    body_prefix: Option<String>,
     /// While a view's body is inferred: an element's name is the element,
     /// whose value is markup
     in_view: bool,
@@ -387,7 +389,6 @@ impl TypeContext {
             views: std::collections::BTreeSet::new(),
             body_assigned: None,
             top_values: std::collections::HashSet::new(),
-            body_prefix: None,
             in_view: false,
             is_ui: false,
             view_handlers: std::collections::BTreeSet::new(),
@@ -713,7 +714,7 @@ impl TypeContext {
                 }
             }
             // the module's reactive state: every top-level assignment
-            let module_vars: std::collections::BTreeSet<String> = stmts.iter().filter_map(|s| if let Stmt::Assign { name, .. } = s { Some(name.clone()) } else { None }).collect();
+            let module_vars: std::collections::BTreeSet<String> = stmts.iter().filter_map(|s| if let Stmt::Assign { name, .. } = s { Some(name.clone()) } else { None }).filter(|n| !crate::plain_entry_name(n)).collect();
             self.facts = module_vars.clone();
             // a function that assigns reactive state — or tells the reader
             // something with notice[], which the session keeps, or sends
@@ -741,13 +742,14 @@ impl TypeContext {
                 }
             }
 
-            // a function that reaches a session's effect through the
-            // functions it calls holds it for the handler too, so it joins
-            // with them
+            // a function that writes its part's state or reaches a session's
+            // effect — itself, or through the functions it calls — acts for
+            // the handler that calls it, so it joins with them (`clock.jump`
+            // moves the head through `moved_to`, which writes it)
             fn effects_any(stmts: &[Stmt]) -> bool {
                 assigns_any(stmts, &std::collections::BTreeSet::new())
             }
-            let mut reaches: std::collections::BTreeSet<String> = self.functions.iter().filter(|(_, f)| effects_any(&f.body)).map(|(n, _)| n.clone()).collect();
+            let mut reaches: std::collections::BTreeSet<String> = self.functions.iter().filter(|(n, f)| effects_any(&f.body) || assigns_any(&f.body, &own_state(n, &module_vars))).map(|(n, _)| n.clone()).collect();
             loop {
                 let before = reaches.len();
                 for (n, f) in &self.functions {
@@ -789,7 +791,7 @@ impl TypeContext {
                             let mut called = std::collections::BTreeSet::new();
                             Self::collect_called_fns_stmts(&sig.body, &mut called);
                             for c in called {
-                                if reaches.contains(&c) || self.functions.get(&c).map_or(false, |cs| assigns_any(&cs.body, &own_state(&c, &module_vars))) {
+                                if reaches.contains(&c) {
                                     targets.insert(c);
                                 }
                             }
@@ -945,43 +947,67 @@ impl TypeContext {
     /// their types for the parameters nothing in the program types: the
     /// click may be the only call it has, and a compiled program dispatches
     /// it by them. The program's own evidence (a view's call, a table's
-    /// action, a widget's text) comes first. Whether any parameter moved.
+    /// action, a widget's text) comes first. An argument may be one of the
+    /// test's own variables (`eps = …` then `click[a, h[eps]]`): it is read
+    /// as the test assigned it before the click. Whether any parameter moved.
     fn type_clicked_handlers(&mut self, stmts: &[Stmt]) -> bool {
-        fn walk(e: &Expr, out: &mut Vec<(String, Vec<Expr>)>) {
+        type Click = (String, Vec<Expr>, Vec<(String, Expr)>);
+        fn walk(e: &Expr, locals: &[(String, Expr)], out: &mut Vec<Click>) {
             if let Expr::Call { callee, args } = e {
                 if matches!(callee.as_ref(), Expr::Ident(n) if n == "click") && args.len() == 2 {
                     if let Expr::Call { callee: h, args: hargs } = &args[1] {
                         if let Expr::Ident(h) = h.as_ref() {
-                            out.push((h.clone(), hargs.clone()));
+                            out.push((h.clone(), hargs.clone(), locals.to_vec()));
                         }
                     }
                 }
                 for a in args {
-                    walk(a, out);
+                    walk(a, locals, out);
                 }
             }
         }
-        fn clicked_calls(stmts: &[Stmt], in_test: bool, out: &mut Vec<(String, Vec<Expr>)>) {
+        fn clicked_calls(stmts: &[Stmt], in_test: bool, locals: &mut Vec<(String, Expr)>, out: &mut Vec<Click>) {
             for st in stmts {
                 match st {
-                    Stmt::TestBlock { body, .. } => clicked_calls(body, true, out),
-                    Stmt::ExprStmt(e) | Stmt::Return(Some(e)) | Stmt::Assign { value: e, .. } if in_test => walk(e, out),
+                    Stmt::TestBlock { body, .. } => clicked_calls(body, true, &mut Vec::new(), out),
+                    Stmt::Assign { name, value } if in_test => {
+                        walk(value, locals, out);
+                        locals.push((name.clone(), value.clone()));
+                    }
+                    Stmt::ExprStmt(e) | Stmt::Return(Some(e)) if in_test => walk(e, locals, out),
                     Stmt::If { then_body, else_body, .. } if in_test => {
-                        clicked_calls(then_body, true, out);
+                        clicked_calls(then_body, true, locals, out);
                         if let Some(eb) = else_body {
-                            clicked_calls(eb, true, out);
+                            clicked_calls(eb, true, locals, out);
                         }
                     }
-                    Stmt::For { body, .. } | Stmt::While { body, .. } if in_test => clicked_calls(body, true, out),
+                    Stmt::For { body, .. } | Stmt::While { body, .. } if in_test => clicked_calls(body, true, locals, out),
                     _ => {}
                 }
             }
         }
         let mut calls = Vec::new();
-        clicked_calls(stmts, false, &mut calls);
+        clicked_calls(stmts, false, &mut Vec::new(), &mut calls);
         let mut moved = false;
-        for (h, args) in calls {
+        for (h, args, locals) in calls {
+            // the test's variables as it assigned them, in view while its
+            // click's arguments are read, then out of view again
+            let mut saved: Vec<(String, Option<CrowType>)> = Vec::new();
+            for (n, v) in &locals {
+                let t = self.infer_expr(v);
+                saved.push((n.clone(), self.vars.insert(n.clone(), t)));
+            }
             let types: Vec<CrowType> = args.iter().map(|a| self.infer_expr(a)).collect();
+            for (n, old) in saved.into_iter().rev() {
+                match old {
+                    Some(t) => {
+                        self.vars.insert(n, t);
+                    }
+                    None => {
+                        self.vars.remove(&n);
+                    }
+                }
+            }
             if let Some(sig) = self.functions.get_mut(&h) {
                 if sig.params.len() == types.len() {
                     for (p, t) in sig.params.iter_mut().zip(types) {
@@ -1164,6 +1190,7 @@ impl TypeContext {
                     self.vars.insert(name.clone(), ty);
                 } else {
                     let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
+                    let ty = self.consumed(&existing, ty);
                     self.vars.insert(name.clone(), existing.unify(&ty));
                 }
                 if self.body_assigned.is_none() && !matches!(value, Expr::Ident(f) if self.functions.contains_key(f)) {
@@ -1179,6 +1206,7 @@ impl TypeContext {
                 for (name, value) in names.iter().zip(values.iter()) {
                     let ty = self.infer_expr(value);
                     let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
+                    let ty = self.consumed(&existing, ty);
                     self.vars.insert(name.clone(), existing.unify(&ty));
                 }
                 for v in values { self.collect_call_types_expr(v); }
@@ -1225,10 +1253,8 @@ impl TypeContext {
                     }
                 }
                 let saved_assigned = self.body_assigned.replace(assigned);
-                let saved_prefix = std::mem::replace(&mut self.body_prefix, crate::part_prefix_of_declaration(name));
                 for s in body { self.collect_call_types_stmt(s); }
                 self.body_assigned = saved_assigned;
-                self.body_prefix = saved_prefix;
                 // A module-level variable assigned in this body (reactive
                 // state written by a handler) keeps the refined type: an
                 // empty default learns its element type from the handler.
@@ -2138,15 +2164,13 @@ impl TypeContext {
             }
         }
         let outer_assigned = self.body_assigned.replace(assigned);
-        let outer_prefix = std::mem::replace(&mut self.body_prefix, crate::part_prefix_of_declaration(name));
         let outer_in_view = std::mem::replace(&mut self.in_view, self.views.contains(name));
-        BodyScope { saved_vars, outer_assigned, outer_prefix, outer_in_view }
+        BodyScope { saved_vars, outer_assigned, outer_in_view }
     }
 
     pub(crate) fn leave_body(&mut self, scope: BodyScope) {
         self.vars = scope.saved_vars;
         self.body_assigned = scope.outer_assigned;
-        self.body_prefix = scope.outer_prefix;
         self.in_view = scope.outer_in_view;
     }
 
@@ -2159,7 +2183,6 @@ impl TypeContext {
             self.infer_stmt(stmt);
         }
         self.body_assigned = scope.outer_assigned;
-        self.body_prefix = scope.outer_prefix;
         self.in_view = scope.outer_in_view;
 
         // Find return type
@@ -2237,14 +2260,28 @@ impl TypeContext {
     fn fresh_binding(&mut self, name: &str) -> bool {
         let is_ui = self.is_ui;
         let facts = &self.facts;
-        let foreign = self.body_prefix.as_ref().is_some_and(|p| !name.starts_with(p.as_str()));
         match &mut self.body_assigned {
-            Some(assigned) => assigned.insert(name.to_string()) && !(is_ui && facts.contains(name) && !foreign),
+            Some(assigned) => assigned.insert(name.to_string()) && !(is_ui && facts.contains(name)),
             None => false,
         }
     }
 
     /// Infer types from a statement (mainly assignments).
+    /// The type a body's variable takes from a later value: a variable
+    /// whose first value could not fail holds no error (spec,
+    /// Reassignment), so a value that can fail lands as its payload — the
+    /// lowering propagates the failure where it is assigned (`ms = push[ms,
+    /// m]` inside `if m.ok` kept `ms` a list of numbers there, and a record
+    /// built from it typed its field as a list that could fail). Only in a
+    /// body, where the first assignment binds afresh: at the top level the
+    /// fixpoint meets a declaration again, its own last type in hand.
+    fn consumed(&self, existing: &CrowType, ty: CrowType) -> CrowType {
+        match ty {
+            CrowType::Result(inner) if self.body_assigned.is_some() && !matches!(existing, CrowType::Unknown | CrowType::Result(_)) => *inner,
+            other => other,
+        }
+    }
+
     pub(crate) fn infer_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Assign { name, value } => {
@@ -2253,6 +2290,7 @@ impl TypeContext {
                     self.vars.insert(name.clone(), ty);
                 } else {
                     let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
+                    let ty = self.consumed(&existing, ty);
                     self.vars.insert(name.clone(), existing.unify(&ty));
                 }
                 // the columns a local reads are those of the value assigned
@@ -2267,6 +2305,7 @@ impl TypeContext {
                 for (name, value) in names.iter().zip(values.iter()) {
                     let ty = self.infer_expr(value);
                     let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
+                    let ty = self.consumed(&existing, ty);
                     self.vars.insert(name.clone(), existing.unify(&ty));
                 }
             }

@@ -1556,6 +1556,9 @@ pub(crate) fn declarations(stmts: &[Stmt]) -> Vec<Stmt> {
                 };
                 matches!(name, "map" | "set" | "new" | "with") && args.iter().all(is_literal)
             }
+            // `map[launch = 'VWAP Launch']` as it is written, before its
+            // named arguments become a set[] chain
+            Expr::Named { value, .. } => is_literal(value),
             _ => false,
         }
     }
@@ -2319,6 +2322,19 @@ pub fn run_check(
 mod tests {
     use super::*;
     use crate::type_infer::TypeContext;
+
+    /// A map written as a literal is a declaration's first value, as a list
+    /// of literals is: the probes see it (finch's `setup_names`, a map of
+    /// names a handler reads, was left out and no probe of the program
+    /// lowered — "the declarations do not lower")
+    #[test]
+    fn a_map_literal_is_a_declaration() {
+        let src = "use web, ui\nnames = map[launch = 'VWAP Launch', burst = 'Burst']\nsaid = ''\nfn tell[code]\n    said = names[code]\nview render[]\n    return stack[p['`said`'], button['go', click = tell['launch']]]\npage['/', render]\n";
+        let stmts = crate::build(src).unwrap();
+        let decls = declarations(&stmts);
+        assert!(decls.iter().any(|s| matches!(s, Stmt::Assign { name, .. } if name == "names")), "{:?}", decls);
+        assert!(crate::ir_interp::prepare(&decls, "check").is_ok());
+    }
 
     #[test]
     fn later_is_the_sanctioned_blocking_boundary() {

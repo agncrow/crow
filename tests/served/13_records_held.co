@@ -1,0 +1,26 @@
+--- A fact that holds records keeps them between events: the session's
+--- facts cross the loop as JSON, and a record went as nothing in the
+--- interpreter (finch's orders, a list of records placed one by one).
+use web, ui
+
+struct Order [symbol, qty]
+
+orders = []
+
+fn buy[s]
+    orders = push[orders, Order[s, 100]]
+
+view render[]
+    total = 0
+    names = ''
+    for o in orders
+        total = total + o.qty
+        names = '`names` `o.symbol`'
+    return stack[
+        p['orders `len[orders]` shares `total`:`names`'],
+        button['Buy MNTS', click = buy['MNTS']],
+        button['Buy BMR', click = buy['BMR']]
+    ]
+
+serve[3413]
+page['/', render]
