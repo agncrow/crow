@@ -16,6 +16,7 @@ mod lower_ir;
 mod emit_rs;
 mod ops;
 mod baseline;
+mod states;
 mod checker;
 mod db_check;
 mod derive;
@@ -3122,7 +3123,8 @@ fn derive_app(filename: &str) -> Result<(baseline::Artifacts, Vec<baseline::Rule
     let lowered = lower::lower_program(&stmts).map_err(|e| format!("error: {}", e))?;
     let ctx = infer_and_validate(&lowered, describing()).map_err(|e| refine_error_lines(&source, &e))?;
     let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
-    let (artifacts, rules) = baseline::derive_artifacts(&lowered, &ctx, &parts, filename);
+    let (mut artifacts, rules) = baseline::derive_artifacts(&lowered, &ctx, &parts, filename);
+    wireframe::layout_artifacts(&mut artifacts, filename, read_file(filename).contains("wide = true"));
     let (changes, summary) = match baseline::load(filename) {
         None => (Vec::new(), None),
         Some(old) => { let (c, mut s) = baseline::compare(&old, &artifacts); s.dir = baseline::store_dir(filename).display().to_string(); (c, Some(s)) }
@@ -3386,7 +3388,8 @@ fn run_check_pipeline(filename: &str) -> checker::CheckResult {
     // The app baseline: what the program does, derived from the lowered
     // program and diffed against what was accepted (app-baseline-design.md)
     let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
-    let (artifacts, rules) = baseline::derive_artifacts(&lowered, &lctx, &parts, filename);
+    let (mut artifacts, rules) = baseline::derive_artifacts(&lowered, &lctx, &parts, filename);
+    wireframe::layout_artifacts(&mut artifacts, filename, source.contains("wide = true"));
     let changed = baseline::git_changed_files(source_dir);
     let dir = baseline::store_dir(filename).display().to_string();
     match baseline::load(filename) {

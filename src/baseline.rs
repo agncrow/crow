@@ -150,6 +150,9 @@ fn op_str(op: &BinOp) -> &'static str {
 #[derive(Clone, Default)]
 struct Env {
     locals: BTreeMap<String, String>,
+    /// a local holding a tree, as a node, on this path (a path's own: the
+    /// branch that reassigns `body` does not reassign its sibling's)
+    nodes: BTreeMap<String, WNode>,
 }
 
 fn fmt_float(f: f64) -> String {
@@ -568,10 +571,10 @@ struct Wiring {
     view_paths: BTreeMap<String, BTreeSet<String>>,
     /// view → (element, attr, fact) for open/disabled attributes
     gates: BTreeMap<String, Vec<(String, String, String)>>,
-    /// a local holding a tree, as a node, while its view is walked
-    local_nodes: BTreeMap<String, WNode>,
     /// view → (guard, tree) per path
     wires: BTreeMap<String, Vec<(String, WNode)>>,
+    /// view → (guard conditions, tree text) per path, for the states
+    path_trees: BTreeMap<String, Vec<(Vec<String>, String)>>,
 }
 
 /// A value's short name for a placeholder: the last identifier of the
@@ -735,7 +738,7 @@ fn tree(m: &Model, e: &Expr, env: &Env, depth: usize, view: &str, w: &mut Wiring
                 // a local holding a tree prints as that tree
                 if t.starts_with('\u{1}') {
                     out.push_str(&t[1..].lines().map(|l| format!("{}{}\n", pad, l)).collect::<String>());
-                    return w.local_nodes.get(n).cloned().unwrap_or_default();
+                    return env.nodes.get(n).cloned().unwrap_or_default();
                 }
             }
             let t = canon(e, env);
@@ -806,10 +809,10 @@ fn view_tree(m: &Model, name: &str, params: &[String], body: &[Stmt], w: &mut Wi
     let mut env = Env::default();
     for (i, p) in params.iter().enumerate() { env.locals.insert(p.clone(), format!("${}", i + 1)); }
     let mut paths: Vec<(Vec<String>, String)> = Vec::new();
-    w.local_nodes.clear();
     walk_view(m, name, body, env, Vec::new(), w, &mut paths);
     paths.sort();
     paths.dedup();
+    w.path_trees.insert(name.to_string(), paths.clone());
     let mut out = String::new();
     for (conds, t) in paths {
         let head = if conds.is_empty() { "always".to_string() } else { format!("when {}", conds.join(" and ")) };
@@ -829,7 +832,7 @@ fn walk_view(m: &Model, view: &str, stmts: &[Stmt], mut env: Env, conds: Vec<Str
                 if is_node(m, value, &env) {
                     let mut t = String::new();
                     let node = tree(m, value, &env, 0, view, w, &mut t);
-                    w.local_nodes.insert(name.clone(), node);
+                    env.nodes.insert(name.clone(), node);
                     env.locals.insert(name.clone(), format!("\u{1}{}", t));
                 } else {
                     let t = canon(value, &env);
@@ -1100,6 +1103,50 @@ pub fn derive_artifacts(stmts: &[Stmt], ctx: &TypeContext, parts: &BTreeMap<Stri
         art.files.insert(key.clone(), entry.to_string());
         art.reach.insert(key.clone(), vec![format!("view {}", v)]);
         art.entries.insert(key, format!("page {} → {}\n", path, v));
+    }
+    // each page's reachable states, and what each offers (B2)
+    let mut initial: BTreeMap<String, String> = BTreeMap::new();
+    for s in stmts {
+        if let Stmt::Assign { name, value } = s {
+            if facts.contains(name) {
+                initial.insert(name.clone(), canon(value, &Env::default()));
+            }
+        }
+    }
+    // the page's reader: nobody until a handler signs someone in
+    initial.insert("reader".into(), "'nobody'".into());
+    let machine_paths: BTreeMap<String, Vec<crate::states::HandlerPath>> = sigs
+        .iter()
+        .map(|(h, paths)| {
+            let ps = paths
+                .iter()
+                .map(|p| crate::states::HandlerPath {
+                    conds: p.conds.clone(),
+                    writes: p
+                        .writes
+                        .iter()
+                        .map(|(f, v)| (f.clone(), v.clone()))
+                        .chain(p.effects.iter().filter_map(|e| {
+                            let verb = e.strip_prefix("effect ")?.split_whitespace().next()?;
+                            match verb {
+                                "sign_in" => Some(("reader".to_string(), "'someone'".to_string())),
+                                "sign_out" => Some(("reader".to_string(), "'nobody'".to_string())),
+                                _ => None,
+                            }
+                        }))
+                        .collect(),
+                    may: p.may.iter().filter_map(|mw| mw.split_once(" := ").map(|(f, v)| (f.to_string(), v.to_string()))).collect(),
+                })
+                .collect();
+            (h.clone(), ps)
+        })
+        .collect();
+    let program = crate::states::Program { initial: &initial, handlers: &machine_paths, views: &wiring.path_trees };
+    for (path, v) in &pages {
+        let key = format!("states {}", path);
+        art.files.insert(key.clone(), entry.to_string());
+        art.reach.insert(key.clone(), vec![format!("page {}", path), format!("view {}", v)]);
+        art.entries.insert(key, crate::states::machine(&program, path, v));
     }
 
     // kernel rules
@@ -1522,6 +1569,39 @@ mod tests {
 
     const APP: &str = "use web, ui\nsession_id = 0\nending = false\nstatus = ''\nwin_from = '06:55'\nwin_to = '09:30'\nfn say[msg]\n    status = msg\nfn start[]\n    t0 = win_from\n    t1 = win_to\n    if t1 lte t0\n        say['the window ends before it starts']\n        return\n    session_id = 1\n    say['started']\nfn ask_end[]\n    ending = true\nfn cancel_end[]\n    ending = false\nfn end_session[]\n    ending = false\n    session_id = 0\nview setup[]\n    return row[field['From', win_from], button['Start', click = start]]\nview session_view[]\n    return stack[p['`status`'], button['End session', click = ask_end], modal[button['End', click = end_session], button['Keep going', click = cancel_end], open = ending]]\nview render[]\n    if session_id gt 0\n        return session_view[]\n    return setup[]\npage['/', render]\n";
 
+    /// A local holding a tree is the path's own: the branch that reassigns
+    /// it does not reassign it for its sibling (the app's book drew one
+    /// state of such a page twice)
+    #[test]
+    fn a_local_tree_is_each_paths_own() {
+        let src = "use web, ui\nn = 0\nfn go[]\n    n = n + 1\nview first[]\n    return p['first']\nview second[]\n    return button['second', click = go]\nview render[]\n    body = first[]\n    if n gt 0\n        body = second[]\n    return stack[body]\npage['/', render]\n";
+        let (art, _) = artifacts(src);
+        let shown: Vec<String> = art.structure.wires["render"].iter().map(|(_, node)| node.kids.iter().map(|k| k.view.clone()).collect::<Vec<_>>().join(",")).collect();
+        assert!(shown.contains(&"first".to_string()) && shown.contains(&"second".to_string()), "{:?}", shown);
+    }
+
+    /// Each page's reachable states: every control with when it is offered,
+    /// over the facts the guards read; a control moved out of its guard is
+    /// its line changing (B2)
+    #[test]
+    fn each_control_is_said_with_when_it_is_offered() {
+        let (a, _) = artifacts(APP);
+        let s = &a.entries["states /"];
+        // the facts a guard reads, a handler's condition included (`t1 lte t0`)
+        assert!(s.contains("  facts: ending ∈ {false, true} · session_id ∈ {0, 1} · win_from ∈ {'06:55', *} · win_to ∈ {'09:30'}\n"), "{}", s);
+        assert!(s.contains("  button 'Start' → start: when session_id = 0\n"), "{}", s);
+        assert!(s.contains("  button 'End session' → ask_end: when session_id = 1\n"), "{}", s);
+        // the modal's buttons only while it is open, which only a session opens
+        assert!(s.contains("  button 'End' → end_session: when ending = true\n"), "{}", s);
+        assert!(s.contains("  button 'Keep going' → cancel_end: when ending = true\n"), "{}", s);
+        assert!(s.contains("  field 'From' binds win_from: when session_id = 0\n"), "{}", s);
+        let moved = APP.replace("row[field['From', win_from], button['Start', click = start]]", "row[field['From', win_from], button['Start', click = start], button['End session', click = ask_end]]");
+        let (b, _) = artifacts(&moved);
+        assert!(b.entries["states /"].contains("  button 'End session' → ask_end: always\n"), "{}", b.entries["states /"]);
+        let (changes, _) = compare(&a.entries, &b);
+        assert!(changes.iter().any(|c| c.key == "states /"), "{:?}", changes.iter().map(|c| &c.key).collect::<Vec<_>>());
+    }
+
     /// Locals are substituted, so a renamed temporary or an inlined helper
     /// leaves the signature unchanged; a flipped guard changes it.
     #[test]
@@ -1647,3 +1727,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+

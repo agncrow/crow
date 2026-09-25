@@ -44,6 +44,26 @@ their guards. Locals are substituted, values from calls are named
 helper moved between parts changes nothing; a guard flipped from `lte`
 to `lt`, a fact written or not, a button wired elsewhere shows as a diff.
 
+A page's `states` file is its **reachable states**: from the declared
+facts, every state the wired handlers can bring the page to, searched
+over small, abstract values — each fact a guard reads takes a literal it
+is declared with, written with or offered by an input, or `*`, some other
+value (a number whose only literal is 0 holds a positive one: zero or a
+session), and the signed-in reader is `reader`, which `sign_in` and
+`sign_out` write. The file says each control once, with when it is
+offered — `button 'Buy' → sim_trading_buy: when sim_session_session_id =
+*`, `button '10x' → sim_clock_set_speed[10.0]: when … session_id = *,
+except when sim_clock_speed = 10.0` — so a control that becomes
+reachable where it was not ("Buy with no session") is its line changing.
+A closed modal or drawer and a hidden element offer nothing; a guard the
+search cannot judge (a query's cell, a derivation) keeps both ways.
+
+A page's `layout` file is its **layout bounds**: each state of the page
+(each path of its view) laid out by the engine the harness uses, at 1280
+and 390 wide, with its height and every element that runs past the width
+— `390: 4733 high, past the width: button 'End session' by 256` — so a
+row that stops fitting a phone, or a page that changes shape, is a diff.
+
 The first check records the baseline. Every check after diffs against
 it, per declaration, and reports each difference with its cause (the
 part's file), its reach (the views and pages it can affect, through the
@@ -73,9 +93,8 @@ maintain: a `modal`, `drawer` or `toast` whose `open` fact no handler
 sets true, or none sets false; a `disabled` fact no handler writes; a
 control whose handler writes nothing and performs nothing; a function
 that assigns a fact but is wired by nothing and called by nothing. The
-design and the phases after this one (the reachable state machine,
-rehearsal with declared data, the app's chapter in `crow book`) are in
-`app-baseline-design.md`.
+design and the phase after this one (rehearsal with declared data) are
+in `app-baseline-design.md`.
 
 ## The hazard catalog
 

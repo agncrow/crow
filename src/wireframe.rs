@@ -238,6 +238,43 @@ impl<'a> Wire<'a> {
         }
     }
 
+    /// A tree's bounds at a viewport width: its height, and the labelled
+    /// elements that run past the width (the widest first, six at most).
+    pub fn bounds(&mut self, node: &WNode, guard: &str, width: f64, wide: bool) -> Result<Bounds, String> {
+        let mut html = String::new();
+        let mut emitted = Vec::new();
+        let mut seen = Vec::new();
+        self.html(node, "/.", guard, false, 0, &mut seen, &mut html, &mut emitted);
+        let boxes = match self.interp.layout_html(&html, width, wide) {
+            Ok(b) => b,
+            Err(e) => {
+                self.interp = IrInterp::new(&crate::type_infer::TypeContext::new().registry, "wireframe");
+                return Err(e);
+            }
+        };
+        let label = labels(&boxes, &emitted);
+        let height = boxes.iter().map(|b| b.y + b.height).fold(0.0, f64::max);
+        let mut over: Vec<(String, f64)> = Vec::new();
+        for (i, b) in boxes.iter().enumerate() {
+            let past = b.x + b.width - width;
+            if past <= 1.0 {
+                continue;
+            }
+            // the content that does not fit, not every container around it
+            let Some(&(text, kind)) = label.get(&i) else { continue };
+            if kind == "container" || kind == "hidden" {
+                continue;
+            }
+            let what = if text.is_empty() { kind.to_string() } else { format!("{} '{}'", kind, text) };
+            if !over.iter().any(|(w, _)| *w == what) {
+                over.push((what, past));
+            }
+        }
+        over.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then(a.0.cmp(&b.0)));
+        over.truncate(6);
+        Ok(Bounds { height, over })
+    }
+
     /// The wireframe of a tree at a viewport width.
     pub fn svg(&mut self, node: &WNode, guard: &str, width: f64, wide: bool, layers_open: bool) -> Result<String, String> {
         let mut html = String::new();
@@ -259,8 +296,9 @@ impl<'a> Wire<'a> {
 
 /// Draw the boxes: containers as faint outlines, controls filled, text as
 /// text. Labels are paired to boxes by the engine's path and reading order.
-fn draw(boxes: &[LayoutBox], emitted: &[Emitted], width: f64) -> String {
-    // pair: for each path, boxes in reading order ↔ elements in document order
+/// Each box's label and kind: for each engine path, the boxes in reading
+/// order paired with the elements in document order.
+fn labels<'e>(boxes: &[LayoutBox], emitted: &'e [Emitted]) -> BTreeMap<usize, (&'e str, &'static str)> {
     let mut by_path: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (i, b) in boxes.iter().enumerate() { by_path.entry(b.path.as_str()).or_default().push(i); }
     for list in by_path.values_mut() {
@@ -269,7 +307,7 @@ fn draw(boxes: &[LayoutBox], emitted: &[Emitted], width: f64) -> String {
             (ba.y as i64, ba.x as i64).cmp(&(bb.y as i64, bb.x as i64))
         });
     }
-    let mut label: BTreeMap<usize, (&str, &str)> = BTreeMap::new();
+    let mut label: BTreeMap<usize, (&str, &'static str)> = BTreeMap::new();
     let mut taken: BTreeMap<&str, usize> = BTreeMap::new();
     for e in emitted {
         let n = taken.entry(e.path.as_str()).or_insert(0);
@@ -278,6 +316,59 @@ fn draw(boxes: &[LayoutBox], emitted: &[Emitted], width: f64) -> String {
         }
         *n += 1;
     }
+    label
+}
+
+/// A page state laid out at a width: how tall it is, and the elements
+/// whose boxes run past the width, by how much (a phone layout that does
+/// not fit).
+pub struct Bounds {
+    pub height: f64,
+    pub over: Vec<(String, f64)>,
+}
+
+/// Each page's layout, one artifact per page (app-baseline-design.md §7,
+/// B2): per state of the page, its height at desktop and phone widths and
+/// what does not fit, from the engine the harness uses. A change in the
+/// UI's shape is a change in the baseline; an element pushed past the
+/// phone's width is named.
+pub fn layout_artifacts(art: &mut Artifacts, entry: &str, wide: bool) {
+    let pages = art.structure.pages.clone();
+    let wires = art.structure.wires.clone();
+    let mut out: Vec<(String, String, String)> = Vec::new();
+    {
+        let mut wire = Wire::new(art);
+        for (path, v) in &pages {
+            let mut text = format!("layout {} ({})\n", path, v);
+            for (guard, node) in wires.get(v).into_iter().flatten() {
+                text.push_str(&format!("  {}:\n", if guard.is_empty() { "always".to_string() } else { format!("when {}", guard) }));
+                for w in [1280.0, 390.0] {
+                    match wire.bounds(node, guard, w, wide && w > 600.0) {
+                        Ok(b) => {
+                            let mut line = format!("    {}: {} high", w as i64, b.height.round() as i64);
+                            if !b.over.is_empty() {
+                                let items: Vec<String> = b.over.iter().map(|(what, by)| format!("{} by {}", what, by.round() as i64)).collect();
+                                line.push_str(&format!(", past the width: {}", items.join(" · ")));
+                            }
+                            text.push_str(&format!("{}\n", line));
+                        }
+                        Err(e) => text.push_str(&format!("    {}: could not lay out: {}\n", w as i64, e.lines().next().unwrap_or(""))),
+                    }
+                }
+            }
+            out.push((path.clone(), v.clone(), text));
+        }
+    }
+    for (path, v, text) in out {
+        let key = format!("layout {}", path);
+        art.files.insert(key.clone(), entry.to_string());
+        art.reach.insert(key.clone(), vec![format!("page {}", path), format!("view {}", v)]);
+        art.entries.insert(key, text);
+    }
+}
+
+fn draw(boxes: &[LayoutBox], emitted: &[Emitted], width: f64) -> String {
+    let label = labels(boxes, emitted);
     let mut height: f64 = 0.0;
     for b in boxes { height = height.max(b.y + b.height); }
     let height = (height + 12.0).max(40.0);
@@ -356,5 +447,30 @@ mod tests {
         assert!(svg.contains("‹status›"), "dynamic text is a placeholder\n{}", svg);
         assert!(svg.contains(">Name<"), "a field shows its label\n{}", svg);
         assert!(svg.matches("<rect").count() >= 4, "{}", svg);
+    }
+
+    /// A page is laid out once per state at desktop and phone widths, each
+    /// state its own tree; a row that does not fit a phone is named, the
+    /// widest first.
+    #[test]
+    fn a_page_is_laid_out_per_state_and_says_what_does_not_fit() {
+        std::thread::Builder::new().stack_size(256 << 20).spawn(laid_out_per_state).unwrap().join().unwrap();
+    }
+
+    fn laid_out_per_state() {
+        let src = "use web, ui\nn = 0\nfn go[]\n    n = n + 1\nview render[]\n    body = p['done']\n    if n eq 0\n        body = row[button['A long first label to press', click = go], button['A long second label to press', click = go], button['A long third label to press', click = go]]\n    return stack[h1['Page'], body]\npage['/', render]\n";
+        let stmts = crate::build(src).unwrap();
+        let lowered = crate::lower::lower_program(&stmts).unwrap();
+        let mut ctx = crate::type_infer::TypeContext::new();
+        ctx.infer_program(&lowered);
+        let (mut art, _) = crate::baseline::derive_artifacts(&lowered, &ctx, &BTreeMap::new(), "main.co");
+        layout_artifacts(&mut art, "main.co", false);
+        let t = &art.entries["layout /"];
+        let (row_state, done_state) = t.split_once("  when (not (n eq 0)):").expect(t);
+        assert!(row_state.contains("  when (n eq 0):\n    1280: "), "{}", t);
+        // the three buttons fit a desktop and not a phone
+        assert!(!row_state.lines().nth(2).unwrap_or("").contains("past the width"), "{}", t);
+        assert!(row_state.contains("    390: ") && row_state.contains("past the width: button 'A long"), "{}", t);
+        assert!(!done_state.contains("past the width"), "{}", t);
     }
 }
