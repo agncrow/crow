@@ -1,0 +1,6 @@
+[
+  {"expect": "error: cannot convert"},
+  {"event": "fix"},
+  {"expect": "data-crow-widget=\"stars\""},
+  {"expect": ":3}"}
+]

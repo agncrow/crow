@@ -190,12 +190,19 @@ impl Emitter {
     fn widget(&mut self, attrs: &[(String, Expr)], children: &[Expr]) -> String {
         let module = children.first().and_then(|c| if let Expr::Const(Const::Str(s), _) = Emitter::raw(c) { Some(s.clone()) } else { None }).unwrap_or_default();
         let mut props = "serde_json::Value::Null".to_string();
+        // props that can fail: the reason in the widget's place when they do
+        let mut failed: Option<String> = None;
         let mut on: Vec<String> = Vec::new();
         for (k, v) in attrs {
             match k.as_str() {
                 "props" => {
                     self.needs_serde_json = true;
-                    props = format!("serde_json::to_value(&{}).unwrap_or(serde_json::Value::Null)", self.expr(v));
+                    if matches!(self.tt(v), CrowType::Result(_)) {
+                        failed = Some(self.expr(v));
+                        props = "serde_json::to_value(&_p.value).unwrap_or(serde_json::Value::Null)".to_string();
+                    } else {
+                        props = format!("serde_json::to_value(&{}).unwrap_or(serde_json::Value::Null)", self.expr(v));
+                    }
                 }
                 "on" => {
                     for (event, h) in map_literal_pairs(v).unwrap_or_default() {
@@ -207,7 +214,11 @@ impl Emitter {
                 _ => {}
             }
         }
-        format!("CrowVNode::widget({:?}, &{}, &[{}])", module, props, on.join(", "))
+        let widget = format!("CrowVNode::widget({:?}, &{}, &[{}])", module, props, on.join(", "));
+        match failed {
+            Some(p) => format!("{{ let _p = &({}); if !_p.ok {{ CrowVNode::text(&format!(\"error: {{}}\", _p.reason)) }} else {{ {} }} }}", p, widget),
+            None => widget,
+        }
     }
 
     /// `table[frame, click = f, key = 'col', …]`: the kernel's rows.

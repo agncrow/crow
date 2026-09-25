@@ -152,6 +152,13 @@ fn unwrapped(e: &Expr) -> &Expr {
 fn placeholder(cell: CrowValue, ty: &Ty) -> CrowValue {
     match (cell.ok || cell.kind != "missing", ty) {
         (true, _) => cell,
+        // a column that can have missing cells (a nullable database column,
+        // a join's unmatched side): a missing one is an error
+        (false, Ty::Result(_)) => {
+            let mut missing = CrowValue::error_with_kind("missing", "missing", "");
+            missing.trace.clear();
+            missing
+        }
         (false, Ty::Float) => CrowValue::ok(Value::Float(f64::NAN)),
         (false, Ty::Int) => CrowValue::ok(Value::Int(0)),
         (false, Ty::Bool) => CrowValue::ok(Value::Bool(false)),
@@ -189,7 +196,10 @@ const RETURN: &str = "\u{1}return\u{1}";
 pub fn prepare(stmts: &[crate::ast::Stmt], name: &str) -> Result<(Program, crate::type_infer::TypeContext), String> {
     let stmts = crate::lower::lower_program(stmts)?;
     let mut ctx = crate::type_infer::TypeContext::new();
-    ctx.describe_queries = false;
+    // a test's program types its queries' columns as the program does
+    // (crate::describing): with them off, every cell of a test read as
+    // dynamic, or as text before that, while `crow run` typed it
+    ctx.describe_queries = crate::describing();
     ctx.infer_program(&stmts);
     // the gate every pipeline passes: the lowering refuses what `crow run`
     // refuses
@@ -2795,14 +2805,15 @@ mod tests {
     }
 
     /// A local's field indexed in place reads what the copy read: a frame's
-    /// cell (a missing one its column's placeholder), a struct's or map's
-    /// item, from the end with a negative index, and out of range refused.
+    /// cell (a missing one of a join's unmatched side an error of reason
+    /// `missing`), a struct's or map's item, from the end with a negative
+    /// index, and out of range refused.
     #[test]
     fn a_field_indexed_in_place_reads_what_the_copy_read() {
         let src = "use frame\nstruct Bars [c]\ndf = with[with[frame.new[], 'k', [0, 1, 2]], 'p', [1.5, 2.5, 3.5]]\nother = with[with[frame.new[], 'k', [0, 1]], 'q', [7.5, 8.5]]\ndf = join[df, other, 'k', 'left']\nb = Bars[[4.0, 5.0, 6.0]]\nm = map[xs = [1, 2, 3]]\na = df.p[1]\ng = df.q[2]\nz = b.c[-1]\nw = m.xs[0]\nn = b.c[1] + df.p[0]\n";
         let r = run_script(&parse(src), "t").unwrap();
         assert!(matches!(r.var("a").unwrap().value, Value::Float(x) if x == 2.5));
-        assert!(matches!(r.var("g").unwrap().value, Value::Float(x) if x.is_nan()), "{:?}", r.var("g"));
+        assert!(r.var("g").is_some_and(|g| !g.ok && g.reason == "missing"), "{:?}", r.var("g"));
         assert_eq!(format!("{}", r.var("z").unwrap().value), "6");
         assert!(matches!(r.var("w").unwrap().value, Value::Int(1)));
         assert!(matches!(r.var("n").unwrap().value, Value::Float(x) if x == 6.5));

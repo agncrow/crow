@@ -1,0 +1,39 @@
+--- A database column that can hold NULL has fallible cells: a NULL one is
+--- an error of reason 'missing' in both modes, which computes and cannot
+--- be decided on, `.ok` guards it and the guard narrows it to its value. A
+--- column declared NOT NULL keeps plain cells, as does one SQL says has a
+--- value (`count`, `coalesce`); a left join's unmatched side can be NULL.
+--- (Both modes read a NULL cell as its column's placeholder, NaN or 0 — a
+--- guess the program could not tell from a value.)
+use db
+book = db.connect['sqlite://:memory:']
+exec[book, 'CREATE TABLE trades (id INTEGER PRIMARY KEY, symbol TEXT NOT NULL, shares INTEGER NOT NULL, entry_px REAL NOT NULL, exit_px REAL)']
+exec[book, 'CREATE TABLE notes (symbol TEXT NOT NULL, note TEXT NOT NULL)']
+exec[book, 'INSERT INTO trades (symbol, shares, entry_px, exit_px) VALUES (?, ?, ?, ?)', ['AB', 100, 2.5, 3.0]]
+exec[book, 'INSERT INTO trades (symbol, shares, entry_px) VALUES (?, ?, ?)', ['CD', 50, 4.0]]
+exec[book, 'INSERT INTO notes VALUES (?, ?)', ['AB', 'faded']]
+rows = query[book, 'SELECT id, symbol, shares, exit_px, round((exit_px - entry_px) * shares, 2) AS pnl FROM trades ORDER BY id']
+total = 0.0
+for i in range[len[rows]]
+    pnl = rows.pnl[i]
+    sym = rows.symbol[i]
+    if not pnl.ok
+        log['`sym` is open: `pnl.reason`']
+        continue
+    total = total + pnl
+log[total]
+px = rows.exit_px[1]
+log[px.ok]
+log[px]
+log[px * 2.0]
+log[rows.shares[1] * 2 + rows.id[1]]
+counted = query[book, 'SELECT count(*) AS n, coalesce(max(exit_px), 0.0) AS best FROM trades']
+log[counted.n[0] + 1]
+log[counted.best[0] * 10.0]
+noted = query[book, 'SELECT t.symbol, n.note FROM trades t LEFT JOIN notes n ON n.symbol = t.symbol ORDER BY t.id']
+for i in range[len[noted]]
+    note = noted.note[i]
+    if note.ok
+        log['`noted.symbol[i]`: `note`']
+    else
+        log['`noted.symbol[i]`: no note']

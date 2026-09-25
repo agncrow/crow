@@ -2950,7 +2950,31 @@ impl TypeContext {
                         }
                         _ => None,
                     },
-                    "filter" | "sort" | "head" | "tail" | "fill" | "stack" => args.first().and_then(|a| self.frame_schema_of(a)),
+                    "filter" | "sort" | "head" | "tail" => args.first().and_then(|a| self.frame_schema_of(a)),
+                    // fill[df, 'col', value]: that column has no missing cell
+                    "fill" => {
+                        let mut base = args.first().and_then(|a| self.frame_schema_of(a))?;
+                        if let Some(Expr::Str(col)) = args.get(1) {
+                            if let Some(CrowType::Result(inner)) = base.get(col).cloned() {
+                                base.insert(col.clone(), *inner);
+                            }
+                        }
+                        Some(base)
+                    }
+                    // stack[a, b]: the same columns, missing where either's can be
+                    "stack" => {
+                        let mut base = args.first().and_then(|a| self.frame_schema_of(a))?;
+                        for other in args.iter().skip(1).filter_map(|a| self.frame_schema_of(a)) {
+                            for (k, t) in other {
+                                if let (CrowType::Result(_), Some(mine)) = (&t, base.get_mut(&k)) {
+                                    if !matches!(mine, CrowType::Result(_)) {
+                                        *mine = CrowType::Result(Box::new(mine.clone()));
+                                    }
+                                }
+                            }
+                        }
+                        Some(base)
+                    }
                     "new" => Some(BTreeMap::new()),
                     "with" => {
                         let mut base = args.first().and_then(|a| self.frame_schema_of(a)).unwrap_or_default();
@@ -2972,10 +2996,26 @@ impl TypeContext {
                         }
                         Some(out)
                     }
+                    // join[a, b, 'key', how]: a's columns, then b's but its key
+                    // (one a has too is named `_right`); the side a row can
+                    // have no match on has missing cells — b's in a left join,
+                    // a's in a right one, both in an outer one
                     "join" => {
-                        let mut out = args.first().and_then(|a| self.frame_schema_of(a))?;
+                        let left = args.first().and_then(|a| self.frame_schema_of(a))?;
+                        let key = match args.get(2) { Some(Expr::Str(k)) => k.clone(), _ => String::new() };
+                        let how = match args.get(3) { Some(Expr::Str(h)) => h.clone(), _ => "inner".to_string() };
+                        let missing = |t: CrowType, can: bool| match t {
+                            CrowType::Result(_) => t,
+                            t if can => CrowType::Result(Box::new(t)),
+                            t => t,
+                        };
+                        let mut out: BTreeMap<String, CrowType> = left.iter().map(|(k, t)| (k.clone(), missing(t.clone(), how == "right" || how == "outer"))).collect();
                         if let Some(right) = args.get(1).and_then(|a| self.frame_schema_of(a)) {
-                            for (k, v) in right { out.entry(k).or_insert(v); }
+                            for (k, t) in right {
+                                if k == key { continue; }
+                                let name = if left.contains_key(&k) { format!("{}_right", k) } else { k };
+                                out.insert(name, missing(t, how == "left" || how == "outer"));
+                            }
                         }
                         Some(out)
                     }
@@ -3038,11 +3078,7 @@ impl TypeContext {
             match crate::type_infer::describe_with_tables(&url, &scrubbed, &self.ddl) {
                 Ok(cols) => {
                     schema_record::write(&var, &scrubbed, &cols);
-                    let mut schema = BTreeMap::new();
-                    for (n, kind) in cols {
-                        let t = match kind.as_str() { "int" => CrowType::Int, "float" | "datetime" => CrowType::Float, "bool" => CrowType::Bool, _ => CrowType::Str };
-                        schema.insert(n, t);
-                    }
+                    let schema: BTreeMap<String, CrowType> = cols.into_iter().map(|(n, kind)| (n, cell_type_of_kind(&kind))).collect();
                     found = Some(schema);
                     break;
                 }
@@ -3641,11 +3677,73 @@ fn describe_on(key: &str, url: &str, ddl: &[String], sql: &str) -> Result<Vec<(S
                         }
                     }
                 }
+                mark_nullable(db, url, sql, &mut cols);
                 Ok(cols)
             }
             Err(e) => Err(e.clone()),
         }
     })
+}
+
+/// Mark the columns of a statement's rows that can hold NULL, as its tables'
+/// declarations and the statement say (`sql_types::select_nulls`): their
+/// kinds end in `?`, and their cells are fallible. SQLite and Postgres
+/// describe no column's nullability, so each table's declared NOT NULLs
+/// are asked for; a statement that is not read that way can hold NULL in
+/// every column. ClickHouse's DESCRIBE says it itself (`Nullable(…)`).
+fn mark_nullable(db: &crow_db::DbHandle, url: &str, sql: &str, cols: &mut [(String, String)]) {
+    use crow_runtime::frame::Column;
+    let postgres = url.starts_with("postgres");
+    if !postgres && !url.starts_with("sqlite://") {
+        return;
+    }
+    let read = |frame: &crow_runtime::frame::CrowFrame, name: &str| -> Vec<String> {
+        frame.columns.iter().position(|c| c == name).map(|i| match frame.data[i].as_ref() {
+            Column::Str(v) => v.clone(),
+            Column::Int(v) => v.iter().map(|x| x.to_string()).collect(),
+            Column::Bool(v) => v.iter().map(|x| x.to_string()).collect(),
+            _ => Vec::new(),
+        }).unwrap_or_default()
+    };
+    let columns_of = |table: &str| -> Vec<(String, bool)> {
+        if postgres {
+            let q = "SELECT attname::text AS name, attnotnull AS notnull FROM pg_attribute WHERE attrelid = to_regclass(?) AND attnum > 0 AND NOT attisdropped ORDER BY attnum";
+            let Ok(frame) = db.query(q, &[serde_json::Value::String(table.to_string())]) else { return Vec::new() };
+            read(&frame, "name").into_iter().zip(read(&frame, "notnull")).map(|(n, nn)| (n, nn == "true")).collect()
+        } else {
+            let t = table.rsplit('.').next().unwrap_or(table);
+            let Ok(frame) = db.query(&format!("PRAGMA table_info(\"{}\")", t.replace('"', "\"\"")), &[]) else { return Vec::new() };
+            let (names, types, notnull, pk) = (read(&frame, "name"), read(&frame, "type"), read(&frame, "notnull"), read(&frame, "pk"));
+            // an INTEGER PRIMARY KEY is the row's id, never NULL
+            let keys = pk.iter().filter(|p| *p != "0").count();
+            names.into_iter().enumerate().map(|(i, n)| {
+                let rowid = keys == 1 && pk.get(i).map_or(false, |p| p != "0") && types.get(i).map_or(false, |t| t.eq_ignore_ascii_case("integer"));
+                (n, rowid || notnull.get(i).map_or(false, |x| x == "1"))
+            }).collect()
+        }
+    };
+    let nulls = crate::sql_types::select_nulls(sql, postgres, &columns_of).filter(|v| v.len() == cols.len());
+    for (i, (_, kind)) in cols.iter_mut().enumerate() {
+        if nulls.as_ref().map_or(true, |v| v[i]) && !kind.ends_with('?') {
+            kind.push('?');
+        }
+    }
+}
+
+/// A described column's kind as the type of its cells: a column that can
+/// hold NULL (`float?`) has fallible cells, a missing one an error.
+pub(crate) fn cell_type_of_kind(kind: &str) -> CrowType {
+    let (base, nullable) = match kind.strip_suffix('?') {
+        Some(b) => (b, true),
+        None => (kind, false),
+    };
+    let t = match base {
+        "int" => CrowType::Int,
+        "float" | "datetime" => CrowType::Float,
+        "bool" => CrowType::Bool,
+        _ => CrowType::Str,
+    };
+    if nullable { CrowType::Result(Box::new(t)) } else { t }
 }
 
 /// The variable an expression reads, seen through a guard's narrowing:
@@ -3675,7 +3773,8 @@ mod tests {
         let url = format!("sqlite://{}", path.display());
         crow_db::connect(&url, Some(1)).unwrap().exec("CREATE TABLE trades (session_id INTEGER, shares INTEGER, entry_px REAL, exit_px REAL)", &[]).unwrap();
         let cols = describe_with_tables(&url, "SELECT shares, round((exit_px - entry_px) * shares, 2) AS pnl FROM trades WHERE session_id = ?", &[]).unwrap();
-        assert_eq!(cols, vec![("shares".to_string(), "int".to_string()), ("pnl".to_string(), "float".to_string())]);
+        // (no column is declared NOT NULL: each can hold NULL)
+        assert_eq!(cols, vec![("shares".to_string(), "int?".to_string()), ("pnl".to_string(), "float?".to_string())]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -3698,8 +3797,11 @@ mod tests {
         ctx.describe_queries = true;
         ctx.infer_program(&stmts);
         let schema = ctx.frame_schemas.get("rows").cloned().unwrap_or_default();
-        assert_eq!(schema.get("stars"), Some(&CrowType::Int), "{:?}", schema);
-        assert_eq!(schema.get("title"), Some(&CrowType::Str));
+        // an INTEGER PRIMARY KEY is the row's id, never NULL; the others
+        // are not declared NOT NULL, so their cells can be missing
+        assert_eq!(schema.get("id"), Some(&CrowType::Int), "{:?}", schema);
+        assert_eq!(schema.get("stars"), Some(&CrowType::Result(Box::new(CrowType::Int))), "{:?}", schema);
+        assert_eq!(schema.get("title"), Some(&CrowType::Result(Box::new(CrowType::Str))));
         assert!(!path.exists(), "describing creates no database");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -3924,18 +4026,6 @@ pub(crate) mod schema_record {
     /// What `var` answered for `sql` when it last could, if it is kept.
     pub(crate) fn read(var: &str, sql: &str) -> Option<BTreeMap<String, CrowType>> {
         let (_, cols) = parse(&std::fs::read_to_string(file_for(var, sql)?).ok()?)?;
-        Some(
-            cols.into_iter()
-                .map(|(n, k)| {
-                    let t = match k.as_str() {
-                        "int" => CrowType::Int,
-                        "float" | "datetime" => CrowType::Float,
-                        "bool" => CrowType::Bool,
-                        _ => CrowType::Str,
-                    };
-                    (n, t)
-                })
-                .collect(),
-        )
+        Some(cols.into_iter().map(|(n, k)| (n, super::cell_type_of_kind(&k))).collect())
     }
 }

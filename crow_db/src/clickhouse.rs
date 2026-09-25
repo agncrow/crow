@@ -487,6 +487,16 @@ fn placeholder_count(sql: &str) -> usize {
     n
 }
 
+/// Whether a ClickHouse type can hold NULL: `Nullable(…)`, alone or
+/// inside `LowCardinality(…)`. `Nullable(Nothing)` is a value made only
+/// of a parameter, which describing stands NULL in for: its type is not
+/// known, not able to be missing.
+fn ch_nullable(t: &str) -> bool {
+    let t = t.trim();
+    let t = t.strip_prefix("LowCardinality(").and_then(|x| x.strip_suffix(')')).unwrap_or(t);
+    t.starts_with("Nullable(") && t != "Nullable(Nothing)"
+}
+
 /// A ClickHouse type name to the kinds the compiler knows.
 fn ch_kind(t: &str) -> &'static str {
     let mut t = t.trim();
@@ -520,7 +530,12 @@ impl CrowDb for CrowClickhouseDb {
         if names.is_empty() || names.len() != types.len() {
             return Err("clickhouse describe: unexpected DESCRIBE output".into());
         }
-        Ok(names.into_iter().zip(types).map(|(n, t)| (n, ch_kind(&t).to_string())).collect())
+        // a column that can hold NULL is marked `?`: its cells are fallible
+        Ok(names
+            .into_iter()
+            .zip(types)
+            .map(|(n, t)| (n, format!("{}{}", ch_kind(&t), if ch_nullable(&t) { "?" } else { "" })))
+            .collect())
     }
 
     fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
@@ -664,7 +679,23 @@ impl CrowDb for CrowClickhouseDb {
 
 #[cfg(test)]
 mod param_tests {
-    use super::{substitute_params, is_transport_error};
+    use super::{ch_kind, ch_nullable, substitute_params, is_transport_error};
+
+    /// DESCRIBE's types: a `Nullable` one, alone or inside
+    /// `LowCardinality`, can hold NULL; an array of nullable values is a
+    /// value
+    #[test]
+    fn a_nullable_type_can_hold_null() {
+        assert!(ch_nullable("Nullable(Float64)"));
+        assert!(ch_nullable("LowCardinality(Nullable(String))"));
+        assert!(!ch_nullable("Float64"));
+        assert!(!ch_nullable("LowCardinality(String)"));
+        assert!(!ch_nullable("Array(Nullable(Float64))"));
+        // a value made only of a parameter, NULL while describing
+        assert!(!ch_nullable("Nullable(Nothing)"));
+        assert_eq!(ch_kind("LowCardinality(Nullable(String))"), "str");
+        assert_eq!(ch_kind("Nullable(UInt64)"), "int");
+    }
 
     /// The message a dead channel produces is a transport error; a
     /// server's own exception is not

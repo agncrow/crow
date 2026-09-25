@@ -895,6 +895,11 @@ fn render_widget(vals: &[CrowValue]) -> String {
             Value::Map(m) => {
                 for (k, val) in m {
                     match (k.as_str(), &val.value) {
+                        // props that failed: the widget shows the reason in
+                        // its place, as a control shows a failed argument
+                        ("props", _) if val.is_error() => {
+                            return crate::harness::html_escape_text(&format!("error: {}", val.reason));
+                        }
                         ("props", _) => props = crate::builtins::crow_to_json("", val).unwrap_or(serde_json::Value::Null),
                         ("on", Value::Map(evs)) => {
                             for (event, h) in evs {

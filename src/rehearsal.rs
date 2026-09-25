@@ -174,7 +174,8 @@ impl Rehearsal {
         for (i, (_, kind)) in cols.iter().enumerate() {
             let cells: Vec<&serde_json::Value> = rows.iter().map(|r| r.get(i).unwrap_or(&serde_json::Value::Null)).collect();
             validity.push(cells.iter().map(|c| !c.is_null()).collect());
-            data.push(match kind.as_str() {
+            // a column that can hold NULL is marked `float?`
+            data.push(match kind.trim_end_matches('?') {
                 "int" => Column::Int(cells.iter().map(|c| c.as_i64().unwrap_or(0)).collect()),
                 "float" | "datetime" => Column::Float(cells.iter().map(|c| c.as_f64().unwrap_or(0.0)).collect()),
                 "bool" => Column::Bool(cells.iter().map(|c| c.as_bool().unwrap_or(false)).collect()),
@@ -192,7 +193,7 @@ impl Rehearsal {
         let mut validity = Vec::new();
         for (name, kind) in &cols {
             validity.push(vec![true; n]);
-            data.push(match kind.as_str() {
+            data.push(match kind.trim_end_matches('?') {
                 "int" => Column::Int((1..=n as i64).collect()),
                 "float" | "datetime" => Column::Float((1..=n).map(|i| i as f64).collect()),
                 "bool" => Column::Bool((0..n).map(|i| i % 2 == 0).collect()),
