@@ -1557,6 +1557,21 @@ impl<'a> Lowerer<'a> {
             }
         }
         self.check_callee(callee, args);
+        // a mask decides each row, and an error decides nothing: a list of
+        // values that can fail (a cell of a column that can be missing) is
+        // not a mask, in either mode (compiled, it did not build; the
+        // interpreter stopped only when a cell was missing)
+        if name == "filter" && matches!(module.as_deref(), None | Some("frame")) {
+            if let Some(Ty::List(item)) = lowered.get(1).map(|m| m.ty()) {
+                if item.is_result() {
+                    let what = match args.get(1) {
+                        Some(A::Ident(v)) => format!("'{}'", crate::lower::shown(v)),
+                        _ => "the mask".to_string(),
+                    };
+                    self.refuse(format!("filter: {} holds values that can fail — a cell of a column that can be missing — and a mask decides every row: fill the column first (fill[frame, 'column', value]) or guard each value with .ok", what));
+                }
+            }
+        }
         let ty = self.call_type(callee, args, &arg_types, None);
         let current = self.current_fn.clone();
         if let Some(m) = module {

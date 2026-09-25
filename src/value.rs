@@ -256,7 +256,7 @@ impl CrowValue {
     fn fmt_item(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.ok {
             self.value.fmt_repr(f)
-        } else if self.kind == "missing" {
+        } else if self.kind == "missing" && self.reason == "nan" {
             // a frame column's missing cell, as the display kernel shows it
             write!(f, "nan")
         } else {

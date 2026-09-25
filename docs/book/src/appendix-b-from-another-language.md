@@ -95,7 +95,7 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `df$col` | `df.col` |
 | `nrow(df)` | `len[df]` |
 | `group_by %>% summarise` | `group[df, 'dept', ['salary', 'mean']]` |
-| `NULL`, `NA` | no null — error values; missing cells in frames are excluded by filters |
+| `NULL`, `NA` | no null — error values: a NULL cell read from a database, or a frame's missing cell, is an error of reason `missing`; filters exclude missing cells |
 | `TRUE/FALSE` | `true/false` |
 | `==  !=  <=` | `eq  ne  lte` |
 | `&&  \|\|  !`, `&  \|` | `and  or  not` (they work element-wise on columns too) |

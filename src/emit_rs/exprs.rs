@@ -627,6 +627,14 @@ impl Emitter {
             }
             CrowType::FrameCol => {
                 let getter = Self::cell_getter(&Self::inner(&self.tt(whole)));
+                // a column that can have missing cells: the cell is a result,
+                // a missing one an error
+                if matches!(self.tt(whole), CrowType::Result(_)) {
+                    return format!(
+                        "{{ let _i = {}; let _c = &{}; let _idx = if _i < 0 {{ (_c.len() as i64 + _i) as usize }} else {{ _i as usize }}; let _ok = _c.valid[_idx]; let _why = if _ok {{ String::new() }} else {{ \"missing\".to_string() }}; CrowResult {{ ok: _ok, value: _c.{}(_idx), reason: _why.clone(), kind: _why, trace: vec![], captured: 0.0 }} }}",
+                        idx, b, getter
+                    );
+                }
                 format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.{}(_idx) }}", idx, b, b, getter)
             }
             CrowType::Map(_) => {

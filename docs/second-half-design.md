@@ -103,8 +103,21 @@ typed is `Json` in both modes — the interpreter's missing one JSON's null,
 the compiled program's cell read with `get_json` — so arithmetic on it is
 refused until `int[]`, `float[]` or `str[]` says what it is (parity 90;
 the compiled program's JSON null, shown and tested as the error value the
-spec says it is, came with it). Decision 3 (a nullable column's cells
-fallible) comes next.
+spec says it is, came with it). *Decision 3 built (2026-09-25):* a column the schema says can have
+missing cells has `Result` cells in both modes — the interpreter's missing
+one an error of reason `missing`, the compiled program's a `CrowResult`
+made from the column's validity. A database column's nullability comes
+from the statement and the tables' declared NOT NULLs
+(`sql_types::select_nulls`: outer-join sides, SQL's rules for expressions
+and aggregates, the columns a WHERE compares), or from ClickHouse's
+`Nullable`; the schema record keeps it as `float?`. A join's unmatched side
+is typed the same way, and `fill` makes a column's cells plain (parity 65,
+parity 92); a mask built from fallible cells is refused, as a decision on
+values that can fail. A test's program now asks its databases too
+(`ir_interp::prepare` had describing off, so a test read every query cell
+as dynamic). Moving finch across found a handler's specialized copies
+lowered as plain functions (their fact writes lost) and an int handed to
+a float parameter left unconverted in the compiled program, both fixed.
 
 ## 3. Shapes
 

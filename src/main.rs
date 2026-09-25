@@ -3339,7 +3339,9 @@ fn ir_of_file(entry: &str, describe: bool) -> Result<String, String> {
 
 #[cfg(test)]
 mod ir_tests {
-    /// The IR must exist for every program the modes are held to agree on.
+    /// The IR must exist for every program the modes are held to agree on,
+    /// lowered as every pipeline lowers it: its queries' columns asked of
+    /// its databases.
     #[test]
     fn every_parity_program_lowers_to_the_ir() {
         let mut failures = Vec::new();
@@ -3348,7 +3350,7 @@ mod ir_tests {
             let p = entry.unwrap().path();
             if p.extension().map_or(false, |x| x == "co") {
                 count += 1;
-                if let Err(e) = super::ir_of_file(&p.to_string_lossy(), false) {
+                if let Err(e) = super::ir_of_file(&p.to_string_lossy(), true) {
                     failures.push(format!("{}: {}", p.display(), e));
                 }
             }
@@ -3389,7 +3391,7 @@ fn generated_cargo_toml(project_name: &str, deps: &str) -> String {
 /// return. Every pipeline — run, run -i, test, check, the book, each part
 /// alone — passes the same answer, so a program refused for its columns'
 /// types is refused by all of them; `CROW_NO_DESCRIBE` turns it off.
-fn describing() -> bool {
+pub(crate) fn describing() -> bool {
     std::env::var("CROW_NO_DESCRIBE").is_err()
 }
 
@@ -5583,7 +5585,8 @@ mod module_parts_tests {
         let stmts = expand_module_imports(&build(&src).unwrap(), &dir, &mut std::collections::HashSet::new());
         let ctx = infer_and_validate(&lower::lower_program(&stmts).unwrap(), true).unwrap();
         let cols = ctx.frame_schemas.get("r").cloned().unwrap_or_default();
-        assert_eq!(cols.get("n"), Some(&type_infer::CrowType::Int), "{:?}", cols);
+        // columns not declared NOT NULL: their cells can be missing
+        assert_eq!(cols.get("n"), Some(&type_infer::CrowType::Result(Box::new(type_infer::CrowType::Int))), "{:?}", cols);
         let kept: Vec<_> = std::fs::read_dir(dir.join(".crow/schema")).unwrap().collect();
         assert_eq!(kept.len(), 1, "one statement kept");
         // not answered: a server that is not there types it from the record
@@ -5593,8 +5596,33 @@ mod module_parts_tests {
         let stmts = expand_module_imports(&build(&src).unwrap(), &dir, &mut std::collections::HashSet::new());
         let ctx = infer_and_validate(&lower::lower_program(&stmts).unwrap(), true).unwrap();
         let cols = ctx.frame_schemas.get("r").cloned().unwrap_or_default();
-        assert_eq!(cols.get("px"), Some(&type_infer::CrowType::Float), "{:?}\n{}", cols, text);
+        assert_eq!(cols.get("px"), Some(&type_infer::CrowType::Result(Box::new(type_infer::CrowType::Float))), "{:?}\n{}", cols, text);
+        assert!(text.contains("\"float?\""), "the record keeps that a column can hold NULL: {}", text);
         assert!(ctx.describe_notes.iter().any(|n| n.contains("typed from .crow/schema")), "{:?}", ctx.describe_notes);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A test block's program types its queries' columns as the program
+    /// does: a NULL cell of a column that can hold one is a missing cell, an
+    /// error of reason `missing`, as `crow run` reads it. (The test's
+    /// program was lowered without asking the database, so its cells were
+    /// dynamic — a NULL one JSON's null — and a handler handed one was
+    /// copied for a dynamic value.)
+    #[test]
+    fn a_test_types_its_queries_as_the_program_does() {
+        let dir = std::env::temp_dir().join(format!("crow_test_describes_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("t.db");
+        let h = crow_db::connect(&format!("sqlite://{}", db.display()), None).unwrap();
+        h.exec("CREATE TABLE bars (sym TEXT NOT NULL, px REAL)", &[]).unwrap();
+        h.exec("INSERT INTO bars (sym) VALUES ('AB')", &[]).unwrap();
+        let src = format!("use db\nbook = connect['sqlite://{}']\ntest a_null_cell_is_missing[]\n    r = query[book, 'SELECT sym, px FROM bars']\n    px = r.px[0]\n    assert[not px.ok and px.reason eq 'missing', 'px is `px.reason`']\n", db.display());
+        let stmts = expand_module_imports(&build(&src).unwrap(), &dir, &mut std::collections::HashSet::new());
+        let stmts = lower::lower_program(&stmts).unwrap();
+        let (issues, counts) = checker::run_test_blocks(&stmts);
+        assert_eq!(counts.blocks, 1);
+        assert!(issues.is_empty(), "{:?}", issues);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -5734,7 +5762,7 @@ mod module_parts_tests {
         std::fs::create_dir_all(dir.join("sim")).unwrap();
         std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
         let url = format!("sqlite://{}", dir.join("book.db").display());
-        crow_db::connect(&url, Some(1)).unwrap().exec("CREATE TABLE nums (n INTEGER)", &[]).unwrap();
+        crow_db::connect(&url, Some(1)).unwrap().exec("CREATE TABLE nums (n INTEGER NOT NULL)", &[]).unwrap();
         std::fs::write(dir.join("sim/rows.co"), format!("use web, ui, db\n\nbook = db.connect['{}']\n\nderive first\n    r = query[book, 'SELECT n FROM nums']\n    x = r.n[0]\n    x = 'a'\n    return x\n\nview panel[]\n    return p['`first`']\n", url)).unwrap();
         let path = std::fs::canonicalize(dir.join("sim/rows.co")).unwrap();
         let err = validate_part_alone(&path).unwrap_err();

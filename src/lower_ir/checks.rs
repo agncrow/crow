@@ -985,6 +985,18 @@ mod tests {
         assert!(err.contains("in band: derivations are not visible inside functions — read 'cfg' in a view or handler"), "{}", err);
     }
 
+    /// A mask decides every row: a list of values that can fail — cells of
+    /// a join's unmatched side — is refused as one in both modes (compiled,
+    /// it did not build; the interpreter stopped only when a cell was
+    /// missing), and a filled column's cells make one
+    #[test]
+    fn a_mask_of_values_that_can_fail_is_refused() {
+        let src = "use frame\na = with[with[frame.new[], 'k', [0, 1]], 'p', [1.5, 2.5]]\nb = with[with[frame.new[], 'k', [0]], 'q', [7.5]]\nj = join[a, b, 'k', 'left']\nkeep = for i in range[len[j]]\n    j.q[i] gt 1.0\nlog[len[filter[j, keep]]]\n";
+        let err = check_source(src).unwrap_err();
+        assert!(err.contains("filter: 'keep' holds values that can fail — a cell of a column that can be missing — and a mask decides every row: fill the column first (fill[frame, 'column', value]) or guard each value with .ok"), "{}", err);
+        assert!(check_source(&src.replace("j = join[a, b, 'k', 'left']", "j = fill[join[a, b, 'k', 'left'], 'q', 0.0]")).is_ok());
+    }
+
     /// A cell of a column nothing typed is dynamic: arithmetic on it is
     /// refused until the program says what it is (typed frames, decision 1)
     #[test]

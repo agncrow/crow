@@ -1,11 +1,14 @@
---- A frame's missing cell: a column shows it as nan, its .ok says it is
---- missing, and read one at a time it is its column's placeholder, as a
---- filter reads it: NaN in a number column, so it compares as false. A
---- left join leaves cells missing. A column no compiler can type (a file
+--- A frame's missing cell: a column shows it as nan and its .ok says it is
+--- missing. A column that can have missing cells — a join's unmatched
+--- side, a database column that can be NULL — has fallible cells: a
+--- missing one is an error of reason 'missing', which computes and cannot
+--- be decided on, and `fill` gives the column a value where it had none,
+--- so its cells are plain again. A column no compiler can type (a file
 --- loaded as the program runs) has dynamic cells, and a missing one is
---- JSON's null, an error value. (The interpreter read a missing cell
---- as an error, so a collecting loop over one dropped the row; compiled, a
---- comparison with a cell read did not build.)
+--- JSON's null, an error value. (The interpreter read a missing cell as an
+--- error, so a collecting loop over one dropped the row; compiled, a
+--- comparison with a cell read did not build; then both read a missing
+--- cell as its column's placeholder, NaN or 0 or false — a guess.)
 use frame
 write['parity65.csv', 'a,b,s\n1,,x\n2,3,\n']
 df = load['parity65.csv']
@@ -18,10 +21,13 @@ a = with[with[frame.new[], 'symbol', ['A', 'B', 'C']], 'gate', [1, 0, 0]]
 b = with[with[frame.new[], 'symbol', ['C', 'A']], 'rsi', [75.0, 20.0]]
 j = join[a, b, 'symbol', 'left']
 x = j.rsi[1]
+log[x.ok]
+log[x.reason]
 log[x gt 70.0]
-log[x lte 70.0]
-hot = for i in range[len[j]]
-    j.gate[i] eq 1 or j.rsi[i] gt 70.0
+log[j.rsi[0] + 1.0]
+f = fill[j, 'rsi', 0.0]
+hot = for i in range[len[f]]
+    f.gate[i] eq 1 or f.rsi[i] gt 70.0
 log[hot]
-log[len[filter[j, hot]]]
+log[len[filter[f, hot]]]
 log[len[filter[j, j.rsi gt 70.0]]]
