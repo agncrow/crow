@@ -3499,6 +3499,20 @@ fn format_location(filename: &str, issue: &checker::Issue, fn_lines: &std::colle
     filename.to_string()
 }
 
+/// The module prefix of the part a declaration came from (the longest
+/// that fits); none for the entry file's own. Inside that part's
+/// functions its own facts and derivations carry the prefix, so a name
+/// without it is never the part's own.
+pub(crate) fn part_prefix_of_declaration(name: &str) -> Option<String> {
+    EXPANSION_PARTS.with(|p| {
+        p.borrow()
+            .iter()
+            .filter(|(prefix, _)| name.starts_with(prefix.as_str()))
+            .max_by_key(|(prefix, _)| prefix.len())
+            .map(|(prefix, _)| prefix.clone())
+    })
+}
+
 /// The part file a declaration came from, by its module prefix (the
 /// longest that fits); none for the entry file's own.
 fn file_of_declaration(name: &str) -> Option<String> {
@@ -4978,6 +4992,40 @@ mod module_parts_tests {
         let lowered = lower::lower_program(&stmts).unwrap();
         let checked = infer_and_validate(&lowered, false);
         assert!(checked.is_ok(), "{:?}", checked.err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A part's function is its own in the whole program: its locals and
+    /// parameters are not the entry's facts or derivations of those names,
+    /// nor the functions another part imports (finch's detectors, in the
+    /// app: a local `ch` beside the entry's connection was refused as a type
+    /// change and made the function a handler, a parameter `secs` read as
+    /// the entry's derivation, a local list `rsi` as chart's function where
+    /// the scanner imports chart, a parameter `vwap` was reserved)
+    #[test]
+    fn a_parts_locals_are_its_own_in_the_whole_program() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_own_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(
+            dir.join("lib/calc.co"),
+            "fn spread[ts, secs, vwap]\n    ch = []\n    rsi = []\n    for t in ts\n        ch = push[ch, t * secs - vwap]\n        rsi = push[rsi, t]\n    first = rsi[0]\n    return ch[0] + first\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("lib/scan.co"), "use math, chart\nfn smooth[xs]\n    return sum[xs]\n").unwrap();
+        let stmts = build("use web, ui\nuse lib.calc\nuse lib.scan\nch = 'conn'\nderive secs\n    return len[ch]\nview v[]\n    return p['`calc.spread[[1.0, 2.0], 2.0, 0.5]` `scan.smooth[[1.0, 2.0]]` `secs`']\npage['/', v]\n").unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let stmts = expand_module_imports(&stmts, &dir, &mut visited);
+        let lowered = lower::lower_program(&stmts).unwrap();
+        let checked = infer_and_validate(&lowered, false);
+        assert!(checked.is_ok(), "{:?}", checked.err());
+        let mut ctx = checked.unwrap();
+        let program = lower_ir::lower(&lowered, &mut ctx, "parts").unwrap();
+        let text = ir::print(&program);
+        assert!(text.contains("pure lib_calc_spread("), "a plain function, not a handler:\n{}", text);
+        assert!(text.contains("let ch: List(Float) = []"), "{}", text);
+        assert!(text.contains("secs: Float"), "{}", text);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

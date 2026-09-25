@@ -1,0 +1,28 @@
+--- A test reads a derivation that holds a record, field by field, and a
+--- record inside it: CI runs it against the interpreter and against the
+--- compiled program (crow test --compiled), whose harness had no form for
+--- a record and refused to read one.
+use web, ui
+struct Items [names, total]
+struct Stats [count, mean, items]
+n = 3
+derive stats
+    names = []
+    total = 0.0
+    for i in range[n]
+        names = push[names, 'item`i`']
+        total = total + float[i]
+    return Stats[n, total / float[n], Items[names, total]]
+view summary[]
+    return p['`stats.count` items, mean `stats.mean`']
+page['/', summary]
+
+test a_record_reads_by_field[]
+    a = app[summary]
+    assert[stats.count eq 3, 'count `stats.count`']
+    assert[stats.mean eq 1.0, 'mean `stats.mean`']
+    assert[stats.items.names eq ['item0', 'item1', 'item2'], 'names `stats.items.names`']
+    assert[stats.items.total eq 3.0]
+    change[a, 'n', 1]
+    assert[stats.count eq 1 and stats.items.names eq ['item0']]
+    assert[contains[html[a], '1 items'], 'the page `html[a]`']

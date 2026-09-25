@@ -1,0 +1,29 @@
+--- Numbers compared with `eq` by value and shape, however they are held: a
+--- list built by `push` against a literal (interpreted it was always
+--- false; compiled, it did not build), ints against floats, a list of rows
+--- against a matrix literal, and a list whose items could have failed.
+secs = [0.0, 30.0, 59.0, 60.0, 61.0]
+minutes = []
+for s in secs
+    minutes = push[minutes, floor[s / 60.0] * 60.0]
+log[minutes eq [0.0, 0.0, 0.0, 60.0, 60.0]]
+log[[0.0, 0.0, 0.0, 60.0, 60.0] eq minutes]
+log[minutes ne [0.0, 0.0, 0.0, 60.0, 61.0]]
+log[minutes eq [0.0, 60.0]]
+
+counts = []
+for i in range[3]
+    counts = push[counts, i]
+log[counts eq [0, 1, 2]]
+log[counts eq [0.0, 1.0, 2.0]]
+
+rows = []
+for i in range[2]
+    rows = push[rows, [float[i], float[i] + 1.0]]
+log[rows eq [[0.0, 1.0], [1.0, 2.0]]]
+log[rows eq [[0.0, 1.0], [1.0, 3.0]]]
+log[[[1, 2], [3, 4]] eq [[1, 2], [3, 4]]]
+
+parsed = []
+parsed = push[parsed, float['2.5']]
+log[parsed eq [2.5]]

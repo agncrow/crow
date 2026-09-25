@@ -710,7 +710,7 @@ impl<'a> Lowerer<'a> {
             FnKind::View
         } else if self.ctx.view_handlers.contains(name) {
             FnKind::Handler
-        } else if self.in_ui && assigns_any(body, &self.ctx.facts) {
+        } else if self.in_ui && assigns_any(body, &own_facts(name, &self.ctx.facts)) {
             // (a script has no facts: its function's first assignment of a
             // name is a local, whatever the top level calls)
             FnKind::Helper
@@ -747,10 +747,29 @@ impl<'a> Lowerer<'a> {
         // the program's types keeps the top level out of its body, so a local
         // named like one is not taken for it (`s = s + x` in a helper beside
         // a top-level `s` was refused as a type change)
-        let hidden = if kind == FnKind::Pure { self.v.types.as_mut().map(|t| std::mem::take(&mut t.vars)) } else { None };
+        // — nor a derivation, which no function reads; its own parameters and
+        // locals are its own names, of types not known here (a guess from a
+        // call site must not refuse it), so a local named like a function
+        // another file imports is the local (`rsi[jg]` indexes a list)
+        let hidden = if kind == FnKind::Pure {
+            let mut own: HashSet<String> = params.iter().cloned().collect();
+            own.extend(crate::lower::assigned(body));
+            loop_vars(body, &mut own);
+            let seen: BTreeMap<String, CrowType> = own.iter().map(|n| (n.clone(), CrowType::Unknown)).collect();
+            self.v.types.as_mut().map(|t| {
+                let vars = std::mem::replace(&mut t.vars, seen.into_iter().collect());
+                let derives = std::mem::take(&mut t.derives);
+                let assigned = std::mem::replace(&mut t.body_assigned, Some(own.iter().cloned().collect()));
+                (vars, derives, assigned)
+            })
+        } else {
+            None
+        };
         let block = self.lower_block(body);
-        if let (Some(vars), Some(t)) = (hidden, self.v.types.as_mut()) {
+        if let (Some((vars, derives, assigned)), Some(t)) = (hidden, self.v.types.as_mut()) {
             t.vars = vars;
+            t.derives = derives;
+            t.body_assigned = assigned;
         }
         self.scopes.pop();
         self.v.reactive = false;
@@ -762,19 +781,21 @@ impl<'a> Lowerer<'a> {
     }
 
     fn lower_derive(&mut self, name: &str, fresh: f64, body: &[S]) -> Result<Derive, String> {
-        let saved = self.ctx.vars.clone();
+        // a derivation's locals are its own, as a function's are: typed in a
+        // body of their own, first assignments new bindings (an empty list's
+        // type is its own pushes', not another body's local of that name)
+        let scope = self.ctx.enter_body(name);
         for s in body {
             self.ctx.infer_stmt(s);
         }
         self.at = Where::Derive;
         self.current_fn = name.to_string();
-        // a derivation's locals are its own, as a function's are
         self.v.local_types.clear();
         self.v.stored.clear();
         self.scopes.push(HashSet::new());
         let mut block = self.lower_block(body)?;
         self.scopes.pop();
-        self.ctx.vars = saved;
+        self.ctx.leave_body(scope);
         place_moves_in(&mut block, &HashSet::new(), Some(&HashSet::new()));
         let ty = self.ctx.vars.get(name).map(ty_of).unwrap_or(Ty::Unknown);
         let mut reads = ReadSet::default();
@@ -1629,6 +1650,35 @@ impl<'a> Lowerer<'a> {
 }
 
 // ── analyses over the parser's tree ─────────────────────────────────
+
+/// The facts a function can write: a part's function its own part's, whose
+/// names carry the part's prefix — an unprefixed name there is a local.
+fn own_facts(f: &str, facts: &BTreeSet<String>) -> BTreeSet<String> {
+    match crate::part_prefix_of_declaration(f) {
+        Some(p) => facts.iter().filter(|m| m.starts_with(p.as_str())).cloned().collect(),
+        None => facts.clone(),
+    }
+}
+
+/// The loop variables of a body, at any depth.
+fn loop_vars(body: &[S], out: &mut HashSet<String>) {
+    for s in body {
+        match s {
+            S::For { var, body, .. } => {
+                out.insert(var.clone());
+                loop_vars(body, out);
+            }
+            S::While { body, .. } => loop_vars(body, out),
+            S::If { then_body, else_body, .. } => {
+                loop_vars(then_body, out);
+                if let Some(b) = else_body {
+                    loop_vars(b, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
 
 fn assigns_any(body: &[S], names: &BTreeSet<String>) -> bool {
     body.iter().any(|s| match s {

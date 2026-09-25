@@ -1,0 +1,10 @@
+--- A call inside a string's interpolation takes its named arguments and
+--- defaults as a call outside the string does (it was refused: "expects 2
+--- arguments, got 1").
+fn greet[name, greeting = 'hello', times = 1]
+    return '`greeting` `name` x`times`'
+
+n = 'bo'
+log[greet[n]]
+log['said: `greet[n]`']
+log['said: `greet[n, times = 3]`']

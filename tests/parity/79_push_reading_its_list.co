@@ -1,0 +1,13 @@
+--- A push whose item reads the list it grows: the list is read again after
+--- it would have been moved into the push, so it is copied (compiled, it
+--- was moved and the program did not build).
+fn grow[n]
+    xs = []
+    for i in range[n]
+        xs = push[xs, 10.0 + float[len[xs]]]
+    return xs
+
+log[grow[3]]
+ys = ['a']
+ys = push[ys, '`len[ys]`']
+log[ys]

@@ -1,0 +1,15 @@
+--- A local sliced from a parameter, indexed, then passed to a function:
+--- the index is not a call, and the local is a list (compiled, a function
+--- was guessed from `hs[0]` while the parameter was still untyped, the
+--- other function took it, and the program did not build).
+struct Bars [h]
+
+fn edge[ys]
+    return ys[0] + ys[1]
+
+fn around[cd]
+    hs = slice[cd.h, 0, 2]
+    top = hs[0]
+    return edge[hs] + top
+
+log[around[Bars[[1.0, 2.0, 3.0]]]]

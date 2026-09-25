@@ -506,10 +506,19 @@ pub fn values_equal(a: &CrowValue, b: &CrowValue) -> bool {
         (Value::Int(x), Value::Dual(y, _)) => (*x as f64) == *y,
         (Value::Str(x), Value::Str(y)) => x == y,
         (Value::Bool(x), Value::Bool(y)) => x == y,
-        (Value::NumArray(x), Value::NumArray(y)) => x.to_vec() == y.to_vec(),
+        (Value::NumArray(x), Value::NumArray(y)) => x == y,
         (Value::Array(x), Value::Array(y)) => {
             x.len() == y.len()
                 && x.iter().zip(y.iter()).all(|(a, b)| values_equal(a, b))
+        }
+        // a list of numbers and a tensor hold numbers alike: equal when the
+        // numbers and the shape are (a vector's numbers, a matrix's rows)
+        (Value::Array(x), Value::NumArray(t)) | (Value::NumArray(t), Value::Array(x)) => {
+            if t.ndim() == 0 {
+                return false;
+            }
+            let ys = iter_items(&CrowValue::ok(Value::NumArray(t.clone()))).unwrap_or_default();
+            x.len() == ys.len() && x.iter().zip(ys.iter()).all(|(a, b)| values_equal(a, b))
         }
         _ => false,
     }
@@ -525,23 +534,7 @@ pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, 
         if arg_vals.len() != 1 {
             return Err("array indexing requires exactly one argument".to_string());
         }
-        let index_val = arg_vals[0].unwrap_or_propagate()?;
-        match index_val {
-            Value::Int(idx) => {
-                let idx = *idx;
-                let len = items.len() as i64;
-                let resolved = if idx < 0 { len + idx } else { idx };
-                if resolved < 0 || resolved >= len {
-                    return Err(format!(
-                        "index {} out of bounds for array of length {}",
-                        idx,
-                        items.len()
-                    ));
-                }
-                Ok(items[resolved as usize].clone())
-            }
-            _ => Err("array index must be an integer".to_string()),
-        }
+        Ok(items[list_position(&arg_vals[0], items.len())?].clone())
     }
     Value::NumArray(tensor) => {
         // NumArray[index] - indexing
@@ -648,6 +641,42 @@ pub fn valid(obj: CrowValue) -> Result<CrowValue, String> {
 /// A field of a value: the status fields on anything, `len`, the datetime
 /// parts of a text, a tensor's shape, a frame's properties and columns, a
 /// struct's or a map's member, a module's binding.
+/// A frame's cell: a missing one is an error of kind `missing` (the
+/// column's `.ok` reads it false, a read by index gets its placeholder).
+pub fn frame_cell(frame: &crow_runtime::frame::CrowFrame, col: usize, row: usize) -> CrowValue {
+    if !frame.validity[col][row] {
+        let mut missing = CrowValue::error_with_kind("nan", "missing", "");
+        missing.trace.clear();
+        return missing;
+    }
+    CrowValue::ok(match frame.data[col].as_ref() {
+        crow_runtime::frame::Column::Int(v) => Value::Int(v[row]),
+        crow_runtime::frame::Column::Float(v) => Value::Float(v[row]),
+        crow_runtime::frame::Column::Str(v) => Value::Str(v[row].clone()),
+        crow_runtime::frame::Column::Bool(v) => Value::Bool(v[row]),
+        crow_runtime::frame::Column::DateTime(millis, offsets) => {
+            Value::Str(crow_runtime::frame::format_datetime(millis[row], offsets[row]))
+        }
+    })
+}
+
+/// Where `xs[i]` reads in a list of `len` items: a negative index counts
+/// from the end.
+pub fn list_position(index: &CrowValue, len: usize) -> Result<usize, String> {
+    match index.unwrap_or_propagate()? {
+        Value::Int(idx) => {
+            let idx = *idx;
+            let n = len as i64;
+            let resolved = if idx < 0 { n + idx } else { idx };
+            if resolved < 0 || resolved >= n {
+                return Err(format!("index {} out of bounds for array of length {}", idx, len));
+            }
+            Ok(resolved as usize)
+        }
+        _ => Err("array index must be an integer".to_string()),
+    }
+}
+
 pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
 
     // special fields: .ok, .reason, .kind, .trace — always work, even on errors.
@@ -755,30 +784,7 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
             _ => {
                 // Try column access by name: df.age returns the column as an array
                 if let Some(idx) = frame.col_index(field) {
-                    let col = &frame.data[idx];
-                    let validity = &frame.validity[idx];
-                    let nrows = frame.nrows();
-                    let mut vals: Vec<CrowValue> = Vec::with_capacity(nrows);
-                    for i in 0..nrows {
-                        if !validity[i] {
-                            // a missing cell: the column's `.ok` reads it false,
-                            // a read by index gets its placeholder (ir_interp)
-                            let mut missing = CrowValue::error_with_kind("nan", "missing", "");
-                            missing.trace.clear();
-                            vals.push(missing);
-                        } else {
-                            let v = match col.as_ref() {
-                                crow_runtime::frame::Column::Int(v) => Value::Int(v[i]),
-                                crow_runtime::frame::Column::Float(v) => Value::Float(v[i]),
-                                crow_runtime::frame::Column::Str(v) => Value::Str(v[i].clone()),
-                                crow_runtime::frame::Column::Bool(v) => Value::Bool(v[i]),
-                                crow_runtime::frame::Column::DateTime(millis, offsets) => {
-                                    Value::Str(crow_runtime::frame::format_datetime(millis[i], offsets[i]))
-                                }
-                            };
-                            vals.push(CrowValue::ok(v));
-                        }
-                    }
+                    let vals: Vec<CrowValue> = (0..frame.nrows()).map(|i| frame_cell(frame, idx, i)).collect();
                     return Ok(CrowValue::ok(Value::Array(vals)));
                 }
                 return Err(format!("frame has no property or column '{}'", field));
