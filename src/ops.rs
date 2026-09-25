@@ -761,7 +761,11 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
                     let mut vals: Vec<CrowValue> = Vec::with_capacity(nrows);
                     for i in 0..nrows {
                         if !validity[i] {
-                            vals.push(CrowValue::error("nan", "missing"));
+                            // a missing cell: the column's `.ok` reads it false,
+                            // a read by index gets its placeholder (ir_interp)
+                            let mut missing = CrowValue::error_with_kind("nan", "missing", "");
+                            missing.trace.clear();
+                            vals.push(missing);
                         } else {
                             let v = match col.as_ref() {
                                 crow_runtime::frame::Column::Int(v) => Value::Int(v[i]),
@@ -831,7 +835,9 @@ pub fn array_literal(vals: Vec<CrowValue>) -> Result<CrowValue, String> {
 /// What a collecting loop yields: iterations that produced nothing are
 /// skipped, all numbers make a tensor, anything else a list.
 pub fn collect_loop(results: Vec<CrowValue>) -> CrowValue {
-    let filtered: Vec<CrowValue> = results.into_iter().filter(|v| !matches!(v.value, Value::Done)).collect();
+    // an iteration that yielded nothing is skipped; one that yielded an
+    // error keeps it as its item (an error's value is `Done` too)
+    let filtered: Vec<CrowValue> = results.into_iter().filter(|v| !(v.ok && matches!(v.value, Value::Done))).collect();
     let all_numeric = !filtered.is_empty() && filtered.iter().all(|v| v.ok && matches!(v.value, Value::Int(_) | Value::Float(_)));
     if all_numeric {
         let data: Vec<f64> = filtered.iter().map(|v| match &v.value {

@@ -1,5 +1,7 @@
-//! Crow names that Rust reserves. A Crow program may call a variable
-//! `move` or a function `impl`; Rust may not. The compiled program renames
+//! Crow names that Rust reserves, or that the compiled program itself
+//! declares where the program's code runs (a view's session, `state`). A
+//! Crow program may call a variable `move` or a function `impl`, or a
+//! local `state`; Rust may not, or not beside the session. The compiled program renames
 //! each such name the program declares — every declaration and every read,
 //! inside interpolation spans too — to one Rust accepts (`move` → `move_`,
 //! longer when that is taken). It runs after the gate, so errors speak in
@@ -21,6 +23,10 @@ pub const RUST_KEYWORDS: &[&str] = &[
     "override", "priv", "try", "typeof", "unsized", "virtual", "yield",
 ];
 
+/// The names the compiled program itself declares where the program's code
+/// runs: a view's or a handler's session is `state`.
+pub const GENERATED_NAMES: &[&str] = &["state"];
+
 /// The program with every declared name Rust reserves renamed, and the map
 /// from each new name back to the program's; `None` when it declares none.
 pub fn rename_rust_keywords(stmts: &[Stmt]) -> Option<(Vec<Stmt>, BTreeMap<String, String>)> {
@@ -29,7 +35,7 @@ pub fn rename_rust_keywords(stmts: &[Stmt]) -> Option<(Vec<Stmt>, BTreeMap<Strin
     for s in stmts {
         collect_stmt(s, &mut declared, &mut seen);
     }
-    let reserved: Vec<String> = declared.into_iter().filter(|n| RUST_KEYWORDS.contains(&n.as_str())).collect();
+    let reserved: Vec<String> = declared.into_iter().filter(|n| RUST_KEYWORDS.contains(&n.as_str()) || GENERATED_NAMES.contains(&n.as_str())).collect();
     if reserved.is_empty() {
         return None;
     }
@@ -412,5 +418,18 @@ mod tests {
         assert_eq!(shown.get("move__").map(String::as_str), Some("move"));
         assert!(format!("{:?}", out).contains("Assign { name: \"move__\""));
         assert!(rename_rust_keywords(&stmts("x = 1\nlog[x]\n")).is_none());
+    }
+
+    /// A view's local named `state` would stand beside the compiled view's
+    /// own session: it is renamed as a reserved name is (the build failed
+    /// on `state.view_exit` of the program's string)
+    #[test]
+    fn a_local_named_like_the_session_is_renamed() {
+        let src = "use web, ui\nn = 0\nview v[]\n    state = span['idle']\n    return stack[state, p['`n`']]\n";
+        let (out, shown) = rename_rust_keywords(&stmts(src)).expect("renames");
+        let text = format!("{:?}", out);
+        assert!(text.contains("Assign { name: \"state_\""), "{}", text);
+        assert!(!text.contains("Ident(\"state\")"), "{}", text);
+        assert_eq!(shown.get("state_").map(String::as_str), Some("state"));
     }
 }

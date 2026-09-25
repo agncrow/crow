@@ -241,7 +241,10 @@ impl Emitter {
 
     fn operand(&mut self, e: &Expr) -> String {
         let s = self.expr(e);
-        if matches!(e, Expr::Binary { .. }) {
+        // a block (a cell read, an index with its bounds) is parenthesised
+        // too: at the start of a statement Rust reads `{ … } > 1.0` as a
+        // block and a stray operator
+        if matches!(e, Expr::Binary { .. }) || s.starts_with('{') {
             format!("({})", s)
         } else {
             s
@@ -777,13 +780,24 @@ impl Emitter {
         for i in items {
             inner_type = inner_type.unify(&self.tt(i));
         }
+        // a list of results holds a plain item as a result that did not fail
+        let of_results = matches!(&lt, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Result(_)));
         let vals: Vec<String> = if let CrowType::Fn(_, _) = &inner_type {
             let ft = inner_type.to_rust_type();
             items.iter().map(|i| format!("{} as {}", self.expr(i), ft)).collect()
         } else if self.in_view() && !items.is_empty() && items.iter().all(|i| self.makes_node(i)) {
             items.iter().map(|i| format!("({}).to_html()", self.expr(i))).collect()
         } else {
-            items.iter().map(|i| self.owned_expr(i)).collect()
+            items
+                .iter()
+                .map(|i| {
+                    let s = self.owned_expr(i);
+                    match &lt {
+                        CrowType::Array(item) if of_results => self.as_item(s, &self.tt(i), item),
+                        _ => s,
+                    }
+                })
+                .collect()
         };
         if items.is_empty() {
             if let CrowType::Array(inner) = &lt {
@@ -794,6 +808,22 @@ impl Emitter {
             return "vec![]".to_string();
         }
         format!("vec![{}]", vals.join(", "))
+    }
+
+    /// A value as an item of a list whose items can fail: a plain value is a
+    /// result that did not fail, and an error without a value (`error[…]`)
+    /// is one of the item's type, its value the type's default.
+    pub(crate) fn as_item(&self, s: String, from: &CrowType, item: &CrowType) -> String {
+        let CrowType::Result(inner) = item else { return s };
+        match from {
+            CrowType::Result(v) if matches!(v.as_ref(), CrowType::Void) && !matches!(inner.as_ref(), CrowType::Void) => format!(
+                "{{ let _e = {}; CrowResult {{ ok: false, value: {}, reason: _e.reason, kind: _e.kind, trace: _e.trace, captured: 0.0 }} }}",
+                s,
+                inner.default_rust_value()
+            ),
+            CrowType::Result(_) => s,
+            _ => format!("CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", s),
+        }
     }
 
     fn map_lit(&mut self, pairs: &[(String, Expr)]) -> String {
@@ -890,7 +920,10 @@ impl Emitter {
         // back, a handler's stop) or that yields on some paths only gathers
         // in a loop: a closure can neither return from the function nor
         // skip an iteration (the lowering never marks the first parallel)
-        if !use_par && (leaves(body) || (!always_yields(body) && Self::filter_parts(body).is_none())) {
+        // a body that does not end in its value (an if whose every arm
+        // yields) gathers too: each arm pushes what it yields
+        let gathers = !ends_in_value(body) && Self::filter_parts(body).is_none();
+        if !use_par && (leaves(body) || (!always_yields(body) && Self::filter_parts(body).is_none()) || gathers) {
             return self.gathering_loop(var, iter, body, whole);
         }
         let iter_str = self.expr(iter);
@@ -916,7 +949,13 @@ impl Emitter {
         } else {
             iter_str
         };
-        let param = if is_copy { format!("|&{}|", var) } else { format!("|{}|", var) };
+        // an item that is not Copy is borrowed from what the loop walks; the
+        // body reads it as its own value, as the interpreter's does
+        let (param, rebind) = if is_copy {
+            (format!("|&{}|", var), String::new())
+        } else {
+            (format!("|__item_{}|", var), format!("let {v} = __item_{v}.clone(); ", v = var))
+        };
 
         if let Some((cond, val)) = Self::filter_parts(body) {
             self.push_scope();
@@ -930,13 +969,14 @@ impl Emitter {
                 vt = CrowType::Str;
             }
             self.pop_scope();
-            return format!("{}.{}().filter_map({} {{ if {} {{ Some({}) }} else {{ None }} }}).collect::<Vec<{}>>()", iter_str, method, param, c, v, vt.to_rust_type());
+            return format!("{}.{}().filter_map({} {{ {}if {} {{ Some({}) }} else {{ None }} }}).collect::<Vec<{}>>()", iter_str, method, param, rebind, c, v, vt.to_rust_type());
         }
 
-        // a body that yields on some paths only, run in parallel: each
-        // iteration gathers what it yields (none or one) and the lists are
-        // joined in input order; a sequential one gathered in a loop above
-        if !always_yields(body) {
+        // a body that yields on some paths only, or from the arms of a
+        // branch, run in parallel: each iteration gathers what it yields
+        // (none or one) and the lists are joined in input order; a
+        // sequential one gathered in a loop above
+        if !always_yields(body) || gathers {
             let list = match whole.ty() {
                 Ty::List(item) => Ty::List(item),
                 _ => Ty::List(Box::new(Ty::Unknown)),
@@ -949,6 +989,9 @@ impl Emitter {
             self.indent = saved_indent + 1;
             self.push_scope();
             self.declare(var, elem);
+            if !rebind.is_empty() {
+                self.line(rebind.trim_end());
+            }
             self.line(&format!("let mut {}: {} = Vec::new();", one, list_ty.to_rust_type()));
             self.declare(&one, list_ty.clone());
             self.closure_depth += 1;
@@ -970,6 +1013,9 @@ impl Emitter {
         self.indent = saved_indent + 1;
         self.push_scope();
         self.declare(var, elem);
+        if !rebind.is_empty() {
+            self.line(rebind.trim_end());
+        }
         let last = body.iter().rposition(|s| !matches!(s, Stmt::Line(_)));
         let (init, last_expr) = match last {
             Some(i) if matches!(body[i], Stmt::Do(_)) => (&body[..i], Some(&body[i])),
@@ -1047,7 +1093,7 @@ impl Emitter {
     }
 
     fn call(&mut self, e: &Expr) -> String {
-        let (mut target, args, _propagates) = match e {
+        let (mut target, args, propagates) = match e {
             Expr::Call { target, args, propagates, .. } => (target.clone(), args.clone(), *propagates),
             Expr::Effect { name, args, propagates, .. } => {
                 let t = match name.split_once('.') {
@@ -1117,8 +1163,11 @@ impl Emitter {
             }
         }
 
-        // an argument's error is the call's value (spec, auto-propagation)
-        let skip = matches!(name.as_str(), "log" | "assert" | "cpu" | "gpu" | "nodes" | "type" | "error" | "captured" | "running")
+        // an argument's error is the call's value (spec, auto-propagation),
+        // unless the IR says the call takes it as it is (a collecting loop
+        // gathering what an iteration yielded, errors included)
+        let skip = (!propagates && matches!(target, Target::Runtime(_)))
+            || matches!(name.as_str(), "log" | "assert" | "cpu" | "gpu" | "nodes" | "type" | "error" | "captured" | "running")
             || (self.needs_ui && (name == "chart" || name == "table" || crate::lower::UI_ELEMENTS.contains(&name.as_str())))
             || (self.needs_crow_web && name == "arrow");
         if !skip {
@@ -1285,6 +1334,11 @@ fn leaves(body: &[Stmt]) -> bool {
     // a collecting loop inside over a list that can fail refuses it there
     visit_block(body, &mut |e| out |= matches!(e, Expr::ForExpr { iter, .. } if iter.ty().is_result()));
     out
+}
+
+/// Whether a collecting loop's body ends in its value itself.
+fn ends_in_value(body: &[Stmt]) -> bool {
+    matches!(body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))), Some(Stmt::Do(_)))
 }
 
 /// Whether every pass through a collecting loop's body yields a value: it

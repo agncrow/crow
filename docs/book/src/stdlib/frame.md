@@ -47,7 +47,7 @@ rich_old = filter[df, df.age gt 50 and df.salary gt 100000]
 others = filter[df, not (df.name eq 'alice')]
 ```
 
-Missing values compare as `false` — they are excluded by any filter. A column's `.ok` is its rows' validity — `true` where the cell is present, `false` where it is missing — so `filter[df, df.age.ok]` keeps the complete rows. (Every other value's `.ok` is its own status: a list that did not fail is ok.)
+Missing values compare as `false` — they are excluded by any filter. A column's `.ok` is its rows' validity — `true` where the cell is present, `false` where it is missing — so `filter[df, df.age.ok]` keeps the complete rows. (Every other value's `.ok` is its own status: a list that did not fail is ok.) A column shows a missing cell as `nan`, and read one at a time (`df.age[3]`) a missing cell is its column's placeholder, as a filter reads it: `NaN` in a number column, so it compares as false, `nan` in a text column, `0` in an int column and `false` in a bool column. A left `join` leaves the cells it has no match for missing. Asking the column's `.ok` is how to tell a placeholder from a value.
 
 Dynamic column names need no special syntax — a string variable works everywhere a column name does:
 

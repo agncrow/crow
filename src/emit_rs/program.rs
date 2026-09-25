@@ -644,6 +644,19 @@ impl Emitter {
         }
         self.emit_main();
         self.emit_synthetic_types();
+        // a result as the display kernel shows it inside a list: its value,
+        // or its reason (written last: only a program that links the kernel
+        // knows by now that it does)
+        if self.needs_crow_runtime {
+            for l in [
+                "impl<T: Clone + crow_runtime::display::CrowDisplay> crow_runtime::display::CrowDisplay for CrowResult<T> {",
+                "    fn crow_repr(&self) -> String { if !self.ok { format!(\"error: {}\", self.reason) } else { self.value.crow_repr() } }",
+                "    fn crow_fmt(&self) -> String { if !self.ok { format!(\"error: {}\", self.reason) } else { self.value.crow_fmt() } }",
+                "}",
+            ] {
+                self.line(l);
+            }
+        }
 
         if let Some(e) = self.error.take() {
             return Err(e);
@@ -776,6 +789,9 @@ impl Emitter {
         match ty {
             CrowType::Array(inner) => match inner.as_ref() {
                 CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Bool => true,
+                // an item that can fail shows its value or its reason
+                // (`CrowResult`'s CrowDisplay, written with the program)
+                CrowType::Result(item) => matches!(item.as_ref(), CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Bool),
                 CrowType::NumArray(_) => true,
                 nested @ CrowType::Array(_) => self.kernel_displayable(nested),
                 _ => false,
