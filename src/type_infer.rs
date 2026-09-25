@@ -282,6 +282,10 @@ pub struct TypeContext {
     /// (its parameters to begin with). The first assignment of another
     /// name binds a new local (spec §7), whatever the module calls it.
     pub(crate) body_assigned: Option<std::collections::HashSet<String>>,
+    /// Top-level names assigned a value that is not a function's name: an
+    /// index into one (`got[0]`) is indexing, however early in the
+    /// fixpoint its value's type is still unknown
+    top_values: std::collections::HashSet<String>,
     /// The module prefix of the part whose function body is being typed:
     /// its own reactive state carries it, so a name without it is a local.
     body_prefix: Option<String>,
@@ -382,6 +386,7 @@ impl TypeContext {
             call_signatures: BTreeMap::new(),
             views: std::collections::BTreeSet::new(),
             body_assigned: None,
+            top_values: std::collections::HashSet::new(),
             body_prefix: None,
             in_view: false,
             is_ui: false,
@@ -1161,6 +1166,9 @@ impl TypeContext {
                     let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
                     self.vars.insert(name.clone(), existing.unify(&ty));
                 }
+                if self.body_assigned.is_none() && !matches!(value, Expr::Ident(f) if self.functions.contains_key(f)) {
+                    self.top_values.insert(name.clone());
+                }
                 self.collect_call_types_expr(value);
                 self.note_connection(name, value);
                 if let Some(schema) = self.frame_schema_of(value) {
@@ -1284,11 +1292,11 @@ impl TypeContext {
                     }
                     _ => {}
                 }
-                for s in body { self.collect_call_types_stmt(s); }
+                self.collect_loop_call_types(body);
             }
             Stmt::While { condition, body } => {
                 self.collect_call_types_expr(condition);
-                for s in body { self.collect_call_types_stmt(s); }
+                self.collect_loop_call_types(body);
             }
             Stmt::FieldAssign { object, value, .. } => {
                 self.collect_call_types_expr(object);
@@ -1300,6 +1308,23 @@ impl TypeContext {
                 self.collect_call_types_expr(value);
             }
             _ => {}
+        }
+    }
+
+    /// A loop's body for call sites: it runs again with what it assigned,
+    /// so when a variable from before the loop took a type in it (`made =
+    /// []`, a call on `made`, then a push of records), the body is read a
+    /// second time and its calls see that type.
+    fn collect_loop_call_types(&mut self, body: &[Stmt]) {
+        let outer = self.vars.clone();
+        for s in body {
+            self.collect_call_types_stmt(s);
+        }
+        let moved = outer.iter().any(|(n, t)| self.vars.get(n).map_or(false, |now| now != t));
+        if moved {
+            for s in body {
+                self.collect_call_types_stmt(s);
+            }
         }
     }
 
@@ -1481,7 +1506,7 @@ impl TypeContext {
                     if !self.functions.contains_key(name) && !self.structs.contains_key(name) {
                         let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
                         let is_param = self.current_fn_params.contains(name);
-                        let is_local = self.body_assigned.as_ref().is_some_and(|a| a.contains(name));
+                        let is_local = self.body_assigned.as_ref().map_or(self.top_values.contains(name), |a| a.contains(name));
                         match &existing {
                             CrowType::Fn(_, _) => {
                                 // Already known to be Fn — refine arg types
@@ -3152,8 +3177,10 @@ impl TypeContext {
         let base = self.infer_call_base_typed(name, args, callee, arg_types);
         // Auto-propagation: wrap in CrowResult if any arg is CrowResult
         // a view renders what it is given: a failed argument shows
-        // its reason inside the tree, it never fails the view
+        // its reason inside the tree, it never fails the view; a record
+        // holds a failed value in its field, as a module's record does
         let skip = matches!(name, "log" | "assert" | "type" | "cpu" | "gpu" | "error" | "table" | "chart" | "__known")
+            || self.structs.contains_key(name)
             || crate::lower::UI_ELEMENTS.contains(&name)
             || (self.in_view && crate::lower::is_ui_control(name, matches!(arg_types.first().cloned().map(Self::walked), Some(CrowType::Frame))))
             || self.views.contains(name);

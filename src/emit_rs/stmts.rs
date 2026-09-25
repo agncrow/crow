@@ -773,6 +773,16 @@ impl Emitter {
         self.line(&format!("{} = {};", var, text));
     }
 
+    /// A statement after the lines it needs, in a block of its own when
+    /// there are any (the indices a path assignment found first).
+    fn line_after(&mut self, found: &[String], text: &str) {
+        if found.is_empty() {
+            self.line(text);
+        } else {
+            self.line(&format!("{{ {} {} }}", found.join(" "), text));
+        }
+    }
+
     /// `x = push[x, v]`: an in-place builtin whose collection is `x` itself.
     fn in_place_call_on(e: &Expr, var: &str) -> bool {
         match e {
@@ -792,9 +802,13 @@ impl Emitter {
 
     fn emit_set_path(&mut self, var: &str, path: &[PathStep], expr: &Expr) {
         let val = self.expr(expr);
-        // the object the last step writes into, and its type
+        // the object the last step writes into, and its type; each list
+        // index is found before the write (`out[m].status = …` read
+        // `out.len()` inside the element it was writing, which Rust's
+        // borrows refuse)
         let mut obj = if self.static_handle_vars.contains(var) { format!("__crow_handle_{}.get().unwrap().clone()", var) } else { var.to_string() };
         let mut ty = self.local_ty(var).unwrap_or(CrowType::Unknown).text();
+        let mut found: Vec<String> = Vec::new();
         for step in &path[..path.len().saturating_sub(1)] {
             match step {
                 PathStep::Field(f) => {
@@ -819,7 +833,9 @@ impl Emitter {
                     obj = if matches!(ty, CrowType::Map(_)) {
                         format!("(*{}.get_mut(&{}).unwrap())", obj, idx)
                     } else {
-                        format!("{o}[{{ let _i = {i}; if _i < 0 {{ ({o}.len() as i64 + _i) as usize }} else {{ _i as usize }} }}]", o = obj, i = idx)
+                        let k = found.len();
+                        found.push(format!("let _at{k} = {{ let _i = {i}; if _i < 0 {{ ({o}.len() as i64 + _i) as usize }} else {{ _i as usize }} }};", k = k, i = idx, o = obj));
+                        format!("{}[_at{}]", obj, k)
                     };
                     ty = next;
                 }
@@ -828,26 +844,26 @@ impl Emitter {
         match path.last() {
             Some(PathStep::Field(f)) => {
                 if matches!(ty, CrowType::Map(_)) {
-                    self.line(&format!("{}.insert(\"{}\".to_string(), {});", obj, f, val));
+                    self.line_after(&found, &format!("{}.insert(\"{}\".to_string(), {});", obj, f, val));
                 } else {
-                    self.line(&format!("{}.{} = {};", obj, Self::rust_field(f), val));
+                    self.line_after(&found, &format!("{}.{} = {};", obj, Self::rust_field(f), val));
                 }
             }
             Some(PathStep::Index(i)) => {
                 let idx = self.expr(i);
                 match &ty {
-                    CrowType::Map(_) => self.line(&format!("{}.insert({}, {});", obj, idx, val)),
+                    CrowType::Map(_) => self.line_after(&found, &format!("{}.insert({}, {});", obj, idx, val)),
                     CrowType::NumArray(_) => {
                         self.needs_crow_runtime = true;
-                        self.line(&format!(
+                        self.line_after(&found, &format!(
                             "{{ let _i = {}; let mut _tmp = {}.to_vec(); let _idx = if _i < 0 {{ (_tmp.len() as i64 + _i) as usize }} else {{ _i as usize }}; _tmp[_idx] = {} as f64; {} = crow_runtime::tensor::CrowTensor::from_vec(_tmp, {}.shape().to_vec()); }}",
                             idx, obj, val, obj, obj
                         ));
                     }
-                    _ => self.line(&format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}[_idx] = {}; }}", idx, obj, obj, val)),
+                    _ => self.line_after(&found, &format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}[_idx] = {}; }}", idx, obj, obj, val)),
                 }
             }
-            None => self.line(&format!("{} = {};", obj, val)),
+            None => self.line_after(&found, &format!("{} = {};", obj, val)),
         }
     }
 
@@ -911,11 +927,15 @@ impl Emitter {
         } else {
             iter_str
         };
+        // an item of text is the loop's own, as the body reads it (a
+        // borrowed one compared with a cell's text did not build)
+        let text = matches!(elem, CrowType::Str | CrowType::Markup);
         self.push_scope();
         if use_par {
             self.needs_rayon = true;
             let param = if is_copy { format!("|&{}|", var) } else { format!("|{}|", var) };
-            self.line(&format!("{}.par_iter().for_each({} {{", actual, param));
+            let each = if text { ".cloned()" } else { "" };
+            self.line(&format!("{}.par_iter(){}.for_each({} {{", actual, each, param));
             self.indent += 1;
             self.declare(var, elem);
             self.closure_depth += 1;
@@ -925,7 +945,8 @@ impl Emitter {
             self.line("});");
         } else {
             let param = if is_copy { format!("&{}", var) } else { var.to_string() };
-            self.line(&format!("for {} in {}.iter() {{", param, actual));
+            let each = if text { ".cloned()" } else { "" };
+            self.line(&format!("for {} in {}.iter(){} {{", param, actual, each));
             self.indent += 1;
             self.declare(var, elem);
             self.emit_block(body);

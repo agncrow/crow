@@ -1,0 +1,19 @@
+--- A record holds a failed value in its field, so a record built from a
+--- value that can fail is a record, not a value that can fail: a list
+--- gathered from such records is a list. The compiled program typed the
+--- record as able to fail, the list after it, and did not build.
+struct Pair [name, n]
+
+fn build[words]
+    out = []
+    for w in words
+        out = push[out, Pair[w, int[w]]]
+    return out
+
+got = build[['1', '2']]
+log[got.ok]
+log[len[got]]
+bad = build[['1', 'x']]
+log[bad.ok]
+log[bad[1].n.ok]
+log[bad[0].n]

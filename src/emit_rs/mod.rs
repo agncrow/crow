@@ -29,6 +29,8 @@ pub struct Emitted {
     pub source: String,
     pub needs_rayon: bool,
     pub needs_serde_json: bool,
+    /// Records a fact holds are kept as JSON by the session: serde derives.
+    pub needs_serde: bool,
     pub needs_crow_runtime: bool,
     pub needs_regex: bool,
     pub needs_chrono: bool,
@@ -59,6 +61,7 @@ pub fn emit_with(
         source,
         needs_rayon: e.needs_rayon,
         needs_serde_json: e.needs_serde_json,
+        needs_serde: !e.serde_records.is_empty(),
         needs_crow_runtime: e.needs_crow_runtime,
         needs_regex: e.needs_regex,
         needs_chrono: e.needs_chrono,
@@ -87,6 +90,9 @@ pub(crate) struct Emitter {
     // what the crate needs
     pub(crate) needs_rayon: bool,
     pub(crate) needs_serde_json: bool,
+    /// The records a fact holds, directly or in a field: the session keeps
+    /// them as JSON, so they derive serde's traits.
+    pub(crate) serde_records: BTreeSet<String>,
     pub(crate) needs_crow_runtime: bool,
     pub(crate) needs_distributed: bool,
     pub(crate) needs_later: bool,
@@ -170,6 +176,7 @@ impl Emitter {
             indent: 0,
             needs_rayon: false,
             needs_serde_json: false,
+            serde_records: BTreeSet::new(),
             needs_crow_runtime: false,
             needs_distributed: false,
             needs_later: false,

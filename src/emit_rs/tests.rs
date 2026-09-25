@@ -78,7 +78,8 @@ fn a_collecting_loop_that_can_return_gathers_in_a_loop() {
     let rest = &rust[start..];
     let body = &rest[..rest.find("\n}\n").unwrap()];
     assert!(body.contains("-> CrowResult<Vec<String>>"), "{}", body);
-    assert!(body.contains("for x in xs.iter() {"), "a loop, not a closure:\n{}", body);
+    // (an item of text is the loop's own, as the body reads it)
+    assert!(body.contains("for x in xs.iter().cloned() {"), "a loop, not a closure:\n{}", body);
     assert!(body.contains("return CrowResult { ok: false"), "the error goes back:\n{}", body);
     assert!(!body.contains(".map(|"), "{}", body);
 }
@@ -183,6 +184,16 @@ fn a_plain_variable_refuses_a_failed_value() {
     let body = &rest[..rest.find("\n}\n").unwrap()];
     assert!(body.contains("-> CrowResult<i64>"), "{}", body);
     assert!(rust.contains("runtime error: line 7: cannot assign an error value to 'y' — {}"), "{}", rust);
+}
+
+/// A function that writes a fact but that nothing calls or wires (the
+/// part it lives in lost the button that wired it) can never run, and is
+/// not compiled: it was emitted without the session's state and did not
+/// build
+#[test]
+fn an_unreached_fact_writer_is_left_out() {
+    let rust = transpile("use web, ui\ncount = 0\nfn reset[]\n    count = 0\nview v[]\n    return p['`count`']\npage['/', v]\n");
+    assert!(!rust.contains("fn reset("), "{}", rust);
 }
 
 /// Helper: parse Crow source, infer, lower to the IR, emit Rust
@@ -1482,8 +1493,9 @@ fn test_web_imports() {
 #[test]
 fn test_web_async_main() {
     let rust = transpile("use web\nsite = web.new[]\n");
-    assert!(rust.contains("#[tokio::main]"), "should emit #[tokio::main]\n{}", rust);
-    assert!(rust.contains("async fn main()"), "should emit async fn main\n{}", rust);
+    assert!(rust.contains("async fn __crow_main()"), "should emit an async main\n{}", rust);
+    // the runtime's threads get stacks sized for a page's work
+    assert!(rust.contains(".thread_stack_size(16 * 1024 * 1024)"), "should size the runtime's stacks\n{}", rust);
 }
 
 #[test]
@@ -1535,8 +1547,8 @@ fn test_web_handler_types() {
 #[test]
 fn test_web_no_async_without_web() {
     let rust = transpile("x = 1 + 2\n");
-    assert!(!rust.contains("async fn main"), "should NOT emit async main without web\n{}", rust);
-    assert!(!rust.contains("#[tokio::main]"), "should NOT emit tokio::main without web\n{}", rust);
+    assert!(!rust.contains("async fn"), "should NOT emit async main without web\n{}", rust);
+    assert!(!rust.contains("tokio::runtime"), "should NOT start a runtime without web\n{}", rust);
 }
 
 // --- P4: Web module codegen tests ---

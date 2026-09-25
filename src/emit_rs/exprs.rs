@@ -39,7 +39,8 @@ fn fmt_piece(s: &str) -> String {
 
 /// The builtins whose own value is a result, whatever their arguments.
 const FALLIBLE_BUILTINS: &[&str] = &[
-    "error", "hash", "shell", "find", "input", "read", "write", "mkdir", "ls", "rm", "mv", "cp", "captured", "moment", "parse_time", "env", "json", "encode", "mail",
+    "error", "hash", "shell", "find", "input", "read", "write", "mkdir", "ls", "rm", "mv", "cp", "captured", "moment", "parse_time", "env", "json", "encode", "mail", "query",
+    "exec",
 ];
 
 impl Emitter {
@@ -207,13 +208,23 @@ impl Emitter {
     /// An expression as an owned value: a non-copy variable read where a
     /// value is kept (an assignment, a list, a return) is cloned, so the
     /// variable stays usable; a by-reference parameter too.
+    /// A variable read, or a field of one at any depth (`h.walk.past`):
+    /// what a value taken from it must copy, since the variable owns it.
+    pub(crate) fn place_read(e: &Expr) -> bool {
+        match Emitter::raw(e) {
+            Expr::Local(..) | Expr::Move(..) | Expr::Load(..) => true,
+            Expr::Field { base, .. } => Emitter::place_read(base),
+            _ => false,
+        }
+    }
+
     pub(crate) fn owned_expr(&mut self, e: &Expr) -> String {
         let s = self.expr(e);
         // a field of a local is copied out of it (`c = g.last`): a struct
         // parameter is borrowed, and a local read again later still owns it;
         // a field that can hold a failed value is never Copy
         if let Expr::Field { base, .. } = e {
-            if matches!(Emitter::raw(base), Expr::Local(..) | Expr::Move(..) | Expr::Load(..)) {
+            if Emitter::place_read(base) {
                 let t = self.tt(e);
                 let non_copy = matches!(t, CrowType::Result(_))
                     || matches!(Self::inner(&t), CrowType::NumArray(_) | CrowType::Array(_) | CrowType::Map(_) | CrowType::Str | CrowType::Markup | CrowType::Frame | CrowType::Struct(_) | CrowType::Json);
@@ -923,7 +934,7 @@ impl Emitter {
             // a variable read before its last use is copied into the field
             // (`Tape[ts, cs, cs, cs, vs]` moved `cs` three times); the last,
             // a move, hands it over
-            let val = if matches!(Emitter::raw(e), Expr::Local(..)) { self.owned_expr(e) } else { self.expr(e) };
+            let val = if Emitter::place_read(e) || matches!(Emitter::raw(e), Expr::Derived(..)) { self.owned_expr(e) } else { self.expr(e) };
             let is_ref = matches!(Emitter::raw(e), Expr::Local(n, _) | Expr::Move(n, _) if self.ref_params.contains(n));
             let owned = if is_ref { format!("{}.clone()", val) } else { val };
             if let Ty::OptRecord(_) = fty {

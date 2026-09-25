@@ -113,7 +113,23 @@ impl RemoteApp {
         let mut raw = String::new();
         s.read_to_string(&mut raw).map_err(|e| e.to_string())?;
         let answer = raw.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
-        let v: serde_json::Value = serde_json::from_str(answer).map_err(|_| format!("the compiled program answered {} with: {}", op, raw.lines().next().unwrap_or("")))?;
+        let v: serde_json::Value = match serde_json::from_str(answer) {
+            Ok(v) => v,
+            Err(_) => {
+                // what the program said as it failed, a panic's message
+                // among it: the answer alone is empty when a request dies
+                let said = std::fs::read_to_string(&self.log).unwrap_or_default();
+                let last: Vec<&str> = said.lines().filter(|l| !l.trim().is_empty()).collect();
+                let tail = last[last.len().saturating_sub(4)..].join(" | ");
+                let first = raw.lines().next().unwrap_or("");
+                return Err(format!(
+                    "the compiled program answered {} with: {}{}",
+                    op,
+                    if first.is_empty() { "nothing" } else { first },
+                    if tail.is_empty() { String::new() } else { format!(" — it said: {}", tail) }
+                ));
+            }
+        };
         if let Some(e) = v.get("error").and_then(|e| e.as_str()) {
             return Err(e.to_string());
         }

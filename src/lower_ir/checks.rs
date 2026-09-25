@@ -250,7 +250,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// The function or derivation being lowered, when one is.
-    fn in_fn(&self) -> Option<String> {
+    pub(super) fn in_fn(&self) -> Option<String> {
         matches!(self.at, Where::In(_) | Where::Derive).then(|| self.current_fn.clone())
     }
 

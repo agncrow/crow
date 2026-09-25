@@ -35,6 +35,12 @@ pub struct ReadSet {
     /// (`sid = '`session_id`'`), so a query's parameter set from one reads a
     /// slice keyed by that fact
     aliases: BTreeMap<String, String>,
+    /// each function's parameters, for the walk into its body
+    params: BTreeMap<String, Vec<String>>,
+    /// while a called function's body is walked: its parameters and the
+    /// names it assigns, which are its own and not the program's facts or
+    /// derivations (a part's `fills` beside the entry's `derive fills`)
+    own: BTreeSet<String>,
 }
 
 /// The program's facts: top-level assignments that hold state. A database
@@ -150,14 +156,41 @@ pub fn read_set(
     facts: &BTreeSet<String>,
     derives: &BTreeSet<String>,
     fns: &BTreeMap<String, Vec<Stmt>>,
+    params: &BTreeMap<String, Vec<String>>,
     owned_tables: &BTreeSet<String>,
 ) -> ReadSet {
-    let mut rs = ReadSet::default();
+    let mut rs = ReadSet { params: params.clone(), ..ReadSet::default() };
     let mut visited: BTreeSet<String> = BTreeSet::new();
     walk_stmts(body, facts, derives, fns, &mut visited, &mut rs);
     rs.external = rs.tables.iter().any(|t| !owned_tables.contains(t));
     rs.aliases.clear();
+    rs.params.clear();
+    rs.own.clear();
     rs
+}
+
+/// The names a body binds: what it assigns and what its loops walk with.
+fn bound_names(stmts: &[Stmt], out: &mut BTreeSet<String>) {
+    for st in stmts {
+        match st {
+            Stmt::Assign { name, .. } => {
+                out.insert(name.clone());
+            }
+            Stmt::MultiAssign { names, .. } => out.extend(names.iter().cloned()),
+            Stmt::If { then_body, else_body, .. } => {
+                bound_names(then_body, out);
+                if let Some(eb) = else_body {
+                    bound_names(eb, out);
+                }
+            }
+            Stmt::For { var, body, .. } => {
+                out.insert(var.clone());
+                bound_names(body, out);
+            }
+            Stmt::While { body, .. } => bound_names(body, out),
+            _ => {}
+        }
+    }
 }
 
 /// The fact a value is exactly: the fact itself, or a string that is only
@@ -245,7 +278,8 @@ fn walk_expr(e: &Expr, facts: &BTreeSet<String>, derives: &BTreeSet<String>, fns
             for inner in interpolation_exprs(s) { walk_expr(&inner, facts, derives, fns, visited, rs); }
         }
         Expr::Ident(n) => {
-            if derives.contains(n) { rs.derives.insert(n.clone()); }
+            if rs.own.contains(n) {}
+            else if derives.contains(n) { rs.derives.insert(n.clone()); }
             else if facts.contains(n) { rs.facts.insert(n.clone()); }
         }
         Expr::Call { callee, args } => {
@@ -285,9 +319,17 @@ fn walk_expr(e: &Expr, facts: &BTreeSet<String>, derives: &BTreeSet<String>, fns
                 }
                 if let Some(body) = fns.get(n) {
                     if visited.insert(n.clone()) {
-                        // a function's locals are its own
+                        // a function's locals are its own: its parameters and
+                        // what it binds are not the program's names — but a
+                        // fact it assigns is written, not bound
                         let aliases = std::mem::take(&mut rs.aliases);
+                        let mut own: BTreeSet<String> = rs.params.get(n).map(|ps| ps.iter().cloned().collect()).unwrap_or_default();
+                        let mut bound = BTreeSet::new();
+                        bound_names(body, &mut bound);
+                        own.extend(bound.into_iter().filter(|b| !facts.contains(b)));
+                        let outer = std::mem::replace(&mut rs.own, own);
                         walk_stmts(body, facts, derives, fns, visited, rs);
+                        rs.own = outer;
                         rs.aliases = aliases;
                     }
                 }
@@ -402,6 +444,44 @@ pub fn owned_tables(stmts: &[Stmt], fns: &BTreeMap<String, Vec<Stmt>>) -> BTreeS
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A function a derivation calls may name a parameter or a local as the
+    /// program names a derivation: they are the function's own, not a read
+    /// (finch's book, called by `books`, has a `fills` of its own beside
+    /// trading's `derive fills`; the compiled program looped on the cycle)
+    #[test]
+    fn a_called_functions_own_names_are_not_reads() {
+        let derives: BTreeSet<String> = ["fills".to_string(), "books".to_string()].into_iter().collect();
+        let fns = crate::build("fn lots[fills]\n    return len[fills]\nfn walk[xs]\n    fills = []\n    for x in xs\n        fills = push[fills, x]\n    return fills\nfn reads[]\n    return fills\n").unwrap();
+        let mut bodies = BTreeMap::new();
+        let mut params = BTreeMap::new();
+        for s in &fns {
+            if let Stmt::FnDecl { name, params: ps, body, .. } = s {
+                bodies.insert(name.clone(), body.clone());
+                params.insert(name.clone(), ps.clone());
+            }
+        }
+        let body = crate::build("w = walk[[1, 2]]\nreturn lots[w]\n").unwrap();
+        let rs = read_set(&body, &BTreeSet::new(), &derives, &bodies, &params, &BTreeSet::new());
+        assert!(rs.derives.is_empty(), "{:?}", rs.derives);
+        let body = crate::build("return reads[]\n").unwrap();
+        let rs = read_set(&body, &BTreeSet::new(), &derives, &bodies, &params, &BTreeSet::new());
+        assert!(rs.derives.contains("fills"), "a function that reads the derivation still does");
+        // a fact a function assigns is written, and its reads are reads
+        let facts: BTreeSet<String> = ["playing".to_string()].into_iter().collect();
+        let fns = crate::build("fn toggle[]\n    if playing\n        playing = false\n    else\n        playing = true\n").unwrap();
+        let (mut bodies, mut params) = (BTreeMap::new(), BTreeMap::new());
+        for s in &fns {
+            if let Stmt::FnDecl { name, params: ps, body, .. } = s {
+                bodies.insert(name.clone(), body.clone());
+                params.insert(name.clone(), ps.clone());
+            }
+        }
+        let body = crate::build("toggle[]\n").unwrap();
+        let rs = read_set(&body, &facts, &BTreeSet::new(), &bodies, &params, &BTreeSet::new());
+        assert!(rs.facts.contains("playing"), "{:?}", rs.facts);
+    }
+
     #[test]
     fn a_query_that_inserts_writes_its_table() {
         let src = "fn start[book]\n    r = query[book, 'INSERT INTO sessions (day) VALUES (?) RETURNING id', ['2026-09-04']]\n    return r\n";
@@ -420,24 +500,24 @@ mod tests {
         let facts: BTreeSet<String> = ["board_id".to_string(), "day".to_string()].into_iter().collect();
         let parse = |src: &str| crate::build(src).unwrap();
         let body = parse("rows = query[book, 'SELECT id, title FROM cards WHERE board = ? ORDER BY id', [board_id]]\nreturn rows\n");
-        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new());
+        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new());
         assert_eq!(rs.keys.get("cards"), Some(&("board".to_string(), "board_id".to_string())));
         let body = parse("a = query[book, 'SELECT id FROM cards WHERE board = ?', [board_id]]\nb = query[book, 'SELECT count(*) AS n FROM cards']\nreturn len[a]\n");
-        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new());
+        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new());
         assert!(rs.keys.is_empty() && rs.whole.contains("cards"));
         let body = parse("a = query[book, 'SELECT id FROM cards WHERE board = ?', [board_id]]\nb = query[book, 'SELECT id FROM cards WHERE day = ?', [day]]\nreturn len[a]\n");
-        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new());
+        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new());
         assert!(rs.keys.is_empty(), "{:?}", rs.keys);
         // a local that is only the fact as text keys the slice by the fact
         let body = parse("b = '`board_id`'\nrows = query[book, 'SELECT id FROM cards WHERE board = ?', [b]]\nreturn rows\n");
-        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new());
+        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new());
         assert_eq!(rs.keys.get("cards"), Some(&("board".to_string(), "board_id".to_string())));
         let body = parse("b = 'board `board_id`'\nrows = query[book, 'SELECT id FROM cards WHERE board = ?', [b]]\nreturn rows\n");
-        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new());
+        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new());
         assert!(rs.keys.is_empty(), "text around the fact is another value");
         // a column fixed by something other than a fact reads the table whole
         let body = parse("rows = query[book, 'SELECT id FROM cards WHERE board = ?', [3]]\nreturn rows\n");
-        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new());
+        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new());
         assert!(rs.keys.is_empty());
     }
 
