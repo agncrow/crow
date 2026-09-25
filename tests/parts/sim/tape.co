@@ -4,3 +4,17 @@ use sim.clock
 
 derive marker
     return clock.head + 1.0
+
+--- a handler handed text by one caller and a number by another is copied
+--- for each, and each copy is still a handler: it writes another part's fact
+fn note_as[s]
+    clock.note = str[s]
+
+fn note_plain[]
+    note_as['plain']
+
+fn note_count[]
+    note_as[7]
+
+view notes[]
+    return row[p['note `clock.note`'], button['plain', click = note_plain], button['7', click = note_count]]

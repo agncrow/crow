@@ -1,0 +1,4 @@
+fact sim_clock_note (sim/clock.co)
+  type: str
+  written by: sim_tape_note_as, sim_tape_note_count, sim_tape_note_plain
+  read by: sim_tape_notes, views_sim_render

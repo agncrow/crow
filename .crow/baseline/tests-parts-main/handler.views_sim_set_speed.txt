@@ -1,0 +1,5 @@
+handler views_sim_set_speed (views/sim.co)
+  inputs: $1
+  called by: views_sim_quick, views_sim_twice
+  always:
+    sim_clock_speed := $1

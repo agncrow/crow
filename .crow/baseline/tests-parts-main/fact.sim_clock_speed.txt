@@ -1,4 +1,4 @@
 fact sim_clock_speed (sim/clock.co)
   type: float
-  written by: sim_clock_faster, views_sim_slow
+  written by: sim_clock_faster, views_sim_quick, views_sim_set_speed, views_sim_slow, views_sim_twice
   read by: sim_clock_head, views_sim_label
