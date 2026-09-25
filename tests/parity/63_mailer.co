@@ -1,0 +1,11 @@
+--- A mailer prints as its host, never its password; a message it cannot
+--- address fails with the reason, before any server is asked.
+use web
+use web.mail
+
+mailer = smtp['smtp.example.com', 587, 'noreply@example.com', 'secret']
+log[mailer]
+log['`mailer`']
+r = mail[mailer, 'nobody', 'Hello', 'Welcome']
+log[r.ok]
+log[r.reason]

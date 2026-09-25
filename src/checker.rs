@@ -37,7 +37,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     "shell",
     "serve", "route", "page",
     "later", "running",
-    "app", "html", "click", "elements", "change", "box", "fits", "style", "downloads",
+    "app", "html", "click", "elements", "change", "box", "fits", "style", "downloads", "mails",
     "fmt",
     "now", "moment", "calendar", "parse_time", "captured", "chart",
 ];
@@ -367,10 +367,11 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
     // A connection is a declaration of a resource, not a computation: a
     // view that reads at render (--- crow: remote-render) needs it to exist
     // for app[] to render at all, exactly as it does for the served page.
+    // A mailer is one too: making it sends nothing.
     fn is_connect(e: &Expr) -> bool {
         match e {
             Expr::Call { callee, .. } => match callee.as_ref() {
-                Expr::Ident(n) => n == "connect",
+                Expr::Ident(n) => n == "connect" || n == "smtp",
                 Expr::FieldAccess { object, field } => field == "connect" && matches!(object.as_ref(), Expr::Ident(m) if m == "db"),
                 _ => false,
             },

@@ -322,6 +322,48 @@ without `page` is refused in place, as an over-budget chart is: the page
 says how many rows there are and how to page them, rather than quietly
 cutting some off.
 
+## Mail
+
+`mail[mailer, to, subject, body]` sends a plain-text message through a
+mailer that `smtp[host, port, user, pass]` makes once for the whole
+program, as a connection is made. Like `notice` and `download` it is an
+effect held to the handler's commit, so a handler that stops sends
+nothing, and a function a handler calls holds its messages for that
+handler. A handler that must know whether the server took a message reads
+the answer: `sent = mail[…]` is sent at once, and `sent.ok` says. A test
+sends nothing: `mails[a]` is what the session sent.
+
+```crow
+use web, ui
+use web.mail
+
+mailer = smtp['smtp.example.com', 587, 'desk@example.com', 'app-password']
+email = ''
+
+fn subscribe[]
+    mail[mailer, email, 'Subscribed', 'You will hear from the desk.']
+    notice['subscribed `email`']
+
+view signup[]
+    return stack[field['Email', email], button['Subscribe', click = subscribe]]
+
+test a_subscription_sends_one_message[]
+    a = app[signup]
+    change[a, 'email', 'ada@example.com']
+    click[a, subscribe]
+    assert[len[mails[a]] eq 1]
+    assert[mails[a][0].to eq 'ada@example.com']
+
+page['/', signup]
+log['signup defined']
+```
+
+```text
+signup defined
+```
+
+A mailer prints as its host, never its password.
+
 ## Sliders, helpers, and bigger state
 
 `slider['Seek %', seek_pct, min = 0, max = 100, step = 1]` binds a range

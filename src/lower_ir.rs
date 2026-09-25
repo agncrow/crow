@@ -72,7 +72,143 @@ fn lower_checked(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &Ha
     }
     let mut program = Program { parts: vec![part.map_err(Refusal::Unlowered)?] };
     decide_loops(&mut program);
+    decide_answers(&mut program);
     Ok(program)
+}
+
+// ── effects: answered, or held to the commit ────────────────────────
+
+/// Decides the effects functions return, now that every caller is known.
+/// A function's last line is its value (the parser writes it as a
+/// return), but a handler's value goes to nobody: the page, `later` and
+/// the harness name a handler only to run it. Nor does the value of a
+/// function every caller calls as a statement. An effect such a function
+/// returns is one whose answer nobody uses, so it waits for the commit as
+/// a statement's does (spec, "A handler is a transaction").
+fn decide_answers(program: &mut Program) {
+    for part in &mut program.parts {
+        let used = values_used(part);
+        for f in &mut part.fns {
+            if !used.contains(&f.name) {
+                hold_returned(&mut f.body);
+            }
+        }
+    }
+}
+
+/// The functions whose value something reads: a call whose value is used,
+/// a function handed on as a value anywhere but to run it, and a function
+/// whose call a used function returns.
+fn values_used(part: &Part) -> BTreeSet<String> {
+    let mut used: BTreeSet<String> = BTreeSet::new();
+    // (caller, callee): the callee's value is the caller's
+    let mut passes: Vec<(String, String)> = Vec::new();
+    let mut refs: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    for f in &part.fns {
+        used_in_block(&f.body, Some(&f.name), &mut used, &mut passes, &mut refs);
+    }
+    for d in &part.derives {
+        used_in_block(&d.body, None, &mut used, &mut passes, &mut refs);
+    }
+    for t in &part.tests {
+        used_in_block(&t.body, None, &mut used, &mut passes, &mut refs);
+    }
+    for fact in &part.facts {
+        used_in_expr(&fact.default, &mut used, &mut refs);
+    }
+    used_in_block(&part.main, None, &mut used, &mut passes, &mut refs);
+    // a function named somewhere other than to be run is a value a callee
+    // may call and read
+    used.extend(refs.into_iter().filter(|(_, (all, run))| all > run).map(|(n, _)| n));
+    loop {
+        let before = used.len();
+        for (caller, callee) in &passes {
+            if used.contains(caller) {
+                used.insert(callee.clone());
+            }
+        }
+        if used.len() == before {
+            return used;
+        }
+    }
+}
+
+fn used_in_block(b: &Block, owner: Option<&str>, used: &mut BTreeSet<String>, passes: &mut Vec<(String, String)>, refs: &mut BTreeMap<String, (usize, usize)>) {
+    for s in b {
+        match s {
+            // a call for what it does: its value goes nowhere
+            Stmt::Do(Expr::Call { target: Target::User(_), args, .. }) => args.iter().for_each(|a| used_in_expr(a, used, refs)),
+            // a call returned: its value is read when the function's is
+            Stmt::Return(Some(Expr::Call { target: Target::User(n), args, .. })) if owner.is_some() => {
+                passes.push((owner.unwrap_or_default().to_string(), n.clone()));
+                args.iter().for_each(|a| used_in_expr(a, used, refs));
+            }
+            Stmt::If { cond, then, els } => {
+                used_in_expr(cond, used, refs);
+                used_in_block(then, owner, used, passes, refs);
+                if let Some(e) = els {
+                    used_in_block(e, owner, used, passes, refs);
+                }
+            }
+            Stmt::While { cond: e, body } | Stmt::For { iter: e, body, .. } => {
+                used_in_expr(e, used, refs);
+                used_in_block(body, owner, used, passes, refs);
+            }
+            other => visit_stmt(other, &mut |e| note_used(e, used, refs)),
+        }
+    }
+}
+
+fn used_in_expr(e: &Expr, used: &mut BTreeSet<String>, refs: &mut BTreeMap<String, (usize, usize)>) {
+    visit_expr(e, &mut |x| note_used(x, used, refs));
+}
+
+/// One node: a call's value is read where it is written (a collecting
+/// loop's last line is what it yields), and each naming of a function is
+/// counted, with the namings that only run it: a control's handler
+/// (`click = save`, a widget's `on = map[pick = choose]`), `later[f]` and
+/// the harness's `click[a, save]`.
+fn note_used(e: &Expr, used: &mut BTreeSet<String>, refs: &mut BTreeMap<String, (usize, usize)>) {
+    let run = |x: &Expr, refs: &mut BTreeMap<String, (usize, usize)>| {
+        if let Expr::FnRef(n, _) = x {
+            refs.entry(n.clone()).or_default().1 += 1;
+        }
+    };
+    match e {
+        Expr::Call { target: Target::User(n), .. } => {
+            used.insert(n.clone());
+        }
+        Expr::FnRef(n, _) => refs.entry(n.clone()).or_default().0 += 1,
+        Expr::Tree { attrs, .. } => {
+            for (_, a) in attrs {
+                match a {
+                    Expr::MapLit(pairs, _) => pairs.iter().for_each(|(_, v)| run(v, refs)),
+                    other => run(other, refs),
+                }
+            }
+        }
+        Expr::Effect { args, .. } | Expr::Call { args, .. } if matches!(call_name(e).as_deref(), Some("later" | "click")) => {
+            args.iter().for_each(|a| run(a, refs));
+        }
+        _ => {}
+    }
+}
+
+/// Every effect a function returns, held: its answer goes to nobody.
+fn hold_returned(b: &mut Block) {
+    for s in b {
+        match s {
+            Stmt::Return(Some(Expr::Effect { answered, .. })) => *answered = false,
+            Stmt::If { then, els, .. } => {
+                hold_returned(then);
+                if let Some(e) = els {
+                    hold_returned(e);
+                }
+            }
+            Stmt::While { body, .. } | Stmt::For { body, .. } => hold_returned(body),
+            _ => {}
+        }
+    }
 }
 
 // ── loops: in parallel or in order ──────────────────────────────────
@@ -289,6 +425,7 @@ pub fn ty_of(t: &CrowType) -> Ty {
         CrowType::WebRequest => Ty::Handle("web.request".into()),
         CrowType::WebDb => Ty::Handle("web.db".into()),
         CrowType::Sparse => Ty::Handle("sparse".into()),
+        CrowType::Mailer => Ty::Handle("mailer".into()),
         CrowType::Void => Ty::Unit,
         CrowType::Unknown => Ty::Unknown,
     }
@@ -322,6 +459,7 @@ pub fn crow_type(t: &Ty) -> CrowType {
             "web.response" => CrowType::WebResponse,
             "web.request" => CrowType::WebRequest,
             "web.db" => CrowType::WebDb,
+            "mailer" => CrowType::Mailer,
             _ => CrowType::Unknown,
         },
         // a view's tree has no inference type of its own: the backends
@@ -496,6 +634,18 @@ impl<'a> Lowerer<'a> {
                 }
             }
             f.effects = effects.into_iter().collect();
+        }
+        // a view or a derivation that reaches mail through a function it
+        // calls would send it at every render (a call of its own is refused
+        // where it is written)
+        let renders: Vec<String> = part.fns.iter().filter(|f| f.kind == FnKind::View).map(|f| f.name.clone()).chain(part.derives.iter().map(|d| d.name.clone())).collect();
+        for r in renders {
+            let own = self.direct_effects.get(&r).map_or(false, |e| e.contains("mail"));
+            let through = self.calls.get(&r).into_iter().flatten().find(|c| part.fns.iter().any(|f| &f.name == *c && f.effects.iter().any(|e| e == "mail")));
+            if let (false, Some(via)) = (own, through) {
+                let msg = format!("in {}: calls {}, which sends mail — {}", r, via, checks::MAIL_IN_A_RENDER);
+                self.v.errors.push((msg, Some(r.clone())));
+            }
         }
         // what the live layer memoizes each derivation by, and the tables
         // each function writes, recorded here so the Rust backend reads the
@@ -1923,6 +2073,21 @@ mod tests {
         ctx.infer_program(&stmts);
         let program = lower(&stmts, &mut ctx, "t").unwrap();
         print(&program)
+    }
+
+    /// A function's last line is its value, but a handler's value goes to
+    /// nobody: an effect it returns waits for the commit, as does one a
+    /// helper returns to a caller that calls it as a statement; an effect
+    /// whose answer is read runs when asked.
+    #[test]
+    fn an_effect_whose_answer_nobody_reads_waits_for_the_commit() {
+        let ir = ir_of("use web, ui\nuse web.mail\nmailer = smtp['smtp.example.com', 587, 'noreply@example.com', 'secret']\nn = 0\nfn notify[m, to]\n    mail[m, to, 'Hello', 'From a helper']\nfn welcome[]\n    n = n + 1\n    mail[mailer, 'ada@example.com', 'Hello', 'Welcome, number `n`']\nfn broken[]\n    mail[mailer, 'bob@example.com', 'Lost', 'never sent']\n    x = float['no']\n    if x gt 1.0\n        n = 1\nfn asked[]\n    r = mail[mailer, 'cy@example.com', 'Asked', 'sent at once']\n    if r.ok\n        n = 10\nfn helped[]\n    notify[mailer, 'di@example.com']\nview v[]\n    return stack[p['`n`'], button['Welcome', click = welcome], button['Broken', click = broken], button['Asked', click = asked], button['Helped', click = helped]]\n");
+        assert!(ir.contains("return mail!held(load mailer, \"ada@example.com\""), "{}", ir);
+        assert!(ir.contains("return mail!held(m, move to"), "{}", ir);
+        assert!(ir.contains("let r: Result(Bool) = mail!now(load mailer"), "{}", ir);
+        // read by its caller, the helper's effect answers
+        let ir = ir_of("use web, ui\nuse web.mail\nmailer = smtp['h', 587, 'u', 'p']\nsent = false\nfn notify[m, to]\n    mail[m, to, 'Hello', 'x']\nfn go[]\n    r = notify[mailer, 'a@b.c']\n    sent = r.ok\nview v[]\n    return button['Go', click = go]\n");
+        assert!(ir.contains("return mail!now(m, move to"), "{}", ir);
     }
 
     #[test]
