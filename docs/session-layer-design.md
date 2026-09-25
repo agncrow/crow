@@ -230,7 +230,24 @@ Invalidation is by table. A write to `trades` makes every session's
 blotter over `trades` recompute, even one filtered to another session's
 id; that is right and cheap at tens of sessions and wasteful at
 thousands. Invalidation by key — the write's key columns against the
-derivation's `WHERE` — is later work (§9, after phase I).
+derivation's `WHERE` — is later work (§9, after phase I). *Built
+2026-09-24.* A derivation whose every query of a table fixes one column by a
+fact (`SELECT … FROM cards WHERE board = ?` with `[board_id]`) reads a
+slice of it, and its `DeriveSpec` says so (`keys`, from `derive::read_set`).
+The database layer records what each write says about the rows it touched
+(`crow_runtime::sql::write_keys`): an `INSERT`'s values, the equalities of
+an `UPDATE`'s or `DELETE`'s `WHERE`, the columns an `UPDATE` sets. Both
+modes hand those records to the session (`note_writes`), and the runtime
+keeps each table's last 1,024 writes. A keyed derivation's version for the
+table is the newest write that may touch its slice. That is a write naming
+the same value (numbers by value, 1.0 is 1), one that says nothing of the
+column, one that sets the column, or one that does not say its rows; a
+write dropped from the log counts as touching. Waking is still by table: a
+woken page renders again, and its keyed derivations answer from their
+cache. A local that is exactly one fact (`sid = '`session.session_id`'`, the
+id as text) keys a slice as the fact does. The task board's cards, card,
+talk and files are keyed, and so are finch's trades by `session_id`. Its
+fills, a `UNION`, read the table whole.
 
 Writes made outside the program (another service, a cron job, a person
 at a SQL prompt) are seen only through time: a derivation over a table

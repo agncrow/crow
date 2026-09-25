@@ -141,9 +141,9 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
             .and_then(|j| j.as_array().cloned())
             .map(|items| items.iter().map(|x| crate::builtins::json_to_crow("", x)).collect())
             .unwrap_or_default();
-        let _ = crow_db::take_written();
+        let _ = crow_db::take_write_keys();
         let outcome = it.transaction(event, args);
-        let written = crow_db::take_written();
+        let written = crow_db::take_write_keys();
         if let Err(e) = outcome {
             state.stop(format!("{} stopped: {}", event, e));
             return;
@@ -175,10 +175,9 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
             Some(None) => state.sign_out(),
             None => {}
         }
-        // the tables it wrote wake their other readers when it commits
-        for table in written {
-            state.note_table_write(&table);
-        }
+        // the tables it wrote wake their other readers when it commits, and a
+        // derivation over a slice it did not touch keeps its value
+        state.note_writes(written);
     };
 
     let rt = tokio::runtime::Runtime::new().map_err(|e| format!("cannot start the server: {}", e))?;

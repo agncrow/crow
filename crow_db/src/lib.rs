@@ -144,13 +144,40 @@ thread_local! {
     /// `take_written`: what an interpreted handler wrote, for the live
     /// runtime to wake the readers of (a compiled handler knows statically).
     static WRITTEN: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Each write on this thread since the last `take_write_keys`, with what
+    /// it says about the rows it touched: which derivations it can have
+    /// changed (invalidation by key, session-layer-design.md §3.5).
+    static WRITE_KEYS: std::cell::RefCell<Vec<crow_runtime::sql::WriteKeys>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-fn note_written(sql: &str) {
+fn note_written(sql: &str, params: &[serde_json::Value]) {
     let (_, tables) = crow_runtime::sql::tables_of_sql(sql);
     if !tables.is_empty() {
+        // what the write says about its rows, or, when it says nothing a
+        // reader can use, that it touched every row of each table
+        let keys = crow_runtime::sql::write_keys(sql, params);
+        WRITE_KEYS.with(|w| {
+            let mut w = w.borrow_mut();
+            match keys {
+                Some(k) if tables.len() == 1 && tables[0] == k.table => w.push(k),
+                _ => w.extend(tables.iter().map(|t| whole_table(t))),
+            }
+        });
         WRITTEN.with(|w| w.borrow_mut().extend(tables));
     }
+}
+
+/// A write that touched any row of a table.
+fn whole_table(table: &str) -> crow_runtime::sql::WriteKeys {
+    crow_runtime::sql::WriteKeys { table: table.to_string(), known: vec![], changed: vec![], exact: false }
+}
+
+/// The writes made on this thread since the last call, in order, each with
+/// what it says about the rows it touched; the tables' record goes with
+/// them (`take_written`).
+pub fn take_write_keys() -> Vec<crow_runtime::sql::WriteKeys> {
+    WRITTEN.with(|w| w.borrow_mut().clear());
+    WRITE_KEYS.with(|w| std::mem::take(&mut *w.borrow_mut()))
 }
 
 /// The tables written on this thread since the last call, each once.
@@ -243,7 +270,7 @@ impl DbHandle {
     pub fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
         let (sql, params) = expand_array_params(sql, params);
         if writes(&sql) {
-            note_written(&sql);
+            note_written(&sql, &params);
         }
         if let Some(r) = self.in_scope(writes(&sql), |tx| tx.query(&sql, &params)) {
             return r;
@@ -258,7 +285,7 @@ impl DbHandle {
 
     pub fn exec(&self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
         let (sql, params) = expand_array_params(sql, params);
-        note_written(&sql);
+        note_written(&sql, &params);
         if let Some(r) = self.in_scope(true, |tx| tx.exec(&sql, &params)) {
             return r;
         }
@@ -267,6 +294,8 @@ impl DbHandle {
 
     pub fn insert(&self, table: &str, frame: &CrowFrame) -> Result<i64, String> {
         WRITTEN.with(|w| w.borrow_mut().push(table.to_string()));
+        // a frame's rows at once: read as touching the table
+        WRITE_KEYS.with(|w| w.borrow_mut().push(whole_table(table)));
         // inside a handler the rows go into its transaction, one by one
         let rows = |tx: &mut dyn ScopeTx| -> Result<i64, String> {
             if frame.nrows() == 0 {

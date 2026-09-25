@@ -138,12 +138,23 @@ derivations over that table: when one reader buys, the blotter of
 another reader watching the same book follows at once — the write wakes
 every page that read the table, with no refresh tick and no code.
 
-`crow check` prints the read set and the holder of each derivation, so
-the split is never a guess:
+A derivation that reads only a slice of a table is recomputed only when a
+write may have touched that slice. Every one of its queries of the table
+has to fix one column by a fact, as `WHERE board = ?` with `[board_id]`
+does. A local that is only the fact also counts, including the fact as
+text (`b = '`board_id`'`). A card added to board 2 then leaves every page showing board 1 as it
+was. A write says which rows it touched when its `WHERE` is equalities
+joined by `AND`, or an `INSERT` names its values. A write that does not
+say (`WHERE qty > ?`, a card moved by its `id` alone, which does not say
+its board) reaches every reader of the table, as before.
+
+`crow check` prints the read set and the holder of each derivation, and a
+slice by its column, so the split is never a guess:
 
 ```text
   derivations — what each reads, and who holds it:
     bars: reads day, sym · tables bars (external, fresh 300s) — per session
+    cards: reads board_id · tables cards where board = board_id — per session
     universe: reads day · tables datasets — shared by every session
 ```
 
