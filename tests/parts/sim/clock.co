@@ -5,6 +5,7 @@ base = 0.0
 anchor = 0.0
 speed = 1.0
 playing = false
+note = ''
 
 fn clock_at[b, a, s, moving]
     if moving

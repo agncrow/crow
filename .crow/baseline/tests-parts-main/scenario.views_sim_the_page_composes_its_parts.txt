@@ -2,3 +2,5 @@ scenario views_sim_the_page_composes_its_parts (views/sim.co)
   ran to its end
   changed:
     sim_clock_anchor = 1767225600
+    sim_clock_note = 7
+    sim_clock_speed = 20.5

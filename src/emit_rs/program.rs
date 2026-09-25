@@ -1078,8 +1078,29 @@ impl Emitter {
         self.line("match event {");
         self.indent += 1;
         for h in self.reactive_event_handlers.clone() {
-            let rust = Self::rust_fn_name(&h);
-            let params: Vec<(String, Ty)> = self.fns.get(&h).map(|f| f.params.clone()).unwrap_or_default();
+            // a specialized handler's original is not compiled, its clones
+            // are: the event goes to the clone of the original's own
+            // parameter types, which means what the original does, or else
+            // the first one the page can hand arguments to
+            let clones: Vec<String> = self
+                .fns
+                .keys()
+                .filter(|k| k.strip_prefix(h.as_str()).and_then(|r| r.strip_prefix("__")).map_or(false, |d| !d.is_empty() && d.chars().all(|c| c.is_ascii_digit())))
+                .cloned()
+                .collect();
+            let target = if clones.is_empty() {
+                h.clone()
+            } else {
+                let own: Vec<Ty> = self.fns.get(&h).map(|f| f.params.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default();
+                let plain = |t: &Ty| matches!(t, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup);
+                let same = clones.iter().find(|c| self.fns.get(*c).map_or(false, |f| f.params.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>() == own));
+                match same.or_else(|| clones.iter().find(|c| self.fns.get(*c).map_or(false, |f| f.params.iter().all(|(_, t)| plain(t))))) {
+                    Some(c) => c.clone(),
+                    None => continue,
+                }
+            };
+            let rust = Self::rust_fn_name(&target);
+            let params: Vec<(String, Ty)> = self.fns.get(&target).map(|f| f.params.clone()).unwrap_or_default();
             // a list, a tensor, a frame or a record arrives as JSON its own
             // serde reads (a test clicks a handler with one as it clicks any)
             let by_serde = |t: &Ty| matches!(t, Ty::List(_) | Ty::Map(_) | Ty::Tensor(_) | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_));

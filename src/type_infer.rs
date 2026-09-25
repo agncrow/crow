@@ -742,12 +742,14 @@ impl TypeContext {
                 })
             }
 
-            // the reactive state a function can write: a part's function its
-            // own part's, which carries the part's prefix (a local `ch` in a
-            // part is not the entry's connection)
+            // the reactive state a function can write: a part's function any
+            // part's — its own, or one it uses (`session.picked = symbol` in
+            // scan) — which carries that part's prefix; never the entry's,
+            // which it cannot see (a local `ch` in a part is not the entry's
+            // connection: the expansion renamed it)
             fn own_state(f: &str, module_vars: &std::collections::BTreeSet<String>) -> std::collections::BTreeSet<String> {
                 match crate::part_prefix_of_declaration(f) {
-                    Some(p) => module_vars.iter().filter(|m| m.starts_with(p.as_str())).cloned().collect(),
+                    Some(_) => module_vars.iter().filter(|m| crate::part_prefix_of_declaration(m).is_some()).cloned().collect(),
                     None => module_vars.clone(),
                 }
             }
@@ -1948,9 +1950,15 @@ impl TypeContext {
                         body: base.body.clone(),
                     });
                     self.specializations.entry(name.clone()).or_default().push((sig.clone(), mangled.clone()));
-                    // Clones of a view are views (component monomorphization)
+                    // Clones of a view are views (component monomorphization),
+                    // and a handler's are handlers: each writes the session's
+                    // state as the original does (a clone lowered as a plain
+                    // function made its fact writes locals)
                     if self.views.contains(name.as_str()) {
                         self.views.insert(mangled.clone());
+                    }
+                    if self.view_handlers.contains(name.as_str()) {
+                        self.view_handlers.insert(mangled.clone());
                     }
                     new_clones.push((name.clone(), sig.clone(), mangled));
                 }

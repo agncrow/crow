@@ -10,8 +10,18 @@ derive label
 fn slow[]
     clock.speed = 1.0
 
+--- a handler handed an int by one caller and a float by another is copied
+--- for each; each copy is still a handler, writing a part's fact
+fn set_speed[x]
+    clock.speed = x
+
+fn twice[]
+    set_speed[2]
+
+fn quick[]
+    set_speed[20.5]
 view render[]
-    return stack[p[label, class = 'h'], clock.transport[], button['1x', click = slow]]
+    return stack[p[label, class = 'h'], clock.transport[], button['1x', click = slow], button['2x', click = twice], button['20.5x', click = quick], tape.notes[]]
 
 test the_page_composes_its_parts[]
     a = app[render]
@@ -20,3 +30,12 @@ test the_page_composes_its_parts[]
     assert[contains[html[a], 'x10']]
     click[a, slow]
     assert[contains[html[a], 'x1 ']]
+    click[a, twice]
+    assert[contains[html[a], 'x2 '], html[a]]
+    click[a, quick]
+    assert[contains[html[a], 'x20.5 '], html[a]]
+    click[a, tape.note_plain]
+    assert[clock.note eq 'plain', 'note is `clock.note`']
+    click[a, tape.note_count]
+    assert[clock.note eq '7', 'note is `clock.note`']
+    assert[contains[html[a], 'note 7'], html[a]]

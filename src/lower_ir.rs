@@ -1570,6 +1570,22 @@ impl<'a> Lowerer<'a> {
         }
         if self.ctx.functions.contains_key(&name) || self.ctx.specializations.contains_key(&name) {
             let resolved = self.specialised(&name, args);
+            // an int handed to a float parameter is a float (spec §1), as one
+            // assigned to a float variable is: the conversion is explicit
+            if let Some(sig) = self.ctx.functions.get(&resolved) {
+                let floats: Vec<bool> = sig.params.iter().map(|(_, t)| matches!(t, CrowType::Float)).collect();
+                lowered = lowered
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, x)| {
+                        if floats.get(i).copied().unwrap_or(false) && x.ty() == Ty::Int {
+                            Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float }
+                        } else {
+                            x
+                        }
+                    })
+                    .collect();
+            }
             self.calls.entry(current).or_default().insert(resolved.clone());
             return Ok(Expr::Call { target: Target::User(resolved), args: lowered, ty, propagates });
         }
@@ -1755,11 +1771,12 @@ impl<'a> Lowerer<'a> {
 
 // ── analyses over the parser's tree ─────────────────────────────────
 
-/// The facts a function can write: a part's function its own part's, whose
-/// names carry the part's prefix — an unprefixed name there is a local.
+/// The facts a function can write: a part's function any part's, whose
+/// names carry that part's prefix — an unprefixed name there is a local.
 fn own_facts(f: &str, facts: &BTreeSet<String>) -> BTreeSet<String> {
     match crate::part_prefix_of_declaration(f) {
-        Some(p) => facts.iter().filter(|m| m.starts_with(p.as_str())).cloned().collect(),
+        // any part's (a part writes one it uses), never the entry's
+        Some(_) => facts.iter().filter(|m| crate::part_prefix_of_declaration(m).is_some()).cloned().collect(),
         None => facts.clone(),
     }
 }

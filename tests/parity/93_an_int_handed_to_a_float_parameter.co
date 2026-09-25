@@ -1,0 +1,15 @@
+--- An int handed to a parameter that is a float is a float, as one
+--- assigned to a float variable is. (The compiled program handed the
+--- function its int, and did not build; the interpreter ran it.)
+fn half[x]
+    return x / 2.0
+
+fn mean[a, b]
+    return (a + b) / 2.0
+
+log[half[3]]
+log[half[2.5]]
+n = 4
+log[half[n]]
+log[mean[1, 2.5]]
+log[mean[3, 4]]
