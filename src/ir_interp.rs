@@ -868,16 +868,43 @@ impl IrInterp {
                 self.answering = asked;
                 r?
             }
-            Expr::Convert { how, expr, .. } => {
+            Expr::Convert { how, expr, ty } => {
                 let v = self.eval(expr)?;
                 match how {
                     Convert::IntToFloat => match &v.value {
                         Value::Int(n) if v.ok => CrowValue::ok(Value::Float(*n as f64)),
                         _ => v,
                     },
+                    // a tensor's numbers as a list's items, ints where the
+                    // list holds ints
+                    Convert::ToList => match &v.value {
+                        Value::NumArray(t) if v.ok => {
+                            let ints = matches!(ty, Ty::List(e) if **e == Ty::Int);
+                            CrowValue::ok(Value::Array(
+                                t.to_vec().into_iter().map(|x| CrowValue::ok(if ints { Value::Int(x as i64) } else { Value::Float(x) })).collect(),
+                            ))
+                        }
+                        _ => v,
+                    },
+                    // a list's numbers as a tensor of one axis
+                    Convert::ToTensor => match &v.value {
+                        Value::Array(items) if v.ok => {
+                            let mut data = Vec::with_capacity(items.len());
+                            for item in items.iter() {
+                                match item.value {
+                                    Value::Int(n) => data.push(n as f64),
+                                    Value::Float(x) => data.push(x),
+                                    _ => return Err(format!("a list of {} is not a list of numbers", item.value.type_name())),
+                                }
+                            }
+                            let n = data.len();
+                            CrowValue::ok(Value::NumArray(crow_runtime::tensor::CrowTensor::from_vec(data, vec![n])))
+                        }
+                        _ => v,
+                    },
                     // a CrowValue is its own payload; an error reached here is
                     // the caller's to propagate
-                    Convert::Unwrap | Convert::Known | Convert::ToStr | Convert::ToTensor | Convert::ToList => v,
+                    Convert::Unwrap | Convert::Known | Convert::ToStr => v,
                 }
             }
             Expr::Binary { op, l, r, .. } => {

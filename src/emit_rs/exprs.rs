@@ -67,7 +67,7 @@ impl Emitter {
             }
             Expr::FnRef(name, _) => self.fn_ref(name),
             Expr::Call { .. } | Expr::Effect { .. } => self.call(e),
-            Expr::Convert { how, expr, .. } => match how {
+            Expr::Convert { how, expr, ty } => match how {
                 Convert::IntToFloat => {
                     let inner = self.expr(expr);
                     if self.emitting_dual {
@@ -104,7 +104,27 @@ impl Emitter {
                     let inner = self.expr(expr);
                     format!("format!(\"{{}}\", {})", inner)
                 }
-                Convert::ToTensor | Convert::ToList => self.expr(expr),
+                // a tensor's numbers as a list's items, ints where the list
+                // holds ints; a list's numbers as a tensor of one axis
+                Convert::ToList => {
+                    let inner = self.expr(expr);
+                    if !matches!(self.tt(expr), CrowType::NumArray(_)) {
+                        return inner;
+                    }
+                    if matches!(ty, Ty::List(e) if **e == Ty::Int) {
+                        format!("({}).to_vec().into_iter().map(|x| x as i64).collect::<Vec<i64>>()", inner)
+                    } else {
+                        format!("({}).to_vec()", inner)
+                    }
+                }
+                Convert::ToTensor => {
+                    let inner = self.expr(expr);
+                    if !matches!(self.tt(expr), CrowType::Array(_)) {
+                        return inner;
+                    }
+                    self.needs_crow_runtime = true;
+                    format!("{{ let _v: Vec<f64> = ({}).iter().map(|x| *x as f64).collect(); let _n = _v.len(); crow_runtime::tensor::CrowTensor::from_vec(_v, vec![_n]) }}", inner)
+                }
             },
             Expr::Binary { op, l, r, .. } => self.binary(op, l, r),
             Expr::Unary { op, expr, .. } => self.unary(op, expr),

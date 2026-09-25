@@ -1,0 +1,27 @@
+--- An empty list joined with numbers takes its items from them: `concat`
+--- joins in the first's form, a list or a tensor, with the second
+--- converted to it. The interpreter refused a list joined to a tensor,
+--- and the compiled program took the empty list for a list of text.
+fn positions_by_value[xs]
+    idx = []
+    for i in range[len[xs]]
+        j = len[idx]
+        moving = j gt 0
+        while moving
+            if xs[idx[j - 1]] gt xs[i]
+                j = j - 1
+                moving = j gt 0
+            else
+                moving = false
+        idx = concat[concat[slice[idx, 0, j], [i]], slice[idx, j, len[idx]]]
+    return idx
+
+log[positions_by_value[[3.0, 1.0, 2.0, 1.0]]]
+t = [1.5, 2.5]
+grown = []
+grown = concat[grown, t]
+log[grown]
+log[len[grown]]
+both = concat[t, grown]
+log[both]
+log[len[both]]

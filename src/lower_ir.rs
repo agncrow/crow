@@ -1539,6 +1539,19 @@ impl<'a> Lowerer<'a> {
             return Ok(Expr::Effect { name, args: lowered, ty, answered: true, propagates });
         }
         if RUNTIME_TABLE.iter().any(|(b, _)| *b == name) {
+            // a list of numbers is held as a list or as a tensor: `concat`
+            // joins them in the first's form, so the second is converted
+            if name == "concat" && lowered.len() >= 2 {
+                let how = match (lowered[0].ty().payload(), lowered[1].ty().payload(), ty.payload()) {
+                    (Ty::List(_), Ty::Tensor(_), Ty::List(_)) => Some(Convert::ToList),
+                    (Ty::Tensor(_), Ty::List(_), Ty::Tensor(_)) => Some(Convert::ToTensor),
+                    _ => None,
+                };
+                if let Some(how) = how {
+                    let second = lowered.remove(1);
+                    lowered.insert(1, Expr::Convert { how, expr: Box::new(second), ty: ty.payload().clone() });
+                }
+            }
             return Ok(Expr::Call { target: Target::Runtime(runtime_name(&name)), args: lowered, ty, propagates });
         }
         // a bare name a loaded module provides resolves at run time, by the
