@@ -362,10 +362,12 @@ impl<'a> Lowerer<'a> {
         if self.v.decl.as_deref().map_or(false, |d| crate::file_of_declaration(d).is_some()) {
             return;
         }
-        // Bare stdlib imports reserve their exports
+        // Bare stdlib imports reserve their exports — the entry's own: an
+        // import a part makes has no line of the entry's and reserves names
+        // in the part alone
+        let entry_line = |module: &str| self.v.bare_import_lines.get(module).copied().filter(|l| *l > 0);
         if let Some(module) = self.ctx.registry.module_name_of(name) {
-            if self.ctx.bare_modules.contains(module) {
-                let line = self.v.bare_import_lines.get(module).copied().unwrap_or(0);
+            if let Some(line) = self.ctx.bare_modules.contains(module).then(|| entry_line(module)).flatten() {
                 let module = module.to_string();
                 self.refuse(format!(
                     "'{}' is provided by {} (imported on line {}) — rename the {}, or import qualified: use {} as m",
@@ -376,12 +378,13 @@ impl<'a> Lowerer<'a> {
         }
         // Constants (pi, e, inf, nan) reserve under a bare math import
         if self.ctx.registry.has_constant(name) && self.ctx.bare_modules.contains("math") {
-            let line = self.v.bare_import_lines.get("math").copied().unwrap_or(0);
-            self.refuse(format!(
-                "'{}' is a math constant (imported on line {}) — rename the {}, or import qualified: use math as m",
-                name, line, what
-            ));
-            return;
+            if let Some(line) = entry_line("math") {
+                self.refuse(format!(
+                    "'{}' is a math constant (imported on line {}) — rename the {}, or import qualified: use math as m",
+                    name, line, what
+                ));
+                return;
+            }
         }
         let web_bare = self.v.bare_import_lines.keys().any(|p| p == "web" || p.starts_with("web."));
         if web_bare && name == "reader" {
