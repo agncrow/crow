@@ -4313,16 +4313,48 @@ fn expand_module_imports(
     source_dir: &std::path::Path,
     visited: &mut std::collections::HashSet<String>,
 ) -> Vec<ast::Stmt> {
+    // the entry's own imports and their lines: a part's, hoisted ahead of
+    // the entry, carries no line of the entry's
+    let use_key = |path: &str, alias: &Option<String>| format!("{}|{}", path, alias.clone().unwrap_or_default());
+    let mut own_lines: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut line = 0usize;
+    for st in stmts {
+        match st {
+            ast::Stmt::Line(n) => line = *n,
+            ast::Stmt::Use { path, alias } => {
+                own_lines.entry(use_key(path, alias)).or_insert(line);
+            }
+            _ => {}
+        }
+    }
     let mut ex = ModuleExpansion::default();
     let body = expand_into(stmts, source_dir, &mut ex, visited);
-    let mut out = ex.hoisted;
-    out.extend(body);
-    // every part says `use db` for itself; the program imports it once
+    let hoisted = ex.hoisted.len();
+    let mut all = ex.hoisted;
+    all.extend(body);
+    // every part says `use db` for itself; the program imports it once — at
+    // the entry's line when the entry imports it too, so an import reserves
+    // names by the line it is made on (a part's has none: it reserves
+    // names in the part alone)
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    out.retain(|st| match st {
-        ast::Stmt::Use { path, alias } => seen.insert(format!("{}|{}", path, alias.clone().unwrap_or_default())),
-        _ => true,
-    });
+    let mut out: Vec<ast::Stmt> = Vec::with_capacity(all.len());
+    for (i, st) in all.into_iter().enumerate() {
+        if let ast::Stmt::Use { path, alias } = &st {
+            let key = use_key(path, alias);
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            if i < hoisted {
+                if let Some(l) = own_lines.get(&key).filter(|l| **l > 0) {
+                    out.push(ast::Stmt::Line(*l));
+                    out.push(st);
+                    out.push(ast::Stmt::Line(0));
+                    continue;
+                }
+            }
+        }
+        out.push(st);
+    }
     // Each part is validated alone, as `crow test part.co` sees it — its
     // own names unprefixed, its imports inlined — so a name a part reserves
     // by what it imports, or a handler nothing in the part wires, is
@@ -5029,6 +5061,31 @@ mod module_parts_tests {
         assert!(text.contains("pure lib_calc_spread("), "a plain function, not a handler:\n{}", text);
         assert!(text.contains("let ch: List(Float) = []"), "{}", text);
         assert!(text.contains("secs: Float"), "{}", text);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An import a part makes reserves names in the part, not in the entry:
+    /// the entry may name a parameter `vwap` beside a part that imports
+    /// chart (it was refused "provided by chart (imported on line 0)");
+    /// the entry's own import still reserves it, with its line
+    #[test]
+    fn a_parts_import_reserves_nothing_in_the_entry() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_import_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(dir.join("lib/scan.co"), "use math, chart\nfn smooth[xs]\n    return sum[xs]\n").unwrap();
+        let check = |entry: &str| {
+            let stmts = build(entry).unwrap();
+            let mut visited = std::collections::HashSet::new();
+            let stmts = expand_module_imports(&stmts, &dir, &mut visited);
+            let lowered = lower::lower_program(&stmts).unwrap();
+            infer_and_validate(&lowered, false).map(|_| ())
+        };
+        let ok = check("use lib.scan\nfn spread[vwap]\n    return vwap * 2.0\nlog[spread[1.0]]\nlog[scan.smooth[[1.0]]]\n");
+        assert!(ok.is_ok(), "{:?}", ok.err());
+        let own = check("use chart\nuse lib.scan\nfn spread[vwap]\n    return vwap * 2.0\nlog[spread[1.0]]\nlog[scan.smooth[[1.0]]]\n");
+        assert!(own.as_ref().is_err_and(|e| e.contains("'vwap' is provided by chart (imported on line 1)")), "{:?}", own);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
