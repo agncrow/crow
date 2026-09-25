@@ -1,0 +1,47 @@
+--- mail[mailer, to, subject, body]: a handler's message waits for its commit,
+--- a stopped handler sends nothing, one whose answer is read is sent when
+--- asked, and a helper's waits for its handler's. A test sends nothing and
+--- reads what the session sent with mails[a]; CI runs it against the
+--- interpreter and against the compiled program (crow test --compiled).
+use web, ui
+use web.mail
+mailer = smtp['smtp.example.com', 587, 'noreply@example.com', 'secret']
+n = 0
+fn notify[m, to]
+    mail[m, to, 'Hello', 'From a helper']
+fn welcome[]
+    n = n + 1
+    mail[mailer, 'ada@example.com', 'Hello', 'Welcome, number `n`']
+fn broken[]
+    mail[mailer, 'bob@example.com', 'Lost', 'never sent']
+    x = float['no']
+    if x gt 1.0
+        n = 1
+fn asked[]
+    r = mail[mailer, 'cy@example.com', 'Asked', 'sent at once']
+    if r.ok
+        n = 10
+fn helped[]
+    notify[mailer, 'di@example.com']
+view v[]
+    return stack[p['`n`'], button['Welcome', click = welcome], button['Broken', click = broken], button['Asked', click = asked], button['Helped', click = helped]]
+serve[3419]
+page['/', v]
+test t[]
+    a = app[v]
+    click[a, welcome]
+    got = mails[a]
+    assert[len[got] eq 1]
+    assert[got[0].to eq 'ada@example.com']
+    assert[got[0].subject eq 'Hello']
+    assert[got[0].body eq 'Welcome, number 1']
+    r = click[a, broken]
+    assert[not r.ok]
+    assert[len[mails[a]] eq 1]
+    click[a, asked]
+    assert[len[mails[a]] eq 2]
+    assert[mails[a][1].to eq 'cy@example.com']
+    assert[a.n eq 10]
+    click[a, helped]
+    assert[len[mails[a]] eq 3]
+    assert[mails[a][2].to eq 'di@example.com']

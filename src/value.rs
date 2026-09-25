@@ -132,6 +132,9 @@ pub enum Value {
     Sparse(CrowSparse), // sparse matrix (CSR format)
     Frame(CrowFrame), // column-oriented data frame
     DbConn(DbHandle), // database connection handle
+    /// A mailer `smtp[…]` made: its place among the interpreter's mailers
+    /// and its host. The password stays with the mailer, out of every value.
+    Mailer(usize, String),
     Dual(f64, f64), // dual number for autograd: (real, derivative)
     App(FnValue, f64, bool, u64),   // headless app session for test blocks (the view, its viewport width, the wide look, which session)
     GradFn(FnValue), // gradient function wrapping a user function
@@ -176,6 +179,7 @@ impl Value {
             Value::Sparse(_) => "sparse",
             Value::Frame(_) => "frame",
             Value::DbConn(_) => "db",
+            Value::Mailer(..) => "mailer",
             Value::Dual(_, _) => "float", // Dual appears as float to user
             Value::GradFn(_) => "fn",
             Value::Done => "done",
@@ -231,6 +235,7 @@ impl fmt::Display for Value {
             Value::Sparse(s) => write!(f, "{}", s),
             Value::Frame(frame) => write!(f, "{}", frame),
             Value::DbConn(h) => write!(f, "<db:{}>", h.backend_name()),
+            Value::Mailer(_, host) => write!(f, "<mailer:{}>", host),
             Value::GradFn(func) => write!(f, "<grad {}>", func.name),
             Value::Dual(real, _) => {
                 // Display as float (user never sees the derivative)

@@ -125,7 +125,7 @@ pub fn router(initial: CrowLiveState, view: ViewFn, handle: HandleFn, derived: D
         })
     };
     let mut r = axum::Router::new();
-    for op in ["open", "event", "field", "clock", "reader", "read", "facts", "html", "downloads"] {
+    for op in ["open", "event", "field", "clock", "reader", "read", "facts", "html", "downloads", "mails"] {
         r = r.route(&format!("/__crow/test/{}", op), route(op));
     }
     r
@@ -248,6 +248,11 @@ async fn answer(c: &Control, op: &str, body: serde_json::Value) -> Result<serde_
             let files: Vec<serde_json::Value> =
                 s.state.downloads.iter().map(|(name, bytes)| serde_json::json!({ "name": name, "text": String::from_utf8_lossy(bytes) })).collect();
             Ok(serde_json::json!({ "files": files }))
+        }
+        // what the session sent, recorded: nothing is sent under test
+        "mails" => {
+            let mails: Vec<serde_json::Value> = s.state.mails.iter().map(|m| serde_json::json!({ "to": m.to, "subject": m.subject, "body": m.body })).collect();
+            Ok(serde_json::json!({ "mails": mails }))
         }
         other => Err(format!("no test verb '{}'", other)),
     }

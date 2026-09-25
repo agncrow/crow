@@ -107,6 +107,14 @@ pub struct IrInterp {
     /// there (compiled_harness.rs).
     remote: Option<Arc<crate::compiled_harness::RemoteApp>>,
     remote_sessions: HashMap<u64, u64>,
+    /// Whether the effect being run has its answer used (`Effect.answered`):
+    /// `sent = mail[…]` sends at once, `mail[…]` waits for the commit.
+    answering: bool,
+    /// A test block's run: a message is recorded, never sent.
+    pub(crate) testing: bool,
+    /// The messages each session sent, as a test reads them (`mails[a]`),
+    /// each with its mailer's place in `MAILERS`.
+    pub(crate) session_mails: HashMap<u64, Vec<(crow_web::live::SentMail, usize)>>,
 }
 
 /// An effect a handler held to its commit (core-design.md §1.2).
@@ -118,6 +126,22 @@ enum HeldEffect {
     Sign(Option<std::collections::BTreeMap<String, CrowValue>>),
     /// download[value, name]: the file's name and bytes
     Download(String, Vec<u8>),
+    /// mail[mailer, to, subject, body]: the message, and its mailer's place
+    /// in `MAILERS`
+    Mail(crow_web::live::SentMail, usize),
+}
+
+/// The mailers `smtp[…]` made. A mailer value names its place here, so its
+/// password is never part of a value a program can print.
+static MAILERS: std::sync::LazyLock<std::sync::Mutex<Vec<crow_web::mail::CrowMailer>>> = std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));
+
+/// How a mailer sends one message, from wherever it is asked.
+pub(crate) fn mail_sender(mailer: usize, mail: &crow_web::live::SentMail) -> crow_web::live::MailSender {
+    let m = mail.clone();
+    std::sync::Arc::new(move || {
+        let mailer = MAILERS.lock().unwrap_or_else(|p| p.into_inner()).get(mailer).cloned().ok_or("no such mailer")?;
+        mailer.send_blocking(&m.to, &m.subject, &m.body)
+    })
 }
 
 /// How a stop travels out of a handler, through every helper, to the
@@ -216,6 +240,8 @@ pub fn run_test(decls: &[crate::ast::Stmt], label: &str, params: &[(String, Crow
         eprintln!("{}", crate::ir::print(&program));
     }
     let mut it = IrInterp::new(&ctx.registry, "test");
+    // a test records what the program would send, and sends nothing
+    it.testing = true;
     it.load(&program);
     it.run_main(&program).map_err(|e| format!("a declaration failed before the test ran: {}", e))?;
     let test = program.parts.iter().flat_map(|p| p.tests.iter()).last().ok_or("lowering: the test block is missing")?;
@@ -268,6 +294,9 @@ impl IrInterp {
             session_downloads: HashMap::new(),
             remote: None,
             remote_sessions: HashMap::new(),
+            answering: true,
+            testing: false,
+            session_mails: HashMap::new(),
             held: None,
             notice_read: false,
             page_config: None,
@@ -772,14 +801,17 @@ impl IrInterp {
                     Target::Module(m, f) => self.module_call(m, f, vals)?,
                 }
             }
-            Expr::Effect { name, args, propagates, .. } => {
+            Expr::Effect { name, args, propagates, answered, .. } => {
                 let vals = self.eval_args(args)?;
                 if *propagates {
                     if let Some(err) = self.first_error(&vals) {
                         return Ok(err);
                     }
                 }
-                self.effect(name, vals)?
+                let asked = std::mem::replace(&mut self.answering, *answered);
+                let r = self.effect(name, vals);
+                self.answering = asked;
+                r?
             }
             Expr::Convert { how, expr, .. } => {
                 let v = self.eval(expr)?;
@@ -1115,7 +1147,7 @@ impl IrInterp {
         if name == "transact" {
             return self.transact(vals);
         }
-        if matches!(name, "serve" | "page" | "fetch" | "poll" | "app" | "html" | "elements" | "change" | "click" | "box" | "fits" | "style" | "downloads") {
+        if matches!(name, "serve" | "page" | "fetch" | "poll" | "app" | "html" | "elements" | "change" | "click" | "box" | "fits" | "style" | "downloads" | "mails") {
             return self.harness(name, vals);
         }
         // a scalar name both core and math answer goes to the core builtin
@@ -1414,14 +1446,51 @@ impl IrInterp {
                 if vals.len() != 4 {
                     return Err("smtp[] takes 4 arguments".into());
                 }
-                let host = match vals[0].unwrap_or_propagate()? {
-                    Value::Str(s) => s.clone(),
-                    _ => return Err("smtp[] host must be a string".into()),
+                let text = |i: usize, what: &str| -> Result<String, String> {
+                    match vals[i].unwrap_or_propagate()? {
+                        Value::Str(s) => Ok(s.clone()),
+                        _ => Err(format!("smtp[] {} must be a string", what)),
+                    }
                 };
-                let mut map = std::collections::BTreeMap::new();
-                map.insert("host".to_string(), CrowValue::ok(Value::Str(host)));
-                map.insert("ok".to_string(), CrowValue::ok(Value::Bool(true)));
-                Ok(CrowValue::ok(Value::Map(map)))
+                let (host, user, pass) = (text(0, "host")?, text(2, "user")?, text(3, "password")?);
+                let port = match vals[1].unwrap_or_propagate()? {
+                    Value::Int(n) => *n as u16,
+                    _ => return Err("smtp[] port must be an int".into()),
+                };
+                let mailer = crow_web::mail::CrowMailer::new(&host, port, &user, &pass)?;
+                let id = {
+                    let mut all = MAILERS.lock().unwrap_or_else(|p| p.into_inner());
+                    all.push(mailer);
+                    all.len() - 1
+                };
+                Ok(CrowValue::ok(Value::Mailer(id, host)))
+            }
+            // mail[mailer, to, subject, body]: held to a handler's commit, or
+            // sent when its answer is used; in a test, recorded and never sent
+            "mail" => {
+                if vals.len() != 4 {
+                    return Err("mail[] takes a mailer, to, subject and body: mail[mailer, 'ada@example.com', 'Hello', 'Welcome']".into());
+                }
+                let mailer = match &vals[0].value {
+                    Value::Mailer(id, _) => *id,
+                    _ => return Err("mail[] sends through a mailer: mailer = smtp[host, port, user, pass]".into()),
+                };
+                let text = |i: usize| format!("{}", vals[i].value);
+                let mail = crow_web::live::SentMail { to: text(1), subject: text(2), body: text(3) };
+                if self.testing || self.held.is_some() && !self.answering {
+                    match self.held.as_mut() {
+                        Some(held) if !self.answering => held.push(HeldEffect::Mail(mail, mailer)),
+                        _ => {
+                            let id = self.active_session.unwrap_or(0);
+                            self.session_mails.entry(id).or_default().push((mail, mailer));
+                        }
+                    }
+                    return Ok(CrowValue::ok(Value::Bool(true)));
+                }
+                match (mail_sender(mailer, &mail))() {
+                    Ok(()) => Ok(CrowValue::ok(Value::Bool(true))),
+                    Err(e) => Ok(CrowValue::error_with_kind(&format!("mail to {} failed: {}", mail.to, e), "mail", &self.trace_entry())),
+                }
             }
             "msgpack" | "arrow" | "bytes" | "stream" => {
                 if vals.len() != 1 {
@@ -1781,6 +1850,9 @@ impl IrInterp {
                         HeldEffect::Download(name, bytes) => {
                             self.session_downloads.entry(id).or_default().push((name, bytes));
                         }
+                        HeldEffect::Mail(mail, mailer) => {
+                            self.session_mails.entry(id).or_default().push((mail, mailer));
+                        }
                         HeldEffect::Sign(record) => {
                             let strings = record.as_ref().map(|m| {
                                 m.iter().map(|(k, v)| (k.clone(), match &v.value { Value::Str(s) => s.clone(), other => format!("{}", other) })).collect()
@@ -1921,6 +1993,16 @@ impl IrInterp {
             .unwrap_or_default())
     }
 
+    fn remote_mails(&mut self, rid: u64) -> Result<Vec<crow_web::live::SentMail>, String> {
+        let answer = self.remote()?.post("mails", serde_json::json!({ "session": rid }))?;
+        let text = |m: &serde_json::Value, k: &str| m.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        Ok(answer
+            .get("mails")
+            .and_then(|m| m.as_array())
+            .map(|ms| ms.iter().map(|m| crow_web::live::SentMail { to: text(m, "to"), subject: text(m, "subject"), body: text(m, "body") }).collect())
+            .unwrap_or_default())
+    }
+
     /// A session's page: rendered here, or by the compiled program.
     fn session_html(&mut self, view: &str, id: u64) -> Result<String, String> {
         if let Some(rid) = self.remote_sessions.get(&id).copied() {
@@ -2037,6 +2119,25 @@ impl IrInterp {
                         m.insert("name".to_string(), CrowValue::ok(Value::Str(name)));
                         m.insert("text".to_string(), CrowValue::ok(Value::Str(String::from_utf8_lossy(&bytes).to_string())));
                         CrowValue::ok(Value::Map(m))
+                    })
+                    .collect();
+                CrowValue::ok(Value::Array(items))
+            }
+            // mails[a]: the messages the session sent, which a test never sends
+            "mails" => {
+                let (_, _, _, id) = vals.first().and_then(app_view).ok_or("mails[] takes an app session: mails[a]")?;
+                let list = match self.remote_sessions.get(&id).copied() {
+                    Some(rid) => self.remote_mails(rid)?,
+                    None => self.session_mails.get(&id).cloned().unwrap_or_default().into_iter().map(|(m, _)| m).collect(),
+                };
+                let items = list
+                    .into_iter()
+                    .map(|m| {
+                        let mut map = std::collections::BTreeMap::new();
+                        map.insert("to".to_string(), CrowValue::ok(Value::Str(m.to)));
+                        map.insert("subject".to_string(), CrowValue::ok(Value::Str(m.subject)));
+                        map.insert("body".to_string(), CrowValue::ok(Value::Str(m.body)));
+                        CrowValue::ok(Value::Map(map))
                     })
                     .collect();
                 CrowValue::ok(Value::Array(items))

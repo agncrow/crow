@@ -37,6 +37,10 @@ pub(crate) const CORE_RESERVED: &[&str] = &[
     "grad",
 ];
 
+/// Why `mail` is refused in a view or a derivation, directly or through a
+/// function it calls.
+pub(super) const MAIL_IN_A_RENDER: &str = "mail[] sends a message, and a view or a derivation runs whenever the page needs it: send it from a handler, or a function a handler calls";
+
 /// Reserved only in files that import web (use web / use web.*)
 pub(crate) const WEB_RESERVED: &[&str] = &[
     "route", "serve", "respond", "redirect", "html", "text",
@@ -44,7 +48,7 @@ pub(crate) const WEB_RESERVED: &[&str] = &[
     "app", "click", "elements", "change", "box", "fits", "style",
     "cors", "sessions", "templates", "cache", "limit",
     "uploads", "sse", "ws", "connect", "send", "recv", "close",
-    "page", "static_dir", "smtp", "msgpack", "arrow", "bytes", "stream",
+    "page", "static_dir", "smtp", "mail", "mails", "msgpack", "arrow", "bytes", "stream",
     "reader", "sign_in", "sign_out", "download", "downloads",
 ];
 
@@ -105,7 +109,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     // Web P4 modules
     "cors", "sessions", "templates", "render", "cache", "limit",
     "uploads", "sse", "ws", "connect", "send", "recv", "close",
-    "page", "static_dir", "smtp",
+    "page", "static_dir", "smtp", "mail",
     // UI reactive builtins
     "fetch", "poll", "field", "slider", "checkbox", "toggle", "radio", "tabs", "select", "progress", "icon", "today",
 ];
@@ -544,7 +548,7 @@ impl<'a> Lowerer<'a> {
         let arg_type = |l: &Self, i: usize| -> CrowType { args.get(i).map(|a| l.seen_type(a)).unwrap_or(CrowType::Unknown) };
         // Test-harness builtins exist only inside test blocks (which never
         // reach a build) — accept them there, refuse them anywhere else.
-        if matches!(name, "app" | "click" | "elements" | "change" | "box" | "fits" | "style" | "downloads") {
+        if matches!(name, "app" | "click" | "elements" | "change" | "box" | "fits" | "style" | "downloads" | "mails") {
             if self.at != Where::Test {
                 self.refuse(format!("'{}' is a test-harness builtin — it only works inside a test block", name));
             }
@@ -689,6 +693,11 @@ impl<'a> Lowerer<'a> {
             }
             if name == "download" && !for_session {
                 self.refuse("download[] hands the page's reader a file: call it in a handler, or in a function a handler calls".to_string());
+            }
+            // a message is sent once, and a render or a derivation runs
+            // whenever the page needs it
+            if name == "mail" && matches!(self.at, Where::In(FnKind::View) | Where::Derive) {
+                self.refuse(MAIL_IN_A_RENDER.to_string());
             }
             // signing in and out is a session's: a handler does it
             if matches!(name, "sign_in" | "sign_out") && !for_session {
@@ -883,6 +892,7 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "page" => argc == 2 || argc == 3,     // page[path, render] or page[path, render, handle]
         "static_dir" => argc == 3,            // static_dir[app, url_path, dir_path]
         "smtp" => argc == 4,                  // smtp[host, port, user, pass]
+        "mail" => argc == 4,                  // mail[mailer, to, subject, body]
         // UI reactive builtins
         "fetch" => argc == 1,                 // fetch[url]
         "poll" => argc == 2,                  // poll[url, seconds]
@@ -1099,6 +1109,27 @@ mod tests {
     fn an_aliased_modules_constant_is_read() {
         let result = check_source("use math as m\nlog[m.pi]\n");
         assert!(result.is_ok(), "{:?}", result);
+    }
+
+    /// mail takes a mailer, to, subject and body; what a session sent is a
+    /// test's to read, and only a test's
+    #[test]
+    fn mail_is_checked_where_it_is_written() {
+        let err = check_source("use web\nuse web.mail\nm = smtp['h', 587, 'u', 'p']\nmail[m, 'a@b.c', 'Hello']\n").unwrap_err();
+        assert!(err.contains("mail"), "{}", err);
+        let err = check_source("use web, ui\nuse web.mail\nn = 0\nview v[]\n    return p['`n`']\nlog[mails[v]]\n").unwrap_err();
+        assert!(err.contains("'mails' is a test-harness builtin"), "{}", err);
+        let result = check_source("use web\nuse web.mail\nm = smtp['h', 587, 'u', 'p']\nr = mail[m, 'a@b.c', 'Hello', 'Welcome']\nlog[r.ok]\n");
+        assert!(result.is_ok(), "{:?}", result);
+        // a render or a derivation runs whenever the page needs it: it
+        // sends nothing, itself or through a function it calls
+        let ui = "use web, ui\nuse web.mail\nmailer = smtp['h', 587, 'u', 'p']\nn = 0\n";
+        let err = check_source(&format!("{}view v[]\n    mail[mailer, 'a@b.c', 'x', 'y']\n    return p['`n`']\n", ui)).unwrap_err();
+        assert!(err.contains("line 6: mail[] sends a message, and a view or a derivation"), "{}", err);
+        let err = check_source(&format!("{}derive d\n    r = mail[mailer, 'a@b.c', 'x', 'y']\n    return r.ok\nview v[]\n    return p['`d`']\n", ui)).unwrap_err();
+        assert!(err.contains("line 6: mail[] sends a message"), "{}", err);
+        let err = check_source(&format!("{}fn tell[m]\n    mail[m, 'a@b.c', 'x', 'y']\n    return 1\nview v[]\n    k = tell[mailer]\n    return p['`k`']\n", ui)).unwrap_err();
+        assert!(err.contains("in v: calls tell, which sends mail"), "{}", err);
     }
 
     /// A cell of a column no database described is text only as a guess:

@@ -2554,14 +2554,14 @@ mod tests {
 
     #[test]
     fn test_smtp_builtin() {
+        // a mailer is a handle: it shows its host, and its password is in
+        // no value a program can print
         let val = get_var("mailer = smtp['smtp.example.com', 587, 'user', 'pass']", "mailer");
         match &val.value {
-            Value::Map(m) => {
-                assert!(m.contains_key("host"));
-                assert!(m.contains_key("ok"));
-            }
-            _ => panic!("expected map"),
+            Value::Mailer(_, host) => assert_eq!(host, "smtp.example.com"),
+            other => panic!("expected a mailer, got {:?}", other),
         }
+        assert_eq!(format!("{}", val.value), "<mailer:smtp.example.com>");
     }
 
     // ===== Response format tests (P4) =====
@@ -3251,6 +3251,17 @@ mod tests {
     #[test]
     fn a_handler_hands_the_reader_files() {
         let src = "use web, ui, frame\nn = 0\nfn export[]\n    f = with[frame.new[], 'n', range[1, 3]]\n    download[f, 'numbers.csv']\n    download['hello', 'note.txt']\nfn broken[]\n    download['never', 'lost.txt']\n    x = float['no']\n    if x gt 1.0\n        n = 1\nview v[]\n    return stack[button['Export', click = export], button['Broken', click = broken]]\ntest t[]\n    a = app[v]\n    click[a, export]\n    got = downloads[a]\n    assert[len[got] eq 2]\n    assert[got[0].name eq 'numbers.csv']\n    assert[got[0].text eq 'n\\n1\\n2\\n']\n    assert[got[1].text eq 'hello']\n    r = click[a, broken]\n    assert[not r.ok]\n    assert[len[downloads[a]] eq 2]\n";
+        let issues = harness_issues(src);
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
+
+    /// mail[mailer, to, subject, body]: a handler's message waits for its
+    /// commit, a stopped handler sends nothing, one whose answer is used is
+    /// sent when asked, and a helper's is its handler's; a test sends none
+    /// and reads what the session sent with mails[a]
+    #[test]
+    fn a_handlers_mail_waits_for_its_commit() {
+        let src = "use web, ui\nuse web.mail\nmailer = smtp['smtp.example.com', 587, 'noreply@example.com', 'secret']\nn = 0\nfn notify[m, to]\n    mail[m, to, 'Hello', 'From a helper']\nfn welcome[]\n    n = n + 1\n    mail[mailer, 'ada@example.com', 'Hello', 'Welcome, number `n`']\nfn broken[]\n    mail[mailer, 'bob@example.com', 'Lost', 'never sent']\n    x = float['no']\n    if x gt 1.0\n        n = 1\nfn asked[]\n    r = mail[mailer, 'cy@example.com', 'Asked', 'sent at once']\n    if r.ok\n        n = 10\nfn helped[]\n    notify[mailer, 'di@example.com']\nview v[]\n    return stack[p['`n`'], button['Welcome', click = welcome], button['Broken', click = broken], button['Asked', click = asked], button['Helped', click = helped]]\ntest t[]\n    a = app[v]\n    click[a, welcome]\n    got = mails[a]\n    assert[len[got] eq 1]\n    assert[got[0].to eq 'ada@example.com']\n    assert[got[0].subject eq 'Hello']\n    assert[got[0].body eq 'Welcome, number 1']\n    r = click[a, broken]\n    assert[not r.ok]\n    assert[len[mails[a]] eq 1]\n    click[a, asked]\n    assert[len[mails[a]] eq 2]\n    assert[a.n eq 10]\n    click[a, helped]\n    assert[mails[a][2].to eq 'di@example.com']\n    assert['`mailer`' eq '<mailer:smtp.example.com>']\n";
         let issues = harness_issues(src);
         assert!(issues.is_empty(), "harness issues: {:?}", issues);
     }

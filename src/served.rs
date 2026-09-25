@@ -14,10 +14,10 @@ use crow_web::live::{CrowLiveState, CrowLiveView};
 use crow_web::view::CrowVNode;
 
 /// Whether a fact is data a session holds, rather than a resource every
-/// session shares (a database handle) or a function: resources stay the
+/// session shares (a database handle, a mailer) or a function: resources stay the
 /// template's, never copied into a session.
 pub(crate) fn is_data(v: &CrowValue) -> bool {
-    !matches!(v.value, Value::DbConn(_) | Value::Fn(_) | Value::GradFn(_) | Value::App(..))
+    !matches!(v.value, Value::DbConn(_) | Value::Mailer(..) | Value::Fn(_) | Value::GradFn(_) | Value::App(..))
 }
 
 /// A fact as the session keeps it: JSON, a frame by its own shape.
@@ -167,6 +167,11 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
         // the files the handler handed the reader go with its commit
         for (name, bytes) in it.session_downloads.remove(&0).unwrap_or_default() {
             state.download(&name, bytes);
+        }
+        // and the messages it sent, which the runtime sends when it commits
+        for (mail, mailer) in it.session_mails.remove(&0).unwrap_or_default() {
+            let send = crate::ir_interp::mail_sender(mailer, &mail);
+            state.mail(mail, send);
         }
         // a sign-in or sign-out the handler made lands with its commit, and
         // the runtime keeps the cookie

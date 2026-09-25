@@ -3,18 +3,27 @@
 //! ```text
 //! use web.mail
 //!
-//! mailer = smtp['smtp.example.com', 587, 'user', 'pass']
-//! send[mailer, {
-//!   from, 'noreply@example.com',
-//!   to, 'alice@example.com',
-//!   subject, 'Hello',
-//!   body, 'Welcome to Crow!'
-//! }]
+//! mailer = smtp['smtp.example.com', 587, 'noreply@example.com', 'pass']
+//! fn welcome[m, to]
+//!     mail[m, to, 'Hello', 'Welcome to Crow!']
 //! ```
+//!
+//! In a handler `mail` waits for the commit, and a handler that stops sends
+//! nothing (`crow_web::live`, `Held::Mail`).
 
-/// SMTP mailer wrapper around lettre.
+/// SMTP mailer wrapper around lettre. Its messages come from its user.
+#[derive(Clone)]
 pub struct CrowMailer {
     transport: lettre::AsyncSmtpTransport<lettre::Tokio1Executor>,
+    from: String,
+    host: String,
+}
+
+impl std::fmt::Display for CrowMailer {
+    /// A mailer shows its host, never its password.
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "<mailer:{}>", self.host)
+    }
 }
 
 impl CrowMailer {
@@ -30,7 +39,24 @@ impl CrowMailer {
             .credentials(creds)
             .build();
 
-        Ok(Self { transport })
+        Ok(Self { transport, from: username.to_string(), host: host.to_string() })
+    }
+
+    /// `mail[mailer, to, subject, body]`: a plain-text message from the
+    /// mailer's user, sent from where no runtime waits — a handler's worker
+    /// thread, the interpreter — on a thread of its own. Under
+    /// `CROW_TEST_CONTROL` (`crow test --compiled`) nothing is sent.
+    pub fn send_blocking(&self, to: &str, subject: &str, body: &str) -> Result<(), String> {
+        if std::env::var("CROW_TEST_CONTROL").is_ok() {
+            return Ok(());
+        }
+        let (mailer, to, subject, body) = (self.clone(), to.to_string(), subject.to_string(), body.to_string());
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
+            rt.block_on(mailer.send(&mailer.from, &to, &subject, &body))
+        })
+        .join()
+        .map_err(|_| "the mail thread failed".to_string())?
     }
 
     /// Send an email.

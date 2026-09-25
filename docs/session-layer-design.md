@@ -672,11 +672,20 @@ checks still hold, every harness test passes. What building it found:
   serialized value in compiled code and was refused there; now it stops
   the handler in both modes.
 - *Not built:* facts still round-trip through JSON (the working copy is
-  a clone of the JSON store), `mail` has no builtin to hold, and a
-  handler's own derivation over a table it wrote is recomputed from its
-  uncommitted transaction only when it reads through the same handle.
-  Comparing a bare `error[…]` value with a number does not compile (its
-  value has no type) — a pre-existing gap, noted, not fixed.
+  a clone of the JSON store), and a handler's own derivation over a
+  table it wrote is recomputed from its uncommitted transaction only when
+  it reads through the same handle. Comparing a bare `error[…]` value
+  with a number did not compile (its value has no type); fixed in
+  3a7bab4, where such an error hands itself on.
+- *Built 2026-09-24:* `mail[mailer, to, subject, body]` is held like
+  `notice`: sent when its handler commits, dropped when it stops, sent
+  at once when its answer is read. A handler's last line is not an
+  answer anyone reads, so the lowering holds an effect a function
+  returns when no caller reads that function's value (`decide_answers`).
+  A function that sends mail for a handler joins the handler class, as
+  one that says a notice does, so the compiled helper has the session to
+  hold it in. The mailer is a process-wide handle like a connection. A
+  test records instead of sending, in both modes (`mails[a]`).
 
 **Phase C — built 2026-09-23.** A session outlives its socket: parked
 for ten minutes under a token the tab keeps in `sessionStorage`,

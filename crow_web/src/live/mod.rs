@@ -211,6 +211,25 @@ enum Held {
     Sign(Option<std::collections::BTreeMap<String, String>>),
     /// download[value, name]: the file's name and bytes
     Download(String, Vec<u8>),
+    /// mail[mailer, to, subject, body]: the message, and how to send it
+    Mail(SentMail, MailSender),
+}
+
+/// A message `mail[…]` sent: what a test reads back (`mails[a]`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SentMail {
+    pub to: String,
+    pub subject: String,
+    pub body: String,
+}
+
+/// How a message is sent: the mailer's blocking send, with its message.
+pub type MailSender = std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+
+/// Whether the program answers a test (`crow test --compiled`): then a
+/// message is recorded, and nothing is sent.
+fn under_test() -> bool {
+    std::env::var("CROW_TEST_CONTROL").is_ok()
 }
 
 impl std::fmt::Debug for Held {
@@ -220,6 +239,7 @@ impl std::fmt::Debug for Held {
             Held::Later(n, _) => write!(f, "later {}", n),
             Held::Sign(r) => write!(f, "sign {}", if r.is_some() { "in" } else { "out" }),
             Held::Download(n, b) => write!(f, "download {} ({} bytes)", n, b.len()),
+            Held::Mail(m, _) => write!(f, "mail to {} ({:?})", m.to, m.subject),
         }
     }
 }
@@ -356,6 +376,8 @@ pub struct CrowLiveState {
     tables_drawn: std::sync::atomic::AtomicUsize,
     /// files the last commits handed the reader, for the page to fetch
     pub(crate) downloads: Vec<(String, Vec<u8>)>,
+    /// the messages the session sent, kept for a test (`mails[a]`)
+    pub(crate) mails: Vec<SentMail>,
 }
 
 /// Derivations shared by every session (derive-design.md §3.5): one value
@@ -989,6 +1011,7 @@ impl CrowLiveState {
             signing: None,
             tables_drawn: std::sync::atomic::AtomicUsize::new(0),
             downloads: Vec::new(),
+            mails: Vec::new(),
         }
     }
 
@@ -1046,6 +1069,8 @@ impl CrowLiveState {
         for (v, keys) in copy.local_writes.lock().unwrap_or_else(|p| p.into_inner()).drain(..) {
             log_write(v, keys);
         }
+        // a message the handler sent at once was sent, stop or not
+        self.mails.extend(copy.mails);
         if let Some(reason) = copy.stopped {
             // its transactions rolled back, but a store without them
             // (ClickHouse) kept what it was given: its readers look again
@@ -1075,6 +1100,9 @@ impl CrowLiveState {
                 }
                 Held::Sign(record) => self.apply_sign(record),
                 Held::Download(name, bytes) => self.downloads.push((name, bytes)),
+                Held::Mail(mail, send) => {
+                    let _ = self.deliver(mail, send, false);
+                }
             }
         }
         None
@@ -1112,6 +1140,40 @@ impl CrowLiveState {
         } else {
             self.downloads.push((name.to_string(), bytes));
         }
+    }
+
+    /// `mail[mailer, to, subject, body]` whose answer the handler does not
+    /// use: sent when the handler commits, on a thread of its own so the
+    /// session never waits on the mail server, and not at all when it stops.
+    pub fn mail(&mut self, mail: SentMail, send: MailSender) {
+        if self.copy {
+            self.held.push(Held::Mail(mail, send));
+        } else {
+            // a send that is not waited for says its failure in the log
+            let _ = self.deliver(mail, send, false);
+        }
+    }
+
+    /// `sent = mail[…]`: sent when asked, answering whether the server took it.
+    pub fn mail_now(&mut self, mail: SentMail, send: MailSender) -> Result<(), String> {
+        self.deliver(mail, send, true)
+    }
+
+    fn deliver(&mut self, mail: SentMail, send: MailSender, wait: bool) -> Result<(), String> {
+        if under_test() {
+            self.mails.push(mail);
+            return Ok(());
+        }
+        if wait {
+            return send();
+        }
+        let to = mail.to.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = send() {
+                eprintln!("crow live: mail to {} failed: {}", to, e);
+            }
+        });
+        Ok(())
     }
 
     /// `sign_out[]`: nobody, from when the handler commits — and the sign-in
@@ -1264,6 +1326,7 @@ impl CrowLiveState {
             signing: None,
             tables_drawn: std::sync::atomic::AtomicUsize::new(0),
             downloads: Vec::new(),
+            mails: Vec::new(),
         }
     }
 
@@ -1722,6 +1785,7 @@ impl Clone for CrowLiveState {
             signing: None,
             tables_drawn: std::sync::atomic::AtomicUsize::new(0),
             downloads: Vec::new(),
+            mails: Vec::new(),
         }
     }
 }
@@ -4443,6 +4507,46 @@ mod tests {
         assert_eq!(s.commit(copy), Some("apply stopped: no quote".to_string()));
         assert_eq!((s.get("a"), s.get("b")), (Some(&serde_json::json!(2)), Some(&serde_json::json!(1))), "a stop lands nothing");
         assert_eq!(s.notice.as_ref().map(|n| n.0.as_str()), Some("apply stopped: no quote"));
+    }
+
+    /// mail[…] whose answer the handler does not use is sent when the
+    /// handler commits and never when it stops; one whose answer it uses is
+    /// sent when asked, stop or not
+    #[test]
+    fn a_handlers_mail_waits_for_its_commit() {
+        let sent: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+        let sender = |to: &str| -> MailSender {
+            let (sent, to) = (sent.clone(), to.to_string());
+            std::sync::Arc::new(move || {
+                sent.lock().unwrap().push(to.clone());
+                Ok(())
+            })
+        };
+        let message = |to: &str| SentMail { to: to.to_string(), subject: "Hello".into(), body: "Welcome".into() };
+        let settled = |n: usize| {
+            for _ in 0..400 {
+                if sent.lock().unwrap().len() >= n {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            sent.lock().unwrap().clone()
+        };
+        let mut s = start_session(&CrowLiveState::new());
+        let mut copy = s.working_copy();
+        copy.mail(message("ada@example.com"), sender("ada@example.com"));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(sent.lock().unwrap().is_empty(), "nothing is sent before the commit");
+        assert_eq!(s.commit(copy), None);
+        assert_eq!(settled(1), vec!["ada@example.com".to_string()]);
+        let mut copy = s.working_copy();
+        copy.mail(message("bob@example.com"), sender("bob@example.com"));
+        assert_eq!(copy.mail_now(message("cy@example.com"), sender("cy@example.com")), Ok(()));
+        assert_eq!(settled(2), vec!["ada@example.com".to_string(), "cy@example.com".to_string()]);
+        copy.stop("welcome stopped: no quote".to_string());
+        assert!(s.commit(copy).is_some());
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(sent.lock().unwrap().len(), 2, "a stopped handler's held mail is dropped");
     }
 
     #[test]

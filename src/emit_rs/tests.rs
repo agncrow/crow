@@ -1623,6 +1623,21 @@ fn test_web_smtp_import() {
     assert!(rust.contains("use crow_web::mail::CrowMailer;"), "should import CrowMailer\n{}", rust);
 }
 
+/// A handler's mail waits for the session's commit, one whose answer is
+/// read is sent when asked, and the mailer is a process-wide static like a
+/// connection, never a session's fact.
+#[test]
+fn mail_in_a_handler_goes_through_the_session() {
+    let rust = transpile("use web, ui\nuse web.mail\nmailer = smtp['smtp.example.com', 587, 'user', 'pass']\nn = 0\nfn welcome[]\n    mail[mailer, 'ada@example.com', 'Hello', 'Welcome']\nfn asked[]\n    r = mail[mailer, 'cy@example.com', 'Asked', 'now']\n    if r.ok\n        n = 1\nview v[]\n    return stack[button['A', click = welcome], button['B', click = asked]]\npage['/', v]\n");
+    assert!(rust.contains("state.mail(_mail, _send)"), "held to the commit\n{}", rust);
+    assert!(rust.contains("state.mail_now(_mail, _send)"), "sent when asked\n{}", rust);
+    assert!(rust.contains("static __crow_handle_mailer: std::sync::OnceLock<crow_web::mail::CrowMailer>"), "a static mailer\n{}", rust);
+    assert!(!rust.contains("\"mailer\", serde_json"), "not a session fact\n{}", rust);
+    // a script sends at once
+    let rust = transpile("use web\nuse web.mail\nmailer = smtp['smtp.example.com', 587, 'user', 'pass']\nr = mail[mailer, 'ada@example.com', 'Hello', 'Welcome']\nlog[r.ok]\n");
+    assert!(rust.contains(".send_blocking(&_to, &_subject, &_body)"), "{}", rust);
+}
+
 #[test]
 fn test_web_connect() {
     let rust = transpile("use web\nuse web.ws\nurl = 'ws://localhost:3000'\nsock = connect[url]\n");

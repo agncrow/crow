@@ -45,9 +45,15 @@ pub enum CrowType {
     DbHandle,
     /// Database transaction handle (&dyn crow_db::DbTx) — transact[] callback param.
     DbTx,
+    /// An SMTP mailer (crow_web::mail::CrowMailer) — `use web.mail` smtp[].
+    Mailer,
     Void,
     Unknown,
 }
+
+/// The effects a session keeps or holds for its handler's commit: a
+/// function that makes one acts for the session.
+const SESSION_EFFECTS: &[&str] = &["notice", "sign_in", "sign_out", "download", "mail"];
 
 impl CrowType {
     pub fn to_rust_type(&self) -> String {
@@ -76,6 +82,7 @@ impl CrowType {
             CrowType::WebDb => "crow_web::db::CrowSqlite".into(),
             CrowType::DbHandle => "crow_db::DbHandle".into(),
             CrowType::DbTx => "&dyn crow_db::DbTx".into(),
+            CrowType::Mailer => "crow_web::mail::CrowMailer".into(),
             CrowType::Void => "()".into(),
             CrowType::Unknown => "String".into(),
         }
@@ -106,6 +113,7 @@ impl CrowType {
             CrowType::WebDb => "panic!(\"no default db\")".into(),
             CrowType::DbHandle => "panic!(\"no default db connection\")".into(),
             CrowType::DbTx => "panic!(\"no default db transaction\")".into(),
+            CrowType::Mailer => "panic!(\"no default mailer\")".into(),
             CrowType::Void => "()".into(),
             CrowType::Unknown => "String::new()".into(),
         }
@@ -163,6 +171,7 @@ impl CrowType {
             CrowType::WebDb => "web.db".into(),
             CrowType::DbHandle => "db.conn".into(),
             CrowType::DbTx => "db.tx".into(),
+            CrowType::Mailer => "mailer".into(),
             CrowType::Void => "void".into(),
             CrowType::Unknown => "unknown".into(),
         }
@@ -693,17 +702,42 @@ impl TypeContext {
             let module_vars: std::collections::BTreeSet<String> = stmts.iter().filter_map(|s| if let Stmt::Assign { name, .. } = s { Some(name.clone()) } else { None }).collect();
             self.facts = module_vars.clone();
             // a function that assigns reactive state — or tells the reader
-            // something with notice[], which the session keeps — acts for
-            // the session and joins the handler class
+            // something with notice[], which the session keeps, or sends
+            // mail, which waits for the session's commit — acts for the
+            // session and joins the handler class. A function's last line
+            // is written as its return.
             fn assigns_any(stmts: &[Stmt], names: &std::collections::BTreeSet<String>) -> bool {
                 stmts.iter().any(|st| match st {
-                    Stmt::ExprStmt(Expr::Call { callee, .. }) if matches!(callee.as_ref(), Expr::Ident(n) if n == "notice" || n == "sign_in" || n == "sign_out" || n == "download") => true,
+                    Stmt::ExprStmt(Expr::Call { callee, .. }) | Stmt::Return(Some(Expr::Call { callee, .. })) if matches!(callee.as_ref(), Expr::Ident(n) if SESSION_EFFECTS.contains(&n.as_str())) => true,
                     Stmt::Assign { name, .. } => names.contains(name),
                     Stmt::MultiAssign { names: ns, .. } => ns.iter().any(|n| names.contains(n)),
                     Stmt::If { then_body, else_body, .. } => assigns_any(then_body, names) || else_body.as_ref().map_or(false, |eb| assigns_any(eb, names)),
                     Stmt::For { body, .. } | Stmt::While { body, .. } => assigns_any(body, names),
                     _ => false,
                 })
+            }
+
+            // a function that reaches a session's effect through the
+            // functions it calls holds it for the handler too, so it joins
+            // with them
+            fn effects_any(stmts: &[Stmt]) -> bool {
+                assigns_any(stmts, &std::collections::BTreeSet::new())
+            }
+            let mut reaches: std::collections::BTreeSet<String> = self.functions.iter().filter(|(_, f)| effects_any(&f.body)).map(|(n, _)| n.clone()).collect();
+            loop {
+                let before = reaches.len();
+                for (n, f) in &self.functions {
+                    if !reaches.contains(n) {
+                        let mut called = std::collections::BTreeSet::new();
+                        Self::collect_called_fns_stmts(&f.body, &mut called);
+                        if called.iter().any(|c| reaches.contains(c)) {
+                            reaches.insert(n.clone());
+                        }
+                    }
+                }
+                if reaches.len() == before {
+                    break;
+                }
             }
 
             // later[f] targets scheduled from views/handlers are deferred
@@ -731,7 +765,7 @@ impl TypeContext {
                             let mut called = std::collections::BTreeSet::new();
                             Self::collect_called_fns_stmts(&sig.body, &mut called);
                             for c in called {
-                                if self.functions.get(&c).map_or(false, |cs| assigns_any(&cs.body, &module_vars)) {
+                                if reaches.contains(&c) || self.functions.get(&c).map_or(false, |cs| assigns_any(&cs.body, &module_vars)) {
                                     targets.insert(c);
                                 }
                             }
@@ -2466,6 +2500,11 @@ impl TypeContext {
             "sign_in" | "sign_out" | "download" => CrowType::Void,
             // the files a test's session was handed, as maps of name and text
             "downloads" => CrowType::Array(Box::new(CrowType::Map(Box::new(CrowType::Str)))),
+            // a message: whether the server took it; and the messages a
+            // test's session sent, as maps of to, subject and body
+            "mail" => CrowType::Result(Box::new(CrowType::Bool)),
+            "smtp" => CrowType::Mailer,
+            "mails" => CrowType::Array(Box::new(CrowType::Map(Box::new(CrowType::Str)))),
             "__notice_text" => CrowType::Str,
             "__notice_at" => CrowType::Float,
             "env" => CrowType::Result(Box::new(CrowType::Str)),
@@ -3319,6 +3358,21 @@ mod tests {
         ctx.infer_program(&stmts);
         assert!(ctx.view_handlers.contains("begin"));
         assert_eq!(ctx.functions["begin"].params[0].1, CrowType::Float);
+    }
+
+    /// A function that sends mail for a handler holds it for the handler's
+    /// commit, so it acts for the session with its handler, as one that
+    /// says a notice does, and so does a function between them; one no
+    /// handler calls keeps its own scope, and a mailer is a handle
+    #[test]
+    fn a_function_that_mails_for_a_handler_acts_for_the_session() {
+        let src = "use web, ui\nuse web.mail\nmailer = smtp['h', 587, 'u', 'p']\nn = 0\nfn notify[m, to]\n    mail[m, to, 'Hello', 'x']\nfn between[m]\n    notify[m, 'a@b.c']\nfn alone[m]\n    mail[m, 'z@b.c', 'Hi', 'y']\nfn go[]\n    n = n + 1\n    between[mailer]\nview v[]\n    return button['Go', click = go]\n";
+        let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        assert!(ctx.view_handlers.contains("notify") && ctx.view_handlers.contains("between"), "{:?}", ctx.view_handlers);
+        assert!(!ctx.view_handlers.contains("alone"));
+        assert_eq!(ctx.functions["notify"].params[0].1, CrowType::Mailer);
     }
 
     /// The program's own evidence types a handler before a test's click

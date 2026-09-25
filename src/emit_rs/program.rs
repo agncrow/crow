@@ -440,8 +440,9 @@ impl Emitter {
                 self.data_source_vars.insert(fact.name.clone());
                 continue;
             }
-            // a connection is infrastructure: a process-wide static
-            if matches!(fact.ty, Ty::Handle(ref k) if k == "db") || matches!(self.tt(&fact.default), CrowType::DbHandle) {
+            // a connection is infrastructure: a process-wide static, as a
+            // mailer is
+            if matches!(fact.ty, Ty::Handle(ref k) if k == "db" || k == "mailer") || matches!(self.tt(&fact.default), CrowType::DbHandle | CrowType::Mailer) {
                 self.static_handle_vars.insert(fact.name.clone());
                 continue;
             }
@@ -966,8 +967,10 @@ impl Emitter {
         }
         if !self.static_handle_vars.is_empty() {
             for n in self.static_handle_vars.clone() {
+                let mailer = self.part.facts.iter().any(|f| f.name == n && (matches!(f.ty, Ty::Handle(ref k) if k == "mailer") || matches!(self.tt(&f.default), CrowType::Mailer)));
+                let ty = if mailer { "crow_web::mail::CrowMailer" } else { "crow_db::DbHandle" };
                 self.line("#[allow(non_upper_case_globals)]");
-                self.line(&format!("static __crow_handle_{}: std::sync::OnceLock<crow_db::DbHandle> = std::sync::OnceLock::new();", n));
+                self.line(&format!("static __crow_handle_{}: std::sync::OnceLock<{}> = std::sync::OnceLock::new();", n, ty));
             }
             self.line("");
         }

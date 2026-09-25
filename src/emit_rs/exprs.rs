@@ -39,7 +39,7 @@ fn fmt_piece(s: &str) -> String {
 
 /// The builtins whose own value is a result, whatever their arguments.
 const FALLIBLE_BUILTINS: &[&str] = &[
-    "error", "hash", "shell", "find", "input", "read", "write", "mkdir", "ls", "rm", "mv", "cp", "captured", "moment", "parse_time", "env", "json", "encode",
+    "error", "hash", "shell", "find", "input", "read", "write", "mkdir", "ls", "rm", "mv", "cp", "captured", "moment", "parse_time", "env", "json", "encode", "mail",
 ];
 
 impl Emitter {

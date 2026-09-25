@@ -662,6 +662,38 @@ impl Emitter {
                     _ => format!("{{ state.download(&{}, format!(\"{{}}\", {}).into_bytes()); }}", a[1], a[0]),
                 }
             }
+            // mail[mailer, to, subject, body]: for a session, held to its
+            // commit (or sent at once when the answer is used, `r = mail[…]`);
+            // elsewhere sent at once. Either way a CrowResult<bool>.
+            "mail" if n == 4 => {
+                let tr = self.trace_format_expr();
+                let mail = format!("crow_web::live::SentMail {{ to: format!(\"{{}}\", {}), subject: format!(\"{{}}\", {}), body: format!(\"{{}}\", {}) }}", a[1], a[2], a[3]);
+                let answer = |sent: &str| {
+                    format!(
+                        "match {} {{ Ok(()) => CrowResult {{ ok: true, value: true, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: false, reason: format!(\"mail to {{}} failed: {{}}\", _to, _e), kind: \"mail\".to_string(), trace: vec![{}], captured: 0.0 }} }}",
+                        sent, tr
+                    )
+                };
+                if self.reactive_event_handlers.contains(&self.cur_fn) {
+                    let send = format!(
+                        "{{ let _m = ({}).clone(); let _s = _mail.clone(); let _f: crow_web::live::MailSender = std::sync::Arc::new(move || _m.send_blocking(&_s.to, &_s.subject, &_s.body)); _f }}",
+                        a[0]
+                    );
+                    if matches!(whole, Expr::Effect { answered: true, .. }) {
+                        format!("{{ let _mail = {}; let _to = _mail.to.clone(); let _send = {}; {} }}", mail, send, answer("state.mail_now(_mail, _send)"))
+                    } else {
+                        format!("{{ let _mail = {}; let _send = {}; state.mail(_mail, _send); CrowResult {{ ok: true, value: true, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }}", mail, send)
+                    }
+                } else {
+                    format!(
+                        "{{ let _to = format!(\"{{}}\", {}); let _subject = format!(\"{{}}\", {}); let _body = format!(\"{{}}\", {}); {} }}",
+                        a[1],
+                        a[2],
+                        a[3],
+                        answer(&format!("({}).send_blocking(&_to, &_subject, &_body)", a[0]))
+                    )
+                }
+            }
             "__reader" => {
                 if self.in_live() {
                     "state.reader()".to_string()
