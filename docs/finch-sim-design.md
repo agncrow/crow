@@ -570,19 +570,63 @@ in for the live config. Everything else is built, in this order.
 | 6 | Next RSI(14, 3m) > 70 crossing | ReplayControlBar | built (2026-09-07): kernel `rsi` over 3-minute bars, the first crossing above 70 after the play-head, any symbol or this one; hops are not bounded by the window's end, as in Python |
 | 7 | Scanner table filters: in-gate only, RSI > 70 charts only; per-symbol mini charts | ScannerReplayMode | built (2026-09-24): the table leaves out skipped symbols and carries RSI(14, 3m) from the kernel's `rsi` over 3-minute closes; three boxes (In-gate only, RSI > 70 charts, Show charts) choose up to twelve cards, strongest slope first, each a `chart` of price and both VWAPs since the window opened that focuses its symbol on click. One chart per card where finch draws two (the 1-second chart and the day's context): the window so far is both. Building it found seven compiler bugs (crow dbb96ed) and one rule for apps: a remote derivation is computed off the render, so a view must not assume two of them caught up together (a card draws its tape only when the tape has rows) |
 | 8 | Patterns: Flag / Pennant, VWAP Launch, Burst Ignition, VWAP Power Cross, Ascending Staircase, Leg Scalp, B2e Surge, Mid-day Grinder, EVT Fade — chips select which are searched | patterns/ (9 detectors, ~3.1k lines) | built (2026-09-24): `patterns/` holds each detector as a part of pure functions over the 1-second bars as lists of numbers (with `tape_state` for the power cross), returning a record of lists; `sim/patterns.co` derives each over the bars up to the play-head when its chip is on (on as finch's `pattern_configs` has them, EVT Fade off), marks what each found on the tape and says its live setup under its chip. Each detector's tests are finch's own truths; the last four were run against the Python on real days — Flag / Pennant on three, Mid-day Grinder on eight (LEDS and ENHA of 2026-07-17 among them), B2e Surge on seven, EVT Fade at every 20th bar of seven — and agree signal for signal, to the last bits of a float. Building it found two dozen compiler bugs, among them a part's locals read as another file's names, fallible record fields, quadratic reads of a record's list in the interpreter, and records unreadable by a compiled test (crow, row 8) |
-| 9 | Next pattern setup; Auto Next as a running mode; auto-advance when the closing window ends | PracticeMode, next-setup | to build — needs #8 and a tick handler |
-| 10 | Brackets: arm at trigger/stop with qty, target, trail, +2R stop floor, limit sells, flatten, unrealised P&L; bracket defaults | TradePanel, ComplexOrderCard, bracket routes | to build — needs a tick handler |
-| 11 | Session-wide Auto-trade on setups | auto-trade route | to build — needs #8, #10 |
+| 9 | Next pattern setup; Auto Next as a running mode; auto-advance when the closing window ends | PracticeMode, next-setup | to build — the play-head walks a derived chain (below) |
+| 10 | Brackets: arm at trigger/stop with qty, target, trail, +2R stop floor, limit sells, flatten, unrealised P&L; bracket defaults | TradePanel, ComplexOrderCard, bracket routes | to build — the book is derived from the orders (below) |
+| 11 | Session-wide Auto-trade on setups | auto-trade route | to build — arms derived from the B2e signals (below) |
 | 12 | Autoplay at start | setup | built (2026-09-07): the Autoplay checkbox; `start_session` presses Play; `test autoplay_starts_the_clock` |
 
-**The language question this raises.** #9, #10 and #11 act on a tick
-while the session plays, with nobody clicking: a bracket fills when the
-play-head crosses a level, Auto Next rolls on when a symbol drops out of
-the gate. The derive model has no such thing — handlers set facts, views
-derive, and only derivations move on a tick. A declared tick handler on
-the live loop (`every[1, watch_brackets]` or a form like it) is designed
-in the spec before those three are built; the alternative, a `later[]`
-job re-scheduling itself, is the habit the model exists to remove.
+**Rows 9–11 without a tick (decided 2026-09-25).** Vijay chose no new
+construct: what a replay does with nobody clicking is a derivation of the
+play-head. It can be, because everything finch's replay does on its own
+is causal — a decision at second *t* reads the bars up to *t* and the
+orders placed before it — so it is computed over the window once and
+revealed up to the head, and a render asks what has happened by the
+head. Nothing ticks, as the clock does not (§3). The rules are finch's
+replay routes, its `exit_engine` and `patterns/b2e.py`, read end to end
+before building and recorded with their constants in
+`finch-replay-rules.md`.
+
+- **The book is derived.** An order is a fact written when it is placed,
+  with the play-head it was placed at: a market buy or sell, filled at
+  placement at the quote nearest the head (buys at the ask, sells at the
+  bid, the bar's close when no quote is within 2 s, as finch's
+  `nbbo_fills` does); a managed bracket (a market buy with a trail and a
+  target, in % or ¢); a resting limit sell a few cents over the bid; a
+  manual arm (trigger, stop, size, lock 2R); and the session's auto-trade
+  switch. What follows an order — a stop moving up under a new peak, a
+  target or a stop hit, a limit filling, an arm triggering — is computed
+  per bar over the bars after it. The book at the head is every fill up
+  to the head: the position, the average price, unrealised P&L, the
+  blotter. A rewind shows the book as it stood at the new head, and
+  playing on replays what the orders do.
+- **Auto-trade** reads the B2e Surge signals (patterns/surge.co, one
+  causal pass) of each of the session's symbols over the window. Each
+  signal after the last exit is an arm, sized by finch's five
+  multipliers, filled when a bar trades through its trigger while a
+  setup is ready or has broken out, and exited by finch's exit engine
+  (fast fail, confluence, channel, stall, the trailing window and its
+  ladder). The signals are computed once per symbol and session; the
+  head reveals them.
+- **Auto Next** moves the play-head itself. With it on, the head is the
+  point at the played distance along a chain: the focused symbol until
+  it has been out of its gate (or its RSI > 70 run) for ten seconds,
+  then the next symbol to enter, a few seconds before it does. The chain
+  is computed from the day's episodes, the head walks it, and the
+  focused symbol is the chain's at the head. Practice's roll-over onto a
+  random day is the chain continuing into that day. Next setup is a
+  button: the next confirmed pattern after the head, a minute before it.
+- **What is written.** The session's fills up to the head are written at
+  End, as FIFO lots — closed lots with both sides, one open row per
+  symbol still held — with each bracket's trail and target, so the next
+  session's bracket starts from the last one used. finch writes each
+  fill as it happens.
+
+Where this differs from finch's replay, by decision: finch evaluates at
+its stream's heartbeat, so a fill is found up to a second late and dated
+back, and a seek backwards re-walks bars under an order already done;
+here every order is evaluated per bar once, and a rewind is the book as
+it was. finch draws the lead before a gate episode at random; here it is
+a hash of the episode, the same on every replay.
 
 **The look.** Three causes, none per-app CSS: records were drawn as rows
 where the vocabulary has `table`; the kernel styled every paragraph in a
