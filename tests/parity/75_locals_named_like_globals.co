@@ -1,0 +1,20 @@
+--- A function's local named like a variable the program holds a record
+--- in: the local passed on types the other function's parameter by its own
+--- value (compiled, the record's type reached the parameter and the program
+--- did not build).
+struct Pair [a, b]
+
+fn span[x, last]
+    return last - x
+
+fn walk[n]
+    f = 0
+    total = 0
+    while f lt n
+        total = total + span[1, f]
+        f = f + 1
+    return total
+
+f = Pair[1, 2]
+log[walk[4]]
+log[f.a]

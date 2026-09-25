@@ -753,8 +753,10 @@ impl Emitter {
                 if existing.compatible(inner) || (matches!(existing, CrowType::Float) && matches!(inner.as_ref(), CrowType::Int)) {
                     let abort = if self.reactive_epilogue.is_some() {
                         format!("{{ state.stop(format!(\"{} stopped: {{}}\", _asg.reason)); return; }}", self.shown_fn_name())
-                    } else if matches!(self.cur_ret, Some(CrowType::Result(_))) && !self.cur_fn.is_empty() {
-                        "return CrowResult { ok: false, value: Default::default(), reason: _asg.reason.clone(), kind: _asg.kind.clone(), trace: _asg.trace.clone(), captured: 0.0 };".to_string()
+                    } else if let (Some(CrowType::Result(ret)), false) = (&self.cur_ret, self.cur_fn.is_empty()) {
+                        // the function's own default: a struct's is its
+                        // crow_default, not Rust's Default
+                        format!("return CrowResult {{ ok: false, value: {}, reason: _asg.reason.clone(), kind: _asg.kind.clone(), trace: _asg.trace.clone(), captured: 0.0 }};", ret.default_rust_value())
                     } else if self.in_view() {
                         "return CrowVNode::text(&format!(\"error: {}\", _asg.reason));".to_string()
                     } else {
@@ -780,7 +782,14 @@ impl Emitter {
     fn in_place_call_on(e: &Expr, var: &str) -> bool {
         match e {
             Expr::Call { target: Target::Runtime(path), args, .. } => {
-                in_place_builtin(path) && matches!(args.first().map(Emitter::raw), Some(Expr::Move(v, _)) | Some(Expr::Local(v, _)) if v == var)
+                // only when the right side reads the variable once (spec:
+                // `xs = push[xs, float[len[xs]]]` reads it again after the
+                // move, and is a copy)
+                let mut again = false;
+                for a in args.iter().skip(1) {
+                    crate::ir::visit_expr(a, &mut |x| again |= matches!(x, Expr::Local(n, _) | Expr::Move(n, _) if n == var));
+                }
+                !again && in_place_builtin(path) && matches!(args.first().map(Emitter::raw), Some(Expr::Move(v, _)) | Some(Expr::Local(v, _)) if v == var)
             }
             _ => false,
         }

@@ -1,0 +1,30 @@
+--- Records whose fields can hold a failed value: one literal gives the
+--- field a fallible reading, another a plain one; a function that can hand
+--- back its failure does so with the record's own default; a field is read
+--- out of a record passed in (compiled, none of these built).
+struct Reading [value, seen]
+struct Pair [a, b]
+
+fn read_text[s]
+    return Reading[float[s], true]
+
+fn blank[]
+    return Reading[0.0, false]
+
+fn value_of[r]
+    v = r.value
+    return v
+
+fn pair_of[s]
+    x = 1.0
+    x = float[s]
+    return Pair[x, x + 1.0]
+
+a = read_text['2.5']
+b = blank[]
+log[value_of[a]]
+log[value_of[b]]
+log[b.seen]
+c = read_text['x']
+log[c.value.ok]
+log[pair_of['3.5'].b]

@@ -137,6 +137,15 @@ static MAILERS: std::sync::LazyLock<std::sync::Mutex<Vec<crow_web::mail::CrowMai
 
 /// A frame column's cell as read: a missing one is its column's
 /// placeholder, as the runtime's getters give it and the IR types it.
+/// What an unwrap passes on: the value itself (a failed one is the
+/// caller's to propagate), so a read in place sees through it.
+fn unwrapped(e: &Expr) -> &Expr {
+    match e {
+        Expr::Convert { how: Convert::Unwrap, expr, .. } => expr,
+        other => other,
+    }
+}
+
 fn placeholder(cell: CrowValue, ty: &Ty) -> CrowValue {
     match (cell.ok || cell.kind != "missing", ty) {
         (true, _) => cell,
@@ -804,15 +813,30 @@ impl IrInterp {
             // the length of a local, read where it lies: a list is not
             // copied to be measured (a loop over a growing list was quadratic)
             Expr::Call { target: Target::Runtime(name), args, .. }
-                if name == "len" && args.len() == 1 && matches!(&args[0], Expr::Local(..)) && !self.registry.has_function("len") =>
+                if name == "len" && args.len() == 1 && matches!(unwrapped(&args[0]), Expr::Local(..)) && !self.registry.has_function("len") =>
             {
-                let Expr::Local(v, _) = &args[0] else { unreachable!() };
+                let Expr::Local(v, _) = unwrapped(&args[0]) else { unreachable!() };
                 let trace = self.trace_entry();
                 let b = self.lookup(v).ok_or_else(|| format!("undefined variable '{}'", v))?;
                 if b.is_error() {
                     return Ok(b.clone());
                 }
                 crate::builtins::call("len", std::slice::from_ref(b), &trace).unwrap_or_else(|| Err("len[] is not a builtin".into()))?
+            }
+            // ... and of a local's field: a struct's list, a frame's column
+            Expr::Call { target: Target::Runtime(name), args, .. }
+                if name == "len" && args.len() == 1 && !self.registry.has_function("len") && matches!(unwrapped(&args[0]), Expr::Field { base, name, .. } if self.field_in_place(base, name)) =>
+            {
+                let Expr::Field { base: owner, name: field, .. } = unwrapped(&args[0]) else { unreachable!() };
+                let trace = self.trace_entry();
+                let o = self.place(owner).ok_or_else(|| format!("no field '{}'", field))?;
+                let item = match &o.value {
+                    Value::Frame(f) => return Ok(CrowValue::ok(Value::Int(f.nrows() as i64))),
+                    Value::StructInstance(si) => &si.fields[field.as_str()],
+                    Value::Map(m) => &m[field.as_str()],
+                    _ => unreachable!(),
+                };
+                crate::builtins::call("len", std::slice::from_ref(item), &trace).unwrap_or_else(|| Err("len[] is not a builtin".into()))?
             }
             Expr::Call { target, args, propagates, .. } => {
                 let vals = self.eval_args(args)?;
@@ -869,12 +893,13 @@ impl IrInterp {
                 // a local list, map, text or frame is indexed where it lies:
                 // reading it copied it first, and a loop over a growing list
                 // was quadratic (its indices cannot touch it, so they go first)
-                if let Expr::Local(v, _) = base.as_ref() {
-                    // (not when an index reads the list itself: its last read
-                    // there moves it, `r[len(move r) - 1]`)
+                let place = unwrapped(base);
+                if let Expr::Local(v, _) = place {
+                    // (not when an index moves the list itself — its last read
+                    // there, `r[len(move r) - 1]`; a plain read is fine)
                     let mut mentioned = false;
                     for i in indices {
-                        crate::ir::visit_expr(i, &mut |e| mentioned |= matches!(e, Expr::Local(n, _) | Expr::Move(n, _) if n == v));
+                        crate::ir::visit_expr(i, &mut |e| mentioned |= matches!(e, Expr::Move(n, _) if n == v));
                     }
                     let in_place = !mentioned && matches!(self.lookup(v), Some(b) if b.ok && matches!(b.value, Value::Array(_) | Value::NumArray(_) | Value::Map(_) | Value::Str(_) | Value::Frame(_)));
                     if in_place {
@@ -884,6 +909,30 @@ impl IrInterp {
                         }
                         let b = self.lookup(v).ok_or_else(|| format!("undefined variable '{}'", v))?;
                         let cell = crate::ops::index(b, idx)?;
+                        return Ok(if matches!(base.ty(), Ty::Column(_)) { placeholder(cell, ty) } else { cell });
+                    }
+                }
+                // a local's field indexed where it lies too — a frame's column
+                // (`df.price[i]`), a struct's list (`bars.c[i]`): reading the
+                // field copied the whole column or list for every cell
+                if let Expr::Field { base: owner, name, .. } = place {
+                    let root = Self::root_local(owner);
+                    let mut moved = root.is_none();
+                    for i in indices {
+                        crate::ir::visit_expr(i, &mut |e| moved |= matches!(e, Expr::Move(n, _) if Some(n.as_str()) == root));
+                    }
+                    if !moved && indices.len() == 1 && self.field_in_place(owner, name) {
+                        let at = self.eval(&indices[0])?;
+                        let o = self.place(owner).ok_or_else(|| format!("no field '{}'", name))?;
+                        let cell = match &o.value {
+                            Value::Frame(f) => {
+                                let col = f.col_index(name).ok_or_else(|| format!("frame has no property or column '{}'", name))?;
+                                crate::ops::frame_cell(f, col, crate::ops::list_position(&at, f.nrows())?)
+                            }
+                            Value::StructInstance(si) => crate::ops::index(&si.fields[name], vec![at])?,
+                            Value::Map(m) => crate::ops::index(&m[name], vec![at])?,
+                            _ => unreachable!(),
+                        };
                         return Ok(if matches!(base.ty(), Ty::Column(_)) { placeholder(cell, ty) } else { cell });
                     }
                 }
@@ -1061,7 +1110,14 @@ impl IrInterp {
             "map_del" => "del",
             other => other,
         };
-        if !crate::ast::IN_PLACE_BUILTINS.contains(&name) || !matches!(args.first(), Some(Expr::Move(v, _)) if v == var) {
+        // (a list that could hold a failed item is unwrapped where it is
+        // passed: `push(unwrap move xs, …)` grows it in place too — through
+        // the table a loop of pushes copied the list every time)
+        let list = match args.first() {
+            Some(Expr::Convert { how: Convert::Unwrap, expr, .. }) => Some(expr.as_ref()),
+            other => other,
+        };
+        if !crate::ast::IN_PLACE_BUILTINS.contains(&name) || !matches!(list, Some(Expr::Move(v, _)) if v == var) {
             return Ok(false);
         }
         if self.registry.has_function(name) && name != "sort" {
@@ -1126,6 +1182,49 @@ impl IrInterp {
     /// The lowering marked the loop parallel because its body writes no
     /// outer variable or fact and reaches no effect, so nothing is lost
     /// when the clones are dropped; a `return` inside is refused.
+    /// The local a chain of fields starts from: `bars` in `bars.c`.
+    fn root_local(e: &Expr) -> Option<&str> {
+        match e {
+            Expr::Local(v, _) => Some(v),
+            Expr::Field { base, .. } => Self::root_local(base),
+            _ => None,
+        }
+    }
+
+    /// A local, or a field of one (a struct's, a map's), where it lies;
+    /// `None` for anything else (a session's state, a failed value).
+    fn place(&self, e: &Expr) -> Option<&CrowValue> {
+        match e {
+            Expr::Local(v, _) => self.lookup(v).filter(|b| b.ok),
+            Expr::Field { base, name, .. } => {
+                if matches!(name.as_str(), "ok" | "reason" | "kind" | "trace" | "len") {
+                    return None;
+                }
+                match &self.place(base)?.value {
+                    Value::StructInstance(si) => si.fields.get(name.as_str()).filter(|b| b.ok),
+                    Value::Map(m) => m.get(name.as_str()).filter(|b| b.ok),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// `owner.name[i]` can be read without copying `owner.name`: a frame's
+    /// column, or a struct's or map's list, map or text.
+    fn field_in_place(&self, owner: &Expr, name: &str) -> bool {
+        if matches!(name, "ok" | "reason" | "kind" | "trace" | "len") {
+            return false;
+        }
+        let indexable = |v: &CrowValue| v.ok && matches!(v.value, Value::Array(_) | Value::NumArray(_) | Value::Map(_) | Value::Str(_));
+        match self.place(owner).map(|o| &o.value) {
+            Some(Value::Frame(f)) => !matches!(name, "shape" | "columns" | "dtypes") && f.col_index(name).is_some(),
+            Some(Value::StructInstance(si)) => si.fields.get(name).is_some_and(indexable),
+            Some(Value::Map(m)) => m.get(name).is_some_and(indexable),
+            _ => false,
+        }
+    }
+
     fn run_parallel(&mut self, items: &[CrowValue], var: &str, body: &[Stmt], collect: bool) -> Result<Vec<CrowValue>, String> {
         self.check_cancel()?;
         let threads = rayon::current_num_threads().max(1);
@@ -2583,5 +2682,21 @@ mod tests {
         assert!(!Arc::ptr_eq(&a.frames[0].scopes[0], &b.frames[0].scopes[0]));
         assert!(matches!(a.var("y").unwrap().value, Value::Int(1)));
         assert!(matches!(b.var("y").unwrap().value, Value::Int(2)));
+    }
+
+    /// A local's field indexed in place reads what the copy read: a frame's
+    /// cell (a missing one its column's placeholder), a struct's or map's
+    /// item, from the end with a negative index, and out of range refused.
+    #[test]
+    fn a_field_indexed_in_place_reads_what_the_copy_read() {
+        let src = "use frame\nstruct Bars [c]\ndf = with[with[frame.new[], 'k', [0, 1, 2]], 'p', [1.5, 2.5, 3.5]]\nother = with[with[frame.new[], 'k', [0, 1]], 'q', [7.5, 8.5]]\ndf = join[df, other, 'k', 'left']\nb = Bars[[4.0, 5.0, 6.0]]\nm = map[xs = [1, 2, 3]]\na = df.p[1]\ng = df.q[2]\nz = b.c[-1]\nw = m.xs[0]\nn = b.c[1] + df.p[0]\n";
+        let r = run_script(&parse(src), "t").unwrap();
+        assert!(matches!(r.var("a").unwrap().value, Value::Float(x) if x == 2.5));
+        assert!(matches!(r.var("g").unwrap().value, Value::Float(x) if x.is_nan()), "{:?}", r.var("g"));
+        assert_eq!(format!("{}", r.var("z").unwrap().value), "6");
+        assert!(matches!(r.var("w").unwrap().value, Value::Int(1)));
+        assert!(matches!(r.var("n").unwrap().value, Value::Float(x) if x == 6.5));
+        let far = run_script(&parse("struct Bars [c]\nb = Bars[[4.0, 5.0]]\nx = b.c[2]\n"), "t");
+        assert!(far.is_err_and(|e| e.contains("index 2 out of bounds for array of length 2")));
     }
 }

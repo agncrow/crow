@@ -126,33 +126,46 @@ thread_local! {
     /// Whether the program lowered last on this thread uses web: the
     /// interpolations parsed from its strings later are lowered as it was.
     static PROGRAM_WEB: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The functions and structs of the program lowered last on this
+    /// thread: a call in one of its interpolations takes its named
+    /// arguments and defaults as a call outside the string does.
+    static PROGRAM_SIGS: std::cell::RefCell<(BTreeMap<String, FnSig>, BTreeMap<String, Vec<String>>)> = const { std::cell::RefCell::new((BTreeMap::new(), BTreeMap::new())) };
 }
 
 pub fn lower_program(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
     let web = stmts.iter().any(|s| matches!(s, Stmt::Use { path, alias: None } if path == "web" || path.starts_with("web.")));
     PROGRAM_WEB.with(|w| w.set(web));
-    lower_with(stmts, web)
+    let mut l = Lowerer::new(web);
+    l.collect_sigs(stmts);
+    PROGRAM_SIGS.with(|p| *p.borrow_mut() = (l.fns.clone(), l.structs.clone()));
+    l.finish(stmts)
 }
 
 /// An expression parsed from a string's interpolation, lowered as the
 /// program around it was — its `reader` is the page's when the program
-/// uses web, as it is outside the string.
+/// uses web, as it is outside the string, and its calls know the
+/// program's functions.
 pub fn lower_fragment(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
-    lower_with(stmts, PROGRAM_WEB.with(|w| w.get()))
+    let mut l = Lowerer::new(PROGRAM_WEB.with(|w| w.get()));
+    PROGRAM_SIGS.with(|p| {
+        let (fns, structs) = &*p.borrow();
+        l.fns = fns.clone();
+        l.structs = structs.clone();
+    });
+    l.collect_sigs(stmts);
+    l.finish(stmts)
 }
 
-fn lower_with(stmts: &[Stmt], web: bool) -> Result<Vec<Stmt>, String> {
-    let mut l = Lowerer {
-        fns: BTreeMap::new(),
-        structs: BTreeMap::new(),
-        current_line: 0,
-        in_view: false,
-        web,
-    };
-    l.collect_sigs(stmts);
-    let lowered = l.lower_stmts(stmts)?;
-    let scoped = scoped(lowered)?;
-    Ok(narrowed(scoped, &BTreeSet::new()))
+impl Lowerer {
+    fn new(web: bool) -> Self {
+        Lowerer { fns: BTreeMap::new(), structs: BTreeMap::new(), current_line: 0, in_view: false, web }
+    }
+
+    fn finish(mut self, stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
+        let lowered = self.lower_stmts(stmts)?;
+        let scoped = scoped(lowered)?;
+        Ok(narrowed(scoped, &BTreeSet::new()))
+    }
 }
 
 // ── names, scoped ───────────────────────────────────────────────────
@@ -591,7 +604,7 @@ fn narrow_expr(e: Expr, known: &BTreeSet<String>) -> Expr {
 
 /// Every name a block assigns, inside its nested blocks and collecting
 /// loops too (a function's body is its own).
-fn assigned(stmts: &[Stmt]) -> BTreeSet<String> {
+pub(crate) fn assigned(stmts: &[Stmt]) -> BTreeSet<String> {
     fn in_expr(e: &Expr, out: &mut BTreeSet<String>) {
         match e {
             Expr::BinOp { left, right, .. } => {

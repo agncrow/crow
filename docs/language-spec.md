@@ -263,7 +263,7 @@ Scalar-array operations broadcast the scalar:
 -[1, 2, 3]                  --- [-1, -2, -3]
 ```
 
-Internally, all-numeric arrays use a fast tensor representation for element-wise operations. This is transparent — numeric arrays behave identically to regular arrays for indexing, iteration, and all builtins.
+Internally, all-numeric arrays use a fast tensor representation for element-wise operations. This is transparent — numeric arrays behave identically to regular arrays for indexing, iteration, comparison and all builtins: two lists of numbers are `eq` when they hold the same numbers in the same shape, however each was built (a list grown by `push` and a literal, ints and the same floats, a list of rows and a matrix literal).
 
 
 ### Expression Grouping
@@ -1517,7 +1517,7 @@ Rules:
 
 ### User Modules: File Structure
 
-A source file ends in `.co`. (A `.crow` file is still read this release, with a note the first time one is met, so a tree can be renamed at leisure; bytecode is `.coc`.) Each file is a module. The file path is the module path, rooted at the project: the nearest directory above the entry file that holds a `crowfile`, or the entry file's own directory when there is none. So `views/sim.co` reaches `sim/clock.co` with `use sim.clock` whichever file is the entry. A part is validated alone as it is expanded — its own names unprefixed, its imports inlined — so a name the part reserves by what it imports (`derive progress` beside `use ui`), or a handler nothing in the part wires, is refused whichever file is the entry, under the part's path: `crow test part.co` and `crow run main.co` see the same part. Any error found in a part — alone or in the whole program — names the part and its own line (`sim/session.co: line 60: …`), never a line of the entry.
+A source file ends in `.co`. (A `.crow` file is still read this release, with a note the first time one is met, so a tree can be renamed at leisure; bytecode is `.coc`.) Each file is a module. The file path is the module path, rooted at the project: the nearest directory above the entry file that holds a `crowfile`, or the entry file's own directory when there is none. So `views/sim.co` reaches `sim/clock.co` with `use sim.clock` whichever file is the entry. A part is validated alone as it is expanded — its own names unprefixed, its imports inlined — so a name the part reserves by what it imports (`derive progress` beside `use ui`), or a handler nothing in the part wires, is refused whichever file is the entry, under the part's path: `crow test part.co` and `crow run main.co` see the same part. Any error found in a part — alone or in the whole program — names the part and its own line (`sim/session.co: line 60: …`), never a line of the entry. In the whole program a part keeps its own names: its facts and derivations carry its path, so a local or parameter of one of its functions is that function's own, whatever another file holds or imports under the same name — a local `ch` beside the entry's connection `ch`, a parameter `secs` beside the entry's `derive secs`, a list `rsi` where another part imports `chart` bare.
 
 #### Design Note: The Extension Is `.co`
 
@@ -3198,7 +3198,11 @@ automatic — determinism contracts, edge cases, database hazards. `crow test
 --compiled` runs them with every app they open (`app[view]`) compiled: the
 block runs in the interpreter, and its harness verbs reach the compiled
 program, started fresh for each run that opens one, so both modes answer
-the same test. A handler a test clicks with arguments is a handler, as one
+the same test. A test reads a fact or a derivation of the compiled program
+by name, a record's fields included (`stats.items.names`), and the page it
+renders is the settled one: a render that read a value still being computed
+waits for it and renders again, as the interpreter computes it before it
+answers. A handler a test clicks with arguments is a handler, as one
 clicked by name is, and its arguments type the parameters nothing in the
 program types.
 

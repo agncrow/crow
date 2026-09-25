@@ -825,6 +825,35 @@ impl Emitter {
         }
     }
 
+    /// The records whose every field has a JSON form (numbers, text, lists
+    /// and maps of them, results of them, tensors, and such records).
+    fn json_records(&self) -> BTreeSet<String> {
+        fn jsonable(t: &CrowType, ok: &BTreeSet<String>) -> bool {
+            match t {
+                CrowType::Int | CrowType::Float | CrowType::Bool | CrowType::Str | CrowType::Markup | CrowType::Json | CrowType::NumArray(_) => true,
+                CrowType::Array(i) | CrowType::Map(i) | CrowType::Result(i) => jsonable(i, ok),
+                CrowType::Struct(n) => ok.contains(n),
+                _ => false,
+            }
+        }
+        // a record whose fields are records joins once they have
+        let mut ok: BTreeSet<String> = BTreeSet::new();
+        loop {
+            let before = ok.len();
+            for (name, def) in &self.structs {
+                if matches!(name.as_str(), "CrowFindResult" | "CrowShell" | "CrowElapsed") || ok.contains(name) {
+                    continue;
+                }
+                if def.fields.iter().all(|(_, t)| jsonable(&crow_type(t), &ok)) {
+                    ok.insert(name.clone());
+                }
+            }
+            if ok.len() == before {
+                return ok;
+            }
+        }
+    }
+
     pub(crate) fn struct_kernel_displayable(&self, name: &str) -> bool {
         if matches!(name, "CrowShell" | "CrowFindResult") {
             return true;
@@ -920,12 +949,32 @@ impl Emitter {
         self.indent -= 1;
         self.line("}");
         self.line("");
+        // a record reads as the map of its fields, each as JSON — when every
+        // field has a JSON form (a detector's result read by a test)
+        let records = self.json_records();
+        for name in &records {
+            let def = self.structs.get(name).cloned().expect("a record the program defines");
+            let inserts: Vec<String> = def
+                .fields
+                .iter()
+                .map(|(f, _)| format!("m.insert({}.to_string(), crow_runtime::json::ToJson::to_json(&self.{}));", crate::emit_rs::exprs::rust_str_lit(f), Self::rust_field(f)))
+                .collect();
+            self.line(&format!(
+                "impl crow_runtime::json::ToJson for {} {{ fn to_json(&self) -> serde_json::Value {{ let mut m = serde_json::Map::new(); {} serde_json::Value::Object(m) }} }}",
+                name,
+                inserts.join(" ")
+            ));
+        }
+        if !records.is_empty() {
+            self.needs_crow_runtime = true;
+            self.line("impl<T: Clone + crow_runtime::json::ToJson> crow_runtime::json::ToJson for CrowResult<T> { fn to_json(&self) -> serde_json::Value { if self.ok { self.value.to_json() } else { serde_json::json!({ \"ok\": false, \"reason\": self.reason, \"kind\": self.kind }) } } }");
+        }
         self.line("#[allow(unused_variables, dead_code)]");
         self.line("fn __crow_derived(state: &CrowLiveState, name: &str) -> Option<serde_json::Value> {");
         self.indent += 1;
         self.line("match name {");
         self.indent += 1;
-        fn as_json(t: &CrowType, v: &str) -> Option<String> {
+        let as_json = |t: &CrowType, v: &str| -> Option<String> {
             match t {
                 CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Markup | CrowType::Bool | CrowType::Json | CrowType::Frame => {
                     Some(format!("serde_json::to_value(&{}).unwrap_or(serde_json::Value::Null)", v))
@@ -934,9 +983,10 @@ impl Emitter {
                 CrowType::Array(i) | CrowType::Map(i) if matches!(i.as_ref(), CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Markup | CrowType::Bool | CrowType::Json) => {
                     Some(format!("serde_json::to_value(&{}).unwrap_or(serde_json::Value::Null)", v))
                 }
+                CrowType::Struct(n) if records.contains(n) => Some(format!("crow_runtime::json::ToJson::to_json(&{})", v)),
                 _ => None,
             }
-        }
+        };
         let derives: Vec<(String, Ty)> = self.part.derives.iter().map(|d| (d.name.clone(), d.ty.clone())).collect();
         for (d, ty) in derives {
             let rt = crow_type(&ty);

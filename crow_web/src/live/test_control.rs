@@ -62,17 +62,21 @@ impl Session {
 
     /// The page, settled: a render that read a derivation still being
     /// computed in the background waits for it and renders again, as the
-    /// interpreter's harness computes it before it answers.
+    /// interpreter's harness computes it before it answers — as many times
+    /// as a chain of derivations is deep (each render starts the next link:
+    /// four renders left a panel of detectors over a query loading).
     fn html(&self, view: ViewFn) -> Result<String, String> {
         let name = self.view.clone();
         let mut html = String::new();
-        for _ in 0..4 {
+        for _ in 0..32 {
             html = caught(|| {
                 crow_runtime::moments::at(self.moment(), || {
                     self.state.render_with(&|s: &CrowLiveState| view(s, &name).unwrap_or_else(|| CrowVNode::text(""))).as_built().to_html()
                 })
             })?;
-            if !self.recomputing() {
+            // a render that read a value still pending is stale, even when
+            // the recompute it started has landed by now
+            if !self.recomputing() && !html.contains("data-crow-stale=\"\"") {
                 break;
             }
             for _ in 0..2000 {

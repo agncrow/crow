@@ -189,6 +189,19 @@ impl Emitter {
     /// variable stays usable; a by-reference parameter too.
     pub(crate) fn owned_expr(&mut self, e: &Expr) -> String {
         let s = self.expr(e);
+        // a field of a local is copied out of it (`c = g.last`): a struct
+        // parameter is borrowed, and a local read again later still owns it;
+        // a field that can hold a failed value is never Copy
+        if let Expr::Field { base, .. } = e {
+            if matches!(Emitter::raw(base), Expr::Local(..) | Expr::Move(..) | Expr::Load(..)) {
+                let t = self.tt(e);
+                let non_copy = matches!(t, CrowType::Result(_))
+                    || matches!(Self::inner(&t), CrowType::NumArray(_) | CrowType::Array(_) | CrowType::Map(_) | CrowType::Str | CrowType::Markup | CrowType::Frame | CrowType::Struct(_) | CrowType::Json);
+                if non_copy && !s.ends_with(".clone()") {
+                    return format!("{}.clone()", s);
+                }
+            }
+        }
         if let Expr::Local(name, ty) | Expr::Move(name, ty) = e {
             if self.ref_params.contains(name) {
                 return format!("{}.clone()", s);
@@ -251,6 +264,20 @@ impl Emitter {
         }
     }
 
+    /// A tensor, or a list whose items are numbers or lists of numbers.
+    fn holds_numbers(t: &CrowType) -> bool {
+        match t {
+            CrowType::NumArray(_) => true,
+            CrowType::Array(inner) => matches!(inner.as_ref(), CrowType::Int | CrowType::Float) || (matches!(inner.as_ref(), CrowType::Array(_) | CrowType::NumArray(_)) && Self::holds_numbers(inner)),
+            _ => false,
+        }
+    }
+
+    /// Two operands that hold numbers in different Rust types.
+    fn numbers_mix(a: &CrowType, b: &CrowType) -> bool {
+        Self::holds_numbers(a) && Self::holds_numbers(b) && a != b
+    }
+
     fn binary(&mut self, op: &str, left: &Expr, right: &Expr) -> String {
         // an int made a float for a float operand: when the int can fail, the
         // operator unwraps it and converts the value
@@ -311,6 +338,10 @@ impl Emitter {
             let l_val = if l_res { format!("_binl_{}.value", ctr) } else { format!("(*_binl_{})", ctr) };
             let r_val = if r_res { format!("_binr_{}.value", ctr) } else { format!("(*_binr_{})", ctr) };
             let inner_expr = match (&lti, &rti) {
+                _ if matches!(op, "eq" | "ne") && Self::numbers_mix(&lti, &rti) => {
+                    let not = if op == "ne" { "!" } else { "" };
+                    format!("{}crow_runtime::tensor::numbers_equal(&{}, &{})", not, l_val, r_val)
+                }
                 (CrowType::Int, CrowType::Float) => format!("({}) as f64 {} {}", l_val, op_str, r_val),
                 (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l_val, op_str, r_val),
                 _ if op == "pow" => {
@@ -359,6 +390,13 @@ impl Emitter {
         let col_bridge = matches!(op, "elemmul" | "elemdiv" | "elempow" | "add" | "sub");
         let (l, lti) = if matches!(lti, CrowType::FrameCol) && col_bridge { (format!("({}).to_tensor()", l), CrowType::NumArray(Box::new(CrowType::Float))) } else { (l, lti) };
         let (r, rti) = if matches!(rti, CrowType::FrameCol) && col_bridge { (format!("({}).to_tensor()", r), CrowType::NumArray(Box::new(CrowType::Float))) } else { (r, rti) };
+        // numbers held two ways (a list built by `push` against a literal's
+        // tensor, a list of rows against a matrix) compare by value and
+        // shape, as in the interpreter; both sides evaluated, the left first
+        if matches!(op, "eq" | "ne") && Self::numbers_mix(&lti, &rti) {
+            let not = if op == "ne" { "!" } else { "" };
+            return format!("({}{{ let _l = &({}); let _r = &({}); crow_runtime::tensor::numbers_equal(_l, _r) }})", not, l, r);
+        }
         let l_t = matches!(lti, CrowType::NumArray(_));
         let r_t = matches!(rti, CrowType::NumArray(_));
         let cmp = matches!(op, "gt" | "lt" | "gte" | "lte" | "eq" | "ne");
@@ -875,6 +913,10 @@ impl Emitter {
                     inits.push(format!("{}: Some(Box::new({}))", Self::rust_field(fname), owned));
                 }
             } else {
+                // a field that can hold a failed value takes a plain one as
+                // ok (`Last[false, …]` where another literal gave it a
+                // fallible comparison)
+                let owned = self.as_item(owned, &self.tt(e), &crate::lower_ir::crow_type(fty));
                 inits.push(format!("{}: {}", Self::rust_field(fname), owned));
             }
         }

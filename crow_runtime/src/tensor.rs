@@ -1368,10 +1368,94 @@ impl crate::display::CrowDisplay for CrowTensor {
     }
 }
 
+// ── Equality ────────────────────────────────────────────────────────────
+
+/// Two tensors are equal when they have the same shape and the same numbers.
+impl PartialEq for CrowTensor {
+    fn eq(&self, other: &Self) -> bool {
+        self.shape == other.shape && self.to_vec() == other.to_vec()
+    }
+}
+
+/// The numbers a list holds, whether it is a tensor, a list of numbers, or a
+/// list of lists: `eq` compares numbers and shape, not the representation
+/// (an all-numeric array is a tensor only for speed).
+pub trait Numbers {
+    fn numbers_into(&self, out: &mut Vec<f64>);
+    fn shape_into(&self, shape: &mut Vec<usize>);
+}
+
+impl Numbers for f64 {
+    fn numbers_into(&self, out: &mut Vec<f64>) {
+        out.push(*self);
+    }
+    fn shape_into(&self, _: &mut Vec<usize>) {}
+}
+
+impl Numbers for i64 {
+    fn numbers_into(&self, out: &mut Vec<f64>) {
+        out.push(*self as f64);
+    }
+    fn shape_into(&self, _: &mut Vec<usize>) {}
+}
+
+impl Numbers for CrowTensor {
+    fn numbers_into(&self, out: &mut Vec<f64>) {
+        out.extend(self.to_vec());
+    }
+    fn shape_into(&self, shape: &mut Vec<usize>) {
+        shape.extend_from_slice(&self.shape);
+    }
+}
+
+impl<T: Numbers> Numbers for Vec<T> {
+    fn numbers_into(&self, out: &mut Vec<f64>) {
+        for x in self {
+            x.numbers_into(out);
+        }
+    }
+    fn shape_into(&self, shape: &mut Vec<usize>) {
+        shape.push(self.len());
+        if let Some(first) = self.first() {
+            first.shape_into(shape);
+        }
+    }
+}
+
+/// `a eq b` for two numeric lists held differently (a list built by `push`
+/// against a literal, a list of rows against a matrix).
+pub fn numbers_equal<A: Numbers, B: Numbers>(a: &A, b: &B) -> bool {
+    let (mut sa, mut sb) = (Vec::new(), Vec::new());
+    a.shape_into(&mut sa);
+    b.shape_into(&mut sb);
+    let (mut na, mut nb) = (Vec::new(), Vec::new());
+    a.numbers_into(&mut na);
+    b.numbers_into(&mut nb);
+    sa == sb && na == nb
+}
+
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn numbers_compare_by_value_and_shape_whatever_holds_them() {
+        let v = CrowTensor::from_vec(vec![0.0, 60.0], vec![2]);
+        assert!(numbers_equal(&vec![0.0f64, 60.0], &v));
+        assert!(numbers_equal(&vec![0i64, 60], &v));
+        assert!(!numbers_equal(&vec![0.0f64, 61.0], &v));
+        assert!(!numbers_equal(&vec![0.0f64], &v));
+        let m = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        assert!(numbers_equal(&vec![vec![1.0f64, 2.0], vec![3.0, 4.0]], &m));
+        assert!(!numbers_equal(&vec![1.0f64, 2.0, 3.0, 4.0], &m));
+        // a ragged list is never a matrix
+        assert!(!numbers_equal(&vec![vec![1.0f64, 2.0, 3.0], vec![4.0]], &m));
+        // two tensors: the same numbers in another shape are not equal
+        assert_eq!(m, CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]));
+        assert_ne!(m, CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![4]));
+        assert!(numbers_equal(&Vec::<f64>::new(), &CrowTensor::from_vec(vec![], vec![0])));
+    }
 
     #[test]
     fn a_tensor_round_trips_through_json() {

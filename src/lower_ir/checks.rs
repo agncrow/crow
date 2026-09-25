@@ -355,6 +355,13 @@ impl<'a> Lowerer<'a> {
             self.refuse(format!("'{}' is a core builtin — pick another name for this {}", name, what));
             return;
         }
+        // An import reserves names in the file that makes it — a part's own:
+        // the whole program carries every file's imports, and each part was
+        // validated alone under its own (a part that never imports chart may
+        // name a parameter `vwap`, one that never imports web `close`)
+        if self.v.decl.as_deref().map_or(false, |d| crate::file_of_declaration(d).is_some()) {
+            return;
+        }
         // Bare stdlib imports reserve their exports
         if let Some(module) = self.ctx.registry.module_name_of(name) {
             if self.ctx.bare_modules.contains(module) {
@@ -374,13 +381,6 @@ impl<'a> Lowerer<'a> {
                 "'{}' is a math constant (imported on line {}) — rename the {}, or import qualified: use math as m",
                 name, line, what
             ));
-            return;
-        }
-        // Web/ui builtin names reserve under their imports — a part's own:
-        // the whole program carries the entry's imports, and each part was
-        // validated alone under its (a part that never imports web may name
-        // a parameter `close`)
-        if self.v.decl.as_deref().map_or(false, |d| crate::file_of_declaration(d).is_some()) {
             return;
         }
         let web_bare = self.v.bare_import_lines.keys().any(|p| p == "web" || p.starts_with("web."));
@@ -405,7 +405,11 @@ impl<'a> Lowerer<'a> {
     /// An assignment: a derivation is not assigned, and a variable keeps the
     /// type it was first given.
     pub(super) fn check_assign(&mut self, name: &str, new_ty: &CrowType) {
-        let in_local_scope = self.in_fn().is_some() && !(self.v.reactive && self.v.module_vars.contains(name));
+        // in a part's function the part's own module variables carry its
+        // prefix: a name without it is a local, whatever another file holds
+        // under it
+        let foreign = self.v.decl.as_deref().and_then(crate::part_prefix_of_declaration).map_or(false, |p| !name.starts_with(p.as_str()));
+        let in_local_scope = self.in_fn().is_some() && !(self.v.reactive && self.v.module_vars.contains(name) && !foreign);
         let existing = if in_local_scope { self.v.local_types.get(name).cloned() } else { self.ctx.vars.get(name).cloned() };
         if in_local_scope && !matches!(new_ty, CrowType::Unknown) {
             self.v.local_types.entry(name.to_string()).or_insert_with(|| new_ty.clone());

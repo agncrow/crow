@@ -103,7 +103,7 @@ impl CrowType {
             CrowType::Struct(name) => format!("{}::crow_default()", name),
             CrowType::OptBoxStruct(_) => "None".into(),
             CrowType::Fn(_, _) => "panic!(\"unreachable\")".into(),
-            CrowType::Result(inner) => format!("CrowResult {{ ok: false, value: {}, reason: String::new(), kind: String::new(), trace: vec![] }}", inner.default_rust_value()),
+            CrowType::Result(inner) => format!("CrowResult {{ ok: false, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", inner.default_rust_value()),
             CrowType::Json => "serde_json::Value::Null".into(),
             CrowType::NumArray(_) => "crow_runtime::tensor::CrowTensor::zeros(vec![0])".into(),
             CrowType::Sparse => "CrowSparse::from_coo(&[], &[], &[], 0, 0)".into(),
@@ -265,6 +265,7 @@ pub struct StructSig {
 pub(crate) struct BodyScope {
     saved_vars: BTreeMap<String, CrowType>,
     outer_assigned: Option<std::collections::HashSet<String>>,
+    outer_prefix: Option<String>,
     outer_in_view: bool,
 }
 
@@ -280,7 +281,10 @@ pub struct TypeContext {
     /// While a function body is inferred: the names it has assigned so far
     /// (its parameters to begin with). The first assignment of another
     /// name binds a new local (spec §7), whatever the module calls it.
-    body_assigned: Option<std::collections::HashSet<String>>,
+    pub(crate) body_assigned: Option<std::collections::HashSet<String>>,
+    /// The module prefix of the part whose function body is being typed:
+    /// its own reactive state carries it, so a name without it is a local.
+    body_prefix: Option<String>,
     /// While a view's body is inferred: an element's name is the element,
     /// whose value is markup
     in_view: bool,
@@ -378,6 +382,7 @@ impl TypeContext {
             call_signatures: BTreeMap::new(),
             views: std::collections::BTreeSet::new(),
             body_assigned: None,
+            body_prefix: None,
             in_view: false,
             is_ui: false,
             view_handlers: std::collections::BTreeSet::new(),
@@ -721,6 +726,16 @@ impl TypeContext {
                 })
             }
 
+            // the reactive state a function can write: a part's function its
+            // own part's, which carries the part's prefix (a local `ch` in a
+            // part is not the entry's connection)
+            fn own_state(f: &str, module_vars: &std::collections::BTreeSet<String>) -> std::collections::BTreeSet<String> {
+                match crate::part_prefix_of_declaration(f) {
+                    Some(p) => module_vars.iter().filter(|m| m.starts_with(p.as_str())).cloned().collect(),
+                    None => module_vars.clone(),
+                }
+            }
+
             // a function that reaches a session's effect through the
             // functions it calls holds it for the handler too, so it joins
             // with them
@@ -769,7 +784,7 @@ impl TypeContext {
                             let mut called = std::collections::BTreeSet::new();
                             Self::collect_called_fns_stmts(&sig.body, &mut called);
                             for c in called {
-                                if reaches.contains(&c) || self.functions.get(&c).map_or(false, |cs| assigns_any(&cs.body, &module_vars)) {
+                                if reaches.contains(&c) || self.functions.get(&c).map_or(false, |cs| assigns_any(&cs.body, &own_state(&c, &module_vars))) {
                                     targets.insert(c);
                                 }
                             }
@@ -1137,10 +1152,15 @@ impl TypeContext {
         match stmt {
             Stmt::Assign { name, value } => {
                 // Track local variable types during call-site scanning (a
-                // local holding a view's markup is markup)
+                // local holding a view's markup is markup); a function's own
+                // local is not the module variable of its name
                 let ty = self.infer_expr_full(value);
-                let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-                self.vars.insert(name.clone(), existing.unify(&ty));
+                if self.fresh_binding(name) {
+                    self.vars.insert(name.clone(), ty);
+                } else {
+                    let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
+                    self.vars.insert(name.clone(), existing.unify(&ty));
+                }
                 self.collect_call_types_expr(value);
                 self.note_connection(name, value);
                 if let Some(schema) = self.frame_schema_of(value) {
@@ -1162,8 +1182,10 @@ impl TypeContext {
                 let saved_vars = self.vars.clone();
                 let saved_fn_params = self.current_fn_params.clone();
                 let saved_fn_name = self.current_fn_name.replace(name.clone());
+                let saved_assigned = self.body_assigned.replace(std::collections::HashSet::new());
                 self.current_fn_params = Vec::new();
                 for s in body { self.collect_call_types_stmt(s); }
+                self.body_assigned = saved_assigned;
                 // the frame a derivation returns keeps its columns' types
                 // under the derivation's name, as a variable's would
                 let returned: Vec<Expr> = body.iter().filter_map(|s| if let Stmt::Return(Some(e)) = s { Some(e.clone()) } else { None }).collect();
@@ -1186,13 +1208,19 @@ impl TypeContext {
                 let saved_fn_name = self.current_fn_name.replace(name.clone());
                 // inside a view an element is markup, at the calls it makes too
                 let saved_in_view = std::mem::replace(&mut self.in_view, self.views.contains(name));
+                let mut assigned = std::collections::HashSet::new();
                 if let Some(sig) = self.functions.get(name) {
                     self.current_fn_params = sig.params.iter().map(|(n, _)| n.clone()).collect();
                     for (pname, pty) in &sig.params.clone() {
                         self.vars.insert(pname.clone(), pty.clone());
+                        assigned.insert(pname.clone());
                     }
                 }
+                let saved_assigned = self.body_assigned.replace(assigned);
+                let saved_prefix = std::mem::replace(&mut self.body_prefix, crate::part_prefix_of_declaration(name));
                 for s in body { self.collect_call_types_stmt(s); }
+                self.body_assigned = saved_assigned;
+                self.body_prefix = saved_prefix;
                 // A module-level variable assigned in this body (reactive
                 // state written by a handler) keeps the refined type: an
                 // empty default learns its element type from the handler.
@@ -1446,9 +1474,14 @@ impl TypeContext {
                     // For function params with Unknown type, skip — [] is ambiguous (call vs index)
                     // and the call site will provide the actual type.
                     // For params already known to be Fn, allow refinement of arg types.
+                    // A local the body assigned is untyped only until its value
+                    // is (a slice of a parameter, early in the fixpoint): `hs[0]`
+                    // says nothing, and a function guessed from it stuck to
+                    // every function the local was passed to.
                     if !self.functions.contains_key(name) && !self.structs.contains_key(name) {
                         let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
                         let is_param = self.current_fn_params.contains(name);
+                        let is_local = self.body_assigned.as_ref().is_some_and(|a| a.contains(name));
                         match &existing {
                             CrowType::Fn(_, _) => {
                                 // Already known to be Fn — refine arg types
@@ -1456,7 +1489,7 @@ impl TypeContext {
                                 let unified = existing.unify(&fn_type);
                                 self.vars.insert(name.clone(), unified);
                             }
-                            CrowType::Unknown if !is_param => {
+                            CrowType::Unknown if !is_param && !is_local => {
                                 // Non-param Unknown variable called with [] — assume it's a function
                                 let fn_type = CrowType::Fn(arg_types, Box::new(CrowType::Unknown));
                                 self.vars.insert(name.clone(), fn_type);
@@ -1997,13 +2030,15 @@ impl TypeContext {
             }
         }
         let outer_assigned = self.body_assigned.replace(assigned);
+        let outer_prefix = std::mem::replace(&mut self.body_prefix, crate::part_prefix_of_declaration(name));
         let outer_in_view = std::mem::replace(&mut self.in_view, self.views.contains(name));
-        BodyScope { saved_vars, outer_assigned, outer_in_view }
+        BodyScope { saved_vars, outer_assigned, outer_prefix, outer_in_view }
     }
 
     pub(crate) fn leave_body(&mut self, scope: BodyScope) {
         self.vars = scope.saved_vars;
         self.body_assigned = scope.outer_assigned;
+        self.body_prefix = scope.outer_prefix;
         self.in_view = scope.outer_in_view;
     }
 
@@ -2016,6 +2051,7 @@ impl TypeContext {
             self.infer_stmt(stmt);
         }
         self.body_assigned = scope.outer_assigned;
+        self.body_prefix = scope.outer_prefix;
         self.in_view = scope.outer_in_view;
 
         // Find return type
@@ -2085,27 +2121,37 @@ impl TypeContext {
         ret
     }
 
+    /// Inside a function, the first assignment of a name that is neither a
+    /// parameter nor a fact is a new binding: its type is its own, not the
+    /// module variable's of the same name. Reactive state keeps its type
+    /// through a handler's assignment; every other module name is shadowed.
+    fn fresh_binding(&mut self, name: &str) -> bool {
+        let is_ui = self.is_ui;
+        let facts = &self.facts;
+        let foreign = self.body_prefix.as_ref().is_some_and(|p| !name.starts_with(p.as_str()));
+        match &mut self.body_assigned {
+            Some(assigned) => assigned.insert(name.to_string()) && !(is_ui && facts.contains(name) && !foreign),
+            None => false,
+        }
+    }
+
     /// Infer types from a statement (mainly assignments).
     pub(crate) fn infer_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Assign { name, value } => {
                 let ty = self.infer_expr_full(value);
-                // inside a function, the first assignment of a name that is
-                // neither a parameter nor a fact is a new binding: its type
-                // is its own, not the module variable's of the same name
-                let is_ui = self.is_ui;
-                let facts = &self.facts;
-                let fresh = match &mut self.body_assigned {
-                    // reactive state keeps its type through a handler's
-                    // assignment; every other module name is shadowed
-                    Some(assigned) => assigned.insert(name.clone()) && !(is_ui && facts.contains(name)),
-                    None => false,
-                };
-                if fresh {
+                if self.fresh_binding(name) {
                     self.vars.insert(name.clone(), ty);
                 } else {
                     let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
                     self.vars.insert(name.clone(), existing.unify(&ty));
+                }
+                // the columns a local reads are those of the value assigned
+                // here, as the call-site scan and the lowering have them (a
+                // cell read later in the body was typed by another frame of
+                // the same name)
+                if let Some(schema) = self.frame_schema_of(value) {
+                    self.frame_schemas.insert(name.clone(), schema);
                 }
             }
             Stmt::MultiAssign { names, values } => {
@@ -2221,6 +2267,24 @@ impl TypeContext {
                 None => self.infer_expr(a),
             }
         };
+        // a body's own list, map or text is indexed, whatever a module
+        // another file imports names the same — the environment first, as
+        // both backends look (a part's `rsi[jg]` where the program imports
+        // chart)
+        if self.body_assigned.as_ref().is_some_and(|a| a.contains(name)) {
+            let var_type = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
+            let unwrapped = match var_type {
+                CrowType::Result(inner) => *inner,
+                other => other,
+            };
+            return match unwrapped {
+                CrowType::Array(inner) | CrowType::NumArray(inner) | CrowType::Map(inner) => *inner,
+                CrowType::Str | CrowType::FrameCol => CrowType::Str,
+                CrowType::Fn(_, ret) => *ret,
+                // a local not typed yet is still not a module's function
+                _ => CrowType::Unknown,
+            };
+        }
         // Struct constructor
         if self.structs.contains_key(name) {
             return CrowType::Struct(name.to_string());
@@ -3412,6 +3476,33 @@ mod tests {
         ctx.infer_program(&stmts);
         assert_eq!(ctx.vars.get("r"), Some(&CrowType::Float));
         assert!(crate::lower_ir::check(&stmts, &ctx).is_ok());
+    }
+
+    /// ... nor does the module variable type the local: a function's
+    /// local passed to another function gives it the local's type (the
+    /// call-site scan unified the local with the module variable, and the
+    /// struct it held typed the other function's parameter)
+    #[test]
+    fn a_module_variable_does_not_type_a_functions_local_of_its_name() {
+        let src = "struct Pair [a, b]\nfn inner[x, last]\n    return last - x\nfn outer[n]\n    f = 0\n    total = 0\n    while f lt n\n        total = total + inner[1, f]\n        f = f + 1\n    return total\nf = Pair[1, 2]\nlog[outer[3]]\nlog[f.a]\n";
+        let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        assert_eq!(ctx.functions["inner"].params[1].1, CrowType::Int);
+        assert!(ctx.vars.get("f").is_some_and(|t| t.to_rust_type().contains("Pair")), "{:?}", ctx.vars.get("f"));
+    }
+
+    /// A local indexed before its value is typed is not a function: the
+    /// function it is passed to takes a list (a function guessed from
+    /// `hs[0]` early in the fixpoint stuck to `edge`'s parameter)
+    #[test]
+    fn an_indexed_local_is_not_guessed_a_function() {
+        let src = "struct Bars [h]\nfn edge[ys]\n    return ys[0] + ys[1]\nfn around[cd]\n    hs = slice[cd.h, 0, 2]\n    top = hs[0]\n    return edge[hs] + top\nlog[around[Bars[[1.0, 2.0, 3.0]]]]\n";
+        let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        let ys = &ctx.functions["edge"].params[0].1;
+        assert!(!matches!(ys, CrowType::Fn(_, _)), "{:?}", ys);
     }
 
     /// A function that sends mail for a handler holds it for the handler's
