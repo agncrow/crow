@@ -73,6 +73,11 @@ pub struct DeriveSpec {
     /// reads no fact a handler writes and no per-session derivation: one
     /// value for the app, computed once and shared by every session
     pub shared: bool,
+    /// the tables it reads only a slice of, each with the column its
+    /// queries fix and the fact that fixes it: a write that says it touched
+    /// no row of the slice leaves the derivation as it is
+    /// (session-layer-design.md §3.5)
+    pub keys: &'static [(&'static str, &'static str, &'static str)],
 }
 
 /// A derivation's cached value and the input versions it was computed from.
@@ -325,6 +330,9 @@ pub struct CrowLiveState {
     /// tables the working copy wrote, with their new versions, published
     /// when it commits
     local_tables: std::sync::Mutex<HashMap<String, u64>>,
+    /// the working copy's writes with what each says about its rows, logged
+    /// when it commits
+    local_writes: std::sync::Mutex<Vec<(u64, crow_runtime::sql::WriteKeys)>>,
     /// the reason the handler stopped, if it did
     stopped: Option<String>,
     /// effects held to the commit
@@ -358,6 +366,81 @@ static SHARED_DERIVED: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Deri
 /// is a write every session's derivations see.
 static TABLE_VERSIONS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, u64>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+/// Each table's recent writes, newest last, with what each says about the
+/// rows it touched: what a derivation over a slice of the table asks
+/// (invalidation by key, session-layer-design.md §3.5). A log keeps the
+/// last `WRITE_LOG_LEN` writes, and remembers the newest one it dropped: a
+/// reader counts every dropped write as touching it.
+struct WriteLog {
+    writes: std::collections::VecDeque<(u64, std::sync::Arc<crow_runtime::sql::WriteKeys>)>,
+    dropped: u64,
+}
+
+const WRITE_LOG_LEN: usize = 1024;
+
+static WRITE_LOGS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, WriteLog>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+fn log_write(version: u64, keys: crow_runtime::sql::WriteKeys) {
+    let mut logs = WRITE_LOGS.lock().unwrap_or_else(|p| p.into_inner());
+    let log = logs.entry(keys.table.clone()).or_insert_with(|| WriteLog { writes: std::collections::VecDeque::new(), dropped: 0 });
+    log.writes.push_back((version, std::sync::Arc::new(keys)));
+    while log.writes.len() > WRITE_LOG_LEN {
+        if let Some((v, _)) = log.writes.pop_front() {
+            log.dropped = log.dropped.max(v);
+        }
+    }
+}
+
+/// Whether two key values are the same key: numbers by value (a fact of
+/// 7.0 is the row of 7), a number and its text alike, as a database
+/// compares them. Too wide is a recompute; too narrow would be a stale
+/// value.
+fn same_key(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    use serde_json::Value as V;
+    let num = |v: &V| match v {
+        V::Number(n) => n.as_f64(),
+        V::String(s) => s.trim().parse::<f64>().ok(),
+        V::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
+        _ => None,
+    };
+    if a == b {
+        return true;
+    }
+    match (num(a), num(b)) {
+        (Some(x), Some(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// Whether a write may have touched the rows whose `column` is `value`.
+fn touches(keys: &crow_runtime::sql::WriteKeys, column: &str, value: &serde_json::Value) -> bool {
+    if !keys.exact || keys.changed.iter().any(|c| c == column) {
+        return true;
+    }
+    let mut said = false;
+    for (c, v) in &keys.known {
+        if c == column {
+            said = true;
+            if same_key(v, value) {
+                return true;
+            }
+        }
+    }
+    // a write that says nothing of the column may have any value there
+    !said
+}
+
+/// The newest write to `table` that may have touched the rows whose
+/// `column` is `value`: the version a derivation over that slice compares.
+fn keyed_version(table: &str, column: &str, value: &serde_json::Value) -> u64 {
+    let logs = WRITE_LOGS.lock().unwrap_or_else(|p| p.into_inner());
+    match logs.get(table) {
+        None => 0,
+        Some(log) => log.writes.iter().rev().find(|(_, k)| touches(k, column, value)).map(|(v, _)| *v).unwrap_or(0).max(log.dropped),
+    }
+}
 /// The render counter every session advances.
 static TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -896,6 +979,7 @@ impl CrowLiveState {
             view_stale: std::sync::Mutex::new(Vec::new()),
             copy: false,
             local_tables: std::sync::Mutex::new(HashMap::new()),
+            local_writes: std::sync::Mutex::new(Vec::new()),
             stopped: None,
             held: Vec::new(),
             notice: None,
@@ -912,13 +996,30 @@ impl CrowLiveState {
     /// are stale. This session's are part of the current event's answer;
     /// every other session whose page read one is woken to catch up.
     pub fn note_table_write(&self, table: &str) {
+        self.note_write(crow_runtime::sql::WriteKeys { table: table.to_string(), known: vec![], changed: vec![], exact: false });
+    }
+
+    /// A write this program made, with what it says about the rows it
+    /// touched (`crow_db::take_write_keys`): a derivation over a slice of
+    /// the table that the write says it did not touch keeps its value.
+    pub fn note_write(&self, keys: crow_runtime::sql::WriteKeys) {
         let v = next_version();
-        self.tables_written.lock().unwrap_or_else(|p| p.into_inner()).insert(table.to_string());
+        let table = keys.table.clone();
+        self.tables_written.lock().unwrap_or_else(|p| p.into_inner()).insert(table.clone());
         if self.copy {
             // the handler sees its own write at once; everyone else when it commits
-            self.local_tables.lock().unwrap_or_else(|p| p.into_inner()).insert(table.to_string(), v);
+            self.local_tables.lock().unwrap_or_else(|p| p.into_inner()).insert(table, v);
+            self.local_writes.lock().unwrap_or_else(|p| p.into_inner()).push((v, keys));
         } else {
-            publish_table(table, v, self.session_id);
+            log_write(v, keys);
+            publish_table(&table, v, self.session_id);
+        }
+    }
+
+    /// Every write made on this thread since the last call, noted.
+    pub fn note_writes(&self, writes: Vec<crow_runtime::sql::WriteKeys>) {
+        for w in writes {
+            self.note_write(w);
         }
     }
 
@@ -940,6 +1041,11 @@ impl CrowLiveState {
     /// becomes the session's notice, which is returned.
     pub fn commit(&mut self, copy: CrowLiveState) -> Option<String> {
         let tables: Vec<(String, u64)> = copy.local_tables.lock().unwrap_or_else(|p| p.into_inner()).drain().collect();
+        // what each write said lands before its table's readers look again —
+        // on a stop too: a store without transactions kept what it was given
+        for (v, keys) in copy.local_writes.lock().unwrap_or_else(|p| p.into_inner()).drain(..) {
+            log_write(v, keys);
+        }
         if let Some(reason) = copy.stopped {
             // its transactions rolled back, but a store without them
             // (ClickHouse) kept what it was given: its readers look again
@@ -1148,6 +1254,7 @@ impl CrowLiveState {
             view_stale: std::sync::Mutex::new(Vec::new()),
             copy: false,
             local_tables: std::sync::Mutex::new(HashMap::new()),
+            local_writes: std::sync::Mutex::new(Vec::new()),
             stopped: None,
             held: Vec::new(),
             notice: None,
@@ -1397,12 +1504,21 @@ impl CrowLiveState {
     fn inputs_now(&self, spec: &DeriveSpec) -> Inputs {
         let facts = spec.facts.iter()
             .map(|f| (f.to_string(), self.versions.get(*f).copied().unwrap_or(0))).collect();
-        let tables = {
-            // a handler's own writes first: it reads what it wrote
-            let local = self.local_tables.lock().unwrap_or_else(|p| p.into_inner());
-            let tv = TABLE_VERSIONS.lock().unwrap_or_else(|p| p.into_inner());
-            spec.tables.iter().map(|t| (t.to_string(), local.get(*t).or_else(|| tv.get(*t)).copied().unwrap_or(0))).collect()
-        };
+        let tables = spec
+            .tables
+            .iter()
+            .map(|t| {
+                // a handler's own writes first: it reads what it wrote
+                let own = self.local_tables.lock().unwrap_or_else(|p| p.into_inner()).get(*t).copied();
+                if let Some(v) = own {
+                    return (t.to_string(), v);
+                }
+                // a slice of the table: the newest write that may touch it
+                let keyed = spec.keys.iter().find(|(kt, _, _)| kt == t).and_then(|(_, column, fact)| self.data.get(*fact).map(|value| keyed_version(t, column, value)));
+                let v = keyed.unwrap_or_else(|| TABLE_VERSIONS.lock().unwrap_or_else(|p| p.into_inner()).get(*t).copied().unwrap_or(0));
+                (t.to_string(), v)
+            })
+            .collect();
         let derives = spec.derives.iter().filter(|d| **d != spec.name)
             .map(|d| (d.to_string(), self.derive_version(d))).collect();
         Inputs { facts, tables, derives, now: crow_runtime::moments::now() }
@@ -1596,6 +1712,7 @@ impl Clone for CrowLiveState {
             view_stale: std::sync::Mutex::new(Vec::new()),
             copy: false,
             local_tables: std::sync::Mutex::new(HashMap::new()),
+            local_writes: std::sync::Mutex::new(Vec::new()),
             stopped: None,
             held: Vec::new(),
             notice: None,
@@ -4020,7 +4137,7 @@ mod tests {
     #[test]
     fn a_shared_derivation_is_computed_once_for_every_session() {
         use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
-        static SPEC: DeriveSpec = DeriveSpec { name: "test_shared_universe", facts: &[], derives: &[], tables: &[], now: false, external: false, fresh: 0.0, shared: true };
+        static SPEC: DeriveSpec = DeriveSpec { name: "test_shared_universe", facts: &[], derives: &[], tables: &[], now: false, external: false, fresh: 0.0, shared: true , keys: &[] };
         let runs = AtomicUsize::new(0);
         let compute = |_: &CrowLiveState| { runs.fetch_add(1, SeqCst); 42i64 };
         let mut s1 = CrowLiveState::new();
@@ -4035,7 +4152,7 @@ mod tests {
     #[test]
     fn a_table_write_in_one_session_is_seen_by_every_session() {
         use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
-        static SPEC: DeriveSpec = DeriveSpec { name: "test_session_rows", facts: &["sym"], derives: &[], tables: &["test_trades"], now: false, external: false, fresh: 0.0, shared: false };
+        static SPEC: DeriveSpec = DeriveSpec { name: "test_session_rows", facts: &["sym"], derives: &[], tables: &["test_trades"], now: false, external: false, fresh: 0.0, shared: false , keys: &[] };
         let runs = AtomicUsize::new(0);
         let compute = |_: &CrowLiveState| { runs.fetch_add(1, SeqCst); 1i64 };
         let mut s1 = CrowLiveState::new();
@@ -4051,6 +4168,50 @@ mod tests {
         s1.note_table_write("test_trades");
         s2.derive(&SPEC, &compute, |a, b| a == b);
         assert_eq!(runs.load(SeqCst), 3, "the other session's write reaches this one");
+    }
+
+    /// A derivation over a slice of a table — `WHERE board = ?` with the
+    /// session's `board` — recomputes after a write that touched its slice,
+    /// or that does not say which rows it touched, and keeps its value after
+    /// one that says it touched only another slice
+    #[test]
+    fn a_keyed_derivation_recomputes_only_for_its_slice() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        static SPEC: DeriveSpec = DeriveSpec { name: "test_keyed_cards", facts: &["board"], derives: &[], tables: &["test_keyed_cards"], now: false, external: false, fresh: 0.0, shared: false, keys: &[("test_keyed_cards", "board", "board")] };
+        let runs = AtomicUsize::new(0);
+        let compute = |_: &CrowLiveState| { runs.fetch_add(1, SeqCst); 1i64 };
+        let write = |board: serde_json::Value| crow_runtime::sql::WriteKeys { table: "test_keyed_cards".into(), known: vec![("board".into(), board)], changed: vec![], exact: true };
+        let mut s = CrowLiveState::new();
+        s.set("board", serde_json::json!(1));
+        s.next_tick();
+        s.derive(&SPEC, &compute, |a, b| a == b);
+        assert_eq!(runs.load(SeqCst), 1);
+        s.note_write(write(serde_json::json!(2)));
+        s.derive(&SPEC, &compute, |a, b| a == b);
+        assert_eq!(runs.load(SeqCst), 1, "another board's card: kept");
+        s.note_write(write(serde_json::json!(1.0)));
+        s.derive(&SPEC, &compute, |a, b| a == b);
+        assert_eq!(runs.load(SeqCst), 2, "this board's card (1.0 is 1): recomputed");
+        s.note_table_write("test_keyed_cards");
+        s.derive(&SPEC, &compute, |a, b| a == b);
+        assert_eq!(runs.load(SeqCst), 3, "a write that says nothing of its rows: recomputed");
+        // a handler's write lands with its commit, what it said with it
+        let copy = s.working_copy();
+        copy.note_write(write(serde_json::json!(2)));
+        assert!(s.commit(copy).is_none());
+        s.derive(&SPEC, &compute, |a, b| a == b);
+        assert_eq!(runs.load(SeqCst), 3, "a handler's write to another board: kept");
+    }
+
+    #[test]
+    fn a_write_touches_the_rows_it_says() {
+        let w = crow_runtime::sql::WriteKeys { table: "t".into(), known: vec![("board".into(), serde_json::json!(2))], changed: vec!["stars".into()], exact: true };
+        assert!(touches(&w, "board", &serde_json::json!(2)) && touches(&w, "board", &serde_json::json!("2")));
+        assert!(!touches(&w, "board", &serde_json::json!(3)));
+        assert!(touches(&w, "stars", &serde_json::json!(5)), "a column it sets moves rows");
+        assert!(touches(&w, "owner", &serde_json::json!("ada")), "a column it says nothing of");
+        let whole = crow_runtime::sql::WriteKeys { exact: false, ..w };
+        assert!(touches(&whole, "board", &serde_json::json!(3)));
     }
 
     /// Wait until no recompute of `name` is in flight (or give up).
@@ -4074,7 +4235,7 @@ mod tests {
 
     mod slow_rows {
         use super::super::*;
-        pub static SPEC: DeriveSpec = DeriveSpec { name: "test_bg_rows", facts: &["n"], derives: &[], tables: &["test_bg_table"], now: false, external: false, fresh: 0.0, shared: false };
+        pub static SPEC: DeriveSpec = DeriveSpec { name: "test_bg_rows", facts: &["n"], derives: &[], tables: &["test_bg_table"], now: false, external: false, fresh: 0.0, shared: false , keys: &[] };
         pub static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         pub fn body(state: &CrowLiveState) -> i64 {
             RUNS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -4111,7 +4272,7 @@ mod tests {
 
     mod pending_rows {
         use super::super::*;
-        pub static SPEC: DeriveSpec = DeriveSpec { name: "test_bg_pending", facts: &[], derives: &[], tables: &["test_bg_pending_t"], now: false, external: true, fresh: 60.0, shared: false };
+        pub static SPEC: DeriveSpec = DeriveSpec { name: "test_bg_pending", facts: &[], derives: &[], tables: &["test_bg_pending_t"], now: false, external: true, fresh: 60.0, shared: false , keys: &[] };
         pub fn body(_: &CrowLiveState) -> i64 {
             std::thread::sleep(std::time::Duration::from_millis(30));
             7
@@ -4136,7 +4297,7 @@ mod tests {
 
     mod own_rows {
         use super::super::*;
-        pub static SPEC: DeriveSpec = DeriveSpec { name: "test_bg_own", facts: &[], derives: &[], tables: &["test_bg_own_t"], now: false, external: false, fresh: 0.0, shared: false };
+        pub static SPEC: DeriveSpec = DeriveSpec { name: "test_bg_own", facts: &[], derives: &[], tables: &["test_bg_own_t"], now: false, external: false, fresh: 0.0, shared: false , keys: &[] };
         pub static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         pub fn body(_: &CrowLiveState) -> usize {
             RUNS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
@@ -4162,7 +4323,7 @@ mod tests {
 
     mod shared_rows {
         use super::super::*;
-        pub static SPEC: DeriveSpec = DeriveSpec { name: "test_bg_shared", facts: &[], derives: &[], tables: &["test_bg_shared_t"], now: false, external: false, fresh: 0.0, shared: true };
+        pub static SPEC: DeriveSpec = DeriveSpec { name: "test_bg_shared", facts: &[], derives: &[], tables: &["test_bg_shared_t"], now: false, external: false, fresh: 0.0, shared: true , keys: &[] };
         pub static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         pub fn body(_: &CrowLiveState) -> usize {
             std::thread::sleep(std::time::Duration::from_millis(60));
@@ -4214,7 +4375,7 @@ mod tests {
         init.set("n", serde_json::json!(5));
         let mut s = start_session(&init);
         s.next_tick();
-        static SPEC: DeriveSpec = DeriveSpec { name: "test_bg_marked", facts: &["n"], derives: &[], tables: &["test_bg_marked_t"], now: false, external: false, fresh: 0.0, shared: false };
+        static SPEC: DeriveSpec = DeriveSpec { name: "test_bg_marked", facts: &["n"], derives: &[], tables: &["test_bg_marked_t"], now: false, external: false, fresh: 0.0, shared: false , keys: &[] };
         fn body(state: &CrowLiveState) -> i64 {
             std::thread::sleep(std::time::Duration::from_millis(30));
             state.get_i64("n", 0)
@@ -4286,7 +4447,7 @@ mod tests {
 
     #[test]
     fn a_table_write_reaches_other_readers_when_the_handler_commits() {
-        static SPEC: DeriveSpec = DeriveSpec { name: "test_commit_rows", facts: &[], derives: &[], tables: &["test_commit_t"], now: false, external: false, fresh: 0.0, shared: true };
+        static SPEC: DeriveSpec = DeriveSpec { name: "test_commit_rows", facts: &[], derives: &[], tables: &["test_commit_t"], now: false, external: false, fresh: 0.0, shared: true , keys: &[] };
         fn read(state: &CrowLiveState) -> i64 {
             state.derive(&SPEC, |_| 1, |a, b| a == b)
         }

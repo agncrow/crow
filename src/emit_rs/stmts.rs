@@ -217,7 +217,17 @@ impl Emitter {
         if is_reactive_handler {
             self.needs_serde_json = true;
             let mut lines: Vec<String> = Vec::new();
-            if !self.derive_fns.is_empty() {
+            // the writes this handler made, each with what it says about its
+            // rows (crow_db records them): the readers of their tables look
+            // again, and a derivation over a slice they did not touch keeps
+            // its value
+            if self.needs_crow_db {
+                if self.derive_fns.is_empty() {
+                    lines.push("let _ = crow_db::take_write_keys();".to_string());
+                } else {
+                    lines.push("state.note_writes(crow_db::take_write_keys());".to_string());
+                }
+            } else if !self.derive_fns.is_empty() {
                 for t in &f.tables_written {
                     lines.push(format!("state.note_table_write(\"{}\");", t));
                 }
@@ -309,7 +319,7 @@ impl Emitter {
         let eq = if matches!(rt, CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Bool) { "|a, b| a == b" } else { "|_a, _b| false" };
         let list = |xs: &BTreeSet<String>| xs.iter().map(|x| format!("\"{}\"", x)).collect::<Vec<_>>().join(", ");
         self.line(&format!(
-            "static __DERIVE_SPEC_{n}: crow_web::live::DeriveSpec = crow_web::live::DeriveSpec {{ name: \"{n}\", facts: &[{f}], derives: &[{dd}], tables: &[{t}], now: {now}, external: {ext}, fresh: {fresh:?}, shared: {sh} }};",
+            "static __DERIVE_SPEC_{n}: crow_web::live::DeriveSpec = crow_web::live::DeriveSpec {{ name: \"{n}\", facts: &[{f}], derives: &[{dd}], tables: &[{t}], now: {now}, external: {ext}, fresh: {fresh:?}, shared: {sh}, keys: &[{k}] }};",
             n = name,
             f = list(&rs.facts),
             dd = list(&rs.derives),
@@ -317,7 +327,8 @@ impl Emitter {
             now = rs.now,
             ext = rs.external,
             fresh = d.fresh,
-            sh = rs.shared
+            sh = rs.shared,
+            k = rs.keys.iter().map(|(t, (c, f))| format!("(\"{}\", \"{}\", \"{}\")", t, c, f)).collect::<Vec<_>>().join(", ")
         ));
         self.line(&format!("fn __derive_{}(state: &CrowLiveState) -> {} {{", name, ty));
         self.indent += 1;

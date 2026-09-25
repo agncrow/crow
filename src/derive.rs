@@ -24,6 +24,17 @@ pub struct ReadSet {
     /// value for the whole app, computed once and shared by every session
     /// (derive-design.md §3.5). Set by `mark_shared`.
     pub shared: bool,
+    /// the tables it reads only a slice of — every query of the table fixes
+    /// one column by a fact (`WHERE board = ?` with `[board_id]`) — each with
+    /// that column and fact: a write that says it touched no row of the
+    /// slice leaves the derivation as it is (session-layer-design.md §3.5)
+    pub keys: BTreeMap<String, (String, String)>,
+    /// the tables it reads whole somewhere, which no key narrows
+    pub whole: BTreeSet<String>,
+    /// while its own body is walked: the locals that are one fact
+    /// (`sid = '`session_id`'`), so a query's parameter set from one reads a
+    /// slice keyed by that fact
+    aliases: BTreeMap<String, String>,
 }
 
 /// The program's facts: top-level assignments that hold state. A database
@@ -145,13 +156,44 @@ pub fn read_set(
     let mut visited: BTreeSet<String> = BTreeSet::new();
     walk_stmts(body, facts, derives, fns, &mut visited, &mut rs);
     rs.external = rs.tables.iter().any(|t| !owned_tables.contains(t));
+    rs.aliases.clear();
     rs
+}
+
+/// The fact a value is exactly: the fact itself, or a string that is only
+/// its interpolation (`'`session_id`'`, the id as text for a query).
+fn one_fact(e: &Expr, facts: &BTreeSet<String>) -> Option<String> {
+    match e {
+        Expr::Ident(f) if facts.contains(f) => Some(f.clone()),
+        Expr::Str(s) => {
+            let t = s.trim();
+            let inner = t.strip_prefix('`')?.strip_suffix('`')?;
+            if inner.contains('`') {
+                return None;
+            }
+            match interpolation_exprs(t).as_slice() {
+                [Expr::Ident(f)] if facts.contains(f) => Some(f.clone()),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 fn walk_stmts(stmts: &[Stmt], facts: &BTreeSet<String>, derives: &BTreeSet<String>, fns: &BTreeMap<String, Vec<Stmt>>, visited: &mut BTreeSet<String>, rs: &mut ReadSet) {
     for st in stmts {
         match st {
-            Stmt::Assign { value, .. } => walk_expr(value, facts, derives, fns, visited, rs),
+            Stmt::Assign { name, value } => {
+                walk_expr(value, facts, derives, fns, visited, rs);
+                match one_fact(value, facts) {
+                    Some(f) => {
+                        rs.aliases.insert(name.clone(), f);
+                    }
+                    None => {
+                        rs.aliases.remove(name);
+                    }
+                }
+            }
             Stmt::MultiAssign { values, .. } => for v in values { walk_expr(v, facts, derives, fns, visited, rs) },
             Stmt::FieldAssign { object, value, .. } => { walk_expr(object, facts, derives, fns, visited, rs); walk_expr(value, facts, derives, fns, visited, rs); }
             Stmt::ExprStmt(e) | Stmt::Return(Some(e)) => walk_expr(e, facts, derives, fns, visited, rs),
@@ -212,15 +254,41 @@ fn walk_expr(e: &Expr, facts: &BTreeSet<String>, derives: &BTreeSet<String>, fns
                 // the signed-in reader is a fact the runtime keeps: a
                 // derivation over it follows sign-ins, and is the session's
                 if n == "__reader" { rs.facts.insert("reader".to_string()); }
-                // query[conn, 'sql', ...]: the tables the literal reads
+                // query[conn, 'sql', ...]: the tables the literal reads, and
+                // the slice of one it reads when a fact fixes a column of it
                 if n == "query" {
                     if let Some(Expr::Str(sql)) = args.get(1) {
-                        for t in tables_of_sql(sql).0 { rs.tables.insert(t); }
+                        let params: &[Expr] = match args.get(2) {
+                            Some(Expr::Array(items)) => items,
+                            _ => &[],
+                        };
+                        let keyed = crow_runtime::sql::read_keys(sql).and_then(|(t, ks)| {
+                            ks.iter().find_map(|(col, i)| match params.get(*i) {
+                                Some(Expr::Ident(f)) if facts.contains(f) => Some((t.clone(), (col.clone(), f.clone()))),
+                                Some(Expr::Ident(local)) => rs.aliases.get(local).map(|f| (t.clone(), (col.clone(), f.clone()))),
+                                _ => None,
+                            })
+                        });
+                        for t in tables_of_sql(sql).0 {
+                            rs.tables.insert(t.clone());
+                            match &keyed {
+                                Some((kt, key)) if *kt == t && !rs.whole.contains(&t) && rs.keys.get(&t).map_or(true, |k| k == key) => {
+                                    rs.keys.insert(t, key.clone());
+                                }
+                                _ => {
+                                    rs.keys.remove(&t);
+                                    rs.whole.insert(t);
+                                }
+                            }
+                        }
                     }
                 }
                 if let Some(body) = fns.get(n) {
                     if visited.insert(n.clone()) {
+                        // a function's locals are its own
+                        let aliases = std::mem::take(&mut rs.aliases);
                         walk_stmts(body, facts, derives, fns, visited, rs);
+                        rs.aliases = aliases;
                     }
                 }
             } else {
@@ -342,6 +410,35 @@ mod tests {
         assert!(written.contains("sessions"), "INSERT … RETURNING through query writes its table: {:?}", written);
         let reads_only = crate::build("fn rows[book]\n    return query[book, 'SELECT id FROM sessions']\n").unwrap();
         assert!(owned_tables(&reads_only, &BTreeMap::new()).is_empty(), "a query that only reads writes nothing");
+    }
+
+    /// A derivation that reads a slice of a table — every query of it fixes
+    /// one column by a fact — is keyed by that column and fact; a table read
+    /// whole anywhere, or by two keys, is read whole
+    #[test]
+    fn a_derivations_keyed_reads() {
+        let facts: BTreeSet<String> = ["board_id".to_string(), "day".to_string()].into_iter().collect();
+        let parse = |src: &str| crate::build(src).unwrap();
+        let body = parse("rows = query[book, 'SELECT id, title FROM cards WHERE board = ? ORDER BY id', [board_id]]\nreturn rows\n");
+        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new());
+        assert_eq!(rs.keys.get("cards"), Some(&("board".to_string(), "board_id".to_string())));
+        let body = parse("a = query[book, 'SELECT id FROM cards WHERE board = ?', [board_id]]\nb = query[book, 'SELECT count(*) AS n FROM cards']\nreturn len[a]\n");
+        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new());
+        assert!(rs.keys.is_empty() && rs.whole.contains("cards"));
+        let body = parse("a = query[book, 'SELECT id FROM cards WHERE board = ?', [board_id]]\nb = query[book, 'SELECT id FROM cards WHERE day = ?', [day]]\nreturn len[a]\n");
+        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new());
+        assert!(rs.keys.is_empty(), "{:?}", rs.keys);
+        // a local that is only the fact as text keys the slice by the fact
+        let body = parse("b = '`board_id`'\nrows = query[book, 'SELECT id FROM cards WHERE board = ?', [b]]\nreturn rows\n");
+        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new());
+        assert_eq!(rs.keys.get("cards"), Some(&("board".to_string(), "board_id".to_string())));
+        let body = parse("b = 'board `board_id`'\nrows = query[book, 'SELECT id FROM cards WHERE board = ?', [b]]\nreturn rows\n");
+        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new());
+        assert!(rs.keys.is_empty(), "text around the fact is another value");
+        // a column fixed by something other than a fact reads the table whole
+        let body = parse("rows = query[book, 'SELECT id FROM cards WHERE board = ?', [3]]\nreturn rows\n");
+        let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new());
+        assert!(rs.keys.is_empty());
     }
 
     #[test]

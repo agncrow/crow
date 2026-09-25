@@ -2186,7 +2186,16 @@ pub fn describe_derivations(stmts: &[Stmt]) -> Vec<String> {
         if rs.now { reads.push("now[]".to_string()); }
         if !reads.is_empty() { parts.push(format!("reads {}", reads.join(", "))); }
         if !rs.tables.is_empty() {
-            let tables = rs.tables.iter().cloned().collect::<Vec<_>>().join(", ");
+            // a table it reads a slice of says which: `cards where board = board_id`
+            let tables = rs
+                .tables
+                .iter()
+                .map(|t| match rs.keys.get(t) {
+                    Some((column, fact)) => format!("{} where {} = {}", t, column, fact),
+                    None => t.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
             let fresh = fresh_of.get(name).copied().unwrap_or(0.0);
             let how = if !rs.external { String::new() }
                 else if fresh > 0.0 { format!(" (external, fresh {}s)", fresh) }
