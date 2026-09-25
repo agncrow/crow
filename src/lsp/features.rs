@@ -108,17 +108,106 @@ pub fn hover(a: &Analysis, pos: Position) -> Option<String> {
     None
 }
 
-pub fn definition(a: &Analysis, pos: Position, uri: &Uri) -> Option<Location> {
-    let word = ident_at(a, pos)?;
-    let line = decl_line(&a.stmts, &word)?;
-    let line0 = line.saturating_sub(1) as u32;
-    Some(Location {
-        uri: uri.clone(),
+/// What the cursor is on: a name, a part's name qualified by the part
+/// (`calc.total`), or the part's name itself (`calc` in `calc.total`).
+#[derive(Debug, PartialEq)]
+enum Named {
+    Plain(String),
+    Qualified(String, String),
+    Module(String),
+}
+
+/// The token index of the identifier at the cursor.
+fn token_at(a: &Analysis, pos: Position) -> Option<usize> {
+    let line = pos.line as usize + 1;
+    let ch = pos.character as usize + 1;
+    a.tokens.iter().position(|t| {
+        t.line == line && matches!(&t.token, Token::Ident(name) if ch >= t.col && ch <= t.col + name.chars().count())
+    })
+}
+
+fn named_at(a: &Analysis, pos: Position) -> Option<Named> {
+    let i = token_at(a, pos)?;
+    let Token::Ident(name) = &a.tokens[i].token else { return None };
+    let ident = |j: usize| match a.tokens.get(j).map(|t| &t.token) {
+        Some(Token::Ident(n)) => Some(n.clone()),
+        _ => None,
+    };
+    let dot = |j: usize| matches!(a.tokens.get(j).map(|t| &t.token), Some(Token::Dot));
+    if i >= 2 && dot(i - 1) {
+        if let Some(m) = ident(i - 2) {
+            if a.parts.contains_key(&m) {
+                return Some(Named::Qualified(m, name.clone()));
+            }
+        }
+    }
+    if dot(i + 1) && a.parts.contains_key(name) {
+        return Some(Named::Module(name.clone()));
+    }
+    Some(Named::Plain(name.clone()))
+}
+
+fn at_line(uri: Uri, line_1based: usize) -> Location {
+    let line0 = line_1based.saturating_sub(1) as u32;
+    Location {
+        uri,
         range: Range {
             start: Position { line: line0, character: 0 },
             end: Position { line: line0, character: 0 },
         },
-    })
+    }
+}
+
+/// Where a name is declared: in this file, or — qualified by a part
+/// (`calc.total`) — in the part's file; the part's name opens the part.
+pub fn definition(a: &Analysis, pos: Position, uri: &Uri) -> Option<Location> {
+    match named_at(a, pos)? {
+        Named::Plain(word) => Some(at_line(uri.clone(), decl_line(&a.stmts, &word)?)),
+        Named::Module(m) => {
+            let file = a.parts.get(&m)?;
+            Some(at_line(file_uri(file)?, 1))
+        }
+        Named::Qualified(m, word) => {
+            let file = a.parts.get(&m)?;
+            let text = std::fs::read_to_string(file).ok()?;
+            let tokens = crate::lexer::Lexer::new(&text).tokenize().ok()?;
+            let (stmts, _) = crate::parser::Parser::new(tokens).parse_lenient();
+            Some(at_line(file_uri(file)?, decl_line(&stmts, &word)?))
+        }
+    }
+}
+
+fn file_uri(path: &std::path::Path) -> Option<Uri> {
+    let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let text: String = abs.to_string_lossy().chars().map(|c| if c == ' ' { "%20".to_string() } else { c.to_string() }).collect();
+    format!("file://{}", text).parse().ok()
+}
+
+/// Every place the name at the cursor is read or written in this file,
+/// its declaration included: a part's name qualified by the part only
+/// where it is so qualified, a field (`x.name`) never for a plain name.
+pub fn references(a: &Analysis, pos: Position, uri: &Uri) -> Vec<Location> {
+    let Some(named) = named_at(a, pos) else { return Vec::new() };
+    let ident = |j: usize| match a.tokens.get(j).map(|t| &t.token) {
+        Some(Token::Ident(n)) => Some(n.as_str()),
+        _ => None,
+    };
+    let dot = |j: usize| matches!(a.tokens.get(j).map(|t| &t.token), Some(Token::Dot));
+    let mut out = Vec::new();
+    for (i, t) in a.tokens.iter().enumerate() {
+        let Token::Ident(name) = &t.token else { continue };
+        let hit = match &named {
+            Named::Plain(w) => name == w && !(i >= 1 && dot(i - 1)),
+            Named::Qualified(m, w) => name == w && i >= 2 && dot(i - 1) && ident(i - 2) == Some(m.as_str()),
+            Named::Module(m) => name == m && dot(i + 1),
+        };
+        if hit {
+            let start = Position { line: t.line.saturating_sub(1) as u32, character: t.col.saturating_sub(1) as u32 };
+            let end = Position { line: start.line, character: start.character + name.chars().count() as u32 };
+            out.push(Location { uri: uri.clone(), range: Range { start, end } });
+        }
+    }
+    out
 }
 
 pub fn document_symbols(a: &Analysis) -> Vec<DocumentSymbol> {
@@ -382,6 +471,35 @@ mod param_fill_tests {
 
     fn analyzed(src: &str) -> crate::lsp::analysis::Analysis {
         crate::lsp::analysis::analyze(src, None, None, "t.co")
+    }
+
+    #[test]
+    fn definition_follows_a_part_qualified_name_into_its_file() {
+        let dir = std::env::temp_dir().join(format!("crow_lsp_parts_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(dir.join("lib/calc.co"), "--- sums\n\nfn total[x]\n    return x * 2.0\n").unwrap();
+        let src = "use lib.calc\nx = calc.total[2.0]\n";
+        let a = crate::lsp::analysis::analyze(src, Some(&dir), None, "main.co");
+        let here: Uri = "file:///tmp/main.co".parse().unwrap();
+        // on `total` in `calc.total`: its declaration, line 3 of the part
+        let loc = definition(&a, Position { line: 1, character: 11 }, &here).expect("found");
+        assert!(loc.uri.as_str().ends_with("lib/calc.co"), "{:?}", loc.uri);
+        assert_eq!(loc.range.start.line, 2);
+        // on `calc`: the part's file itself
+        let loc = definition(&a, Position { line: 1, character: 5 }, &here).expect("found");
+        assert!(loc.uri.as_str().ends_with("lib/calc.co") && loc.range.start.line == 0, "{:?}", loc);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn references_are_the_names_occurrences_not_fields_of_that_name() {
+        let a = analyzed("struct P [f]\nfn f[x]\n    return x\ny = f[1]\nz = f[2]\np = P[1]\nw = p.f\n");
+        let here: Uri = "file:///tmp/t.co".parse().unwrap();
+        let refs = references(&a, Position { line: 1, character: 3 }, &here);
+        let lines: Vec<u32> = refs.iter().map(|l| l.range.start.line).collect();
+        assert_eq!(lines, vec![0, 1, 3, 4], "{:?}", refs);
     }
 
     #[test]

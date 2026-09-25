@@ -4836,7 +4836,7 @@ fn rewrite_qualified_refs_expr(
 
 /// The directory a project's module paths are rooted at: the nearest
 /// ancestor holding a crowfile, else the entry file's own directory.
-fn project_root(source_dir: &std::path::Path) -> std::path::PathBuf {
+pub(crate) fn project_root(source_dir: &std::path::Path) -> std::path::PathBuf {
     let start = if source_dir.as_os_str().is_empty() { std::path::Path::new(".") } else { source_dir };
     let mut dir = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
     loop {

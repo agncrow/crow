@@ -19,6 +19,10 @@ pub struct Analysis {
     /// The analyzed document text — signature help walks it to find the
     /// enclosing call at the cursor.
     pub source: String,
+    /// The parts the document uses, by the name it calls them (`calc` for
+    /// `use lib.calc`), each its file under the project: a qualified name
+    /// is defined there.
+    pub parts: std::collections::BTreeMap<String, std::path::PathBuf>,
 }
 
 pub fn analyze(
@@ -42,11 +46,12 @@ pub fn analyze(
                 DiagnosticSeverity::ERROR,
             ));
             return Analysis {
-            source: text.to_string(),
+                source: text.to_string(),
                 stmts: Vec::new(),
                 ctx: TypeContext::new(),
                 tokens: Vec::new(),
                 diagnostics,
+                parts: std::collections::BTreeMap::new(),
             };
         }
     };
@@ -61,6 +66,21 @@ pub fn analyze(
             strip_location(&e),
             DiagnosticSeverity::ERROR,
         ));
+    }
+
+    // The parts the document uses, by the name it calls them.
+    let mut parts = std::collections::BTreeMap::new();
+    if let Some(dir) = doc_dir {
+        let root = crate::project_root(dir);
+        for s in &stmts {
+            if let crate::ast::Stmt::Use { path, alias } = s {
+                let file = root.join(format!("{}.co", path.replace('.', "/")));
+                if file.exists() {
+                    let name = alias.clone().unwrap_or_else(|| path.rsplit('.').next().unwrap_or(path).to_string());
+                    parts.insert(name, file);
+                }
+            }
+        }
     }
 
     // Module expansion (missing modules are skipped, never fatal).
@@ -131,11 +151,12 @@ pub fn analyze(
     }
 
     Analysis {
-            source: text.to_string(),
+        source: text.to_string(),
         stmts,
         ctx,
         tokens,
         diagnostics,
+        parts,
     }
 }
 
