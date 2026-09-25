@@ -4330,6 +4330,8 @@ fn expand_module_imports(
             _ => {}
         }
     }
+    // what the program's databases answer is kept in its project
+    SCHEMA_DIR.with(|d| *d.borrow_mut() = Some(project_root(source_dir).join(".crow").join("schema")));
     let mut ex = ModuleExpansion::default();
     let mut body = expand_into(stmts, source_dir, &mut ex, visited);
     separate_part_locals(&mut body, &mut ex.hoisted);
@@ -4377,6 +4379,12 @@ fn expand_module_imports(
     let plain = !stmts.iter().any(is_ui) && out.iter().any(is_ui);
     PLAIN_ENTRY.with(|p| p.set(plain));
     out
+}
+
+/// Where the program being built keeps what its databases answered: the
+/// project's `.crow/schema`, once a file of it has been expanded.
+pub(crate) fn schema_dir() -> Option<std::path::PathBuf> {
+    SCHEMA_DIR.with(|d| d.borrow().clone())
 }
 
 /// A top-level name of an entry file that does not import ui, in a program
@@ -4708,6 +4716,8 @@ fn visit_exprs_mut(st: &mut ast::Stmt, f: &mut dyn FnMut(&mut ast::Expr)) {
 thread_local! {
     /// The entry being expanded imports no ui while a part does
     static PLAIN_ENTRY: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    /// The project's record of what its databases answered (`.crow/schema`)
+    static SCHEMA_DIR: std::cell::RefCell<Option<std::path::PathBuf>> = std::cell::RefCell::new(None);
     static VALIDATED_PARTS: std::cell::RefCell<std::collections::HashSet<std::path::PathBuf>> =
         std::cell::RefCell::new(std::collections::HashSet::new());
     /// module prefix (`sim_session_`) → the part's project-relative file
@@ -5467,6 +5477,39 @@ mod module_parts_tests {
         assert!(text.contains("let r__lib_state: Int"), "{}", text);
         assert!(text.contains("s__lib_state: Int"), "{}", text);
         assert!(text.contains("fact c: Int") && text.contains("fact r: Str") && text.contains("fact s: Str"), "{}", text);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// What a database answers about a statement is kept in the project's
+    /// `.crow/schema`, and a build reads it back when no database answers:
+    /// a ClickHouse that was down typed every cell as text, and the compiled
+    /// finch refused `entry` as a float given text
+    #[test]
+    fn a_query_is_typed_from_what_its_database_last_answered() {
+        let dir = std::env::temp_dir().join(format!("crow_schema_record_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'schema'\n").unwrap();
+        let db = dir.join("t.db");
+        let h = crow_db::connect(&format!("sqlite://{}", db.display()), None).unwrap();
+        h.exec("CREATE TABLE bars (sym TEXT, n INTEGER, px REAL)", &[]).unwrap();
+        // answered: the columns are typed, and the answer is kept
+        let src = format!("use db\nbook = connect['sqlite://{}']\nr = query[book, 'SELECT sym, n, px FROM bars']\n", db.display());
+        let stmts = expand_module_imports(&build(&src).unwrap(), &dir, &mut std::collections::HashSet::new());
+        let ctx = infer_and_validate(&lower::lower_program(&stmts).unwrap(), true).unwrap();
+        let cols = ctx.frame_schemas.get("r").cloned().unwrap_or_default();
+        assert_eq!(cols.get("n"), Some(&type_infer::CrowType::Int), "{:?}", cols);
+        let kept: Vec<_> = std::fs::read_dir(dir.join(".crow/schema")).unwrap().collect();
+        assert_eq!(kept.len(), 1, "one statement kept");
+        // not answered: a server that is not there types it from the record
+        let text = std::fs::read_to_string(kept[0].as_ref().unwrap().path()).unwrap();
+        let unreachable = "clickhouse://127.0.0.1:1/none";
+        let src = format!("use db\nbook = connect['{}']\nr = query[book, 'SELECT sym, n, px FROM bars']\n", unreachable);
+        let stmts = expand_module_imports(&build(&src).unwrap(), &dir, &mut std::collections::HashSet::new());
+        let ctx = infer_and_validate(&lower::lower_program(&stmts).unwrap(), true).unwrap();
+        let cols = ctx.frame_schemas.get("r").cloned().unwrap_or_default();
+        assert_eq!(cols.get("px"), Some(&type_infer::CrowType::Float), "{:?}\n{}", cols, text);
+        assert!(ctx.describe_notes.iter().any(|n| n.contains("typed from .crow/schema")), "{:?}", ctx.describe_notes);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
