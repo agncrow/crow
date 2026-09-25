@@ -270,6 +270,7 @@ pub struct StructSig {
 /// What `enter_body` saved: restored by `leave_body`.
 pub(crate) struct BodyScope {
     saved_vars: BTreeMap<String, CrowType>,
+    saved_frames: Vec<(String, Option<BTreeMap<String, CrowType>>)>,
     outer_assigned: Option<std::collections::HashSet<String>>,
     outer_in_view: bool,
 }
@@ -333,6 +334,13 @@ pub struct TypeContext {
     pub frame_schemas: BTreeMap<String, BTreeMap<String, CrowType>>,
     /// Functions whose returned frame has known columns.
     pub fn_frame_schemas: BTreeMap<String, BTreeMap<String, CrowType>>,
+    /// The columns of the frame each function's parameter is given, when
+    /// its calls agree on them — `(function, parameter) → columns`, `None`
+    /// when they do not — as the last pass over the call sites found them:
+    /// a frame handed to a function keeps its cells' types there
+    pub param_frame_schemas: BTreeMap<(String, String), Option<BTreeMap<String, CrowType>>>,
+    /// What the pass under way finds (the one before it is read meanwhile)
+    param_frame_schemas_next: BTreeMap<(String, String), Option<BTreeMap<String, CrowType>>>,
     /// Ask the program's databases what its query literals return. Every
     /// pipeline's gate asks the same way (`CROW_NO_DESCRIBE` turns it off),
     /// so a program refused for a query's column types is refused by run,
@@ -405,6 +413,8 @@ impl TypeContext {
             ddl: Vec::new(),
             frame_schemas: BTreeMap::new(),
             fn_frame_schemas: BTreeMap::new(),
+            param_frame_schemas: BTreeMap::new(),
+            param_frame_schemas_next: BTreeMap::new(),
             describe_queries: false,
             describe_cache: BTreeMap::new(),
             describe_notes: Vec::new(),
@@ -894,9 +904,12 @@ impl TypeContext {
             let before: Vec<(String, CrowType, Vec<(String, CrowType)>)> = self.functions.iter().map(|(n, s)| (n.clone(), s.return_type.clone(), s.params.clone())).collect();
             self.sync_derive_types();
             // Scan call sites with function-local variable context
+            self.param_frame_schemas_next.clear();
             for stmt in stmts {
                 self.collect_call_types_stmt(stmt);
             }
+            let frames_moved = self.param_frame_schemas_next != self.param_frame_schemas;
+            self.param_frame_schemas = std::mem::take(&mut self.param_frame_schemas_next);
 
             // Propagate types from indirect calls back to original functions
             self.propagate_indirect_fn_types(stmts);
@@ -909,7 +922,7 @@ impl TypeContext {
                 self.infer_function_body(name, body);
             }
             let after: Vec<(String, CrowType, Vec<(String, CrowType)>)> = self.functions.iter().map(|(n, s)| (n.clone(), s.return_type.clone(), s.params.clone())).collect();
-            if round >= 4 && before == after {
+            if round >= 4 && before == after && !frames_moved {
                 break;
             }
         }
@@ -1252,9 +1265,11 @@ impl TypeContext {
                         assigned.insert(pname.clone());
                     }
                 }
+                let saved_frames = self.param_frames_in_view(name);
                 let saved_assigned = self.body_assigned.replace(assigned);
                 for s in body { self.collect_call_types_stmt(s); }
                 self.body_assigned = saved_assigned;
+                self.param_frames_out_of_view(saved_frames);
                 // A module-level variable assigned in this body (reactive
                 // state written by a handler) keeps the refined type: an
                 // empty default learns its element type from the handler.
@@ -1481,6 +1496,26 @@ impl TypeContext {
                             }
                         }
                         self.functions.get_mut(name).unwrap().params = new_params;
+
+                        // a frame argument's columns are its parameter's, when
+                        // every call agrees on them
+                        for (i, arg) in args.iter().enumerate() {
+                            let Some((pname, _)) = sig.params.get(i) else { continue };
+                            let Some(schema) = self.frame_schema_of(arg) else { continue };
+                            if schema.is_empty() {
+                                continue;
+                            }
+                            let key = (name.clone(), pname.clone());
+                            match self.param_frame_schemas_next.get(&key) {
+                                None => {
+                                    self.param_frame_schemas_next.insert(key, Some(schema));
+                                }
+                                Some(Some(seen)) if *seen != schema => {
+                                    self.param_frame_schemas_next.insert(key, None);
+                                }
+                                _ => {}
+                            }
+                        }
 
                         // Propagate types to functions passed as arguments:
                         // If param type is Fn(...) and arg is a function name, update that function's signature
@@ -2165,13 +2200,42 @@ impl TypeContext {
         }
         let outer_assigned = self.body_assigned.replace(assigned);
         let outer_in_view = std::mem::replace(&mut self.in_view, self.views.contains(name));
-        BodyScope { saved_vars, outer_assigned, outer_in_view }
+        let saved_frames = self.param_frames_in_view(name);
+        BodyScope { saved_vars, saved_frames, outer_assigned, outer_in_view }
     }
 
     pub(crate) fn leave_body(&mut self, scope: BodyScope) {
         self.vars = scope.saved_vars;
         self.body_assigned = scope.outer_assigned;
         self.in_view = scope.outer_in_view;
+        self.param_frames_out_of_view(scope.saved_frames);
+    }
+
+    /// A function's frame parameters with the columns their calls agree
+    /// on, in view while its body is read (the frame schemas are kept by
+    /// name); what they replaced, to put back.
+    fn param_frames_in_view(&mut self, name: &str) -> Vec<(String, Option<BTreeMap<String, CrowType>>)> {
+        let params: Vec<String> = self.functions.get(name).map(|s| s.params.iter().map(|(p, _)| p.clone()).collect()).unwrap_or_default();
+        let mut saved = Vec::new();
+        for p in params {
+            if let Some(Some(schema)) = self.param_frame_schemas.get(&(name.to_string(), p.clone())).cloned() {
+                saved.push((p.clone(), self.frame_schemas.insert(p, schema)));
+            }
+        }
+        saved
+    }
+
+    fn param_frames_out_of_view(&mut self, saved: Vec<(String, Option<BTreeMap<String, CrowType>>)>) {
+        for (p, old) in saved.into_iter().rev() {
+            match old {
+                Some(s) => {
+                    self.frame_schemas.insert(p, s);
+                }
+                None => {
+                    self.frame_schemas.remove(&p);
+                }
+            }
+        }
     }
 
     pub(crate) fn infer_function_body(&mut self, name: &str, body: &[Stmt]) {
@@ -2218,6 +2282,7 @@ impl TypeContext {
         for f in widened {
             self.vars.insert(f, CrowType::Float);
         }
+        self.param_frames_out_of_view(scope.saved_frames);
     }
 
     /// Find the return type from a list of statements.
@@ -2888,6 +2953,23 @@ impl TypeContext {
                         let mut out = args.first().and_then(|a| self.frame_schema_of(a))?;
                         if let Some(right) = args.get(1).and_then(|a| self.frame_schema_of(a)) {
                             for (k, v) in right { out.entry(k).or_insert(v); }
+                        }
+                        Some(out)
+                    }
+                    // group[f, 'key', ['col', 'agg'], …]: the key as it was,
+                    // and each aggregate a float named col_agg
+                    "group" => {
+                        let base = args.first().and_then(|a| self.frame_schema_of(a))?;
+                        let mut out = BTreeMap::new();
+                        if let Some(Expr::Str(key)) = args.get(1) {
+                            out.insert(key.clone(), base.get(key).cloned().unwrap_or(CrowType::Str));
+                        }
+                        for a in args.iter().skip(2) {
+                            if let Expr::Array(pair) = a {
+                                if let (Some(Expr::Str(col)), Some(Expr::Str(agg))) = (pair.first(), pair.get(1)) {
+                                    out.insert(format!("{}_{}", col, agg), CrowType::Float);
+                                }
+                            }
                         }
                         Some(out)
                     }

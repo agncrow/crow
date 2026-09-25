@@ -1,0 +1,31 @@
+--- A frame handed to a function keeps its columns' types: the function
+--- reads its cells as the numbers they are. The compiled program read a
+--- parameter's cells as text and did not build (finch built its tapes in
+--- derivations to keep them typed).
+use frame
+
+fn total[f]
+    s = 0.0
+    for i in range[len[f]]
+        s = s + f.px[i] * float[f.qty[i]]
+    return s
+
+fn dearest[f]
+    top = sort[f, 'px', desc = true]
+    return top.sym[0]
+
+t = with[with[with[frame.new[], 'sym', ['AB', 'CD', 'EF']], 'px', [1.5, 2.5, 0.5]], 'qty', [2, 4, 8]]
+log[total[t]]
+log[dearest[t]]
+cheap = filter[t, t.px lt 2.0]
+log[total[cheap]]
+
+--- a grouped frame's columns are its key and its aggregates, floats
+fn heaviest[g]
+    best = 0.0
+    for i in range[len[g]]
+        best = max[best, g.qty_max[i] * g.px_mean[i]]
+    return best
+
+g = group[t, 'sym', ['px', 'mean'], ['qty', 'max']]
+log[heaviest[g]]
