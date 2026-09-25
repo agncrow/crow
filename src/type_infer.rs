@@ -2928,6 +2928,7 @@ impl TypeContext {
         }
         let mut reasons = Vec::new();
         let mut found: Option<BTreeMap<String, CrowType>> = None;
+        let names: Vec<String> = candidates.iter().map(|(v, _)| v.clone()).collect();
         for (var, url) in candidates {
             match crate::type_infer::describe_with_tables(&url, &scrubbed, &self.ddl) {
                 Ok(cols) => {
@@ -2936,6 +2937,7 @@ impl TypeContext {
                         let t = match kind.as_str() { "int" => CrowType::Int, "float" | "datetime" => CrowType::Float, "bool" => CrowType::Bool, _ => CrowType::Str };
                         schema.insert(n, t);
                     }
+                    schema_record::write(&var, &scrubbed, &schema);
                     found = Some(schema);
                     break;
                 }
@@ -2946,7 +2948,14 @@ impl TypeContext {
         }
         if found.is_none() && !reasons.is_empty() {
             let head: String = sql.chars().take(60).collect();
-            self.describe_notes.push(format!("note: the columns of `{}…` could not be typed at compile time — cells read as text ({})", head, reasons.join("; ")));
+            // what the database answered last time, kept in the project
+            match names.iter().find_map(|v| schema_record::read(v, &scrubbed)) {
+                Some(schema) => {
+                    self.describe_notes.push(format!("note: the columns of `{}…` are typed from .crow/schema — no database answered ({})", head, reasons.join("; ")));
+                    found = Some(schema);
+                }
+                None => self.describe_notes.push(format!("note: the columns of `{}…` could not be typed at compile time — cells read as text ({})", head, reasons.join("; "))),
+            }
         }
         if std::env::var("CROW_DEBUG_SCHEMAS").is_ok() {
             eprintln!("DESCRIBE {:?} via {:?} for `{}…`", found, handle, sql.chars().take(50).collect::<String>());
@@ -3736,5 +3745,72 @@ mod tests {
         assert_eq!(ret("f"), Some(CrowType::Result(Box::new(CrowType::Int))));
         assert_eq!(ret("g"), Some(CrowType::Int));
         assert_eq!(ret("h"), Some(CrowType::Int));
+    }
+}
+
+/// What a program's databases answered about its statements, kept in the
+/// project's `.crow/schema`: one file per statement and the connection it
+/// was asked on, named by a hash of both (an FNV-1a, the same on every
+/// machine and release), holding the statement and its columns' types. A
+/// build reads it when no database answers — a server down, a machine
+/// without the data — so the program is typed as it was.
+pub(crate) mod schema_record {
+    use super::CrowType;
+    use std::collections::BTreeMap;
+
+    fn file_for(var: &str, sql: &str) -> Option<std::path::PathBuf> {
+        let dir = crate::schema_dir()?;
+        let mut h: u64 = 0xcbf29ce484222325;
+        for b in var.bytes().chain(std::iter::once(b'\n')).chain(sql.bytes()) {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        Some(dir.join(format!("{:016x}.json", h)))
+    }
+
+    fn kind(t: &CrowType) -> &'static str {
+        match t {
+            CrowType::Int => "int",
+            CrowType::Float => "float",
+            CrowType::Bool => "bool",
+            _ => "str",
+        }
+    }
+
+    /// Keep what `var` answered for `sql` (written only when it changed).
+    pub(crate) fn write(var: &str, sql: &str, schema: &BTreeMap<String, CrowType>) {
+        let Some(path) = file_for(var, sql) else { return };
+        let columns: BTreeMap<String, &str> = schema.iter().map(|(n, t)| (n.clone(), kind(t))).collect();
+        let text = match serde_json::to_string_pretty(&serde_json::json!({ "via": var, "sql": sql, "columns": columns })) {
+            Ok(t) => t + "\n",
+            Err(_) => return,
+        };
+        if std::fs::read_to_string(&path).ok().as_deref() == Some(text.as_str()) {
+            return;
+        }
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&path, text);
+    }
+
+    /// What `var` answered for `sql` when it last could, if it is kept.
+    pub(crate) fn read(var: &str, sql: &str) -> Option<BTreeMap<String, CrowType>> {
+        let text = std::fs::read_to_string(file_for(var, sql)?).ok()?;
+        let j: serde_json::Value = serde_json::from_str(&text).ok()?;
+        let cols = j.get("columns")?.as_object()?;
+        Some(
+            cols.iter()
+                .map(|(n, k)| {
+                    let t = match k.as_str() {
+                        Some("int") => CrowType::Int,
+                        Some("float") => CrowType::Float,
+                        Some("bool") => CrowType::Bool,
+                        _ => CrowType::Str,
+                    };
+                    (n.clone(), t)
+                })
+                .collect(),
+        )
     }
 }
