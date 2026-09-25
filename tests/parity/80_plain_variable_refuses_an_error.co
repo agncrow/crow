@@ -1,0 +1,52 @@
+--- A variable whose first value could not fail holds no error: a later
+--- value that can fail lands when it is good, and when it failed the
+--- assignment refuses it, as a decision does, so the function hands the
+--- error back. The interpreter kept the error in the variable and ran on
+--- (the logs below the assignment printed it); compiled returned there.
+fn parse[s]
+    x = 1.0
+    x = float[s]
+    log['after: `x`']
+    return x * 2.0
+
+fn count_good[xs]
+    total = 0.0
+    for s in xs
+        total = total + float[s]
+    return 1
+
+fn grow[xs]
+    out = [0.0]
+    for s in xs
+        out = push[out, float[s]]
+    return len[out]
+
+fn both[s, t]
+    a = 0.0
+    b = 0.0
+    a, b = float[s], float[t]
+    return a + b
+
+fn widen[s]
+    x = 0.5
+    x = int[s]
+    return x / 2
+
+log[parse['2.5']]
+bad = parse['y']
+log[bad.ok]
+log[bad.reason]
+log[count_good[['1', '2']]]
+c = count_good[['1', 'q', '3']]
+log[c.ok]
+log[c.reason]
+log[grow[['1', '2', '3']]]
+g = grow[['1', 'z']]
+log[g.ok]
+log[g.reason]
+log[both['1.5', '2']]
+m = both['1.5', 'w']
+log[m.ok]
+log[m.reason]
+log[widen['3']]
+log[widen['v'].reason]

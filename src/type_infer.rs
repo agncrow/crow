@@ -1952,6 +1952,89 @@ impl TypeContext {
         false
     }
 
+    /// Does a variable whose first value could not fail meet a value that
+    /// can? It holds no error, so the assignment refuses a failed one (spec,
+    /// Reassignment) and hands it out of the function, as a condition does.
+    /// The body is walked as the lowering binds it: a block's first
+    /// assignments are its own, and a local keeps its first value's type.
+    fn body_refuses_assignment(&mut self, name: &str, body: &[Stmt]) -> bool {
+        let saved = self.vars.clone();
+        let mut own = std::collections::HashSet::new();
+        if let Some(sig) = self.functions.get(name).cloned() {
+            for (p, t) in sig.params {
+                self.vars.insert(p.clone(), t);
+                own.insert(p);
+            }
+        }
+        let mut scopes = vec![own];
+        let found = self.refuses_in(body, &mut scopes);
+        self.vars = saved;
+        found
+    }
+
+    fn refuses_in(&mut self, stmts: &[Stmt], scopes: &mut Vec<std::collections::HashSet<String>>) -> bool {
+        let mut found = false;
+        for s in stmts {
+            match s {
+                Stmt::Assign { name, value } => found |= self.refused_at(name, value, scopes),
+                Stmt::MultiAssign { names, values } if names.len() == values.len() => {
+                    for (n, v) in names.iter().zip(values) {
+                        found |= self.refused_at(n, v, scopes);
+                    }
+                }
+                Stmt::If { then_body, else_body, .. } => {
+                    scopes.push(Default::default());
+                    found |= self.refuses_in(then_body, scopes);
+                    scopes.pop();
+                    if let Some(eb) = else_body {
+                        scopes.push(Default::default());
+                        found |= self.refuses_in(eb, scopes);
+                        scopes.pop();
+                    }
+                }
+                Stmt::While { body, .. } => {
+                    scopes.push(Default::default());
+                    found |= self.refuses_in(body, scopes);
+                    scopes.pop();
+                }
+                Stmt::For { var, iter, body } => {
+                    if let CrowType::Array(t) | CrowType::NumArray(t) = Self::walked(self.infer_expr(iter)) {
+                        self.vars.insert(var.clone(), *t);
+                    }
+                    scopes.push([var.clone()].into_iter().collect());
+                    found |= self.refuses_in(body, scopes);
+                    scopes.pop();
+                }
+                _ => {}
+            }
+        }
+        found
+    }
+
+    /// One assignment of `refuses_in`: a new name is bound with its value's
+    /// type (a fact is written, not bound); a bound one refuses a value
+    /// that can fail when it holds a plain value.
+    fn refused_at(&mut self, name: &str, value: &Expr, scopes: &mut [std::collections::HashSet<String>]) -> bool {
+        let ty = self.infer_expr_full(value);
+        if !scopes.iter().any(|s| s.contains(name)) {
+            if self.is_ui && self.facts.contains(name) {
+                return false;
+            }
+            if let Some(last) = scopes.last_mut() {
+                last.insert(name.to_string());
+            }
+            if !format!("{:?}", ty).contains("Unknown") {
+                self.vars.insert(name.to_string(), ty);
+            }
+            return false;
+        }
+        let held = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
+        match &ty {
+            CrowType::Result(inner) => !matches!(held, CrowType::Result(_)) && !format!("{:?}", held).contains("Unknown") && held.compatible(inner),
+            _ => false,
+        }
+    }
+
     /// Whether a loop can hand an error out of its function: its list can
     /// fail (the loop refuses it, as a condition is refused), or a decision
     /// in its body can, read with the loop's variable typed as an item.
@@ -2057,8 +2140,9 @@ impl TypeContext {
         // Find return type
         let ret = self.find_return_type(body);
         // A fallible condition can propagate an error out of the function
-        // (spec §11: Errors in Conditions) — the return type widens to Result
-        let has_fallible_condition = self.body_has_result_condition(body);
+        // (spec §11: Errors in Conditions) — the return type widens to Result;
+        // so can a failed value assigned to a variable that holds no error
+        let has_fallible_condition = self.body_has_result_condition(body) || self.body_refuses_assignment(name, body);
         if let Some(sig) = self.functions.get_mut(name) {
             sig.return_type = sig.return_type.unify(&ret);
             if has_fallible_condition && !matches!(sig.return_type, CrowType::Result(_)) {
@@ -3557,5 +3641,21 @@ mod tests {
         ctx.infer_program(&stmts);
         assert_eq!(ctx.functions.get("f").map(|s| s.return_type.clone()), Some(CrowType::Int));
         assert_eq!(ctx.vars.get("x"), Some(&CrowType::Str));
+    }
+
+    /// A variable whose first value could not fail refuses a failed one
+    /// where it is assigned, so the function can fail there, as at a
+    /// condition; a name first bound in a branch is the branch's own, and a
+    /// variable whose first value could fail holds whatever it is given
+    #[test]
+    fn a_function_that_refuses_an_assignment_can_fail() {
+        let src = "fn f[s]\n    x = 1.0\n    for c in [s]\n        x = float[c]\n    return 1\nfn g[s]\n    if s eq ''\n        y = 1.0\n    y = float[s]\n    return 1\nfn h[s]\n    z = float[s]\n    z = float['2']\n    return 1\nlog[f['1'], g['1'], h['1']]\n";
+        let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        let ret = |n: &str| ctx.functions.get(n).map(|s| s.return_type.clone());
+        assert_eq!(ret("f"), Some(CrowType::Result(Box::new(CrowType::Int))));
+        assert_eq!(ret("g"), Some(CrowType::Int));
+        assert_eq!(ret("h"), Some(CrowType::Int));
     }
 }

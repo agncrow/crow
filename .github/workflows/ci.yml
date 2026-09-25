@@ -80,6 +80,11 @@ jobs:
           ./target/release/crow test tests/records_harness.co
           ./target/release/crow test --compiled tests/records_harness.co
           rm -rf .crow_build && df -h / | tail -1
+      - name: A failed value refused where a plain variable is assigned, in the interpreter and the compiled program
+        run: |
+          ./target/release/crow test tests/refused_assignment_harness.co
+          ./target/release/crow test --compiled tests/refused_assignment_harness.co
+          rm -rf .crow_build && df -h / | tail -1
       - name: The app's book (derived from the parts fixture, with wireframes)
         run: cd tests/parts && ../../target/release/crow book --write && test -f .crow/book/site/pages.html && grep -q '<svg' .crow/book/site/pages.html
       - name: Disk used by the run

@@ -1,0 +1,41 @@
+--- A variable whose first value could not fail holds no error: a view
+--- renders the failed value in place of itself, and a handler stops, so
+--- nothing its click did lands. The interpreter kept the error in the
+--- variable and ran on: the view drew its own text, the handler counted.
+--- CI runs it against the interpreter and against the compiled program
+--- (crow test --compiled).
+use web, ui
+entry = '1.5'
+count = 0
+view reading[]
+    v = 1.0
+    v = float[entry]
+    kept = [v]
+    return p['reading `len[kept]`']
+fn apply[]
+    n = 1.0
+    n = float[entry]
+    count = count + 1
+    kept = [n]
+    log[len[kept]]
+view panel[]
+    return stack[
+        reading[],
+        p['count `count`'],
+        p['`notice.text`'],
+        button['Apply', click = apply]
+    ]
+page['/', panel]
+
+test a_failed_value_is_refused_where_it_is_assigned[]
+    a = app[panel]
+    assert[contains[html[a], 'reading 1'], 'the page `html[a]`']
+    click[a, apply]
+    assert[a.count eq 1, 'count `a.count`']
+    change[a, 'entry', 'x']
+    assert[contains[html[a], 'error: cannot convert'], 'the page `html[a]`']
+    assert[not contains[html[a], 'reading'], 'the view is the error: `html[a]`']
+    r = click[a, apply]
+    assert[not r.ok]
+    assert[a.count eq 1, 'nothing the click did landed: `a.count`']
+    assert[contains[html[a], 'apply stopped: cannot convert'], 'the page `html[a]`']

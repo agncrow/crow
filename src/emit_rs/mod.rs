@@ -382,14 +382,4 @@ fn raw(e: &Expr) -> &Expr {
     Emitter::raw(e)
 }
 
-/// The builtins that grow a list or a map in place when the variable they
-/// read is the one the statement assigns (`x = push[x, v]`).
-pub(crate) fn in_place_builtin(path: &str) -> bool {
-    let name = path.rsplit('.').next().unwrap_or(path);
-    let name = match name {
-        "map_set" => "set",
-        "map_del" => "del",
-        other => other,
-    };
-    crate::ast::IN_PLACE_BUILTINS.contains(&name)
-}
+pub(crate) use crate::ir::in_place_builtin;

@@ -178,7 +178,13 @@ The lowering fixes, in one place, the rules that today live in two:
 - **Results.** A result consumed by an operation that needs the payload
   gets `Propagate` before and `Convert(Unwrap)` at the use. Storing a
   result into a fact is `Stop` on error, then the payload (rule 2 of
-  `core-design.md`, landing in §7).
+  `core-design.md`, landing in §7). Assigning one to a variable whose
+  first value could not fail is a `Propagate` that names the variable
+  (`Decision::Assign`), then the payload (spec, Reassignment); in an
+  in-place update (`xs = push[xs, float[s]]`) the item is refused before
+  the call and read as `Convert(Known)`, so the list still grows where
+  it lies. Inference widens the function's type as it does for a failing
+  condition.
 - **Frames.** Cell types come from `describe` when the query is a
   literal, otherwise the frame is `Frame(None)` and cells are `Json`
   until read through `int[]`, `float[]`, `str[]`, exactly as today's

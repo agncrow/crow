@@ -41,6 +41,16 @@ x = 3.14        --- ok, int/float compatible
 x = 'hello'     --- error: cannot reassign from int to string
 ```
 
+**A variable whose first value could not fail holds no error.** A later value that can fail lands when it is good; when it failed, the assignment refuses it, as a decision refuses one (§10, Errors in Conditions): a function hands the error back to its caller, so a function that can fail this way can fail, as one with such a condition can; a handler stops; a view renders `error: reason` in its own place; and the top level halts with `runtime error: line N: cannot assign an error value to 'x' — <reason>`. To keep a failure to look at, give it a name whose first value can fail: `r = float[s]`, then `if not r.ok`.
+
+```
+x = 1.0
+x = float['2.5']     --- 2.5 lands
+x = float['abc']     --- halts: cannot assign an error value to 'x' — cannot convert 'abc' to float
+```
+
+**Design Note: a plain variable refuses an error.** Considered: letting the variable hold the error, its type widening to one that can fail, which the interpreter did while the compiled program returned at the assignment. Decided (Vijay, 2026-09-25): the compiled program's rule, in both modes. A variable's type does not change (above), and an error that silently took the variable's place would surface lines later, far from its cause; refused where it is assigned, it names the line and the variable.
+
 **A variable that is ever assigned a float is a float for its whole scope.** Assigning an int to it stores the float value (`x = 1` above stores `1.0`). Note for interpreted mode: the widening applies from the first float assignment onward, so an int division performed *before* any float assignment may differ from compiled mode, where the variable is float from its declaration — don't depend on int division of variables that later hold floats.
 
 
@@ -937,6 +947,8 @@ else
 - **inside a function**: the function immediately returns the error to its caller (auto-propagation, trace appended) — the same rule as error arguments, applied to decisions
 - **at top level**: the program halts: `runtime error: line N: cannot branch on an error value — <reason>`, or `cannot loop over an error value` for a loop
 
+A variable whose first value could not fail refuses an error the same way where it is assigned (see Reassignment): `cannot assign an error value to 'x'`.
+
 ```
 fn check[s]
     n = int[s]
@@ -949,7 +961,7 @@ log[r.ok]                --- false — the parse error propagated out
 log[r.reason]            --- cannot convert 'abc' to int
 ```
 
-The same holds when a function hands back an error of another shape — `if not b.ok` / `return b` in a function whose value is a number, where `b` is a frame: the caller receives the error with its reason, kind and trace, and the value is the function's default. A handler has no caller to hand an error to. **A handler stops when an error value reaches a decision, a fact, or an effect** — an `if` or `while` condition, the list a `for` walks, an assignment to reactive state, or an argument of `query`, `exec`, `insert`, `transact`, `read`, `write`, `fetch`, `shell`, `later`, `notice` or `sign_in` — and nothing it did lands: its fact writes are discarded, its database writes are rolled back, its held effects are dropped. The reason reaches the reader as the session's notice (`apply stopped: …`) and the served program's log. A local that holds an error and is guarded later computes as it always has: `.ok`, `.reason`, `.kind` and `.trace` never propagate, so `if not r.ok` is how a handler does something other than stop. In the harness, `click[a, apply]` evaluates to that error value and the session's facts are as they were before the click. A fact never holds an error: a derivation, which is a belief, may; a fact, which the reader acts on, keeps its last good value.
+The same holds when a function hands back an error of another shape — `if not b.ok` / `return b` in a function whose value is a number, where `b` is a frame: the caller receives the error with its reason, kind and trace, and the value is the function's default. A handler has no caller to hand an error to. **A handler stops when an error value reaches a decision, a fact, or an effect** — an `if` or `while` condition, the list a `for` walks, an assignment to reactive state or to a variable whose first value could not fail, or an argument of `query`, `exec`, `insert`, `transact`, `read`, `write`, `fetch`, `shell`, `later`, `notice` or `sign_in` — and nothing it did lands: its fact writes are discarded, its database writes are rolled back, its held effects are dropped. The reason reaches the reader as the session's notice (`apply stopped: …`) and the served program's log. A local whose first value could fail, holding an error and guarded later, computes as it always has: `.ok`, `.reason`, `.kind` and `.trace` never propagate, so `if not r.ok` is how a handler does something other than stop. In the harness, `click[a, apply]` evaluates to that error value and the session's facts are as they were before the click. A fact never holds an error: a derivation, which is a belief, may; a fact, which the reader acts on, keeps its last good value.
 
 **Design Note: a loop over an error is refused.** Considered: running such a loop zero times, which the interpreter did for the statement form (the collecting form made a one-item list of the error). Decided (Vijay, 2026-09-23): refused like a condition, so an error never vanishes into an empty loop. A function whose loop walks a list that can fail can fail itself, as one with a condition that can; a guard before the loop narrows (below), so a guarded loop is an ordinary one.
 

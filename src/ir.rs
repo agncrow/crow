@@ -241,7 +241,8 @@ pub enum Stmt {
     Do(Expr),
     /// The spec's auto-propagation, made visible: if any named value is an
     /// error, a function returns it, a handler stops, the top level halts.
-    /// `at` is the decision the error reached, a branch or a loop's list.
+    /// `at` is where the error was refused: a branch, a loop's list, or a
+    /// variable whose first value could not fail.
     Propagate { values: Vec<String>, at: Decision },
     /// A handler meets an error at a fact or an effect: commits nothing and
     /// reports (core-design.md §2; emitted once the session layer lands).
@@ -250,23 +251,38 @@ pub enum Stmt {
     Line(usize),
 }
 
-/// The decision an error value reached and was refused at (spec, Errors
-/// in Conditions): an error has no truth value to branch on and no items
-/// to walk.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Where an error value was refused (spec, Errors in Conditions): an error
+/// has no truth value to branch on and no items to walk, and a variable
+/// whose first value could not fail holds no error (spec, Reassignment).
+#[derive(Debug, Clone, PartialEq)]
 pub enum Decision {
     Branch,
     Loop,
+    /// Assigned into the named variable.
+    Assign(String),
 }
 
 impl Decision {
-    /// How the top level's halt names it: `cannot branch on an error value`.
-    pub fn verb(self) -> &'static str {
+    /// How a halt names it: `cannot branch on an error value`.
+    pub fn refusal(&self) -> String {
         match self {
-            Decision::Branch => "branch on",
-            Decision::Loop => "loop over",
+            Decision::Branch => "cannot branch on an error value".to_string(),
+            Decision::Loop => "cannot loop over an error value".to_string(),
+            Decision::Assign(var) => format!("cannot assign an error value to '{}'", var),
         }
     }
+}
+
+/// The builtins that grow a list or a map in place when the variable they
+/// read is the one the statement assigns (`x = push[x, v]`).
+pub fn in_place_builtin(path: &str) -> bool {
+    let name = path.rsplit('.').next().unwrap_or(path);
+    let name = match name {
+        "map_set" => "set",
+        "map_del" => "del",
+        other => other,
+    };
+    crate::ast::IN_PLACE_BUILTINS.contains(&name)
 }
 
 #[derive(Debug, Clone)]
@@ -864,7 +880,11 @@ fn block(out: &mut String, b: &Block, depth: usize) {
                 let _ = writeln!(out, "{}{}", pad, expr(e));
             }
             Stmt::Propagate { values, at } => {
-                let at = if *at == Decision::Loop { " (a loop's list)" } else { "" };
+                let at = match at {
+                    Decision::Branch => String::new(),
+                    Decision::Loop => " (a loop's list)".to_string(),
+                    Decision::Assign(var) => format!(" (into {})", var),
+                };
                 let _ = writeln!(out, "{}propagate {}{}", pad, values.join(", "), at);
             }
             Stmt::Stop { value } => {

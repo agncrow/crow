@@ -572,24 +572,29 @@ impl IrInterp {
         r
     }
 
-    /// An error where a decision is needed: a function hands it to its
-    /// caller, the top level halts with the reason (spec §10).
-    fn refuse(&mut self, err: CrowValue, at: Decision) -> Result<Flow, String> {
+    /// An error where a decision is needed, or assigned to a variable that
+    /// holds no error: a function hands it to its caller, the top level
+    /// halts with the reason (spec §10).
+    fn refuse(&mut self, err: CrowValue, at: &Decision) -> Result<Flow, String> {
+        let name = self.frames.last().map(|f| f.fn_name.clone()).unwrap_or_default();
         // a handler, or a helper acting for it, meets an error at a decision:
         // the whole click stops and nothing it did lands (core-design.md §2)
         if self.held.is_some() {
-            let name = self.frames.last().map(|f| f.fn_name.clone()).unwrap_or_default();
             let acting = self.fns.get(&name).map_or(false, |f| matches!(f.kind, FnKind::Handler | FnKind::Helper));
             if acting {
                 return Err(format!("{}{}\u{1}{}\u{1}{}", STOP, name, err.reason, err.kind));
             }
         }
-        if self.in_function() {
+        // a function whose value cannot fail has no way to hand the error
+        // back: the program halts with the reason, as the top level does
+        let hands_back = self.in_function()
+            && self.fns.get(&name).map_or(true, |f| f.kind == FnKind::View || matches!(f.ret, Ty::Result(_) | Ty::Unit | Ty::Unknown));
+        if hands_back {
             let mut e = err;
             e.append_trace(&self.trace_entry());
             Ok(Flow::Return(e))
         } else {
-            Err(format!("cannot {} an error value — {}", at.verb(), err.reason))
+            Err(format!("{} — {}", at.refusal(), err.reason))
         }
     }
 
@@ -617,7 +622,7 @@ impl IrInterp {
                 // a fact never holds an error: the handler stops instead,
                 // and the fact keeps its last value (core-design.md §2.3)
                 if v.is_error() && self.held.is_some() {
-                    if let Err(e) = self.refuse(v.clone(), Decision::Branch) {
+                    if let Err(e) = self.refuse(v.clone(), &Decision::Branch) {
                         return Err(e);
                     }
                 }
@@ -641,7 +646,7 @@ impl IrInterp {
             Stmt::If { cond, then, els } => {
                 let c = self.eval(cond)?;
                 if c.is_error() {
-                    return self.refuse(c, Decision::Branch);
+                    return self.refuse(c, &Decision::Branch);
                 }
                 if crate::ops::is_truthy(&c) {
                     self.exec_block(then)
@@ -656,7 +661,7 @@ impl IrInterp {
                     self.check_cancel()?;
                     let c = self.eval(cond)?;
                     if c.is_error() {
-                        return self.refuse(c, Decision::Branch);
+                        return self.refuse(c, &Decision::Branch);
                     }
                     if !crate::ops::is_truthy(&c) {
                         break;
@@ -675,7 +680,7 @@ impl IrInterp {
                 // lowering refuses a typed one first; this is one it could
                 // not see)
                 if it.is_error() {
-                    return self.refuse(it, Decision::Loop);
+                    return self.refuse(it, &Decision::Loop);
                 }
                 let items = crate::ops::iter_items(&it)?;
                 if *parallel && items.len() > 1 {
@@ -712,7 +717,7 @@ impl IrInterp {
                 for v in values {
                     let val = self.lookup(v).cloned().ok_or_else(|| format!("undefined variable '{}'", v))?;
                     if val.is_error() {
-                        return self.refuse(val, *at);
+                        return self.refuse(val, at);
                     }
                 }
                 Ok(Flow::Next)
@@ -1053,7 +1058,7 @@ impl IrInterp {
                 // refused like the statement form's; a function hands the
                 // error back from here, as from a return inside the loop
                 if it.is_error() {
-                    return match self.refuse(it, Decision::Loop)? {
+                    return match self.refuse(it, &Decision::Loop)? {
                         Flow::Return(v) => {
                             self.returning = Some(v);
                             Err(RETURN.to_string())
@@ -1952,7 +1957,7 @@ impl IrInterp {
                 _ => None,
             }
         })?;
-        match self.refuse(err, Decision::Branch) {
+        match self.refuse(err, &Decision::Branch) {
             Err(e) => Some(Err(e)),
             _ => None,
         }
