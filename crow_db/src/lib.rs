@@ -344,22 +344,29 @@ impl std::fmt::Debug for DbHandle {
 /// - `postgres://user:pass@host/db` → PostgreSQL
 /// - `clickhouse://user:pass@host:port/db` → ClickHouse (native TCP)
 pub fn connect(url: &str, pool_size: Option<usize>) -> Result<DbHandle, String> {
-    // One handle per server and process: parts that each connect to the
-    // same Postgres or ClickHouse share its pool, so the program's queries
-    // to one server are bounded by one pool, not one per declaration. A
-    // sqlite file is one connection already, and `:memory:` is a new
-    // database each time by design.
+    // One handle per server and process, and per sqlite file: parts that
+    // each connect to the same Postgres or ClickHouse share its pool, so
+    // the program's queries to one server are bounded by one pool, not one
+    // per declaration; parts that each connect to one sqlite file share
+    // its connection, so a handler writing through both writes in one
+    // transaction (two connections to one file locked each other out:
+    // finch's roll-over ends a session and starts one in a click).
+    // `:memory:` is a new database each time by design.
     static SHARED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(String, Option<usize>), DbHandle>>> =
         std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    let shared = !url.starts_with("sqlite://");
-    if shared {
-        if let Some(h) = SHARED.lock().unwrap_or_else(|p| p.into_inner()).get(&(url.to_string(), pool_size)) {
+    let key = match url.strip_prefix("sqlite://") {
+        Some(path) if path.is_empty() || path.contains(":memory:") => None,
+        Some(path) => Some(format!("sqlite://{}", std::path::absolute(path).map(|p| p.display().to_string()).unwrap_or_else(|_| path.to_string()))),
+        None => Some(url.to_string()),
+    };
+    if let Some(k) = &key {
+        if let Some(h) = SHARED.lock().unwrap_or_else(|p| p.into_inner()).get(&(k.clone(), pool_size)) {
             return Ok(h.clone());
         }
     }
     let handle = open_handle(url, pool_size)?;
-    if shared {
-        SHARED.lock().unwrap_or_else(|p| p.into_inner()).insert((url.to_string(), pool_size), handle.clone());
+    if let Some(k) = key {
+        SHARED.lock().unwrap_or_else(|p| p.into_inner()).insert((k, pool_size), handle.clone());
     }
     Ok(handle)
 }
@@ -406,3 +413,29 @@ fn open_handle(url: &str, pool_size: Option<usize>) -> Result<DbHandle, String> 
     }
 }
 
+
+#[cfg(all(test, feature = "sqlite"))]
+mod shared_handle_tests {
+    /// Two parts that connect to one sqlite file share its connection, so a
+    /// handler writing through both writes in one transaction: two
+    /// connections to the file locked each other out ("database is locked",
+    /// finch's roll-over ending a session and starting one in a click)
+    #[test]
+    fn two_connections_to_one_sqlite_file_are_one() {
+        let dir = std::env::temp_dir().join(format!("crow_db_shared_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let url = format!("sqlite://{}", dir.join("one.db").display());
+        let a = super::connect(&url, None).unwrap();
+        let b = super::connect(&url, None).unwrap();
+        a.exec("CREATE TABLE t (x INTEGER)", &[]).unwrap();
+        crow_runtime::txn::begin();
+        a.exec("INSERT INTO t VALUES (1)", &[]).unwrap();
+        b.exec("INSERT INTO t VALUES (2)", &[]).unwrap();
+        crow_runtime::txn::finish(true).unwrap();
+        let rows = a.query("SELECT count(*) AS n FROM t", &[]).unwrap();
+        assert_eq!(rows.data[0].len(), 1);
+        assert!(format!("{:?}", rows.data[0]).contains('2'), "{:?}", rows.data[0]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
