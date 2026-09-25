@@ -1,0 +1,27 @@
+--- A loop's body runs again with what it assigned: a call early in the
+--- body sees the type a later statement gives its argument. The list
+--- starts empty and is pushed records after the call that reads it; the
+--- compiled program typed the function's parameter as a list of text,
+--- from the empty list, and did not build.
+struct Arm [status, qty]
+
+fn any_live[xs]
+    for a in xs
+        if a.status eq 'live'
+            return true
+    return false
+
+fn gather[n]
+    made = []
+    for i in range[n]
+        if not any_live[made]
+            made = push[made, Arm['live', i]]
+        else
+            made = push[made, Arm['done', i]]
+    return made
+
+got = gather[4]
+log[len[got]]
+log[got[0].status]
+log[got[3].status]
+log[any_live[got]]

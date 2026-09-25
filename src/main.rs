@@ -1854,6 +1854,9 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     if emitted.needs_serde_json {
         dep_list.push("serde_json = \"1\"".to_string());
     }
+    if emitted.needs_serde {
+        dep_list.push("serde = { version = \"1\", features = [\"derive\"] }".to_string());
+    }
     if emitted.needs_crow_runtime {
         let runtime_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_runtime");
         if emitted.web_features.contains("arrow_ipc") {
@@ -4807,6 +4810,16 @@ fn rewrite_qualified_refs_expr(
         }
         ast::Expr::UnaryOp { expr: e, .. } => rewrite_qualified_refs_expr(e, module_name, local_names),
         ast::Expr::Call { callee, args } => {
+            // `change[a, 'session.day', v]` in a test names a part's fact
+            // as the code does: the harness sets it by its prefixed name
+            if matches!(callee.as_ref(), ast::Expr::Ident(n) if n == "change") {
+                if let Some(ast::Expr::Str(s)) = args.get_mut(1) {
+                    let field = s.strip_prefix(module_name).and_then(|rest| rest.strip_prefix('.')).map(str::to_string);
+                    if let Some(prefixed) = field.and_then(|f| local_names.get(&f)) {
+                        *s = prefixed.clone();
+                    }
+                }
+            }
             rewrite_qualified_refs_expr(callee, module_name, local_names);
             for a in args {
                 rewrite_qualified_refs_expr(a, module_name, local_names);
@@ -5061,6 +5074,48 @@ mod module_parts_tests {
         assert!(text.contains("pure lib_calc_spread("), "a plain function, not a handler:\n{}", text);
         assert!(text.contains("let ch: List(Float) = []"), "{}", text);
         assert!(text.contains("secs: Float"), "{}", text);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A part's function may name a local as the entry names a derivation:
+    /// the local is the function's (finch's book walk kept its `fills`
+    /// beside trading's `derive fills`, and was refused as assigning a
+    /// derivation)
+    #[test]
+    fn a_parts_local_may_share_a_derivations_name() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_derived_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(dir.join("lib/walk.co"), "fn gather[xs]\n    fills = []\n    for x in xs\n        fills = push[fills, x * 2.0]\n    return fills\n").unwrap();
+        let stmts = build("use web, ui\nuse lib.walk\nderive fills\n    return walk.gather[[1.0, 2.0]]\nview v[]\n    return p['`len[fills]`']\npage['/', v]\n").unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let stmts = expand_module_imports(&stmts, &dir, &mut visited);
+        let lowered = lower::lower_program(&stmts).unwrap();
+        let checked = infer_and_validate(&lowered, false);
+        assert!(checked.is_ok(), "{:?}", checked.err());
+        let mut ctx = checked.unwrap();
+        let program = lower_ir::lower(&lowered, &mut ctx, "parts").unwrap();
+        let text = ir::print(&program);
+        assert!(text.contains("let fills: List(Float) = []"), "{}", text);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A test sets a part's fact by the name the code reads it by:
+    /// `change[a, 'calc.rate', 2.0]` (the harness knew it only by its
+    /// prefixed name)
+    #[test]
+    fn a_test_changes_a_parts_fact_by_its_qualified_name() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_change_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(dir.join("lib/calc.co"), "use web, ui\nrate = 1.0\nview show[]\n    return p['`rate`']\n").unwrap();
+        let stmts = build("use web, ui\nuse lib.calc\nview v[]\n    return calc.show[]\npage['/', v]\ntest t[]\n    a = app[v]\n    change[a, 'calc.rate', 2.0]\n    assert[contains[html[a], '2']]\n").unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let stmts = expand_module_imports(&stmts, &dir, &mut visited);
+        let text = format!("{:?}", stmts);
+        assert!(text.contains("Str(\"lib_calc_rate\")"), "{}", text);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

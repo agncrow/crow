@@ -1,0 +1,19 @@
+--- A list whose first value is empty cannot fail, so it holds no error:
+--- a push of a value that can fail, in one branch, is refused where it is
+--- assigned (spec, Reassignment), and the list keeps its type in the
+--- other branch. The lowering declared the list by the type inference
+--- settled on, one that can fail, while the compiled program declared it
+--- plain, and the program did not build.
+fn gather[words]
+    xs = []
+    for w in words
+        if w eq ''
+            xs = push[xs, 0.0]
+        else
+            xs = push[xs, float[w]]
+    return xs
+
+log[gather[['1.5', '', '2']]]
+bad = gather[['1', 'x', '3']]
+log[bad.ok]
+log[bad.reason]

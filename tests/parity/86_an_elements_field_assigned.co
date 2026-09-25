@@ -1,0 +1,19 @@
+--- A field of a list's element is assigned where it lies, a negative
+--- index counting from the end. The compiled program read the list's
+--- length inside the element it was writing, which Rust's borrows refuse,
+--- and did not build.
+struct Arm [status, qty]
+
+fn cancel_armed[xs]
+    out = xs
+    for m in range[len[out]]
+        if out[m].status eq 'armed'
+            out[m].status = 'cancelled'
+    out[-1].qty = 99
+    return out
+
+got = cancel_armed[[Arm['armed', 1], Arm['done', 2], Arm['armed', 3]]]
+log[got[0].status]
+log[got[1].status]
+log[got[2].status]
+log[got[2].qty]

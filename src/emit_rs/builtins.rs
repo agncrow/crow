@@ -121,7 +121,7 @@ impl Emitter {
     /// value): a variable read is cloned, so the variable stays usable and a
     /// loop's borrowed variable becomes a value of its own.
     pub(crate) fn kept(arg: &Expr, printed: &str) -> String {
-        if matches!(Emitter::raw(arg), Expr::Local(..) | Expr::Move(..) | Expr::Load(..)) {
+        if Emitter::place_read(arg) {
             format!("({}).clone()", printed)
         } else {
             printed.to_string()

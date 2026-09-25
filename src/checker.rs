@@ -2175,12 +2175,15 @@ pub fn describe_derivations(stmts: &[Stmt]) -> Vec<String> {
     let bodies: BTreeMap<String, Vec<Stmt>> = stmts.iter()
         .filter_map(|s| if let Stmt::FnDecl { name, body, .. } = s { Some((name.clone(), body.clone())) } else { None })
         .collect();
+    let params: BTreeMap<String, Vec<String>> = stmts.iter()
+        .filter_map(|s| if let Stmt::FnDecl { name, params, .. } = s { Some((name.clone(), params.clone())) } else { None })
+        .collect();
     let owned = crate::derive::owned_tables(stmts, &bodies);
     let mut fresh_of: BTreeMap<String, f64> = BTreeMap::new();
     let mut sets: BTreeMap<String, crate::derive::ReadSet> = BTreeMap::new();
     for s in stmts {
         if let Stmt::Derive { name, fresh, body } = s {
-            sets.insert(name.clone(), crate::derive::read_set(body, &facts, &derive_names, &bodies, &owned));
+            sets.insert(name.clone(), crate::derive::read_set(body, &facts, &derive_names, &bodies, &params, &owned));
             fresh_of.insert(name.clone(), *fresh);
         }
     }

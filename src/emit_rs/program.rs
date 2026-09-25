@@ -442,8 +442,10 @@ impl Emitter {
         for d in &self.part.derives {
             visit_block(&d.body, &mut |e| note(e, &mut todo));
         }
+        // what runs by itself: handlers, views and the program's callbacks;
+        // a helper runs when one of them calls it
         for f in self.fns.values() {
-            if f.kind != FnKind::Pure || self.views.contains(&f.name) || self.reactive_event_handlers.contains(&f.name) || self.web_handlers.contains(&f.name) {
+            if !matches!(f.kind, FnKind::Pure | FnKind::Helper) || self.views.contains(&f.name) || self.reactive_event_handlers.contains(&f.name) || self.web_handlers.contains(&f.name) {
                 todo.push(f.name.clone());
             }
         }
@@ -586,10 +588,16 @@ impl Emitter {
         }
         self.line("");
 
+        // the records a fact holds are kept as JSON by the session
+        self.serde_records = self.records_in_facts();
+        let result_serde = self.part.structs.iter().any(|s| self.serde_records.contains(&s.name) && s.fields.iter().any(|(_, t)| t.is_result()));
+        if !self.serde_records.is_empty() {
+            self.needs_serde_json = true;
+        }
         // the one result type
         for l in [
             "#[allow(dead_code)]",
-            "#[derive(Debug, Clone)]",
+            if result_serde { "#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]" } else { "#[derive(Debug, Clone)]" },
             "struct CrowResult<T: Clone> {",
             "    ok: bool,",
             "    value: T,",
@@ -648,9 +656,11 @@ impl Emitter {
             // function nothing the program runs calls (a shared part's, in a
             // part's test app) is not compiled — its types came from no call,
             // or from a query nothing could describe, and could meet a kernel
-            // that takes numbers
+            // that takes numbers. Nor is a helper nothing calls: it writes
+            // facts for a handler no handler is (a part whose button moved to
+            // another part), and it can never run
             let has_unknown = f.params.iter().any(|(_, t)| matches!(t, Ty::Unknown))
-                || (!reached.contains(n) && (f.kind == FnKind::Pure || f.params.iter().any(|(_, t)| unknown_inside(t))));
+                || (!reached.contains(n) && (matches!(f.kind, FnKind::Pure | FnKind::Helper) || f.params.iter().any(|(_, t)| unknown_inside(t))));
             let is_callback = self.live_render_fns.contains(n)
                 || self.live_handle_fns.contains(n)
                 || self.reactive_render_fns.contains(n)
@@ -784,10 +794,37 @@ impl Emitter {
         }
     }
 
+    /// The records a fact holds, and the records their fields hold.
+    fn records_in_facts(&self) -> BTreeSet<String> {
+        fn records(t: &Ty, out: &mut Vec<String>) {
+            match t {
+                Ty::Record(n) | Ty::OptRecord(n) => out.push(n.clone()),
+                Ty::List(i) | Ty::Map(i) | Ty::Result(i) => records(i, out),
+                _ => {}
+            }
+        }
+        let mut todo: Vec<String> = Vec::new();
+        for f in &self.part.facts {
+            records(&f.ty, &mut todo);
+        }
+        let mut seen = BTreeSet::new();
+        while let Some(n) = todo.pop() {
+            if seen.insert(n.clone()) {
+                if let Some(s) = self.part.structs.iter().find(|s| s.name == n) {
+                    for (_, t) in &s.fields {
+                        records(t, &mut todo);
+                    }
+                }
+            }
+        }
+        seen
+    }
+
     pub(crate) fn emit_struct(&mut self, s: &StructDef) {
         let all_copy = s.fields.iter().all(|(_, t)| matches!(t, Ty::Int | Ty::Float | Ty::Bool));
+        let serde = if self.serde_records.contains(&s.name) { ", serde::Serialize, serde::Deserialize" } else { "" };
         self.line("#[allow(non_camel_case_types)]");
-        self.line(if all_copy { "#[derive(Debug, Clone, Copy)]" } else { "#[derive(Debug, Clone)]" });
+        self.line(&format!("#[derive(Debug, Clone{}{})]", if all_copy { ", Copy" } else { "" }, serde));
         self.line(&format!("struct {} {{", s.name));
         self.indent += 1;
         for (f, t) in &s.fields {
@@ -1091,8 +1128,14 @@ impl Emitter {
             self.line("");
         }
         if self.needs_crow_web {
-            self.line("#[tokio::main]");
-            self.line("async fn main() {");
+            // the runtime's threads compute a page's derivations and run its
+            // handlers: their stacks are sized for that work, not tokio's
+            // 2 MiB (a debug build of finch's book walk overflowed it)
+            self.line("fn main() {");
+            self.line("    tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(16 * 1024 * 1024).build().expect(\"the async runtime\").block_on(__crow_main());");
+            self.line("}");
+            self.line("");
+            self.line("async fn __crow_main() {");
         } else {
             self.line("fn main() {");
         }

@@ -1,0 +1,72 @@
+--- What finch's paper book needed of the compiled program: a fact that
+--- holds records, a loop over text meeting a frame's cells, a record built
+--- from a fact the handler reads again, fields taken from a record the
+--- loop borrows, and a derivation calling a function whose parameter is
+--- named like another derivation. The compiled program: the records had
+--- no serde traits, a borrowed text item met an owned cell, a fact and a
+--- field were moved while still in use, and the derivations called each
+--- other for ever. CI runs it in the interpreter and compiled.
+use web, ui, frame
+struct Order [symbol, qty]
+struct Tag [order, note]
+struct Held [tag, count]
+
+orders = []
+sym = 'AB'
+said = ''
+
+fn place[]
+    orders = push[orders, Order[sym, 100]]
+    said = 'placed `sym`'
+
+derive symbols
+    out = []
+    for o in orders
+        if not contains[out, o.symbol]
+            out = push[out, o.symbol]
+    return out
+
+derive table
+    return with[frame.new[], 'symbol', ['AB', 'CD', 'AB']]
+
+derive counts
+    out = []
+    for s in symbols
+        n = 0
+        for i in range[len[table]]
+            if table.symbol[i] eq s
+                n = n + 1
+        out = push[out, n]
+    return out
+
+fn sized[counts]
+    return len[counts]
+
+derive helds
+    out = []
+    for o in orders
+        out = push[out, Held[Tag[o, 'x'], sized[[1, 2]]]]
+    return out
+
+derive gathered
+    tags = []
+    notes = ''
+    for h in helds
+        note = h.tag.note
+        notes = '`notes``note`'
+        tags = push[tags, h.tag]
+    return len[tags]
+
+view shown[]
+    return p['`len[orders]` orders, counts `counts`, gathered `gathered`, `said`']
+page['/', shown]
+
+test a_fact_holds_records[]
+    a = app[shown]
+    click[a, place]
+    click[a, place]
+    assert[len[orders] eq 2, 'orders `len[orders]`']
+    assert[counts eq [2], 'counts `counts`']
+    assert[gathered eq 2, 'gathered `gathered`']
+    assert[contains[html[a], '2 orders'], 'the page `html[a]`']
+    assert[contains[html[a], 'placed AB'], 'the page `html[a]`']

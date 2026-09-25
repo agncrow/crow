@@ -888,8 +888,9 @@ fn walk_view(m: &Model, view: &str, stmts: &[Stmt], mut env: Env, conds: Vec<Str
 
 fn read_names(m: &Model, body: &[Stmt]) -> (BTreeSet<String>, BTreeSet<String>, BTreeSet<String>, bool) {
     let bodies: BTreeMap<String, Vec<Stmt>> = m.fns.iter().filter(|(n, _)| !m.derives.contains(*n)).map(|(n, (_, b))| (n.clone(), b.clone())).collect();
+    let params: BTreeMap<String, Vec<String>> = m.fns.iter().map(|(n, (ps, _))| (n.clone(), ps.clone())).collect();
     let owned = crate::derive::owned_tables(m.stmts, &bodies);
-    let rs = crate::derive::read_set(body, &m.facts, &m.derives, &bodies, &owned);
+    let rs = crate::derive::read_set(body, &m.facts, &m.derives, &bodies, &params, &owned);
     (rs.facts, rs.derives, rs.tables, rs.now)
 }
 

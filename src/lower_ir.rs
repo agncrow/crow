@@ -660,11 +660,12 @@ impl<'a> Lowerer<'a> {
                 .filter(|(n, _)| !derive_names.contains(*n))
                 .map(|(n, sig)| (n.clone(), sig.body.clone()))
                 .collect();
+            let params: BTreeMap<String, Vec<String>> = self.ctx.functions.iter().map(|(n, sig)| (n.clone(), sig.params.iter().map(|(p, _)| p.clone()).collect())).collect();
             let owned = crate::derive::owned_tables(stmts, &bodies);
             let mut specs: BTreeMap<String, crate::derive::ReadSet> = BTreeMap::new();
             for st in stmts {
                 if let S::Derive { name, body, .. } = st {
-                    specs.insert(name.clone(), crate::derive::read_set(body, &facts, &derive_names, &bodies, &owned));
+                    specs.insert(name.clone(), crate::derive::read_set(body, &facts, &derive_names, &bodies, &params, &owned));
                 }
             }
             let written = crate::derive::written_facts(&bodies, &facts);
@@ -872,7 +873,10 @@ impl<'a> Lowerer<'a> {
                 vec![Stmt::Line(*n)]
             }
             S::Assign { name, value } => {
-                if self.ctx.derives.contains(name) {
+                // in a part's function a name without the part's prefix is a
+                // local, whatever another file derives under it
+                let foreign = self.in_fn().is_some() && self.v.decl.as_deref().and_then(crate::part_prefix_of_declaration).map_or(false, |p| !name.starts_with(p.as_str()));
+                if self.ctx.derives.contains(name) && !foreign {
                     self.refuse(format!("'{}' is derived — it follows what it reads; change those facts instead of assigning it", name));
                 }
                 if !self.defined(name) {
@@ -1120,7 +1124,18 @@ impl<'a> Lowerer<'a> {
             Ty::Markup
         } else if format!("{:?}", expr_ty).contains("Unknown") {
             match self.ctx.vars.get(name) {
-                Some(t) if !matches!(t, CrowType::Unknown) => ty_of(t),
+                // a first value that cannot fail makes a variable that holds
+                // no error (spec, Reassignment): the settled type's payload,
+                // as the Rust backend declares it (`xs = []`, then a push of
+                // a value that can fail, refused where it is assigned)
+                Some(t) if !matches!(t, CrowType::Unknown) => {
+                    let settled = ty_of(t);
+                    if expr_ty.is_result() {
+                        settled
+                    } else {
+                        settled.payload().clone()
+                    }
+                }
                 _ => expr_ty,
             }
         } else {
