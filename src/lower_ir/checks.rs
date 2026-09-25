@@ -533,7 +533,14 @@ impl<'a> Lowerer<'a> {
                 BinOp::Div => "/",
                 _ => "%",
             };
-            self.refuse(format!("cannot use '{}' with {} and {}", op_str, lt.crow_name(), rt.crow_name()));
+            // a value whose type is not known (a cell of a column nothing
+            // typed, a parsed document's member) says what it is first
+            let hint = if matches!(lt, CrowType::Json) || matches!(rt, CrowType::Json) {
+                " — a value whose type the program does not know is read as one first: int[…], float[…] or str[…]"
+            } else {
+                ""
+            };
+            self.refuse(format!("cannot use '{}' with {} and {}{}", op_str, lt.crow_name(), rt.crow_name(), hint));
         }
     }
 
@@ -976,6 +983,15 @@ mod tests {
     fn a_function_reading_a_derivation_is_told_to_derive() {
         let err = check_source("use web, ui\nn = 1\nderive cfg\n    return n + 1\nfn band[]\n    return cfg * 2\nview render[]\n    return p['`band[]`']\npage['/', render]\n").unwrap_err();
         assert!(err.contains("in band: derivations are not visible inside functions — read 'cfg' in a view or handler"), "{}", err);
+    }
+
+    /// A cell of a column nothing typed is dynamic: arithmetic on it is
+    /// refused until the program says what it is (typed frames, decision 1)
+    #[test]
+    fn a_cell_nothing_typed_is_read_as_one_first() {
+        let err = check_source("use frame\ndf = load['nowhere.csv']\nlog[df.px[0] * 2.0]\n").unwrap_err();
+        assert!(err.contains("cannot use '*' with json and float — a value whose type the program does not know is read as one first: int[…], float[…] or str[…]"), "{}", err);
+        assert!(check_source("use frame\ndf = load['nowhere.csv']\nlog[float[df.px[0]] * 2.0]\n").is_ok());
     }
 
     /// A fact gets one value at the top level of a ui program: a loop that

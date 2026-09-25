@@ -2877,7 +2877,9 @@ impl TypeContext {
                         CrowType::NumArray(inner) => return *inner.clone(),
                         CrowType::Map(inner) => return *inner.clone(),
                         CrowType::Str => return CrowType::Str,
-                        CrowType::FrameCol => return CrowType::Str, // col[i] → string
+                        // a cell of a column whose type nothing told: dynamic
+                        // until int[], float[] or str[] reads it (typed frames)
+                        CrowType::FrameCol => return CrowType::Json,
                         _ => {}
                     }
                 }
@@ -2914,6 +2916,19 @@ impl TypeContext {
         match e {
             Expr::Ident(v) => self.frame_schemas.get(v).cloned(),
             Expr::Call { callee, args } => {
+                // the frames the standard modules build have fixed columns:
+                // doc.chapters as crow_runtime::markdown::chapters_frame
+                // builds it, chart.macd as crow_runtime::ta::macd_frame does
+                if let Expr::FieldAccess { object, field } = callee.as_ref() {
+                    let cols: &[(&str, CrowType)] = match (object.as_ref(), field.as_str()) {
+                        (Expr::Ident(m), "chapters") if m == "doc" => &[("title", CrowType::Str), ("path", CrowType::Str), ("depth", CrowType::Int), ("part", CrowType::Str)],
+                        (Expr::Ident(m), "macd") if m == "chart" => &[("line", CrowType::Float), ("signal", CrowType::Float), ("hist", CrowType::Float)],
+                        _ => &[],
+                    };
+                    if !cols.is_empty() {
+                        return Some(cols.iter().map(|(n, t)| (n.to_string(), t.clone())).collect());
+                    }
+                }
                 let name = match callee.as_ref() {
                     Expr::Ident(n) => n.clone(),
                     Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if m == "db" || m == "frame") => field.clone(),
@@ -3036,7 +3051,7 @@ impl TypeContext {
                     self.describe_notes.push(format!("note: the columns of `{}…` are typed from .crow/schema — no database answered ({})", head, reasons.join("; ")));
                     found = Some(schema);
                 }
-                None => self.describe_notes.push(format!("note: the columns of `{}…` could not be typed at compile time — cells read as text ({})", head, reasons.join("; "))),
+                None => self.describe_notes.push(format!("note: the columns of `{}…` could not be typed at compile time — its cells are dynamic: read them with int[…], float[…] or str[…] ({})", head, reasons.join("; "))),
             }
         }
         if std::env::var("CROW_DEBUG_SCHEMAS").is_ok() {
@@ -3364,7 +3379,9 @@ impl TypeContext {
                 }
                 *inner
             }
-            CrowType::FrameCol => CrowType::Str, // col[i] → string
+            // a cell of a column whose type nothing told: dynamic until
+            // int[], float[] or str[] reads it (typed frames)
+            CrowType::FrameCol => CrowType::Json,
             CrowType::Map(inner) => *inner,
             CrowType::Json => CrowType::Json,
             CrowType::Fn(_, ret) => *ret,

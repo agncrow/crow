@@ -156,6 +156,13 @@ fn placeholder(cell: CrowValue, ty: &Ty) -> CrowValue {
         (false, Ty::Int) => CrowValue::ok(Value::Int(0)),
         (false, Ty::Bool) => CrowValue::ok(Value::Bool(false)),
         (false, Ty::Str) => CrowValue::ok(Value::Str("nan".to_string())),
+        // a column nothing typed: its missing cell is JSON's null, an error
+        // value of reason 'null', as `json[]` reads one
+        (false, Ty::Json) => {
+            let mut null = CrowValue::error_with_kind("null", "parse", "");
+            null.trace.clear();
+            null
+        }
         (false, _) => cell,
     }
 }
