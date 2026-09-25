@@ -56,6 +56,28 @@ fn tag() -> String {
     format!("crow {} {} {}", host_name(), std::process::id(), n)
 }
 
+/// Statements of this process running on a ClickHouse server now: a
+/// program that stops with none running asks the server to stop nothing
+/// (each ask is a connection and a statement, and a busy server does better
+/// without them).
+static IN_FLIGHT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A statement in flight, for as long as it is held.
+struct InFlight;
+
+impl InFlight {
+    fn start() -> Self {
+        IN_FLIGHT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        InFlight
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        IN_FLIGHT.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// The LIKE pattern for every statement of process `pid` on this machine.
 fn process_pattern(pid: u32) -> String {
     format!("/* crow {} {} %", host_name(), pid)
@@ -163,6 +185,9 @@ impl CrowClickhouseDb {
         // when the program stops, what it started stops with it
         let (addr, options) = (db.addr.clone(), db.options.clone());
         crow_runtime::cancel::on_shutdown(Box::new(move || {
+            if IN_FLIGHT.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                return;
+            }
             let (addr, options) = (addr.clone(), options.clone());
             let _ = std::thread::spawn(move || {
                 if let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() {
@@ -263,6 +288,7 @@ impl CrowClickhouseDb {
         }
         let i = self.checkout();
         let _release = Release(&self.busy[i]);
+        let _running = InFlight::start();
         match op(self.client(i)?) {
             Err(e) if is_transport_error(&e) => {
                 eprintln!("crow db: the clickhouse connection to {} was lost ({}); reconnecting", self.addr, e);
@@ -679,7 +705,20 @@ impl CrowDb for CrowClickhouseDb {
 
 #[cfg(test)]
 mod param_tests {
-    use super::{ch_kind, ch_nullable, substitute_params, is_transport_error};
+    use super::{ch_kind, ch_nullable, substitute_params, is_transport_error, InFlight, IN_FLIGHT};
+
+    /// A statement counts as in flight while it runs, and a program that
+    /// stops with none in flight sends the server nothing
+    #[test]
+    fn a_statement_is_in_flight_while_it_runs() {
+        let before = IN_FLIGHT.load(std::sync::atomic::Ordering::SeqCst);
+        {
+            let _a = InFlight::start();
+            let _b = InFlight::start();
+            assert!(IN_FLIGHT.load(std::sync::atomic::Ordering::SeqCst) >= before + 2);
+        }
+        assert_eq!(IN_FLIGHT.load(std::sync::atomic::Ordering::SeqCst), before);
+    }
 
     /// DESCRIBE's types: a `Nullable` one, alone or inside
     /// `LowCardinality`, can hold NULL; an array of nullable values is a
