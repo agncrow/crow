@@ -43,6 +43,15 @@ Data sources compose the same way: `prices = poll['/api/prices', 5]`
 declares state that refreshes every five seconds and re-renders whatever
 reads it.
 
+State gets its value once, where it is declared: `count = 0` is what
+every session starts from, and handlers move it from there. The top
+level does not change it afterwards — a second `count = 1`, or a loop at
+the top level that pushes into a list of state, is refused and told why,
+since no session and no test would see the change. Give the state its
+whole value where it is declared (a function can loop to build it), or
+make it a `derive`. A script that imports a ui part but not ui itself
+keeps its own top-level variables plain, and runs top to bottom.
+
 ## The page and its connection
 
 The browser holds a socket to the server, and the server holds your

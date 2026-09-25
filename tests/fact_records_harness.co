@@ -5,7 +5,18 @@
 --- named like another derivation. The compiled program: the records had
 --- no serde traits, a borrowed text item met an owned cell, a fact and a
 --- field were moved while still in use, and the derivations called each
---- other for ever. CI runs it in the interpreter and compiled.
+--- other for ever. And a test clicks a handler that takes a record, a
+--- list and numbers written as a list, as the clock's Auto Next takes the
+--- day's episodes: the compiled program left such a handler out of its
+--- events, the interpreter sent the record as nothing and the numbers in
+--- a form the compiled tensor did not read, and the click did nothing.
+--- And a handler hands a record to another handler, as finch's Auto Next
+--- switch hands the clock its episodes: the compiled program borrowed the
+--- record where the handler takes it by value, and did not build. A
+--- handler clicked only by a test, with the test's own variables, had no
+--- types for its parameters; and a function that writes state only
+--- through another (`clock.jump` through `moved_to`) was compiled without
+--- the session it writes. CI runs it in the interpreter and compiled.
 use web, ui, frame
 struct Order [symbol, qty]
 struct Tag [order, note]
@@ -14,6 +25,8 @@ struct Held [tag, count]
 orders = []
 sym = 'AB'
 said = ''
+given_qty = 0
+given_symbols = ['']
 
 fn place[]
     orders = push[orders, Order[sym, 100]]
@@ -57,8 +70,48 @@ derive gathered
         tags = push[tags, h.tag]
     return len[tags]
 
+--- the orders a record and a list give: the record's symbol, each of the
+--- list's quantities
+fn place_all[first, more, sizes]
+    orders = push[orders, first]
+    for s in more
+        orders = push[orders, Order[s, int[sizes[0]]]]
+    said = 'placed `len[more] + 1`'
+
+--- a handler that takes a record, and one that hands it records of its own
+fn place_one[o]
+    orders = push[orders, o]
+
+fn place_pair[]
+    first = Order['OP', 3]
+    place_one[first]
+    place_one[Order['QR', 4]]
+    said = 'placed a pair'
+
+--- a handler only a test clicks: it writes, and reads nothing but what
+--- it is given
+fn place_given[first, more]
+    given_qty = first.qty
+    given_symbols = concat[[first.symbol], more]
+
+--- writes state, and writes it only through that
+fn note_it[s]
+    said = s
+
+fn relay[s]
+    note_it[s]
+
+fn relay_click[]
+    relay['relayed']
+
 view shown[]
-    return p['`len[orders]` orders, counts `counts`, gathered `gathered`, `said`']
+    return stack[
+        p['`len[orders]` orders, counts `counts`, gathered `gathered`, `said`'],
+        button['Place', click = place],
+        button['Place all', click = place_all[Order['KL', 1], ['MN'], [2.0]]],
+        button['Place a pair', click = place_pair],
+        button['Relay', click = relay_click]
+    ]
 page['/', shown]
 
 test a_fact_holds_records[]
@@ -70,3 +123,29 @@ test a_fact_holds_records[]
     assert[gathered eq 2, 'gathered `gathered`']
     assert[contains[html[a], '2 orders'], 'the page `html[a]`']
     assert[contains[html[a], 'placed AB'], 'the page `html[a]`']
+
+test a_click_takes_a_record_and_a_list[]
+    a = app[shown]
+    click[a, place_all[Order['EF', 5], ['GH', 'IJ'], [7.0, 8.0]]]
+    assert[len[orders] eq 3, 'orders `len[orders]`']
+    assert[orders[0].symbol eq 'EF' and orders[2].qty eq 7, 'orders `orders`']
+    assert[contains[html[a], 'placed 3'], 'the page `html[a]`']
+
+test a_handler_hands_a_record_to_another[]
+    a = app[shown]
+    click[a, place_pair]
+    assert[len[orders] eq 2 and orders[1].symbol eq 'QR', 'orders `orders`']
+    assert[contains[html[a], 'placed a pair'], 'the page `html[a]`']
+
+test a_click_takes_the_tests_own_values[]
+    a = app[shown]
+    first = Order['ST', 9]
+    more = ['UV', 'WX']
+    click[a, place_given[first, more]]
+    assert[given_qty eq 9 and given_symbols eq ['ST', 'UV', 'WX'], 'given `given_qty` `given_symbols`']
+
+test a_function_writes_state_through_another[]
+    a = app[shown]
+    click[a, relay_click]
+    assert[said eq 'relayed', 'said `said`']
+    assert[contains[html[a], 'relayed'], 'the page `html[a]`']

@@ -1,0 +1,30 @@
+--- A list whose first value is empty holds no error, so a moment pushed
+--- into it under `if m.ok` lands as a number: a record built from the list
+--- has a list of numbers in its field, and an item read back from it is a
+--- number. The type inference let the list become one that could fail, the
+--- record's field after it, and an item read from that field lost its
+--- type: the compiled program typed the list built from them as text and
+--- did not build (finch's headlines, gathered per symbol for Next setup).
+struct Heard [symbol, t]
+
+fn heard[texts]
+    syms = []
+    ms = []
+    for s in texts
+        m = parse_time[s, tz = 'America/New_York']
+        if m.ok
+            syms = push[syms, 'X']
+            ms = push[ms, m]
+    return Heard[syms, ms]
+
+fn moments_of[n, symbol]
+    out = []
+    for i in range[len[n.t]]
+        if n.symbol[i] eq symbol
+            out = push[out, n.t[i]]
+    return out
+
+h = heard[['2026-05-26 06:00:00', 'not a time', '2026-05-26 06:00:10']]
+got = moments_of[h, 'X']
+log[len[got]]
+log[got[1] - got[0]]

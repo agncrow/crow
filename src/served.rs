@@ -20,10 +20,18 @@ pub(crate) fn is_data(v: &CrowValue) -> bool {
     !matches!(v.value, Value::DbConn(_) | Value::Mailer(..) | Value::Fn(_) | Value::GradFn(_) | Value::App(..))
 }
 
-/// A fact as the session keeps it: JSON, a frame by its own shape.
+/// A fact as the session keeps it: JSON, a frame by its own shape, a
+/// record as the object of its fields (in a list or a map too), as the
+/// compiled program keeps its records.
 pub(crate) fn fact_to_json(v: &CrowValue) -> serde_json::Value {
+    if v.is_error() {
+        return serde_json::Value::Null;
+    }
     match &v.value {
         Value::Frame(f) => serde_json::to_value(f).unwrap_or(serde_json::Value::Null),
+        Value::StructInstance(si) => serde_json::Value::Object(si.fields.iter().map(|(k, x)| (k.clone(), fact_to_json(x))).collect()),
+        Value::Array(items) => serde_json::Value::Array(items.iter().map(fact_to_json).collect()),
+        Value::Map(m) => serde_json::Value::Object(m.iter().map(|(k, x)| (k.clone(), fact_to_json(x))).collect()),
         _ => crate::builtins::crow_to_json("", v).unwrap_or(serde_json::Value::Null),
     }
 }
@@ -43,12 +51,46 @@ pub(crate) fn json_to_fact(j: &serde_json::Value, declared: &CrowValue) -> CrowV
     }
 }
 
+/// A value back from JSON by the type the program gives it: a record
+/// from the object of its fields, a list of records item by item, a
+/// tensor from its numbers; anything else as `json_to_fact` reads it.
+pub(crate) fn json_to_typed(j: &serde_json::Value, ty: &crate::ir::Ty, template: &IrInterp, declared: &CrowValue) -> CrowValue {
+    use crate::ir::Ty;
+    match (ty, j) {
+        (Ty::Record(name) | Ty::OptRecord(name), serde_json::Value::Object(obj)) => match template.struct_def(name) {
+            Some(def) => {
+                let mut fields = std::collections::BTreeMap::new();
+                for (field, fty) in &def.fields {
+                    let fj = obj.get(field).cloned().unwrap_or(serde_json::Value::Null);
+                    fields.insert(field.clone(), json_to_typed(&fj, fty, template, &CrowValue::ok(Value::Done)));
+                }
+                CrowValue::ok(Value::StructInstance(crate::value::StructInstance { name: name.clone(), fields }))
+            }
+            None => json_to_fact(j, declared),
+        },
+        (Ty::List(item), serde_json::Value::Array(items)) if matches!(item.payload(), Ty::Record(_) | Ty::OptRecord(_) | Ty::List(_) | Ty::Tensor(_)) => {
+            let none = CrowValue::ok(Value::Done);
+            CrowValue::ok(Value::Array(items.iter().map(|x| json_to_typed(x, item, template, &none)).collect()))
+        }
+        (Ty::Tensor(_), serde_json::Value::Array(items)) if items.iter().all(|x| x.is_number()) => {
+            let data: Vec<f64> = items.iter().filter_map(|x| x.as_f64()).collect();
+            let n = data.len();
+            CrowValue::ok(Value::NumArray(crow_runtime::tensor::CrowTensor::from_vec(data, vec![n])))
+        }
+        (Ty::Float, serde_json::Value::Number(n)) => CrowValue::ok(Value::Float(n.as_f64().unwrap_or(0.0))),
+        _ => json_to_fact(j, declared),
+    }
+}
+
 /// The template with one session's facts and notice loaded.
 fn with_session(template: &IrInterp, state: &CrowLiveState) -> IrInterp {
     let mut it = template.clone();
     for name in template.fact_names.clone() {
         if let (Some(j), Some(declared)) = (state.get(&name), template.var(&name)) {
-            let v = json_to_fact(j, declared);
+            let v = match template.fact_types.get(&name) {
+                Some(ty) => json_to_typed(j, ty, template, declared),
+                None => json_to_fact(j, declared),
+            };
             it.set_fact(&name, v);
         }
     }

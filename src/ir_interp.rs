@@ -58,6 +58,9 @@ pub struct IrInterp {
     cancel: Option<Arc<AtomicBool>>,
     /// Every fact's name: what a harness session holds.
     pub(crate) fact_names: Vec<String>,
+    /// Every fact's declared type: how a session's facts come back from
+    /// the JSON they cross the loop as.
+    pub(crate) fact_types: HashMap<String, Ty>,
     /// The harness's sessions, each with its own facts, as the server gives
     /// each page. The active session's facts are the globals; the others
     /// wait here until a verb acts on them.
@@ -303,6 +306,7 @@ impl IrInterp {
             engine_loaded: false,
             cancel: None,
             fact_names: Vec::new(),
+            fact_types: HashMap::new(),
             sessions: HashMap::new(),
             active_session: None,
             session_start: HashMap::new(),
@@ -354,6 +358,7 @@ impl IrInterp {
                 if !self.fact_names.contains(&fact.name) {
                     self.fact_names.push(fact.name.clone());
                 }
+                self.fact_types.insert(fact.name.clone(), fact.ty.clone());
             }
             if let Err(e) = self.exec_stmts(&part.main) {
                 return Err(self.with_line(e));
@@ -374,6 +379,11 @@ impl IrInterp {
                 self.structs.insert(s.name.clone(), Arc::new(s.clone()));
             }
         }
+    }
+
+    /// A struct's fields and their types, as the program declared it.
+    pub(crate) fn struct_def(&self, name: &str) -> Option<Arc<crate::ir::StructDef>> {
+        self.structs.get(name).cloned()
     }
 
     /// A top-level variable or fact, as the crowfile reader and the tools ask.
@@ -2141,9 +2151,10 @@ impl IrInterp {
     fn remote_read(&mut self, rid: u64, name: &str) -> Result<CrowValue, String> {
         let answer = self.remote()?.post("read", serde_json::json!({ "session": rid, "name": name }))?;
         if let Some(j) = answer.get("fact") {
-            return Ok(match self.frames[0].scopes[0].get(name).cloned() {
-                Some(declared) => crate::served::json_to_fact(j, &declared),
-                None => crate::builtins::json_to_crow("", j),
+            return Ok(match (self.frames[0].scopes[0].get(name).cloned(), self.fact_types.get(name)) {
+                (Some(declared), Some(ty)) => crate::served::json_to_typed(j, ty, self, &declared),
+                (Some(declared), None) => crate::served::json_to_fact(j, &declared),
+                (None, _) => crate::builtins::json_to_crow("", j),
             });
         }
         let d = answer.get("derived").ok_or_else(|| format!("the compiled program has no '{}'", name))?;

@@ -1,0 +1,29 @@
+--- A record's field of numbers is held in one form, a list or a tensor:
+--- a literal list of numbers (a tensor) given to a field that is settled
+--- as a list is converted where the record is built. The compiled
+--- program passed the tensor as it was and did not build (finch's Auto
+--- Next chain: its first moment is [h0], the rest are pushed).
+struct Path [v, sym]
+
+fn built[n]
+    vs = []
+    syms = []
+    for i in range[n]
+        vs = push[vs, float[i] * 1.5]
+        syms = push[syms, 'S`i`']
+    return Path[vs, syms]
+
+fn literal[h]
+    vs = [h]
+    vs = push[vs, h + 1.0]
+    return Path[vs, ['A', 'B']]
+
+fn none[]
+    return Path[[], []]
+
+a = built[3]
+b = literal[10.0]
+c = none[]
+log[a.v[2] + b.v[1]]
+log[len[c.v]]
+log[b.sym[1]]
