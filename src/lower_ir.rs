@@ -641,6 +641,15 @@ impl<'a> Lowerer<'a> {
         std::mem::replace(&mut self.seen, outer).unwrap_or_default()
     }
 
+    /// Whose the top-level statement being lowered is: the part its
+    /// declaration's prefix names, or the entry's (a statement that
+    /// declares nothing, `page[…]`, is the entry's). A part's top level
+    /// reaches what it reaches under this name (`Part.main_effects`).
+    fn main_of_part(&self) -> String {
+        let prefix = self.v.decl.as_deref().and_then(crate::part_prefix_of_declaration).unwrap_or_default();
+        format!("<main>{}", prefix)
+    }
+
     /// The kind of function a declaration is, as the lowering writes it.
     fn kind_of(&self, name: &str, body: &[S], is_view: bool) -> FnKind {
         if is_view || self.ctx.views.contains(name) {
@@ -825,6 +834,7 @@ impl<'a> Lowerer<'a> {
             fns: vec![],
             tests: vec![],
             main: vec![],
+            main_effects: BTreeMap::new(),
         };
         let fact_names: BTreeSet<String> = self.ctx.facts.clone();
         let written: BTreeSet<String> = facts_written_by_fns(stmts, &fact_names);
@@ -891,7 +901,7 @@ impl<'a> Lowerer<'a> {
                 }
                 S::Assign { name, value } if self.in_ui && fact_names.contains(name) && !self.declared(name) => {
                     self.at = Where::Top;
-                    self.current_fn = "<main>".to_string();
+                    self.current_fn = self.main_of_part();
                     if self.ctx.derives.contains(name) {
                         self.refuse(format!("'{}' is derived — it follows what it reads; change those facts instead of assigning it", name));
                     }
@@ -905,7 +915,7 @@ impl<'a> Lowerer<'a> {
                 }
                 other => {
                     self.at = Where::Top;
-                    self.current_fn = "<main>".to_string();
+                    self.current_fn = self.main_of_part();
                     let lowered = self.lower_stmt(other)?;
                     self.flush_pre_into(&mut part.main);
                     part.main.extend(lowered);
@@ -913,6 +923,38 @@ impl<'a> Lowerer<'a> {
             }
         }
         place_moves_in(&mut part.main, &HashSet::new(), None);
+        // what a derivation and each part's top level reach, transitively,
+        // as a function's does below
+        let reach = |start: &str, l: &Self| -> Vec<String> {
+            let mut seen: BTreeSet<String> = BTreeSet::new();
+            let mut todo = vec![start.to_string()];
+            let mut effects: BTreeSet<String> = BTreeSet::new();
+            while let Some(n) = todo.pop() {
+                if !seen.insert(n.clone()) {
+                    continue;
+                }
+                if let Some(e) = l.direct_effects.get(&n) {
+                    effects.extend(e.iter().cloned());
+                }
+                if let Some(c) = l.calls.get(&n) {
+                    todo.extend(c.iter().cloned());
+                }
+            }
+            effects.into_iter().collect()
+        };
+        for d in &mut part.derives {
+            d.effects = reach(&d.name, self);
+        }
+        let mains: Vec<String> = self.direct_effects.keys().chain(self.calls.keys()).filter(|k| k.starts_with("<main>")).cloned().collect();
+        for m in mains {
+            let effects = reach(&m, self);
+            let prefix = m.trim_start_matches("<main>").to_string();
+            part.main_effects.entry(prefix).or_default().extend(effects);
+        }
+        for effects in part.main_effects.values_mut() {
+            effects.sort();
+            effects.dedup();
+        }
         // what each function reaches, transitively
         let names: Vec<String> = part.fns.iter().map(|f| f.name.clone()).collect();
         for f in &mut part.fns {
@@ -1087,7 +1129,7 @@ impl<'a> Lowerer<'a> {
             }
         }
         reads.clock = clock;
-        Ok(Derive { name: name.to_string(), ty, body: block, reads, fresh, spec: Default::default() })
+        Ok(Derive { name: name.to_string(), ty, body: block, reads, fresh, spec: Default::default(), effects: vec![] })
     }
 
     fn lower_test(&mut self, name: Option<String>, params: &[String], body: &[S]) -> Result<Test, String> {

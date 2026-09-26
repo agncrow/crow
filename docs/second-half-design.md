@@ -41,7 +41,14 @@ need nothing. The harness already substitutes doubles for the page
 
 **First step.** Each part's reach in `crow check` and the baseline,
 derived from `Fn.effects`, with a harness test and the task board's
-baseline re-accepted once.
+baseline re-accepted once. *Built (2026-09-26):* each file's reach is
+the effects its functions, derivations (`Derive.effects`) and top level
+(`Part.main_effects`, by the part a statement declares for) reach,
+transitively, grouped by capability, recorded as `reach <file>` in the
+baseline (`baseline::reach_entries`) and printed by `crow check` one line
+a file; a file that touches nothing says so. `crow check` now reads it
+from the one lowering it refuses by. The task board's six files and the
+parts test's were recorded (`crow-check.md`, "The baseline").
 
 ## 2. Typed frames
 

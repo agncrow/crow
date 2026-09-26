@@ -1,0 +1,4 @@
+reach board/cards.co
+  database: connect, exec, query
+  files: cp, mkdir
+  session: download, notice

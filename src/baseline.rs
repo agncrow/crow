@@ -1382,6 +1382,78 @@ fn collect_clicks(stmts: &[Stmt], out: &mut BTreeSet<String>) {
 
 // ---------------------------------------------------------------- the store
 
+// ---------------------------------------------------------------- reach
+
+/// The capability an effect is one of: what it lets a part touch
+/// (second-half-design.md §1). `log` touches nothing outside the program.
+pub fn capability_of(effect: &str) -> Option<&'static str> {
+    Some(match effect {
+        "query" | "exec" | "insert" | "transact" | "migrate" | "connect" => "database",
+        "read" | "write" | "mkdir" | "ls" | "rm" | "mv" | "cp" | "csv" | "lines" | "load" | "save" => "files",
+        "fetch" | "poll" | "send" | "recv" => "network",
+        "serve" | "page" | "route" | "listen" => "serving",
+        "shell" => "shell",
+        "mail" => "mail",
+        "now" | "time" | "sleep" => "clock",
+        "input" | "args" | "env" | "exit" => "process",
+        "later" | "notice" | "sign_in" | "sign_out" | "download" => "session",
+        _ => return None,
+    })
+}
+
+/// The capabilities, in the order a reach names them.
+const CAPABILITIES: &[&str] = &["database", "files", "network", "serving", "shell", "mail", "clock", "process", "session"];
+
+/// Each file's reach, from the lowered program: every effect its
+/// functions, derivations and top level reach, transitively, by the
+/// capability it is one of (second-half-design.md §1). One entry per file,
+/// the entry's own and each part's, keyed `reach <file>`; a file that
+/// reaches nothing says so, so its first reach is a change to accept.
+pub fn reach_entries(program: &crate::ir::Program, parts: &BTreeMap<String, String>, entry: &str) -> BTreeMap<String, (String, String)> {
+    let file_of = |name: &str| -> String {
+        parts
+            .iter()
+            .filter(|(prefix, _)| name.starts_with(prefix.as_str()))
+            .max_by_key(|(prefix, _)| prefix.len())
+            .map(|(_, f)| f.clone())
+            .unwrap_or_else(|| entry.to_string())
+    };
+    let mut by_file: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    by_file.entry(entry.to_string()).or_default();
+    for f in parts.values() {
+        by_file.entry(f.clone()).or_default();
+    }
+    for part in &program.parts {
+        for f in &part.fns {
+            by_file.entry(file_of(&f.name)).or_default().extend(f.effects.iter().cloned());
+        }
+        for d in &part.derives {
+            by_file.entry(file_of(&d.name)).or_default().extend(d.effects.iter().cloned());
+        }
+        for (prefix, effects) in &part.main_effects {
+            let file = parts.get(prefix).cloned().unwrap_or_else(|| entry.to_string());
+            by_file.entry(file).or_default().extend(effects.iter().cloned());
+        }
+    }
+    by_file
+        .into_iter()
+        .map(|(file, effects)| {
+            let key = format!("reach {}", file);
+            let mut text = format!("{}\n", key);
+            for cap in CAPABILITIES {
+                let mine: Vec<&str> = effects.iter().filter(|e| capability_of(e) == Some(*cap)).map(|e| e.as_str()).collect();
+                if !mine.is_empty() {
+                    text.push_str(&format!("  {}: {}\n", cap, mine.join(", ")));
+                }
+            }
+            if !text.contains(':') {
+                text.push_str("  nothing\n");
+            }
+            (key, (file, text))
+        })
+        .collect()
+}
+
 const BASELINE_DIR: &str = ".crow/baseline";
 
 /// The store for an entry file: `.crow/baseline/<entry>/`, the entry's
@@ -1569,6 +1641,26 @@ mod tests {
     }
 
     const APP: &str = "use web, ui\nsession_id = 0\nending = false\nstatus = ''\nwin_from = '06:55'\nwin_to = '09:30'\nfn say[msg]\n    status = msg\nfn start[]\n    t0 = win_from\n    t1 = win_to\n    if t1 lte t0\n        say['the window ends before it starts']\n        return\n    session_id = 1\n    say['started']\nfn ask_end[]\n    ending = true\nfn cancel_end[]\n    ending = false\nfn end_session[]\n    ending = false\n    session_id = 0\nview setup[]\n    return row[field['From', win_from], button['Start', click = start]]\nview session_view[]\n    return stack[p['`status`'], button['End session', click = ask_end], modal[button['End', click = end_session], button['Keep going', click = cancel_end], open = ending]]\nview render[]\n    if session_id gt 0\n        return session_view[]\n    return setup[]\npage['/', render]\n";
+
+    /// Each file's reach is what its functions, derivations and top level
+    /// can touch, by capability, transitively through what they call; a
+    /// file that touches nothing says so (second-half-design.md §1).
+    #[test]
+    fn a_files_reach_is_what_it_can_touch() {
+        let src = "fn keep[s]\n    write['out.txt', s]\nfn stamp[s]\n    t = now[]\n    keep['`s` `t`']\n    return t\nfn pure[x]\n    return x + 1\nlog[stamp['x'], pure[1]]\n";
+        let stmts = crate::lower::lower_program(&crate::build(src).expect("parses")).expect("lowers");
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        let program = crate::lower_ir::lower(&stmts, &mut ctx, "main").expect("lowers to the IR");
+        let reach = reach_entries(&program, &BTreeMap::new(), "main.co");
+        assert_eq!(reach["reach main.co"].1, "reach main.co\n  files: write\n  clock: now\n");
+        let quiet = "fn pure[x]\n    return x + 1\nlog[pure[1]]\n";
+        let stmts = crate::lower::lower_program(&crate::build(quiet).expect("parses")).expect("lowers");
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        let program = crate::lower_ir::lower(&stmts, &mut ctx, "main").expect("lowers to the IR");
+        assert_eq!(reach_entries(&program, &BTreeMap::new(), "main.co")["reach main.co"].1, "reach main.co\n  nothing\n");
+    }
 
     /// A local holding a tree is the path's own: the branch that reassigns
     /// it does not reassign it for its sibling (the app's book drew one

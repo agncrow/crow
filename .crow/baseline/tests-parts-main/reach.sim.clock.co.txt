@@ -1,0 +1,2 @@
+reach sim/clock.co
+  clock: now

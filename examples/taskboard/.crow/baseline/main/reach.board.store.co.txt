@@ -1,0 +1,2 @@
+reach board/store.co
+  database: connect, exec

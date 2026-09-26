@@ -1,0 +1,3 @@
+reach board/door.co
+  database: connect, exec, query
+  session: notice, sign_in, sign_out
