@@ -339,7 +339,7 @@ impl<'a> Lowerer<'a> {
             A::Ident(n) => self.check_ident(n),
             A::FieldAccess { object, field } => {
                 self.check_target(object);
-                let object_type = self.ctx.infer_expr(object);
+                let object_type = self.target_type(object);
                 self.check_field(&object_type, field);
             }
             // an index's expressions are checked as they are lowered

@@ -809,3 +809,9 @@ weeks; the core stages are weeks each.
   literal, 80 nested calls, now outgrows a test thread's stack in an
   unoptimised build, so its test runs on a thread of its own (the
   release binary is as deep as its final lowering always was).
+- **2026-09-26, F5 step S8, first part: three readers of the walk's
+  types moved to the lowering's.** An assignment target's type is read
+  along its path as the lowering builds it (`path_of`, `target_type`), a
+  handler call a harness click holds is typed from its lowered arguments
+  (`held_type`), and the list-parameter check reads the lowered list's
+  items. The oracle is unchanged.
