@@ -341,6 +341,11 @@ pub struct TypeContext {
     pub param_frame_schemas: BTreeMap<(String, String), Option<BTreeMap<String, CrowType>>>,
     /// What the pass under way finds (the one before it is read meanwhile)
     param_frame_schemas_next: BTreeMap<(String, String), Option<BTreeMap<String, CrowType>>>,
+    /// Keep each body's locals as the lowering types them (`crow build
+    /// --types`, the oracle every step of inference's rewrite is held to).
+    pub record_envs: bool,
+    /// Each body's parameters and locals, as its lowering began with them.
+    pub body_envs: BTreeMap<String, BTreeMap<String, CrowType>>,
     /// Ask the program's databases what its query literals return. Every
     /// pipeline's gate asks the same way (`CROW_NO_DESCRIBE` turns it off),
     /// so a program refused for a query's column types is refused by run,
@@ -414,6 +419,8 @@ impl TypeContext {
             frame_schemas: BTreeMap::new(),
             fn_frame_schemas: BTreeMap::new(),
             param_frame_schemas: BTreeMap::new(),
+            record_envs: false,
+            body_envs: BTreeMap::new(),
             param_frame_schemas_next: BTreeMap::new(),
             describe_queries: false,
             describe_cache: BTreeMap::new(),
@@ -3748,6 +3755,65 @@ fn describe_asking(key: &str, url: &str, ddl: &[String], sql: &str) -> Result<Ve
             Err(e) => Err(e.clone()),
         }
     })
+}
+
+/// Every type inference found, in one canonical text: each function's
+/// signature with its body's locals as the lowering began with them, the
+/// specializations, the top level's variables, the frames' columns, the
+/// classification and the records. `crow build --types` prints it; each
+/// step of inference's rewrite keeps it the same (core-rewrite-notes §10).
+pub fn dump_types(ctx: &TypeContext) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let _ = writeln!(out, "functions:");
+    for (name, sig) in &ctx.functions {
+        let params: Vec<String> = sig.params.iter().map(|(p, t)| format!("{}: {:?}", p, t)).collect();
+        let _ = writeln!(out, "  {}({}) -> {:?}", name, params.join(", "), sig.return_type);
+        if let Some(env) = ctx.body_envs.get(name) {
+            for (n, t) in env {
+                let _ = writeln!(out, "    {}: {:?}", n, t);
+            }
+        }
+    }
+    for (name, env) in ctx.body_envs.iter().filter(|(n, _)| n.starts_with("test ")) {
+        let _ = writeln!(out, "  {}", name);
+        for (n, t) in env {
+            let _ = writeln!(out, "    {}: {:?}", n, t);
+        }
+    }
+    let _ = writeln!(out, "specializations:");
+    for (name, clones) in &ctx.specializations {
+        for (sig, clone) in clones {
+            let _ = writeln!(out, "  {} {:?} -> {}", name, sig, clone);
+        }
+    }
+    let _ = writeln!(out, "top:");
+    for (n, t) in &ctx.vars {
+        let _ = writeln!(out, "  {}: {:?}", n, t);
+    }
+    let _ = writeln!(out, "frames:");
+    for (n, s) in &ctx.frame_schemas {
+        let _ = writeln!(out, "  {}: {:?}", n, s);
+    }
+    let _ = writeln!(out, "function frames:");
+    for (n, s) in &ctx.fn_frame_schemas {
+        let _ = writeln!(out, "  {}: {:?}", n, s);
+    }
+    let _ = writeln!(out, "parameter frames:");
+    for ((f, p), s) in &ctx.param_frame_schemas {
+        let _ = writeln!(out, "  {}.{}: {:?}", f, p, s);
+    }
+    let set = |s: &std::collections::BTreeSet<String>| s.iter().cloned().collect::<Vec<_>>().join(" ");
+    let _ = writeln!(out, "views: {}", set(&ctx.views));
+    let _ = writeln!(out, "handlers: {}", set(&ctx.view_handlers));
+    let _ = writeln!(out, "derives: {}", set(&ctx.derives));
+    let _ = writeln!(out, "facts: {}", set(&ctx.facts));
+    let _ = writeln!(out, "records:");
+    for (n, s) in &ctx.structs {
+        let fields: Vec<String> = s.fields.iter().map(|(f, t)| format!("{}: {:?}", f, t)).collect();
+        let _ = writeln!(out, "  {} {{ {} }}", n, fields.join(", "));
+    }
+    out
 }
 
 /// Mark the columns of a statement's rows that can hold NULL, as its tables'

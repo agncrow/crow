@@ -2269,6 +2269,19 @@ fn cmd_build() {
         transpile_and_compile(&file, true, None, false);
         return;
     }
+    // `crow build --types file.co`: every type inference found, each
+    // body's locals included — the oracle inference's rewrite is held to
+    if args.iter().any(|a| a == "--types") {
+        let file = args.iter().skip(2).find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| parse_crowfile().entry);
+        match types_of_file(&file, describing()) {
+            Ok(text) => print!("{}", text),
+            Err(e) => {
+                eprintln!("{}", e);
+                process::exit(1);
+            }
+        }
+        return;
+    }
     // `crow build --ir file.co`: the program's one typed form, printed
     // (docs/ir-design.md); nothing is compiled
     if args.iter().any(|a| a == "--ir") {
@@ -3340,6 +3353,22 @@ mod extension_tests {
 
 /// A program's IR, printed: the same front end as run, test and check,
 /// then the lowering of docs/ir-design.md §4.
+/// Every type inference found for a program, as `crow build --types`
+/// prints it (`type_infer::dump_types`).
+fn types_of_file(entry: &str, describe: bool) -> Result<String, String> {
+    let source = read_file(entry);
+    let stmts = build(&source).map_err(|e| e.to_string())?;
+    let source_dir = std::path::Path::new(entry).parent().unwrap_or(std::path::Path::new("."));
+    let mut visited = std::collections::HashSet::new();
+    let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
+    let stmts = lower::lower_program(&stmts)?;
+    let mut ctx = infer_and_validate(&stmts, describe)?;
+    ctx.record_envs = true;
+    let name = std::path::Path::new(entry).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| entry.to_string());
+    lower_ir::lower(&stmts, &mut ctx, &name)?;
+    Ok(type_infer::dump_types(&ctx))
+}
+
 fn ir_of_file(entry: &str, describe: bool) -> Result<String, String> {
     let source = read_file(entry);
     let stmts = build(&source).map_err(|e| e.to_string())?;
@@ -5621,6 +5650,21 @@ mod module_parts_tests {
         assert_eq!(cols.get("px"), Some(&type_infer::CrowType::Result(Box::new(type_infer::CrowType::Float))), "{:?}\n{}", cols, text);
         assert!(text.contains("\"float?\""), "the record keeps that a column can hold NULL: {}", text);
         assert!(ctx.describe_notes.iter().any(|n| n.contains("typed from .crow/schema")), "{:?}", ctx.describe_notes);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `crow build --types` prints each body's locals beside its signature:
+    /// the oracle inference's rewrite is held to
+    #[test]
+    fn the_types_dump_shows_each_body() {
+        let dir = std::env::temp_dir().join(format!("crow_types_dump_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("t.co");
+        std::fs::write(&file, "fn half[x]\n    y = x / 2.0\n    return y\nlog[half[3]]\n").unwrap();
+        let text = types_of_file(&file.display().to_string(), false).unwrap();
+        assert!(text.contains("functions:\n  half(x: Int) -> Float\n    x: Int\n    y: Float\n"), "{}", text);
+        assert!(text.contains("\nspecializations:\n") && text.contains("\ntop:\n"), "{}", text);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

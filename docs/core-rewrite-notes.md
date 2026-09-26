@@ -692,3 +692,40 @@ weeks; the core stages are weeks each.
   assignments, a variable widened to a float, a condition that can
   fail making a function's value fallible. That is a rewrite of
   inference, not a move, and it waits for a decision.
+- **2026-09-26, F5 decided and planned: signatures by lowering bodies.**
+  Vijay's decision (2026-09-25): do it. A map of the walker found one
+  body typed under three environments today: a running join in program
+  order (`infer_stmt`, and the call scan's variant, which updates the
+  assigned variable before scanning its right-hand side, walks a loop
+  twice when a type moved and never types `set[]`); the frozen end
+  environment that `find_return_type` and `body_has_result_condition`
+  read after the walk; and the first-value-or-settled type the IR's
+  bindings carry. A signature can therefore disagree with its IR
+  `return` (`xs = [1]`, `xs = push[xs, 2.5]`, `return xs`). Some state
+  leaks across bodies and rounds: frame schemas keyed by name, the top
+  level's variables unified across rounds, test locals meeting top-level
+  names, call signatures never cleared. Block renaming is what keeps
+  those leaks harmless today. The migration, each step held to the same
+  IR, Rust and types for every tracked program, every book block and
+  finch (`crow build --types`, the oracle):
+  S0 the types oracle; S1 split type_infer.rs into classification,
+  frames and rules, the walker left alone; S2 the rules stop walking
+  (`specialization_for` and `for_type` take the types the caller has);
+  S3 the statement rules shared, as the expression rules were (a local's
+  settling, float and Result widening, the refusal predicate); S4 a
+  provisional mode of the lowering (checks muted, scratch state, an
+  observer of call sites, returns and propagations); S5 the lowering
+  types its own bodies; S6 a shadow driver behind `CROW_INFER=lower`,
+  diffed against the walker; S7 the switch, and the walker deleted; S8
+  the last `infer_expr` callers moved to lowered children; S9 the seams
+  flipped one reviewed commit at a time (returns from the bindings,
+  fallibility from propagations alone, call sites from the bindings);
+  S10 one final lowering for check and build; S11 a scoped environment,
+  retiring the renaming of block names.
+- **2026-09-26, F5 step S0: `crow build --types`.** Every type
+  inference found, in one canonical text: each function's signature with
+  its body's locals as the lowering began with them, the
+  specializations, the top level's variables, the frames' columns, the
+  classification and the records. The harness now keeps it beside the
+  IR and the Rust of every program (1,047 files); two runs of one binary
+  agree byte for byte, and adding it changed no IR or Rust.
