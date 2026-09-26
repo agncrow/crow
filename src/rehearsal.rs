@@ -195,41 +195,48 @@ fn writes(sql: &str) -> bool {
 /// as: `IN ?` handed a list runs as `IN (?, ?, ?)`, or `IN (NULL)` when the
 /// list is empty, and the record keeps `IN ?`.
 fn one_placeholder_per_list(sql: &str) -> String {
-    let b = sql.as_bytes();
+    // (by character: a statement holds text like '—', which bytes would cut)
+    let c: Vec<char> = sql.chars().collect();
+    let skip = |k: &mut usize| {
+        while *k < c.len() && c[*k].is_whitespace() {
+            *k += 1
+        }
+    };
+    // a list goes where `IN ?` was written
+    let after_in = |i: usize| {
+        let mut j = i;
+        while j > 0 && c[j - 1].is_whitespace() {
+            j -= 1;
+        }
+        j >= 2 && c[j - 2].eq_ignore_ascii_case(&'I') && c[j - 1].eq_ignore_ascii_case(&'N') && (j == 2 || !(c[j - 3].is_alphanumeric() || c[j - 3] == '_'))
+    };
     let mut out = String::with_capacity(sql.len());
     let mut i = 0;
-    while i < b.len() {
-        // a list goes where `IN ?` was written
-        let after_in = {
-            let head = sql[..i].trim_end();
-            head.len() >= 2 && head[head.len() - 2..].eq_ignore_ascii_case("IN") && head[..head.len() - 2].chars().last().map_or(true, |c| !c.is_ascii_alphanumeric() && c != '_')
-        };
-        if b[i] == b'(' && after_in {
+    while i < c.len() {
+        if c[i] == '(' && after_in(i) {
             // `(` then `?`s separated by commas, or a lone NULL, then `)`
             let mut j = i + 1;
-            let skip = |j: &mut usize| while *j < b.len() && b[*j].is_ascii_whitespace() { *j += 1 };
             skip(&mut j);
-            let list_end = if sql[j..].starts_with("NULL") {
+            let null = c.len() >= j + 4 && c[j..j + 4].iter().collect::<String>() == "NULL";
+            let list_end = if null {
                 let mut k = j + 4;
                 skip(&mut k);
-                (k < b.len() && b[k] == b')').then_some(k)
+                (k < c.len() && c[k] == ')').then_some(k)
             } else {
                 let mut k = j;
                 let mut seen = false;
-                loop {
-                    if k < b.len() && b[k] == b'?' {
-                        seen = true;
+                while k < c.len() && c[k] == '?' {
+                    seen = true;
+                    k += 1;
+                    skip(&mut k);
+                    if k < c.len() && c[k] == ',' {
                         k += 1;
                         skip(&mut k);
-                        if k < b.len() && b[k] == b',' {
-                            k += 1;
-                            skip(&mut k);
-                            continue;
-                        }
+                    } else {
+                        break;
                     }
-                    break;
                 }
-                (seen && k < b.len() && b[k] == b')').then_some(k)
+                (seen && k < c.len() && c[k] == ')').then_some(k)
             };
             if let Some(end) = list_end {
                 out.push('?');
@@ -237,7 +244,7 @@ fn one_placeholder_per_list(sql: &str) -> String {
                 continue;
             }
         }
-        out.push(b[i] as char);
+        out.push(c[i]);
         i += 1;
     }
     out
@@ -563,5 +570,7 @@ mod tests {
         assert_eq!(one_placeholder_per_list("f(a, ?) IN ( ?, ? ) (x)"), "f(a, ?) IN ? (x)");
         // a call with one parameter is not a list
         assert_eq!(one_placeholder_per_list("toDate(?) AND x NOT IN (?, ?)"), "toDate(?) AND x NOT IN ?");
+        // text beyond ASCII is read by character (finch's '—' panicked a byte slice)
+        assert_eq!(one_placeholder_per_list("SELECT coalesce(s, '—') AS t FROM x WHERE y IN (?, ?) AND z = 'é'"), "SELECT coalesce(s, '—') AS t FROM x WHERE y IN ? AND z = 'é'");
     }
 }
