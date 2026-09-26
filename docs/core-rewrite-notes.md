@@ -829,3 +829,10 @@ weeks; the core stages are weeks each.
   of named functions (`for f in [double, square]`) types each of them
   where the lowering meets it, not by a walk of the loop's body first;
   the oracle is unchanged by that.
+- **2026-09-26, F5 step S8, third part: the call scan settles after the
+  value.** An assignment's variable settles once its value is lowered,
+  with the lowered type, where the scan used to settle it first by
+  asking the walk (so the value's own calls saw the variable's new
+  type); `a, b = x, y` likewise. The typing rules' fallback to the walk
+  for an argument not among the call's own is gone (none reached it).
+  The oracle is unchanged.

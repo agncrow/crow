@@ -293,7 +293,7 @@ impl TypeContext {
         }
     }
 
-    /// An assignment while calls are read, before its value's calls are:
+    /// An assignment while calls are read, once its value's calls are:
     /// the variable takes the value's type (a function's first assignment
     /// of a name binds it, spec §7).
     pub(crate) fn note_scanned_assign(&mut self, name: &str, ty: CrowType) {

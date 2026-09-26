@@ -1117,17 +1117,14 @@ impl<'a> Lowerer<'a> {
                     self.check_reserved(name, "variable");
                 }
                 self.check_top_write(name);
-                if self.pass == Pass::Scan {
-                    // the call scan settles the variable before its value's
-                    // calls are read
-                    let ty = self.ctx.infer_expr_full(value);
-                    self.ctx.note_scanned_assign(name, ty);
-                }
                 let expr = self.lower_expr(value)?;
                 if self.pass == Pass::Final {
                     self.check_assign(name, &self.seen_type(value));
                 }
                 if self.pass == Pass::Scan {
+                    // the call scan settles the variable once its value's
+                    // calls are read, with the value's type
+                    self.ctx.note_scanned_assign(name, full(&expr));
                     self.ctx.note_scanned_value(name, value);
                 } else if let Some(schema) = self.ctx.frame_schema_of(value) {
                     // the columns a local reads are those of the value
@@ -1554,18 +1551,19 @@ impl<'a> Lowerer<'a> {
         Stmt::Set { var: name.to_string(), expr }
     }
 
-    /// The call scan's `a, b = x, y` (F5): each name settles with its own
-    /// value's type as the scan pairs them, before the values' calls are
-    /// read.
+    /// The call scan's `a, b = x, y` (F5): once the values' calls are
+    /// read, each name settles with its own value's type read as text, as
+    /// the scan pairs them.
     fn scanned_multi(&mut self, names: &[String], values: &[A]) -> Result<Vec<Stmt>, String> {
+        let mut types = Vec::with_capacity(values.len());
+        for v in values {
+            let x = self.lower_expr(v)?;
+            types.push(read(&x));
+        }
         let in_body = self.ctx.body_assigned.is_some();
-        for (n, v) in names.iter().zip(values) {
-            let t = self.ctx.infer_expr(v);
+        for (n, t) in names.iter().zip(types) {
             let existing = self.ctx.vars.get(n).cloned().unwrap_or(CrowType::Unknown);
             self.ctx.vars.insert(n.clone(), crate::type_infer::settle::settle(&existing, t, in_body));
-        }
-        for v in values {
-            self.lower_expr(v)?;
         }
         for n in names {
             let store = self.is_fact(n) && self.sees_facts();

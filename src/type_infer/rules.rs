@@ -12,8 +12,8 @@ impl TypeContext {
     pub fn infer_call_base_typed(&self, name: &str, args: &[Expr], _callee: &Expr, arg_types: &[CrowType], full: &[CrowType]) -> CrowType {
         let arg_ty = |a: &Expr| -> CrowType {
             match args.iter().position(|x| std::ptr::eq(x, a)) {
-                Some(i) => arg_types[i].clone(),
-                None => self.infer_expr(a),
+                Some(i) => arg_types.get(i).cloned().unwrap_or(CrowType::Unknown),
+                None => CrowType::Unknown,
             }
         };
         // a body's own list, map or text is indexed, whatever a module
