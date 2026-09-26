@@ -31,6 +31,25 @@ impl Emitter {
         out
     }
 
+    /// The facts a block reads or stores itself: all a handler, a render
+    /// or a derivation reads from the session's state up front (a helper it
+    /// calls reads its own).
+    pub(crate) fn facts_used(block: &[Stmt]) -> BTreeSet<String> {
+        let mut out = Self::facts_stored(block);
+        visit_block(block, &mut |e| {
+            if let Expr::Load(fact, _) = e {
+                out.insert(fact.clone());
+            }
+        });
+        // a part of one assigned (`items[0] = x`) names it too
+        visit_stmts(block, &mut |s| {
+            if let Stmt::SetPath { var, .. } = s {
+                out.insert(var.clone());
+            }
+        });
+        out
+    }
+
     /// The facts a block stores itself.
     pub(crate) fn facts_stored(block: &[Stmt]) -> BTreeSet<String> {
         let mut out = BTreeSet::new();
@@ -170,7 +189,11 @@ impl Emitter {
             self.line("let __view = state.view_enter();");
         }
         if is_reactive_render || is_reactive_handler {
+            let used = Self::facts_used(&f.body);
             for (v, (vt, d)) in self.reactive_vars.clone() {
+                if !used.contains(&v) {
+                    continue;
+                }
                 let kw = if is_reactive_handler { "let mut" } else { "let" };
                 self.line(&format!("{} {} = {};", kw, v, Self::state_getter(&v, &vt, &d)));
                 self.declare(&v, vt);
@@ -282,7 +305,11 @@ impl Emitter {
         self.returns_unit = false;
         self.cur_fn = name.clone();
         self.mutated = Self::mutated_in(&d.body);
+        let used = Self::facts_used(&d.body);
         for (v, (vt, dv)) in self.reactive_vars.clone() {
+            if !used.contains(&v) {
+                continue;
+            }
             self.line(&format!("let {} = {};", v, Self::state_getter(&v, &vt, &dv)));
             self.declare(&v, vt);
         }

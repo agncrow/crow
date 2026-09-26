@@ -156,6 +156,15 @@ benchmark.
   the 230 places a string is read deciding whether markup is one there.
   Taken up when the builtins move to the table (§4 step 2), which reads
   each of those places anyway.
+- **2026-09-26, a compiled body reads only the facts it uses.** Every
+  handler, render and derivation body read every fact of the program
+  from the session's JSON up front, used or not. Each now reads the
+  facts it loads, stores or assigns into (`facts_used`): finch's
+  generated Rust has 320 such reads where it had 10,501, and 43 JSON
+  decodings of a list, map or record where it had 1,870; the file is
+  8,709 lines where it was 18,783. The served pages, the task board's
+  and finch's compiled tests and finch's build all pass. The facts as a
+  struct (§4 step 4) take the rest of the JSON away.
 - Next: the status held only
   where the IR types a value as able to fail (decision 1), the scalar
   lists (decision 3), builtins from the table (§4 step 2), and the
