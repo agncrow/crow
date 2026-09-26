@@ -919,7 +919,7 @@ weeks; the core stages are weeks each.
   finch's `crow build --ir` takes 5.5 s against 6.0 s before this step.
 - **2026-09-26, F5 closed; S11 deferred.** What F5 was decided for is
   done: signatures are found by lowering bodies to a fixpoint, and the
-  walk is gone from inference (type_infer.rs is 1,227 lines, from
+  walk is gone from inference (type_infer.rs is 1,252 lines, from
   2,230). S11, a scoped environment retiring the renaming of block names
   (`x__s2`), is left for later: its gain is names (the IR and the Rust
   would say `x` where they say `x__s2`; messages already do), and its
