@@ -1791,10 +1791,15 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         process::exit(1);
     });
 
-    // Type inference and validation. The compiler may ask the program's
-    // databases what each literal query returns, so frame cells are typed
-    // natively.
-    let ctx = infer_and_validate(&stmts, describing()).unwrap_or_else(|e| {
+    let entry_file = std::path::Path::new(entry).file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| entry.to_string());
+    let name = std::path::Path::new(&entry_file).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| entry_file.clone());
+    // Type inference, and the lowering to the IR the interpreter runs,
+    // which refuses what is not a program. The compiler may ask the
+    // program's databases what each literal query returns, so frame cells
+    // are typed natively.
+    let (ctx, program) = infer_and_lower(&stmts, describing(), &name).unwrap_or_else(|e| {
         eprintln!("{}", refine_error_lines(&source, &e));
         process::exit(1);
     });
@@ -1802,31 +1807,20 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     // the compiled program renames each one it declares, after the gate has
     // spoken in the program's own names, and prints the program's name
     // wherever one reaches the reader
-    let (stmts, ctx, shown) = match rust_names::rename_rust_keywords(&stmts) {
-        None => (stmts, ctx, std::collections::BTreeMap::new()),
+    let (ctx, program, shown) = match rust_names::rename_rust_keywords(&stmts) {
+        None => (ctx, program, std::collections::BTreeMap::new()),
         Some((renamed, shown)) => {
-            let ctx = infer_and_validate(&renamed, describing()).unwrap_or_else(|e| {
+            let (ctx, program) = infer_and_lower(&renamed, describing(), &name).unwrap_or_else(|e| {
                 eprintln!("{}", refine_error_lines(&source, &e));
                 process::exit(1);
             });
-            (renamed, ctx, shown)
+            (ctx, program, shown)
         }
     };
     for note in &ctx.describe_notes {
         eprintln!("{}", note);
     }
-
-    let entry_file = std::path::Path::new(entry).file_name()
-        .map(|f| f.to_string_lossy().to_string())
-        .unwrap_or_else(|| entry.to_string());
-    // The Rust backend: the program lowered to the IR the interpreter runs,
-    // then printed as Rust
-    let mut ctx = ctx;
-    let name = std::path::Path::new(&entry_file).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| entry_file.clone());
-    let program = lower_ir::lower(&stmts, &mut ctx, &name).unwrap_or_else(|e| {
-        eprintln!("error: {}", e);
-        process::exit(1);
-    });
+    // The Rust backend: the program's IR printed as Rust
     let test_control = TEST_CONTROL.load(std::sync::atomic::Ordering::SeqCst);
     let emitted = emit_rs::emit_with(&program, ctx.registry.clone(), &entry_file, shown, cpu, test_control).unwrap_or_else(|e| {
         eprintln!("error: {}", e);
@@ -3376,15 +3370,14 @@ fn ir_of_file(entry: &str, describe: bool) -> Result<String, String> {
     let mut visited = std::collections::HashSet::new();
     let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
     let stmts = lower::lower_program(&stmts)?;
-    let mut ctx = infer_and_validate(&stmts, describe)?;
-    for note in &ctx.describe_notes {
-        eprintln!("{}", note);
-    }
     let name = std::path::Path::new(entry)
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| entry.to_string());
-    let program = lower_ir::lower(&stmts, &mut ctx, &name)?;
+    let (ctx, program) = infer_and_lower(&stmts, describe, &name)?;
+    for note in &ctx.describe_notes {
+        eprintln!("{}", note);
+    }
     Ok(ir::print(&program))
 }
 
@@ -3444,6 +3437,22 @@ fn generated_cargo_toml(project_name: &str, deps: &str) -> String {
 /// types is refused by all of them; `CROW_NO_DESCRIBE` turns it off.
 pub(crate) fn describing() -> bool {
     std::env::var("CROW_NO_DESCRIBE").is_err()
+}
+
+/// The program inferred and lowered once (F5 S10): the lowering is the gate
+/// — it refuses what is not a program, each error owned by the part it is
+/// in — and its IR is the one the backends read, so a pipeline that runs or
+/// builds a program lowers it once.
+fn infer_and_lower(lowered: &[ast::Stmt], describe: bool, name: &str) -> Result<(type_infer::TypeContext, ir::Program), String> {
+    let mut ctx = type_infer::TypeContext::new();
+    ctx.describe_queries = describe;
+    ctx.infer_program(lowered);
+    match lower_ir::lower_refusing(lowered, &mut ctx, name) {
+        Ok(program) => Ok((ctx, program)),
+        // a message names a variable as the program wrote it
+        Err(lower_ir::Refusal::Invalid(errors)) => Err(lower::shown(&attribute_to_parts(&errors))),
+        Err(refusal) => Err(refusal.message()),
+    }
 }
 
 fn infer_and_validate(lowered: &[ast::Stmt], describe: bool) -> Result<type_infer::TypeContext, String> {
@@ -4138,13 +4147,6 @@ fn cmd_run_file_interpreted(filename: &str) {
             process::exit(1);
         }
     };
-    let mut ctx = match infer_and_validate(&lowered, describing()) {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            eprintln!("{}", refine_error_lines(&source, &e));
-            process::exit(1);
-        }
-    };
     let serves = serve_line(&lowered).is_some();
     // then the one typed form (ir-design.md), walked by the interpreter
     let base = source_of_bytecode(filename);
@@ -4152,10 +4154,13 @@ fn cmd_run_file_interpreted(filename: &str) {
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| base.clone());
-    let program = lower_ir::lower(&lowered, &mut ctx, &name).unwrap_or_else(|e| {
-        eprintln!("{}", e);
-        process::exit(1);
-    });
+    let (ctx, program) = match infer_and_lower(&lowered, describing(), &name) {
+        Ok(lowered_once) => lowered_once,
+        Err(e) => {
+            eprintln!("{}", refine_error_lines(&source, &e));
+            process::exit(1);
+        }
+    };
     if serves {
         // a program that serves pages: its main runs, then the interpreter
         // renders and handles for the live runtime's sessions
