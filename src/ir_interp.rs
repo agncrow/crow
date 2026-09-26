@@ -27,19 +27,55 @@ enum Flow {
     Continue,
 }
 
+/// How the walker's own maps hash a name: cheaply (FxHash's rotate and
+/// multiply), since their keys are the program's names, not outside input.
+#[derive(Default, Clone, Copy)]
+struct NameHasher(u64);
+
+impl std::hash::Hasher for NameHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.add(u64::from_le_bytes(word));
+        }
+    }
+    fn write_u8(&mut self, i: u8) {
+        self.add(i as u64);
+    }
+    fn write_usize(&mut self, i: usize) {
+        self.add(i as u64);
+    }
+}
+
+impl NameHasher {
+    fn add(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+}
+
+type Names = std::hash::BuildHasherDefault<NameHasher>;
+
 /// A scope is shared until written (a parallel loop clones the walker per
 /// chunk of items; the clone costs one reference per scope).
-type Scope = Arc<HashMap<String, CrowValue>>;
+type Scope = Arc<HashMap<String, CrowValue, Names>>;
 
 #[derive(Clone)]
 struct Frame {
     scopes: Vec<Scope>,
+    /// The function the frame runs, named as it was called (a trace and a
+    /// refusal say it). Its own copy: a name shared between the threads of
+    /// a parallel loop is a reference count every call of every thread
+    /// writes, slower than the copy.
     fn_name: String,
 }
 
 #[derive(Clone)]
 pub struct IrInterp {
-    fns: HashMap<String, Arc<Fn>>,
+    fns: HashMap<String, Arc<Fn>, Names>,
     derives: HashMap<String, Arc<Derive>>,
     structs: HashMap<String, Arc<crate::ir::StructDef>>,
     registry: ModuleRegistry,
@@ -295,7 +331,7 @@ pub fn run_scenario(decls: &[crate::ast::Stmt], label: &str, body: &[crate::ast:
         crow_runtime::moments::hold(None);
         return (Err("lowering: the test block is missing".into()), vec![], vec![]);
     };
-    it.frames[0].scopes.push(Arc::new(HashMap::new()));
+    it.frames[0].scopes.push(Arc::new(HashMap::default()));
     let result = it.exec_stmts(&test.body).map(|_| ()).map_err(|e| it.with_line(e));
     crow_runtime::moments::hold(None);
     let after = it.fact_values();
@@ -340,7 +376,7 @@ pub fn run_test(decls: &[crate::ast::Stmt], label: &str, params: &[(String, Crow
     let test = program.parts.iter().flat_map(|p| p.tests.iter()).last().ok_or("lowering: the test block is missing")?;
     // the block runs at the program's top level, in a scope of its own: it
     // sees the declarations' variables as a caller would, and its inputs
-    let mut scope = HashMap::new();
+    let mut scope: HashMap<String, CrowValue, Names> = HashMap::default();
     for (p, v) in params {
         scope.insert(p.clone(), v.clone());
     }
@@ -361,11 +397,11 @@ impl IrInterp {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| source_file.to_string());
         IrInterp {
-            fns: HashMap::new(),
+            fns: HashMap::default(),
             derives: HashMap::new(),
             structs: HashMap::new(),
             registry: registry.clone(),
-            frames: vec![Frame { scopes: vec![Arc::new(HashMap::new())], fn_name: String::new() }],
+            frames: vec![Frame { scopes: vec![Arc::new(HashMap::default())], fn_name: String::new() }],
             line: 0,
             file,
             last_value: None,
@@ -588,7 +624,7 @@ impl IrInterp {
     // ── scopes ──────────────────────────────────────────────────────
 
     fn push_scope(&mut self) {
-        self.frames.last_mut().unwrap().scopes.push(Arc::new(HashMap::new()));
+        self.frames.last_mut().unwrap().scopes.push(Arc::new(HashMap::default()));
     }
 
     fn pop_scope(&mut self) {
@@ -1999,16 +2035,17 @@ impl IrInterp {
                 return Ok(CrowValue::markup(format!("error: {}", crate::harness::html_escape_text(&bad.reason()))));
             }
         }
-        let mut scope = HashMap::new();
+        let mut scope = HashMap::with_capacity_and_hasher(f.params.len(), Names::default());
         for ((p, _), v) in f.params.iter().zip(vals) {
             scope.insert(p.clone(), v);
         }
+        let fn_name = name.to_string();
         let saved_line = self.line;
         let is_view = f.kind == FnKind::View;
         if is_view {
             self.in_view += 1;
         }
-        self.frames.push(Frame { scopes: vec![Arc::new(scope)], fn_name: name.to_string() });
+        self.frames.push(Frame { scopes: vec![Arc::new(scope)], fn_name });
         let r = self.exec_stmts(&f.body);
         let r = self.returned(r);
         self.frames.pop();
@@ -2040,7 +2077,7 @@ impl IrInterp {
         let d = self.derives.get(name).cloned().ok_or_else(|| format!("unknown derivation '{}'", name))?;
         // the reader's line is still the line reading it
         let saved_line = self.line;
-        self.frames.push(Frame { scopes: vec![Arc::new(HashMap::new())], fn_name: name.to_string() });
+        self.frames.push(Frame { scopes: vec![Arc::new(HashMap::default())], fn_name: name.to_string() });
         let r = self.exec_stmts(&d.body);
         let r = self.returned(r);
         self.frames.pop();
