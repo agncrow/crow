@@ -82,7 +82,12 @@ text, true, false, true for a flag — and NULL in the second row of a
 column that can hold one (`float?` in the record), so a program that walks
 the rows meets the missing cell it has to decide on. A statement that
 hands `IN ?` a list runs as `IN (?, ?, …)`, and matches its record and
-fixture as the `?` it was written as. A write — `exec`, `insert`, a
+fixture as the `?` it was written as. `crow check --record-fixtures` runs
+the scenarios as *recordings*: a statement that can only read goes to the
+real database, what it answers first is kept as its fixture (its first
+10,000 rows; the run says when it kept fewer than there were), and a later
+read of it is answered from that, as the rehearsals after will be. A write
+is recorded as in any rehearsal, so a recording never changes a database. A write — `exec`, `insert`, a
 migration, a statement through `query` that changes rows — is recorded
 with its payload and the program sees success; a shell command and a file
 written, moved or removed are recorded instead of run; mail is recorded

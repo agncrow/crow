@@ -3635,7 +3635,41 @@ thread_local! {
 /// does not exist yet — or one missing a table the statement reads — is
 /// described from a scratch copy the program's `CREATE` statements build,
 /// so a new app's columns are typed on its first build as on every later one.
+/// `IN ?` as the list of one it is sent as, `IN (?)`: a list parameter's
+/// `?` is only ever sent expanded, and no database prepares `IN $2` (finch's
+/// headlines, asked about as written, went untyped)
+fn in_lists_as_one(sql: &str) -> String {
+    let chars: Vec<char> = sql.chars().collect();
+    let mut out = String::with_capacity(sql.len() + 8);
+    let mut quote: Option<char> = None;
+    for (i, &c) in chars.iter().enumerate() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c == '\'' || c == '"' => quote = Some(c),
+            None if c == '?' => {
+                let mut j = i;
+                while j > 0 && chars[j - 1].is_whitespace() {
+                    j -= 1;
+                }
+                let after_in = j >= 2
+                    && chars[j - 2..j].iter().collect::<String>().eq_ignore_ascii_case("IN")
+                    && (j == 2 || !(chars[j - 3].is_ascii_alphanumeric() || chars[j - 3] == '_'));
+                if after_in {
+                    out.push_str("(?)");
+                    continue;
+                }
+            }
+            None => {}
+        }
+        out.push(c);
+    }
+    out
+}
+
 pub fn describe_with_tables(url: &str, sql: &str, ddl: &[String]) -> Result<Vec<(String, String)>, String> {
+    let listed = in_lists_as_one(sql);
+    let sql = listed.as_str();
     let sqlite_path = url.strip_prefix("sqlite://");
     let missing = sqlite_path.map_or(false, |p| p == ":memory:" || !std::path::Path::new(p).exists());
     if missing {
@@ -3806,6 +3840,22 @@ mod tests {
         let cols = describe_with_tables(&url, "SELECT shares, round((exit_px - entry_px) * shares, 2) AS pnl FROM trades WHERE session_id = ?", &[]).unwrap();
         // (no column is declared NOT NULL: each can hold NULL)
         assert_eq!(cols, vec![("shares".to_string(), "int?".to_string()), ("pnl".to_string(), "float?".to_string())]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A statement with a list parameter (`IN ?`) is asked about as the list
+    /// of one it is sent as: no database prepares `IN ?`
+    #[test]
+    fn a_list_parameter_is_described_as_a_list_of_one() {
+        assert_eq!(in_lists_as_one("SELECT a FROM t WHERE b IN ? AND c NOT IN  ? AND d = '? IN ?' AND e = ? AND MIN(f) > ?"), "SELECT a FROM t WHERE b IN (?) AND c NOT IN  (?) AND d = '? IN ?' AND e = ? AND MIN(f) > ?");
+        let dir = std::env::temp_dir().join(format!("crow_describe_in_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("in.db");
+        let _ = std::fs::remove_file(&path);
+        let url = format!("sqlite://{}", path.display());
+        crow_db::connect(&url, Some(1)).unwrap().exec("CREATE TABLE news (sym TEXT NOT NULL, at REAL NOT NULL)", &[]).unwrap();
+        let cols = describe_with_tables(&url, "SELECT sym, at FROM news WHERE sym IN ?", &[]).unwrap();
+        assert_eq!(cols, vec![("sym".to_string(), "str".to_string()), ("at".to_string(), "float".to_string())]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

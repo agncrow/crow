@@ -1572,6 +1572,22 @@ impl<'a> Lowerer<'a> {
             }
         }
         self.check_callee(callee, args);
+        // a list handed to a `?` is sent as (?, ?, …), which only `IN` reads:
+        // finch's `n.symbol = ANY(?)` handed its symbols failed at the
+        // database every time (Postgres wants an array there, not a row)
+        if matches!(name.as_str(), "query" | "exec") && matches!(module.as_deref(), None | Some("db")) {
+            if let (Some(A::Str(sql)), Some(A::Array(items))) = (args.get(1), args.get(2)) {
+                let before = words_before_placeholders(sql);
+                for (i, item) in items.iter().enumerate() {
+                    let t = self.ctx.infer_expr(item);
+                    let t = if let CrowType::Result(inner) = t { *inner } else { t };
+                    let is_list = matches!(t, CrowType::Array(_) | CrowType::NumArray(_));
+                    if is_list && before.get(i).is_some_and(|w| !w.eq_ignore_ascii_case("IN")) {
+                        self.refuse(format!("{}: parameter {} is a list, which is sent as (?, ?, …) — only `IN ?` reads one: write `x IN ?`", name, i + 1));
+                    }
+                }
+            }
+        }
         // a mask decides each row, and an error decides nothing: a list of
         // values that can fail (a cell of a column that can be missing) is
         // not a mask, in either mode (compiled, it did not build; the
@@ -1800,6 +1816,35 @@ impl<'a> Lowerer<'a> {
 }
 
 // ── analyses over the parser's tree ─────────────────────────────────
+
+/// The word before each `?` of a statement, outside quotes, an opening
+/// parenthesis passed over (`ANY(?)` is `ANY`): where a list parameter
+/// may go (only after `IN`).
+pub(crate) fn words_before_placeholders(sql: &str) -> Vec<String> {
+    let chars: Vec<char> = sql.chars().collect();
+    let mut out = Vec::new();
+    let mut quote: Option<char> = None;
+    for (i, &c) in chars.iter().enumerate() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c == '\'' || c == '"' => quote = Some(c),
+            None if c == '?' => {
+                let mut j = i;
+                while j > 0 && (chars[j - 1].is_whitespace() || chars[j - 1] == '(') {
+                    j -= 1;
+                }
+                let end = j;
+                while j > 0 && (chars[j - 1].is_ascii_alphanumeric() || chars[j - 1] == '_') {
+                    j -= 1;
+                }
+                out.push(chars[j..end].iter().collect());
+            }
+            None => {}
+        }
+    }
+    out
+}
 
 /// The facts a function can write: a part's function any part's, whose
 /// names carry that part's prefix — an unprefixed name there is a local.

@@ -6,6 +6,12 @@
 //! — `exec`, `insert`, a migration, a statement through `query` that
 //! changes rows — is recorded as an effect with its payload, and the
 //! program sees success. Nothing leaves the machine.
+//!
+//! A recording (`crow check --record-fixtures`) is a rehearsal whose reads
+//! go to the real databases: what each statement answers first is kept as
+//! its fixture, and a later read of it is answered from that, as the
+//! rehearsals after will be. Writes are recorded as in any rehearsal — a
+//! recording never changes a database.
 
 use crow_runtime::frame::{Column, CrowFrame};
 use std::cell::RefCell;
@@ -15,6 +21,10 @@ use std::sync::{Arc, Mutex};
 /// Rows a query is answered with when no fixture holds it: three, their
 /// cells counted by kind (1, 2, 3; 1.0, 2.0, 3.0; `name1`…; true, false).
 const GENERATED_ROWS: usize = 3;
+
+/// Rows a recorded fixture keeps of what its database answered: a day of
+/// one-second bars is too many to keep in a project.
+pub const FIXTURE_ROWS: usize = 10_000;
 
 /// One rehearsal: what it knows of the program's databases, and what the
 /// program did to them.
@@ -29,6 +39,14 @@ pub struct Rehearsal {
     pub generated: Mutex<Vec<String>>,
     /// The assertions that did not hold on rehearsal data.
     pub unheld: Mutex<Vec<String>>,
+    /// Recording: reads go to the real databases, and what each answers is
+    /// kept.
+    recording: bool,
+    /// The real connections a recording reads through, by URL.
+    real: Mutex<std::collections::BTreeMap<String, Result<crow_db::DbHandle, String>>>,
+    /// What each statement read answered first, by the statement as it was
+    /// written: the statement as run, the rows kept, the rows answered.
+    pub recorded: Mutex<std::collections::BTreeMap<String, (String, CrowFrame, usize)>>,
 }
 
 thread_local! {
@@ -42,6 +60,16 @@ pub fn active() -> Option<Arc<Rehearsal>> {
 
 /// Start a rehearsal of the project at `root`: its `.crow/schema` read.
 pub fn begin(root: &Path) -> Arc<Rehearsal> {
+    begin_as(root, false)
+}
+
+/// Start a recording of the project at `root`: a rehearsal whose reads the
+/// real databases answer.
+pub fn begin_recording(root: &Path) -> Arc<Rehearsal> {
+    begin_as(root, true)
+}
+
+fn begin_as(root: &Path, recording: bool) -> Arc<Rehearsal> {
     let mut schema = Vec::new();
     if let Ok(dir) = std::fs::read_dir(root.join(".crow").join("schema")) {
         let mut files: Vec<PathBuf> = dir.filter_map(|e| e.ok().map(|e| e.path())).collect();
@@ -58,6 +86,9 @@ pub fn begin(root: &Path) -> Arc<Rehearsal> {
         effects: Mutex::new(Vec::new()),
         generated: Mutex::new(Vec::new()),
         unheld: Mutex::new(Vec::new()),
+        recording,
+        real: Mutex::new(std::collections::BTreeMap::new()),
+        recorded: Mutex::new(std::collections::BTreeMap::new()),
     });
     ACTIVE.with(|a| *a.borrow_mut() = Some(r.clone()));
     r
@@ -124,6 +155,36 @@ pub fn connect(url: &str) -> crow_db::DbHandle {
     crow_db::DbHandle::new(RehearsalDb { url: url.to_string(), r })
 }
 
+/// Whether a statement can only read: it starts as a query does and names
+/// no write anywhere (a `WITH … INSERT` writes). Only such a statement goes
+/// to a real database in a recording.
+fn reads_only(sql: &str) -> bool {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut quote: Option<char> = None;
+    for c in sql.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c == '\'' || c == '"' || c == '`' => quote = Some(c),
+            None if c.is_ascii_alphanumeric() || c == '_' => word.push(c.to_ascii_uppercase()),
+            None => {
+                if !word.is_empty() {
+                    words.push(std::mem::take(&mut word));
+                }
+            }
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    let first = words.first().map(String::as_str).unwrap_or("");
+    matches!(first, "SELECT" | "WITH" | "SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN")
+        && !words.iter().any(|w| {
+            matches!(w.as_str(), "INSERT" | "UPDATE" | "DELETE" | "MERGE" | "UPSERT" | "REPLACE" | "TRUNCATE" | "DROP" | "ALTER" | "CREATE" | "GRANT" | "REVOKE" | "ATTACH" | "DETACH" | "OPTIMIZE" | "KILL" | "SYSTEM" | "RENAME")
+        })
+}
+
 /// Whether a statement changes rows or the schema, not only reads them.
 fn writes(sql: &str) -> bool {
     let first = sql.trim_start().split_whitespace().next().unwrap_or("").to_ascii_uppercase();
@@ -138,7 +199,12 @@ fn one_placeholder_per_list(sql: &str) -> String {
     let mut out = String::with_capacity(sql.len());
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'(' {
+        // a list goes where `IN ?` was written
+        let after_in = {
+            let head = sql[..i].trim_end();
+            head.len() >= 2 && head[head.len() - 2..].eq_ignore_ascii_case("IN") && head[..head.len() - 2].chars().last().map_or(true, |c| !c.is_ascii_alphanumeric() && c != '_')
+        };
+        if b[i] == b'(' && after_in {
             // `(` then `?`s separated by commas, or a lone NULL, then `)`
             let mut j = i + 1;
             let skip = |j: &mut usize| while *j < b.len() && b[*j].is_ascii_whitespace() { *j += 1 };
@@ -262,6 +328,10 @@ impl Rehearsal {
     fn answer(&self, url: &str, sql: &str, params: &[serde_json::Value]) -> CrowFrame {
         if writes(sql) {
             self.record(url, sql, params);
+        } else if self.recording && reads_only(sql) {
+            if let Some(f) = self.read_real(url, sql, params) {
+                return f;
+            }
         }
         if let Some(f) = self.fixture(sql) {
             return f;
@@ -274,6 +344,26 @@ impl Rehearsal {
         }
         // a write that answers (RETURNING) answers one row
         self.generated_rows(sql, if writes(sql) { 1 } else { GENERATED_ROWS })
+    }
+
+    /// A read in a recording: the real database answers it once, and that
+    /// answer — its first FIXTURE_ROWS rows — is the statement's from then
+    /// on, as the fixture it becomes will be. `None` when the database
+    /// cannot answer (it is not there): the rehearsal answers.
+    fn read_real(&self, url: &str, sql: &str, params: &[serde_json::Value]) -> Option<CrowFrame> {
+        let key = one_placeholder_per_list(sql);
+        if let Some((_, f, _)) = self.recorded.lock().ok()?.get(&key) {
+            return Some(f.clone());
+        }
+        let db = {
+            let mut real = self.real.lock().ok()?;
+            real.entry(url.to_string()).or_insert_with(|| crow_db::connect(url, Some(1))).clone().ok()?
+        };
+        let frame = db.query(sql, params).ok()?;
+        let answered = frame.nrows();
+        let kept = if answered > FIXTURE_ROWS { frame.head(FIXTURE_ROWS) } else { frame };
+        self.recorded.lock().ok()?.insert(key, (sql.to_string(), kept.clone(), answered));
+        Some(kept)
     }
 
     fn record(&self, url: &str, sql: &str, params: &[serde_json::Value]) {
@@ -291,6 +381,65 @@ impl Rehearsal {
             e.push(line);
         }
     }
+}
+
+/// The fixtures a recording kept, written to `.crow/fixtures`: one file per
+/// statement (`{"sql", "columns", "rows", "answered"}`), a statement a
+/// scenario of this run recorded first keeping its first answer. Each
+/// statement written, with the rows kept and the rows its database answered.
+pub fn keep_fixtures(r: &Rehearsal) -> Result<Vec<(String, usize, usize)>, String> {
+    static KEPT: Mutex<std::collections::BTreeSet<String>> = Mutex::new(std::collections::BTreeSet::new());
+    let recorded = r.recorded.lock().map_err(|e| e.to_string())?;
+    let mut kept = KEPT.lock().map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for (key, (_, frame, answered)) in recorded.iter() {
+        if !kept.insert(key.clone()) {
+            continue;
+        }
+        std::fs::create_dir_all(&r.fixtures).map_err(|e| e.to_string())?;
+        let columns: Vec<serde_json::Value> = frame
+            .columns
+            .iter()
+            .zip(frame.data.iter())
+            .map(|(name, col)| {
+                let kind = match col.as_ref() {
+                    Column::Int(_) => "int",
+                    Column::Float(_) => "float",
+                    Column::Bool(_) => "bool",
+                    _ => "str",
+                };
+                serde_json::json!([name, kind])
+            })
+            .collect();
+        let rows: Vec<serde_json::Value> = (0..frame.nrows())
+            .map(|i| {
+                serde_json::Value::Array(
+                    frame
+                        .data
+                        .iter()
+                        .zip(frame.validity.iter())
+                        .map(|(col, valid)| {
+                            if !valid[i] {
+                                return serde_json::Value::Null;
+                            }
+                            match col.as_ref() {
+                                Column::Int(v) => serde_json::json!(v[i]),
+                                Column::Float(v) => serde_json::json!(v[i]),
+                                Column::Bool(v) => serde_json::json!(v[i]),
+                                Column::Str(v) => serde_json::json!(v[i]),
+                                Column::DateTime(millis, offsets) => serde_json::json!(crow_runtime::frame::format_datetime(millis[i], offsets[i])),
+                            }
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+        let doc = serde_json::json!({ "sql": key, "columns": columns, "rows": rows, "answered": answered });
+        let path = r.fixtures.join(format!("{}.json", crate::type_infer::schema_record::fnv(&[key])));
+        std::fs::write(&path, serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())? + "\n").map_err(|e| e.to_string())?;
+        out.push((key.clone(), frame.nrows(), *answered));
+    }
+    Ok(out)
 }
 
 struct RehearsalDb {
@@ -353,6 +502,42 @@ mod tests {
         assert!(!writes("SELECT 1"));
     }
 
+    /// A recording reads the real database and keeps what it answered; its
+    /// writes are recorded, not made; a rehearsal after reads the fixture
+    #[test]
+    fn a_recording_keeps_what_the_database_answered() {
+        let root = std::env::temp_dir().join(format!("crow_recording_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("real.db");
+        let url = format!("sqlite://{}", path.display());
+        let real = crow_db::connect(&url, Some(1)).unwrap();
+        real.exec("CREATE TABLE marks (sym TEXT NOT NULL, px REAL)", &[]).unwrap();
+        real.exec("INSERT INTO marks VALUES ('AB', 1.5), ('CD', NULL)", &[]).unwrap();
+        let sql = "SELECT sym, px FROM marks WHERE sym IN ? ORDER BY sym -- a recording";
+        let r = begin_recording(&root);
+        let db = connect(&url);
+        let f = db.query(sql, &[serde_json::json!(["AB", "CD"])]).unwrap();
+        assert_eq!(f.nrows(), 2);
+        db.exec("INSERT INTO marks VALUES ('EF', 2.0)", &[]).unwrap();
+        let kept = keep_fixtures(&r).unwrap();
+        end();
+        assert_eq!(kept.len(), 1, "{:?}", kept);
+        assert_eq!(real.query("SELECT count(*) AS n FROM marks", &[]).unwrap().nrows(), 1);
+        let n = real.query("SELECT count(*) AS n FROM marks", &[]).unwrap();
+        assert!(matches!(n.data[0].as_ref(), Column::Int(v) if v[0] == 2), "the recording wrote to the database");
+        assert!(r.effects.lock().unwrap().iter().any(|e| e.contains("INSERT INTO marks VALUES ('EF', 2.0)")));
+        // a rehearsal after answers from the fixture: the rows, a NULL kept
+        let _r2 = begin(&root);
+        let g = connect(&url).query(sql, &[serde_json::json!(["AB"])]).unwrap();
+        end();
+        assert_eq!(g.nrows(), 2);
+        assert_eq!(*g.validity[1], vec![true, false]);
+        assert!(!reads_only("WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x"));
+        assert!(reads_only("SELECT 'insert' AS word FROM t"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// Generated rows hold NULL in the second row of a column that can hold
     /// one, and only there
     #[test]
@@ -376,5 +561,7 @@ mod tests {
         assert!(matches_record("INSERT INTO t (a, b) VALUES (?, ?)", "INSERT INTO t (a, b) VALUES (?, ?)"));
         assert!(!matches_record("SELECT symbol FROM bars WHERE date = toDate(?) AND dataset_id = ?", recorded));
         assert_eq!(one_placeholder_per_list("f(a, ?) IN ( ?, ? ) (x)"), "f(a, ?) IN ? (x)");
+        // a call with one parameter is not a list
+        assert_eq!(one_placeholder_per_list("toDate(?) AND x NOT IN (?, ?)"), "toDate(?) AND x NOT IN ?");
     }
 }

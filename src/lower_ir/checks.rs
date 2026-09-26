@@ -985,6 +985,17 @@ mod tests {
         assert!(err.contains("in band: derivations are not visible inside functions — read 'cfg' in a view or handler"), "{}", err);
     }
 
+    /// A list handed to a `?` is sent as (?, ?, …), which only `IN` reads:
+    /// finch's `= ANY(?)` handed a list failed at the database every time
+    #[test]
+    fn a_list_parameter_goes_after_in() {
+        let src = "use db\nbook = db.connect['sqlite://:memory:']\nsyms = ['A', 'B']\nr = query[book, 'SELECT 1 AS x WHERE ? = ANY(?)', ['A', syms]]\n";
+        let err = check_source(src).unwrap_err();
+        assert!(err.contains("query: parameter 2 is a list, which is sent as (?, ?, …) — only `IN ?` reads one: write `x IN ?`"), "{}", err);
+        assert!(check_source(&src.replace("? = ANY(?)", "? IN ?")).is_ok());
+        assert_eq!(crate::lower_ir::words_before_placeholders("a = ? AND b NOT IN ? AND c = ANY( ?) AND d = '?'"), vec!["", "IN", "ANY"]);
+    }
+
     /// A web response is what a route returns: a view placing one is refused
     /// in both modes (the interpreter showed `text[s]` as its text; the
     /// compiled page did not build)
