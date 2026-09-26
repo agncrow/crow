@@ -917,3 +917,16 @@ weeks; the core stages are weeks each.
   longer types each function's signature again before lowering it
   (inference has settled; the oracle is unchanged without it), and
   finch's `crow build --ir` takes 5.5 s against 6.0 s before this step.
+- **2026-09-26, F5 closed; S11 deferred.** What F5 was decided for is
+  done: signatures are found by lowering bodies to a fixpoint, and the
+  walk is gone from inference (type_infer.rs is 1,227 lines, from
+  2,230). S11, a scoped environment retiring the renaming of block names
+  (`x__s2`), is left for later: its gain is names (the IR and the Rust
+  would say `x` where they say `x__s2`; messages already do), and its
+  cost is every table inference, the lowering and the checks keep by
+  name made to follow blocks: a binding's settled type kept per binding
+  (the n-th binding of a name in a body, the same in the provisional and
+  the final lowering, and carried from inference to the final lowering
+  for the top level), the call scan's environment, the checks' first
+  types, and the frames' columns. The renaming keeps all of them right
+  meanwhile, since two blocks' variables never share a name.
