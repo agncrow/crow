@@ -815,3 +815,17 @@ weeks; the core stages are weeks each.
   handler call a harness click holds is typed from its lowered arguments
   (`held_type`), and the list-parameter check reads the lowered list's
   items. The oracle is unchanged.
+- **2026-09-26, F5 step S8, second part: a name nothing binds is no
+  variable, and a list of functions is read where it is called.** A
+  call of a name that no scope binds used to make it a variable holding
+  a function of the call's arguments: every builtin a program's top
+  level called (`log`, `len`, `page`, …) was one, and a fact not typed
+  yet would have become one where a view indexed it. The rule now only
+  refines a variable already holding a function; the bookkeeping that
+  guarded it (`top_values`, `current_fn_params`) is gone, and an
+  element's call is read from its lowered arguments. The oracle loses
+  exactly those entries, 1,125 lines of 324 types dumps, nothing added
+  and no IR or Rust changed. A call through a loop's variable over a list
+  of named functions (`for f in [double, square]`) types each of them
+  where the lowering meets it, not by a walk of the loop's body first;
+  the oracle is unchanged by that.

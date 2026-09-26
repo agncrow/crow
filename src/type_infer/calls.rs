@@ -7,7 +7,6 @@ use super::*;
 /// What `enter_fn_scan` saved: restored by `leave_fn_scan`.
 pub(crate) struct FnScan {
     saved_vars: BTreeMap<String, CrowType>,
-    saved_fn_params: Vec<String>,
     saved_fn_name: Option<String>,
     saved_in_view: bool,
     saved_frames: Vec<(String, Option<BTreeMap<String, CrowType>>)>,
@@ -17,7 +16,6 @@ pub(crate) struct FnScan {
 /// What `enter_derive_scan` saved: restored by `leave_derive_scan`.
 pub(crate) struct DeriveScan {
     saved_vars: BTreeMap<String, CrowType>,
-    saved_fn_params: Vec<String>,
     saved_fn_name: Option<String>,
     saved_assigned: Option<std::collections::HashSet<String>>,
 }
@@ -227,32 +225,16 @@ impl TypeContext {
                 self.structs.get_mut(name).unwrap().fields = new_fields;
             }
 
-            // Is it a variable holding a function? (not a declared function or struct)
-            // Only update Fn type — don't override concrete types like Array/Map.
-            // For function params with Unknown type, skip — [] is ambiguous (call vs index)
-            // and the call site will provide the actual type.
-            // For params already known to be Fn, allow refinement of arg types.
-            // A local the body assigned is untyped only until its value
-            // is (a slice of a parameter, early in the fixpoint): `hs[0]`
-            // says nothing, and a function guessed from it stuck to
-            // every function the local was passed to.
+            // A variable holding a function (`op = double`, then `op[5]`):
+            // its calls type its parameters. A variable of any other type
+            // is indexed, and a name nothing binds (a builtin, an element)
+            // is no variable — guessing a function from its call made a
+            // builtin one, and a fact not typed yet one a view indexed.
             if !self.functions.contains_key(name) && !self.structs.contains_key(name) {
-                let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-                let is_param = self.current_fn_params.contains(name);
-                let is_local = self.body_assigned.as_ref().map_or(self.top_values.contains(name), |a| a.contains(name));
-                match &existing {
-                    CrowType::Fn(_, _) => {
-                        // Already known to be Fn — refine arg types
-                        let fn_type = CrowType::Fn(arg_types.to_vec(), Box::new(CrowType::Unknown));
-                        let unified = existing.unify(&fn_type);
-                        self.vars.insert(name.clone(), unified);
-                    }
-                    CrowType::Unknown if !is_param && !is_local => {
-                        // Non-param Unknown variable called with [] — assume it's a function
-                        let fn_type = CrowType::Fn(arg_types.to_vec(), Box::new(CrowType::Unknown));
-                        self.vars.insert(name.clone(), fn_type);
-                    }
-                    _ => {} // Array, Map, param with Unknown — [] means indexing
+                if let Some(existing @ CrowType::Fn(_, _)) = self.vars.get(name) {
+                    let fn_type = CrowType::Fn(arg_types.to_vec(), Box::new(CrowType::Unknown));
+                    let unified = existing.unify(&fn_type);
+                    self.vars.insert(name.clone(), unified);
                 }
             }
         }
@@ -290,34 +272,14 @@ impl TypeContext {
         }
     }
 
-    /// A collecting loop over a list of named functions (`for f in [a, b]`):
-    /// each call through its variable in the body types every one of them.
-    /// Each call's arguments are typed as the loop begins.
-    pub(crate) fn note_function_list(&mut self, var: &str, iter: &Expr, body: &[Stmt]) {
-        let Expr::Array(elems) = iter else { return };
-        let fn_names: Vec<String> = elems
-            .iter()
-            .filter_map(|e| match e {
-                Expr::Ident(n) if self.functions.contains_key(n) => Some(n.clone()),
-                _ => None,
-            })
-            .collect();
-        if fn_names.len() != elems.len() || fn_names.is_empty() {
-            return;
-        }
-        let mut raw_calls: Vec<Vec<Expr>> = Vec::new();
-        Self::find_calls_to_var(body, var, &mut |args| {
-            raw_calls.push(args.to_vec());
-        });
-        let typed_calls: Vec<Vec<CrowType>> = raw_calls.iter().map(|args| args.iter().map(|a| self.infer_expr(a)).collect()).collect();
-        for fname in &fn_names {
-            if let Some(sig) = self.functions.get_mut(fname) {
-                for tys in &typed_calls {
-                    if tys.len() == sig.params.len() {
-                        for (p, t) in sig.params.iter_mut().zip(tys.iter()) {
-                            p.1 = p.1.unify(t);
-                        }
-                    }
+    /// A call through a loop's variable over a list of named functions
+    /// (`for f in [a, b]`, then `f[x]`): each of them takes the arguments'
+    /// types (read as text) when it takes as many.
+    pub(crate) fn note_through_list(&mut self, f: &str, types: &[CrowType]) {
+        if let Some(sig) = self.functions.get_mut(f) {
+            if types.len() == sig.params.len() {
+                for (p, t) in sig.params.iter_mut().zip(types) {
+                    p.1 = p.1.unify(t);
                 }
             }
         }
@@ -333,17 +295,13 @@ impl TypeContext {
 
     /// An assignment while calls are read, before its value's calls are:
     /// the variable takes the value's type (a function's first assignment
-    /// of a name binds it, spec §7), and a top-level name given a value
-    /// that is not a function's name is a value (`top_values`).
-    pub(crate) fn note_scanned_assign(&mut self, name: &str, value: &Expr, ty: CrowType) {
+    /// of a name binds it, spec §7).
+    pub(crate) fn note_scanned_assign(&mut self, name: &str, ty: CrowType) {
         if self.fresh_binding(name) {
             self.vars.insert(name.to_string(), ty);
         } else {
             let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
             self.vars.insert(name.to_string(), settle::settle(&existing, ty, self.body_assigned.is_some()));
-        }
-        if self.body_assigned.is_none() && !matches!(value, Expr::Ident(f) if self.functions.contains_key(f)) {
-            self.top_values.insert(name.to_string());
         }
     }
 
@@ -384,13 +342,11 @@ impl TypeContext {
     /// markup, and a frame a parameter is given keeps its columns.
     pub(crate) fn enter_fn_scan(&mut self, name: &str) -> FnScan {
         let saved_vars = self.vars.clone();
-        let saved_fn_params = self.current_fn_params.clone();
         let saved_fn_name = self.current_fn_name.replace(name.to_string());
         // inside a view an element is markup, at the calls it makes too
         let saved_in_view = std::mem::replace(&mut self.in_view, self.views.contains(name));
         let mut assigned = std::collections::HashSet::new();
         if let Some(sig) = self.functions.get(name) {
-            self.current_fn_params = sig.params.iter().map(|(n, _)| n.clone()).collect();
             for (pname, pty) in &sig.params.clone() {
                 self.vars.insert(pname.clone(), pty.clone());
                 assigned.insert(pname.clone());
@@ -398,14 +354,14 @@ impl TypeContext {
         }
         let saved_frames = self.param_frames_in_view(name);
         let saved_assigned = self.body_assigned.replace(assigned);
-        FnScan { saved_vars, saved_fn_params, saved_fn_name, saved_in_view, saved_frames, saved_assigned }
+        FnScan { saved_vars, saved_fn_name, saved_in_view, saved_frames, saved_assigned }
     }
 
     /// Out of a function's body after its calls were read: reactive state
     /// it refined keeps the refinement, and a parameter called as a
     /// function keeps what its calls said of it.
     pub(crate) fn leave_fn_scan(&mut self, name: &str, scan: FnScan) {
-        let FnScan { saved_vars, saved_fn_params, saved_fn_name, saved_in_view, saved_frames, saved_assigned } = scan;
+        let FnScan { saved_vars, saved_fn_name, saved_in_view, saved_frames, saved_assigned } = scan;
         self.body_assigned = saved_assigned;
         self.param_frames_out_of_view(saved_frames);
         // A module-level variable assigned in this body (reactive
@@ -441,7 +397,6 @@ impl TypeContext {
             self.functions.get_mut(name).unwrap().params = new_params;
         }
 
-        self.current_fn_params = saved_fn_params;
         self.current_fn_name = saved_fn_name;
         self.in_view = saved_in_view;
         self.vars = saved_vars;
@@ -455,17 +410,16 @@ impl TypeContext {
     /// their parameters from it, as they would from a handler's.
     pub(crate) fn enter_derive_scan(&mut self, name: &str) -> DeriveScan {
         let saved_vars = self.vars.clone();
-        let saved_fn_params = std::mem::take(&mut self.current_fn_params);
         let saved_fn_name = self.current_fn_name.replace(name.to_string());
         let saved_assigned = self.body_assigned.replace(std::collections::HashSet::new());
-        DeriveScan { saved_vars, saved_fn_params, saved_fn_name, saved_assigned }
+        DeriveScan { saved_vars, saved_fn_name, saved_assigned }
     }
 
     /// Out of a derivation's body after its calls were read: the frame it
     /// returns keeps its columns' types under its name, as a variable's
     /// would.
     pub(crate) fn leave_derive_scan(&mut self, name: &str, body: &[Stmt], scan: DeriveScan) {
-        let DeriveScan { saved_vars, saved_fn_params, saved_fn_name, saved_assigned } = scan;
+        let DeriveScan { saved_vars, saved_fn_name, saved_assigned } = scan;
         self.body_assigned = saved_assigned;
         let returned: Vec<Expr> = body.iter().filter_map(|s| if let Stmt::Return(Some(e)) = s { Some(e.clone()) } else { None }).collect();
         for e in returned {
@@ -476,7 +430,6 @@ impl TypeContext {
                 }
             }
         }
-        self.current_fn_params = saved_fn_params;
         self.current_fn_name = saved_fn_name;
         self.vars = saved_vars;
     }
