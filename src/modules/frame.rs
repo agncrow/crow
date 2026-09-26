@@ -19,7 +19,7 @@ impl CrowModule for FrameModule {
     fn call(&self, name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
         // Propagate errors
         for a in args {
-            if !a.ok { return Ok(a.clone()); }
+            if !a.is_ok() { return Ok(a.clone()); }
         }
         call_frame(name, args)
     }

@@ -19,7 +19,7 @@ impl CrowModule for StatsModule {
 
     fn call(&self, name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
         for a in args {
-            if !a.ok {
+            if !a.is_ok() {
                 return Ok(a.clone());
             }
         }
@@ -224,7 +224,7 @@ mod tests {
 
     fn unwrap_map(r: Result<CrowValue, String>) -> BTreeMap<String, CrowValue> {
         let cv = r.expect("call_stats failed");
-        assert!(cv.ok, "CrowValue is error: {}", cv.reason);
+        assert!(cv.is_ok(), "CrowValue is error: {}", cv.reason());
         match cv.value {
             Value::Map(m) => m,
             other => panic!("expected Map, got {:?}", other),
@@ -233,7 +233,7 @@ mod tests {
 
     fn unwrap_float(r: Result<CrowValue, String>) -> f64 {
         let cv = r.expect("call_stats failed");
-        assert!(cv.ok, "CrowValue is error: {}", cv.reason);
+        assert!(cv.is_ok(), "CrowValue is error: {}", cv.reason());
         match cv.value {
             Value::Float(f) => f,
             other => panic!("expected Float, got {:?}", other),

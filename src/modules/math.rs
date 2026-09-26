@@ -64,7 +64,7 @@ impl CrowModule for MathModule {
     fn call(&self, name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
         // Auto-propagation: if any argument is an error-value, return the first error.
         for a in args {
-            if !a.ok {
+            if !a.is_ok() {
                 return Ok(a.clone());
             }
         }
@@ -1156,7 +1156,7 @@ mod tests {
 
     fn unwrap_tensor(r: Result<CrowValue, String>) -> CrowTensor {
         let cv = r.expect("call_math failed");
-        assert!(cv.ok, "CrowValue is error: {}", cv.reason);
+        assert!(cv.is_ok(), "CrowValue is error: {}", cv.reason());
         match cv.value {
             Value::NumArray(t) => t,
             other => panic!("expected NumArray, got {:?}", other),
@@ -1164,7 +1164,7 @@ mod tests {
     }
     fn unwrap_float(r: Result<CrowValue, String>) -> f64 {
         let cv = r.expect("call_math failed");
-        assert!(cv.ok, "CrowValue is error: {}", cv.reason);
+        assert!(cv.is_ok(), "CrowValue is error: {}", cv.reason());
         match cv.value {
             Value::Float(f) => f,
             Value::Int(n) => n as f64,
@@ -1173,7 +1173,7 @@ mod tests {
     }
     fn unwrap_int(r: Result<CrowValue, String>) -> i64 {
         let cv = r.expect("call_math failed");
-        assert!(cv.ok, "CrowValue is error: {}", cv.reason);
+        assert!(cv.is_ok(), "CrowValue is error: {}", cv.reason());
         match cv.value {
             Value::Int(n) => n,
             other => panic!("expected Int, got {:?}", other),
@@ -1181,7 +1181,7 @@ mod tests {
     }
     fn unwrap_array(r: Result<CrowValue, String>) -> Vec<CrowValue> {
         let cv = r.expect("call_math failed");
-        assert!(cv.ok, "CrowValue is error: {}", cv.reason);
+        assert!(cv.is_ok(), "CrowValue is error: {}", cv.reason());
         match cv.value {
             Value::Array(a) => a,
             other => panic!("expected Array, got {:?}", other),
@@ -1624,7 +1624,7 @@ mod tests {
     fn test_seed() {
         let r = call_math("seed", &[int(42)]);
         let cv = r.expect("seed failed");
-        assert!(cv.ok);
+        assert!(cv.is_ok());
     }
 
     #[test]
@@ -1825,7 +1825,7 @@ mod tests {
     fn test_sparse_from_dense() {
         let t = tensor(vec![1.0, 0.0, 0.0, 2.0], vec![2, 2]);
         let r = call_math("sparse", &[t]).expect("sparse failed");
-        assert!(r.ok);
+        assert!(r.is_ok());
         match &r.value {
             Value::Sparse(_) => {},
             other => panic!("expected Sparse, got {:?}", other),

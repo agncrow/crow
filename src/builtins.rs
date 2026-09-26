@@ -31,7 +31,7 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                     print!(" ");
                 }
                 if arg.is_error() {
-                    print!("error: {}", arg.reason);
+                    print!("error: {}", arg.reason());
                 } else {
                     print!("{}", arg.value);
                 }
@@ -920,10 +920,10 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
             }
             let cond = &args[0];
             // An assert is a decision — errors have no truth value
-            if !cond.ok {
+            if !cond.is_ok() {
                 return Err(format!(
                     "cannot branch on an error value — {}",
-                    cond.reason
+                    cond.reason()
                 ));
             }
             let passed = match &cond.value {
