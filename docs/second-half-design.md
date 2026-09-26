@@ -150,7 +150,19 @@ known at run time. Shape errors are runtime errors in both modes.
 
 **First step.** Rank and literal dimensions for literals and the
 constructors (`zeros`, `ones`, `eye`, `rand` of a shape), carried through
-element-wise operators and `*`, with a unit test for the refusal.
+element-wise operators and `*`, with a unit test for the refusal. *Built
+(2026-09-26):* the lowering works out a tensor's shape from what the
+program states (a literal's nesting; `zeros`, `ones`, `full`, `rand`,
+`randn`, `eye`, `linspace` given literal sizes; `transpose`; a local as
+last assigned, forgotten where a later value's shape differs or a part
+of it is assigned), through `+`, `-`, `.*`, `./`, `.^` by the runtime's
+broadcasting and through `*` as the matrix product, and refuses the
+certainly wrong with the message the program would stop with
+(`lower_ir/shapes.rs`). The shape lives in that analysis, not yet in
+`Ty::Tensor`: carrying it in the type waits for fusion, which needs it
+there. Found on the way: a broadcast mismatch the program computes
+panics in both modes rather than failing as an error (the runtime's
+`broadcast_shape`).
 
 ## 4. Order
 

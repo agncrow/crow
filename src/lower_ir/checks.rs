@@ -1047,6 +1047,27 @@ mod tests {
         assert!(err.contains("cannot reassign 'x' from int to str"), "{}", err);
     }
 
+    /// A tensor's shape the program states — a literal, a constructor of
+    /// literal sizes — is known before it runs, through the element-wise
+    /// operators and `*`: two known dimensions that cannot meet are refused
+    /// then; a dimension the program computes is left to run time.
+    #[test]
+    fn shapes_the_program_states_meet_before_it_runs() {
+        let err = check_source("use math\na = [[1.0, 2.0], [3.0, 4.0]]\nb = zeros[2, 3]\nlog[a + b]\n").unwrap_err();
+        assert!(err.contains("`+` of tensors of shapes [2, 2] and [2, 3]: dimension 2 is 2 in one and 3 in the other"), "{}", err);
+        let err = check_source("use math\nlog[zeros[2, 2] * zeros[3, 3]]\n").unwrap_err();
+        assert!(err.contains("matmul: incompatible shapes [2, 2] × [3, 3] — the first's columns (2) must be the second's rows (3)"), "{}", err);
+        let err = check_source("use math\nlog[[1.0, 2.0] * eye[2]]\n").unwrap_err();
+        assert!(err.contains("needs two 2-D tensors, got shapes [2] and [2, 2]"), "{}", err);
+        // a shape kept through a local and a transpose
+        let err = check_source("use math\nfn f[]\n    a = zeros[2, 3]\n    b = transpose[a]\n    return a .* b\nlog[f[]]\n").unwrap_err();
+        assert!(err.contains("`.*` of tensors of shapes [2, 3] and [3, 2]"), "{}", err);
+        // broadcasting, a scalar, a computed dimension, a reshaped local: run time's
+        assert!(check_source("use math\nlog[zeros[2, 3] + ones[3], zeros[2, 3] * 2.0, eye[3] * zeros[3, 4]]\n").is_ok());
+        assert!(check_source("use math\nn = 4\nlog[zeros[n, 3] + zeros[5, 3]]\n").is_ok());
+        assert!(check_source("use math\nfn f[k]\n    a = zeros[2, 3]\n    if k gt 1\n        a = zeros[3, 3]\n    return a + zeros[3, 3]\nlog[f[2]]\n").is_ok());
+    }
+
     /// The checks read the lowering's types, a pure function's locals
     /// among them (they used to read the signatures, where a pure
     /// function's locals were not known): a local keeps its first type, and

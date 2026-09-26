@@ -266,6 +266,20 @@ c = full[3, 2] .^ 3    --- element-wise power
 d = ones[3] * 2        --- scalar multiply
 ```
 
+A shape the program states is known before it runs — a literal
+(`[[1.0, 2.0], [3.0, 4.0]]` is 2×2), a constructor given literal sizes
+(`zeros[2, 3]`, `ones`, `full`, `rand`, `randn`, `eye[3]`, `linspace`),
+and what `transpose`, the element-wise operators and `*` make of them —
+so an operation two known dimensions make certainly wrong is refused
+before it runs, in both modes: `*` of tensors that are not both 2-D, or
+whose inner dimensions differ (`matmul: incompatible shapes [2, 2] × [3,
+3] — …`), and an element-wise operation of two shapes that do not
+broadcast (each pair of dimensions, aligned from the innermost, equal or
+one of them 1: `` `+` of tensors of shapes [2, 2] and [2, 3]: dimension 2
+is 2 in one and 3 in the other — … ``). A dimension the program computes
+(`zeros[n, 3]`) is not known, and nothing about it is refused before the
+program runs.
+
 Scalar-array operations broadcast the scalar:
 
 ```

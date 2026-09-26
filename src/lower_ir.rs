@@ -15,6 +15,7 @@ use crate::type_infer::{CrowType, TypeContext};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod checks;
+mod shapes;
 pub(crate) use checks::{BUILTINS, CORE_RESERVED, UI_RESERVED, WEB_EXTRA_FUNCTIONS, WEB_RESERVED};
 
 /// Lower a whole (expanded, lowered, inferred) program.
@@ -553,6 +554,9 @@ struct Lowerer<'a> {
     /// While a test is lowered for the handlers it clicks: each handler
     /// call a click holds, with its arguments' types (`type_clicks`).
     clicks: Option<Vec<(String, Vec<CrowType>)>>,
+    /// The shapes of the body's tensor locals the program states
+    /// (`shapes.rs`).
+    shapes: HashMap<String, shapes::Shape>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -576,6 +580,7 @@ impl<'a> Lowerer<'a> {
             first_types: HashMap::new(),
             held: Vec::new(),
             clicks: None,
+            shapes: HashMap::new(),
         }
     }
 
@@ -604,6 +609,7 @@ impl<'a> Lowerer<'a> {
         let stored = self.v.stored.clone();
         let outer_first = std::mem::take(&mut self.first_types);
         let outer_held = std::mem::take(&mut self.held);
+        let outer_shapes = self.shapes.clone();
         self.v.mute += 1;
         if let Some(own) = own {
             self.scopes.push(own);
@@ -628,6 +634,7 @@ impl<'a> Lowerer<'a> {
         }
         self.first_types = outer_first;
         self.held = outer_held;
+        self.shapes = outer_shapes;
         self.v.mute = mute;
         self.v.line = line;
         self.v.local_types = local_types;
@@ -1077,7 +1084,9 @@ impl<'a> Lowerer<'a> {
         self.provisional(Pass::Settle, Some(params.iter().cloned().collect()), body);
         self.record_env(name, params, body);
         self.scopes.push(params.iter().cloned().collect());
+        let outer_shapes = std::mem::take(&mut self.shapes);
         let block = self.lower_block(body);
+        self.shapes = outer_shapes;
         self.scopes.pop();
         self.v.reactive = false;
         let mut block = block?;
@@ -1112,7 +1121,10 @@ impl<'a> Lowerer<'a> {
         self.provisional(Pass::Settle, Some(HashSet::new()), body);
         self.record_env(name, &[], body);
         self.scopes.push(HashSet::new());
-        let mut block = self.lower_block(body)?;
+        let outer_shapes = std::mem::take(&mut self.shapes);
+        let block = self.lower_block(body);
+        self.shapes = outer_shapes;
+        let mut block = block?;
         self.scopes.pop();
         self.ctx.leave_body(scope);
         place_moves_in(&mut block, &HashSet::new(), Some(&HashSet::new()));
@@ -1142,7 +1154,10 @@ impl<'a> Lowerer<'a> {
         self.provisional(Pass::Settle, Some(params.iter().cloned().collect()), body);
         self.record_env(&format!("test {}", name.clone().unwrap_or_default()), params, body);
         self.scopes.push(params.iter().cloned().collect());
-        let mut block = self.lower_block(body)?;
+        let outer_shapes = std::mem::take(&mut self.shapes);
+        let block = self.lower_block(body);
+        self.shapes = outer_shapes;
+        let mut block = block?;
         self.scopes.pop();
         self.ctx.vars = saved;
         place_moves_in(&mut block, &HashSet::new(), Some(&params.iter().cloned().collect()));
@@ -1248,6 +1263,7 @@ impl<'a> Lowerer<'a> {
                 let expr = self.lower_expr(value)?;
                 let (var, mut path) = self.muted_target(object)?;
                 path.push(PathStep::Field(field.clone()));
+                self.shapes.remove(&var);
                 vec![Stmt::SetPath { var, path, expr }]
             }
             S::IndexAssign { object, index, value } => {
@@ -1262,6 +1278,7 @@ impl<'a> Lowerer<'a> {
                 let idx = self.lower_expr(index)?;
                 let (var, mut path) = self.muted_target(object)?;
                 path.push(PathStep::Index(idx));
+                self.shapes.remove(&var);
                 vec![Stmt::SetPath { var, path, expr }]
             }
             S::If { condition, then_body, else_body } => {
@@ -1481,8 +1498,10 @@ impl<'a> Lowerer<'a> {
             return Stmt::Store { fact: name.to_string(), expr };
         }
         if self.declared(name) {
+            self.note_shape(name, &expr, false);
             return Stmt::Set { var: name.to_string(), expr };
         }
+        self.note_shape(name, &expr, true);
         self.scopes.last_mut().unwrap().insert(name.to_string());
         // what reads the local from here on is typed by the local as
         // declared: its first value's type, or the type it settles on
@@ -1815,6 +1834,7 @@ impl<'a> Lowerer<'a> {
                 let mut l = self.lower_expr(left)?;
                 let mut r = self.lower_expr(right)?;
                 self.check_binop(op, self.checked(&l), self.checked(&r));
+                self.check_shapes(op, &l, &r);
                 let ty = ty_of(&self.ctx.binop_type(op, read(&l), read(&r)));
                 let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow | BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte);
                 if arithmetic {
