@@ -985,6 +985,16 @@ mod tests {
         assert!(err.contains("in band: derivations are not visible inside functions — read 'cfg' in a view or handler"), "{}", err);
     }
 
+    /// A web response is what a route returns: a view placing one is refused
+    /// in both modes (the interpreter showed `text[s]` as its text; the
+    /// compiled page did not build)
+    #[test]
+    fn a_view_does_not_place_a_web_response() {
+        let err = check_source("use web, ui\nn = 3\nview v[]\n    return row[text['`n` items'], p['ok']]\npage['/', v]\n").unwrap_err();
+        assert!(err.contains("row: text[…] is a web response, which a route returns — a page shows elements and text: place the text itself, or p[…] or span[…]"), "{}", err);
+        assert!(check_source("use web, ui\nn = 3\nview v[]\n    return row['`n` items', p['ok']]\npage['/', v]\n").is_ok());
+    }
+
     /// A mask decides every row: a list of values that can fail — cells of
     /// a join's unmatched side — is refused as one in both modes (compiled,
     /// it did not build; the interpreter stopped only when a cell was

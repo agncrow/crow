@@ -1,0 +1,11 @@
+--- A trace names each place an error passed once: a variable that
+--- refuses the error on the line it came from adds nothing. (Both modes
+--- named the line twice.)
+fn parse_count[s]
+    n = 0
+    n = int[s]
+    return n
+
+r = parse_count['x']
+log[r.reason]
+log[r.trace]

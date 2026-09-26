@@ -952,7 +952,7 @@ else
 
 **An error has no truth value, and no items to walk.** A comparison with an error-value operand does not produce true or false — it propagates the error, like every other operator. And a branch cannot be taken on an error, nor a loop run over one: when an `if` or `while` condition evaluates to an error-value, or the list a `for` walks does (`for i in range[len[r]]` when `r` failed), the decision is refused —
 
-- **inside a function**: the function immediately returns the error to its caller (auto-propagation, trace appended) — the same rule as error arguments, applied to decisions
+- **inside a function**: the function immediately returns the error to its caller (auto-propagation, trace appended — a place the trace already ends at is not named twice, as when the refusal is on the line the error came from) — the same rule as error arguments, applied to decisions
 - **at top level**: the program halts: `runtime error: line N: cannot branch on an error value — <reason>`, or `cannot loop over an error value` for a loop
 
 A variable whose first value could not fail refuses an error the same way where it is assigned (see Reassignment): `cannot assign an error value to 'x'`.
@@ -969,7 +969,7 @@ log[r.ok]                --- false — the parse error propagated out
 log[r.reason]            --- cannot convert 'abc' to int
 ```
 
-The same holds when a function hands back an error of another shape — `if not b.ok` / `return b` in a function whose value is a number, where `b` is a frame: the caller receives the error with its reason, kind and trace, and the value is the function's default. A handler has no caller to hand an error to. **A handler stops when an error value reaches a decision, a fact, or an effect** — an `if` or `while` condition, the list a `for` walks, an assignment to reactive state or to a variable whose first value could not fail, or an argument of `query`, `exec`, `insert`, `transact`, `read`, `write`, `fetch`, `shell`, `later`, `notice` or `sign_in` — and nothing it did lands: its fact writes are discarded, its database writes are rolled back, its held effects are dropped. The reason reaches the reader as the session's notice (`apply stopped: …`) and the served program's log. A local whose first value could fail, holding an error and guarded later, computes as it always has: `.ok`, `.reason`, `.kind` and `.trace` never propagate, so `if not r.ok` is how a handler does something other than stop. In the harness, `click[a, apply]` evaluates to that error value and the session's facts are as they were before the click. A fact never holds an error: a derivation, which is a belief, may; a fact, which the reader acts on, keeps its last good value.
+The same holds when a function hands back an error of another shape — `if not b.ok` / `return b` in a function whose value is a number, where `b` is a frame: the caller receives the error with its reason, kind and trace, and the value is the function's default. A handler has no caller to hand an error to. **A handler stops when an error value reaches a decision, a fact, or an effect** — an `if` or `while` condition, the list a `for` walks, an assignment to reactive state or to a variable whose first value could not fail, or an argument of `query`, `exec`, `insert`, `transact`, `read`, `write`, `fetch`, `shell`, `later`, `notice` or `sign_in` — and nothing it did lands: its fact writes are discarded, its database writes are rolled back, its held effects are dropped. The reason reaches the reader as the session's notice (`apply stopped: …`) and the served program's log. A local whose first value could fail, holding an error and guarded later, computes as it always has: `.ok`, `.reason`, `.kind` and `.trace` never propagate, so `if not r.ok` is how a handler does something other than stop. In the harness, `click[a, apply]` evaluates to that error value and the session's facts are as they were before the click. An event that does not fit the program — no handler of its name, or not the arguments the handler takes (`click[a, apply]` where `apply` takes one) — stops the same way, on a served page and in a test, in both modes. A fact never holds an error: a derivation, which is a belief, may; a fact, which the reader acts on, keeps its last good value.
 
 **Design Note: a loop over an error is refused.** Considered: running such a loop zero times, which the interpreter did for the statement form (the collecting form made a one-item list of the error). Decided (Vijay, 2026-09-23): refused like a condition, so an error never vanishes into an empty loop. A function whose loop walks a list that can fail can fail itself, as one with a condition that can; a guard before the loop narrows (below), so a guarded loop is an ordinary one.
 
@@ -2414,6 +2414,8 @@ If the port is already in use, the server prints a friendly error: `error: port 
 | `arrow[frame]` | Arrow IPC binary response for DataFrames |
 | `bytes[data]` | Raw binary response (`application/octet-stream`) |
 | `stream[handler_fn]` | Streaming/chunked response via channel |
+
+A response is what a route returns. A page shows elements and text, so a view that places one — `row[text['3 items']]` — is refused in both modes: place the text itself, or `p[…]` or `span[…]`.
 
 #### Auth (`use web.auth`)
 

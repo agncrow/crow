@@ -610,6 +610,10 @@ impl Emitter {
             "    trace: Vec<String>,",
             "    captured: f64,",
             "}",
+            // a trace names each place an error passed once: a refusal on
+            // the line the error came from adds nothing
+            "#[allow(dead_code)]",
+            "fn crow_trace_push(t: &mut Vec<String>, at: String) { if t.last() != Some(&at) { t.push(at); } }",
             "impl<T: Clone + std::fmt::Display> std::fmt::Display for CrowResult<T> {",
             "    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {",
             "        if !self.ok { write!(f, \"error: {}\", self.reason) } else { write!(f, \"{}\", self.value) }",
@@ -1133,15 +1137,21 @@ impl Emitter {
                     let values: Vec<String> = decoded.iter().map(|(_, v)| v.clone()).collect();
                     format!("if let ({},) = ({},) {{ {} }}", names.join(", "), values.join(", "), call)
                 };
+                // arguments the handler does not take stop it, as the
+                // interpreter's call does
                 self.line(&format!(
-                    "\"{}\" => {{ if let Some(_v) = _value {{ if let Ok(_a) = serde_json::from_str::<Vec<serde_json::Value>>(_v) {{ if _a.len() == {} {{ {} }} }} }} }},",
-                    h,
-                    params.len(),
-                    call
+                    "\"{h}\" => {{ let _a: Vec<serde_json::Value> = _value.and_then(|_v| serde_json::from_str::<Vec<serde_json::Value>>(_v).ok()).unwrap_or_default(); if _a.len() == {n} {{ {call} }} else {{ state.stop(format!(\"{h} stopped: {h}[] expects {n} arguments, got {{}}\", _a.len())); }} }},",
+                    h = h,
+                    n = params.len(),
+                    call = call
                 ));
             }
         }
-        self.line("_ => {}");
+        // the page's own events are answered before the program's; any
+        // other the program has no handler for stops, as the interpreter's
+        // does (it was dropped without a word)
+        self.line("_ if event.starts_with(\"__\") => {}");
+        self.line("_ => state.stop(format!(\"{} stopped: unknown function '{}'\", event, event)),");
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
