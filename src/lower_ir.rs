@@ -532,6 +532,9 @@ struct Lowerer<'a> {
     /// Above zero while the call scan lowers what inference's scan never
     /// reads (a callee lowered as a value).
     unscanned: usize,
+    /// The collecting loops over a list of named functions the call scan
+    /// is inside (`for f in [a, b]`): the loop's variable and the functions.
+    fn_lists: Vec<(String, Vec<String>)>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -551,6 +554,7 @@ impl<'a> Lowerer<'a> {
             seen: None,
             collecting: 0,
             unscanned: 0,
+            fn_lists: Vec::new(),
         }
     }
 
@@ -574,7 +578,7 @@ impl<'a> Lowerer<'a> {
         let temp = self.temp;
         let pre = std::mem::take(&mut self.pre);
         let depth = self.scopes.len();
-        let (mute, line, collecting, unscanned) = (self.v.mute, self.v.line, self.collecting, self.unscanned);
+        let (mute, line, collecting, unscanned, fn_lists) = (self.v.mute, self.v.line, self.collecting, self.unscanned, self.fn_lists.len());
         let local_types = self.v.local_types.clone();
         let stored = self.v.stored.clone();
         self.v.mute += 1;
@@ -589,6 +593,7 @@ impl<'a> Lowerer<'a> {
         self.v.stored = stored;
         self.collecting = collecting;
         self.unscanned = unscanned;
+        self.fn_lists.truncate(fn_lists);
         self.pre = pre;
         self.temp = temp;
         self.pass = outer_pass;
@@ -704,8 +709,22 @@ impl<'a> Lowerer<'a> {
     /// A call's arguments' types noted for its callee's signature, in the
     /// call scan (F5).
     fn scan_call(&mut self, callee: &A, args: &[A], types: &[CrowType]) {
-        if self.pass == Pass::Scan && self.unscanned == 0 && self.ctx.call_says_of_callee(callee) {
+        if self.pass != Pass::Scan || self.unscanned > 0 {
+            return;
+        }
+        if self.ctx.call_says_of_callee(callee) {
             self.ctx.note_call(callee, args, types);
+        }
+        // a call through a loop's variable over a list of named functions
+        // types every one of them (an uncalled function would keep its
+        // parameters unknown and not be emitted)
+        if let A::Ident(n) = callee {
+            if let Some((_, fns)) = self.fn_lists.iter().rev().find(|(v, _)| v == n) {
+                let text: Vec<CrowType> = types.iter().map(|t| t.text()).collect();
+                for f in fns.clone() {
+                    self.ctx.note_through_list(&f, &text);
+                }
+            }
         }
     }
 
@@ -1102,7 +1121,7 @@ impl<'a> Lowerer<'a> {
                     // the call scan settles the variable before its value's
                     // calls are read
                     let ty = self.ctx.infer_expr_full(value);
-                    self.ctx.note_scanned_assign(name, value, ty);
+                    self.ctx.note_scanned_assign(name, ty);
                 }
                 let expr = self.lower_expr(value)?;
                 if self.pass == Pass::Final {
@@ -1806,16 +1825,28 @@ impl<'a> Lowerer<'a> {
                 let outer = (self.pass == Pass::Settle).then(|| (self.ctx.vars.clone(), self.ctx.body_assigned.clone(), self.ctx.frame_schemas.clone()));
                 // the call scan reads the body with the variable bound as
                 // an item, what it assigns left behind
+                let fn_list = match iter.as_ref() {
+                    A::Array(elems) if !elems.is_empty() && elems.iter().all(|e| matches!(e, A::Ident(n) if self.ctx.functions.contains_key(n))) => {
+                        Some(elems.iter().filter_map(|e| if let A::Ident(n) = e { Some(n.clone()) } else { None }).collect::<Vec<String>>())
+                    }
+                    _ => None,
+                };
                 let saved = if self.pass == Pass::Scan {
                     self.ctx.scan_loop_var(var, read(&it));
-                    self.ctx.note_function_list(var, iter, body);
                     None
                 } else {
                     Some(self.bind_loop_var(var, &it.ty()))
                 };
+                let listed = self.pass == Pass::Scan && fn_list.is_some();
+                if let (true, Some(fns)) = (listed, fn_list) {
+                    self.fn_lists.push((var.clone(), fns));
+                }
                 self.collecting += 1;
                 let mut b = self.lower_block(body)?;
                 self.collecting -= 1;
+                if listed {
+                    self.fn_lists.pop();
+                }
                 if let Some(saved) = saved {
                     self.unbind_loop_var(var, saved);
                 }
@@ -1944,14 +1975,11 @@ impl<'a> Lowerer<'a> {
         }
         // a ui element with its attributes first (lower.rs put them there)
         if module.is_none() && self.in_ui && crate::lower::UI_ELEMENTS.contains(&name.as_str()) {
-            // the call scan reads an element's arguments as written (its
-            // attributes a map, a handler with arguments a call)
-            if self.pass == Pass::Scan && self.unscanned == 0 {
-                let types: Vec<CrowType> = args.iter().map(|a| self.ctx.infer_expr_full(a)).collect();
-                self.scan_call(callee, args, &types);
-            }
             let mut attrs = Vec::new();
             let mut children = Vec::new();
+            // what the call scan reads of the arguments: the attributes as
+            // one map, each held handler call as the call it holds
+            let mut types: Vec<CrowType> = Vec::with_capacity(args.len());
             for (i, a) in args.iter().enumerate() {
                 if i == 0 {
                     if let A::Map(pairs) = a {
@@ -1974,6 +2002,8 @@ impl<'a> Lowerer<'a> {
                             }
                             attrs.push((key, self.lower_expr(v)?));
                         }
+                        let values: Vec<CrowType> = pairs.iter().zip(&attrs).map(|((_, v), (_, x))| if matches!(x, Expr::Deferred { .. }) { self.held_type(v, x).text() } else { read(x) }).collect();
+                        types.push(TypeContext::map_type(values.into_iter()));
                         continue;
                     }
                 }
@@ -1992,9 +2022,11 @@ impl<'a> Lowerer<'a> {
                     };
                     self.refuse(format!("{}: {} is a web response, which a route returns — a page shows elements and text: place the text itself, or p[…] or span[…]", name, what));
                 }
+                types.push(full(&child));
                 children.push(child);
             }
             self.check_call(&name, args);
+            self.scan_call(callee, args, &types);
             return Ok(Expr::Tree { element: name, attrs, children });
         }
         // arguments: a fallible one reaches the callee as its payload, and

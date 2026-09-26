@@ -298,10 +298,6 @@ pub struct TypeContext {
     /// (its parameters to begin with). The first assignment of another
     /// name binds a new local (spec §7), whatever the module calls it.
     pub(crate) body_assigned: Option<std::collections::HashSet<String>>,
-    /// Top-level names assigned a value that is not a function's name: an
-    /// index into one (`got[0]`) is indexing, however early in the
-    /// fixpoint its value's type is still unknown
-    top_values: std::collections::HashSet<String>,
     /// While a view's body is inferred: an element's name is the element,
     /// whose value is markup
     in_view: bool,
@@ -326,9 +322,6 @@ pub struct TypeContext {
     pub specializations: BTreeMap<String, Vec<(Vec<CrowType>, String)>>,
     pub structs: BTreeMap<String, StructSig>,
     pub cpu_count: Option<usize>,
-    /// Param names of the function currently being body-scanned (to avoid
-    /// incorrectly inferring [] indexing as a function call on params).
-    current_fn_params: Vec<String>,
     /// Module registry for generic type dispatch
     pub registry: crate::modules::ModuleRegistry,
     /// Connection variables bound to a literal URL (`pg = db.connect['...']`),
@@ -411,7 +404,6 @@ impl TypeContext {
             call_signatures: BTreeMap::new(),
             views: std::collections::BTreeSet::new(),
             body_assigned: None,
-            top_values: std::collections::HashSet::new(),
             in_view: false,
             is_ui: false,
             view_handlers: std::collections::BTreeSet::new(),
@@ -422,7 +414,6 @@ impl TypeContext {
             specializations: BTreeMap::new(),
             structs,
             cpu_count: None,
-            current_fn_params: Vec::new(),
             registry: crate::modules::ModuleRegistry::new(),
             conn_urls: Vec::new(),
             ddl: Vec::new(),
@@ -643,55 +634,6 @@ impl TypeContext {
                 }
                 Stmt::For { body, .. } | Stmt::While { body, .. } => {
                     self.collect_var_fn_assignments(body, map);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Walk statements and invoke f with the args of every call whose callee
-    /// is the given variable name.
-    pub(crate) fn find_calls_to_var(stmts: &[Stmt], var: &str, f: &mut dyn FnMut(&[Expr])) {
-        fn walk_expr(e: &Expr, var: &str, f: &mut dyn FnMut(&[Expr])) {
-            match e {
-                Expr::Call { callee, args } => {
-                    if let Expr::Ident(n) = callee.as_ref() {
-                        if n == var {
-                            f(args);
-                        }
-                    }
-                    walk_expr(callee, var, f);
-                    for a in args { walk_expr(a, var, f); }
-                }
-                Expr::BinOp { left, right, .. } => {
-                    walk_expr(left, var, f);
-                    walk_expr(right, var, f);
-                }
-                Expr::UnaryOp { expr, .. } => walk_expr(expr, var, f),
-                Expr::Array(items) => for i in items { walk_expr(i, var, f); },
-                Expr::FieldAccess { object, .. } => walk_expr(object, var, f),
-                _ => {}
-            }
-        }
-        for s in stmts {
-            match s {
-                Stmt::ExprStmt(e) | Stmt::Return(Some(e)) | Stmt::Assign { value: e, .. } => {
-                    walk_expr(e, var, f)
-                }
-                Stmt::If { condition, then_body, else_body } => {
-                    walk_expr(condition, var, f);
-                    Self::find_calls_to_var(then_body, var, f);
-                    if let Some(eb) = else_body {
-                        Self::find_calls_to_var(eb, var, f);
-                    }
-                }
-                Stmt::While { condition, body } => {
-                    walk_expr(condition, var, f);
-                    Self::find_calls_to_var(body, var, f);
-                }
-                Stmt::For { iter, body, .. } => {
-                    walk_expr(iter, var, f);
-                    Self::find_calls_to_var(body, var, f);
                 }
                 _ => {}
             }
