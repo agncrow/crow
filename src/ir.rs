@@ -131,6 +131,10 @@ pub struct Part {
     pub tests: Vec<Test>,
     /// The statements of a script, or a ui program's top level, in order.
     pub main: Block,
+    /// Every effect the top level reaches, by the part its statements
+    /// belong to (the part's prefix; "" for the entry's own): what a part
+    /// does before anything runs (a connection it opens, a page it serves).
+    pub main_effects: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -167,6 +171,9 @@ pub struct Derive {
     /// facts, derivations and tables it reads, the clock, whether a table
     /// is outside the app, and whether one value serves every session.
     pub spec: crate::derive::ReadSet,
+    /// Every effect it reaches, its own and through what it calls (a
+    /// query, the clock): what it can touch.
+    pub effects: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

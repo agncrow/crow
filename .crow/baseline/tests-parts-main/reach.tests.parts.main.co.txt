@@ -1,0 +1,2 @@
+reach tests/parts/main.co
+  serving: page, serve

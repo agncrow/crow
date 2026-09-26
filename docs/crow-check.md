@@ -64,6 +64,27 @@ the search runs again with only the facts the page's guards read — a
 condition on one left out keeps both ways, so what each state offers
 stays right — and the file says so.
 
+Each file's `reach` is what it can touch outside its values: every
+effect its functions, derivations and top level reach, through
+whatever they call, by capability — `database` (a query, an exec, a
+connection), `files`, `network`, `serving` (a page, a route), `shell`,
+`mail`, `clock`, `process` (an argument, the environment, an exit) and
+`session` (a notice, a sign-in, a download, work held for later):
+
+```
+reach board/cards.co
+  database: connect, exec, query
+  files: cp, mkdir
+  session: download, notice
+```
+
+A file that touches nothing says `nothing`, so a part that starts
+writing files or calling a shell is its reach changing, a change to
+accept like any other. `crow check` prints each file's capabilities on
+one line (`board/cards.co: database, files, session`). Nothing declares
+a reach: it is derived from the program, which already names each
+effect it makes (second-half-design.md §1).
+
 A page's `layout` file is its **layout bounds**: each state of the page
 (each path of its view) laid out by the engine the harness uses, at 1280
 and 390 wide, with its height and every element that runs past the width

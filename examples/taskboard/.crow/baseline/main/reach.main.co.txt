@@ -1,0 +1,3 @@
+reach main.co
+  database: exec
+  serving: page, serve

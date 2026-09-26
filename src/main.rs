@@ -3515,10 +3515,11 @@ fn run_check_pipeline(filename: &str) -> checker::CheckResult {
     let mut visited = std::collections::HashSet::new();
     let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
     // Validated before it is checked: `crow check` refuses what `crow run`
-    // refuses, with the same message
-    let (lowered, lctx) = match lower::lower_program(&stmts) {
-        Ok(lowered) => match infer_and_validate(&lowered, describing()) {
-            Ok(lctx) => (lowered, lctx),
+    // refuses, with the same message; the lowering it refuses by is the
+    // one each part's reach is read from
+    let (lowered, lctx, program) = match lower::lower_program(&stmts) {
+        Ok(lowered) => match infer_and_lower(&lowered, describing(), "check") {
+            Ok((lctx, program)) => (lowered, lctx, program),
             Err(e) => {
                 eprintln!("{}", refine_error_lines(&source, &e));
                 process::exit(1);
@@ -3536,6 +3537,12 @@ fn run_check_pipeline(filename: &str) -> checker::CheckResult {
     let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
     let (mut artifacts, rules) = baseline::derive_artifacts(&lowered, &lctx, &parts, filename);
     wireframe::layout_artifacts(&mut artifacts, filename, source.contains("wide = true"));
+    // what each part can touch (second-half-design.md §1): a part that
+    // starts writing files or calling a shell is a change to accept
+    for (key, (file, text)) in baseline::reach_entries(&program, &parts, filename) {
+        artifacts.files.insert(key.clone(), file);
+        artifacts.entries.insert(key, text);
+    }
     for (key, (file, text)) in scenario_artifacts(filename, &parts) {
         artifacts.files.insert(key.clone(), file);
         artifacts.entries.insert(key, text);
@@ -3613,6 +3620,16 @@ fn print_check_summary(result: &checker::CheckResult, verbose: bool) {
             if b.added > 0 { parts.push(format!("{} new", b.added)); }
             if b.removed > 0 { parts.push(format!("\x1b[33m{} removed\x1b[0m", b.removed)); }
             println!("  baseline — {} ({})", parts.join(", "), b.dir);
+        }
+    }
+    if let Some(art) = &result.artifacts {
+        let reach: Vec<(&String, &String)> = art.entries.iter().filter(|(k, _)| k.starts_with("reach ")).collect();
+        if !reach.is_empty() {
+            println!("  reach — what each part can touch:");
+            for (key, text) in reach {
+                let caps: Vec<&str> = text.lines().skip(1).map(|l| l.trim().split(':').next().unwrap_or("")).collect();
+                println!("    {}: {}", key.trim_start_matches("reach "), caps.join(", "));
+            }
         }
     }
     if verbose {
