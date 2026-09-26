@@ -20,7 +20,7 @@ impl CrowModule for DocModule {
 
     fn call(&self, name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
         for a in args {
-            if !a.ok {
+            if !a.is_ok() {
                 return Ok(a.clone());
             }
         }

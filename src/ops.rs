@@ -632,9 +632,9 @@ pub fn valid(obj: CrowValue) -> Result<CrowValue, String> {
     }
     match &obj.value {
         Value::Array(items) => Ok(CrowValue::ok(Value::Array(
-            items.iter().map(|item| CrowValue::ok(Value::Bool(item.ok))).collect(),
+            items.iter().map(|item| CrowValue::ok(Value::Bool(item.is_ok()))).collect(),
         ))),
-        _ => Ok(CrowValue::ok(Value::Bool(obj.ok))),
+        _ => Ok(CrowValue::ok(Value::Bool(obj.is_ok()))),
     }
 }
 
@@ -646,7 +646,7 @@ pub fn valid(obj: CrowValue) -> Result<CrowValue, String> {
 pub fn frame_cell(frame: &crow_runtime::frame::CrowFrame, col: usize, row: usize) -> CrowValue {
     if !frame.validity[col][row] {
         let mut missing = CrowValue::error_with_kind("nan", "missing", "");
-        missing.trace.clear();
+        missing.status_mut().trace.clear();
         return missing;
     }
     CrowValue::ok(match frame.data[col].as_ref() {
@@ -684,16 +684,16 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
     // whatever it holds (a frame column's rows are `valid`).
     match field {
         "ok" => {
-            return Ok(CrowValue::ok(Value::Bool(obj.ok)));
+            return Ok(CrowValue::ok(Value::Bool(obj.is_ok())));
         }
         "reason" => {
-            return Ok(CrowValue::ok(Value::Str(obj.reason.clone())));
+            return Ok(CrowValue::ok(Value::Str(obj.reason().to_string())));
         }
         "kind" => {
-            return Ok(CrowValue::ok(Value::Str(obj.kind.clone())));
+            return Ok(CrowValue::ok(Value::Str(obj.kind().to_string())));
         }
         "trace" => {
-            let trace_list: Vec<CrowValue> = obj.trace.iter()
+            let trace_list: Vec<CrowValue> = obj.trace().iter()
                 .map(|s| CrowValue::ok(Value::Str(s.clone())))
                 .collect();
             return Ok(CrowValue::ok(Value::Array(trace_list)));
@@ -816,7 +816,7 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
 /// An array literal's value: all numbers make a tensor, all tensors of one
 /// shape make a shaped tensor (spec: unified arrays), anything else a list.
 pub fn array_literal(vals: Vec<CrowValue>) -> Result<CrowValue, String> {
-    let all_numeric = !vals.is_empty() && vals.iter().all(|v| v.ok && matches!(v.value, Value::Int(_) | Value::Float(_)));
+    let all_numeric = !vals.is_empty() && vals.iter().all(|v| v.is_ok() && matches!(v.value, Value::Int(_) | Value::Float(_)));
     if all_numeric {
         let data: Vec<f64> = vals.iter().map(|v| match &v.value {
             Value::Int(n) => *n as f64,
@@ -826,7 +826,7 @@ pub fn array_literal(vals: Vec<CrowValue>) -> Result<CrowValue, String> {
         let len = data.len();
         return Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))));
     }
-    let all_tensors = !vals.is_empty() && vals.iter().all(|v| v.ok && matches!(v.value, Value::NumArray(_)));
+    let all_tensors = !vals.is_empty() && vals.iter().all(|v| v.is_ok() && matches!(v.value, Value::NumArray(_)));
     if all_tensors {
         let tensors: Vec<CrowTensor> = vals.iter().map(|v| match &v.value {
             Value::NumArray(t) => t.clone(),
@@ -843,8 +843,8 @@ pub fn array_literal(vals: Vec<CrowValue>) -> Result<CrowValue, String> {
 pub fn collect_loop(results: Vec<CrowValue>) -> CrowValue {
     // an iteration that yielded nothing is skipped; one that yielded an
     // error keeps it as its item (an error's value is `Done` too)
-    let filtered: Vec<CrowValue> = results.into_iter().filter(|v| !(v.ok && matches!(v.value, Value::Done))).collect();
-    let all_numeric = !filtered.is_empty() && filtered.iter().all(|v| v.ok && matches!(v.value, Value::Int(_) | Value::Float(_)));
+    let filtered: Vec<CrowValue> = results.into_iter().filter(|v| !(v.is_ok() && matches!(v.value, Value::Done))).collect();
+    let all_numeric = !filtered.is_empty() && filtered.iter().all(|v| v.is_ok() && matches!(v.value, Value::Int(_) | Value::Float(_)));
     if all_numeric {
         let data: Vec<f64> = filtered.iter().map(|v| match &v.value {
             Value::Int(n) => *n as f64,
@@ -898,7 +898,7 @@ fn render_widget(vals: &[CrowValue]) -> String {
                         // props that failed: the widget shows the reason in
                         // its place, as a control shows a failed argument
                         ("props", _) if val.is_error() => {
-                            return crate::harness::html_escape_text(&format!("error: {}", val.reason));
+                            return crate::harness::html_escape_text(&format!("error: {}", val.reason()));
                         }
                         ("props", _) => props = crate::builtins::crow_to_json("", val).unwrap_or(serde_json::Value::Null),
                         ("on", Value::Map(evs)) => {
@@ -929,7 +929,7 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
     fn splice(inner: &mut String, items: &[CrowValue]) {
         for it in items {
             match &it.value {
-                Value::Str(s) if it.markup => inner.push_str(s),
+                Value::Str(s) if it.is_markup() => inner.push_str(s),
                 Value::Array(nested) => splice(inner, nested),
                 other => inner.push_str(&crate::harness::html_escape_text(&format!("{}", other))),
             }
@@ -952,7 +952,7 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
     for v in vals {
         if v.is_error() {
             // a view renders what it is given: a failed value shows its reason
-            inner.push_str(&format!("error: {}", v.reason));
+            inner.push_str(&format!("error: {}", v.reason()));
             continue;
         }
         match &v.value {
@@ -1041,7 +1041,7 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
                     attrs.push((k.clone(), s));
                 }
             }
-            Value::Str(s) if v.markup => inner.push_str(s),
+            Value::Str(s) if v.is_markup() => inner.push_str(s),
             Value::Frame(f) if name == "table" => inner.push_str(&crow_runtime::layout::frame_table_html(
                 f,
                 table_click.as_deref(),

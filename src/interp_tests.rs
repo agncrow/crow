@@ -347,36 +347,36 @@ mod tests {
     #[test]
     fn test_error_line_int_parse() {
         let val = get_var("x = int['bad']\n", "x");
-        assert!(!val.ok);
-        assert!(val.trace.iter().any(|t| t.contains("1")));
+        assert!(!val.is_ok());
+        assert!(val.trace().iter().any(|t| t.contains("1")));
     }
 
     #[test]
     fn test_error_line_second_line() {
         let val = get_var("y = 10\nx = int['bad']\n", "x");
-        assert!(!val.ok);
-        assert!(val.trace.iter().any(|t| t.contains("2")));
+        assert!(!val.is_ok());
+        assert!(val.trace().iter().any(|t| t.contains("2")));
     }
 
     #[test]
     fn test_error_line_read() {
         let val = get_var("x = read['nonexistent_test_file.txt']\n", "x");
-        assert!(!val.ok);
-        assert!(val.trace.iter().any(|t| t.contains("1")));
+        assert!(!val.is_ok());
+        assert!(val.trace().iter().any(|t| t.contains("1")));
     }
 
     #[test]
     fn test_ok_value_line_zero() {
         let val = get_var("x = int['42']\n", "x");
-        assert!(val.ok);
-        assert!(val.trace.is_empty());
+        assert!(val.is_ok());
+        assert!(val.trace().is_empty());
     }
 
     #[test]
     fn test_raw_value_line_field() {
         // raw values (non-error-value) should have empty trace
         let val = get_var("x = 5\n", "x");
-        assert!(val.trace.is_empty());
+        assert!(val.trace().is_empty());
     }
 
     #[test]
@@ -407,54 +407,54 @@ mod tests {
     fn test_auto_propagation_builtin() {
         // Error should propagate through len[]
         let val = get_var("x = int['bad']\ny = len[x]\n", "y");
-        assert!(!val.ok);
-        assert!(val.reason.contains("convert"));
+        assert!(!val.is_ok());
+        assert!(val.reason().contains("convert"));
     }
 
     #[test]
     fn test_auto_propagation_user_fn() {
         // Error should propagate through user functions
         let val = get_var("fn double[n]\n    return n * 2\nx = int['bad']\ny = double[x]\n", "y");
-        assert!(!val.ok);
-        assert!(val.reason.contains("convert"));
+        assert!(!val.is_ok());
+        assert!(val.reason().contains("convert"));
     }
 
     #[test]
     fn test_auto_propagation_chain() {
         // Error propagates through a chain of calls
         let val = get_var("fn a[x]\n    return x + 1\nfn b[x]\n    return a[x]\ne = int['bad']\nr = b[e]\n", "r");
-        assert!(!val.ok);
+        assert!(!val.is_ok());
     }
 
     #[test]
     fn test_auto_propagation_preserves_line() {
         // The original error trace should contain the original line
         let val = get_var("fn double[n]\n    return n * 2\nz = 10\nx = int['bad']\ny = double[x]\n", "y");
-        assert!(!val.ok);
-        assert!(val.trace.iter().any(|t| t.contains("4")));
+        assert!(!val.is_ok());
+        assert!(val.trace().iter().any(|t| t.contains("4")));
     }
 
     #[test]
     fn test_binop_propagates_left_error() {
         // Error in left operand should propagate through arithmetic
         let val = get_var("bad = int['hello']\nx = bad + 10\n", "x");
-        assert!(!val.ok, "binop with error left operand should propagate error");
-        assert!(val.reason.contains("convert"), "should preserve original error reason");
+        assert!(!val.is_ok(), "binop with error left operand should propagate error");
+        assert!(val.reason().contains("convert"), "should preserve original error reason");
     }
 
     #[test]
     fn test_binop_propagates_right_error() {
         // Error in right operand should propagate through arithmetic
         let val = get_var("bad = int['hello']\nx = 10 + bad\n", "x");
-        assert!(!val.ok, "binop with error right operand should propagate error");
-        assert!(val.reason.contains("convert"), "should preserve original error reason");
+        assert!(!val.is_ok(), "binop with error right operand should propagate error");
+        assert!(val.reason().contains("convert"), "should preserve original error reason");
     }
 
     #[test]
     fn test_binop_success_unwraps() {
         // Successful CrowResult should auto-unwrap in arithmetic
         let val = get_var("good = int['42']\nx = good + 10\n", "x");
-        assert!(val.ok, "binop with successful result should produce ok value");
+        assert!(val.is_ok(), "binop with successful result should produce ok value");
         assert!(matches!(val.value, Value::Int(52)), "expected 52, got {:?}", val.value);
     }
 
@@ -462,7 +462,7 @@ mod tests {
     fn test_log_no_propagation() {
         // log should NOT propagate — it should print and return done
         let val = get_var("x = int['bad']\ny = log[x]\n", "y");
-        assert!(val.ok);
+        assert!(val.is_ok());
         assert!(matches!(val.value, Value::Done));
     }
 
@@ -686,14 +686,14 @@ mod tests {
     #[test]
     fn test_int_from_string_success() {
         let val = get_var("x = int['42']\n", "x");
-        assert!(val.ok);
+        assert!(val.is_ok());
         assert!(matches!(val.value, Value::Int(42)));
     }
 
     #[test]
     fn test_int_from_string_fail() {
         let val = get_var("x = int['bad']\n", "x");
-        assert!(!val.ok);
+        assert!(!val.is_ok());
     }
 
     #[test]
@@ -705,7 +705,7 @@ mod tests {
     #[test]
     fn test_float_from_string_success() {
         let val = get_var("x = float['3.14']\n", "x");
-        assert!(val.ok);
+        assert!(val.is_ok());
         assert!(matches!(val.value, Value::Float(f) if (f - 3.14).abs() < 0.001));
     }
 
@@ -893,16 +893,16 @@ mod tests {
     #[test]
     fn test_error_builtin() {
         let val = get_var("x = error['something went wrong']\n", "x");
-        assert!(!val.ok);
-        assert_eq!(val.reason, "something went wrong");
+        assert!(!val.is_ok());
+        assert_eq!(val.reason(), "something went wrong");
     }
 
     #[test]
     fn test_error_builtin_with_kind() {
         let val = get_var("x = error['bad input', 'validation']\n", "x");
-        assert!(!val.ok);
-        assert_eq!(val.reason, "bad input");
-        assert_eq!(val.kind, "validation");
+        assert!(!val.is_ok());
+        assert_eq!(val.reason(), "bad input");
+        assert_eq!(val.kind(), "validation");
     }
 
     // ===== §11: Error value status on normal values =====
@@ -910,10 +910,10 @@ mod tests {
     #[test]
     fn test_ok_on_normal_value() {
         let val = get_var("x = 5\n", "x");
-        assert!(val.ok);
-        assert_eq!(val.reason, "");
-        assert_eq!(val.kind, "");
-        assert!(val.trace.is_empty());
+        assert!(val.is_ok());
+        assert_eq!(val.reason(), "");
+        assert_eq!(val.kind(), "");
+        assert!(val.trace().is_empty());
     }
 
     // ===== Scope =====
@@ -1373,7 +1373,7 @@ mod tests {
         });
         assert!(result.is_err() || {
             let val = get_var("x = zeros[3]\n", "x");
-            !val.ok
+            !val.is_ok()
         });
     }
 
@@ -1569,7 +1569,7 @@ mod tests {
         });
         assert!(result.is_err() || {
             let val = result.unwrap();
-            !val.ok
+            !val.is_ok()
         });
     }
 
@@ -2325,13 +2325,13 @@ mod tests {
     fn test_fs_mkdir_error_propagation() {
         // mkdir returns error-value on failure, not panic
         let val = get_var("x = mkdir['/root/no_permission_dir_xyz']\n", "x");
-        assert!(!val.ok, "mkdir on inaccessible path should return error-value");
+        assert!(!val.is_ok(), "mkdir on inaccessible path should return error-value");
     }
 
     #[test]
     fn test_fs_rm_nonexistent() {
         let val = get_var("x = rm['/tmp/no_such_file_crow_test_xyz']\n", "x");
-        assert!(!val.ok, "rm on nonexistent path should return error-value");
+        assert!(!val.is_ok(), "rm on nonexistent path should return error-value");
     }
 
     // ===== env builtin =====
@@ -2340,7 +2340,7 @@ mod tests {
     fn test_env_existing_var() {
         unsafe { std::env::set_var("CROW_TEST_ENV_VAR", "hello123"); }
         let val = get_var("x = env['CROW_TEST_ENV_VAR']\n", "x");
-        assert!(val.ok, "env[] on existing var should succeed");
+        assert!(val.is_ok(), "env[] on existing var should succeed");
         assert_eq!(format!("{}", val.value), "hello123");
         unsafe { std::env::remove_var("CROW_TEST_ENV_VAR"); }
     }
@@ -2349,14 +2349,14 @@ mod tests {
     fn test_env_missing_var_no_default() {
         unsafe { std::env::remove_var("CROW_TEST_NONEXISTENT_XYZ"); }
         let val = get_var("x = env['CROW_TEST_NONEXISTENT_XYZ']\n", "x");
-        assert!(!val.ok, "env[] on missing var without default should return error-value");
+        assert!(!val.is_ok(), "env[] on missing var without default should return error-value");
     }
 
     #[test]
     fn test_env_missing_var_with_default() {
         unsafe { std::env::remove_var("CROW_TEST_NONEXISTENT_XYZ"); }
         let val = get_var("x = env['CROW_TEST_NONEXISTENT_XYZ', 3000]\n", "x");
-        assert!(val.ok, "env[] with default should succeed");
+        assert!(val.is_ok(), "env[] with default should succeed");
         assert_eq!(format!("{}", val.value), "3000");
     }
 
@@ -2364,7 +2364,7 @@ mod tests {
     fn test_env_existing_var_ignores_default() {
         unsafe { std::env::set_var("CROW_TEST_ENV_PORT", "8080"); }
         let val = get_var("x = env['CROW_TEST_ENV_PORT', 3000]\n", "x");
-        assert!(val.ok);
+        assert!(val.is_ok());
         assert_eq!(format!("{}", val.value), "8080");
         unsafe { std::env::remove_var("CROW_TEST_ENV_PORT"); }
     }
@@ -2373,7 +2373,7 @@ mod tests {
     #[test]
     fn test_shell_builtin() {
         let val = run_program("x = shell['echo hello']\nlog[x.stdout]");
-        assert!(val.ok);
+        assert!(val.is_ok());
     }
 
     #[test]
@@ -2418,13 +2418,13 @@ mod tests {
     fn test_find_ok() {
         // a record with the whole match then each group; a miss is an error value
         let val = get_var("m = find['abc123', '([a-z]+)([0-9]+)']", "m");
-        assert!(val.ok);
+        assert!(val.is_ok());
         assert_eq!(format!("{}", val.value), "[groups = ['abc123', 'abc', '123']]");
         let miss = get_var("m = find['abc', '[0-9]+']", "m");
-        assert!(!miss.ok);
-        assert_eq!(miss.reason, "no match");
+        assert!(!miss.is_ok());
+        assert_eq!(miss.reason(), "no match");
         let bad = get_var("m = find['abc', '(']", "m");
-        assert_eq!(bad.kind, "regex");
+        assert_eq!(bad.kind(), "regex");
     }
 
     #[test]
@@ -2951,7 +2951,7 @@ mod tests {
         let src = "fn parse_all[xs]\n    out = for x in xs\n        if int[x] gt 0\n            x\n    return out\nr = parse_all[['1', 'a', 'b']]\ngood = parse_all[['1', '2']]\n";
         let r = get_var(src, "r");
         assert!(r.is_error(), "{:?}", r);
-        assert!(r.reason.contains("'a'"), "the first failure in input order: {}", r.reason);
+        assert!(r.reason().contains("'a'"), "the first failure in input order: {}", r.reason());
         assert!(matches!(&get_var(src, "good").value, Value::Array(items) if items.len() == 2));
     }
 
@@ -2961,7 +2961,7 @@ mod tests {
     fn a_loop_over_a_failed_list_is_refused_like_a_condition() {
         let src = "fn count[s]\n    n = 0\n    for i in range[int[s]]\n        n = n + 1\n    return n\nbad = count['x']\ngood = count['3']\n";
         let bad = get_var(src, "bad");
-        assert!(bad.is_error() && bad.reason.contains("'x'"), "{:?}", bad);
+        assert!(bad.is_error() && bad.reason().contains("'x'"), "{:?}", bad);
         assert!(matches!(get_var(src, "good").value, Value::Int(3)));
         let halted = run("for i in range[int['x']]\n    log['never']\n").err().expect("the top level halts");
         assert!(halted.contains("cannot loop over an error value"), "{}", halted);
@@ -2975,7 +2975,7 @@ mod tests {
     fn a_plain_variable_refuses_a_failed_value() {
         let src = "fn parse[s]\n    x = 1.0\n    x = float[s]\n    return 1\nbad = parse['y']\ngood = parse['2']\n";
         let bad = get_var(src, "bad");
-        assert!(bad.is_error() && bad.reason.contains("'y'"), "{:?}", bad);
+        assert!(bad.is_error() && bad.reason().contains("'y'"), "{:?}", bad);
         assert!(matches!(get_var(src, "good").value, Value::Int(1)));
         let halted = run("x = 1.0\nx = float['y']\nlog['never']\n").err().expect("the top level halts");
         assert!(halted.contains("cannot assign an error value to 'x' — cannot convert 'y' to float"), "{}", halted);

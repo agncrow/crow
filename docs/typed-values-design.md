@@ -1,10 +1,10 @@
 # Typed values: the interpreter's values, the compiled facts, one builtin table
 
-*Proposed 2026-09-24. The last three things `ir-design.md` §11 lists as
-still standing after step 4: the interpreter's `Value` with a status on
-every value, the compiled handlers' write-through of facts, and the
-emitter's chain of per-builtin printing. Decisions open (§3), each with a
-recommendation.*
+*Proposed 2026-09-24; every decision in §3 taken as recommended
+2026-09-25; under way (§5). The last three things `ir-design.md` §11 lists
+as still standing after step 4: the interpreter's `Value` with a status
+on every value, the compiled handlers' write-through of facts, and the
+emitter's chain of per-builtin printing.*
 
 ## 1. What stands, and what it costs
 
@@ -115,3 +115,27 @@ Res ::= { value: Option<Val>, reason, kind, trace, captured: Option<f64> }
 A step that changes what a program prints fails parity and is fixed
 before it lands, as in stage 4. What `ir-design.md` §5 sketched is this
 document's target; this document decides the parts it left open.
+
+## 5. Progress
+
+The interpreter's value moves to the target in place rather than beside
+an adapter: `CrowValue` is changed step by step until it is `Val`, so the
+builtins and the modules move with it, and every step keeps what every
+program prints (parity, the book, the harnesses) and is timed on the
+benchmark.
+
+- **2026-09-26, A: a value's status lives apart.** What a value carries
+  besides itself (whether it failed, its reason, kind and trace, its
+  capture moment, whether it is markup) is one boxed `Status`, absent on
+  a plain value; `CrowValue` is 104 bytes where it was 192 (its `Value`
+  is 96, held up by the frame, tensor and sparse variants). Reads go
+  through accessors (`is_ok`, `reason`, `trace`, `captured`,
+  `is_markup`), writes through `status_mut`. Interpreter times on
+  `collect`, before and after, full sizes: the collecting loop 121 → 88
+  ms, the loop through a function 216 → 184 ms, join/split 34 → 27 ms,
+  sort 3.3 → 2.0 ms, the JSON round trip 13 → 8.6 ms.
+- Next: **B,** the large variants boxed, so a value is about 32 bytes;
+  **C,** markup its own variant (decision 2); then the status held only
+  where the IR types a value as able to fail (decision 1), the scalar
+  lists (decision 3), builtins from the table (§4 step 2), and the
+  compiled facts as a struct (§4 step 4).

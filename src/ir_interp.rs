@@ -150,13 +150,13 @@ fn unwrapped(e: &Expr) -> &Expr {
 }
 
 fn placeholder(cell: CrowValue, ty: &Ty) -> CrowValue {
-    match (cell.ok || cell.kind != "missing", ty) {
+    match (cell.is_ok() || cell.kind() != "missing", ty) {
         (true, _) => cell,
         // a column that can have missing cells (a nullable database column,
         // a join's unmatched side): a missing one is an error
         (false, Ty::Result(_)) => {
             let mut missing = CrowValue::error_with_kind("missing", "missing", "");
-            missing.trace.clear();
+            missing.status_mut().trace.clear();
             missing
         }
         (false, Ty::Float) => CrowValue::ok(Value::Float(f64::NAN)),
@@ -167,7 +167,7 @@ fn placeholder(cell: CrowValue, ty: &Ty) -> CrowValue {
         // value of reason 'null', as `json[]` reads one
         (false, Ty::Json) => {
             let mut null = CrowValue::error_with_kind("null", "parse", "");
-            null.trace.clear();
+            null.status_mut().trace.clear();
             null
         }
         (false, _) => cell,
@@ -301,9 +301,9 @@ pub fn run_scenario(decls: &[crate::ast::Stmt], label: &str, body: &[crate::ast:
     let after = it.fact_values();
     let mut changed: Vec<String> = after
         .iter()
-        .filter(|(n, v)| before.get(*n).map_or(true, |b| format!("{}", b.value) != format!("{}", v.value) || b.ok != v.ok))
+        .filter(|(n, v)| before.get(*n).map_or(true, |b| format!("{}", b.value) != format!("{}", v.value) || b.is_ok() != v.is_ok()))
         .map(|(n, v)| {
-            let text = if v.ok { format!("{}", v.value) } else { format!("error: {}", v.reason) };
+            let text = if v.is_ok() { format!("{}", v.value) } else { format!("error: {}", v.reason()) };
             let text: String = if text.chars().count() > 160 { format!("{}…", text.chars().take(160).collect::<String>()) } else { text };
             format!("{} = {}", n, text)
         })
@@ -660,7 +660,7 @@ impl IrInterp {
         if self.held.is_some() {
             let acting = self.fns.get(&name).map_or(false, |f| matches!(f.kind, FnKind::Handler | FnKind::Helper));
             if acting {
-                return Err(format!("{}{}\u{1}{}\u{1}{}", STOP, name, err.reason, err.kind));
+                return Err(format!("{}{}\u{1}{}\u{1}{}", STOP, name, err.reason(), err.kind()));
             }
         }
         // a function whose value cannot fail has no way to hand the error
@@ -672,7 +672,7 @@ impl IrInterp {
             e.append_trace(&self.trace_entry());
             Ok(Flow::Return(e))
         } else {
-            Err(format!("{} — {}", at.refusal(), err.reason))
+            Err(format!("{} — {}", at.refusal(), err.reason()))
         }
     }
 
@@ -802,7 +802,7 @@ impl IrInterp {
             }
             Stmt::Stop { value } => {
                 let val = self.lookup(value).cloned().ok_or_else(|| format!("undefined variable '{}'", value))?;
-                Err(format!("stopped: {}", val.reason))
+                Err(format!("stopped: {}", val.reason()))
             }
         }
     }
@@ -863,8 +863,8 @@ impl IrInterp {
                     _ => unreachable!(),
                 };
                 let full = self.eval(&args[0])?;
-                if !full.ok {
-                    return Err(format!("cannot branch on an error value — {}", full.reason));
+                if !full.is_ok() {
+                    return Err(format!("cannot branch on an error value — {}", full.reason()));
                 }
                 if matches!(full.value, Value::Bool(false)) {
                     let lv = self.eval(l)?;
@@ -892,7 +892,7 @@ impl IrInterp {
                 // a control renders what it is given: a failed argument is
                 // its reason in place of the control, as for a view
                 if let Some(bad) = vals.iter().find(|v| v.is_error()) {
-                    return Ok(CrowValue::markup(format!("error: {}", crate::harness::html_escape_text(&bad.reason))));
+                    return Ok(CrowValue::markup(format!("error: {}", crate::harness::html_escape_text(&bad.reason()))));
                 }
                 CrowValue::markup(crate::ops::render_input(name, &key, &vals)?)
             }
@@ -953,13 +953,13 @@ impl IrInterp {
                 let v = self.eval(expr)?;
                 match how {
                     Convert::IntToFloat => match &v.value {
-                        Value::Int(n) if v.ok => CrowValue::ok(Value::Float(*n as f64)),
+                        Value::Int(n) if v.is_ok() => CrowValue::ok(Value::Float(*n as f64)),
                         _ => v,
                     },
                     // a tensor's numbers as a list's items, ints where the
                     // list holds ints
                     Convert::ToList => match &v.value {
-                        Value::NumArray(t) if v.ok => {
+                        Value::NumArray(t) if v.is_ok() => {
                             let ints = matches!(ty, Ty::List(e) if **e == Ty::Int);
                             CrowValue::ok(Value::Array(
                                 t.to_vec().into_iter().map(|x| CrowValue::ok(if ints { Value::Int(x as i64) } else { Value::Float(x) })).collect(),
@@ -969,7 +969,7 @@ impl IrInterp {
                     },
                     // a list's numbers as a tensor of one axis
                     Convert::ToTensor => match &v.value {
-                        Value::Array(items) if v.ok => {
+                        Value::Array(items) if v.is_ok() => {
                             let mut data = Vec::with_capacity(items.len());
                             for item in items.iter() {
                                 match item.value {
@@ -1014,7 +1014,7 @@ impl IrInterp {
                     for i in indices {
                         crate::ir::visit_expr(i, &mut |e| mentioned |= matches!(e, Expr::Move(n, _) if n == v));
                     }
-                    let in_place = !mentioned && matches!(self.lookup(v), Some(b) if b.ok && matches!(b.value, Value::Array(_) | Value::NumArray(_) | Value::Map(_) | Value::Str(_) | Value::Frame(_)));
+                    let in_place = !mentioned && matches!(self.lookup(v), Some(b) if b.is_ok() && matches!(b.value, Value::Array(_) | Value::NumArray(_) | Value::Map(_) | Value::Str(_) | Value::Frame(_)));
                     if in_place {
                         let mut idx = Vec::with_capacity(indices.len());
                         for i in indices {
@@ -1308,14 +1308,14 @@ impl IrInterp {
     /// `None` for anything else (a session's state, a failed value).
     fn place(&self, e: &Expr) -> Option<&CrowValue> {
         match e {
-            Expr::Local(v, _) => self.lookup(v).filter(|b| b.ok),
+            Expr::Local(v, _) => self.lookup(v).filter(|b| b.is_ok()),
             Expr::Field { base, name, .. } => {
                 if matches!(name.as_str(), "ok" | "reason" | "kind" | "trace" | "len") {
                     return None;
                 }
                 match &self.place(base)?.value {
-                    Value::StructInstance(si) => si.fields.get(name.as_str()).filter(|b| b.ok),
-                    Value::Map(m) => m.get(name.as_str()).filter(|b| b.ok),
+                    Value::StructInstance(si) => si.fields.get(name.as_str()).filter(|b| b.is_ok()),
+                    Value::Map(m) => m.get(name.as_str()).filter(|b| b.is_ok()),
                     _ => None,
                 }
             }
@@ -1329,7 +1329,7 @@ impl IrInterp {
         if matches!(name, "ok" | "reason" | "kind" | "trace" | "len") {
             return false;
         }
-        let indexable = |v: &CrowValue| v.ok && matches!(v.value, Value::Array(_) | Value::NumArray(_) | Value::Map(_) | Value::Str(_));
+        let indexable = |v: &CrowValue| v.is_ok() && matches!(v.value, Value::Array(_) | Value::NumArray(_) | Value::Map(_) | Value::Str(_));
         match self.place(owner).map(|o| &o.value) {
             Some(Value::Frame(f)) => !matches!(name, "shape" | "columns" | "dtypes") && f.col_index(name).is_some(),
             Some(Value::StructInstance(si)) => si.fields.get(name).is_some_and(indexable),
@@ -1488,7 +1488,7 @@ impl IrInterp {
                     err.append_trace(&self.trace_entry());
                     return Ok(err);
                 }
-                Ok(match vals[0].captured {
+                Ok(match vals[0].captured() {
                     Some(t) => CrowValue::ok(Value::Float(t)),
                     None => CrowValue::error_with_kind(
                         "this value was computed here, not read from outside - it has no capture moment",
@@ -1809,7 +1809,7 @@ impl IrInterp {
                 let Value::Frame(f) = &vals[0].value else {
                     if vals[0].is_error() {
                         // the reason is text, as the compiled chart writes it
-                        return Ok(CrowValue::markup(crate::harness::html_escape_text(&format!("chart error: {}", vals[0].reason))));
+                        return Ok(CrowValue::markup(crate::harness::html_escape_text(&format!("chart error: {}", vals[0].reason()))));
                     }
                     return Err("chart[] takes a frame first".into());
                 };
@@ -1995,7 +1995,7 @@ impl IrInterp {
         // a view renders what it is given: a failed argument is its text
         if f.kind == FnKind::View {
             if let Some(bad) = vals.iter().find(|v| v.is_error()) {
-                return Ok(CrowValue::markup(format!("error: {}", crate::harness::html_escape_text(&bad.reason))));
+                return Ok(CrowValue::markup(format!("error: {}", crate::harness::html_escape_text(&bad.reason()))));
             }
         }
         let mut scope = HashMap::new();
@@ -2048,7 +2048,7 @@ impl IrInterp {
             Flow::Return(v) => v,
             _ => CrowValue::done(),
         };
-        v.captured = Some(crow_runtime::moments::now());
+        v.set_captured(Some(crow_runtime::moments::now()));
         Ok(v)
     }
 
@@ -2097,7 +2097,7 @@ impl IrInterp {
             self.last_stop = Some(told.clone());
             self.session_notice.insert(id, (told, crow_runtime::moments::now()));
             let mut stopped = CrowValue::error_with_kind(&reason, "stop", "");
-            stopped.trace.clear();
+            stopped.status_mut().trace.clear();
             return Ok(stopped);
         }
         let before = self.fact_values();
@@ -2830,7 +2830,7 @@ mod tests {
         let src = "use frame\nstruct Bars [c]\ndf = with[with[frame.new[], 'k', [0, 1, 2]], 'p', [1.5, 2.5, 3.5]]\nother = with[with[frame.new[], 'k', [0, 1]], 'q', [7.5, 8.5]]\ndf = join[df, other, 'k', 'left']\nb = Bars[[4.0, 5.0, 6.0]]\nm = map[xs = [1, 2, 3]]\na = df.p[1]\ng = df.q[2]\nz = b.c[-1]\nw = m.xs[0]\nn = b.c[1] + df.p[0]\n";
         let r = run_script(&parse(src), "t").unwrap();
         assert!(matches!(r.var("a").unwrap().value, Value::Float(x) if x == 2.5));
-        assert!(r.var("g").is_some_and(|g| !g.ok && g.reason == "missing"), "{:?}", r.var("g"));
+        assert!(r.var("g").is_some_and(|g| !g.is_ok() && g.reason() == "missing"), "{:?}", r.var("g"));
         assert_eq!(format!("{}", r.var("z").unwrap().value), "6");
         assert!(matches!(r.var("w").unwrap().value, Value::Int(1)));
         assert!(matches!(r.var("n").unwrap().value, Value::Float(x) if x == 6.5));
