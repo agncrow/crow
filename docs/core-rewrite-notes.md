@@ -903,3 +903,14 @@ weeks; the core stages are weeks each.
   the lowered types). Each goes when its decision moves into the
   lowering: a test's assertions written into the IR for both backends,
   and a frame's columns carried by its type.
+- **2026-09-26, F5 step S10: one lowering for a pipeline that runs or
+  builds.** `crow run`, `crow run -i`, `crow build` and `--ir`/`--rs`
+  inferred, lowered a copy of the context to check the program, threw
+  that IR away and lowered again; they now lower once
+  (`infer_and_lower`, `lower_ir::lower_refusing`), the lowering refusing
+  what is not a program with the same messages, and the backends read
+  its IR. The commands that only ask (`crow check`, a part validated
+  alone, the language server) still lower a copy. The oracle is
+  unchanged. A part is still validated alone, as `crow test part.co`
+  sees it, before the program it is imported into: most of finch's build
+  is that, one inference and lowering per part.

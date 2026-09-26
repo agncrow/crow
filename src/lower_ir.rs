@@ -50,6 +50,13 @@ impl Refusal {
     }
 }
 
+/// A program lowered, refused with each error and the declaration it was
+/// found in when it is not one: the lowering a pipeline that runs or builds
+/// the program shares with its check (F5 S10).
+pub fn lower_refusing(stmts: &[S], ctx: &mut TypeContext, part_name: &str) -> Result<Program, Refusal> {
+    lower_checked(stmts, ctx, part_name, &HashSet::new())
+}
+
 /// Whether a program is one: lowered in a copy of its context and thrown
 /// away, for the callers that only ask (`crow check`, the harness, the
 /// language server).
