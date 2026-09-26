@@ -796,3 +796,16 @@ weeks; the core stages are weeks each.
   takes 6.1 s with the flag against 4.5 s, most of either in expanding
   its parts, each inferred on its own; one final lowering (S10) takes
   back a share.
+- **2026-09-26, F5 step S7: the switch, and the walk's traversals
+  deleted.** Inference is `lower_ir::infer_by_lowering`, flag or not.
+  `collect_call_types_*`, `infer_stmt`, `infer_function_body` and the
+  walk's own rounds and specialization are gone (type_infer.rs is 1,575
+  lines, from 2,230); what a body's end environment decides
+  (`find_return_type`, `body_has_result_condition`,
+  `body_refuses_assignment`) stays until S9 flips those seams to the
+  lowering's own returns and propagations, and the expression walk
+  (`infer_expr`) until S8. The oracle matches S6's with the flag, and
+  every gate is green. Lowering is deeper than walking: an 80-entry map
+  literal, 80 nested calls, now outgrows a test thread's stack in an
+  unoptimised build, so its test runs on a thread of its own (the
+  release binary is as deep as its final lowering always was).

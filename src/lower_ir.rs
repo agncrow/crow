@@ -924,11 +924,7 @@ impl<'a> Lowerer<'a> {
 
     fn lower_fn(&mut self, name: &str, params: &[String], body: &[S], is_view: bool) -> Result<Fn, String> {
         let kind = self.kind_of(name, body, is_view);
-        if self.ctx.infer_by_lowering {
-            self.infer_body(name, body);
-        } else {
-            self.ctx.infer_function_body(name, body);
-        }
+        self.infer_body(name, body);
         // the body typed as inference types it: parameters from the
         // signature, first assignments new bindings
         let scope = self.ctx.enter_body(name);
@@ -2265,11 +2261,9 @@ impl<'a> Lowerer<'a> {
 /// order, each call noting its arguments' types for its callee, and each
 /// function's locals are what a provisional lowering of its body leaves.
 /// A body's return type and whether an error leaves it are still decided
-/// from that environment as the walk decides them. Behind
-/// `CROW_INFER=lower` until it agrees with the walk everywhere.
+/// from that environment (`finish_body`).
 pub(crate) fn infer_by_lowering(ctx: &mut TypeContext, stmts: &[S]) {
     let in_ui = stmts.iter().any(|s| matches!(s, S::Use { path, .. } if path == "ui" || path == "web.ui"));
-    ctx.infer_by_lowering = true;
     ctx.begin_inference(stmts);
     // five rounds at least, as ever; then more while a signature still
     // moves — a chain of derivations learns one link a round
@@ -2848,10 +2842,10 @@ mod tests {
         assert!(ir.contains("return mail!now(m, move to"), "{}", ir);
     }
 
-    /// A function's body lowered provisionally (F5), beside inference's
-    /// walk of it: what it met, the walk's environment and its own, and
-    /// the lowering's state after it, which must be as before.
-    fn provisional_of(src: &str, f: &str) -> (Seen, BTreeMap<String, CrowType>, BTreeMap<String, CrowType>) {
+    /// A function's body lowered provisionally (F5): what it met, the
+    /// environment it leaves, and the lowering's state after it, which
+    /// must be as before.
+    fn provisional_of(src: &str, f: &str) -> (Seen, BTreeMap<String, CrowType>) {
         let mut lexer = crate::lexer::Lexer::new(src);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = crate::parser::Parser::new(tokens);
@@ -2862,35 +2856,28 @@ mod tests {
         ctx.infer_program(&stmts);
         let body = ctx.functions[f].body.clone();
         let params: HashSet<String> = ctx.functions[f].params.iter().map(|(p, _)| p.clone()).collect();
-        let scope = ctx.enter_body(f);
-        for s in &body {
-            ctx.infer_stmt(s);
-        }
-        let walked = ctx.vars.clone();
-        ctx.leave_body(scope);
         let mut l = Lowerer::new(&mut ctx, false);
         l.prescan(&stmts, &HashSet::new());
         let scope = l.ctx.enter_body(f);
         l.at = Where::In(FnKind::Pure);
         l.current_fn = f.to_string();
-        let seen = l.provisional(params, &body);
+        let seen = l.provisional(Pass::Settle, Some(params), &body);
         let lowered = l.ctx.vars.clone();
-        assert_eq!((l.temp, l.pre.len(), l.scopes.len(), l.v.mute), (0, 0, 1, 0));
+        assert_eq!((l.temp, l.pre.len(), l.scopes.len(), l.v.mute, l.pass), (0, 0, 1, 0, Pass::Final));
         assert!(l.calls.is_empty() && l.direct_effects.is_empty() && l.v.errors.is_empty() && l.seen.is_none());
         l.ctx.leave_body(scope);
-        (seen, walked, lowered)
+        (seen, lowered)
     }
 
-    /// Lowered to learn its types, a body leaves the environment inference's
-    /// walk leaves — a variable settled across its assignments, a loop's
-    /// variable left bound, a collecting loop's locals left out, a map's
-    /// values taken from `set[]` and `m[k] = v` — and says what it met:
-    /// the calls it makes, the values it returns, the errors it hands back.
+    /// Lowered to learn its types, a body leaves the environment inference
+    /// reads — a variable settled across its assignments, a loop's variable
+    /// left bound, a collecting loop's locals left out, a map's values taken
+    /// from `set[]` and `m[k] = v` — and says what it met: the calls it
+    /// makes, the values it returns, the errors it hands back.
     #[test]
     fn a_body_lowered_to_learn_its_types_settles_as_inference_walks() {
         let src = "fn half[x]\n    return x / 2.0\nfn f[n, s]\n    xs = []\n    for i in range[n]\n        xs = push[xs, i * 1.5]\n    ys = for x in xs\n        y = half[x]\n        y\n    m = map[a = 1]\n    set[m, 'b', 2]\n    m['c'] = 3\n    a, b = 1, 'x'\n    k = int[s]\n    if k gt 5\n        return half[2]\n    return len[ys] * 1.0\nlog[f[3, '7']]\n";
-        let (seen, walked, lowered) = provisional_of(src, "f");
-        assert_eq!(walked, lowered);
+        let (seen, lowered) = provisional_of(src, "f");
         assert_eq!(lowered.get("xs"), Some(&CrowType::Array(Box::new(CrowType::Float))));
         assert_eq!(lowered.get("i"), Some(&CrowType::Int));
         assert!(!lowered.contains_key("y") && !lowered.contains_key("x"), "{:?}", lowered);

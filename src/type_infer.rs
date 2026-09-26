@@ -354,9 +354,6 @@ pub struct TypeContext {
     /// Keep each body's locals as the lowering types them (`crow build
     /// --types`, the oracle every step of inference's rewrite is held to).
     pub record_envs: bool,
-    /// Signatures are found by lowering bodies (F5, `CROW_INFER=lower`):
-    /// the lowering types a function's body for its signature too.
-    pub infer_by_lowering: bool,
     /// Each body's parameters and locals, as its lowering began with them.
     pub body_envs: BTreeMap<String, BTreeMap<String, CrowType>>,
     /// Ask the program's databases what its query literals return. Every
@@ -433,7 +430,6 @@ impl TypeContext {
             fn_frame_schemas: BTreeMap::new(),
             param_frame_schemas: BTreeMap::new(),
             record_envs: false,
-            infer_by_lowering: false,
             body_envs: BTreeMap::new(),
             param_frame_schemas_next: BTreeMap::new(),
             describe_queries: false,
@@ -443,63 +439,10 @@ impl TypeContext {
         }
     }
 
-    /// Main entry point: run multi-pass type inference on a program.
+    /// Main entry point: the program's signatures, found by lowering its
+    /// bodies (F5, `lower_ir::infer_by_lowering`).
     pub fn infer_program(&mut self, stmts: &[Stmt]) {
-        // signatures found by lowering bodies (F5), held beside the walk's
-        // until the two agree
-        if std::env::var("CROW_INFER").as_deref() == Ok("lower") {
-            return crate::lower_ir::infer_by_lowering(self, stmts);
-        }
-        self.begin_inference(stmts);
-
-        // Pass 2+: iterate call-site scanning and function body inference
-        // until types stabilize (handles cross-function type propagation)
-        // five rounds at least, as ever; then more while a signature still
-        // moves — a chain of derivations learns one link a round
-        for round in 0..16 {
-            let before = self.signatures();
-            self.sync_derive_types();
-            // Scan call sites with function-local variable context
-            self.begin_scan();
-            for stmt in stmts {
-                self.collect_call_types_stmt(stmt);
-            }
-            let frames_moved = self.end_scan();
-
-            // Propagate types from indirect calls back to original functions
-            self.propagate_indirect_fn_types(stmts);
-
-            // Infer function bodies and return types
-            let fn_entries: Vec<(String, Vec<Stmt>)> = self.functions.iter()
-                .map(|(n, sig)| (n.clone(), sig.body.clone()))
-                .collect();
-            for (name, body) in &fn_entries {
-                self.infer_function_body(name, body);
-            }
-            if round >= 4 && before == self.signatures() && !frames_moved {
-                break;
-            }
-        }
-        // what the last round learned, where the top level reads it
-        self.sync_derive_types();
-
-        // what only a test's click types, last, and the bodies again
-        if self.type_clicked_handlers(stmts) {
-            let fn_entries: Vec<(String, Vec<Stmt>)> = self.functions.iter().map(|(n, sig)| (n.clone(), sig.body.clone())).collect();
-            for (name, body) in &fn_entries {
-                self.infer_function_body(name, body);
-            }
-        }
-
-        // F2: monomorphize functions used at multiple type signatures
-        self.specialize_functions();
-        self.sync_derive_types();
-
-        // Pass 4: infer top-level variables
-        for stmt in stmts {
-            self.infer_stmt(stmt);
-        }
-
+        crate::lower_ir::infer_by_lowering(self, stmts);
         if std::env::var("CROW_DEBUG_TYPES").is_ok() {
             for (n, t) in &self.vars {
                 eprintln!("VAR {} : {:?}", n, t);
@@ -706,138 +649,6 @@ impl TypeContext {
         }
     }
 
-    fn collect_call_types_stmt(&mut self, stmt: &Stmt) {
-        match stmt {
-            Stmt::Assign { name, value } => {
-                // Track local variable types during call-site scanning (a
-                // local holding a view's markup is markup); a function's own
-                // local is not the module variable of its name
-                let ty = self.infer_expr_full(value);
-                self.note_scanned_assign(name, value, ty);
-                self.collect_call_types_expr(value);
-                self.note_scanned_value(name, value);
-            }
-            Stmt::MultiAssign { names, values, .. } => {
-                for (name, value) in names.iter().zip(values.iter()) {
-                    let ty = self.infer_expr(value);
-                    let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-                    self.vars.insert(name.clone(), settle::settle(&existing, ty, self.body_assigned.is_some()));
-                }
-                for v in values { self.collect_call_types_expr(v); }
-            }
-            // A derivation's body is scanned like a parameterless function's:
-            // the views and helpers it calls learn their parameter types from
-            // its call sites, exactly as they would from a handler's
-            Stmt::Derive { name, body, .. } => {
-                let scan = self.enter_derive_scan(name);
-                for s in body { self.collect_call_types_stmt(s); }
-                self.leave_derive_scan(name, body, scan);
-            }
-            Stmt::FnDecl { name, body, .. } => {
-                let scan = self.enter_fn_scan(name);
-                for s in body { self.collect_call_types_stmt(s); }
-                self.leave_fn_scan(name, scan);
-            }
-            Stmt::Return(Some(e)) => {
-                self.collect_call_types_expr(e);
-                self.note_return_frame(e);
-            }
-            Stmt::ExprStmt(e) => self.collect_call_types_expr(e),
-            Stmt::If { condition, then_body, else_body } => {
-                self.collect_call_types_expr(condition);
-                for s in then_body { self.collect_call_types_stmt(s); }
-                if let Some(eb) = else_body {
-                    for s in eb { self.collect_call_types_stmt(s); }
-                }
-            }
-            Stmt::For { var, iter, body } => {
-                self.collect_call_types_expr(iter);
-                // Infer loop variable type from iterator
-                let iter_type = self.infer_expr(iter);
-                self.scan_loop_var(var, iter_type);
-                self.collect_loop_call_types(body);
-            }
-            Stmt::While { condition, body } => {
-                self.collect_call_types_expr(condition);
-                self.collect_loop_call_types(body);
-            }
-            Stmt::FieldAssign { object, value, .. } => {
-                self.collect_call_types_expr(object);
-                self.collect_call_types_expr(value);
-            }
-            Stmt::IndexAssign { object, index, value } => {
-                self.collect_call_types_expr(object);
-                self.collect_call_types_expr(index);
-                self.collect_call_types_expr(value);
-            }
-            _ => {}
-        }
-    }
-
-    /// A loop's body for call sites: it runs again with what it assigned,
-    /// so when a variable from before the loop took a type in it (`made =
-    /// []`, a call on `made`, then a push of records), the body is read a
-    /// second time and its calls see that type.
-    fn collect_loop_call_types(&mut self, body: &[Stmt]) {
-        let outer = self.vars.clone();
-        for s in body {
-            self.collect_call_types_stmt(s);
-        }
-        let moved = outer.iter().any(|(n, t)| self.vars.get(n).map_or(false, |now| now != t));
-        if moved {
-            for s in body {
-                self.collect_call_types_stmt(s);
-            }
-        }
-    }
-
-    /// Scan an expression for call sites; update function param types and struct field types.
-    fn collect_call_types_expr(&mut self, expr: &Expr) {
-        match expr {
-            Expr::Call { callee, args } => {
-                // markup told apart from text: a view given markup and the
-                // same view given text are two specializations
-                if self.call_says_of_callee(callee) {
-                    let arg_types: Vec<CrowType> = args.iter().map(|a| self.infer_expr_full(a)).collect();
-                    self.note_call(callee, args, &arg_types);
-                }
-                // Recurse into args
-                for a in args { self.collect_call_types_expr(a); }
-            }
-            Expr::BinOp { left, right, .. } => {
-                self.collect_call_types_expr(left);
-                self.collect_call_types_expr(right);
-            }
-            Expr::UnaryOp { expr: e, .. } => self.collect_call_types_expr(e),
-            Expr::FieldAccess { object, .. } => self.collect_call_types_expr(object),
-            Expr::Array(items) => {
-                for i in items { self.collect_call_types_expr(i); }
-            }
-            Expr::Map(pairs) => {
-                for (k, v) in pairs {
-                    self.collect_call_types_expr(k);
-                    self.collect_call_types_expr(v);
-                }
-            }
-            Expr::ForExpr { var, iter, body } => {
-                self.collect_call_types_expr(iter);
-                // Infer loop variable type from iterator
-                let iter_type = self.infer_expr(iter);
-                self.scan_loop_var(var, iter_type);
-                // Iterating an array literal of named fns: calls through the
-                // loop variable type each fn's params (an uncalled fn would
-                // otherwise keep Unknown params and be skipped at emission)
-                self.note_function_list(var, iter, body);
-                for s in body { self.collect_call_types_stmt(s); }
-            }
-            Expr::Str(s) => {
-                // Parse string interpolations to discover embedded call sites
-                self.collect_call_types_in_string(s);
-            }
-            _ => {}
-        }
-    }
-
     /// Walk statements and invoke f with the args of every call whose callee
     /// is the given variable name.
     pub(crate) fn find_calls_to_var(stmts: &[Stmt], var: &str, f: &mut dyn FnMut(&[Expr])) {
@@ -926,90 +737,10 @@ impl TypeContext {
         false
     }
 
-    fn collect_call_types_in_string(&mut self, s: &str) {
-        let chars: Vec<char> = s.chars().collect();
-        let mut i = 0;
-        while i < chars.len() {
-            // Escaped backtick: literal, not interpolation
-            if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '`' {
-                i += 2;
-                continue;
-            }
-            if chars[i] == '`' {
-                // Interpolation span: scan to closing backtick, quote-aware
-                let start = i + 1;
-                i += 1;
-                let mut in_str = false;
-                while i < chars.len() {
-                    let c = chars[i];
-                    if in_str {
-                        if c == '\\' && i + 1 < chars.len() { i += 2; continue; }
-                        if c == '\'' { in_str = false; }
-                    } else if c == '\'' {
-                        in_str = true;
-                    } else if c == '`' {
-                        break;
-                    }
-                    i += 1;
-                }
-                let expr_str: String = chars[start..i.min(chars.len())].iter().collect();
-                i += 1;
-
-                // Parse and collect call types from the embedded expression
-                let mut lexer = crate::lexer::Lexer::new(&expr_str);
-                if let Ok(tokens) = lexer.tokenize() {
-                    let mut parser = crate::parser::Parser::new(tokens);
-                    if let Ok(stmts) = parser.parse() {
-                        let stmts = crate::lower::lower_fragment(&stmts).unwrap_or(stmts);
-                        if let Some(crate::ast::Stmt::ExprStmt(expr)) = stmts.iter().find(|s| !matches!(s, Stmt::Line(_))) {
-                            self.collect_call_types_expr(expr);
-                        }
-                    }
-                }
-            } else {
-                i += 1;
-            }
-        }
-    }
-
     /// A type is concrete if it contains no Unknown anywhere (used to decide
     /// whether a call signature is usable for monomorphization).
     pub(crate) fn type_is_concrete(t: &CrowType) -> bool {
         !format!("{:?}", t).contains("Unknown")
-    }
-
-    /// The F2 monomorphization pass: functions called with multiple
-    /// incompatible signatures get one clone per signature group. Single-
-    /// signature functions are untouched. Runs to fixpoint so specialization
-    /// propagates through call chains.
-    fn specialize_functions(&mut self) {
-        for _round in 0..5 {
-            let new_clones = self.new_clones();
-            if new_clones.is_empty() {
-                break;
-            }
-            // Infer each clone's body under its own parameter types; this also
-            // records the clone's callees' signatures (transitive propagation)
-            for mangled in &new_clones {
-                let body = self.functions.get(mangled).unwrap().body.clone();
-                // record callee signatures from the clone's body with params bound
-                let saved_vars = self.bind_params(mangled);
-                for stmt in &body {
-                    self.collect_call_types_stmt(stmt);
-                }
-                self.vars = saved_vars;
-                self.infer_function_body(mangled, &body);
-            }
-        }
-        // Settle: re-infer all clone bodies so transitive return types
-        // stabilize regardless of clone creation order
-        for _ in 0..2 {
-            for mangled in self.clone_names() {
-                if let Some(body) = self.reset_clone(&mangled) {
-                    self.infer_function_body(&mangled, &body);
-                }
-            }
-        }
     }
 
     /// One round of the F2 monomorphization pass: each function called with
@@ -1303,15 +1034,6 @@ impl TypeContext {
         self.param_frames_out_of_view(scope.saved_frames);
     }
 
-    pub(crate) fn infer_function_body(&mut self, name: &str, body: &[Stmt]) {
-        let scope = self.enter_body(name);
-        // Infer body statements
-        for stmt in body {
-            self.infer_stmt(stmt);
-        }
-        self.finish_body(name, body, scope);
-    }
-
     /// Out of a function's body once its locals are typed (by the walk, or
     /// by a provisional lowering): its return type from its returns,
     /// widened to a Result when an error can leave it, and a fact a view or
@@ -1400,86 +1122,6 @@ impl TypeContext {
         match &mut self.body_assigned {
             Some(assigned) => assigned.insert(name.to_string()) && !(is_ui && facts.contains(name)),
             None => false,
-        }
-    }
-
-    pub(crate) fn infer_stmt(&mut self, stmt: &Stmt) {
-        match stmt {
-            Stmt::Assign { name, value } => {
-                let ty = self.infer_expr_full(value);
-                if self.fresh_binding(name) {
-                    self.vars.insert(name.clone(), ty);
-                } else {
-                    let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-                    self.vars.insert(name.clone(), settle::settle(&existing, ty, self.body_assigned.is_some()));
-                }
-                // the columns a local reads are those of the value assigned
-                // here, as the call-site scan and the lowering have them (a
-                // cell read later in the body was typed by another frame of
-                // the same name)
-                if let Some(schema) = self.frame_schema_of(value) {
-                    self.frame_schemas.insert(name.clone(), schema);
-                }
-            }
-            Stmt::MultiAssign { names, values } => {
-                for (name, value) in names.iter().zip(values.iter()) {
-                    let ty = self.infer_expr(value);
-                    let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-                    self.vars.insert(name.clone(), settle::settle(&existing, ty, self.body_assigned.is_some()));
-                }
-            }
-            Stmt::If { then_body, else_body, .. } => {
-                for s in then_body { self.infer_stmt(s); }
-                if let Some(eb) = else_body {
-                    for s in eb { self.infer_stmt(s); }
-                }
-            }
-            Stmt::While { body, .. } => {
-                for s in body { self.infer_stmt(s); }
-            }
-            Stmt::For { var, iter, body } => {
-                let iter_type = Self::walked(self.infer_expr(iter));
-                match &iter_type {
-                    CrowType::Array(inner) | CrowType::NumArray(inner) => {
-                        self.vars.insert(var.clone(), *inner.clone());
-                    }
-                    _ => {}
-                }
-                for s in body { self.infer_stmt(s); }
-            }
-            Stmt::ExprStmt(Expr::Call { callee, args }) => {
-                // Propagate value type from set[map_var, key, val] to the map variable
-                if let Expr::Ident(name) = callee.as_ref() {
-                    if name == "set" && args.len() == 3 {
-                        if let Expr::Ident(var_name) = &args[0] {
-                            let val_type = self.infer_expr(&args[2]);
-                            let map_type = CrowType::Map(Box::new(val_type));
-                            let existing = self.vars.get(var_name).cloned().unwrap_or(CrowType::Unknown);
-                            self.vars.insert(var_name.clone(), existing.unify(&map_type));
-                        }
-                    }
-                }
-            }
-            Stmt::FieldAssign { value, .. } => {
-                // Just infer the value expression for side effects
-                self.infer_expr(value);
-            }
-            Stmt::IndexAssign { object, value, .. } => {
-                // Infer value type and update the collection's element type
-                let val_type = self.infer_expr(value);
-                let obj_type = self.infer_expr(object);
-                // If assigning to a map, unify value type
-                if let Expr::Ident(var_name) = object {
-                    match &obj_type {
-                        CrowType::Map(inner) => {
-                            let new_inner = inner.unify(&val_type);
-                            self.vars.insert(var_name.clone(), CrowType::Map(Box::new(new_inner)));
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
         }
     }
 
@@ -1892,13 +1534,18 @@ mod tests {
     /// finished. Each argument is inferred once, so this is instant.
     #[test]
     fn a_large_map_literal_infers_in_one_pass() {
-        let entries: Vec<String> = (0..80).map(|i| format!("'k{}' = {}.5", i, i)).collect();
-        let src = format!("m = map[{}]\nlog[len[m]]\n", entries.join(", "));
-        let stmts = crate::build(&src).unwrap();
-        let stmts = crate::lower::lower_program(&stmts).unwrap();
-        let mut ctx = TypeContext::new();
-        ctx.infer_program(&stmts);
-        assert_eq!(ctx.vars.get("m"), Some(&CrowType::Map(Box::new(CrowType::Float))));
+        // 80 entries are 80 nested calls, which inference lowers level by
+        // level: an unoptimised build's frames outgrow a test thread's stack
+        let infers = || {
+            let entries: Vec<String> = (0..80).map(|i| format!("'k{}' = {}.5", i, i)).collect();
+            let src = format!("m = map[{}]\nlog[len[m]]\n", entries.join(", "));
+            let stmts = crate::build(&src).unwrap();
+            let stmts = crate::lower::lower_program(&stmts).unwrap();
+            let mut ctx = TypeContext::new();
+            ctx.infer_program(&stmts);
+            assert_eq!(ctx.vars.get("m"), Some(&CrowType::Map(Box::new(CrowType::Float))));
+        };
+        std::thread::Builder::new().stack_size(64 << 20).spawn(infers).unwrap().join().unwrap();
     }
 
     /// A local reusing a module variable's name is a new binding (spec §7):
