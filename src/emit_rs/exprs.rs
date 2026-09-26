@@ -839,7 +839,7 @@ impl Emitter {
         let mut out = format!("{{ {}", binds);
         for (b, _) in &fallible {
             out.push_str(&format!(
-                "if !{b}.ok {{ let mut _err = CrowResult {{ ok: false, value: String::new(), reason: {b}.reason.clone(), kind: {b}.kind.clone(), trace: {b}.trace.clone(), captured: 0.0 }}; _err.trace.push({trace}); _err }} else ",
+                "if !{b}.ok {{ let mut _err = CrowResult {{ ok: false, value: String::new(), reason: {b}.reason.clone(), kind: {b}.kind.clone(), trace: {b}.trace.clone(), captured: 0.0 }}; crow_trace_push(&mut _err.trace, {trace}); _err }} else ",
                 b = b,
                 trace = trace
             ));
@@ -1340,7 +1340,7 @@ impl Emitter {
                 return format!("{{ state.stop(format!(\"{} stopped: {{}}\", _prop_{}.reason)); return; }}", who, i);
             }
             format!(
-                "{{ let mut _err = CrowResult {{ ok: false, value: {}, reason: _prop_{i}.reason.clone(), kind: _prop_{i}.kind.clone(), trace: _prop_{i}.trace.clone(), captured: 0.0 }}; _err.trace.push({}); _err }}",
+                "{{ let mut _err = CrowResult {{ ok: false, value: {}, reason: _prop_{i}.reason.clone(), kind: _prop_{i}.kind.clone(), trace: _prop_{i}.trace.clone(), captured: 0.0 }}; crow_trace_push(&mut _err.trace, {}); _err }}",
                 default_val,
                 trace,
                 i = i

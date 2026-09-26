@@ -16,7 +16,10 @@
 --- handler clicked only by a test, with the test's own variables, had no
 --- types for its parameters; and a function that writes state only
 --- through another (`clock.jump` through `moved_to`) was compiled without
---- the session it writes. CI runs it in the interpreter and compiled.
+--- the session it writes. A click without the arguments its handler
+--- takes stops, as the handler stopping would: the interpreter failed the
+--- test at the click, and the compiled page dropped the event without a
+--- word. CI runs it in the interpreter and compiled.
 use web, ui, frame
 struct Order [symbol, qty]
 struct Tag [order, note]
@@ -149,3 +152,10 @@ test a_function_writes_state_through_another[]
     click[a, relay_click]
     assert[said eq 'relayed', 'said `said`']
     assert[contains[html[a], 'relayed'], 'the page `html[a]`']
+
+test a_click_without_its_arguments_stops[]
+    a = app[shown]
+    r = click[a, note_it]
+    assert[not r.ok, 'the click ran']
+    assert[contains[r.reason, 'note_it[] expects 1 arguments, got 0'], r.reason]
+    assert[said eq '', 'said `said`']

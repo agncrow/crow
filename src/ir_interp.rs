@@ -2083,6 +2083,23 @@ impl IrInterp {
     pub(crate) fn transaction(&mut self, name: &str, args: Vec<CrowValue>) -> Result<CrowValue, String> {
         let id = self.active_session.unwrap_or(0);
         self.last_stop = None;
+        // an event that does not fit the program — no handler of the name,
+        // or not the arguments it takes — stops, as a handler that stops
+        // does, in a test's click as on a served page (a click failed the
+        // test; the compiled page dropped the event without a word)
+        let fits = match self.fns.get(name).or_else(|| self.fns.get(name.split("__").next().unwrap_or(name))) {
+            None => Err(format!("unknown function '{}'", name)),
+            Some(f) if f.params.len() != args.len() => Err(format!("{}[] expects {} arguments, got {}", name, f.params.len(), args.len())),
+            Some(_) => Ok(()),
+        };
+        if let Err(reason) = fits {
+            let told = format!("{} stopped: {}", name, reason);
+            self.last_stop = Some(told.clone());
+            self.session_notice.insert(id, (told, crow_runtime::moments::now()));
+            let mut stopped = CrowValue::error_with_kind(&reason, "stop", "");
+            stopped.trace.clear();
+            return Ok(stopped);
+        }
         let before = self.fact_values();
         let outer = self.held.replace(Vec::new());
         let saved_view = self.in_view;

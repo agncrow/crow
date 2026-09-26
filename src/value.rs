@@ -104,9 +104,13 @@ impl CrowValue {
         }
     }
 
-    /// Append a trace entry during auto-propagation
+    /// Append a trace entry during auto-propagation: a place the trace
+    /// already ends at is not named twice (a refusal on the line the error
+    /// came from)
     pub fn append_trace(&mut self, location: &str) {
-        self.trace.push(location.to_string());
+        if self.trace.last().map(String::as_str) != Some(location) {
+            self.trace.push(location.to_string());
+        }
     }
 
     /// Stamp this value as captured from the outside world now.

@@ -38,6 +38,8 @@ If the port is already in use, the server prints a friendly error: `error: port 
 | `bytes[data]` | Raw binary response (`application/octet-stream`) | [Web: responses and submodules](../by-example/web-more.md) |
 | `stream[handler_fn]` | Streaming/chunked response via channel |  |
 
+A response is what a route returns. A page shows elements and text, so a view that places one — `row[text['3 items']]` — is refused in both modes: place the text itself, or `p[…]` or `span[…]`.
+
 ### Auth (`use web.auth`)
 
 | Function | Description | Example |

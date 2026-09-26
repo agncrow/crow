@@ -514,7 +514,7 @@ impl Emitter {
             let trace = self.trace_format_expr();
             if matches!(ret, CrowType::Result(_)) {
                 format!(
-                    "return CrowResult {{ ok: false, value: {}, reason: {v}.reason.clone(), kind: {v}.kind.clone(), trace: {{ let mut _t = {v}.trace.clone(); _t.push({}); _t }}, captured: 0.0 }};",
+                    "return CrowResult {{ ok: false, value: {}, reason: {v}.reason.clone(), kind: {v}.kind.clone(), trace: {{ let mut _t = {v}.trace.clone(); crow_trace_push(&mut _t, {}); _t }}, captured: 0.0 }};",
                     inner_default,
                     trace,
                     v = v

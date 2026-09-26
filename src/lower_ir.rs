@@ -1525,7 +1525,22 @@ impl<'a> Lowerer<'a> {
                         continue;
                     }
                 }
-                children.push(self.lower_expr(a)?);
+                let child = self.lower_expr(a)?;
+                // a response is what a route returns, not something a page
+                // shows (the interpreter showed `text[s]` as its text; the
+                // compiled page did not build)
+                if matches!(child.ty().payload(), Ty::Handle(h) if h == "web.response") {
+                    let what = match a {
+                        A::Call { callee, .. } => match callee.as_ref() {
+                            A::Ident(f) => format!("{}[…]", f),
+                            A::FieldAccess { field, .. } => format!("{}[…]", field),
+                            _ => "this".to_string(),
+                        },
+                        _ => "this".to_string(),
+                    };
+                    self.refuse(format!("{}: {} is a web response, which a route returns — a page shows elements and text: place the text itself, or p[…] or span[…]", name, what));
+                }
+                children.push(child);
             }
             self.check_call(&name, args);
             return Ok(Expr::Tree { element: name, attrs, children });
