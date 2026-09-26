@@ -134,8 +134,15 @@ benchmark.
   `collect`, before and after, full sizes: the collecting loop 121 → 88
   ms, the loop through a function 216 → 184 ms, join/split 34 → 27 ms,
   sort 3.3 → 2.0 ms, the JSON round trip 13 → 8.6 ms.
-- Next: **B,** the large variants boxed, so a value is about 32 bytes;
-  **C,** markup its own variant (decision 2); then the status held only
+- **2026-09-26, B: the large variants held apart.** A tensor, a frame,
+  a sparse matrix, a record and a test's app session are boxed, and a
+  mailer names its host by a shared string: a `Value` is 32 bytes and a
+  `CrowValue` 40, from 96 and 104. On `collect`, against A: the
+  collecting loop 82 → 67 ms, the loop through a function 187 → 168 ms,
+  join/split 26 → 22 ms, the JSON round trip 8.7 → 5 ms. Against the
+  start: the collecting loop and sort each nearly twice as fast, the
+  JSON round trip over twice.
+- Next: **C,** markup its own variant (decision 2); then the status held only
   where the IR types a value as able to fail (decision 1), the scalar
   lists (decision 3), builtins from the table (§4 step 2), and the
   compiled facts as a struct (§4 step 4).

@@ -81,7 +81,7 @@ fn call_frame(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
     match name {
         "new" => {
             if !args.is_empty() { return Err("new: takes no arguments — frame.new[] is the empty frame; add columns with with[frame, name, values]".into()); }
-            Ok(CrowValue::ok(Value::Frame(CrowFrame::new(vec![], vec![], vec![]))))
+            Ok(CrowValue::ok(Value::Frame(Box::new(CrowFrame::new(vec![], vec![], vec![])))))
         }
         "with" => {
             if args.len() != 3 { return Err("with: expected 3 arguments (frame, column name, values)".into()); }
@@ -90,7 +90,7 @@ fn call_frame(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             let (col, scalar) = value_to_column(&args[2], "with")?;
             let out = if scalar { f.with_scalar(name, col) } else { f.with_column(name, col) };
             match out {
-                Ok(fr) => Ok(CrowValue::ok(Value::Frame(fr))),
+                Ok(fr) => Ok(CrowValue::ok(Value::Frame(Box::new(fr)))),
                 Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
             }
         }
@@ -98,7 +98,7 @@ fn call_frame(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             if args.len() != 1 { return Err("load: expected 1 argument (path)".into()); }
             let path = to_str(&args[0], "load")?;
             match crow_runtime::frame::load_csv(path) {
-                Ok(frame) => Ok(CrowValue::ok(Value::Frame(frame))),
+                Ok(frame) => Ok(CrowValue::ok(Value::Frame(Box::new(frame)))),
                 Err(ref e) => Ok(CrowValue::error_with_kind(e, "frame", "")),
             }
         }
@@ -117,7 +117,7 @@ fn call_frame(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             let col_names = extract_str_list(&args[1], "select")?;
             let refs: Vec<&str> = col_names.iter().map(|s| s.as_str()).collect();
             match frame.select(&refs) {
-                Ok(f) => Ok(CrowValue::ok(Value::Frame(f))),
+                Ok(f) => Ok(CrowValue::ok(Value::Frame(Box::new(f)))),
                 Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
             }
         }
@@ -126,7 +126,7 @@ fn call_frame(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             let frame = to_frame(&args[0], "filter")?;
             let mask = extract_bool_list(&args[1], "filter")?;
             match frame.filter(&mask) {
-                Ok(f) => Ok(CrowValue::ok(Value::Frame(f))),
+                Ok(f) => Ok(CrowValue::ok(Value::Frame(Box::new(f)))),
                 Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
             }
         }
@@ -157,7 +157,7 @@ fn call_sort(args: &[CrowValue]) -> Result<CrowValue, String> {
         }
     } else { false };
     match frame.sort(col, desc) {
-        Ok(f) => Ok(CrowValue::ok(Value::Frame(f))),
+        Ok(f) => Ok(CrowValue::ok(Value::Frame(Box::new(f)))),
         Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
     }
 }
@@ -189,7 +189,7 @@ fn call_group(args: &[CrowValue]) -> Result<CrowValue, String> {
     }
     let agg_refs: Vec<(&str, AggFn)> = aggs.iter().map(|(s, a)| (s.as_str(), *a)).collect();
     match frame.group(group_col, &agg_refs) {
-        Ok(f) => Ok(CrowValue::ok(Value::Frame(f))),
+        Ok(f) => Ok(CrowValue::ok(Value::Frame(Box::new(f)))),
         Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
     }
 }
@@ -201,7 +201,7 @@ fn call_join(args: &[CrowValue]) -> Result<CrowValue, String> {
     let key = to_str(&args[2], "join")?;
     let jtype = if args.len() == 4 { to_str(&args[3], "join")? } else { "inner" };
     match left.join(right, key, jtype) {
-        Ok(f) => Ok(CrowValue::ok(Value::Frame(f))),
+        Ok(f) => Ok(CrowValue::ok(Value::Frame(Box::new(f)))),
         Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
     }
 }
@@ -211,7 +211,7 @@ fn call_stack(args: &[CrowValue]) -> Result<CrowValue, String> {
     let a = to_frame(&args[0], "stack")?;
     let b = to_frame(&args[1], "stack")?;
     match a.stack(b) {
-        Ok(f) => Ok(CrowValue::ok(Value::Frame(f))),
+        Ok(f) => Ok(CrowValue::ok(Value::Frame(Box::new(f)))),
         Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
     }
 }
@@ -222,7 +222,7 @@ fn call_head_tail(args: &[CrowValue], is_head: bool) -> Result<CrowValue, String
     let frame = to_frame(&args[0], fname)?;
     let n = to_int(&args[1], fname)? as usize;
     let result = if is_head { frame.head(n) } else { frame.tail(n) };
-    Ok(CrowValue::ok(Value::Frame(result)))
+    Ok(CrowValue::ok(Value::Frame(Box::new(result))))
 }
 
 fn call_fill(args: &[CrowValue]) -> Result<CrowValue, String> {
@@ -231,7 +231,7 @@ fn call_fill(args: &[CrowValue]) -> Result<CrowValue, String> {
     let col = to_str(&args[1], "fill")?;
     let fill_val = format!("{}", args[2].value);
     match frame.fill_column(col, &fill_val) {
-        Ok(f) => Ok(CrowValue::ok(Value::Frame(f))),
+        Ok(f) => Ok(CrowValue::ok(Value::Frame(Box::new(f)))),
         Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
     }
 }
@@ -259,7 +259,7 @@ fn call_rename(args: &[CrowValue]) -> Result<CrowValue, String> {
     let old = to_str(&args[1], "rename")?;
     let new = to_str(&args[2], "rename")?;
     match frame.rename(old, new) {
-        Ok(f) => Ok(CrowValue::ok(Value::Frame(f))),
+        Ok(f) => Ok(CrowValue::ok(Value::Frame(Box::new(f)))),
         Err(e) => Ok(CrowValue::error_with_kind(&e, "frame", "")),
     }
 }

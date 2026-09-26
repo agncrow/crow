@@ -109,7 +109,7 @@ fn to_float(v: &CrowValue, fname: &str) -> Result<f64, String> {
 
 fn to_tensor(v: &CrowValue, fname: &str) -> Result<CrowTensor, String> {
     match &v.value {
-        Value::NumArray(t) => Ok(t.clone()),
+        Value::NumArray(t) => Ok(*t.clone()),
         // All-numeric plain arrays coerce (frame columns arrive this way in
         // the interpreter — compiled mode already accepts columns)
         Value::Array(items) => {
@@ -156,7 +156,7 @@ fn call_math(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
         let x = match &args[0].value { Value::Int(n) => Some(*n as f64), Value::Float(f) => Some(*f), _ => None };
         if let Some(x) = x {
             let t = CrowTensor::from_vec(vec![x], vec![1]);
-            let r = call_math(name, &[CrowValue::ok(Value::NumArray(t))])?;
+            let r = call_math(name, &[CrowValue::ok(Value::NumArray(Box::new(t)))])?;
             return Ok(match &r.value {
                 Value::NumArray(t) => CrowValue::ok(Value::Float(t.to_vec().first().copied().unwrap_or(f64::NAN))),
                 _ => r,
@@ -167,45 +167,45 @@ fn call_math(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
         // Tensor creation
         "zeros" => {
             let shape = shape_from_args(args, name)?;
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::zeros(shape))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::zeros(shape)))))
         }
         "ones" => {
             let shape = shape_from_args(args, name)?;
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::ones(shape))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::ones(shape)))))
         }
         "eye" => {
             if args.len() != 1 { return Err(format!("eye: expected 1 argument, got {}", args.len())); }
             let n = to_usize(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::eye(n))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::eye(n)))))
         }
         "randn" => {
             let shape = shape_from_args(args, name)?;
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::randn(shape))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::randn(shape)))))
         }
         "linspace" => {
             if args.len() != 3 { return Err(format!("linspace: expected 3 arguments (start, stop, n), got {}", args.len())); }
             let start = to_f64(&args[0], name)?;
             let stop = to_f64(&args[1], name)?;
             let n = to_usize(&args[2], name)?;
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::linspace(start, stop, n))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::linspace(start, stop, n)))))
         }
         "arange" => {
             if args.len() != 3 { return Err(format!("arange: expected 3 arguments (start, stop, step), got {}", args.len())); }
             let start = to_f64(&args[0], name)?;
             let stop = to_f64(&args[1], name)?;
             let step = to_f64(&args[2], name)?;
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::arange(start, stop, step))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::arange(start, stop, step)))))
         }
         "full" => {
             if args.len() < 2 { return Err(format!("full: expected at least 2 arguments (dims..., value), got {}", args.len())); }
             let value = to_f64(args.last().unwrap(), name)?;
             let shape = shape_from_args(&args[..args.len()-1], name)?;
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::full(shape, value))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::full(shape, value)))))
         }
         "diag" => {
             if args.len() != 1 { return Err(format!("diag: expected 1 argument, got {}", args.len())); }
             let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::diag(&t))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::diag(&t)))))
         }
         "tensor" => {
             if args.is_empty() || args.len() > 2 { return Err(format!("tensor: expected 1-2 arguments, got {}", args.len())); }
@@ -217,7 +217,7 @@ fn call_math(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
                         Value::Float(f) => Ok(*f),
                         _ => Err("tensor: array elements must be numbers".into()),
                     }).collect();
-                    Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data?, vec![arr.len()]))))
+                    Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::from_vec(data?, vec![arr.len()])))))
                 }
                 Value::Frame(frame) => {
                     // tensor[df] or tensor[df, [col1, col2]]
@@ -236,57 +236,57 @@ fn call_math(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
                     let (data, nrows, ncols) = crow_runtime::frame::frame_to_tensor_data(
                         frame, col_names.as_deref(),
                     )?;
-                    Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![nrows, ncols]))))
+                    Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::from_vec(data, vec![nrows, ncols])))))
                 }
                 _ => Err(format!("tensor: expected array or frame, got {:?}", args[0].value)),
             }
         }
 
         // Element-wise math
-        "exp" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.exp()))) }
-        "ln" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.log()))) }
-        "log2" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.log2()))) }
-        "log10" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.log10()))) }
-        "sqrt" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.sqrt()))) }
-        "sin" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.sin()))) }
-        "cos" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.cos()))) }
-        "abs" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.abs()))) }
-        "sign" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.sign()))) }
-        "floor" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.floor()))) }
-        "ceil" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.ceil()))) }
-        "round" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.round()))) }
+        "exp" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.exp())))) }
+        "ln" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.log())))) }
+        "log2" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.log2())))) }
+        "log10" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.log10())))) }
+        "sqrt" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.sqrt())))) }
+        "sin" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.sin())))) }
+        "cos" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.cos())))) }
+        "abs" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.abs())))) }
+        "sign" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.sign())))) }
+        "floor" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.floor())))) }
+        "ceil" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.ceil())))) }
+        "round" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.round())))) }
         "clip" => {
             if args.len() != 3 { return Err(format!("clip: expected 3 arguments (tensor, lo, hi), got {}", args.len())); }
             let t = to_tensor(&args[0], name)?;
             let lo = to_f64(&args[1], name)?;
             let hi = to_f64(&args[2], name)?;
-            Ok(CrowValue::ok(Value::NumArray(t.clip(lo, hi))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(t.clip(lo, hi)))))
         }
         "mod" => {
             if args.len() != 2 { return Err(format!("mod: expected 2 arguments, got {}", args.len())); }
             let a = to_tensor(&args[0], name)?;
             match &args[1].value {
-                Value::NumArray(b) => Ok(CrowValue::ok(Value::NumArray(a.modulo(b)))),
-                Value::Int(n) => Ok(CrowValue::ok(Value::NumArray(a.modulo_scalar(*n as f64)))),
-                Value::Float(f) => Ok(CrowValue::ok(Value::NumArray(a.modulo_scalar(*f)))),
+                Value::NumArray(b) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.modulo(b))))),
+                Value::Int(n) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.modulo_scalar(*n as f64))))),
+                Value::Float(f) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.modulo_scalar(*f))))),
                 _ => Err("mod: second argument must be a number or tensor".into()),
             }
         }
 
         // Trigonometry
-        "tan" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.tan()))) }
-        "asin" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.asin()))) }
-        "acos" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.acos()))) }
-        "atan" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.atan()))) }
+        "tan" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.tan())))) }
+        "asin" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.asin())))) }
+        "acos" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.acos())))) }
+        "atan" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.atan())))) }
         "atan2" => {
             if args.len() != 2 { return Err(format!("atan2: expected 2 arguments, got {}", args.len())); }
             let y = to_tensor(&args[0], name)?;
             let x = to_tensor(&args[1], name)?;
-            Ok(CrowValue::ok(Value::NumArray(y.atan2(&x))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(y.atan2(&x)))))
         }
-        "sinh" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.sinh()))) }
-        "cosh" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.cosh()))) }
-        "tanh" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.tanh()))) }
+        "sinh" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.sinh())))) }
+        "cosh" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.cosh())))) }
+        "tanh" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.tanh())))) }
 
         _ => call_math_reductions(name, args),
     }
@@ -297,33 +297,33 @@ fn call_math_reductions(name: &str, args: &[CrowValue]) -> Result<CrowValue, Str
         // Reductions
         "sum" => {
             let t = to_tensor(&args[0], name)?;
-            if args.len() >= 2 { let axis = to_f64(&args[1], name)? as usize; Ok(CrowValue::ok(Value::NumArray(t.sum_axis(axis)))) }
+            if args.len() >= 2 { let axis = to_f64(&args[1], name)? as usize; Ok(CrowValue::ok(Value::NumArray(Box::new(t.sum_axis(axis))))) }
             else { Ok(CrowValue::ok(Value::Float(t.sum()))) }
         }
         "mean" => {
             let t = to_tensor(&args[0], name)?;
-            if args.len() >= 2 { let axis = to_f64(&args[1], name)? as usize; Ok(CrowValue::ok(Value::NumArray(t.mean_axis(axis)))) }
+            if args.len() >= 2 { let axis = to_f64(&args[1], name)? as usize; Ok(CrowValue::ok(Value::NumArray(Box::new(t.mean_axis(axis))))) }
             else { Ok(CrowValue::ok(Value::Float(t.mean()))) }
         }
         "min" => {
             let t = to_tensor(&args[0], name)?;
-            if args.len() >= 2 { let axis = to_f64(&args[1], name)? as usize; Ok(CrowValue::ok(Value::NumArray(t.min_axis(axis)))) }
+            if args.len() >= 2 { let axis = to_f64(&args[1], name)? as usize; Ok(CrowValue::ok(Value::NumArray(Box::new(t.min_axis(axis))))) }
             else { Ok(CrowValue::ok(Value::Float(t.min()))) }
         }
         "max" => {
             let t = to_tensor(&args[0], name)?;
-            if args.len() >= 2 { let axis = to_f64(&args[1], name)? as usize; Ok(CrowValue::ok(Value::NumArray(t.max_axis(axis)))) }
+            if args.len() >= 2 { let axis = to_f64(&args[1], name)? as usize; Ok(CrowValue::ok(Value::NumArray(Box::new(t.max_axis(axis))))) }
             else { Ok(CrowValue::ok(Value::Float(t.max()))) }
         }
         "prod" => {
             let t = to_tensor(&args[0], name)?;
-            if args.len() >= 2 { let axis = to_f64(&args[1], name)? as usize; Ok(CrowValue::ok(Value::NumArray(t.prod_axis(axis)))) }
+            if args.len() >= 2 { let axis = to_f64(&args[1], name)? as usize; Ok(CrowValue::ok(Value::NumArray(Box::new(t.prod_axis(axis))))) }
             else { Ok(CrowValue::ok(Value::Float(t.prod()))) }
         }
         "argmax" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::Int(t.argmax() as i64))) }
         "argmin" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::Int(t.argmin() as i64))) }
-        "cumsum" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.cumsum()))) }
-        "cumprod" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.cumprod()))) }
+        "cumsum" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.cumsum())))) }
+        "cumprod" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.cumprod())))) }
 
         _ => call_math_ops(name, args),
     }
@@ -338,40 +338,40 @@ fn call_math_ops(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
                 Value::Array(items) => {
                     let tensors: Result<Vec<CrowTensor>, String> = items.iter().map(|item| {
                         match &item.value {
-                            Value::NumArray(t) => Ok(t.clone()),
+                            Value::NumArray(t) => Ok(t.as_ref().clone()),
                             _ => Err("stack: all elements must be tensors".into()),
                         }
                     }).collect();
                     let tensors = tensors?;
                     let axis = if args.len() >= 2 { to_f64(&args[1], name)? as usize } else { 0 };
-                    Ok(CrowValue::ok(Value::NumArray(CrowTensor::stack(&tensors, axis))))
+                    Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::stack(&tensors, axis)))))
                 }
                 // Array-of-tensor literals auto-build a stacked tensor now;
                 // accept it and restack along the requested axis
                 Value::NumArray(t) => {
                     let tensors = t.rows();
                     let axis = if args.len() >= 2 { to_f64(&args[1], name)? as usize } else { 0 };
-                    Ok(CrowValue::ok(Value::NumArray(CrowTensor::stack(&tensors, axis))))
+                    Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::stack(&tensors, axis)))))
                 }
                 _ => Err("stack: first argument must be an array of tensors".into()),
             }
         }
 
         // Sorting & selection
-        "argsort" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.argsort()))) }
+        "argsort" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.argsort())))) }
         "topk" => {
             if args.len() < 2 { return Err("topk: expected 2 arguments (tensor, k)".into()); }
             let t = to_tensor(&args[0], name)?;
             let k = to_f64(&args[1], name)? as usize;
-            Ok(CrowValue::ok(Value::NumArray(t.topk(k))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(t.topk(k)))))
         }
-        "unique" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(t.unique()))) }
+        "unique" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.unique())))) }
         "where" => {
             if args.len() < 3 { return Err("where: expected 3 arguments (cond, a, b)".into()); }
             let cond = to_tensor(&args[0], name)?;
             let a = to_tensor(&args[1], name)?;
             let b = to_tensor(&args[2], name)?;
-            Ok(CrowValue::ok(Value::NumArray(cond.where_cond(&a, &b))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(cond.where_cond(&a, &b)))))
         }
 
         // Shape ops
@@ -379,17 +379,17 @@ fn call_math_ops(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             if args.len() < 2 { return Err(format!("reshape: expected at least 2 arguments (tensor, dims...), got {}", args.len())); }
             let t = to_tensor(&args[0], name)?;
             let new_shape = shape_from_args(&args[1..], name)?;
-            Ok(CrowValue::ok(Value::NumArray(t.reshape(new_shape))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(t.reshape(new_shape)))))
         }
         "flatten" => {
             if args.len() != 1 { return Err(format!("flatten: expected 1 argument, got {}", args.len())); }
             let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(t.flatten())))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(t.flatten()))))
         }
         "transpose" => {
             if args.len() != 1 { return Err(format!("transpose: expected 1 argument, got {}", args.len())); }
             let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(t.transpose())))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(t.transpose()))))
         }
 
         _ => call_math_linalg(name, args),
@@ -402,17 +402,17 @@ fn call_math_linalg(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
             if args.len() != 2 { return Err(format!("solve: expected 2 arguments, got {}", args.len())); }
             if let Value::Sparse(s) = &args[0].value {
                 let b = to_tensor(&args[1], name)?;
-                Ok(CrowValue::ok(Value::NumArray(s.solve(&b))))
+                Ok(CrowValue::ok(Value::NumArray(Box::new(s.solve(&b)))))
             } else {
                 let a = to_tensor(&args[0], name)?;
                 let b = to_tensor(&args[1], name)?;
-                Ok(CrowValue::ok(Value::NumArray(a.solve(&b))))
+                Ok(CrowValue::ok(Value::NumArray(Box::new(a.solve(&b)))))
             }
         }
         "inv" => {
             if args.len() != 1 { return Err(format!("inv: expected 1 argument, got {}", args.len())); }
             let a = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(a.inv())))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(a.inv()))))
         }
         "det" => {
             if args.len() != 1 { return Err(format!("det: expected 1 argument, got {}", args.len())); }
@@ -424,9 +424,9 @@ fn call_math_linalg(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
             let a = to_tensor(&args[0], name)?;
             let (u, s, vt) = a.svd_decomp();
             Ok(CrowValue::ok(Value::Array(vec![
-                CrowValue::ok(Value::NumArray(u)),
-                CrowValue::ok(Value::NumArray(s)),
-                CrowValue::ok(Value::NumArray(vt)),
+                CrowValue::ok(Value::NumArray(Box::new(u))),
+                CrowValue::ok(Value::NumArray(Box::new(s))),
+                CrowValue::ok(Value::NumArray(Box::new(vt))),
             ])))
         }
         "qr" => {
@@ -434,22 +434,22 @@ fn call_math_linalg(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
             let a = to_tensor(&args[0], name)?;
             let (q, r) = a.qr_decomp();
             Ok(CrowValue::ok(Value::Array(vec![
-                CrowValue::ok(Value::NumArray(q)),
-                CrowValue::ok(Value::NumArray(r)),
+                CrowValue::ok(Value::NumArray(Box::new(q))),
+                CrowValue::ok(Value::NumArray(Box::new(r))),
             ])))
         }
         "cholesky" => {
             if args.len() != 1 { return Err(format!("cholesky: expected 1 argument, got {}", args.len())); }
             let a = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(a.cholesky_decomp())))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(a.cholesky_decomp()))))
         }
         "eigen" => {
             if args.len() != 1 { return Err(format!("eigen: expected 1 argument, got {}", args.len())); }
             let a = to_tensor(&args[0], name)?;
             let (real, imag) = a.eigen_decomp();
             Ok(CrowValue::ok(Value::Array(vec![
-                CrowValue::ok(Value::NumArray(real)),
-                CrowValue::ok(Value::NumArray(imag)),
+                CrowValue::ok(Value::NumArray(Box::new(real))),
+                CrowValue::ok(Value::NumArray(Box::new(imag))),
             ])))
         }
         "norm" => {
@@ -473,23 +473,23 @@ fn call_math_linalg(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
         "pinv" => {
             if args.len() != 1 { return Err(format!("pinv: expected 1 argument, got {}", args.len())); }
             let a = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(a.pinv())))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(a.pinv()))))
         }
         "lstsq" => {
             if args.len() != 2 { return Err(format!("lstsq: expected 2 arguments, got {}", args.len())); }
             let a = to_tensor(&args[0], name)?;
             let b = to_tensor(&args[1], name)?;
-            Ok(CrowValue::ok(Value::NumArray(a.lstsq(&b))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(a.lstsq(&b)))))
         }
         "triu" => {
             if args.len() != 1 { return Err(format!("triu: expected 1 argument, got {}", args.len())); }
             let a = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(a.triu())))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(a.triu()))))
         }
         "tril" => {
             if args.len() != 1 { return Err(format!("tril: expected 1 argument, got {}", args.len())); }
             let a = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(a.tril())))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(a.tril()))))
         }
         "rank" => {
             if args.len() != 1 { return Err(format!("rank: expected 1 argument, got {}", args.len())); }
@@ -525,7 +525,7 @@ fn call_math_random(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
             let std_val = to_f64(&args[1], name)?;
             let shape = shape_from_args(&args[2..], name)?;
             let shape = if shape.is_empty() { vec![1] } else { shape };
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::normal(shape, mean, std_val))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::normal(shape, mean, std_val)))))
         }
         "uniform" => {
             if args.len() < 2 { return Err(format!("uniform: expected at least 2 arguments (low, high, dims...), got {}", args.len())); }
@@ -533,21 +533,21 @@ fn call_math_random(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
             let high = to_f64(&args[1], name)?;
             let shape = shape_from_args(&args[2..], name)?;
             let shape = if shape.is_empty() { vec![1] } else { shape };
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::rand_range(shape, low, high))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::rand_range(shape, low, high)))))
         }
         "poisson" => {
             if args.is_empty() { return Err(format!("poisson: expected at least 1 argument (lambda, dims...), got 0")); }
             let lambda = to_f64(&args[0], name)?;
             let shape = shape_from_args(&args[1..], name)?;
             let shape = if shape.is_empty() { vec![1] } else { shape };
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::poisson(shape, lambda))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::poisson(shape, lambda)))))
         }
         "bernoulli" => {
             if args.is_empty() { return Err(format!("bernoulli: expected at least 1 argument (p, dims...), got 0")); }
             let p = to_f64(&args[0], name)?;
             let shape = shape_from_args(&args[1..], name)?;
             let shape = if shape.is_empty() { vec![1] } else { shape };
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::bernoulli(shape, p))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::bernoulli(shape, p)))))
         }
         "gamma_dist" => {
             if args.len() < 2 { return Err(format!("gamma_dist: expected at least 2 arguments (alpha, beta, dims...), got {}", args.len())); }
@@ -555,7 +555,7 @@ fn call_math_random(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
             let beta = to_f64(&args[1], name)?;
             let shape = shape_from_args(&args[2..], name)?;
             let shape = if shape.is_empty() { vec![1] } else { shape };
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::gamma_dist(shape, alpha, beta))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::gamma_dist(shape, alpha, beta)))))
         }
         "beta_dist" => {
             if args.len() < 2 { return Err(format!("beta_dist: expected at least 2 arguments (alpha, beta, dims...), got {}", args.len())); }
@@ -563,30 +563,30 @@ fn call_math_random(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
             let beta = to_f64(&args[1], name)?;
             let shape = shape_from_args(&args[2..], name)?;
             let shape = if shape.is_empty() { vec![1] } else { shape };
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::beta_dist(shape, alpha, beta))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::beta_dist(shape, alpha, beta)))))
         }
         "exponential" => {
             if args.is_empty() { return Err(format!("exponential: expected at least 1 argument (lambda, dims...), got 0")); }
             let lambda = to_f64(&args[0], name)?;
             let shape = shape_from_args(&args[1..], name)?;
             let shape = if shape.is_empty() { vec![1] } else { shape };
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::exponential(shape, lambda))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::exponential(shape, lambda)))))
         }
         "shuffle" => {
             if args.len() != 1 { return Err(format!("shuffle: expected 1 argument, got {}", args.len())); }
             let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(t.shuffle())))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(t.shuffle()))))
         }
         "choice" => {
             if args.len() != 2 { return Err(format!("choice: expected 2 arguments (tensor, n), got {}", args.len())); }
             let t = to_tensor(&args[0], name)?;
             let n = to_usize(&args[1], name)?;
-            Ok(CrowValue::ok(Value::NumArray(t.choice(n))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(t.choice(n)))))
         }
         "permutation" => {
             if args.len() != 1 { return Err(format!("permutation: expected 1 argument, got {}", args.len())); }
             let n = to_usize(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::permutation(n))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::permutation(n)))))
         }
         _ => call_math_signal(name, args),
     }
@@ -599,46 +599,46 @@ fn call_math_signal(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
             let t = to_tensor(&args[0], name)?;
             let (real, imag) = t.fft();
             Ok(CrowValue::ok(Value::Array(vec![
-                CrowValue::ok(Value::NumArray(real)),
-                CrowValue::ok(Value::NumArray(imag)),
+                CrowValue::ok(Value::NumArray(Box::new(real))),
+                CrowValue::ok(Value::NumArray(Box::new(imag))),
             ])))
         }
         "ifft" => {
             if args.len() != 2 { return Err(format!("ifft: expected 2 arguments (real, imag), got {}", args.len())); }
             let real = to_tensor(&args[0], name)?;
             let imag = to_tensor(&args[1], name)?;
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::ifft(&real, &imag))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::ifft(&real, &imag)))))
         }
         "fft2" => {
             if args.len() != 1 { return Err(format!("fft2: expected 1 argument, got {}", args.len())); }
             let t = to_tensor(&args[0], name)?;
             let (real, imag) = t.fft2();
             Ok(CrowValue::ok(Value::Array(vec![
-                CrowValue::ok(Value::NumArray(real)),
-                CrowValue::ok(Value::NumArray(imag)),
+                CrowValue::ok(Value::NumArray(Box::new(real))),
+                CrowValue::ok(Value::NumArray(Box::new(imag))),
             ])))
         }
         "conv" => {
             if args.len() != 2 { return Err(format!("conv: expected 2 arguments, got {}", args.len())); }
             let a = to_tensor(&args[0], name)?;
             let b = to_tensor(&args[1], name)?;
-            Ok(CrowValue::ok(Value::NumArray(a.conv(&b))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(a.conv(&b)))))
         }
         "conv2d" => {
             if args.len() != 2 { return Err(format!("conv2d: expected 2 arguments, got {}", args.len())); }
             let a = to_tensor(&args[0], name)?;
             let b = to_tensor(&args[1], name)?;
-            Ok(CrowValue::ok(Value::NumArray(a.conv2d(&b))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(a.conv2d(&b)))))
         }
         "hamming" => {
             if args.len() != 1 { return Err(format!("hamming: expected 1 argument, got {}", args.len())); }
             let n = to_usize(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::hamming(n))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::hamming(n)))))
         }
         "hanning" => {
             if args.len() != 1 { return Err(format!("hanning: expected 1 argument, got {}", args.len())); }
             let n = to_usize(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(CrowTensor::hanning(n))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::hanning(n)))))
         }
         "stft" => {
             if args.len() != 3 { return Err(format!("stft: expected 3 arguments (signal, window_size, hop_size), got {}", args.len())); }
@@ -647,8 +647,8 @@ fn call_math_signal(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
             let hop = to_usize(&args[2], name)?;
             let (real, imag) = t.stft(win, hop);
             Ok(CrowValue::ok(Value::Array(vec![
-                CrowValue::ok(Value::NumArray(real)),
-                CrowValue::ok(Value::NumArray(imag)),
+                CrowValue::ok(Value::NumArray(Box::new(real))),
+                CrowValue::ok(Value::NumArray(Box::new(imag))),
             ])))
         }
         "spectrogram" => {
@@ -656,21 +656,21 @@ fn call_math_signal(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
             let t = to_tensor(&args[0], name)?;
             let win = to_usize(&args[1], name)?;
             let hop = to_usize(&args[2], name)?;
-            Ok(CrowValue::ok(Value::NumArray(t.spectrogram(win, hop))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(t.spectrogram(win, hop)))))
         }
         "lowpass" => {
             if args.len() != 3 { return Err(format!("lowpass: expected 3 arguments (signal, cutoff_hz, sample_rate), got {}", args.len())); }
             let t = to_tensor(&args[0], name)?;
             let cutoff = to_float(&args[1], name)?;
             let sr = to_float(&args[2], name)?;
-            Ok(CrowValue::ok(Value::NumArray(t.lowpass(cutoff, sr))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(t.lowpass(cutoff, sr)))))
         }
         "highpass" => {
             if args.len() != 3 { return Err(format!("highpass: expected 3 arguments (signal, cutoff_hz, sample_rate), got {}", args.len())); }
             let t = to_tensor(&args[0], name)?;
             let cutoff = to_float(&args[1], name)?;
             let sr = to_float(&args[2], name)?;
-            Ok(CrowValue::ok(Value::NumArray(t.highpass(cutoff, sr))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(t.highpass(cutoff, sr)))))
         }
         "bandpass" => {
             if args.len() != 4 { return Err(format!("bandpass: expected 4 arguments (signal, low_hz, high_hz, sample_rate), got {}", args.len())); }
@@ -678,7 +678,7 @@ fn call_math_signal(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
             let low = to_float(&args[1], name)?;
             let high = to_float(&args[2], name)?;
             let sr = to_float(&args[3], name)?;
-            Ok(CrowValue::ok(Value::NumArray(t.bandpass(low, high, sr))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(t.bandpass(low, high, sr)))))
         }
         _ => call_math_special(name, args),
     }
@@ -690,29 +690,29 @@ fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String
         "gamma" => {
             if args.len() != 1 { return Err(format!("gamma: expected 1 argument, got {}", args.len())); }
             let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(t.gamma())))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(t.gamma()))))
         }
         "erf" => {
             if args.len() != 1 { return Err(format!("erf: expected 1 argument, got {}", args.len())); }
             let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(t.erf())))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(t.erf()))))
         }
         "bessel" => {
             if args.len() != 2 { return Err(format!("bessel: expected 2 arguments (x, n), got {}", args.len())); }
             let t = to_tensor(&args[0], name)?;
             let n = to_f64(&args[1], name)? as i64;
-            Ok(CrowValue::ok(Value::NumArray(t.bessel(n))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(t.bessel(n)))))
         }
         "factorial" => {
             if args.len() != 1 { return Err(format!("factorial: expected 1 argument, got {}", args.len())); }
             let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(t.factorial())))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(t.factorial()))))
         }
         "choose" => {
             if args.len() != 2 { return Err(format!("choose: expected 2 arguments (n, k), got {}", args.len())); }
             let n = to_tensor(&args[0], name)?;
             let k = to_tensor(&args[1], name)?;
-            Ok(CrowValue::ok(Value::NumArray(n.choose(&k))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(n.choose(&k)))))
         }
 
         // Complex numbers
@@ -722,8 +722,8 @@ fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String
             let im = to_f64(&args[1], name)?;
             let (r, i) = CrowTensor::complex(re, im);
             Ok(CrowValue::ok(Value::Array(vec![
-                CrowValue::ok(Value::NumArray(r)),
-                CrowValue::ok(Value::NumArray(i)),
+                CrowValue::ok(Value::NumArray(Box::new(r))),
+                CrowValue::ok(Value::NumArray(Box::new(i))),
             ])))
         }
         "real" => {
@@ -746,7 +746,7 @@ fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String
                 Value::Array(arr) if arr.len() == 2 => {
                     let re = to_tensor(&arr[0], name)?;
                     let im = to_tensor(&arr[1], name)?;
-                    Ok(CrowValue::ok(Value::NumArray(CrowTensor::magnitude(&re, &im))))
+                    Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::magnitude(&re, &im)))))
                 }
                 _ => Err("magnitude: expected complex value [real, imag]".to_string()),
             }
@@ -757,7 +757,7 @@ fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String
                 Value::Array(arr) if arr.len() == 2 => {
                     let re = to_tensor(&arr[0], name)?;
                     let im = to_tensor(&arr[1], name)?;
-                    Ok(CrowValue::ok(Value::NumArray(CrowTensor::phase(&re, &im))))
+                    Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::phase(&re, &im)))))
                 }
                 _ => Err("phase: expected complex value [real, imag]".to_string()),
             }
@@ -770,8 +770,8 @@ fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String
                     let im = to_tensor(&arr[1], name)?;
                     let (cr, ci) = CrowTensor::conjugate(&re, &im);
                     Ok(CrowValue::ok(Value::Array(vec![
-                        CrowValue::ok(Value::NumArray(cr)),
-                        CrowValue::ok(Value::NumArray(ci)),
+                        CrowValue::ok(Value::NumArray(Box::new(cr))),
+                        CrowValue::ok(Value::NumArray(Box::new(ci))),
                     ])))
                 }
                 _ => Err("conjugate: expected complex value [real, imag]".to_string()),
@@ -782,7 +782,7 @@ fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String
         "sparse" => {
             if args.len() == 1 {
                 let t = to_tensor(&args[0], name)?;
-                Ok(CrowValue::ok(Value::Sparse(CrowSparse::from_dense(&t))))
+                Ok(CrowValue::ok(Value::Sparse(Box::new(CrowSparse::from_dense(&t)))))
             } else if args.len() == 4 {
                 let rows_t = to_tensor(&args[0], name)?;
                 let cols_t = to_tensor(&args[1], name)?;
@@ -797,7 +797,7 @@ fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String
                 }
                 let nrows = shape_data[0] as usize;
                 let ncols = shape_data[1] as usize;
-                Ok(CrowValue::ok(Value::Sparse(CrowSparse::from_coo(&rows, &cols, &vals, nrows, ncols))))
+                Ok(CrowValue::ok(Value::Sparse(Box::new(CrowSparse::from_coo(&rows, &cols, &vals, nrows, ncols)))))
             } else {
                 Err(format!("sparse: expected 1 or 4 arguments, got {}", args.len()))
             }
@@ -805,7 +805,7 @@ fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String
         "dense" => {
             if args.len() != 1 { return Err(format!("dense: expected 1 argument, got {}", args.len())); }
             match &args[0].value {
-                Value::Sparse(s) => Ok(CrowValue::ok(Value::NumArray(s.to_dense()))),
+                Value::Sparse(s) => Ok(CrowValue::ok(Value::NumArray(Box::new(s.to_dense())))),
                 Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(t.clone()))),
                 _ => Err(format!("dense: expected sparse or numarray, got {}", args[0].value.type_name())),
             }
@@ -821,7 +821,7 @@ fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String
             if args.len() != 2 { return Err(format!("spmv: expected 2 arguments, got {}", args.len())); }
             match (&args[0].value, &args[1].value) {
                 (Value::Sparse(s), Value::NumArray(v)) => {
-                    Ok(CrowValue::ok(Value::NumArray(s.matmul_dense(v))))
+                    Ok(CrowValue::ok(Value::NumArray(Box::new(s.matmul_dense(v)))))
                 }
                 _ => Err("spmv: expected (sparse, numarray)".into()),
             }
@@ -837,7 +837,7 @@ fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String
             match crow_runtime::io::load_csv_numeric(path) {
                 Ok((data, nrows, ncols)) => {
                     let t = CrowTensor::from_vec(data, vec![nrows, ncols]);
-                    Ok(CrowValue::ok(Value::NumArray(t)))
+                    Ok(CrowValue::ok(Value::NumArray(Box::new(t))))
                 }
                 Err(e) => Ok(CrowValue::error_with_kind(&e, "load", "")),
             }
@@ -1146,11 +1146,11 @@ mod tests {
     fn int(n: i64) -> CrowValue { CrowValue::ok(Value::Int(n)) }
     fn float(f: f64) -> CrowValue { CrowValue::ok(Value::Float(f)) }
     fn tensor(data: Vec<f64>, shape: Vec<usize>) -> CrowValue {
-        CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, shape)))
+        CrowValue::ok(Value::NumArray(Box::new(CrowTensor::from_vec(data, shape))))
     }
     fn tensor_1d(data: Vec<f64>) -> CrowValue {
         let len = data.len();
-        CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len])))
+        CrowValue::ok(Value::NumArray(Box::new(CrowTensor::from_vec(data, vec![len]))))
     }
     fn str_val(s: &str) -> CrowValue { CrowValue::ok(Value::Str(s.to_string())) }
 
@@ -1158,7 +1158,7 @@ mod tests {
         let cv = r.expect("call_math failed");
         assert!(cv.is_ok(), "CrowValue is error: {}", cv.reason());
         match cv.value {
-            Value::NumArray(t) => t,
+            Value::NumArray(t) => *t,
             other => panic!("expected NumArray, got {:?}", other),
         }
     }

@@ -157,20 +157,35 @@ pub enum Value {
     Str(String),
     Bool(bool),
     Array(Vec<CrowValue>),
-    NumArray(CrowTensor),
+    // the large ones are held apart, so a value is as big as the small
+    // ones (typed-values-design.md §5, B)
+    NumArray(Box<CrowTensor>),
     Map(BTreeMap<String, CrowValue>),
     Fn(FnValue),
-    StructInstance(StructInstance),
-    Sparse(CrowSparse), // sparse matrix (CSR format)
-    Frame(CrowFrame), // column-oriented data frame
+    StructInstance(Box<StructInstance>),
+    Sparse(Box<CrowSparse>), // sparse matrix (CSR format)
+    Frame(Box<CrowFrame>), // column-oriented data frame
     DbConn(DbHandle), // database connection handle
     /// A mailer `smtp[…]` made: its place among the interpreter's mailers
     /// and its host. The password stays with the mailer, out of every value.
-    Mailer(usize, String),
+    Mailer(usize, std::sync::Arc<str>),
     Dual(f64, f64), // dual number for autograd: (real, derivative)
-    App(FnValue, f64, bool, u64),   // headless app session for test blocks (the view, its viewport width, the wide look, which session)
+    App(Box<AppSession>), // headless app session for test blocks
     GradFn(FnValue), // gradient function wrapping a user function
     Done, // represents no value (from 'done' status)
+}
+
+/// A headless app session a test block opened (`app[view]`).
+#[derive(Debug, Clone)]
+pub struct AppSession {
+    /// The view it renders.
+    pub view: FnValue,
+    /// Its viewport width.
+    pub width: f64,
+    /// The wide look.
+    pub wide: bool,
+    /// Which session.
+    pub id: u64,
 }
 
 /// A function as a value: its name and parameters; the walker holds the
@@ -223,7 +238,7 @@ impl Value {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Value::App(a, ..) => write!(f, "app[{}]", a.name),
+            Value::App(a) => write!(f, "app[{}]", a.view.name),
             Value::Int(n) => write!(f, "{}", n),
             Value::Float(n) => write!(f, "{}", n),
             Value::Str(s) => write!(f, "{}", s),
@@ -318,6 +333,8 @@ mod tests {
     #[test]
     fn a_plain_value_carries_nothing_beside_itself() {
         assert!(std::mem::size_of::<CrowValue>() <= std::mem::size_of::<Value>() + 8);
+        // and the large ones are held apart: a value is as big as a string
+        assert!(std::mem::size_of::<Value>() <= 32, "{}", std::mem::size_of::<Value>());
         let v = CrowValue::ok(Value::Int(1));
         assert!(v.is_ok() && v.reason().is_empty() && v.trace().is_empty() && v.captured().is_none() && !v.is_markup());
         let mut e = CrowValue::error_with_kind("no", "parse", "line 1");

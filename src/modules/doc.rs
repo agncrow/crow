@@ -69,7 +69,7 @@ fn call_doc(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
         "chapters" => {
             if args.len() != 1 { return Err("chapters: takes 1 argument — chapters[summary_text]".into()); }
             let s = to_str(&args[0], name, "the summary")?;
-            Ok(CrowValue::ok(Value::Frame(crow_runtime::markdown::chapters_frame(s))))
+            Ok(CrowValue::ok(Value::Frame(Box::new(crow_runtime::markdown::chapters_frame(s)))))
         }
         "menu" => {
             if args.len() != 2 { return Err("menu: takes 2 arguments — menu[chapters, current_path]".into()); }

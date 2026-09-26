@@ -81,7 +81,7 @@ fn call_db(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
                 vec![]
             };
             match conn.query(sql, &params) {
-                Ok(frame) => Ok(CrowValue::ok(Value::Frame(frame))),
+                Ok(frame) => Ok(CrowValue::ok(Value::Frame(Box::new(frame)))),
                 Err(e) => Ok(CrowValue::error_with_kind(&e, "db", "")),
             }
         }

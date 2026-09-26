@@ -38,13 +38,13 @@ pub fn binop(
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a + b))),
             (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 + b))),
             (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a + *b as f64))),
-            (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.add(b)))),
-            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(a.add_scalar(*b as f64)))),
-            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.add_scalar(*b)))),
-            (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.add_scalar(*a as f64)))),
-            (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.add_scalar(*a)))),
+            (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add(b))))),
+            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add_scalar(*b as f64))))),
+            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add_scalar(*b))))),
+            (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.add_scalar(*a as f64))))),
+            (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.add_scalar(*a))))),
             // sparse + sparse
-            (Value::Sparse(a), Value::Sparse(b)) => Ok(CrowValue::ok(Value::Sparse(a.add(b)))),
+            (Value::Sparse(a), Value::Sparse(b)) => Ok(CrowValue::ok(Value::Sparse(Box::new(a.add(b))))),
             (Value::Str(_), Value::Str(_)) => Err("cannot use '+' with strings — use string interpolation instead".to_string()),
             // Vectorized: Array + scalar
             (Value::Array(items), scalar @ (Value::Int(_) | Value::Float(_))) |
@@ -64,11 +64,11 @@ pub fn binop(
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a - b))),
             (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 - b))),
             (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a - *b as f64))),
-            (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.sub(b)))),
-            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(a.add_scalar(-(*b as f64))))),
-            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.add_scalar(-*b)))),
-            (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.neg().add_scalar(*a as f64)))),
-            (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.neg().add_scalar(*a)))),
+            (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.sub(b))))),
+            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add_scalar(-(*b as f64)))))),
+            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add_scalar(-*b))))),
+            (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.neg().add_scalar(*a as f64))))),
+            (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.neg().add_scalar(*a))))),
             // Vectorized: Array - scalar
             (Value::Array(items), scalar @ (Value::Int(_) | Value::Float(_))) => {
                 array_scalar_arithmetic(items, scalar, |a, b| a - b)
@@ -90,13 +90,13 @@ pub fn binop(
             (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 * b))),
             (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a * *b as f64))),
             // tensor * tensor → matmul; tensor * scalar → scale
-            (Value::NumArray(a), Value::NumArray(b)) => a.try_matmul(b).map(|t| CrowValue::ok(Value::NumArray(t))),
-            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(*b as f64)))),
-            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(*b)))),
-            (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.mul_scalar(*a as f64)))),
-            (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.mul_scalar(*a)))),
+            (Value::NumArray(a), Value::NumArray(b)) => a.try_matmul(b).map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))),
+            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(*b as f64))))),
+            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(*b))))),
+            (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.mul_scalar(*a as f64))))),
+            (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.mul_scalar(*a))))),
             // sparse * dense → matmul
-            (Value::Sparse(s), Value::NumArray(t)) => Ok(CrowValue::ok(Value::NumArray(s.matmul_dense(t)))),
+            (Value::Sparse(s), Value::NumArray(t)) => Ok(CrowValue::ok(Value::NumArray(Box::new(s.matmul_dense(t))))),
             // Vectorized: Array * scalar
             (Value::Array(items), scalar @ (Value::Int(_) | Value::Float(_))) |
             (scalar @ (Value::Int(_) | Value::Float(_)), Value::Array(items)) => {
@@ -133,15 +133,15 @@ pub fn binop(
             (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a / *b as f64))),
             // tensor / tensor → error (use ./ for element-wise)
             (Value::NumArray(_), Value::NumArray(_)) => Err("use ./ for element-wise tensor division".to_string()),
-            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(1.0 / *b as f64)))),
-            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(1.0 / *b)))),
+            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(1.0 / *b as f64))))),
+            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(1.0 / *b))))),
             (Value::Int(a), Value::NumArray(b)) => {
                 let scalar_tensor = CrowTensor::full(b.shape().to_vec(), *a as f64);
-                Ok(CrowValue::ok(Value::NumArray(scalar_tensor.div(b))))
+                Ok(CrowValue::ok(Value::NumArray(Box::new(scalar_tensor.div(b)))))
             }
             (Value::Float(a), Value::NumArray(b)) => {
                 let scalar_tensor = CrowTensor::full(b.shape().to_vec(), *a);
-                Ok(CrowValue::ok(Value::NumArray(scalar_tensor.div(b))))
+                Ok(CrowValue::ok(Value::NumArray(Box::new(scalar_tensor.div(b)))))
             }
             // Vectorized: Array / scalar
             (Value::Array(items), scalar @ (Value::Int(_) | Value::Float(_))) => {
@@ -189,35 +189,35 @@ pub fn binop(
             _ => Err("^ requires numbers".to_string()),
         },
         BinOp::ElemMul => match (&coerce_numeric_array(l), &coerce_numeric_array(r)) {
-            (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul(b)))),
-            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(*b as f64)))),
-            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(*b)))),
-            (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.mul_scalar(*a as f64)))),
-            (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(b.mul_scalar(*a)))),
+            (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul(b))))),
+            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(*b as f64))))),
+            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(*b))))),
+            (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.mul_scalar(*a as f64))))),
+            (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.mul_scalar(*a))))),
             _ => Err(".* requires tensors or tensor and scalar".to_string()),
         },
         BinOp::ElemDiv => match (&coerce_numeric_array(l), &coerce_numeric_array(r)) {
-            (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.div(b)))),
-            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(1.0 / *b as f64)))),
-            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(a.mul_scalar(1.0 / *b)))),
+            (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.div(b))))),
+            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(1.0 / *b as f64))))),
+            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(1.0 / *b))))),
             (Value::Int(a), Value::NumArray(b)) => {
                 let scalar_tensor = CrowTensor::full(b.shape().to_vec(), *a as f64);
-                Ok(CrowValue::ok(Value::NumArray(scalar_tensor.div(b))))
+                Ok(CrowValue::ok(Value::NumArray(Box::new(scalar_tensor.div(b)))))
             }
             (Value::Float(a), Value::NumArray(b)) => {
                 let scalar_tensor = CrowTensor::full(b.shape().to_vec(), *a);
-                Ok(CrowValue::ok(Value::NumArray(scalar_tensor.div(b))))
+                Ok(CrowValue::ok(Value::NumArray(Box::new(scalar_tensor.div(b)))))
             }
             _ => Err("./ requires tensors or tensor and scalar".to_string()),
         },
         BinOp::ElemPow => match (&coerce_numeric_array(l), &coerce_numeric_array(r)) {
-            (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(a.pow(b)))),
+            (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.pow(b))))),
             (Value::NumArray(a), Value::Int(b)) => {
                 let s = *b as f64;
-                Ok(CrowValue::ok(Value::NumArray(a.map(|x| x.powf(s)))))
+                Ok(CrowValue::ok(Value::NumArray(Box::new(a.map(|x| x.powf(s))))))
             }
             (Value::NumArray(a), Value::Float(b)) => {
-                Ok(CrowValue::ok(Value::NumArray(a.map(|x| x.powf(*b)))))
+                Ok(CrowValue::ok(Value::NumArray(Box::new(a.map(|x| x.powf(*b))))))
             }
             _ => Err(".^ requires tensors or tensor and scalar".to_string()),
         },
@@ -438,7 +438,7 @@ pub fn unaryop(
             Value::Int(n) => Ok(CrowValue::ok(Value::Int(-n))),
             Value::Float(n) => Ok(CrowValue::ok(Value::Float(-n))),
             Value::Dual(a, da) => Ok(CrowValue::ok(Value::Dual(-a, -da))),
-            Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(t.neg()))),
+            Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(Box::new(t.neg())))),
             _ => Err("cannot negate this type".to_string()),
         },
         UnaryOp::Not => match v {
@@ -487,7 +487,7 @@ fn coerce_numeric_array(v: &Value) -> Value {
                 }
             }
             let n = data.len();
-            return Value::NumArray(CrowTensor::from_vec(data, vec![n]));
+            return Value::NumArray(Box::new(CrowTensor::from_vec(data, vec![n])));
         }
     }
     v.clone()
@@ -555,7 +555,7 @@ pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, 
                             idx, rows
                         ));
                     }
-                    return Ok(CrowValue::ok(Value::NumArray(tensor.index0(resolved as usize))));
+                    return Ok(CrowValue::ok(Value::NumArray(Box::new(tensor.index0(resolved as usize)))));
                 }
                 let len = tensor.len() as i64;
                 let resolved = if idx < 0 { len + idx } else { idx };
@@ -575,7 +575,7 @@ pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, 
             }
             Value::NumArray(idx_tensor) => {
                 // Advanced indexing: gather by index array
-                Ok(CrowValue::ok(Value::NumArray(tensor.gather(idx_tensor))))
+                Ok(CrowValue::ok(Value::NumArray(Box::new(tensor.gather(idx_tensor)))))
             }
             _ => Err("array index must be an integer or tensor".to_string()),
         }
@@ -824,16 +824,16 @@ pub fn array_literal(vals: Vec<CrowValue>) -> Result<CrowValue, String> {
             _ => unreachable!(),
         }).collect();
         let len = data.len();
-        return Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))));
+        return Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::from_vec(data, vec![len])))));
     }
     let all_tensors = !vals.is_empty() && vals.iter().all(|v| v.is_ok() && matches!(v.value, Value::NumArray(_)));
     if all_tensors {
         let tensors: Vec<CrowTensor> = vals.iter().map(|v| match &v.value {
-            Value::NumArray(t) => t.clone(),
+            Value::NumArray(t) => t.as_ref().clone(),
             _ => unreachable!(),
         }).collect();
         let stacked = CrowTensor::from_elements(&tensors)?;
-        return Ok(CrowValue::ok(Value::NumArray(stacked)));
+        return Ok(CrowValue::ok(Value::NumArray(Box::new(stacked))));
     }
     Ok(CrowValue::ok(Value::Array(vals)))
 }
@@ -852,7 +852,7 @@ pub fn collect_loop(results: Vec<CrowValue>) -> CrowValue {
             _ => unreachable!(),
         }).collect();
         let len = data.len();
-        return CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len])));
+        return CrowValue::ok(Value::NumArray(Box::new(CrowTensor::from_vec(data, vec![len]))));
     }
     CrowValue::ok(Value::Array(filtered))
 }
@@ -864,7 +864,7 @@ pub fn iter_items(iter_val: &CrowValue) -> Result<Vec<CrowValue>, String> {
         Value::Array(items) => Ok(items.clone()),
         Value::NumArray(tensor) => {
             if tensor.ndim() >= 2 {
-                Ok(tensor.rows().into_iter().map(|t| CrowValue::ok(Value::NumArray(t))).collect())
+                Ok(tensor.rows().into_iter().map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))).collect())
             } else {
                 Ok(tensor.to_vec().into_iter().map(|v| {
                     if v == (v as i64) as f64 && v.is_finite() {
