@@ -75,7 +75,7 @@ fn call_stats(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
         "zscore" => {
             if args.len() != 1 { return Err("zscore: expected 1 argument".into()); }
             match &args[0].value {
-                Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(crow_runtime::stats::zscore(t)))),
+                Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(Box::new(crow_runtime::stats::zscore(t))))),
                 _ => Err("zscore: expected numarray".into()),
             }
         }
@@ -137,7 +137,7 @@ fn call_stats(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             if args.len() < 2 { return Err("anova: expected at least 2 arguments (groups)".into()); }
             let groups: Result<Vec<&crow_runtime::tensor::CrowTensor>, String> = args.iter().map(|a| {
                 match &a.value {
-                    Value::NumArray(t) => Ok(t),
+                    Value::NumArray(t) => Ok(t.as_ref()),
                     _ => Err("anova: all arguments must be numarrays".into()),
                 }
             }).collect();
@@ -219,7 +219,7 @@ mod tests {
 
     fn tensor_1d(data: Vec<f64>) -> CrowValue {
         let len = data.len();
-        CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len])))
+        CrowValue::ok(Value::NumArray(Box::new(CrowTensor::from_vec(data, vec![len]))))
     }
 
     fn unwrap_map(r: Result<CrowValue, String>) -> BTreeMap<String, CrowValue> {

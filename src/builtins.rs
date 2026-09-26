@@ -413,7 +413,7 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                 Value::NumArray(t) => {
                     match (args[1].unwrap_or_propagate()?, args[2].unwrap_or_propagate()?) {
                         (Value::Int(start), Value::Int(end)) => {
-                            Ok(CrowValue::ok(Value::NumArray(crow_runtime::core::slice_tensor(t, *start, *end))))
+                            Ok(CrowValue::ok(Value::NumArray(Box::new(crow_runtime::core::slice_tensor(t, *start, *end)))))
                         }
                         _ => Err("slice[] requires integer start and end".into()),
                     }
@@ -476,9 +476,9 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                     // The element of a rank-N tensor is a rank-(N-1) slice:
                     // scalar for 1-D, row for 2-D. Shape and type checked.
                     match args[1].unwrap_or_propagate()? {
-                        Value::Int(n) => Ok(CrowValue::ok(Value::NumArray(t.push_scalar(*n as f64)?))),
-                        Value::Float(f) => Ok(CrowValue::ok(Value::NumArray(t.push_scalar(*f)?))),
-                        Value::NumArray(row) => Ok(CrowValue::ok(Value::NumArray(t.push_row(row)?))),
+                        Value::Int(n) => Ok(CrowValue::ok(Value::NumArray(Box::new(t.push_scalar(*n as f64)?)))),
+                        Value::Float(f) => Ok(CrowValue::ok(Value::NumArray(Box::new(t.push_scalar(*f)?)))),
+                        Value::NumArray(row) => Ok(CrowValue::ok(Value::NumArray(Box::new(t.push_row(row)?)))),
                         other => Err(format!(
                             "arrays are homogeneous — cannot add {} to a numeric array",
                             other.type_name()
@@ -498,7 +498,7 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                     let mut data = t.to_vec();
                     data.pop();
                     let len = data.len();
-                    Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))))
+                    Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::from_vec(data, vec![len])))))
                 }
                 _ => Err("pop[] requires an array".into()),
             }
@@ -513,7 +513,7 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                     let mut data = t.to_vec();
                     data.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                     let len = data.len();
-                    Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))))
+                    Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::from_vec(data, vec![len])))))
                 }
                 _ => Err("sort[] requires an array".into()),
             }
@@ -528,7 +528,7 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                     let mut data = t.to_vec();
                     data.reverse();
                     let len = data.len();
-                    Ok(CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len]))))
+                    Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::from_vec(data, vec![len])))))
                 }
                 Value::Str(s) => {
                     Ok(CrowValue::ok(Value::Str(s.chars().rev().collect())))
@@ -564,7 +564,7 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                             _ => return Err("concat: axis must be an int".into()),
                         }
                     } else { 0 };
-                    Ok(CrowValue::ok(Value::NumArray(a.concat(b, axis))))
+                    Ok(CrowValue::ok(Value::NumArray(Box::new(a.concat(b, axis)))))
                 }
                 _ => Err("concat[] requires two arrays of the same kind".into()),
             }
@@ -1024,7 +1024,7 @@ pub fn json_to_crow(trace: &str, jval: &serde_json::Value) -> CrowValue {
             if all_numeric {
                 let data: Vec<f64> = arr.iter().map(|v| v.as_f64().unwrap_or(0.0)).collect();
                 let len = data.len();
-                CrowValue::ok(Value::NumArray(CrowTensor::from_vec(data, vec![len])))
+                CrowValue::ok(Value::NumArray(Box::new(CrowTensor::from_vec(data, vec![len]))))
             } else {
                 let items: Vec<CrowValue> = arr.iter().map(|v| json_to_crow(trace, v)).collect();
                 CrowValue::ok(Value::Array(items))

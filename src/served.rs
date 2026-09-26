@@ -40,7 +40,7 @@ pub(crate) fn fact_to_json(v: &CrowValue) -> serde_json::Value {
 pub(crate) fn json_to_fact(j: &serde_json::Value, declared: &CrowValue) -> CrowValue {
     match &declared.value {
         Value::Frame(_) => match serde_json::from_value::<crow_runtime::frame::CrowFrame>(j.clone()) {
-            Ok(f) => CrowValue::ok(Value::Frame(f)),
+            Ok(f) => CrowValue::ok(Value::Frame(Box::new(f))),
             Err(_) => declared.clone(),
         },
         Value::Float(_) => match j.as_f64() {
@@ -64,7 +64,7 @@ pub(crate) fn json_to_typed(j: &serde_json::Value, ty: &crate::ir::Ty, template:
                     let fj = obj.get(field).cloned().unwrap_or(serde_json::Value::Null);
                     fields.insert(field.clone(), json_to_typed(&fj, fty, template, &CrowValue::ok(Value::Done)));
                 }
-                CrowValue::ok(Value::StructInstance(crate::value::StructInstance { name: name.clone(), fields }))
+                CrowValue::ok(Value::StructInstance(Box::new(crate::value::StructInstance { name: name.clone(), fields })))
             }
             None => json_to_fact(j, declared),
         },
@@ -75,7 +75,7 @@ pub(crate) fn json_to_typed(j: &serde_json::Value, ty: &crate::ir::Ty, template:
         (Ty::Tensor(_), serde_json::Value::Array(items)) if items.iter().all(|x| x.is_number()) => {
             let data: Vec<f64> = items.iter().filter_map(|x| x.as_f64()).collect();
             let n = data.len();
-            CrowValue::ok(Value::NumArray(crow_runtime::tensor::CrowTensor::from_vec(data, vec![n])))
+            CrowValue::ok(Value::NumArray(Box::new(crow_runtime::tensor::CrowTensor::from_vec(data, vec![n]))))
         }
         (Ty::Float, serde_json::Value::Number(n)) => CrowValue::ok(Value::Float(n.as_f64().unwrap_or(0.0))),
         _ => json_to_fact(j, declared),

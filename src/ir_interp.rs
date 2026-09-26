@@ -979,7 +979,7 @@ impl IrInterp {
                                 }
                             }
                             let n = data.len();
-                            CrowValue::ok(Value::NumArray(crow_runtime::tensor::CrowTensor::from_vec(data, vec![n])))
+                            CrowValue::ok(Value::NumArray(Box::new(crow_runtime::tensor::CrowTensor::from_vec(data, vec![n]))))
                         }
                         _ => v,
                     },
@@ -1089,7 +1089,8 @@ impl IrInterp {
                 let b = self.eval(base)?;
                 // an app session reads its own reactive state: the globals
                 // while it is the active one, its waiting copy otherwise
-                if let Value::App(_, _, _, id) = &b.value {
+                if let Value::App(a) = &b.value {
+                    let id = &a.id;
                     if let Some(rid) = self.remote_sessions.get(id).copied() {
                         return self.remote_read(rid, name);
                     }
@@ -1159,7 +1160,7 @@ impl IrInterp {
                 for ((fname, _), e) in def.fields.iter().zip(fields) {
                     vals.insert(fname.clone(), self.eval(e)?);
                 }
-                CrowValue::ok(Value::StructInstance(StructInstance { name: name.clone(), fields: vals }))
+                CrowValue::ok(Value::StructInstance(Box::new(StructInstance { name: name.clone(), fields: vals })))
             }
             Expr::ForExpr { var, iter, body, parallel, .. } => {
                 let it = self.eval(iter)?;
@@ -1737,7 +1738,7 @@ impl IrInterp {
                     all.push(mailer);
                     all.len() - 1
                 };
-                Ok(CrowValue::ok(Value::Mailer(id, host)))
+                Ok(CrowValue::ok(Value::Mailer(id, host.into())))
             }
             // mail[mailer, to, subject, body]: held to a handler's commit, or
             // sent when its answer is used; in a test, recorded and never sent
@@ -1866,7 +1867,7 @@ impl IrInterp {
                     as_f64(&vals[7]),
                     &panes,
                     &levels,
-                    points,
+                    points.map(|v| &**v),
                     seek.as_deref(),
                 );
                 Ok(CrowValue::markup(node.to_html()))
@@ -2259,7 +2260,7 @@ impl IrInterp {
         let ty = self.derives.get(name).map(|d| d.ty.payload().clone()).unwrap_or(Ty::Unknown);
         Ok(match ty {
             Ty::Frame(_) => match serde_json::from_value::<crow_runtime::frame::CrowFrame>(value.clone()) {
-                Ok(f) => CrowValue::ok(Value::Frame(f)),
+                Ok(f) => CrowValue::ok(Value::Frame(Box::new(f))),
                 Err(_) => crate::builtins::json_to_crow("", &value),
             },
             Ty::Float => CrowValue::ok(Value::Float(value.as_f64().unwrap_or(0.0))),
@@ -2336,7 +2337,7 @@ impl IrInterp {
 
     fn harness(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
         let app_view = |v: &CrowValue| -> Option<(FnValue, f64, bool, u64)> {
-            if let Value::App(f, w, wide, id) = &v.value { Some((f.clone(), *w, *wide, *id)) } else { None }
+            if let Value::App(a) = &v.value { Some((a.view.clone(), a.width, a.wide, a.id)) } else { None }
         };
         Ok(match name {
             // recorded for `crow run -i`, which serves what they ask for
@@ -2396,7 +2397,7 @@ impl IrInterp {
                 if opens_remote {
                     self.remote_open(&f.name, id)?;
                 }
-                CrowValue::ok(Value::App(f, width, wide, id))
+                CrowValue::ok(Value::App(Box::new(crate::value::AppSession { view: f, width, wide, id })))
             }
             // downloads[a]: the files the session was handed, as a reader's
             // browser saved them
@@ -2458,7 +2459,7 @@ impl IrInterp {
             }
             "change" => {
                 let id = match (vals.len(), &vals.first().map(|v| &v.value)) {
-                    (3, Some(Value::App(_, _, _, id))) => *id,
+                    (3, Some(Value::App(a))) => a.id,
                     _ => return Err("change[] first argument must be an app session: change[a, 'min_qty', 5]".into()),
                 };
                 self.activate(id);
@@ -2517,7 +2518,7 @@ impl IrInterp {
             }
             "click" => {
                 let id = match (vals.len(), &vals.first().map(|v| &v.value)) {
-                    (2, Some(Value::App(_, _, _, id))) => *id,
+                    (2, Some(Value::App(a))) => a.id,
                     _ => return Err("click[] first argument must be an app session: click[a, go]".into()),
                 };
                 self.activate(id);
@@ -2779,7 +2780,7 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
                             _ => unreachable!(),
                         };
                         let shape = t.shape().to_vec();
-                        *t = crow_runtime::tensor::CrowTensor::from_vec(data, shape);
+                        *t = Box::new(crow_runtime::tensor::CrowTensor::from_vec(data, shape));
                         Ok(())
                     }
                     _ => Err("a numeric array takes a number at an integer index".to_string()),

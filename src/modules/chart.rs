@@ -101,7 +101,7 @@ fn num(v: &CrowValue, fname: &str) -> Result<f64, String> {
 }
 
 fn out(v: Vec<f64>) -> Result<CrowValue, String> {
-    Ok(CrowValue::ok(Value::NumArray(crow_runtime::ta::tensor(v))))
+    Ok(CrowValue::ok(Value::NumArray(Box::new(crow_runtime::ta::tensor(v)))))
 }
 
 fn call_chart(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
@@ -117,12 +117,12 @@ fn call_chart(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             num(&args[2], name)? as usize,
             num(&args[3], name)?,
         )),
-        ("macd", 4) => Ok(CrowValue::ok(Value::Frame(ta::macd_frame(
+        ("macd", 4) => Ok(CrowValue::ok(Value::Frame(Box::new(ta::macd_frame(
             &series(&args[0], name)?,
             num(&args[1], name)? as usize,
             num(&args[2], name)? as usize,
             num(&args[3], name)? as usize,
-        )))),
+        ))))),
         ("vwap", 2) => out(ta::vwap(&series(&args[0], name)?, &series(&args[1], name)?)),
         ("vwap", 4) => out(ta::rolling_vwap(
             &series(&args[0], name)?,

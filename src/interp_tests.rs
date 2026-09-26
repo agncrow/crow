@@ -2558,7 +2558,7 @@ mod tests {
         // no value a program can print
         let val = get_var("mailer = smtp['smtp.example.com', 587, 'user', 'pass']", "mailer");
         match &val.value {
-            Value::Mailer(_, host) => assert_eq!(host, "smtp.example.com"),
+            Value::Mailer(_, host) => assert_eq!(&**host, "smtp.example.com"),
             other => panic!("expected a mailer, got {:?}", other),
         }
         assert_eq!(format!("{}", val.value), "<mailer:smtp.example.com>");

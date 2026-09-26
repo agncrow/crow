@@ -47,22 +47,22 @@ fn call_nn(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
         "relu" => {
             if args.len() != 1 { return Err("relu: expected 1 argument".into()); }
             let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(crow_runtime::nn::relu(t))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(crow_runtime::nn::relu(t)))))
         }
         "sigmoid" => {
             if args.len() != 1 { return Err("sigmoid: expected 1 argument".into()); }
             let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(crow_runtime::nn::sigmoid(t))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(crow_runtime::nn::sigmoid(t)))))
         }
         "softmax" => {
             if args.len() != 1 { return Err("softmax: expected 1 argument".into()); }
             let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(crow_runtime::nn::softmax(t))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(crow_runtime::nn::softmax(t)))))
         }
         "gelu" => {
             if args.len() != 1 { return Err("gelu: expected 1 argument".into()); }
             let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(crow_runtime::nn::gelu(t))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(crow_runtime::nn::gelu(t)))))
         }
         "mse" => {
             if args.len() != 2 { return Err("mse: expected 2 arguments".into()); }
@@ -87,7 +87,7 @@ fn call_nn(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             let x = to_tensor(&args[0], name)?;
             let w = to_tensor(&args[1], name)?;
             let b = to_tensor(&args[2], name)?;
-            Ok(CrowValue::ok(Value::NumArray(crow_runtime::nn::linear(x, w, b))))
+            Ok(CrowValue::ok(Value::NumArray(Box::new(crow_runtime::nn::linear(x, w, b)))))
         }
         _ => Err(format!("{}: unknown nn function", name)),
     }
