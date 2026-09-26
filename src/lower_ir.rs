@@ -1815,7 +1815,6 @@ impl<'a> Lowerer<'a> {
                 // What the iterable hoisted waits while the body is lowered,
                 // or the body's first statement would take it.
                 let it = self.lower_expr(iter)?;
-                let ty = ty_of(&TypeContext::for_type(self.ctx.loop_yield_type(var, read(&it), body)));
                 let before = std::mem::take(&mut self.pre);
                 self.scopes.push([var.clone()].into_iter().collect());
                 // inference's walk reads a collecting loop's yield, never its
@@ -1845,6 +1844,8 @@ impl<'a> Lowerer<'a> {
                 if listed {
                     self.fn_lists.pop();
                 }
+                // a list of what the body yields, as the lowering typed it
+                let ty = ty_of(&TypeContext::for_type(yield_of(&b)));
                 if let Some(saved) = saved {
                     self.unbind_loop_var(var, saved);
                 }
@@ -2413,6 +2414,23 @@ pub(crate) fn words_before_placeholders(sql: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// What a collecting loop's lowered body yields: its last expression, or
+/// what the branches of a trailing `if` yield (the filter pattern);
+/// unknown when the body ends otherwise.
+fn yield_of(body: &Block) -> CrowType {
+    match body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
+        Some(Stmt::Do(x)) => full(x),
+        Some(Stmt::If { then, els, .. }) => {
+            let t = yield_of(then);
+            match els {
+                Some(e) => t.unify(&yield_of(e)),
+                None => t,
+            }
+        }
+        _ => CrowType::Unknown,
+    }
 }
 
 /// The facts a function can write: a part's function any part's, whose

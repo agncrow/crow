@@ -1,0 +1,22 @@
+--- A collecting loop is a list of what its body yields, typed as the body
+--- is lowered: a yield that reads a variable the body assigned is that
+--- variable's type. (Inference typed the yield without the body's
+--- assignments, so a function returning such a loop was a list of
+--- unknown items, and the compiled program did not build.)
+fn doubled[vs]
+    out = for v in vs
+        w = v + v
+        w
+    return out
+
+fn labels[names]
+    out = for n in names
+        label = 'item `n`'
+        if len[n] gt 1
+            label
+        else
+            'short'
+    return out
+
+log[doubled[[1, 2, 3]]]
+log[labels[['a', 'bc']]]
