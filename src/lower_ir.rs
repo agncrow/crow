@@ -783,10 +783,6 @@ impl<'a> Lowerer<'a> {
                 .unwrap_or(CrowType::Unknown);
             ps.push((p.clone(), ty_of(&t)));
         }
-        for s in body {
-            self.ctx.infer_stmt(s);
-        }
-        self.record_env(name, params, body);
         let ret = sig.as_ref().map(|s| ty_of(&s.return_type)).unwrap_or(Ty::Unknown);
         let ret = if kind == FnKind::View { Ty::Node } else { ret };
         self.at = Where::In(kind);
@@ -796,6 +792,10 @@ impl<'a> Lowerer<'a> {
         self.v.reactive = self.v.ui_mode && matches!(kind, FnKind::View | FnKind::Handler);
         self.v.local_types.clear();
         self.v.stored.clear();
+        // lowered once to learn its types: each local settled across its
+        // assignments, which a first value of no known type is declared by
+        self.provisional(params.iter().cloned().collect(), body);
+        self.record_env(name, params, body);
         self.scopes.push(params.iter().cloned().collect());
         // a plain function sees no module variable: the checks' snapshot of
         // the program's types keeps the top level out of its body, so a local
@@ -852,14 +852,12 @@ impl<'a> Lowerer<'a> {
         // body of their own, first assignments new bindings (an empty list's
         // type is its own pushes', not another body's local of that name)
         let scope = self.ctx.enter_body(name);
-        for s in body {
-            self.ctx.infer_stmt(s);
-        }
-        self.record_env(name, &[], body);
         self.at = Where::Derive;
         self.current_fn = name.to_string();
         self.v.local_types.clear();
         self.v.stored.clear();
+        self.provisional(HashSet::new(), body);
+        self.record_env(name, &[], body);
         self.scopes.push(HashSet::new());
         let mut block = self.lower_block(body)?;
         self.scopes.pop();
@@ -886,12 +884,10 @@ impl<'a> Lowerer<'a> {
         for p in params {
             self.ctx.vars.insert(p.clone(), CrowType::Unknown);
         }
-        for s in body {
-            self.ctx.infer_stmt(s);
-        }
-        self.record_env(&format!("test {}", name.clone().unwrap_or_default()), params, body);
         self.at = Where::Test;
         self.current_fn = name.clone().unwrap_or_default();
+        self.provisional(params.iter().cloned().collect(), body);
+        self.record_env(&format!("test {}", name.clone().unwrap_or_default()), params, body);
         self.scopes.push(params.iter().cloned().collect());
         let mut block = self.lower_block(body)?;
         self.scopes.pop();
