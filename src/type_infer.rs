@@ -460,76 +460,18 @@ impl TypeContext {
         self.functions.iter().map(|(n, s)| (n.clone(), s.return_type.clone(), s.params.clone())).collect()
     }
 
-    /// A handler a test clicks with arguments (`click[a, h[4]]`) takes
-    /// their types for the parameters nothing in the program types: the
-    /// click may be the only call it has, and a compiled program dispatches
-    /// it by them. The program's own evidence (a view's call, a table's
-    /// action, a widget's text) comes first. An argument may be one of the
-    /// test's own variables (`eps = …` then `click[a, h[eps]]`): it is read
-    /// as the test assigned it before the click. Whether any parameter moved.
-    pub(crate) fn type_clicked_handlers(&mut self, stmts: &[Stmt]) -> bool {
-        type Click = (String, Vec<Expr>, Vec<(String, Expr)>);
-        fn walk(e: &Expr, locals: &[(String, Expr)], out: &mut Vec<Click>) {
-            if let Expr::Call { callee, args } = e {
-                if matches!(callee.as_ref(), Expr::Ident(n) if n == "click") && args.len() == 2 {
-                    if let Expr::Call { callee: h, args: hargs } = &args[1] {
-                        if let Expr::Ident(h) = h.as_ref() {
-                            out.push((h.clone(), hargs.clone(), locals.to_vec()));
-                        }
-                    }
-                }
-                for a in args {
-                    walk(a, locals, out);
-                }
-            }
-        }
-        fn clicked_calls(stmts: &[Stmt], in_test: bool, locals: &mut Vec<(String, Expr)>, out: &mut Vec<Click>) {
-            for st in stmts {
-                match st {
-                    Stmt::TestBlock { body, .. } => clicked_calls(body, true, &mut Vec::new(), out),
-                    Stmt::Assign { name, value } if in_test => {
-                        walk(value, locals, out);
-                        locals.push((name.clone(), value.clone()));
-                    }
-                    Stmt::ExprStmt(e) | Stmt::Return(Some(e)) if in_test => walk(e, locals, out),
-                    Stmt::If { then_body, else_body, .. } if in_test => {
-                        clicked_calls(then_body, true, locals, out);
-                        if let Some(eb) = else_body {
-                            clicked_calls(eb, true, locals, out);
-                        }
-                    }
-                    Stmt::For { body, .. } | Stmt::While { body, .. } if in_test => clicked_calls(body, true, locals, out),
-                    _ => {}
-                }
-            }
-        }
-        let mut calls = Vec::new();
-        clicked_calls(stmts, false, &mut Vec::new(), &mut calls);
+    /// The handler calls the program's tests click (`click[a, h[4]]`), each
+    /// with its arguments' types: a parameter nothing in the program types
+    /// takes the click's (the program's own evidence — a view's call, a
+    /// table's action, a widget's text — comes first). Whether any moved.
+    pub(crate) fn type_clicked(&mut self, clicks: &[(String, Vec<CrowType>)]) -> bool {
         let mut moved = false;
-        for (h, args, locals) in calls {
-            // the test's variables as it assigned them, in view while its
-            // click's arguments are read, then out of view again
-            let mut saved: Vec<(String, Option<CrowType>)> = Vec::new();
-            for (n, v) in &locals {
-                let t = self.infer_expr(v);
-                saved.push((n.clone(), self.vars.insert(n.clone(), t)));
-            }
-            let types: Vec<CrowType> = args.iter().map(|a| self.infer_expr(a)).collect();
-            for (n, old) in saved.into_iter().rev() {
-                match old {
-                    Some(t) => {
-                        self.vars.insert(n, t);
-                    }
-                    None => {
-                        self.vars.remove(&n);
-                    }
-                }
-            }
-            if let Some(sig) = self.functions.get_mut(&h) {
+        for (h, types) in clicks {
+            if let Some(sig) = self.functions.get_mut(h) {
                 if sig.params.len() == types.len() {
                     for (p, t) in sig.params.iter_mut().zip(types) {
                         if matches!(p.1, CrowType::Unknown) && !matches!(t, CrowType::Unknown) {
-                            p.1 = t;
+                            p.1 = t.clone();
                             moved = true;
                         }
                     }

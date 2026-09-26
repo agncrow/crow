@@ -890,3 +890,16 @@ weeks; the core stages are weeks each.
   seven predictions (`body_has_result_condition` and its loops,
   `body_refuses_assignment` and its scopes) are gone. The oracle is
   unchanged.
+- **2026-09-26, F5 step S8, last part: a test's clicks typed by
+  lowering the test.** A handler only a test clicks with arguments
+  (`click[a, h[4]]`) is typed from a provisional lowering of each test,
+  its own variables in view, where the walk typed each click's arguments
+  again with the test's assignments laid over the program's variables.
+  The oracle is unchanged. Inference no longer asks the walk anything;
+  three readers outside it still do: the test runner deciding which bare
+  line of a test is a truth and guessing a test parameter's type from
+  its use (`checker.rs`), and a frame's `with` rule typing the column it
+  adds (`frames.rs`, whose schemas are keyed by the tree, not carried by
+  the lowered types). Each goes when its decision moves into the
+  lowering: a test's assertions written into the IR for both backends,
+  and a frame's columns carried by its type.

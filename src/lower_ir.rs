@@ -543,6 +543,9 @@ struct Lowerer<'a> {
     /// whether inside a collecting loop. Whether each refuses the failed
     /// value is known once the body's locals have settled.
     held: Vec<(String, CrowType, bool)>,
+    /// While a test is lowered for the handlers it clicks: each handler
+    /// call a click holds, with its arguments' types (`type_clicks`).
+    clicks: Option<Vec<(String, Vec<CrowType>)>>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -565,6 +568,7 @@ impl<'a> Lowerer<'a> {
             fn_lists: Vec::new(),
             first_types: HashMap::new(),
             held: Vec::new(),
+            clicks: None,
         }
     }
 
@@ -689,6 +693,31 @@ impl<'a> Lowerer<'a> {
         self.current_fn = name.to_string();
         let seen = self.provisional(Pass::Settle, Some(params), body);
         self.ctx.finish_body(name, scope, &seen.returns, !seen.refusals.is_empty());
+    }
+
+    /// What only a test's click types (F5): a handler a test clicks with
+    /// arguments (`click[a, h[4]]`) takes their types for the parameters
+    /// nothing in the program types — the click may be the only call it
+    /// has, and a compiled program dispatches it by them. Each test is
+    /// lowered as it runs, its own variables in view where its clicks'
+    /// arguments are typed. Whether any parameter moved.
+    fn type_clicks(&mut self, stmts: &[S]) -> bool {
+        let mut clicks: Vec<(String, Vec<CrowType>)> = Vec::new();
+        for s in stmts {
+            if let S::TestBlock { name, params, body } = s {
+                let saved = self.ctx.vars.clone();
+                for p in params {
+                    self.ctx.vars.insert(p.clone(), CrowType::Unknown);
+                }
+                self.at = Where::Test;
+                self.current_fn = name.clone().unwrap_or_default();
+                self.clicks = Some(Vec::new());
+                self.provisional(Pass::Settle, Some(params.iter().cloned().collect()), body);
+                clicks.extend(self.clicks.take().unwrap_or_default());
+                self.ctx.vars = saved;
+            }
+        }
+        self.ctx.type_clicked(&clicks)
     }
 
     /// The F2 monomorphization pass (F5): each clone's calls read with its
@@ -2056,6 +2085,9 @@ impl<'a> Lowerer<'a> {
             // the harness's click[a, h[x]] holds the handler call for the click
             if module.is_none() && name == "click" && i == 1 {
                 if let Some(d) = self.deferred(a)? {
+                    if let (Some(clicks), Expr::Deferred { name: h, args: held_args }) = (&mut self.clicks, &d) {
+                        clicks.push((h.clone(), held_args.iter().map(read).collect()));
+                    }
                     // typed as the call it holds
                     let held = self.held_type(a, &d);
                     arg_types.push(held.text());
@@ -2386,7 +2418,7 @@ pub(crate) fn infer_by_lowering(ctx: &mut TypeContext, stmts: &[S]) {
     // what the last round learned, where the top level reads it
     ctx.sync_derive_types();
     // what only a test's click types, last, and the bodies again
-    if ctx.type_clicked_handlers(stmts) {
+    if Lowerer::for_inference(ctx, in_ui, stmts).type_clicks(stmts) {
         infer_bodies(ctx, in_ui, stmts);
     }
     // F2: a function called at several signatures is one per signature
