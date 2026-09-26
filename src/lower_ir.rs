@@ -735,6 +735,7 @@ impl<'a> Lowerer<'a> {
         for s in body {
             self.ctx.infer_stmt(s);
         }
+        self.record_env(name, params, body);
         let ret = sig.as_ref().map(|s| ty_of(&s.return_type)).unwrap_or(Ty::Unknown);
         let ret = if kind == FnKind::View { Ty::Node } else { ret };
         self.at = Where::In(kind);
@@ -782,6 +783,19 @@ impl<'a> Lowerer<'a> {
         Ok(Fn { name: name.to_string(), params: ps, ret, body: block, kind, effects: vec![], tables_written: vec![] })
     }
 
+    /// A body's parameters and locals as its lowering begins with them, kept
+    /// when `crow build --types` asks (`type_infer::dump_types`).
+    fn record_env(&mut self, key: &str, params: &[String], body: &[S]) {
+        if !self.ctx.record_envs {
+            return;
+        }
+        let mut own: HashSet<String> = params.iter().cloned().collect();
+        own.extend(crate::lower::assigned(body));
+        loop_vars(body, &mut own);
+        let env: BTreeMap<String, CrowType> = own.into_iter().filter_map(|n| self.ctx.vars.get(&n).map(|t| (n, t.clone()))).collect();
+        self.ctx.body_envs.insert(key.to_string(), env);
+    }
+
     fn lower_derive(&mut self, name: &str, fresh: f64, body: &[S]) -> Result<Derive, String> {
         // a derivation's locals are its own, as a function's are: typed in a
         // body of their own, first assignments new bindings (an empty list's
@@ -790,6 +804,7 @@ impl<'a> Lowerer<'a> {
         for s in body {
             self.ctx.infer_stmt(s);
         }
+        self.record_env(name, &[], body);
         self.at = Where::Derive;
         self.current_fn = name.to_string();
         self.v.local_types.clear();
@@ -823,6 +838,7 @@ impl<'a> Lowerer<'a> {
         for s in body {
             self.ctx.infer_stmt(s);
         }
+        self.record_env(&format!("test {}", name.clone().unwrap_or_default()), params, body);
         self.at = Where::Test;
         self.current_fn = name.clone().unwrap_or_default();
         self.scopes.push(params.iter().cloned().collect());
