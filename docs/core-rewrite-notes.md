@@ -767,3 +767,9 @@ weeks; the core stages are weeks each.
   its arguments' types, each returned value's type, and each error
   handed back, marked when inside a collecting loop. Nothing uses it yet;
   a test holds it to the walk's environment for one body.
+- **2026-09-26, F5 step S5: the lowering types its own bodies.** A
+  function's, a derivation's and a test's locals are what the provisional
+  lowering of the body leaves, not what `infer_stmt` walked: the final
+  lowering declares a first value of no known type by it, as before. The
+  oracle is unchanged: none of 1,047 files differs, so the provisional
+  lowering settles every body of every program as the walk did.
