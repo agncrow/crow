@@ -1399,7 +1399,7 @@ impl<'a> Lowerer<'a> {
                 // What the iterable hoisted waits while the body is lowered,
                 // or the body's first statement would take it.
                 let it = self.lower_expr(iter)?;
-                let ty = ty_of(&self.ctx.for_type(var, read(&it), body));
+                let ty = ty_of(&TypeContext::for_type(self.ctx.loop_yield_type(var, read(&it), body)));
                 let before = std::mem::take(&mut self.pre);
                 self.scopes.push([var.clone()].into_iter().collect());
                 let saved = self.bind_loop_var(var, &it.ty());
@@ -1465,8 +1465,9 @@ impl<'a> Lowerer<'a> {
                 idx.push(self.lower_expr(a)?);
             }
             let arg_types: Vec<CrowType> = idx.iter().map(read).collect();
+            let full_types: Vec<CrowType> = idx.iter().map(full).collect();
             self.check_callee(callee, args);
-            let ty = self.call_type(callee, args, &arg_types, Some(read(&base)));
+            let ty = self.call_type(callee, args, &arg_types, &full_types, Some(read(&base)));
             return Ok(Expr::Index { base: Box::new(base), indices: idx, ty });
         }
         let (module, name) = match callee {
@@ -1568,18 +1569,21 @@ impl<'a> Lowerer<'a> {
         let propagates = !(module.is_none() && (matches!(name.as_str(), "log" | "type" | "error" | "assert") || self.ctx.views.contains(&name)));
         let mut lowered = Vec::with_capacity(args.len());
         let mut arg_types = Vec::with_capacity(args.len());
+        let mut full_types = Vec::with_capacity(args.len());
         for (i, a) in args.iter().enumerate() {
             // the harness's click[a, h[x]] holds the handler call for the click
             if module.is_none() && name == "click" && i == 1 {
                 if let Some(d) = self.deferred(a)? {
                     // typed as the call it holds
                     arg_types.push(self.ctx.infer_expr(a));
+                    full_types.push(self.ctx.infer_expr_full(a));
                     lowered.push(d);
                     continue;
                 }
             }
             let x = self.lower_expr(a)?;
             arg_types.push(read(&x));
+            full_types.push(full(&x));
             if propagates && x.ty().is_result() {
                 let rty = x.ty();
                 lowered.push(Expr::Convert { how: Convert::Unwrap, expr: Box::new(x), ty: rty.payload().clone() });
@@ -1619,7 +1623,7 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
-        let ty = self.call_type(callee, args, &arg_types, None);
+        let ty = self.call_type(callee, args, &arg_types, &full_types, None);
         let current = self.current_fn.clone();
         if let Some(m) = module {
             let m = self.ctx.module_aliases.get(&m).cloned().unwrap_or(m);
@@ -1631,7 +1635,7 @@ impl<'a> Lowerer<'a> {
             return Ok(Expr::Call { target: Target::Module(m, name), args: lowered, ty, propagates });
         }
         if self.ctx.functions.contains_key(&name) || self.ctx.specializations.contains_key(&name) {
-            let resolved = self.specialised(&name, args);
+            let resolved = self.specialised(&name, &full_types);
             // an int handed to a float parameter is a float (spec §1), as one
             // assigned to a float variable is: the conversion is explicit
             if let Some(sig) = self.ctx.functions.get(&resolved) {
@@ -1680,7 +1684,7 @@ impl<'a> Lowerer<'a> {
     /// as lowered, before a failure among them is unwrapped) and, when the
     /// callee was lowered as a value, the callee's. The rule is picked by the
     /// callee's form, as the walk picks it.
-    fn call_type(&self, callee: &A, args: &[A], arg_types: &[CrowType], callee_type: Option<CrowType>) -> Ty {
+    fn call_type(&self, callee: &A, args: &[A], arg_types: &[CrowType], full_types: &[CrowType], callee_type: Option<CrowType>) -> Ty {
         // a cell of a column whose type the database told us: frame.col[i]
         if let A::FieldAccess { object, field } = callee {
             if let (Some(t), [index]) = (self.ctx.column_type(object, field), arg_types) {
@@ -1690,7 +1694,7 @@ impl<'a> Lowerer<'a> {
             }
         }
         let t = match callee {
-            A::Ident(name) => self.ctx.named_call_type(name, args, callee, arg_types),
+            A::Ident(name) => self.ctx.named_call_type(name, args, callee, arg_types, full_types),
             _ => {
                 let module = match callee {
                     A::FieldAccess { object, field } => match object.as_ref() {
@@ -1760,8 +1764,8 @@ impl<'a> Lowerer<'a> {
 
     /// The specialised name of a user function called at these argument
     /// types, when it has one.
-    fn specialised(&self, name: &str, args: &[A]) -> String {
-        self.ctx.specialization_for(name, args).unwrap_or_else(|| name.to_string())
+    fn specialised(&self, name: &str, full_types: &[CrowType]) -> String {
+        self.ctx.specialization_for(name, full_types).unwrap_or_else(|| name.to_string())
     }
 
     /// An interpolated string's pieces, each expression parsed as the
