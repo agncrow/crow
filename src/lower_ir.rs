@@ -469,6 +469,22 @@ pub fn crow_type(t: &Ty) -> CrowType {
     }
 }
 
+/// What a provisional lowering met (F5, signatures found by lowering
+/// bodies): what inference reads from a body once the lowering types it.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(crate) struct Seen {
+    /// Each call of a function or record the program declares, by the name
+    /// written, with its arguments' types as lowered: markup told apart, a
+    /// failure not yet unwrapped.
+    pub calls: Vec<(String, Vec<CrowType>)>,
+    /// The type of each value returned, where it is returned.
+    pub returns: Vec<CrowType>,
+    /// Each place an error leaves the body — a decision on a value that
+    /// can fail, or an assignment refusing one — and whether it is inside
+    /// a collecting loop.
+    pub refusals: Vec<(Decision, bool)>,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Where {
     Top,
@@ -492,6 +508,11 @@ struct Lowerer<'a> {
     current_fn: String,
     /// What the checks keep (`checks.rs`).
     v: checks::Checks,
+    /// While a body is lowered to learn its types, not to keep it (F5):
+    /// what the lowering met (`provisional`).
+    seen: Option<Seen>,
+    /// How many collecting loops the lowering is inside.
+    collecting: usize,
 }
 
 impl<'a> Lowerer<'a> {
@@ -507,7 +528,37 @@ impl<'a> Lowerer<'a> {
             direct_effects: BTreeMap::new(),
             current_fn: String::new(),
             v: checks::Checks::default(),
+            seen: None,
+            collecting: 0,
         }
+    }
+
+    /// A body lowered to learn its types, keeping nothing of it (F5): the
+    /// checks say nothing, what the lowering keeps for the program is left
+    /// as it was, and each variable's type settles across its assignments
+    /// as the body runs, the way inference's walk settles it, so the body's
+    /// environment is left in the context. `own` is the body's first scope
+    /// (its parameters). An error is the final lowering's to report.
+    fn provisional(&mut self, own: HashSet<String>, body: &[S]) -> Seen {
+        let outer = self.seen.replace(Seen::default());
+        let temp = self.temp;
+        let pre = std::mem::take(&mut self.pre);
+        let depth = self.scopes.len();
+        let (mute, line, collecting) = (self.v.mute, self.v.line, self.collecting);
+        let local_types = self.v.local_types.clone();
+        let stored = self.v.stored.clone();
+        self.v.mute += 1;
+        self.scopes.push(own);
+        let _ = self.lower_block(body);
+        self.scopes.truncate(depth);
+        self.v.mute = mute;
+        self.v.line = line;
+        self.v.local_types = local_types;
+        self.v.stored = stored;
+        self.collecting = collecting;
+        self.pre = pre;
+        self.temp = temp;
+        std::mem::replace(&mut self.seen, outer).unwrap_or_default()
     }
 
     // ── declarations ────────────────────────────────────────────────
@@ -898,7 +949,9 @@ impl<'a> Lowerer<'a> {
                 }
                 self.check_top_write(name);
                 let expr = self.lower_expr(value)?;
-                self.check_assign(name, &self.seen_type(value));
+                if self.seen.is_none() {
+                    self.check_assign(name, &self.seen_type(value));
+                }
                 // the columns a local reads are those of the value assigned
                 // here, in this function — not the last function's local of
                 // the same name (inference keeps one map by name)
@@ -911,6 +964,7 @@ impl<'a> Lowerer<'a> {
                 }
                 vec![stmt]
             }
+            S::MultiAssign { names, values } if self.seen.is_some() => self.settled_multi(names, values)?,
             S::MultiAssign { names, values } => {
                 // each new name checked against the names taken, after the
                 // values it is given
@@ -946,6 +1000,9 @@ impl<'a> Lowerer<'a> {
                     self.check_top_write(&root);
                 }
                 let expr = self.lower_expr(value)?;
+                if self.seen.is_some() {
+                    self.settled_entry(object, &expr);
+                }
                 let idx = self.lower_expr(index)?;
                 let (var, mut path) = self.muted_target(object)?;
                 path.push(PathStep::Index(idx));
@@ -994,27 +1051,50 @@ impl<'a> Lowerer<'a> {
                 self.check_reserved(var, "loop variable");
                 // a list that can fail is refused like a condition
                 let it = self.lower_expr(iter)?;
+                let walks = read(&it);
                 let it = self.decided(it, Decision::Loop);
                 let mut prelude = std::mem::take(&mut self.pre);
                 self.scopes.push([var.clone()].into_iter().collect());
-                let saved = self.bind_loop_var(var, &it.ty());
-                let b = self.lower_block(body)?;
-                self.unbind_loop_var(var, saved);
+                let b = if self.seen.is_some() {
+                    // inference's walk binds the variable to an item of what
+                    // the loop walks, read as text, and leaves it bound
+                    let walks = if let CrowType::Result(inner) = walks { *inner } else { walks };
+                    if let CrowType::Array(t) | CrowType::NumArray(t) = walks {
+                        self.ctx.vars.insert(var.clone(), *t);
+                    }
+                    self.lower_block(body)?
+                } else {
+                    let saved = self.bind_loop_var(var, &it.ty());
+                    let b = self.lower_block(body)?;
+                    self.unbind_loop_var(var, saved);
+                    b
+                };
                 self.scopes.pop();
                 // in parallel or in order: decided once every function is
                 // known (decide_loops)
                 prelude.push(Stmt::For { var: var.clone(), iter: it, body: b, parallel: false });
                 prelude
             }
-            S::Return(None) => vec![Stmt::Return(None)],
+            S::Return(None) => {
+                if let Some(seen) = &mut self.seen {
+                    seen.returns.push(CrowType::Void);
+                }
+                vec![Stmt::Return(None)]
+            }
             S::Return(Some(e)) => {
                 let x = self.lower_expr(e)?;
+                if let Some(seen) = &mut self.seen {
+                    seen.returns.push(full(&x));
+                }
                 vec![Stmt::Return(Some(x))]
             }
             S::Break => vec![Stmt::Break],
             S::Continue => vec![Stmt::Continue],
             S::ExprStmt(e) => {
                 let mut x = self.lower_expr(e)?;
+                if self.seen.is_some() {
+                    self.settled_set(e, &x);
+                }
                 if let Expr::Effect { answered, .. } = &mut x {
                     *answered = false;
                 }
@@ -1112,6 +1192,7 @@ impl<'a> Lowerer<'a> {
                     t
                 }
             };
+            self.saw_refusal(&at);
             self.pre.push(Stmt::Propagate { values: vec![t.clone()], at });
             return Expr::Convert {
                 how: Convert::Unwrap,
@@ -1123,6 +1204,9 @@ impl<'a> Lowerer<'a> {
     }
 
     fn assign(&mut self, name: &str, expr: Expr) -> Stmt {
+        if self.seen.is_some() {
+            return self.settled(name, expr);
+        }
         let expr = if self.declared(name) && !(self.is_fact(name) && self.sees_facts()) { self.held_by(name, expr) } else { expr };
         // an int assigned to a float variable is a float (spec §1): the
         // conversion is explicit in the form
@@ -1210,12 +1294,97 @@ impl<'a> Lowerer<'a> {
                     }
                 }
                 if !failing.is_empty() {
+                    self.saw_refusal(&at);
                     self.pre.push(Stmt::Propagate { values: failing, at });
                     return Expr::Call { target: Target::Runtime(path.clone()), args: out, ty: payload, propagates: *propagates };
                 }
             }
         }
         self.decided(expr, at)
+    }
+
+    /// An error leaving the body, for a provisional lowering's observer.
+    fn saw_refusal(&mut self, at: &Decision) {
+        let collecting = self.collecting > 0;
+        if let Some(seen) = &mut self.seen {
+            seen.refusals.push((at.clone(), collecting));
+        }
+    }
+
+    /// A provisional lowering's assignment (F5): the variable's type
+    /// settles with its value's, as inference's walk settles it — a
+    /// function's first assignment of a name binds it with the value's type
+    /// (spec §7), a later one joins it — and the scopes are kept as the
+    /// final lowering keeps them. A failed value's refusal is observed
+    /// (`held_by`), the value's own type settling.
+    fn settled(&mut self, name: &str, expr: Expr) -> Stmt {
+        let ty = full(&expr);
+        let store = self.is_fact(name) && self.sees_facts();
+        let expr = if self.declared(name) && !store { self.held_by(name, expr) } else { expr };
+        let settled = if self.ctx.fresh_binding(name) {
+            ty
+        } else {
+            let existing = self.ctx.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
+            crate::type_infer::settle::settle(&existing, ty, self.ctx.body_assigned.is_some())
+        };
+        self.ctx.vars.insert(name.to_string(), settled);
+        if !store && !self.declared(name) {
+            self.scopes.last_mut().unwrap().insert(name.to_string());
+        }
+        Stmt::Set { var: name.to_string(), expr }
+    }
+
+    /// A provisional lowering's `a, b = x, y` (F5): each name settles with
+    /// its own value's type read as text, as inference's walk pairs them
+    /// (one value unpacked settles only the first name, with the whole),
+    /// and no name is a new binding there.
+    fn settled_multi(&mut self, names: &[String], values: &[A]) -> Result<Vec<Stmt>, String> {
+        let mut types = Vec::with_capacity(values.len());
+        for v in values {
+            let x = self.lower_expr(v)?;
+            types.push(read(&x));
+        }
+        let in_body = self.ctx.body_assigned.is_some();
+        for (n, t) in names.iter().zip(types) {
+            let existing = self.ctx.vars.get(n).cloned().unwrap_or(CrowType::Unknown);
+            self.ctx.vars.insert(n.clone(), crate::type_infer::settle::settle(&existing, t, in_body));
+        }
+        for n in names {
+            let store = self.is_fact(n) && self.sees_facts();
+            if !store && !self.declared(n) {
+                self.scopes.last_mut().unwrap().insert(n.clone());
+            }
+        }
+        Ok(vec![])
+    }
+
+    /// A provisional lowering's `m[k] = v` (F5): a map's values take the
+    /// value's type, as inference's walk has it.
+    fn settled_entry(&mut self, object: &A, value: &Expr) {
+        if let A::Ident(var) = object {
+            if let CrowType::Map(inner) = self.ctx.ident_type(var).text() {
+                let joined = inner.unify(&read(value));
+                self.ctx.vars.insert(var.clone(), CrowType::Map(Box::new(joined)));
+            }
+        }
+    }
+
+    /// A provisional lowering's `set[m, k, v]` as a statement (F5): the
+    /// map's values take v's type, as inference's walk has it.
+    fn settled_set(&mut self, e: &A, x: &Expr) {
+        let A::Call { callee, args } = e else { return };
+        let (true, [A::Ident(var), _, _]) = (matches!(callee.as_ref(), A::Ident(n) if n == "set"), args.as_slice()) else { return };
+        let value = match x {
+            Expr::Call { args, .. } | Expr::Effect { args, .. } => match args.get(2) {
+                // the value as written, before its failure was unwrapped
+                Some(Expr::Convert { how: Convert::Unwrap, expr, .. }) => read(expr),
+                Some(v) => read(v),
+                None => return,
+            },
+            _ => return,
+        };
+        let existing = self.ctx.vars.get(var).cloned().unwrap_or(CrowType::Unknown);
+        self.ctx.vars.insert(var.clone(), existing.unify(&CrowType::Map(Box::new(value))));
     }
 
     /// While a loop's body is lowered, its variable has the element type
@@ -1402,9 +1571,19 @@ impl<'a> Lowerer<'a> {
                 let ty = ty_of(&TypeContext::for_type(self.ctx.loop_yield_type(var, read(&it), body)));
                 let before = std::mem::take(&mut self.pre);
                 self.scopes.push([var.clone()].into_iter().collect());
+                // inference's walk reads a collecting loop's yield, never its
+                // body: a provisional lowering's body leaves nothing behind
+                let outer = self.seen.is_some().then(|| (self.ctx.vars.clone(), self.ctx.body_assigned.clone(), self.ctx.frame_schemas.clone()));
                 let saved = self.bind_loop_var(var, &it.ty());
+                self.collecting += 1;
                 let mut b = self.lower_block(body)?;
+                self.collecting -= 1;
                 self.unbind_loop_var(var, saved);
+                if let Some((vars, assigned, frames)) = outer {
+                    self.ctx.vars = vars;
+                    self.ctx.body_assigned = assigned;
+                    self.ctx.frame_schemas = frames;
+                }
                 self.scopes.pop();
                 let left = std::mem::replace(&mut self.pre, before);
                 self.pre.extend(left);
@@ -1511,6 +1690,9 @@ impl<'a> Lowerer<'a> {
                 });
             }
             self.check_call(&name, args);
+            if let Some(seen) = &mut self.seen {
+                seen.calls.push((name.clone(), fields.iter().map(full).collect()));
+            }
             return Ok(Expr::RecordLit { name, fields });
         }
         // a ui element with its attributes first (lower.rs put them there)
@@ -1629,12 +1811,17 @@ impl<'a> Lowerer<'a> {
             let m = self.ctx.module_aliases.get(&m).cloned().unwrap_or(m);
             if is_effect(&name) {
                 // a qualified effect keeps its module: frame.load, db.query
-                self.direct_effects.entry(current).or_default().insert(name.clone());
+                if self.seen.is_none() {
+                    self.direct_effects.entry(current).or_default().insert(name.clone());
+                }
                 return Ok(Expr::Effect { name: format!("{}.{}", m, name), args: lowered, ty, answered: true, propagates });
             }
             return Ok(Expr::Call { target: Target::Module(m, name), args: lowered, ty, propagates });
         }
         if self.ctx.functions.contains_key(&name) || self.ctx.specializations.contains_key(&name) {
+            if let Some(seen) = &mut self.seen {
+                seen.calls.push((name.clone(), full_types.clone()));
+            }
             let resolved = self.specialised(&name, &full_types);
             // an int handed to a float parameter is a float (spec §1), as one
             // assigned to a float variable is: the conversion is explicit
@@ -1652,11 +1839,15 @@ impl<'a> Lowerer<'a> {
                     })
                     .collect();
             }
-            self.calls.entry(current).or_default().insert(resolved.clone());
+            if self.seen.is_none() {
+                self.calls.entry(current).or_default().insert(resolved.clone());
+            }
             return Ok(Expr::Call { target: Target::User(resolved), args: lowered, ty, propagates });
         }
         if is_effect(&name) {
-            self.direct_effects.entry(current).or_default().insert(name.clone());
+            if self.seen.is_none() {
+                self.direct_effects.entry(current).or_default().insert(name.clone());
+            }
             return Ok(Expr::Effect { name, args: lowered, ty, answered: true, propagates });
         }
         if RUNTIME_TABLE.iter().any(|(b, _)| *b == name) {
@@ -2374,6 +2565,59 @@ mod tests {
         // read by its caller, the helper's effect answers
         let ir = ir_of("use web, ui\nuse web.mail\nmailer = smtp['h', 587, 'u', 'p']\nsent = false\nfn notify[m, to]\n    mail[m, to, 'Hello', 'x']\nfn go[]\n    r = notify[mailer, 'a@b.c']\n    sent = r.ok\nview v[]\n    return button['Go', click = go]\n");
         assert!(ir.contains("return mail!now(m, move to"), "{}", ir);
+    }
+
+    /// A function's body lowered provisionally (F5), beside inference's
+    /// walk of it: what it met, the walk's environment and its own, and
+    /// the lowering's state after it, which must be as before.
+    fn provisional_of(src: &str, f: &str) -> (Seen, BTreeMap<String, CrowType>, BTreeMap<String, CrowType>) {
+        let mut lexer = crate::lexer::Lexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let stmts = crate::lower::lower_program(&stmts).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.describe_queries = false;
+        ctx.infer_program(&stmts);
+        let body = ctx.functions[f].body.clone();
+        let params: HashSet<String> = ctx.functions[f].params.iter().map(|(p, _)| p.clone()).collect();
+        let scope = ctx.enter_body(f);
+        for s in &body {
+            ctx.infer_stmt(s);
+        }
+        let walked = ctx.vars.clone();
+        ctx.leave_body(scope);
+        let mut l = Lowerer::new(&mut ctx, false);
+        l.prescan(&stmts, &HashSet::new());
+        let scope = l.ctx.enter_body(f);
+        l.at = Where::In(FnKind::Pure);
+        l.current_fn = f.to_string();
+        let seen = l.provisional(params, &body);
+        let lowered = l.ctx.vars.clone();
+        assert_eq!((l.temp, l.pre.len(), l.scopes.len(), l.v.mute), (0, 0, 1, 0));
+        assert!(l.calls.is_empty() && l.direct_effects.is_empty() && l.v.errors.is_empty() && l.seen.is_none());
+        l.ctx.leave_body(scope);
+        (seen, walked, lowered)
+    }
+
+    /// Lowered to learn its types, a body leaves the environment inference's
+    /// walk leaves — a variable settled across its assignments, a loop's
+    /// variable left bound, a collecting loop's locals left out, a map's
+    /// values taken from `set[]` and `m[k] = v` — and says what it met:
+    /// the calls it makes, the values it returns, the errors it hands back.
+    #[test]
+    fn a_body_lowered_to_learn_its_types_settles_as_inference_walks() {
+        let src = "fn half[x]\n    return x / 2.0\nfn f[n, s]\n    xs = []\n    for i in range[n]\n        xs = push[xs, i * 1.5]\n    ys = for x in xs\n        y = half[x]\n        y\n    m = map[a = 1]\n    set[m, 'b', 2]\n    m['c'] = 3\n    a, b = 1, 'x'\n    k = int[s]\n    if k gt 5\n        return half[2]\n    return len[ys] * 1.0\nlog[f[3, '7']]\n";
+        let (seen, walked, lowered) = provisional_of(src, "f");
+        assert_eq!(walked, lowered);
+        assert_eq!(lowered.get("xs"), Some(&CrowType::Array(Box::new(CrowType::Float))));
+        assert_eq!(lowered.get("i"), Some(&CrowType::Int));
+        assert!(!lowered.contains_key("y") && !lowered.contains_key("x"), "{:?}", lowered);
+        assert_eq!(lowered.get("m"), Some(&CrowType::Map(Box::new(CrowType::Int))));
+        assert_eq!((lowered.get("a"), lowered.get("b")), (Some(&CrowType::Int), Some(&CrowType::Str)));
+        assert_eq!(seen.calls, vec![("half".to_string(), vec![CrowType::Float]), ("half".to_string(), vec![CrowType::Int])]);
+        assert_eq!(seen.returns, vec![CrowType::Float, CrowType::Float]);
+        assert_eq!(seen.refusals, vec![(Decision::Branch, false)]);
     }
 
     #[test]

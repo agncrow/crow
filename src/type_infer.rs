@@ -1714,7 +1714,7 @@ impl TypeContext {
     /// parameter nor a fact is a new binding: its type is its own, not the
     /// module variable's of the same name. Reactive state keeps its type
     /// through a handler's assignment; every other module name is shadowed.
-    fn fresh_binding(&mut self, name: &str) -> bool {
+    pub(crate) fn fresh_binding(&mut self, name: &str) -> bool {
         let is_ui = self.is_ui;
         let facts = &self.facts;
         match &mut self.body_assigned {

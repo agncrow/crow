@@ -756,3 +756,14 @@ weeks; the core stages are weeks each.
   (`refuses_failed`) are one module, `type_infer/settle.rs`, that the
   walker's four assignment sites, its `refused_at` and the lowering's
   `held_by` all call. The oracle is unchanged: none of 1,047.
+- **2026-09-26, F5 step S4: a provisional lowering.** The lowering can
+  lower a body to learn its types and keep nothing (`provisional`): the
+  checks say nothing, its temporaries, scopes and the program's call
+  graph are left as they were, and each variable settles across its
+  assignments as inference's walk settles it (a first assignment binds,
+  a later one joins, a loop's variable stays bound, a collecting loop's
+  locals stay out, `set[]` and `m[k] = v` type a map's values). What it
+  met is kept (`Seen`): each call of a declared function or record with
+  its arguments' types, each returned value's type, and each error
+  handed back, marked when inside a collecting loop. Nothing uses it yet;
+  a test holds it to the walk's environment for one body.
