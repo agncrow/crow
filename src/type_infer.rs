@@ -1842,16 +1842,18 @@ impl TypeContext {
         a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && x.has_markup() == y.has_markup())
     }
 
-    /// The specialization of `name` a call with these arguments reaches,
-    /// the one rule the inference, the compiler and the interpreter share.
-    pub fn specialization_for(&self, name: &str, args: &[Expr]) -> Option<String> {
+    /// The specialization of `name` a call reaches, given its arguments'
+    /// types with markup told apart: the one rule the inference, the
+    /// compiler and the interpreter share. The caller has the types (the
+    /// walker from the tree, the lowering from its lowered arguments).
+    pub fn specialization_for(&self, name: &str, full: &[CrowType]) -> Option<String> {
         let clones = self.specializations.get(name)?;
-        let call_sig: Vec<CrowType> = args
+        let call_sig: Vec<CrowType> = full
             .iter()
-            .map(|a| match self.infer_expr_full(a) {
-                CrowType::Result(inner) => *inner,
-                CrowType::OptBoxStruct(n) => CrowType::Struct(n),
-                other => other,
+            .map(|t| match t {
+                CrowType::Result(inner) => *inner.clone(),
+                CrowType::OptBoxStruct(n) => CrowType::Struct(n.clone()),
+                other => other.clone(),
             })
             .collect();
         clones
@@ -1859,6 +1861,37 @@ impl TypeContext {
             .find(|(csig, _)| Self::same_signature(csig, &call_sig))
             .or_else(|| clones.first())
             .map(|(_, m)| m.clone())
+    }
+
+    /// What a collecting loop's body yields, walked with the loop variable
+    /// bound to the element type: its last expression, or from inside the
+    /// branches of a trailing `if` (the filter pattern). Unknown when the
+    /// body says nothing yet (a later pass settles it).
+    pub(crate) fn loop_yield_type(&self, var: &str, iter_type: CrowType, body: &[Stmt]) -> CrowType {
+        let elem = match Self::walked(iter_type) {
+            CrowType::Array(inner) | CrowType::NumArray(inner) => *inner,
+            _ => CrowType::Unknown,
+        };
+        fn body_yield_type(ctx: &TypeContext, body: &[Stmt]) -> CrowType {
+            match body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
+                Some(Stmt::ExprStmt(e)) => ctx.infer_expr_full(e),
+                Some(Stmt::If { then_body, else_body, .. }) => {
+                    let t = body_yield_type(ctx, then_body);
+                    match else_body {
+                        Some(eb) => t.unify(&body_yield_type(ctx, eb)),
+                        None => t,
+                    }
+                }
+                _ => CrowType::Unknown,
+            }
+        }
+        if elem != CrowType::Unknown {
+            let mut sub = self.clone();
+            sub.vars.insert(var.to_string(), elem);
+            body_yield_type(&sub, body)
+        } else {
+            body_yield_type(self, body)
+        }
     }
 
     /// An expression's type as every reader of strings sees it: markup is
@@ -1896,10 +1929,14 @@ impl TypeContext {
             Expr::BinOp { left, op, right } => self.binop_type(op, self.infer_expr(left), self.infer_expr(right)),
             Expr::UnaryOp { op, expr: e } => self.unary_type(op, self.infer_expr(e)),
             Expr::Call { callee, args } => {
-                // every argument inferred once, here
-                let arg_types: Vec<CrowType> = args.iter().map(|a| self.infer_expr(a)).collect();
+                // every argument inferred once, here: its type with markup
+                // told apart, which choosing a specialization reads, and the
+                // text every other rule reads (walked twice, a nesting of
+                // calls cost twice per level — the layout engine never ended)
+                let full: Vec<CrowType> = args.iter().map(|a| self.infer_expr_full(a)).collect();
+                let arg_types: Vec<CrowType> = full.iter().map(|t| t.text()).collect();
                 if let Expr::Ident(name) = callee.as_ref() {
-                    return self.named_call_type(name, args, callee, &arg_types);
+                    return self.named_call_type(name, args, callee, &arg_types, &full);
                 }
                 // Module call: module.func[args] or module.Struct[args]
                 if let Expr::FieldAccess { object, field } = callee.as_ref() {
@@ -1915,7 +1952,7 @@ impl TypeContext {
             Expr::FieldAccess { object, field } => self.field_type(object, self.infer_expr(object), field),
             Expr::Array(items) => Self::array_type(items.iter().map(|i| self.infer_expr_full(i))),
             Expr::Map(pairs) => Self::map_type(pairs.iter().map(|(_, v)| self.infer_expr(v))),
-            Expr::ForExpr { var, iter, body } => self.for_type(var, self.infer_expr(iter), body),
+            Expr::ForExpr { var, iter, body } => Self::for_type(self.loop_yield_type(var, self.infer_expr(iter), body)),
         }
     }
 

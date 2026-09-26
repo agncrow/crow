@@ -9,7 +9,7 @@ impl TypeContext {
     /// after lowering) is walked once per level, not twice — twice per
     /// level doubled the work for every entry, and a 30-entry literal
     /// never finished.
-    pub fn infer_call_base_typed(&self, name: &str, args: &[Expr], _callee: &Expr, arg_types: &[CrowType]) -> CrowType {
+    pub fn infer_call_base_typed(&self, name: &str, args: &[Expr], _callee: &Expr, arg_types: &[CrowType], full: &[CrowType]) -> CrowType {
         let arg_ty = |a: &Expr| -> CrowType {
             match args.iter().position(|x| std::ptr::eq(x, a)) {
                 Some(i) => arg_types[i].clone(),
@@ -58,7 +58,7 @@ impl TypeContext {
         // User-defined function call (specialization-aware: a monomorphized
         // callee's return type depends on this call's argument types)
         if let Some(sig) = self.functions.get(name) {
-            if let Some(mangled) = self.specialization_for(name, args) {
+            if let Some(mangled) = self.specialization_for(name, full) {
                 if let Some(clone_sig) = self.functions.get(&mangled) {
                     return clone_sig.return_type.clone();
                 }
@@ -579,8 +579,8 @@ impl TypeContext {
     /// A call by name's type from its arguments' types, an argument's
     /// failure made the call's (auto-propagation) unless the callee renders
     /// what it is given.
-    pub(crate) fn named_call_type(&self, name: &str, args: &[Expr], callee: &Expr, arg_types: &[CrowType]) -> CrowType {
-        let base = self.infer_call_base_typed(name, args, callee, arg_types);
+    pub(crate) fn named_call_type(&self, name: &str, args: &[Expr], callee: &Expr, arg_types: &[CrowType], full: &[CrowType]) -> CrowType {
+        let base = self.infer_call_base_typed(name, args, callee, arg_types, full);
         // Auto-propagation: wrap in CrowResult if any arg is CrowResult
         // a view renders what it is given: a failed argument shows
         // its reason inside the tree, it never fails the view; a record
@@ -750,45 +750,13 @@ impl TypeContext {
         CrowType::Unknown
     }
 
-    /// A collecting loop's type from its list's: the list of what its body
-    /// yields, typed with the loop variable bound to an element.
-    pub(crate) fn for_type(&self, var: &str, iter_type: CrowType, body: &[Stmt]) -> CrowType {
-        // Determine element type from iterator
-        let elem = match Self::walked(iter_type) {
-            CrowType::Array(inner) | CrowType::NumArray(inner) => *inner,
-            _ => CrowType::Unknown,
-        };
-
-        // Infer the yield type from the body's last expression, with
-        // the loop variable bound — otherwise a body like f[10]
-        // (f = loop var holding a fn) infers Unknown. A trailing if
-        // (the filter pattern) yields from inside its branches.
-        fn body_yield_type(ctx: &TypeContext, body: &[Stmt]) -> CrowType {
-            match body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
-                Some(Stmt::ExprStmt(e)) => ctx.infer_expr_full(e),
-                Some(Stmt::If { then_body, else_body, .. }) => {
-                    let t = body_yield_type(ctx, then_body);
-                    match else_body {
-                        Some(eb) => t.unify(&body_yield_type(ctx, eb)),
-                        None => t,
-                    }
-                }
-                _ => CrowType::Unknown,
-            }
-        }
-        let last_type = if elem != CrowType::Unknown {
-            let mut sub = self.clone();
-            sub.vars.insert(var.to_string(), elem);
-            body_yield_type(&sub, body)
-        } else {
-            body_yield_type(self, body)
-        };
-
-        // If the body type is still unknown, leave it unknown — a
-        // later inference pass settles it. (Falling back to the
-        // element type is wrong whenever the body maps elements to a
-        // different type, e.g. calling fns held in the array.)
-        CrowType::Array(Box::new(last_type))
+    /// A collecting loop's type: a list of what its body yields (the
+    /// caller has the yield type — the walker from the tree, and one day
+    /// the lowering from the lowered body). An unknown yield stays unknown
+    /// for a later pass to settle; falling back to the element type is
+    /// wrong whenever the body maps elements to a different type.
+    pub(crate) fn for_type(yield_type: CrowType) -> CrowType {
+        CrowType::Array(Box::new(yield_type))
     }
 
     /// A list literal's type from its items': numbers make a tensor, and

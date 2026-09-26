@@ -738,3 +738,14 @@ weeks; the core stages are weeks each.
   `infer_program`'s declaration and classification phases are methods.
   What stays in `type_infer.rs` is the walker the next steps retire. The
   oracle is unchanged: 1,047 files, none different.
+- **2026-09-26, F5 step S2: the rules stop walking.** Choosing a
+  function's specialization reads the arguments' types the caller has —
+  the walker's from the tree, the lowering's from its lowered arguments —
+  instead of walking the arguments again; `named_call_type` takes them
+  too. A collecting loop's type is a list of its yield, and finding the
+  yield by walking the body (`loop_yield_type`) is the walker's, which
+  the lowering still asks until S8. Every argument is typed once: typing
+  a call's arguments twice, once as text and once with markup, doubled
+  the work at each level of nesting, and the layout engine never
+  finished (caught by the oracle, which now fails a file after two
+  minutes rather than wait). The oracle is unchanged: none of 1,047.
