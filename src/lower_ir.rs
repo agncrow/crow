@@ -12,7 +12,7 @@
 use crate::ast::{BinOp, Expr as A, Stmt as S};
 use crate::ir::*;
 use crate::type_infer::{CrowType, TypeContext};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod checks;
 pub(crate) use checks::{BUILTINS, CORE_RESERVED, UI_RESERVED, WEB_EXTRA_FUNCTIONS, WEB_RESERVED};
@@ -535,6 +535,14 @@ struct Lowerer<'a> {
     /// The collecting loops over a list of named functions the call scan
     /// is inside (`for f in [a, b]`): the loop's variable and the functions.
     fn_lists: Vec<(String, Vec<String>)>,
+    /// A provisional lowering's locals, each with its first value's type:
+    /// with the type it settles on, what it is declared as (`declared_as`).
+    first_types: HashMap<String, CrowType>,
+    /// A provisional lowering's assignments of a value that can fail to a
+    /// variable declared before: the variable, the value's payload, and
+    /// whether inside a collecting loop. Whether each refuses the failed
+    /// value is known once the body's locals have settled.
+    held: Vec<(String, CrowType, bool)>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -555,6 +563,8 @@ impl<'a> Lowerer<'a> {
             collecting: 0,
             unscanned: 0,
             fn_lists: Vec::new(),
+            first_types: HashMap::new(),
+            held: Vec::new(),
         }
     }
 
@@ -581,12 +591,32 @@ impl<'a> Lowerer<'a> {
         let (mute, line, collecting, unscanned, fn_lists) = (self.v.mute, self.v.line, self.collecting, self.unscanned, self.fn_lists.len());
         let local_types = self.v.local_types.clone();
         let stored = self.v.stored.clone();
+        let outer_first = std::mem::take(&mut self.first_types);
+        let outer_held = std::mem::take(&mut self.held);
         self.v.mute += 1;
         if let Some(own) = own {
             self.scopes.push(own);
         }
         let _ = self.lower_block(body);
         self.scopes.truncate(depth);
+        // a variable holds no error when it is declared with a type that
+        // cannot fail: an assignment of a failed value to it refuses the
+        // value and hands the error out of the body (spec, Reassignment),
+        // decided with the type the final lowering declares it with
+        for (name, payload, collecting) in std::mem::take(&mut self.held) {
+            let settled = self.ctx.vars.get(&name);
+            let held = match self.first_types.get(&name) {
+                Some(first) => crow_type(&declared_as(&ty_of(first), settled)),
+                None => settled.cloned().unwrap_or(CrowType::Unknown),
+            };
+            if crate::type_infer::settle::refuses_failed(&held, &payload) {
+                if let Some(seen) = &mut self.seen {
+                    seen.refusals.push((Decision::Assign(name), collecting));
+                }
+            }
+        }
+        self.first_types = outer_first;
+        self.held = outer_held;
         self.v.mute = mute;
         self.v.line = line;
         self.v.local_types = local_types;
@@ -649,16 +679,16 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// A function's body typed (F5): its locals by a provisional lowering,
-    /// then its return type and whether an error leaves it, as inference
-    /// decides them from that environment (`finish_body`).
+    /// A function's body typed (F5): its locals, its return type and
+    /// whether an error leaves it, all as a provisional lowering met them
+    /// (`finish_body`).
     fn infer_body(&mut self, name: &str, body: &[S]) {
         let params: HashSet<String> = self.ctx.functions.get(name).map(|sig| sig.params.iter().map(|(p, _)| p.clone()).collect()).unwrap_or_default();
         let scope = self.ctx.enter_body(name);
         self.at = if self.ctx.derives.contains(name) { Where::Derive } else { Where::In(self.kind_of(name, body, false)) };
         self.current_fn = name.to_string();
         let seen = self.provisional(Pass::Settle, Some(params), body);
-        self.ctx.finish_body(name, body, scope, &seen.returns);
+        self.ctx.finish_body(name, scope, &seen.returns, !seen.refusals.is_empty());
     }
 
     /// The F2 monomorphization pass (F5): each clone's calls read with its
@@ -1377,33 +1407,9 @@ impl<'a> Lowerer<'a> {
             return Stmt::Set { var: name.to_string(), expr };
         }
         self.scopes.last_mut().unwrap().insert(name.to_string());
-        // a local is its first value's type (a node's value is its markup);
-        // only a value whose type is not known yet takes the type inference
-        // settled on across its assignments. A later fallible value is
-        // unwrapped where it is assigned. What reads the local from here on
-        // is typed by the local as declared.
-        let expr_ty = expr.ty();
-        let ty = if matches!(expr_ty, Ty::Node) {
-            Ty::Markup
-        } else if format!("{:?}", expr_ty).contains("Unknown") {
-            match self.ctx.vars.get(name) {
-                // a first value that cannot fail makes a variable that holds
-                // no error (spec, Reassignment): the settled type's payload,
-                // as the Rust backend declares it (`xs = []`, then a push of
-                // a value that can fail, refused where it is assigned)
-                Some(t) if !matches!(t, CrowType::Unknown) => {
-                    let settled = ty_of(t);
-                    if expr_ty.is_result() {
-                        settled
-                    } else {
-                        settled.payload().clone()
-                    }
-                }
-                _ => expr_ty,
-            }
-        } else {
-            expr_ty
-        };
+        // what reads the local from here on is typed by the local as
+        // declared: its first value's type, or the type it settles on
+        let ty = declared_as(&expr.ty(), self.ctx.vars.get(name));
         if !matches!(ty, Ty::Unknown) {
             self.ctx.vars.insert(name.to_string(), crow_type(&ty));
         }
@@ -1475,7 +1481,7 @@ impl<'a> Lowerer<'a> {
     fn settled(&mut self, name: &str, expr: Expr) -> Stmt {
         let ty = full(&expr);
         let store = self.is_fact(name) && self.sees_facts();
-        let expr = if self.declared(name) && !store { self.held_by(name, expr) } else { expr };
+        self.note_held(name, &ty, store);
         let settled = if self.ctx.fresh_binding(name) {
             ty
         } else {
@@ -1489,15 +1495,40 @@ impl<'a> Lowerer<'a> {
         Stmt::Set { var: name.to_string(), expr }
     }
 
+    /// What a provisional lowering's assignment says of the variable's
+    /// declaration: a new local's first value's type is kept, and a value
+    /// that can fail, given to a variable declared before, is held to be
+    /// judged once the body has settled (`provisional`).
+    fn note_held(&mut self, name: &str, ty: &CrowType, store: bool) {
+        if store {
+            return;
+        }
+        if self.declared(name) {
+            if let CrowType::Result(payload) = ty {
+                self.held.push((name.to_string(), payload.as_ref().clone(), self.collecting > 0));
+            }
+        } else {
+            self.first_types.entry(name.to_string()).or_insert_with(|| ty.clone());
+        }
+    }
+
     /// A provisional lowering's `a, b = x, y` (F5): each name settles with
     /// its own value's type read as text, as inference's walk pairs them
     /// (one value unpacked settles only the first name, with the whole),
     /// and no name is a new binding there.
     fn settled_multi(&mut self, names: &[String], values: &[A]) -> Result<Vec<Stmt>, String> {
         let mut types = Vec::with_capacity(values.len());
+        let mut fulls = Vec::with_capacity(values.len());
         for v in values {
             let x = self.lower_expr(v)?;
             types.push(read(&x));
+            fulls.push(full(&x));
+        }
+        if names.len() == values.len() {
+            for (n, t) in names.iter().zip(&fulls) {
+                let store = self.is_fact(n) && self.sees_facts();
+                self.note_held(n, t, store);
+            }
         }
         let in_body = self.ctx.body_assigned.is_some();
         for (n, t) in names.iter().zip(types) {
@@ -1790,6 +1821,11 @@ impl<'a> Lowerer<'a> {
                 // What the iterable hoisted waits while the body is lowered,
                 // or the body's first statement would take it.
                 let it = self.lower_expr(iter)?;
+                // a list that can fail is refused where the loop starts (by
+                // the backends, not a propagation): an error leaves there
+                if it.ty().is_result() {
+                    self.saw_refusal(&Decision::Loop);
+                }
                 let before = std::mem::take(&mut self.pre);
                 self.scopes.push([var.clone()].into_iter().collect());
                 // inference's walk reads a collecting loop's yield, never its
@@ -2397,6 +2433,37 @@ pub(crate) fn words_before_placeholders(sql: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// The type a local is declared with, from its first value's type and the
+/// type inference settled on across its assignments: the first value's (a
+/// node's value is its markup, an int given to a float variable is a
+/// float, spec §1), unless it is not known yet, when the settled type is
+/// taken — its payload when the first value cannot fail, which makes a
+/// variable that holds no error (spec, Reassignment), as the Rust backend
+/// declares it (`xs = []`, then a push of a value that can fail, refused
+/// where it is assigned).
+fn declared_as(first: &Ty, settled: Option<&CrowType>) -> Ty {
+    if matches!(first, Ty::Node) {
+        return Ty::Markup;
+    }
+    if *first == Ty::Int && matches!(settled, Some(CrowType::Float)) {
+        return Ty::Float;
+    }
+    if !format!("{:?}", first).contains("Unknown") {
+        return first.clone();
+    }
+    match settled {
+        Some(t) if !matches!(t, CrowType::Unknown) => {
+            let settled = ty_of(t);
+            if first.is_result() {
+                settled
+            } else {
+                settled.payload().clone()
+            }
+        }
+        _ => first.clone(),
+    }
 }
 
 /// What a collecting loop's lowered body yields: its last expression, or

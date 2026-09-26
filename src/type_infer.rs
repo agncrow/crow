@@ -761,191 +761,12 @@ impl TypeContext {
         saved_vars
     }
 
-    /// Does any if/while condition in this body, or any loop's list, infer
-    /// to a Result type? (Such decisions can propagate errors out of the
-    /// function.) A collecting loop counts, its body's conditions too.
-    fn body_has_result_condition(&mut self, stmts: &[Stmt]) -> bool {
-        for s in stmts {
-            if self.loops_have_result_condition(s) {
-                return true;
-            }
-            match s {
-                Stmt::If { condition, then_body, else_body } => {
-                    if matches!(self.infer_expr(condition), CrowType::Result(_)) {
-                        return true;
-                    }
-                    if self.body_has_result_condition(then_body) {
-                        return true;
-                    }
-                    if let Some(eb) = else_body {
-                        if self.body_has_result_condition(eb) {
-                            return true;
-                        }
-                    }
-                }
-                Stmt::While { condition, body } => {
-                    if matches!(self.infer_expr(condition), CrowType::Result(_)) {
-                        return true;
-                    }
-                    if self.body_has_result_condition(body) {
-                        return true;
-                    }
-                }
-                Stmt::For { var, iter, body } => {
-                    // a list that can fail is refused like a condition
-                    if self.loop_list_can_fail(var, iter, body) {
-                        return true;
-                    }
-                }
-                _ => {}
-            }
-        }
-        false
-    }
-
-    /// Does a variable whose first value could not fail meet a value that
-    /// can? It holds no error, so the assignment refuses a failed one (spec,
-    /// Reassignment) and hands it out of the function, as a condition does.
-    /// The body is walked as the lowering binds it: a block's first
-    /// assignments are its own, and a local keeps its first value's type.
-    fn body_refuses_assignment(&mut self, name: &str, body: &[Stmt]) -> bool {
-        let saved = self.vars.clone();
-        let mut own = std::collections::HashSet::new();
-        if let Some(sig) = self.functions.get(name).cloned() {
-            for (p, t) in sig.params {
-                self.vars.insert(p.clone(), t);
-                own.insert(p);
-            }
-        }
-        let mut scopes = vec![own];
-        let found = self.refuses_in(body, &mut scopes);
-        self.vars = saved;
-        found
-    }
-
-    fn refuses_in(&mut self, stmts: &[Stmt], scopes: &mut Vec<std::collections::HashSet<String>>) -> bool {
-        let mut found = false;
-        for s in stmts {
-            match s {
-                Stmt::Assign { name, value } => found |= self.refused_at(name, value, scopes),
-                Stmt::MultiAssign { names, values } if names.len() == values.len() => {
-                    for (n, v) in names.iter().zip(values) {
-                        found |= self.refused_at(n, v, scopes);
-                    }
-                }
-                Stmt::If { then_body, else_body, .. } => {
-                    scopes.push(Default::default());
-                    found |= self.refuses_in(then_body, scopes);
-                    scopes.pop();
-                    if let Some(eb) = else_body {
-                        scopes.push(Default::default());
-                        found |= self.refuses_in(eb, scopes);
-                        scopes.pop();
-                    }
-                }
-                Stmt::While { body, .. } => {
-                    scopes.push(Default::default());
-                    found |= self.refuses_in(body, scopes);
-                    scopes.pop();
-                }
-                Stmt::For { var, iter, body } => {
-                    if let CrowType::Array(t) | CrowType::NumArray(t) = Self::walked(self.infer_expr(iter)) {
-                        self.vars.insert(var.clone(), *t);
-                    }
-                    scopes.push([var.clone()].into_iter().collect());
-                    found |= self.refuses_in(body, scopes);
-                    scopes.pop();
-                }
-                _ => {}
-            }
-        }
-        found
-    }
-
-    /// One assignment of `refuses_in`: a new name is bound with its value's
-    /// type (a fact is written, not bound); a bound one refuses a value
-    /// that can fail when it holds a plain value.
-    fn refused_at(&mut self, name: &str, value: &Expr, scopes: &mut [std::collections::HashSet<String>]) -> bool {
-        let ty = self.infer_expr_full(value);
-        if !scopes.iter().any(|s| s.contains(name)) {
-            if self.is_ui && self.facts.contains(name) {
-                return false;
-            }
-            if let Some(last) = scopes.last_mut() {
-                last.insert(name.to_string());
-            }
-            if !format!("{:?}", ty).contains("Unknown") {
-                self.vars.insert(name.to_string(), ty);
-            }
-            return false;
-        }
-        let held = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-        match &ty {
-            CrowType::Result(inner) => settle::refuses_failed(&held, inner),
-            _ => false,
-        }
-    }
-
-    /// Whether a loop can hand an error out of its function: its list can
-    /// fail (the loop refuses it, as a condition is refused), or a decision
-    /// in its body can, read with the loop's variable typed as an item.
-    fn loop_list_can_fail(&mut self, var: &str, iter: &Expr, body: &[Stmt]) -> bool {
-        let list = self.infer_expr(iter);
-        if matches!(list, CrowType::Result(_)) {
-            return true;
-        }
-        let elem = match Self::walked(list) {
-            CrowType::Array(t) | CrowType::NumArray(t) => *t,
-            _ => CrowType::Unknown,
-        };
-        let saved = self.vars.insert(var.to_string(), elem);
-        let found = self.body_has_result_condition(body);
-        match saved {
-            Some(t) => {
-                self.vars.insert(var.to_string(), t);
-            }
-            None => {
-                self.vars.remove(var);
-            }
-        }
-        found
-    }
-
     /// What a loop walks: a list that can fail is refused before the loop
     /// runs (spec, Errors in Conditions), so its items are the value's.
     pub(crate) fn walked(t: CrowType) -> CrowType {
         match t {
             CrowType::Result(inner) => *inner,
             other => other,
-        }
-    }
-
-    /// The collecting loops in a statement's own expressions, each body
-    /// read with its variable typed as an element of what it walks.
-    fn loops_have_result_condition(&mut self, s: &Stmt) -> bool {
-        let exprs: Vec<&Expr> = match s {
-            Stmt::Assign { value, .. } | Stmt::FieldAssign { value, .. } => vec![value],
-            Stmt::MultiAssign { values, .. } => values.iter().collect(),
-            Stmt::IndexAssign { index, value, .. } => vec![index, value],
-            Stmt::ExprStmt(e) | Stmt::Return(Some(e)) => vec![e],
-            Stmt::If { condition, .. } | Stmt::While { condition, .. } => vec![condition],
-            Stmt::For { iter, .. } => vec![iter],
-            _ => vec![],
-        };
-        exprs.into_iter().any(|e| self.expr_loops_have_result_condition(e))
-    }
-
-    fn expr_loops_have_result_condition(&mut self, e: &Expr) -> bool {
-        match e {
-            Expr::ForExpr { var, iter, body } => self.expr_loops_have_result_condition(iter) || self.loop_list_can_fail(var, iter, body),
-            Expr::Call { callee, args } => self.expr_loops_have_result_condition(callee) || args.iter().any(|a| self.expr_loops_have_result_condition(a)),
-            Expr::BinOp { left, right, .. } => self.expr_loops_have_result_condition(left) || self.expr_loops_have_result_condition(right),
-            Expr::UnaryOp { expr, .. } => self.expr_loops_have_result_condition(expr),
-            Expr::FieldAccess { object, .. } => self.expr_loops_have_result_condition(object),
-            Expr::Array(items) => items.iter().any(|i| self.expr_loops_have_result_condition(i)),
-            Expr::Map(pairs) => pairs.iter().any(|(k, v)| self.expr_loops_have_result_condition(k) || self.expr_loops_have_result_condition(v)),
-            Expr::Named { value, .. } => self.expr_loops_have_result_condition(value),
-            _ => false,
         }
     }
 
@@ -978,22 +799,22 @@ impl TypeContext {
 
     /// Out of a function's body once a provisional lowering typed it: its
     /// return type the values it returns joined (each typed where it is
-    /// returned, as the lowering met it), widened to a Result when an error
-    /// can leave it, and a fact a view or handler gives a float widened for
-    /// the program.
-    pub(crate) fn finish_body(&mut self, name: &str, body: &[Stmt], scope: BodyScope, returns: &[CrowType]) {
+    /// returned, as the lowering met it), widened to a Result when the
+    /// lowering handed an error out of it (`fails`), and a fact a view or
+    /// handler gives a float widened for the program.
+    pub(crate) fn finish_body(&mut self, name: &str, scope: BodyScope, returns: &[CrowType], fails: bool) {
         let BodyScope { saved_vars, saved_frames, outer_assigned, outer_in_view } = scope;
         self.body_assigned = outer_assigned;
         self.in_view = outer_in_view;
 
         let ret = returns.iter().fold(CrowType::Void, |r, t| r.unify(t));
-        // A fallible condition can propagate an error out of the function
-        // (spec §11: Errors in Conditions) — the return type widens to Result;
-        // so can a failed value assigned to a variable that holds no error
-        let has_fallible_condition = self.body_has_result_condition(body) || self.body_refuses_assignment(name, body);
+        // A decision on a value that can fail hands its error out of the
+        // function (spec §11: Errors in Conditions), as a failed value
+        // assigned to a variable that holds no error does: the return type
+        // widens to Result
         if let Some(sig) = self.functions.get_mut(name) {
             sig.return_type = sig.return_type.unify(&ret);
-            if has_fallible_condition && !matches!(sig.return_type, CrowType::Result(_)) {
+            if fails && !matches!(sig.return_type, CrowType::Result(_)) {
                 let inner = std::mem::replace(&mut sig.return_type, CrowType::Unknown);
                 sig.return_type = CrowType::Result(Box::new(inner));
             }

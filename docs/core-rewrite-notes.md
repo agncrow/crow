@@ -876,3 +876,17 @@ weeks; the core stages are weeks each.
   failed query handed back), so reading returns where they are made
   (not from the bindings, which keep a first value's type) moves no
   other signature.
+- **2026-09-26, F5 step S9, second seam: a function can fail when its
+  lowering hands an error out.** Whether a function's value can fail is
+  whether its provisional lowering refused a failed value
+  (`Seen.refusals`): a decision on one, a collecting loop over one (the
+  backends refuse it where the loop starts), or an assignment of one to a
+  variable that holds no error. The last is judged once the body has
+  settled, with the type the final lowering declares the variable with
+  (`declared_as`, the rule `assign` and the judgment now share): judged
+  with the running type instead, `out = []` was still a list of unknown
+  items at its first push of a failed float, and parity 70, 80 and 87
+  lost their `Result` while their bodies still propagated. The walk's
+  seven predictions (`body_has_result_condition` and its loops,
+  `body_refuses_assignment` and its scopes) are gone. The oracle is
+  unchanged.
