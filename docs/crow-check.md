@@ -56,7 +56,13 @@ offered — `button 'Buy' → sim_trading_buy: when sim_session_session_id =
 except when sim_clock_speed = 10.0` — so a control that becomes
 reachable where it was not ("Buy with no session") is its line changing.
 A closed modal or drawer and a hidden element offer nothing; a guard the
-search cannot judge (a query's cell, a derivation) keeps both ways.
+search cannot judge (a query's cell, a derivation) keeps both ways. The
+search visits at most 4096 states. A fact only a handler's conditions
+read is tracked too, so the handler takes the way its facts decide; when
+that makes more states than the search visits (a page of many fields),
+the search runs again with only the facts the page's guards read — a
+condition on one left out keeps both ways, so what each state offers
+stays right — and the file says so.
 
 A page's `layout` file is its **layout bounds**: each state of the page
 (each path of its view) laid out by the engine the harness uses, at 1280
@@ -72,7 +78,11 @@ answered from a fixture recorded on purpose, `.crow/fixtures/<hash>.json`
 FNV-1a of the statement), else from three rows generated from the columns
 the database answered at build time (`.crow/schema`, the record every
 build keeps): 1, 2, 3 for an int, 1.0, 2.0, 3.0 for a float, `name1`… for
-text, true, false, true for a flag. A write — `exec`, `insert`, a
+text, true, false, true for a flag — and NULL in the second row of a
+column that can hold one (`float?` in the record), so a program that walks
+the rows meets the missing cell it has to decide on. A statement that
+hands `IN ?` a list runs as `IN (?, ?, …)`, and matches its record and
+fixture as the `?` it was written as. A write — `exec`, `insert`, a
 migration, a statement through `query` that changes rows — is recorded
 with its payload and the program sees success; a shell command and a file
 written, moved or removed are recorded instead of run; mail is recorded

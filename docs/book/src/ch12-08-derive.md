@@ -96,7 +96,7 @@ old it may be:
 ```crow,norun
 use web, ui, db
 
-ch = db.connect['clickhouse://localhost:9000/market']
+ch = db.connect['clickhouse://clickhouse.example:9000/market']
 sym = 'IMRN'
 day = '2026-09-04'
 
