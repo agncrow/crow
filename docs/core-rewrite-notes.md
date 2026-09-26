@@ -860,3 +860,19 @@ weeks; the core stages are weeks each.
   symbol cell nothing described; finch now reads it with `str[…]` (finch
   270e995), and built with that, finch's IR, Rust and types are as they
   were. Every finch test passes.
+- **2026-09-26, F5 step S9, first seam: a return type is the values the
+  lowering returns.** A function's return type joins the types of the
+  values its provisional lowering returned, each where it was returned
+  (`Seen.returns`), where `find_return_type` walked the returns again in
+  the body's end environment — after leaving the body, so inside a view
+  an element was no markup and a view's return type came out `Void`
+  (`Frame` for a `table`, `Str` for a chart). `find_return_type` is
+  gone. The oracle differs in 70 types dumps and nowhere else: every
+  changed signature is a view's, now `Markup` or `Result(Markup)`, which
+  is what a view returns (its IR returns a node and its callers read
+  markup, as before). None of 44 returns the lowering typed differently
+  from its function's signature is a narrowing: each is one of several
+  returns joined (an int beside floats, `error[…]` beside a value, a
+  failed query handed back), so reading returns where they are made
+  (not from the bindings, which keep a first value's type) moves no
+  other signature.
