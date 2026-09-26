@@ -157,9 +157,6 @@ pub(super) struct Checks {
     pub stored: BTreeSet<String>,
     /// The line each fact is declared on: where its first value is given.
     pub fact_lines: HashMap<String, usize>,
-    /// The program's types as its signatures were inferred, before any
-    /// body was lowered: what a check comparing types reads (`seen_type`).
-    pub types: Option<TypeContext>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -300,36 +297,19 @@ impl<'a> Lowerer<'a> {
         !hidden && (self.scopes[0].contains(name) || self.v.module_vars.contains(name))
     }
 
-    /// A value's type as a check comparing types reads it: as the
-    /// program's signatures were inferred, where a function's parameters
-    /// and locals are not yet known. The lowering types a body more
-    /// precisely, but some of what it knows is a guess — a cell of a column
-    /// no database described is text until the program runs, and a
-    /// parameter given one is typed by it — and a guess must not refuse a
-    /// program. When frames are typed (ir-design.md §8) the checks read the
-    /// lowering's types.
-    ///
-    /// A call to a function whose returned value's type is not known yet is
+    /// A lowered value's type as a check compares it, read as text. A
+    /// call to a function whose returned value's type is not known yet is
     /// of an unknown type, not of none (inference types such a function as
     /// returning nothing until it knows), so an error in the function is not
     /// blamed on its callers too.
-    pub(super) fn seen_type(&self, e: &A) -> CrowType {
-        // a provisional lowering checks nothing (F5)
-        if self.pass != Pass::Final {
-            return CrowType::Unknown;
-        }
-        if let A::Call { callee, .. } = e {
-            if let A::Ident(f) = callee.as_ref() {
-                let returns = self.ctx.functions.get(f).map_or(false, |sig| returns_value(&sig.body));
-                if returns && matches!(self.ctx.functions.get(f).map(|s| &s.return_type), Some(CrowType::Void)) {
-                    return CrowType::Unknown;
-                }
+    pub(super) fn checked(&self, x: &Expr) -> CrowType {
+        if let Expr::Call { target: Target::User(f), .. } = x {
+            let returns = self.ctx.functions.get(f).map_or(false, |sig| returns_value(&sig.body));
+            if returns && matches!(self.ctx.functions.get(f).map(|s| &s.return_type), Some(CrowType::Void)) {
+                return CrowType::Unknown;
             }
         }
-        match &self.v.types {
-            Some(types) => types.infer_expr(e),
-            None => CrowType::Unknown,
-        }
+        read(x)
     }
 
     /// An assignment's target, before the value it is given: its variable
@@ -443,12 +423,16 @@ impl<'a> Lowerer<'a> {
                 || (matches!(existing_ty, CrowType::Float) && matches!(inner.as_ref(), CrowType::Int)))
             || matches!(&existing_ty, CrowType::Result(inner) if inner.compatible(new_ty));
         if !unwraps && !existing_ty.compatible(new_ty) && !matches!(existing_ty, CrowType::Unknown) && !matches!(new_ty, CrowType::Unknown) {
-            self.refuse(format!(
-                "cannot reassign '{}' from {} to {} — variable type cannot change",
-                name,
-                existing_ty.crow_name(),
-                new_ty.crow_name()
-            ));
+            // a value whose type the program does not know (a cell of a
+            // column no database described, a parsed document's member)
+            // says what it is first
+            let unknown = matches!(new_ty, CrowType::Json) || matches!(new_ty, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Json));
+            let why = if unknown {
+                "a value whose type the program does not know is read as one first: str[…], int[…] or float[…]"
+            } else {
+                "variable type cannot change"
+            };
+            self.refuse(format!("cannot reassign '{}' from {} to {} — {}", name, existing_ty.crow_name(), new_ty.crow_name(), why));
         }
     }
 
@@ -582,8 +566,8 @@ impl<'a> Lowerer<'a> {
     }
 
     /// A call by name, its arguments already lowered and checked.
-    pub(super) fn check_call(&mut self, name: &str, args: &[A]) {
-        let arg_type = |l: &Self, i: usize| -> CrowType { args.get(i).map(|a| l.seen_type(a)).unwrap_or(CrowType::Unknown) };
+    pub(super) fn check_call(&mut self, name: &str, args: &[A], types: &[CrowType]) {
+        let arg_type = |_: &Self, i: usize| -> CrowType { types.get(i).cloned().unwrap_or(CrowType::Unknown) };
         // Test-harness builtins exist only inside test blocks (which never
         // reach a build) — accept them there, refuse them anywhere else.
         if matches!(name, "app" | "click" | "elements" | "change" | "box" | "fits" | "style" | "downloads" | "mails") {
@@ -1061,6 +1045,19 @@ mod tests {
         assert!(result.is_ok(), "{:?}", result);
         let err = check_source("use web, ui\nderive d\n    x = 1\n    x = 'a'\n    return x\nview render[]\n    return p['`d`']\npage['/', render]\n").unwrap_err();
         assert!(err.contains("cannot reassign 'x' from int to str"), "{}", err);
+    }
+
+    /// The checks read the lowering's types, a pure function's locals
+    /// among them (they used to read the signatures, where a pure
+    /// function's locals were not known): a local keeps its first type, and
+    /// a value of a type the program does not know is read as one first.
+    #[test]
+    fn a_pure_functions_local_keeps_its_type() {
+        let err = check_source("fn f[]\n    x = 1\n    x = 'a'\n    return x\nlog[f[]]\n").unwrap_err();
+        assert!(err.contains("cannot reassign 'x' from int to str — variable type cannot change"), "{}", err);
+        let err = check_source("fn f[s]\n    x = ''\n    x = json[s]\n    return x\nlog[f['1']]\n").unwrap_err();
+        assert!(err.contains("cannot reassign 'x' from str to result[json] — a value whose type the program does not know is read as one first"), "{}", err);
+        assert!(check_source("fn f[s]\n    x = ''\n    x = str[json[s]]\n    return x\nlog[f['1']]\n").is_ok());
     }
 
     /// Each error keeps the top-level declaration it was found in: after
