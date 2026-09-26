@@ -1184,7 +1184,7 @@ impl<'a> Lowerer<'a> {
             Some(t) => t.clone(),
             None => return expr,
         };
-        if matches!(held, CrowType::Result(_)) || format!("{:?}", held).contains("Unknown") || !held.compatible(&crow_type(&payload)) {
+        if !crate::type_infer::settle::refuses_failed(&held, &crow_type(&payload)) {
             return expr;
         }
         let at = Decision::Assign(name.to_string());

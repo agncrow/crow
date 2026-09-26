@@ -56,6 +56,7 @@ pub enum CrowType {
 mod classify;
 mod frames;
 mod rules;
+pub(crate) mod settle;
 #[cfg(test)]
 use frames::*;
 pub use frames::describe_with_tables;
@@ -697,8 +698,7 @@ impl TypeContext {
                     self.vars.insert(name.clone(), ty);
                 } else {
                     let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-                    let ty = self.consumed(&existing, ty);
-                    self.vars.insert(name.clone(), existing.unify(&ty));
+                    self.vars.insert(name.clone(), settle::settle(&existing, ty, self.body_assigned.is_some()));
                 }
                 if self.body_assigned.is_none() && !matches!(value, Expr::Ident(f) if self.functions.contains_key(f)) {
                     self.top_values.insert(name.clone());
@@ -713,8 +713,7 @@ impl TypeContext {
                 for (name, value) in names.iter().zip(values.iter()) {
                     let ty = self.infer_expr(value);
                     let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-                    let ty = self.consumed(&existing, ty);
-                    self.vars.insert(name.clone(), existing.unify(&ty));
+                    self.vars.insert(name.clone(), settle::settle(&existing, ty, self.body_assigned.is_some()));
                 }
                 for v in values { self.collect_call_types_expr(v); }
             }
@@ -1536,7 +1535,7 @@ impl TypeContext {
         }
         let held = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
         match &ty {
-            CrowType::Result(inner) => !matches!(held, CrowType::Result(_)) && !format!("{:?}", held).contains("Unknown") && held.compatible(inner),
+            CrowType::Result(inner) => settle::refuses_failed(&held, inner),
             _ => false,
         }
     }
@@ -1724,22 +1723,6 @@ impl TypeContext {
         }
     }
 
-    /// Infer types from a statement (mainly assignments).
-    /// The type a body's variable takes from a later value: a variable
-    /// whose first value could not fail holds no error (spec,
-    /// Reassignment), so a value that can fail lands as its payload — the
-    /// lowering propagates the failure where it is assigned (`ms = push[ms,
-    /// m]` inside `if m.ok` kept `ms` a list of numbers there, and a record
-    /// built from it typed its field as a list that could fail). Only in a
-    /// body, where the first assignment binds afresh: at the top level the
-    /// fixpoint meets a declaration again, its own last type in hand.
-    fn consumed(&self, existing: &CrowType, ty: CrowType) -> CrowType {
-        match ty {
-            CrowType::Result(inner) if self.body_assigned.is_some() && !matches!(existing, CrowType::Unknown | CrowType::Result(_)) => *inner,
-            other => other,
-        }
-    }
-
     pub(crate) fn infer_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Assign { name, value } => {
@@ -1748,8 +1731,7 @@ impl TypeContext {
                     self.vars.insert(name.clone(), ty);
                 } else {
                     let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-                    let ty = self.consumed(&existing, ty);
-                    self.vars.insert(name.clone(), existing.unify(&ty));
+                    self.vars.insert(name.clone(), settle::settle(&existing, ty, self.body_assigned.is_some()));
                 }
                 // the columns a local reads are those of the value assigned
                 // here, as the call-site scan and the lowering have them (a
@@ -1763,8 +1745,7 @@ impl TypeContext {
                 for (name, value) in names.iter().zip(values.iter()) {
                     let ty = self.infer_expr(value);
                     let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-                    let ty = self.consumed(&existing, ty);
-                    self.vars.insert(name.clone(), existing.unify(&ty));
+                    self.vars.insert(name.clone(), settle::settle(&existing, ty, self.body_assigned.is_some()));
                 }
             }
             Stmt::If { then_body, else_body, .. } => {
