@@ -63,7 +63,6 @@ fn lower_checked(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &Ha
     let mut l = Lowerer::new(ctx, in_ui);
     l.scopes[0].extend(known.iter().cloned());
     l.prescan(stmts, known);
-    l.v.types = Some(l.ctx.clone());
     let part = l.lower_part(stmts, part_name);
     // what the program got wrong comes first: a form the lowering cannot
     // take is usually one of those errors seen from the other side
@@ -830,7 +829,7 @@ impl<'a> Lowerer<'a> {
                         self.refuse(format!("'{}' is derived — it follows what it reads; change those facts instead of assigning it", name));
                     }
                     let default = self.lower_expr(value)?;
-                    self.check_assign(name, &self.seen_type(value));
+                    self.check_assign(name, &self.checked(&default));
                     self.flush_pre_into(&mut part.main);
                     let ty = self.ctx.vars.get(name).map(ty_of).unwrap_or_else(|| default.ty());
                     self.scopes[0].insert(name.clone());
@@ -970,34 +969,7 @@ impl<'a> Lowerer<'a> {
         self.provisional(Pass::Settle, Some(params.iter().cloned().collect()), body);
         self.record_env(name, params, body);
         self.scopes.push(params.iter().cloned().collect());
-        // a plain function sees no module variable: the checks' snapshot of
-        // the program's types keeps the top level out of its body, so a local
-        // named like one is not taken for it (`s = s + x` in a helper beside
-        // a top-level `s` was refused as a type change)
-        // — nor a derivation, which no function reads; its own parameters and
-        // locals are its own names, of types not known here (a guess from a
-        // call site must not refuse it), so a local named like a function
-        // another file imports is the local (`rsi[jg]` indexes a list)
-        let hidden = if kind == FnKind::Pure {
-            let mut own: HashSet<String> = params.iter().cloned().collect();
-            own.extend(crate::lower::assigned(body));
-            loop_vars(body, &mut own);
-            let seen: BTreeMap<String, CrowType> = own.iter().map(|n| (n.clone(), CrowType::Unknown)).collect();
-            self.v.types.as_mut().map(|t| {
-                let vars = std::mem::replace(&mut t.vars, seen.into_iter().collect());
-                let derives = std::mem::take(&mut t.derives);
-                let assigned = std::mem::replace(&mut t.body_assigned, Some(own.iter().cloned().collect()));
-                (vars, derives, assigned)
-            })
-        } else {
-            None
-        };
         let block = self.lower_block(body);
-        if let (Some((vars, derives, assigned)), Some(t)) = (hidden, self.v.types.as_mut()) {
-            t.vars = vars;
-            t.derives = derives;
-            t.body_assigned = assigned;
-        }
         self.scopes.pop();
         self.v.reactive = false;
         let mut block = block?;
@@ -1119,7 +1091,7 @@ impl<'a> Lowerer<'a> {
                 self.check_top_write(name);
                 let expr = self.lower_expr(value)?;
                 if self.pass == Pass::Final {
-                    self.check_assign(name, &self.seen_type(value));
+                    self.check_assign(name, &self.checked(&expr));
                 }
                 if self.pass == Pass::Scan {
                     // the call scan settles the variable once its value's
@@ -1668,13 +1640,15 @@ impl<'a> Lowerer<'a> {
                 };
                 let mut arg_types = Vec::with_capacity(args.len());
                 let mut types = Vec::with_capacity(args.len());
+                let mut checks = Vec::with_capacity(args.len());
                 for a in args {
                     let i = self.lower_expr(a)?;
                     arg_types.push(read(&i));
                     types.push(full(&i));
+                    checks.push(self.checked(&i));
                     p.push(PathStep::Index(i));
                 }
-                self.check_callee(callee, args);
+                self.check_callee(callee, args, &checks);
                 self.scan_call(callee, args, &types);
                 let ty = crow_type(&self.call_type(callee, args, &arg_types, &types, Some(callee_type))).text();
                 Ok((v, p, ty))
@@ -1731,7 +1705,7 @@ impl<'a> Lowerer<'a> {
             A::BinOp { left, op, right } => {
                 let mut l = self.lower_expr(left)?;
                 let mut r = self.lower_expr(right)?;
-                self.check_binop(op, self.seen_type(left), self.seen_type(right));
+                self.check_binop(op, self.checked(&l), self.checked(&r));
                 let ty = ty_of(&self.ctx.binop_type(op, read(&l), read(&r)));
                 let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow | BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte);
                 if arithmetic {
@@ -1918,7 +1892,8 @@ impl<'a> Lowerer<'a> {
             let arg_types: Vec<CrowType> = idx.iter().map(read).collect();
             let full_types: Vec<CrowType> = idx.iter().map(full).collect();
             self.scan_call(callee, args, &full_types);
-            self.check_callee(callee, args);
+            let checks: Vec<CrowType> = idx.iter().map(|x| self.checked(x)).collect();
+            self.check_callee(callee, args, &checks);
             let ty = self.call_type(callee, args, &arg_types, &full_types, Some(read(&base)));
             return Ok(Expr::Index { base: Box::new(base), indices: idx, ty });
         }
@@ -1934,7 +1909,7 @@ impl<'a> Lowerer<'a> {
         if module.is_none() && name == crate::lower::KNOWN && args.len() == 1 {
             let x = self.lower_expr(&args[0])?;
             self.scan_call(callee, args, &[full(&x)]);
-            self.check_call(&name, args);
+            self.check_call(&name, args, &[self.checked(&x)]);
             if x.ty().is_result() {
                 let payload = x.ty().payload().clone();
                 return Ok(Expr::Convert { how: Convert::Known, expr: Box::new(x), ty: payload });
@@ -1946,9 +1921,11 @@ impl<'a> Lowerer<'a> {
             let declared: Vec<Ty> = self.ctx.structs.get(&name).map(|s| s.fields.iter().map(|(_, t)| ty_of(t)).collect()).unwrap_or_default();
             let mut fields = Vec::new();
             let mut types = Vec::new();
+            let mut checks = Vec::new();
             for (i, a) in args.iter().enumerate() {
                 let value = self.lower_expr(a)?;
                 types.push(full(&value));
+                checks.push(self.checked(&value));
                 // a list of numbers is held as a list or as a tensor: a
                 // field holds the form its record was settled on, so a value
                 // in the other is converted (`[h]` beside a list pushed to)
@@ -1965,7 +1942,7 @@ impl<'a> Lowerer<'a> {
                     None => value,
                 });
             }
-            self.check_call(&name, args);
+            self.check_call(&name, args, &checks);
             self.scan_call(callee, args, &types);
             if let Some(seen) = &mut self.seen {
                 seen.calls.push((name.clone(), types));
@@ -2024,7 +2001,8 @@ impl<'a> Lowerer<'a> {
                 types.push(full(&child));
                 children.push(child);
             }
-            self.check_call(&name, args);
+            let checks: Vec<CrowType> = types.iter().map(|t| t.text()).collect();
+            self.check_call(&name, args, &checks);
             self.scan_call(callee, args, &types);
             return Ok(Expr::Tree { element: name, attrs, children });
         }
@@ -2036,6 +2014,7 @@ impl<'a> Lowerer<'a> {
         let mut lowered = Vec::with_capacity(args.len());
         let mut arg_types = Vec::with_capacity(args.len());
         let mut full_types = Vec::with_capacity(args.len());
+        let mut checks = Vec::with_capacity(args.len());
         for (i, a) in args.iter().enumerate() {
             // the harness's click[a, h[x]] holds the handler call for the click
             if module.is_none() && name == "click" && i == 1 {
@@ -2043,6 +2022,7 @@ impl<'a> Lowerer<'a> {
                     // typed as the call it holds
                     let held = self.held_type(a, &d);
                     arg_types.push(held.text());
+                    checks.push(held.text());
                     full_types.push(held);
                     lowered.push(d);
                     continue;
@@ -2051,6 +2031,7 @@ impl<'a> Lowerer<'a> {
             let x = self.lower_expr(a)?;
             arg_types.push(read(&x));
             full_types.push(full(&x));
+            checks.push(self.checked(&x));
             if propagates && x.ty().is_result() {
                 let rty = x.ty();
                 lowered.push(Expr::Convert { how: Convert::Unwrap, expr: Box::new(x), ty: rty.payload().clone() });
@@ -2058,7 +2039,7 @@ impl<'a> Lowerer<'a> {
                 lowered.push(x);
             }
         }
-        self.check_callee(callee, args);
+        self.check_callee(callee, args, &checks);
         self.scan_call(callee, args, &full_types);
         // a list handed to a `?` is sent as (?, ?, …), which only `IN` reads:
         // finch's `n.symbol = ANY(?)` handed its symbols failed at the
@@ -2208,9 +2189,9 @@ impl<'a> Lowerer<'a> {
 
     /// A call's own checks, made after its arguments': a name called is
     /// checked as a call by name, `m.f[…]` as a module's.
-    fn check_callee(&mut self, callee: &A, args: &[A]) {
+    fn check_callee(&mut self, callee: &A, args: &[A], types: &[CrowType]) {
         match callee {
-            A::Ident(n) => self.check_call(n, args),
+            A::Ident(n) => self.check_call(n, args, types),
             A::FieldAccess { object, field } => {
                 if let A::Ident(m) = object.as_ref() {
                     self.check_module_call(m, field);
@@ -2239,7 +2220,8 @@ impl<'a> Lowerer<'a> {
                     for a in args {
                         lowered.push(self.lower_expr(a)?);
                     }
-                    self.check_call(f, args);
+                    let checks: Vec<CrowType> = lowered.iter().map(|x| self.checked(x)).collect();
+                    self.check_call(f, args, &checks);
                     let types: Vec<CrowType> = lowered.iter().map(full).collect();
                     self.scan_call(callee, args, &types);
                     return Ok(Some(Expr::Deferred { name: f.clone(), args: lowered }));

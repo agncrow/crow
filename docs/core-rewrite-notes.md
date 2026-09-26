@@ -844,3 +844,19 @@ weeks; the core stages are weeks each.
   items that the compiled program did not build ("type mismatch", while
   the interpreter ran it). Parity 95 holds both modes to one answer. The
   oracle is unchanged: no tracked program had the pattern.
+- **2026-09-26, F5 step S8, fifth part: the checks read the lowering's
+  types.** A check comparing types (an assignment's, an operator's, a
+  call's arguments') reads the lowered value's type, not the walk's
+  snapshot of the signatures, where a pure function's parameters and
+  locals were hidden as unknown so that a guess could not refuse it. The
+  guess the hiding kept out was a cell no database described typed as
+  text; frames are typed now (such a cell is dynamic, Json), so the
+  snapshot, the hiding and `seen_type` are gone, and no program's whole
+  context is cloned for its checks any more. Inside functions the checks
+  now see what they always saw at the top level: a local keeps its first
+  type, and a dynamic value is read as one before a typed variable holds
+  it (the message says so). The oracle differs in one place: finch's
+  scanner, checked as a part without ClickHouse, gave a text variable a
+  symbol cell nothing described; finch now reads it with `str[…]` (finch
+  270e995), and built with that, finch's IR, Rust and types are as they
+  were. Every finch test passes.
