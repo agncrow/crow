@@ -142,7 +142,21 @@ benchmark.
   join/split 26 → 22 ms, the JSON round trip 8.7 → 5 ms. Against the
   start: the collecting loop and sort each nearly twice as fast, the
   JSON round trip over twice.
-- Next: **C,** markup its own variant (decision 2); then the status held only
+- **2026-09-26, the walker's scopes hash names cheaply** (FxHash's
+  rotate and multiply: their keys are the program's names). The loop
+  through a function 181 → 171 ms, the map-building loop 6.4 → 5.8 ms,
+  within the parallel loops' noise elsewhere. A frame naming its
+  function by a shared string was tried and undone: in a parallel loop
+  every call of every thread wrote that string's reference count, and
+  the function loop slowed by a sixth.
+- **C deferred.** With a value's status held apart (A), markup is a flag
+  in a box a plain string does not have, so it costs a plain value
+  nothing; a variant of its own would buy the form decision 2 asked for
+  (a view places a value by what it is) at the price of every one of
+  the 230 places a string is read deciding whether markup is one there.
+  Taken up when the builtins move to the table (§4 step 2), which reads
+  each of those places anyway.
+- Next: the status held only
   where the IR types a value as able to fail (decision 1), the scalar
   lists (decision 3), builtins from the table (§4 step 2), and the
   compiled facts as a struct (§4 step 4).
