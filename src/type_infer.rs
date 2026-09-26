@@ -976,17 +976,17 @@ impl TypeContext {
         self.param_frames_out_of_view(scope.saved_frames);
     }
 
-    /// Out of a function's body once its locals are typed (by the walk, or
-    /// by a provisional lowering): its return type from its returns,
-    /// widened to a Result when an error can leave it, and a fact a view or
-    /// handler gives a float widened for the program.
-    pub(crate) fn finish_body(&mut self, name: &str, body: &[Stmt], scope: BodyScope) {
+    /// Out of a function's body once a provisional lowering typed it: its
+    /// return type the values it returns joined (each typed where it is
+    /// returned, as the lowering met it), widened to a Result when an error
+    /// can leave it, and a fact a view or handler gives a float widened for
+    /// the program.
+    pub(crate) fn finish_body(&mut self, name: &str, body: &[Stmt], scope: BodyScope, returns: &[CrowType]) {
         let BodyScope { saved_vars, saved_frames, outer_assigned, outer_in_view } = scope;
         self.body_assigned = outer_assigned;
         self.in_view = outer_in_view;
 
-        // Find return type
-        let ret = self.find_return_type(body);
+        let ret = returns.iter().fold(CrowType::Void, |r, t| r.unify(t));
         // A fallible condition can propagate an error out of the function
         // (spec §11: Errors in Conditions) — the return type widens to Result;
         // so can a failed value assigned to a variable that holds no error
@@ -1019,39 +1019,6 @@ impl TypeContext {
             self.vars.insert(f, CrowType::Float);
         }
         self.param_frames_out_of_view(saved_frames);
-    }
-
-    /// Find the return type from a list of statements.
-    fn find_return_type(&self, stmts: &[Stmt]) -> CrowType {
-        let mut ret = CrowType::Void;
-        for stmt in stmts {
-            match stmt {
-                Stmt::Return(Some(e)) => {
-                    ret = ret.unify(&self.infer_expr_full(e));
-                }
-                Stmt::Return(None) => {
-                    ret = ret.unify(&CrowType::Void);
-                }
-                Stmt::If { then_body, else_body, .. } => {
-                    let t = self.find_return_type(then_body);
-                    ret = ret.unify(&t);
-                    if let Some(eb) = else_body {
-                        let e = self.find_return_type(eb);
-                        ret = ret.unify(&e);
-                    }
-                }
-                Stmt::While { body, .. } => {
-                    let w = self.find_return_type(body);
-                    ret = ret.unify(&w);
-                }
-                Stmt::For { body, .. } => {
-                    let f = self.find_return_type(body);
-                    ret = ret.unify(&f);
-                }
-                _ => {}
-            }
-        }
-        ret
     }
 
     /// Inside a function, the first assignment of a name that is neither a

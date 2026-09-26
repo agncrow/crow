@@ -476,7 +476,8 @@ pub(crate) struct Seen {
     /// written, with its arguments' types as lowered: markup told apart, a
     /// failure not yet unwrapped.
     pub calls: Vec<(String, Vec<CrowType>)>,
-    /// The type of each value returned, where it is returned.
+    /// The type of each value the body returns, where it is returned (a
+    /// collecting loop's body returns nothing of the function's).
     pub returns: Vec<CrowType>,
     /// Each place an error leaves the body — a decision on a value that
     /// can fail, or an assignment refusing one — and whether it is inside
@@ -656,8 +657,8 @@ impl<'a> Lowerer<'a> {
         let scope = self.ctx.enter_body(name);
         self.at = if self.ctx.derives.contains(name) { Where::Derive } else { Where::In(self.kind_of(name, body, false)) };
         self.current_fn = name.to_string();
-        self.provisional(Pass::Settle, Some(params), body);
-        self.ctx.finish_body(name, body, scope);
+        let seen = self.provisional(Pass::Settle, Some(params), body);
+        self.ctx.finish_body(name, body, scope, &seen.returns);
     }
 
     /// The F2 monomorphization pass (F5): each clone's calls read with its
@@ -1225,14 +1226,14 @@ impl<'a> Lowerer<'a> {
                 prelude
             }
             S::Return(None) => {
-                if let Some(seen) = &mut self.seen {
+                if let (Some(seen), 0) = (&mut self.seen, self.collecting) {
                     seen.returns.push(CrowType::Void);
                 }
                 vec![Stmt::Return(None)]
             }
             S::Return(Some(e)) => {
                 let x = self.lower_expr(e)?;
-                if let Some(seen) = &mut self.seen {
+                if let (Some(seen), 0) = (&mut self.seen, self.collecting) {
                     seen.returns.push(full(&x));
                 }
                 if self.pass == Pass::Scan {
