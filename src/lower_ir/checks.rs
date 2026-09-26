@@ -314,6 +314,10 @@ impl<'a> Lowerer<'a> {
     /// returning nothing until it knows), so an error in the function is not
     /// blamed on its callers too.
     pub(super) fn seen_type(&self, e: &A) -> CrowType {
+        // a provisional lowering checks nothing (F5)
+        if self.seen.is_some() {
+            return CrowType::Unknown;
+        }
         if let A::Call { callee, .. } = e {
             if let A::Ident(f) = callee.as_ref() {
                 let returns = self.ctx.functions.get(f).map_or(false, |sig| returns_value(&sig.body));
