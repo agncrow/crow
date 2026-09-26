@@ -1009,7 +1009,6 @@ impl<'a> Lowerer<'a> {
 
     fn lower_fn(&mut self, name: &str, params: &[String], body: &[S], is_view: bool) -> Result<Fn, String> {
         let kind = self.kind_of(name, body, is_view);
-        self.infer_body(name, body);
         // the body typed as inference types it: parameters from the
         // signature, first assignments new bindings
         let scope = self.ctx.enter_body(name);

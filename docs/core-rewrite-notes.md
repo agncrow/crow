@@ -913,4 +913,7 @@ weeks; the core stages are weeks each.
   alone, the language server) still lower a copy. The oracle is
   unchanged. A part is still validated alone, as `crow test part.co`
   sees it, before the program it is imported into: most of finch's build
-  is that, one inference and lowering per part.
+  is that, one inference and lowering per part. The final lowering no
+  longer types each function's signature again before lowering it
+  (inference has settled; the oracle is unchanged without it), and
+  finch's `crow build --ir` takes 5.5 s against 6.0 s before this step.
