@@ -836,3 +836,11 @@ weeks; the core stages are weeks each.
   type); `a, b = x, y` likewise. The typing rules' fallback to the walk
   for an argument not among the call's own is gone (none reached it).
   The oracle is unchanged.
+- **2026-09-26, F5 step S8, fourth part: a collecting loop is typed by
+  its lowered body.** Its type is a list of what the lowered body yields
+  (`yield_of`), not what the walk made of the last line without the
+  body's assignments: a yield that reads a variable the body assigned was
+  unknown, and a function returning such a loop was a list of unknown
+  items that the compiled program did not build ("type mismatch", while
+  the interpreter ran it). Parity 95 holds both modes to one answer. The
+  oracle is unchanged: no tracked program had the pattern.
