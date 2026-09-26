@@ -110,6 +110,7 @@ fn main() {
                     "--verbose" => verbose = true,
                     "--strict" => strict = true,
                     "--accept" => accept_all = true,
+                    "--record-fixtures" => RECORD_FIXTURES.store(true, std::sync::atomic::Ordering::SeqCst),
                     "--show" => {
                         // --show [name]: the app's structure, or one declaration
                         let next = rest.clone().next().cloned();
@@ -306,6 +307,7 @@ fn print_usage() {
     eprintln!("  crow check             auto-verify project (uses crowfile)");
     eprintln!("  crow check file.co   auto-verify a specific file");
     eprintln!("  crow check --db <url>  + schema-aware db checks (or db = '…' in crowfile)");
+    eprintln!("  crow check --record-fixtures  the scenarios read the real databases; keep what each statement answers");
     eprintln!("  crow fix file.co --hazard N [--option M]   apply a fix from the check report");
     eprintln!("  crow lsp               language server over stdio (see docs/crow-lsp.md)");
     eprintln!("  crow fmt               format project (uses crowfile)");
@@ -2255,6 +2257,10 @@ static PRINT_RS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::
 /// (`crow_web::live::test_control`), under a name of its own.
 static TEST_CONTROL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// `crow check --record-fixtures`: each scenario reads the real databases,
+/// and what each statement answers is kept in `.crow/fixtures`.
+static RECORD_FIXTURES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn cmd_build() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--rs") {
@@ -3163,11 +3169,27 @@ fn scenario_artifacts(entry: &str, parts: &std::collections::BTreeMap<String, St
             if !params.is_empty() || !opens_app(body) {
                 continue;
             }
-            let r = rehearsal::begin(&root);
+            let recording = RECORD_FIXTURES.load(std::sync::atomic::Ordering::SeqCst);
+            let r = if recording { rehearsal::begin_recording(&root) } else { rehearsal::begin(&root) };
             crow_runtime::rng::set_seed(0);
             let (result, changed_facts, mailed) = ir_interp::run_scenario(&decls, &format!("test {}", name), body);
             crow_runtime::rng::clear_seed();
             rehearsal::end();
+            if recording {
+                match rehearsal::keep_fixtures(&r) {
+                    Ok(kept) => {
+                        for (sql, rows, answered) in kept {
+                            let head: String = sql.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(80).collect();
+                            if rows < answered {
+                                println!("  recorded {}… — the first {} of {} rows", head, rows, answered);
+                            } else {
+                                println!("  recorded {}… — {} rows", head, rows);
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("  the fixtures of {} were not kept: {}", name, e),
+                }
+            }
             let short = |l: &str| -> String { if l.chars().count() > 200 { format!("{}…", l.chars().take(200).collect::<String>()) } else { l.to_string() } };
             // the store reads a key back from the first line, up to ` (`
             let key = format!("scenario {}_{}", stem, name);
