@@ -1621,42 +1621,70 @@ impl<'a> Lowerer<'a> {
     /// checked (`check_target`); an index's expressions are checked as they
     /// are lowered.
     fn muted_target(&mut self, object: &A) -> Result<(String, Vec<PathStep>), String> {
-        match object {
-            A::Ident(_) | A::FieldAccess { .. } => self.muted(|l| l.path_of(object)),
-            _ => self.path_of(object),
-        }
+        let (v, p, _) = match object {
+            A::Ident(_) | A::FieldAccess { .. } => self.muted(|l| l.path_of(object))?,
+            _ => self.path_of(object)?,
+        };
+        Ok((v, p))
     }
 
-    fn path_of(&mut self, object: &A) -> Result<(String, Vec<PathStep>), String> {
+    /// An assignment target's variable, its path, and the type of what the
+    /// path names, by inference's rules along it (read as text).
+    fn path_of(&mut self, object: &A) -> Result<(String, Vec<PathStep>, CrowType), String> {
         match object {
             A::Ident(n) => {
                 self.check_ident(n);
-                Ok((n.clone(), vec![]))
+                Ok((n.clone(), vec![], self.ctx.ident_type(n).text()))
             }
             A::FieldAccess { object, field } => {
-                let (v, mut p) = self.path_of(object)?;
-                let object_type = self.ctx.infer_expr(object);
+                let (v, mut p, object_type) = self.path_of(object)?;
                 self.check_field(&object_type, field);
+                let ty = self.ctx.field_type(object, object_type, field).text();
                 p.push(PathStep::Field(field.clone()));
-                Ok((v, p))
+                Ok((v, p, ty))
             }
             A::Call { callee, args } => {
                 // a name indexed is checked as the call it is written as
-                let (v, mut p) = match callee.as_ref() {
+                let (v, mut p, callee_type) = match callee.as_ref() {
                     A::Ident(_) => self.muted(|l| l.path_of(callee))?,
                     _ => self.path_of(callee)?,
                 };
+                let mut arg_types = Vec::with_capacity(args.len());
                 let mut types = Vec::with_capacity(args.len());
                 for a in args {
                     let i = self.lower_expr(a)?;
+                    arg_types.push(read(&i));
                     types.push(full(&i));
                     p.push(PathStep::Index(i));
                 }
                 self.check_callee(callee, args);
                 self.scan_call(callee, args, &types);
-                Ok((v, p))
+                let ty = crow_type(&self.call_type(callee, args, &arg_types, &types, Some(callee_type))).text();
+                Ok((v, p, ty))
             }
             _ => Err("lowering: an assignment target must be a variable, a field or an index".into()),
+        }
+    }
+
+    /// What an assignment's target names, before its value is lowered:
+    /// inference's rules along the path, an index typed by a lowering of it
+    /// that keeps nothing (its own checks are made when it is lowered).
+    fn target_type(&mut self, e: &A) -> CrowType {
+        match e {
+            A::Ident(n) => self.ctx.ident_type(n).text(),
+            A::FieldAccess { object, field } => {
+                let object_type = self.target_type(object);
+                self.ctx.field_type(object, object_type, field).text()
+            }
+            _ => {
+                let (pre, temp) = (std::mem::take(&mut self.pre), self.temp);
+                self.unscanned += 1;
+                let t = self.muted(|l| l.lower_expr(e)).map(|x| read(&x)).unwrap_or(CrowType::Unknown);
+                self.unscanned -= 1;
+                self.pre = pre;
+                self.temp = temp;
+                t
+            }
         }
     }
 
@@ -1982,8 +2010,9 @@ impl<'a> Lowerer<'a> {
             if module.is_none() && name == "click" && i == 1 {
                 if let Some(d) = self.deferred(a)? {
                     // typed as the call it holds
-                    arg_types.push(self.ctx.infer_expr(a));
-                    full_types.push(self.ctx.infer_expr_full(a));
+                    let held = self.held_type(a, &d);
+                    arg_types.push(held.text());
+                    full_types.push(held);
                     lowered.push(d);
                     continue;
                 }
@@ -2004,10 +2033,18 @@ impl<'a> Lowerer<'a> {
         // finch's `n.symbol = ANY(?)` handed its symbols failed at the
         // database every time (Postgres wants an array there, not a row)
         if matches!(name.as_str(), "query" | "exec") && matches!(module.as_deref(), None | Some("db")) {
-            if let (Some(A::Str(sql)), Some(A::Array(items))) = (args.get(1), args.get(2)) {
+            let items = match lowered.get(2) {
+                Some(Expr::ListLit(items, _)) => Some(items),
+                Some(Expr::Convert { how: Convert::Unwrap, expr, .. }) => match expr.as_ref() {
+                    Expr::ListLit(items, _) => Some(items),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let (Some(A::Str(sql)), Some(A::Array(_)), Some(items)) = (args.get(1), args.get(2), items) {
                 let before = words_before_placeholders(sql);
                 for (i, item) in items.iter().enumerate() {
-                    let t = self.ctx.infer_expr(item);
+                    let t = read(item);
                     let t = if let CrowType::Result(inner) = t { *inner } else { t };
                     let is_list = matches!(t, CrowType::Array(_) | CrowType::NumArray(_));
                     if is_list && before.get(i).is_some_and(|w| !w.eq_ignore_ascii_case("IN")) {
@@ -2179,6 +2216,22 @@ impl<'a> Lowerer<'a> {
             }
         }
         Ok(None)
+    }
+
+    /// The type of the call a deferred call holds (`h[x]` in `click[a,
+    /// h[x]]`), from its lowered arguments, markup told apart.
+    fn held_type(&self, a: &A, d: &Expr) -> CrowType {
+        match (a, d) {
+            (A::Call { callee, args }, Expr::Deferred { args: lowered, .. }) => {
+                let arg_types: Vec<CrowType> = lowered.iter().map(read).collect();
+                let full_types: Vec<CrowType> = lowered.iter().map(full).collect();
+                match self.call_type(callee, args, &arg_types, &full_types, None) {
+                    Ty::Node => CrowType::Markup,
+                    t => crow_type(&t),
+                }
+            }
+            _ => CrowType::Unknown,
+        }
     }
 
     /// The specialised name of a user function called at these argument
