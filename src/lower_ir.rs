@@ -485,6 +485,20 @@ pub(crate) struct Seen {
     pub refusals: Vec<(Decision, bool)>,
 }
 
+/// How a body is lowered (F5).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Pass {
+    /// For the program: every check made, every decision kept.
+    Final,
+    /// To learn its locals' types: each variable settles across its
+    /// assignments as the body runs, as inference's walk settles it.
+    Settle,
+    /// To learn what its calls say of their callees: each call notes its
+    /// arguments' types, the environment kept as inference's call scan
+    /// keeps it.
+    Scan,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Where {
     Top,
@@ -508,11 +522,16 @@ struct Lowerer<'a> {
     current_fn: String,
     /// What the checks keep (`checks.rs`).
     v: checks::Checks,
-    /// While a body is lowered to learn its types, not to keep it (F5):
-    /// what the lowering met (`provisional`).
+    /// How the body under way is lowered (F5, `provisional`).
+    pass: Pass,
+    /// While a body is lowered to learn its types, not to keep it: what
+    /// the lowering met.
     seen: Option<Seen>,
     /// How many collecting loops the lowering is inside.
     collecting: usize,
+    /// Above zero while the call scan lowers what inference's scan never
+    /// reads (a callee lowered as a value).
+    unscanned: usize,
 }
 
 impl<'a> Lowerer<'a> {
@@ -528,9 +547,19 @@ impl<'a> Lowerer<'a> {
             direct_effects: BTreeMap::new(),
             current_fn: String::new(),
             v: checks::Checks::default(),
+            pass: Pass::Final,
             seen: None,
             collecting: 0,
+            unscanned: 0,
         }
+    }
+
+    /// A lowering that only infers (F5): what the checks read before the
+    /// walk is read, and nothing it finds is kept but types.
+    fn for_inference(ctx: &'a mut TypeContext, in_ui: bool, stmts: &[S]) -> Self {
+        let mut l = Lowerer::new(ctx, in_ui);
+        l.prescan(stmts, &HashSet::new());
+        l
     }
 
     /// A body lowered to learn its types, keeping nothing of it (F5): the
@@ -539,16 +568,19 @@ impl<'a> Lowerer<'a> {
     /// as the body runs, the way inference's walk settles it, so the body's
     /// environment is left in the context. `own` is the body's first scope
     /// (its parameters). An error is the final lowering's to report.
-    fn provisional(&mut self, own: HashSet<String>, body: &[S]) -> Seen {
+    fn provisional(&mut self, pass: Pass, own: Option<HashSet<String>>, body: &[S]) -> Seen {
         let outer = self.seen.replace(Seen::default());
+        let outer_pass = std::mem::replace(&mut self.pass, pass);
         let temp = self.temp;
         let pre = std::mem::take(&mut self.pre);
         let depth = self.scopes.len();
-        let (mute, line, collecting) = (self.v.mute, self.v.line, self.collecting);
+        let (mute, line, collecting, unscanned) = (self.v.mute, self.v.line, self.collecting, self.unscanned);
         let local_types = self.v.local_types.clone();
         let stored = self.v.stored.clone();
         self.v.mute += 1;
-        self.scopes.push(own);
+        if let Some(own) = own {
+            self.scopes.push(own);
+        }
         let _ = self.lower_block(body);
         self.scopes.truncate(depth);
         self.v.mute = mute;
@@ -556,9 +588,141 @@ impl<'a> Lowerer<'a> {
         self.v.local_types = local_types;
         self.v.stored = stored;
         self.collecting = collecting;
+        self.unscanned = unscanned;
         self.pre = pre;
         self.temp = temp;
+        self.pass = outer_pass;
         std::mem::replace(&mut self.seen, outer).unwrap_or_default()
+    }
+
+    /// The kind of function a declaration is, as the lowering writes it.
+    fn kind_of(&self, name: &str, body: &[S], is_view: bool) -> FnKind {
+        if is_view || self.ctx.views.contains(name) {
+            FnKind::View
+        } else if self.ctx.view_handlers.contains(name) {
+            FnKind::Handler
+        } else if self.in_ui && assigns_any(body, &own_facts(name, &self.ctx.facts)) {
+            // (a script has no facts: its function's first assignment of a
+            // name is a local, whatever the top level calls)
+            FnKind::Helper
+        } else {
+            FnKind::Pure
+        }
+    }
+
+    // ── inference by lowering (F5) ──────────────────────────────────
+
+    /// The call scan: every body lowered in order, each call noting its
+    /// arguments' types for its callee's signature — a function's body
+    /// with its parameters bound, a derivation's like a parameterless
+    /// function's, the top level's statements in the top level's
+    /// environment. A test says nothing of the program's signatures.
+    fn scan_program(&mut self, stmts: &[S]) {
+        for s in stmts {
+            match s {
+                S::FnDecl { name, params, body, is_view, .. } => {
+                    let scan = self.ctx.enter_fn_scan(name);
+                    self.at = Where::In(self.kind_of(name, body, *is_view));
+                    self.current_fn = name.clone();
+                    self.provisional(Pass::Scan, Some(params.iter().cloned().collect()), body);
+                    self.ctx.leave_fn_scan(name, scan);
+                }
+                S::Derive { name, body, .. } => {
+                    let scan = self.ctx.enter_derive_scan(name);
+                    self.at = Where::Derive;
+                    self.current_fn = name.clone();
+                    self.provisional(Pass::Scan, Some(HashSet::new()), body);
+                    self.ctx.leave_derive_scan(name, body, scan);
+                }
+                S::TestBlock { .. } | S::StructDecl { .. } | S::Use { .. } | S::Resource { .. } => {}
+                other => {
+                    self.at = Where::Top;
+                    self.current_fn = "<main>".to_string();
+                    self.provisional(Pass::Scan, None, std::slice::from_ref(other));
+                }
+            }
+        }
+    }
+
+    /// A function's body typed (F5): its locals by a provisional lowering,
+    /// then its return type and whether an error leaves it, as inference
+    /// decides them from that environment (`finish_body`).
+    fn infer_body(&mut self, name: &str, body: &[S]) {
+        let params: HashSet<String> = self.ctx.functions.get(name).map(|sig| sig.params.iter().map(|(p, _)| p.clone()).collect()).unwrap_or_default();
+        let scope = self.ctx.enter_body(name);
+        self.at = if self.ctx.derives.contains(name) { Where::Derive } else { Where::In(self.kind_of(name, body, false)) };
+        self.current_fn = name.to_string();
+        self.provisional(Pass::Settle, Some(params), body);
+        self.ctx.finish_body(name, body, scope);
+    }
+
+    /// The F2 monomorphization pass (F5): each clone's calls read with its
+    /// parameters bound, then its body typed; every clone's body typed
+    /// again after, so return types settle whatever the order clones were
+    /// made in.
+    fn specialize(&mut self) {
+        for _round in 0..5 {
+            let new_clones = self.ctx.new_clones();
+            if new_clones.is_empty() {
+                break;
+            }
+            for mangled in &new_clones {
+                let body = self.ctx.functions.get(mangled).map(|sig| sig.body.clone()).unwrap_or_default();
+                let params: HashSet<String> = self.ctx.functions.get(mangled).map(|sig| sig.params.iter().map(|(p, _)| p.clone()).collect()).unwrap_or_default();
+                let saved = self.ctx.bind_params(mangled);
+                self.at = Where::In(self.kind_of(mangled, &body, false));
+                self.current_fn = mangled.clone();
+                self.provisional(Pass::Scan, Some(params), &body);
+                self.ctx.vars = saved;
+                self.infer_body(mangled, &body);
+            }
+        }
+        for _ in 0..2 {
+            for mangled in self.ctx.clone_names() {
+                if let Some(body) = self.ctx.reset_clone(&mangled) {
+                    self.infer_body(&mangled, &body);
+                }
+            }
+        }
+    }
+
+    /// The top level's variables (F5): its statements lowered as they run,
+    /// each variable settled across its assignments.
+    fn settle_top(&mut self, stmts: &[S]) {
+        self.at = Where::Top;
+        self.current_fn = "<main>".to_string();
+        for s in stmts {
+            match s {
+                S::FnDecl { .. } | S::Derive { .. } | S::TestBlock { .. } | S::StructDecl { .. } | S::Use { .. } | S::Resource { .. } => {}
+                other => {
+                    self.provisional(Pass::Settle, None, std::slice::from_ref(other));
+                }
+            }
+        }
+    }
+
+    /// A call's arguments' types noted for its callee's signature, in the
+    /// call scan (F5).
+    fn scan_call(&mut self, callee: &A, args: &[A], types: &[CrowType]) {
+        if self.pass == Pass::Scan && self.unscanned == 0 && self.ctx.call_says_of_callee(callee) {
+            self.ctx.note_call(callee, args, types);
+        }
+    }
+
+    /// A loop's body in the call scan (F5): read again when a variable from
+    /// before the loop took a type in it, so its calls see that type.
+    fn scan_loop_body(&mut self, body: &[S]) -> Result<Block, String> {
+        let outer = self.ctx.vars.clone();
+        let scope = self.scopes.last().cloned().unwrap_or_default();
+        let b = self.lower_block(body)?;
+        let moved = outer.iter().any(|(n, t)| self.ctx.vars.get(n).map_or(false, |now| now != t));
+        if moved {
+            if let Some(last) = self.scopes.last_mut() {
+                *last = scope;
+            }
+            return self.lower_block(body);
+        }
+        Ok(b)
     }
 
     // ── declarations ────────────────────────────────────────────────
@@ -759,18 +923,12 @@ impl<'a> Lowerer<'a> {
     }
 
     fn lower_fn(&mut self, name: &str, params: &[String], body: &[S], is_view: bool) -> Result<Fn, String> {
-        let kind = if is_view || self.ctx.views.contains(name) {
-            FnKind::View
-        } else if self.ctx.view_handlers.contains(name) {
-            FnKind::Handler
-        } else if self.in_ui && assigns_any(body, &own_facts(name, &self.ctx.facts)) {
-            // (a script has no facts: its function's first assignment of a
-            // name is a local, whatever the top level calls)
-            FnKind::Helper
+        let kind = self.kind_of(name, body, is_view);
+        if self.ctx.infer_by_lowering {
+            self.infer_body(name, body);
         } else {
-            FnKind::Pure
-        };
-        self.ctx.infer_function_body(name, body);
+            self.ctx.infer_function_body(name, body);
+        }
         // the body typed as inference types it: parameters from the
         // signature, first assignments new bindings
         let scope = self.ctx.enter_body(name);
@@ -794,7 +952,7 @@ impl<'a> Lowerer<'a> {
         self.v.stored.clear();
         // lowered once to learn its types: each local settled across its
         // assignments, which a first value of no known type is declared by
-        self.provisional(params.iter().cloned().collect(), body);
+        self.provisional(Pass::Settle, Some(params.iter().cloned().collect()), body);
         self.record_env(name, params, body);
         self.scopes.push(params.iter().cloned().collect());
         // a plain function sees no module variable: the checks' snapshot of
@@ -856,7 +1014,7 @@ impl<'a> Lowerer<'a> {
         self.current_fn = name.to_string();
         self.v.local_types.clear();
         self.v.stored.clear();
-        self.provisional(HashSet::new(), body);
+        self.provisional(Pass::Settle, Some(HashSet::new()), body);
         self.record_env(name, &[], body);
         self.scopes.push(HashSet::new());
         let mut block = self.lower_block(body)?;
@@ -886,7 +1044,7 @@ impl<'a> Lowerer<'a> {
         }
         self.at = Where::Test;
         self.current_fn = name.clone().unwrap_or_default();
-        self.provisional(params.iter().cloned().collect(), body);
+        self.provisional(Pass::Settle, Some(params.iter().cloned().collect()), body);
         self.record_env(&format!("test {}", name.clone().unwrap_or_default()), params, body);
         self.scopes.push(params.iter().cloned().collect());
         let mut block = self.lower_block(body)?;
@@ -944,14 +1102,23 @@ impl<'a> Lowerer<'a> {
                     self.check_reserved(name, "variable");
                 }
                 self.check_top_write(name);
+                if self.pass == Pass::Scan {
+                    // the call scan settles the variable before its value's
+                    // calls are read
+                    let ty = self.ctx.infer_expr_full(value);
+                    self.ctx.note_scanned_assign(name, value, ty);
+                }
                 let expr = self.lower_expr(value)?;
-                if self.seen.is_none() {
+                if self.pass == Pass::Final {
                     self.check_assign(name, &self.seen_type(value));
                 }
-                // the columns a local reads are those of the value assigned
-                // here, in this function — not the last function's local of
-                // the same name (inference keeps one map by name)
-                if let Some(schema) = self.ctx.frame_schema_of(value) {
+                if self.pass == Pass::Scan {
+                    self.ctx.note_scanned_value(name, value);
+                } else if let Some(schema) = self.ctx.frame_schema_of(value) {
+                    // the columns a local reads are those of the value
+                    // assigned here, in this function — not the last
+                    // function's local of the same name (inference keeps
+                    // one map by name)
                     self.ctx.frame_schemas.insert(name.clone(), schema);
                 }
                 let stmt = self.assign(name, expr);
@@ -960,7 +1127,8 @@ impl<'a> Lowerer<'a> {
                 }
                 vec![stmt]
             }
-            S::MultiAssign { names, values } if self.seen.is_some() => self.settled_multi(names, values)?,
+            S::MultiAssign { names, values } if self.pass == Pass::Settle => self.settled_multi(names, values)?,
+            S::MultiAssign { names, values } if self.pass == Pass::Scan => self.scanned_multi(names, values)?,
             S::MultiAssign { names, values } => {
                 // each new name checked against the names taken, after the
                 // values it is given
@@ -996,7 +1164,7 @@ impl<'a> Lowerer<'a> {
                     self.check_top_write(&root);
                 }
                 let expr = self.lower_expr(value)?;
-                if self.seen.is_some() {
+                if self.pass == Pass::Settle {
                     self.settled_entry(object, &expr);
                 }
                 let idx = self.lower_expr(index)?;
@@ -1026,7 +1194,7 @@ impl<'a> Lowerer<'a> {
                 let cond = self.lower_cond(condition)?;
                 let prelude = std::mem::take(&mut self.pre);
                 self.scopes.push(HashSet::new());
-                let b = self.lower_block(body)?;
+                let b = if self.pass == Pass::Scan { self.scan_loop_body(body)? } else { self.lower_block(body)? };
                 self.scopes.pop();
                 if prelude.is_empty() {
                     vec![Stmt::While { cond, body: b }]
@@ -1051,14 +1219,15 @@ impl<'a> Lowerer<'a> {
                 let it = self.decided(it, Decision::Loop);
                 let mut prelude = std::mem::take(&mut self.pre);
                 self.scopes.push([var.clone()].into_iter().collect());
-                let b = if self.seen.is_some() {
-                    // inference's walk binds the variable to an item of what
-                    // the loop walks, read as text, and leaves it bound
-                    let walks = if let CrowType::Result(inner) = walks { *inner } else { walks };
-                    if let CrowType::Array(t) | CrowType::NumArray(t) = walks {
-                        self.ctx.vars.insert(var.clone(), *t);
+                let b = if self.pass != Pass::Final {
+                    // inference binds the variable to an item of what the
+                    // loop walks, read as text, and leaves it bound
+                    self.ctx.scan_loop_var(var, walks);
+                    if self.pass == Pass::Scan {
+                        self.scan_loop_body(body)?
+                    } else {
+                        self.lower_block(body)?
                     }
-                    self.lower_block(body)?
                 } else {
                     let saved = self.bind_loop_var(var, &it.ty());
                     let b = self.lower_block(body)?;
@@ -1082,13 +1251,16 @@ impl<'a> Lowerer<'a> {
                 if let Some(seen) = &mut self.seen {
                     seen.returns.push(full(&x));
                 }
+                if self.pass == Pass::Scan {
+                    self.ctx.note_return_frame(e);
+                }
                 vec![Stmt::Return(Some(x))]
             }
             S::Break => vec![Stmt::Break],
             S::Continue => vec![Stmt::Continue],
             S::ExprStmt(e) => {
                 let mut x = self.lower_expr(e)?;
-                if self.seen.is_some() {
+                if self.pass == Pass::Settle {
                     self.settled_set(e, &x);
                 }
                 if let Expr::Effect { answered, .. } = &mut x {
@@ -1200,8 +1372,10 @@ impl<'a> Lowerer<'a> {
     }
 
     fn assign(&mut self, name: &str, expr: Expr) -> Stmt {
-        if self.seen.is_some() {
-            return self.settled(name, expr);
+        match self.pass {
+            Pass::Settle => return self.settled(name, expr),
+            Pass::Scan => return self.scanned(name, expr),
+            Pass::Final => {}
         }
         let expr = if self.declared(name) && !(self.is_fact(name) && self.sees_facts()) { self.held_by(name, expr) } else { expr };
         // an int assigned to a float variable is a float (spec §1): the
@@ -1354,6 +1528,39 @@ impl<'a> Lowerer<'a> {
         Ok(vec![])
     }
 
+    /// The call scan's assignment (F5): the variable settled before its
+    /// value was lowered (`note_scanned_assign`); the scopes are kept as the
+    /// final lowering keeps them.
+    fn scanned(&mut self, name: &str, expr: Expr) -> Stmt {
+        let store = self.is_fact(name) && self.sees_facts();
+        if !store && !self.declared(name) {
+            self.scopes.last_mut().unwrap().insert(name.to_string());
+        }
+        Stmt::Set { var: name.to_string(), expr }
+    }
+
+    /// The call scan's `a, b = x, y` (F5): each name settles with its own
+    /// value's type as the scan pairs them, before the values' calls are
+    /// read.
+    fn scanned_multi(&mut self, names: &[String], values: &[A]) -> Result<Vec<Stmt>, String> {
+        let in_body = self.ctx.body_assigned.is_some();
+        for (n, v) in names.iter().zip(values) {
+            let t = self.ctx.infer_expr(v);
+            let existing = self.ctx.vars.get(n).cloned().unwrap_or(CrowType::Unknown);
+            self.ctx.vars.insert(n.clone(), crate::type_infer::settle::settle(&existing, t, in_body));
+        }
+        for v in values {
+            self.lower_expr(v)?;
+        }
+        for n in names {
+            let store = self.is_fact(n) && self.sees_facts();
+            if !store && !self.declared(n) {
+                self.scopes.last_mut().unwrap().insert(n.clone());
+            }
+        }
+        Ok(vec![])
+    }
+
     /// A provisional lowering's `m[k] = v` (F5): a map's values take the
     /// value's type, as inference's walk has it.
     fn settled_entry(&mut self, object: &A, value: &Expr) {
@@ -1443,11 +1650,14 @@ impl<'a> Lowerer<'a> {
                     A::Ident(_) => self.muted(|l| l.path_of(callee))?,
                     _ => self.path_of(callee)?,
                 };
+                let mut types = Vec::with_capacity(args.len());
                 for a in args {
                     let i = self.lower_expr(a)?;
+                    types.push(full(&i));
                     p.push(PathStep::Index(i));
                 }
                 self.check_callee(callee, args);
+                self.scan_call(callee, args, &types);
                 Ok((v, p))
             }
             _ => Err("lowering: an assignment target must be a variable, a field or an index".into()),
@@ -1569,12 +1779,22 @@ impl<'a> Lowerer<'a> {
                 self.scopes.push([var.clone()].into_iter().collect());
                 // inference's walk reads a collecting loop's yield, never its
                 // body: a provisional lowering's body leaves nothing behind
-                let outer = self.seen.is_some().then(|| (self.ctx.vars.clone(), self.ctx.body_assigned.clone(), self.ctx.frame_schemas.clone()));
-                let saved = self.bind_loop_var(var, &it.ty());
+                let outer = (self.pass == Pass::Settle).then(|| (self.ctx.vars.clone(), self.ctx.body_assigned.clone(), self.ctx.frame_schemas.clone()));
+                // the call scan reads the body with the variable bound as
+                // an item, what it assigns left behind
+                let saved = if self.pass == Pass::Scan {
+                    self.ctx.scan_loop_var(var, read(&it));
+                    self.ctx.note_function_list(var, iter, body);
+                    None
+                } else {
+                    Some(self.bind_loop_var(var, &it.ty()))
+                };
                 self.collecting += 1;
                 let mut b = self.lower_block(body)?;
                 self.collecting -= 1;
-                self.unbind_loop_var(var, saved);
+                if let Some(saved) = saved {
+                    self.unbind_loop_var(var, saved);
+                }
                 if let Some((vars, assigned, frames)) = outer {
                     self.ctx.vars = vars;
                     self.ctx.body_assigned = assigned;
@@ -1630,17 +1850,20 @@ impl<'a> Lowerer<'a> {
         if indexes_value {
             // a name or `m.x` indexed is checked as the call it is written
             // as, after its arguments
+            self.unscanned += 1;
             let base = match callee {
                 A::Ident(_) => self.muted(|l| l.lower_expr(callee))?,
                 A::FieldAccess { object, .. } if matches!(object.as_ref(), A::Ident(_)) => self.muted(|l| l.lower_expr(callee))?,
                 _ => self.lower_expr(callee)?,
             };
+            self.unscanned -= 1;
             let mut idx = Vec::new();
             for a in args {
                 idx.push(self.lower_expr(a)?);
             }
             let arg_types: Vec<CrowType> = idx.iter().map(read).collect();
             let full_types: Vec<CrowType> = idx.iter().map(full).collect();
+            self.scan_call(callee, args, &full_types);
             self.check_callee(callee, args);
             let ty = self.call_type(callee, args, &arg_types, &full_types, Some(read(&base)));
             return Ok(Expr::Index { base: Box::new(base), indices: idx, ty });
@@ -1656,6 +1879,7 @@ impl<'a> Lowerer<'a> {
         // a read a guard narrowed (lower.rs): the value, never its failure
         if module.is_none() && name == crate::lower::KNOWN && args.len() == 1 {
             let x = self.lower_expr(&args[0])?;
+            self.scan_call(callee, args, &[full(&x)]);
             self.check_call(&name, args);
             if x.ty().is_result() {
                 let payload = x.ty().payload().clone();
@@ -1667,8 +1891,10 @@ impl<'a> Lowerer<'a> {
         if module.is_none() && self.ctx.structs.contains_key(&name) {
             let declared: Vec<Ty> = self.ctx.structs.get(&name).map(|s| s.fields.iter().map(|(_, t)| ty_of(t)).collect()).unwrap_or_default();
             let mut fields = Vec::new();
+            let mut types = Vec::new();
             for (i, a) in args.iter().enumerate() {
                 let value = self.lower_expr(a)?;
+                types.push(full(&value));
                 // a list of numbers is held as a list or as a tensor: a
                 // field holds the form its record was settled on, so a value
                 // in the other is converted (`[h]` beside a list pushed to)
@@ -1686,13 +1912,20 @@ impl<'a> Lowerer<'a> {
                 });
             }
             self.check_call(&name, args);
+            self.scan_call(callee, args, &types);
             if let Some(seen) = &mut self.seen {
-                seen.calls.push((name.clone(), fields.iter().map(full).collect()));
+                seen.calls.push((name.clone(), types));
             }
             return Ok(Expr::RecordLit { name, fields });
         }
         // a ui element with its attributes first (lower.rs put them there)
         if module.is_none() && self.in_ui && crate::lower::UI_ELEMENTS.contains(&name.as_str()) {
+            // the call scan reads an element's arguments as written (its
+            // attributes a map, a handler with arguments a call)
+            if self.pass == Pass::Scan && self.unscanned == 0 {
+                let types: Vec<CrowType> = args.iter().map(|a| self.ctx.infer_expr_full(a)).collect();
+                self.scan_call(callee, args, &types);
+            }
             let mut attrs = Vec::new();
             let mut children = Vec::new();
             for (i, a) in args.iter().enumerate() {
@@ -1770,6 +2003,7 @@ impl<'a> Lowerer<'a> {
             }
         }
         self.check_callee(callee, args);
+        self.scan_call(callee, args, &full_types);
         // a list handed to a `?` is sent as (?, ?, …), which only `IN` reads:
         // finch's `n.symbol = ANY(?)` handed its symbols failed at the
         // database every time (Postgres wants an array there, not a row)
@@ -1807,7 +2041,7 @@ impl<'a> Lowerer<'a> {
             let m = self.ctx.module_aliases.get(&m).cloned().unwrap_or(m);
             if is_effect(&name) {
                 // a qualified effect keeps its module: frame.load, db.query
-                if self.seen.is_none() {
+                if self.pass == Pass::Final {
                     self.direct_effects.entry(current).or_default().insert(name.clone());
                 }
                 return Ok(Expr::Effect { name: format!("{}.{}", m, name), args: lowered, ty, answered: true, propagates });
@@ -1835,13 +2069,13 @@ impl<'a> Lowerer<'a> {
                     })
                     .collect();
             }
-            if self.seen.is_none() {
+            if self.pass == Pass::Final {
                 self.calls.entry(current).or_default().insert(resolved.clone());
             }
             return Ok(Expr::Call { target: Target::User(resolved), args: lowered, ty, propagates });
         }
         if is_effect(&name) {
-            if self.seen.is_none() {
+            if self.pass == Pass::Final {
                 self.direct_effects.entry(current).or_default().insert(name.clone());
             }
             return Ok(Expr::Effect { name, args: lowered, ty, answered: true, propagates });
@@ -1942,6 +2176,8 @@ impl<'a> Lowerer<'a> {
                         lowered.push(self.lower_expr(a)?);
                     }
                     self.check_call(f, args);
+                    let types: Vec<CrowType> = lowered.iter().map(full).collect();
+                    self.scan_call(callee, args, &types);
                     return Ok(Some(Expr::Deferred { name: f.clone(), args: lowered }));
                 }
             }
@@ -2019,6 +2255,55 @@ impl<'a> Lowerer<'a> {
             pieces.push(Piece::Text(text));
         }
         Ok(pieces)
+    }
+}
+
+// ── inference by lowering (F5) ───────────────────────────────────────
+
+/// Signatures found by lowering bodies (F5, core-rewrite-notes §10):
+/// inference's rounds, where each round's call scan lowers every body in
+/// order, each call noting its arguments' types for its callee, and each
+/// function's locals are what a provisional lowering of its body leaves.
+/// A body's return type and whether an error leaves it are still decided
+/// from that environment as the walk decides them. Behind
+/// `CROW_INFER=lower` until it agrees with the walk everywhere.
+pub(crate) fn infer_by_lowering(ctx: &mut TypeContext, stmts: &[S]) {
+    let in_ui = stmts.iter().any(|s| matches!(s, S::Use { path, .. } if path == "ui" || path == "web.ui"));
+    ctx.infer_by_lowering = true;
+    ctx.begin_inference(stmts);
+    // five rounds at least, as ever; then more while a signature still
+    // moves — a chain of derivations learns one link a round
+    for round in 0..16 {
+        let before = ctx.signatures();
+        ctx.sync_derive_types();
+        ctx.begin_scan();
+        Lowerer::for_inference(ctx, in_ui, stmts).scan_program(stmts);
+        let frames_moved = ctx.end_scan();
+        // types from indirect calls back to the functions named
+        ctx.propagate_indirect_fn_types(stmts);
+        infer_bodies(ctx, in_ui, stmts);
+        if round >= 4 && before == ctx.signatures() && !frames_moved {
+            break;
+        }
+    }
+    // what the last round learned, where the top level reads it
+    ctx.sync_derive_types();
+    // what only a test's click types, last, and the bodies again
+    if ctx.type_clicked_handlers(stmts) {
+        infer_bodies(ctx, in_ui, stmts);
+    }
+    // F2: a function called at several signatures is one per signature
+    Lowerer::for_inference(ctx, in_ui, stmts).specialize();
+    ctx.sync_derive_types();
+    Lowerer::for_inference(ctx, in_ui, stmts).settle_top(stmts);
+}
+
+/// Every function's body typed, in name order (`Lowerer::infer_body`).
+fn infer_bodies(ctx: &mut TypeContext, in_ui: bool, stmts: &[S]) {
+    let fns: Vec<(String, Vec<S>)> = ctx.functions.iter().map(|(n, sig)| (n.clone(), sig.body.clone())).collect();
+    let mut l = Lowerer::for_inference(ctx, in_ui, stmts);
+    for (name, body) in &fns {
+        l.infer_body(name, body);
     }
 }
 

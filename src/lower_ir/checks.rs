@@ -315,7 +315,7 @@ impl<'a> Lowerer<'a> {
     /// blamed on its callers too.
     pub(super) fn seen_type(&self, e: &A) -> CrowType {
         // a provisional lowering checks nothing (F5)
-        if self.seen.is_some() {
+        if self.pass != Pass::Final {
             return CrowType::Unknown;
         }
         if let A::Call { callee, .. } = e {

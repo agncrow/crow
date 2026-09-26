@@ -773,3 +773,26 @@ weeks; the core stages are weeks each.
   lowering declares a first value of no known type by it, as before. The
   oracle is unchanged: none of 1,047 files differs, so the provisional
   lowering settles every body of every program as the walk did.
+- **2026-09-26, F5 step S6: inference by lowering, beside the walk.**
+  With `CROW_INFER=lower`, inference's rounds read every body by
+  lowering it (`lower_ir::infer_by_lowering`): the call scan lowers the
+  program in order, each call noting its arguments' types for its callee
+  (`note_call`, the rules the walk's scan now shares from
+  `type_infer/calls.rs`), in the scan's environment (a variable settled
+  before its value's calls are read, a loop read again when a type moved
+  in it, a collecting loop's assignments kept, a callee lowered as a
+  value not read); each function's locals are a provisional lowering's,
+  and its return type and whether an error leaves it are decided from
+  them as before (`finish_body`); the clones and the top level likewise.
+  The oracle with the flag differs in three files, each in one line of
+  the types dump and nowhere in the IR or the Rust: the walk types a
+  builtin called at the top level as a variable holding a function
+  (`with: Fn([Result(Frame), Str, …], Unknown)`), which nothing reads,
+  and the lowering notes a nested call before the call around it, so of
+  two argument types that do not unify the other one is kept. Reviewed
+  and left; the entry itself is a follow-up (a name no scope binds is no
+  variable). The walk alone is unchanged (none of 1,047). Lowering costs
+  more than walking: finch's `crow build --types` without its databases
+  takes 6.1 s with the flag against 4.5 s, most of either in expanding
+  its parts, each inferred on its own; one final lowering (S10) takes
+  back a share.
