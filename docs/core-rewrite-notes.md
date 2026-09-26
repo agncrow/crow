@@ -729,3 +729,12 @@ weeks; the core stages are weeks each.
   classification and the records. The harness now keeps it beside the
   IR and the Rust of every program (1,047 files); two runs of one binary
   agree byte for byte, and adding it changed no IR or Rust.
+- **2026-09-26, F5 step S1: type_infer.rs split.** The rules
+  (`type_infer/rules.rs`: a node's type from its children's), the frames
+  (`frames.rs`: describing a query's columns, the schema record, a
+  frame's columns through operations and calls) and the classification
+  (`classify.rs`: the tables, records, functions and derivations a
+  program declares, its handlers and facts) are files of their own;
+  `infer_program`'s declaration and classification phases are methods.
+  What stays in `type_infer.rs` is the walker the next steps retire. The
+  oracle is unchanged: 1,047 files, none different.

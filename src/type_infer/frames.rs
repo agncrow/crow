@@ -1,0 +1,519 @@
+//! Frames' columns: what a query returns, asked of its databases and
+//! kept in `.crow/schema`, and how a frame's columns pass through
+//! frame operations and function calls.
+
+use super::*;
+
+impl TypeContext {
+    /// Infer the type of an expression.
+    /// `x = db.connect['url']` (or bare `connect`) binds x to a database.
+    pub(super) fn note_connection(&mut self, name: &str, value: &Expr) {
+        if let Expr::Call { callee, args } = value {
+            let is_connect = match callee.as_ref() {
+                Expr::Ident(n) => n == "connect",
+                Expr::FieldAccess { object, field } => field == "connect" && matches!(object.as_ref(), Expr::Ident(m) if m == "db"),
+                _ => false,
+            };
+            if is_connect {
+                if let Some(Expr::Str(url)) = args.first() {
+                    self.conn_urls.retain(|(n, _)| n != name);
+                    self.conn_urls.push((name.to_string(), url.clone()));
+                }
+            }
+        }
+    }
+
+    /// The columns of the frame an expression produces, when they can be
+    /// known: a literal query (described by the database), a function that
+    /// returns one, or a frame operation over a known frame.
+    pub fn frame_schema_of(&mut self, e: &Expr) -> Option<BTreeMap<String, CrowType>> {
+        if let Some(v) = read_var(e) {
+            return self.frame_schemas.get(v).cloned();
+        }
+        match e {
+            Expr::Ident(v) => self.frame_schemas.get(v).cloned(),
+            Expr::Call { callee, args } => {
+                // the frames the standard modules build have fixed columns:
+                // doc.chapters as crow_runtime::markdown::chapters_frame
+                // builds it, chart.macd as crow_runtime::ta::macd_frame does
+                if let Expr::FieldAccess { object, field } = callee.as_ref() {
+                    let cols: &[(&str, CrowType)] = match (object.as_ref(), field.as_str()) {
+                        (Expr::Ident(m), "chapters") if m == "doc" => &[("title", CrowType::Str), ("path", CrowType::Str), ("depth", CrowType::Int), ("part", CrowType::Str)],
+                        (Expr::Ident(m), "macd") if m == "chart" => &[("line", CrowType::Float), ("signal", CrowType::Float), ("hist", CrowType::Float)],
+                        _ => &[],
+                    };
+                    if !cols.is_empty() {
+                        return Some(cols.iter().map(|(n, t)| (n.to_string(), t.clone())).collect());
+                    }
+                }
+                let name = match callee.as_ref() {
+                    Expr::Ident(n) => n.clone(),
+                    Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if m == "db" || m == "frame") => field.clone(),
+                    _ => return None,
+                };
+                match name.as_str() {
+                    "query" => match args.get(1) {
+                        Some(Expr::Str(sql)) => {
+                            let handle = match args.first() { Some(Expr::Ident(v)) => Some(v.clone()), _ => None };
+                            self.describe_sql(sql, handle.as_deref())
+                        }
+                        _ => None,
+                    },
+                    "filter" | "sort" | "head" | "tail" => args.first().and_then(|a| self.frame_schema_of(a)),
+                    // fill[df, 'col', value]: that column has no missing cell
+                    "fill" => {
+                        let mut base = args.first().and_then(|a| self.frame_schema_of(a))?;
+                        if let Some(Expr::Str(col)) = args.get(1) {
+                            if let Some(CrowType::Result(inner)) = base.get(col).cloned() {
+                                base.insert(col.clone(), *inner);
+                            }
+                        }
+                        Some(base)
+                    }
+                    // stack[a, b]: the same columns, missing where either's can be
+                    "stack" => {
+                        let mut base = args.first().and_then(|a| self.frame_schema_of(a))?;
+                        for other in args.iter().skip(1).filter_map(|a| self.frame_schema_of(a)) {
+                            for (k, t) in other {
+                                if let (CrowType::Result(_), Some(mine)) = (&t, base.get_mut(&k)) {
+                                    if !matches!(mine, CrowType::Result(_)) {
+                                        *mine = CrowType::Result(Box::new(mine.clone()));
+                                    }
+                                }
+                            }
+                        }
+                        Some(base)
+                    }
+                    "new" => Some(BTreeMap::new()),
+                    "with" => {
+                        let mut base = args.first().and_then(|a| self.frame_schema_of(a)).unwrap_or_default();
+                        if let (Some(Expr::Str(col)), Some(v)) = (args.get(1), args.get(2)) {
+                            let vt = self.infer_expr(v);
+                            let vt = if let CrowType::Result(i) = vt { *i } else { vt };
+                            let cell = match vt { CrowType::Array(inner) => *inner, CrowType::NumArray(_) => CrowType::Float, CrowType::Int => CrowType::Int, CrowType::Float => CrowType::Float, CrowType::Bool => CrowType::Bool, _ => CrowType::Str };
+                            base.insert(col.clone(), cell);
+                        }
+                        Some(base)
+                    }
+                    "select" => {
+                        let base = args.first().and_then(|a| self.frame_schema_of(a))?;
+                        let mut out = BTreeMap::new();
+                        if let Some(Expr::Array(cols)) = args.get(1) {
+                            for c in cols {
+                                if let Expr::Str(n) = c { if let Some(t) = base.get(n) { out.insert(n.clone(), t.clone()); } }
+                            }
+                        }
+                        Some(out)
+                    }
+                    // join[a, b, 'key', how]: a's columns, then b's but its key
+                    // (one a has too is named `_right`); the side a row can
+                    // have no match on has missing cells — b's in a left join,
+                    // a's in a right one, both in an outer one
+                    "join" => {
+                        let left = args.first().and_then(|a| self.frame_schema_of(a))?;
+                        let key = match args.get(2) { Some(Expr::Str(k)) => k.clone(), _ => String::new() };
+                        let how = match args.get(3) { Some(Expr::Str(h)) => h.clone(), _ => "inner".to_string() };
+                        let missing = |t: CrowType, can: bool| match t {
+                            CrowType::Result(_) => t,
+                            t if can => CrowType::Result(Box::new(t)),
+                            t => t,
+                        };
+                        let mut out: BTreeMap<String, CrowType> = left.iter().map(|(k, t)| (k.clone(), missing(t.clone(), how == "right" || how == "outer"))).collect();
+                        if let Some(right) = args.get(1).and_then(|a| self.frame_schema_of(a)) {
+                            for (k, t) in right {
+                                if k == key { continue; }
+                                let name = if left.contains_key(&k) { format!("{}_right", k) } else { k };
+                                out.insert(name, missing(t, how == "left" || how == "outer"));
+                            }
+                        }
+                        Some(out)
+                    }
+                    // group[f, 'key', ['col', 'agg'], …]: the key as it was,
+                    // and each aggregate a float named col_agg
+                    "group" => {
+                        let base = args.first().and_then(|a| self.frame_schema_of(a))?;
+                        let mut out = BTreeMap::new();
+                        if let Some(Expr::Str(key)) = args.get(1) {
+                            out.insert(key.clone(), base.get(key).cloned().unwrap_or(CrowType::Str));
+                        }
+                        for a in args.iter().skip(2) {
+                            if let Expr::Array(pair) = a {
+                                if let (Some(Expr::Str(col)), Some(Expr::Str(agg))) = (pair.first(), pair.get(1)) {
+                                    out.insert(format!("{}_{}", col, agg), CrowType::Float);
+                                }
+                            }
+                        }
+                        Some(out)
+                    }
+                    other => self.fn_frame_schemas.get(other).cloned(),
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Ask each declared database, in order, what the statement returns.
+    /// Interpolated spans and `?` placeholders are unknown at compile
+    /// time and stand in as NULL. A database that cannot be reached or
+    /// does not understand the statement is skipped; when none answers,
+    /// the cells read as text, as before, and the build says so once.
+    /// The query's own connection answers when the handle is a known
+    /// top-level one; a handle that is a parameter (a helper's `conn`) is
+    /// unknown here, and every connection is asked until one answers.
+    pub(super) fn describe_sql(&mut self, sql: &str, handle: Option<&str>) -> Option<BTreeMap<String, CrowType>> {
+        if !self.describe_queries || self.conn_urls.is_empty() { return None; }
+        if let Some(cached) = self.describe_cache.get(sql) {
+            if std::env::var("CROW_DEBUG_SCHEMAS").is_ok() {
+                eprintln!("DESCRIBE cached {:?} for `{}…`", cached, sql.chars().take(50).collect::<String>());
+            }
+            return cached.clone();
+        }
+        let own: Vec<(String, String)> = match handle {
+            Some(h) => self.conn_urls.iter().filter(|(n, _)| n == h).cloned().collect(),
+            None => Vec::new(),
+        };
+        let candidates: Vec<(String, String)> = if own.is_empty() { self.conn_urls.clone() } else { own };
+        // `...` spans → NULL
+        let mut scrubbed = String::with_capacity(sql.len());
+        let mut in_span = false;
+        for c in sql.chars() {
+            if c == '`' { if !in_span { scrubbed.push_str("NULL"); } in_span = !in_span; continue; }
+            if !in_span { scrubbed.push(c); }
+        }
+        let mut reasons = Vec::new();
+        let mut found: Option<BTreeMap<String, CrowType>> = None;
+        let names: Vec<String> = candidates.iter().map(|(v, _)| v.clone()).collect();
+        for (var, url) in candidates {
+            match crate::type_infer::describe_with_tables(&url, &scrubbed, &self.ddl) {
+                Ok(cols) => {
+                    schema_record::write(&var, &scrubbed, &cols);
+                    let schema: BTreeMap<String, CrowType> = cols.into_iter().map(|(n, kind)| (n, cell_type_of_kind(&kind))).collect();
+                    found = Some(schema);
+                    break;
+                }
+                // a backend without describe (sqlite) is not a failure to report
+                Err(e) if e.contains("describe is not supported") => {}
+                Err(e) => reasons.push(format!("{}: {}", var, e)),
+            }
+        }
+        if found.is_none() && !reasons.is_empty() {
+            let head: String = sql.chars().take(60).collect();
+            // what the database answered last time, kept in the project
+            match names.iter().find_map(|v| schema_record::read(v, &scrubbed)) {
+                Some(schema) => {
+                    self.describe_notes.push(format!("note: the columns of `{}…` are typed from .crow/schema — no database answered ({})", head, reasons.join("; ")));
+                    found = Some(schema);
+                }
+                None => self.describe_notes.push(format!("note: the columns of `{}…` could not be typed at compile time — its cells are dynamic: read them with int[…], float[…] or str[…] ({})", head, reasons.join("; "))),
+            }
+        }
+        if std::env::var("CROW_DEBUG_SCHEMAS").is_ok() {
+            eprintln!("DESCRIBE {:?} via {:?} for `{}…`", found, handle, sql.chars().take(50).collect::<String>());
+        }
+        self.describe_cache.insert(sql.to_string(), found.clone());
+        found
+    }
+
+    /// A function's frame parameters with the columns their calls agree
+    /// on, in view while its body is read (the frame schemas are kept by
+    /// name); what they replaced, to put back.
+    pub(super) fn param_frames_in_view(&mut self, name: &str) -> Vec<(String, Option<BTreeMap<String, CrowType>>)> {
+        let params: Vec<String> = self.functions.get(name).map(|s| s.params.iter().map(|(p, _)| p.clone()).collect()).unwrap_or_default();
+        let mut saved = Vec::new();
+        for p in params {
+            if let Some(Some(schema)) = self.param_frame_schemas.get(&(name.to_string(), p.clone())).cloned() {
+                saved.push((p.clone(), self.frame_schemas.insert(p, schema)));
+            }
+        }
+        saved
+    }
+
+    pub(super) fn param_frames_out_of_view(&mut self, saved: Vec<(String, Option<BTreeMap<String, CrowType>>)>) {
+        for (p, old) in saved.into_iter().rev() {
+            match old {
+                Some(s) => {
+                    self.frame_schemas.insert(p, s);
+                }
+                None => {
+                    self.frame_schemas.remove(&p);
+                }
+            }
+        }
+    }
+}
+
+thread_local! {
+    static DESCRIBE_HANDLES: std::cell::RefCell<std::collections::HashMap<String, Result<crow_db::DbHandle, String>>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    /// What each database answered for each statement, and when: a test
+    /// file's programs, each lowered alone, ask again about the same
+    /// statements within seconds (a run of finch's nav.co sent 147
+    /// describes for 19 queries), and a server that is asked less is a
+    /// server under less load. An answer is kept a minute, so a long-lived
+    /// process (the language server) sees a changed table soon.
+    static DESCRIBE_ANSWERS: std::cell::RefCell<std::collections::HashMap<(String, String), (std::time::Instant, Vec<(String, String)>)>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// How long a database's answer about a statement is kept
+const DESCRIBE_KEPT: std::time::Duration = std::time::Duration::from_secs(60);
+
+#[cfg(test)]
+thread_local! {
+    /// How many times this thread asked a database to describe a statement
+    pub(super) static DESCRIBES_ASKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Describe a statement against a database URL, keeping one connection per
+/// URL for the build. A SQLite file that does not exist yet is not created
+/// by asking: only the program makes its database. For a program that makes
+/// its own tables, a SQLite database that
+/// does not exist yet — or one missing a table the statement reads — is
+/// described from a scratch copy the program's `CREATE` statements build,
+/// so a new app's columns are typed on its first build as on every later one.
+/// `IN ?` as the list of one it is sent as, `IN (?)`: a list parameter's
+/// `?` is only ever sent expanded, and no database prepares `IN $2` (finch's
+/// headlines, asked about as written, went untyped)
+pub(super) fn in_lists_as_one(sql: &str) -> String {
+    let chars: Vec<char> = sql.chars().collect();
+    let mut out = String::with_capacity(sql.len() + 8);
+    let mut quote: Option<char> = None;
+    for (i, &c) in chars.iter().enumerate() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c == '\'' || c == '"' => quote = Some(c),
+            None if c == '?' => {
+                let mut j = i;
+                while j > 0 && chars[j - 1].is_whitespace() {
+                    j -= 1;
+                }
+                let after_in = j >= 2
+                    && chars[j - 2..j].iter().collect::<String>().eq_ignore_ascii_case("IN")
+                    && (j == 2 || !(chars[j - 3].is_ascii_alphanumeric() || chars[j - 3] == '_'));
+                if after_in {
+                    out.push_str("(?)");
+                    continue;
+                }
+            }
+            None => {}
+        }
+        out.push(c);
+    }
+    out
+}
+
+pub fn describe_with_tables(url: &str, sql: &str, ddl: &[String]) -> Result<Vec<(String, String)>, String> {
+    let listed = in_lists_as_one(sql);
+    let sql = listed.as_str();
+    let sqlite_path = url.strip_prefix("sqlite://");
+    let missing = sqlite_path.map_or(false, |p| p == ":memory:" || !std::path::Path::new(p).exists());
+    if missing {
+        if ddl.is_empty() {
+            return Err(format!("{} does not exist yet", url));
+        }
+        return describe_on(&format!("{}#program", url), "sqlite://:memory:", ddl, sql);
+    }
+    match describe_on(url, url, &[], sql) {
+        Err(e) if sqlite_path.is_some() && !ddl.is_empty() && e.contains("no such table") => describe_on(&format!("{}#program", url), "sqlite://:memory:", ddl, sql),
+        other => other,
+    }
+}
+
+/// Describe on the build's connection for `key` (opened on `url`, built from
+/// `ddl` when it is new).
+pub(super) fn describe_on(key: &str, url: &str, ddl: &[String], sql: &str) -> Result<Vec<(String, String)>, String> {
+    let asked = (key.to_string(), sql.to_string());
+    if let Some(cols) = DESCRIBE_ANSWERS.with(|a| a.borrow().get(&asked).filter(|(at, _)| at.elapsed() < DESCRIBE_KEPT).map(|(_, c)| c.clone())) {
+        return Ok(cols);
+    }
+    let answer = describe_asking(key, url, ddl, sql);
+    if let Ok(cols) = &answer {
+        DESCRIBE_ANSWERS.with(|a| a.borrow_mut().insert(asked, (std::time::Instant::now(), cols.clone())));
+    }
+    answer
+}
+
+/// Ask the database (see `describe_on`, which keeps the answers).
+pub(super) fn describe_asking(key: &str, url: &str, ddl: &[String], sql: &str) -> Result<Vec<(String, String)>, String> {
+    #[cfg(test)]
+    DESCRIBES_ASKED.with(|n| n.set(n.get() + 1));
+    DESCRIBE_HANDLES.with(|h| {
+        let mut map = h.borrow_mut();
+        let handle = map.entry(key.to_string()).or_insert_with(|| {
+            let db = crow_db::connect(url, Some(1))?;
+            for statement in ddl {
+                let _ = db.exec(statement, &[]);
+            }
+            Ok(db)
+        });
+        match handle {
+            Ok(db) => {
+                let mut cols = db.describe(sql)?;
+                // SQLite types no computed column, and a statement whose
+                // parameters match no row shows none: type those from the
+                // statement and the tables' declared columns
+                if url.starts_with("sqlite://") && cols.iter().any(|(_, k)| k == "unknown") {
+                    let columns_of = |table: &str| -> Vec<(String, String)> {
+                        let frame = match db.query(&format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\"")), &[]) {
+                            Ok(f) => f,
+                            Err(_) => return Vec::new(),
+                        };
+                        let text = |name: &str| -> Vec<String> {
+                            frame.columns.iter().position(|c| c == name)
+                                .and_then(|i| match frame.data[i].as_ref() { crow_runtime::frame::Column::Str(v) => Some(v.clone()), _ => None })
+                                .unwrap_or_default()
+                        };
+                        text("name").into_iter().zip(text("type")).collect()
+                    };
+                    if let Some(kinds) = crate::sql_types::select_kinds(sql, &columns_of) {
+                        if kinds.len() == cols.len() {
+                            for ((_, k), typed) in cols.iter_mut().zip(kinds) {
+                                if k == "unknown" {
+                                    if let Some(t) = typed {
+                                        *k = t;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                mark_nullable(db, url, sql, &mut cols);
+                Ok(cols)
+            }
+            Err(e) => Err(e.clone()),
+        }
+    })
+}
+
+/// Mark the columns of a statement's rows that can hold NULL, as its tables'
+/// declarations and the statement say (`sql_types::select_nulls`): their
+/// kinds end in `?`, and their cells are fallible. SQLite and Postgres
+/// describe no column's nullability, so each table's declared NOT NULLs
+/// are asked for; a statement that is not read that way can hold NULL in
+/// every column. ClickHouse's DESCRIBE says it itself (`Nullable(…)`).
+pub(super) fn mark_nullable(db: &crow_db::DbHandle, url: &str, sql: &str, cols: &mut [(String, String)]) {
+    use crow_runtime::frame::Column;
+    let postgres = url.starts_with("postgres");
+    if !postgres && !url.starts_with("sqlite://") {
+        return;
+    }
+    let read = |frame: &crow_runtime::frame::CrowFrame, name: &str| -> Vec<String> {
+        frame.columns.iter().position(|c| c == name).map(|i| match frame.data[i].as_ref() {
+            Column::Str(v) => v.clone(),
+            Column::Int(v) => v.iter().map(|x| x.to_string()).collect(),
+            Column::Bool(v) => v.iter().map(|x| x.to_string()).collect(),
+            _ => Vec::new(),
+        }).unwrap_or_default()
+    };
+    let columns_of = |table: &str| -> Vec<(String, bool)> {
+        if postgres {
+            let q = "SELECT attname::text AS name, attnotnull AS notnull FROM pg_attribute WHERE attrelid = to_regclass(?) AND attnum > 0 AND NOT attisdropped ORDER BY attnum";
+            let Ok(frame) = db.query(q, &[serde_json::Value::String(table.to_string())]) else { return Vec::new() };
+            read(&frame, "name").into_iter().zip(read(&frame, "notnull")).map(|(n, nn)| (n, nn == "true")).collect()
+        } else {
+            let t = table.rsplit('.').next().unwrap_or(table);
+            let Ok(frame) = db.query(&format!("PRAGMA table_info(\"{}\")", t.replace('"', "\"\"")), &[]) else { return Vec::new() };
+            let (names, types, notnull, pk) = (read(&frame, "name"), read(&frame, "type"), read(&frame, "notnull"), read(&frame, "pk"));
+            // an INTEGER PRIMARY KEY is the row's id, never NULL
+            let keys = pk.iter().filter(|p| *p != "0").count();
+            names.into_iter().enumerate().map(|(i, n)| {
+                let rowid = keys == 1 && pk.get(i).map_or(false, |p| p != "0") && types.get(i).map_or(false, |t| t.eq_ignore_ascii_case("integer"));
+                (n, rowid || notnull.get(i).map_or(false, |x| x == "1"))
+            }).collect()
+        }
+    };
+    let nulls = crate::sql_types::select_nulls(sql, postgres, &columns_of).filter(|v| v.len() == cols.len());
+    for (i, (_, kind)) in cols.iter_mut().enumerate() {
+        if nulls.as_ref().map_or(true, |v| v[i]) && !kind.ends_with('?') {
+            kind.push('?');
+        }
+    }
+}
+
+/// A described column's kind as the type of its cells: a column that can
+/// hold NULL (`float?`) has fallible cells, a missing one an error.
+pub(crate) fn cell_type_of_kind(kind: &str) -> CrowType {
+    let (base, nullable) = match kind.strip_suffix('?') {
+        Some(b) => (b, true),
+        None => (kind, false),
+    };
+    let t = match base {
+        "int" => CrowType::Int,
+        "float" | "datetime" => CrowType::Float,
+        "bool" => CrowType::Bool,
+        _ => CrowType::Str,
+    };
+    if nullable { CrowType::Result(Box::new(t)) } else { t }
+}
+
+/// What a program's databases answered about its statements, kept in the
+/// project's `.crow/schema`: one file per statement and the connection it
+/// was asked on, named by a hash of both (an FNV-1a, the same on every
+/// machine and release), holding the statement and its columns — name and
+/// kind (`int` `float` `str` `bool` `datetime`), in the statement's order.
+/// A build reads it when no database answers — a server down, a machine
+/// without the data — so the program is typed as it was; a rehearsal
+/// generates rows from it.
+pub(crate) mod schema_record {
+    use super::CrowType;
+    use std::collections::BTreeMap;
+
+    /// The FNV-1a hash of the parts, a stable file name
+    pub(crate) fn fnv(parts: &[&str]) -> String {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for (i, p) in parts.iter().enumerate() {
+            if i > 0 {
+                h ^= b'\n' as u64;
+                h = h.wrapping_mul(0x100000001b3);
+            }
+            for b in p.bytes() {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x100000001b3);
+            }
+        }
+        format!("{:016x}", h)
+    }
+
+    fn file_for(var: &str, sql: &str) -> Option<std::path::PathBuf> {
+        let dir = crate::schema_dir()?;
+        Some(dir.join(format!("{}.json", fnv(&[var, sql]))))
+    }
+
+    /// Keep what `var` answered for `sql` (written only when it changed).
+    pub(crate) fn write(var: &str, sql: &str, columns: &[(String, String)]) {
+        let Some(path) = file_for(var, sql) else { return };
+        let columns: Vec<[&str; 2]> = columns.iter().map(|(n, k)| [n.as_str(), k.as_str()]).collect();
+        let text = match serde_json::to_string_pretty(&serde_json::json!({ "via": var, "sql": sql, "columns": columns })) {
+            Ok(t) => t + "\n",
+            Err(_) => return,
+        };
+        if std::fs::read_to_string(&path).ok().as_deref() == Some(text.as_str()) {
+            return;
+        }
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&path, text);
+    }
+
+    /// A record's statement and columns, from its file's text.
+    pub(crate) fn parse(text: &str) -> Option<(String, Vec<(String, String)>)> {
+        let j: serde_json::Value = serde_json::from_str(text).ok()?;
+        let sql = j.get("sql")?.as_str()?.to_string();
+        let cols = j
+            .get("columns")?
+            .as_array()?
+            .iter()
+            .filter_map(|c| {
+                let pair = c.as_array()?;
+                Some((pair.first()?.as_str()?.to_string(), pair.get(1)?.as_str()?.to_string()))
+            })
+            .collect();
+        Some((sql, cols))
+    }
+
+    /// What `var` answered for `sql` when it last could, if it is kept.
+    pub(crate) fn read(var: &str, sql: &str) -> Option<BTreeMap<String, CrowType>> {
+        let (_, cols) = parse(&std::fs::read_to_string(file_for(var, sql)?).ok()?)?;
+        Some(cols.into_iter().map(|(n, k)| (n, super::cell_type_of_kind(&k))).collect())
+    }
+}
