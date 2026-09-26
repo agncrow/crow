@@ -165,7 +165,25 @@ benchmark.
   8,709 lines where it was 18,783. The served pages, the task board's
   and finch's compiled tests and finch's build all pass. The facts as a
   struct (§4 step 4) take the rest of the JSON away.
-- Next: the status held only
-  where the IR types a value as able to fail (decision 1), the scalar
-  lists (decision 3), builtins from the table (§4 step 2), and the
-  compiled facts as a struct (§4 step 4).
+- **Where it stops for now (2026-09-26).** What the decisions were for
+  is largely had: the interpreter's values are a fifth of their size and
+  its slow rows run in half the time, and the compiled bodies read
+  almost none of the JSON they read. What is left is form, each measured
+  against its cost and left until the cost is worth it:
+  - *The facts as a struct* (decision 5, §4 step 4): the JSON a compiled
+    body still reads is the handful of facts it uses, and the
+    write-through around a helper call. The struct is a day's change to
+    the live runtime (its working copies, versions, commits, keyed
+    invalidation, `later[]`'s deltas, the harness, the bound inputs) for
+    what reading only the used facts left of the gain.
+  - *The scalar lists* (decision 3): a second path in each of the 186
+    places a list is taken apart, for memory on long lists of ints,
+    floats, booleans or text only — a numeric literal is already a
+    tensor, and a list's items are 40 bytes, not 192.
+  - *Markup its own variant* (decision 2): see C above.
+  - *The status only where the IR says a value can fail* (decision 1):
+    a plain value carries none already; what remains is the lowering
+    printing `.ok` of a value that cannot fail as `true`.
+  - *Builtins from the table* (§4 step 2): form and one implementation
+    per builtin; the state-free builtins are shared already
+    (`core-runtime-builtins.md`).
