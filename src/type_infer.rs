@@ -53,6 +53,7 @@ pub enum CrowType {
 
 /// The effects a session keeps or holds for its handler's commit: a
 /// function that makes one acts for the session.
+mod calls;
 mod classify;
 mod frames;
 mod rules;
@@ -353,6 +354,9 @@ pub struct TypeContext {
     /// Keep each body's locals as the lowering types them (`crow build
     /// --types`, the oracle every step of inference's rewrite is held to).
     pub record_envs: bool,
+    /// Signatures are found by lowering bodies (F5, `CROW_INFER=lower`):
+    /// the lowering types a function's body for its signature too.
+    pub infer_by_lowering: bool,
     /// Each body's parameters and locals, as its lowering began with them.
     pub body_envs: BTreeMap<String, BTreeMap<String, CrowType>>,
     /// Ask the program's databases what its query literals return. Every
@@ -429,6 +433,7 @@ impl TypeContext {
             fn_frame_schemas: BTreeMap::new(),
             param_frame_schemas: BTreeMap::new(),
             record_envs: false,
+            infer_by_lowering: false,
             body_envs: BTreeMap::new(),
             param_frame_schemas_next: BTreeMap::new(),
             describe_queries: false,
@@ -440,27 +445,26 @@ impl TypeContext {
 
     /// Main entry point: run multi-pass type inference on a program.
     pub fn infer_program(&mut self, stmts: &[Stmt]) {
-        self.is_ui = self.is_ui || stmts.iter().any(|st| matches!(st, Stmt::Use { path, .. } if path == "ui" || path == "web.ui"));
-        self.collect_ddl(stmts);
-        self.collect_declarations(stmts);
-        self.classify_handlers(stmts);
+        // signatures found by lowering bodies (F5), held beside the walk's
+        // until the two agree
+        if std::env::var("CROW_INFER").as_deref() == Ok("lower") {
+            return crate::lower_ir::infer_by_lowering(self, stmts);
+        }
+        self.begin_inference(stmts);
 
         // Pass 2+: iterate call-site scanning and function body inference
         // until types stabilize (handles cross-function type propagation)
-        // A derivation's name reads as a variable of the type its body returns
-        self.sync_derive_types();
         // five rounds at least, as ever; then more while a signature still
         // moves — a chain of derivations learns one link a round
         for round in 0..16 {
-            let before: Vec<(String, CrowType, Vec<(String, CrowType)>)> = self.functions.iter().map(|(n, s)| (n.clone(), s.return_type.clone(), s.params.clone())).collect();
+            let before = self.signatures();
             self.sync_derive_types();
             // Scan call sites with function-local variable context
-            self.param_frame_schemas_next.clear();
+            self.begin_scan();
             for stmt in stmts {
                 self.collect_call_types_stmt(stmt);
             }
-            let frames_moved = self.param_frame_schemas_next != self.param_frame_schemas;
-            self.param_frame_schemas = std::mem::take(&mut self.param_frame_schemas_next);
+            let frames_moved = self.end_scan();
 
             // Propagate types from indirect calls back to original functions
             self.propagate_indirect_fn_types(stmts);
@@ -472,8 +476,7 @@ impl TypeContext {
             for (name, body) in &fn_entries {
                 self.infer_function_body(name, body);
             }
-            let after: Vec<(String, CrowType, Vec<(String, CrowType)>)> = self.functions.iter().map(|(n, s)| (n.clone(), s.return_type.clone(), s.params.clone())).collect();
-            if round >= 4 && before == after && !frames_moved {
+            if round >= 4 && before == self.signatures() && !frames_moved {
                 break;
             }
         }
@@ -507,6 +510,22 @@ impl TypeContext {
         }
     }
 
+    /// Before any body: the program's tables, declarations and handlers,
+    /// and a derivation's name read as a variable of its body's type.
+    pub(crate) fn begin_inference(&mut self, stmts: &[Stmt]) {
+        self.is_ui = self.is_ui || stmts.iter().any(|st| matches!(st, Stmt::Use { path, .. } if path == "ui" || path == "web.ui"));
+        self.collect_ddl(stmts);
+        self.collect_declarations(stmts);
+        self.classify_handlers(stmts);
+        self.sync_derive_types();
+    }
+
+    /// Every function's return type and parameters: a round of inference
+    /// that moves none of them has settled.
+    pub(crate) fn signatures(&self) -> Vec<(String, CrowType, Vec<(String, CrowType)>)> {
+        self.functions.iter().map(|(n, s)| (n.clone(), s.return_type.clone(), s.params.clone())).collect()
+    }
+
     /// A handler a test clicks with arguments (`click[a, h[4]]`) takes
     /// their types for the parameters nothing in the program types: the
     /// click may be the only call it has, and a compiled program dispatches
@@ -514,7 +533,7 @@ impl TypeContext {
     /// action, a widget's text) comes first. An argument may be one of the
     /// test's own variables (`eps = …` then `click[a, h[eps]]`): it is read
     /// as the test assigned it before the click. Whether any parameter moved.
-    fn type_clicked_handlers(&mut self, stmts: &[Stmt]) -> bool {
+    pub(crate) fn type_clicked_handlers(&mut self, stmts: &[Stmt]) -> bool {
         type Click = (String, Vec<Expr>, Vec<(String, Expr)>);
         fn walk(e: &Expr, locals: &[(String, Expr)], out: &mut Vec<Click>) {
             if let Expr::Call { callee, args } = e {
@@ -588,7 +607,7 @@ impl TypeContext {
 
     /// Propagate types from indirect function calls back to original function declarations.
     /// When we see `op = double` and `op[5]`, propagate i64 back to double's param.
-    fn propagate_indirect_fn_types(&mut self, stmts: &[Stmt]) {
+    pub(crate) fn propagate_indirect_fn_types(&mut self, stmts: &[Stmt]) {
         // Collect var -> function name mappings from assignments
         let mut var_to_fn: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
         self.collect_var_fn_assignments(stmts, &mut var_to_fn);
@@ -694,20 +713,9 @@ impl TypeContext {
                 // local holding a view's markup is markup); a function's own
                 // local is not the module variable of its name
                 let ty = self.infer_expr_full(value);
-                if self.fresh_binding(name) {
-                    self.vars.insert(name.clone(), ty);
-                } else {
-                    let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-                    self.vars.insert(name.clone(), settle::settle(&existing, ty, self.body_assigned.is_some()));
-                }
-                if self.body_assigned.is_none() && !matches!(value, Expr::Ident(f) if self.functions.contains_key(f)) {
-                    self.top_values.insert(name.clone());
-                }
+                self.note_scanned_assign(name, value, ty);
                 self.collect_call_types_expr(value);
-                self.note_connection(name, value);
-                if let Some(schema) = self.frame_schema_of(value) {
-                    self.frame_schemas.insert(name.clone(), schema);
-                }
+                self.note_scanned_value(name, value);
             }
             Stmt::MultiAssign { names, values, .. } => {
                 for (name, value) in names.iter().zip(values.iter()) {
@@ -721,92 +729,18 @@ impl TypeContext {
             // the views and helpers it calls learn their parameter types from
             // its call sites, exactly as they would from a handler's
             Stmt::Derive { name, body, .. } => {
-                let saved_vars = self.vars.clone();
-                let saved_fn_params = self.current_fn_params.clone();
-                let saved_fn_name = self.current_fn_name.replace(name.clone());
-                let saved_assigned = self.body_assigned.replace(std::collections::HashSet::new());
-                self.current_fn_params = Vec::new();
+                let scan = self.enter_derive_scan(name);
                 for s in body { self.collect_call_types_stmt(s); }
-                self.body_assigned = saved_assigned;
-                // the frame a derivation returns keeps its columns' types
-                // under the derivation's name, as a variable's would
-                let returned: Vec<Expr> = body.iter().filter_map(|s| if let Stmt::Return(Some(e)) = s { Some(e.clone()) } else { None }).collect();
-                for e in returned {
-                    if let Some(schema) = self.frame_schema_of(&e) {
-                        if !schema.is_empty() {
-                            self.frame_schemas.insert(name.clone(), schema);
-                            break;
-                        }
-                    }
-                }
-                self.current_fn_params = saved_fn_params;
-                self.current_fn_name = saved_fn_name;
-                self.vars = saved_vars;
+                self.leave_derive_scan(name, body, scan);
             }
             Stmt::FnDecl { name, body, .. } => {
-                // Add function params as known vars before scanning body
-                let saved_vars = self.vars.clone();
-                let saved_fn_params = self.current_fn_params.clone();
-                let saved_fn_name = self.current_fn_name.replace(name.clone());
-                // inside a view an element is markup, at the calls it makes too
-                let saved_in_view = std::mem::replace(&mut self.in_view, self.views.contains(name));
-                let mut assigned = std::collections::HashSet::new();
-                if let Some(sig) = self.functions.get(name) {
-                    self.current_fn_params = sig.params.iter().map(|(n, _)| n.clone()).collect();
-                    for (pname, pty) in &sig.params.clone() {
-                        self.vars.insert(pname.clone(), pty.clone());
-                        assigned.insert(pname.clone());
-                    }
-                }
-                let saved_frames = self.param_frames_in_view(name);
-                let saved_assigned = self.body_assigned.replace(assigned);
+                let scan = self.enter_fn_scan(name);
                 for s in body { self.collect_call_types_stmt(s); }
-                self.body_assigned = saved_assigned;
-                self.param_frames_out_of_view(saved_frames);
-                // A module-level variable assigned in this body (reactive
-                // state written by a handler) keeps the refined type: an
-                // empty default learns its element type from the handler.
-                // Only a ui program's facts: anywhere else a body's first
-                // assignment is a local of its own (spec §7), and a local
-                // named like a module variable says nothing about it.
-                let module_vars: Vec<String> = saved_vars.keys().filter(|m| self.is_ui && self.facts.contains(*m)).cloned().collect();
-                let mut refined: Vec<(String, CrowType)> = Vec::new();
-                for m in &module_vars {
-                    if let (Some(before), Some(after)) = (saved_vars.get(m), self.vars.get(m)) {
-                        let open = matches!(before, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Unknown))
-                            || matches!(before, CrowType::Map(inner) if matches!(inner.as_ref(), CrowType::Unknown))
-                            || matches!(before, CrowType::Unknown);
-                        if open && before != after { refined.push((m.clone(), before.unify(after))); }
-                    }
-                }
-
-                // After scanning body, propagate any updated Fn-typed param types back.
-                // This handles `f[result, array[i]]` where `f` is a known function param.
-                if let Some(sig) = self.functions.get(name).cloned() {
-                    let mut new_params = sig.params.clone();
-                    for (i, (pname, _pty)) in sig.params.iter().enumerate() {
-                        if let Some(updated_type) = self.vars.get(pname) {
-                            if let CrowType::Fn(_, _) = updated_type {
-                                new_params[i].1 = new_params[i].1.unify(updated_type);
-                            }
-                        }
-                    }
-                    self.functions.get_mut(name).unwrap().params = new_params;
-                }
-
-                self.current_fn_params = saved_fn_params;
-                self.current_fn_name = saved_fn_name;
-                self.in_view = saved_in_view;
-                self.vars = saved_vars;
-                for (m, t) in refined { self.vars.insert(m, t); }
+                self.leave_fn_scan(name, scan);
             }
             Stmt::Return(Some(e)) => {
                 self.collect_call_types_expr(e);
-                if let Some(f) = self.current_fn_name.clone() {
-                    if let Some(schema) = self.frame_schema_of(e) {
-                        self.fn_frame_schemas.insert(f, schema);
-                    }
-                }
+                self.note_return_frame(e);
             }
             Stmt::ExprStmt(e) => self.collect_call_types_expr(e),
             Stmt::If { condition, then_body, else_body } => {
@@ -819,13 +753,8 @@ impl TypeContext {
             Stmt::For { var, iter, body } => {
                 self.collect_call_types_expr(iter);
                 // Infer loop variable type from iterator
-                let iter_type = Self::walked(self.infer_expr(iter));
-                match &iter_type {
-                    CrowType::Array(inner) | CrowType::NumArray(inner) => {
-                        self.vars.insert(var.clone(), *inner.clone());
-                    }
-                    _ => {}
-                }
+                let iter_type = self.infer_expr(iter);
+                self.scan_loop_var(var, iter_type);
                 self.collect_loop_call_types(body);
             }
             Stmt::While { condition, body } => {
@@ -866,253 +795,11 @@ impl TypeContext {
     fn collect_call_types_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Call { callee, args } => {
-                if let Expr::Ident(name) = callee.as_ref() {
-                    // markup told apart from text: a view given markup and the
-                    // same view given text are two specializations
-                    let arg_types: Vec<CrowType> = args.iter()
-                        .map(|a| self.infer_expr_full(a))
-                        .collect();
-
-                    // table[frame, click = h, key = 'id', actions = map[…]]: the
-                    // row's key cell is what every one of those handlers
-                    // receives, so their first parameter is the key column's type
-                    if name == "table" && args.len() == 2 {
-                        if let Expr::Map(pairs) = &args[0] {
-                            let key_name = pairs.iter().find_map(|(k, v)| match (k, v) {
-                                (Expr::Ident(s), Expr::Str(col)) | (Expr::Str(s), Expr::Str(col)) if s == "key" => Some(col.clone()),
-                                _ => None,
-                            });
-                            let schema = self.frame_schema_of(&args[1]);
-                            let key_type = match (&key_name, &schema) {
-                                (Some(col), Some(sc)) => sc.get(col).cloned().unwrap_or(CrowType::Str),
-                                (None, Some(sc)) => sc.values().next().cloned().unwrap_or(CrowType::Str),
-                                _ => CrowType::Str,
-                            };
-                            let mut handlers: Vec<String> = Vec::new();
-                            for (k, v) in pairs {
-                                let kname = match k { Expr::Ident(s) | Expr::Str(s) => s.as_str(), _ => continue };
-                                match (kname, v) {
-                                    ("click", Expr::Ident(h)) => handlers.push(h.clone()),
-                                    ("actions", v) => if let Some(acts) = crate::lower::map_literal_pairs(v) {
-                                        for (_, h) in acts { if let Expr::Ident(f) = &h { handlers.push(f.clone()); } }
-                                    },
-                                    _ => {}
-                                }
-                            }
-                            for h in handlers {
-                                if let Some(sig) = self.functions.get_mut(&h) {
-                                    if let Some(p) = sig.params.first_mut() {
-                                        if matches!(p.1, CrowType::Unknown) { p.1 = key_type.clone(); }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Search builtins: the predicate's parameter is the
-                    // array's element type (any[arr, pred] etc.)
-                    if matches!(name.as_str(), "any" | "all" | "find") && args.len() == 2 {
-                        if let Expr::Ident(fn_name) = &args[1] {
-                            let elem = match arg_types.first() {
-                                Some(CrowType::Array(inner)) => Some(inner.as_ref().clone()),
-                                Some(CrowType::NumArray(inner)) => Some(inner.as_ref().clone()),
-                                _ => None,
-                            };
-                            if let Some(elem) = elem {
-                                if let Some(sig) = self.functions.get_mut(fn_name) {
-                                    if let Some(p) = sig.params.first_mut() {
-                                        p.1 = p.1.unify(&elem);
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // later[f, args…] IS a call of f with those args — infer
-                    // it as one so f's params unify and monomorphization
-                    // emits it even when later[] is its only call site.
-                    if name == "later" && !args.is_empty() {
-                        if let Expr::Ident(target) = &args[0] {
-                            if self.functions.contains_key(target) {
-                                let synthetic = Expr::Call {
-                                    callee: Box::new(Expr::Ident(target.clone())),
-                                    args: args[1..].to_vec(),
-                                };
-                                self.collect_call_types_expr(&synthetic);
-                            }
-                        }
-                    }
-
-                    // db transact[conn, fn]: the callback's parameter is a
-                    // db connection handle
-                    if name == "transact" && args.len() == 2 {
-                        if let Expr::Ident(fn_name) = &args[1] {
-                            if let Some(sig) = self.functions.get_mut(fn_name) {
-                                if let Some(p) = sig.params.first_mut() {
-                                    p.1 = CrowType::DbTx;
-                                }
-                            }
-                        }
-                    }
-
-                    // Is it a function call?
-                    if self.functions.contains_key(name) {
-                        let sig = self.functions.get(name).unwrap().clone();
-                        let mut new_params = sig.params.clone();
-                        let mut normalized_sig: Vec<CrowType> = Vec::with_capacity(arg_types.len());
-                        for (i, at) in arg_types.iter().enumerate() {
-                            // Normalize types for function params:
-                            // - OptBoxStruct -> Struct (the Rust backend unwraps before passing)
-                            // - Result<T> -> T (auto-propagation unwraps at call site)
-                            // - an error with no value (error[…]) says nothing of the
-                            //   parameter: that call never reaches the body
-                            let normalized = match at {
-                                CrowType::OptBoxStruct(n) => CrowType::Struct(n.clone()),
-                                CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Void) => CrowType::Unknown,
-                                CrowType::Result(inner) => *inner.clone(),
-                                other => other.clone(),
-                            };
-                            normalized_sig.push(normalized.clone());
-                            if i < new_params.len() {
-                                new_params[i].1 = new_params[i].1.unify(&normalized);
-                            }
-                        }
-                        // F2: record this call's concrete signature for the
-                        // monomorphization pass (skip if anything is unknown)
-                        if normalized_sig.len() == sig.params.len()
-                            && normalized_sig.iter().all(Self::type_is_concrete)
-                        {
-                            let entry = self.call_signatures.entry(name.clone()).or_default();
-                            let dup = entry.iter().any(|existing| Self::same_signature(existing, &normalized_sig));
-                            if !dup {
-                                entry.push(normalized_sig);
-                            }
-                        }
-                        self.functions.get_mut(name).unwrap().params = new_params;
-
-                        // a frame argument's columns are its parameter's, when
-                        // every call agrees on them
-                        for (i, arg) in args.iter().enumerate() {
-                            let Some((pname, _)) = sig.params.get(i) else { continue };
-                            let Some(schema) = self.frame_schema_of(arg) else { continue };
-                            if schema.is_empty() {
-                                continue;
-                            }
-                            let key = (name.clone(), pname.clone());
-                            match self.param_frame_schemas_next.get(&key) {
-                                None => {
-                                    self.param_frame_schemas_next.insert(key, Some(schema));
-                                }
-                                Some(Some(seen)) if *seen != schema => {
-                                    self.param_frame_schemas_next.insert(key, None);
-                                }
-                                _ => {}
-                            }
-                        }
-
-                        // Propagate types to functions passed as arguments:
-                        // If param type is Fn(...) and arg is a function name, update that function's signature
-                        let updated_sig = self.functions.get(name).unwrap().clone();
-                        for (i, arg) in args.iter().enumerate() {
-                            if i < updated_sig.params.len() {
-                                if let CrowType::Fn(param_types, ret_type) = &updated_sig.params[i].1 {
-                                    if let Expr::Ident(fn_name) = arg {
-                                        if self.functions.contains_key(fn_name) {
-                                            let target_sig = self.functions.get(fn_name).unwrap().clone();
-                                            let mut new_target_params = target_sig.params.clone();
-                                            for (j, pt) in param_types.iter().enumerate() {
-                                                if j < new_target_params.len() {
-                                                    new_target_params[j].1 = new_target_params[j].1.unify(pt);
-                                                }
-                                            }
-                                            let new_ret = target_sig.return_type.unify(ret_type);
-                                            let target = self.functions.get_mut(fn_name).unwrap();
-                                            target.params = new_target_params;
-                                            target.return_type = new_ret;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Is it a struct constructor?
-                    if self.structs.contains_key(name) {
-                        let sig = self.structs.get(name).unwrap().clone();
-                        let mut new_fields = sig.fields.clone();
-                        for (i, at) in arg_types.iter().enumerate() {
-                            if i < new_fields.len() {
-                                new_fields[i].1 = new_fields[i].1.unify(at);
-                            }
-                        }
-                        self.structs.get_mut(name).unwrap().fields = new_fields;
-                    }
-
-                    // Is it a variable holding a function? (not a declared function or struct)
-                    // Only update Fn type — don't override concrete types like Array/Map.
-                    // For function params with Unknown type, skip — [] is ambiguous (call vs index)
-                    // and the call site will provide the actual type.
-                    // For params already known to be Fn, allow refinement of arg types.
-                    // A local the body assigned is untyped only until its value
-                    // is (a slice of a parameter, early in the fixpoint): `hs[0]`
-                    // says nothing, and a function guessed from it stuck to
-                    // every function the local was passed to.
-                    if !self.functions.contains_key(name) && !self.structs.contains_key(name) {
-                        let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-                        let is_param = self.current_fn_params.contains(name);
-                        let is_local = self.body_assigned.as_ref().map_or(self.top_values.contains(name), |a| a.contains(name));
-                        match &existing {
-                            CrowType::Fn(_, _) => {
-                                // Already known to be Fn — refine arg types
-                                let fn_type = CrowType::Fn(arg_types.clone(), Box::new(CrowType::Unknown));
-                                let unified = existing.unify(&fn_type);
-                                self.vars.insert(name.clone(), unified);
-                            }
-                            CrowType::Unknown if !is_param && !is_local => {
-                                // Non-param Unknown variable called with [] — assume it's a function
-                                let fn_type = CrowType::Fn(arg_types, Box::new(CrowType::Unknown));
-                                self.vars.insert(name.clone(), fn_type);
-                            }
-                            _ => {} // Array, Map, param with Unknown — [] means indexing
-                        }
-                    }
-                }
-                // Module function/struct call: module.func[args] or module.Struct[args]
-                if let Expr::FieldAccess { object, field } = callee.as_ref() {
-                    if let Expr::Ident(mod_name) = object.as_ref() {
-                        let prefixed = format!("{}_{}", mod_name, field);
-                        if self.functions.contains_key(&prefixed) {
-                            let arg_types: Vec<CrowType> = args.iter()
-                                .map(|a| self.infer_expr(a))
-                                .collect();
-                            let sig = self.functions.get(&prefixed).unwrap().clone();
-                            let mut new_params = sig.params.clone();
-                            for (i, at) in arg_types.iter().enumerate() {
-                                if i < new_params.len() {
-                                    let normalized = match at {
-                                        CrowType::OptBoxStruct(n) => CrowType::Struct(n.clone()),
-                                        other => other.clone(),
-                                    };
-                                    new_params[i].1 = new_params[i].1.unify(&normalized);
-                                }
-                            }
-                            self.functions.get_mut(&prefixed).unwrap().params = new_params;
-                        }
-                        // Module struct constructor: update field types from args
-                        if self.structs.contains_key(&prefixed) {
-                            let arg_types: Vec<CrowType> = args.iter()
-                                .map(|a| self.infer_expr(a))
-                                .collect();
-                            let sig = self.structs.get(&prefixed).unwrap().clone();
-                            let mut new_fields = sig.fields.clone();
-                            for (i, at) in arg_types.iter().enumerate() {
-                                if i < new_fields.len() {
-                                    new_fields[i].1 = new_fields[i].1.unify(at);
-                                }
-                            }
-                            self.structs.get_mut(&prefixed).unwrap().fields = new_fields;
-                        }
-                    }
+                // markup told apart from text: a view given markup and the
+                // same view given text are two specializations
+                if self.call_says_of_callee(callee) {
+                    let arg_types: Vec<CrowType> = args.iter().map(|a| self.infer_expr_full(a)).collect();
+                    self.note_call(callee, args, &arg_types);
                 }
                 // Recurse into args
                 for a in args { self.collect_call_types_expr(a); }
@@ -1135,46 +822,12 @@ impl TypeContext {
             Expr::ForExpr { var, iter, body } => {
                 self.collect_call_types_expr(iter);
                 // Infer loop variable type from iterator
-                let iter_type = Self::walked(self.infer_expr(iter));
-                match &iter_type {
-                    CrowType::Array(inner) | CrowType::NumArray(inner) => {
-                        self.vars.insert(var.clone(), *inner.clone());
-                    }
-                    _ => {}
-                }
+                let iter_type = self.infer_expr(iter);
+                self.scan_loop_var(var, iter_type);
                 // Iterating an array literal of named fns: calls through the
                 // loop variable type each fn's params (an uncalled fn would
                 // otherwise keep Unknown params and be skipped at emission)
-                if let Expr::Array(elems) = iter.as_ref() {
-                    let fn_names: Vec<String> = elems.iter()
-                        .filter_map(|e| match e {
-                            Expr::Ident(n) if self.functions.contains_key(n) => Some(n.clone()),
-                            _ => None,
-                        })
-                        .collect();
-                    if fn_names.len() == elems.len() && !fn_names.is_empty() {
-                        // Infer arg types outside the closure (borrow rules)
-                        let mut typed_calls: Vec<Vec<CrowType>> = Vec::new();
-                        let mut raw_calls: Vec<Vec<Expr>> = Vec::new();
-                        Self::find_calls_to_var(body, var, &mut |args| {
-                            raw_calls.push(args.to_vec());
-                        });
-                        for args in &raw_calls {
-                            typed_calls.push(args.iter().map(|a| self.infer_expr(a)).collect());
-                        }
-                        for fname in &fn_names {
-                            if let Some(sig) = self.functions.get_mut(fname) {
-                                for tys in &typed_calls {
-                                    if tys.len() == sig.params.len() {
-                                        for (p, t) in sig.params.iter_mut().zip(tys.iter()) {
-                                            p.1 = p.1.unify(t);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                self.note_function_list(var, iter, body);
                 for s in body { self.collect_call_types_stmt(s); }
             }
             Expr::Str(s) => {
@@ -1187,7 +840,7 @@ impl TypeContext {
 
     /// Walk statements and invoke f with the args of every call whose callee
     /// is the given variable name.
-    fn find_calls_to_var(stmts: &[Stmt], var: &str, f: &mut dyn FnMut(&[Expr])) {
+    pub(crate) fn find_calls_to_var(stmts: &[Stmt], var: &str, f: &mut dyn FnMut(&[Expr])) {
         fn walk_expr(e: &Expr, var: &str, f: &mut dyn FnMut(&[Expr])) {
             match e {
                 Expr::Call { callee, args } => {
@@ -1321,7 +974,7 @@ impl TypeContext {
 
     /// A type is concrete if it contains no Unknown anywhere (used to decide
     /// whether a call signature is usable for monomorphization).
-    fn type_is_concrete(t: &CrowType) -> bool {
+    pub(crate) fn type_is_concrete(t: &CrowType) -> bool {
         !format!("{:?}", t).contains("Unknown")
     }
 
@@ -1331,64 +984,16 @@ impl TypeContext {
     /// propagates through call chains.
     fn specialize_functions(&mut self) {
         for _round in 0..5 {
-            let mut new_clones: Vec<(String, Vec<CrowType>, String)> = Vec::new();
-            for (name, sigs) in self.call_signatures.clone() {
-                if sigs.len() < 2 || self.specializations.contains_key(&name) {
-                    continue;
-                }
-                // Don't specialize functions that are themselves clones
-                if name.contains("__") {
-                    continue;
-                }
-                let Some(base) = self.functions.get(&name).cloned() else { continue };
-                // v1 limitation: generic higher-order functions (fn-typed
-                // params) used at multiple types are not specialized — the
-                // predicate's types would need per-clone propagation
-                if sigs.iter().any(|sig| sig.iter().any(|t| matches!(t, CrowType::Fn(_, _)))) {
-                    continue;
-                }
-                for (idx, sig) in sigs.iter().enumerate() {
-                    let mangled = format!("{}__{}", name, idx + 1);
-                    let params: Vec<(String, CrowType)> = base
-                        .params
-                        .iter()
-                        .zip(sig.iter())
-                        .map(|((pname, _), ty)| (pname.clone(), ty.clone()))
-                        .collect();
-                    self.functions.insert(mangled.clone(), FnSig {
-                        params,
-                        return_type: CrowType::Unknown,
-                        body: base.body.clone(),
-                    });
-                    self.specializations.entry(name.clone()).or_default().push((sig.clone(), mangled.clone()));
-                    // Clones of a view are views (component monomorphization),
-                    // and a handler's are handlers: each writes the session's
-                    // state as the original does (a clone lowered as a plain
-                    // function made its fact writes locals)
-                    if self.views.contains(name.as_str()) {
-                        self.views.insert(mangled.clone());
-                    }
-                    if self.view_handlers.contains(name.as_str()) {
-                        self.view_handlers.insert(mangled.clone());
-                    }
-                    new_clones.push((name.clone(), sig.clone(), mangled));
-                }
-            }
+            let new_clones = self.new_clones();
             if new_clones.is_empty() {
                 break;
             }
             // Infer each clone's body under its own parameter types; this also
             // records the clone's callees' signatures (transitive propagation)
-            for (_, _, mangled) in &new_clones {
+            for mangled in &new_clones {
                 let body = self.functions.get(mangled).unwrap().body.clone();
                 // record callee signatures from the clone's body with params bound
-                let saved_vars = self.vars.clone();
-                if let Some(sig) = self.functions.get(mangled) {
-                    let bind: Vec<(String, CrowType)> = sig.params.clone();
-                    for (p, t) in bind {
-                        self.vars.insert(p, t);
-                    }
-                }
+                let saved_vars = self.bind_params(mangled);
                 for stmt in &body {
                     self.collect_call_types_stmt(stmt);
                 }
@@ -1399,20 +1004,88 @@ impl TypeContext {
         // Settle: re-infer all clone bodies so transitive return types
         // stabilize regardless of clone creation order
         for _ in 0..2 {
-            let clone_names: Vec<String> = self
-                .specializations
-                .values()
-                .flat_map(|v| v.iter().map(|(_, m)| m.clone()))
-                .collect();
-            for mangled in clone_names {
-                if let Some(sig) = self.functions.get(&mangled) {
-                    let body = sig.body.clone();
-                    // reset the return type so stale unifications don't stick
-                    self.functions.get_mut(&mangled).unwrap().return_type = CrowType::Unknown;
+            for mangled in self.clone_names() {
+                if let Some(body) = self.reset_clone(&mangled) {
                     self.infer_function_body(&mangled, &body);
                 }
             }
         }
+    }
+
+    /// One round of the F2 monomorphization pass: each function called with
+    /// several signatures, not specialized yet, gets a clone per signature.
+    /// The clones' names; none when nothing is left to specialize.
+    pub(crate) fn new_clones(&mut self) -> Vec<String> {
+        let mut new_clones: Vec<String> = Vec::new();
+        for (name, sigs) in self.call_signatures.clone() {
+            if sigs.len() < 2 || self.specializations.contains_key(&name) {
+                continue;
+            }
+            // Don't specialize functions that are themselves clones
+            if name.contains("__") {
+                continue;
+            }
+            let Some(base) = self.functions.get(&name).cloned() else { continue };
+            // v1 limitation: generic higher-order functions (fn-typed
+            // params) used at multiple types are not specialized — the
+            // predicate's types would need per-clone propagation
+            if sigs.iter().any(|sig| sig.iter().any(|t| matches!(t, CrowType::Fn(_, _)))) {
+                continue;
+            }
+            for (idx, sig) in sigs.iter().enumerate() {
+                let mangled = format!("{}__{}", name, idx + 1);
+                let params: Vec<(String, CrowType)> = base
+                    .params
+                    .iter()
+                    .zip(sig.iter())
+                    .map(|((pname, _), ty)| (pname.clone(), ty.clone()))
+                    .collect();
+                self.functions.insert(mangled.clone(), FnSig {
+                    params,
+                    return_type: CrowType::Unknown,
+                    body: base.body.clone(),
+                });
+                self.specializations.entry(name.clone()).or_default().push((sig.clone(), mangled.clone()));
+                // Clones of a view are views (component monomorphization),
+                // and a handler's are handlers: each writes the session's
+                // state as the original does (a clone lowered as a plain
+                // function made its fact writes locals)
+                if self.views.contains(name.as_str()) {
+                    self.views.insert(mangled.clone());
+                }
+                if self.view_handlers.contains(name.as_str()) {
+                    self.view_handlers.insert(mangled.clone());
+                }
+                new_clones.push(mangled);
+            }
+        }
+        new_clones
+    }
+
+    /// Every clone the monomorphization pass made.
+    pub(crate) fn clone_names(&self) -> Vec<String> {
+        self.specializations.values().flat_map(|v| v.iter().map(|(_, m)| m.clone())).collect()
+    }
+
+    /// A clone's return type forgotten, so a stale unification does not
+    /// stick when its body is typed again; its body.
+    pub(crate) fn reset_clone(&mut self, mangled: &str) -> Option<Vec<Stmt>> {
+        let sig = self.functions.get_mut(mangled)?;
+        sig.return_type = CrowType::Unknown;
+        Some(sig.body.clone())
+    }
+
+    /// A function's parameters bound in the environment, typed by its
+    /// signature; the environment before, to put back.
+    pub(crate) fn bind_params(&mut self, name: &str) -> BTreeMap<String, CrowType> {
+        let saved_vars = self.vars.clone();
+        if let Some(sig) = self.functions.get(name) {
+            let bind: Vec<(String, CrowType)> = sig.params.clone();
+            for (p, t) in bind {
+                self.vars.insert(p, t);
+            }
+        }
+        saved_vars
     }
 
     /// Does any if/while condition in this body, or any loop's list, infer
@@ -1567,7 +1240,7 @@ impl TypeContext {
 
     /// What a loop walks: a list that can fail is refused before the loop
     /// runs (spec, Errors in Conditions), so its items are the value's.
-    fn walked(t: CrowType) -> CrowType {
+    pub(crate) fn walked(t: CrowType) -> CrowType {
         match t {
             CrowType::Result(inner) => *inner,
             other => other,
@@ -1632,14 +1305,21 @@ impl TypeContext {
 
     pub(crate) fn infer_function_body(&mut self, name: &str, body: &[Stmt]) {
         let scope = self.enter_body(name);
-        let saved_vars = scope.saved_vars.clone();
-
         // Infer body statements
         for stmt in body {
             self.infer_stmt(stmt);
         }
-        self.body_assigned = scope.outer_assigned;
-        self.in_view = scope.outer_in_view;
+        self.finish_body(name, body, scope);
+    }
+
+    /// Out of a function's body once its locals are typed (by the walk, or
+    /// by a provisional lowering): its return type from its returns,
+    /// widened to a Result when an error can leave it, and a fact a view or
+    /// handler gives a float widened for the program.
+    pub(crate) fn finish_body(&mut self, name: &str, body: &[Stmt], scope: BodyScope) {
+        let BodyScope { saved_vars, saved_frames, outer_assigned, outer_in_view } = scope;
+        self.body_assigned = outer_assigned;
+        self.in_view = outer_in_view;
 
         // Find return type
         let ret = self.find_return_type(body);
@@ -1674,7 +1354,7 @@ impl TypeContext {
         for f in widened {
             self.vars.insert(f, CrowType::Float);
         }
-        self.param_frames_out_of_view(scope.saved_frames);
+        self.param_frames_out_of_view(saved_frames);
     }
 
     /// Find the return type from a list of statements.
