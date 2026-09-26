@@ -18,6 +18,7 @@ const GENERATED_ROWS: usize = 3;
 
 /// One rehearsal: what it knows of the program's databases, and what the
 /// program did to them.
+#[derive(Default)]
 pub struct Rehearsal {
     /// Each statement the databases were asked about, and its columns.
     schema: Vec<(String, Vec<(String, String)>)>,
@@ -129,9 +130,61 @@ fn writes(sql: &str) -> bool {
     matches!(first.as_str(), "INSERT" | "UPDATE" | "DELETE" | "CREATE" | "ALTER" | "DROP" | "REPLACE" | "TRUNCATE" | "UPSERT" | "MERGE")
 }
 
+/// A statement with each list of parameters as the one `?` it was written
+/// as: `IN ?` handed a list runs as `IN (?, ?, ?)`, or `IN (NULL)` when the
+/// list is empty, and the record keeps `IN ?`.
+fn one_placeholder_per_list(sql: &str) -> String {
+    let b = sql.as_bytes();
+    let mut out = String::with_capacity(sql.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'(' {
+            // `(` then `?`s separated by commas, or a lone NULL, then `)`
+            let mut j = i + 1;
+            let skip = |j: &mut usize| while *j < b.len() && b[*j].is_ascii_whitespace() { *j += 1 };
+            skip(&mut j);
+            let list_end = if sql[j..].starts_with("NULL") {
+                let mut k = j + 4;
+                skip(&mut k);
+                (k < b.len() && b[k] == b')').then_some(k)
+            } else {
+                let mut k = j;
+                let mut seen = false;
+                loop {
+                    if k < b.len() && b[k] == b'?' {
+                        seen = true;
+                        k += 1;
+                        skip(&mut k);
+                        if k < b.len() && b[k] == b',' {
+                            k += 1;
+                            skip(&mut k);
+                            continue;
+                        }
+                    }
+                    break;
+                }
+                (seen && k < b.len() && b[k] == b')').then_some(k)
+            };
+            if let Some(end) = list_end {
+                out.push('?');
+                i = end + 1;
+                continue;
+            }
+        }
+        out.push(b[i] as char);
+        i += 1;
+    }
+    out
+}
+
 /// Whether a statement as run matches one as recorded: the record's NULLs
-/// stood in for spans the program interpolated, so each matches any text.
+/// stood in for spans the program interpolated, so each matches any text,
+/// and a list of parameters is the one `?` it was written as.
 fn matches_record(run: &str, recorded: &str) -> bool {
+    matches_as_written(&one_placeholder_per_list(run), &one_placeholder_per_list(recorded))
+}
+
+fn matches_as_written(run: &str, recorded: &str) -> bool {
     let parts: Vec<&str> = recorded.split("NULL").collect();
     if parts.len() == 1 {
         return run == recorded;
@@ -157,7 +210,7 @@ impl Rehearsal {
 
     /// A fixture recorded for the statement: `{"sql", "columns", "rows"}`.
     fn fixture(&self, sql: &str) -> Option<CrowFrame> {
-        let path = self.fixtures.join(format!("{}.json", crate::type_infer::schema_record::fnv(&[sql])));
+        let path = self.fixtures.join(format!("{}.json", crate::type_infer::schema_record::fnv(&[&one_placeholder_per_list(sql)])));
         let j: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
         let cols: Vec<(String, String)> = j
             .get("columns")?
@@ -192,7 +245,10 @@ impl Rehearsal {
         let mut data = Vec::new();
         let mut validity = Vec::new();
         for (name, kind) in &cols {
-            validity.push(vec![true; n]);
+            // a column that can hold NULL holds one in the second row: the
+            // first reads as a value, and a walk over the rows meets the
+            // missing cell the program has to decide on
+            validity.push((0..n).map(|i| !(kind.ends_with('?') && i == 1)).collect());
             data.push(match kind.trim_end_matches('?') {
                 "int" => Column::Int((1..=n as i64).collect()),
                 "float" | "datetime" => Column::Float((1..=n).map(|i| i as f64).collect()),
@@ -295,5 +351,30 @@ mod tests {
         assert!(!matches_record("SELECT b FROM t", "SELECT a FROM t"));
         assert!(writes("  insert into t values (1)"));
         assert!(!writes("SELECT 1"));
+    }
+
+    /// Generated rows hold NULL in the second row of a column that can hold
+    /// one, and only there
+    #[test]
+    fn a_column_that_can_hold_null_holds_one_in_its_second_row() {
+        let mut r = Rehearsal::default();
+        r.schema.push(("SELECT a, b FROM t".to_string(), vec![("a".to_string(), "int".to_string()), ("b".to_string(), "float?".to_string())]));
+        let f = r.generated_rows("SELECT a, b FROM t", 3);
+        assert_eq!(*f.validity[0], vec![true, true, true]);
+        assert_eq!(*f.validity[1], vec![true, false, true]);
+    }
+
+    /// A list handed to `IN ?` runs as `IN (?, ?, ?)` — or `IN (NULL)`,
+    /// empty — and still matches its record, as finch's scanner query did
+    /// not: the rehearsal answered it with no columns, and the scanner's
+    /// join failed
+    #[test]
+    fn a_list_parameter_matches_the_one_it_was_written_as() {
+        let recorded = "SELECT symbol FROM bars WHERE date = toDate(?) AND dataset_id IN ? AND symbol NOT IN ?";
+        assert!(matches_record("SELECT symbol FROM bars WHERE date = toDate(?) AND dataset_id IN (?, ?, ?) AND symbol NOT IN (NULL)", recorded));
+        assert!(matches_record("SELECT symbol FROM bars WHERE date = toDate(?) AND dataset_id IN (?) AND symbol NOT IN (?,?)", recorded));
+        assert!(matches_record("INSERT INTO t (a, b) VALUES (?, ?)", "INSERT INTO t (a, b) VALUES (?, ?)"));
+        assert!(!matches_record("SELECT symbol FROM bars WHERE date = toDate(?) AND dataset_id = ?", recorded));
+        assert_eq!(one_placeholder_per_list("f(a, ?) IN ( ?, ? ) (x)"), "f(a, ?) IN ? (x)");
     }
 }

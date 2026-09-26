@@ -587,6 +587,48 @@ fn literal_sets(p: &Program, frozen: &BTreeMap<String, Vec<Vec<String>>>, bound:
     out
 }
 
+/// Every state a control can lead to from the first, breadth first, with
+/// what each offers, tracking `tracked`: the first state, the states, what
+/// each offers, and whether the search stopped at its end.
+fn search(m: &mut Machine, root: &str, tracked: BTreeSet<String>) -> (State, Vec<State>, BTreeMap<State, BTreeSet<Control>>, bool) {
+    m.tracked = tracked;
+    let initial: State = m
+        .tracked
+        .iter()
+        .map(|f| {
+            let v = m.p.initial.get(f).map(|v| v.trim().to_string()).unwrap_or_default();
+            (f.clone(), if is_literal(&v) { v } else { "*".into() })
+        })
+        .collect();
+    let mut states: Vec<State> = vec![initial.clone()];
+    let mut known: BTreeSet<State> = [initial.clone()].into_iter().collect();
+    let mut offered: BTreeMap<State, BTreeSet<Control>> = BTreeMap::new();
+    let mut i = 0;
+    let mut stopped = false;
+    while i < states.len() {
+        let s = states[i].clone();
+        i += 1;
+        let mut here = BTreeSet::new();
+        let mut seen = BTreeSet::new();
+        m.offers(root, &s, &mut seen, &mut here);
+        for c in &here {
+            for next in m.successors(&s, c) {
+                if known.contains(&next) {
+                    continue;
+                }
+                if states.len() >= MAX_STATES {
+                    stopped = true;
+                    break;
+                }
+                known.insert(next.clone());
+                states.push(next);
+            }
+        }
+        offered.insert(s, here);
+    }
+    (initial, states, offered, stopped)
+}
+
 /// The page's reachable states, as the artifact prints them.
 pub fn machine(p: &Program, page: &str, root: &str) -> String {
     // the views the page can show, and the controls anywhere in them
@@ -642,54 +684,37 @@ pub fn machine(p: &Program, page: &str, root: &str) -> String {
             }
         }
     }
+    // the facts the page's guards read, and those a wired handler's
+    // conditions read
+    let facts_of = |guards: &[String]| -> BTreeSet<String> {
+        guards.iter().flat_map(|g| idents(&normalize(g))).filter(|id| p.initial.contains_key(id)).collect()
+    };
+    let page_facts = facts_of(&guards);
+    let mut handler_guards: Vec<String> = Vec::new();
     for h in &handlers {
         for path in p.handlers.get(h).into_iter().flatten() {
-            guards.extend(path.conds.iter().cloned());
+            handler_guards.extend(path.conds.iter().cloned());
         }
     }
-    for g in &guards {
-        for id in idents(&normalize(g)) {
-            if p.initial.contains_key(&id) {
-                m.tracked.insert(id);
-            }
-        }
-    }
+    let every_fact: BTreeSet<String> = page_facts.union(&facts_of(&handler_guards)).cloned().collect();
     m.literals = literal_sets(p, &frozen, &bound);
-    let initial: State = m
-        .tracked
-        .iter()
-        .map(|f| {
-            let v = p.initial.get(f).map(|v| v.trim().to_string()).unwrap_or_default();
-            (f.clone(), if is_literal(&v) { v } else { "*".into() })
-        })
-        .collect();
-
-    // the search: every state a control can lead to, breadth first
-    let mut states: Vec<State> = vec![initial.clone()];
-    let mut known: BTreeSet<State> = [initial.clone()].into_iter().collect();
-    let mut offered: BTreeMap<State, BTreeSet<Control>> = BTreeMap::new();
-    let mut i = 0;
-    let mut stopped = false;
-    while i < states.len() {
-        let s = states[i].clone();
-        i += 1;
-        let mut here = BTreeSet::new();
-        let mut seen = BTreeSet::new();
-        m.offers(root, &s, &mut seen, &mut here);
-        for c in &here {
-            for next in m.successors(&s, c) {
-                if known.contains(&next) {
-                    continue;
-                }
-                if states.len() >= MAX_STATES {
-                    stopped = true;
-                    break;
-                }
-                known.insert(next.clone());
-                states.push(next);
-            }
+    // the search with every fact a guard reads, a handler's condition
+    // included, so a handler takes the way its facts decide; when that
+    // passes the search's end, again with only the page's own: a condition
+    // on a fact left out is unknown and keeps both of its handler's ways,
+    // so what each state offers stays right, with more states reachable
+    // (finch's quantities, trail and target, each a field, multiplied the
+    // states past the end)
+    let (mut initial, mut states, mut offered, mut stopped) = search(&mut m, root, every_fact.clone());
+    let mut narrowed = false;
+    if stopped && every_fact.len() > page_facts.len() {
+        let again = search(&mut m, root, page_facts.clone());
+        if !again.3 {
+            (initial, states, offered, stopped) = again;
+            narrowed = true;
+        } else {
+            let _ = search(&mut m, root, every_fact);
         }
-        offered.insert(s, here);
     }
 
     // the artifact: the facts and their values, then each state as it
@@ -711,6 +736,9 @@ pub fn machine(p: &Program, page: &str, root: &str) -> String {
             })
             .collect();
         text.push_str(&format!("  facts: {}\n", facts.join(" · ")));
+        if narrowed {
+            text.push_str(&format!("  (the facts only a handler's conditions read are left out: with them the search passed {} states)\n", MAX_STATES));
+        }
     }
     // one line per control: the states that offer it, told by the values
     // they all share, and the states those values also take in that do not
@@ -802,6 +830,31 @@ mod tests {
             ],
         );
         (initial, handlers, views)
+    }
+
+    /// Thirteen switches only their handlers' conditions read make more
+    /// states than the search visits: it runs again with the page's own
+    /// facts, says so, and still tells what each state offers
+    #[test]
+    fn a_search_too_large_leaves_out_the_facts_only_handlers_read() {
+        let (mut initial, mut handlers, mut views) = program();
+        let mut buttons = String::from("stack[]\n  button[click → play] 'Play'\n  button[click → finish] 'End'");
+        for k in 1..=13 {
+            let f = format!("f{}", k);
+            initial.insert(f.clone(), "0".into());
+            handlers.insert(format!("flip{}", k), vec![HandlerPath { conds: vec![format!("({} eq 0)", f)], writes: vec![(f.clone(), "1".into())], may: vec![] }]);
+            buttons.push_str(&format!("\n  button[click → flip{}] 'Flip {}'", k, k));
+        }
+        views.insert(
+            "page_view".to_string(),
+            vec![(vec!["(session gt 0)".to_string()], buttons), (vec!["(not (session gt 0))".to_string()], "button[click → start] 'Start'".to_string())],
+        );
+        let p = Program { initial: &initial, handlers: &handlers, views: &views };
+        let t = machine(&p, "/", "page_view");
+        assert!(t.contains("  facts: session ∈ {0, *}\n  (the facts only a handler's conditions read are left out: with them the search passed 4096 states)\n"), "{}", t);
+        assert!(!t.contains("the search stopped"), "{}", t);
+        assert!(t.contains("  button 'Flip 13' → flip13: when session = *\n"), "{}", t);
+        assert!(t.contains("  button 'Start' → start: when session = 0\n"), "{}", t);
     }
 
     #[test]
