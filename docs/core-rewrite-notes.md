@@ -749,3 +749,10 @@ weeks; the core stages are weeks each.
   the work at each level of nesting, and the layout engine never
   finished (caught by the oracle, which now fails a file after two
   minutes rather than wait). The oracle is unchanged: none of 1,047.
+- **2026-09-26, F5 step S3: the statement rules shared.** How a
+  variable's type settles after a later assignment (`settle`, with
+  `consumed`: a value that can fail lands as its payload in a variable
+  that holds no error) and when a variable refuses a failed value
+  (`refuses_failed`) are one module, `type_infer/settle.rs`, that the
+  walker's four assignment sites, its `refused_at` and the lowering's
+  `held_by` all call. The oracle is unchanged: none of 1,047.
