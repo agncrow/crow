@@ -726,6 +726,32 @@ impl CrowTensor {
         self.map(cpu_fn)
     }
 
+    /// An element-wise operation between tensors (`+`, `-`, `.*`, `./`,
+    /// `.^`, named by its sign), or the reason their shapes do not meet as
+    /// a value the caller reports: never a panic. The words are the ones
+    /// the lowering refuses a program with when it knows both shapes.
+    pub fn try_elementwise(&self, other: &CrowTensor, sign: &str) -> Result<CrowTensor, String> {
+        let (a, b) = (self.shape(), other.shape());
+        let n = a.len().max(b.len());
+        for i in 0..n {
+            let da = if i < n - a.len() { 1 } else { a[i - (n - a.len())] };
+            let db = if i < n - b.len() { 1 } else { b[i - (n - b.len())] };
+            if da != db && da != 1 && db != 1 {
+                return Err(format!(
+                    "`{}` of tensors of shapes {:?} and {:?}: dimension {} is {} in one and {} in the other — an element-wise operation needs each pair equal, or one of them 1",
+                    sign, a, b, i + 1, da, db
+                ));
+            }
+        }
+        Ok(match sign {
+            "+" => self.add(other),
+            "-" => self.sub(other),
+            ".*" => self.mul(other),
+            "./" => self.div(other),
+            _ => self.pow(other),
+        })
+    }
+
     pub fn add(&self, other: &CrowTensor) -> CrowTensor {
         self.gpu_binary_or_cpu(other, "add", |a, b| a + b)
     }

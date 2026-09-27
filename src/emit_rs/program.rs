@@ -614,6 +614,11 @@ impl Emitter {
             // the line the error came from adds nothing
             "#[allow(dead_code)]",
             "fn crow_trace_push(t: &mut Vec<String>, at: String) { if t.last() != Some(&at) { t.push(at); } }",
+            // a runtime failure the program cannot go on from stops it with
+            // the interpreter's words; on a server's thread it is contained
+            // as a panic there is
+            "#[allow(dead_code)]",
+            "fn crow_stop(line: usize, why: String) -> ! { if std::thread::current().name() == Some(\"main\") { eprintln!(\"runtime error: line {}: {}\", line, why); std::process::exit(1); } panic!(\"line {}: {}\", line, why) }",
             "impl<T: Clone + std::fmt::Display> std::fmt::Display for CrowResult<T> {",
             "    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {",
             "        if !self.ok { write!(f, \"error: {}\", self.reason) } else { write!(f, \"{}\", self.value) }",

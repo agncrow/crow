@@ -433,13 +433,15 @@ impl Emitter {
         let cmp = matches!(op, "gt" | "lt" | "gte" | "lte" | "eq" | "ne");
         if l_t && r_t {
             return match op {
-                "add" => format!("{}.add(&{})", l, r),
-                "sub" => format!("{}.sub(&{})", l, r),
-                "mul" => format!("{}.try_matmul(&{}).unwrap_or_else(|e| panic!(\"{{}}\", e))", l, r),
+                // a shape mismatch stops the program as the interpreter
+                // stops it, with the runtime's words, never a bare panic
+                "add" => format!("{}.try_elementwise(&{}, \"+\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.current_line),
+                "sub" => format!("{}.try_elementwise(&{}, \"-\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.current_line),
+                "mul" => format!("{}.try_matmul(&{}).unwrap_or_else(|e| crow_stop({}, e))", l, r, self.current_line),
                 "div" => "compile_error!(\"use ./ for element-wise tensor division\")".to_string(),
-                "elemmul" => format!("{}.mul(&{})", l, r),
-                "elemdiv" => format!("{}.div(&{})", l, r),
-                "elempow" => format!("{}.pow(&{})", l, r),
+                "elemmul" => format!("{}.try_elementwise(&{}, \".*\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.current_line),
+                "elemdiv" => format!("{}.try_elementwise(&{}, \"./\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.current_line),
+                "elempow" => format!("{}.try_elementwise(&{}, \".^\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.current_line),
                 "eq" => format!("{} == {}", l, r),
                 "ne" => format!("{} != {}", l, r),
                 _ => format!("{} {} {}", l, op_str, r),

@@ -794,7 +794,7 @@ fn test_numarray_import_transpile() {
 #[test]
 fn test_numarray_add_transpile() {
     let rust = transpile("a = [1, 2, 3]\nb = [4, 5, 6]\nc = a + b\n");
-    assert!(rust.contains(".add(&"), "NumArray + NumArray should use .add()\n{}", rust);
+    assert!(rust.contains(".try_elementwise(&") && rust.contains("\"+\""), "NumArray + NumArray checks its shapes\n{}", rust);
 }
 
 #[test]
@@ -1026,19 +1026,19 @@ fn test_pow_float_transpile() {
 #[test]
 fn test_elem_mul_transpile() {
     let rust = transpile("use math\nx = ones[3] .* ones[3]\n");
-    assert!(rust.contains(".mul("), "should use .mul()\n{}", rust);
+    assert!(rust.contains(".try_elementwise(&") && rust.contains("\".*\""), "an element-wise product checks its shapes\n{}", rust);
 }
 
 #[test]
 fn test_elem_div_transpile() {
     let rust = transpile("use math\nx = ones[3] ./ ones[3]\n");
-    assert!(rust.contains(".div("), "should use .div()\n{}", rust);
+    assert!(rust.contains(".try_elementwise(&") && rust.contains("\"./\""), "an element-wise quotient checks its shapes\n{}", rust);
 }
 
 #[test]
 fn test_elem_pow_transpile() {
     let rust = transpile("use math\nx = ones[3] .^ ones[3]\n");
-    assert!(rust.contains(".pow("), "should use .pow()\n{}", rust);
+    assert!(rust.contains(".try_elementwise(&") && rust.contains("\".^\""), "an element-wise power checks its shapes\n{}", rust);
 }
 
 #[test]
@@ -1144,13 +1144,13 @@ fn test_math_stack_transpile() {
 #[test]
 fn test_broadcast_add_transpile() {
     let rust = transpile("use math\na = reshape[ones[3], 3, 1]\nb = reshape[ones[4], 1, 4]\nx = a + b\n");
-    assert!(rust.contains(".add("), "should emit .add() for broadcast\n{}", rust);
+    assert!(rust.contains(".try_elementwise(&") && rust.contains("\"+\""), "a broadcast sum checks its shapes\n{}", rust);
 }
 
 #[test]
 fn test_broadcast_elem_mul_transpile() {
     let rust = transpile("use math\na = reshape[ones[6], 3, 1]\nb = reshape[ones[2], 1, 2]\nx = a .* b\n");
-    assert!(rust.contains(".mul("), "should emit .mul() for broadcast elem mul\n{}", rust);
+    assert!(rust.contains(".try_elementwise(&") && rust.contains("\".*\""), "a broadcast product checks its shapes\n{}", rust);
 }
 
 // ===== Advanced indexing (gather) tests =====
