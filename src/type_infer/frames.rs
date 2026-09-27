@@ -161,7 +161,7 @@ impl TypeContext {
     /// top-level one; a handle that is a parameter (a helper's `conn`) is
     /// unknown here, and every connection is asked until one answers.
     pub(super) fn describe_sql(&mut self, sql: &str, handle: Option<&str>) -> Option<BTreeMap<String, CrowType>> {
-        if !self.describe_queries || self.conn_urls.is_empty() { return None; }
+        if self.conn_urls.is_empty() { return None; }
         if let Some(cached) = self.describe_cache.get(sql) {
             if std::env::var("CROW_DEBUG_SCHEMAS").is_ok() {
                 eprintln!("DESCRIBE cached {:?} for `{}…`", cached, sql.chars().take(50).collect::<String>());
@@ -183,6 +183,14 @@ impl TypeContext {
         let mut reasons = Vec::new();
         let mut found: Option<BTreeMap<String, CrowType>> = None;
         let names: Vec<String> = candidates.iter().map(|(v, _)| v.clone()).collect();
+        // not asked (CROW_NO_DESCRIBE): no database answers, so what one
+        // answered last time, kept in the project, types the cells, as when
+        // none can be reached (spec, typed cells); nothing is written
+        if !self.describe_queries {
+            let kept = names.iter().find_map(|v| schema_record::read(v, &scrubbed));
+            self.describe_cache.insert(sql.to_string(), kept.clone());
+            return kept;
+        }
         for (var, url) in candidates {
             match crate::type_infer::describe_with_tables(&url, &scrubbed, &self.ddl) {
                 Ok(cols) => {

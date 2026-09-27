@@ -5679,6 +5679,14 @@ mod module_parts_tests {
         assert_eq!(cols.get("px"), Some(&type_infer::CrowType::Result(Box::new(type_infer::CrowType::Float))), "{:?}\n{}", cols, text);
         assert!(text.contains("\"float?\""), "the record keeps that a column can hold NULL: {}", text);
         assert!(ctx.describe_notes.iter().any(|n| n.contains("typed from .crow/schema")), "{:?}", ctx.describe_notes);
+        // not asked (CROW_NO_DESCRIBE): no database answers either, so the
+        // record types it too — and asking nothing writes nothing
+        let src = format!("use db\nbook = connect['sqlite://{}']\nr = query[book, 'SELECT sym, n, px FROM bars']\n", db.display());
+        let stmts = expand_module_imports(&build(&src).unwrap(), &dir, &mut std::collections::HashSet::new());
+        let ctx = infer_and_validate(&lower::lower_program(&stmts).unwrap(), false).unwrap();
+        let cols = ctx.frame_schemas.get("r").cloned().unwrap_or_default();
+        assert_eq!(cols.get("sym"), Some(&type_infer::CrowType::Result(Box::new(type_infer::CrowType::Str))), "{:?}", cols);
+        assert_eq!(std::fs::read_dir(dir.join(".crow/schema")).unwrap().count(), 1, "one statement kept, as before");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
