@@ -38,7 +38,7 @@ pub fn binop(
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a + b))),
             (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 + b))),
             (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a + *b as f64))),
-            (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add(b))))),
+            (Value::NumArray(a), Value::NumArray(b)) => a.try_elementwise(b, "+").map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))),
             (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add_scalar(*b as f64))))),
             (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add_scalar(*b))))),
             (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.add_scalar(*a as f64))))),
@@ -64,7 +64,7 @@ pub fn binop(
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a - b))),
             (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 - b))),
             (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a - *b as f64))),
-            (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.sub(b))))),
+            (Value::NumArray(a), Value::NumArray(b)) => a.try_elementwise(b, "-").map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))),
             (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add_scalar(-(*b as f64)))))),
             (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add_scalar(-*b))))),
             (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.neg().add_scalar(*a as f64))))),
@@ -189,7 +189,7 @@ pub fn binop(
             _ => Err("^ requires numbers".to_string()),
         },
         BinOp::ElemMul => match (&coerce_numeric_array(l), &coerce_numeric_array(r)) {
-            (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul(b))))),
+            (Value::NumArray(a), Value::NumArray(b)) => a.try_elementwise(b, ".*").map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))),
             (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(*b as f64))))),
             (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(*b))))),
             (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.mul_scalar(*a as f64))))),
@@ -197,7 +197,7 @@ pub fn binop(
             _ => Err(".* requires tensors or tensor and scalar".to_string()),
         },
         BinOp::ElemDiv => match (&coerce_numeric_array(l), &coerce_numeric_array(r)) {
-            (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.div(b))))),
+            (Value::NumArray(a), Value::NumArray(b)) => a.try_elementwise(b, "./").map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))),
             (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(1.0 / *b as f64))))),
             (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(1.0 / *b))))),
             (Value::Int(a), Value::NumArray(b)) => {
@@ -211,7 +211,7 @@ pub fn binop(
             _ => Err("./ requires tensors or tensor and scalar".to_string()),
         },
         BinOp::ElemPow => match (&coerce_numeric_array(l), &coerce_numeric_array(r)) {
-            (Value::NumArray(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.pow(b))))),
+            (Value::NumArray(a), Value::NumArray(b)) => a.try_elementwise(b, ".^").map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))),
             (Value::NumArray(a), Value::Int(b)) => {
                 let s = *b as f64;
                 Ok(CrowValue::ok(Value::NumArray(Box::new(a.map(|x| x.powf(s))))))

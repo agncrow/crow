@@ -278,7 +278,8 @@ broadcast (each pair of dimensions, aligned from the innermost, equal or
 one of them 1: `` `+` of tensors of shapes [2, 2] and [2, 3]: dimension 2
 is 2 in one and 3 in the other — … ``). A dimension the program computes
 (`zeros[n, 3]`) is not known, and nothing about it is refused before the
-program runs.
+program runs: an operation whose shapes do not meet stops the program
+where it runs, with the same words, in both modes.
 
 Scalar-array operations broadcast the scalar:
 

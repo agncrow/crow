@@ -160,9 +160,13 @@ broadcasting and through `*` as the matrix product, and refuses the
 certainly wrong with the message the program would stop with
 (`lower_ir/shapes.rs`). The shape lives in that analysis, not yet in
 `Ty::Tensor`: carrying it in the type waits for fusion, which needs it
-there. Found on the way: a broadcast mismatch the program computes
-panics in both modes rather than failing as an error (the runtime's
-`broadcast_shape`).
+there. Found on the way, and fixed: a broadcast mismatch the program
+computes panicked the interpreter (the runtime's `broadcast_shape`)
+while the compiled program reported it; both now stop with the words
+the refusal uses (`CrowTensor::try_elementwise`; the compiled program's
+`crow_stop`, which the matrix product's mismatch now uses too), and
+`crow test --parity` counts two modes stopping alike as agreeing
+(parity 96).
 
 ## 4. Order
 

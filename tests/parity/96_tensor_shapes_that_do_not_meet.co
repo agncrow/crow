@@ -1,0 +1,11 @@
+--- Two tensors whose shapes do not meet stop the program with the same
+--- words in both modes. Shapes the program states are refused before it
+--- runs; shapes it computes meet at run time, where an element-wise
+--- operation of shapes that do not broadcast stopped the interpreter with
+--- a crash (a panic in the runtime) while the compiled program reported it.
+use math
+fn grid[k]
+    return zeros[k, k]
+log[len[grid[2] + ones[2]]]
+log[len[grid[3] .* ones[3, 3]]]
+log[grid[2] + grid[3]]

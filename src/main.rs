@@ -882,6 +882,13 @@ fn cmd_test_parity() {
             println!("  ok    {}", name);
             continue;
         }
+        // both modes stopping at the same point with the same words is
+        // parity too (a crash's last line, a backtrace's note, never is)
+        let i_last = i_err.lines().last();
+        if !i_ok && !t_ok && i_out == t_out && i_last.is_some() && i_last == t_err.lines().last() {
+            println!("  ok    {} (both stop: {})", name, i_last.unwrap_or_default());
+            continue;
+        }
         failures += 1;
         println!("  FAIL  {}", name);
         if !i_ok {
