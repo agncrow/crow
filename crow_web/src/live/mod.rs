@@ -93,6 +93,10 @@ pub struct DerivedSlot {
     /// when the computation that produced it started, in the app's count:
     /// a recompute that started earlier never replaces a later one
     stamp: u64,
+    /// the session's count of the reader's actions when it was computed
+    /// (`CrowLiveState::acted`); none for a shared value, which no one
+    /// reader's action moves
+    acted_seen: u64,
 }
 
 impl std::fmt::Debug for DerivedSlot {
@@ -125,7 +129,9 @@ impl Inputs {
 /// What the cache holds for a derivation at a read.
 enum Found<T> {
     Fresh(T),
-    Stale(T),
+    /// A value whose inputs have moved, with the reader's actions it had
+    /// seen (`DerivedSlot::acted_seen`).
+    Stale(T, u64),
     Missing,
 }
 
@@ -318,6 +324,10 @@ pub struct CrowLiveState {
     /// one version per fact key, bumped by every set — what derivations
     /// compare their inputs against
     pub versions: HashMap<String, u64>,
+    /// how many times the reader has changed this session's facts (a
+    /// handler's commit, a bound input): a derivation computed before the
+    /// last one is behind the reader, and a view waiting on it shows so
+    pub acted: u64,
     /// the render this session is at, taken from the app-wide counter:
     /// what "as fresh as the loop" means
     pub tick: u64,
@@ -911,6 +921,7 @@ fn apply_field(state: &mut CrowLiveState, event: &str, value: Option<&str>) -> b
     if let Some(val) = value {
         if let Some(v) = coerce_field_value(state.get(key), val) {
             state.set(key, v);
+            state.acted += 1;
         }
     }
     true
@@ -989,6 +1000,7 @@ impl CrowLiveState {
         Self {
             data: HashMap::new(),
             versions: HashMap::new(),
+            acted: 0,
             tick: 0,
             derived: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
             sources: Vec::new(),
@@ -1081,12 +1093,17 @@ impl CrowLiveState {
             return Some(reason);
         }
         // the facts the handler changed land; the rest stay as they are now
+        let mut moved = false;
         for (key, value) in copy.data {
             let version = copy.versions.get(&key).copied();
             if version.is_some() && version != copy.base_versions.get(&key).copied() {
                 self.data.insert(key.clone(), value);
                 self.versions.insert(key, version.unwrap_or_default());
+                moved = true;
             }
+        }
+        if moved {
+            self.acted += 1;
         }
         for (t, v) in tables {
             self.tables_written.lock().unwrap_or_else(|p| p.into_inner()).insert(t.clone());
@@ -1304,6 +1321,7 @@ impl CrowLiveState {
         CrowLiveState {
             data: self.data.clone(),
             versions: self.versions.clone(),
+            acted: self.acted,
             tick: self.tick,
             derived: self.derived.clone(),
             sources: Vec::new(),
@@ -1549,13 +1567,20 @@ impl CrowLiveState {
             spec.tables.iter().any(|t| written.contains(*t))
         };
         if self.rendering() && !own_write {
+            // the view shows it is catching up while it is behind something
+            // the reader did — a value from before their last change, or
+            // none yet. One behind only a moving clock is where a query
+            // catching up with a playing clock always is: marked each tick,
+            // the panes it feeds dimmed and brightened every second
             let waiting = match found {
-                Found::Stale(v) => Some(v),
-                _ => pending.map(|p| p()),
+                Found::Stale(v, acted_seen) => Some((v, acted_seen < self.acted)),
+                _ => pending.map(|p| (p(), true)),
             };
-            if let Some(v) = waiting {
+            if let Some((v, behind)) = waiting {
                 self.schedule(spec, refresh, inputs.signature());
-                self.mark_stale();
+                if behind {
+                    self.mark_stale();
+                }
                 return v;
             }
         }
@@ -1602,7 +1627,7 @@ impl CrowLiveState {
             && same(&slot.tables_seen, &inputs.tables)
             && (!spec.now || fresh_tick(slot.tick_seen))
             && (!spec.external || if spec.fresh > 0.0 { inputs.now - slot.computed_at <= spec.fresh } else { fresh_tick(slot.tick_seen) });
-        if valid { Found::Fresh(v.clone()) } else { Found::Stale(v.clone()) }
+        if valid { Found::Fresh(v.clone()) } else { Found::Stale(v.clone(), slot.acted_seen) }
     }
 
     /// Compute the derivation and cache it with the inputs it saw. Equal
@@ -1641,6 +1666,7 @@ impl CrowLiveState {
             tick_seen: self.tick,
             computed_at: inputs.now,
             stamp,
+            acted_seen: if spec.shared { u64::MAX } else { self.acted },
         });
         value
     }
@@ -1763,6 +1789,7 @@ impl Clone for CrowLiveState {
         Self {
             data: self.data.clone(),
             versions: self.versions.clone(),
+            acted: self.acted,
             tick: self.tick,
             derived: std::sync::Arc::new(std::sync::Mutex::new(self.derived.lock().unwrap_or_else(|p| p.into_inner()).clone())),
             sources: self.sources.clone(),
@@ -4448,7 +4475,8 @@ mod tests {
             state.derive_bg(&SPEC, body, |a, b| a == b, None, read)
         }
         read(&s);
-        s.set("n", serde_json::json!(6));
+        // the reader changes what it reads, through a bound input
+        assert!(apply_field(&mut s, "__field:n", Some("6")));
         s.begin_render();
         let outer = s.view_enter();
         let inner = s.view_enter();
@@ -4460,6 +4488,36 @@ mod tests {
         assert!(html.contains("<p data-crow-stale"), "the view that read it is marked: {}", html);
         assert!(!html.contains("<div data-crow-stale"), "its parent is not: {}", html);
         settle(&s, "test_bg_marked");
+    }
+
+    /// A value behind only the moving clock — a query over a playing
+    /// replay's play-head, recomputed every tick — is where it always is
+    /// while the clock plays: the view that reads it is not marked, or it
+    /// dimmed and brightened every second (finch's scanner, its clock bar
+    /// and its highs and volumes so far).
+    #[test]
+    fn a_view_behind_only_the_clock_is_not_marked() {
+        let mut s = start_session(&CrowLiveState::new());
+        s.next_tick();
+        static SPEC: DeriveSpec = DeriveSpec { name: "test_bg_clock", facts: &[], derives: &[], tables: &["test_bg_clock_t"], now: true, external: false, fresh: 0.0, shared: false, keys: &[] };
+        fn body(_: &CrowLiveState) -> f64 {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            crow_runtime::moments::now()
+        }
+        fn read(state: &CrowLiveState) -> f64 {
+            state.derive_bg(&SPEC, body, |a, b| a == b, None, read)
+        }
+        read(&s);
+        // the clock moves: a new tick, nothing the reader did
+        s.next_tick();
+        s.begin_render();
+        let view = s.view_enter();
+        read(&s);
+        let node = s.view_exit(view, CrowVNode::tag("p", vec![]));
+        s.end_render();
+        let html = node.to_html();
+        assert!(!html.contains("data-crow-stale"), "a value behind the clock alone is not marked: {}", html);
+        settle(&s, "test_bg_clock");
     }
 
     #[test]

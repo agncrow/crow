@@ -9,8 +9,10 @@ that takes a while — and Crow treats them differently.
 
 A derivation that queries a database is computed off the render. When its
 value is stale, the page renders at once with the value it has, and renders
-again when the new value lands; a view still waiting on one is dimmed after
-a moment, so the reader can see that part is catching up. A click never
+again when the new value lands; a view still catching up with something
+the reader did is dimmed after a moment, so the reader can see that part is
+catching up. One that is only behind a moving clock is not dimmed: it is
+always one query behind while the clock plays. A click never
 waits for a query it did not cause. A query it did cause — the rows its own
 handler just inserted — is part of its answer:
 

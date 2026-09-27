@@ -206,6 +206,12 @@ The rest of the rules:
   read a derivation still recomputing carries `data-crow-stale`; the
   default stylesheet dims it slightly after 300 ms, so a fast recompute
   never flashes. A view that wants its own treatment reads `running[x]`.
+  *Amended 2026-09-27:* marked only while the value is behind the
+  reader's last change (or has none yet). A replay playing at 1x
+  recomputes its panes every tick, each one query behind the clock;
+  marked each tick, finch's scanner, clock bar and highs and volumes so
+  far dimmed and brightened every second (155 marks in 20 s), and not at
+  all after the change once they had caught up with Start and Play.
 - **Handlers read fresh.** A handler is already off the loop, so a
   stale derivation it reads is computed before the read: `r = trades`
   after `exec[book, 'INSERT …']` sees the insert. The handler waits; the
