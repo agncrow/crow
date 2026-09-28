@@ -132,9 +132,11 @@ pub fn render(tag: &str, attrs: &[(String, String)]) -> Rendered {
                 // 'm' or 'm l' (vertical horizontal)
                 let parts: Vec<&str> = v.split_whitespace().collect();
                 let pxs: Vec<Option<u32>> = parts.iter().map(|p| space_px(p)).collect();
-                if pxs.is_empty() || pxs.iter().any(|p| p.is_none()) { bad("spacing step (xs s m l xl)", &mut errors); }
-                else if pxs.len() == 1 { css.push(format!("padding:{}px", pxs[0].unwrap())); }
-                else { css.push(format!("padding:{}px {}px", pxs[0].unwrap(), pxs[1].unwrap())); }
+                match pxs.as_slice() {
+                    [Some(all)] => css.push(format!("padding:{}px", all)),
+                    [Some(v), Some(h)] => css.push(format!("padding:{}px {}px", v, h)),
+                    _ => bad("spacing step (xs s m l xl)", &mut errors),
+                }
             }
             "margin" => match space_px(v) { Some(px) => css.push(format!("margin:{}px 0", px)), None => bad("spacing step (xs s m l xl)", &mut errors) },
             "align" => match v { "start" => css.push("align-items:flex-start".into()), "center" => css.push("align-items:center".into()), "end" => css.push("align-items:flex-end".into()), "stretch" => css.push("align-items:stretch".into()), _ => bad("alignment (start center end stretch)", &mut errors) },

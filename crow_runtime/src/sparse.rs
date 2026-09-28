@@ -51,6 +51,7 @@ impl CrowSparse {
     }
 
     /// Sparse matrix-vector multiply: self * dense_vector → dense vector.
+    #[expect(clippy::panic, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
     pub fn matmul_dense(&self, other: &CrowTensor) -> CrowTensor {
         let other_shape = other.shape();
         let (srows, scols) = self.mat.shape();

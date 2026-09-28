@@ -14,6 +14,12 @@
 //! - Every module depends on `core`.
 //! - No module depends on any other module.
 
+// A runtime function answers its reason, or stops with it: it never
+// panics (docs/bug-classes.md §3). `cargo clippy`, which the gate and CI
+// run, refuses a panic, an unwrap or an expect that is not allowed with the
+// invariant that makes it safe.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unreachable, clippy::todo, clippy::unimplemented))]
+
 pub mod core;
 
 #[cfg(feature = "http")]

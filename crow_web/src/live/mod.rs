@@ -1685,7 +1685,7 @@ impl CrowLiveState {
         }
         let key = format!("{}:{}", self.session_id, name);
         {
-            let mut reg = later_registry().lock().unwrap();
+            let mut reg = crow_runtime::lock(later_registry());
             if !reg.insert(key.clone()) {
                 return false;
             }
@@ -1696,7 +1696,7 @@ impl CrowLiveState {
             struct InFlight(String);
             impl Drop for InFlight {
                 fn drop(&mut self) {
-                    later_registry().lock().unwrap().remove(&self.0);
+                    crow_runtime::lock(later_registry()).remove(&self.0);
                 }
             }
             let _guard = InFlight(key);
@@ -1720,10 +1720,7 @@ impl CrowLiveState {
 
     /// Is a later[] schedule for this session still in flight?
     pub fn later_running(&self, name: &str) -> bool {
-        later_registry()
-            .lock()
-            .unwrap()
-            .contains(&format!("{}:{}", self.session_id, name))
+        crow_runtime::lock(later_registry()).contains(&format!("{}:{}", self.session_id, name))
     }
 
     /// Get a value from state.
@@ -2716,8 +2713,9 @@ where
                                     render = true;
                                 }
                                 LiveAction::HandlerDone(done) => {
-                                    let (handler, seq, _) = running.take().expect("a handler was running");
-                                    later_registry().lock().unwrap_or_else(|p| p.into_inner()).remove(&format!("{}:{}", state.session_id, handler));
+                                    // only a running handler finishes
+                                    let Some((handler, seq, _)) = running.take() else { continue };
+                                    crow_runtime::lock(later_registry()).remove(&format!("{}:{}", state.session_id, handler));
                                     match done {
                                         Ok(copy) => {
                                             if let Some(reason) = state.commit(copy) {

@@ -122,8 +122,8 @@ fn rows_to_frame(rows: &[tokio_postgres::Row]) -> Result<CrowFrame, String> {
                     let v: Option<i64> = match *col_type {
                         Type::INT2 => row.get::<_, Option<i16>>(col_idx).map(|v| v as i64),
                         Type::INT4 => row.get::<_, Option<i32>>(col_idx).map(|v| v as i64),
-                        Type::INT8 => row.get::<_, Option<i64>>(col_idx),
-                        _ => unreachable!(),
+                        // INT8, the arm's last type
+                        _ => row.get::<_, Option<i64>>(col_idx),
                     };
                     match v {
                         Some(n) => vals.push(n),
@@ -137,8 +137,8 @@ fn rows_to_frame(rows: &[tokio_postgres::Row]) -> Result<CrowFrame, String> {
                 for (row_idx, row) in rows.iter().enumerate() {
                     let v: Option<f64> = match *col_type {
                         Type::FLOAT4 => row.get::<_, Option<f32>>(col_idx).map(|v| v as f64),
-                        Type::FLOAT8 => row.get::<_, Option<f64>>(col_idx),
-                        _ => unreachable!(),
+                        // FLOAT8, the arm's other type
+                        _ => row.get::<_, Option<f64>>(col_idx),
                     };
                     match v {
                         Some(n) => vals.push(n),
@@ -192,7 +192,8 @@ impl CrowPostgresDb {
     /// runs on a scoped thread when a runtime is already current.
     fn off_runtime<T: Send>(f: impl FnOnce() -> T + Send) -> T {
         if tokio::runtime::Handle::try_current().is_ok() {
-            std::thread::scope(|sc| sc.spawn(f).join().expect("postgres worker thread panicked"))
+            // a panic on the worker goes on as itself, on this thread
+            std::thread::scope(|sc| sc.spawn(f).join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
         } else {
             f()
         }

@@ -123,9 +123,8 @@ impl CrowClickhouseDb {
     /// hop to a scoped worker thread where blocking is legal.
     fn off_runtime<T: Send>(f: impl FnOnce() -> T + Send) -> T {
         if tokio::runtime::Handle::try_current().is_ok() {
-            std::thread::scope(|sc| {
-                sc.spawn(f).join().expect("clickhouse worker thread panicked")
-            })
+            // a panic on the worker goes on as itself, on this thread
+            std::thread::scope(|sc| sc.spawn(f).join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
         } else {
             f()
         }

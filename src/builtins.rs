@@ -294,27 +294,16 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
             let commas = matches!(&args[2].value, Value::Bool(true));
             let width = match &args[3].value { Value::Int(n) => *n, _ => return Err("fmt: width must be an int".into()) };
             let align = match &args[4].value { Value::Str(s) => s.clone(), _ => return Err("fmt: align must be a string".into()) };
-            if !align.is_empty() && align != "left" && align != "right" {
-                return Err(format!("fmt: align must be 'left' or 'right', got '{}'", align));
-            }
             let fill = match &args[5].value { Value::Str(s) => s.clone(), _ => return Err("fmt: fill must be a string".into()) };
             let percent = matches!(&args[6].value, Value::Bool(true));
-            match args[0].unwrap_or_propagate()? {
-                Value::Int(n) => Ok(CrowValue::ok(Value::Str(
-                    crow_runtime::display::crow_fmt_f64(*n as f64, decimals, commas, width, &align, &fill, percent),
-                ))),
-                Value::Float(f) => Ok(CrowValue::ok(Value::Str(
-                    crow_runtime::display::crow_fmt_f64(*f, decimals, commas, width, &align, &fill, percent),
-                ))),
-                Value::Str(s) => {
-                    if decimals >= 0 { return Err("fmt: decimals applies to numbers, not strings".into()); }
-                    if percent { return Err("fmt: percent applies to numbers, not strings".into()); }
-                    Ok(CrowValue::ok(Value::Str(
-                        crow_runtime::display::crow_fmt_str(s, -1, width, &align, &fill, false),
-                    )))
-                }
-                other => Err(format!("fmt: cannot format {}", other.type_name())),
-            }
+            // the kernel checks what it is given, for both modes
+            let text = match args[0].unwrap_or_propagate()? {
+                Value::Int(n) => crow_runtime::display::crow_fmt_f64(*n as f64, decimals, commas, width, &align, &fill, percent)?,
+                Value::Float(f) => crow_runtime::display::crow_fmt_f64(*f, decimals, commas, width, &align, &fill, percent)?,
+                Value::Str(s) => crow_runtime::display::crow_fmt_str(s, decimals, width, &align, &fill, percent)?,
+                other => return Err(format!("fmt: cannot format {}", other.type_name())),
+            };
+            Ok(CrowValue::ok(Value::Str(text)))
         }
         // --- Conversion builtins ---
         "int" => {

@@ -162,12 +162,16 @@ impl CrowTensor {
         self.strides == Self::row_major_strides(&self.shape)
     }
 
-    /// Get the underlying CPU data slice.
-    /// Panics if tensor is on GPU — call `to_cpu()` first.
-    fn cpu_data(&self) -> &[f64] {
+    /// The tensor's data on the CPU: its own storage, or a copy downloaded
+    /// from the GPU. An operation with no shader reads a GPU tensor this
+    /// way (`t[0]`, a broadcast, `diag` of a GPU matrix panicked).
+    fn cpu_data(&self) -> std::borrow::Cow<'_, [f64]> {
         match self.data.as_ref() {
-            TensorStorage::Cpu(v) => v,
-            TensorStorage::Gpu(_) => panic!("tensor is on GPU, call to_cpu() first"),
+            TensorStorage::Cpu(v) => std::borrow::Cow::Borrowed(v),
+            TensorStorage::Gpu(buf) => match crate::gpu::GpuContext::get() {
+                Some(ctx) => std::borrow::Cow::Owned(buf.to_f64(ctx)),
+                None => crate::stops::halt(0, "the GPU holding a tensor went away"),
+            },
         }
     }
 
@@ -177,8 +181,11 @@ impl CrowTensor {
         match self.data.as_ref() {
             TensorStorage::Cpu(_) => self.clone(),
             TensorStorage::Gpu(gpu_buf) => {
-                let ctx = crate::gpu::GpuContext::get()
-                    .expect("GPU context lost");
+                // a tensor on the GPU was put there through its context, which
+                // lives as long as the process: without it the machine failed
+                let Some(ctx) = crate::gpu::GpuContext::get() else {
+                    crate::stops::halt(0, "the GPU holding a tensor went away");
+                };
                 let data = gpu_buf.to_f64(ctx);
                 CrowTensor {
                     data: Arc::new(TensorStorage::Cpu(data)),
@@ -191,13 +198,16 @@ impl CrowTensor {
     }
 
     /// Transfer tensor data from CPU to GPU.
-    /// If already on GPU, returns self (no-op).
+    /// If already on GPU, returns self (no-op); with no GPU on the machine
+    /// the tensor stays on the CPU (spec, GPU Support: placed on the GPU
+    /// "when a GPU is available").
     pub fn to_gpu(&self) -> CrowTensor {
         match self.data.as_ref() {
             TensorStorage::Gpu(_) => self.clone(),
             TensorStorage::Cpu(_) => {
-                let ctx = crate::gpu::GpuContext::get()
-                    .expect("no GPU available");
+                let Some(ctx) = crate::gpu::GpuContext::get() else {
+                    return self.clone();
+                };
                 let cpu_data = self.to_vec(); // contiguous row-major
                 let gpu_buf = GpuBuffer::from_f64(ctx, &cpu_data);
                 CrowTensor {
@@ -396,6 +406,7 @@ impl CrowTensor {
     }
 
     /// Create a diagonal matrix from a 1D tensor, or extract the diagonal of a 2D tensor.
+    #[expect(clippy::panic, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
     pub fn diag(tensor: &CrowTensor) -> Self {
         if tensor.ndim() == 1 {
             // 1D → diagonal matrix
@@ -408,10 +419,11 @@ impl CrowTensor {
         } else if tensor.ndim() == 2 {
             // 2D → extract diagonal
             let n = tensor.shape[0].min(tensor.shape[1]);
+            let cpu = tensor.cpu_data();
             let data: Vec<f64> = (0..n)
                 .map(|i| {
                     let physical = tensor.offset + i * tensor.strides[0] + i * tensor.strides[1];
-                    tensor.cpu_data()[physical]
+                    cpu[physical]
                 })
                 .collect();
             Self::from_vec(data, vec![n])
@@ -455,6 +467,7 @@ impl CrowTensor {
     }
 
     /// Create a tensor with Poisson-distributed random values.
+    #[expect(clippy::expect_used, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
     pub fn poisson(shape: Vec<usize>, lambda: f64) -> Self {
         use rand_distr::Poisson;
         let dist: Poisson<f64> = Poisson::new(lambda).expect("poisson: lambda must be > 0");
@@ -467,6 +480,7 @@ impl CrowTensor {
     }
 
     /// Create a tensor with Bernoulli-distributed random values (0.0 or 1.0).
+    #[expect(clippy::expect_used, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
     pub fn bernoulli(shape: Vec<usize>, p: f64) -> Self {
         use rand_distr::Bernoulli;
         let dist = Bernoulli::new(p).expect("bernoulli: p must be in [0, 1]");
@@ -476,6 +490,7 @@ impl CrowTensor {
     }
 
     /// Create a tensor with Gamma-distributed random values.
+    #[expect(clippy::expect_used, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
     pub fn gamma_dist(shape: Vec<usize>, alpha: f64, beta: f64) -> Self {
         use rand_distr::Gamma;
         let dist: Gamma<f64> = Gamma::new(alpha, beta).expect("gamma_dist: alpha and beta must be > 0");
@@ -485,6 +500,7 @@ impl CrowTensor {
     }
 
     /// Create a tensor with Beta-distributed random values.
+    #[expect(clippy::expect_used, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
     pub fn beta_dist(shape: Vec<usize>, alpha: f64, beta: f64) -> Self {
         use rand_distr::Beta;
         let dist: Beta<f64> = Beta::new(alpha, beta).expect("beta_dist: alpha and beta must be > 0");
@@ -494,6 +510,7 @@ impl CrowTensor {
     }
 
     /// Create a tensor with Exponential-distributed random values.
+    #[expect(clippy::expect_used, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
     pub fn exponential(shape: Vec<usize>, lambda: f64) -> Self {
         use rand_distr::Exp;
         let dist: Exp<f64> = Exp::new(lambda).expect("exponential: lambda must be > 0");
@@ -632,6 +649,7 @@ impl CrowTensor {
         let n = Self::numel(&out_shape);
         let mut data = Vec::with_capacity(n);
         let out_strides = Self::row_major_strides(&out_shape);
+        let (a_data, b_data) = (self.cpu_data(), other.cpu_data());
         for flat in 0..n {
             let mut remaining = flat;
             let mut a_idx = 0usize;
@@ -654,14 +672,15 @@ impl CrowTensor {
                     b_idx += b_dim_idx * other.strides[b_d];
                 }
             }
-            let a_val = self.cpu_data()[self.offset + a_idx];
-            let b_val = other.cpu_data()[other.offset + b_idx];
+            let a_val = a_data[self.offset + a_idx];
+            let b_val = b_data[other.offset + b_idx];
             data.push(f(a_val, b_val));
         }
         Self::from_vec(data, out_shape)
     }
 
     /// Compute broadcast-compatible output shape.
+    #[expect(clippy::panic, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
     fn broadcast_shape(a: &[usize], b: &[usize]) -> Vec<usize> {
         let max_ndim = a.len().max(b.len());
         let mut out = Vec::with_capacity(max_ndim);
@@ -705,7 +724,7 @@ impl CrowTensor {
     }
 
     /// GPU-dispatched binary op, or CPU fallback.
-    fn gpu_binary_or_cpu(&self, other: &CrowTensor, op: &str, cpu_fn: impl Fn(f64, f64) -> f64) -> CrowTensor {
+    fn gpu_binary_or_cpu(&self, other: &CrowTensor, op: gpu::BinaryOp, cpu_fn: impl Fn(f64, f64) -> f64) -> CrowTensor {
         if let (Some(a_buf), Some(b_buf)) = (self.gpu_buffer(), other.gpu_buffer()) {
             if let Some(ctx) = GpuContext::get() {
                 let out = gpu::gpu_elementwise_binary(ctx, a_buf, b_buf, op);
@@ -716,7 +735,7 @@ impl CrowTensor {
     }
 
     /// GPU-dispatched unary op, or CPU fallback.
-    fn gpu_unary_or_cpu(&self, op: &str, cpu_fn: impl Fn(f64) -> f64) -> CrowTensor {
+    fn gpu_unary_or_cpu(&self, op: gpu::UnaryOp, cpu_fn: impl Fn(f64) -> f64) -> CrowTensor {
         if let Some(buf) = self.gpu_buffer() {
             if let Some(ctx) = GpuContext::get() {
                 let out = gpu::gpu_elementwise_unary(ctx, buf, op);
@@ -753,35 +772,35 @@ impl CrowTensor {
     }
 
     pub fn add(&self, other: &CrowTensor) -> CrowTensor {
-        self.gpu_binary_or_cpu(other, "add", |a, b| a + b)
+        self.gpu_binary_or_cpu(other, gpu::BinaryOp::Add, |a, b| a + b)
     }
 
     pub fn sub(&self, other: &CrowTensor) -> CrowTensor {
-        self.gpu_binary_or_cpu(other, "sub", |a, b| a - b)
+        self.gpu_binary_or_cpu(other, gpu::BinaryOp::Sub, |a, b| a - b)
     }
 
     pub fn mul(&self, other: &CrowTensor) -> CrowTensor {
-        self.gpu_binary_or_cpu(other, "mul", |a, b| a * b)
+        self.gpu_binary_or_cpu(other, gpu::BinaryOp::Mul, |a, b| a * b)
     }
 
     pub fn div(&self, other: &CrowTensor) -> CrowTensor {
-        self.gpu_binary_or_cpu(other, "div", |a, b| a / b)
+        self.gpu_binary_or_cpu(other, gpu::BinaryOp::Div, |a, b| a / b)
     }
 
     pub fn neg(&self) -> CrowTensor {
-        self.gpu_unary_or_cpu("neg", |x| -x)
+        self.gpu_unary_or_cpu(gpu::UnaryOp::Neg, |x| -x)
     }
 
     pub fn abs(&self) -> CrowTensor {
-        self.gpu_unary_or_cpu("abs", |x| x.abs())
+        self.gpu_unary_or_cpu(gpu::UnaryOp::Abs, |x| x.abs())
     }
 
     pub fn exp(&self) -> CrowTensor {
-        self.gpu_unary_or_cpu("exp", |x| x.exp())
+        self.gpu_unary_or_cpu(gpu::UnaryOp::Exp, |x| x.exp())
     }
 
     pub fn log(&self) -> CrowTensor {
-        self.gpu_unary_or_cpu("log", |x| x.ln())
+        self.gpu_unary_or_cpu(gpu::UnaryOp::Log, |x| x.ln())
     }
 
     pub fn log2(&self) -> CrowTensor {
@@ -793,15 +812,15 @@ impl CrowTensor {
     }
 
     pub fn sqrt(&self) -> CrowTensor {
-        self.gpu_unary_or_cpu("sqrt", |x| x.sqrt())
+        self.gpu_unary_or_cpu(gpu::UnaryOp::Sqrt, |x| x.sqrt())
     }
 
     pub fn sin(&self) -> CrowTensor {
-        self.gpu_unary_or_cpu("sin", |x| x.sin())
+        self.gpu_unary_or_cpu(gpu::UnaryOp::Sin, |x| x.sin())
     }
 
     pub fn cos(&self) -> CrowTensor {
-        self.gpu_unary_or_cpu("cos", |x| x.cos())
+        self.gpu_unary_or_cpu(gpu::UnaryOp::Cos, |x| x.cos())
     }
 
     pub fn pow(&self, exponent: &CrowTensor) -> CrowTensor {
@@ -813,7 +832,7 @@ impl CrowTensor {
     pub fn add_scalar(&self, s: f64) -> CrowTensor {
         if let Some(buf) = self.gpu_buffer() {
             if let Some(ctx) = GpuContext::get() {
-                let out = gpu::gpu_scalar_op(ctx, buf, s as f32, "add");
+                let out = gpu::gpu_scalar_op(ctx, buf, s as f32, gpu::ScalarOp::Add);
                 return self.from_gpu_buffer(out);
             }
         }
@@ -824,7 +843,7 @@ impl CrowTensor {
     pub fn mul_scalar(&self, s: f64) -> CrowTensor {
         if let Some(buf) = self.gpu_buffer() {
             if let Some(ctx) = GpuContext::get() {
-                let out = gpu::gpu_scalar_op(ctx, buf, s as f32, "mul");
+                let out = gpu::gpu_scalar_op(ctx, buf, s as f32, gpu::ScalarOp::Mul);
                 return self.from_gpu_buffer(out);
             }
         }
@@ -868,7 +887,9 @@ impl CrowTensor {
     // ── Trigonometry ────────────────────────────────────────────────────
 
     pub fn tan(&self) -> CrowTensor {
-        self.gpu_unary_or_cpu("tan", |x| x.tan())
+        // (a string op once named a shader the GPU did not have: `tan` of a
+        // tensor on the GPU panicked)
+        self.gpu_unary_or_cpu(gpu::UnaryOp::Tan, |x| x.tan())
     }
 
     pub fn asin(&self) -> CrowTensor {

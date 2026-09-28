@@ -29,14 +29,14 @@ impl CrowSessionStore {
     /// Create a new session and return its ID.
     pub fn create(&self) -> String {
         let id = uuid::Uuid::new_v4().to_string();
-        let mut store = self.inner.lock().unwrap();
+        let mut store = crow_runtime::lock(&self.inner);
         store.insert(id.clone(), HashMap::new());
         id
     }
 
     /// Set a value in a session.
     pub fn set(&self, session_id: &str, key: &str, value: serde_json::Value) {
-        let mut store = self.inner.lock().unwrap();
+        let mut store = crow_runtime::lock(&self.inner);
         if let Some(session) = store.get_mut(session_id) {
             session.insert(key.to_string(), value);
         }
@@ -44,13 +44,13 @@ impl CrowSessionStore {
 
     /// Get a value from a session.
     pub fn get(&self, session_id: &str, key: &str) -> Option<serde_json::Value> {
-        let store = self.inner.lock().unwrap();
+        let store = crow_runtime::lock(&self.inner);
         store.get(session_id)?.get(key).cloned()
     }
 
     /// Remove a value from a session.
     pub fn remove(&self, session_id: &str, key: &str) {
-        let mut store = self.inner.lock().unwrap();
+        let mut store = crow_runtime::lock(&self.inner);
         if let Some(session) = store.get_mut(session_id) {
             session.remove(key);
         }
@@ -58,19 +58,19 @@ impl CrowSessionStore {
 
     /// Destroy a session entirely.
     pub fn destroy(&self, session_id: &str) {
-        let mut store = self.inner.lock().unwrap();
+        let mut store = crow_runtime::lock(&self.inner);
         store.remove(session_id);
     }
 
     /// Check if a session exists.
     pub fn exists(&self, session_id: &str) -> bool {
-        let store = self.inner.lock().unwrap();
+        let store = crow_runtime::lock(&self.inner);
         store.contains_key(session_id)
     }
 
     /// Get all data for a session.
     pub fn all(&self, session_id: &str) -> Option<HashMap<String, serde_json::Value>> {
-        let store = self.inner.lock().unwrap();
+        let store = crow_runtime::lock(&self.inner);
         store.get(session_id).cloned()
     }
 }

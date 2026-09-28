@@ -28,6 +28,24 @@ pub fn is_distributed() -> bool {
     DIST_INITIALIZED.load(Ordering::SeqCst)
 }
 
+/// A cluster that cannot form, or a peer that stops answering, is the
+/// machine failing, not the program: the process stops with the reason, the
+/// same in both modes, and never panics (docs/bug-classes.md §3).
+fn fail(why: String) -> ! {
+    crate::stops::halt(0, &why)
+}
+
+const NOT_STARTED: &str = "the cluster was not started: nodes[n] starts it";
+
+/// Eight bytes of a message from another rank at `pos`, or the stop a
+/// message cut short is.
+fn word(bytes: &[u8], pos: usize) -> [u8; 8] {
+    match bytes.get(pos..pos + 8).and_then(|b| <[u8; 8]>::try_from(b).ok()) {
+        Some(w) => w,
+        None => fail(format!("rank {}: a message from another rank was cut short", rank())),
+    }
+}
+
 /// Get the rank of this process.
 pub fn rank() -> usize {
     DIST_RANK.load(Ordering::SeqCst)
@@ -49,12 +67,12 @@ pub fn init(expected_world_size: usize) {
     let rank: usize = std::env::var("CROW_RANK")
         .unwrap_or_else(|_| "0".to_string())
         .parse()
-        .expect("CROW_RANK must be a non-negative integer");
+        .unwrap_or_else(|_| fail("CROW_RANK must be a non-negative integer".to_string()));
 
     let ws: usize = std::env::var("CROW_WORLD_SIZE")
         .unwrap_or_else(|_| expected_world_size.to_string())
         .parse()
-        .expect("CROW_WORLD_SIZE must be a positive integer");
+        .unwrap_or_else(|_| fail("CROW_WORLD_SIZE must be a positive integer".to_string()));
 
     let master_addr = std::env::var("CROW_MASTER_ADDR")
         .unwrap_or_else(|_| "127.0.0.1".to_string());
@@ -62,7 +80,7 @@ pub fn init(expected_world_size: usize) {
     let base_port: u16 = std::env::var("CROW_MASTER_PORT")
         .unwrap_or_else(|_| "29500".to_string())
         .parse()
-        .expect("CROW_MASTER_PORT must be a valid port number");
+        .unwrap_or_else(|_| fail("CROW_MASTER_PORT must be a valid port number".to_string()));
 
     DIST_RANK.store(rank, Ordering::SeqCst);
     DIST_WORLD_SIZE.store(ws, Ordering::SeqCst);
@@ -86,14 +104,14 @@ pub fn init(expected_world_size: usize) {
 
     // Start listener for incoming connection from previous rank
     let listener = TcpListener::bind(format!("{}:{}", master_addr, my_port))
-        .unwrap_or_else(|e| panic!("rank {}: failed to bind port {}: {}", rank, my_port, e));
+        .unwrap_or_else(|e| fail(format!("rank {}: failed to bind port {}: {}", rank, my_port, e)));
 
     // Connect to next rank (with retries)
     let send_stream = connect_with_retry(&master_addr, next_port, rank, next_rank);
 
     // Accept connection from previous rank
     let (recv_stream, _addr) = listener.accept()
-        .unwrap_or_else(|e| panic!("rank {}: failed to accept connection: {}", rank, e));
+        .unwrap_or_else(|e| fail(format!("rank {}: failed to accept connection: {}", rank, e)));
 
     DIST_PEERS.get_or_init(|| Mutex::new(DistPeers {
         send_stream: Some(send_stream),
@@ -119,32 +137,37 @@ fn connect_with_retry(addr: &str, port: u16, my_rank: usize, target_rank: usize)
             }
         }
     }
-    panic!("rank {}: failed to connect to rank {} at {} after 6 seconds", my_rank, target_rank, target);
+    fail(format!("rank {}: failed to connect to rank {} at {} after 6 seconds", my_rank, target_rank, target))
 }
 
 /// Send raw bytes over the ring to the next rank.
 fn send_bytes(data: &[u8]) {
-    let peers = DIST_PEERS.get().expect("distributed not initialized");
-    let mut peers = peers.lock().unwrap();
+    let peers = DIST_PEERS.get().unwrap_or_else(|| fail(NOT_STARTED.to_string()));
+    let mut peers = crate::lock(peers);
     if let Some(ref mut stream) = peers.send_stream {
         // Send length prefix (8 bytes, little-endian)
         let len = data.len() as u64;
-        stream.write_all(&len.to_le_bytes()).expect("send length failed");
-        stream.write_all(data).expect("send data failed");
-        stream.flush().expect("flush failed");
+        let sent = stream.write_all(&len.to_le_bytes()).and_then(|_| stream.write_all(data)).and_then(|_| stream.flush());
+        if let Err(e) = sent {
+            fail(format!("rank {}: sending to the next rank failed: {}", rank(), e));
+        }
     }
 }
 
 /// Receive raw bytes from the previous rank in the ring.
 fn recv_bytes() -> Vec<u8> {
-    let peers = DIST_PEERS.get().expect("distributed not initialized");
-    let mut peers = peers.lock().unwrap();
+    let peers = DIST_PEERS.get().unwrap_or_else(|| fail(NOT_STARTED.to_string()));
+    let mut peers = crate::lock(peers);
     if let Some(ref mut stream) = peers.recv_stream {
         let mut len_buf = [0u8; 8];
-        stream.read_exact(&mut len_buf).expect("recv length failed");
+        if let Err(e) = stream.read_exact(&mut len_buf) {
+            fail(format!("rank {}: receiving from the previous rank failed: {}", rank(), e));
+        }
         let len = u64::from_le_bytes(len_buf) as usize;
         let mut data = vec![0u8; len];
-        stream.read_exact(&mut data).expect("recv data failed");
+        if let Err(e) = stream.read_exact(&mut data) {
+            fail(format!("rank {}: receiving from the previous rank failed: {}", rank(), e));
+        }
         data
     } else {
         Vec::new()
@@ -175,21 +198,21 @@ fn tensor_to_bytes(t: &CrowTensor) -> Vec<u8> {
 fn tensor_from_bytes(bytes: &[u8]) -> CrowTensor {
     let mut pos = 0;
     // shape length
-    let shape_len = u64::from_le_bytes(bytes[pos..pos+8].try_into().unwrap()) as usize;
+    let shape_len = u64::from_le_bytes(word(bytes, pos)) as usize;
     pos += 8;
     // shape values
     let mut shape = Vec::with_capacity(shape_len);
     for _ in 0..shape_len {
-        shape.push(u64::from_le_bytes(bytes[pos..pos+8].try_into().unwrap()) as usize);
+        shape.push(u64::from_le_bytes(word(bytes, pos)) as usize);
         pos += 8;
     }
     // data length
-    let data_len = u64::from_le_bytes(bytes[pos..pos+8].try_into().unwrap()) as usize;
+    let data_len = u64::from_le_bytes(word(bytes, pos)) as usize;
     pos += 8;
     // data values
     let mut data = Vec::with_capacity(data_len);
     for _ in 0..data_len {
-        data.push(f64::from_le_bytes(bytes[pos..pos+8].try_into().unwrap()));
+        data.push(f64::from_le_bytes(word(bytes, pos)));
         pos += 8;
     }
     CrowTensor::from_vec(data, shape)
@@ -236,7 +259,7 @@ pub fn allreduce_mean(tensor: &CrowTensor) -> CrowTensor {
 
         // Accumulate
         let recv_chunk: Vec<f64> = recv_data.chunks_exact(8)
-            .map(|b| f64::from_le_bytes(b.try_into().unwrap()))
+            .map(|b| f64::from_le_bytes(b.try_into().unwrap_or_default()))
             .collect();
         for (i, &v) in recv_chunk.iter().enumerate() {
             if recv_start + i < n {
@@ -263,7 +286,7 @@ pub fn allreduce_mean(tensor: &CrowTensor) -> CrowTensor {
         let _recv_end = std::cmp::min(recv_start + chunk_size, n);
 
         let recv_chunk: Vec<f64> = recv_data.chunks_exact(8)
-            .map(|b| f64::from_le_bytes(b.try_into().unwrap()))
+            .map(|b| f64::from_le_bytes(b.try_into().unwrap_or_default()))
             .collect();
         for (i, &v) in recv_chunk.iter().enumerate() {
             if recv_start + i < n {
@@ -364,7 +387,7 @@ pub fn finalize() {
     barrier();
     // Drop connections
     if let Some(peers) = DIST_PEERS.get() {
-        let mut peers = peers.lock().unwrap();
+        let mut peers = crate::lock(&peers);
         peers.send_stream = None;
         peers.recv_stream = None;
     }

@@ -678,12 +678,14 @@ impl Builder {
         }
         let list = self.current();
         match list.last_mut() {
-            Some(CrowVNode::Text(prev)) => {
-                if source.contains('&') {
-                    let merged = format!("{}{}", html_escape(prev), source);
-                    *list.last_mut().expect("just seen") = CrowVNode::Raw(merged);
-                } else {
-                    prev.push_str(source);
+            Some(last @ CrowVNode::Text(_)) => {
+                if let CrowVNode::Text(prev) = last {
+                    if source.contains('&') {
+                        let merged = format!("{}{}", html_escape(prev), source);
+                        *last = CrowVNode::Raw(merged);
+                    } else {
+                        prev.push_str(source);
+                    }
                 }
             }
             Some(CrowVNode::Raw(prev)) if !prev.starts_with("<!--") => prev.push_str(source),

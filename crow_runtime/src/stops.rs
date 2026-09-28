@@ -161,6 +161,7 @@ pub struct Stop(pub String);
 /// stop of its earliest failing item, once, as the interpreter does; on a
 /// server's thread the live runtime contains it and the handler stops
 /// with nothing it did landing.
+#[allow(clippy::panic, reason = "a stop off the main thread travels as a panic to the thread that joins it")]
 pub fn halt(line: usize, why: &str) -> ! {
     let text = if line > 0 { format!("line {}: {}", line, why) } else { why.to_string() };
     if std::thread::current().name() == Some("main") {

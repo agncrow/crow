@@ -147,6 +147,7 @@ impl CrowTensor {
 
     /// Singular Value Decomposition: self = U * diag(S) * Vt.
     /// Returns (U, S, Vt) where S is a 1D tensor of singular values.
+    #[expect(clippy::expect_used, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
     pub fn svd_decomp(&self) -> (CrowTensor, CrowTensor, CrowTensor) {
         let a = tensor_to_mat(self);
         let svd = a.thin_svd().expect("svd: decomposition failed");
@@ -175,6 +176,7 @@ impl CrowTensor {
 
     /// Cholesky decomposition: self = L * L^T.
     /// Self must be symmetric positive definite. Returns L (lower triangular).
+    #[expect(clippy::expect_used, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
     pub fn cholesky_decomp(&self) -> CrowTensor {
         let a = tensor_to_mat(self);
         let llt = a.llt(Side::Lower).expect("cholesky: matrix is not positive definite");
@@ -300,6 +302,7 @@ impl CrowTensor {
     /// Eigendecomposition of a square matrix.
     /// Returns (eigenvalues_real, eigenvalues_imag).
     /// For symmetric matrices, imaginary parts will be zero.
+    #[expect(clippy::expect_used, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
     pub fn eigen_decomp(&self) -> (CrowTensor, CrowTensor) {
         let a = tensor_to_mat(self);
         let n = a.nrows();

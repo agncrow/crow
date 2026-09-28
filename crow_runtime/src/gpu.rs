@@ -119,10 +119,17 @@ impl GpuBuffer {
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
-            tx.send(result).unwrap();
+            // the receiver waits below for exactly this
+            let _ = tx.send(result);
         });
         let _ = ctx.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None });
-        rx.recv().unwrap().unwrap();
+        // a device that cannot hand its results back is the machine failing,
+        // not the program: a stop with its reason (docs/bug-classes.md §3)
+        match rx.recv() {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => crate::stops::halt(0, &format!("the GPU could not hand its results back: {}", e)),
+            Err(_) => crate::stops::halt(0, "the GPU could not hand its results back"),
+        }
 
         let data = slice.get_mapped_range();
         let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
@@ -145,22 +152,50 @@ impl GpuBuffer {
 
 // ── WGSL Compute Shaders ──────────────────────────────────────────────
 
+/// An element-wise operation between two buffers: a closed set, so no op
+/// the shaders lack can be asked for.
+#[derive(Clone, Copy, Debug)]
+pub enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+/// An element-wise operation on one buffer.
+#[derive(Clone, Copy, Debug)]
+pub enum UnaryOp {
+    Neg,
+    Abs,
+    Exp,
+    Log,
+    Sqrt,
+    Sin,
+    Cos,
+    Tan,
+}
+
+/// An operation between a buffer and a scalar.
+#[derive(Clone, Copy, Debug)]
+pub enum ScalarOp {
+    Add,
+    Mul,
+}
+
 /// Element-wise binary operation on GPU.
-/// op_code: "add", "sub", "mul", "div"
 pub fn gpu_elementwise_binary(
     ctx: &GpuContext,
     a: &GpuBuffer,
     b: &GpuBuffer,
-    op: &str,
+    op: BinaryOp,
 ) -> GpuBuffer {
     assert_eq!(a.len, b.len, "gpu binary op: mismatched lengths");
 
     let op_expr = match op {
-        "add" => "a[idx] + b[idx]",
-        "sub" => "a[idx] - b[idx]",
-        "mul" => "a[idx] * b[idx]",
-        "div" => "a[idx] / b[idx]",
-        _ => panic!("unknown gpu binary op: {op}"),
+        BinaryOp::Add => "a[idx] + b[idx]",
+        BinaryOp::Sub => "a[idx] - b[idx]",
+        BinaryOp::Mul => "a[idx] * b[idx]",
+        BinaryOp::Div => "a[idx] / b[idx]",
     };
 
     let shader_src = format!(
@@ -183,21 +218,20 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 }
 
 /// Element-wise unary operation on GPU.
-/// op: "neg", "abs", "exp", "log", "sqrt", "sin", "cos"
 pub fn gpu_elementwise_unary(
     ctx: &GpuContext,
     input: &GpuBuffer,
-    op: &str,
+    op: UnaryOp,
 ) -> GpuBuffer {
     let op_expr = match op {
-        "neg" => "-a[idx]",
-        "abs" => "abs(a[idx])",
-        "exp" => "exp(a[idx])",
-        "log" => "log(a[idx])",
-        "sqrt" => "sqrt(a[idx])",
-        "sin" => "sin(a[idx])",
-        "cos" => "cos(a[idx])",
-        _ => panic!("unknown gpu unary op: {op}"),
+        UnaryOp::Neg => "-a[idx]",
+        UnaryOp::Abs => "abs(a[idx])",
+        UnaryOp::Exp => "exp(a[idx])",
+        UnaryOp::Log => "log(a[idx])",
+        UnaryOp::Sqrt => "sqrt(a[idx])",
+        UnaryOp::Sin => "sin(a[idx])",
+        UnaryOp::Cos => "cos(a[idx])",
+        UnaryOp::Tan => "tan(a[idx])",
     };
 
     let shader_src = format!(
@@ -223,12 +257,11 @@ pub fn gpu_scalar_op(
     ctx: &GpuContext,
     input: &GpuBuffer,
     scalar: f32,
-    op: &str,
+    op: ScalarOp,
 ) -> GpuBuffer {
     let op_expr = match op {
-        "add" => format!("a[idx] + {scalar:.10}"),
-        "mul" => format!("a[idx] * {scalar:.10}"),
-        _ => panic!("unknown gpu scalar op: {op}"),
+        ScalarOp::Add => format!("a[idx] + {scalar:.10}"),
+        ScalarOp::Mul => format!("a[idx] * {scalar:.10}"),
     };
 
     let shader_src = format!(
@@ -691,6 +724,22 @@ mod tests {
         GpuContext::get()
     }
 
+    /// An operation with no shader reads a GPU tensor's data through a
+    /// download: indexing, a broadcast and `diag` of a GPU tensor panicked
+    /// ("tensor is on GPU").
+    #[test]
+    fn a_gpu_tensor_is_read_by_operations_without_a_shader() {
+        let Some(_ctx) = skip_if_no_gpu() else { return };
+        use crate::tensor::CrowTensor;
+        let t = CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]).to_gpu();
+        assert!(t.is_gpu());
+        assert_eq!(t.get_flat(1), 2.0);
+        let m = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]).to_gpu();
+        let row = CrowTensor::from_vec(vec![10.0, 20.0], vec![2]);
+        assert_eq!(m.zip_with(&row, |a, b| a + b).to_vec(), vec![11.0, 22.0, 13.0, 24.0]);
+        assert_eq!(CrowTensor::diag(&m).to_vec(), vec![1.0, 4.0]);
+    }
+
     #[test]
     fn test_gpu_available() {
         // Just check it doesn't panic
@@ -713,7 +762,7 @@ mod tests {
         let Some(ctx) = skip_if_no_gpu() else { return };
         let a = GpuBuffer::from_f64(ctx, &[1.0, 2.0, 3.0, 4.0]);
         let b = GpuBuffer::from_f64(ctx, &[10.0, 20.0, 30.0, 40.0]);
-        let c = gpu_elementwise_binary(ctx, &a, &b, "add");
+        let c = gpu_elementwise_binary(ctx, &a, &b, BinaryOp::Add);
         let result = c.to_f64(ctx);
         assert_eq!(result.len(), 4);
         for (got, expected) in result.iter().zip([11.0, 22.0, 33.0, 44.0].iter()) {
@@ -726,7 +775,7 @@ mod tests {
         let Some(ctx) = skip_if_no_gpu() else { return };
         let a = GpuBuffer::from_f64(ctx, &[2.0, 3.0, 4.0]);
         let b = GpuBuffer::from_f64(ctx, &[5.0, 6.0, 7.0]);
-        let c = gpu_elementwise_binary(ctx, &a, &b, "mul");
+        let c = gpu_elementwise_binary(ctx, &a, &b, BinaryOp::Mul);
         let result = c.to_f64(ctx);
         for (got, expected) in result.iter().zip([10.0, 18.0, 28.0].iter()) {
             assert!((got - expected).abs() < 1e-4);
@@ -737,7 +786,7 @@ mod tests {
     fn test_gpu_neg() {
         let Some(ctx) = skip_if_no_gpu() else { return };
         let a = GpuBuffer::from_f64(ctx, &[1.0, -2.0, 3.0]);
-        let c = gpu_elementwise_unary(ctx, &a, "neg");
+        let c = gpu_elementwise_unary(ctx, &a, UnaryOp::Neg);
         let result = c.to_f64(ctx);
         for (got, expected) in result.iter().zip([-1.0, 2.0, -3.0].iter()) {
             assert!((got - expected).abs() < 1e-5);
@@ -748,7 +797,7 @@ mod tests {
     fn test_gpu_exp() {
         let Some(ctx) = skip_if_no_gpu() else { return };
         let a = GpuBuffer::from_f64(ctx, &[0.0, 1.0]);
-        let c = gpu_elementwise_unary(ctx, &a, "exp");
+        let c = gpu_elementwise_unary(ctx, &a, UnaryOp::Exp);
         let result = c.to_f64(ctx);
         assert!((result[0] - 1.0).abs() < 1e-5);
         assert!((result[1] - std::f64::consts::E).abs() < 1e-3); // f32 precision
@@ -758,7 +807,7 @@ mod tests {
     fn test_gpu_scalar_add() {
         let Some(ctx) = skip_if_no_gpu() else { return };
         let a = GpuBuffer::from_f64(ctx, &[1.0, 2.0, 3.0]);
-        let c = gpu_scalar_op(ctx, &a, 10.0, "add");
+        let c = gpu_scalar_op(ctx, &a, 10.0, ScalarOp::Add);
         let result = c.to_f64(ctx);
         for (got, expected) in result.iter().zip([11.0, 12.0, 13.0].iter()) {
             assert!((got - expected).abs() < 1e-5);
@@ -860,12 +909,12 @@ mod tests {
         let buf = GpuBuffer::from_f64(ctx, &data);
 
         // Test all unary ops produce reasonable results
-        for op in &["neg", "abs", "exp", "log", "sqrt", "sin", "cos"] {
+        for op in [UnaryOp::Neg, UnaryOp::Abs, UnaryOp::Exp, UnaryOp::Log, UnaryOp::Sqrt, UnaryOp::Sin, UnaryOp::Cos] {
             let result = gpu_elementwise_unary(ctx, &buf, op);
             let out = result.to_f64(ctx);
-            assert_eq!(out.len(), 4, "unary op {op} should preserve length");
+            assert_eq!(out.len(), 4, "unary op {op:?} should preserve length");
             for v in &out {
-                assert!(v.is_finite(), "unary op {op} produced non-finite: {v}");
+                assert!(v.is_finite(), "unary op {op:?} produced non-finite: {v}");
             }
         }
     }
@@ -876,12 +925,12 @@ mod tests {
         let a = GpuBuffer::from_f64(ctx, &[10.0, 20.0, 30.0, 40.0]);
         let b = GpuBuffer::from_f64(ctx, &[2.0, 4.0, 5.0, 8.0]);
 
-        for op in &["add", "sub", "mul", "div"] {
+        for op in [BinaryOp::Add, BinaryOp::Sub, BinaryOp::Mul, BinaryOp::Div] {
             let result = gpu_elementwise_binary(ctx, &a, &b, op);
             let out = result.to_f64(ctx);
-            assert_eq!(out.len(), 4, "binary op {op} should preserve length");
+            assert_eq!(out.len(), 4, "binary op {op:?} should preserve length");
             for v in &out {
-                assert!(v.is_finite(), "binary op {op} produced non-finite: {v}");
+                assert!(v.is_finite(), "binary op {op:?} produced non-finite: {v}");
             }
         }
     }
@@ -936,7 +985,7 @@ mod tests {
             // GPU: upload + exp + download
             let t0 = Instant::now();
             let buf = GpuBuffer::from_f64(ctx, &data);
-            let out = gpu_elementwise_unary(ctx, &buf, "exp");
+            let out = gpu_elementwise_unary(ctx, &buf, UnaryOp::Exp);
             let _result = out.to_f64(ctx);
             let gpu_time = t0.elapsed();
 

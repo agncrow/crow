@@ -48,7 +48,7 @@ impl CrowRateLimiter {
     /// Check if a request from `key` (e.g. IP address) is allowed.
     /// Returns `true` if allowed, `false` if rate-limited.
     pub fn check(&self, key: &str) -> bool {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = crow_runtime::lock(&self.inner);
         let now = Instant::now();
         let max_tokens = inner.max_tokens;
         let refill_rate = inner.refill_rate;
@@ -75,7 +75,7 @@ impl CrowRateLimiter {
 
     /// Get remaining tokens for a key.
     pub fn remaining(&self, key: &str) -> u64 {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = crow_runtime::lock(&self.inner);
         let now = Instant::now();
 
         if let Some(bucket) = inner.buckets.get_mut(key) {
@@ -90,7 +90,7 @@ impl CrowRateLimiter {
 
     /// Reset the limiter for a specific key.
     pub fn reset(&self, key: &str) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = crow_runtime::lock(&self.inner);
         inner.buckets.remove(key);
     }
 }

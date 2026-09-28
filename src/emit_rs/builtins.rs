@@ -446,9 +446,9 @@ impl Emitter {
                 if !matches!(Self::lit_str(&args[7]), Some("")) {
                     format!("match crow_runtime::moments::fmt_time(({}) as f64, &{}, &{}) {{ Ok(s) => s, Err(e) => format!(\"[fmt: {{}}]\", e) }}", a[0], a[7], a[8])
                 } else if matches!(in0, CrowType::Str) {
-                    format!("crow_runtime::display::crow_fmt_str(&{}, {}, {}, &{}, &{}, {})", a[0], a[1], a[3], a[4], a[5], a[6])
+                    format!("crow_runtime::display::crow_fmt_str(&{}, {}, {}, &{}, &{}, {}){}", a[0], a[1], a[3], a[4], a[5], a[6], self.or_stop())
                 } else {
-                    format!("crow_runtime::display::crow_fmt_f64(({}) as f64, {}, {}, {}, &{}, &{}, {})", a[0], a[1], a[2], a[3], a[4], a[5], a[6])
+                    format!("crow_runtime::display::crow_fmt_f64(({}) as f64, {}, {}, {}, &{}, &{}, {}){}", a[0], a[1], a[2], a[3], a[4], a[5], a[6], self.or_stop())
                 }
             }
             // conversions
@@ -1006,11 +1006,11 @@ impl Emitter {
                 self.needs_crow_runtime = true;
                 if matches!(self.tt(&args[0]), CrowType::Result(_)) {
                     format!(
-                        "{{ let _fr = &({}); if !_fr.ok {{ CrowResponse::text(format!(\"error: {{}}\", _fr.reason)) }} else {{ CrowResponse::arrow_ipc(crow_runtime::frame::to_arrow_ipc(&_fr.value)) }} }}",
+                        "{{ let _fr = &({}); if !_fr.ok {{ CrowResponse::text(format!(\"error: {{}}\", _fr.reason)) }} else {{ match crow_runtime::frame::to_arrow_ipc(&_fr.value) {{ Ok(_b) => CrowResponse::arrow_ipc(_b), Err(_e) => CrowResponse::text(format!(\"error: {{}}\", _e)) }} }} }}",
                         a[0]
                     )
                 } else {
-                    format!("CrowResponse::arrow_ipc(crow_runtime::frame::to_arrow_ipc(&{}))", a[0])
+                    format!("match crow_runtime::frame::to_arrow_ipc(&{}) {{ Ok(_b) => CrowResponse::arrow_ipc(_b), Err(_e) => CrowResponse::text(format!(\"error: {{}}\", _e)) }}", a[0])
                 }
             }
             "bytes" if web && n == 1 => format!("CrowResponse::binary(200, {}.into_bytes(), \"application/octet-stream\")", a[0]),

@@ -159,20 +159,52 @@ The corpus has no findings now.
 reason crashes the interpreter, or reaches the compiled program's hook
 with no line.
 
-**Done.** The safety net of §1: nothing in either mode crashes. A panic
-anywhere under a run is a stop with the line where it happened (the
-interpreter) or with its words (the compiled program).
+**The fix, in two layers.**
 
-**Left.** The panics themselves. Clippy's panic lints over `crow_runtime`
-count 601 index expressions and 43 slices that can panic, 37 `unwrap` or
-`expect` calls, 14 `panic!`s and one `unreachable!`. The plan:
+- **The net** (§1): nothing in either mode crashes. A panic anywhere under
+  a run is a stop, with the line where it happened (the interpreter) or
+  its words (the compiled program).
+- **The rule:** `crow_runtime`, `crow_db` and `crow_web` deny `unwrap`,
+  `expect`, `panic!`, `unreachable!`, `todo!` and `unimplemented!` outside
+  their tests. `cargo clippy --workspace --all-features` runs in CI and
+  the gate and refuses a new one. The exceptions are allowed at the site,
+  each with its reason:
+  - `stops::halt`'s `panic_any`, which is how a stop travels off the main
+    thread;
+  - eleven math functions whose failures on a user's argument become
+    their reasons when they move to the table (§4). These are `#[expect]`,
+    so each warns once it is converted and the exception can go.
 
-- Deny `unwrap_used`, `expect_used`, `panic` and `unreachable` in
-  `crow_runtime`, `crow_db` and `crow_web`.
-- Audit each site: return the reason, or an `#[allow]` with the invariant
-  that makes it safe.
-- Index expressions are audited per function, the tensor kernels' by
-  their shape checks.
+**Found on the audit** (61 sites at the start), each fixed:
+
+- **CSV type inference** decided a column's type from its first hundred
+  values and then read the rest as that type. An int column read `n/a`
+  as 0, a float column read it as NaN, and a datetime column panicked. The
+  whole column decides now, and a value that does not parse makes the
+  column the next type.
+- **`group` with a misspelled column** panicked a worker thread. It is
+  refused with the column's name before the work is shared out.
+- **A tensor on the GPU** panicked in every operation with no shader
+  (`t[0]`, a broadcast, `diag`). Such operations read a downloaded copy
+  now.
+- **`tan` of a GPU tensor** asked the GPU for a shader it did not have,
+  and panicked. The GPU's operations are enums now, so no operation can be
+  named that has no shader; `tan` has one.
+- **`to_gpu` on a machine with no GPU** panicked, where the spec says a
+  tensor goes to the GPU "when a GPU is available". It stays on the CPU.
+- **`fmt`'s kernel** panicked on a misuse the interpreter's adapter
+  checked first. The kernel checks and answers the reason, and both modes
+  stop with it.
+- **Locks poisoned by a panic elsewhere** failed every later use. They
+  recover their data now (`crow_runtime::lock`).
+- The distributed runtime's network failures, a GPU that cannot hand
+  results back, a queue's semaphore, a worker thread's panic, and the
+  Arrow encoder now stop with a reason or pass the panic on as it was.
+
+**Left.** The `assert!`s that check a user's arguments in the tensor,
+linear algebra, signal and sparse kernels (shapes, axes, lengths: about
+forty) are not caught by these lints. They move with their functions into
+the table (§4), whose runtime functions answer `Result`.
 
 ## 4. One implementation per builtin
 

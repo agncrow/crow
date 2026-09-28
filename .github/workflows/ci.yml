@@ -26,8 +26,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Unit tests
+      - name: Unit tests (a debug build checks the IR of every program it lowers)
         run: cargo test --workspace
+      - name: The runtime never panics (clippy refuses an unaudited unwrap, expect or panic in crow_runtime, crow_db and crow_web)
+        run: cargo clippy --workspace --all-features
       - name: Live runtime and server tests (the features the workspace run leaves off)
         run: cargo test -p crow_web --features live,http
       - name: Free the unit tests' build (every later step runs the release binary)

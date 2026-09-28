@@ -21,6 +21,7 @@ them by number. The short version:
 
 ```
 cargo test --workspace
+cargo clippy --workspace --all-features
 ./target/release/crow test --parity
 ./target/release/crow test --served
 ./target/release/crow test --docs
@@ -47,3 +48,9 @@ steps on every push and must be green.
   to `~/.crow/src` for that reason.
 - After verifying a served app (finch on 3100), run `crow stop` so the
   port is free for the user.
+- A debug build checks the IR of every program it lowers
+  (`CROW_IR_VERIFY`, strict by default there; the harnesses set it for the
+  release binary). A finding is a bug in the lowering, not in the program.
+- `crow_runtime`, `crow_db` and `crow_web` deny panics under clippy: a
+  runtime function answers its reason, and a failure no value can carry
+  stops through `crow_runtime::stops` (docs/bug-classes.md).

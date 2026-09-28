@@ -25,7 +25,7 @@ fn handles() -> &'static Mutex<Vec<JoinHandle<()>>> {
 struct InFlight(String);
 impl Drop for InFlight {
     fn drop(&mut self) {
-        registry().lock().unwrap().remove(&self.0);
+        crate::lock(registry()).remove(&self.0);
     }
 }
 
@@ -33,7 +33,7 @@ impl Drop for InFlight {
 /// schedule with the same name is still in flight.
 pub fn spawn(name: &str, work: impl FnOnce() + Send + 'static) -> bool {
     {
-        let mut reg = registry().lock().unwrap();
+        let mut reg = crate::lock(registry());
         if !reg.insert(name.to_string()) {
             return false;
         }
@@ -43,20 +43,20 @@ pub fn spawn(name: &str, work: impl FnOnce() + Send + 'static) -> bool {
         let _guard = InFlight(guard_name);
         work();
     });
-    handles().lock().unwrap().push(handle);
+    crate::lock(handles()).push(handle);
     true
 }
 
 /// Is a schedule with this name still in flight?
 pub fn running(name: &str) -> bool {
-    registry().lock().unwrap().contains(name)
+    crate::lock(registry()).contains(name)
 }
 
 /// Block until every scheduled work item has finished. Called at the end
 /// of main so background work can't silently vanish at exit.
 pub fn wait_all() {
     loop {
-        let handle = handles().lock().unwrap().pop();
+        let handle = crate::lock(handles()).pop();
         match handle {
             Some(h) => {
                 let _ = h.join();

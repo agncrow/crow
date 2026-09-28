@@ -14,13 +14,13 @@ static GLOBAL_RNG: Mutex<Option<StdRng>> = Mutex::new(None);
 /// Set the global seed for reproducibility. All subsequent random tensor
 /// operations will use a deterministic RNG seeded with this value.
 pub fn set_seed(seed: u64) {
-    let mut rng = GLOBAL_RNG.lock().unwrap();
+    let mut rng = crate::lock(&GLOBAL_RNG);
     *rng = Some(StdRng::seed_from_u64(seed));
 }
 
 /// Clear the global seed. Random operations revert to thread-local RNG.
 pub fn clear_seed() {
-    let mut rng = GLOBAL_RNG.lock().unwrap();
+    let mut rng = crate::lock(&GLOBAL_RNG);
     *rng = None;
 }
 
@@ -28,7 +28,7 @@ pub fn clear_seed() {
 /// otherwise using a thread-local RNG. Takes a size and a function
 /// that generates one sample from an RNG.
 pub fn gen_random_vec(n: usize, mut sample_fn: impl FnMut(&mut StdRng) -> f64) -> Vec<f64> {
-    let mut guard = GLOBAL_RNG.lock().unwrap();
+    let mut guard = crate::lock(&GLOBAL_RNG);
     if let Some(ref mut rng) = *guard {
         (0..n).map(|_| sample_fn(rng)).collect()
     } else {
@@ -40,7 +40,7 @@ pub fn gen_random_vec(n: usize, mut sample_fn: impl FnMut(&mut StdRng) -> f64) -
 
 /// Run a closure that needs mutable access to the RNG (e.g., for shuffle).
 pub fn with_rng(f: impl FnOnce(&mut StdRng)) {
-    let mut guard = GLOBAL_RNG.lock().unwrap();
+    let mut guard = crate::lock(&GLOBAL_RNG);
     if let Some(ref mut rng) = *guard {
         f(rng);
     } else {

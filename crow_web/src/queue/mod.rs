@@ -37,7 +37,8 @@ impl CrowQueue {
     {
         let sem = self.semaphore.clone();
         tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+            // a closed queue runs nothing (it is never closed)
+            let Ok(_permit) = sem.acquire().await else { return };
             tokio::task::spawn_blocking(job).await.ok();
         });
     }
@@ -50,7 +51,7 @@ impl CrowQueue {
     {
         let sem = self.semaphore.clone();
         tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+            let Ok(_permit) = sem.acquire().await else { return };
             job().await;
         });
     }

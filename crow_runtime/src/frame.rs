@@ -649,37 +649,30 @@ fn infer_and_convert_refs(raw: &[&str], valid: &[bool]) -> Column {
         return Column::Str(raw.iter().map(|s| s.to_string()).collect());
     }
 
-    // Try int
+    // The sample rules a type out quickly; the whole column decides it. A
+    // value past the sample that does not parse makes the column the next
+    // type: an int column read "n/a" as 0, a float column as NaN, and a
+    // datetime column panicked.
     if sampled.iter().all(|s| s.parse::<i64>().is_ok()) {
-        let data: Vec<i64> = raw.iter().zip(valid.iter())
-            .map(|(s, &v)| if v { s.parse().unwrap_or(0) } else { 0 })
-            .collect();
-        return Column::Int(data);
-    }
-
-    // Try float
-    if sampled.iter().all(|s| s.parse::<f64>().is_ok()) {
-        let data: Vec<f64> = raw.iter().zip(valid.iter())
-            .map(|(s, &v)| if v { s.parse().unwrap_or(f64::NAN) } else { f64::NAN })
-            .collect();
-        return Column::Float(data);
-    }
-
-    // Try datetime
-    if sampled.iter().all(|s| parse_datetime(s).is_some()) {
-        let mut millis = Vec::with_capacity(raw.len());
-        let mut offsets = Vec::with_capacity(raw.len());
-        for (s, &v) in raw.iter().zip(valid.iter()) {
-            if v {
-                let (m, o) = parse_datetime(s).unwrap();
-                millis.push(m);
-                offsets.push(o);
-            } else {
-                millis.push(0);
-                offsets.push(0);
-            }
+        let data: Option<Vec<i64>> = raw.iter().zip(valid.iter()).map(|(s, &v)| if v { s.parse().ok() } else { Some(0) }).collect();
+        if let Some(data) = data {
+            return Column::Int(data);
         }
-        return Column::DateTime(millis, offsets);
+    }
+
+    if sampled.iter().all(|s| s.parse::<f64>().is_ok()) {
+        let data: Option<Vec<f64>> = raw.iter().zip(valid.iter()).map(|(s, &v)| if v { s.parse().ok() } else { Some(f64::NAN) }).collect();
+        if let Some(data) = data {
+            return Column::Float(data);
+        }
+    }
+
+    if sampled.iter().all(|s| parse_datetime(s).is_some()) {
+        let parsed: Option<Vec<(i64, i16)>> = raw.iter().zip(valid.iter()).map(|(s, &v)| if v { parse_datetime(s) } else { Some((0, 0)) }).collect();
+        if let Some(parsed) = parsed {
+            let (millis, offsets) = parsed.into_iter().unzip();
+            return Column::DateTime(millis, offsets);
+        }
     }
 
     // Fall back to string
@@ -897,7 +890,8 @@ pub fn frame_to_tensor_data(frame: &CrowFrame, col_names: Option<&[String]>) -> 
                     data[i * ncols + j] = if valid[i] { v[i] } else { f64::NAN };
                 }
             }
-            _ => unreachable!(),
+            // every column was checked numeric above
+            _ => {}
         }
     }
     Ok((data, nrows, ncols))
@@ -1203,6 +1197,12 @@ impl CrowFrame {
     pub fn group(&self, group_col: &str, aggs: &[(&str, AggFn)]) -> Result<CrowFrame, String> {
         let gi = self.col_index(group_col)
             .ok_or_else(|| format!("group: column '{}' not found", group_col))?;
+        // every aggregated column exists before the work is shared out (a
+        // misspelled one panicked a worker thread)
+        let agg_cols: Vec<usize> = aggs
+            .iter()
+            .map(|(c, _)| self.col_index(c).ok_or_else(|| format!("group: column '{}' not found", c)))
+            .collect::<Result<_, _>>()?;
 
         // Build groups using native keys for speed (avoid fmt_cell string alloc)
         let valid = self.validity[gi].as_ref();
@@ -1291,8 +1291,7 @@ impl CrowFrame {
         result_valid.push(vec![true; ngroups]);
 
         // Aggregate columns — process each agg column in parallel
-        let agg_results: Vec<(String, Vec<f64>)> = aggs.par_iter().map(|(col_name, agg_fn)| {
-            let ci = self.col_index(col_name).expect("group: agg column not found");
+        let agg_results: Vec<(String, Vec<f64>)> = aggs.par_iter().zip(agg_cols.par_iter()).map(|((col_name, agg_fn), &ci)| {
             let agg_name = format!("{}_{:?}", col_name, agg_fn).to_lowercase();
             let col_valid = self.validity[ci].as_ref();
 
@@ -1916,7 +1915,7 @@ impl fmt::Display for CrowFrame {
 ///
 /// The validity bitmap is applied as null masks.
 #[cfg(feature = "arrow")]
-pub fn to_arrow_ipc(frame: &CrowFrame) -> Vec<u8> {
+pub fn to_arrow_ipc(frame: &CrowFrame) -> Result<Vec<u8>, String> {
     use arrow::array::*;
     use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
     use arrow::ipc::writer::StreamWriter;
@@ -1983,18 +1982,17 @@ pub fn to_arrow_ipc(frame: &CrowFrame) -> Vec<u8> {
         }
     }
 
+    // a frame's columns are one length, so these fail only for a frame
+    // built wrongly: its reason, not a panic
     let schema = Arc::new(Schema::new(fields));
-    let batch = RecordBatch::try_new(schema.clone(), arrays)
-        .expect("failed to create Arrow RecordBatch from CrowFrame");
-
+    let batch = RecordBatch::try_new(schema.clone(), arrays).map_err(|e| format!("arrow: {}", e))?;
     let mut buf = Vec::new();
     {
-        let mut writer = StreamWriter::try_new(&mut buf, &schema)
-            .expect("failed to create Arrow IPC writer");
-        writer.write(&batch).expect("failed to write Arrow IPC batch");
-        writer.finish().expect("failed to finish Arrow IPC stream");
+        let mut writer = StreamWriter::try_new(&mut buf, &schema).map_err(|e| format!("arrow: {}", e))?;
+        writer.write(&batch).map_err(|e| format!("arrow: {}", e))?;
+        writer.finish().map_err(|e| format!("arrow: {}", e))?;
     }
-    buf
+    Ok(buf)
 }
 
 #[cfg(feature = "arrow")]
@@ -2017,7 +2015,7 @@ mod arrow_tests {
                 vec![true, true, true],
             ],
         );
-        let bytes = to_arrow_ipc(&frame);
+        let bytes = to_arrow_ipc(&frame).expect("the frame encodes");
         // Arrow IPC starts with magic bytes "ARROW1"
         assert!(!bytes.is_empty(), "Arrow IPC bytes should not be empty");
         // Verify it starts with the IPC stream continuation marker (0xFFFFFFFF)
@@ -2031,7 +2029,46 @@ mod arrow_tests {
             vec![Column::Int(vec![10, 0, 30])],
             vec![vec![true, false, true]],
         );
-        let bytes = to_arrow_ipc(&frame);
+        let bytes = to_arrow_ipc(&frame).expect("the frame encodes");
         assert!(!bytes.is_empty());
+    }
+}
+#[cfg(test)]
+mod inference_tests {
+    use super::*;
+
+    fn column_of(values: &[String]) -> Column {
+        let raw: Vec<&str> = values.iter().map(|s| s.as_str()).collect();
+        let valid = vec![true; raw.len()];
+        infer_and_convert_refs(&raw, &valid)
+    }
+
+    /// A value past the sample decides with the rest: a column the sample
+    /// took for ints read "n/a" as 0, one it took for dates panicked.
+    #[test]
+    fn the_whole_column_decides_its_type() {
+        let mut ints: Vec<String> = (0..150).map(|i| i.to_string()).collect();
+        assert!(matches!(column_of(&ints), Column::Int(_)));
+        ints.push("2.5".to_string());
+        assert!(matches!(column_of(&ints), Column::Float(ref v) if v[150] == 2.5));
+        ints.push("n/a".to_string());
+        assert!(matches!(column_of(&ints), Column::Str(ref v) if v[151] == "n/a"));
+        let mut dates: Vec<String> = (0..150).map(|i| format!("2024-01-{:02}", 1 + i % 28)).collect();
+        assert!(matches!(column_of(&dates), Column::DateTime(..)));
+        dates.push("soon".to_string());
+        assert!(matches!(column_of(&dates), Column::Str(_)));
+    }
+
+    /// A misspelled aggregated column is refused with its name before the
+    /// work is shared out: it panicked a worker thread.
+    #[test]
+    fn a_group_by_a_column_the_frame_lacks_is_refused() {
+        let frame = CrowFrame::new(
+            vec!["sym".into(), "px".into()],
+            vec![Column::Str(vec!["a".into(), "b".into()]), Column::Float(vec![1.0, 2.0])],
+            vec![vec![true, true], vec![true, true]],
+        );
+        assert!(frame.group("sym", &[("px", AggFn::Sum)]).is_ok());
+        assert_eq!(frame.group("sym", &[("pxx", AggFn::Sum)]).err(), Some("group: column 'pxx' not found".to_string()));
     }
 }

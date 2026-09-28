@@ -110,7 +110,7 @@ pub fn crow_fmt_f64(
     align: &str,
     fill: &str,
     percent: bool,
-) -> String {
+) -> Result<String, String> {
     let val = if percent { v * 100.0 } else { v };
     let mut s = if decimals >= 0 {
         format!("{:.*}", decimals as usize, val)
@@ -144,9 +144,8 @@ pub fn crow_fmt_f64(
     apply_width(s, width, if align.is_empty() { "right" } else { align }, fill)
 }
 
-/// fmt[] kernel for strings — width/align/fill only.
-/// decimals/percent on a string is an error (panics with a Crow-style message,
-/// which both modes surface as a runtime error).
+/// fmt[] kernel for strings: width, align and fill only. Decimals or a
+/// percent on a string is the misuse both modes stop on, with these words.
 pub fn crow_fmt_str(
     s: &str,
     decimals: i64,
@@ -154,12 +153,12 @@ pub fn crow_fmt_str(
     align: &str,
     fill: &str,
     percent: bool,
-) -> String {
+) -> Result<String, String> {
     if decimals >= 0 {
-        panic!("fmt: decimals applies to numbers, not strings");
+        return Err("fmt: decimals applies to numbers, not strings".to_string());
     }
     if percent {
-        panic!("fmt: percent applies to numbers, not strings");
+        return Err("fmt: percent applies to numbers, not strings".to_string());
     }
     apply_width(
         s.to_string(),
@@ -169,22 +168,18 @@ pub fn crow_fmt_str(
     )
 }
 
-fn apply_width(s: String, width: i64, align: &str, fill: &str) -> String {
-    if width <= 0 {
-        return s;
+fn apply_width(s: String, width: i64, align: &str, fill: &str) -> Result<String, String> {
+    if align != "left" && align != "right" {
+        return Err(format!("fmt: align must be 'left' or 'right', got '{}'", align));
     }
-    let width = width as usize;
+    let Ok(width) = usize::try_from(width) else { return Ok(s) };
     let len = s.chars().count();
     if len >= width {
-        return s;
+        return Ok(s);
     }
     let fill_ch = fill.chars().next().unwrap_or(' ');
     let padding: String = std::iter::repeat(fill_ch).take(width - len).collect();
-    match align {
-        "left" => format!("{}{}", s, padding),
-        "right" => format!("{}{}", padding, s),
-        other => panic!("fmt: align must be 'left' or 'right', got '{}'", other),
-    }
+    Ok(if align == "left" { format!("{}{}", s, padding) } else { format!("{}{}", padding, s) })
 }
 
 #[cfg(test)]
@@ -211,19 +206,19 @@ mod tests {
 
     #[test]
     fn test_fmt_decimals_and_commas() {
-        assert_eq!(crow_fmt_f64(1234.567, 2, false, 0, "", " ", false), "1234.57");
-        assert_eq!(crow_fmt_f64(1234.567, 2, true, 0, "", " ", false), "1,234.57");
-        assert_eq!(crow_fmt_f64(-1234567.0, 0, true, 0, "", " ", false), "-1,234,567");
-        assert_eq!(crow_fmt_f64(42.0, -1, false, 0, "", " ", false), "42");
+        assert_eq!(crow_fmt_f64(1234.567, 2, false, 0, "", " ", false).as_deref(), Ok("1234.57"));
+        assert_eq!(crow_fmt_f64(1234.567, 2, true, 0, "", " ", false).as_deref(), Ok("1,234.57"));
+        assert_eq!(crow_fmt_f64(-1234567.0, 0, true, 0, "", " ", false).as_deref(), Ok("-1,234,567"));
+        assert_eq!(crow_fmt_f64(42.0, -1, false, 0, "", " ", false).as_deref(), Ok("42"));
     }
 
     #[test]
     fn test_fmt_percent_width_fill() {
-        assert_eq!(crow_fmt_f64(0.123, 1, false, 0, "", " ", true), "12.3%");
-        assert_eq!(crow_fmt_f64(42.0, -1, false, 8, "", " ", false), "      42");
-        assert_eq!(crow_fmt_f64(42.0, -1, false, 5, "", "0", false), "00042");
-        assert_eq!(crow_fmt_str("alice", -1, 8, "", " ", false), "alice   ");
-        assert_eq!(crow_fmt_str("alice", -1, 8, "right", " ", false), "   alice");
+        assert_eq!(crow_fmt_f64(0.123, 1, false, 0, "", " ", true).as_deref(), Ok("12.3%"));
+        assert_eq!(crow_fmt_f64(42.0, -1, false, 8, "", " ", false).as_deref(), Ok("      42"));
+        assert_eq!(crow_fmt_f64(42.0, -1, false, 5, "", "0", false).as_deref(), Ok("00042"));
+        assert_eq!(crow_fmt_str("alice", -1, 8, "", " ", false).as_deref(), Ok("alice   "));
+        assert_eq!(crow_fmt_str("alice", -1, 8, "right", " ", false).as_deref(), Ok("   alice"));
     }
 
     #[test]
