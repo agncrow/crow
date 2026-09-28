@@ -133,14 +133,6 @@ fn to_tensor(v: &CrowValue, fname: &str) -> Result<CrowTensor, String> {
     }
 }
 
-fn shape_from_args(args: &[CrowValue], fname: &str) -> Result<Vec<usize>, String> {
-    args.iter().map(|a| match &a.value {
-        Value::Int(n) if *n >= 0 => Ok(*n as usize),
-        Value::Int(n) => Err(format!("{}: expected non-negative integer for shape, got {}", fname, n)),
-        Value::Float(f) => Ok(*f as usize),
-        _ => Err(format!("{}: expected integer for shape, got {:?}", fname, a.value)),
-    }).collect()
-}
 
 // ===== Interpreter dispatch =====
 
@@ -150,19 +142,8 @@ pub(crate) const SCALAR_UNARY: &[&str] = &[
 ];
 
 fn call_math(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
-    // A number goes through the same code as a one-element tensor and
-    // comes back as a number.
-    if SCALAR_UNARY.contains(&name) && args.len() == 1 {
-        let x = match &args[0].value { Value::Int(n) => Some(*n as f64), Value::Float(f) => Some(*f), _ => None };
-        if let Some(x) = x {
-            let t = CrowTensor::from_vec(vec![x], vec![1]);
-            let r = call_math(name, &[CrowValue::ok(Value::NumArray(Box::new(t)))])?;
-            return Ok(match &r.value {
-                Value::NumArray(t) => CrowValue::ok(Value::Float(t.to_vec().first().copied().unwrap_or(f64::NAN))),
-                _ => r,
-            });
-        }
-    }
+    // (the element-wise functions of a number or a tensor are rows of the
+    // builtin table, answered before this module's arms: crate::table)
     match name {
         // Tensor creation
         "tensor" => {
@@ -201,25 +182,6 @@ fn call_math(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
         }
 
         // Element-wise math
-        "exp" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.exp())))) }
-        "ln" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.log())))) }
-        "log2" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.log2())))) }
-        "log10" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.log10())))) }
-        "sqrt" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.sqrt())))) }
-        "sin" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.sin())))) }
-        "cos" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.cos())))) }
-        "abs" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.abs())))) }
-        "sign" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.sign())))) }
-        "floor" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.floor())))) }
-        "ceil" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.ceil())))) }
-        "round" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.round())))) }
-        "clip" => {
-            if args.len() != 3 { return Err(format!("clip: expected 3 arguments (tensor, lo, hi), got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            let lo = to_f64(&args[1], name)?;
-            let hi = to_f64(&args[2], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(t.clip(lo, hi)))))
-        }
         "mod" => {
             if args.len() != 2 { return Err(format!("mod: expected 2 arguments, got {}", args.len())); }
             let a = to_tensor(&args[0], name)?;
@@ -232,19 +194,6 @@ fn call_math(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
         }
 
         // Trigonometry
-        "tan" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.tan())))) }
-        "asin" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.asin())))) }
-        "acos" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.acos())))) }
-        "atan" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.atan())))) }
-        "atan2" => {
-            if args.len() != 2 { return Err(format!("atan2: expected 2 arguments, got {}", args.len())); }
-            let y = to_tensor(&args[0], name)?;
-            let x = to_tensor(&args[1], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(y.atan2(&x)))))
-        }
-        "sinh" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.sinh())))) }
-        "cosh" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.cosh())))) }
-        "tanh" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.tanh())))) }
 
         _ => call_math_reductions(name, args),
     }
@@ -253,35 +202,6 @@ fn call_math(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
 fn call_math_reductions(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
     match name {
         // Reductions
-        "sum" => {
-            let t = to_tensor(&args[0], name)?;
-            if args.len() >= 2 { let axis = to_f64(&args[1], name)? as usize; Ok(CrowValue::ok(Value::NumArray(Box::new(t.sum_axis(axis))))) }
-            else { Ok(CrowValue::ok(Value::Float(t.sum()))) }
-        }
-        "mean" => {
-            let t = to_tensor(&args[0], name)?;
-            if args.len() >= 2 { let axis = to_f64(&args[1], name)? as usize; Ok(CrowValue::ok(Value::NumArray(Box::new(t.mean_axis(axis))))) }
-            else { Ok(CrowValue::ok(Value::Float(t.mean()))) }
-        }
-        "min" => {
-            let t = to_tensor(&args[0], name)?;
-            if args.len() >= 2 { let axis = to_f64(&args[1], name)? as usize; Ok(CrowValue::ok(Value::NumArray(Box::new(t.min_axis(axis))))) }
-            else { Ok(CrowValue::ok(Value::Float(t.min()))) }
-        }
-        "max" => {
-            let t = to_tensor(&args[0], name)?;
-            if args.len() >= 2 { let axis = to_f64(&args[1], name)? as usize; Ok(CrowValue::ok(Value::NumArray(Box::new(t.max_axis(axis))))) }
-            else { Ok(CrowValue::ok(Value::Float(t.max()))) }
-        }
-        "prod" => {
-            let t = to_tensor(&args[0], name)?;
-            if args.len() >= 2 { let axis = to_f64(&args[1], name)? as usize; Ok(CrowValue::ok(Value::NumArray(Box::new(t.prod_axis(axis))))) }
-            else { Ok(CrowValue::ok(Value::Float(t.prod()))) }
-        }
-        "argmax" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::Int(t.argmax() as i64))) }
-        "argmin" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::Int(t.argmin() as i64))) }
-        "cumsum" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.cumsum())))) }
-        "cumprod" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.cumprod())))) }
 
         _ => call_math_ops(name, args),
     }
@@ -316,39 +236,8 @@ fn call_math_ops(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
         }
 
         // Sorting & selection
-        "argsort" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.argsort())))) }
-        "topk" => {
-            if args.len() < 2 { return Err("topk: expected 2 arguments (tensor, k)".into()); }
-            let t = to_tensor(&args[0], name)?;
-            let k = to_f64(&args[1], name)? as usize;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(t.topk(k)))))
-        }
-        "unique" => { let t = to_tensor(&args[0], name)?; Ok(CrowValue::ok(Value::NumArray(Box::new(t.unique())))) }
-        "where" => {
-            if args.len() < 3 { return Err("where: expected 3 arguments (cond, a, b)".into()); }
-            let cond = to_tensor(&args[0], name)?;
-            let a = to_tensor(&args[1], name)?;
-            let b = to_tensor(&args[2], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(cond.where_cond(&a, &b)))))
-        }
 
         // Shape ops
-        "reshape" => {
-            if args.len() < 2 { return Err(format!("reshape: expected at least 2 arguments (tensor, dims...), got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            let new_shape = shape_from_args(&args[1..], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(t.reshape(new_shape)))))
-        }
-        "flatten" => {
-            if args.len() != 1 { return Err(format!("flatten: expected 1 argument, got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(t.flatten()))))
-        }
-        "transpose" => {
-            if args.len() != 1 { return Err(format!("transpose: expected 1 argument, got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(t.transpose()))))
-        }
 
         _ => call_math_linalg(name, args),
     }
@@ -663,16 +552,6 @@ fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String
 // ===== Rust emission =====
 
 fn emit_math_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String> {
-    if SCALAR_UNARY.contains(&name) && arg_strs.len() == 1 {
-        let t = arg_types.first().cloned().unwrap_or(CrowType::Unknown);
-        let t = if let CrowType::Result(i) = t { *i } else { t };
-        let method = if name == "sign" { "signum" } else { name };
-        match t {
-            CrowType::Int => return Ok(format!("(({}) as f64).{}()", arg_strs[0], method)),
-            CrowType::Float => return Ok(format!("(({}) as f64).{}()", arg_strs[0], method)),
-            _ => {}
-        }
-    }
     let result = match name {
         // Tensor creation
         "tensor" => {
@@ -692,19 +571,6 @@ fn emit_math_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Re
             }
         }
         // Element-wise math (ln replaces log)
-        "exp" => format!("{}.exp()", arg_strs[0]),
-        "ln" => format!("{}.log()", arg_strs[0]),
-        "log2" => format!("{}.log2()", arg_strs[0]),
-        "log10" => format!("{}.log10()", arg_strs[0]),
-        "sqrt" => format!("{}.sqrt()", arg_strs[0]),
-        "sin" => format!("{}.sin()", arg_strs[0]),
-        "cos" => format!("{}.cos()", arg_strs[0]),
-        "abs" => format!("{}.abs()", arg_strs[0]),
-        "sign" => format!("{}.sign()", arg_strs[0]),
-        "floor" => format!("{}.floor()", arg_strs[0]),
-        "ceil" => format!("{}.ceil()", arg_strs[0]),
-        "round" => format!("{}.round()", arg_strs[0]),
-        "clip" => format!("{}.clip({} as f64, {} as f64)", arg_strs[0], arg_strs[1], arg_strs[2]),
         "mod" => {
             if arg_types.len() > 1 && matches!(arg_types[1], CrowType::NumArray(_)) {
                 format!("{}.modulo(&{})", arg_strs[0], arg_strs[1])
@@ -713,30 +579,8 @@ fn emit_math_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Re
             }
         }
         // Trig
-        "tan" => format!("{}.tan()", arg_strs[0]),
-        "asin" => format!("{}.asin()", arg_strs[0]),
-        "acos" => format!("{}.acos()", arg_strs[0]),
-        "atan" => format!("{}.atan()", arg_strs[0]),
-        "atan2" => format!("{}.atan2(&{})", arg_strs[0], arg_strs[1]),
-        "sinh" => format!("{}.sinh()", arg_strs[0]),
-        "cosh" => format!("{}.cosh()", arg_strs[0]),
-        "tanh" => format!("{}.tanh()", arg_strs[0]),
         // Reductions
-        "sum" if arg_strs.len() >= 2 => format!("{}.sum_axis({} as usize)", arg_strs[0], arg_strs[1]),
-        "sum" => format!("{}.sum()", arg_strs[0]),
-        "mean" if arg_strs.len() >= 2 => format!("{}.mean_axis({} as usize)", arg_strs[0], arg_strs[1]),
-        "mean" => format!("{}.mean()", arg_strs[0]),
-        "min" if arg_strs.len() >= 2 => format!("{}.min_axis({} as usize)", arg_strs[0], arg_strs[1]),
-        "min" => format!("{}.min()", arg_strs[0]),
-        "max" if arg_strs.len() >= 2 => format!("{}.max_axis({} as usize)", arg_strs[0], arg_strs[1]),
-        "max" => format!("{}.max()", arg_strs[0]),
-        "prod" if arg_strs.len() >= 2 => format!("{}.prod_axis({} as usize)", arg_strs[0], arg_strs[1]),
-        "prod" => format!("{}.prod()", arg_strs[0]),
-        "argmax" => format!("{}.argmax() as i64", arg_strs[0]),
-        "argmin" => format!("{}.argmin() as i64", arg_strs[0]),
         // Cumulative
-        "cumsum" => format!("{}.cumsum()", arg_strs[0]),
-        "cumprod" => format!("{}.cumprod()", arg_strs[0]),
         // Combining. Array-of-tensor literals now build a stacked tensor,
         // so stack accepts either a Vec of tensors or a tensor (restack rows).
         "stack" => {
@@ -748,17 +592,7 @@ fn emit_math_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Re
             }
         }
         // Sorting & selection
-        "argsort" => format!("{}.argsort()", arg_strs[0]),
-        "topk" => format!("{}.topk({} as usize)", arg_strs[0], arg_strs[1]),
-        "unique" => format!("{}.unique()", arg_strs[0]),
-        "where" => format!("{}.where_cond(&{}, &{})", arg_strs[0], arg_strs[1], arg_strs[2]),
         // Shape ops
-        "reshape" => {
-            let shape_args: Vec<String> = arg_strs[1..].iter().map(|a| format!("{} as usize", a)).collect();
-            format!("{}.reshape(vec![{}])", arg_strs[0], shape_args.join(", "))
-        }
-        "flatten" => format!("{}.flatten()", arg_strs[0]),
-        "transpose" => format!("{}.transpose()", arg_strs[0]),
         // Linear algebra
         "solve" => format!("{}.solve(&{})", arg_strs[0], arg_strs[1]),
         "norm" if arg_strs.len() >= 2 => format!("{}.norm({} as f64)", arg_strs[0], arg_strs[1]),
@@ -816,38 +650,19 @@ fn emit_math_rust_continued(name: &str, arg_strs: &[String]) -> Result<String, S
 
 // ===== Type inference =====
 
-fn math_type_of(name: &str, arg_count: usize) -> CrowType {
+fn math_type_of(name: &str, _arg_count: usize) -> CrowType {
     match name {
         // Tensor creation → NumArray(Float)
         // (zeros, ones, eye, randn, linspace, arange, full and diag are rows
         // of the builtin table, which types them: crate::table)
         "tensor" => CrowType::NumArray(Box::new(CrowType::Float)),
-        // Element-wise → NumArray(Float)
-        "exp" | "ln" | "log2" | "log10" | "sqrt" | "sin" | "cos" | "abs"
-        | "sign" | "floor" | "ceil" | "round" | "clip" | "mod"
-        | "tan" | "asin" | "acos" | "atan" | "atan2"
-        | "sinh" | "cosh" | "tanh" => CrowType::NumArray(Box::new(CrowType::Float)),
-        // Shape ops → NumArray(Float)
-        "reshape" | "flatten" | "transpose" => CrowType::NumArray(Box::new(CrowType::Float)),
-        // Linalg returning tensor
-        // (the rest of linear algebra is rows of the builtin table)
+        // (the element-wise functions, the reductions, the shapes, sorting
+        // and selection, and linear algebra but solve are rows of the builtin
+        // table, which types them: crate::table)
+        "mod" => CrowType::NumArray(Box::new(CrowType::Float)),
         "solve" => CrowType::NumArray(Box::new(CrowType::Float)),
-        // Reductions: scalar if no axis, NumArray if axis given
-        "sum" | "mean" | "min" | "max" | "prod" => {
-            if arg_count >= 2 {
-                CrowType::NumArray(Box::new(CrowType::Float))
-            } else {
-                CrowType::Float
-            }
-        }
-        "argmax" | "argmin" => CrowType::Int,
-        // Cumulative
-        "cumsum" | "cumprod" => CrowType::NumArray(Box::new(CrowType::Float)),
         // Combining
         "concat" | "stack" => CrowType::NumArray(Box::new(CrowType::Float)),
-        // Sorting & selection
-        "argsort" | "topk" | "unique" | "where" => CrowType::NumArray(Box::new(CrowType::Float)),
-        // Decompositions returning arrays of tensors
         // Random & Distributions
         "seed" => CrowType::Void,
         // (the distributions are rows of the builtin table)

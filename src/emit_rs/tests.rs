@@ -971,19 +971,19 @@ fn test_numarray_device_transpile() {
 #[test]
 fn test_math_sign_transpile() {
     let rust = transpile("use math\nx = sign[ones[3]]\n");
-    assert!(rust.contains(".sign()"), "should emit .sign()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::sign_t("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_floor_tensor_transpile() {
     let rust = transpile("use math\nx = floor[ones[3]]\n");
-    assert!(rust.contains(".floor()"), "should emit .floor()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::floor_t("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_clip_transpile() {
     let rust = transpile("use math\nx = clip[ones[3], 0, 1]\n");
-    assert!(rust.contains(".clip("), "should emit .clip()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::clip("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 #[test]
@@ -995,19 +995,19 @@ fn test_math_mod_transpile() {
 #[test]
 fn test_math_tan_transpile() {
     let rust = transpile("use math\nx = tan[ones[3]]\n");
-    assert!(rust.contains(".tan()"), "should emit .tan()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::tan_t("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_tanh_transpile() {
     let rust = transpile("use math\nx = tanh[ones[3]]\n");
-    assert!(rust.contains(".tanh()"), "should emit .tanh()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::tanh_t("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_atan2_transpile() {
     let rust = transpile("use math\nx = atan2[ones[3], ones[3]]\n");
-    assert!(rust.contains(".atan2("), "should emit .atan2()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::atan2("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 // ===== Operator tests: ^, .*, ./, .^ =====
@@ -1054,37 +1054,37 @@ fn test_tensor_mul_is_matmul_transpile() {
 #[test]
 fn test_math_prod_transpile() {
     let rust = transpile("use math\nx = prod[ones[3]]\n");
-    assert!(rust.contains(".prod()"), "should emit .prod()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::prod("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_argmax_transpile() {
     let rust = transpile("use math\nx = argmax[ones[3]]\n");
-    assert!(rust.contains(".argmax()"), "should emit .argmax()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::argmax("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_argmin_transpile() {
     let rust = transpile("use math\nx = argmin[ones[3]]\n");
-    assert!(rust.contains(".argmin()"), "should emit .argmin()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::argmin("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_sum_axis_transpile() {
     let rust = transpile("use math\nx = sum[ones[2, 3], 0]\n");
-    assert!(rust.contains(".sum_axis("), "should emit .sum_axis()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::sum_axis("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_max_axis_transpile() {
     let rust = transpile("use math\nx = max[ones[2, 3], 1]\n");
-    assert!(rust.contains(".max_axis("), "should emit .max_axis()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::max_axis("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_prod_axis_transpile() {
     let rust = transpile("use math\nx = prod[ones[2, 3], 0]\n");
-    assert!(rust.contains(".prod_axis("), "should emit .prod_axis()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::prod_axis("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 // ===== Sorting & selection tests =====
@@ -1092,25 +1092,25 @@ fn test_math_prod_axis_transpile() {
 #[test]
 fn test_math_argsort_transpile() {
     let rust = transpile("use math\nx = argsort[ones[5]]\n");
-    assert!(rust.contains(".argsort()"), "should emit .argsort()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::argsort("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_topk_transpile() {
     let rust = transpile("use math\nx = topk[ones[5], 3]\n");
-    assert!(rust.contains(".topk("), "should emit .topk()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::topk("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_unique_transpile() {
     let rust = transpile("use math\nx = unique[ones[5]]\n");
-    assert!(rust.contains(".unique()"), "should emit .unique()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::unique("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_where_transpile() {
     let rust = transpile("use math\nx = where[ones[3], ones[3], zeros[3]]\n");
-    assert!(rust.contains(".where_cond("), "should emit .where_cond()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::where_("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 // ===== Cumulative ops tests =====
@@ -1118,13 +1118,13 @@ fn test_math_where_transpile() {
 #[test]
 fn test_math_cumsum_transpile() {
     let rust = transpile("use math\nx = cumsum[ones[5]]\n");
-    assert!(rust.contains(".cumsum()"), "should emit .cumsum()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::cumsum("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_cumprod_transpile() {
     let rust = transpile("use math\nx = cumprod[ones[5]]\n");
-    assert!(rust.contains(".cumprod()"), "should emit .cumprod()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::cumprod("), "should call the runtime's function (the builtin table)\n{}", rust);
 }
 
 // ===== Combining ops tests =====

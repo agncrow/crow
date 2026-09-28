@@ -220,6 +220,216 @@ pub fn cond(a: &CrowTensor) -> Result<f64, String> {
     a.cond()
 }
 
+
+// ── reductions, shapes, selection ───────────────────────────────────
+// An axis, a shape or a length a program gets wrong is the reason here;
+// the kernels assert it, and panicked both modes (`sum[t, 5]`,
+// `reshape[t, 7]`, `transpose` of a vector).
+
+/// An axis of `t`: 0 up to its rank.
+fn axis(what: &str, t: &CrowTensor, axis: i64) -> Result<usize, String> {
+    match usize::try_from(axis) {
+        Ok(a) if a < t.ndim() => Ok(a),
+        _ => Err(format!("{}: axis {} is out of range for a {}D tensor", what, axis, t.ndim())),
+    }
+}
+
+/// `sum[t]`.
+pub fn sum(t: &CrowTensor) -> f64 {
+    t.sum()
+}
+
+/// `sum[t, axis]`.
+pub fn sum_axis(t: &CrowTensor, ax: i64) -> Result<CrowTensor, String> {
+    Ok(t.sum_axis(axis("sum", t, ax)?))
+}
+
+/// `mean[t]`.
+pub fn mean(t: &CrowTensor) -> f64 {
+    t.mean()
+}
+
+/// `mean[t, axis]`.
+pub fn mean_axis(t: &CrowTensor, ax: i64) -> Result<CrowTensor, String> {
+    Ok(t.mean_axis(axis("mean", t, ax)?))
+}
+
+/// `min[t]` of a tensor.
+pub fn min(t: &CrowTensor) -> f64 {
+    t.min()
+}
+
+/// `min[t, axis]`.
+pub fn min_axis(t: &CrowTensor, ax: i64) -> Result<CrowTensor, String> {
+    Ok(t.min_axis(axis("min", t, ax)?))
+}
+
+/// `max[t]` of a tensor.
+pub fn max(t: &CrowTensor) -> f64 {
+    t.max()
+}
+
+/// `max[t, axis]`.
+pub fn max_axis(t: &CrowTensor, ax: i64) -> Result<CrowTensor, String> {
+    Ok(t.max_axis(axis("max", t, ax)?))
+}
+
+/// `prod[t]`.
+pub fn prod(t: &CrowTensor) -> f64 {
+    t.prod()
+}
+
+/// `prod[t, axis]`.
+pub fn prod_axis(t: &CrowTensor, ax: i64) -> Result<CrowTensor, String> {
+    Ok(t.prod_axis(axis("prod", t, ax)?))
+}
+
+/// `argmax[t]`: the flat index of the largest value, 0 of an empty tensor.
+pub fn argmax(t: &CrowTensor) -> i64 {
+    t.argmax() as i64
+}
+
+/// `argmin[t]`.
+pub fn argmin(t: &CrowTensor) -> i64 {
+    t.argmin() as i64
+}
+
+/// `cumsum[t]`.
+pub fn cumsum(t: &CrowTensor) -> CrowTensor {
+    t.cumsum()
+}
+
+/// `cumprod[t]`.
+pub fn cumprod(t: &CrowTensor) -> CrowTensor {
+    t.cumprod()
+}
+
+/// `argsort[t]`.
+pub fn argsort(t: &CrowTensor) -> CrowTensor {
+    t.argsort()
+}
+
+/// `topk[t, k]`: the k largest values, largest first; all of them when k
+/// is past the length.
+pub fn topk(t: &CrowTensor, k: i64) -> Result<CrowTensor, String> {
+    Ok(t.topk(stops::size("topk", k)?))
+}
+
+/// `unique[t]`: the distinct values, sorted.
+pub fn unique(t: &CrowTensor) -> CrowTensor {
+    t.unique()
+}
+
+/// `where[cond, a, b]`: a's value where cond holds, b's elsewhere.
+pub fn where_(cond: &CrowTensor, a: &CrowTensor, b: &CrowTensor) -> Result<CrowTensor, String> {
+    if cond.len() != a.len() || cond.len() != b.len() {
+        return Err(format!("where: cond, a and b must be one length, got {}, {} and {}", cond.len(), a.len(), b.len()));
+    }
+    Ok(cond.where_cond(a, b))
+}
+
+/// `reshape[t, d1, d2, …]`: the same values in a new shape of as many.
+pub fn reshape(t: &CrowTensor, sizes: &[i64]) -> Result<CrowTensor, String> {
+    let shape: Vec<usize> = sizes.iter().map(|&n| stops::size("reshape", n)).collect::<Result<_, _>>()?;
+    let n: usize = shape.iter().product();
+    if n != t.len() {
+        return Err(format!("reshape: {} values cannot fill shape {:?} ({} values)", t.len(), shape, n));
+    }
+    Ok(t.reshape(shape))
+}
+
+/// `flatten[t]`.
+pub fn flatten(t: &CrowTensor) -> CrowTensor {
+    t.flatten()
+}
+
+/// `transpose[t]`: its last two dimensions swapped.
+pub fn transpose(t: &CrowTensor) -> Result<CrowTensor, String> {
+    if t.ndim() < 2 {
+        return Err(format!("transpose: needs at least 2 dimensions, got {}", t.ndim()));
+    }
+    Ok(t.transpose())
+}
+
+/// `clip[t, lo, hi]`.
+pub fn clip(t: &CrowTensor, lo: f64, hi: f64) -> CrowTensor {
+    t.clip(lo, hi)
+}
+
+/// `atan2[y, x]`, element-wise, the shapes broadcasting.
+pub fn atan2(y: &CrowTensor, x: &CrowTensor) -> Result<CrowTensor, String> {
+    y.meets(x, "atan2")?;
+    Ok(y.atan2(x))
+}
+
+// ── element-wise ────────────────────────────────────────────────────
+// Each takes a number or a tensor, one rule for both: a number is the
+// tensor's rule applied to one value, not a Rust method of its own
+// (`sign[0.0]` was 1 compiled, from f64::signum, and 0 interpreted, from
+// the tensor's rule). The tensor forms keep their GPU dispatch.
+
+/// The sign of a value: 1, -1, or 0 for zero.
+fn sign_of(x: f64) -> f64 {
+    if x > 0.0 {
+        1.0
+    } else if x < 0.0 {
+        -1.0
+    } else {
+        0.0
+    }
+}
+
+macro_rules! elementwise {
+    ($($number:ident, $tensor:ident, $rule:expr, $method:ident;)*) => {
+        $(
+            /// Of a number.
+            pub fn $number(x: f64) -> f64 {
+                let rule: fn(f64) -> f64 = $rule;
+                rule(x)
+            }
+            /// Of a tensor, value by value.
+            pub fn $tensor(t: &CrowTensor) -> CrowTensor {
+                t.$method()
+            }
+        )*
+    };
+}
+
+elementwise! {
+    exp_n, exp_t, |x| x.exp(), exp;
+    ln_n, ln_t, |x| x.ln(), log;
+    log2_n, log2_t, |x| x.log2(), log2;
+    log10_n, log10_t, |x| x.log10(), log10;
+    sin_n, sin_t, |x| x.sin(), sin;
+    cos_n, cos_t, |x| x.cos(), cos;
+    tan_n, tan_t, |x| x.tan(), tan;
+    asin_n, asin_t, |x| x.asin(), asin;
+    acos_n, acos_t, |x| x.acos(), acos;
+    atan_n, atan_t, |x| x.atan(), atan;
+    sinh_n, sinh_t, |x| x.sinh(), sinh;
+    cosh_n, cosh_t, |x| x.cosh(), cosh;
+    tanh_n, tanh_t, |x| x.tanh(), tanh;
+    sign_n, sign_t, sign_of, sign;
+}
+
+/// `abs`, `sqrt`, `floor`, `ceil`, `round` of a tensor; of a number they are
+/// the core builtins.
+pub fn abs_t(t: &CrowTensor) -> CrowTensor {
+    t.abs()
+}
+pub fn sqrt_t(t: &CrowTensor) -> CrowTensor {
+    t.sqrt()
+}
+pub fn floor_t(t: &CrowTensor) -> CrowTensor {
+    t.floor()
+}
+pub fn ceil_t(t: &CrowTensor) -> CrowTensor {
+    t.ceil()
+}
+pub fn round_t(t: &CrowTensor) -> CrowTensor {
+    t.round()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,6 +475,29 @@ mod tests {
         assert_eq!(cholesky(&not_pd).map(|_| ()), Err("cholesky: the matrix is not positive definite".to_string()));
         let empty = CrowTensor::zeros(vec![0, 0]);
         assert_eq!(pinv(&empty).map(|t| t.shape().to_vec()), Ok(vec![0, 0]));
+    }
+
+    #[test]
+    fn an_axis_a_shape_or_a_length_is_checked() {
+        let m = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        assert_eq!(sum_axis(&m, 1).map(|t| t.to_vec()), Ok(vec![3.0, 7.0]));
+        assert_eq!(sum_axis(&m, 2).map(|_| ()), Err("sum: axis 2 is out of range for a 2D tensor".to_string()));
+        assert_eq!(mean_axis(&m, -1).map(|_| ()), Err("mean: axis -1 is out of range for a 2D tensor".to_string()));
+        assert_eq!(reshape(&m, &[4]).map(|t| t.shape().to_vec()), Ok(vec![4]));
+        assert_eq!(reshape(&m, &[3]).map(|_| ()), Err("reshape: 4 values cannot fill shape [3] (3 values)".to_string()));
+        let v = CrowTensor::from_vec(vec![1.0, 2.0], vec![2]);
+        assert_eq!(transpose(&v).map(|_| ()), Err("transpose: needs at least 2 dimensions, got 1".to_string()));
+        assert!(where_(&v, &v, &m).is_err());
+        assert!(atan2(&v, &CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3])).is_err());
+    }
+
+    /// A number's rule is the tensor's: sign of zero is 0 in both.
+    #[test]
+    fn a_number_and_a_tensor_share_one_rule() {
+        assert_eq!(sign_n(0.0), 0.0);
+        assert_eq!(sign_t(&CrowTensor::from_vec(vec![0.0, -2.0], vec![2])).to_vec(), vec![0.0, -1.0]);
+        assert_eq!(exp_n(0.0), 1.0);
+        assert_eq!(ln_t(&CrowTensor::from_vec(vec![1.0], vec![1])).to_vec(), vec![0.0]);
     }
 
     #[test]

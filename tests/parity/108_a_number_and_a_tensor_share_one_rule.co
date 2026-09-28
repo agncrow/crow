@@ -1,0 +1,24 @@
+--- The math reductions, shapes, selection and element-wise functions are
+--- rows of the builtin table (docs/bug-classes.md §4). A number and a
+--- tensor share one rule: sign[0.0] was 1 compiled, from Rust's signum,
+--- and 0 interpreted. An axis out of range, a reshape that does not fill,
+--- and a transpose of a vector are the reason one function gives both
+--- modes, where a kernel asserted.
+use math
+log[sign[0.0]]
+log[sign[0 - 2.5]]
+log[sign[[0.0, 3.0]]]
+log[exp[0]]
+log[ln[[1.0]]]
+m = [[1.0, 2.0], [3.0, 4.0]]
+log[sum[m]]
+log[sum[m, 1]]
+log[max[m, 0]]
+log[argmax[[3.0, 9.0, 1.0]]]
+log[topk[[3.0, 9.0, 1.0], 2]]
+log[reshape[m, 4]]
+log[transpose[m]]
+log[clip[[0.5, 2.0], 0, 1]]
+log[where[[1.0, 0.0], [5.0, 6.0], [7.0, 8.0]]]
+log[transpose[[1.0, 2.0]]]
+log['not reached']

@@ -214,6 +214,7 @@ pub fn read_float(v: &CrowValue) -> Result<f64, String> {
     }
 }
 
+#[allow(dead_code)] // no row takes a bool yet
 pub fn read_bool(v: &CrowValue) -> Result<bool, String> {
     match &v.value {
         Value::Bool(b) => Ok(*b),
@@ -399,6 +400,67 @@ pub static ROWS: &[Row] = &[
     row!("math.tril", "math", "tril", crow_runtime::math::tril, (Tensor) -> Tensor, stops),
     row!("math.rank", "math", "rank", crow_runtime::math::rank, (Tensor) -> Int, stops),
     row!("math.cond", "math", "cond", crow_runtime::math::cond, (Tensor) -> Float, stops),
+    // math: reductions (an axis out of range is the reason), sorting and
+    // selection, shapes (a reshape that does not fill, a transpose of a
+    // vector: the reason, where a kernel asserted)
+    row!("math.sum", "math", "sum", crow_runtime::math::sum, (Tensor) -> Float, never),
+    row!("math.sum_axis", "math", "sum", crow_runtime::math::sum_axis, (Tensor, Int) -> Tensor, stops),
+    row!("math.mean", "math", "mean", crow_runtime::math::mean, (Tensor) -> Float, never),
+    row!("math.mean_axis", "math", "mean", crow_runtime::math::mean_axis, (Tensor, Int) -> Tensor, stops),
+    row!("math.min", "math", "min", crow_runtime::math::min, (Tensor) -> Float, never),
+    row!("math.min_axis", "math", "min", crow_runtime::math::min_axis, (Tensor, Int) -> Tensor, stops),
+    row!("math.max", "math", "max", crow_runtime::math::max, (Tensor) -> Float, never),
+    row!("math.max_axis", "math", "max", crow_runtime::math::max_axis, (Tensor, Int) -> Tensor, stops),
+    row!("math.prod", "math", "prod", crow_runtime::math::prod, (Tensor) -> Float, never),
+    row!("math.prod_axis", "math", "prod", crow_runtime::math::prod_axis, (Tensor, Int) -> Tensor, stops),
+    row!("math.argmax", "math", "argmax", crow_runtime::math::argmax, (Tensor) -> Int, never),
+    row!("math.argmin", "math", "argmin", crow_runtime::math::argmin, (Tensor) -> Int, never),
+    row!("math.cumsum", "math", "cumsum", crow_runtime::math::cumsum, (Tensor) -> Tensor, never),
+    row!("math.cumprod", "math", "cumprod", crow_runtime::math::cumprod, (Tensor) -> Tensor, never),
+    row!("math.argsort", "math", "argsort", crow_runtime::math::argsort, (Tensor) -> Tensor, never),
+    row!("math.topk", "math", "topk", crow_runtime::math::topk, (Tensor, Int) -> Tensor, stops),
+    row!("math.unique", "math", "unique", crow_runtime::math::unique, (Tensor) -> Tensor, never),
+    row!("math.where", "math", "where", crow_runtime::math::where_, (Tensor, Tensor, Tensor) -> Tensor, stops),
+    row!("math.reshape", "math", "reshape", crow_runtime::math::reshape, (Tensor, Sizes) -> Tensor, stops),
+    row!("math.flatten", "math", "flatten", crow_runtime::math::flatten, (Tensor) -> Tensor, never),
+    row!("math.transpose", "math", "transpose", crow_runtime::math::transpose, (Tensor) -> Tensor, stops),
+    row!("math.clip", "math", "clip", crow_runtime::math::clip, (Tensor, Float, Float) -> Tensor, never),
+    row!("math.atan2", "math", "atan2", crow_runtime::math::atan2, (Tensor, Tensor) -> Tensor, stops),
+    // element-wise: a number and a tensor share one rule (the number's row
+    // first, so a number never reaches the tensor's)
+    row!("math.exp_n", "math", "exp", crow_runtime::math::exp_n, (Float) -> Float, never),
+    row!("math.exp_t", "math", "exp", crow_runtime::math::exp_t, (Tensor) -> Tensor, never),
+    row!("math.ln_n", "math", "ln", crow_runtime::math::ln_n, (Float) -> Float, never),
+    row!("math.ln_t", "math", "ln", crow_runtime::math::ln_t, (Tensor) -> Tensor, never),
+    row!("math.log2_n", "math", "log2", crow_runtime::math::log2_n, (Float) -> Float, never),
+    row!("math.log2_t", "math", "log2", crow_runtime::math::log2_t, (Tensor) -> Tensor, never),
+    row!("math.log10_n", "math", "log10", crow_runtime::math::log10_n, (Float) -> Float, never),
+    row!("math.log10_t", "math", "log10", crow_runtime::math::log10_t, (Tensor) -> Tensor, never),
+    row!("math.sin_n", "math", "sin", crow_runtime::math::sin_n, (Float) -> Float, never),
+    row!("math.sin_t", "math", "sin", crow_runtime::math::sin_t, (Tensor) -> Tensor, never),
+    row!("math.cos_n", "math", "cos", crow_runtime::math::cos_n, (Float) -> Float, never),
+    row!("math.cos_t", "math", "cos", crow_runtime::math::cos_t, (Tensor) -> Tensor, never),
+    row!("math.tan_n", "math", "tan", crow_runtime::math::tan_n, (Float) -> Float, never),
+    row!("math.tan_t", "math", "tan", crow_runtime::math::tan_t, (Tensor) -> Tensor, never),
+    row!("math.asin_n", "math", "asin", crow_runtime::math::asin_n, (Float) -> Float, never),
+    row!("math.asin_t", "math", "asin", crow_runtime::math::asin_t, (Tensor) -> Tensor, never),
+    row!("math.acos_n", "math", "acos", crow_runtime::math::acos_n, (Float) -> Float, never),
+    row!("math.acos_t", "math", "acos", crow_runtime::math::acos_t, (Tensor) -> Tensor, never),
+    row!("math.atan_n", "math", "atan", crow_runtime::math::atan_n, (Float) -> Float, never),
+    row!("math.atan_t", "math", "atan", crow_runtime::math::atan_t, (Tensor) -> Tensor, never),
+    row!("math.sinh_n", "math", "sinh", crow_runtime::math::sinh_n, (Float) -> Float, never),
+    row!("math.sinh_t", "math", "sinh", crow_runtime::math::sinh_t, (Tensor) -> Tensor, never),
+    row!("math.cosh_n", "math", "cosh", crow_runtime::math::cosh_n, (Float) -> Float, never),
+    row!("math.cosh_t", "math", "cosh", crow_runtime::math::cosh_t, (Tensor) -> Tensor, never),
+    row!("math.tanh_n", "math", "tanh", crow_runtime::math::tanh_n, (Float) -> Float, never),
+    row!("math.tanh_t", "math", "tanh", crow_runtime::math::tanh_t, (Tensor) -> Tensor, never),
+    row!("math.sign_n", "math", "sign", crow_runtime::math::sign_n, (Float) -> Float, never),
+    row!("math.sign_t", "math", "sign", crow_runtime::math::sign_t, (Tensor) -> Tensor, never),
+    row!("math.abs_t", "math", "abs", crow_runtime::math::abs_t, (Tensor) -> Tensor, never),
+    row!("math.sqrt_t", "math", "sqrt", crow_runtime::math::sqrt_t, (Tensor) -> Tensor, never),
+    row!("math.floor_t", "math", "floor", crow_runtime::math::floor_t, (Tensor) -> Tensor, never),
+    row!("math.ceil_t", "math", "ceil", crow_runtime::math::ceil_t, (Tensor) -> Tensor, never),
+    row!("math.round_t", "math", "round", crow_runtime::math::round_t, (Tensor) -> Tensor, never),
 ];
 
 /// The row the IR names by `id`.
@@ -486,6 +548,7 @@ pub fn module(module: &str, name: &str, args: &[Arg]) -> Option<&'static Row> {
 /// interpreter holds (`later`, `running`, `notice`), a function argument
 /// (`any`, `all`, `find`, `grad`), a resource (`cpu`, `gpu`, `nodes`), a
 /// test block, a chart's tree.
+#[cfg_attr(not(test), allow(dead_code))] // read by the drift test
 pub const OWN_FORM: &[&str] = &[
     "log", "type", "map", "error", "assert", "captured", "later", "running", "notice", "any", "all", "find", "grad", "cpu", "gpu", "nodes", "test",
     "chart", "args", "exit", "sleep", "time", "now", "input", "env",
@@ -494,10 +557,37 @@ pub const OWN_FORM: &[&str] = &[
 /// The core builtins still written twice, each to become a row (docs/
 /// bug-classes.md §4). The list only shrinks: a builtin added outside the
 /// table fails `every_core_builtin_is_a_row_or_says_why_not`.
+#[cfg_attr(not(test), allow(dead_code))] // read by the drift test
 pub const TO_MOVE: &[&str] = &[
     "abs", "sqrt", "floor", "ceil", "round", "min", "max", "split", "trim", "replace", "upper", "lower", "join", "starts", "ends", "fmt", "int", "float",
     "str", "len", "contains", "slice", "push", "pop", "sort", "reverse", "concat", "range", "keys", "values", "has", "set", "del", "read", "write",
     "exists", "mkdir", "ls", "rm", "mv", "cp", "rand", "json", "encode", "shell", "hash",
+];
+
+/// The module functions with a form of their own: the database's effects,
+/// which the session layer performs (a connection, a transaction, a write
+/// held to the handler's commit).
+#[cfg_attr(not(test), allow(dead_code))] // read by the drift test
+pub const MODULE_OWN_FORM: &[(&str, &str)] = &[("db", "connect"), ("db", "query"), ("db", "exec"), ("db", "insert"), ("db", "migrate"), ("db", "transact")];
+
+/// The module functions still written twice, each to become a row (docs/
+/// bug-classes.md §4); like TO_MOVE, it only shrinks.
+#[cfg_attr(not(test), allow(dead_code))] // read by the drift test
+pub const MODULE_TO_MOVE: &[(&str, &str)] = &[
+    // math
+    ("math", "tensor"), ("math", "mod"), ("math", "stack"), ("math", "solve"), ("math", "seed"), ("math", "shuffle"), ("math", "choice"), ("math", "permutation"), ("math", "fft"), ("math", "fft2"), ("math", "ifft"), ("math", "conv"), ("math", "conv2d"), ("math", "hamming"), ("math", "hanning"), ("math", "stft"), ("math", "spectrogram"), ("math", "lowpass"), ("math", "highpass"), ("math", "bandpass"), ("math", "gamma"), ("math", "erf"), ("math", "bessel"), ("math", "factorial"), ("math", "choose"), ("math", "complex"), ("math", "real"), ("math", "imag"), ("math", "magnitude"), ("math", "phase"), ("math", "conjugate"), ("math", "sparse"), ("math", "dense"), ("math", "nnz"), ("math", "spmv"), ("math", "load"),
+    // math.stats
+    ("math.stats", "median"), ("math.stats", "std"), ("math.stats", "var"), ("math.stats", "percentile"), ("math.stats", "zscore"), ("math.stats", "corr"), ("math.stats", "cov"), ("math.stats", "ttest"), ("math.stats", "linreg"), ("math.stats", "chisq"), ("math.stats", "anova"), ("math.stats", "kstest"), ("math.stats", "fit"),
+    // math.nn
+    ("math.nn", "relu"), ("math.nn", "sigmoid"), ("math.nn", "softmax"), ("math.nn", "gelu"), ("math.nn", "mse"), ("math.nn", "crossentropy"), ("math.nn", "bce"), ("math.nn", "linear"),
+    // frame
+    ("frame", "load"), ("frame", "save"), ("frame", "select"), ("frame", "filter"), ("frame", "sort"), ("frame", "group"), ("frame", "join"), ("frame", "stack"), ("frame", "head"), ("frame", "tail"), ("frame", "fill"), ("frame", "unique"), ("frame", "rename"), ("frame", "stats"), ("frame", "datetime"), ("frame", "tz"), ("frame", "new"), ("frame", "with"),
+    // io
+    ("io", "csv"), ("io", "lines"),
+    // doc
+    ("doc", "markdown"), ("doc", "chapters"), ("doc", "menu"), ("doc", "pager"), ("doc", "plain"), ("doc", "document"),
+    // chart
+    ("chart", "sma"), ("chart", "ema"), ("chart", "rsi"), ("chart", "macd"), ("chart", "vwap"), ("chart", "rolling_sum"), ("chart", "cvd"),
 ];
 
 #[cfg(test)]
@@ -543,6 +633,30 @@ mod tests {
         }
         for r in ROWS.iter().filter(|r| r.module.is_empty()) {
             assert!(crate::lower_ir::CORE_RESERVED.contains(&r.name), "row '{}' names no core builtin", r.name);
+        }
+    }
+
+    /// A module function is a row, has a form of its own, or is still to
+    /// move, and exactly one of these.
+    #[test]
+    fn every_module_function_is_a_row_or_says_why_not() {
+        use crate::modules::{chart, db, doc, frame, io, math, nn, stats};
+        let modules: [(&str, &[&str]); 8] = [
+            ("math", math::MATH_FUNCTIONS),
+            ("math.stats", stats::STATS_FUNCTIONS),
+            ("math.nn", nn::NN_FUNCTIONS),
+            ("frame", frame::FRAME_FUNCTIONS),
+            ("db", db::DB_FUNCTIONS),
+            ("io", io::IO_FUNCTIONS),
+            ("doc", doc::DOC_FUNCTIONS),
+            ("chart", chart::CHART_FUNCTIONS),
+        ];
+        for (m, names) in modules {
+            for name in names {
+                let row = ROWS.iter().any(|r| r.module == m && r.name == *name);
+                let places = [row, MODULE_OWN_FORM.contains(&(m, name)), MODULE_TO_MOVE.contains(&(m, name))];
+                assert_eq!(places.iter().filter(|p| **p).count(), 1, "{}.{} is in {} of: the table, MODULE_OWN_FORM, MODULE_TO_MOVE", m, name, places.iter().filter(|p| **p).count());
+            }
         }
     }
 

@@ -300,6 +300,31 @@ the oracle.
 - A negative `std` for `normal` stops the program. Both modes had
   flipped the samples' sign.
 
+**Batch 3**: linear algebra (`det`, `inv`, `svd`, `qr`, `cholesky`,
+`eigen`, `norm`, `dot`, `pinv`, `lstsq`, `triu`, `tril`, `rank`, `cond`),
+with parity 107.
+
+- A vector, a rank-3 tensor, or a rectangle where a square is needed is
+  the program's reason. A kernel had panicked.
+- `cholesky` of a matrix that is not positive definite answers its reason
+  (it panicked both modes).
+- `pinv` of an empty matrix read its first singular value unchecked.
+- The sparse product's shapes are checked (`s * v` panicked).
+- A name with several rows takes the one its arguments fit, by count
+  (`norm[t]`, `norm[t, p]`) and by kind.
+
+**Batches 4 and 5**: reductions, sorting, selection and shapes (`sum`,
+`mean`, `min`, `max`, `prod` with and without an axis, `argmax`,
+`argmin`, `cumsum`, `cumprod`, `argsort`, `topk`, `unique`, `where`,
+`reshape`, `flatten`, `transpose`, `clip`, `atan2`), and the element-wise
+functions of a number or a tensor, with parity 108.
+
+- An axis out of range, a reshape that does not fill its shape, `where`'s
+  lengths, and a transpose of a vector are the reason. The kernels had
+  asserted them.
+- A number and a tensor share one rule. `sign[0.0]` was 1 compiled, from
+  Rust's `signum`, and 0 interpreted.
+
 ## Open questions (Vijay)
 
 1. **A handler passes a failed value to a helper.** By the spec's

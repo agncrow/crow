@@ -750,6 +750,19 @@ impl CrowTensor {
     /// a value the caller reports: never a panic. The words are the ones
     /// the lowering refuses a program with when it knows both shapes.
     pub fn try_elementwise(&self, other: &CrowTensor, sign: &str) -> Result<CrowTensor, String> {
+        self.meets(other, sign)?;
+        Ok(match sign {
+            "+" => self.add(other),
+            "-" => self.sub(other),
+            ".*" => self.mul(other),
+            "./" => self.div(other),
+            _ => self.pow(other),
+        })
+    }
+
+    /// Whether two tensors' shapes broadcast for an element-wise operation
+    /// named by `sign`: each pair of dimensions equal, or one of them 1.
+    pub fn meets(&self, other: &CrowTensor, sign: &str) -> Result<(), String> {
         let (a, b) = (self.shape(), other.shape());
         let n = a.len().max(b.len());
         for i in 0..n {
@@ -762,13 +775,7 @@ impl CrowTensor {
                 ));
             }
         }
-        Ok(match sign {
-            "+" => self.add(other),
-            "-" => self.sub(other),
-            ".*" => self.mul(other),
-            "./" => self.div(other),
-            _ => self.pow(other),
-        })
+        Ok(())
     }
 
     pub fn add(&self, other: &CrowTensor) -> CrowTensor {
