@@ -85,13 +85,14 @@ fn a_collecting_loop_that_can_return_gathers_in_a_loop() {
 }
 
 /// What a list or a map keeps is its own: a variable read is cloned into
-/// push[] and into set[]'s key, so the variable stays usable and a loop's
-/// borrowed variable becomes a value
+/// push[] (set[]'s key is read, and kept by the runtime), so the variable
+/// stays usable and a loop's borrowed variable becomes a value; the
+/// collection the statement assigns is moved into the call, not copied
 #[test]
 fn a_collection_keeps_a_clone_of_a_variable() {
     let rust = transpile("out = []\nfor w in ['a', 'b']\n    out = push[out, w]\nm = map[]\nfor k in ['p', 'q']\n    m = set[m, k, 1]\nlog[out]\nlog[m]\n");
-    assert!(rust.contains("crow_runtime::core::push(out, (w).clone())"), "{}", rust);
-    assert!(rust.contains("crow_runtime::core::map_set(m, (k).clone(), 1_i64)"), "{}", rust);
+    assert!(rust.contains("crow_runtime::core::push((out), ((w).clone()))"), "{}", rust);
+    assert!(rust.contains("crow_runtime::core::set((m), &*(k), (1_i64))"), "{}", rust);
 }
 
 /// A control renders what it is given, as an element and a view do: a
@@ -136,7 +137,7 @@ fn a_top_level_loop_over_an_error_halts_with_the_loop_message() {
 fn a_parallel_loop_that_skips_gathers_per_iteration() {
     let rust = transpile("out = for x in [1, 2, 3]\n    y = x * 2\n    if y gt 2\n        y\nlog[out]\n");
     assert!(rust.contains(".par_iter().flat_map_iter(|&x| {"), "{}", rust);
-    assert!(rust.contains("= crow_runtime::core::push(_yielded_"), "{}", rust);
+    assert!(rust.contains("= crow_runtime::core::push((_yielded_"), "{}", rust);
 }
 
 /// A guard narrows: after `if not t.ok` / `return`, t is its value, so
@@ -668,7 +669,8 @@ fn test_range_transpile() {
 #[test]
 fn test_len_transpile() {
     let rust = transpile("x = [1, 2, 3]\ny = len[x]\n");
-    assert!(rust.contains(".len()"), "should use .len()\n{}", rust);
+    // a numeric literal is a tensor: its row, the one the interpreter calls
+    assert!(rust.contains("crow_runtime::core::len_tensor(&(x))"), "should call the tensor's len\n{}", rust);
 }
 
 #[test]
@@ -846,7 +848,7 @@ fn test_numarray_sort_transpile() {
 #[test]
 fn test_numarray_contains_transpile() {
     let rust = transpile("a = [1, 2, 3]\nb = contains[a, 2]\n");
-    assert!(rust.contains("to_vec().contains"), "NumArray contains should use to_vec().contains\n{}", rust);
+    assert!(rust.contains("crow_runtime::core::contains_number(&(a), (2_i64) as f64)"), "a tensor's contains is its row\n{}", rust);
 }
 
 #[test]
@@ -1135,7 +1137,8 @@ fn test_math_cumprod_transpile() {
 fn test_math_concat_transpile() {
     let rust = transpile("use math\nx = concat[ones[3], ones[2]]\n");
     // shapes that do not join stop with their reason (the kernel asserted)
-    assert!(rust.contains(".try_concat("), "should emit .try_concat()\n{}", rust);
+    assert!(rust.contains("crow_runtime::core::concat_tensors("), "should call the tensors' concat\n{}", rust);
+    assert!(rust.contains(".unwrap_or_else(|e| crow_stop(2, e));"), "{}", rust);
 }
 
 #[test]

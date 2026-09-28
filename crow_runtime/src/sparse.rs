@@ -4,7 +4,7 @@ use crate::tensor::CrowTensor;
 use sprs::{CsMat, TriMat};
 
 /// A sparse matrix stored in CSR (Compressed Sparse Row) format.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CrowSparse {
     mat: CsMat<f64>,
 }

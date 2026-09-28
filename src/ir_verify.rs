@@ -350,12 +350,14 @@ impl<'p> Verifier<'p> {
                 match target {
                     Target::User(name) => self.user_call(name, &ts, ty, *propagates),
                     Target::Module(m, name) => self.row_call(m, name, &ts),
-                    Target::Runtime(id) if crate::table::by_id(id).is_some() => {
-                        if let Some(row) = crate::table::by_id(id) {
-                            self.row_call(row.module, row.name, &ts);
+                    // a core builtin with rows: the row the arguments' types
+                    // pick, as both backends pick it
+                    Target::Runtime(path) => {
+                        let name = crate::ir::RUNTIME_TABLE.iter().find(|(_, r)| r == path).map_or(path.as_str(), |(b, _)| b);
+                        if crate::table::has_core_rows(name) {
+                            self.row_call("", name, &ts);
                         }
                     }
-                    _ => {}
                 }
                 ty.clone()
             }
@@ -513,7 +515,15 @@ impl<'p> Verifier<'p> {
             return;
         }
         let kinds: Vec<crate::table::Arg> = args.iter().map(|t| crate::table::Arg::of_type(&crate::lower_ir::crow_type(t))).collect();
-        let Some(row) = crate::table::module(module, name, &kinds) else {
+        // (a core call no row takes is the lowering's to refuse, or a JSON
+        // value's, whose kind shows as it runs; one with an argument the
+        // table has no kind for — a handle, a value of unknown type — picks
+        // its row by the value, as the interpreter does)
+        if module.is_empty() && kinds.iter().any(|k| matches!(k, crate::table::Arg::Unknown | crate::table::Arg::Json)) {
+            return;
+        }
+        let row = if module.is_empty() { crate::table::core_row(name, &kinds) } else { crate::table::module(module, name, &kinds) };
+        let Some(row) = row else {
             return;
         };
         let Some(params) = crate::table::kinds_of(row.params, args.len()) else {
@@ -583,7 +593,7 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
         || match k.each() {
             Kind::Int | Kind::Float => matches!(t, Ty::Int | Ty::Float),
             Kind::Whole => *t == Ty::Int,
-            Kind::Words => matches!(t, Ty::Tensor(_)) || items(t, &|e| matches!(e, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup)),
+            Kind::Words => matches!(t, Ty::Tensor(_) | Ty::Column(_)) || items(t, &|e| matches!(e, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup)),
             Kind::Bool => *t == Ty::Bool,
             Kind::Str => matches!(t, Ty::Str | Ty::Markup),
             Kind::Tensor => matches!(t, Ty::Tensor(_)) || items(t, &|_| false),
@@ -595,6 +605,14 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::Cell => cell(t) || *t == Ty::Json,
             // a column's values: a list of cells, a tensor, a column, a cell
             Kind::Cells => cell(t) || matches!(t, Ty::Tensor(_) | Ty::Column(_)) || items(t, &|e| cell(e)),
+            // a collection of anything: its items are the function's own type
+            Kind::List | Kind::Seq => matches!(t, Ty::List(_)),
+            Kind::MapOf | Kind::MapRef => matches!(t, Ty::Map(_)),
+            Kind::Ints => items(t, &|e| *e == Ty::Int),
+            Kind::Floats => items(t, &|e| *e == Ty::Float),
+            Kind::Texts => items(t, &|e| matches!(e, Ty::Str | Ty::Markup)),
+            Kind::Json => *t == Ty::Json,
+            Kind::Column => matches!(t, Ty::Column(_)),
             _ => true,
         }
 }

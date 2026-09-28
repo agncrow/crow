@@ -61,7 +61,13 @@ impl TypeContext {
         // its arguments' kinds pick, as both backends pick it
         let kinds: Vec<crate::table::Arg> = args.iter().map(|a| crate::table::Arg::of_type(&arg_ty(a))).collect();
         if let Some(row) = crate::table::core_row(name, &kinds) {
-            return row.crow_type();
+            // a collection's answer is what it was given — a list of its
+            // items, a tensor of its numbers — which its rule below reads
+            // from the arguments
+            let given = row.ret.generic() || (row.ret == crate::table::Kind::Tensor && row.params.first() == Some(&crate::table::Kind::Tensor));
+            if !given {
+                return row.crow_type();
+            }
         }
         // Module function dispatch (overlapping builtins: check arg type)
         let is_overlapping = matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max");

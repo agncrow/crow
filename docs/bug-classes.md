@@ -482,6 +482,52 @@ points for the builtins). The kernels' other asserts guard what their
 Crow-facing callers check first, and a guard reports one as a stop if a
 check were ever missing.
 
+**Batch 11**: the collections — `len`, `contains`, `slice`, `push`,
+`pop`, `sort`, `reverse`, `concat`, `range`, `keys`, `values`, `has`,
+`set` and `del` — with parity 116. Each is one generic function over the
+items (`crow_runtime::core`, "the collections a program calls"): the
+compiled program calls it with its typed items, the interpreter with its
+values, and a name's rows are tried in order, a list's before a tensor's.
+New kinds say how a collection is taken: read (`Seq`, `MapRef`), or kept
+and made the answer of (`List`, `MapOf`), which the compiled program moves
+when the statement assigns the variable it reads and the interpreter moves
+out of its arguments (a row has a second entry, `take`, that owns them).
+So `xs = push[xs, x]` still grows the list in place in both modes, through
+the same row; the interpreter's own in-place path is gone.
+
+- `eq` of two records did not build compiled and was `false` interpreted;
+  of two maps with equal entries it was `true` compiled and `false`
+  interpreted; `contains` of a list of records did not build. Records
+  compare field by field and maps entry by entry now, in both modes: the
+  generated structs derive `PartialEq` when their fields compare, a result
+  compares as a value that can fail does (an error equals nothing), and
+  the interpreter's `eq` gained the arms, with an error equal to nothing
+  there too (a missing cell's placeholder had compared as a value).
+- `sort` of numbers holding a NaN sorted to wherever the NaN stood, in
+  both modes; a tensor's panicked compiled. NaN sorts last now. `sort` of
+  bools sorted compiled and left the list as it was interpreted; of
+  records or of values that can fail it did not build compiled and was the
+  list unchanged interpreted. Those have no order, and are refused.
+- `len` of a number, `has` and `keys` of a list, `contains` of a map: the
+  interpreter stopped as it ran, the compiled program did not build. Each
+  is refused before the program runs, in the table's words. `len` of a
+  JSON number was 0 compiled; it stops both modes with the same refusal.
+  A frame loaded (`use frame`) had silenced these refusals for the names
+  it shares with the core (`sort`, `join`): the core's rows and the
+  module's are checked together now.
+- `range` of a float was cut to an int compiled and refused interpreted:
+  refused. An int pushed onto, set in or compared with a collection of
+  floats is a float, as one assigned to a float variable is: interpreted,
+  `map[lr = 0.01, epochs = 100]` held the int, so `type[m.epochs]` said
+  `int` beside a float division, and compiled it did not build.
+- `join` of a frame's column joined its cells interpreted and did not
+  build compiled; a missing cell had joined as its placeholder. Both join
+  the cells now, and a missing one stops, as where numbers are taken.
+- A map of tensors logged Rust's debug form compiled.
+
+`str`, `json` and `encode` (any value's display and JSON) and the effects
+are still written twice.
+
 ## Decisions (Vijay, 2026-09-28)
 
 The questions the work raised, each decided as recommended.

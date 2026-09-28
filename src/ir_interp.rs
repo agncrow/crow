@@ -960,7 +960,7 @@ impl IrInterp {
                 if b.is_error() {
                     return Ok(b.clone());
                 }
-                crate::builtins::call("len", std::slice::from_ref(b), &trace).unwrap_or_else(|| Err("len[] is not a builtin".into()))?
+                Self::core_rows("len", std::slice::from_ref(b), &trace, false).unwrap_or_else(|| Err("len[] is not a builtin".into()))?
             }
             // ... and of a local's field: a struct's list, a frame's column
             Expr::Call { target: Target::Runtime(name), args, .. }
@@ -975,7 +975,7 @@ impl IrInterp {
                     Value::Map(m) => &m[field.as_str()],
                     _ => unreachable!(),
                 };
-                crate::builtins::call("len", std::slice::from_ref(item), &trace).unwrap_or_else(|| Err("len[] is not a builtin".into()))?
+                Self::core_rows("len", std::slice::from_ref(item), &trace, false).unwrap_or_else(|| Err("len[] is not a builtin".into()))?
             }
             Expr::Call { target, args, propagates, .. } => {
                 let vals = self.eval_args(args)?;
@@ -1268,11 +1268,11 @@ impl IrInterp {
 
     /// `x = push[move x, v]` and the other in-place builtins on a list or a
     /// map (ast::IN_PLACE_BUILTINS): the value is taken out of its slot and
-    /// the runtime's own function grows it, as the compiled mode does —
-    /// through the shared builtin table it would be copied first. Only a
-    /// shape the runtime handles totally takes this path; anything else
-    /// (a frame, a tensor, a module's function of the same name, a wrong
-    /// key type) goes the ordinary way.
+    /// moved into the row its values pick, whose function grows it, as the
+    /// compiled mode does. Only a row that makes its answer of the
+    /// collection takes this path; anything else (a frame, a tensor, a
+    /// module's function of the same name, a kind no row takes) goes the
+    /// ordinary way.
     fn assign_in_place(&mut self, var: &str, expr: &Expr) -> Result<bool, String> {
         let (name, args) = match expr {
             Expr::Call { target: Target::Runtime(name), args, .. } => (name.rsplit('.').next().unwrap_or(name), args),
@@ -1301,53 +1301,29 @@ impl IrInterp {
         if rest.iter().any(|r| r.is_error()) {
             return Ok(false);
         }
-        let ok = match self.lookup(var) {
-            Some(cur) if !cur.is_error() => match (&cur.value, name) {
-                (Value::Array(_), "push") => rest.len() == 1,
-                (Value::Array(_), "pop") | (Value::Array(_), "reverse") | (Value::Array(_), "sort") => rest.is_empty(),
-                (Value::Array(_), "concat") => rest.len() == 1 && matches!(rest[0].value, Value::Array(_)),
-                (Value::Map(m), "set") => {
-                    rest.len() == 2 && matches!(rest[0].value, Value::Str(_)) && crate::builtins::check_map_homogeneous(m, &rest[1]).is_ok()
-                }
-                (Value::Map(_), "del") => rest.len() == 1 && matches!(rest[0].value, Value::Str(_)),
-                _ => false,
-            },
-            _ => false,
+        // the row the values pick (the collection's kind read where it
+        // lies), when it makes its answer of the collection: taken out of
+        // its slot and moved into the call
+        let row = {
+            let Some(cur) = self.lookup(var).filter(|c| !c.is_error()) else {
+                return Ok(false);
+            };
+            let mut kinds = vec![crate::table::Arg::of_value(cur)];
+            kinds.extend(rest.iter().map(crate::table::Arg::of_value));
+            match crate::table::core_row(name, &kinds) {
+                Some(row) if row.params.first().is_some_and(|k| k.owned()) => row,
+                _ => return Ok(false),
+            }
         };
-        if !ok {
-            return Ok(false);
-        }
         let taken = match self.slot(var) {
             Some(slot) => std::mem::replace(slot, CrowValue::done()),
             None => return Ok(false),
         };
-        let mut rest = rest.into_iter();
-        let out = match (taken.value, name) {
-            (Value::Array(items), "push") => Value::Array(crow_runtime::core::push(items, rest.next().unwrap())),
-            (Value::Array(items), "pop") => Value::Array(crow_runtime::core::pop(items)),
-            (Value::Array(items), "reverse") => Value::Array(crow_runtime::core::reverse(items)),
-            (Value::Array(items), "sort") => Value::Array(crow_runtime::core::sort_by(items, crate::builtins::value_cmp)),
-            (Value::Array(items), "concat") => match rest.next().unwrap().value {
-                Value::Array(other) => Value::Array(crow_runtime::core::concat(items, &other)),
-                _ => unreachable!("checked above"),
-            },
-            (Value::Map(m), "set") => {
-                let key = match rest.next().unwrap().value {
-                    Value::Str(s) => s,
-                    _ => unreachable!("checked above"),
-                };
-                Value::Map(crow_runtime::core::map_set(m, key, rest.next().unwrap()))
-            }
-            (Value::Map(m), "del") => {
-                let key = match rest.next().unwrap().value {
-                    Value::Str(s) => s,
-                    _ => unreachable!("checked above"),
-                };
-                Value::Map(crow_runtime::core::map_del(m, &key))
-            }
-            _ => unreachable!("checked above"),
-        };
-        self.assign(var, CrowValue::ok(out));
+        let mut vals = Vec::with_capacity(1 + rest.len());
+        vals.push(taken);
+        vals.extend(rest);
+        let out = (row.take)(vals, &self.trace_entry())?;
+        self.assign(var, out);
         Ok(true)
     }
 
@@ -1468,19 +1444,32 @@ impl IrInterp {
         // row its arguments' kinds pick, as the emitter picks it by their
         // types
         let name = RUNTIME_TABLE.iter().find(|(_, r)| *r == path).map(|(b, _)| *b).unwrap_or(path).to_string();
+        match Self::core_row(&name, &vals, self.registry.has_function(&name)) {
+            Some(Ok(row)) => (row.take)(vals, &self.trace_entry()),
+            Some(Err(refused)) => Err(refused),
+            None => self.bare_call(&name, vals),
+        }
+    }
+
+    /// A core builtin's row for these values; or, when none takes them and
+    /// no module answers the name (math's min of a tensor, frame's join of
+    /// frames), the refusal the lowering gives when it knows the kinds.
+    /// None when the name has no rows, or a module may take them.
+    fn core_row(name: &str, vals: &[CrowValue], module_too: bool) -> Option<Result<&'static crate::table::Row, String>> {
         let kinds: Vec<crate::table::Arg> = vals.iter().map(crate::table::Arg::of_value).collect();
-        if let Some(row) = crate::table::core_row(&name, &kinds) {
-            return (row.call)(&vals, &self.trace_entry());
+        if let Some(row) = crate::table::core_row(name, &kinds) {
+            return Some(Ok(row));
         }
-        // none takes them, and no module answers the name (math's min of a
-        // tensor, frame's join of frames): the refusal the lowering gives
-        // when it knows the kinds
-        if crate::table::has_core_rows(&name) && !self.registry.has_function(&name) {
-            if let Some(e) = crate::table::refusal(&[""], &name, &kinds) {
-                return Err(e);
-            }
+        if crate::table::has_core_rows(name) && !module_too {
+            return crate::table::refusal(&[""], name, &kinds).map(Err);
         }
-        self.bare_call(&name, vals)
+        None
+    }
+
+    /// A core builtin's row called on values read where they lie (a list
+    /// measured is not copied).
+    fn core_rows(name: &str, vals: &[CrowValue], trace: &str, module_too: bool) -> Option<Result<CrowValue, String>> {
+        Self::core_row(name, vals, module_too).map(|row| row.and_then(|row| (row.call)(vals, trace)))
     }
 
     /// A bare name, resolved as the interpreter resolves it: a loaded

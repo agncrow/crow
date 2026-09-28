@@ -297,16 +297,6 @@ impl Emitter {
         let in0 = Self::inner(&ty0);
         match name {
             "log" => return Some(self.emit_log(a, args)),
-            "range" => {
-                self.needs_crow_runtime = true;
-                let (x, y, z) = match n {
-                    1 => ("0".to_string(), a[0].clone(), "1".to_string()),
-                    2 => (a[0].clone(), a[1].clone(), "1".to_string()),
-                    3 => (a[0].clone(), a[1].clone(), a[2].clone()),
-                    _ => return Some("vec![]".to_string()),
-                };
-                return Some(format!("crow_runtime::core::range(({}) as i64, ({}) as i64, ({}) as i64){}", x, y, z, self.or_stop()));
-            }
             "map" if n == 0 => return Some("BTreeMap::new()".to_string()),
             "grad" if n == 1 => {
                 if let Some(fname) = fn_named(&args[0]) {
@@ -394,128 +384,8 @@ impl Emitter {
                 }
                 _ => format!("format!(\"{{}}\", {})", a[0]),
             },
-            // collections
-            // a value that can fail arrives as its payload: the call hands
-            // its error on before len runs (spec, Auto-Propagation)
-            "len" if n == 1 => match in0 {
-                CrowType::Frame => format!("(({}).nrows() as i64)", a[0]),
-                CrowType::Str => format!("(({}).chars().count() as i64)", a[0]),
-                CrowType::Json => {
-                    self.needs_crow_runtime = true;
-                    format!("crow_runtime::json::len(&({}))", a[0])
-                }
-                _ => format!("(({}).len() as i64)", a[0]),
-            },
-            "contains" if n == 2 => match ty0 {
-                CrowType::NumArray(_) => format!("{}.to_vec().contains(&({} as f64))", a[0], a[1]),
-                CrowType::Str => format!("({}).contains(&*{})", a[0], a[1]),
-                _ => format!("({}).contains(&{})", a[0], a[1]),
-            },
-            "slice" if n == 3 => {
-                self.needs_crow_runtime = true;
-                match ty0 {
-                    CrowType::NumArray(_) => format!("crow_runtime::core::slice_tensor(&({}), ({}) as i64, ({}) as i64)", a[0], a[1], a[2]),
-                    CrowType::Str => format!("crow_runtime::core::slice_str(&({}), ({}) as i64, ({}) as i64)", a[0], a[1], a[2]),
-                    _ => format!("crow_runtime::core::slice(&({}), ({}) as i64, ({}) as i64)", a[0], a[1], a[2]),
-                }
-            }
-            "push" if n == 2 && !(self.needs_crow_web && self.web_features.contains("queue") && !matches!(ty0, CrowType::Array(_) | CrowType::NumArray(_))) => {
-                if matches!(ty0, CrowType::NumArray(_)) {
-                    if matches!(Self::inner(&self.tt(&args[1])), CrowType::NumArray(_)) {
-                        format!("{}.push_row(&{}){}", a[0], a[1], self.or_stop())
-                    } else {
-                        format!("{}.push_scalar({} as f64){}", a[0], a[1], self.or_stop())
-                    }
-                } else {
-                    self.needs_crow_runtime = true;
-                    let first = self.moved_or_cloned(&args[0], &a[0]);
-                    // the list keeps the value: a variable read stays usable
-                    // (a loop's variable is borrowed from what it walks)
-                    let item = Self::kept(&args[1], &a[1]);
-                    // into a list whose items can fail: a propagating push
-                    // hands over the value, a gathering one (a collecting
-                    // loop's) the item as it was yielded
-                    let item = match &ty0 {
-                        CrowType::Array(it) if matches!(it.as_ref(), CrowType::Result(_)) => {
-                            let gathered = matches!(whole, Expr::Call { propagates: false, .. });
-                            let from = if gathered { self.tt(&args[1]) } else { Self::inner(&self.tt(&args[1])) };
-                            self.as_item(item, &from, it)
-                        }
-                        _ => item,
-                    };
-                    format!("crow_runtime::core::push({}, {})", first, item)
-                }
-            }
+            // a web queue's push (crow_web): a collection's is its row
             "push" if n == 2 => format!("{}.push({})", a[0], a[1]),
-            "pop" if n == 1 => {
-                if matches!(ty0, CrowType::NumArray(_)) {
-                    format!("{{ let mut tmp = {}.to_vec(); tmp.pop(); crow_runtime::tensor::CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", a[0])
-                } else {
-                    self.needs_crow_runtime = true;
-                    let first = self.moved_or_cloned(&args[0], &a[0]);
-                    format!("crow_runtime::core::pop({})", first)
-                }
-            }
-            "sort" if n >= 1 => {
-                if matches!(ty0, CrowType::NumArray(_)) {
-                    format!("{{ let mut tmp = {}.to_vec(); tmp.sort_by(|a, b| a.partial_cmp(b).unwrap()); crow_runtime::tensor::CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", a[0])
-                } else {
-                    self.needs_crow_runtime = true;
-                    let first = self.moved_or_cloned(&args[0], &a[0]);
-                    let inner = match &in0 {
-                        CrowType::Array(i) => i.as_ref().clone(),
-                        _ => CrowType::Unknown,
-                    };
-                    match inner {
-                        CrowType::Int => format!("crow_runtime::core::sort_ints({})", first),
-                        CrowType::Float => format!("crow_runtime::core::sort_floats({})", first),
-                        CrowType::Str => format!("crow_runtime::core::sort_strs({})", first),
-                        _ => format!("{{ let mut tmp = {}; tmp.sort(); tmp }}", first),
-                    }
-                }
-            }
-            "reverse" if n == 1 => match ty0 {
-                CrowType::NumArray(_) => format!("{{ let mut tmp = {}.to_vec(); tmp.reverse(); crow_runtime::tensor::CrowTensor::from_vec(tmp.clone(), vec![tmp.len()]) }}", a[0]),
-                CrowType::Str => format!("({}).chars().rev().collect::<String>()", a[0]),
-                _ => {
-                    self.needs_crow_runtime = true;
-                    let first = self.moved_or_cloned(&args[0], &a[0]);
-                    format!("crow_runtime::core::reverse({})", first)
-                }
-            },
-            "concat" if n == 2 || n == 3 => {
-                if matches!(in0, CrowType::Str) {
-                    format!("format!(\"{{}}{{}}\", {}, {})", a[0], a[1])
-                } else if matches!(in0, CrowType::NumArray(_)) {
-                    self.needs_crow_runtime = true;
-                    let axis = if n == 3 { format!("({}) as i64", a[2]) } else { "0".to_string() };
-                    format!("{}.try_concat(&{}, {}){}", a[0], a[1], axis, self.or_stop())
-                } else {
-                    self.needs_crow_runtime = true;
-                    let first = self.moved_or_cloned(&args[0], &a[0]);
-                    format!("crow_runtime::core::concat({}, &({}))", first, a[1])
-                }
-            }
-            // maps
-            "keys" if n == 1 => format!("{}.keys().cloned().collect::<Vec<String>>()", a[0]),
-            "values" if n == 1 => format!("{}.values().cloned().collect::<Vec<_>>()", a[0]),
-            "has" if n == 2 => format!("{}.contains_key(&{})", a[0], a[1]),
-            "set" if n == 3 => {
-                let vt = self.tt(&args[2]);
-                let val = match vt {
-                    CrowType::Fn(_, _) => format!("{} as {}", a[2], vt.to_rust_type()),
-                    _ => Self::kept(&args[2], &a[2]),
-                };
-                self.needs_crow_runtime = true;
-                let first = self.moved_or_cloned(&args[0], &a[0]);
-                let key = Self::kept(&args[1], &a[1]);
-                format!("crow_runtime::core::map_set({}, {}, {})", first, key, val)
-            }
-            "del" if n == 2 => {
-                self.needs_crow_runtime = true;
-                let first = self.moved_or_cloned(&args[0], &a[0]);
-                format!("crow_runtime::core::map_del({}, &{})", first, a[1])
-            }
             // the command line and the terminal
             "args" if n == 0 => "std::env::args().skip(1).collect::<Vec<String>>()".to_string(),
             "input" if !self.in_view() => {

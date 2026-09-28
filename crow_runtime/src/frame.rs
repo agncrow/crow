@@ -5,7 +5,7 @@ use std::sync::Arc;
 use rayon::prelude::*;
 
 /// Column data types — each column stores a single typed vector.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Column {
     Int(Vec<i64>),
     Float(Vec<f64>),
@@ -71,8 +71,9 @@ impl Column {
     }
 }
 
-/// A column-oriented data frame.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+/// A column-oriented data frame. Two frames are equal when their column
+/// names, cells and missing cells are.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CrowFrame {
     pub columns: Vec<String>,              // column names (order preserved)
     pub data: Vec<Arc<Column>>,            // column data (Arc for cheap sharing)
@@ -188,7 +189,7 @@ impl CrowFrame {
 // ===== CrowColumn: typed column wrapper for zero-parse operations =====
 
 /// A typed column wrapper that avoids string conversion for comparisons/arithmetic.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CrowColumn {
     pub data: Arc<Column>,
     pub valid: Arc<Vec<bool>>,

@@ -2448,7 +2448,9 @@ impl<'a> Lowerer<'a> {
             .zip(kinds.iter().copied().map(Some).chain(std::iter::repeat(None)))
             .map(|(x, k)| {
                 let item = match k {
-                    Some(Kind::Words | Kind::Strs) => Ty::Str,
+                    Some(Kind::Words | Kind::Strs | Kind::Texts) => Ty::Str,
+                    Some(Kind::Ints) => Ty::Int,
+                    Some(Kind::Floats) => Ty::Float,
                     Some(Kind::Bools) => Ty::Bool,
                     Some(Kind::Tensors) => Ty::Tensor(Box::new(Ty::Float)),
                     Some(Kind::Tensor) => Ty::Float,
@@ -2470,13 +2472,35 @@ impl<'a> Lowerer<'a> {
     }
 
     /// A core builtin's row's arguments, as a module row's are given theirs:
-    /// an empty list literal is typed by the parameter it is handed to.
+    /// an empty list literal is typed by the parameter it is handed to, and
+    /// numbers held as a list handed to a tensor's parameter are converted
+    /// (`push[m, range[3]]`). An int kept in or compared with a collection
+    /// of floats is a float, as one assigned to a float variable is
+    /// (compiled, `push[xs, 2]` onto floats did not build).
     fn core_row_arguments(&self, name: &str, lowered: Vec<Expr>) -> Vec<Expr> {
+        use crate::table::Kind;
         let args: Vec<crate::table::Arg> = lowered.iter().map(|x| crate::table::Arg::of_type(&read(x))).collect();
-        match crate::table::core_row(name, &args).and_then(|row| crate::table::kinds_of(row.params, lowered.len())) {
-            Some(kinds) => Self::typed_empties(&kinds, lowered),
-            None => lowered,
-        }
+        let Some(kinds) = crate::table::core_row(name, &args).and_then(|row| crate::table::kinds_of(row.params, lowered.len())) else {
+            return lowered;
+        };
+        let lowered = Self::typed_empties(&kinds, lowered);
+        let floats = kinds.iter().zip(&lowered).any(|(k, x)| match (k, x.ty().payload()) {
+            (Kind::List | Kind::Seq, Ty::List(e)) | (Kind::MapOf | Kind::MapRef, Ty::Map(e)) => **e == Ty::Float,
+            _ => false,
+        });
+        lowered
+            .into_iter()
+            .zip(kinds)
+            .map(|(x, k)| match (k, x.ty()) {
+                (Kind::Tensor, Ty::List(e)) if matches!(*e, Ty::Int | Ty::Float) => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: Ty::Tensor(Box::new(Ty::Float)) },
+                // (a plain int: one that can fail is handed on as its error,
+                // through the mark the backends read)
+                (Kind::Item | Kind::ItemRef, Ty::Int) if floats && !matches!(x, Expr::Convert { how: Convert::Unwrap, .. }) => {
+                    Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float }
+                }
+                _ => x,
+            })
+            .collect()
     }
 
     fn row_arguments(&self, module: &str, name: &str, lowered: Vec<Expr>) -> Vec<Expr> {

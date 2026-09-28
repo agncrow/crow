@@ -105,11 +105,29 @@ pub fn sort_ints(mut v: Vec<i64>) -> Vec<i64> {
     v
 }
 
-/// Floats order by value; a NaN sorts as equal to everything, which is
-/// what the interpreter has always done.
+/// The order `sort` puts numbers in, in both modes: ascending, NaN last.
+/// (NaN compared equal to everything, so a list holding one sorted to an
+/// order that depended on where it stood.)
+pub fn order_floats(a: &f64, b: &f64) -> std::cmp::Ordering {
+    match (a.is_nan(), b.is_nan()) {
+        (true, true) => std::cmp::Ordering::Equal,
+        (true, false) => std::cmp::Ordering::Greater,
+        (false, true) => std::cmp::Ordering::Less,
+        (false, false) => a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal),
+    }
+}
+
 pub fn sort_floats(mut v: Vec<f64>) -> Vec<f64> {
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    v.sort_by(order_floats);
     v
+}
+
+/// `sort[t]` of a tensor: its numbers in order, as one axis. (Compiled,
+/// a NaN among them panicked.)
+pub fn sort_tensor(t: &crate::tensor::CrowTensor) -> crate::tensor::CrowTensor {
+    let v = sort_floats(t.to_vec());
+    let n = v.len();
+    crate::tensor::CrowTensor::from_vec(v, vec![n])
 }
 
 pub fn sort_strs(mut v: Vec<String>) -> Vec<String> {
@@ -127,6 +145,147 @@ pub fn map_set<T>(mut m: BTreeMap<String, T>, key: String, value: T) -> BTreeMap
 pub fn map_del<T>(mut m: BTreeMap<String, T>, key: &str) -> BTreeMap<String, T> {
     m.remove(key);
     m
+}
+
+// ── the collections a program calls ─────────────────────────────────
+// One function each, generic over the items: the compiled program calls
+// it with its typed items, the interpreter with its own values, so a list
+// means one thing to both (docs/bug-classes.md §4).
+
+/// `set[map, key, value]`.
+pub fn set<T>(m: BTreeMap<String, T>, key: &str, value: T) -> BTreeMap<String, T> {
+    map_set(m, key.to_string(), value)
+}
+
+/// `len[list]`.
+pub fn len<T>(v: &[T]) -> i64 {
+    v.len() as i64
+}
+
+/// `len[text]`, in characters.
+pub fn len_text(s: &str) -> i64 {
+    s.chars().count() as i64
+}
+
+/// `len[map]`: its entries.
+pub fn len_map<T>(m: &BTreeMap<String, T>) -> i64 {
+    m.len() as i64
+}
+
+/// `len[tensor]`.
+pub fn len_tensor(t: &crate::tensor::CrowTensor) -> i64 {
+    t.len() as i64
+}
+
+/// `len[frame]`: its rows.
+pub fn len_frame(f: &crate::frame::CrowFrame) -> i64 {
+    f.nrows() as i64
+}
+
+/// `len[col]`: a frame's column's cells, a missing one too.
+pub fn len_column(c: &crate::frame::CrowColumn) -> i64 {
+    c.len() as i64
+}
+
+/// `len[j]` of a parsed JSON value: a list's items, an object's entries,
+/// text's characters. A number or a bool has no length: the refusal the
+/// interpreter gives the value it parsed to (the table's words for `len`).
+pub fn len_json(j: &serde_json::Value) -> Result<i64, String> {
+    let got = match j {
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) | serde_json::Value::String(_) => return Ok(crate::json::len(j)),
+        serde_json::Value::Number(n) if n.is_i64() => "an int",
+        serde_json::Value::Number(_) => "a number",
+        serde_json::Value::Bool(_) => "a bool",
+        serde_json::Value::Null => "a value",
+    };
+    Err(format!("len[] takes a list, text, a map, numbers or a frame, got {}", got))
+}
+
+/// `contains[list, x]`: whether an item is `x`, compared as `eq` compares
+/// (a record field by field, a map entry by entry).
+pub fn contains<T: PartialEq>(v: &[T], x: &T) -> bool {
+    v.contains(x)
+}
+
+/// `contains[text, part]`.
+pub fn contains_text(s: &str, part: &str) -> bool {
+    s.contains(part)
+}
+
+/// `contains[tensor, x]`.
+pub fn contains_number(t: &crate::tensor::CrowTensor, x: f64) -> bool {
+    t.to_vec().contains(&x)
+}
+
+/// `keys[map]`, in order.
+pub fn keys<T>(m: &BTreeMap<String, T>) -> Vec<String> {
+    m.keys().cloned().collect()
+}
+
+/// `values[map]`, in their keys' order.
+pub fn values<T: Clone>(m: &BTreeMap<String, T>) -> Vec<T> {
+    m.values().cloned().collect()
+}
+
+/// `has[map, key]`.
+pub fn has<T>(m: &BTreeMap<String, T>, key: &str) -> bool {
+    m.contains_key(key)
+}
+
+/// `reverse[text]`, by character.
+pub fn reverse_text(s: &str) -> String {
+    s.chars().rev().collect()
+}
+
+/// `reverse[tensor]`: its numbers backwards, as one axis.
+pub fn reverse_tensor(t: &crate::tensor::CrowTensor) -> crate::tensor::CrowTensor {
+    let mut v = t.to_vec();
+    v.reverse();
+    let n = v.len();
+    crate::tensor::CrowTensor::from_vec(v, vec![n])
+}
+
+/// `pop[tensor]`: its numbers but the last, as one axis.
+pub fn pop_tensor(t: &crate::tensor::CrowTensor) -> crate::tensor::CrowTensor {
+    let mut v = t.to_vec();
+    v.pop();
+    let n = v.len();
+    crate::tensor::CrowTensor::from_vec(v, vec![n])
+}
+
+/// `push[tensor, x]`: a number onto a vector.
+pub fn push_number(t: &crate::tensor::CrowTensor, x: f64) -> Result<crate::tensor::CrowTensor, String> {
+    t.push_scalar(x)
+}
+
+/// `push[matrix, row]`: a row onto a matrix.
+pub fn push_row(t: &crate::tensor::CrowTensor, row: &crate::tensor::CrowTensor) -> Result<crate::tensor::CrowTensor, String> {
+    t.push_row(row)
+}
+
+/// `concat[a, b]` of text.
+pub fn concat_text(a: &str, b: &str) -> String {
+    format!("{}{}", a, b)
+}
+
+/// `concat[a, b]` of tensors, along the first axis.
+pub fn concat_tensors(a: &crate::tensor::CrowTensor, b: &crate::tensor::CrowTensor) -> Result<crate::tensor::CrowTensor, String> {
+    a.try_concat(b, 0)
+}
+
+/// `concat[a, b, axis]` of tensors.
+pub fn concat_axis(a: &crate::tensor::CrowTensor, b: &crate::tensor::CrowTensor, axis: i64) -> Result<crate::tensor::CrowTensor, String> {
+    a.try_concat(b, axis)
+}
+
+/// `range[n]`: 0 up to `n`.
+pub fn range_to(n: i64) -> Result<Vec<i64>, String> {
+    range(0, n, 1)
+}
+
+/// `range[start, stop]`.
+pub fn range_from(start: i64, stop: i64) -> Result<Vec<i64>, String> {
+    range(start, stop, 1)
 }
 
 /// `rand[]`: a float in [0, 1) from the program's RNG, the one `seed[n]`

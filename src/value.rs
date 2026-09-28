@@ -149,6 +149,14 @@ impl CrowValue {
 
 }
 
+/// Two values compared as `eq` compares them (`ops::values_equal`): what
+/// `contains` asks of a list's items, in both modes alike.
+impl PartialEq for CrowValue {
+    fn eq(&self, other: &Self) -> bool {
+        crate::ops::values_equal(self, other)
+    }
+}
+
 /// The actual runtime values
 #[derive(Debug, Clone)]
 pub enum Value {

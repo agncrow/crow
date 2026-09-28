@@ -140,39 +140,59 @@ pub fn float_of_bool(b: bool) -> f64 {
 }
 
 /// A list's items as the text `join` writes: a number as it displays (a
-/// whole float as an int), a bool as `true` or `false`.
+/// whole float as an int), a bool as `true` or `false`. A frame's column
+/// has a missing cell's reason instead, as where numbers are taken.
 pub trait Words {
-    fn words(&self) -> Vec<String>;
+    fn words(&self) -> Result<Vec<String>, String>;
 }
 
 impl Words for Vec<String> {
-    fn words(&self) -> Vec<String> {
-        self.clone()
+    fn words(&self) -> Result<Vec<String>, String> {
+        Ok(self.clone())
     }
 }
 impl Words for Vec<i64> {
-    fn words(&self) -> Vec<String> {
-        self.iter().map(|n| n.to_string()).collect()
+    fn words(&self) -> Result<Vec<String>, String> {
+        Ok(self.iter().map(|n| n.to_string()).collect())
     }
 }
 impl Words for Vec<f64> {
-    fn words(&self) -> Vec<String> {
-        self.iter().map(|x| x.to_string()).collect()
+    fn words(&self) -> Result<Vec<String>, String> {
+        Ok(self.iter().map(|x| x.to_string()).collect())
     }
 }
 impl Words for Vec<bool> {
-    fn words(&self) -> Vec<String> {
-        self.iter().map(|b| b.to_string()).collect()
+    fn words(&self) -> Result<Vec<String>, String> {
+        Ok(self.iter().map(|b| b.to_string()).collect())
     }
 }
 impl Words for crate::tensor::CrowTensor {
-    fn words(&self) -> Vec<String> {
-        self.to_vec().iter().map(|x| x.to_string()).collect()
+    fn words(&self) -> Result<Vec<String>, String> {
+        Ok(self.to_vec().iter().map(|x| x.to_string()).collect())
+    }
+}
+impl Words for crate::frame::CrowColumn {
+    fn words(&self) -> Result<Vec<String>, String> {
+        use crate::frame::Column;
+        (0..self.len())
+            .map(|i| {
+                if !self.valid.get(i).copied().unwrap_or(false) {
+                    return Err(crate::stops::missing_cell(i));
+                }
+                Ok(match self.data.as_ref() {
+                    Column::Int(v) => v[i].to_string(),
+                    Column::Float(v) => v[i].to_string(),
+                    Column::Str(v) => v[i].clone(),
+                    Column::Bool(v) => v[i].to_string(),
+                    Column::DateTime(..) => self.data.fmt_cell(i, true),
+                })
+            })
+            .collect()
     }
 }
 
 /// The words of a list, for the compiled program's `join`.
-pub fn words<T: Words + ?Sized>(items: &T) -> Vec<String> {
+pub fn words<T: Words + ?Sized>(items: &T) -> Result<Vec<String>, String> {
     items.words()
 }
 
@@ -189,6 +209,6 @@ mod tests {
         assert_eq!(int_of(&Cell::from(serde_json::json!(2.9))), Ok(2));
         assert_eq!(float_of(&Cell::from(serde_json::json!("2.5"))), Ok(2.5));
         assert_eq!(int_of(&Cell::from(serde_json::Value::Null)), Err("cannot convert null to int".to_string()));
-        assert_eq!(words(&vec![2.0, 2.5]), vec!["2".to_string(), "2.5".to_string()]);
+        assert_eq!(words(&vec![2.0, 2.5]), Ok(vec!["2".to_string(), "2.5".to_string()]));
     }
 }

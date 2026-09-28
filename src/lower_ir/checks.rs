@@ -566,6 +566,22 @@ impl<'a> Lowerer<'a> {
     }
 
     /// A call by name, its arguments already lowered and checked.
+    /// A builtin with rows takes the counts and kinds its rows take — the
+    /// core's, and a loaded module's of the same name — refused in the
+    /// table's words when none does.
+    fn refuse_kinds(&mut self, name: &str, argc: usize, types: &[CrowType]) {
+        if !crate::table::has_core_rows(name) {
+            return;
+        }
+        let kinds: Vec<crate::table::Arg> = (0..argc).map(|i| types.get(i).map_or(crate::table::Arg::Unknown, crate::table::Arg::of_type)).collect();
+        let providers: Vec<String> = self.ctx.registry.providers_of(name).into_iter().map(str::to_string).collect();
+        let mut modules: Vec<&str> = vec![""];
+        modules.extend(providers.iter().map(String::as_str));
+        if let Some(e) = crate::table::refusal(&modules, name, &kinds) {
+            self.refuse(e);
+        }
+    }
+
     pub(super) fn check_call(&mut self, name: &str, args: &[A], types: &[CrowType]) {
         let arg_type = |_: &Self, i: usize| -> CrowType { types.get(i).cloned().unwrap_or(CrowType::Unknown) };
         // Test-harness builtins exist only inside test blocks (which never
@@ -677,6 +693,9 @@ impl<'a> Lowerer<'a> {
             }
             if let Some(module) = self.ctx.registry.module_name_of(name) {
                 if self.ctx.bare_modules.contains(module) {
+                    // a name the core answers too (frame's sort, math's max)
+                    // takes what the core's rows or the module's take
+                    self.refuse_kinds(name, argc, types);
                     return;
                 }
                 // Imported under an alias?
@@ -773,13 +792,7 @@ impl<'a> Lowerer<'a> {
             // table's words (the interpreter stopped on the value, the
             // compiled program did not build)
             if crate::table::has_core_rows(name) {
-                let kinds: Vec<crate::table::Arg> = (0..argc).map(|i| crate::table::Arg::of_type(&arg_type(self, i))).collect();
-                let providers: Vec<String> = self.ctx.registry.providers_of(name).into_iter().map(str::to_string).collect();
-                let mut modules: Vec<&str> = vec![""];
-                modules.extend(providers.iter().map(String::as_str));
-                if let Some(e) = crate::table::refusal(&modules, name, &kinds) {
-                    self.refuse(e);
-                }
+                self.refuse_kinds(name, argc, types);
             } else if !builtin_arity_ok(name, argc) {
                 self.refuse(format!("wrong number of arguments for '{}'", name));
             }
@@ -845,12 +858,6 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "type" => argc == 1,
         "abs" | "sqrt" | "floor" | "ceil" | "round" => argc == 1,
         "str" => argc == 1,
-        "len" => argc == 1,
-        "contains" => argc == 2,
-        "slice" => argc == 3,
-        "repeat" => argc == 2,
-        "moment" => argc == 7,
-        "calendar" | "parse_time" => argc == 2,
         "now" => argc == 0,
         "captured" => argc == 1,
         "notice" => argc == 1,
@@ -860,13 +867,8 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "sign_out" | "__reader" => argc == 0,
         "__known" => argc == 1,
         "chart" => argc == 12,
-        "push" | "append" => argc == 2,
-        "pop" | "sort" | "reverse" => argc == 1,
-        "range" => (1..=3).contains(&argc),
+        "append" => argc == 2,
         "map" => argc == 0,
-        "keys" | "values" => argc == 1,
-        "has" | "del" => argc == 2,
-        "set" => argc == 3,
         "args" => argc == 0,
         "input" => argc <= 1,
         "read" => argc == 1,
@@ -889,8 +891,7 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "grad" => argc == 1,
         // Shell / Hash / Regex / Date
         "shell" => argc == 1,
-        "find" | "matches" | "any" | "all" => argc == 2,
-        "sub" => argc == 3,
+        "find" | "any" | "all" => argc == 2,
         "date" => argc == 3,
         "elapsed" => argc == 2,
         // Web
@@ -1173,6 +1174,19 @@ mod tests {
     fn test_map_hetero_set_rejected_at_compile_time() {
         // Maps are dictionaries: set[] changing value type is refused
         assert!(check_source("m = map[a = 1]\nm2 = set[m, 'b', 'x']\n").unwrap_err().contains("map values must all be the same type"));
+    }
+
+    /// A collection builtin given a kind none of its rows takes is refused
+    /// before either mode runs, naming the forms it takes (compiled, these
+    /// did not build; interpreted, they stopped as they ran).
+    #[test]
+    fn a_collection_given_a_wrong_kind_is_refused() {
+        assert!(check_source("log[has[[1, 2], 1]]\n").unwrap_err().contains("has[] takes a map and text, got numbers and an int"));
+        assert!(check_source("log[len[5]]\n").unwrap_err().contains("len[] takes a list, text, a map, numbers or a frame, got an int"));
+        let sorted = check_source("struct P [x, y]\nlog[sort[[P[3, 4], P[1, 2]]]]\n").unwrap_err();
+        assert!(sorted.contains("sort[] takes a list of ints, a list of numbers, a list of text or numbers, got a list of records"), "{}", sorted);
+        assert!(check_source("log[range[2.5]]\n").unwrap_err().contains("range[] takes an int, got a number"));
+        assert!(check_source("m = map[a = 1]\nlog[contains[m, 'a']]\n").is_err());
     }
 
     #[test]

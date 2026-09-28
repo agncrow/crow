@@ -1449,8 +1449,8 @@ impl Emitter {
         match target {
             Target::User(n) => self.user_call(n, args, arg_strs.to_vec()),
             Target::Module(m, f) => self.module_call(m, f, args, arg_strs, whole),
-            Target::Runtime(_) => match self.row_for(name, args) {
-                Some(row) => self.table_call(row, arg_strs),
+            Target::Runtime(_) => match self.row_for(name, args).filter(|_| !(name == "push" && self.queue_push(args))) {
+                Some(row) => self.table_call(row, args, arg_strs, whole),
                 None => match self.builtin(name, args, arg_strs, whole) {
                     Some(s) => s,
                     None => format!("{}({})", name, arg_strs.join(", ")),
@@ -1459,13 +1459,57 @@ impl Emitter {
         }
     }
 
+    /// `push[queue, task]`: a web queue's own push, no collection's.
+    pub(crate) fn queue_push(&self, args: &[Expr]) -> bool {
+        self.needs_crow_web
+            && self.web_features.contains("queue")
+            && !matches!(args.first().map(|x| Self::inner(&self.tt(x))), Some(CrowType::Array(_) | CrowType::NumArray(_)))
+    }
+
     /// A builtin with a row: its runtime function, each argument printed as
     /// its kind takes it, its failure as the row says (crate::table). The
-    /// interpreter calls the same function through the same row.
-    fn table_call(&mut self, row: &crate::table::Row, arg_strs: &[String]) -> String {
+    /// interpreter calls the same function through the same row. A
+    /// collection the function makes its answer of is moved when it is the
+    /// variable the statement assigns (`xs = push[xs, x]` grows it in place)
+    /// and copied otherwise; an item it keeps is copied from a variable, and
+    /// into a list or a map whose items can fail it is an item that did not
+    /// (a gathering push, a collecting loop's, keeps it as it was yielded).
+    fn table_call(&mut self, row: &crate::table::Row, args: &[Expr], arg_strs: &[String], whole: &Expr) -> String {
+        use crate::table::Kind;
         self.needs_crow_runtime = true;
+        let mut strs = arg_strs.to_vec();
+        if let Some(kinds) = crate::table::kinds_of(row.params, strs.len()) {
+            let items = kinds.iter().zip(args).find_map(|(k, a)| match (k, Self::inner(&self.tt(a))) {
+                (Kind::List | Kind::Seq, CrowType::Array(it)) | (Kind::MapOf | Kind::MapRef, CrowType::Map(it)) => Some(*it),
+                _ => None,
+            });
+            let gathered = matches!(whole, Expr::Call { propagates: false, .. });
+            for (i, (k, a)) in kinds.iter().zip(args).enumerate() {
+                let s = strs[i].clone();
+                strs[i] = match k {
+                    k if k.owned() => self.moved_or_cloned(a, &s),
+                    Kind::Item | Kind::ItemRef => {
+                        let at = self.tt(a);
+                        let s = if *k == Kind::Item { Self::kept(a, &s) } else { s };
+                        // a function kept is the collection's function type
+                        let s = match &at {
+                            CrowType::Fn(..) => format!("({} as {})", s, at.to_rust_type()),
+                            _ => s,
+                        };
+                        match &items {
+                            Some(it @ CrowType::Result(_)) => {
+                                let from = if gathered { at.clone() } else { Self::inner(&at) };
+                                self.as_item(s, &from, it)
+                            }
+                            _ => s,
+                        }
+                    }
+                    _ => s,
+                };
+            }
+        }
         let trace = self.trace_format_expr();
-        crate::table::print(row, arg_strs, &self.current_line.to_string(), Some(&trace)).unwrap_or_else(|e| format!("compile_error!({:?})", e))
+        crate::table::print(row, &strs, &self.current_line.to_string(), Some(&trace)).unwrap_or_else(|e| format!("compile_error!({:?})", e))
     }
 
     /// A user function's call: a view's or an element's tree handed to it

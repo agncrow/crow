@@ -477,7 +477,15 @@ fn coerce_numeric_array(v: &Value) -> Value {
     v.clone()
 }
 
+/// `a eq b` of two values, as the compiled program's `==` compares its
+/// typed values: numbers by value (an int beside a float as a float), a
+/// list item by item, a map entry by entry, a record field by field; an
+/// error equals nothing, as a result that failed does (a missing cell holds
+/// a placeholder, never a value to compare).
 pub fn values_equal(a: &CrowValue, b: &CrowValue) -> bool {
+    if a.is_error() || b.is_error() {
+        return false;
+    }
     match (&a.value, &b.value) {
         (Value::Int(x), Value::Int(y)) => x == y,
         (Value::Float(x), Value::Float(y)) => x == y,
@@ -504,6 +512,12 @@ pub fn values_equal(a: &CrowValue, b: &CrowValue) -> bool {
             let ys = iter_items(&CrowValue::ok(Value::NumArray(t.clone()))).unwrap_or_default();
             x.len() == ys.len() && x.iter().zip(ys.iter()).all(|(a, b)| values_equal(a, b))
         }
+        (Value::Map(x), Value::Map(y)) => x.len() == y.len() && x.iter().zip(y.iter()).all(|((ka, va), (kb, vb))| ka == kb && values_equal(va, vb)),
+        (Value::StructInstance(x), Value::StructInstance(y)) => {
+            x.name == y.name && x.fields.len() == y.fields.len() && x.fields.iter().zip(y.fields.iter()).all(|((ka, va), (kb, vb))| ka == kb && values_equal(va, vb))
+        }
+        (Value::Frame(x), Value::Frame(y)) => x == y,
+        (Value::Sparse(x), Value::Sparse(y)) => x == y,
         _ => false,
     }
 }

@@ -620,6 +620,11 @@ impl Emitter {
             // the interpreter stops, with the runtime's words
             "#[allow(dead_code)]",
             "fn crow_stop(line: usize, why: String) -> ! { crow_runtime::stops::halt(line, &why) }",
+            // a value that can fail compares as `eq` compares one: an error
+            // equals nothing, as the interpreter's does (a list item, a field)
+            "impl<T: Clone + PartialEq> PartialEq for CrowResult<T> {",
+            "    fn eq(&self, other: &Self) -> bool { self.ok && other.ok && self.value == other.value }",
+            "}",
             "impl<T: Clone + std::fmt::Display> std::fmt::Display for CrowResult<T> {",
             "    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {",
             "        if !self.ok { write!(f, \"error: {}\", self.reason) } else { write!(f, \"{}\", self.value) }",
@@ -843,11 +848,35 @@ impl Emitter {
         seen
     }
 
+    /// Whether a record's values compare as `eq` compares them — field by
+    /// field — in Rust too: every field's type does (a function, a handle
+    /// and a view's tree do not). A record reached again through its own
+    /// fields compares if the rest does.
+    fn record_compares(&self, name: &str, seen: &mut BTreeSet<String>) -> bool {
+        fn compares(e: &Emitter, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
+            match t {
+                Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(_) | Ty::Frame(_) | Ty::Column(_) => true,
+                Ty::Handle(h) => h == "sparse",
+                Ty::List(i) | Ty::Map(i) | Ty::Result(i) => compares(e, i, seen),
+                Ty::Record(n) | Ty::OptRecord(n) => e.record_compares(n, seen),
+                _ => false,
+            }
+        }
+        if !seen.insert(name.to_string()) {
+            return true;
+        }
+        match self.part.structs.iter().find(|s| s.name == name) {
+            Some(s) => s.fields.iter().all(|(_, t)| compares(self, t, seen)),
+            None => false,
+        }
+    }
+
     pub(crate) fn emit_struct(&mut self, s: &StructDef) {
         let all_copy = s.fields.iter().all(|(_, t)| matches!(t, Ty::Int | Ty::Float | Ty::Bool));
         let serde = if self.serde_records.contains(&s.name) { ", serde::Serialize, serde::Deserialize" } else { "" };
+        let eq = if self.record_compares(&s.name, &mut BTreeSet::new()) { ", PartialEq" } else { "" };
         self.line("#[allow(non_camel_case_types)]");
-        self.line(&format!("#[derive(Debug, Clone{}{})]", if all_copy { ", Copy" } else { "" }, serde));
+        self.line(&format!("#[derive(Debug, Clone{}{}{})]", if all_copy { ", Copy" } else { "" }, eq, serde));
         self.line(&format!("struct {} {{", s.name));
         self.indent += 1;
         for (f, t) in &s.fields {
@@ -936,7 +965,7 @@ impl Emitter {
                 _ => false,
             },
             CrowType::Map(inner) => match inner.as_ref() {
-                CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Bool | CrowType::Unknown => true,
+                CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Bool | CrowType::Unknown | CrowType::NumArray(_) => true,
                 nested @ (CrowType::Array(_) | CrowType::Map(_)) => self.kernel_displayable(nested),
                 _ => false,
             },

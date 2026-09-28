@@ -328,6 +328,8 @@ if x gt 10
     log['big']
 ```
 
+`eq` compares two values whole, in both modes alike: numbers by value (an int beside a float as a float: `1 eq 1.0`), text by its characters, a list item by item, a map entry by entry, and a record field by field — two records are equal when they are the same struct and every field is (`Point[1, 2] eq Point[1, 2]`). An item or a field that failed equals nothing, not even another failure. `contains` compares a list's items the same way. A list compared with a single value is a mask instead (see Arrays). (Compiled, comparing two records did not build, and the interpreter answered `false` for records and maps with equal contents.)
+
 
 ### Logical
 
@@ -1162,7 +1164,7 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 | Function | Description |
 |----------|-------------|
 | `log[value]` | Print a value to stdout |
-| `range[stop]` | Array of ints from 0 to stop (exclusive) |
+| `range[stop]` | Array of ints from 0 to stop (exclusive); every argument of `range` is an int (`range[2.5]` is refused) |
 | `range[start, stop]` | Array of ints from start to stop (exclusive) |
 | `range[start, stop, step]` | Array of ints with custom step; a negative step counts down (`range[5, 0, -2]` is `[5, 3, 1]`); a zero step is an error |
 | `map[]` | Create an empty map |
@@ -1198,7 +1200,7 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 | `lower[s]` | Convert to lowercase |
 | `starts[s, prefix]` | Check if string starts with prefix |
 | `ends[s, suffix]` | Check if string ends with suffix |
-| `join[arr, sep]` | Join array elements into string |
+| `join[arr, sep]` | Join array elements into string: text as it is, a number as it displays, a bool as `true` or `false`; a frame's column's cells too, where a missing cell stops the program, as it does where numbers are taken |
 | `repeat[s, n]` | Repeat string `n` times |
 | `fmt[x, ...]` | Format a value with named arguments (see Formatting) |
 | `reverse[s]` | Reverse a string |
@@ -1266,14 +1268,14 @@ type[error['x']]  --- 'error'
 
 | Function | Description |
 |----------|-------------|
-| `len[x]` | Length of array, string, or map |
-| `push[arr, value]` | Return new array with value appended |
+| `len[x]` | Length of a list, of text (in characters), of a map (its entries), of a tensor, of a frame (its rows), of a frame's column (its cells, a missing one too) |
+| `push[arr, value]` | Return new array with value appended; onto a tensor, a number onto a vector or a row onto a matrix |
 | `pop[arr]` | Return new array without last element; an empty array stays empty |
 | `concat[a, b]` | Return new array merging two arrays: `a`'s items, then `b`'s. An empty `a` takes its items from `b` (`idx = []`, then `idx = concat[idx, [i]]` makes a list of ints) |
 | `concat[a, b, axis]` | Concatenate two tensors along an axis |
-| `sort[arr]` | Return new sorted array |
-| `reverse[arr]` | Return new reversed array |
-| `contains[arr, value]` | Check if array contains value |
+| `sort[arr]` | Return new sorted array: numbers ascending, NaN last; text by character code (`'B'` before `'a'`). A list of anything else — bools, records, lists — has no order, and is refused |
+| `reverse[arr]` | Return new reversed array; text reversed by character |
+| `contains[arr, value]` | Whether an item is `value`, compared as `eq` compares (a record field by field); of text, whether it holds the part (`contains['hello', 'ell']`) |
 | `any[arr, pred]` | True if any element passes the predicate (parallel, early exit) |
 | `all[arr, pred]` | True if every element passes (parallel, early exit) |
 | `find[arr, pred]` | First element passing the predicate; error-value if none |
@@ -1288,6 +1290,8 @@ type[error['x']]  --- 'error'
 | `has[m, key]` | Check if map contains key |
 | `set[m, key, value]` | Return new map with entry added/updated |
 | `del[m, key]` | Return new map with entry removed |
+
+A collection builtin takes the kinds its forms above say — a list, a map, text, a tensor — and any other is refused before the program runs, in both modes, naming the forms it takes: `has[[1, 2], 1]` is `has[] takes a map and text, got numbers and an int`, and `len[5]`, `keys[[1, 2]]` and `contains[m, 'a']` of a map are refused alike. A JSON value's kind shows only as the program runs, so `len` of one that is a number or a bool stops the program with the same words. (Compiled, those calls did not build, where the interpreter stopped as it ran; and `len` of a JSON number was 0.)
 
 **All builtins are immutable.** No builtin modifies its arguments. To update a variable, reassign: `nums = push[nums, 4]`. Both modes turn `x = push[x, v]` (and `pop`, `sort`, `reverse`, `concat`, `set`, `del` in the same shape) into an in-place update: the collection is moved into the operation, not copied, when the right-hand side reads `x` exactly once.
 

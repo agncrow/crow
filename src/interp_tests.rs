@@ -405,8 +405,9 @@ mod tests {
 
     #[test]
     fn test_auto_propagation_builtin() {
-        // Error should propagate through len[]
-        let val = get_var("x = int['bad']\ny = len[x]\n", "y");
+        // Error should propagate through len[] (of text that failed: the
+        // length of an int is refused before the program runs)
+        let val = get_var("x = str[int['bad']]\ny = len[x]\n", "y");
         assert!(!val.is_ok());
         assert!(val.reason().contains("convert"));
     }
@@ -3147,8 +3148,11 @@ mod tests {
 
     #[test]
     fn test_map_int_float_values_unify() {
+        // a map of floats holds an int as a float, as its type says (the
+        // interpreter held the int, so `m.epochs / 3` was a float while
+        // type[m.epochs] said int, and the compiled program did not build)
         let val = get_var("m = map[lr = 0.01, epochs = 100]\nx = m.epochs\n", "x");
-        assert!(matches!(val.value, Value::Int(100)));
+        assert!(matches!(val.value, Value::Float(f) if f == 100.0), "{:?}", val.value);
     }
 
     #[test]

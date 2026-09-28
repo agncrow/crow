@@ -79,6 +79,37 @@ pub enum Kind {
     /// `&[String]` taken: a list's items as text, a number as it displays
     /// (`join`'s items, `crow_runtime::cell::Words`).
     Words,
+    // A collection's builtin is one generic function over its items: the
+    // compiled program calls it with its typed items, the interpreter with
+    // its values (crow_runtime::core, "the collections a program calls").
+    /// `Vec<T>` taken and given: a list the function makes its answer of,
+    /// moved when the statement assigns the variable it reads (`xs =
+    /// push[xs, x]` stays in place), copied otherwise.
+    List,
+    /// `&[T]` taken: a list read.
+    Seq,
+    /// `T` taken: an item a list or a map keeps (a variable read is copied;
+    /// into a list whose items can fail, it is an item that did not).
+    Item,
+    /// `&T` taken: an item compared (`contains`).
+    ItemRef,
+    /// `BTreeMap<String, T>` taken and given, moved or copied as a list is.
+    MapOf,
+    /// `&BTreeMap<String, T>` taken: a map read.
+    MapRef,
+    /// `Vec<i64>` taken and given, moved or copied as a list is.
+    Ints,
+    /// `Vec<f64>` taken and given, moved or copied as a list is.
+    Floats,
+    /// `Vec<String>` taken and given, moved or copied as a list is.
+    Texts,
+    /// `&serde_json::Value` taken: a parsed JSON value, which only the
+    /// compiled program holds as one (the interpreter holds what it parsed
+    /// to, and picks the row of that).
+    Json,
+    /// `&CrowColumn` taken: a frame's column, which only the compiled
+    /// program holds as one (the interpreter holds its cells as a list).
+    Column,
 }
 
 /// What a failure of the function is.
@@ -110,6 +141,11 @@ pub struct Row {
     /// applied, the failure dispatched as the row says. `trace` is where an
     /// error value is made.
     pub call: fn(&[CrowValue], &str) -> Result<CrowValue, String>,
+    /// The same call, given the arguments to keep: a collection the
+    /// function makes its answer of is moved into it, not copied (the
+    /// interpreter's `xs = push[xs, x]` grows the list where it lies, as the
+    /// compiled program's does).
+    pub take: fn(Vec<CrowValue>, &str) -> Result<CrowValue, String>,
 }
 
 impl Row {
@@ -148,13 +184,34 @@ impl Kind {
             Kind::Bools => CrowType::Array(Box::new(CrowType::Bool)),
             Kind::Cell | Kind::Cells => CrowType::Unknown,
             Kind::Lists => CrowType::Array(Box::new(CrowType::Array(Box::new(CrowType::Str)))),
-            Kind::Words => CrowType::Array(Box::new(CrowType::Str)),
+            Kind::Words | Kind::Texts => CrowType::Array(Box::new(CrowType::Str)),
+            Kind::Ints => CrowType::Array(Box::new(CrowType::Int)),
+            Kind::Floats => CrowType::Array(Box::new(CrowType::Float)),
+            Kind::Json => CrowType::Json,
+            Kind::Column => CrowType::FrameCol,
+            // what the arguments' items are: inference types the call from
+            // them (a generic row's answer is the list or map it was given)
+            Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef | Kind::MapOf | Kind::MapRef => CrowType::Unknown,
         }
     }
 
+    /// Whether the kind is over a collection's items, whatever they are: the
+    /// call's type is its arguments', which inference reads.
+    pub fn generic(self) -> bool {
+        matches!(self, Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef | Kind::MapOf | Kind::MapRef)
+    }
+
+    /// Whether the function takes the collection itself, to make its
+    /// answer of: the compiled program moves the variable the statement
+    /// assigns and copies any other.
+    pub fn owned(self) -> bool {
+        matches!(self, Kind::List | Kind::MapOf | Kind::Ints | Kind::Floats | Kind::Texts)
+    }
+
     /// An argument printed the way the runtime function takes it (each of
-    /// a rest parameter's, as its [`Kind::each`]).
-    pub fn print(self, arg: &str) -> String {
+    /// a rest parameter's, as its [`Kind::each`]); `line` is where a stop
+    /// in reading it stops (a frame's column's missing cell among words).
+    pub fn print(self, arg: &str, line: &str) -> String {
         match self.each() {
             Kind::Int | Kind::Whole => format!("({}) as i64", arg),
             Kind::Float => format!("({}) as f64", arg),
@@ -163,8 +220,11 @@ impl Kind {
             Kind::Unit => format!("({})", arg),
             Kind::Strs | Kind::Bools => format!("&({})[..]", arg),
             Kind::Cell => format!("&crow_runtime::cell::Cell::from(({}).clone())", arg),
-            Kind::Words => format!("&crow_runtime::cell::words(&({}))[..]", arg),
+            Kind::Words => format!("&crow_runtime::cell::words(&({})).unwrap_or_else(|e| crow_stop({}, e))[..]", arg, line),
             Kind::Cells => format!("crow_runtime::frames::Cells::from(({}).clone())", arg),
+            Kind::Seq => format!("&({})[..]", arg),
+            // moved or copied (an item kept) where the call is made
+            Kind::List | Kind::MapOf | Kind::Ints | Kind::Floats | Kind::Texts | Kind::Item => format!("({})", arg),
             _ => format!("&({})", arg),
         }
     }
@@ -204,7 +264,15 @@ impl Kind {
             Kind::Cell => "crow_runtime::cell::Cell::Int(0)",
             Kind::Cells => "crow_runtime::frames::Cells::One(crow_runtime::cell::Cell::Int(0))",
             Kind::Lists => "Vec::<Vec<String>>::new()",
-            Kind::Words => "Vec::<String>::new()",
+            Kind::Words | Kind::Texts => "Vec::<String>::new()",
+            Kind::Ints => "Vec::<i64>::new()",
+            Kind::Floats => "Vec::<f64>::new()",
+            Kind::Json => "serde_json::Value::Null",
+            // taken, never given
+            Kind::Column => "unreachable!()",
+            // a generic answer never fails as a value (its rows answer or stop)
+            Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef => "Vec::new()",
+            Kind::MapOf | Kind::MapRef => "std::collections::BTreeMap::new()",
         }
     }
 }
@@ -242,6 +310,19 @@ pub fn groups<'a>(params: &[Kind], args: &'a [CrowValue], name: &str) -> Result<
     Ok(spans(params, args.len(), name)?.into_iter().map(|(a, b)| &args[a..b]).collect())
 }
 
+/// The arguments grouped so, each group the function's to keep.
+pub fn groups_mut<'a>(params: &[Kind], args: &'a mut [CrowValue], name: &str) -> Result<Vec<&'a mut [CrowValue]>, String> {
+    let spans = spans(params, args.len(), name)?;
+    let mut out = Vec::with_capacity(spans.len());
+    let mut rest = args;
+    for (a, b) in spans {
+        let (group, tail) = std::mem::take(&mut rest).split_at_mut(b - a);
+        out.push(group);
+        rest = tail;
+    }
+    Ok(out)
+}
+
 /// A row's call as the compiled program prints it: each argument as its
 /// kind takes it, the failure as the row says. `line` is the stop's line
 /// (a module's code carries `modules::STOP_LINE` for the emitter to fill),
@@ -251,9 +332,9 @@ pub fn print(row: &Row, args: &[String], line: &str, trace: Option<&str>) -> Res
     let mut printed = Vec::with_capacity(row.params.len());
     for (k, (a, b)) in row.params.iter().zip(spans(row.params, args.len(), row.name)?) {
         if k.is_rest() {
-            printed.push(format!("&[{}]", args[a..b].iter().map(|x| k.print(x)).collect::<Vec<_>>().join(", ")));
+            printed.push(format!("&[{}]", args[a..b].iter().map(|x| k.print(x, line)).collect::<Vec<_>>().join(", ")));
         } else {
-            printed.push(k.print(&args[a]));
+            printed.push(k.print(&args[a], line));
         }
     }
     let call = format!("{}({})", row.rust_path(), printed.join(", "));
@@ -425,7 +506,10 @@ pub fn read_words(v: &CrowValue) -> Result<Vec<String>, String> {
     match &v.value {
         Value::Array(items) => items
             .iter()
-            .map(|i| match &i.value {
+            .enumerate()
+            .map(|(n, i)| match &i.value {
+                // a failed item holds a placeholder, never a word
+                _ if i.is_error() => Err(if i.kind() == "missing" { crow_runtime::stops::missing_cell(n) } else { format!("item {} of the list failed: {}", n, i.reason()) }),
                 Value::Str(s) => Ok(s.clone()),
                 Value::Int(n) => Ok(n.to_string()),
                 Value::Float(x) => Ok(x.to_string()),
@@ -491,9 +575,109 @@ pub fn read_tensors(v: &CrowValue) -> Result<Vec<CrowTensor>, String> {
     }
 }
 
+/// A list's items, the interpreter's values (a failed item is kept as the
+/// item it is, as the compiled program keeps a list's results).
+pub fn read_seq(v: &CrowValue) -> Result<&[CrowValue], String> {
+    match &v.value {
+        Value::Array(items) => Ok(items.as_slice()),
+        _ => Err(format!("expected a list, got {}", named(v))),
+    }
+}
+
+/// A list the function makes its answer of.
+pub fn read_list(v: &CrowValue) -> Result<Vec<CrowValue>, String> {
+    read_seq(v).map(|items| items.to_vec())
+}
+
+/// A map's entries, the interpreter's values.
+pub fn read_map_ref(v: &CrowValue) -> Result<&BTreeMap<String, CrowValue>, String> {
+    match &v.value {
+        Value::Map(m) => Ok(m),
+        _ => Err(format!("expected a map, got {}", named(v))),
+    }
+}
+
+/// A map the function makes its answer of.
+pub fn read_map_of(v: &CrowValue) -> Result<BTreeMap<String, CrowValue>, String> {
+    read_map_ref(v).cloned()
+}
+
+/// A list's items, each read by `read`: a failed item is the reason the
+/// list has no such items (a missing cell's, as a column's).
+fn read_items<T>(v: &CrowValue, what: &str, read: fn(&CrowValue) -> Result<T, String>) -> Result<Vec<T>, String> {
+    let items = read_seq(v).map_err(|_| format!("expected {}, got {}", what, named(v)))?;
+    let mut out = Vec::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate() {
+        if item.is_error() {
+            return Err(if item.kind() == "missing" { crow_runtime::stops::missing_cell(i) } else { format!("item {} of the list failed: {}", i, item.reason()) });
+        }
+        out.push(read(item)?);
+    }
+    Ok(out)
+}
+
+/// A list of ints.
+pub fn read_ints(v: &CrowValue) -> Result<Vec<i64>, String> {
+    read_items(v, "a list of ints", read_whole)
+}
+
+/// A list of floats.
+pub fn read_floats(v: &CrowValue) -> Result<Vec<f64>, String> {
+    read_items(v, "a list of numbers", read_float)
+}
+
+/// A parsed JSON value: the interpreter holds what it parsed to, whose
+/// own row it picks, so it reads one only for a row it cannot pick.
+pub fn read_json(v: &CrowValue) -> Result<serde_json::Value, String> {
+    crate::builtins::crow_to_json("", v)
+}
+
+/// A frame's column: the interpreter holds its cells as a list, whose own
+/// row it picks.
+pub fn read_column(v: &CrowValue) -> Result<crow_runtime::frame::CrowColumn, String> {
+    Err(format!("expected a frame's column, got {}", named(v)))
+}
+
+pub fn write_list(items: Vec<CrowValue>) -> CrowValue {
+    CrowValue::ok(Value::Array(items))
+}
+
+pub fn write_map_of(m: BTreeMap<String, CrowValue>) -> CrowValue {
+    CrowValue::ok(Value::Map(m))
+}
+
+pub fn write_ints(ns: Vec<i64>) -> CrowValue {
+    CrowValue::ok(Value::Array(ns.into_iter().map(write_int).collect()))
+}
+
+pub fn write_floats(xs: Vec<f64>) -> CrowValue {
+    CrowValue::ok(Value::Array(xs.into_iter().map(write_float).collect()))
+}
+
 /// One argument of a group, the group of a single parameter.
 pub fn one(group: &[CrowValue]) -> Result<&CrowValue, String> {
     group.first().ok_or_else(|| "an argument is missing".to_string())
+}
+
+/// One argument of a group, to keep: taken out of the arguments.
+pub fn one_taken(group: &mut [CrowValue]) -> Result<CrowValue, String> {
+    group.first_mut().map(|v| std::mem::replace(v, CrowValue::done())).ok_or_else(|| "an argument is missing".to_string())
+}
+
+/// A list the function makes its answer of, moved.
+pub fn take_list(v: CrowValue) -> Result<Vec<CrowValue>, String> {
+    match v.value {
+        Value::Array(items) => Ok(items),
+        other => Err(format!("expected a list, got {}", other.type_name())),
+    }
+}
+
+/// A map the function makes its answer of, moved.
+pub fn take_map(v: CrowValue) -> Result<BTreeMap<String, CrowValue>, String> {
+    match v.value {
+        Value::Map(m) => Ok(m),
+        other => Err(format!("expected a map, got {}", other.type_name())),
+    }
 }
 
 /// The sizes of a group, each an int.
@@ -525,6 +709,17 @@ macro_rules! read {
     (Cell, $g:expr) => { &read_cell(one($g)?)? };
     (Cells, $g:expr) => { read_cells(one($g)?)? };
     (Lists, $g:expr) => { &read_lists($g)?.iter().map(|l| l.as_slice()).collect::<Vec<&[String]>>() };
+    (List, $g:expr) => { read_list(one($g)?)? };
+    (Seq, $g:expr) => { read_seq(one($g)?)? };
+    (Item, $g:expr) => { one($g)?.clone() };
+    (ItemRef, $g:expr) => { one($g)? };
+    (MapOf, $g:expr) => { read_map_of(one($g)?)? };
+    (MapRef, $g:expr) => { read_map_ref(one($g)?)? };
+    (Ints, $g:expr) => { read_ints(one($g)?)? };
+    (Floats, $g:expr) => { read_floats(one($g)?)? };
+    (Texts, $g:expr) => { read_strs(one($g)?)? };
+    (Json, $g:expr) => { &read_json(one($g)?)? };
+    (Column, $g:expr) => { &read_column(one($g)?)? };
 }
 
 /// The value of an answer by its kind.
@@ -541,6 +736,44 @@ macro_rules! answer {
     (Tensors, $x:expr) => { write_tensors($x) };
     (Unit, $x:expr) => { write_unit($x) };
     (Sparse, $x:expr) => { write_sparse($x) };
+    (List, $x:expr) => { write_list($x) };
+    (MapOf, $x:expr) => { write_map_of($x) };
+    (Ints, $x:expr) => { write_ints($x) };
+    (Floats, $x:expr) => { write_floats($x) };
+    (Texts, $x:expr) => { write_strs($x) };
+}
+
+/// The taking of a parameter's group by its kind: a collection the
+/// function makes its answer of is moved out of the arguments; any other
+/// kind is read as [`read!`] reads it.
+macro_rules! take {
+    (List, $g:expr) => { take_list(one_taken($g)?)? };
+    (MapOf, $g:expr) => { take_map(one_taken($g)?)? };
+    (Item, $g:expr) => { one_taken($g)? };
+    ($k:ident, $g:expr) => { read!($k, $g) };
+}
+
+/// What a failure is, as the row macro writes it.
+macro_rules! fails {
+    (never) => { Fails::Never };
+    (stops) => { Fails::Stops };
+    (value $kind:literal) => { Fails::Value($kind) };
+}
+
+/// The function's answer as the row says: its value, its reason as a stop
+/// (the call's `Err`), or an error value of the row's kind.
+macro_rules! respond {
+    ($r:ident, $call:expr, $trace:expr, never) => { Ok(answer!($r, $call)) };
+    ($r:ident, $call:expr, $trace:expr, stops) => {{
+        let got = $call?;
+        Ok(answer!($r, got))
+    }};
+    ($r:ident, $call:expr, $trace:expr, value $kind:literal) => {
+        Ok(match $call {
+            Ok(got) => answer!($r, got),
+            Err(e) => CrowValue::error_with_kind(&e, $kind, $trace),
+        })
+    };
 }
 
 /// A row: its id, Crow name and module, the runtime function, the kinds of
@@ -548,46 +781,25 @@ macro_rules! answer {
 /// `value "kind"`). The interpreter's call is made from the same tokens the
 /// emitter prints, so the two cannot name different functions.
 macro_rules! row {
-    ($id:literal, $module:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, never) => {
+    ($id:literal, $module:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, $($fails:tt)+) => {
         Row {
             id: $id, name: $name, module: $module, path: stringify!($f),
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: Fails::Never,
-            call: |args: &[CrowValue], _trace: &str| {
-                let groups = groups(&[$(Kind::$k),*], args, $name)?;
-                let mut g = groups.into_iter();
-                let mut next = || g.next().unwrap_or(&[]);
-                let _ = &mut next;
-                Ok(answer!($r, $f($(read!($k, next())),*)))
-            },
-        }
-    };
-    ($id:literal, $module:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, stops) => {
-        Row {
-            id: $id, name: $name, module: $module, path: stringify!($f),
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: Fails::Stops,
-            call: |args: &[CrowValue], _trace: &str| {
-                let groups = groups(&[$(Kind::$k),*], args, $name)?;
-                let mut g = groups.into_iter();
-                let mut next = || g.next().unwrap_or(&[]);
-                let _ = &mut next;
-                let got = $f($(read!($k, next())),*)?;
-                Ok(answer!($r, got))
-            },
-        }
-    };
-    ($id:literal, $module:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, value $kind:literal) => {
-        Row {
-            id: $id, name: $name, module: $module, path: stringify!($f),
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: Fails::Value($kind),
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+),
             call: |args: &[CrowValue], trace: &str| {
+                let _ = trace;
                 let groups = groups(&[$(Kind::$k),*], args, $name)?;
                 let mut g = groups.into_iter();
                 let mut next = || g.next().unwrap_or(&[]);
                 let _ = &mut next;
-                Ok(match $f($(read!($k, next())),*) {
-                    Ok(got) => answer!($r, got),
-                    Err(e) => CrowValue::error_with_kind(&e, $kind, trace),
-                })
+                respond!($r, $f($(read!($k, next())),*), trace, $($fails)+)
+            },
+            take: |mut args: Vec<CrowValue>, trace: &str| {
+                let _ = trace;
+                let groups = groups_mut(&[$(Kind::$k),*], &mut args, $name)?;
+                let mut g = groups.into_iter();
+                let mut next = || g.next().unwrap_or(&mut []);
+                let _ = &mut next;
+                respond!($r, $f($(take!($k, next())),*), trace, $($fails)+)
             },
         }
     };
@@ -606,6 +818,59 @@ pub static ROWS: &[Row] = &[
     row!("text.starts", "", "starts", crow_runtime::text::starts, (Str, Str) -> Bool, never),
     row!("text.ends", "", "ends", crow_runtime::text::ends, (Str, Str) -> Bool, never),
     row!("core.join", "", "join", crow_runtime::core::join_words, (Words, Str) -> Str, never),
+    // collections: one generic function each over a list's or a map's
+    // items, then text's and a tensor's own, a name's rows in the order
+    // they are tried (a list reaches its own row before a tensor's). A kind
+    // no row takes is refused before the program runs: compiled, `has` of a
+    // list and `len` of a number did not build, and `contains` of a record
+    // did not compare.
+    row!("core.len", "", "len", crow_runtime::core::len, (Seq) -> Int, never),
+    row!("core.len_text", "", "len", crow_runtime::core::len_text, (Str) -> Int, never),
+    row!("core.len_map", "", "len", crow_runtime::core::len_map, (MapRef) -> Int, never),
+    row!("core.len_column", "", "len", crow_runtime::core::len_column, (Column) -> Int, never),
+    row!("core.len_tensor", "", "len", crow_runtime::core::len_tensor, (Tensor) -> Int, never),
+    row!("core.len_frame", "", "len", crow_runtime::core::len_frame, (Frame) -> Int, never),
+    // a JSON value's kind shows as the program runs: of a number or a bool,
+    // the refusal the interpreter gives the value it parsed to (compiled,
+    // its length was 0)
+    row!("core.len_json", "", "len", crow_runtime::core::len_json, (Json) -> Int, stops),
+    // an item compared as `eq` compares it: a record field by field, a map
+    // entry by entry
+    row!("core.contains", "", "contains", crow_runtime::core::contains, (Seq, ItemRef) -> Bool, never),
+    row!("core.contains_text", "", "contains", crow_runtime::core::contains_text, (Str, Str) -> Bool, never),
+    row!("core.contains_number", "", "contains", crow_runtime::core::contains_number, (Tensor, Float) -> Bool, never),
+    row!("core.slice", "", "slice", crow_runtime::core::slice, (Seq, Int, Int) -> List, never),
+    row!("core.slice_str", "", "slice", crow_runtime::core::slice_str, (Str, Int, Int) -> Str, never),
+    row!("core.slice_tensor", "", "slice", crow_runtime::core::slice_tensor, (Tensor, Int, Int) -> Tensor, never),
+    row!("core.push", "", "push", crow_runtime::core::push, (List, Item) -> List, never),
+    row!("core.push_row", "", "push", crow_runtime::core::push_row, (Tensor, Tensor) -> Tensor, stops),
+    row!("core.push_number", "", "push", crow_runtime::core::push_number, (Tensor, Float) -> Tensor, stops),
+    row!("core.pop", "", "pop", crow_runtime::core::pop, (List) -> List, never),
+    row!("core.pop_tensor", "", "pop", crow_runtime::core::pop_tensor, (Tensor) -> Tensor, never),
+    // numbers ascending with NaN last, text by its characters; a list of
+    // anything else has no order (a record's was the interpreter's
+    // unchanged list, and the compiled program's missing Ord)
+    row!("core.sort_ints", "", "sort", crow_runtime::core::sort_ints, (Ints) -> Ints, never),
+    row!("core.sort_floats", "", "sort", crow_runtime::core::sort_floats, (Floats) -> Floats, never),
+    row!("core.sort_strs", "", "sort", crow_runtime::core::sort_strs, (Texts) -> Texts, never),
+    row!("core.sort_tensor", "", "sort", crow_runtime::core::sort_tensor, (Tensor) -> Tensor, never),
+    row!("core.reverse", "", "reverse", crow_runtime::core::reverse, (List) -> List, never),
+    row!("core.reverse_text", "", "reverse", crow_runtime::core::reverse_text, (Str) -> Str, never),
+    row!("core.reverse_tensor", "", "reverse", crow_runtime::core::reverse_tensor, (Tensor) -> Tensor, never),
+    row!("core.concat", "", "concat", crow_runtime::core::concat, (List, Seq) -> List, never),
+    row!("core.concat_text", "", "concat", crow_runtime::core::concat_text, (Str, Str) -> Str, never),
+    row!("core.concat_tensors", "", "concat", crow_runtime::core::concat_tensors, (Tensor, Tensor) -> Tensor, stops),
+    row!("core.concat_axis", "", "concat", crow_runtime::core::concat_axis, (Tensor, Tensor, Int) -> Tensor, stops),
+    // ints only (compiled, a float was cut to an int where the interpreter
+    // refused it)
+    row!("core.range_to", "", "range", crow_runtime::core::range_to, (Whole) -> Ints, stops),
+    row!("core.range_from", "", "range", crow_runtime::core::range_from, (Whole, Whole) -> Ints, stops),
+    row!("core.range", "", "range", crow_runtime::core::range, (Whole, Whole, Whole) -> Ints, stops),
+    row!("core.keys", "", "keys", crow_runtime::core::keys, (MapRef) -> Strs, never),
+    row!("core.values", "", "values", crow_runtime::core::values, (MapRef) -> List, never),
+    row!("core.has", "", "has", crow_runtime::core::has, (MapRef, Str) -> Bool, never),
+    row!("core.set", "", "set", crow_runtime::core::set, (MapOf, Str, Item) -> MapOf, never),
+    row!("core.del", "", "del", crow_runtime::core::map_del, (MapOf, Str) -> MapOf, never),
     // min and max of numbers (text was compared compiled and refused
     // interpreted: min['a', 'b'] is refused before the program runs)
     row!("core.min_ints", "", "min", crow_runtime::core::min_ints, (Whole, Whole) -> Int, never),
@@ -852,7 +1117,8 @@ pub static ROWS: &[Row] = &[
     row!("frame.tz", "frame", "tz", crow_runtime::frames::tz, (Str, Str) -> Str, value "time"),
 ];
 
-/// The row the IR names by `id`.
+/// The row of an id (the tests name rows so).
+#[cfg(test)]
 pub fn by_id(id: &str) -> Option<&'static Row> {
     ROWS.iter().find(|r| r.id == id)
 }
@@ -896,7 +1162,9 @@ pub fn refusal(modules: &[&str], name: &str, args: &[Arg]) -> Option<String> {
         return Some(miscount(name, &listed(&counts, "or"), args.len()));
     }
     let mut forms: Vec<String> = Vec::new();
-    for r in rows.iter().filter(|r| spans(r.params, args.len(), name).is_ok()) {
+    // a JSON value's and a column's own rows are the compiled program's
+    // holding of what the interpreter holds as a list, a map or text
+    for r in rows.iter().filter(|r| spans(r.params, args.len(), name).is_ok() && !r.params.iter().any(|k| matches!(k, Kind::Json | Kind::Column))) {
         let form = listed(&r.params.iter().map(|k| k.words().to_string()).collect::<Vec<_>>(), "and");
         if !forms.contains(&form) {
             forms.push(form);
@@ -923,9 +1191,13 @@ pub enum Arg {
     Float,
     /// A parsed JSON value, whose kind shows only as it runs.
     Json,
-    /// A tensor, or a list of numbers.
+    /// A tensor.
     Tensor,
-    /// A list of tensors.
+    /// A list of ints.
+    Ints,
+    /// A list of floats.
+    Floats,
+    /// A list of tensors, or of lists of numbers.
     Tensors,
     Text,
     /// A list of text.
@@ -933,8 +1205,23 @@ pub enum Arg {
     Truth,
     /// A list of bools.
     Truths,
+    /// A list of records.
+    Records,
+    /// A list of maps.
+    Maps,
+    /// A list of anything else: lists of text, functions.
+    Items,
+    /// A list whose items can fail.
+    Fallible,
+    /// A frame's column: numbers where numbers are taken, the compiled
+    /// program's `CrowColumn` (the interpreter holds its cells as a list).
+    Column,
+    Map,
+    Record,
     Sparse,
     Frame,
+    /// A function.
+    Fn,
     /// Not known here: any parameter takes it.
     Unknown,
 }
@@ -947,55 +1234,87 @@ impl Arg {
             Arg::Float => "a number",
             Arg::Json => "a JSON value",
             Arg::Tensor => "numbers",
+            Arg::Ints => "a list of ints",
+            Arg::Floats => "a list of numbers",
             Arg::Tensors => "a list of tensors",
             Arg::Text => "text",
             Arg::Texts => "a list of text",
             Arg::Truth => "a bool",
             Arg::Truths => "a list of bools",
+            Arg::Records => "a list of records",
+            Arg::Maps => "a list of maps",
+            Arg::Items => "a list",
+            Arg::Fallible => "a list whose items can fail",
+            Arg::Column => "a frame's column",
+            Arg::Map => "a map",
+            Arg::Record => "a record",
             Arg::Sparse => "a sparse matrix",
             Arg::Frame => "a frame",
+            Arg::Fn => "a function",
             Arg::Unknown => "a value",
         }
     }
 
     pub fn of_type(t: &CrowType) -> Arg {
         match t {
+            // a value that can fail is handed on as its error before the
+            // call: the call takes what it holds
             CrowType::Result(inner) => Arg::of_type(inner),
             CrowType::Int => Arg::Int,
             CrowType::Float => Arg::Float,
             CrowType::Json => Arg::Json,
-            CrowType::Array(inner) => match Arg::of_type(inner) {
-                Arg::Int | Arg::Float => Arg::Tensor,
-                Arg::Tensor => Arg::Tensors,
-                Arg::Text => Arg::Texts,
-                Arg::Truth => Arg::Truths,
-                _ => Arg::Unknown,
+            CrowType::Array(inner) => match inner.as_ref() {
+                CrowType::Unknown => Arg::Unknown,
+                CrowType::Result(_) => Arg::Fallible,
+                i => Arg::of_items(Arg::of_type(i)),
             },
-            CrowType::NumArray(_) | CrowType::FrameCol => Arg::Tensor,
+            CrowType::NumArray(_) => Arg::Tensor,
+            CrowType::FrameCol => Arg::Column,
             CrowType::Str | CrowType::Markup => Arg::Text,
             CrowType::Bool => Arg::Truth,
+            CrowType::Map(_) => Arg::Map,
+            CrowType::Struct(_) | CrowType::OptBoxStruct(_) => Arg::Record,
             CrowType::Sparse => Arg::Sparse,
             CrowType::Frame => Arg::Frame,
+            CrowType::Fn(..) => Arg::Fn,
             _ => Arg::Unknown,
         }
     }
 
+    /// A list, by what its items are.
+    fn of_items(item: Arg) -> Arg {
+        match item {
+            Arg::Int => Arg::Ints,
+            Arg::Float => Arg::Floats,
+            Arg::Tensor | Arg::Ints | Arg::Floats => Arg::Tensors,
+            Arg::Text => Arg::Texts,
+            Arg::Truth => Arg::Truths,
+            Arg::Record => Arg::Records,
+            Arg::Map => Arg::Maps,
+            Arg::Unknown => Arg::Unknown,
+            _ => Arg::Items,
+        }
+    }
+
+    /// What a value is. A list is what its first item is (an empty one
+    /// could be any list); the interpreter's JSON value and frame's column
+    /// are what they hold.
     pub fn of_value(v: &CrowValue) -> Arg {
         match &v.value {
             Value::Int(_) => Arg::Int,
             Value::Float(_) => Arg::Float,
             Value::NumArray(_) => Arg::Tensor,
-            Value::Array(items) => match items.first().map(Arg::of_value) {
-                Some(Arg::Tensor) => Arg::Tensors,
-                Some(Arg::Text) => Arg::Texts,
-                Some(Arg::Int | Arg::Float) => Arg::Tensor,
-                Some(Arg::Truth) => Arg::Truths,
-                _ => Arg::Unknown,
+            Value::Array(items) => match items.first() {
+                Some(first) => Arg::of_items(Arg::of_value(first)),
+                None => Arg::Unknown,
             },
             Value::Str(_) => Arg::Text,
             Value::Bool(_) => Arg::Truth,
+            Value::Map(_) => Arg::Map,
+            Value::StructInstance(_) => Arg::Record,
             Value::Sparse(_) => Arg::Sparse,
             Value::Frame(_) => Arg::Frame,
+            Value::Fn(_) | Value::GradFn(_) => Arg::Fn,
             _ => Arg::Unknown,
         }
     }
@@ -1021,8 +1340,15 @@ impl Kind {
             Kind::Sizes => "sizes",
             Kind::Groups => "tensors",
             Kind::Lists => "lists of text",
-            Kind::IntMap | Kind::FloatMap => "a map",
+            Kind::IntMap | Kind::FloatMap | Kind::MapOf | Kind::MapRef => "a map",
             Kind::Unit => "nothing",
+            Kind::List | Kind::Seq => "a list",
+            Kind::Item | Kind::ItemRef => "a value",
+            Kind::Ints => "a list of ints",
+            Kind::Floats => "a list of numbers",
+            Kind::Texts => "a list of text",
+            Kind::Json => "a JSON value",
+            Kind::Column => "a frame's column",
         }
     }
 
@@ -1032,26 +1358,41 @@ impl Kind {
             || match self.each() {
                 Kind::Int | Kind::Float => matches!(a, Arg::Int | Arg::Float),
                 Kind::Whole => a == Arg::Int,
-                Kind::Tensor => a == Arg::Tensor,
+                // numbers held as a list or a column are converted where
+                // they meet the parameter (the lowering's row arguments)
+                Kind::Tensor => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Column),
                 Kind::Tensors => a == Arg::Tensors,
                 Kind::Str => a == Arg::Text,
-                Kind::Strs => a == Arg::Texts,
+                Kind::Strs | Kind::Texts => a == Arg::Texts,
                 Kind::Bool => a == Arg::Truth,
                 Kind::Bools => a == Arg::Truths,
                 Kind::Sparse => a == Arg::Sparse,
                 Kind::Frame => a == Arg::Frame,
                 Kind::Cell => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Json),
-                Kind::Cells => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Tensor | Arg::Texts | Arg::Truths),
-                Kind::Words => matches!(a, Arg::Tensor | Arg::Texts | Arg::Truths),
+                Kind::Cells => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column),
+                Kind::Words => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column),
+                Kind::List | Kind::Seq => matches!(a, Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Records | Arg::Maps | Arg::Items | Arg::Fallible),
+                Kind::Item | Kind::ItemRef => true,
+                Kind::MapOf | Kind::MapRef => a == Arg::Map,
+                Kind::Ints => a == Arg::Ints,
+                Kind::Floats => a == Arg::Floats,
+                Kind::Json => a == Arg::Json,
+                Kind::Column => a == Arg::Column,
                 _ => true,
             }
     }
 }
 
 /// Whether a row takes these arguments: their count, and each one's kind.
+/// A frame's column is numbers where a module takes numbers; the core
+/// takes one where it says so (`len`), the interpreter's cells being a list.
 fn takes(row: &Row, args: &[Arg]) -> bool {
     match spans(row.params, args.len(), row.name) {
-        Ok(spans) => row.params.iter().zip(spans).all(|(k, (a, b))| args[a..b].iter().all(|x| k.takes(*x))),
+        Ok(spans) => row
+            .params
+            .iter()
+            .zip(spans)
+            .all(|(k, (a, b))| args[a..b].iter().all(|x| k.takes(*x) && !(row.module.is_empty() && *x == Arg::Column && k.each() == Kind::Tensor))),
         Err(_) => false,
     }
 }
@@ -1121,10 +1462,7 @@ pub const OWN_FORM: &[&str] = &[
 /// bug-classes.md §4). The list only shrinks: a builtin added outside the
 /// table fails `every_core_builtin_is_a_row_or_says_why_not`.
 #[cfg_attr(not(test), allow(dead_code))] // read by the drift test
-pub const TO_MOVE: &[&str] = &[
-    "str", "len", "contains", "slice", "push", "pop", "sort", "reverse", "concat", "range", "keys", "values", "has", "set", "del", "read", "write",
-    "exists", "mkdir", "ls", "rm", "mv", "cp", "json", "encode", "shell",
-];
+pub const TO_MOVE: &[&str] = &["str", "read", "write", "exists", "mkdir", "ls", "rm", "mv", "cp", "json", "encode", "shell"];
 
 /// The module functions with a form of their own: the database's effects,
 /// which the session layer performs (a connection, a transaction, a write
@@ -1238,5 +1576,29 @@ mod tests {
         for (i, r) in ROWS.iter().enumerate() {
             assert!(ROWS.iter().skip(i + 1).all(|o| o.id != r.id), "{} twice", r.id);
         }
+    }
+
+    /// A JSON number's length stops the compiled program with the words the
+    /// interpreter's refusal gives the number it parsed to.
+    #[test]
+    fn a_json_value_without_a_length_is_refused_in_the_tables_words() {
+        assert_eq!(crow_runtime::core::len_json(&serde_json::json!(5)), Err(refusal(&[""], "len", &[Arg::Int]).expect("a refusal")));
+        assert_eq!(crow_runtime::core::len_json(&serde_json::json!(2.5)), Err(refusal(&[""], "len", &[Arg::Float]).expect("a refusal")));
+        assert_eq!(crow_runtime::core::len_json(&serde_json::json!(true)), Err(refusal(&[""], "len", &[Arg::Truth]).expect("a refusal")));
+        assert_eq!(crow_runtime::core::len_json(&serde_json::json!([1, 2])), Ok(2));
+    }
+
+    /// A collection is taken, not copied, by the call that keeps it: the
+    /// interpreter's `take` moves the list into the runtime's push.
+    #[test]
+    fn a_collection_is_moved_into_its_row() {
+        let push = core_row("push", &[Arg::Ints, Arg::Int]).expect("the generic push");
+        assert_eq!(push.id, "core.push");
+        let grown = (push.take)(vec![CrowValue::ok(Value::Array(vec![int(1)])), int(2)], "t:1").expect("a list");
+        assert_eq!(format!("{}", grown.value), "[1, 2]");
+        assert_eq!(core_row("sort", &[Arg::Floats]).map(|r| r.id), Some("core.sort_floats"));
+        assert!(core_row("sort", &[Arg::Records]).is_none());
+        assert_eq!(core_row("len", &[Arg::Column]).map(|r| r.id), Some("core.len_column"));
+        assert!(core_row("contains", &[Arg::Column, Arg::Int]).is_none());
     }
 }
