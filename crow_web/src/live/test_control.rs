@@ -99,10 +99,7 @@ impl Session {
 /// What a render or a handler panicked with, as the verb's error: the
 /// program keeps serving the test, as it keeps serving its pages.
 fn caught<T>(f: impl FnOnce() -> T) -> Result<T, String> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|p| {
-        let said = p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default();
-        format!("the compiled program failed: {}", said)
-    })
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|p| format!("the compiled program failed: {}", crow_runtime::stops::panic_words(p.as_ref())))
 }
 
 /// The routes, answering only when `CROW_TEST_CONTROL` is set.

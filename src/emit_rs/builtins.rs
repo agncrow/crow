@@ -151,7 +151,8 @@ impl Emitter {
             Some(m) => self.registry.emit_rust_in(m, name, &strs, &arg_types),
             None => self.registry.emit_rust(name, &strs, &arg_types),
         };
-        emitted.unwrap_or_else(|e| format!("compile_error!({:?})", e))
+        // a module stops on the line its call is on (modules::STOP_LINE)
+        emitted.map(|code| code.replace(crate::modules::STOP_LINE, &self.current_line.to_string())).unwrap_or_else(|e| format!("compile_error!({:?})", e))
     }
 
     pub(crate) fn module_call(&mut self, m: &str, f: &str, args: &[Expr], arg_strs: &[String], whole: &Expr) -> String {
@@ -314,7 +315,7 @@ impl Emitter {
                     3 => (a[0].clone(), a[1].clone(), a[2].clone()),
                     _ => return Some("vec![]".to_string()),
                 };
-                return Some(format!("crow_runtime::core::range(({}) as i64, ({}) as i64, ({}) as i64).unwrap_or_else(|e| panic!(\"{{}}\", e))", x, y, z));
+                return Some(format!("crow_runtime::core::range(({}) as i64, ({}) as i64, ({}) as i64){}", x, y, z, self.or_stop()));
             }
             "map" if n == 0 => return Some("BTreeMap::new()".to_string()),
             "grad" if n == 1 => {
@@ -355,6 +356,7 @@ impl Emitter {
 
         Some(match name {
             // math
+            "abs" if n == 1 && matches!(ty0, CrowType::Int) && !self.emitting_dual => format!("crow_runtime::stops::abs({}).unwrap_or_else(|e| crow_stop({}, e))", a[0], self.current_line),
             "abs" if n == 1 => format!("({}).abs()", a[0]),
             "sqrt" if n == 1 => {
                 if self.emitting_dual || matches!(ty0, CrowType::Float) {
@@ -400,7 +402,7 @@ impl Emitter {
             }
             "starts" if n == 2 => self.runtime("text::starts", &[format!("&({})", a[0]), format!("&({})", a[1])]),
             "ends" if n == 2 => self.runtime("text::ends", &[format!("&({})", a[0]), format!("&({})", a[1])]),
-            "repeat" if n == 2 => format!("{}.unwrap_or_else(|e| panic!(\"{{}}\", e))", self.runtime("text::repeat", &[format!("&({})", a[0]), format!("({}) as i64", a[1])])),
+            "repeat" if n == 2 => format!("{}{}", self.runtime("text::repeat", &[format!("&({})", a[0]), format!("({}) as i64", a[1])]), self.or_stop()),
             "captured" if n == 1 => {
                 self.needs_crow_runtime = true;
                 if matches!(ty0, CrowType::Result(_)) {
@@ -521,9 +523,9 @@ impl Emitter {
             "push" if n == 2 && !(self.needs_crow_web && self.web_features.contains("queue") && !matches!(ty0, CrowType::Array(_) | CrowType::NumArray(_))) => {
                 if matches!(ty0, CrowType::NumArray(_)) {
                     if matches!(Self::inner(&self.tt(&args[1])), CrowType::NumArray(_)) {
-                        format!("{}.push_row(&{}).unwrap_or_else(|e| panic!(\"{{}}\", e))", a[0], a[1])
+                        format!("{}.push_row(&{}){}", a[0], a[1], self.or_stop())
                     } else {
-                        format!("{}.push_scalar({} as f64).unwrap_or_else(|e| panic!(\"{{}}\", e))", a[0], a[1])
+                        format!("{}.push_scalar({} as f64){}", a[0], a[1], self.or_stop())
                     }
                 } else {
                     self.needs_crow_runtime = true;
@@ -630,8 +632,8 @@ impl Emitter {
                 self.needs_crow_runtime = true;
                 match n {
                     0 => "crow_runtime::core::rand_float()".to_string(),
-                    1 => format!("crow_runtime::core::rand_int(({}) as i64).unwrap_or_else(|e| panic!(\"{{}}\", e))", a[0]),
-                    _ => format!("crow_runtime::core::rand_between(({}) as i64, ({}) as i64).unwrap_or_else(|e| panic!(\"{{}}\", e))", a[0], a[1]),
+                    1 => format!("crow_runtime::core::rand_int(({}) as i64){}", a[0], self.or_stop()),
+                    _ => format!("crow_runtime::core::rand_between(({}) as i64, ({}) as i64){}", a[0], a[1], self.or_stop()),
                 }
             }
             "seed" if n == 1 => {
@@ -758,15 +760,17 @@ impl Emitter {
             "assert" if n == 1 || n == 2 => {
                 let cond = match &ty0 {
                     CrowType::Bool => a[0].clone(),
-                    CrowType::Result(_) => format!("{{ let _a = &({}); if !_a.ok {{ panic!(\"cannot branch on an error value — {{}}\", _a.reason); }} _a.value }}", a[0]),
+                    CrowType::Result(_) => format!("{{ let _a = &({}); if !_a.ok {{ crow_stop({}, format!(\"cannot branch on an error value — {{}}\", _a.reason)); }} _a.value }}", a[0], self.current_line),
                     CrowType::Int => format!("({}) != 0", a[0]),
                     CrowType::Str => format!("!({}).is_empty()", a[0]),
                     _ => format!("({}) != 0", a[0]),
                 };
+                // a failed assert stops with the interpreter's words, not
+                // the Rust expression it was printed as
                 if n == 2 {
-                    format!("if !({}) {{ panic!(\"assertion failed: {{}}\", {}); }}", cond, a[1])
+                    format!("if !({}) {{ crow_stop({}, format!(\"assertion failed: {{}}\", {})); }}", cond, self.current_line, a[1])
                 } else {
-                    format!("assert!({})", cond)
+                    format!("if !({}) {{ crow_stop({}, \"assertion failed\".to_string()); }}", cond, self.current_line)
                 }
             }
             "error" if n == 1 || n == 2 => {
@@ -930,7 +934,7 @@ impl Emitter {
             // regular expressions
             "matches" if n == 2 => {
                 self.needs_crow_runtime = true;
-                format!("crow_runtime::text::matches(&*{}, &*{}).unwrap_or_else(|e| panic!(\"{{}}\", e))", a[0], a[1])
+                format!("crow_runtime::text::matches(&*{}, &*{}){}", a[0], a[1], self.or_stop())
             }
             "find" if n == 2 => {
                 self.needs_crow_runtime = true;
@@ -943,7 +947,7 @@ impl Emitter {
             }
             "sub" if n == 3 => {
                 self.needs_crow_runtime = true;
-                format!("crow_runtime::text::sub(&*{}, &*{}, &*{}).unwrap_or_else(|e| panic!(\"{{}}\", e))", a[0], a[1], a[2])
+                format!("crow_runtime::text::sub(&*{}, &*{}, &*{}){}", a[0], a[1], a[2], self.or_stop())
             }
             "date" if n == 3 => {
                 self.needs_chrono = true;

@@ -3100,14 +3100,11 @@ fn download_messages(state: &mut CrowLiveState, download_path: &str) -> Vec<serd
         .collect()
 }
 
-/// What made a handler's thread panic, in its own words.
+/// What stopped a handler's thread: a stop's line and reason, or a
+/// panic's words, as the program itself would print them.
 fn panic_reason(e: tokio::task::JoinError) -> String {
     match e.try_into_panic() {
-        Ok(p) => p
-            .downcast_ref::<String>()
-            .cloned()
-            .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
-            .unwrap_or_else(|| "it panicked".to_string()),
+        Ok(p) => crow_runtime::stops::panic_words(p.as_ref()),
         Err(_) => "it was cancelled".to_string(),
     }
 }

@@ -111,7 +111,7 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
         "abs" => {
             if args.len() != 1 { return Err("abs[] takes exactly 1 argument".into()); }
             match args[0].unwrap_or_propagate()? {
-                Value::Int(n) => Ok(CrowValue::ok(Value::Int(n.abs()))),
+                Value::Int(n) => crow_runtime::stops::abs(*n).map(|n| CrowValue::ok(Value::Int(n))),
                 Value::Float(n) => Ok(CrowValue::ok(Value::Float(n.abs()))),
                 Value::Dual(a, da) => {
                     // abs'(x) = sign(x) * x'

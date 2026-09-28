@@ -1,0 +1,256 @@
+# Bug classes, removed by construction
+
+Building finch in Crow found its bugs one at a time. Each fix came with a
+test, but the next bug of the same kind waited in the next module. This
+document records the fixes that remove a whole class instead (design rule
+12: the modes agree by construction, not by discipline): what each class
+is, the structure that closes it, what the structure found on its first
+run, and what is left.
+
+The four classes, in the order they were taken:
+
+1. A failure means different things in the two modes.
+2. The lowering decides a type wrongly, and the mistake surfaces late.
+3. The runtime panics where it should stop.
+4. A builtin is implemented twice.
+
+## 1. A failure stops both modes the same way
+
+**The class.** A program that indexes past its array, reads a key its map
+lacks, or divides an int by zero cannot go on. Each mode handled such
+failures its own way, and so did each build. Probes of thirty failure
+paths (2026-09-27) found:
+
+| Failure | `crow run -i` | `crow run` | `crow build` |
+|---|---|---|---|
+| index out of range | stop, its own words | panic hook, other words, no line | same as `crow run` |
+| negative index past the start | stop | the index printed as a huge unsigned number | same |
+| key a map lacks | stop, `key 'b' not found in map` | stop, `map has no key 'b'` | same |
+| int divided by zero | an error value, the program went on | stop | stop |
+| int past 64 bits | wrapped silently | stop | wrapped silently |
+| `min_int / -1` | a Rust panic | stop | stop |
+| `2 ^ -1` | `0.5`, where both modes type the value an int | overflow | overflow |
+| `range` near the last int | looped until memory ran out | overflow | wrapped |
+| stop inside a function | named the caller's line | named the function's line | same |
+| stop inside a parallel loop | named the loop's line | one message per failing thread | same |
+| `assert[c]` false | `assertion failed` | the generated Rust expression | same |
+| deep recursion | Rust's abort message | Rust's abort message | same |
+
+**The fix.** Every such failure is one check in `crow_runtime::stops`,
+called by both modes: `item`, `char_at`, `row` and `key` for indexes,
+`add`, `sub`, `mul`, `div`, `rem`, `pow`, `neg` and `abs` for ints, and
+`no_column` and `size` for their words. Each returns the reason, so the
+interpreter stops with it on the line it is running, and the compiled
+program stops through `halt(line, reason)` on the line the emitter knows.
+
+- Both print `runtime error: line N: <reason>` and exit with status 1.
+- A stop off the main thread travels as a `Stop` payload to the thread
+  that joins it. A parallel loop reports its earliest failing item once,
+  in both modes, because rayon joins left before right and the
+  interpreter's chunks are read in order. The live runtime reads a stop in
+  a handler as the handler's (`panic_reason` uses `panic_words`).
+- The interpreter attaches the line where a stop happened: in a function
+  body, a derivation, a parallel loop's body.
+- `overflow-checks = true` in the release profile of crow itself and of
+  every generated program, so no build wraps an int that the checks miss.
+- A panic that is not a stop — a check Crow is missing — is caught.
+  - The interpreter runs every entry point under `guarded` (run, serve,
+    render, handler, test, scenario, script, REPL), so the panic becomes
+    a stop on the line it happened on.
+  - The compiled program's `main_guard` and `install_hook` name it in the
+    same words (`panic_words`).
+
+The spec records the stops and their words: §10, When a Program Stops,
+with the Design Note on why these failures stop rather than fail as
+values.
+
+**Tests.** Parity programs 97–104, one per stop (the harness counts two
+modes stopping with the same last line as agreeing), and the unit tests
+in `stops.rs`. `crow test --parity <words>` runs the programs whose names
+hold the words.
+
+**Measured.** The benchmark's `collect` rows, before and after, both
+modes. Compiled (release): within noise on every row. Interpreted:
+`for_collect` 82 → 58 ms, because each binary operator had formatted a
+trace string it never used.
+
+**Left.** Deep recursion still aborts with Rust's message in both modes.
+A depth guard needs a limit both modes share, and the compiled program's
+guard would cost on every call of a recursive function (the lowering
+knows which ones are).
+
+## 2. The IR is checked before a backend reads it
+
+**The class.** The lowering decides every type once, and the backends
+trust it. When it decided wrongly, the mistake surfaced late and far
+away. The generated Rust did not build: `len[[]]`'s element type, a local
+declared `()`. Or the interpreter carried a value its type said it could
+not hold: an int in a float fact.
+
+**The fix.** `ir_verify::verify` walks every body of a lowered program
+with the bindings in scope, and checks that the parts agree:
+
+- every local read is bound, and read at its binding's type;
+- every value fits the slot it is stored in: a `let`, a `set`, a fact, a
+  list's items;
+- a decision is made on a boolean, and a loop walks something with items;
+- a call hands a function as many arguments as it takes, each fitting its
+  parameter, and an argument that can fail is handed on as the call's
+  error;
+- a return fits the function's type;
+- a conversion converts what it says;
+- a render (a view or a derivation) calls nothing that writes facts.
+
+It runs at the end of `lower_checked`, the one gate every pipeline passes
+(run, run -i, build, test, check, the REPL, the layout engine). What it
+does with a finding depends on `CROW_IR_VERIFY`:
+
+- `strict` refuses the program as an internal error, a bug in Crow and
+  not in the program.
+- `report` prints each finding and goes on.
+- `off` does not check.
+
+When the variable is unset, a debug build is strict and a release build
+is off. `cargo test` therefore checks every program a test lowers (1,052
+tests), and a harness can run the release binary strict. A user's release
+build pays nothing.
+
+**Found on its first run.** Over the corpus (every tracked `.co` file,
+every book block, finch: 1,053 files) the first version reported 442
+findings. Most were conventions both backends already keep, which the
+verifier now states:
+
+- a view's tree placed where markup goes;
+- a view rendering a failed argument as its text;
+- a handler's value, which goes to nobody;
+- `0` as a recursive link's empty sentinel;
+- a query's parameter list holding values of every type;
+- a loop over a value that can fail, refused where it runs;
+- a failed value stored into a fact, which stops the handler;
+- the original of a specialized function, which neither backend runs.
+
+The rest were bugs, each fixed with a test:
+
+- **An int default of a fact that holds floats** stayed an int in the
+  interpreter until a handler stored a float, where the compiled program
+  converted it. It is converted in the lowering now.
+- **An int returned by a float function** was handed to the interpreter's
+  caller as an int (the layout engine's `lay_lines`). It is converted in
+  the lowering now.
+- **A function whose returns are all of unknown type** was typed as
+  returning nothing. A part built alone knows nothing of its parameters,
+  so finch's `sim/autonext.co` alone declared `let e: ()` for a value, and
+  a compiled build of the part would not have built. Such returns are now
+  unknown.
+- **Numbers held as a tensor, handed to a parameter that holds them as a
+  list** (or the reverse) were not converted at the call. The generated
+  Rust did not build. The lowering now converts where they meet, as it
+  already did for `concat`.
+- **A view calling a function that assigns a fact.** The interpreter
+  wrote the fact mid-render, and the compiled program assigned a variable
+  it never declared and did not build. It is refused in both modes (open
+  question 2).
+
+The corpus has no findings now.
+
+## 3. No crash in the runtime
+
+**The class.** A runtime function that panics instead of returning its
+reason crashes the interpreter, or reaches the compiled program's hook
+with no line.
+
+**Done.** The safety net of §1: nothing in either mode crashes. A panic
+anywhere under a run is a stop with the line where it happened (the
+interpreter) or with its words (the compiled program).
+
+**Left.** The panics themselves. Clippy's panic lints over `crow_runtime`
+count 601 index expressions and 43 slices that can panic, 37 `unwrap` or
+`expect` calls, 14 `panic!`s and one `unreachable!`. The plan:
+
+- Deny `unwrap_used`, `expect_used`, `panic` and `unreachable` in
+  `crow_runtime`, `crow_db` and `crow_web`.
+- Audit each site: return the reason, or an `#[allow]` with the invariant
+  that makes it safe.
+- Index expressions are audited per function, the tensor kernels' by
+  their shape checks.
+
+## 4. One implementation per builtin
+
+**The class.** A builtin whose interpreter adapter and compiled printing
+are written separately drifts apart. Examples:
+
+- `zeros[-2]` and `eye[-1]` stop the interpreter with a reason. The
+  compiled program printed `capacity overflow` and `integer overflow in a
+  multiplication`, because only the interpreter's math adapter checked
+  the size.
+- `fmt` checks `align` and the string-only options in the interpreter's
+  adapter, while the compiled path relied on the kernel panicking.
+- A bad time style is an error value interpreted, and the literal text
+  `[fmt: …]` compiled.
+- `calendar` fails as a value interpreted, and prints to stderr and
+  answers an empty map compiled.
+
+In all, 66 core builtins and 155 module functions (`math` 102, `frame`
+18, `stats` 13, `nn` 8, `db` 6, `doc` 6, `io` 2, and `chart`) are
+written twice: `builtins.rs` beside `emit_rs/builtins.rs`, and each
+module's `call` beside its `emit_rust`.
+
+**The design** (ir-design.md §3.5, typed-values-design.md §2 decided
+the shape: "a builtin is a runtime function and a row naming it"):
+
+- **One runtime function per builtin**, taking typed arguments (`i64`,
+  `f64`, `&str`, `&CrowTensor`, `&[i64]`, …) and answering `Result<T,
+  String>`. Its validation (sizes, shapes, axes, column names, offsets,
+  styles) lives there and nowhere else.
+- **One row per builtin** in the table. The row gives the Crow name, the
+  module, the runtime path, the parameters' kinds, the answer's kind, and
+  what a failure is: a stop (a misuse no value can carry, §1), an error
+  value of a kind (`'time'`, `'parse'`, `'io'`), or impossible.
+- **The interpreter's adapter is generic.** Each parameter kind reads
+  its argument from a value (a float from an int or a float, a tensor
+  from a tensor or a list of numbers), and each answer kind builds a
+  value. So a row's call is the function applied to the read arguments,
+  with its failure dispatched as the row says.
+- **The emitter's printing is generic.** Each parameter kind prints its
+  argument the way the function takes it (`(x) as f64`, `&*s`, `&t`).
+  The failure prints as the row says: `.unwrap_or_else(|e| crow_stop(line,
+  e))`, or a `CrowResult` of the row's kind.
+- **A guard against drift:** a test that every builtin and module
+  function the lowering accepts is a row, or is on the short list of
+  names with syntax or state of their own. That list covers `log`,
+  `type`, `grad`, `later`, the predicates that take a function, and the
+  constructors of ui, web and db. A builtin added outside the table fails
+  the test.
+
+The two modes then agree by construction for every row. The only code
+per mode is the adapter and the printer of each parameter kind, and
+those are tested once per kind rather than once per builtin.
+
+**The order.** `fmt`, `calendar` and the time builtins first (they
+diverge today), then `math` (it diverges and is the largest), then
+`frame`, `stats`, `nn`, `io`, `doc`, `chart`, and the remaining core
+builtins. Each batch is gated by parity (one program per batch pinning
+the edges both modes must now share), the book, the served pages and
+the oracle.
+
+## Open questions (Vijay)
+
+1. **A handler passes a failed value to a helper.** By the spec's
+   auto-propagation, the helper does not run and the call's value is the
+   error. A helper called for what it writes has its value dropped, so the
+   error vanishes and the handler commits its other writes. finch's
+   `start_session` calls `clock.begin[start, finish - start, open_at]`,
+   where `open_at` can fail: if it does, the session starts without its
+   clock. An effect given a failed argument stops the handler
+   (`effect_refused`). Should a helper call? The verifier accepts it today.
+2. **A function that assigns a fact's name, called from a view.** The spec
+   says "ordinary `fn` declarations are fully isolated even under
+   `use ui`" (the assignment is a local), and also "a function a handler
+   calls that assigns a module-level variable is a handler too". The
+   lowering classes any function assigning a fact as a helper, which
+   writes it, and inference agreed. The program is refused now. The other
+   reading, a local, would be a small change if preferred.
+3. **Int division.** The spec said `3 / 2` is floor division, but both
+   modes have always rounded toward zero (`-7 / 2` is `-3`, as in Rust, C
+   and Go; Python floors to `-4`). The spec now says what the language
+   does.

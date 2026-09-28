@@ -20,30 +20,30 @@ pub fn range(start: i64, stop: i64, step: i64) -> Result<Vec<i64>, String> {
     }
     let mut out = Vec::new();
     let mut i = start;
+    // a step past the last int ends the range: its next value would be
+    // beyond `stop` too
     if step > 0 {
         while i < stop {
             out.push(i);
-            i += step;
+            let Some(next) = i.checked_add(step) else { break };
+            i = next;
         }
     } else {
         while i > stop {
             out.push(i);
-            i += step;
+            let Some(next) = i.checked_add(step) else { break };
+            i = next;
         }
     }
     Ok(out)
 }
 
-/// `push[arr, x]`: the array with `x` at the end.
-/// `m.key` / `m[key]`: the value, or the error both modes stop on — the
-/// interpreter's words, so a page reads the same in either.
-pub fn map_key<T: Clone>(m: &std::collections::BTreeMap<String, T>, key: &str) -> T {
-    match m.get(key) {
-        Some(v) => v.clone(),
-        None => panic!("map has no key '{}'", key),
-    }
+/// `m.key` / `m[key]`: the value, or the words both modes stop with.
+pub fn map_key<T: Clone>(m: &std::collections::BTreeMap<String, T>, key: &str) -> Result<T, String> {
+    crate::stops::key(m, key).cloned()
 }
 
+/// `push[arr, x]`: the array with `x` at the end.
 pub fn push<T>(mut v: Vec<T>, x: T) -> Vec<T> {
     v.push(x);
     v
@@ -213,6 +213,9 @@ mod tests {
         assert_eq!(range(5, 0, -2).unwrap(), vec![5, 3, 1]);
         assert_eq!(range(3, 3, 1).unwrap(), Vec::<i64>::new());
         assert!(range(0, 1, 0).is_err());
+        // near the last int the range ends instead of wrapping round forever
+        assert_eq!(range(i64::MAX - 6, i64::MAX, 5).unwrap(), vec![i64::MAX - 6, i64::MAX - 1]);
+        assert_eq!(range(i64::MIN + 6, i64::MIN, -5).unwrap(), vec![i64::MIN + 6, i64::MIN + 1]);
     }
 
     #[test]

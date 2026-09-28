@@ -1,5 +1,5 @@
 scenario board_cards_a_card_keeps_its_talk_and_files (board/cards.co)
-  stopped: line 201: download: No such file or directory (os error 2)
+  stopped: line 94: download: No such file or directory (os error 2)
   wrote:
     sqlite://taskboard.db CREATE TABLE IF NOT EXISTS people (name TEXT PRIMARY KEY, role TEXT NOT NULL, hash TEXT NOT NULL)
     sqlite://taskboard.db CREATE TABLE IF NOT EXISTS boards (id INTEGER PRIMARY KEY, name TEXT NOT NULL)

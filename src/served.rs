@@ -162,7 +162,7 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
     let view_name = view.clone();
     let render = move |state: &CrowLiveState| -> CrowVNode {
         let mut it = with_session(&t, state);
-        match it.render_view(&view_name) {
+        match it.guard(|it| it.render_view(&view_name)) {
             Ok(html) => {
                 if it.notice_read {
                     // the view shows the notice itself: no runtime toast
@@ -184,7 +184,7 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
             .map(|items| items.iter().map(|x| crate::builtins::json_to_crow("", x)).collect())
             .unwrap_or_default();
         let _ = crow_db::take_write_keys();
-        let outcome = it.transaction(event, args);
+        let outcome = it.guard(|it| it.transaction(event, args));
         let written = crow_db::take_write_keys();
         if let Err(e) = outcome {
             state.stop(format!("{} stopped: {}", event, e));

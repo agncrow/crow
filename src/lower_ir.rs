@@ -80,6 +80,27 @@ fn lower_checked(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &Ha
     let mut program = Program { parts: vec![part.map_err(Refusal::Unlowered)?] };
     decide_loops(&mut program);
     decide_answers(&mut program);
+    // the parts agree before a backend reads them (ir_verify): a lowering
+    // that disagrees with itself is refused as the bug in Crow it is, in a
+    // debug build and in every harness; a release build checks when asked
+    match crate::ir_verify::mode() {
+        crate::ir_verify::Mode::Off => {}
+        crate::ir_verify::Mode::Report => {
+            for f in crate::ir_verify::verify(&program) {
+                eprintln!("ir-verify: {}", f);
+            }
+        }
+        crate::ir_verify::Mode::Strict => {
+            let found = crate::ir_verify::verify(&program);
+            if let Some(first) = found.first() {
+                let more = if found.len() > 1 { format!(" (and {} more)", found.len() - 1) } else { String::new() };
+                return Err(Refusal::Unlowered(format!(
+                    "internal error: the lowered program disagrees with itself — a bug in Crow, not in this program: {}{}",
+                    first, more
+                )));
+            }
+        }
+    }
     Ok(program)
 }
 
@@ -916,6 +937,14 @@ impl<'a> Lowerer<'a> {
                     self.check_assign(name, &self.checked(&default));
                     self.flush_pre_into(&mut part.main);
                     let ty = self.ctx.vars.get(name).map(ty_of).unwrap_or_else(|| default.ty());
+                    // an int default of a fact that holds floats is a float
+                    // (spec §1): the interpreter held the int until a handler
+                    // stored a float, where the compiled program converted it
+                    let default = if ty == Ty::Float && default.ty() == Ty::Int {
+                        Expr::Convert { how: Convert::IntToFloat, expr: Box::new(default), ty: Ty::Float }
+                    } else {
+                        default
+                    };
                     self.scopes[0].insert(name.clone());
                     self.v.fact_lines.insert(name.clone(), self.v.line);
                     part.facts.push(Fact { name: name.clone(), ty, default, session: written.contains(name) });
@@ -1363,6 +1392,15 @@ impl<'a> Lowerer<'a> {
                 if self.pass == Pass::Scan {
                     self.ctx.note_return_frame(e);
                 }
+                // an int returned by a function whose value is a float is a
+                // float (spec §1), as one assigned to a float variable is: the
+                // interpreter handed the caller the int
+                let floats = self.pass == Pass::Final
+                    && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| match &sig.return_type {
+                        CrowType::Result(inner) => matches!(inner.as_ref(), CrowType::Float),
+                        t => matches!(t, CrowType::Float),
+                    });
+                let x = if floats && x.ty() == Ty::Int { Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float } } else { x };
                 vec![Stmt::Return(Some(x))]
             }
             S::Break => vec![Stmt::Break],
@@ -2234,20 +2272,39 @@ impl<'a> Lowerer<'a> {
             if let Some(seen) = &mut self.seen {
                 seen.calls.push((name.clone(), full_types.clone()));
             }
+            // a render reads state and never moves it (spec, Reactive State):
+            // the interpreter wrote the fact mid-render, and the compiled
+            // program did not build
+            if self.pass == Pass::Final && matches!(self.at, Where::In(FnKind::View) | Where::Derive) {
+                if let Some(body) = self.ctx.functions.get(&name).map(|sig| sig.body.clone()) {
+                    if matches!(self.kind_of(&name, &body, false), FnKind::Handler | FnKind::Helper) {
+                        let from = if self.at == Where::Derive { "a derivation" } else { "a view" };
+                        self.refuse(format!(
+                            "{} calls '{}', which assigns reactive state — {} reads state and never changes it: move the assignment into a handler, or give the local a name that is not a fact's",
+                            from, name, from
+                        ));
+                    }
+                }
+            }
             let resolved = self.specialised(&name, &full_types);
             // an int handed to a float parameter is a float (spec §1), as one
             // assigned to a float variable is: the conversion is explicit
+            // — and numbers held as a tensor handed to a parameter that holds
+            // them as a list, or the other way, are converted where they meet
+            // (a literal handed where a call elsewhere made the parameter a
+            // list did not build)
             if let Some(sig) = self.ctx.functions.get(&resolved) {
-                let floats: Vec<bool> = sig.params.iter().map(|(_, t)| matches!(t, CrowType::Float)).collect();
+                let params: Vec<CrowType> = sig.params.iter().map(|(_, t)| t.clone()).collect();
                 lowered = lowered
                     .into_iter()
                     .enumerate()
-                    .map(|(i, x)| {
-                        if floats.get(i).copied().unwrap_or(false) && x.ty() == Ty::Int {
-                            Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float }
-                        } else {
-                            x
-                        }
+                    .map(|(i, x)| match (params.get(i), x.ty()) {
+                        (Some(CrowType::Float), Ty::Int) => Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float },
+                        (Some(p @ CrowType::Array(_)), Ty::Tensor(_)) => Expr::Convert { how: Convert::ToList, expr: Box::new(x), ty: ty_of(p) },
+                        // (an empty literal, whose items are not known, is
+                        // any list the backends need: parity 71)
+                        (Some(p @ CrowType::NumArray(_)), Ty::List(e)) if *e != Ty::Unknown => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: ty_of(p) },
+                        _ => x,
                     })
                     .collect();
             }

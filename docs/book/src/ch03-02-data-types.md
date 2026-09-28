@@ -3,7 +3,7 @@
 The scalar types are `int`, `float`, `bool`, and `string`. Arithmetic is
 familiar, with two things worth pinning down.
 
-**Division between ints floors; a float anywhere makes it float:**
+**Division between ints rounds toward zero; a float anywhere makes it float:**
 
 ```crow
 log[3 / 2]

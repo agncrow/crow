@@ -234,11 +234,15 @@ next_thing[]
 Division is type-determined — one operator, no ambiguity:
 
 ```
-3 / 2        --- 1 (both int → int, floor division)
+3 / 2        --- 1 (both int → int, rounded toward zero)
+-7 / 2       --- -3
+-7 % 2       --- -1 (the remainder has the sign of the left side)
 3 / 2.0      --- 1.5 (float involved → float)
 7 / 3        --- 2
 7.0 / 3      --- 2.3333...
 ```
+
+An int divided by zero stops the program (When a Program Stops, §10); a float divided by zero is infinity.
 
 
 ### Tensor Arithmetic
@@ -1115,6 +1119,32 @@ Errors include line numbers. What is not a program — an undefined name, a buil
 line 3: undefined variable 'z'
 runtime error: line 7: assertion failed: expected positive
 ```
+
+
+### When a Program Stops
+
+Some failures no value can carry. An index reads an element and an int operation makes an int, and neither an element nor an int can say it failed. These failures stop the program on the line they happen on, with the same words in both modes: `runtime error: line N: <reason>` on stderr, exit status 1. Inside a function the line is the function's own. In a loop whose iterations run in parallel it is the body's line, for the earliest item that failed, printed once. A handler that meets one stops as it does at a decision: nothing it did lands, and the reason is the session's notice.
+
+| What | The reason |
+|------|------------|
+| `xs[i]` outside the array (a negative index counts from the end: `-1` is the last) | `index 5 is out of range for an array of 3 items` |
+| `s[i]` outside the string, counted in characters | `index 9 is out of range for a string of 3 characters` |
+| `m[i]` outside a matrix's rows | `index 4 is out of range for a tensor of 2 rows` |
+| `xs[i] = v` outside the array | as reading it |
+| `m[k]` or `m.k` of a key the map lacks | `map has no key 'k'` |
+| `df.col` of a column the frame lacks | `frame has no property or column 'col'` |
+| an int `/` or `%` by zero | `division by zero`, `modulo by zero` |
+| an int past 64 bits (`+`, `-`, `*`, `^`, `-x`, `abs`) | `integer overflow: 9223372036854775807 + 1 does not fit in 64 bits` |
+| an int to a negative power | `2 ^ -1: an int to a negative power is a fraction — write 2.0 ^ -1 for a float` |
+| `assert[c]` or `assert[c, message]` false | `assertion failed`, `assertion failed: message` |
+
+An int never wraps round, in any mode or build, and a float never stops: a float divided by zero is IEEE's infinity, and a float too large for `int[]` gives the largest int. A `range` that would step past the last int ends there. A check Crow is missing, a panic inside the runtime, stops the program the same way and never crashes it.
+
+#### Design Note: The Failures No Value Carries Stop the Program
+
+**What was considered:** making an index outside its array, or an int divided by zero, an error value, as `int['x']` is.
+
+**Why it was rejected:** every `xs[i]` and `a / b` would be fallible, so every function that indexes or divides would be typed as able to fail. The two modes had drifted apart instead of choosing. The interpreter answered an error value for a division by zero where the compiled program stopped. It wrapped an overflowing int where `crow run` stopped and `crow build`'s binary wrapped. And each mode used its own words for an index out of range. Now each failure is one check in the runtime (`crow_runtime::stops`), called by both modes, so they agree by construction (design rule 12).
 
 
 ## 11. Core Builtins

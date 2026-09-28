@@ -12,6 +12,11 @@ use std::sync::Arc;
 use crate::value::CrowValue;
 use crate::type_infer::CrowType;
 
+/// Where a module's printed code stops the program, the line it stops on:
+/// the emitter puts the call's line in its place, so a module's refusal
+/// names its line as the interpreter's does (`crow_stop(__crow_line__, e)`).
+pub const STOP_LINE: &str = "__crow_line__";
+
 /// Trait that every Crow module implements.
 /// Each module is self-contained: it declares its functions, constants,
 /// and knows how to interpret calls, emit Rust code, and infer types.

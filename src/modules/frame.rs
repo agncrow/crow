@@ -371,11 +371,11 @@ fn emit_frame_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> R
             arg_strs[0]
         ),
         "save" => format!(
-            "{{ {}.save(&{}).unwrap_or_else(|e| panic!(\"save: {{}}\", e)); }}",
+            "{{ {}.save(&{}).unwrap_or_else(|e| crow_stop(__crow_line__, format!(\"save: {{}}\", e))); }}",
             arg_strs[0], arg_strs[1]
         ),
         "select" => format!(
-            "{{ let _strs = {}; let _refs: Vec<&str> = _strs.iter().map(|s: &String| s.as_str()).collect(); {}.select(&_refs).unwrap_or_else(|e| panic!(\"select: {{}}\", e)) }}",
+            "{{ let _strs = {}; let _refs: Vec<&str> = _strs.iter().map(|s: &String| s.as_str()).collect(); {}.select(&_refs).unwrap_or_else(|e| crow_stop(__crow_line__, format!(\"select: {{}}\", e))) }}",
             arg_strs[1], arg_strs[0]
         ),
         "head" => format!("{}.head({} as usize)", arg_strs[0], arg_strs[1]),
@@ -383,26 +383,26 @@ fn emit_frame_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> R
         "sort" => {
             if arg_strs.len() == 3 {
                 // desc is a bool (lowered from `desc = true`)
-                format!("{}.sort(&{}, {}).unwrap_or_else(|e| panic!(\"sort: {{}}\", e))", arg_strs[0], arg_strs[1], arg_strs[2])
+                format!("{}.sort(&{}, {}).unwrap_or_else(|e| crow_stop(__crow_line__, format!(\"sort: {{}}\", e)))", arg_strs[0], arg_strs[1], arg_strs[2])
             } else {
-                format!("{}.sort(&{}, false).unwrap_or_else(|e| panic!(\"sort: {{}}\", e))", arg_strs[0], arg_strs[1])
+                format!("{}.sort(&{}, false).unwrap_or_else(|e| crow_stop(__crow_line__, format!(\"sort: {{}}\", e)))", arg_strs[0], arg_strs[1])
             }
         }
         "rename" => format!(
-            "{}.rename(&{}, &{}).unwrap_or_else(|e| panic!(\"rename: {{}}\", e))",
+            "{}.rename(&{}, &{}).unwrap_or_else(|e| crow_stop(__crow_line__, format!(\"rename: {{}}\", e)))",
             arg_strs[0], arg_strs[1], arg_strs[2]
         ),
         "stats" => format!("{}.stats_summary()", arg_strs[0]),
         "stack" => format!(
-            "{}.stack(&{}).unwrap_or_else(|e| panic!(\"stack: {{}}\", e))",
+            "{}.stack(&{}).unwrap_or_else(|e| crow_stop(__crow_line__, format!(\"stack: {{}}\", e)))",
             arg_strs[0], arg_strs[1]
         ),
         "filter" => format!(
-            "{}.filter(&{}).unwrap_or_else(|e| panic!(\"filter: {{}}\", e))",
+            "{}.filter(&{}).unwrap_or_else(|e| crow_stop(__crow_line__, format!(\"filter: {{}}\", e)))",
             arg_strs[0], arg_strs[1]
         ),
         "fill" => format!(
-            "{}.fill_column(&{}, &format!(\"{{}}\", {})).unwrap_or_else(|e| panic!(\"fill: {{}}\", e))",
+            "{}.fill_column(&{}, &format!(\"{{}}\", {})).unwrap_or_else(|e| crow_stop(__crow_line__, format!(\"fill: {{}}\", e)))",
             arg_strs[0], arg_strs[1], arg_strs[2]
         ),
         "unique" => {
@@ -411,7 +411,7 @@ fn emit_frame_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> R
                 format!("{}.unique()", arg_strs[0])
             } else {
                 format!(
-                    "{}.unique_col(&{}).unwrap_or_else(|e| panic!(\"unique: {{}}\", e))",
+                    "{}.unique_col(&{}).unwrap_or_else(|e| crow_stop(__crow_line__, format!(\"unique: {{}}\", e)))",
                     arg_strs[0], arg_strs[1]
                 )
             }
@@ -423,7 +423,7 @@ fn emit_frame_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> R
                 "\"inner\"".to_string()
             };
             format!(
-                "{}.join(&{}, &{}, {}).unwrap_or_else(|e| panic!(\"join: {{}}\", e))",
+                "{}.join(&{}, &{}, {}).unwrap_or_else(|e| crow_stop(__crow_line__, format!(\"join: {{}}\", e)))",
                 arg_strs[0], arg_strs[1], arg_strs[2], jtype
             )
         }
@@ -438,7 +438,7 @@ fn emit_frame_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> R
                 ));
             }
             format!(
-                "{{ let mut _aggs: Vec<(&str, crow_runtime::frame::AggFn)> = Vec::new(); {} {}.group(&{}, &_aggs).unwrap_or_else(|e| panic!(\"group: {{}}\", e)) }}",
+                "{{ let mut _aggs: Vec<(&str, crow_runtime::frame::AggFn)> = Vec::new(); {} {}.group(&{}, &_aggs).unwrap_or_else(|e| crow_stop(__crow_line__, format!(\"group: {{}}\", e))) }}",
                 agg_lines, arg_strs[0], arg_strs[1]
             )
         }

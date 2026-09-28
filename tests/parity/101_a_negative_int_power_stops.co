@@ -1,0 +1,9 @@
+--- An int to a negative power is a fraction, which an int does not hold:
+--- the program stops and names the float form. The interpreter answered
+--- 0.5 where both modes type the value an int; the compiled program's
+--- power overflowed.
+e = 0 - len[[1]]
+log[2 ^ 10]
+log[2.0 ^ e]
+log[2 ^ e]
+log['not reached']

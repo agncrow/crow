@@ -598,6 +598,8 @@ impl Emitter {
         if !self.serde_records.is_empty() {
             self.needs_serde_json = true;
         }
+        // every program stops through the runtime (crow_stop, main_guard)
+        self.needs_crow_runtime = true;
         // the one result type
         for l in [
             "#[allow(dead_code)]",
@@ -614,11 +616,10 @@ impl Emitter {
             // the line the error came from adds nothing
             "#[allow(dead_code)]",
             "fn crow_trace_push(t: &mut Vec<String>, at: String) { if t.last() != Some(&at) { t.push(at); } }",
-            // a runtime failure the program cannot go on from stops it with
-            // the interpreter's words; on a server's thread it is contained
-            // as a panic there is
+            // a runtime failure the program cannot go on from stops it as
+            // the interpreter stops, with the runtime's words
             "#[allow(dead_code)]",
-            "fn crow_stop(line: usize, why: String) -> ! { if std::thread::current().name() == Some(\"main\") { eprintln!(\"runtime error: line {}: {}\", line, why); std::process::exit(1); } panic!(\"line {}: {}\", line, why) }",
+            "fn crow_stop(line: usize, why: String) -> ! { crow_runtime::stops::halt(line, &why) }",
             "impl<T: Clone + std::fmt::Display> std::fmt::Display for CrowResult<T> {",
             "    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {",
             "        if !self.ok { write!(f, \"error: {}\", self.reason) } else { write!(f, \"{}\", self.value) }",
@@ -1191,20 +1192,27 @@ impl Emitter {
             }
             self.line("");
         }
+        // a stop carried back from another thread (a parallel loop's) is the
+        // program's stop, printed once; any other panic names itself in
+        // Crow's words (crow_runtime::stops)
+        self.line("fn main() {");
+        self.line("    crow_runtime::stops::install_hook();");
         if self.needs_crow_web {
             // the runtime's threads compute a page's derivations and run its
             // handlers: their stacks are sized for that work, not tokio's
             // 2 MiB (a debug build of finch's book walk overflowed it)
-            self.line("fn main() {");
-            self.line("    tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(16 * 1024 * 1024).build().expect(\"the async runtime\").block_on(__crow_main());");
+            self.line("    crow_runtime::stops::main_guard(|| tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(16 * 1024 * 1024).build().expect(\"the async runtime\").block_on(__crow_main()));");
             self.line("}");
             self.line("");
             self.line("async fn __crow_main() {");
         } else {
-            self.line("fn main() {");
+            self.line("    crow_runtime::stops::main_guard(__crow_main);");
+            self.line("}");
+            self.line("");
+            self.line("fn __crow_main() {");
         }
+        self.needs_crow_runtime = true;
         self.indent += 1;
-        self.emit_panic_hook();
         self.cur_fn = String::new();
         self.cur_ret = None;
         self.returns_unit = true;
@@ -1348,52 +1356,6 @@ impl Emitter {
             self.line("");
             self.line("#[derive(Clone, Debug)]");
             self.line("struct CrowElapsed { seconds: f64, minutes: f64, hours: f64, days: f64 }");
-        }
-    }
-
-    fn emit_panic_hook(&mut self) {
-        for l in [
-            "std::panic::set_hook(Box::new(|info| {",
-            "    let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {",
-            "        s.to_string()",
-            "    } else if let Some(s) = info.payload().downcast_ref::<String>() {",
-            "        s.clone()",
-            "    } else {",
-            "        \"unknown error\".to_string()",
-            "    };",
-            "    let crow_msg = if msg.contains(\"index out of bounds\") {",
-            "        let parts: Vec<&str> = msg.split(\"the len is \").collect();",
-            "        if parts.len() > 1 {",
-            "            let rest: Vec<&str> = parts[1].split(\" but the index is \").collect();",
-            "            if rest.len() > 1 {",
-            "                format!(\"index {} is out of range (array has {} items)\", rest[1], rest[0])",
-            "            } else { format!(\"index out of range\") }",
-            "        } else { format!(\"index out of range\") }",
-            "    } else if msg.contains(\"divide by zero\") || msg.contains(\"division by zero\") {",
-            "        format!(\"cannot divide by zero\")",
-            "    } else if msg.contains(\"attempt to divide by zero\") {",
-            "        format!(\"cannot divide by zero\")",
-            "    } else if msg.contains(\"assertion failed\") {",
-            "        if msg.starts_with(\"assertion failed: \") {",
-            "            msg.clone()",
-            "        } else { format!(\"assertion failed\") }",
-            "    } else if msg.contains(\"stack overflow\") {",
-            "        format!(\"stack overflow (possible infinite recursion)\")",
-            "    } else if msg.contains(\"arithmetic operation overflowed\") || msg.contains(\"attempt to \") {",
-            "        let crow = msg.replace(\"attempt to \", \"\");",
-            "        format!(\"arithmetic error: {}\", crow)",
-            "    } else {",
-            "        format!(\"runtime error: {}\", msg)",
-            "    };",
-            "    eprintln!(\"error: {}\", crow_msg);",
-            "    // A panic on the main thread is fatal; a contained panic in a",
-            "    // worker/server task is reported but must not kill the server.",
-            "    if std::thread::current().name() == Some(\"main\") {",
-            "        std::process::exit(1);",
-            "    }",
-            "}));",
-        ] {
-            self.line(l);
         }
     }
 

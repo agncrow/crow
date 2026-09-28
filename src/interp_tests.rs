@@ -1506,7 +1506,12 @@ mod tests {
 
     #[test]
     fn test_pow_negative_exp() {
-        let val = get_var("x = 2 ^ -1\n", "x");
+        // an int to a negative power is a fraction, which an int does not
+        // hold: the program stops and names the float form (it answered a
+        // float where both modes type an int)
+        let err = run("x = 2 ^ -1\n").map(|_| ()).expect_err("a negative int power stops");
+        assert!(err.contains("2 ^ -1: an int to a negative power is a fraction — write 2.0 ^ -1 for a float"), "{}", err);
+        let val = get_var("x = 2.0 ^ -1\n", "x");
         if let Value::Float(f) = val.value { assert!((f - 0.5).abs() < 1e-10); }
         else { panic!("expected Float"); }
     }

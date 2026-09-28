@@ -22,6 +22,7 @@ pub mod sparse;
 pub mod special;
 pub mod sql;
 pub mod stats;
+pub mod stops;
 pub mod ta;
 pub mod txn;
 pub mod tensor;

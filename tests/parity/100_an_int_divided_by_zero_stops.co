@@ -1,0 +1,11 @@
+--- An int divided by zero stops the program in both modes. The quotient
+--- is typed int, and an int cannot say it failed: the interpreter answered
+--- an error value and went on, where the compiled program stopped. A float
+--- divided by zero is IEEE's infinity in both.
+a = 10
+zero = len[[1]] - 1
+log[a / 3]
+log[a % 3]
+log[1.0 / float[zero]]
+log[a / zero]
+log['not reached']

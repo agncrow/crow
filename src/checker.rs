@@ -273,7 +273,7 @@ impl Issue {
             Issue::EdgeCaseCrash { error, .. } => {
                 if error.contains("overflow") {
                     "add a bounds check or use saturating arithmetic".to_string()
-                } else if error.contains("out of bounds") || error.contains("index") {
+                } else if error.contains("out of range") || error.contains("index") {
                     "check length before indexing, e.g. if len[lst] > 0".to_string()
                 } else if error.contains("divide by zero") || error.contains("division by zero") {
                     "check for zero before dividing, e.g. if b != 0".to_string()
@@ -2714,7 +2714,7 @@ mod tests {
         let pure = find_pure_functions(&ctx);
         let recursive = find_recursive_functions(&ctx);
         let (issues, _) = run_edge_cases(&ctx, &stmts, &pure, &recursive);
-        let crashes: Vec<_> = issues.iter().filter(|i| matches!(i, Issue::EdgeCaseCrash { error, .. } if error.contains("out of bounds"))).collect();
+        let crashes: Vec<_> = issues.iter().filter(|i| matches!(i, Issue::EdgeCaseCrash { error, .. } if error.contains("index 0 is out of range for an array of 0 items"))).collect();
         assert!(!crashes.is_empty(), "first[[]] should crash with index out of bounds");
     }
 

@@ -333,6 +333,12 @@ impl Emitter {
         }
     }
 
+    /// What a runtime call that can refuse ends with: its value, or the
+    /// program stops on this line with the runtime's reason.
+    pub(crate) fn or_stop(&self) -> String {
+        format!(".unwrap_or_else(|e| crow_stop({}, e))", self.current_line)
+    }
+
     /// A call argument as the program wrote it: the lowering marks a
     /// fallible argument of a propagating call with an unwrap; the backend
     /// decides the propagation itself and reads through the mark.

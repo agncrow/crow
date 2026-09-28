@@ -27,3 +27,10 @@ tungstenite = "0.28.0"
 sqlparser = "0.62.0"
 lsp-server = "0.10.0"
 lsp-types = "0.97.0"
+
+# An arithmetic overflow inside the interpreter or the runtime stops the
+# program in every build, as the debug build does: a release binary never
+# wraps a value round silently (crow_runtime::stops, spec: When a Program
+# Stops). Generated programs build with the same setting.
+[profile.release]
+overflow-checks = true

@@ -6,13 +6,13 @@
 
 use crate::ast::{BinOp, UnaryOp};
 use crate::value::*;
+use crow_runtime::stops;
 use crow_runtime::tensor::CrowTensor;
 
 pub fn binop(
     left: &CrowValue,
     op: &BinOp,
     right: &CrowValue,
-    trace: &str,
 ) -> Result<CrowValue, String> {
     // soft error propagation: if either operand is an error, propagate it
     if left.is_error() {
@@ -21,7 +21,6 @@ pub fn binop(
     if right.is_error() {
         return Ok(right.clone());
     }
-    // Note: trace is appended at the call site (eval_call / call_builtin), not here
 
     let l = &left.value;
     let r = &right.value;
@@ -34,7 +33,7 @@ pub fn binop(
             (Value::Float(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(a + b, *db))),
             (Value::Dual(a, da), Value::Int(b)) => Ok(CrowValue::ok(Value::Dual(a + *b as f64, *da))),
             (Value::Int(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(*a as f64 + b, *db))),
-            (Value::Int(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Int(a + b))),
+            (Value::Int(a), Value::Int(b)) => stops::add(*a, *b).map(|n| CrowValue::ok(Value::Int(n))),
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a + b))),
             (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 + b))),
             (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a + *b as f64))),
@@ -60,7 +59,7 @@ pub fn binop(
             (Value::Float(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(a - b, -db))),
             (Value::Dual(a, da), Value::Int(b)) => Ok(CrowValue::ok(Value::Dual(a - *b as f64, *da))),
             (Value::Int(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(*a as f64 - b, -db))),
-            (Value::Int(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Int(a - b))),
+            (Value::Int(a), Value::Int(b)) => stops::sub(*a, *b).map(|n| CrowValue::ok(Value::Int(n))),
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a - b))),
             (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 - b))),
             (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a - *b as f64))),
@@ -85,7 +84,7 @@ pub fn binop(
             (Value::Float(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(a * b, a * db))),
             (Value::Dual(a, da), Value::Int(b)) => Ok(CrowValue::ok(Value::Dual(a * *b as f64, da * *b as f64))),
             (Value::Int(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(*a as f64 * b, *a as f64 * db))),
-            (Value::Int(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Int(a * b))),
+            (Value::Int(a), Value::Int(b)) => stops::mul(*a, *b).map(|n| CrowValue::ok(Value::Int(n))),
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a * b))),
             (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 * b))),
             (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a * *b as f64))),
@@ -121,13 +120,9 @@ pub fn binop(
                 let af = *a as f64;
                 Ok(CrowValue::ok(Value::Dual(af / b, (-af * db) / (b * b))))
             }
-            (Value::Int(a), Value::Int(b)) => {
-                if *b == 0 {
-                    Ok(CrowValue::error_with_kind("division by zero", "math", trace))
-                } else {
-                    Ok(CrowValue::ok(Value::Int(a / b)))
-                }
-            }
+            // an int divided by zero stops the program, as in the compiled
+            // one: the quotient is typed int, and no int says it failed
+            (Value::Int(a), Value::Int(b)) => stops::div(*a, *b).map(|n| CrowValue::ok(Value::Int(n))),
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a / b))),
             (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 / b))),
             (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a / *b as f64))),
@@ -153,13 +148,7 @@ pub fn binop(
             _ => Err("cannot divide these types".to_string()),
         },
         BinOp::Mod => match (l, r) {
-            (Value::Int(a), Value::Int(b)) => {
-                if *b == 0 {
-                    Ok(CrowValue::error_with_kind("modulo by zero", "math", trace))
-                } else {
-                    Ok(CrowValue::ok(Value::Int(a % b)))
-                }
-            }
+            (Value::Int(a), Value::Int(b)) => stops::rem(*a, *b).map(|n| CrowValue::ok(Value::Int(n))),
             _ => Err("modulo only works on integers".to_string()),
         },
         BinOp::Pow => match (l, r) {
@@ -176,13 +165,8 @@ pub fn binop(
                 let deriv = val * (db * a.ln() + b * da / a);
                 Ok(CrowValue::ok(Value::Dual(val, deriv)))
             }
-            (Value::Int(a), Value::Int(b)) => {
-                if *b >= 0 {
-                    Ok(CrowValue::ok(Value::Int(a.pow(*b as u32))))
-                } else {
-                    Ok(CrowValue::ok(Value::Float((*a as f64).powf(*b as f64))))
-                }
-            }
+            // int ^ int is an int: exact, or the program stops
+            (Value::Int(a), Value::Int(b)) => stops::pow(*a, *b).map(|n| CrowValue::ok(Value::Int(n))),
             (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a.powf(*b as f64)))),
             (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float((*a as f64).powf(*b)))),
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a.powf(*b)))),
@@ -435,7 +419,7 @@ pub fn unaryop(
     let v = &val.value;
     match op {
         UnaryOp::Neg => match v {
-            Value::Int(n) => Ok(CrowValue::ok(Value::Int(-n))),
+            Value::Int(n) => stops::neg(*n).map(|n| CrowValue::ok(Value::Int(n))),
             Value::Float(n) => Ok(CrowValue::ok(Value::Float(-n))),
             Value::Dual(a, da) => Ok(CrowValue::ok(Value::Dual(-a, -da))),
             Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(Box::new(t.neg())))),
@@ -547,25 +531,10 @@ pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, 
                 let idx = *idx;
                 // Rank >= 2: the element at [i] is a row (rank-1-lower tensor)
                 if tensor.ndim() >= 2 {
-                    let rows = tensor.shape()[0] as i64;
-                    let resolved = if idx < 0 { rows + idx } else { idx };
-                    if resolved < 0 || resolved >= rows {
-                        return Err(format!(
-                            "index {} out of bounds for tensor with {} rows",
-                            idx, rows
-                        ));
-                    }
-                    return Ok(CrowValue::ok(Value::NumArray(Box::new(tensor.index0(resolved as usize)))));
+                    let at = stops::row(idx, tensor.shape()[0])?;
+                    return Ok(CrowValue::ok(Value::NumArray(Box::new(tensor.index0(at)))));
                 }
-                let len = tensor.len() as i64;
-                let resolved = if idx < 0 { len + idx } else { idx };
-                if resolved < 0 || resolved >= len {
-                    return Err(format!(
-                        "index {} out of bounds for array of length {}",
-                        idx, tensor.len()
-                    ));
-                }
-                let v = tensor.get_flat(resolved as usize);
+                let v = tensor.get_flat(stops::item(idx, tensor.len())?);
                 // Return as int if it's a whole number
                 if v == (v as i64) as f64 && v.is_finite() {
                     Ok(CrowValue::ok(Value::Int(v as i64)))
@@ -590,16 +559,7 @@ pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, 
             Value::Int(idx) => {
                 let idx = *idx;
                 let chars: Vec<char> = s.chars().collect();
-                let len = chars.len() as i64;
-                let resolved = if idx < 0 { len + idx } else { idx };
-                if resolved < 0 || resolved >= len {
-                    return Err(format!(
-                        "index {} out of bounds for string of length {}",
-                        idx,
-                        chars.len()
-                    ));
-                }
-                Ok(CrowValue::ok(Value::Str(chars[resolved as usize].to_string())))
+                Ok(CrowValue::ok(Value::Str(chars[stops::char_at(idx, chars.len())?].to_string())))
             }
             _ => Err("string index must be an integer".to_string()),
         }
@@ -614,10 +574,7 @@ pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, 
             Value::Str(s) => s.clone(),
             other => format!("{}", other),
         };
-        match map.get(&key_str) {
-            Some(val) => Ok(val.clone()),
-            None => Err(format!("key '{}' not found in map", key_str)),
-        }
+        stops::key(map, &key_str).cloned()
     }
         _ => Err("not indexable".to_string()),
     }
@@ -664,15 +621,7 @@ pub fn frame_cell(frame: &crow_runtime::frame::CrowFrame, col: usize, row: usize
 /// from the end.
 pub fn list_position(index: &CrowValue, len: usize) -> Result<usize, String> {
     match index.unwrap_or_propagate()? {
-        Value::Int(idx) => {
-            let idx = *idx;
-            let n = len as i64;
-            let resolved = if idx < 0 { n + idx } else { idx };
-            if resolved < 0 || resolved >= n {
-                return Err(format!("index {} out of bounds for array of length {}", idx, len));
-            }
-            Ok(resolved as usize)
-        }
+        Value::Int(idx) => stops::item(*idx, len),
         _ => Err("array index must be an integer".to_string()),
     }
 }
@@ -787,7 +736,7 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
                     let vals: Vec<CrowValue> = (0..frame.nrows()).map(|i| frame_cell(frame, idx, i)).collect();
                     return Ok(CrowValue::ok(Value::Array(vals)));
                 }
-                return Err(format!("frame has no property or column '{}'", field));
+                return Err(stops::no_column(field));
             }
         }
     }
@@ -803,12 +752,7 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
                 )),
             }
         }
-        Value::Map(m) => {
-            match m.get(field) {
-                Some(val) => Ok(val.clone()),
-                None => Err(format!("map has no key '{}'", field)),
-            }
-        }
+        Value::Map(m) => stops::key(m, field).cloned(),
         _ => Err(format!("cannot access field '{}' on this value", field)),
     }
 }

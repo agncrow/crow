@@ -749,7 +749,18 @@ impl TypeContext {
         self.body_assigned = outer_assigned;
         self.in_view = outer_in_view;
 
-        let ret = returns.iter().fold(CrowType::Void, |r, t| r.unify(t));
+        // a value whose type is not known is still a value: returns that are
+        // all unknown make an unknown, not the no-value of a bare return
+        // (a function built without its callers returned "nothing", and a
+        // local holding its value was declared as the unit type)
+        let ret = returns.iter().fold(None::<CrowType>, |r, t| {
+            Some(match (r, t) {
+                (None, t) => t.clone(),
+                (Some(CrowType::Void), CrowType::Unknown) | (Some(CrowType::Unknown), CrowType::Void) => CrowType::Unknown,
+                (Some(r), t) => r.unify(t),
+            })
+        });
+        let ret = ret.unwrap_or(CrowType::Void);
         // A decision on a value that can fail hands its error out of the
         // function (spec §11: Errors in Conditions), as a failed value
         // assigned to a variable that holds no error does: the return type

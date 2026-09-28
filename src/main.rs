@@ -12,6 +12,7 @@ mod harness;
 #[cfg(test)]
 mod interp_tests;
 mod ir_interp;
+mod ir_verify;
 mod lower_ir;
 mod emit_rs;
 mod ops;
@@ -80,6 +81,9 @@ fn load_dotenv() {
 
 fn main() {
     load_dotenv();
+    // a panic in the program's run is its stop, reported by the guard around
+    // the run (crow_runtime::stops); a panic of crow's own prints as Rust's
+    crow_runtime::stops::quiet_under_guards();
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
@@ -221,8 +225,19 @@ fn main() {
             }
         }
         "test" => {
+            // the harnesses check every program's IR before running it
+            // (ir_verify): a lowering that disagrees with itself fails its
+            // program as the bug it is, in whichever suite reaches it
+            if args.iter().any(|a| matches!(a.as_str(), "--parity" | "--served" | "--book" | "--bench")) && std::env::var_os("CROW_IR_VERIFY").is_none() {
+                // Rust 2024: the environment is process-global; nothing else
+                // runs yet
+                unsafe { std::env::set_var("CROW_IR_VERIFY", "strict") };
+            }
             if args.iter().any(|a| a == "--parity") {
-                cmd_test_parity();
+                // `crow test --parity 97 shapes`: only the programs whose
+                // names hold one of the words
+                let only: Vec<String> = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect();
+                cmd_test_parity(&only);
             } else if args.iter().any(|a| a == "--served") {
                 process::exit(served_parity::run());
             } else if args.iter().any(|a| a == "--bench") {
@@ -316,7 +331,7 @@ fn print_usage() {
     eprintln!("  crow fmt --fix-interpolation  migrate {{expr}} strings to `expr`");
     eprintln!("  crow fmt --fix-views      migrate ui-building fns to view declarations");
     eprintln!("  crow launch 4 file.co  build + run on 4 distributed processes");
-    eprintln!("  crow test --parity     run tests/parity/ in both modes, diff output");
+    eprintln!("  crow test --parity     run tests/parity/ in both modes, diff output (words after it pick programs by name)");
     eprintln!("  crow test --served     serve tests/served/ and the example apps in both modes, drive each page, compare");
     eprintln!("  crow test --compiled file.co  run the test blocks with the apps they open compiled");
     eprintln!("  crow test --book       execute every code block of the book in both modes");
@@ -833,7 +848,7 @@ fn cmd_test_docs() {
     }
 }
 
-fn cmd_test_parity() {
+fn cmd_test_parity(only: &[String]) {
     let dir = std::path::Path::new("tests/parity");
     if !dir.is_dir() {
         eprintln!("error: no tests/parity/ directory found (run from the project root)");
@@ -843,12 +858,13 @@ fn cmd_test_parity() {
         .map(|rd| {
             rd.filter_map(|e| e.ok().map(|e| e.path()))
                 .filter(|p| p.extension().map_or(false, |x| x == "co" || x == "crow"))
+                .filter(|p| only.is_empty() || only.iter().any(|w| p.to_string_lossy().contains(w.as_str())))
                 .collect()
         })
         .unwrap_or_default();
     files.sort();
     if files.is_empty() {
-        eprintln!("error: tests/parity/ contains no .co files");
+        eprintln!("error: no .co files in tests/parity/ match");
         process::exit(1);
     }
 
@@ -3433,7 +3449,7 @@ fn package_name(entry: &str) -> String {
 
 fn generated_cargo_toml(project_name: &str, deps: &str) -> String {
     format!(
-        "[workspace]\n\n[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{}\n[profile.dev.package.\"*\"]\nopt-level = 1\n\n[profile.release]\nopt-level = 3\nlto = true\n",
+        "[workspace]\n\n[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{}\n[profile.dev.package.\"*\"]\nopt-level = 1\n\n[profile.release]\nopt-level = 3\nlto = true\noverflow-checks = true\n",
         project_name, deps
     )
 }
@@ -5460,7 +5476,7 @@ mod build_crate_tests {
         assert_eq!(package_name("my app.co"), "my_app");
         let toml = generated_cargo_toml("main", "[dependencies]\n");
         assert!(toml.contains("[profile.dev.package.\"*\"]\nopt-level = 1"), "{}", toml);
-        assert!(toml.contains("[profile.release]\nopt-level = 3\nlto = true"), "{}", toml);
+        assert!(toml.contains("[profile.release]\nopt-level = 3\nlto = true\noverflow-checks = true"), "{}", toml);
         assert!(toml.starts_with("[workspace]\n\n[package]\nname = \"main\""), "{}", toml);
     }
 }

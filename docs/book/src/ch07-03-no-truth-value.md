@@ -85,3 +85,30 @@ cannot convert 'two' to float
 halts there with `cannot assign an error value to 'acc'`. When you want to
 keep a failure and look at it, give it a name of its own whose first value
 can fail: `r = float[s]`, then `if not r.ok`.
+
+## What no value can carry
+
+A few failures have no error value to become. `xs[i]` reads an element and
+`a / b` of two ints makes an int, and neither an element nor an int can say
+it failed. So an index outside its array, a key the map lacks, an int
+divided by zero, or an int that no longer fits in 64 bits stops the program
+on the line it happened on:
+
+```crow,norun
+fn pick[xs, i]
+    return xs[i]
+
+log[pick[[10, 20, 30], -1]]
+log[pick[[10, 20, 30], 5]]
+```
+
+```text
+30
+runtime error: line 2: index 5 is out of range for an array of 3 items
+```
+
+A negative index counts from the end, so `-1` is the last item. The stop
+names line 2, inside `pick`, where the index was read. The words are the
+same in `crow run -i` and `crow run`, and in a handler the click stops with
+nothing it did landing. When an index might be outside, check `len` first,
+as you would guard any decision.

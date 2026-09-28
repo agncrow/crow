@@ -1,0 +1,11 @@
+--- An index outside its array stops the program on the line it is on,
+--- with the same words in both modes: inside a function, the function's
+--- line (the interpreter named the caller's). A negative index counts from
+--- the end, and one past the start stops too (compiled, it printed the
+--- index as a huge unsigned number).
+fn pick[xs, i]
+    return xs[i]
+log[pick[[10, 20, 30], -1]]
+log[pick[['a', 'b'], 1]]
+log[pick[[10, 20, 30], -4]]
+log['not reached']

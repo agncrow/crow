@@ -652,7 +652,7 @@ fn test_logical_operators_transpile() {
 #[test]
 fn test_expression_grouping_transpile() {
     let rust = transpile("x = (1 + 2) * 3\n");
-    assert!(rust.contains("(1") && rust.contains("* 3"), "should preserve grouping\n{}", rust);
+    assert!(rust.contains("crow_runtime::stops::mul((crow_runtime::stops::add(1_i64, 2_i64).unwrap_or_else(|e| crow_stop(1, e))), 3_i64)"), "should preserve grouping\n{}", rust);
 }
 
 // ===== Builtins =====
@@ -736,13 +736,14 @@ fn test_then_chaining_transpile() {
 #[test]
 fn test_negative_index_transpile() {
     let rust = transpile("nums = [10, 20, 30]\nx = nums[-1]\n");
-    assert!(rust.contains("if _i < 0"), "should emit negative index handling\n{}", rust);
+    // the runtime resolves a negative index, and stops on one outside
+    assert!(rust.contains("crow_runtime::stops::item(_i, _t.len()).unwrap_or_else(|e| crow_stop(2, e))"), "should resolve the index through the runtime\n{}", rust);
 }
 
 #[test]
 fn test_negative_index_assign_transpile() {
     let rust = transpile("nums = [10, 20, 30]\nnums[-1] = 99\n");
-    assert!(rust.contains("if _i < 0"), "should emit negative index handling for assignment\n{}", rust);
+    assert!(rust.contains("crow_runtime::stops::item(_i, _tmp.len()).unwrap_or_else(|e| crow_stop(2, e))"), "should resolve the assigned index through the runtime\n{}", rust);
 }
 
 #[test]
@@ -772,7 +773,7 @@ fn test_string_index_transpile() {
 #[test]
 fn test_string_negative_index_transpile() {
     let rust = transpile("s = 'hello'\nx = s[-1]\n");
-    assert!(rust.contains("if _i < 0"), "should handle negative string index\n{}", rust);
+    assert!(rust.contains("crow_runtime::stops::char_at(_i, _s.len())"), "should handle negative string index\n{}", rust);
 }
 
 // ===== NumArray tests =====
@@ -819,7 +820,7 @@ fn test_numarray_indexing_transpile() {
 fn test_numarray_negative_index_transpile() {
     let rust = transpile("nums = [10, 20, 30]\nx = nums[-1]\n");
     assert!(rust.contains("get_flat"), "NumArray negative indexing should use get_flat\n{}", rust);
-    assert!(rust.contains("if _i < 0"), "should handle negative index\n{}", rust);
+    assert!(rust.contains("crow_runtime::stops::item("), "should handle negative index\n{}", rust);
 }
 
 #[test]
@@ -1014,7 +1015,8 @@ fn test_math_atan2_transpile() {
 #[test]
 fn test_pow_int_transpile() {
     let rust = transpile("x = 2 ^ 10\n");
-    assert!(rust.contains(".pow("), "should use .pow()\n{}", rust);
+    // exact, or the program stops: never a wrapped int
+    assert!(rust.contains("crow_runtime::stops::pow(2_i64, 10_i64).unwrap_or_else(|e| crow_stop(1, e))"), "should check the power\n{}", rust);
 }
 
 #[test]
@@ -2096,15 +2098,19 @@ fn test_fallible_condition_guarded_and_return_widened() {
 #[test]
 fn a_fact_a_handler_assigns_a_float_is_a_float_from_its_declaration() {
     let rust = transpile("use web, ui, frame\ndeleted = 0\nfn delete_row[id]\n    deleted = id\nview records[]\n    rows = frame.new[]\n    rows = with[rows, 'id', [3, 4]]\n    return table[rows, click = delete_row, key = 'id']\npage['/', records]\n");
-    assert!(rust.contains("state.get_f64(\"deleted\", (0_i64) as f64)"), "the key column is float, so the fact is\n{}", rust);
+    assert!(rust.contains("state.get_f64(\"deleted\", ((0_i64) as f64))"), "the key column is float, so the fact is\n{}", rust);
 }
 
-/// A plain function's local of a fact's name is a new binding: it says
-/// nothing about the fact's type
+/// A function that assigns a fact's name, called from a view, would change
+/// state mid-render: the interpreter wrote the fact, and the compiled
+/// program assigned a variable it never declared and did not build (the IR
+/// verifier found the fact stored a float it did not hold). It is refused,
+/// in both modes (docs/bug-classes.md, open question 2).
 #[test]
-fn a_plain_functions_local_does_not_widen_a_fact() {
-    let rust = transpile("use web, ui\nn = 0\nfn scale[x]\n    n = 2.5\n    return n * x\nview render[]\n    return p['`n` `scale[2]`']\npage['/', render]\n");
-    assert!(rust.contains("state.get_i64(\"n\", 0_i64)"), "a local n is a new binding\n{}", rust);
+fn a_view_calling_what_assigns_a_fact_is_refused() {
+    let stmts = crate::build("use web, ui\nn = 0\nfn scale[x]\n    n = 2.5\n    return n * x\nview render[]\n    return p['`n` `scale[2]`']\npage['/', render]\n").expect("parses");
+    let err = crate::ir_interp::prepare(&stmts, "t").map(|_| ()).expect_err("a view may not call what writes state");
+    assert!(err.contains("a view calls 'scale', which assigns reactive state"), "{}", err);
 }
 
 /// A handler hands no error back: a fallible condition stops it, the

@@ -248,7 +248,7 @@ pub fn run_script(stmts: &[crate::ast::Stmt], name: &str) -> Result<IrInterp, St
     let (program, ctx) = prepare(stmts, name)?;
     let mut it = IrInterp::new(&ctx.registry, name);
     it.load(&program);
-    it.run_main(&program)?;
+    it.guard(|it| it.run_main(&program))?;
     Ok(it)
 }
 
@@ -274,7 +274,7 @@ impl Session {
         self.it.registry = self.ctx.registry.clone();
         self.it.load(&program);
         self.it.last_value = None;
-        self.it.run_main(&program)?;
+        self.it.guard(|it| it.run_main(&program))?;
         let value = self.it.last().cloned();
         self.it.last_value = None;
         Ok(value)
@@ -285,7 +285,7 @@ impl Session {
 pub fn run(program: &Program, registry: &ModuleRegistry, source_file: &str) -> Result<(), String> {
     let mut it = IrInterp::new(registry, source_file);
     it.load(program);
-    it.run_main(program)
+    it.guard(|it| it.run_main(program))
 }
 
 /// Run a program that serves pages: its facts get their defaults and its
@@ -294,7 +294,7 @@ pub fn run(program: &Program, registry: &ModuleRegistry, source_file: &str) -> R
 pub fn run_to_serve(program: &Program, registry: &ModuleRegistry, source_file: &str) -> Result<IrInterp, String> {
     let mut it = IrInterp::new(registry, source_file);
     it.load(program);
-    it.run_main(program)?;
+    it.guard(|it| it.run_main(program))?;
     Ok(it)
 }
 
@@ -322,7 +322,7 @@ pub fn run_scenario(decls: &[crate::ast::Stmt], label: &str, body: &[crate::ast:
     it.testing = true;
     it.load(&program);
     crow_runtime::moments::hold(Some(REHEARSAL_EPOCH));
-    if let Err(e) = it.run_main(&program) {
+    if let Err(e) = it.guard(|it| it.run_main(&program)) {
         crow_runtime::moments::hold(None);
         return (Err(format!("a declaration failed before the test ran: {}", e)), vec![], vec![]);
     }
@@ -332,7 +332,7 @@ pub fn run_scenario(decls: &[crate::ast::Stmt], label: &str, body: &[crate::ast:
         return (Err("lowering: the test block is missing".into()), vec![], vec![]);
     };
     it.frames[0].scopes.push(Arc::new(HashMap::default()));
-    let result = it.exec_stmts(&test.body).map(|_| ()).map_err(|e| it.with_line(e));
+    let result = it.guard(|it| it.exec_stmts(&test.body).map(|_| ())).map_err(|e| it.with_line(e));
     crow_runtime::moments::hold(None);
     let after = it.fact_values();
     let mut changed: Vec<String> = after
@@ -372,7 +372,7 @@ pub fn run_test(decls: &[crate::ast::Stmt], label: &str, params: &[(String, Crow
     // a test records what the program would send, and sends nothing
     it.testing = true;
     it.load(&program);
-    it.run_main(&program).map_err(|e| format!("a declaration failed before the test ran: {}", e))?;
+    it.guard(|it| it.run_main(&program)).map_err(|e| format!("a declaration failed before the test ran: {}", e))?;
     let test = program.parts.iter().flat_map(|p| p.tests.iter()).last().ok_or("lowering: the test block is missing")?;
     // the block runs at the program's top level, in a scope of its own: it
     // sees the declarations' variables as a caller would, and its inputs
@@ -381,7 +381,7 @@ pub fn run_test(decls: &[crate::ast::Stmt], label: &str, params: &[(String, Crow
         scope.insert(p.clone(), v.clone());
     }
     it.frames[0].scopes.push(Arc::new(scope));
-    let result = it.exec_stmts(&test.body);
+    let result = it.guard(|it| it.exec_stmts(&test.body));
     // the test's clock ends with the test
     crow_runtime::moments::hold(None);
     match result {
@@ -600,8 +600,21 @@ impl IrInterp {
         Ok(())
     }
 
+    /// Run part of the program so that a panic inside it — a check Crow is
+    /// missing — is a stop on the line it happened on, never a crash: the
+    /// same words as the compiled program's (crow_runtime::stops).
+    pub(crate) fn guard<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, String>) -> Result<T, String> {
+        match crow_runtime::stops::guarded(|| f(self)) {
+            Ok(r) => r,
+            Err(words) => Err(self.with_line(words)),
+        }
+    }
+
+    /// A stop's reason with the line it happened on, once: the innermost
+    /// statement names it, as the compiled program's stop does. A control
+    /// signal (a handler's stop, a return) passes as it is.
     fn with_line(&self, e: String) -> String {
-        if self.line > 0 && !e.starts_with("line ") {
+        if self.line > 0 && !e.starts_with("line ") && !e.starts_with('\u{1}') {
             format!("line {}: {}", self.line, e)
         } else {
             e
@@ -1027,7 +1040,7 @@ impl IrInterp {
             Expr::Binary { op, l, r, .. } => {
                 let lv = self.eval(l)?;
                 let rv = self.eval(r)?;
-                crate::ops::binop(&lv, &binop_of(op)?, &rv, &self.trace_entry())?
+                crate::ops::binop(&lv, &binop_of(op)?, &rv)?
             }
             Expr::Unary { op, expr, .. } => {
                 let v = self.eval(expr)?;
@@ -1075,7 +1088,7 @@ impl IrInterp {
                         let o = self.place(owner).ok_or_else(|| format!("no field '{}'", name))?;
                         let cell = match &o.value {
                             Value::Frame(f) => {
-                                let col = f.col_index(name).ok_or_else(|| format!("frame has no property or column '{}'", name))?;
+                                let col = f.col_index(name).ok_or_else(|| crow_runtime::stops::no_column(name))?;
                                 crate::ops::frame_cell(f, col, crate::ops::list_position(&at, f.nrows())?)
                             }
                             Value::StructInstance(si) => crate::ops::index(&si.fields[name], vec![at])?,
@@ -1389,7 +1402,8 @@ impl IrInterp {
                     local.push_scope();
                     local.bind(var, item.clone());
                     local.last_value = None;
-                    let r = local.exec_stmts(body);
+                    // a stop names the body's line, as the compiled loop's does
+                    let r = local.exec_stmts(body).map_err(|e| local.with_line(e));
                     let yielded = local.last_value.take();
                     local.pop_scope();
                     if let Flow::Return(_) = r? {
@@ -2047,7 +2061,8 @@ impl IrInterp {
         }
         self.frames.push(Frame { scopes: vec![Arc::new(scope)], fn_name });
         let r = self.exec_stmts(&f.body);
-        let r = self.returned(r);
+        // a stop names the line in the body it happened on, not the call's
+        let r = self.returned(r).map_err(|e| self.with_line(e));
         self.frames.pop();
         if is_view {
             self.in_view -= 1;
@@ -2079,7 +2094,7 @@ impl IrInterp {
         let saved_line = self.line;
         self.frames.push(Frame { scopes: vec![Arc::new(HashMap::default())], fn_name: name.to_string() });
         let r = self.exec_stmts(&d.body);
-        let r = self.returned(r);
+        let r = self.returned(r).map_err(|e| self.with_line(e));
         self.frames.pop();
         self.line = saved_line;
         let mut v = match r? {
@@ -2740,7 +2755,10 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
         match p {
             PathStep::Field(f) => match cur {
                 Value::StructInstance(si) => si.fields.get_mut(f).ok_or_else(|| format!("struct '{}' has no field '{}'", si.name, f)),
-                Value::Map(m) => m.get_mut(f).ok_or_else(|| format!("map has no key '{}'", f)),
+                Value::Map(m) => {
+                    crow_runtime::stops::key(m, f)?;
+                    m.get_mut(f).ok_or_else(|| format!("map has no key '{}'", f))
+                }
                 other => Err(format!("cannot assign field '{}' on {}", f, other.type_name())),
             },
             PathStep::Index(_) => {
@@ -2748,17 +2766,16 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
                 match cur {
                     Value::Array(items) => match &i.value {
                         Value::Int(n) => {
-                            let len = items.len() as i64;
-                            let r = if *n < 0 { len + n } else { *n };
-                            if r < 0 || r >= len {
-                                return Err(format!("index {} out of bounds (len {})", n, items.len()));
-                            }
-                            Ok(&mut items[r as usize])
+                            let at = crow_runtime::stops::item(*n, items.len())?;
+                            Ok(&mut items[at])
                         }
                         _ => Err("array index must be an integer".to_string()),
                     },
                     Value::Map(m) => match &i.value {
-                        Value::Str(k) => m.get_mut(k).ok_or_else(|| format!("map has no key '{}'", k)),
+                        Value::Str(k) => {
+                            crow_runtime::stops::key(m, k)?;
+                            m.get_mut(k).ok_or_else(|| format!("map has no key '{}'", k))
+                        }
                         _ => Err("map key must be a string".to_string()),
                     },
                     other => Err(format!("cannot index-assign into {}", other.type_name())),
@@ -2793,12 +2810,8 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
             match cur {
                 Value::Array(items) => match &i.value {
                     Value::Int(n) => {
-                        let len = items.len() as i64;
-                        let r = if *n < 0 { len + n } else { *n };
-                        if r < 0 || r >= len {
-                            return Err(format!("index {} out of bounds (len {})", n, items.len()));
-                        }
-                        items[r as usize] = new;
+                        let at = crow_runtime::stops::item(*n, items.len())?;
+                        items[at] = new;
                         Ok(())
                     }
                     _ => Err("array index must be an integer".to_string()),
@@ -2806,12 +2819,8 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
                 Value::NumArray(t) => match (&i.value, &new.value) {
                     (Value::Int(n), Value::Int(_) | Value::Float(_)) => {
                         let mut data = t.to_vec();
-                        let len = data.len() as i64;
-                        let r = if *n < 0 { len + n } else { *n };
-                        if r < 0 || r >= len {
-                            return Err(format!("index {} out of bounds (len {})", n, data.len()));
-                        }
-                        data[r as usize] = match &new.value {
+                        let at = crow_runtime::stops::item(*n, data.len())?;
+                        data[at] = match &new.value {
                             Value::Int(x) => *x as f64,
                             Value::Float(x) => *x,
                             _ => unreachable!(),
@@ -2873,6 +2882,6 @@ mod tests {
         assert!(matches!(r.var("w").unwrap().value, Value::Int(1)));
         assert!(matches!(r.var("n").unwrap().value, Value::Float(x) if x == 6.5));
         let far = run_script(&parse("struct Bars [c]\nb = Bars[[4.0, 5.0]]\nx = b.c[2]\n"), "t");
-        assert!(far.is_err_and(|e| e.contains("index 2 out of bounds for array of length 2")));
+        assert!(far.is_err_and(|e| e.contains("index 2 is out of range for an array of 2 items")));
     }
 }

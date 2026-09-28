@@ -1,0 +1,14 @@
+--- A range that steps past the last int ends there, as its next value
+--- would be beyond the stop anyway. The runtime's range added the step and
+--- wrapped round: the interpreter looped until memory ran out, and the
+--- compiled program's debug build stopped with an overflow.
+top = 9223372036854775807
+n = 0
+for i in range[top - 6, top, 5]
+    n = n + 1
+log[n]
+down = 0 - top - 1
+m = 0
+for i in range[down + 6, down, -5]
+    m = m + 1
+log[m]

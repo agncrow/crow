@@ -845,7 +845,7 @@ impl Emitter {
                         _ => CrowType::Unknown,
                     };
                     obj = if matches!(ty, CrowType::Map(_)) {
-                        format!("(*{}.get_mut(\"{}\").unwrap())", obj, f)
+                        format!("(*{}.get_mut(\"{}\").unwrap_or_else(|| crow_stop({}, crow_runtime::stops::no_key(\"{}\"))))", obj, f, self.current_line, f)
                     } else {
                         format!("{}.{}", obj, Self::rust_field(f))
                     };
@@ -858,10 +858,10 @@ impl Emitter {
                         _ => CrowType::Unknown,
                     };
                     obj = if matches!(ty, CrowType::Map(_)) {
-                        format!("(*{}.get_mut(&{}).unwrap())", obj, idx)
+                        format!("(*{{ let _k = {i}; {o}.get_mut(&_k).unwrap_or_else(|| crow_stop({l}, crow_runtime::stops::no_key(&_k))) }})", i = idx, o = obj, l = self.current_line)
                     } else {
                         let k = found.len();
-                        found.push(format!("let _at{k} = {{ let _i = {i}; if _i < 0 {{ ({o}.len() as i64 + _i) as usize }} else {{ _i as usize }} }};", k = k, i = idx, o = obj));
+                        found.push(format!("let _at{k} = crow_runtime::stops::item({i}, {o}.len()).unwrap_or_else(|e| crow_stop({l}, e));", k = k, i = idx, o = obj, l = self.current_line));
                         format!("{}[_at{}]", obj, k)
                     };
                     ty = next;
@@ -883,11 +883,11 @@ impl Emitter {
                     CrowType::NumArray(_) => {
                         self.needs_crow_runtime = true;
                         self.line_after(&found, &format!(
-                            "{{ let _i = {}; let mut _tmp = {}.to_vec(); let _idx = if _i < 0 {{ (_tmp.len() as i64 + _i) as usize }} else {{ _i as usize }}; _tmp[_idx] = {} as f64; {} = crow_runtime::tensor::CrowTensor::from_vec(_tmp, {}.shape().to_vec()); }}",
-                            idx, obj, val, obj, obj
+                            "{{ let _i = {}; let mut _tmp = {}.to_vec(); let _idx = crow_runtime::stops::item(_i, _tmp.len()).unwrap_or_else(|e| crow_stop({}, e)); _tmp[_idx] = {} as f64; {} = crow_runtime::tensor::CrowTensor::from_vec(_tmp, {}.shape().to_vec()); }}",
+                            idx, obj, self.current_line, val, obj, obj
                         ));
                     }
-                    _ => self.line_after(&found, &format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}[_idx] = {}; }}", idx, obj, obj, val)),
+                    _ => self.line_after(&found, &format!("{{ let _i = {}; let _idx = crow_runtime::stops::item(_i, {}.len()).unwrap_or_else(|e| crow_stop({}, e)); {}[_idx] = {}; }}", idx, obj, self.current_line, obj, val)),
                 }
             }
             None => self.line_after(&found, &format!("{} = {};", obj, val)),

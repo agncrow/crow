@@ -1,0 +1,9 @@
+--- A stop inside a loop whose iterations run in parallel names the body's
+--- line and the earliest failing item, once, in both modes. The compiled
+--- program printed one message per failing thread, and the interpreter
+--- named the loop's line.
+xs = [1, 2, 3]
+ys = for i in range[10]
+    xs[i] * 2
+log[ys]
+log['not reached']

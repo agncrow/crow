@@ -375,6 +375,7 @@ impl Emitter {
                 }
                 (CrowType::Int, CrowType::Float) => format!("({}) as f64 {} {}", l_val, op_str, r_val),
                 (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l_val, op_str, r_val),
+                (CrowType::Int, CrowType::Int) if self.int_op(op, &l_val, &r_val).is_some() => self.int_op(op, &l_val, &r_val).unwrap_or_default(),
                 _ if op == "pow" => {
                     if lti == CrowType::Float || rti == CrowType::Float {
                         format!("(({}) as f64).powf(({}) as f64)", l_val, r_val)
@@ -503,6 +504,11 @@ impl Emitter {
             }
             return format!("{} {} {}", l, op_str, r);
         }
+        if matches!((&lti, &rti), (CrowType::Int, CrowType::Int)) {
+            if let Some(checked) = self.int_op(op, &l, &r) {
+                return checked;
+            }
+        }
         if op == "pow" {
             if lti == CrowType::Float || rti == CrowType::Float {
                 return format!("(({}) as f64).powf(({}) as f64)", l, r);
@@ -516,6 +522,22 @@ impl Emitter {
         }
     }
 
+    /// An int operator that can fail — past 64 bits, a division by zero, a
+    /// negative power — checked by the runtime, which has the words both
+    /// modes stop with (crow_runtime::stops).
+    pub(crate) fn int_op(&self, op: &str, l: &str, r: &str) -> Option<String> {
+        let f = match op {
+            "add" => "add",
+            "sub" => "sub",
+            "mul" => "mul",
+            "div" => "div",
+            "mod" => "rem",
+            "pow" => "pow",
+            _ => return None,
+        };
+        Some(format!("crow_runtime::stops::{}({}, {}).unwrap_or_else(|e| crow_stop({}, e))", f, l, r, self.current_line))
+    }
+
     fn unary(&mut self, op: &str, e: &Expr) -> String {
         let inner = self.operand(e);
         let ty = Self::inner(&self.tt(e));
@@ -523,6 +545,9 @@ impl Emitter {
             "neg" => {
                 if matches!(ty, CrowType::NumArray(_)) {
                     format!("{}.neg()", inner)
+                } else if matches!(ty, CrowType::Int) && !matches!(Emitter::raw(e), Expr::Const(..)) && !self.emitting_dual {
+                    // only the smallest int has no negation
+                    format!("crow_runtime::stops::neg({}).unwrap_or_else(|e| crow_stop({}, e))", inner, self.current_line)
                 } else {
                     format!("(-{})", inner)
                 }
@@ -601,7 +626,7 @@ impl Emitter {
             .map(|i| {
                 let s = self.expr(i);
                 if matches!(self.tt(i), CrowType::Result(_)) {
-                    format!("{{ let _ix = &({}); if !_ix.ok {{ panic!(\"{{}}\", _ix.reason); }} _ix.value.clone() }}", s)
+                    format!("{{ let _ix = &({}); if !_ix.ok {{ crow_stop({}, _ix.reason.clone()); }} _ix.value.clone() }}", s, self.current_line)
                 } else {
                     s
                 }
@@ -614,34 +639,37 @@ impl Emitter {
                 if matches!(idx_ty, Some(CrowType::NumArray(_))) {
                     return format!("{}.gather(&{})", b, idx);
                 }
+                // an index outside stops the program with the runtime's words
+                let line = self.current_line;
                 if matches!(el.as_ref(), CrowType::NumArray(_)) {
-                    return format!("{{ let _i = {}; let _rows = {}.shape()[0] as i64; let _idx = if _i < 0 {{ (_rows + _i) as usize }} else {{ _i as usize }}; {}.index0(_idx) }}", idx, b, b);
+                    return format!("{{ let _i = {}; let _t = &{}; _t.index0(crow_runtime::stops::row(_i, _t.shape()[0]).unwrap_or_else(|e| crow_stop({}, e))) }}", idx, b, line);
                 }
                 let cast = if matches!(el.as_ref(), CrowType::Int) { " as i64" } else { "" };
-                format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.get_flat(_idx){} }}", idx, b, b, cast)
+                format!("{{ let _i = {}; let _t = &{}; _t.get_flat(crow_runtime::stops::item(_i, _t.len()).unwrap_or_else(|e| crow_stop({}, e))){} }}", idx, b, line, cast)
             }
             CrowType::Array(el) => {
                 let suffix = if Self::is_copy_type(el) { "" } else { ".clone()" };
-                format!("{}[{{ let _i = {}; if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }} }}]{}", b, idx, b, suffix)
+                format!("{{ let _i = {}; let _v = &{}; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop({}, e))]{} }}", idx, b, self.current_line, suffix)
             }
             CrowType::Str | CrowType::Markup => {
-                format!("{{ let _s: Vec<char> = {}.chars().collect(); let _i = {}; let _idx = if _i < 0 {{ (_s.len() as i64 + _i) as usize }} else {{ _i as usize }}; _s[_idx].to_string() }}", b, idx)
+                format!("{{ let _s: Vec<char> = {}.chars().collect(); let _i = {}; _s[crow_runtime::stops::char_at(_i, _s.len()).unwrap_or_else(|e| crow_stop({}, e))].to_string() }}", b, idx, self.current_line)
             }
             CrowType::FrameCol => {
                 let getter = Self::cell_getter(&Self::inner(&self.tt(whole)));
                 // a column that can have missing cells: the cell is a result,
                 // a missing one an error
+                let line = self.current_line;
                 if matches!(self.tt(whole), CrowType::Result(_)) {
                     return format!(
-                        "{{ let _i = {}; let _c = &{}; let _idx = if _i < 0 {{ (_c.len() as i64 + _i) as usize }} else {{ _i as usize }}; let _ok = _c.valid[_idx]; let _why = if _ok {{ String::new() }} else {{ \"missing\".to_string() }}; CrowResult {{ ok: _ok, value: _c.{}(_idx), reason: _why.clone(), kind: _why, trace: vec![], captured: 0.0 }} }}",
-                        idx, b, getter
+                        "{{ let _i = {}; let _c = &{}; let _idx = crow_runtime::stops::item(_i, _c.len()).unwrap_or_else(|e| crow_stop({}, e)); let _ok = _c.valid[_idx]; let _why = if _ok {{ String::new() }} else {{ \"missing\".to_string() }}; CrowResult {{ ok: _ok, value: _c.{}(_idx), reason: _why.clone(), kind: _why, trace: vec![], captured: 0.0 }} }}",
+                        idx, b, line, getter
                     );
                 }
-                format!("{{ let _i = {}; let _idx = if _i < 0 {{ ({}.len() as i64 + _i) as usize }} else {{ _i as usize }}; {}.{}(_idx) }}", idx, b, b, getter)
+                format!("{{ let _i = {}; let _c = &{}; _c.{}(crow_runtime::stops::item(_i, _c.len()).unwrap_or_else(|e| crow_stop({}, e))) }}", idx, b, getter, line)
             }
             CrowType::Map(_) => {
                 self.needs_crow_runtime = true;
-                format!("crow_runtime::core::map_key(&{}, &*({}))", b, idx_strs.join(", "))
+                format!("crow_runtime::core::map_key(&{}, &*({})).unwrap_or_else(|e| crow_stop({}, e))", b, idx_strs.join(", "), self.current_line)
             }
             CrowType::Json => {
                 let ie = match idx_ty.clone() {
@@ -694,7 +722,7 @@ impl Emitter {
             }
             if matches!(inner.as_ref(), CrowType::Map(_)) {
                 self.needs_crow_runtime = true;
-                return format!("crow_runtime::core::map_key(&{}.value, \"{}\")", obj, field);
+                return format!("crow_runtime::core::map_key(&{}.value, \"{}\").unwrap_or_else(|e| crow_stop({}, e))", obj, field, self.current_line);
             }
         }
         let oinner = Self::inner(&oty);
@@ -729,12 +757,12 @@ impl Emitter {
                 "shape" => format!("vec![{f}.nrows() as i64, {f}.ncols() as i64]", f = f),
                 "columns" => format!("{}.columns.iter().map(|c: &String| c.clone()).collect::<Vec<String>>()", f),
                 "dtypes" => format!("{}.dtypes().iter().map(|d: &&str| d.to_string()).collect::<Vec<String>>()", f),
-                _ => format!("{}.col_native(\"{}\").unwrap_or_else(|| panic!(\"column '{}' not found\"))", f, field, field),
+                _ => format!("{}.col_native(\"{}\").unwrap_or_else(|| crow_stop({}, crow_runtime::stops::no_column(\"{}\")))", f, field, self.current_line, field),
             };
         }
         if matches!(oty, CrowType::Map(_)) {
             self.needs_crow_runtime = true;
-            return format!("crow_runtime::core::map_key(&{}, \"{}\")", obj, field);
+            return format!("crow_runtime::core::map_key(&{}, \"{}\").unwrap_or_else(|e| crow_stop({}, e))", obj, field, self.current_line);
         }
         if let CrowType::Struct(sname) = &oty {
             if matches!(sname.as_str(), "CrowShell" | "CrowFindResult" | "CrowElapsed") {
@@ -860,7 +888,7 @@ impl Emitter {
                 self.needs_crow_runtime = true;
                 if elem_is_tensor {
                     let elems: Vec<String> = items.iter().map(|i| self.expr(i)).collect();
-                    return format!("crow_runtime::tensor::CrowTensor::from_elements(&[{}]).unwrap_or_else(|e| panic!(\"{{}}\", e))", elems.join(", "));
+                    return format!("crow_runtime::tensor::CrowTensor::from_elements(&[{}]){}", elems.join(", "), self.or_stop());
                 }
                 let vals: Vec<String> = items.iter().map(|i| format!("{} as f64", self.expr(i))).collect();
                 return format!("crow_runtime::tensor::CrowTensor::from_vec(vec![{}], vec![{}])", vals.join(", "), items.len());

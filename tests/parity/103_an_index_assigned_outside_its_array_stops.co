@@ -1,0 +1,9 @@
+--- Assigning through an index outside the array stops the program with
+--- the same words as reading through it (the interpreter said "out of
+--- bounds (len 3)", the compiled program had no line).
+xs = [1, 2, 3]
+xs[-1] = 30
+log[xs]
+i = len[xs] + 2
+xs[i] = 9
+log['not reached']

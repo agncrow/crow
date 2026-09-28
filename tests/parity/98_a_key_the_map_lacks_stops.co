@@ -1,0 +1,9 @@
+--- A key the map lacks stops the program with the same words in both
+--- modes, read by index or by field (the interpreter said "key 'b' not
+--- found in map", the compiled program "map has no key 'b'").
+m = map['a' = 1, 'c' = 3]
+log[m['a']]
+log[m.c]
+k = 'b'
+log[m[k]]
+log['not reached']
