@@ -31,6 +31,22 @@ impl Emitter {
         false
     }
 
+    /// The cast an item takes to reach a predicate's parameter: an int list's
+    /// item into a float parameter, a tensor's number (a float) into an int
+    /// one — as the interpreter hands a function value its argument, an int
+    /// to a float parameter a float (compiled, `any[[1.5], big]` beside
+    /// `any[[1], big]` did not build).
+    fn pred_cast(&self, pred: &Expr, items: &CrowType) -> &'static str {
+        let param = fn_named(pred).and_then(|f| self.fns.get(f)).and_then(|sig| sig.params.first()).map(|(_, t)| t.clone());
+        match (items, param) {
+            (CrowType::NumArray(_), Some(Ty::Int)) => " as i64",
+            (CrowType::NumArray(_), Some(Ty::Float)) => "",
+            (CrowType::NumArray(inner), _) if matches!(inner.as_ref(), CrowType::Int) => " as i64",
+            (CrowType::Array(inner), Some(Ty::Float)) if matches!(inner.as_ref(), CrowType::Int) => " as f64",
+            _ => "",
+        }
+    }
+
     fn note_db_backend(&mut self, url: &str) {
         if url.contains("clickhouse://") {
             self.db_features.insert("clickhouse".to_string());
@@ -210,81 +226,6 @@ impl Emitter {
         }
     }
 
-    // ── log ─────────────────────────────────────────────────────────
-
-    fn emit_log(&mut self, args: &[String], exprs: &[Expr]) -> String {
-        if args.is_empty() {
-            return "println!()".to_string();
-        }
-        if args.len() == 1 {
-            let arg = &args[0];
-            if arg.starts_with("format!(") {
-                return format!("println!{}", &arg[7..]);
-            }
-            let ty = self.tt(&exprs[0]);
-            let (inner, is_result) = match &ty {
-                CrowType::Result(i) => (i.as_ref().clone(), true),
-                o => (o.clone(), false),
-            };
-            // an error with no value (error[…]) is never good: its reason
-            if is_result && matches!(inner, CrowType::Void) {
-                return format!("println!(\"error: {{}}\", ({}).reason)", arg);
-            }
-            if matches!(inner, CrowType::FrameCol) {
-                self.needs_crow_runtime = true;
-                return format!("{{ use crow_runtime::display::CrowDisplay as _; println!(\"{{}}\", ({}).crow_fmt()) }}", arg);
-            }
-            if self.kernel_displayable(&inner) {
-                self.needs_crow_runtime = true;
-                if is_result {
-                    return format!(
-                        "{{ use crow_runtime::display::CrowDisplay as _; let _r = &({}); if !_r.ok {{ println!(\"error: {{}}\", _r.reason) }} else {{ println!(\"{{}}\", _r.value.crow_fmt()) }} }}",
-                        arg
-                    );
-                }
-                return format!("{{ use crow_runtime::display::CrowDisplay as _; println!(\"{{}}\", ({}).crow_fmt()) }}", arg);
-            }
-            let debug = matches!(inner, CrowType::Array(_) | CrowType::Map(_) | CrowType::Struct(_));
-            if debug {
-                return format!("println!(\"{{:?}}\", {})", arg);
-            }
-            if matches!(inner, CrowType::Json) {
-                self.needs_serde_json = true;
-                if is_result {
-                    return format!("{{ let _jv = {}.clone(); if !_jv.ok {{ println!(\"error: {{}}\", _jv.reason); }} else {{ println!(\"{{}}\", crow_json_display(&_jv.value)); }} }}", arg);
-                }
-                return format!("println!(\"{{}}\", crow_json_display(&{}))", arg);
-            }
-            return format!("println!(\"{{}}\", {})", arg);
-        }
-        let mut parts = Vec::new();
-        let mut fargs = Vec::new();
-        for (i, arg) in args.iter().enumerate() {
-            let ty = exprs.get(i).map(|x| self.tt(x)).unwrap_or(CrowType::Unknown);
-            let (inner, is_result) = match &ty {
-                CrowType::Result(t) => (t.as_ref().clone(), true),
-                o => (o.clone(), false),
-            };
-            let is_col = matches!(inner, CrowType::FrameCol);
-            let debug = matches!(inner, CrowType::Array(_) | CrowType::Map(_) | CrowType::Struct(_)) || is_col;
-            let kernel = is_col || self.kernel_displayable(&inner);
-            parts.push(if debug && !kernel { "{:?}" } else { "{}" });
-            if is_col {
-                self.needs_crow_runtime = true;
-                fargs.push(format!("{{ use crow_runtime::display::CrowDisplay as _; {}.to_strings().crow_fmt() }}", arg));
-            } else if kernel {
-                self.needs_crow_runtime = true;
-                fargs.push(format!("{{ use crow_runtime::display::CrowDisplay as _; ({}).crow_fmt() }}", arg));
-            } else if matches!(inner, CrowType::Json) {
-                self.needs_serde_json = true;
-                fargs.push(if is_result { format!("crow_json_display(&{}.value)", arg) } else { format!("crow_json_display(&{})", arg) });
-            } else {
-                fargs.push(arg.clone());
-            }
-        }
-        format!("println!(\"{}\", {})", parts.join(" "), fargs.join(", "))
-    }
-
     // ── the builtins ────────────────────────────────────────────────
 
     pub(crate) fn builtin(&mut self, name: &str, args: &[Expr], a: &[String], whole: &Expr) -> Option<String> {
@@ -292,8 +233,6 @@ impl Emitter {
         let ty0 = args.first().map(|x| self.tt(x)).unwrap_or(CrowType::Unknown);
         let in0 = Self::inner(&ty0);
         match name {
-            "log" => return Some(self.emit_log(a, args)),
-            "map" if n == 0 => return Some("BTreeMap::new()".to_string()),
             "grad" if n == 1 => {
                 if let Some(fname) = fn_named(&args[0]) {
                     if let Some(sig) = self.fns.get(fname).cloned() {
@@ -331,27 +270,11 @@ impl Emitter {
         }
 
         Some(match name {
-            // math
-            "abs" if n == 1 && matches!(ty0, CrowType::Int) && !self.emitting_dual => format!("crow_runtime::stops::abs({}).unwrap_or_else(|e| crow_stop({}, e))", a[0], self.current_line),
+            // math on the dual numbers a function grad differentiates, each
+            // the derivative's own form (a plain number's is its row)
             "abs" if n == 1 => format!("({}).abs()", a[0]),
-            "sqrt" if n == 1 => {
-                if self.emitting_dual || matches!(ty0, CrowType::Float) {
-                    format!("({}).sqrt()", a[0])
-                } else {
-                    format!("(({}) as f64).sqrt()", a[0])
-                }
-            }
-            "floor" | "ceil" | "round" if n == 1 => {
-                if self.emitting_dual {
-                    format!("({}).{}()", a[0], name)
-                } else if matches!(ty0, CrowType::Float) {
-                    format!("({}).{}() as i64", a[0], name)
-                } else {
-                    a[0].clone()
-                }
-            }
-            // text
-            // text: one implementation, crow_runtime::text, for both modes
+            "sqrt" if n == 1 => format!("({}).sqrt()", a[0]),
+            "floor" | "ceil" | "round" if n == 1 => format!("({}).{}()", a[0], name),
             "captured" if n == 1 => {
                 self.needs_crow_runtime = true;
                 if matches!(ty0, CrowType::Result(_)) {
@@ -366,28 +289,13 @@ impl Emitter {
                     )
                 }
             }
-            "now" if n == 0 => {
-                self.needs_crow_runtime = true;
-                "crow_runtime::moments::now()".to_string()
-            }
             // a web queue's push (crow_web): a collection's is its row
             "push" if n == 2 => format!("{}.push({})", a[0], a[1]),
             // the command line and the terminal
-            "args" if n == 0 => "std::env::args().skip(1).collect::<Vec<String>>()".to_string(),
-            "input" if !self.in_view() => {
-                self.needs_crow_runtime = true;
-                let tr = self.trace_format_expr();
-                let prompt = if n == 1 { format!("Some(&format!(\"{{}}\", {}))", a[0]) } else { "None".to_string() };
-                format!(
-                    "{{ match crow_runtime::core::read_line({}) {{ Ok(line) => CrowResult {{ ok: true, value: line, reason: String::new(), kind: String::new(), trace: vec![], captured: {} }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e, kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
-                    prompt, STAMP, tr
-                )
-            }
             "seed" if n == 1 => {
                 self.needs_crow_runtime = true;
                 format!("crow_runtime::core::seed(({}) as i64)", a[0])
             }
-            "time" if n == 0 => "std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64()".to_string(),
             "later" if n >= 1 => {
                 let fname = match fn_named(&args[0]) {
                     Some(f) => f.to_string(),
@@ -487,23 +395,23 @@ impl Emitter {
                     format!("crow_runtime::later::running(\"{}\")", fname)
                 }
             }
-            "sleep" if n == 1 => match ty0 {
-                CrowType::Int => format!("std::thread::sleep(std::time::Duration::from_millis({} as u64))", a[0]),
-                _ => format!("std::thread::sleep(std::time::Duration::from_secs_f64({}))", a[0]),
-            },
-            "env" if n == 2 => format!(
-                "{{ let _name = &*{}; let _val = std::env::var(_name).unwrap_or_else(|_| {}.to_string()); CrowResult {{ ok: true, value: _val, reason: String::new(), kind: String::new(), trace: vec![], captured: {} }} }}",
-                a[0], a[1], STAMP
-            ),
-            "env" if n == 1 => {
-                let tr = self.trace_format_expr();
+            // a comparison that fails reports both sides, in the runtime's
+            // words, as the interpreter does (compiled, it had said only
+            // "assertion failed"): each side is read once
+            "assert" if n == 1 && matches!(&args[0], Expr::Binary { op, ty: Ty::Bool, .. } if matches!(op.as_str(), "eq" | "ne" | "gt" | "lt" | "gte" | "lte")) => {
+                let Expr::Binary { op, l, r, .. } = &args[0] else { unreachable!() };
+                self.needs_crow_runtime = true;
+                let (ls, rs) = (self.expr(l), self.expr(r));
+                self.push_scope();
+                self.declare("_al", self.tt(l));
+                self.declare("_ar", self.tt(r));
+                let cond = self.binary(op, &Expr::Local("_al".to_string(), l.ty()), &Expr::Local("_ar".to_string(), r.ty()));
+                self.pop_scope();
                 format!(
-                    "{{ let _name = &*{}; match std::env::var(_name) {{ Ok(_val) => CrowResult {{ ok: true, value: _val, reason: String::new(), kind: String::new(), trace: vec![], captured: {} }}, Err(_) => CrowResult {{ ok: false, value: String::new(), reason: format!(\"environment variable '{{}}' not set\", _name), kind: \"env\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
-                    a[0], STAMP, tr
+                    "{{ let _al = {}; let _ar = {}; if !({}) {{ crow_stop({}, crow_runtime::display::assert_failed(\"{}\", &crow_runtime::display::shown(&_al), &crow_runtime::display::shown(&_ar))); }} }}",
+                    ls, rs, cond, self.current_line, op
                 )
             }
-            "exit" if n == 0 => "std::process::exit(0)".to_string(),
-            "exit" if n == 1 => format!("std::process::exit({} as i32)", a[0]),
             "assert" if n == 1 || n == 2 => {
                 let cond = match &ty0 {
                     CrowType::Bool => a[0].clone(),
@@ -565,11 +473,15 @@ impl Emitter {
             // search: a parallel early exit
             "any" | "all" if n == 2 => {
                 self.needs_rayon = true;
-                if let CrowType::NumArray(inner) = &in0 {
-                    let cast = if matches!(inner.as_ref(), CrowType::Int) { " as i64" } else { "" };
+                if matches!(in0, CrowType::NumArray(_)) {
+                    let cast = self.pred_cast(&args[1], &in0);
                     return Some(format!("{}.to_vec().par_iter().{}(|&_x| {}(_x{}))", a[0], name, a[1], cast));
                 }
-                let call = if self.pred_takes_ref(&args[1]) { "(_x)" } else { "(_x.clone())" };
+                let call = match self.pred_cast(&args[1], &in0) {
+                    "" if self.pred_takes_ref(&args[1]) => "(_x)".to_string(),
+                    "" => "(_x.clone())".to_string(),
+                    cast => format!("(*_x{})", cast),
+                };
                 format!("{}.par_iter().{}(|_x| {}{})", a[0], name, a[1], call)
             }
             "find" if n == 2 && matches!(in0, CrowType::Array(_) | CrowType::NumArray(_)) => {
@@ -581,12 +493,17 @@ impl Emitter {
                 let default = el.default_rust_value();
                 if matches!(in0, CrowType::NumArray(_)) {
                     let cast = if matches!(el, CrowType::Int) { " as i64" } else { "" };
+                    let call_cast = self.pred_cast(&args[1], &in0);
                     return Some(format!(
                         "{{ match {}.to_vec().par_iter().copied().find_first(|&_x| {}(_x{})) {{ Some(_v) => CrowResult {{ ok: true, value: _v{}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, None => CrowResult {{ ok: false, value: {}, reason: \"no match\".to_string(), kind: \"find\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
-                        a[0], a[1], cast, cast, default
+                        a[0], a[1], call_cast, cast, default
                     ));
                 }
-                let call = if self.pred_takes_ref(&args[1]) { "(*_x)" } else { "((*_x).clone())" };
+                let call = match self.pred_cast(&args[1], &in0) {
+                    "" if self.pred_takes_ref(&args[1]) => "(*_x)".to_string(),
+                    "" => "((*_x).clone())".to_string(),
+                    cast => format!("(**_x{})", cast),
+                };
                 format!(
                     "{{ match {}.par_iter().find_first(|_x| {}{}) {{ Some(_v) => CrowResult {{ ok: true, value: _v.clone(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, None => CrowResult {{ ok: false, value: {}, reason: \"no match\".to_string(), kind: \"find\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
                     a[0], a[1], call, default

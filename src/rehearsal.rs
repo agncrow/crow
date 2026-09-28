@@ -145,7 +145,8 @@ pub fn outside(name: &str, vals: &[crate::value::CrowValue]) -> Option<crate::va
             m.insert("stderr".to_string(), CrowValue::ok(Value::Str(String::new())));
             CrowValue::ok(Value::Map(m))
         }
-        _ => CrowValue::done(),
+        // a file operation answers empty text, as a real one does
+        _ => CrowValue::ok(Value::Str(String::new())),
     })
 }
 

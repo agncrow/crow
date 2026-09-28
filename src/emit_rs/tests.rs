@@ -1480,16 +1480,17 @@ fn test_fs_cp_transpile() {
 #[test]
 fn test_env_one_arg_transpile() {
     let rust = transpile("x = env['PORT']\n");
-    assert!(rust.contains("std::env::var("), "should emit std::env::var\n{}", rust);
+    assert!(rust.contains("crow_runtime::core::env(&*("), "env is its row\n{}", rust);
     assert!(rust.contains("\"env\".to_string()"), "1-arg env is an error value (kind env) when unset\n{}", rust);
-    assert!(rust.contains("captured: std::time::SystemTime"), "env is a reader: its result carries a capture moment\n{}", rust);
+    assert!(rust.contains("captured: crow_runtime::moments::now()"), "env is a reader: its result carries a capture moment\n{}", rust);
 }
 
 #[test]
 fn test_env_two_arg_transpile() {
     let rust = transpile("x = env['PORT', 3000]\n");
-    assert!(rust.contains("std::env::var("), "should emit std::env::var\n{}", rust);
-    assert!(rust.contains("unwrap_or_else"), "should emit unwrap_or_else for 2-arg env\n{}", rust);
+    // the default is text, as the variable is (a number shows as it displays)
+    assert!(rust.contains("crow_runtime::core::env_or(&*("), "the 2-arg env is its row\n{}", rust);
+    assert!(rust.contains("crow_runtime::cell::Cell::from("), "the default is read as a cell\n{}", rust);
 }
 
 // ===== Web tests =====

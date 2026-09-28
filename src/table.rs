@@ -126,6 +126,11 @@ pub enum Kind {
     Encoded,
     /// `Vec<serde_json::Value>` given: a parsed JSON object's values.
     JsonList,
+    /// `&[&dyn CrowDisplay]` taken: the rest of the arguments, each any
+    /// value that shows (`log`).
+    Shows,
+    /// Each of `Shows`: `&dyn CrowDisplay`.
+    ShownDyn,
 }
 
 /// What a failure of the function is.
@@ -208,7 +213,7 @@ impl Kind {
             Kind::Markup => CrowType::Markup,
             Kind::TextRows => CrowType::Array(Box::new(CrowType::Map(Box::new(CrowType::Str)))),
             Kind::Shell => CrowType::Struct("CrowShell".to_string()),
-            Kind::Shown | Kind::Encoded => CrowType::Unknown,
+            Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn => CrowType::Unknown,
             Kind::JsonList => CrowType::Array(Box::new(CrowType::Json)),
             // what the arguments' items are: inference types the call from
             // them (a generic row's answer is the list or map it was given)
@@ -244,6 +249,7 @@ impl Kind {
             Kind::Words => format!("&crow_runtime::cell::words(&({})).unwrap_or_else(|e| crow_stop({}, e))[..]", arg, line),
             Kind::Cells => format!("crow_runtime::frames::Cells::from(({}).clone())", arg),
             Kind::Seq => format!("&({})[..]", arg),
+            Kind::ShownDyn => format!("&({}) as &dyn crow_runtime::display::CrowDisplay", arg),
             // moved or copied (an item kept) where the call is made
             Kind::List | Kind::MapOf | Kind::Ints | Kind::Floats | Kind::Texts | Kind::Item => format!("({})", arg),
             _ => format!("&({})", arg),
@@ -252,7 +258,7 @@ impl Kind {
 
     /// Whether the parameter takes the rest of the arguments.
     pub fn is_rest(self) -> bool {
-        matches!(self, Kind::Sizes | Kind::Groups | Kind::Lists)
+        matches!(self, Kind::Sizes | Kind::Groups | Kind::Lists | Kind::Shows)
     }
 
     /// The kind of each argument a parameter takes: a size of the sizes, a
@@ -262,6 +268,7 @@ impl Kind {
             Kind::Sizes => Kind::Int,
             Kind::Groups => Kind::Tensor,
             Kind::Lists => Kind::Strs,
+            Kind::Shows => Kind::ShownDyn,
             k => k,
         }
     }
@@ -294,7 +301,7 @@ impl Kind {
             Kind::Markup => "String::new()",
             Kind::TextRows => "Vec::<std::collections::BTreeMap<String, String>>::new()",
             Kind::Shell => "crow_runtime::core::Shell { status: -1, stdout: String::new(), stderr: String::new() }",
-            Kind::Shown | Kind::Encoded => "unreachable!()",
+            Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn => "unreachable!()",
             Kind::JsonList => "Vec::<serde_json::Value>::new()",
             // a generic answer never fails as a value (its rows answer or stop)
             Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef => "Vec::new()",
@@ -772,6 +779,7 @@ macro_rules! read {
     (Cell, $g:expr) => { &read_cell(one($g)?)? };
     (Cells, $g:expr) => { read_cells(one($g)?)? };
     (Lists, $g:expr) => { &read_lists($g)?.iter().map(|l| l.as_slice()).collect::<Vec<&[String]>>() };
+    (Shows, $g:expr) => { &$g.iter().map(|v| v as &dyn crow_runtime::display::CrowDisplay).collect::<Vec<&dyn crow_runtime::display::CrowDisplay>>() };
     (List, $g:expr) => { read_list(one($g)?)? };
     (Seq, $g:expr) => { read_seq(one($g)?)? };
     (Item, $g:expr) => { one($g)?.clone() };
@@ -955,6 +963,36 @@ pub static ROWS: &[Row] = &[
     row!("display.str", "", "str", crow_runtime::display::shown, (Shown) -> Str, never),
     row!("json.parse", "", "json", crow_runtime::json::parse, (Str) -> Json, value "parse"),
     row!("json.encode", "", "encode", crow_runtime::json::encode, (Encoded) -> Str, never),
+    // log: the values as they show, one display for both modes (compiled,
+    // an error without a value among several did not build)
+    row!("display.log", "", "log", crow_runtime::display::log, (Shows) -> Unit, never),
+    row!("core.map_new", "", "map", crow_runtime::core::map_new, () -> MapOf, never),
+    // a plain number's math (on the dual numbers a function grad
+    // differentiates, each keeps the derivative's own form)
+    row!("core.abs_int", "", "abs", crow_runtime::core::abs_int, (Whole) -> Int, stops),
+    row!("core.abs", "", "abs", crow_runtime::core::abs_float, (Float) -> Float, never),
+    row!("core.sqrt", "", "sqrt", crow_runtime::core::sqrt, (Float) -> Float, never),
+    row!("core.floor_int", "", "floor", crow_runtime::core::whole, (Whole) -> Int, never),
+    row!("core.floor", "", "floor", crow_runtime::core::floor, (Float) -> Int, never),
+    row!("core.ceil_int", "", "ceil", crow_runtime::core::whole, (Whole) -> Int, never),
+    row!("core.ceil", "", "ceil", crow_runtime::core::ceil, (Float) -> Int, never),
+    row!("core.round_int", "", "round", crow_runtime::core::whole, (Whole) -> Int, never),
+    row!("core.round", "", "round", crow_runtime::core::round, (Float) -> Int, never),
+    // the program and its system: effects, which the session layer
+    // performs, and whose call inside is the row (compiled, env's default
+    // had been text of any value, and a negative sleep panicked or slept
+    // forever in both modes)
+    row!("core.args", "", "args", crow_runtime::core::args, () -> Strs, never),
+    row!("core.env", "", "env", crow_runtime::core::env, (Str) -> Str, value "env"),
+    row!("core.env_or", "", "env", crow_runtime::core::env_or, (Str, Cell) -> Str, value "env"),
+    row!("core.input", "", "input", crow_runtime::core::input, () -> Str, value "io"),
+    row!("core.input_prompt", "", "input", crow_runtime::core::input_prompt, (Str) -> Str, value "io"),
+    row!("core.exit", "", "exit", crow_runtime::core::exit, () -> Unit, never),
+    row!("core.exit_code", "", "exit", crow_runtime::core::exit_code, (Whole) -> Unit, never),
+    row!("core.sleep_ms", "", "sleep", crow_runtime::core::sleep_ms, (Whole) -> Unit, stops),
+    row!("core.sleep", "", "sleep", crow_runtime::core::sleep_secs, (Float) -> Unit, stops),
+    row!("core.time", "", "time", crow_runtime::core::time, () -> Float, never),
+    row!("moments.now", "", "now", crow_runtime::moments::now, () -> Float, never),
     // the file system: an effect, which the session layer performs (held to
     // a handler's commit, recorded in a rehearsal) and whose call inside is
     // the row; a failure is an error value of kind 'io', a success of a
@@ -1250,6 +1288,11 @@ pub fn core_row(name: &str, args: &[Arg]) -> Option<&'static Row> {
     ROWS.iter().filter(|r| r.module.is_empty() && r.name == name).find(|r| takes(r, args))
 }
 
+/// Whether a module (`""` the core) answers the name with rows.
+pub fn has_rows(module: &str, name: &str) -> bool {
+    ROWS.iter().any(|r| r.module == module && r.name == name)
+}
+
 /// Whether the core answers the name with rows.
 pub fn has_core_rows(name: &str) -> bool {
     core(name).is_some()
@@ -1483,7 +1526,7 @@ impl Kind {
             Kind::Markup => "markup",
             Kind::TextRows => "rows of text",
             Kind::Shell => "a command's answer",
-            Kind::Shown => "a value",
+            Kind::Shown | Kind::Shows | Kind::ShownDyn => "a value",
             Kind::Encoded => "a value JSON can hold",
             Kind::JsonList => "a list of JSON values",
         }
@@ -1516,7 +1559,7 @@ impl Kind {
                 Kind::Json => a == Arg::Json,
                 Kind::Column => a == Arg::Column,
                 // a function shows as nothing, and JSON holds no function, frame or matrix
-                Kind::Shown => a != Arg::Fn,
+                Kind::Shown | Kind::ShownDyn => a != Arg::Fn,
                 Kind::Encoded => !matches!(a, Arg::Fn | Arg::Frame | Arg::Sparse | Arg::Column),
                 _ => true,
             }
@@ -1586,16 +1629,16 @@ fn miscount(name: &str, counts: &str, argc: usize) -> String {
 }
 
 /// The core names with syntax or state of their own, which no row says: a
-/// statement (`log`), a value's own status (`error`, `captured`), what the
-/// interpreter holds (`later`, `running`, `notice`), a function argument
-/// (`any`, `all`, `find`, `grad`), a resource (`cpu`, `gpu`, `nodes`), a
-/// test block, a chart's tree.
+/// value's own status (`error` makes one, `captured` reads its stamp) and
+/// a static type's word compiled beside a value's interpreted (`type`); a
+/// statement reporting its operands (`assert`, whose words are the
+/// runtime's, `display::assert_failed`); what the session holds (`later`,
+/// `running`, `notice`); a function argument the walker calls (`any`,
+/// `all`, `find`, `grad`); a resource (`cpu`, `gpu`, `nodes`); a test
+/// block; a chart's tree.
 #[cfg_attr(not(test), allow(dead_code))] // read by the drift test
 pub const OWN_FORM: &[&str] = &[
-    "log", "type", "map", "error", "assert", "captured", "later", "running", "notice", "any", "all", "find", "grad", "cpu", "gpu", "nodes", "test",
-    "chart", "args", "exit", "sleep", "time", "now", "input", "env",
-    // taken on dual numbers too, inside a function grad differentiates
-    "abs", "sqrt", "floor", "ceil", "round",
+    "type", "error", "assert", "captured", "later", "running", "notice", "any", "all", "find", "grad", "cpu", "gpu", "nodes", "test", "chart",
 ];
 
 /// The core builtins still written twice, each to become a row (docs/
@@ -1717,6 +1760,23 @@ mod tests {
         assert_eq!(crow_runtime::core::len_json(&serde_json::json!(2.5)), Err(refusal(&[""], "len", &[Arg::Float]).expect("a refusal")));
         assert_eq!(crow_runtime::core::len_json(&serde_json::json!(true)), Err(refusal(&[""], "len", &[Arg::Truth]).expect("a refusal")));
         assert_eq!(crow_runtime::core::len_json(&serde_json::json!([1, 2])), Ok(2));
+    }
+
+    /// `log` is its row over any values that show, each handed as the one
+    /// display takes it; env's default is text, as the variable is; the math
+    /// of a plain number is its row, an int's int and a float's float.
+    #[test]
+    fn a_builtin_once_per_mode_is_a_row() {
+        let log = core("log").expect("log's row");
+        let printed = print(log, &["a".to_string(), "b".to_string()], "1", None).expect("printed");
+        assert!(printed.contains("&(a) as &dyn crow_runtime::display::CrowDisplay"), "{}", printed);
+        assert_eq!(crow_runtime::core::env_or("CROW_TABLE_TEST_NO_SUCH_VARIABLE", &crow_runtime::cell::Cell::Int(3000)), Ok("3000".to_string()));
+        assert_eq!(core_row("abs", &[Arg::Int]).map(|r| r.id), Some("core.abs_int"));
+        assert_eq!(core_row("abs", &[Arg::Float]).map(|r| r.id), Some("core.abs"));
+        assert_eq!(crow_runtime::core::round(2.5), 3);
+        assert_eq!(crow_runtime::core::round(-2.5), -3);
+        assert!(crow_runtime::core::sleep_ms(-1).is_err());
+        assert!(!OWN_FORM.contains(&"log") && OWN_FORM.contains(&"assert"));
     }
 
     /// A list of numbers that can fail is numbers where numbers are taken

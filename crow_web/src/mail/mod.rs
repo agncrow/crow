@@ -19,6 +19,14 @@ pub struct CrowMailer {
     host: String,
 }
 
+/// A mailer shows as it displays (`<mailer:host>`), through the one
+/// display `log` and `str` use in both modes.
+impl crow_runtime::display::CrowDisplay for CrowMailer {
+    fn crow_repr(&self) -> String {
+        self.to_string()
+    }
+}
+
 impl std::fmt::Display for CrowMailer {
     /// A mailer shows its host, never its password.
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {

@@ -338,6 +338,21 @@ impl DbHandle {
     }
 }
 
+/// A connection shows its backend (`<db:sqlite>`), as the interpreter
+/// shows one, through the one display `log` and `str` use (compiled, `log`
+/// of a connection did not build).
+impl crow_runtime::display::CrowDisplay for DbHandle {
+    fn crow_repr(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl std::fmt::Display for DbHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "<db:{}>", self.backend_name())
+    }
+}
+
 impl std::fmt::Debug for DbHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "DbHandle({})", self.inner.backend_name())

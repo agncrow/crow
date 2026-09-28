@@ -288,6 +288,121 @@ pub fn range_from(start: i64, stop: i64) -> Result<Vec<i64>, String> {
     range(start, stop, 1)
 }
 
+/// `map[]`: an empty map, its values' type what the program puts in it.
+pub fn map_new<T>() -> BTreeMap<String, T> {
+    BTreeMap::new()
+}
+
+// ── a plain number's math ───────────────────────────────────────────
+// (on the dual numbers a function `grad` differentiates, each is the
+// derivative's own form, written with the program)
+
+/// `abs[n]` of an int; past 64 bits, the reason.
+pub fn abs_int(n: i64) -> Result<i64, String> {
+    crate::stops::abs(n)
+}
+
+/// `abs[x]` of a float.
+pub fn abs_float(x: f64) -> f64 {
+    x.abs()
+}
+
+/// `sqrt[x]`: NaN of a negative number, as the float's is.
+pub fn sqrt(x: f64) -> f64 {
+    x.sqrt()
+}
+
+/// `floor`, `ceil` and `round` of an int: the int.
+pub fn whole(n: i64) -> i64 {
+    n
+}
+
+/// `floor[x]`: the int at or below, cut to 64 bits (NaN is 0).
+pub fn floor(x: f64) -> i64 {
+    x.floor() as i64
+}
+
+/// `ceil[x]`: the int at or above, cut to 64 bits (NaN is 0).
+pub fn ceil(x: f64) -> i64 {
+    x.ceil() as i64
+}
+
+/// `round[x]`: the nearest int, a half away from zero, cut to 64 bits.
+pub fn round(x: f64) -> i64 {
+    x.round() as i64
+}
+
+// ── the program and its system ──────────────────────────────────────
+
+/// `args[]`: the arguments the program was given — after the source file
+/// when `crow` runs it, after the program when it runs compiled.
+pub fn args() -> Vec<String> {
+    let all: Vec<String> = std::env::args().collect();
+    let by_crow = all.first().and_then(|a| std::path::Path::new(a).file_stem().map(|s| s == "crow")).unwrap_or(false);
+    if by_crow {
+        let source = all.iter().position(|a| [".co", ".coc", ".crow", ".crowc"].iter().any(|e| a.ends_with(e)));
+        return source.map(|i| all[i + 1..].to_vec()).unwrap_or_default();
+    }
+    all.into_iter().skip(1).collect()
+}
+
+/// `env[name]`: the variable's text, or its absence as the reason.
+pub fn env(name: &str) -> Result<String, String> {
+    std::env::var(name).map_err(|_| format!("environment variable '{}' not set", name))
+}
+
+/// `env[name, default]`: the variable's text, or the default as text — a
+/// variable is text whichever answers (the interpreter had answered a
+/// default of another type as that type).
+pub fn env_or(name: &str, default: &crate::cell::Cell) -> Result<String, String> {
+    Ok(std::env::var(name).unwrap_or_else(|_| default.text()))
+}
+
+/// `input[]`: a line from stdin.
+pub fn input() -> Result<String, String> {
+    read_line(None)
+}
+
+/// `input[prompt]`: the prompt, then a line from stdin.
+pub fn input_prompt(prompt: &str) -> Result<String, String> {
+    read_line(Some(prompt))
+}
+
+/// `exit[]`: the program ends, what it printed written out.
+pub fn exit() {
+    exit_code(0)
+}
+
+/// `exit[code]`: the program ends with the code.
+pub fn exit_code(code: i64) {
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    std::process::exit(code as i32)
+}
+
+/// `sleep[ms]` of an int: milliseconds; one that is negative is refused.
+pub fn sleep_ms(ms: i64) -> Result<(), String> {
+    if ms < 0 {
+        return Err(format!("sleep[] takes a time that is not negative (got {})", ms));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+    Ok(())
+}
+
+/// `sleep[s]` of a float: seconds; one that is negative is refused.
+pub fn sleep_secs(s: f64) -> Result<(), String> {
+    if s.is_nan() || s < 0.0 || s.is_infinite() {
+        return Err(format!("sleep[] takes a time that is not negative (got {})", s));
+    }
+    std::thread::sleep(std::time::Duration::from_secs_f64(s));
+    Ok(())
+}
+
+/// `time[]`: seconds since the Unix epoch.
+pub fn time() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+}
+
 /// `rand[]`: a float in [0, 1) from the program's RNG, the one `seed[n]`
 /// seeds, so a seeded program draws the same numbers in both modes.
 pub fn rand_float() -> f64 {

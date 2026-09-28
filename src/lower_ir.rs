@@ -2508,6 +2508,11 @@ impl<'a> Lowerer<'a> {
     /// name the core answers too takes what the core's rows take as well.
     fn refuse_module_call(&mut self, m: &str, name: &str, lowered: &[Expr]) {
         let core_too = CORE_RESERVED.contains(&name);
+        // (a module whose rows lack the name has a form of its own for it —
+        // `ui.input` is the element, not the core's input)
+        if core_too && !crate::table::has_rows(m, name) {
+            return;
+        }
         if !core_too {
             if let Some(e) = crate::table::miscounted(m, name, lowered.len()) {
                 self.refuse(e);

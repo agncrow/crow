@@ -11,7 +11,9 @@ use std::collections::BTreeMap;
 
 /// The names answered here (a builtin with a row in crate::table is
 /// answered by its row, before this).
-pub const HANDLED: &[&str] = &["log", "type", "map", "abs", "sqrt", "floor", "ceil", "round", "pad", "append", "args", "input", "time", "sleep", "env", "exit", "now", "assert", "error"];
+/// (`abs`, `sqrt`, `floor`, `ceil` and `round` here are the dual numbers'
+/// form, which a function `grad` differentiates; a plain number's is its row)
+pub const HANDLED: &[&str] = &["type", "abs", "sqrt", "floor", "ceil", "round", "pad", "append", "assert", "error"];
 
 /// A state-free builtin by name, or `None` when the name is one the
 /// walker itself must handle.
@@ -24,20 +26,6 @@ pub fn call(name: &str, args: &[CrowValue], trace: &str) -> Option<Result<CrowVa
 
 fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, String> {
     match name {
-        "log" => {
-            for (i, arg) in args.iter().enumerate() {
-                if i > 0 {
-                    print!(" ");
-                }
-                if arg.is_error() {
-                    print!("error: {}", arg.reason());
-                } else {
-                    print!("{}", arg.value);
-                }
-            }
-            println!();
-            Ok(CrowValue::done())
-        }
         "type" => {
             if args.len() != 1 { return Err("type[] takes exactly 1 argument".into()); }
             let type_name = if args[0].is_error() {
@@ -64,20 +52,10 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
             };
             Ok(CrowValue::ok(Value::Str(type_name)))
         }
-        "map" => {
-            // map[] creates an empty map
-            if args.is_empty() {
-                Ok(CrowValue::ok(Value::Map(BTreeMap::new())))
-            } else {
-                Err("map[] takes no arguments".to_string())
-            }
-        }
         // --- Math builtins ---
         "abs" => {
             if args.len() != 1 { return Err("abs[] takes exactly 1 argument".into()); }
             match args[0].unwrap_or_propagate()? {
-                Value::Int(n) => crow_runtime::stops::abs(*n).map(|n| CrowValue::ok(Value::Int(n))),
-                Value::Float(n) => Ok(CrowValue::ok(Value::Float(n.abs()))),
                 Value::Dual(a, da) => {
                     // abs'(x) = sign(x) * x'
                     let sign = if *a > 0.0 { 1.0 } else if *a < 0.0 { -1.0 } else { 0.0 };
@@ -89,8 +67,6 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
         "sqrt" => {
             if args.len() != 1 { return Err("sqrt[] takes exactly 1 argument".into()); }
             match args[0].unwrap_or_propagate()? {
-                Value::Int(n) => Ok(CrowValue::ok(Value::Float((*n as f64).sqrt()))),
-                Value::Float(n) => Ok(CrowValue::ok(Value::Float(n.sqrt()))),
                 Value::Dual(a, da) => {
                     // sqrt'(x) = x' / (2*sqrt(x))
                     let s = a.sqrt();
@@ -102,8 +78,6 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
         "floor" => {
             if args.len() != 1 { return Err("floor[] takes exactly 1 argument".into()); }
             match args[0].unwrap_or_propagate()? {
-                Value::Int(n) => Ok(CrowValue::ok(Value::Int(*n))),
-                Value::Float(n) => Ok(CrowValue::ok(Value::Int(n.floor() as i64))),
                 Value::Dual(a, _) => {
                     // floor is a step function, derivative is 0
                     Ok(CrowValue::ok(Value::Dual(a.floor(), 0.0)))
@@ -114,8 +88,6 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
         "ceil" => {
             if args.len() != 1 { return Err("ceil[] takes exactly 1 argument".into()); }
             match args[0].unwrap_or_propagate()? {
-                Value::Int(n) => Ok(CrowValue::ok(Value::Int(*n))),
-                Value::Float(n) => Ok(CrowValue::ok(Value::Int(n.ceil() as i64))),
                 Value::Dual(a, _) => {
                     Ok(CrowValue::ok(Value::Dual(a.ceil(), 0.0)))
                 }
@@ -125,8 +97,6 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
         "round" => {
             if args.len() != 1 { return Err("round[] takes exactly 1 argument".into()); }
             match args[0].unwrap_or_propagate()? {
-                Value::Int(n) => Ok(CrowValue::ok(Value::Int(*n))),
-                Value::Float(n) => Ok(CrowValue::ok(Value::Int(n.round() as i64))),
                 Value::Dual(a, _) => {
                     Ok(CrowValue::ok(Value::Dual(a.round(), 0.0)))
                 }
@@ -145,87 +115,7 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
             Err("append was removed — use concat[a, b] (one merge operation, see language-spec.md)".into())
         }
         // --- CLI / IO builtins ---
-        "args" => {
-            if !args.is_empty() { return Err("args[] takes no arguments".into()); }
-            let cli_args: Vec<CrowValue> = std::env::args()
-                .skip(1) // skip binary name
-                .skip_while(|a| a == "run" || a == "-i" || a.ends_with(".co") || a.ends_with(".coc") || a.ends_with(".crow") || a.ends_with(".crowc"))
-                .map(|a| CrowValue::ok(Value::Str(a)))
-                .collect();
-            Ok(CrowValue::ok(Value::Array(cli_args)))
-        }
-        "input" => {
-            if args.len() > 1 { return Err("input[] takes at most one argument (a prompt)".into()); }
-            let prompt = args.first().map(|p| format!("{}", p.value));
-            match crow_runtime::core::read_line(prompt.as_deref()) {
-                Ok(line) => Ok(CrowValue::ok(Value::Str(line))),
-                Err(e) => Ok(CrowValue::error_with_kind(&e, "io", trace)),
-            }
-        }
-        // --- System builtins ---
-        "time" => {
-            if !args.is_empty() { return Err("time[] takes no arguments".into()); }
-            match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-                Ok(d) => Ok(CrowValue::ok(Value::Float(d.as_secs_f64()))),
-                Err(_) => Ok(CrowValue::error("system time before unix epoch", trace)),
-            }
-        }
-        "sleep" => {
-            if args.len() != 1 { return Err("sleep[] takes exactly 1 argument".into()); }
-            match args[0].unwrap_or_propagate()? {
-                Value::Int(ms) => {
-                    std::thread::sleep(std::time::Duration::from_millis(*ms as u64));
-                    Ok(CrowValue::done())
-                }
-                Value::Float(s) => {
-                    std::thread::sleep(std::time::Duration::from_secs_f64(*s));
-                    Ok(CrowValue::done())
-                }
-                _ => Err("sleep[] requires a number (milliseconds as int, or seconds as float)".into()),
-            }
-        }
-        "env" => {
-            if args.is_empty() || args.len() > 2 { return Err("env[] takes 1 or 2 arguments".into()); }
-            match args[0].unwrap_or_propagate()? {
-                Value::Str(name) => {
-                    match std::env::var(name) {
-                        Ok(val) => Ok(CrowValue::ok(Value::Str(val))),
-                        Err(_) => {
-                            if args.len() == 2 {
-                                // env[key, default] — return default
-                                Ok(args[1].clone())
-                            } else {
-                                // env[key] — return error-value
-                                Ok(CrowValue::error_with_kind(
-                                    &format!("environment variable '{}' not set", name),
-                                    "env",
-                                    trace,
-                                ))
-                            }
-                        }
-                    }
-                }
-                _ => Err("env[] requires a string key".into()),
-            }
-        }
-        "exit" => {
-            if args.len() > 1 { return Err("exit[] takes 0 or 1 arguments".into()); }
-            let code = if args.is_empty() {
-                0
-            } else {
-                match args[0].unwrap_or_propagate()? {
-                    Value::Int(n) => *n as i32,
-                    _ => return Err("exit[] requires an integer".into()),
-                }
-            };
-            std::process::exit(code);
-        }
         // --- Hashing builtin ---
-        // --- Date/time builtins ---
-        "now" => {
-            if !args.is_empty() { return Err("now[] takes no arguments".into()); }
-            Ok(CrowValue::ok(Value::Float(crow_runtime::moments::now())))
-        }
         "assert" => {
             if args.is_empty() || args.len() > 2 {
                 return Err("assert[] takes 1 or 2 arguments".to_string());

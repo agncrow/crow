@@ -1,0 +1,30 @@
+--- The builtins written once per mode are rows now, one function for
+--- both (docs/bug-classes.md, batch 15): log shows its values through the
+--- one display (compiled, an error among several did not build); a plain
+--- number's math is its row, grad's dual numbers keep their own form; env's
+--- default is text, as the variable is; a function value handed ints for
+--- a float parameter reads floats, in any and find as in a call (compiled,
+--- it did not build); a failed comparison reports both sides in both modes
+--- (compiled, it had said only "assertion failed"). A connection and a
+--- mailer show as they display (compiled, logging a connection did not
+--- build).
+use db
+fn half[x]
+    return x / 2
+fn big[x]
+    return half[x] gt 1
+e = error['nope']
+log['a', e, 3, [1.5, 2.0]]
+log[abs[-3], abs[-2.5], sqrt[16], floor[-2.5], ceil[2.1], round[2.5], round[-2.5]]
+p = env['CROW_PARITY_NO_SUCH_VARIABLE', 3000]
+log[p, type[p]]
+log[any[[1, 2, 3], big], any[[1.5, 2.5], big]]
+log[half[3]]
+m = map[]
+log[m, len[m]]
+conn = db.connect['sqlite://:memory:']
+log[conn, 'on `conn`']
+x = 3
+assert[x eq 3]
+assert[x eq 4]
+log['not reached']

@@ -618,6 +618,41 @@ then; the builtins now follow the same rule.
   the run (finch's scanner builds a column from cells the lowering had not
   typed yet).
 
+**Batch 15**: the builtins that had a form of their own in each mode —
+`log`, `map`, `abs`, `sqrt`, `floor`, `ceil`, `round`, `args`, `env`,
+`input`, `exit`, `sleep`, `time` and `now` — with parity 120. Each is a
+row now; on the dual numbers a function `grad` differentiates, the math
+keeps the derivative's own form, in both modes.
+
+- `log` of several values with an error among them (`log['x', e, 3]`) did
+  not build compiled; it shows its values through the one display, which
+  a connection and a mailer now have too (`<db:sqlite>`, `<mailer:host>`;
+  compiled, logging a connection did not build).
+- `env[name, default]` answered a default of another type as that type
+  interpreted and as text compiled, so a value's type depended on the
+  environment: text in both.
+- A negative `sleep` wrapped to a sleep without end, or panicked, in both
+  modes: it stops the program with the reason.
+- `args` was a heuristic interpreted (it dropped a program's leading
+  argument `run`); one function reads the arguments after the source file,
+  or after the program when it runs compiled.
+- A function value handed ints for a float parameter (`any`, `find`) did
+  not build compiled, and read ints interpreted (so `x / 2` was integer
+  division): the ints are floats, as at a call written in the program.
+- A failed comparison in `assert` reported both sides interpreted and only
+  `assertion failed` compiled: both report, in the runtime's words
+  (`display::assert_failed`), each side read once.
+- A rehearsal answered `done` for a file operation, where a run answers
+  empty text.
+
+Of the core builtins, what keeps a form of its own now needs the walker
+or the session: a value's own status (`error`, `captured`), a static
+type's word beside a value's (`type`, aligned in batch 13), a statement
+reporting its operands (`assert`, whose words are the runtime's), the
+session's state (`later`, `running`, `notice`), a function argument the
+walker calls (`any`, `all`, `find`, `grad`), placement (`cpu`, `gpu`,
+`nodes`), a test block, and a chart's tree.
+
 ## Decisions (Vijay, 2026-09-28)
 
 The questions the work raised, each decided as recommended.

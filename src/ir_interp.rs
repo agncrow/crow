@@ -924,7 +924,7 @@ impl IrInterp {
                     if crate::rehearsal::unheld(format!("{}: {} {} {}", self.trace_entry(), lv.value, op, rv.value)) {
                         return Ok(CrowValue::done());
                     }
-                    return Err(format!("assert failed: {}\n    left:  {}\n    right: {}", op, lv.value, rv.value));
+                    return Err(crow_runtime::display::assert_failed(op, &lv.value.to_string(), &rv.value.to_string()));
                 }
                 CrowValue::done()
             }
@@ -1448,6 +1448,11 @@ impl IrInterp {
         // row its arguments' kinds pick, as the emitter picks it by their
         // types
         let name = RUNTIME_TABLE.iter().find(|(_, r)| *r == path).map(|(b, _)| *b).unwrap_or(path).to_string();
+        // a dual number a function grad differentiates takes the
+        // derivative's own form (a plain number's math is its row)
+        if vals.iter().any(|v| matches!(v.value, Value::Dual(..))) {
+            return self.bare_call(&name, vals);
+        }
         match Self::core_row(&name, &vals, self.registry.has_function(&name)) {
             Some(Ok(row)) => (row.take)(vals, &self.trace_entry()),
             Some(Err(refused)) => Err(refused),
@@ -1507,9 +1512,12 @@ impl IrInterp {
             }
         }
         // an effect with a row (the file system's): the row, inside what the
-        // session layer does around it
-        if let Some(r) = Self::core_rows(name, &vals, &self.trace_entry(), false) {
-            return r.map(|v| Self::stamp(name, v));
+        // session layer does around it (a dual number takes grad's own form)
+        let dual = vals.iter().any(|v| matches!(v.value, Value::Dual(..)));
+        if !dual {
+            if let Some(r) = Self::core_rows(name, &vals, &self.trace_entry(), false) {
+                return r.map(|v| Self::stamp(name, v));
+            }
         }
         if let Some(r) = crate::builtins::call(name, &vals, &self.trace_entry()) {
             return r.map(|v| Self::stamp(name, v));
@@ -2080,7 +2088,14 @@ impl IrInterp {
             }
         }
         let mut scope = HashMap::with_capacity_and_hasher(f.params.len(), Names::default());
-        for ((p, _), v) in f.params.iter().zip(vals) {
+        for ((p, pty), v) in f.params.iter().zip(vals) {
+            // an int handed to a float parameter is a float, where the call
+            // is written (the lowering converts it) and where a function
+            // value is called (`any`, `find`, `later`) alike
+            let v = match (pty, &v.value) {
+                (Ty::Float, Value::Int(n)) if v.is_ok() => CrowValue::ok(Value::Float(*n as f64)),
+                _ => v,
+            };
             scope.insert(p.clone(), v);
         }
         // a recursive function's calls nest to the limit and no deeper, as

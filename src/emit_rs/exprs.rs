@@ -328,7 +328,7 @@ impl Emitter {
         Self::holds_numbers(a) && Self::holds_numbers(b) && a != b
     }
 
-    fn binary(&mut self, op: &str, left: &Expr, right: &Expr) -> String {
+    pub(crate) fn binary(&mut self, op: &str, left: &Expr, right: &Expr) -> String {
         // an int made a float for a float operand: when the int can fail, the
         // operator unwraps it and converts the value
         let strip = |e: &Expr, me: &Emitter| -> Expr {
@@ -1444,7 +1444,12 @@ impl Emitter {
         match target {
             Target::User(n) => self.user_call(n, args, arg_strs.to_vec()),
             Target::Module(m, f) => self.module_call(m, f, args, arg_strs, whole),
-            Target::Runtime(_) => match self.row_for(name, args).filter(|_| !(name == "push" && self.queue_push(args))) {
+            // (a web queue's push is the queue's; math on the dual numbers a
+            // function grad differentiates is the derivative's own form)
+            Target::Runtime(_) => match self
+                .row_for(name, args)
+                .filter(|_| !(name == "push" && self.queue_push(args)) && !(self.emitting_dual && matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round")))
+            {
                 Some(row) => self.table_call(row, args, arg_strs, whole),
                 None => match self.builtin(name, args, arg_strs, whole) {
                     Some(s) => s,

@@ -1139,7 +1139,7 @@ Some failures no value can carry. An index reads an element and an int operation
 | an int `/` or `%` by zero | `division by zero`, `modulo by zero` |
 | an int past 64 bits (`+`, `-`, `*`, `^`, `-x`, `abs`) | `integer overflow: 9223372036854775807 + 1 does not fit in 64 bits` |
 | an int to a negative power | `2 ^ -1: an int to a negative power is a fraction — write 2.0 ^ -1 for a float` |
-| `assert[c]` or `assert[c, message]` false | `assertion failed`, `assertion failed: message` |
+| `assert[c]` or `assert[c, message]` false | `assertion failed`, `assertion failed: message`; a comparison, `assert[a eq b]`, says both sides: `assert failed: eq`, then `left: …` and `right: …` as they show, in both modes (compiled, it had said only `assertion failed`) |
 | a recursive function's calls nested past 10000 deep (the line is the function's first) | `recursion deeper than 10000 calls — a function that calls itself needs a case that returns without calling` |
 | a builtin given what it cannot take: a negative size, an axis or a window outside its range, shapes or lengths that do not meet, a frame's column with a missing cell where numbers are taken | the builtin's own reason: `zeros: a size cannot be negative (got -2)`, `sma: a window is 1 row or more (got 0)`, `corr: x and y must be one length, got 3 and 2` |
 
@@ -1184,7 +1184,7 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 | `sqrt[n]` | Square root (returns float) |
 | `floor[n]` | Floor (returns int) |
 | `ceil[n]` | Ceiling (returns int) |
-| `round[n]` | Round to nearest int |
+| `round[n]` | Round to nearest int, a half away from zero (`round[2.5]` is `3`, `round[-2.5]` is `-3`); `floor`, `ceil` and `round` of a float past 64 bits are cut to the largest int, of NaN `0` |
 | `base ^ exp` | Exponentiation (use `^` operator) |
 | `min[a, b]` | Minimum of two numbers |
 | `max[a, b]` | Maximum of two numbers |
@@ -1307,7 +1307,7 @@ A collection builtin takes the kinds its forms above say — a list, a map, text
 | `rm[path]` | Remove file or directory (recursive). Error-value on failure |
 | `mv[src, dst]` | Move/rename file or directory. Error-value on failure |
 | `cp[src, dst]` | Copy file. Error-value on failure |
-| `args[]` | CLI arguments as array of strings |
+| `args[]` | CLI arguments as array of strings: those after the source file when `crow` runs it, after the program when it runs compiled |
 | `input[]` | Read a line from stdin (error-value on failure) |
 | `input[prompt]` | Print prompt, then read a line (error-value on failure) |
 
@@ -1344,9 +1344,9 @@ log[s]                     --- [1,2,3]
 | `rand[n]` | Random int between 0 and n-1 (n must be positive) |
 | `rand[min, max]` | Random int between min and max (inclusive) |
 | `time[]` | Current unix timestamp as float (seconds) |
-| `sleep[ms]` | Sleep for ms milliseconds (int) or seconds (float) |
+| `sleep[ms]` | Sleep for ms milliseconds (int) or seconds (float); a negative time stops the program (in both modes it had wrapped to a sleep without end, or panicked) |
 | `env[name]` | Get environment variable (error-value if not set) |
-| `env[name, default]` | Get environment variable, return default if not set |
+| `env[name, default]` | Get environment variable, return default if not set — as text, as the variable is (`env['PORT', 3000]` is `'3000'` when `PORT` is unset; the interpreter had answered the int) |
 | `exit[]` | Exit with code 0 |
 | `exit[code]` | Exit with given code |
 

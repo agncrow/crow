@@ -33,7 +33,7 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 | `sqrt[n]` | Square root (returns float) | [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) |
 | `floor[n]` | Floor (returns int) | [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) |
 | `ceil[n]` | Ceiling (returns int) | [Numbers and conversion](../by-example/numbers.md) |
-| `round[n]` | Round to nearest int | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) |
+| `round[n]` | Round to nearest int, a half away from zero (`round[2.5]` is `3`, `round[-2.5]` is `-3`); `floor`, `ceil` and `round` of a float past 64 bits are cut to the largest int, of NaN `0` | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) |
 | `base ^ exp` | Exponentiation (use `^` operator) |  |
 | `min[a, b]` | Minimum of two numbers | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Numbers and conversion](../by-example/numbers.md) |
 | `max[a, b]` | Maximum of two numbers | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) · [Numbers and conversion](../by-example/numbers.md) · [Testing](../ch09-00-testing.md) |
@@ -156,7 +156,7 @@ A collection builtin takes the kinds its forms above say — a list, a map, text
 | `rm[path]` | Remove file or directory (recursive). Error-value on failure | [Databases: `use db`](../by-example/db.md) · [Files and directories](../by-example/files.md) · [Frames: `use frame`](../by-example/frames.md) · [Structured files: `use io`](../by-example/io.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Moments and freshness](../by-example/moments.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) |
 | `mv[src, dst]` | Move/rename file or directory. Error-value on failure | [Files and directories](../by-example/files.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `cp[src, dst]` | Copy file. Error-value on failure | [Files and directories](../by-example/files.md) |
-| `args[]` | CLI arguments as array of strings | [The system: shell, environment, time, arguments](../by-example/system.md) |
+| `args[]` | CLI arguments as array of strings: those after the source file when `crow` runs it, after the program when it runs compiled | [The system: shell, environment, time, arguments](../by-example/system.md) |
 | `input[]` | Read a line from stdin (error-value on failure) | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) |
 | `input[prompt]` | Print prompt, then read a line (error-value on failure) | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) |
 
@@ -193,9 +193,9 @@ log[s]                     --- [1,2,3]
 | `rand[n]` | Random int between 0 and n-1 (n must be positive) | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) |
 | `rand[min, max]` | Random int between min and max (inclusive) | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) |
 | `time[]` | Current unix timestamp as float (seconds) | [Frames: `use frame`](../by-example/frames.md) · [Moments and freshness](../by-example/moments.md) · [The system: shell, environment, time, arguments](../by-example/system.md) |
-| `sleep[ms]` | Sleep for ms milliseconds (int) or seconds (float) | [The system: shell, environment, time, arguments](../by-example/system.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) |
+| `sleep[ms]` | Sleep for ms milliseconds (int) or seconds (float); a negative time stops the program (in both modes it had wrapped to a sleep without end, or panicked) | [The system: shell, environment, time, arguments](../by-example/system.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) |
 | `env[name]` | Get environment variable (error-value if not set) | [The system: shell, environment, time, arguments](../by-example/system.md) |
-| `env[name, default]` | Get environment variable, return default if not set | [The system: shell, environment, time, arguments](../by-example/system.md) |
+| `env[name, default]` | Get environment variable, return default if not set — as text, as the variable is (`env['PORT', 3000]` is `'3000'` when `PORT` is unset; the interpreter had answered the int) | [The system: shell, environment, time, arguments](../by-example/system.md) |
 | `exit[]` | Exit with code 0 | [The system: shell, environment, time, arguments](../by-example/system.md) |
 | `exit[code]` | Exit with given code | [The system: shell, environment, time, arguments](../by-example/system.md) |
 

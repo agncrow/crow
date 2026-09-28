@@ -72,6 +72,15 @@ impl Cell {
         }
     }
 
+    /// The cell as text: a number as it displays, a bool as `true` or
+    /// `false`, text itself.
+    pub fn text(&self) -> String {
+        match self {
+            Cell::Text(s) => s.clone(),
+            other => other.shown(),
+        }
+    }
+
     /// The kind of value it is: `a bool`, `null`.
     pub fn kind(&self) -> &'static str {
         match self {

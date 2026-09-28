@@ -82,6 +82,26 @@ pub fn failed(reason: &str) -> String {
     format!("error: {}", reason)
 }
 
+/// `log[a, b, …]`: the values as they show, between spaces, a value that
+/// failed as its reason — one line, in both modes.
+pub fn log(items: &[&dyn CrowDisplay]) {
+    let line: Vec<String> = items.iter().map(|x| x.crow_fmt()).collect();
+    println!("{}", line.join(" "));
+}
+
+/// What a failed `assert[left op right]` says: the comparison and both
+/// sides as they show.
+pub fn assert_failed(op: &str, left: &str, right: &str) -> String {
+    format!("assert failed: {}\n    left:  {}\n    right: {}", op, left, right)
+}
+
+/// Nothing, as a value that answers nothing shows (`done`).
+impl CrowDisplay for () {
+    fn crow_repr(&self) -> String {
+        "done".to_string()
+    }
+}
+
 /// `str[x]`: a value as it shows (text bare, a number as it displays).
 pub fn shown<T: CrowDisplay + ?Sized>(x: &T) -> String {
     x.crow_fmt()
