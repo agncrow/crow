@@ -774,11 +774,13 @@ impl TypeContext {
         }
 
         // A variable ever assigned a float is a float for its whole scope,
-        // and a fact's scope is the program: a view or handler assigning a
-        // fact a float widens it from its declaration. A plain function's
-        // local of the same name is a new binding and says nothing.
+        // and a fact's scope is the program: a function assigning a fact a
+        // float widens it from its declaration. In a ui program a function's
+        // assignment of a fact's name is the fact (fresh_binding), a helper's
+        // too, which the lowering stores: a helper no handler reaches (a
+        // part's, tested alone) stored a float into a fact typed int.
         let mut widened: Vec<String> = Vec::new();
-        if self.views.contains(name) || self.view_handlers.contains(name) {
+        if self.is_ui || self.views.contains(name) || self.view_handlers.contains(name) {
             for f in &self.facts {
                 let before = saved_vars.get(f).cloned().unwrap_or(CrowType::Unknown);
                 if matches!(before, CrowType::Int | CrowType::Unknown)

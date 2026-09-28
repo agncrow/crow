@@ -607,6 +607,48 @@ mod tests {
         assert_eq!(ended.ret, Ty::Unknown);
     }
 
+    /// An int default of a fact a handler stores floats into is a float
+    /// from the start: the interpreter held the int, the compiled program
+    /// converted it.
+    #[test]
+    fn a_facts_int_default_is_a_float_where_it_holds_floats() {
+        let p = lowered("use web, ui\nlevel = 0\nfn raise[x]\n    level = x * 1.5\nview render[]\n    return p['`level`']\npage['/', render]\n");
+        assert_eq!(verify(&p), Vec::<String>::new());
+        let fact = p.parts[0].facts.iter().find(|f| f.name == "level").expect("the fact");
+        assert_eq!(fact.ty, Ty::Float);
+        assert!(matches!(fact.default, Expr::Convert { how: Convert::IntToFloat, .. }), "{:?}", fact.default);
+    }
+
+    /// An int returned by a function whose value is a float is the float
+    /// (the interpreter handed its caller the int: the layout engine's
+    /// `lay_lines`).
+    #[test]
+    fn an_int_returned_where_the_function_is_a_float_is_the_float() {
+        let p = lowered("fn lines[w]\n    if w lte 0.0\n        return 1.0\n    return ceil[w / 3.0]\nlog[lines[7.0]]\n");
+        assert_eq!(verify(&p), Vec::<String>::new());
+        let f = p.parts[0].fns.iter().find(|f| f.name == "lines").expect("lines");
+        let converted = f.body.iter().any(|s| matches!(s, Stmt::Return(Some(Expr::Convert { how: Convert::IntToFloat, .. }))));
+        assert!(converted, "{:?}", f.body);
+    }
+
+    /// Numbers written as a literal, a tensor, handed to a parameter
+    /// another call made a list, are converted where they meet: the
+    /// generated Rust did not build.
+    #[test]
+    fn a_tensor_handed_where_a_list_is_taken_is_converted() {
+        let p = lowered("fn first[xs]\n    return xs[0]\nfn grown[b]\n    xs = []\n    xs = push[xs, b]\n    return first[xs]\nlog[grown[2.5]]\nlog[first[[1.5, 2.5]]]\n");
+        assert_eq!(verify(&p), Vec::<String>::new());
+        let mut converted = false;
+        for s in &p.parts[0].main {
+            crate::ir::visit_stmts(std::slice::from_ref(s), &mut |st| {
+                if let Stmt::Do(e) = st {
+                    crate::ir::visit_expr(e, &mut |x| converted |= matches!(x, Expr::Convert { how: Convert::ToList, .. }));
+                }
+            });
+        }
+        assert!(converted, "{:?}", p.parts[0].main);
+    }
+
     #[test]
     fn a_read_of_an_unbound_local_is_found() {
         let mut p = lowered("x = 1\nlog[x]\n");
