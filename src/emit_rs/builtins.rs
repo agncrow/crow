@@ -291,13 +291,6 @@ impl Emitter {
 
     // ── the builtins ────────────────────────────────────────────────
 
-    /// A call of the shared runtime's function at `path` (below
-    /// `crow_runtime::`), with its arguments as printed.
-    pub(crate) fn runtime(&mut self, path: &str, args: &[String]) -> String {
-        self.needs_crow_runtime = true;
-        format!("crow_runtime::{}({})", path, args.join(", "))
-    }
-
     pub(crate) fn builtin(&mut self, name: &str, args: &[Expr], a: &[String], whole: &Expr) -> Option<String> {
         let n = a.len();
         let ty0 = args.first().map(|x| self.tt(x)).unwrap_or(CrowType::Unknown);
@@ -371,34 +364,8 @@ impl Emitter {
                     a[0].clone()
                 }
             }
-            "min" | "max" if n == 2 => {
-                let t1 = self.tt(&args[0]);
-                let t2 = self.tt(&args[1]);
-                if t1 == CrowType::Float || t2 == CrowType::Float {
-                    format!("(({}) as f64).{}(({}) as f64)", a[0], name, a[1])
-                } else {
-                    format!("std::cmp::{}({}, {})", name, a[0], a[1])
-                }
-            }
             // text
             // text: one implementation, crow_runtime::text, for both modes
-            "split" if n == 2 => self.runtime("text::split", &[format!("&({})", a[0]), format!("&({})", a[1])]),
-            "trim" if n == 1 => self.runtime("text::trim", &[format!("&({})", a[0])]),
-            "replace" if n == 3 => self.runtime("text::replace", &[format!("&({})", a[0]), format!("&({})", a[1]), format!("&({})", a[2])]),
-            "upper" if n == 1 => self.runtime("text::upper", &[format!("&({})", a[0])]),
-            "lower" if n == 1 => self.runtime("text::lower", &[format!("&({})", a[0])]),
-            "join" if n == 2 => {
-                if Self::is_empty_list(&args[0]) {
-                    format!("{{ let _ = &{}; String::new() }}", a[1])
-                } else if matches!(ty0, CrowType::NumArray(_)) {
-                    self.needs_crow_runtime = true;
-                    format!("crow_runtime::core::join_floats(&{}.to_vec(), &{})", a[0], a[1])
-                } else {
-                    format!("{}.iter().map(|s| s.to_string()).collect::<Vec<String>>().join(&{})", a[0], a[1])
-                }
-            }
-            "starts" if n == 2 => self.runtime("text::starts", &[format!("&({})", a[0]), format!("&({})", a[1])]),
-            "ends" if n == 2 => self.runtime("text::ends", &[format!("&({})", a[0]), format!("&({})", a[1])]),
             "captured" if n == 1 => {
                 self.needs_crow_runtime = true;
                 if matches!(ty0, CrowType::Result(_)) {
@@ -417,51 +384,7 @@ impl Emitter {
                 self.needs_crow_runtime = true;
                 "crow_runtime::moments::now()".to_string()
             }
-            "fmt" if n == 9 => {
-                self.needs_crow_runtime = true;
-                if !matches!(Self::lit_str(&args[7]), Some("")) {
-                    format!("match crow_runtime::moments::fmt_time(({}) as f64, &{}, &{}) {{ Ok(s) => s, Err(e) => format!(\"[fmt: {{}}]\", e) }}", a[0], a[7], a[8])
-                } else if matches!(in0, CrowType::Str) {
-                    format!("crow_runtime::display::crow_fmt_str(&{}, {}, {}, &{}, &{}, {}){}", a[0], a[1], a[3], a[4], a[5], a[6], self.or_stop())
-                } else {
-                    format!("crow_runtime::display::crow_fmt_f64(({}) as f64, {}, {}, {}, &{}, &{}, {}){}", a[0], a[1], a[2], a[3], a[4], a[5], a[6], self.or_stop())
-                }
-            }
             // conversions
-            "int" if n == 1 => {
-                let tr = self.trace_format_expr();
-                match in0 {
-                    CrowType::Int => a[0].clone(),
-                    CrowType::Float => format!("({}) as i64", a[0]),
-                    CrowType::Str => format!(
-                        "{{ let _int_arg = &({}); match _int_arg.parse::<i64>() {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_) => CrowResult {{ ok: false, value: 0_i64, reason: format!(\"cannot convert '{{}}' to int\", _int_arg), kind: \"parse\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
-                        a[0], tr
-                    ),
-                    CrowType::Bool => format!("if {} {{ 1_i64 }} else {{ 0_i64 }}", a[0]),
-                    CrowType::Json => format!(
-                        "{{ let _j = &({}); match _j.as_i64().or_else(|| _j.as_f64().map(|f| f as i64)).or_else(|| _j.as_str().and_then(|s| s.trim().parse::<i64>().ok())) {{ Some(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, None => CrowResult {{ ok: false, value: 0_i64, reason: format!(\"cannot convert {{}} to int\", _j), kind: \"parse\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
-                        a[0], tr
-                    ),
-                    _ => format!("({}) as i64", a[0]),
-                }
-            }
-            "float" if n == 1 => {
-                let tr = self.trace_format_expr();
-                match in0 {
-                    CrowType::Float => a[0].clone(),
-                    CrowType::Int => format!("({}) as f64", a[0]),
-                    CrowType::Str => format!(
-                        "{{ let _float_arg = &({}); match _float_arg.parse::<f64>() {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_) => CrowResult {{ ok: false, value: 0.0_f64, reason: format!(\"cannot convert '{{}}' to float\", _float_arg), kind: \"parse\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
-                        a[0], tr
-                    ),
-                    CrowType::Bool => format!("if {} {{ 1.0_f64 }} else {{ 0.0_f64 }}", a[0]),
-                    CrowType::Json => format!(
-                        "{{ let _j = &({}); match _j.as_f64().or_else(|| _j.as_str().and_then(|s| s.trim().parse::<f64>().ok())) {{ Some(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, None => CrowResult {{ ok: false, value: 0.0_f64, reason: format!(\"cannot convert {{}} to float\", _j), kind: \"parse\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
-                        a[0], tr
-                    ),
-                    _ => format!("({}) as f64", a[0]),
-                }
-            }
             "str" if n == 1 => match in0 {
                 CrowType::Str => a[0].clone(),
                 CrowType::Json => format!("{{ let _j = &({}); match _j.as_str() {{ Some(s) => s.to_string(), None => _j.to_string() }} }}", a[0]),
@@ -603,14 +526,6 @@ impl Emitter {
                     "{{ match crow_runtime::core::read_line({}) {{ Ok(line) => CrowResult {{ ok: true, value: line, reason: String::new(), kind: String::new(), trace: vec![], captured: {} }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e, kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
                     prompt, STAMP, tr
                 )
-            }
-            "rand" => {
-                self.needs_crow_runtime = true;
-                match n {
-                    0 => "crow_runtime::core::rand_float()".to_string(),
-                    1 => format!("crow_runtime::core::rand_int(({}) as i64){}", a[0], self.or_stop()),
-                    _ => format!("crow_runtime::core::rand_between(({}) as i64, ({}) as i64){}", a[0], a[1], self.or_stop()),
-                }
             }
             "seed" if n == 1 => {
                 self.needs_crow_runtime = true;
@@ -867,14 +782,6 @@ impl Emitter {
                 format!(
                     "{{ match crow_runtime::core::shell(&*{}) {{ Ok(sh) => CrowResult {{ ok: true, value: CrowShell {{ status: sh.status, stdout: sh.stdout, stderr: sh.stderr }}, reason: String::new(), kind: String::new(), trace: vec![], captured: {} }}, Err(e) => CrowResult {{ ok: false, value: CrowShell {{ status: -1, stdout: String::new(), stderr: String::new() }}, reason: e, kind: \"shell\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
                     a[0], STAMP, tr
-                )
-            }
-            "hash" if n == 2 => {
-                self.needs_crow_runtime = true;
-                let tr = self.trace_format_expr();
-                format!(
-                    "{{ match crow_runtime::hash::hash(&*{}, &*{}) {{ Ok(h) => CrowResult {{ ok: true, value: h, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e, kind: \"hash\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
-                    a[0], a[1], tr
                 )
             }
             // search: a parallel early exit

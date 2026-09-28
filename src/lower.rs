@@ -484,6 +484,10 @@ impl<'a> Namer<'a> {
 /// typed as its payload (the IR's unwrap).
 pub const KNOWN: &str = "__known";
 
+/// `fmt[t, time = style, tz = zone]` once its named arguments are lowered:
+/// a moment's time style, a row of its own that can fail (crate::table).
+pub const FMT_TIME: &str = "__fmt_time";
+
 /// A guard narrows (spec, Errors in Conditions): after `if not x.ok` with
 /// no `else`, whose branch always leaves (`return`, `break`, `continue`),
 /// `x` is known good for the rest of its block, and `if not a.ok or not
@@ -868,8 +872,9 @@ impl Lowerer {
                         Expr::Call { callee: Box::new(callee), args: resolved }
                     }
                     // fmt has a full named signature with sentinel defaults
-                    // (decimals < 0 / width 0 / align '' mean "unset") so both
-                    // modes always receive exactly 7 positional args
+                    // (decimals < 0 / width 0 / align '' mean "unset"): both
+                    // modes receive the 7 of a number's or a text's options,
+                    // or the 3 of a moment's time style
                     Some("fmt") if !self.fns.contains_key("fmt") => {
                         let params: Vec<String> = ["value", "decimals", "commas", "width", "align", "fill", "percent", "time", "tz"]
                             .iter().map(|s| s.to_string()).collect();
@@ -885,7 +890,17 @@ impl Lowerer {
                             Some(Expr::Str("UTC".to_string())),
                         ];
                         let resolved = self.resolve_args("fmt", &params, &defaults, args)?;
-                        Expr::Call { callee: Box::new(callee), args: resolved }
+                        // a moment's time style is a row of its own, which
+                        // can fail (kind 'time'); a number's and a text's
+                        // options are the other's (crate::table)
+                        // (an internal name: lowered again, as a derivation's
+                        // body is, the call is left as it is)
+                        let timed = !matches!(resolved.get(7), Some(Expr::Str(s)) if s.is_empty());
+                        if timed {
+                            Expr::Call { callee: Box::new(Expr::Ident(crate::lower::FMT_TIME.to_string())), args: vec![resolved[0].clone(), resolved[7].clone(), resolved[8].clone()] }
+                        } else {
+                            Expr::Call { callee: Box::new(callee), args: resolved[..7].to_vec() }
+                        }
                     }
                     // moment[year, month, day, hour = 0, minute = 0,
                     // second = 0, tz = 'UTC'] — the tz-aware constructor.
@@ -1455,5 +1470,16 @@ mod tests {
         assert!(known_reads(&looped).is_empty(), "{:?}", known_reads(&looped));
         let nested = lower_src("fn f[s, c]\n    x = int[s]\n    if c\n        if not x.ok\n            return 0\n        y = x\n    return x\n").unwrap();
         assert_eq!(known_reads(&nested), vec!["x".to_string()], "only the read inside the inner block");
+    }
+
+    /// Lowering a lowered program changes nothing: a derivation's body is
+    /// lowered again, and `fmt`'s time style, lowered to three arguments,
+    /// was read the second time as a number's decimals and commas.
+    #[test]
+    fn lowering_twice_is_lowering_once() {
+        let src = "t = now[]\na = fmt[t, time = 'time', tz = 'America/New_York']\nb = fmt[2.5, decimals = 1]\n";
+        let once = lower_src(src).unwrap();
+        let twice = lower_program(&once).unwrap();
+        assert_eq!(format!("{:?}", once), format!("{:?}", twice));
     }
 }

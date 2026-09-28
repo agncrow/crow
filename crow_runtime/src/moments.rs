@@ -164,6 +164,16 @@ pub fn parse_time(text: &str, tz: &str) -> Result<f64, String> {
 
 /// Render a moment. Styles are named words, not a mini-language:
 /// 'iso' (RFC3339), 'date', 'time', 'datetime'.
+/// `fmt[t, time = style, tz = zone]`: the moment in a time style — or, for
+/// a style held in a variable that is empty, the number `fmt[t]` writes;
+/// a style or a zone it does not know is the error value (kind `'time'`).
+pub fn fmt_moment(t: f64, style: &str, tz: &str) -> Result<String, String> {
+    if style.is_empty() {
+        return crate::display::crow_fmt_f64(t, -1, false, 0, "", " ", false);
+    }
+    fmt_time(t, style, tz)
+}
+
 pub fn fmt_time(t: f64, style: &str, tz: &str) -> Result<String, String> {
     let z = zone(tz)?;
     let secs = t.floor() as i64;

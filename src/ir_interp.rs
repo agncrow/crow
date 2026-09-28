@@ -1460,11 +1460,22 @@ impl IrInterp {
     /// A runtime builtin by its table name (`core.push`) or its own name.
     fn runtime_call(&mut self, path: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
         // a builtin with a row is its runtime function, read and dispatched
-        // as the row says, the same call the compiled program prints
-        if let Some(row) = crate::table::by_id(path) {
+        // as the row says, the same call the compiled program prints: the
+        // row its arguments' kinds pick, as the emitter picks it by their
+        // types
+        let name = RUNTIME_TABLE.iter().find(|(_, r)| *r == path).map(|(b, _)| *b).unwrap_or(path).to_string();
+        let kinds: Vec<crate::table::Arg> = vals.iter().map(crate::table::Arg::of_value).collect();
+        if let Some(row) = crate::table::core_row(&name, &kinds) {
             return (row.call)(&vals, &self.trace_entry());
         }
-        let name = RUNTIME_TABLE.iter().find(|(_, r)| *r == path).map(|(b, _)| *b).unwrap_or(path).to_string();
+        // none takes them, and no module answers the name (math's min of a
+        // tensor, frame's join of frames): the refusal the lowering gives
+        // when it knows the kinds
+        if crate::table::has_core_rows(&name) && !self.registry.has_function(&name) {
+            if let Some(e) = crate::table::refusal(&[""], &name, &kinds) {
+                return Err(e);
+            }
+        }
         self.bare_call(&name, vals)
     }
 
@@ -2015,6 +2026,11 @@ impl IrInterp {
             return self.transact(vals);
         }
         if OVERLAPPING.contains(&name) && !vals.iter().any(|v| matches!(v.value, Value::NumArray(_))) {
+            // math.min[1, 2]: the core's row, as the bare call's
+            let kinds: Vec<crate::table::Arg> = vals.iter().map(crate::table::Arg::of_value).collect();
+            if let Some(row) = crate::table::core_row(name, &kinds) {
+                return (row.call)(&vals, &self.trace_entry());
+            }
             if let Some(r) = crate::builtins::call(name, &vals, &self.trace_entry()) {
                 return r;
             }

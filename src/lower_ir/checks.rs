@@ -94,7 +94,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     // Regex
     "find", "matches", "sub", "any", "all",
     "later", "running", "notice", "__notice_text", "__notice_at",
-    "sign_in", "sign_out", "__reader", "__known", "download",
+    "sign_in", "sign_out", "__reader", "__known", "__fmt_time", "download",
     "test",
     // Date/time
     "now", "moment", "calendar", "parse_time", "captured", "chart",
@@ -767,7 +767,20 @@ impl<'a> Lowerer<'a> {
                     ));
                 }
             }
-            if !builtin_arity_ok(name, argc) {
+            // a builtin with rows takes the counts and kinds its rows take —
+            // the core's, and a loaded module's of the same name (math's
+            // min of a tensor) — refused before either mode runs, in the
+            // table's words (the interpreter stopped on the value, the
+            // compiled program did not build)
+            if crate::table::has_core_rows(name) {
+                let kinds: Vec<crate::table::Arg> = (0..argc).map(|i| crate::table::Arg::of_type(&arg_type(self, i))).collect();
+                let providers: Vec<String> = self.ctx.registry.providers_of(name).into_iter().map(str::to_string).collect();
+                let mut modules: Vec<&str> = vec![""];
+                modules.extend(providers.iter().map(String::as_str));
+                if let Some(e) = crate::table::refusal(&modules, name, &kinds) {
+                    self.refuse(e);
+                }
+            } else if !builtin_arity_ok(name, argc) {
                 self.refuse(format!("wrong number of arguments for '{}'", name));
             }
             return;
@@ -824,24 +837,18 @@ fn returns_value(body: &[S]) -> bool {
 }
 
 /// Whether a builtin takes this many arguments (after named arguments are
-/// lowered to positions).
+/// lowered to positions); a builtin with rows is counted by them
+/// (crate::table).
 fn builtin_arity_ok(name: &str, argc: usize) -> bool {
     match name {
         "log" | "assert" => argc >= 1,
         "type" => argc == 1,
         "abs" | "sqrt" | "floor" | "ceil" | "round" => argc == 1,
-        "min" | "max" => argc == 2,
-        "split" => argc == 2,
-        "trim" | "upper" | "lower" => argc == 1,
-        "replace" => argc == 3,
-        "join" => argc == 2,
-        "starts" | "ends" => argc == 2,
-        "int" | "float" | "str" => argc == 1,
+        "str" => argc == 1,
         "len" => argc == 1,
         "contains" => argc == 2,
         "slice" => argc == 3,
         "repeat" => argc == 2,
-        "fmt" => argc == 9,
         "moment" => argc == 7,
         "calendar" | "parse_time" => argc == 2,
         "now" => argc == 0,
@@ -870,7 +877,6 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "rm" => argc == 1,
         "mv" => argc == 2,
         "cp" => argc == 2,
-        "rand" => argc <= 2,
         "time" => argc == 0,
         "sleep" => argc == 1,
         "env" => argc == 1 || argc == 2,
@@ -883,7 +889,6 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "grad" => argc == 1,
         // Shell / Hash / Regex / Date
         "shell" => argc == 1,
-        "hash" => argc == 2,
         "find" | "matches" | "any" | "all" => argc == 2,
         "sub" => argc == 3,
         "date" => argc == 3,
@@ -1103,7 +1108,10 @@ mod tests {
 
     #[test]
     fn test_wrong_arg_count_builtin() {
-        assert!(check_source("x = min[1]\n").unwrap_err().contains("wrong number of arguments for 'min'"));
+        assert!(check_source("x = min[1]\n").unwrap_err().contains("min[] takes 2 arguments, got 1"));
+        // a kind no row takes is refused before either mode runs
+        assert!(check_source("x = min['a', 'b']\n").unwrap_err().contains("min[] takes an int and an int or a number and a number, got text and text"));
+        assert!(check_source("x = trim[3]\n").unwrap_err().contains("trim[] takes text, got an int"));
     }
 
     #[test]

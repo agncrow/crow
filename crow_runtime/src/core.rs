@@ -159,6 +159,33 @@ pub fn rand_between(min: i64, max: i64) -> Result<i64, String> {
 
 /// `join[tensor, sep]`: a whole number prints without a decimal point,
 /// as it does in a list, everything else as the number is.
+/// `min[a, b]` of two ints.
+pub fn min_ints(a: i64, b: i64) -> i64 {
+    a.min(b)
+}
+
+/// `max[a, b]` of two ints.
+pub fn max_ints(a: i64, b: i64) -> i64 {
+    a.max(b)
+}
+
+/// `min[a, b]` of numbers (an int beside a float is a float): the other
+/// when one is NaN.
+pub fn min_floats(a: f64, b: f64) -> f64 {
+    a.min(b)
+}
+
+/// `max[a, b]` of numbers.
+pub fn max_floats(a: f64, b: f64) -> f64 {
+    a.max(b)
+}
+
+/// `join[items, sep]`: the items' words (`crate::cell::Words`) between
+/// separators.
+pub fn join_words(items: &[String], sep: &str) -> String {
+    items.join(sep)
+}
+
 pub fn join_floats(v: &[f64], sep: &str) -> String {
     v.iter()
         .map(|&x| if x == (x as i64) as f64 && x.is_finite() { (x as i64).to_string() } else { x.to_string() })

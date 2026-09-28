@@ -416,6 +416,37 @@ Left: a column whose every cell is missing reads as text when the
 interpreter copies it (it has no cell to read the kind from); `save`
 fails as a value interpreted and stops compiled (the effects batch).
 
+**Batch 9**: the pure core builtins — text (`split`, `trim`, `replace`,
+`upper`, `lower`, `starts`, `ends`, `join`), `min` and `max`, `hash`,
+`fmt`, `int`, `float` and `rand` — with parity 113. `abs`, `sqrt`,
+`floor`, `ceil` and `round` have a form of their own: a function `grad`
+differentiates takes them on dual numbers. `str`, `json` and `encode`
+(any value's display and JSON), the collections and the effects are still
+written twice.
+
+- A builtin handed a count or a kind no row takes is refused before the
+  program runs, in the table's words, for a core row as for a module's:
+  `min['a', 'b']` is `min[] takes an int and an int or a number and a
+  number, got text and text`. The compiled program had compared the text.
+- `fmt` with a time style that is none was an error value interpreted and
+  the text `[fmt: …]` compiled, typed as text in both. A moment's time
+  style is a row of its own now, typed as able to fail (kind `'time'`).
+- `int` and `float` of a JSON value: compiled, JSON text was trimmed and a
+  JSON bool refused. One rule reads a scalar now (`crow_runtime::cell`).
+- Indexing JSON:
+  - a value indexed twice did not build compiled;
+  - a failed parse, indexed, read `null` compiled, where the interpreter
+    handed the error on;
+  - a `null` element was a good value compiled and an error interpreted.
+- The index rule was written three times in inference, and the copies
+  disagreed. A column's cell was text in one and dynamic in another, and
+  two dropped the failure of a value that can fail, so a failed
+  `io.lines` indexed read an empty list compiled. There is one rule now
+  (`index_type`).
+- Core rows are chosen by their arguments' kinds in all three places —
+  the interpreter, the emitter and inference — as module rows are: `min`
+  of two ints is an int, of a float a float.
+
 ## Decisions (Vijay, 2026-09-28)
 
 The questions the work raised, each decided as recommended.

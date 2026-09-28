@@ -1,0 +1,35 @@
+--- The pure core builtins are rows of the builtin table (docs/bug-classes.md
+--- §4): text, conversions, min and max, hash, fmt and rand, one function
+--- each that both modes call. A time style that is none was an error value
+--- interpreted and the text "[fmt: …]" compiled; a JSON value indexed twice
+--- did not build compiled, a failed parse indexed read null there, and a
+--- JSON bool was 1 interpreted and refused compiled.
+t = moment[2026, 7, 14, hour = 13]
+s = fmt[t, time = 'weekly']
+log[s.ok]
+log[s.kind]
+log[fmt[t, time = 'date', tz = 'UTC']]
+log[fmt[1234567.891, decimals = 2, commas = true]]
+j = json['{"a": [1, 2.5, "x"], "b": null, "t": true}']
+log[int[j['a'][0]] + 1]
+log[float[j['a'][1]] * 2.0]
+log[int[j['t']]]
+n = j['b']
+log[n.ok]
+log[n.reason]
+bad = json['{nope']
+v = bad['a']
+log[v.ok]
+log[join[['x', 'y'], '-']]
+xs = []
+for i in range[3]
+    xs = push[xs, i * 2]
+log[join[xs, ',']]
+log[min[2, 3.5]]
+log[max[7, 3]]
+h = hash['abc', 'crc']
+log[h.ok]
+log[split['a,b', ',']]
+log[int[' 12 '].ok]
+log[fmt[2.5, align = 'middle']]
+log['not reached']

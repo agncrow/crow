@@ -582,6 +582,8 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
     *t == Ty::Unknown
         || match k.each() {
             Kind::Int | Kind::Float => matches!(t, Ty::Int | Ty::Float),
+            Kind::Whole => *t == Ty::Int,
+            Kind::Words => matches!(t, Ty::Tensor(_)) || items(t, &|e| matches!(e, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup)),
             Kind::Bool => *t == Ty::Bool,
             Kind::Str => matches!(t, Ty::Str | Ty::Markup),
             Kind::Tensor => matches!(t, Ty::Tensor(_)) || items(t, &|_| false),
@@ -590,7 +592,7 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::Bools => items(t, &|e| *e == Ty::Bool),
             Kind::Sparse => matches!(t, Ty::Handle(h) if h == "sparse"),
             Kind::Frame => matches!(t, Ty::Frame(_)),
-            Kind::Cell => cell(t),
+            Kind::Cell => cell(t) || *t == Ty::Json,
             // a column's values: a list of cells, a tensor, a column, a cell
             Kind::Cells => cell(t) || matches!(t, Ty::Tensor(_) | Ty::Column(_)) || items(t, &|e| cell(e)),
             _ => true,

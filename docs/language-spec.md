@@ -1153,6 +1153,8 @@ An int never wraps round, in any mode or build, and a float never stops: a float
 
 The functions available in every file without an import. These names are reserved — a definition may not reuse them (see Design Note: Names Are Never Ambiguous). Module functions (`use math`, `use frame`, …) are in section 13.
 
+A builtin handed a number of arguments, or a kind of argument, it does not take is refused before the program runs, in both modes, naming what it takes: `min['a', 'b']` is `min[] takes an int and an int or a number and a number, got text and text`. (The interpreter had stopped on the value while the compiled program did not build — or, for `min` of text, compared it.) An argument whose kind is known only as the program runs — a JSON value, a cell nothing typed — is read then, by the same rule.
+
 
 ### Core
 
@@ -1245,8 +1247,8 @@ log['P&L: `money[pnl]`']
 
 | Function | Description |
 |----------|-------------|
-| `int[value]` | Convert to int (error-value on failure) |
-| `float[value]` | Convert to float (error-value on failure) |
+| `int[value]` | Convert to int: a float is cut toward zero (the largest int past its range), a bool is 1 or 0, text is parsed as written — no spaces around it — and text or a JSON value that names no int is an error value of kind `'parse'` |
+| `float[value]` | Convert to float, as `int` reads its value |
 | `str[value]` | Convert to string |
 | `type[value]` | Type name as string: `'int'`, `'float'`, `'str'`, `'bool'`, `'array'`, `'map'`, `'fn'`, `'none'`, `'error'`, or struct name |
 
@@ -1308,7 +1310,7 @@ type[error['x']]  --- 'error'
 
 | Function | Description |
 |----------|-------------|
-| `json[str]` | Parse JSON string into a Crow value (error-value on failure) |
+| `json[str]` | Parse JSON string into a Crow value (error-value on failure). Indexing the value reads its elements; a parse that failed, indexed, hands its error on, and an element that is JSON's `null` is an error value of reason `null` (kind `'parse'`), in both modes |
 | `encode[value]` | Encode a Crow value as a JSON string; a whole float prints as an int, a NaN or infinite float as `null`, an error value as `null` |
 
 JSON type mapping: objects → maps, arrays → arrays, strings → str, numbers → int/float, booleans → bool, `null` → error-value. Parsed JSON is dynamic data — the map homogeneity rule applies to maps you construct, not to values parsed from JSON (open-schema data is exactly what `json[]` is for). JSON `null` maps to an error-value with `ok: false` and `reason: 'null'`, which auto-propagates through the error-value system (section 10).
@@ -1397,7 +1399,7 @@ date type exists.
 | `moment[y, m, d, hour = 0, minute = 0, second = 0, tz = 'UTC']` | Build a moment from calendar components in a named timezone |
 | `calendar[t, tz = 'UTC']` | Calendar components of a moment: `year month day hour minute second weekday` (weekday 1 = Monday) |
 | `parse_time[text, tz = 'UTC']` | Parse RFC3339, or `'YYYY-MM-DD[ HH:MM[:SS]]'` read in the named zone |
-| `fmt[t, time = 'iso' \| 'date' \| 'time' \| 'datetime', tz = 'UTC']` | Render a moment |
+| `fmt[t, time = 'iso' \| 'date' \| 'time' \| 'datetime', tz = 'UTC']` | Render a moment; a style or a zone it does not know is an error value of kind `'time'` (compiled, it had been the text `[fmt: …]`), so the call can fail as any moment builtin can |
 
 ```
 open_bell = moment[2026, 7, 14, hour = 9, minute = 30, tz = 'America/New_York']

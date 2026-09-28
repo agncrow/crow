@@ -32,6 +32,9 @@ use crow_runtime::tensor::CrowTensor;
 pub enum Kind {
     /// `i64`: an int, or a float cut toward zero (as `as i64` does).
     Int,
+    /// `i64`: an int only — a row beside a float's row of the same name
+    /// (`min` of two ints is an int, of a float a float).
+    Whole,
     /// `f64`: a float, or an int.
     Float,
     Bool,
@@ -73,6 +76,9 @@ pub enum Kind {
     /// `&[&[String]]` taken: the rest of the arguments, each a list of
     /// text (`group`'s `[column, how]`).
     Lists,
+    /// `&[String]` taken: a list's items as text, a number as it displays
+    /// (`join`'s items, `crow_runtime::cell::Words`).
+    Words,
 }
 
 /// What a failure of the function is.
@@ -126,7 +132,7 @@ impl Row {
 impl Kind {
     pub fn crow_type(self) -> CrowType {
         match self {
-            Kind::Int => CrowType::Int,
+            Kind::Int | Kind::Whole => CrowType::Int,
             Kind::Float => CrowType::Float,
             Kind::Bool => CrowType::Bool,
             Kind::Str => CrowType::Str,
@@ -142,6 +148,7 @@ impl Kind {
             Kind::Bools => CrowType::Array(Box::new(CrowType::Bool)),
             Kind::Cell | Kind::Cells => CrowType::Unknown,
             Kind::Lists => CrowType::Array(Box::new(CrowType::Array(Box::new(CrowType::Str)))),
+            Kind::Words => CrowType::Array(Box::new(CrowType::Str)),
         }
     }
 
@@ -149,13 +156,14 @@ impl Kind {
     /// a rest parameter's, as its [`Kind::each`]).
     pub fn print(self, arg: &str) -> String {
         match self.each() {
-            Kind::Int => format!("({}) as i64", arg),
+            Kind::Int | Kind::Whole => format!("({}) as i64", arg),
             Kind::Float => format!("({}) as f64", arg),
             Kind::Bool => format!("({})", arg),
             Kind::Str => format!("&*({})", arg),
             Kind::Unit => format!("({})", arg),
             Kind::Strs | Kind::Bools => format!("&({})[..]", arg),
-            Kind::Cell => format!("&crow_runtime::frames::Cell::from(({}).clone())", arg),
+            Kind::Cell => format!("&crow_runtime::cell::Cell::from(({}).clone())", arg),
+            Kind::Words => format!("&crow_runtime::cell::words(&({}))[..]", arg),
             Kind::Cells => format!("crow_runtime::frames::Cells::from(({}).clone())", arg),
             _ => format!("&({})", arg),
         }
@@ -180,7 +188,7 @@ impl Kind {
     /// The value the compiled program holds for a failed call of this kind.
     pub fn default_rust(self) -> &'static str {
         match self {
-            Kind::Int => "0_i64",
+            Kind::Int | Kind::Whole => "0_i64",
             Kind::Float => "0.0_f64",
             Kind::Bool => "false",
             Kind::Str => "String::new()",
@@ -193,9 +201,10 @@ impl Kind {
             Kind::Frame => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])",
             Kind::Strs => "Vec::<String>::new()",
             Kind::Bools => "Vec::<bool>::new()",
-            Kind::Cell => "crow_runtime::frames::Cell::Int(0)",
-            Kind::Cells => "crow_runtime::frames::Cells::One(crow_runtime::frames::Cell::Int(0))",
+            Kind::Cell => "crow_runtime::cell::Cell::Int(0)",
+            Kind::Cells => "crow_runtime::frames::Cells::One(crow_runtime::cell::Cell::Int(0))",
             Kind::Lists => "Vec::<Vec<String>>::new()",
+            Kind::Words => "Vec::<String>::new()",
         }
     }
 }
@@ -389,15 +398,47 @@ pub fn read_bools(v: &CrowValue) -> Result<Vec<bool>, String> {
     }
 }
 
-/// A value for a frame's cell.
-pub fn read_cell(v: &CrowValue) -> Result<crow_runtime::frames::Cell, String> {
-    use crow_runtime::frames::Cell;
+/// A scalar, as the compiled program's `Cell::from` reads its typed value:
+/// a number, text or a bool; a parsed JSON value's `null`, list or map is
+/// named for the builtin to refuse.
+pub fn read_cell(v: &CrowValue) -> Result<crow_runtime::cell::Cell, String> {
+    use crow_runtime::cell::Cell;
     match &v.value {
         Value::Int(n) => Ok(Cell::Int(*n)),
         Value::Float(x) => Ok(Cell::Float(*x)),
         Value::Bool(b) => Ok(Cell::Bool(*b)),
         Value::Str(s) => Ok(Cell::Text(s.clone())),
+        Value::Done => Ok(Cell::Null),
+        Value::Array(_) => Ok(Cell::Other("a list")),
+        Value::Map(_) => Ok(Cell::Other("a map")),
         _ => Err(format!("expected a number, text or a bool, got {}", named(v))),
+    }
+}
+
+/// A list's items as the text `join` writes them, as the compiled
+/// program's `Words` reads its typed list.
+pub fn read_words(v: &CrowValue) -> Result<Vec<String>, String> {
+    match &v.value {
+        Value::Array(items) => items
+            .iter()
+            .map(|i| match &i.value {
+                Value::Str(s) => Ok(s.clone()),
+                Value::Int(n) => Ok(n.to_string()),
+                Value::Float(x) => Ok(x.to_string()),
+                Value::Bool(b) => Ok(b.to_string()),
+                _ => Err(format!("expected a list of numbers, text or bools, got a list of {}", named(i))),
+            })
+            .collect(),
+        Value::NumArray(t) => Ok(t.to_vec().iter().map(|x| x.to_string()).collect()),
+        _ => Err(format!("expected a list, got {}", named(v))),
+    }
+}
+
+/// An int only.
+pub fn read_whole(v: &CrowValue) -> Result<i64, String> {
+    match &v.value {
+        Value::Int(n) => Ok(*n),
+        _ => Err(format!("expected an int, got {}", named(v))),
     }
 }
 
@@ -461,6 +502,8 @@ pub fn read_groups(group: &[CrowValue]) -> Result<Vec<Cow<'_, CrowTensor>>, Stri
 /// The reading of a parameter's group by its kind, as the function takes it.
 macro_rules! read {
     (Int, $g:expr) => { read_int(one($g)?)? };
+    (Whole, $g:expr) => { read_whole(one($g)?)? };
+    (Words, $g:expr) => { &read_words(one($g)?)? };
     (Float, $g:expr) => { read_float(one($g)?)? };
     (Bool, $g:expr) => { read_bool(one($g)?)? };
     (Str, $g:expr) => { read_str(one($g)?)? };
@@ -546,6 +589,42 @@ macro_rules! row {
 /// The rows. A builtin here is written once, in the runtime; its old arms
 /// in `builtins.rs` and `emit_rs/builtins.rs` are gone.
 pub static ROWS: &[Row] = &[
+    // text: one function each, as both modes already called; a count or a
+    // kind no row takes is refused before the program runs
+    row!("text.split", "", "split", crow_runtime::text::split, (Str, Str) -> Strs, never),
+    row!("text.trim", "", "trim", crow_runtime::text::trim, (Str) -> Str, never),
+    row!("text.replace", "", "replace", crow_runtime::text::replace, (Str, Str, Str) -> Str, never),
+    row!("text.upper", "", "upper", crow_runtime::text::upper, (Str) -> Str, never),
+    row!("text.lower", "", "lower", crow_runtime::text::lower, (Str) -> Str, never),
+    row!("text.starts", "", "starts", crow_runtime::text::starts, (Str, Str) -> Bool, never),
+    row!("text.ends", "", "ends", crow_runtime::text::ends, (Str, Str) -> Bool, never),
+    row!("core.join", "", "join", crow_runtime::core::join_words, (Words, Str) -> Str, never),
+    // min and max of numbers (text was compared compiled and refused
+    // interpreted: min['a', 'b'] is refused before the program runs)
+    row!("core.min_ints", "", "min", crow_runtime::core::min_ints, (Whole, Whole) -> Int, never),
+    row!("core.min", "", "min", crow_runtime::core::min_floats, (Float, Float) -> Float, never),
+    row!("core.max_ints", "", "max", crow_runtime::core::max_ints, (Whole, Whole) -> Int, never),
+    row!("core.max", "", "max", crow_runtime::core::max_floats, (Float, Float) -> Float, never),
+    row!("hash.hash", "", "hash", crow_runtime::hash::hash, (Str, Str) -> Str, value "hash"),
+    // fmt: a number's or a text's options, or a moment's time style, which
+    // can fail (kind 'time'; compiled, the failure was the text "[fmt: …]")
+    row!("display.fmt", "", "fmt", crow_runtime::display::fmt_value, (Cell, Int, Bool, Int, Str, Str, Bool) -> Str, stops),
+    row!("display.fmt_time", "", "__fmt_time", crow_runtime::moments::fmt_moment, (Float, Str, Str) -> Str, value "time"),
+    // conversions: of a number or a bool, plain; of text or a JSON value,
+    // fallible (kind 'parse'), read by one rule (compiled, JSON text was
+    // trimmed and a JSON bool refused)
+    row!("core.int", "", "int", crow_runtime::cell::int_of_int, (Whole) -> Int, never),
+    row!("core.int_of_float", "", "int", crow_runtime::cell::int_of_float, (Float) -> Int, never),
+    row!("core.int_of_bool", "", "int", crow_runtime::cell::int_of_bool, (Bool) -> Int, never),
+    row!("core.int_of", "", "int", crow_runtime::cell::int_of, (Cell) -> Int, value "parse"),
+    row!("core.float_of_int", "", "float", crow_runtime::cell::float_of_int, (Whole) -> Float, never),
+    row!("core.float", "", "float", crow_runtime::cell::float_of_float, (Float) -> Float, never),
+    row!("core.float_of_bool", "", "float", crow_runtime::cell::float_of_bool, (Bool) -> Float, never),
+    row!("core.float_of", "", "float", crow_runtime::cell::float_of, (Cell) -> Float, value "parse"),
+    // draws from the program's generator
+    row!("core.rand", "", "rand", crow_runtime::core::rand_float, () -> Float, never),
+    row!("core.rand_int", "", "rand", crow_runtime::core::rand_int, (Int) -> Int, stops),
+    row!("core.rand_between", "", "rand", crow_runtime::core::rand_between, (Int, Int) -> Int, stops),
     row!("moments.moment", "", "moment", crow_runtime::moments::moment, (Int, Int, Int, Int, Int, Float, Str) -> Float, value "time"),
     row!("moments.calendar", "", "calendar", crow_runtime::moments::calendar_map, (Float, Str) -> IntMap, value "time"),
     row!("moments.parse_time", "", "parse_time", crow_runtime::moments::parse_time, (Str, Str) -> Float, value "time"),
@@ -776,12 +855,67 @@ pub fn core(name: &str) -> Option<&'static Row> {
     ROWS.iter().find(|r| r.module.is_empty() && r.name == name)
 }
 
+/// A core builtin's row for a call with these arguments: the first whose
+/// count and kinds take them (`min` of two ints, or of numbers). The
+/// interpreter reads the arguments from its values, the emitter and
+/// inference from their types, so the modes pick one row.
+pub fn core_row(name: &str, args: &[Arg]) -> Option<&'static Row> {
+    ROWS.iter().filter(|r| r.module.is_empty() && r.name == name).find(|r| takes(r, args))
+}
+
+/// Whether the core answers the name with rows.
+pub fn has_core_rows(name: &str) -> bool {
+    core(name).is_some()
+}
+
+/// The refusal of a call that no row of its name — in the core (`""`) and
+/// in the modules given — takes, by count or by kind; none when one takes
+/// it, or when an argument's kind is not known before the program runs
+/// (a JSON value's is known only then).
+pub fn refusal(modules: &[&str], name: &str, args: &[Arg]) -> Option<String> {
+    let rows: Vec<&Row> = ROWS.iter().filter(|r| r.name == name && modules.contains(&r.module)).collect();
+    if rows.is_empty() || rows.iter().any(|r| takes(r, args)) || args.iter().any(|a| matches!(a, Arg::Unknown | Arg::Json)) {
+        return None;
+    }
+    if !rows.iter().any(|r| spans(r.params, args.len(), name).is_ok()) {
+        let mut counts: Vec<String> = Vec::new();
+        for r in &rows {
+            let fixed = r.params.iter().filter(|k| !k.is_rest()).count();
+            let count = if r.params.iter().any(|k| k.is_rest()) { format!("at least {}", fixed) } else { fixed.to_string() };
+            if !counts.contains(&count) {
+                counts.push(count);
+            }
+        }
+        return Some(miscount(name, &listed(&counts, "or"), args.len()));
+    }
+    let mut forms: Vec<String> = Vec::new();
+    for r in rows.iter().filter(|r| spans(r.params, args.len(), name).is_ok()) {
+        let form = listed(&r.params.iter().map(|k| k.words().to_string()).collect::<Vec<_>>(), "and");
+        if !forms.contains(&form) {
+            forms.push(form);
+        }
+    }
+    let got = listed(&args.iter().map(|a| a.words().to_string()).collect::<Vec<_>>(), "and");
+    Some(format!("{}[] takes {}, got {}", shown(name), listed(&forms, "or"), got))
+}
+
+/// `a`, `a and b`, `a, b or c`.
+fn listed(items: &[String], last: &str) -> String {
+    match items.split_last() {
+        Some((tail, rest)) if !rest.is_empty() => format!("{} {} {}", rest.join(", "), last, tail),
+        _ => items.join(""),
+    }
+}
+
 /// What an argument is, as the choice among a name's rows reads it: from
 /// the interpreter's value, or from the IR's type (the verifier keeps the
 /// two agreeing, so both modes choose the same row).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Arg {
-    Number,
+    Int,
+    Float,
+    /// A parsed JSON value, whose kind shows only as it runs.
+    Json,
     /// A tensor, or a list of numbers.
     Tensor,
     /// A list of tensors.
@@ -799,12 +933,32 @@ pub enum Arg {
 }
 
 impl Arg {
+    /// What the argument is, as a refusal names it.
+    pub fn words(self) -> &'static str {
+        match self {
+            Arg::Int => "an int",
+            Arg::Float => "a number",
+            Arg::Json => "a JSON value",
+            Arg::Tensor => "numbers",
+            Arg::Tensors => "a list of tensors",
+            Arg::Text => "text",
+            Arg::Texts => "a list of text",
+            Arg::Truth => "a bool",
+            Arg::Truths => "a list of bools",
+            Arg::Sparse => "a sparse matrix",
+            Arg::Frame => "a frame",
+            Arg::Unknown => "a value",
+        }
+    }
+
     pub fn of_type(t: &CrowType) -> Arg {
         match t {
             CrowType::Result(inner) => Arg::of_type(inner),
-            CrowType::Int | CrowType::Float => Arg::Number,
+            CrowType::Int => Arg::Int,
+            CrowType::Float => Arg::Float,
+            CrowType::Json => Arg::Json,
             CrowType::Array(inner) => match Arg::of_type(inner) {
-                Arg::Number => Arg::Tensor,
+                Arg::Int | Arg::Float => Arg::Tensor,
                 Arg::Tensor => Arg::Tensors,
                 Arg::Text => Arg::Texts,
                 Arg::Truth => Arg::Truths,
@@ -821,12 +975,13 @@ impl Arg {
 
     pub fn of_value(v: &CrowValue) -> Arg {
         match &v.value {
-            Value::Int(_) | Value::Float(_) => Arg::Number,
+            Value::Int(_) => Arg::Int,
+            Value::Float(_) => Arg::Float,
             Value::NumArray(_) => Arg::Tensor,
             Value::Array(items) => match items.first().map(Arg::of_value) {
                 Some(Arg::Tensor) => Arg::Tensors,
                 Some(Arg::Text) => Arg::Texts,
-                Some(Arg::Number) => Arg::Tensor,
+                Some(Arg::Int | Arg::Float) => Arg::Tensor,
                 Some(Arg::Truth) => Arg::Truths,
                 _ => Arg::Unknown,
             },
@@ -840,11 +995,36 @@ impl Arg {
 }
 
 impl Kind {
+    /// The kind as a refusal names what a parameter takes.
+    pub fn words(self) -> &'static str {
+        match self {
+            Kind::Int | Kind::Whole => "an int",
+            Kind::Float => "a number",
+            Kind::Bool => "a bool",
+            Kind::Str => "text",
+            Kind::Tensor => "numbers",
+            Kind::Tensors => "a list of tensors",
+            Kind::Strs => "a list of text",
+            Kind::Bools => "a list of bools",
+            Kind::Sparse => "a sparse matrix",
+            Kind::Frame => "a frame",
+            Kind::Cell => "a number, text or a bool",
+            Kind::Cells => "a column's values",
+            Kind::Words => "a list",
+            Kind::Sizes => "sizes",
+            Kind::Groups => "tensors",
+            Kind::Lists => "lists of text",
+            Kind::IntMap | Kind::FloatMap => "a map",
+            Kind::Unit => "nothing",
+        }
+    }
+
     /// Whether a parameter of this kind takes an argument of that kind.
     fn takes(self, a: Arg) -> bool {
         a == Arg::Unknown
             || match self.each() {
-                Kind::Int | Kind::Float => a == Arg::Number,
+                Kind::Int | Kind::Float => matches!(a, Arg::Int | Arg::Float),
+                Kind::Whole => a == Arg::Int,
                 Kind::Tensor => a == Arg::Tensor,
                 Kind::Tensors => a == Arg::Tensors,
                 Kind::Str => a == Arg::Text,
@@ -853,8 +1033,9 @@ impl Kind {
                 Kind::Bools => a == Arg::Truths,
                 Kind::Sparse => a == Arg::Sparse,
                 Kind::Frame => a == Arg::Frame,
-                Kind::Cell => matches!(a, Arg::Number | Arg::Text | Arg::Truth),
-                Kind::Cells => matches!(a, Arg::Number | Arg::Text | Arg::Truth | Arg::Tensor | Arg::Texts | Arg::Truths),
+                Kind::Cell => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Json),
+                Kind::Cells => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Tensor | Arg::Texts | Arg::Truths),
+                Kind::Words => matches!(a, Arg::Tensor | Arg::Texts | Arg::Truths),
                 _ => true,
             }
     }
@@ -903,8 +1084,15 @@ pub fn miscounted(module: &str, name: &str, argc: usize) -> Option<String> {
     Some(miscount(name, &counts, argc))
 }
 
+/// The name a refusal shows: an internal one is the builtin the program
+/// wrote (`__fmt_time` is `fmt` with a time style).
+fn shown(name: &str) -> &str {
+    if name == crate::lower::FMT_TIME { "fmt" } else { name }
+}
+
 /// `sma[] takes 2 arguments, got 3`, `median[] takes 1 argument, got 2`.
 fn miscount(name: &str, counts: &str, argc: usize) -> String {
+    let name = shown(name);
     let noun = if counts == "1" || counts == "at least 1" { "argument" } else { "arguments" };
     format!("{}[] takes {} {}, got {}", name, counts, noun, argc)
 }
@@ -918,6 +1106,8 @@ fn miscount(name: &str, counts: &str, argc: usize) -> String {
 pub const OWN_FORM: &[&str] = &[
     "log", "type", "map", "error", "assert", "captured", "later", "running", "notice", "any", "all", "find", "grad", "cpu", "gpu", "nodes", "test",
     "chart", "args", "exit", "sleep", "time", "now", "input", "env",
+    // taken on dual numbers too, inside a function grad differentiates
+    "abs", "sqrt", "floor", "ceil", "round",
 ];
 
 /// The core builtins still written twice, each to become a row (docs/
@@ -925,9 +1115,8 @@ pub const OWN_FORM: &[&str] = &[
 /// table fails `every_core_builtin_is_a_row_or_says_why_not`.
 #[cfg_attr(not(test), allow(dead_code))] // read by the drift test
 pub const TO_MOVE: &[&str] = &[
-    "abs", "sqrt", "floor", "ceil", "round", "min", "max", "split", "trim", "replace", "upper", "lower", "join", "starts", "ends", "fmt", "int", "float",
     "str", "len", "contains", "slice", "push", "pop", "sort", "reverse", "concat", "range", "keys", "values", "has", "set", "del", "read", "write",
-    "exists", "mkdir", "ls", "rm", "mv", "cp", "rand", "json", "encode", "shell", "hash",
+    "exists", "mkdir", "ls", "rm", "mv", "cp", "json", "encode", "shell",
 ];
 
 /// The module functions with a form of their own: the database's effects,
@@ -992,7 +1181,8 @@ mod tests {
             assert_eq!(places.iter().filter(|p| **p).count(), 1, "'{}' is in {} of: the table, OWN_FORM, TO_MOVE", name, places.iter().filter(|p| **p).count());
         }
         for r in ROWS.iter().filter(|r| r.module.is_empty()) {
-            assert!(crate::lower_ir::CORE_RESERVED.contains(&r.name), "row '{}' names no core builtin", r.name);
+            // (an internal name is a core builtin's form: `__fmt_time`)
+            assert!(crate::lower_ir::CORE_RESERVED.contains(&r.name) || r.name.starts_with("__"), "row '{}' names no core builtin", r.name);
         }
     }
 

@@ -485,9 +485,11 @@ fn test_auto_propagation_unwraps_args() {
 
 #[test]
 fn test_int_error_message_format() {
+    // the message is the runtime's, which both modes call
     let src = "x = int['bad']\n";
     let rust = transpile(src);
-    assert!(rust.contains("cannot convert"), "should use Crow-style error message\n{}", rust);
+    assert!(rust.contains("crow_runtime::cell::int_of("), "should call the runtime's conversion\n{}", rust);
+    assert!(rust.contains("kind: \"parse\""), "{}", rust);
 }
 
 #[test]
@@ -2086,10 +2088,15 @@ fn test_search_builtins_emit_parallel_early_exit() {
 
 #[test]
 fn test_fmt_emits_kernel_call() {
+    // one runtime function for a number and a text, as the interpreter calls
     let rust = transpile("x = fmt[1234.5, decimals = 2, commas = true]\nlog[x]\n");
-    assert!(rust.contains("crow_fmt_f64"), "fmt should call the display kernel\n{}", rust);
+    assert!(rust.contains("crow_runtime::display::fmt_value(&crow_runtime::cell::Cell::from("), "fmt should call the display kernel\n{}", rust);
     let rust = transpile("x = fmt['hi', width = 4]\nlog[x]\n");
-    assert!(rust.contains("crow_fmt_str"), "string fmt should call the str kernel\n{}", rust);
+    assert!(rust.contains("crow_runtime::display::fmt_value("), "string fmt should call the same kernel\n{}", rust);
+    // a moment's time style is its own row, able to fail (kind 'time')
+    let rust = transpile("t = now[]\nx = fmt[t, time = 'iso']\nlog[x]\n");
+    assert!(rust.contains("crow_runtime::moments::fmt_moment("), "{}", rust);
+    assert!(rust.contains("kind: \"time\""), "{}", rust);
 }
 
 #[test]

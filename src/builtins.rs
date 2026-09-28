@@ -9,10 +9,9 @@ use crate::value::*;
 use crow_runtime::tensor::CrowTensor;
 use std::collections::BTreeMap;
 
-/// A state-free builtin by name, or `None` when the name is one the
-/// walker itself must handle.
-/// The names answered here.
-pub const HANDLED: &[&str] = &["log", "type", "map", "range", "abs", "sqrt", "floor", "ceil", "round", "min", "max", "split", "trim", "replace", "upper", "lower", "join", "starts", "ends", "pad", "fmt", "int", "float", "str", "len", "contains", "slice", "keys", "values", "has", "push", "pop", "sort", "reverse", "append", "concat", "set", "del", "args", "input", "rand", "time", "sleep", "env", "exit", "read", "write", "exists", "mkdir", "ls", "rm", "mv", "cp", "json", "encode", "shell", "hash", "now", "assert", "error"];
+/// The names answered here (a builtin with a row in crate::table is
+/// answered by its row, before this).
+pub const HANDLED: &[&str] = &["log", "type", "map", "range", "abs", "sqrt", "floor", "ceil", "round", "pad", "str", "len", "contains", "slice", "keys", "values", "has", "push", "pop", "sort", "reverse", "append", "concat", "set", "del", "args", "input", "time", "sleep", "env", "exit", "read", "write", "exists", "mkdir", "ls", "rm", "mv", "cp", "json", "encode", "shell", "now", "assert", "error"];
 
 /// A state-free builtin by name, or `None` when the name is one the
 /// walker itself must handle.
@@ -169,162 +168,13 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
             }
         }
         // pow removed — use ^ operator instead
-        "min" => {
-            if args.len() != 2 { return Err("min[] takes exactly 2 arguments".into()); }
-            match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                (Value::Int(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Int(*a.min(b)))),
-                (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a.min(*b)))),
-                (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float((*a as f64).min(*b)))),
-                (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a.min(*b as f64)))),
-                _ => Err("min[] requires numbers".into()),
-            }
-        }
-        "max" => {
-            if args.len() != 2 { return Err("max[] takes exactly 2 arguments".into()); }
-            match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                (Value::Int(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Int(*a.max(b)))),
-                (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a.max(*b)))),
-                (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float((*a as f64).max(*b)))),
-                (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a.max(*b as f64)))),
-                _ => Err("max[] requires numbers".into()),
-            }
-        }
         // --- String builtins ---
-        "split" => {
-            if args.len() != 2 { return Err("split[] takes exactly 2 arguments".into()); }
-            match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                (Value::Str(s), Value::Str(delim)) => {
-                    let parts: Vec<CrowValue> = crow_runtime::text::split(s, delim).into_iter().map(|p| CrowValue::ok(Value::Str(p))).collect();
-                    Ok(CrowValue::ok(Value::Array(parts)))
-                }
-                _ => Err("split[] requires two strings".into()),
-            }
-        }
-        "trim" => {
-            if args.len() != 1 { return Err("trim[] takes exactly 1 argument".into()); }
-            match args[0].unwrap_or_propagate()? {
-                Value::Str(s) => Ok(CrowValue::ok(Value::Str(crow_runtime::text::trim(s)))),
-                _ => Err("trim[] requires a string".into()),
-            }
-        }
-        "replace" => {
-            if args.len() != 3 { return Err("replace[] takes exactly 3 arguments".into()); }
-            match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?, args[2].unwrap_or_propagate()?) {
-                (Value::Str(s), Value::Str(old), Value::Str(new)) => Ok(CrowValue::ok(Value::Str(crow_runtime::text::replace(s, old, new)))),
-                _ => Err("replace[] requires three strings".into()),
-            }
-        }
-        "upper" => {
-            if args.len() != 1 { return Err("upper[] takes exactly 1 argument".into()); }
-            match args[0].unwrap_or_propagate()? {
-                Value::Str(s) => Ok(CrowValue::ok(Value::Str(crow_runtime::text::upper(s)))),
-                _ => Err("to_upper[] requires a string".into()),
-            }
-        }
-        "lower" => {
-            if args.len() != 1 { return Err("lower[] takes exactly 1 argument".into()); }
-            match args[0].unwrap_or_propagate()? {
-                Value::Str(s) => Ok(CrowValue::ok(Value::Str(crow_runtime::text::lower(s)))),
-                _ => Err("to_lower[] requires a string".into()),
-            }
-        }
-        "join" => {
-            if args.len() != 2 { return Err("join[] takes exactly 2 arguments".into()); }
-            match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                (Value::Array(items), Value::Str(sep)) => {
-                    let parts: Vec<String> = items.iter()
-                        .map(|item| match item.unwrap_or_propagate() {
-                            Ok(Value::Str(s)) => s.clone(),
-                            Ok(Value::Int(n)) => format!("{}", n),
-                            Ok(Value::Float(f)) => format!("{}", f),
-                            Ok(Value::Bool(b)) => format!("{}", b),
-                            _ => "?".to_string(),
-                        })
-                        .collect();
-                    Ok(CrowValue::ok(Value::Str(parts.join(sep.as_str()))))
-                }
-                (Value::NumArray(t), Value::Str(sep)) => {
-                    Ok(CrowValue::ok(Value::Str(crow_runtime::core::join_floats(&t.to_vec(), sep))))
-                }
-                _ => Err("join[] requires an array and a string separator".into()),
-            }
-        }
-        "starts" => {
-            if args.len() != 2 { return Err("starts[] takes exactly 2 arguments".into()); }
-            match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                (Value::Str(s), Value::Str(prefix)) => Ok(CrowValue::ok(Value::Bool(crow_runtime::text::starts(s, prefix)))),
-                _ => Err("starts_with[] requires two strings".into()),
-            }
-        }
-        "ends" => {
-            if args.len() != 2 { return Err("ends[] takes exactly 2 arguments".into()); }
-            match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                (Value::Str(s), Value::Str(suffix)) => Ok(CrowValue::ok(Value::Bool(crow_runtime::text::ends(s, suffix)))),
-                _ => Err("ends_with[] requires two strings".into()),
-            }
-        }
         "pad" => {
             Err("pad was removed — use fmt[s, width = n]".into())
         }
         // fmt: value formatting via the shared display kernel. The lowering
         // pass guarantees exactly 7 positional args (sentinel defaults).
-        "fmt" => {
-            if args.len() != 9 { return Err("fmt[] takes a value plus named arguments (decimals, commas, width, align, fill, percent, time, tz)".into()); }
-            let time_style = match &args[7].value { Value::Str(s) => s.clone(), _ => String::new() };
-            if !time_style.is_empty() {
-                let tz = match &args[8].value { Value::Str(s) => s.clone(), _ => "UTC".to_string() };
-                let t = match args[0].unwrap_or_propagate()? {
-                    Value::Int(n) => *n as f64,
-                    Value::Float(f) => *f,
-                    other => return Err(format!("fmt: time display needs a moment (a number), got {}", other.type_name())),
-                };
-                return match crow_runtime::moments::fmt_time(t, &time_style, &tz) {
-                    Ok(s) => Ok(CrowValue::ok(Value::Str(s))),
-                    Err(e) => Ok(CrowValue::error_with_kind(&e, "time", trace)),
-                };
-            }
-            let decimals = match &args[1].value { Value::Int(n) => *n, _ => return Err("fmt: decimals must be an int".into()) };
-            let commas = matches!(&args[2].value, Value::Bool(true));
-            let width = match &args[3].value { Value::Int(n) => *n, _ => return Err("fmt: width must be an int".into()) };
-            let align = match &args[4].value { Value::Str(s) => s.clone(), _ => return Err("fmt: align must be a string".into()) };
-            let fill = match &args[5].value { Value::Str(s) => s.clone(), _ => return Err("fmt: fill must be a string".into()) };
-            let percent = matches!(&args[6].value, Value::Bool(true));
-            // the kernel checks what it is given, for both modes
-            let text = match args[0].unwrap_or_propagate()? {
-                Value::Int(n) => crow_runtime::display::crow_fmt_f64(*n as f64, decimals, commas, width, &align, &fill, percent)?,
-                Value::Float(f) => crow_runtime::display::crow_fmt_f64(*f, decimals, commas, width, &align, &fill, percent)?,
-                Value::Str(s) => crow_runtime::display::crow_fmt_str(s, decimals, width, &align, &fill, percent)?,
-                other => return Err(format!("fmt: cannot format {}", other.type_name())),
-            };
-            Ok(CrowValue::ok(Value::Str(text)))
-        }
         // --- Conversion builtins ---
-        "int" => {
-            if args.len() != 1 { return Err("int[] takes exactly 1 argument".into()); }
-            match args[0].unwrap_or_propagate()? {
-                Value::Int(n) => Ok(CrowValue::ok(Value::Int(*n))),
-                Value::Float(n) => Ok(CrowValue::ok(Value::Int(*n as i64))),
-                Value::Str(s) => match s.parse::<i64>() {
-                    Ok(n) => Ok(CrowValue::ok(Value::Int(n))),
-                    Err(_) => Ok(CrowValue::error_with_kind(&format!("cannot convert '{}' to int", s), "parse", trace)),
-                },
-                Value::Bool(b) => Ok(CrowValue::ok(Value::Int(if *b { 1 } else { 0 }))),
-                _ => Ok(CrowValue::error_with_kind("cannot convert to int", "parse", trace)),
-            }
-        }
-        "float" => {
-            if args.len() != 1 { return Err("float[] takes exactly 1 argument".into()); }
-            match args[0].unwrap_or_propagate()? {
-                Value::Int(n) => Ok(CrowValue::ok(Value::Float(*n as f64))),
-                Value::Float(n) => Ok(CrowValue::ok(Value::Float(*n))),
-                Value::Str(s) => match s.parse::<f64>() {
-                    Ok(n) => Ok(CrowValue::ok(Value::Float(n))),
-                    Err(_) => Ok(CrowValue::error_with_kind(&format!("cannot convert '{}' to float", s), "parse", trace)),
-                },
-                Value::Bool(b) => Ok(CrowValue::ok(Value::Float(if *b { 1.0 } else { 0.0 }))),
-                _ => Ok(CrowValue::error_with_kind("cannot convert to float", "parse", trace)),
-            }
-        }
         "str" => {
             if args.len() != 1 { return Err("str[] takes exactly 1 argument".into()); }
             let val = args[0].unwrap_or_propagate()?;
@@ -597,23 +447,6 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
             }
         }
         // --- System builtins ---
-        "rand" => {
-            if args.len() > 2 { return Err("rand[] takes 0, 1, or 2 arguments".into()); }
-            // the program's RNG, the one seed[n] seeds (core.rs)
-            if args.is_empty() {
-                Ok(CrowValue::ok(Value::Float(crow_runtime::core::rand_float())))
-            } else if args.len() == 1 {
-                match args[0].unwrap_or_propagate()? {
-                    Value::Int(n) => Ok(CrowValue::ok(Value::Int(crow_runtime::core::rand_int(*n)?))),
-                    _ => Err("rand[n] requires an integer".into()),
-                }
-            } else {
-                match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                    (Value::Int(min), Value::Int(max)) => Ok(CrowValue::ok(Value::Int(crow_runtime::core::rand_between(*min, *max)?))),
-                    _ => Err("rand[min, max] requires two integers".into()),
-                }
-            }
-        }
         "time" => {
             if !args.is_empty() { return Err("time[] takes no arguments".into()); }
             match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
@@ -807,22 +640,6 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
             }
         }
         // --- Hashing builtin ---
-        "hash" => {
-            if args.len() != 2 { return Err("hash[] takes exactly 2 arguments (string, algorithm)".into()); }
-            let s = match args[0].unwrap_or_propagate()? {
-                Value::Str(s) => s.clone(),
-                _ => return Err("hash[] first argument must be a string".into()),
-            };
-            let algo = match args[1].unwrap_or_propagate()? {
-                Value::Str(a) => a.clone(),
-                _ => return Err("hash[] second argument must be a string algorithm".into()),
-            };
-            // one implementation for both modes (crow_runtime::hash)
-            match crow_runtime::hash::hash(&s, &algo) {
-                Ok(h) => Ok(CrowValue::ok(Value::Str(h))),
-                Err(e) => Ok(CrowValue::error_with_kind(&e, "hash", trace)),
-            }
-        }
         // --- Date/time builtins ---
         "now" => {
             if !args.is_empty() { return Err("now[] takes no arguments".into()); }
@@ -917,7 +734,9 @@ pub fn check_map_homogeneous(
 }
 
 /// Convert a serde_json::Value to a CrowValue.
-/// JSON null becomes an error-value with reason "null".
+/// JSON null becomes an error-value with reason "null": the whole value's
+/// carries the parse's place, an element's none (the compiled program
+/// reads an element's null where it is indexed, with no place either).
 pub fn json_to_crow(trace: &str, jval: &serde_json::Value) -> CrowValue {
     match jval {
         serde_json::Value::Null => CrowValue::error_with_kind("null", "parse", trace),
@@ -940,14 +759,14 @@ pub fn json_to_crow(trace: &str, jval: &serde_json::Value) -> CrowValue {
                 let len = data.len();
                 CrowValue::ok(Value::NumArray(Box::new(CrowTensor::from_vec(data, vec![len]))))
             } else {
-                let items: Vec<CrowValue> = arr.iter().map(|v| json_to_crow(trace, v)).collect();
+                let items: Vec<CrowValue> = arr.iter().map(|v| json_to_crow("", v)).collect();
                 CrowValue::ok(Value::Array(items))
             }
         }
         serde_json::Value::Object(obj) => {
             let mut map = BTreeMap::new();
             for (k, v) in obj {
-                map.insert(k.clone(), json_to_crow(trace, v));
+                map.insert(k.clone(), json_to_crow("", v));
             }
             CrowValue::ok(Value::Map(map))
         }

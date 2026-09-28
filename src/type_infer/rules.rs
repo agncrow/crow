@@ -21,18 +21,9 @@ impl TypeContext {
         // both backends look (a part's `rsi[jg]` where the program imports
         // chart)
         if self.body_assigned.as_ref().is_some_and(|a| a.contains(name)) {
+            // (a local not typed yet is still not a module's function)
             let var_type = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-            let unwrapped = match var_type {
-                CrowType::Result(inner) => *inner,
-                other => other,
-            };
-            return match unwrapped {
-                CrowType::Array(inner) | CrowType::NumArray(inner) | CrowType::Map(inner) => *inner,
-                CrowType::Str | CrowType::FrameCol => CrowType::Str,
-                CrowType::Fn(_, ret) => *ret,
-                // a local not typed yet is still not a module's function
-                _ => CrowType::Unknown,
-            };
+            return self.index_type(var_type, arg_types.first().cloned());
         }
         // Struct constructor
         if self.structs.contains_key(name) {
@@ -66,11 +57,11 @@ impl TypeContext {
             return sig.return_type.clone();
         }
         // a builtin with a row is typed by its row, the one place that says
-        // what it answers and whether it can fail (crate::table)
-        if !self.registry.has_function(name) {
-            if let Some(row) = crate::table::core(name) {
-                return row.crow_type();
-            }
+        // what it answers and whether it can fail (crate::table): the row
+        // its arguments' kinds pick, as both backends pick it
+        let kinds: Vec<crate::table::Arg> = args.iter().map(|a| crate::table::Arg::of_type(&arg_ty(a))).collect();
+        if let Some(row) = crate::table::core_row(name, &kinds) {
+            return row.crow_type();
         }
         // Module function dispatch (overlapping builtins: check arg type)
         let is_overlapping = matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max");
@@ -147,46 +138,8 @@ impl TypeContext {
             }
             "sqrt" => CrowType::Float,
             "floor" | "ceil" | "round" => CrowType::Int,
-            "min" | "max" => {
-                if args.len() >= 2 {
-                    let t1 = arg_ty(&args[0]);
-                    let t2 = arg_ty(&args[1]);
-                    let t1u = if let CrowType::Result(inner) = t1 { *inner } else { t1 };
-                    let t2u = if let CrowType::Result(inner) = t2 { *inner } else { t2 };
-                    if t1u == CrowType::Float || t2u == CrowType::Float {
-                        return CrowType::Float;
-                    }
-                    return t1u;
-                }
-                CrowType::Int
-            }
             // String builtins
-            "trim" | "upper" | "lower" | "replace" | "join" | "fmt" => CrowType::Str,
-            // an algorithm it does not know, or a stored hash it cannot read
-            "hash" => CrowType::Result(Box::new(CrowType::Str)),
-            "split" => CrowType::Array(Box::new(CrowType::Str)),
-            "starts" | "ends" | "contains" => CrowType::Bool,
-            // Conversion builtins — fallible when parsing from string
-            "int" => {
-                if let Some(arg) = args.first() {
-                    let arg_type = arg_ty(arg);
-                    let unwrapped = if let CrowType::Result(inner) = &arg_type { inner.as_ref() } else { &arg_type };
-                    if matches!(unwrapped, CrowType::Str | CrowType::Json) {
-                        return CrowType::Result(Box::new(CrowType::Int));
-                    }
-                }
-                CrowType::Int
-            }
-            "float" => {
-                if let Some(arg) = args.first() {
-                    let arg_type = arg_ty(arg);
-                    let unwrapped = if let CrowType::Result(inner) = &arg_type { inner.as_ref() } else { &arg_type };
-                    if matches!(unwrapped, CrowType::Str | CrowType::Json) {
-                        return CrowType::Result(Box::new(CrowType::Float));
-                    }
-                }
-                CrowType::Float
-            }
+            "contains" => CrowType::Bool,
             "str" => CrowType::Str,
             // Immutable collection builtins (return same type as first arg)
             "push" => {
@@ -331,9 +284,6 @@ impl TypeContext {
             "mv" => CrowType::Result(Box::new(CrowType::Str)),
             "cp" => CrowType::Result(Box::new(CrowType::Str)),
             // System builtins
-            "rand" => {
-                if args.is_empty() { CrowType::Float } else { CrowType::Int }
-            }
             "time" => CrowType::Float,
             // Moments are numbers (epoch seconds); constructors are fallible
             "now" => CrowType::Float,
@@ -403,26 +353,12 @@ impl TypeContext {
                 CrowType::Fn(vec![CrowType::Float], Box::new(CrowType::Float))
             }
             _ => {
-                // Check variable type: could be a function call, array/map indexing, etc.
-                if let Some(var_type) = self.vars.get(name) {
-                    // Unwrap Result for indexing purposes
-                    let unwrapped = match var_type {
-                        CrowType::Result(inner) => inner.as_ref(),
-                        other => other,
-                    };
-                    match unwrapped {
-                        CrowType::Fn(_, ret) => return *ret.clone(),
-                        CrowType::Array(inner) => return *inner.clone(),
-                        CrowType::NumArray(inner) => return *inner.clone(),
-                        CrowType::Map(inner) => return *inner.clone(),
-                        CrowType::Str => return CrowType::Str,
-                        // a cell of a column whose type nothing told: dynamic
-                        // until int[], float[] or str[] reads it (typed frames)
-                        CrowType::FrameCol => return CrowType::Json,
-                        _ => {}
-                    }
+                // a variable indexed, or a function value applied: the one
+                // index rule (index_type)
+                match self.vars.get(name) {
+                    Some(var_type) => self.index_type(var_type.clone(), arg_types.first().cloned()),
+                    None => CrowType::Unknown,
                 }
-                CrowType::Unknown
             },
         }
     }
@@ -631,10 +567,20 @@ impl TypeContext {
         self.functions.get(&prefixed).map(|sig| sig.return_type.clone())
     }
 
-    /// An index's type (`xs[i]`, `m[k]`, a function value applied) from the
-    /// indexed value's type and the first index's.
+    /// An index's type (`xs[i]`, `m[k]`, `s[i]`, a function value applied)
+    /// from the indexed value's type and the first index's — the one rule,
+    /// for a variable indexed and for any value (three copies had
+    /// disagreed: a column's cell text in one and dynamic in another, and
+    /// two dropped the failure of a value that can fail).
     pub(crate) fn index_type(&self, callee_type: CrowType, index: Option<CrowType>) -> CrowType {
         match callee_type {
+            // a value that can fail, indexed: its error is the index's value,
+            // as the interpreter hands it on (a failed JSON parse indexed)
+            CrowType::Result(inner) => match self.index_type(*inner, index) {
+                CrowType::Unknown => CrowType::Unknown,
+                t @ CrowType::Result(_) => t,
+                t => CrowType::Result(Box::new(t)),
+            },
             CrowType::Array(inner) => *inner,
             CrowType::NumArray(inner) => {
                 // Advanced indexing: tensor[tensor] → tensor (gather)
@@ -647,7 +593,10 @@ impl TypeContext {
             // int[], float[] or str[] reads it (typed frames)
             CrowType::FrameCol => CrowType::Json,
             CrowType::Map(inner) => *inner,
-            CrowType::Json => CrowType::Json,
+            // a character of text
+            CrowType::Str | CrowType::Markup => CrowType::Str,
+            // an element can be JSON's null, an error value of reason `null`
+            CrowType::Json => CrowType::Result(Box::new(CrowType::Json)),
             CrowType::Fn(_, ret) => *ret,
             _ => CrowType::Unknown,
         }

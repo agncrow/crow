@@ -2387,6 +2387,7 @@ impl<'a> Lowerer<'a> {
                     lowered.insert(1, Expr::Convert { how, expr: Box::new(second), ty: ty.payload().clone() });
                 }
             }
+            let lowered = self.core_row_arguments(&name, lowered);
             return Ok(Expr::Call { target: Target::Runtime(runtime_name(&name)), args: lowered, ty, propagates });
         }
         // a bare name a loaded module provides resolves at run time, by the
@@ -2403,7 +2404,7 @@ impl<'a> Lowerer<'a> {
                 }
                 self.row_arguments(&m, &name, lowered)
             }
-            None => lowered,
+            None => self.core_row_arguments(&name, lowered),
         };
         Ok(Expr::Call { target: Target::Runtime(name), args: lowered, ty, propagates })
     }
@@ -2418,6 +2419,48 @@ impl<'a> Lowerer<'a> {
     /// a list goes to the core's, a tensor to the module's — so a list
     /// handed to it is left as it is, and a column, numbers either way, is
     /// converted. An argument that can fail is handed on as its error.
+    /// An empty list literal handed to a row's list parameter is a list of
+    /// what the parameter takes: its items' type is not known from the
+    /// literal, and the compiled program must name it (`join[[], ',']` did
+    /// not build).
+    fn typed_empties(kinds: &[crate::table::Kind], lowered: Vec<Expr>) -> Vec<Expr> {
+        use crate::table::Kind;
+        lowered
+            .into_iter()
+            .zip(kinds.iter().copied().map(Some).chain(std::iter::repeat(None)))
+            .map(|(x, k)| {
+                let item = match k {
+                    Some(Kind::Words | Kind::Strs) => Ty::Str,
+                    Some(Kind::Bools) => Ty::Bool,
+                    Some(Kind::Tensors) => Ty::Tensor(Box::new(Ty::Float)),
+                    Some(Kind::Tensor) => Ty::Float,
+                    _ => return x,
+                };
+                match x {
+                    Expr::ListLit(items, Ty::List(e)) if items.is_empty() && *e == Ty::Unknown => {
+                        let list = Expr::ListLit(items, Ty::List(Box::new(item)));
+                        if k == Some(Kind::Tensor) {
+                            Expr::Convert { how: Convert::ToTensor, expr: Box::new(list), ty: Ty::Tensor(Box::new(Ty::Float)) }
+                        } else {
+                            list
+                        }
+                    }
+                    other => other,
+                }
+            })
+            .collect()
+    }
+
+    /// A core builtin's row's arguments, as a module row's are given theirs:
+    /// an empty list literal is typed by the parameter it is handed to.
+    fn core_row_arguments(&self, name: &str, lowered: Vec<Expr>) -> Vec<Expr> {
+        let args: Vec<crate::table::Arg> = lowered.iter().map(|x| crate::table::Arg::of_type(&read(x))).collect();
+        match crate::table::core_row(name, &args).and_then(|row| crate::table::kinds_of(row.params, lowered.len())) {
+            Some(kinds) => Self::typed_empties(&kinds, lowered),
+            None => lowered,
+        }
+    }
+
     fn row_arguments(&self, module: &str, name: &str, lowered: Vec<Expr>) -> Vec<Expr> {
         use crate::table::{self, Arg, Kind};
         let core = CORE_RESERVED.contains(&name);
@@ -2425,6 +2468,7 @@ impl<'a> Lowerer<'a> {
         let Some(kinds) = table::module(module, name, &args).and_then(|row| table::kinds_of(row.params, lowered.len())) else {
             return lowered;
         };
+        let lowered = Self::typed_empties(&kinds, lowered);
         lowered
             .into_iter()
             .zip(kinds)

@@ -11,61 +11,16 @@
 use crate::frame::{format_datetime, parse_datetime, AggFn, Column, CrowColumn, CrowFrame};
 use crate::tensor::CrowTensor;
 
-/// A value a program hands a frame for a cell: `fill`'s value, or one
-/// `with` repeats for every row.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Cell {
-    Int(i64),
-    Float(f64),
-    Bool(bool),
-    Text(String),
-}
+pub use crate::cell::Cell;
 
-impl From<i64> for Cell {
-    fn from(n: i64) -> Self {
-        Cell::Int(n)
-    }
-}
-impl From<f64> for Cell {
-    fn from(x: f64) -> Self {
-        Cell::Float(x)
-    }
-}
-impl From<bool> for Cell {
-    fn from(b: bool) -> Self {
-        Cell::Bool(b)
-    }
-}
-impl From<String> for Cell {
-    fn from(s: String) -> Self {
-        Cell::Text(s)
-    }
-}
-impl From<&str> for Cell {
-    fn from(s: &str) -> Self {
-        Cell::Text(s.to_string())
-    }
-}
-
-impl Cell {
-    /// What the cell is, as a refusal names it.
-    fn shown(&self) -> String {
-        match self {
-            Cell::Int(n) => n.to_string(),
-            Cell::Float(x) => x.to_string(),
-            Cell::Bool(b) => b.to_string(),
-            Cell::Text(s) => format!("'{}'", s),
-        }
-    }
-
-    /// The cell as a column of one row.
-    fn column(self) -> Column {
-        match self {
-            Cell::Int(n) => Column::Int(vec![n]),
-            Cell::Float(x) => Column::Float(vec![x]),
-            Cell::Bool(b) => Column::Bool(vec![b]),
-            Cell::Text(s) => Column::Str(vec![s]),
-        }
+/// A cell as a column of one row, for `with` to repeat.
+fn one_row(cell: Cell) -> Result<Column, String> {
+    match cell {
+        Cell::Int(n) => Ok(Column::Int(vec![n])),
+        Cell::Float(x) => Ok(Column::Float(vec![x])),
+        Cell::Bool(b) => Ok(Column::Bool(vec![b])),
+        Cell::Text(s) => Ok(Column::Str(vec![s])),
+        other => Err(format!("with: a column cannot hold {}", other.kind())),
     }
 }
 
@@ -147,7 +102,7 @@ pub fn new() -> CrowFrame {
 pub fn with(f: &CrowFrame, name: &str, values: Cells) -> Result<CrowFrame, String> {
     match values {
         Cells::Column(data, valid) => f.with_valid(name, data, valid),
-        Cells::One(cell) => f.with_scalar(name, cell.column()),
+        Cells::One(cell) => f.with_scalar(name, one_row(cell)?),
     }
 }
 

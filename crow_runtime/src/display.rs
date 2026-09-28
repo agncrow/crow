@@ -144,6 +144,21 @@ pub fn crow_fmt_f64(
     apply_width(s, width, if align.is_empty() { "right" } else { align }, fill)
 }
 
+/// `fmt[x, decimals =, commas =, width =, align =, fill =, percent =]`:
+/// a number by [`crow_fmt_f64`], text by [`crow_fmt_str`] — the one
+/// function both modes call, so a value of either kind is written alike;
+/// any other value is the misuse the program stops on. (A moment's `time =`
+/// is `moments::fmt_time`, which answers an error value of kind `'time'`.)
+pub fn fmt_value(value: &crate::cell::Cell, decimals: i64, commas: bool, width: i64, align: &str, fill: &str, percent: bool) -> Result<String, String> {
+    use crate::cell::Cell;
+    match value {
+        Cell::Int(n) => crow_fmt_f64(*n as f64, decimals, commas, width, align, fill, percent),
+        Cell::Float(x) => crow_fmt_f64(*x, decimals, commas, width, align, fill, percent),
+        Cell::Text(s) => crow_fmt_str(s, decimals, width, align, fill, percent),
+        other => Err(format!("fmt: cannot format {}", other.kind())),
+    }
+}
+
 /// fmt[] kernel for strings: width, align and fill only. Decimals or a
 /// percent on a string is the misuse both modes stop on, with these words.
 pub fn crow_fmt_str(

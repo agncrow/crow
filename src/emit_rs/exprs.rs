@@ -625,6 +625,20 @@ impl Emitter {
         }
         let bty = self.tt(base);
         let is_result = matches!(bty, CrowType::Result(_));
+        // a base that can fail, indexed: its error is the index's value, as
+        // the interpreter hands it on (the payload was read regardless: a
+        // failed JSON parse, indexed, was null)
+        if is_result && matches!(self.tt(whole), CrowType::Result(_)) {
+            let raw_base = self.expr(base);
+            let payload = Expr::Local("_ib".to_string(), crate::lower_ir::ty_of(&Self::inner(&bty)));
+            let read = self.index(&payload, indices, whole);
+            let default = Self::inner(&self.tt(whole)).default_rust_value();
+            let read = if matches!(Self::inner(&bty), CrowType::Json) { read } else { format!("CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", read) };
+            return format!(
+                "{{ let _b = &({}); if !_b.ok {{ CrowResult {{ ok: false, value: {}, reason: _b.reason.clone(), kind: _b.kind.clone(), trace: _b.trace.clone(), captured: 0.0 }} }} else {{ let _ib = _b.value.clone(); {} }} }}",
+                raw_base, default, read
+            );
+        }
         let inner = Self::inner(&bty);
         let raw_base = self.expr(base);
         let b = if is_result { format!("{}.value", raw_base) } else { raw_base };
@@ -680,12 +694,17 @@ impl Emitter {
                 self.needs_crow_runtime = true;
                 format!("crow_runtime::core::map_key(&{}, &*({})).unwrap_or_else(|e| crow_stop({}, e))", b, idx_strs.join(", "), self.current_line)
             }
+            // an element of a JSON value: JSON's null is an error value of
+            // reason `null`, as the interpreter reads it
             CrowType::Json => {
                 let ie = match idx_ty.clone() {
                     Some(CrowType::Int) => format!("{} as usize", idx),
                     _ => format!("&*{}", idx),
                 };
-                format!("{}[{}].clone()", b, ie)
+                format!(
+                    "{{ let _e = {}[{}].clone(); if _e.is_null() {{ CrowResult {{ ok: false, value: serde_json::Value::Null, reason: \"null\".to_string(), kind: \"parse\".to_string(), trace: vec![], captured: 0.0 }} }} else {{ CrowResult {{ ok: true, value: _e, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }} }}",
+                    b, ie
+                )
             }
             CrowType::Fn(ps, _) => {
                 let casted: Vec<String> = idx_strs
@@ -1209,15 +1228,12 @@ impl Emitter {
         match target {
             Target::User(n) => self.fns.get(n).map_or(false, |f| matches!(f.ret, Ty::Result(_))),
             Target::Module(m, f) => self.registry.type_of_in(m, f, &raw_args.iter().map(|a| self.tt(a)).collect::<Vec<_>>()).map_or(false, |t| matches!(t, CrowType::Result(_))),
-            Target::Runtime(p) if crate::table::by_id(p).is_some() => {
-                matches!(crate::table::by_id(p).map(|r| r.fails), Some(crate::table::Fails::Value(_)))
+            Target::Runtime(_) if self.row_for(name, raw_args).is_some() => {
+                matches!(self.row_for(name, raw_args).map(|r| r.fails), Some(crate::table::Fails::Value(_)))
             }
             Target::Runtime(_) => {
                 if name == "set" {
                     return false;
-                }
-                if matches!(name, "int" | "float") {
-                    return matches!(raw_args.first().map(|a| Self::inner(&self.tt(a))), Some(CrowType::Str) | Some(CrowType::Json));
                 }
                 if self.registry.has_function(name) && !matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max") {
                     if let Some(t) = self.registry.type_of(name, &raw_args.iter().map(|a| self.tt(a)).collect::<Vec<_>>()) {
@@ -1425,18 +1441,24 @@ impl Emitter {
         None
     }
 
+    /// A core builtin's row for a call: the one its arguments' types pick,
+    /// as the interpreter picks it by their values (crate::table).
+    fn row_for(&self, name: &str, args: &[Expr]) -> Option<&'static crate::table::Row> {
+        let kinds: Vec<crate::table::Arg> = args.iter().map(|x| crate::table::Arg::of_type(&self.tt(x))).collect();
+        crate::table::core_row(name, &kinds)
+    }
+
     /// A call, by what it names.
     fn dispatch(&mut self, target: &Target, name: &str, args: &[Expr], arg_strs: &[String], whole: &Expr) -> String {
         match target {
             Target::User(n) => self.user_call(n, args, arg_strs.to_vec()),
             Target::Module(m, f) => self.module_call(m, f, args, arg_strs, whole),
-            Target::Runtime(p) if crate::table::by_id(p).is_some() => match crate::table::by_id(p) {
+            Target::Runtime(_) => match self.row_for(name, args) {
                 Some(row) => self.table_call(row, arg_strs),
-                None => String::new(),
-            },
-            Target::Runtime(_) => match self.builtin(name, args, arg_strs, whole) {
-                Some(s) => s,
-                None => format!("{}({})", name, arg_strs.join(", ")),
+                None => match self.builtin(name, args, arg_strs, whole) {
+                    Some(s) => s,
+                    None => format!("{}({})", name, arg_strs.join(", ")),
+                },
             },
         }
     }
