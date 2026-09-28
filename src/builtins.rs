@@ -392,11 +392,11 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                 (Value::NumArray(a), Value::NumArray(b)) => {
                     let axis = if args.len() == 3 {
                         match args[2].unwrap_or_propagate()? {
-                            Value::Int(n) => *n as usize,
+                            Value::Int(n) => *n,
                             _ => return Err("concat: axis must be an int".into()),
                         }
                     } else { 0 };
-                    Ok(CrowValue::ok(Value::NumArray(Box::new(a.concat(b, axis)))))
+                    Ok(CrowValue::ok(Value::NumArray(Box::new(a.try_concat(b, axis)?))))
                 }
                 _ => Err("concat[] requires two arrays of the same kind".into()),
             }

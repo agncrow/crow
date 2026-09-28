@@ -1134,7 +1134,8 @@ fn test_math_cumprod_transpile() {
 #[test]
 fn test_math_concat_transpile() {
     let rust = transpile("use math\nx = concat[ones[3], ones[2]]\n");
-    assert!(rust.contains(".concat("), "should emit .concat()\n{}", rust);
+    // shapes that do not join stop with their reason (the kernel asserted)
+    assert!(rust.contains(".try_concat("), "should emit .try_concat()\n{}", rust);
 }
 
 #[test]
@@ -1163,7 +1164,8 @@ fn test_broadcast_elem_mul_transpile() {
 #[test]
 fn test_gather_transpile() {
     let rust = transpile("use math\na = linspace[10, 50, 5]\nidx = linspace[0, 2, 3]\nx = a[idx]\n");
-    assert!(rust.contains(".gather("), "should emit .gather() for tensor indexing by tensor\n{}", rust);
+    // an index outside stops with the words of xs[i] (the kernel asserted)
+    assert!(rust.contains(".try_gather("), "should emit .try_gather() for tensor indexing by tensor\n{}", rust);
 }
 
 // ===== Norm tests =====
@@ -1506,7 +1508,7 @@ fn test_web_async_main() {
     let rust = transpile("use web\nsite = web.new[]\n");
     assert!(rust.contains("async fn __crow_main()"), "should emit an async main\n{}", rust);
     // the runtime's threads get stacks sized for a page's work
-    assert!(rust.contains(".thread_stack_size(16 * 1024 * 1024)"), "should size the runtime's stacks\n{}", rust);
+    assert!(rust.contains(".thread_stack_size(64 * 1024 * 1024)"), "should size the runtime's stacks\n{}", rust);
 }
 
 #[test]

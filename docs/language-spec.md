@@ -1138,6 +1138,7 @@ Some failures no value can carry. An index reads an element and an int operation
 | an int past 64 bits (`+`, `-`, `*`, `^`, `-x`, `abs`) | `integer overflow: 9223372036854775807 + 1 does not fit in 64 bits` |
 | an int to a negative power | `2 ^ -1: an int to a negative power is a fraction — write 2.0 ^ -1 for a float` |
 | `assert[c]` or `assert[c, message]` false | `assertion failed`, `assertion failed: message` |
+| a recursive function's calls nested past 10000 deep (the line is the function's first) | `recursion deeper than 10000 calls — a function that calls itself needs a case that returns without calling` |
 | a builtin given what it cannot take: a negative size, an axis or a window outside its range, shapes or lengths that do not meet, a frame's column with a missing cell where numbers are taken | the builtin's own reason: `zeros: a size cannot be negative (got -2)`, `sma: a window is 1 row or more (got 0)`, `corr: x and y must be one length, got 3 and 2` |
 
 An int never wraps round, in any mode or build, and a float never stops: a float divided by zero is IEEE's infinity, and a float too large for `int[]` gives the largest int. A `range` that would step past the last int ends there. A check Crow is missing, a panic inside the runtime, stops the program the same way and never crashes it.

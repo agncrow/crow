@@ -227,7 +227,8 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
         state.note_writes(written);
     };
 
-    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("cannot start the server: {}", e))?;
+    // a handler's thread holds the interpreter's frames to the recursion limit
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(crow_runtime::stops::STACK).build().map_err(|e| format!("cannot start the server: {}", e))?;
     rt.block_on(async move {
         let ws_path = format!("/_ws{}", path);
         let pairs: Vec<(&str, &str)> = url_pairs.iter().map(|(n, f)| (n.as_str(), f.as_str())).collect();

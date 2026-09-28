@@ -75,6 +75,9 @@ struct Frame {
 
 #[derive(Clone)]
 pub struct IrInterp {
+    /// How many recursive functions' calls are nested now (the limit is
+    /// crow_runtime::stops::DEPTH).
+    depth: usize,
     fns: HashMap<String, Arc<Fn>, Names>,
     derives: HashMap<String, Arc<Derive>>,
     structs: HashMap<String, Arc<crate::ir::StructDef>>,
@@ -397,6 +400,7 @@ impl IrInterp {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| source_file.to_string());
         IrInterp {
+            depth: 0,
             fns: HashMap::default(),
             derives: HashMap::new(),
             structs: HashMap::new(),
@@ -2081,6 +2085,16 @@ impl IrInterp {
         for ((p, _), v) in f.params.iter().zip(vals) {
             scope.insert(p.clone(), v);
         }
+        // a recursive function's calls nest to the limit and no deeper, as
+        // the compiled program's guard counts them; the stop names the
+        // body's first line in both modes
+        if f.recursive {
+            if self.depth >= crow_runtime::stops::DEPTH {
+                self.line = crate::ir::first_line(&f.body);
+                return Err(self.with_line(crow_runtime::stops::too_deep()));
+            }
+            self.depth += 1;
+        }
         let fn_name = name.to_string();
         let saved_line = self.line;
         let is_view = f.kind == FnKind::View;
@@ -2094,6 +2108,9 @@ impl IrInterp {
         self.frames.pop();
         if is_view {
             self.in_view -= 1;
+        }
+        if f.recursive {
+            self.depth -= 1;
         }
         self.line = saved_line;
         match r? {

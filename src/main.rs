@@ -81,6 +81,23 @@ fn load_dotenv() {
 }
 
 fn main() {
+    // the interpreter's frames to the recursion limit need a deeper stack
+    // than the main thread's (crow_runtime::stops::STACK); the thread is
+    // named for the main thread, so a stop on it exits as one there does
+    match std::thread::Builder::new().name("main".to_string()).stack_size(crow_runtime::stops::STACK).spawn(crow_main) {
+        Ok(h) => {
+            if h.join().is_err() {
+                process::exit(101);
+            }
+        }
+        Err(e) => {
+            eprintln!("crow: cannot start: {}", e);
+            process::exit(1);
+        }
+    }
+}
+
+fn crow_main() {
     load_dotenv();
     // a panic in the program's run is its stop, reported by the guard around
     // the run (crow_runtime::stops); a panic of crow's own prints as Rust's

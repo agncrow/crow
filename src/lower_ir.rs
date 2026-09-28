@@ -997,6 +997,7 @@ impl<'a> Lowerer<'a> {
             let mut seen: BTreeSet<String> = BTreeSet::new();
             let mut todo = vec![f.name.clone()];
             let mut effects: BTreeSet<String> = BTreeSet::new();
+            let mut recursive = false;
             while let Some(n) = todo.pop() {
                 if !seen.insert(n.clone()) {
                     continue;
@@ -1006,6 +1007,8 @@ impl<'a> Lowerer<'a> {
                 }
                 if let Some(c) = self.calls.get(&n) {
                     for callee in c {
+                        // reaching itself again: its calls can nest without end
+                        recursive |= *callee == f.name;
                         if names.contains(callee) {
                             todo.push(callee.clone());
                         }
@@ -1013,6 +1016,7 @@ impl<'a> Lowerer<'a> {
                 }
             }
             f.effects = effects.into_iter().collect();
+            f.recursive = recursive;
         }
         // a view or a derivation that reaches mail through a function it
         // calls would send it at every render (a call of its own is refused
@@ -1122,7 +1126,7 @@ impl<'a> Lowerer<'a> {
         self.ctx.leave_body(scope);
         let param_set: HashSet<String> = params.iter().cloned().collect();
         place_moves_in(&mut block, &HashSet::new(), Some(&param_set));
-        Ok(Fn { name: name.to_string(), params: ps, ret, body: block, kind, effects: vec![], tables_written: vec![] })
+        Ok(Fn { name: name.to_string(), params: ps, ret, body: block, kind, effects: vec![], tables_written: vec![], recursive: false })
     }
 
     /// A body's parameters and locals as its lowering begins with them, kept

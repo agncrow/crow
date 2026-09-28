@@ -680,7 +680,7 @@ impl CrowTensor {
     }
 
     /// Compute broadcast-compatible output shape.
-    #[expect(clippy::panic, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
+    #[expect(clippy::panic, reason = "an invariant, never a user's argument: every caller checks `meets` first — try_elementwise for the operators, the math, nn and special entry points for the builtins (docs/bug-classes.md §3)")]
     fn broadcast_shape(a: &[usize], b: &[usize]) -> Vec<usize> {
         let max_ndim = a.len().max(b.len());
         let mut out = Vec::with_capacity(max_ndim);
@@ -725,7 +725,9 @@ impl CrowTensor {
 
     /// GPU-dispatched binary op, or CPU fallback.
     fn gpu_binary_or_cpu(&self, other: &CrowTensor, op: gpu::BinaryOp, cpu_fn: impl Fn(f64, f64) -> f64) -> CrowTensor {
-        if let (Some(a_buf), Some(b_buf)) = (self.gpu_buffer(), other.gpu_buffer()) {
+        // the GPU kernel takes two buffers of one shape; two shapes that
+        // broadcast are the CPU's (the kernel asserted one length: a panic)
+        if let (Some(a_buf), Some(b_buf), true) = (self.gpu_buffer(), other.gpu_buffer(), self.shape == other.shape) {
             if let Some(ctx) = GpuContext::get() {
                 let out = gpu::gpu_elementwise_binary(ctx, a_buf, b_buf, op);
                 return self.from_gpu_buffer(out);
@@ -1228,6 +1230,18 @@ impl CrowTensor {
 
     /// Gather elements by index array. For a 1D tensor, returns elements at the given indices.
     /// The indices tensor contains integer indices (as f64).
+    /// `t[indices]`: the elements at the indices (a negative one counts
+    /// from the end), or the reason one is outside — the same words as
+    /// `xs[i]`, in both modes (the kernel asserted it: a panic).
+    pub fn try_gather(&self, indices: &CrowTensor) -> Result<CrowTensor, String> {
+        let src = self.to_vec();
+        let mut data = Vec::with_capacity(indices.len());
+        for i in indices.to_vec() {
+            data.push(src[crate::stops::item(i as i64, src.len())?]);
+        }
+        Ok(Self::from_vec(data, indices.shape.clone()))
+    }
+
     pub fn gather(&self, indices: &CrowTensor) -> CrowTensor {
         let src = self.to_vec();
         let idx = indices.to_vec();
@@ -1315,6 +1329,22 @@ impl CrowTensor {
         let mut shape = vec![items.len()];
         shape.extend_from_slice(&first_shape);
         Ok(Self::from_vec(data, shape))
+    }
+
+    /// `concat[a, b]`, `concat[a, b, axis]` of tensors: one tensor, or the
+    /// reason the two do not join — ranks, an axis, a shape across it (the
+    /// kernel asserted them: a panic).
+    pub fn try_concat(&self, other: &CrowTensor, axis: i64) -> Result<CrowTensor, String> {
+        if self.ndim() != other.ndim() {
+            return Err(format!("concat: tensors of {} and {} dimensions do not join", self.ndim(), other.ndim()));
+        }
+        let ax = usize::try_from(axis).ok().filter(|a| *a < self.ndim().max(1)).ok_or_else(|| format!("concat: axis {} is out of range for a {}D tensor", axis, self.ndim()))?;
+        for d in 0..self.ndim() {
+            if d != ax && self.shape[d] != other.shape[d] {
+                return Err(format!("concat: shapes {:?} and {:?} differ across axis {}", self.shape, other.shape, d));
+            }
+        }
+        Ok(self.concat(other, ax))
     }
 
     pub fn concat(&self, other: &CrowTensor, axis: usize) -> CrowTensor {
@@ -1513,6 +1543,20 @@ pub fn numbers_equal<A: Numbers, B: Numbers>(a: &A, b: &B) -> bool {
 
 #[cfg(test)]
 pub(crate) mod tests {
+
+    /// An index outside, and tensors that do not join, are the reason —
+    /// the kernels asserted them, a panic in both modes.
+    #[test]
+    fn a_gather_or_a_concat_that_does_not_fit_is_the_reason() {
+        let a = CrowTensor::from_vec(vec![10.0, 20.0, 30.0], vec![3]);
+        let far = CrowTensor::from_vec(vec![0.0, 9.0], vec![2]);
+        assert_eq!(a.try_gather(&far).map(|_| ()), Err("index 9 is out of range for an array of 3 items".to_string()));
+        assert_eq!(a.try_gather(&CrowTensor::from_vec(vec![-1.0], vec![1])).map(|t| t.to_vec()), Ok(vec![30.0]));
+        let m = CrowTensor::zeros(vec![2, 2]);
+        assert_eq!(a.try_concat(&m, 0).map(|_| ()), Err("concat: tensors of 1 and 2 dimensions do not join".to_string()));
+        assert_eq!(m.try_concat(&CrowTensor::zeros(vec![2, 3]), 0).map(|_| ()), Err("concat: shapes [2, 2] and [2, 3] differ across axis 1".to_string()));
+        assert_eq!(m.try_concat(&m, 5).map(|_| ()), Err("concat: axis 5 is out of range for a 2D tensor".to_string()));
+    }
     use super::*;
 
     #[test]

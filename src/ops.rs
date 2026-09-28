@@ -544,7 +544,7 @@ pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, 
             }
             Value::NumArray(idx_tensor) => {
                 // Advanced indexing: gather by index array
-                Ok(CrowValue::ok(Value::NumArray(Box::new(tensor.gather(idx_tensor)))))
+                Ok(CrowValue::ok(Value::NumArray(Box::new(tensor.try_gather(idx_tensor)?))))
             }
             _ => Err("array index must be an integer or tensor".to_string()),
         }

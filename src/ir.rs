@@ -211,6 +211,16 @@ pub struct Fn {
     /// The tables it writes, itself or through what it calls: a handler
     /// wakes their readers when it commits.
     pub tables_written: Vec<String>,
+    /// Whether it can call itself, directly or through what it calls: its
+    /// calls count toward the recursion limit, in both modes
+    /// (crow_runtime::stops::DEPTH).
+    pub recursive: bool,
+}
+
+/// A body's first source line: where a recursion past the limit stops,
+/// the same line in both modes.
+pub fn first_line(b: &[Stmt]) -> usize {
+    b.iter().find_map(|s| if let Stmt::Line(n) = s { Some(*n) } else { None }).unwrap_or(0)
 }
 
 #[derive(Debug, Clone)]

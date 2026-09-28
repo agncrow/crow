@@ -158,6 +158,49 @@ pub fn size(what: &str, n: i64) -> Result<usize, String> {
     usize::try_from(n).map_err(|_| format!("{}: a size cannot be negative (got {})", what, n))
 }
 
+// ── recursion ───────────────────────────────────────────────────────
+
+/// How deep a recursive function's calls may go before the program stops,
+/// the same in both modes (each runs on a stack that holds it: [`STACK`]).
+pub const DEPTH: usize = 10_000;
+
+/// The stack a program's thread runs on: deep enough for [`DEPTH`] calls
+/// in the interpreter, whose calls are frames of its own.
+pub const STACK: usize = 256 << 20;
+
+/// A recursion past [`DEPTH`]: the reason, where both modes had aborted
+/// with Rust's stack overflow.
+pub fn too_deep() -> String {
+    format!("recursion deeper than {} calls — a function that calls itself needs a case that returns without calling", DEPTH)
+}
+
+thread_local! {
+    static CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// A recursive function's call on this thread's stack: entered when the
+/// function starts, left when the guard drops.
+pub struct Depth;
+
+impl Depth {
+    pub fn enter() -> Result<Depth, String> {
+        CALLS.with(|c| {
+            let n = c.get() + 1;
+            if n > DEPTH {
+                return Err(too_deep());
+            }
+            c.set(n);
+            Ok(Depth)
+        })
+    }
+}
+
+impl Drop for Depth {
+    fn drop(&mut self) {
+        CALLS.with(|c| c.set(c.get().saturating_sub(1)));
+    }
+}
+
 // ── stopping ────────────────────────────────────────────────────────
 
 /// A stop raised off the main thread, carried as the panic's payload to
@@ -185,12 +228,28 @@ pub fn halt(line: usize, why: &str) -> ! {
 /// A compiled program's main, run so that a stop carried back from another
 /// thread is the program's stop, printed once. A panic that is not a stop
 /// printed itself where it happened, through [`install_hook`].
-pub fn main_guard(f: impl FnOnce()) {
-    if let Err(p) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
-        if let Some(Stop(text)) = p.downcast_ref::<Stop>() {
-            eprintln!("runtime error: {}", text);
+pub fn main_guard(f: impl FnOnce() + Send + 'static) {
+    // on a thread of its own, named for the main thread (so a stop on it
+    // exits as the main thread's does), with a stack deep enough for the
+    // recursion limit
+    let run = move || {
+        if let Err(p) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+            if let Some(Stop(text)) = p.downcast_ref::<Stop>() {
+                eprintln!("runtime error: {}", text);
+            }
+            std::process::exit(1);
         }
-        std::process::exit(1);
+    };
+    match std::thread::Builder::new().name("main".to_string()).stack_size(STACK).spawn(run) {
+        Ok(h) => {
+            if h.join().is_err() {
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("runtime error: cannot start the program's thread: {}", e);
+            std::process::exit(1);
+        }
     }
 }
 

@@ -170,6 +170,12 @@ impl Emitter {
             std::mem::take(&mut self.cur_fn),
             self.view_mark,
         );
+        // a recursive function's calls nest to the limit and no deeper, as
+        // the interpreter counts them (crow_runtime::stops::DEPTH)
+        if f.recursive {
+            self.needs_crow_runtime = true;
+            self.line(&format!("let __crow_depth = crow_runtime::stops::Depth::enter().unwrap_or_else(|e| crow_stop({}, e));", crate::ir::first_line(&f.body)));
+        }
         self.scopes = vec![HashMap::new()];
         self.ref_params = refs;
         self.cur_ret = Some(ret_ty.clone());

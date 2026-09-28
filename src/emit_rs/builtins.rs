@@ -488,8 +488,8 @@ impl Emitter {
                     format!("format!(\"{{}}{{}}\", {}, {})", a[0], a[1])
                 } else if matches!(in0, CrowType::NumArray(_)) {
                     self.needs_crow_runtime = true;
-                    let axis = if n == 3 { format!("{} as usize", a[2]) } else { "0".to_string() };
-                    format!("{}.concat(&{}, {})", a[0], a[1], axis)
+                    let axis = if n == 3 { format!("({}) as i64", a[2]) } else { "0".to_string() };
+                    format!("{}.try_concat(&{}, {}){}", a[0], a[1], axis, self.or_stop())
                 } else {
                     self.needs_crow_runtime = true;
                     let first = self.moved_or_cloned(&args[0], &a[0]);

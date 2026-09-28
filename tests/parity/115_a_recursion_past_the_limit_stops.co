@@ -1,0 +1,17 @@
+--- The runtime answers a misuse with its reason, never a crash
+--- (docs/bug-classes.md §3). A recursion past 10000 calls stops both modes
+--- with the same words: the interpreter had aborted at about 1500 calls,
+--- on the main thread's stack, and the compiled program at Rust's own
+--- limit. A tensor indexed by indices inside it, and tensors that join,
+--- are what they were (the kernels had asserted the other cases).
+use math
+fn down[n]
+    if n eq 0
+        return 0
+    return 1 + down[n - 1]
+log[down[9000]]
+a = linspace[10, 50, 5]
+log[a[linspace[0, 2, 3]]]
+log[concat[ones[2], ones[1]]]
+log[down[20000]]
+log['not reached']

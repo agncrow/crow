@@ -74,10 +74,18 @@ modes. Compiled (release): within noise on every row. Interpreted:
 `for_collect` 82 → 58 ms, because each binary operator had formatted a
 trace string it never used.
 
-**Left.** Deep recursion still aborts with Rust's message in both modes.
-A depth guard needs a limit both modes share, and the compiled program's
-guard would cost on every call of a recursive function (the lowering
-knows which ones are).
+**Deep recursion** (built after the table's batches): a recursive
+function's calls nest to 10,000 and no deeper, in both modes, and the
+program stops with `recursion deeper than 10000 calls` on the function's
+first line. The interpreter had aborted with Rust's stack overflow at
+about 1,500 calls, on the main thread's 8 MB, and the compiled program at
+its own depth. The lowering marks a function that can reach itself
+(`Fn::recursive`). The interpreter counts those calls; the compiled
+program gives only those functions a guard (`stops::Depth`), so a
+function that does not recurse pays nothing. Both run their program on a
+256 MB stack (`stops::STACK`: crow's own thread, the compiled program's
+`main_guard`, the interpreter's server), deep enough for the limit.
+Parity 115.
 
 ## 2. The IR is checked before a backend reads it
 
@@ -462,6 +470,17 @@ written twice.
   text interpreted and stayed an int compiled.
 - A list's failed item read where numbers are taken is the reason, never
   its placeholder.
+
+**The last reachable panics.** A tensor indexed by a tensor of indices
+(`gather`) asserted each index, and a tensor `concat` asserted ranks and
+shapes: both answer the reason now, the same words as `xs[i]` for an
+index. A GPU element-wise operation of two shapes that broadcast asserted
+one length; two shapes are the CPU's. `broadcast_shape`'s panic is an
+invariant, not a user's argument: every caller checks `meets` first
+(`try_elementwise` for the operators, the math, nn and special entry
+points for the builtins). The kernels' other asserts guard what their
+Crow-facing callers check first, and a guard reports one as a stop if a
+check were ever missing.
 
 ## Decisions (Vijay, 2026-09-28)
 

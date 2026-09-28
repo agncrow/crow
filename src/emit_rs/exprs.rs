@@ -656,7 +656,7 @@ impl Emitter {
         match &inner {
             CrowType::NumArray(el) => {
                 if matches!(idx_ty, Some(CrowType::NumArray(_))) {
-                    return format!("{}.gather(&{})", b, idx);
+                    return format!("{}.try_gather(&{}){}", b, idx, self.or_stop());
                 }
                 // an index outside stops the program with the runtime's words
                 let line = self.current_line;
