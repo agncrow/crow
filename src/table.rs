@@ -381,6 +381,24 @@ pub static ROWS: &[Row] = &[
     row!("math.gamma_dist", "math", "gamma_dist", crow_runtime::math::gamma_dist, (Float, Float, Sizes) -> Tensor, stops),
     row!("math.beta_dist", "math", "beta_dist", crow_runtime::math::beta_dist, (Float, Float, Sizes) -> Tensor, stops),
     row!("math.exponential", "math", "exponential", crow_runtime::math::exponential, (Float, Sizes) -> Tensor, stops),
+    // math: linear algebra (a vector, a rank-3 tensor or a rectangle where a
+    // square is needed, a matrix that is not positive definite: the reason,
+    // where a kernel panicked)
+    row!("math.det", "math", "det", crow_runtime::math::det, (Tensor) -> Float, stops),
+    row!("math.inv", "math", "inv", crow_runtime::math::inv, (Tensor) -> Tensor, stops),
+    row!("math.svd", "math", "svd", crow_runtime::math::svd, (Tensor) -> Tensors, stops),
+    row!("math.qr", "math", "qr", crow_runtime::math::qr, (Tensor) -> Tensors, stops),
+    row!("math.cholesky", "math", "cholesky", crow_runtime::math::cholesky, (Tensor) -> Tensor, stops),
+    row!("math.eigen", "math", "eigen", crow_runtime::math::eigen, (Tensor) -> Tensors, stops),
+    row!("math.norm", "math", "norm", crow_runtime::math::norm, (Tensor) -> Float, never),
+    row!("math.norm_p", "math", "norm", crow_runtime::math::norm_p, (Tensor, Float) -> Float, never),
+    row!("math.dot", "math", "dot", crow_runtime::math::dot, (Tensor, Tensor) -> Float, stops),
+    row!("math.pinv", "math", "pinv", crow_runtime::math::pinv, (Tensor) -> Tensor, stops),
+    row!("math.lstsq", "math", "lstsq", crow_runtime::math::lstsq, (Tensor, Tensor) -> Tensor, stops),
+    row!("math.triu", "math", "triu", crow_runtime::math::triu, (Tensor) -> Tensor, stops),
+    row!("math.tril", "math", "tril", crow_runtime::math::tril, (Tensor) -> Tensor, stops),
+    row!("math.rank", "math", "rank", crow_runtime::math::rank, (Tensor) -> Int, stops),
+    row!("math.cond", "math", "cond", crow_runtime::math::cond, (Tensor) -> Float, stops),
 ];
 
 /// The row the IR names by `id`.
@@ -393,14 +411,74 @@ pub fn core(name: &str) -> Option<&'static Row> {
     ROWS.iter().find(|r| r.module.is_empty() && r.name == name)
 }
 
-/// A module function's row for a call of `argc` arguments: the one row of
-/// its name, or, of several (`norm[t]`, `norm[t, p]`), the first whose
-/// parameters take that many.
-pub fn module(module: &str, name: &str, argc: usize) -> Option<&'static Row> {
-    let mut named = ROWS.iter().filter(|r| r.module == module && r.name == name).peekable();
-    let first = named.peek().copied()?;
-    let fits = ROWS.iter().filter(|r| r.module == module && r.name == name).find(|r| spans(r.params, argc, r.name).is_ok());
-    Some(fits.unwrap_or(first))
+/// What an argument is, as the choice among a name's rows reads it: from
+/// the interpreter's value, or from the IR's type (the verifier keeps the
+/// two agreeing, so both modes choose the same row).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Arg {
+    Number,
+    Tensor,
+    Text,
+    Truth,
+    /// Not known here: any parameter takes it.
+    Unknown,
+}
+
+impl Arg {
+    pub fn of_type(t: &CrowType) -> Arg {
+        match t {
+            CrowType::Result(inner) => Arg::of_type(inner),
+            CrowType::Int | CrowType::Float => Arg::Number,
+            CrowType::NumArray(_) | CrowType::Array(_) | CrowType::FrameCol => Arg::Tensor,
+            CrowType::Str | CrowType::Markup => Arg::Text,
+            CrowType::Bool => Arg::Truth,
+            _ => Arg::Unknown,
+        }
+    }
+
+    pub fn of_value(v: &CrowValue) -> Arg {
+        match &v.value {
+            Value::Int(_) | Value::Float(_) => Arg::Number,
+            Value::NumArray(_) | Value::Array(_) => Arg::Tensor,
+            Value::Str(_) => Arg::Text,
+            Value::Bool(_) => Arg::Truth,
+            _ => Arg::Unknown,
+        }
+    }
+}
+
+impl Kind {
+    /// Whether a parameter of this kind takes an argument of that kind.
+    fn takes(self, a: Arg) -> bool {
+        a == Arg::Unknown
+            || match self {
+                Kind::Int | Kind::Float | Kind::Sizes => a == Arg::Number,
+                Kind::Tensor => a == Arg::Tensor,
+                Kind::Str => a == Arg::Text,
+                Kind::Bool => a == Arg::Truth,
+                Kind::IntMap | Kind::Tensors => true,
+            }
+    }
+}
+
+/// Whether a row takes these arguments: their count, and each one's kind.
+fn takes(row: &Row, args: &[Arg]) -> bool {
+    match spans(row.params, args.len(), row.name) {
+        Ok(spans) => row.params.iter().zip(spans).all(|(k, (a, b))| args[a..b].iter().all(|x| k.takes(*x))),
+        Err(_) => false,
+    }
+}
+
+/// A module function's row for a call with these arguments: of the rows of
+/// its name, the first that takes their count and kinds (`exp` of a number
+/// or of a tensor, `norm[t]` or `norm[t, p]`); then the first that takes
+/// their count; then the first, whose own check refuses the call.
+pub fn module(module: &str, name: &str, args: &[Arg]) -> Option<&'static Row> {
+    let named = || ROWS.iter().filter(move |r| r.module == module && r.name == name);
+    named()
+        .find(|r| takes(r, args))
+        .or_else(|| named().find(|r| spans(r.params, args.len(), r.name).is_ok()))
+        .or_else(|| named().next())
 }
 
 /// The core names with syntax or state of their own, which no row says: a

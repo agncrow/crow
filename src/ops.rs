@@ -95,7 +95,7 @@ pub fn binop(
             (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.mul_scalar(*a as f64))))),
             (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.mul_scalar(*a))))),
             // sparse * dense → matmul
-            (Value::Sparse(s), Value::NumArray(t)) => Ok(CrowValue::ok(Value::NumArray(Box::new(s.matmul_dense(t))))),
+            (Value::Sparse(s), Value::NumArray(t)) => s.matmul_dense(t).map(|m| CrowValue::ok(Value::NumArray(Box::new(m)))),
             // Vectorized: Array * scalar
             (Value::Array(items), scalar @ (Value::Int(_) | Value::Float(_))) |
             (scalar @ (Value::Int(_) | Value::Float(_)), Value::Array(items)) => {

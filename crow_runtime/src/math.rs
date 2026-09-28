@@ -101,6 +101,125 @@ pub fn exponential(lambda: f64, sizes: &[i64]) -> Result<CrowTensor, String> {
     CrowTensor::exponential(sample_shape("exponential", sizes)?, lambda)
 }
 
+// ── linear algebra ──────────────────────────────────────────────────
+// The kernels take a matrix of the right shape; these check it, so a
+// vector, a rank-3 tensor or a rectangle where a square is needed is the
+// program's reason, never a kernel's panic.
+
+/// The rows and columns of a matrix.
+fn matrix(what: &str, t: &CrowTensor) -> Result<(usize, usize), String> {
+    match t.shape() {
+        [r, c] => Ok((*r, *c)),
+        s => Err(format!("{}: expected a matrix (2D), got a {}D tensor", what, s.len())),
+    }
+}
+
+/// The side of a square matrix.
+fn square(what: &str, t: &CrowTensor) -> Result<usize, String> {
+    let (r, c) = matrix(what, t)?;
+    if r != c {
+        return Err(format!("{}: the matrix must be square, got {}×{}", what, r, c));
+    }
+    Ok(r)
+}
+
+/// `det[a]`.
+pub fn det(a: &CrowTensor) -> Result<f64, String> {
+    square("det", a)?;
+    Ok(a.det())
+}
+
+/// `inv[a]`.
+pub fn inv(a: &CrowTensor) -> Result<CrowTensor, String> {
+    square("inv", a)?;
+    Ok(a.inv())
+}
+
+/// `svd[a]`: `[u, s, vt]`.
+pub fn svd(a: &CrowTensor) -> Result<Vec<CrowTensor>, String> {
+    matrix("svd", a)?;
+    let (u, s, vt) = a.svd_decomp()?;
+    Ok(vec![u, s, vt])
+}
+
+/// `qr[a]`: `[q, r]`.
+pub fn qr(a: &CrowTensor) -> Result<Vec<CrowTensor>, String> {
+    matrix("qr", a)?;
+    let (q, r) = a.qr_decomp();
+    Ok(vec![q, r])
+}
+
+/// `cholesky[a]`: the lower factor of a positive definite matrix.
+pub fn cholesky(a: &CrowTensor) -> Result<CrowTensor, String> {
+    square("cholesky", a)?;
+    a.cholesky_decomp()
+}
+
+/// `eigen[a]`: `[real parts, imaginary parts]` of the eigenvalues.
+pub fn eigen(a: &CrowTensor) -> Result<Vec<CrowTensor>, String> {
+    square("eigen", a)?;
+    let (re, im) = a.eigen_decomp()?;
+    Ok(vec![re, im])
+}
+
+/// `norm[t]`: the Euclidean norm of every element.
+pub fn norm(t: &CrowTensor) -> f64 {
+    t.norm(2.0)
+}
+
+/// `norm[t, p]`.
+pub fn norm_p(t: &CrowTensor, p: f64) -> f64 {
+    t.norm(p)
+}
+
+/// `dot[a, b]`: of two vectors of one length.
+pub fn dot(a: &CrowTensor, b: &CrowTensor) -> Result<f64, String> {
+    if a.len() != b.len() {
+        return Err(format!("dot: the vectors must be one length, got {} and {}", a.len(), b.len()));
+    }
+    Ok(a.dot(b))
+}
+
+/// `pinv[a]`: the pseudo-inverse.
+pub fn pinv(a: &CrowTensor) -> Result<CrowTensor, String> {
+    matrix("pinv", a)?;
+    a.pinv()
+}
+
+/// `lstsq[a, b]`: the least-squares solution of `a x = b`.
+pub fn lstsq(a: &CrowTensor, b: &CrowTensor) -> Result<CrowTensor, String> {
+    let (rows, _) = matrix("lstsq", a)?;
+    let b_rows = b.shape().first().copied().unwrap_or(0);
+    if b.shape().len() > 2 || b_rows != rows {
+        return Err(format!("lstsq: b must have the matrix's {} rows, got shape {:?}", rows, b.shape()));
+    }
+    a.lstsq(b)
+}
+
+/// `triu[a]`.
+pub fn triu(a: &CrowTensor) -> Result<CrowTensor, String> {
+    matrix("triu", a)?;
+    Ok(a.triu())
+}
+
+/// `tril[a]`.
+pub fn tril(a: &CrowTensor) -> Result<CrowTensor, String> {
+    matrix("tril", a)?;
+    Ok(a.tril())
+}
+
+/// `rank[a]`.
+pub fn rank(a: &CrowTensor) -> Result<i64, String> {
+    matrix("rank", a)?;
+    Ok(a.rank()? as i64)
+}
+
+/// `cond[a]`.
+pub fn cond(a: &CrowTensor) -> Result<f64, String> {
+    matrix("cond", a)?;
+    a.cond()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,6 +242,29 @@ mod tests {
         assert_eq!(normal(0.0, -1.0, &[]).map(|_| ()), Err("normal: std must be 0 or more (got -1)".to_string()));
         assert_eq!(poisson(2.0, &[]).map(|t| t.shape().to_vec()), Ok(vec![1]));
         assert_eq!(uniform(0.0, 1.0, &[4]).map(|t| t.shape().to_vec()), Ok(vec![4]));
+    }
+
+    #[test]
+    fn a_matrix_is_the_shape_its_function_needs() {
+        let v = CrowTensor::from_vec(vec![1.0, 2.0], vec![2]);
+        let rect = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
+        let sq = CrowTensor::from_vec(vec![4.0, 2.0, 2.0, 3.0], vec![2, 2]);
+        assert_eq!(det(&v).map(|_| ()), Err("det: expected a matrix (2D), got a 1D tensor".to_string()));
+        assert_eq!(inv(&rect).map(|_| ()), Err("inv: the matrix must be square, got 2×3".to_string()));
+        assert!(det(&sq).is_ok());
+        assert_eq!(dot(&v, &CrowTensor::from_vec(vec![1.0], vec![1])).map(|_| ()), Err("dot: the vectors must be one length, got 2 and 1".to_string()));
+        assert_eq!(svd(&rect).map(|parts| parts.len()), Ok(3));
+        assert_eq!(rank(&rect), Ok(2));
+    }
+
+    /// A matrix that is not positive definite is cholesky's reason: it
+    /// panicked both modes.
+    #[test]
+    fn a_decomposition_that_fails_says_why() {
+        let not_pd = CrowTensor::from_vec(vec![1.0, 2.0, 2.0, 1.0], vec![2, 2]);
+        assert_eq!(cholesky(&not_pd).map(|_| ()), Err("cholesky: the matrix is not positive definite".to_string()));
+        let empty = CrowTensor::zeros(vec![0, 0]);
+        assert_eq!(pinv(&empty).map(|t| t.shape().to_vec()), Ok(vec![0, 0]));
     }
 
     #[test]

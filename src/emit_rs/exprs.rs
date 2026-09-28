@@ -417,7 +417,7 @@ impl Emitter {
             return format!("{}.add(&{})", l, r);
         }
         if l_sparse && matches!(rti, CrowType::NumArray(_)) && op == "mul" {
-            return format!("{}.matmul_dense(&{})", l, r);
+            return format!("{}.matmul_dense(&{}){}", l, r, self.or_stop());
         }
         let col_bridge = matches!(op, "elemmul" | "elemdiv" | "elempow" | "add" | "sub");
         let (l, lti) = if matches!(lti, CrowType::FrameCol) && col_bridge { (format!("({}).to_tensor()", l), CrowType::NumArray(Box::new(CrowType::Float))) } else { (l, lti) };
@@ -1199,7 +1199,7 @@ impl Emitter {
     fn base_is_result(&self, name: &str, target: &Target, raw_args: &[Expr]) -> bool {
         match target {
             Target::User(n) => self.fns.get(n).map_or(false, |f| matches!(f.ret, Ty::Result(_))),
-            Target::Module(m, f) => self.registry.type_of_in(m, f, raw_args.len()).map_or(false, |t| matches!(t, CrowType::Result(_))),
+            Target::Module(m, f) => self.registry.type_of_in(m, f, &raw_args.iter().map(|a| self.tt(a)).collect::<Vec<_>>()).map_or(false, |t| matches!(t, CrowType::Result(_))),
             Target::Runtime(p) if crate::table::by_id(p).is_some() => {
                 matches!(crate::table::by_id(p).map(|r| r.fails), Some(crate::table::Fails::Value(_)))
             }
@@ -1211,7 +1211,7 @@ impl Emitter {
                     return matches!(raw_args.first().map(|a| Self::inner(&self.tt(a))), Some(CrowType::Str) | Some(CrowType::Json));
                 }
                 if self.registry.has_function(name) && !matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max") {
-                    if let Some(t) = self.registry.type_of(name, raw_args.len()) {
+                    if let Some(t) = self.registry.type_of(name, &raw_args.iter().map(|a| self.tt(a)).collect::<Vec<_>>()) {
                         return matches!(t, CrowType::Result(_));
                     }
                 }

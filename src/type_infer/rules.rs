@@ -78,7 +78,7 @@ impl TypeContext {
             let arg_types: Vec<CrowType> = args.iter().map(|a| arg_ty(a)).collect();
             let has_numarray = arg_types.iter().any(|t| matches!(t, CrowType::NumArray(_)));
             if has_numarray {
-                if let Some(t) = self.registry.type_of(name, args.len()) {
+                if let Some(t) = self.registry.type_of(name, &arg_types) {
                     return t;
                 }
             }
@@ -117,12 +117,12 @@ impl TypeContext {
                     _ => None,
                 };
                 if let Some(m) = pick {
-                    if let Some(t) = self.registry.type_of_in(m, name, args.len()) {
+                    if let Some(t) = self.registry.type_of_in(m, name, &args.iter().map(|a| arg_ty(a)).collect::<Vec<_>>()) {
                         return t;
                     }
                 }
             }
-            if let Some(t) = self.registry.type_of(name, args.len()) {
+            if let Some(t) = self.registry.type_of(name, &args.iter().map(|a| arg_ty(a)).collect::<Vec<_>>()) {
                 return t;
             }
         }
@@ -613,7 +613,7 @@ impl TypeContext {
         // or via alias: m.zeros after `use math as m`)
         let real = self.module_aliases.get(module).cloned().unwrap_or_else(|| module.to_string());
         if matches!(real.as_str(), "math" | "io" | "frame" | "db" | "doc" | "chart" | "math.stats" | "math.nn") && self.registry.has_function(field) {
-            if let Some(t) = self.registry.type_of_in(&real, field, arg_types.len()) {
+            if let Some(t) = self.registry.type_of_in(&real, field, arg_types) {
                 // auto-propagation applies to qualified calls too:
                 // a fallible argument makes the result fallible
                 if !matches!(t, CrowType::Result(_) | CrowType::Void) && arg_types.iter().any(|a| matches!(a, CrowType::Result(_))) {

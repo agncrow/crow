@@ -50,16 +50,17 @@ impl CrowSparse {
         CrowTensor::from_vec(data, vec![rows, cols])
     }
 
-    /// Sparse matrix-vector multiply: self * dense_vector → dense vector.
-    #[expect(clippy::panic, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
-    pub fn matmul_dense(&self, other: &CrowTensor) -> CrowTensor {
+    /// Sparse matrix × a dense vector or matrix; shapes that do not meet
+    /// are the reason (they panicked both modes).
+    pub fn matmul_dense(&self, other: &CrowTensor) -> Result<CrowTensor, String> {
         let other_shape = other.shape();
         let (srows, scols) = self.mat.shape();
 
         if other_shape.len() == 1 {
             // Sparse × vector
-            assert!(scols == other_shape[0],
-                "sparse matmul: shape mismatch {}x{} * {}", srows, scols, other_shape[0]);
+            if scols != other_shape[0] {
+                return Err(format!("sparse matmul: incompatible shapes {}×{} and {}", srows, scols, other_shape[0]));
+            }
             let v = other.to_vec();
             let mut result = vec![0.0; srows];
             for (row_idx, row) in self.mat.outer_iterator().enumerate() {
@@ -69,12 +70,13 @@ impl CrowSparse {
                 }
                 result[row_idx] = sum;
             }
-            CrowTensor::from_vec(result, vec![srows])
+            Ok(CrowTensor::from_vec(result, vec![srows]))
         } else if other_shape.len() == 2 {
             // Sparse × dense matrix
             let bcols = other_shape[1];
-            assert!(scols == other_shape[0],
-                "sparse matmul: shape mismatch {}x{} * {}x{}", srows, scols, other_shape[0], bcols);
+            if scols != other_shape[0] {
+                return Err(format!("sparse matmul: incompatible shapes {}×{} and {}×{}", srows, scols, other_shape[0], bcols));
+            }
             let bdata = other.to_vec();
             let mut result = vec![0.0; srows * bcols];
             for (row_idx, row) in self.mat.outer_iterator().enumerate() {
@@ -84,9 +86,9 @@ impl CrowSparse {
                     }
                 }
             }
-            CrowTensor::from_vec(result, vec![srows, bcols])
+            Ok(CrowTensor::from_vec(result, vec![srows, bcols]))
         } else {
-            panic!("sparse matmul: expected 1D or 2D tensor, got {}D", other_shape.len());
+            Err(format!("sparse matmul: expected a vector or a matrix, got a {}D tensor", other_shape.len()))
         }
     }
 
@@ -164,7 +166,7 @@ mod tests {
             &[1.0, 2.0, 3.0, 4.0, 5.0], 3, 3
         );
         let v = CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
-        let r = s.matmul_dense(&v);
+        let r = s.matmul_dense(&v).expect("the shapes meet");
         assert_eq!(r.to_vec(), vec![7.0, 6.0, 19.0]);
     }
 
@@ -173,7 +175,7 @@ mod tests {
         // identity sparse * dense matrix
         let s = CrowSparse::from_coo(&[0, 1], &[0, 1], &[1.0, 1.0], 2, 2);
         let m = CrowTensor::from_vec(vec![3.0, 4.0, 5.0, 6.0], vec![2, 2]);
-        let r = s.matmul_dense(&m);
+        let r = s.matmul_dense(&m).expect("the shapes meet");
         assert_eq!(r.to_vec(), vec![3.0, 4.0, 5.0, 6.0]);
     }
 

@@ -1,0 +1,17 @@
+--- Linear algebra is rows of the builtin table (docs/bug-classes.md §4):
+--- a matrix of the wrong shape, or one that is not positive definite, is
+--- the reason one runtime function gives both modes. cholesky of such a
+--- matrix panicked both, and a vector or a rectangle given to det or inv
+--- panicked a kernel.
+use math
+a = [[4.0, 2.0], [2.0, 3.0]]
+log[det[a]]
+log[rank[a]]
+log[len[svd[a]]]
+log[norm[[3.0, 4.0]]]
+log[norm[[3.0, 4.0], 1]]
+log[dot[[1.0, 2.0], [3.0, 4.0]]]
+log[triu[a]]
+log[len[cholesky[a]]]
+log[cholesky[[[1.0, 2.0], [2.0, 1.0]]]]
+log['not reached']

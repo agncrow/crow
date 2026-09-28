@@ -147,10 +147,10 @@ impl CrowTensor {
 
     /// Singular Value Decomposition: self = U * diag(S) * Vt.
     /// Returns (U, S, Vt) where S is a 1D tensor of singular values.
-    #[expect(clippy::expect_used, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
-    pub fn svd_decomp(&self) -> (CrowTensor, CrowTensor, CrowTensor) {
+    /// (A decomposition that does not converge is its reason.)
+    pub fn svd_decomp(&self) -> Result<(CrowTensor, CrowTensor, CrowTensor), String> {
         let a = tensor_to_mat(self);
-        let svd = a.thin_svd().expect("svd: decomposition failed");
+        let svd = a.thin_svd().map_err(|e| format!("svd: the decomposition failed ({:?})", e))?;
         let u = matref_to_tensor(svd.U());
         // S is diagonal — extract as 1D
         let s_diag = svd.S();
@@ -159,7 +159,7 @@ impl CrowTensor {
         let s_data: Vec<f64> = (0..k).map(|i| s_col[i]).collect();
         let s = CrowTensor::from_vec(s_data, vec![k]);
         let vt = matref_to_tensor(svd.V()).transpose();
-        (u, s, vt)
+        Ok((u, s, vt))
     }
 
     /// QR decomposition: self = Q * R.
@@ -176,11 +176,11 @@ impl CrowTensor {
 
     /// Cholesky decomposition: self = L * L^T.
     /// Self must be symmetric positive definite. Returns L (lower triangular).
-    #[expect(clippy::expect_used, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
-    pub fn cholesky_decomp(&self) -> CrowTensor {
+    /// A matrix that is not positive definite is the reason.
+    pub fn cholesky_decomp(&self) -> Result<CrowTensor, String> {
         let a = tensor_to_mat(self);
-        let llt = a.llt(Side::Lower).expect("cholesky: matrix is not positive definite");
-        matref_to_tensor(llt.L())
+        let llt = a.llt(Side::Lower).map_err(|_| "cholesky: the matrix is not positive definite".to_string())?;
+        Ok(matref_to_tensor(llt.L()))
     }
 
     /// Vector/matrix norm.
@@ -212,10 +212,15 @@ impl CrowTensor {
 
     /// Moore-Penrose pseudo-inverse via SVD: A⁺ = V * diag(1/σᵢ) * Uᵀ.
     /// Works for any m×n matrix.
-    pub fn pinv(&self) -> CrowTensor {
-        let (u, s, vt) = self.svd_decomp();
+    pub fn pinv(&self) -> Result<CrowTensor, String> {
+        let (u, s, vt) = self.svd_decomp()?;
         let s_data = s.to_vec();
-        let tol = s_data[0] * (self.shape()[0].max(self.shape()[1]) as f64) * f64::EPSILON;
+        // an empty matrix has no singular values: its inverse is empty too
+        // (the first value was read unchecked, and panicked)
+        let Some(&largest) = s_data.first() else {
+            return Ok(CrowTensor::zeros(vec![self.shape()[1], self.shape()[0]]));
+        };
+        let tol = largest * (self.shape()[0].max(self.shape()[1]) as f64) * f64::EPSILON;
         // S_inv: k×k diagonal with 1/σᵢ (or 0 if below tolerance)
         let k = s_data.len();
         let mut s_inv_data = vec![0.0; k * k];
@@ -228,17 +233,17 @@ impl CrowTensor {
         // pinv = Vᵀᵀ * S_inv * Uᵀ = V * S_inv * Uᵀ
         let v = vt.transpose();
         let ut = u.transpose();
-        v.matmul(&s_inv).matmul(&ut)
+        Ok(v.matmul(&s_inv).matmul(&ut))
     }
 
     /// Least-squares solve: find x that minimizes ||Ax - b||².
     /// Uses pseudo-inverse: x = pinv(A) * b.
-    pub fn lstsq(&self, b: &CrowTensor) -> CrowTensor {
+    pub fn lstsq(&self, b: &CrowTensor) -> Result<CrowTensor, String> {
         // a plain vector right-hand side is one column (same as solve)
         let b_is_vec = b.shape().len() == 1;
         let b2 = if b_is_vec { b.reshape(vec![b.shape()[0], 1]) } else { b.clone() };
-        let out = self.pinv().matmul(&b2);
-        if b_is_vec { out.reshape(vec![out.shape()[0]]) } else { out }
+        let out = self.pinv()?.matmul(&b2);
+        Ok(if b_is_vec { out.reshape(vec![out.shape()[0]]) } else { out })
     }
 
     /// Extract upper triangular part of a matrix. Elements below the main diagonal are set to 0.
@@ -272,42 +277,33 @@ impl CrowTensor {
     }
 
     /// Matrix rank via SVD. Counts singular values above a tolerance threshold.
-    pub fn rank(&self) -> usize {
-        let (_, s, _) = self.svd_decomp();
+    pub fn rank(&self) -> Result<usize, String> {
+        let (_, s, _) = self.svd_decomp()?;
         let s_data = s.to_vec();
-        if s_data.is_empty() {
-            return 0;
-        }
-        let tol = s_data[0] * (self.shape()[0].max(self.shape()[1]) as f64) * f64::EPSILON;
-        s_data.iter().filter(|&&v| v > tol).count()
+        let Some(&largest) = s_data.first() else { return Ok(0) };
+        let tol = largest * (self.shape()[0].max(self.shape()[1]) as f64) * f64::EPSILON;
+        Ok(s_data.iter().filter(|&&v| v > tol).count())
     }
 
     /// Condition number of a matrix (ratio of largest to smallest singular value).
     /// Uses the 2-norm by default. Returns f64::INFINITY for singular matrices.
-    pub fn cond(&self) -> f64 {
-        let (_, s, _) = self.svd_decomp();
+    pub fn cond(&self) -> Result<f64, String> {
+        let (_, s, _) = self.svd_decomp()?;
         let s_data = s.to_vec();
-        if s_data.is_empty() {
-            return f64::NAN;
-        }
-        let s_max = s_data[0];
-        let s_min = s_data[s_data.len() - 1];
-        if s_min == 0.0 {
-            f64::INFINITY
-        } else {
-            s_max / s_min
-        }
+        let (Some(&s_max), Some(&s_min)) = (s_data.first(), s_data.last()) else { return Ok(f64::NAN) };
+        Ok(if s_min == 0.0 { f64::INFINITY } else { s_max / s_min })
     }
 
     /// Eigendecomposition of a square matrix.
     /// Returns (eigenvalues_real, eigenvalues_imag).
     /// For symmetric matrices, imaginary parts will be zero.
-    #[expect(clippy::expect_used, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
-    pub fn eigen_decomp(&self) -> (CrowTensor, CrowTensor) {
+    /// (A decomposition that does not converge is its reason; the caller
+    /// checked the matrix is square.)
+    pub fn eigen_decomp(&self) -> Result<(CrowTensor, CrowTensor), String> {
         let a = tensor_to_mat(self);
         let n = a.nrows();
         assert_eq!(a.nrows(), a.ncols(), "eigen: matrix must be square");
-        let eigen = a.eigen().expect("eigen: decomposition failed");
+        let eigen = a.eigen().map_err(|e| format!("eigen: the decomposition failed ({:?})", e))?;
         let s = eigen.S();
         let mut real_parts = Vec::with_capacity(n);
         let mut imag_parts = Vec::with_capacity(n);
@@ -319,7 +315,7 @@ impl CrowTensor {
         }
         let eigenvalues_real = CrowTensor::from_vec(real_parts, vec![n]);
         let eigenvalues_imag = CrowTensor::from_vec(imag_parts, vec![n]);
-        (eigenvalues_real, eigenvalues_imag)
+        Ok((eigenvalues_real, eigenvalues_imag))
     }
 }
 
@@ -419,7 +415,7 @@ mod tests {
     #[test]
     fn test_svd_reconstruct() {
         let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
-        let (u, s, vt) = a.svd_decomp();
+        let (u, s, vt) = a.svd_decomp().expect("decomposes");
         // Reconstruct: U * diag(S) * Vt ≈ A
         let s_vec = s.to_vec();
         let k = s_vec.len();
@@ -445,7 +441,7 @@ mod tests {
     fn test_cholesky() {
         // Symmetric positive definite: [[4,2],[2,3]]
         let a = CrowTensor::from_vec(vec![4.0, 2.0, 2.0, 3.0], vec![2, 2]);
-        let l = a.cholesky_decomp();
+        let l = a.cholesky_decomp().expect("positive definite");
         let lt = l.transpose();
         let reconstructed = l.matmul(&lt);
         tensor_approx_eq(&reconstructed, &a, 1e-10);
@@ -455,7 +451,7 @@ mod tests {
     fn test_eigen_symmetric() {
         // Symmetric: [[2,1],[1,2]] has eigenvalues 1 and 3
         let a = CrowTensor::from_vec(vec![2.0, 1.0, 1.0, 2.0], vec![2, 2]);
-        let (real, imag) = a.eigen_decomp();
+        let (real, imag) = a.eigen_decomp().expect("decomposes");
         let mut evals: Vec<f64> = real.to_vec();
         evals.sort_by(|a, b| a.partial_cmp(b).unwrap());
         approx_eq(evals[0], 1.0, 1e-10);
@@ -552,7 +548,7 @@ mod tests {
     fn test_pinv_square() {
         // pinv of invertible matrix ≈ inv
         let a = CrowTensor::from_vec(vec![4.0, 7.0, 2.0, 6.0], vec![2, 2]);
-        let a_pinv = a.pinv();
+        let a_pinv = a.pinv().expect("inverts");
         let a_inv = a.inv();
         tensor_approx_eq(&a_pinv, &a_inv, 1e-10);
     }
@@ -561,7 +557,7 @@ mod tests {
     fn test_pinv_rectangular() {
         // A * pinv(A) * A ≈ A for any matrix
         let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
-        let ap = a.pinv();
+        let ap = a.pinv().expect("inverts");
         let result = a.matmul(&ap).matmul(&a);
         tensor_approx_eq(&result, &a, 1e-10);
     }
@@ -573,7 +569,7 @@ mod tests {
         // Exact system: [[1,0],[0,1]] * x = [[3],[5]] → x = [[3],[5]]
         let a = CrowTensor::eye(2);
         let b = CrowTensor::from_vec(vec![3.0, 5.0], vec![2, 1]);
-        let x = a.lstsq(&b);
+        let x = a.lstsq(&b).expect("solves");
         tensor_approx_eq(&x, &b, 1e-10);
     }
 
@@ -583,7 +579,7 @@ mod tests {
         // A = [[1,1],[2,1],[3,1]], b = [[2],[4],[6]]
         let a = CrowTensor::from_vec(vec![1.0, 1.0, 2.0, 1.0, 3.0, 1.0], vec![3, 2]);
         let b = CrowTensor::from_vec(vec![2.0, 4.0, 6.0], vec![3, 1]);
-        let x = a.lstsq(&b);
+        let x = a.lstsq(&b).expect("solves");
         let xv = x.to_vec();
         approx_eq(xv[0], 2.0, 1e-10); // slope
         approx_eq(xv[1], 0.0, 1e-10); // intercept
@@ -624,26 +620,26 @@ mod tests {
     #[test]
     fn test_rank_full() {
         let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
-        assert_eq!(a.rank(), 2);
+        assert_eq!(a.rank().expect("a rank"), 2);
     }
 
     #[test]
     fn test_rank_deficient() {
         // Rank-1: rows are linearly dependent
         let a = CrowTensor::from_vec(vec![1.0, 2.0, 2.0, 4.0], vec![2, 2]);
-        assert_eq!(a.rank(), 1);
+        assert_eq!(a.rank().expect("a rank"), 1);
     }
 
     #[test]
     fn test_rank_identity() {
         let a = CrowTensor::eye(4);
-        assert_eq!(a.rank(), 4);
+        assert_eq!(a.rank().expect("a rank"), 4);
     }
 
     #[test]
     fn test_rank_rectangular() {
         let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
-        assert_eq!(a.rank(), 2);
+        assert_eq!(a.rank().expect("a rank"), 2);
     }
 
     // ── cond ─────────────────────────────────────────────────────────────
@@ -651,20 +647,20 @@ mod tests {
     #[test]
     fn test_cond_identity() {
         let a = CrowTensor::eye(3);
-        approx_eq(a.cond(), 1.0, 1e-10);
+        approx_eq(a.cond().expect("a condition number"), 1.0, 1e-10);
     }
 
     #[test]
     fn test_cond_singular() {
         let a = CrowTensor::from_vec(vec![1.0, 2.0, 2.0, 4.0], vec![2, 2]);
-        assert!(a.cond().is_infinite());
+        assert!(a.cond().expect("a condition number").is_infinite());
     }
 
     #[test]
     fn test_cond_well_conditioned() {
         // [[2,0],[0,1]] → σ_max=2, σ_min=1, cond=2
         let a = CrowTensor::from_vec(vec![2.0, 0.0, 0.0, 1.0], vec![2, 2]);
-        approx_eq(a.cond(), 2.0, 1e-10);
+        approx_eq(a.cond().expect("a condition number"), 2.0, 1e-10);
     }
 
     #[test]

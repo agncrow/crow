@@ -1168,13 +1168,15 @@ fn test_gather_transpile() {
 #[test]
 fn test_norm_l2_transpile() {
     let rust = transpile("use math\nx = norm[ones[3]]\n");
-    assert!(rust.contains(".norm(2.0)"), "should emit .norm(2.0) for L2 norm\n{}", rust);
+    // one argument: the table's norm row
+    assert!(rust.contains("crow_runtime::math::norm(&("), "should call the runtime's norm\n{}", rust);
 }
 
 #[test]
 fn test_norm_lp_transpile() {
     let rust = transpile("use math\nx = norm[ones[3], 1]\n");
-    assert!(rust.contains(".norm("), "should emit .norm() for Lp norm\n{}", rust);
+    // two arguments: the row the count picks
+    assert!(rust.contains("crow_runtime::math::norm_p(&("), "should call the runtime's norm_p\n{}", rust);
 }
 
 // ===== Layer 3: Random & Distributions =====

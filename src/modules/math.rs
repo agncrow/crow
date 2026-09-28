@@ -367,98 +367,6 @@ fn call_math_linalg(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
                 Ok(CrowValue::ok(Value::NumArray(Box::new(a.solve(&b)))))
             }
         }
-        "inv" => {
-            if args.len() != 1 { return Err(format!("inv: expected 1 argument, got {}", args.len())); }
-            let a = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(a.inv()))))
-        }
-        "det" => {
-            if args.len() != 1 { return Err(format!("det: expected 1 argument, got {}", args.len())); }
-            let a = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::Float(a.det())))
-        }
-        "svd" => {
-            if args.len() != 1 { return Err(format!("svd: expected 1 argument, got {}", args.len())); }
-            let a = to_tensor(&args[0], name)?;
-            let (u, s, vt) = a.svd_decomp();
-            Ok(CrowValue::ok(Value::Array(vec![
-                CrowValue::ok(Value::NumArray(Box::new(u))),
-                CrowValue::ok(Value::NumArray(Box::new(s))),
-                CrowValue::ok(Value::NumArray(Box::new(vt))),
-            ])))
-        }
-        "qr" => {
-            if args.len() != 1 { return Err(format!("qr: expected 1 argument, got {}", args.len())); }
-            let a = to_tensor(&args[0], name)?;
-            let (q, r) = a.qr_decomp();
-            Ok(CrowValue::ok(Value::Array(vec![
-                CrowValue::ok(Value::NumArray(Box::new(q))),
-                CrowValue::ok(Value::NumArray(Box::new(r))),
-            ])))
-        }
-        "cholesky" => {
-            if args.len() != 1 { return Err(format!("cholesky: expected 1 argument, got {}", args.len())); }
-            let a = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(a.cholesky_decomp()))))
-        }
-        "eigen" => {
-            if args.len() != 1 { return Err(format!("eigen: expected 1 argument, got {}", args.len())); }
-            let a = to_tensor(&args[0], name)?;
-            let (real, imag) = a.eigen_decomp();
-            Ok(CrowValue::ok(Value::Array(vec![
-                CrowValue::ok(Value::NumArray(Box::new(real))),
-                CrowValue::ok(Value::NumArray(Box::new(imag))),
-            ])))
-        }
-        "norm" => {
-            if args.is_empty() || args.len() > 2 { return Err(format!("norm: expected 1-2 arguments, got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            let p = if args.len() == 2 {
-                match &args[1].value {
-                    Value::Int(i) => *i as f64,
-                    Value::Float(f) => *f,
-                    _ => return Err("norm: p must be a number".into()),
-                }
-            } else { 2.0 };
-            Ok(CrowValue::ok(Value::Float(t.norm(p))))
-        }
-        "dot" => {
-            if args.len() != 2 { return Err(format!("dot: expected 2 arguments, got {}", args.len())); }
-            let a = to_tensor(&args[0], name)?;
-            let b = to_tensor(&args[1], name)?;
-            Ok(CrowValue::ok(Value::Float(a.dot(&b))))
-        }
-        "pinv" => {
-            if args.len() != 1 { return Err(format!("pinv: expected 1 argument, got {}", args.len())); }
-            let a = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(a.pinv()))))
-        }
-        "lstsq" => {
-            if args.len() != 2 { return Err(format!("lstsq: expected 2 arguments, got {}", args.len())); }
-            let a = to_tensor(&args[0], name)?;
-            let b = to_tensor(&args[1], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(a.lstsq(&b)))))
-        }
-        "triu" => {
-            if args.len() != 1 { return Err(format!("triu: expected 1 argument, got {}", args.len())); }
-            let a = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(a.triu()))))
-        }
-        "tril" => {
-            if args.len() != 1 { return Err(format!("tril: expected 1 argument, got {}", args.len())); }
-            let a = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(a.tril()))))
-        }
-        "rank" => {
-            if args.len() != 1 { return Err(format!("rank: expected 1 argument, got {}", args.len())); }
-            let a = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::Int(a.rank() as i64)))
-        }
-        "cond" => {
-            if args.len() != 1 { return Err(format!("cond: expected 1 argument, got {}", args.len())); }
-            let a = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::Float(a.cond())))
-        }
 
         _ => call_math_random(name, args),
     }
@@ -726,7 +634,7 @@ fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String
             if args.len() != 2 { return Err(format!("spmv: expected 2 arguments, got {}", args.len())); }
             match (&args[0].value, &args[1].value) {
                 (Value::Sparse(s), Value::NumArray(v)) => {
-                    Ok(CrowValue::ok(Value::NumArray(Box::new(s.matmul_dense(v)))))
+                    Ok(CrowValue::ok(Value::NumArray(Box::new(s.matmul_dense(v)?))))
                 }
                 _ => Err("spmv: expected (sparse, numarray)".into()),
             }
@@ -853,21 +761,7 @@ fn emit_math_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Re
         "transpose" => format!("{}.transpose()", arg_strs[0]),
         // Linear algebra
         "solve" => format!("{}.solve(&{})", arg_strs[0], arg_strs[1]),
-        "inv" => format!("{}.inv()", arg_strs[0]),
-        "det" => format!("{}.det()", arg_strs[0]),
-        "svd" => format!("{{ let (_u, _s, _vt) = {}.svd_decomp(); vec![_u, _s, _vt] }}", arg_strs[0]),
-        "qr" => format!("{{ let (_q, _r) = {}.qr_decomp(); vec![_q, _r] }}", arg_strs[0]),
-        "cholesky" => format!("{}.cholesky_decomp()", arg_strs[0]),
-        "eigen" => format!("{{ let (_re, _im) = {}.eigen_decomp(); vec![_re, _im] }}", arg_strs[0]),
         "norm" if arg_strs.len() >= 2 => format!("{}.norm({} as f64)", arg_strs[0], arg_strs[1]),
-        "norm" => format!("{}.norm(2.0)", arg_strs[0]),
-        "dot" => format!("{}.dot(&{})", arg_strs[0], arg_strs[1]),
-        "pinv" => format!("{}.pinv()", arg_strs[0]),
-        "lstsq" => format!("{}.lstsq(&{})", arg_strs[0], arg_strs[1]),
-        "triu" => format!("{}.triu()", arg_strs[0]),
-        "tril" => format!("{}.tril()", arg_strs[0]),
-        "rank" => format!("{}.rank() as i64", arg_strs[0]),
-        "cond" => format!("{}.cond()", arg_strs[0]),
         _ => return emit_math_rust_continued(name, arg_strs),
     };
     Ok(result)
@@ -912,7 +806,7 @@ fn emit_math_rust_continued(name: &str, arg_strs: &[String]) -> Result<String, S
         "sparse" => "/* sparse: unexpected arg count */".to_string(),
         "dense" => format!("{}.to_dense()", arg_strs[0]),
         "nnz" => format!("{}.nnz() as i64", arg_strs[0]),
-        "spmv" => format!("{}.matmul_dense(&{})", arg_strs[0], arg_strs[1]),
+        "spmv" => format!("{}.matmul_dense(&{}).unwrap_or_else(|e| crow_stop({}, e))", arg_strs[0], arg_strs[1], super::STOP_LINE),
         // I/O
         "load" => format!("{{ match crow_runtime::io::load_csv_numeric(&{}) {{ Ok((data, nrows, ncols)) => CrowResult {{ value: CrowTensor::from_vec(data, vec![nrows, ncols]), ok: true, reason: String::new(), kind: String::new(), trace: vec![], captured: crow_runtime::moments::now() }}, Err(e) => CrowResult {{ value: CrowTensor::zeros(vec![0]), ok: false, reason: e, kind: \"load\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0]),
         _ => return Err(format!("{}: unknown math function for the Rust backend", name)),
@@ -936,10 +830,8 @@ fn math_type_of(name: &str, arg_count: usize) -> CrowType {
         // Shape ops → NumArray(Float)
         "reshape" | "flatten" | "transpose" => CrowType::NumArray(Box::new(CrowType::Float)),
         // Linalg returning tensor
-        "solve" | "inv" | "cholesky" | "pinv" | "lstsq" | "triu" | "tril" => CrowType::NumArray(Box::new(CrowType::Float)),
-        // Linalg returning scalar
-        "det" | "norm" | "dot" | "cond" => CrowType::Float,
-        "rank" => CrowType::Int,
+        // (the rest of linear algebra is rows of the builtin table)
+        "solve" => CrowType::NumArray(Box::new(CrowType::Float)),
         // Reductions: scalar if no axis, NumArray if axis given
         "sum" | "mean" | "min" | "max" | "prod" => {
             if arg_count >= 2 {
@@ -956,7 +848,6 @@ fn math_type_of(name: &str, arg_count: usize) -> CrowType {
         // Sorting & selection
         "argsort" | "topk" | "unique" | "where" => CrowType::NumArray(Box::new(CrowType::Float)),
         // Decompositions returning arrays of tensors
-        "svd" | "qr" | "eigen" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
         // Random & Distributions
         "seed" => CrowType::Void,
         // (the distributions are rows of the builtin table)

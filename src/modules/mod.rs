@@ -151,10 +151,10 @@ impl ModuleRegistry {
         self.emit_at(idx, name, arg_strs, arg_types)
     }
 
-    /// Infer return type through a module prefix.
-    pub fn type_of_in(&self, module_name: &str, name: &str, arg_count: usize) -> Option<CrowType> {
+    /// Infer return type through a module prefix, from the arguments' types.
+    pub fn type_of_in(&self, module_name: &str, name: &str, arg_types: &[CrowType]) -> Option<CrowType> {
         let idx = self.idx_in(module_name, name)?;
-        Some(self.type_at(idx, name, arg_count))
+        Some(self.type_at(idx, name, arg_types))
     }
 
     // A module function with a row in the builtin table is its runtime
@@ -162,7 +162,8 @@ impl ModuleRegistry {
     // (crate::table); the module's own arms answer the rest.
 
     fn call_at(&self, idx: usize, name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
-        match crate::table::module(self.modules[idx].name(), name, args.len()) {
+        let kinds: Vec<crate::table::Arg> = args.iter().map(crate::table::Arg::of_value).collect();
+        match crate::table::module(self.modules[idx].name(), name, &kinds) {
             // a module's error value carries no trace, in either mode
             Some(row) => (row.call)(args, ""),
             None => self.modules[idx].call(name, args),
@@ -170,16 +171,22 @@ impl ModuleRegistry {
     }
 
     fn emit_at(&self, idx: usize, name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String> {
-        match crate::table::module(self.modules[idx].name(), name, arg_strs.len()) {
+        let kinds: Vec<crate::table::Arg> = if arg_types.len() == arg_strs.len() {
+            arg_types.iter().map(crate::table::Arg::of_type).collect()
+        } else {
+            vec![crate::table::Arg::Unknown; arg_strs.len()]
+        };
+        match crate::table::module(self.modules[idx].name(), name, &kinds) {
             Some(row) => crate::table::print(row, arg_strs, STOP_LINE, None),
             None => self.modules[idx].emit_rust(name, arg_strs, arg_types),
         }
     }
 
-    fn type_at(&self, idx: usize, name: &str, arg_count: usize) -> CrowType {
-        match crate::table::module(self.modules[idx].name(), name, arg_count) {
+    fn type_at(&self, idx: usize, name: &str, arg_types: &[CrowType]) -> CrowType {
+        let kinds: Vec<crate::table::Arg> = arg_types.iter().map(crate::table::Arg::of_type).collect();
+        match crate::table::module(self.modules[idx].name(), name, &kinds) {
             Some(row) => row.crow_type(),
-            None => self.modules[idx].type_of(name, arg_count),
+            None => self.modules[idx].type_of(name, arg_types.len()),
         }
     }
 
@@ -231,13 +238,14 @@ impl ModuleRegistry {
         self.emit_at(idx, name, arg_strs, arg_types)
     }
 
-    /// Infer return type of a module function (bare call; None when ambiguous).
-    pub fn type_of(&self, name: &str, arg_count: usize) -> Option<CrowType> {
+    /// Infer return type of a module function (bare call; None when
+    /// ambiguous), from the arguments' types.
+    pub fn type_of(&self, name: &str, arg_types: &[CrowType]) -> Option<CrowType> {
         let idxs = self.fn_map.get(name)?;
         if idxs.len() > 1 {
             return None;
         }
-        Some(self.type_at(*idxs.first()?, name, arg_count))
+        Some(self.type_at(*idxs.first()?, name, arg_types))
     }
 
 
