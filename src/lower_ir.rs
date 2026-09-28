@@ -1797,10 +1797,7 @@ impl<'a> Lowerer<'a> {
     /// context, so the lowering's context has not seen the variable).
     fn bind_loop_var(&mut self, var: &str, iter_ty: &Ty) -> Option<CrowType> {
         let saved = self.ctx.vars.get(var).cloned();
-        let elem = match iter_ty.payload() {
-            Ty::List(t) | Ty::Tensor(t) => crow_type(t),
-            _ => CrowType::Unknown,
-        };
+        let elem = crate::type_infer::TypeContext::loop_item(crow_type(iter_ty.payload()));
         if !matches!(elem, CrowType::Unknown) {
             self.ctx.vars.insert(var.to_string(), elem);
         }
@@ -2328,18 +2325,14 @@ impl<'a> Lowerer<'a> {
         let current = self.current_fn.clone();
         if let Some(m) = module {
             let m = self.ctx.module_aliases.get(&m).cloned().unwrap_or(m);
+            self.refuse_module_call(&m, &name, &lowered);
             if is_effect(&name) {
                 // a qualified effect keeps its module: frame.load, db.query
                 if self.pass == Pass::Final {
                     self.direct_effects.entry(current).or_default().insert(name.clone());
                 }
+                let lowered = self.row_arguments(&m, &name, lowered);
                 return Ok(Expr::Effect { name: format!("{}.{}", m, name), args: lowered, ty, answered: true, propagates });
-            }
-            // a count no row of the name takes is refused before either
-            // mode runs (the interpreter stopped, the compiled program did
-            // not build)
-            if let Some(e) = crate::table::miscounted(&m, &name, lowered.len()) {
-                self.refuse(e);
             }
             let lowered = self.row_arguments(&m, &name, lowered);
             return Ok(Expr::Call { target: Target::Module(m, name), args: lowered, ty, propagates });
@@ -2419,10 +2412,12 @@ impl<'a> Lowerer<'a> {
                 // a name only a module answers — not the core's, not an
                 // element's — reaches it, so a count none of its rows take
                 // is refused as a qualified call's is
-                if !CORE_RESERVED.contains(&name.as_str()) && !crate::lower::UI_ELEMENTS.contains(&name.as_str()) {
-                    if let Some(e) = crate::table::miscounted(&m, &name, lowered.len()) {
-                        self.refuse(e);
-                    }
+                // (a ui control named like a module's function — `select` of
+                // options, not of a frame — is the control's)
+                let first_is_frame = lowered.first().is_some_and(|x| matches!(x.ty().payload(), Ty::Frame(_)));
+                let control = self.in_ui && crate::lower::is_ui_control(&name, first_is_frame);
+                if !CORE_RESERVED.contains(&name.as_str()) && !crate::lower::UI_ELEMENTS.contains(&name.as_str()) && !control {
+                    self.refuse_module_call(&m, &name, &lowered);
                 }
                 self.row_arguments(&m, &name, lowered)
             }
@@ -2496,7 +2491,7 @@ impl<'a> Lowerer<'a> {
             .into_iter()
             .zip(kinds)
             .map(|(x, k)| match (k, x.ty()) {
-                (Kind::Tensor, Ty::List(e)) if matches!(*e, Ty::Int | Ty::Float) => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: Ty::Tensor(Box::new(Ty::Float)) },
+                (Kind::Tensor, Ty::List(e)) if matches!(e.payload(), Ty::Int | Ty::Float) => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: Ty::Tensor(Box::new(Ty::Float)) },
                 // (a plain int: one that can fail is handed on as its error,
                 // through the mark the backends read)
                 (Kind::Item | Kind::ItemRef, Ty::Int) if floats && !matches!(x, Expr::Convert { how: Convert::Unwrap, .. }) => {
@@ -2505,6 +2500,30 @@ impl<'a> Lowerer<'a> {
                 _ => x,
             })
             .collect()
+    }
+
+    /// A module function's call that no row of its name takes, by count or
+    /// by kind, is refused before either mode runs (the interpreter stopped
+    /// on the value, the compiled program did not build: `mean['a']`); a
+    /// name the core answers too takes what the core's rows take as well.
+    fn refuse_module_call(&mut self, m: &str, name: &str, lowered: &[Expr]) {
+        let core_too = CORE_RESERVED.contains(&name);
+        if !core_too {
+            if let Some(e) = crate::table::miscounted(m, name, lowered.len()) {
+                self.refuse(e);
+                return;
+            }
+        }
+        // (a name the core answers by a form of its own — `sqrt` of a number,
+        // which grad differentiates — takes what that form takes)
+        if core_too && !crate::table::has_core_rows(name) {
+            return;
+        }
+        let kinds: Vec<crate::table::Arg> = lowered.iter().map(|x| crate::table::Arg::of_type(&read(x))).collect();
+        let modules: Vec<&str> = if core_too { vec!["", m] } else { vec![m] };
+        if let Some(e) = crate::table::refusal(&modules, name, &kinds) {
+            self.refuse(e);
+        }
     }
 
     fn row_arguments(&self, module: &str, name: &str, lowered: Vec<Expr>) -> Vec<Expr> {
@@ -2521,7 +2540,10 @@ impl<'a> Lowerer<'a> {
             .map(|(x, k)| {
                 let numbers = match x.ty() {
                     _ if matches!(x, Expr::Convert { how: Convert::Unwrap, .. }) => false,
-                    Ty::List(e) => !core && *e != Ty::Unknown && !e.is_result(),
+                    // numbers that can fail are numbers too, a failed one
+                    // stopping where they are read (as a column's missing
+                    // cell does)
+                    Ty::List(e) => !core && *e != Ty::Unknown && (!e.is_result() || matches!(e.payload(), Ty::Int | Ty::Float)),
                     Ty::Column(_) => true,
                     _ => false,
                 };

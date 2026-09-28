@@ -38,6 +38,25 @@ pub fn parse(s: &str) -> Result<serde_json::Value, String> {
     }
 }
 
+/// What a loop walks of a parsed JSON value, as the interpreter walks the
+/// value it parsed to: a list's items — a list of numbers' numbers, whole
+/// ones as ints — each still a parsed value; anything else is no list.
+/// (Compiled, a loop over a parsed value did not build.)
+pub fn items(v: &serde_json::Value) -> Result<Vec<serde_json::Value>, String> {
+    use serde_json::Value;
+    match v {
+        Value::Array(items) if !items.is_empty() && items.iter().all(|i| i.is_number()) => Ok(items
+            .iter()
+            .map(|n| {
+                let f = n.as_f64().unwrap_or(0.0);
+                if f == (f as i64) as f64 && f.is_finite() { serde_json::json!(f as i64) } else { float_to_json(f) }
+            })
+            .collect()),
+        Value::Array(items) => Ok(items.clone()),
+        _ => Err("for loop requires an array".to_string()),
+    }
+}
+
 /// `type[j]` of a parsed JSON value: the word the interpreter's value of it
 /// says (a list of numbers is an array there too, `null` an error).
 pub fn type_word(v: &serde_json::Value) -> &'static str {

@@ -937,32 +937,44 @@ impl Emitter {
         }
     }
 
+    /// What a loop walks, and each item's type: a tensor's rows or its
+    /// numbers (ints where it holds ints), a parsed JSON value's items (the
+    /// runtime's, walked as the interpreter walks the value it parsed to),
+    /// a list itself.
+    pub(crate) fn loop_items(&mut self, iter_str: String, it: &CrowType) -> (String, CrowType) {
+        match it {
+            CrowType::NumArray(inner) => {
+                let elem = inner.as_ref().clone();
+                let walked = if matches!(elem, CrowType::NumArray(_)) {
+                    format!("{}.rows()", iter_str)
+                } else if matches!(elem, CrowType::Int) {
+                    format!("{}.to_vec().iter().map(|&v| v as i64).collect::<Vec<i64>>()", iter_str)
+                } else {
+                    format!("{}.to_vec()", iter_str)
+                };
+                (walked, elem)
+            }
+            CrowType::Json => {
+                self.needs_crow_runtime = true;
+                self.needs_serde_json = true;
+                (format!("crow_runtime::json::items(&({})).unwrap_or_else(|e| crow_stop({}, e))", iter_str, self.current_line), CrowType::Json)
+            }
+            CrowType::Array(inner) => (iter_str, inner.as_ref().clone()),
+            _ => (iter_str, CrowType::Unknown),
+        }
+    }
+
     fn emit_for(&mut self, var: &str, iter: &Expr, body: &[Stmt], parallel: bool) {
         let iter_str = self.expr(iter);
         let iter_ty = self.tt(iter);
-        let is_tensor = matches!(iter_ty, CrowType::NumArray(_));
-        let elem = match &iter_ty {
-            CrowType::Array(inner) | CrowType::NumArray(inner) => inner.as_ref().clone(),
-            _ => CrowType::Unknown,
-        };
+        let (actual, elem) = self.loop_items(iter_str, &iter_ty);
         let is_copy = Self::is_copy_type(&elem);
         // in parallel as the lowering decided, unless cpu[1] asked for one core
         let forced_sequential = self.cpu_count.map_or(false, |n| n <= 1);
         let use_par = !forced_sequential && parallel;
-        let actual = if is_tensor {
-            if matches!(elem, CrowType::NumArray(_)) {
-                format!("{}.rows()", iter_str)
-            } else if matches!(elem, CrowType::Int) {
-                format!("{}.to_vec().iter().map(|&v| v as i64).collect::<Vec<i64>>()", iter_str)
-            } else {
-                format!("{}.to_vec()", iter_str)
-            }
-        } else {
-            iter_str
-        };
-        // an item of text is the loop's own, as the body reads it (a
-        // borrowed one compared with a cell's text did not build)
-        let text = matches!(elem, CrowType::Str | CrowType::Markup);
+        // an item of text, or a parsed value, is the loop's own, as the body
+        // reads it (a borrowed one compared with a cell's text did not build)
+        let text = matches!(elem, CrowType::Str | CrowType::Markup | CrowType::Json);
         self.push_scope();
         if use_par {
             self.needs_rayon = true;

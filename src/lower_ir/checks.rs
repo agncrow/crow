@@ -1184,6 +1184,23 @@ mod tests {
         assert!(check_source("m = map[a = 1]\nlog[contains[m, 'a']]\n").is_err());
     }
 
+    /// A parsed JSON value is read as one type before a builtin computes
+    /// with it, in both modes; the builtins that navigate one take it, and a
+    /// loop walks a parsed list. A module function given a kind none of its
+    /// rows take is refused as a core builtin is (the interpreter stopped on
+    /// the value, the compiled program did not build).
+    #[test]
+    fn a_parsed_value_is_read_before_a_builtin_computes_with_it() {
+        let err = check_source("j = json['\"a\"']\nlog[upper[j]]\n").unwrap_err();
+        assert!(err.contains("upper[] takes text, got a JSON value — a value whose type the program does not know is read as one first: int[…], float[…] or str[…], a list item by item (for x in …)"), "{}", err);
+        assert!(check_source("j = json['\"a\"']\nlog[upper[str[j]]]\nlog[len[j]]\n").is_ok());
+        assert!(check_source("j = json['[1, 2]']\nfor x in j\n    log[float[x]]\n").is_ok());
+        assert!(check_source("use math\nlog[mean['a']]\n").unwrap_err().contains("mean[] takes numbers, got text"));
+        assert!(check_source("use math\nlog[math.mean['a']]\n").unwrap_err().contains("mean[] takes numbers, got text"));
+        // a name the core answers by a form of its own takes what it takes
+        assert!(check_source("use math\nlog[math.sqrt[16.0]]\n").is_ok());
+    }
+
     #[test]
     fn test_frame_bare_column_name_rejected() {
         // Regression: bare-name column DSL removed — undefined idents in frame

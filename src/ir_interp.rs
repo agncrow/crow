@@ -1030,6 +1030,11 @@ impl IrInterp {
                             for (i, item) in items.iter().enumerate() {
                                 match item.value {
                                     _ if column && item.is_error() => return Err(crow_runtime::stops::missing_cell(i)),
+                                    // an item that failed: its reason, the words
+                                    // the compiled program stops with
+                                    _ if item.is_error() => {
+                                        return Err(if item.kind() == "missing" { crow_runtime::stops::missing_cell(i) } else { format!("item {} of the list failed: {}", i, item.reason()) })
+                                    }
                                     Value::Int(n) => data.push(n as f64),
                                     Value::Float(x) => data.push(x),
                                     Value::Bool(_) if column => return Err(crow_runtime::stops::not_numbers("bools")),

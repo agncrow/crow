@@ -1,0 +1,28 @@
+--- A parsed JSON value is dynamic until the program reads it (spec,
+--- json[]): a loop walks a parsed list's items, each read as one type, in
+--- both modes (compiled, a loop over a parsed value did not build), and a
+--- builtin that computes with one is refused until it is read (the
+--- interpreter ran `split` of one, the compiled program did not build).
+--- A list of numbers that can fail is its numbers where numbers are
+--- taken, as a column's cells are: a failed one stops, in both modes.
+use math
+j = json['{"prices": [1.5, 2, "x"], "names": ["b", "a"]}']
+names = for x in j.names
+    str[x]
+log[sort[names]]
+log[upper[str[j.names[0]]]]
+good = for x in slice[names, 0, 1]
+    x
+log[good]
+n = 0
+for x in j.prices
+    n = n + 1
+log[n]
+ok = for s in ['1.5', '2']
+    float[s]
+log[sum[ok]]
+prices = for x in j.prices
+    float[x]
+log[prices]
+log[sum[prices]]
+log['not reached']

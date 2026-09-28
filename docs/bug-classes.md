@@ -589,6 +589,35 @@ its own.
 Every core builtin is a row now, or has a form of its own that the table
 says (`TO_MOVE` is empty).
 
+**Batch 14**: a parsed JSON value, and a module's function given a kind
+it does not take, with parity 119. The spec says a parsed value is
+dynamic until the program reads it, and refuses arithmetic on one until
+then; the builtins now follow the same rule.
+
+- A builtin that computes with a parsed value (`split`, `upper`, `sort`,
+  `push`, `contains`, `slice`, `join`, `mean`) ran interpreted on the value
+  it parsed to, and did not build compiled. It is refused before either
+  mode runs, naming the read (`upper[str[j.name]]`); the builtins that
+  navigate a parsed value (`len`, `keys`, `values`, `has`, `str`, `int`,
+  `float`, `encode`) take it as it is.
+- A loop over a parsed list did not build compiled: it walks the list's
+  items in both modes (`crow_runtime::json::items`, the interpreter's rule
+  for the value it parsed to), so a list is read item by item.
+- A list of numbers whose items can fail (`for s in texts / float[s]`)
+  handed to a function that takes numbers ran interpreted and did not
+  build compiled. It is its numbers in both, as a column's cells are, and
+  a failed item stops the program with the interpreter's words.
+- A module's function given a kind none of its rows take (`mean['a']`,
+  `frame.load[5]`) stopped the interpreter and did not build compiled: it
+  is refused before either mode runs, as a core builtin is. A ui control
+  named like a module's function (`select` of options) and a name the core
+  answers by a form of its own (`math.sqrt` of a number) take what they
+  take.
+- A list of parsed values, or of cells no description has typed yet, is
+  one whose items' kind shows as the program runs: the check leaves it to
+  the run (finch's scanner builds a column from cells the lowering had not
+  typed yet).
+
 ## Decisions (Vijay, 2026-09-28)
 
 The questions the work raised, each decided as recommended.

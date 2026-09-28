@@ -1255,15 +1255,24 @@ pub fn has_core_rows(name: &str) -> bool {
     core(name).is_some()
 }
 
+/// How a parsed JSON value is used where a builtin computes with it: read as
+/// one type first — the words arithmetic on one says, and a list's items
+/// one by one (the builtins that navigate it take it as it is: `len`,
+/// `keys`, `values`, `has`, `str`, `int`, `float`, `encode`).
+pub const READ_FIRST: &str = " — a value whose type the program does not know is read as one first: int[…], float[…] or str[…], a list item by item (for x in …)";
+
 /// The refusal of a call that no row of its name — in the core (`""`) and
 /// in the modules given — takes, by count or by kind; none when one takes
 /// it, or when an argument's kind is not known before the program runs
 /// (a JSON value's is known only then).
 pub fn refusal(modules: &[&str], name: &str, args: &[Arg]) -> Option<String> {
     let rows: Vec<&Row> = ROWS.iter().filter(|r| r.name == name && modules.contains(&r.module)).collect();
-    if rows.is_empty() || rows.iter().any(|r| takes(r, args)) || args.iter().any(|a| matches!(a, Arg::Unknown | Arg::Json)) {
+    if rows.is_empty() || rows.iter().any(|r| takes(r, args)) || args.contains(&Arg::Unknown) {
         return None;
     }
+    // a parsed JSON value is read as one type before a builtin computes
+    // with it (spec, json[]): the words say how
+    let read = if args.contains(&Arg::Json) { READ_FIRST } else { "" };
     if !rows.iter().any(|r| spans(r.params, args.len(), name).is_ok()) {
         let mut counts: Vec<String> = Vec::new();
         for r in &rows {
@@ -1285,7 +1294,7 @@ pub fn refusal(modules: &[&str], name: &str, args: &[Arg]) -> Option<String> {
         }
     }
     let got = listed(&args.iter().map(|a| a.words().to_string()).collect::<Vec<_>>(), "and");
-    Some(format!("{}[] takes {}, got {}", shown(name), listed(&forms, "or"), got))
+    Some(format!("{}[] takes {}, got {}{}", shown(name), listed(&forms, "or"), got, read))
 }
 
 /// `a`, `a and b`, `a, b or c`.
@@ -1325,7 +1334,11 @@ pub enum Arg {
     Maps,
     /// A list of anything else: lists of text, functions.
     Items,
-    /// A list whose items can fail.
+    /// A list of numbers whose items can fail: its numbers where numbers
+    /// are taken, a failed item stopping the program, as a column's
+    /// missing cell does.
+    FallibleNumbers,
+    /// A list of anything else whose items can fail.
     Fallible,
     /// A frame's column: numbers where numbers are taken, the compiled
     /// program's `CrowColumn` (the interpreter holds its cells as a list).
@@ -1358,6 +1371,7 @@ impl Arg {
             Arg::Records => "a list of records",
             Arg::Maps => "a list of maps",
             Arg::Items => "a list",
+            Arg::FallibleNumbers => "a list of numbers that can fail",
             Arg::Fallible => "a list whose items can fail",
             Arg::Column => "a frame's column",
             Arg::Map => "a map",
@@ -1379,6 +1393,7 @@ impl Arg {
             CrowType::Json => Arg::Json,
             CrowType::Array(inner) => match inner.as_ref() {
                 CrowType::Unknown => Arg::Unknown,
+                CrowType::Result(item) if matches!(item.as_ref(), CrowType::Int | CrowType::Float) => Arg::FallibleNumbers,
                 CrowType::Result(_) => Arg::Fallible,
                 i => Arg::of_items(Arg::of_type(i)),
             },
@@ -1405,7 +1420,9 @@ impl Arg {
             Arg::Truth => Arg::Truths,
             Arg::Record => Arg::Records,
             Arg::Map => Arg::Maps,
-            Arg::Unknown => Arg::Unknown,
+            // a list of parsed values (or of cells no description typed yet)
+            // is one whose items' kind shows as the program runs
+            Arg::Unknown | Arg::Json => Arg::Unknown,
             _ => Arg::Items,
         }
     }
@@ -1480,7 +1497,7 @@ impl Kind {
                 Kind::Whole => a == Arg::Int,
                 // numbers held as a list or a column are converted where
                 // they meet the parameter (the lowering's row arguments)
-                Kind::Tensor => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Column),
+                Kind::Tensor => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Column | Arg::FallibleNumbers),
                 Kind::Tensors => a == Arg::Tensors,
                 Kind::Str => a == Arg::Text,
                 Kind::Strs | Kind::Texts => a == Arg::Texts,
@@ -1491,7 +1508,7 @@ impl Kind {
                 Kind::Cell => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Json),
                 Kind::Cells => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column),
                 Kind::Words => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column),
-                Kind::List | Kind::Seq => matches!(a, Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Records | Arg::Maps | Arg::Items | Arg::Fallible),
+                Kind::List | Kind::Seq => matches!(a, Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Records | Arg::Maps | Arg::Items | Arg::Fallible | Arg::FallibleNumbers),
                 Kind::Item | Kind::ItemRef => true,
                 Kind::MapOf | Kind::MapRef => a == Arg::Map,
                 Kind::Ints => a == Arg::Ints,
@@ -1700,6 +1717,19 @@ mod tests {
         assert_eq!(crow_runtime::core::len_json(&serde_json::json!(2.5)), Err(refusal(&[""], "len", &[Arg::Float]).expect("a refusal")));
         assert_eq!(crow_runtime::core::len_json(&serde_json::json!(true)), Err(refusal(&[""], "len", &[Arg::Truth]).expect("a refusal")));
         assert_eq!(crow_runtime::core::len_json(&serde_json::json!([1, 2])), Ok(2));
+    }
+
+    /// A list of numbers that can fail is numbers where numbers are taken
+    /// (a failed one stops as it is read); a list of parsed values is one
+    /// whose items' kind shows as the program runs.
+    #[test]
+    fn a_list_is_what_its_items_are() {
+        let fallible = CrowType::Array(Box::new(CrowType::Result(Box::new(CrowType::Float))));
+        assert_eq!(Arg::of_type(&fallible), Arg::FallibleNumbers);
+        assert!(core_row("sum", &[Arg::FallibleNumbers]).is_none(), "sum is math's");
+        assert!(module("math", "sum", &[Arg::FallibleNumbers]).is_some_and(|r| takes(r, &[Arg::FallibleNumbers])));
+        assert_eq!(Arg::of_type(&CrowType::Array(Box::new(CrowType::Json))), Arg::Unknown);
+        assert!(refusal(&[""], "upper", &[Arg::Json]).is_some_and(|e| e.ends_with(READ_FIRST)));
     }
 
     /// A collection is taken, not copied, by the call that keeps it: the

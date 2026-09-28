@@ -288,8 +288,9 @@ impl TypeContext {
     /// A loop's variable while its calls are read: an item of what it
     /// walks, a list that can fail refused first; left bound after.
     pub(crate) fn scan_loop_var(&mut self, var: &str, iter_type: CrowType) {
-        if let CrowType::Array(inner) | CrowType::NumArray(inner) = Self::walked(iter_type) {
-            self.vars.insert(var.to_string(), *inner);
+        let item = Self::loop_item(Self::walked(iter_type));
+        if item != CrowType::Unknown {
+            self.vars.insert(var.to_string(), item);
         }
     }
 

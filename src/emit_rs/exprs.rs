@@ -121,6 +121,16 @@ impl Emitter {
                 Convert::ToTensor => {
                     let inner = self.expr(expr);
                     match self.tt(expr) {
+                        // numbers that can fail: a failed one stops where
+                        // they are read, with the interpreter's words (a
+                        // missing cell's, or the item's reason)
+                        CrowType::Array(item) if matches!(item.as_ref(), CrowType::Result(_)) => {
+                            self.needs_crow_runtime = true;
+                            format!(
+                                "{{ let _xs = &({}); let mut _v: Vec<f64> = Vec::with_capacity(_xs.len()); for (_i, _x) in _xs.iter().enumerate() {{ if !_x.ok {{ crow_stop({}, if _x.kind == \"missing\" {{ crow_runtime::stops::missing_cell(_i) }} else {{ format!(\"item {{}} of the list failed: {{}}\", _i, _x.reason) }}) }} _v.push(_x.value as f64); }} let _n = _v.len(); crow_runtime::tensor::CrowTensor::from_vec(_v, vec![_n]) }}",
+                                inner, self.current_line
+                            )
+                        }
                         CrowType::Array(_) => {
                             self.needs_crow_runtime = true;
                             format!("{{ let _v: Vec<f64> = ({}).iter().map(|x| *x as f64).collect(); let _n = _v.len(); crow_runtime::tensor::CrowTensor::from_vec(_v, vec![_n]) }}", inner)
@@ -1081,23 +1091,8 @@ impl Emitter {
         }
         let method = if use_par { "par_iter" } else { "iter" };
         let it = self.tt(iter);
-        let is_tensor = matches!(it, CrowType::NumArray(_));
-        let elem = match &it {
-            CrowType::Array(inner) | CrowType::NumArray(inner) => inner.as_ref().clone(),
-            _ => CrowType::Unknown,
-        };
+        let (iter_str, elem) = self.loop_items(iter_str, &it);
         let is_copy = Self::is_copy_type(&elem);
-        let iter_str = if is_tensor {
-            if matches!(elem, CrowType::NumArray(_)) {
-                format!("{}.rows()", iter_str)
-            } else if matches!(elem, CrowType::Int) {
-                format!("{}.to_vec().iter().map(|&v| v as i64).collect::<Vec<i64>>()", iter_str)
-            } else {
-                format!("{}.to_vec()", iter_str)
-            }
-        } else {
-            iter_str
-        };
         // an item that is not Copy is borrowed from what the loop walks; the
         // body reads it as its own value, as the interpreter's does
         let (param, rebind) = if is_copy {

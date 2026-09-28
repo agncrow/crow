@@ -855,11 +855,20 @@ impl TypeContext {
     /// bound to the element type: its last expression, or from inside the
     /// branches of a trailing `if` (the filter pattern). Unknown when the
     /// body says nothing yet (a later pass settles it).
-    pub(crate) fn loop_yield_type(&self, var: &str, iter_type: CrowType, body: &[Stmt]) -> CrowType {
-        let elem = match Self::walked(iter_type) {
+    /// What a loop's variable holds: an item of the list, a number of the
+    /// tensor (a row of a matrix), an item of a parsed JSON list.
+    pub(crate) fn loop_item(iter_type: CrowType) -> CrowType {
+        match iter_type {
             CrowType::Array(inner) | CrowType::NumArray(inner) => *inner,
+            // a parsed value's items are parsed values, read as one type
+            // where the body computes with them
+            CrowType::Json => CrowType::Json,
             _ => CrowType::Unknown,
-        };
+        }
+    }
+
+    pub(crate) fn loop_yield_type(&self, var: &str, iter_type: CrowType, body: &[Stmt]) -> CrowType {
+        let elem = Self::loop_item(Self::walked(iter_type));
         fn body_yield_type(ctx: &TypeContext, body: &[Stmt]) -> CrowType {
             match body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
                 Some(Stmt::ExprStmt(e)) => ctx.infer_expr_full(e),
