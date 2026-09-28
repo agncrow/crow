@@ -989,7 +989,7 @@ fn test_math_clip_transpile() {
 #[test]
 fn test_math_mod_transpile() {
     let rust = transpile("use math\nx = mod[ones[3], 2]\n");
-    assert!(rust.contains("modulo_scalar"), "should emit modulo_scalar for scalar arg\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::modulo_by("), "should call the runtime's modulo_by (the builtin table)\n{}", rust);
 }
 
 #[test]
@@ -1138,7 +1138,8 @@ fn test_math_concat_transpile() {
 #[test]
 fn test_math_stack_transpile() {
     let rust = transpile("use math\nx = stack[[ones[3], ones[3]]]\n");
-    assert!(rust.contains("CrowTensor::stack("), "should emit CrowTensor::stack()\n{}", rust);
+    // a literal list of tensors is a tensor: its rows restacked
+    assert!(rust.contains("crow_runtime::math::stack_rows(&("), "should call the runtime's stack_rows\n{}", rust);
 }
 
 // ===== Broadcasting tests =====
@@ -1184,7 +1185,7 @@ fn test_norm_lp_transpile() {
 #[test]
 fn test_math_seed_transpile() {
     let rust = transpile("use math\nseed[42]\n");
-    assert!(rust.contains("set_seed(42"), "should emit set_seed\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::seed("), "should call the runtime's seed (the builtin table)\n{}", rust);
 }
 
 #[test]
@@ -1215,19 +1216,19 @@ fn test_math_bernoulli_transpile() {
 #[test]
 fn test_math_shuffle_transpile() {
     let rust = transpile("use math\nx = shuffle[ones[5]]\n");
-    assert!(rust.contains(".shuffle()"), "should emit .shuffle()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::shuffle("), "should call the runtime's shuffle (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_choice_transpile() {
     let rust = transpile("use math\nx = choice[ones[5], 3]\n");
-    assert!(rust.contains(".choice("), "should emit .choice()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::choice("), "should call the runtime's choice (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_permutation_transpile() {
     let rust = transpile("use math\nx = permutation[5]\n");
-    assert!(rust.contains("CrowTensor::permutation("), "should emit CrowTensor::permutation\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::permutation("), "should call the runtime's permutation (the builtin table)\n{}", rust);
 }
 
 // ===== Layer 4: Signal Processing =====
@@ -1235,43 +1236,43 @@ fn test_math_permutation_transpile() {
 #[test]
 fn test_math_fft_transpile() {
     let rust = transpile("use math\nx = fft[ones[4]]\n");
-    assert!(rust.contains(".fft()"), "should emit .fft()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::fft("), "should call the runtime's fft (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_ifft_transpile() {
     let rust = transpile("use math\nx = ifft[ones[4], zeros[4]]\n");
-    assert!(rust.contains("CrowTensor::ifft("), "should emit CrowTensor::ifft\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::ifft("), "should call the runtime's ifft (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_fft2_transpile() {
     let rust = transpile("use math\nx = fft2[ones[4]]\n");
-    assert!(rust.contains(".fft2()"), "should emit .fft2()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::fft2("), "should call the runtime's fft2 (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_conv_transpile() {
     let rust = transpile("use math\nx = conv[ones[3], ones[2]]\n");
-    assert!(rust.contains(".conv("), "should emit .conv()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::conv("), "should call the runtime's conv (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_conv2d_transpile() {
     let rust = transpile("use math\nx = conv2d[ones[4], ones[4]]\n");
-    assert!(rust.contains(".conv2d("), "should emit .conv2d()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::conv2d("), "should call the runtime's conv2d (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_hamming_transpile() {
     let rust = transpile("use math\nx = hamming[5]\n");
-    assert!(rust.contains("CrowTensor::hamming("), "should emit CrowTensor::hamming\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::hamming("), "should call the runtime's hamming (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_hanning_transpile() {
     let rust = transpile("use math\nx = hanning[5]\n");
-    assert!(rust.contains("CrowTensor::hanning("), "should emit CrowTensor::hanning\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::hanning("), "should call the runtime's hanning (the builtin table)\n{}", rust);
 }
 
 // ===== Layer 5: Special Functions & Complex Numbers =====
@@ -1279,49 +1280,49 @@ fn test_math_hanning_transpile() {
 #[test]
 fn test_math_gamma_transpile() {
     let rust = transpile("use math\nx = gamma[ones[3]]\n");
-    assert!(rust.contains(".gamma()"), "should emit .gamma()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::gamma("), "should call the runtime's gamma (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_erf_transpile() {
     let rust = transpile("use math\nx = erf[ones[3]]\n");
-    assert!(rust.contains(".erf()"), "should emit .erf()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::erf("), "should call the runtime's erf (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_bessel_transpile() {
     let rust = transpile("use math\nx = bessel[ones[3], 0]\n");
-    assert!(rust.contains(".bessel("), "should emit .bessel()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::bessel("), "should call the runtime's bessel (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_factorial_transpile() {
     let rust = transpile("use math\nx = factorial[ones[3]]\n");
-    assert!(rust.contains(".factorial()"), "should emit .factorial()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::factorial("), "should call the runtime's factorial (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_choose_transpile() {
     let rust = transpile("use math\nx = choose[ones[3], ones[3]]\n");
-    assert!(rust.contains(".choose("), "should emit .choose()\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::choose("), "should call the runtime's choose (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_complex_transpile() {
     let rust = transpile("use math\nc = complex[3, 4]\n");
-    assert!(rust.contains("CrowTensor::complex("), "should emit CrowTensor::complex\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::complex("), "should call the runtime's complex (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_magnitude_transpile() {
     let rust = transpile("use math\nc = complex[3, 4]\nm = magnitude[c]\n");
-    assert!(rust.contains("CrowTensor::magnitude("), "should emit CrowTensor::magnitude\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::magnitude("), "should call the runtime's magnitude (the builtin table)\n{}", rust);
 }
 
 #[test]
 fn test_math_conjugate_transpile() {
     let rust = transpile("use math\nc = complex[3, 4]\ncc = conjugate[c]\n");
-    assert!(rust.contains("CrowTensor::conjugate("), "should emit CrowTensor::conjugate\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::conjugate("), "should call the runtime's conjugate (the builtin table)\n{}", rust);
 }
 
 // ===== Sparse Arrays =====
@@ -1329,19 +1330,21 @@ fn test_math_conjugate_transpile() {
 #[test]
 fn test_math_sparse_from_dense_transpile() {
     let rust = transpile("use math\ns = sparse[eye[3]]\n");
-    assert!(rust.contains("CrowSparse::from_dense("), "should emit CrowSparse::from_dense\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::sparse(&("), "should call the runtime's sparse\n{}", rust);
 }
 
 #[test]
 fn test_math_sparse_from_coo_transpile() {
     let rust = transpile("use math\ns = sparse[[0, 1], [0, 1], [5, 6], [2, 2]]\n");
-    assert!(rust.contains("CrowSparse::from_coo("), "should emit CrowSparse::from_coo\n{}", rust);
+    // four arguments: the row from entries, which checks each one
+    assert!(rust.contains("crow_runtime::math::sparse_coo("), "should call the runtime's sparse_coo\n{}", rust);
 }
 
 #[test]
 fn test_math_dense_transpile() {
     let rust = transpile("use math\ns = sparse[eye[2]]\nd = dense[s]\n");
-    assert!(rust.contains(".to_dense()"), "should emit .to_dense()\n{}", rust);
+    // a sparse argument takes dense's sparse row
+    assert!(rust.contains("crow_runtime::math::dense(&("), "should call the runtime's dense\n{}", rust);
 }
 
 #[test]
@@ -1359,7 +1362,8 @@ fn test_sparse_add_transpile() {
 #[test]
 fn test_sparse_solve_transpile() {
     let rust = transpile("use math\ns = sparse[eye[2]]\nx = solve[s, [1, 2]]\n");
-    assert!(rust.contains(".solve("), "should emit .solve() for sparse solve\n{}", rust);
+    // a sparse matrix takes solve's sparse row
+    assert!(rust.contains("crow_runtime::math::solve_sparse(&("), "should call the runtime's solve_sparse\n{}", rust);
 }
 
 #[test]

@@ -1,0 +1,22 @@
+--- The rest of math is rows of the builtin table (docs/bug-classes.md
+--- §4): signal, special functions, complex numbers, draws, sparse
+--- matrices, solving and stacking. A kernel asserted its argument's rank,
+--- window or count, or took a sparse entry outside its matrix, and
+--- panicked both modes; each is the reason one function gives both now.
+use math
+log[len[fft[[1.0, 2.0, 3.0, 4.0]]]]
+log[hamming[3]]
+log[conv[[1.0, 2.0], [1.0, 1.0]]]
+c = complex[3.0, 4.0]
+log[magnitude[c]]
+log[real[c]]
+seed[3]
+log[len[choice[[1.0, 2.0, 3.0], 2]]]
+log[mod[[5.0, 7.0], 3]]
+s = sparse[[0, 1], [1, 0], [5, 6], [2, 2]]
+log[nnz[s]]
+log[dense[s]]
+log[solve[[[2.0, 0.0], [0.0, 4.0]], [2.0, 8.0]]]
+log[stack[[[1.0, 2.0], [3.0, 4.0]]]]
+log[stft[[1.0, 2.0, 3.0, 4.0], 2, 0]]
+log['not reached']

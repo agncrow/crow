@@ -45,8 +45,17 @@ pub enum Kind {
     /// `&[i64]` taken: the rest of the arguments, each a size (`zeros[2, 3]`,
     /// `poisson[1.5, 4]`); the fixed parameters around it take theirs first.
     Sizes,
-    /// `Vec<CrowTensor>` given: a decomposition's parts (`svd`, `qr`).
+    /// `&[CrowTensor]` taken, `Vec<CrowTensor>` given: a decomposition's
+    /// parts (`svd`, `qr`), a complex number's `[real, imag]`.
     Tensors,
+    /// Nothing given: a function run for what it sets (`seed`).
+    Unit,
+    /// `&CrowSparse` taken, `CrowSparse` given.
+    Sparse,
+    /// `&CrowFrame` taken.
+    Frame,
+    /// `&[String]` taken: a list of text (a frame's column names).
+    Strs,
 }
 
 /// What a failure of the function is.
@@ -108,6 +117,10 @@ impl Kind {
             Kind::IntMap => CrowType::Map(Box::new(CrowType::Int)),
             Kind::Sizes => CrowType::Array(Box::new(CrowType::Int)),
             Kind::Tensors => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
+            Kind::Unit => CrowType::Void,
+            Kind::Sparse => CrowType::Sparse,
+            Kind::Frame => CrowType::Frame,
+            Kind::Strs => CrowType::Array(Box::new(CrowType::Str)),
         }
     }
 
@@ -122,6 +135,8 @@ impl Kind {
             Kind::IntMap => format!("&({})", arg),
             Kind::Sizes => format!("({}) as i64", arg),
             Kind::Tensors => format!("&({})", arg),
+            Kind::Unit => format!("({})", arg),
+            Kind::Sparse | Kind::Frame | Kind::Strs => format!("&({})", arg),
         }
     }
 
@@ -136,6 +151,10 @@ impl Kind {
             Kind::IntMap => "std::collections::BTreeMap::new()",
             Kind::Sizes => "Vec::<i64>::new()",
             Kind::Tensors => "Vec::<crow_runtime::tensor::CrowTensor>::new()",
+            Kind::Unit => "()",
+            Kind::Sparse => "crow_runtime::sparse::CrowSparse::from_dense(&crow_runtime::tensor::CrowTensor::zeros(vec![0, 0]))",
+            Kind::Frame => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])",
+            Kind::Strs => "Vec::<String>::new()",
         }
     }
 }
@@ -272,6 +291,43 @@ pub fn write_tensors(ts: Vec<CrowTensor>) -> CrowValue {
     CrowValue::ok(Value::Array(ts.into_iter().map(write_tensor).collect()))
 }
 
+pub fn write_unit(_: ()) -> CrowValue {
+    CrowValue::done()
+}
+
+pub fn write_sparse(m: crow_runtime::sparse::CrowSparse) -> CrowValue {
+    CrowValue::ok(Value::Sparse(Box::new(m)))
+}
+
+pub fn read_sparse(v: &CrowValue) -> Result<&crow_runtime::sparse::CrowSparse, String> {
+    match &v.value {
+        Value::Sparse(m) => Ok(m.as_ref()),
+        _ => Err(format!("expected a sparse matrix, got {}", named(v))),
+    }
+}
+
+pub fn read_frame(v: &CrowValue) -> Result<&crow_runtime::frame::CrowFrame, String> {
+    match &v.value {
+        Value::Frame(f) => Ok(f.as_ref()),
+        _ => Err(format!("expected a frame, got {}", named(v))),
+    }
+}
+
+pub fn read_strs(v: &CrowValue) -> Result<Vec<String>, String> {
+    match &v.value {
+        Value::Array(items) => items.iter().map(|i| read_str(i).map(|s| s.to_string())).collect(),
+        _ => Err(format!("expected a list of text, got {}", named(v))),
+    }
+}
+
+/// A list of tensors: a decomposition's parts, a complex number.
+pub fn read_tensors(v: &CrowValue) -> Result<Vec<CrowTensor>, String> {
+    match &v.value {
+        Value::Array(items) => items.iter().map(|i| read_tensor(i).map(|t| t.into_owned())).collect(),
+        _ => Err(format!("expected a list of tensors, got {}", named(v))),
+    }
+}
+
 /// One argument of a group, the group of a single parameter.
 pub fn one(group: &[CrowValue]) -> Result<&CrowValue, String> {
     group.first().ok_or_else(|| "an argument is missing".to_string())
@@ -289,6 +345,10 @@ macro_rules! read {
     (Bool, $g:expr) => { read_bool(one($g)?)? };
     (Str, $g:expr) => { read_str(one($g)?)? };
     (Tensor, $g:expr) => { &*read_tensor(one($g)?)? };
+    (Tensors, $g:expr) => { &read_tensors(one($g)?)? };
+    (Sparse, $g:expr) => { read_sparse(one($g)?)? };
+    (Frame, $g:expr) => { read_frame(one($g)?)? };
+    (Strs, $g:expr) => { &read_strs(one($g)?)? };
     (Sizes, $g:expr) => { &read_sizes($g)? };
 }
 
@@ -301,6 +361,8 @@ macro_rules! answer {
     (Tensor, $x:expr) => { write_tensor($x) };
     (IntMap, $x:expr) => { write_int_map($x) };
     (Tensors, $x:expr) => { write_tensors($x) };
+    (Unit, $x:expr) => { write_unit($x) };
+    (Sparse, $x:expr) => { write_sparse($x) };
 }
 
 /// A row: its id, Crow name and module, the runtime function, the kinds of
@@ -461,6 +523,56 @@ pub static ROWS: &[Row] = &[
     row!("math.floor_t", "math", "floor", crow_runtime::math::floor_t, (Tensor) -> Tensor, never),
     row!("math.ceil_t", "math", "ceil", crow_runtime::math::ceil_t, (Tensor) -> Tensor, never),
     row!("math.round_t", "math", "round", crow_runtime::math::round_t, (Tensor) -> Tensor, never),
+    // math: signal, special functions, complex numbers, draws (a rank, a
+    // window or a count the kernels asserted is the reason)
+    row!("math.fft", "math", "fft", crow_runtime::math::fft, (Tensor) -> Tensors, stops),
+    row!("math.ifft", "math", "ifft", crow_runtime::math::ifft, (Tensor, Tensor) -> Tensor, stops),
+    row!("math.fft2", "math", "fft2", crow_runtime::math::fft2, (Tensor) -> Tensors, stops),
+    row!("math.conv", "math", "conv", crow_runtime::math::conv, (Tensor, Tensor) -> Tensor, stops),
+    row!("math.conv2d", "math", "conv2d", crow_runtime::math::conv2d, (Tensor, Tensor) -> Tensor, stops),
+    row!("math.hamming", "math", "hamming", crow_runtime::math::hamming, (Int) -> Tensor, stops),
+    row!("math.hanning", "math", "hanning", crow_runtime::math::hanning, (Int) -> Tensor, stops),
+    row!("math.stft", "math", "stft", crow_runtime::math::stft, (Tensor, Int, Int) -> Tensors, stops),
+    row!("math.spectrogram", "math", "spectrogram", crow_runtime::math::spectrogram, (Tensor, Int, Int) -> Tensor, stops),
+    row!("math.lowpass", "math", "lowpass", crow_runtime::math::lowpass, (Tensor, Float, Float) -> Tensor, stops),
+    row!("math.highpass", "math", "highpass", crow_runtime::math::highpass, (Tensor, Float, Float) -> Tensor, stops),
+    row!("math.bandpass", "math", "bandpass", crow_runtime::math::bandpass, (Tensor, Float, Float, Float) -> Tensor, stops),
+    row!("math.gamma", "math", "gamma", crow_runtime::math::gamma, (Tensor) -> Tensor, never),
+    row!("math.erf", "math", "erf", crow_runtime::math::erf, (Tensor) -> Tensor, never),
+    row!("math.factorial", "math", "factorial", crow_runtime::math::factorial, (Tensor) -> Tensor, never),
+    row!("math.bessel", "math", "bessel", crow_runtime::math::bessel, (Tensor, Int) -> Tensor, never),
+    row!("math.choose", "math", "choose", crow_runtime::math::choose, (Tensor, Tensor) -> Tensor, stops),
+    row!("math.complex", "math", "complex", crow_runtime::math::complex, (Float, Float) -> Tensors, never),
+    row!("math.real", "math", "real", crow_runtime::math::real, (Tensors) -> Tensor, stops),
+    row!("math.imag", "math", "imag", crow_runtime::math::imag, (Tensors) -> Tensor, stops),
+    row!("math.magnitude", "math", "magnitude", crow_runtime::math::magnitude, (Tensors) -> Tensor, stops),
+    row!("math.phase", "math", "phase", crow_runtime::math::phase, (Tensors) -> Tensor, stops),
+    row!("math.conjugate", "math", "conjugate", crow_runtime::math::conjugate, (Tensors) -> Tensors, stops),
+    row!("math.seed", "math", "seed", crow_runtime::math::seed, (Int) -> Unit, never),
+    row!("math.shuffle", "math", "shuffle", crow_runtime::math::shuffle, (Tensor) -> Tensor, never),
+    row!("math.choice", "math", "choice", crow_runtime::math::choice, (Tensor, Int) -> Tensor, stops),
+    row!("math.permutation", "math", "permutation", crow_runtime::math::permutation, (Int) -> Tensor, stops),
+    row!("math.mod", "math", "mod", crow_runtime::math::modulo, (Tensor, Tensor) -> Tensor, stops),
+    row!("math.mod_by", "math", "mod", crow_runtime::math::modulo_by, (Tensor, Float) -> Tensor, never),
+    // math: sparse matrices, solving, stacking, conversion (an entry outside
+    // its matrix, a system that does not meet, tensors of two shapes: the
+    // reason; a frame that does not convert stopped the interpreter and
+    // unwrapped into a panic compiled)
+    row!("math.sparse", "math", "sparse", crow_runtime::math::sparse, (Tensor) -> Sparse, stops),
+    row!("math.sparse_coo", "math", "sparse", crow_runtime::math::sparse_coo, (Tensor, Tensor, Tensor, Tensor) -> Sparse, stops),
+    row!("math.dense", "math", "dense", crow_runtime::math::dense, (Sparse) -> Tensor, never),
+    row!("math.dense_of", "math", "dense", crow_runtime::math::dense_of, (Tensor) -> Tensor, never),
+    row!("math.nnz", "math", "nnz", crow_runtime::math::nnz, (Sparse) -> Int, never),
+    row!("math.spmv", "math", "spmv", crow_runtime::math::spmv, (Sparse, Tensor) -> Tensor, stops),
+    row!("math.solve_sparse", "math", "solve", crow_runtime::math::solve_sparse, (Sparse, Tensor) -> Tensor, stops),
+    row!("math.solve", "math", "solve", crow_runtime::math::solve, (Tensor, Tensor) -> Tensor, stops),
+    row!("math.stack", "math", "stack", crow_runtime::math::stack, (Tensors) -> Tensor, stops),
+    row!("math.stack_axis", "math", "stack", crow_runtime::math::stack_axis, (Tensors, Int) -> Tensor, stops),
+    row!("math.stack_rows", "math", "stack", crow_runtime::math::stack_rows, (Tensor) -> Tensor, stops),
+    row!("math.stack_rows_axis", "math", "stack", crow_runtime::math::stack_rows_axis, (Tensor, Int) -> Tensor, stops),
+    row!("math.tensor_of_frame", "math", "tensor", crow_runtime::math::tensor_of_frame, (Frame) -> Tensor, stops),
+    row!("math.tensor_of_columns", "math", "tensor", crow_runtime::math::tensor_of_columns, (Frame, Strs) -> Tensor, stops),
+    row!("math.tensor", "math", "tensor", crow_runtime::math::tensor, (Tensor) -> Tensor, never),
 ];
 
 /// The row the IR names by `id`.
@@ -479,9 +591,16 @@ pub fn core(name: &str) -> Option<&'static Row> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Arg {
     Number,
+    /// A tensor, or a list of numbers.
     Tensor,
+    /// A list of tensors.
+    Tensors,
     Text,
+    /// A list of text.
+    Texts,
     Truth,
+    Sparse,
+    Frame,
     /// Not known here: any parameter takes it.
     Unknown,
 }
@@ -491,9 +610,17 @@ impl Arg {
         match t {
             CrowType::Result(inner) => Arg::of_type(inner),
             CrowType::Int | CrowType::Float => Arg::Number,
-            CrowType::NumArray(_) | CrowType::Array(_) | CrowType::FrameCol => Arg::Tensor,
+            CrowType::Array(inner) => match Arg::of_type(inner) {
+                Arg::Tensor => Arg::Tensors,
+                Arg::Text => Arg::Texts,
+                Arg::Unknown => Arg::Unknown,
+                _ => Arg::Tensor,
+            },
+            CrowType::NumArray(_) | CrowType::FrameCol => Arg::Tensor,
             CrowType::Str | CrowType::Markup => Arg::Text,
             CrowType::Bool => Arg::Truth,
+            CrowType::Sparse => Arg::Sparse,
+            CrowType::Frame => Arg::Frame,
             _ => Arg::Unknown,
         }
     }
@@ -501,9 +628,17 @@ impl Arg {
     pub fn of_value(v: &CrowValue) -> Arg {
         match &v.value {
             Value::Int(_) | Value::Float(_) => Arg::Number,
-            Value::NumArray(_) | Value::Array(_) => Arg::Tensor,
+            Value::NumArray(_) => Arg::Tensor,
+            Value::Array(items) => match items.first().map(Arg::of_value) {
+                Some(Arg::Tensor) => Arg::Tensors,
+                Some(Arg::Text) => Arg::Texts,
+                Some(Arg::Number) => Arg::Tensor,
+                _ => Arg::Unknown,
+            },
             Value::Str(_) => Arg::Text,
             Value::Bool(_) => Arg::Truth,
+            Value::Sparse(_) => Arg::Sparse,
+            Value::Frame(_) => Arg::Frame,
             _ => Arg::Unknown,
         }
     }
@@ -516,9 +651,13 @@ impl Kind {
             || match self {
                 Kind::Int | Kind::Float | Kind::Sizes => a == Arg::Number,
                 Kind::Tensor => a == Arg::Tensor,
+                Kind::Tensors => a == Arg::Tensors,
                 Kind::Str => a == Arg::Text,
+                Kind::Strs => a == Arg::Texts,
                 Kind::Bool => a == Arg::Truth,
-                Kind::IntMap | Kind::Tensors => true,
+                Kind::Sparse => a == Arg::Sparse,
+                Kind::Frame => a == Arg::Frame,
+                Kind::IntMap | Kind::Unit => true,
             }
     }
 }
@@ -575,7 +714,7 @@ pub const MODULE_OWN_FORM: &[(&str, &str)] = &[("db", "connect"), ("db", "query"
 #[cfg_attr(not(test), allow(dead_code))] // read by the drift test
 pub const MODULE_TO_MOVE: &[(&str, &str)] = &[
     // math
-    ("math", "tensor"), ("math", "mod"), ("math", "stack"), ("math", "solve"), ("math", "seed"), ("math", "shuffle"), ("math", "choice"), ("math", "permutation"), ("math", "fft"), ("math", "fft2"), ("math", "ifft"), ("math", "conv"), ("math", "conv2d"), ("math", "hamming"), ("math", "hanning"), ("math", "stft"), ("math", "spectrogram"), ("math", "lowpass"), ("math", "highpass"), ("math", "bandpass"), ("math", "gamma"), ("math", "erf"), ("math", "bessel"), ("math", "factorial"), ("math", "choose"), ("math", "complex"), ("math", "real"), ("math", "imag"), ("math", "magnitude"), ("math", "phase"), ("math", "conjugate"), ("math", "sparse"), ("math", "dense"), ("math", "nnz"), ("math", "spmv"), ("math", "load"),
+    ("math", "load"),
     // math.stats
     ("math.stats", "median"), ("math.stats", "std"), ("math.stats", "var"), ("math.stats", "percentile"), ("math.stats", "zscore"), ("math.stats", "corr"), ("math.stats", "cov"), ("math.stats", "ttest"), ("math.stats", "linreg"), ("math.stats", "chisq"), ("math.stats", "anova"), ("math.stats", "kstest"), ("math.stats", "fit"),
     // math.nn

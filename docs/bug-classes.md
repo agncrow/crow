@@ -325,6 +325,19 @@ functions of a number or a tensor, with parity 108.
 - A number and a tensor share one rule. `sign[0.0]` was 1 compiled, from
   Rust's `signum`, and 0 interpreted.
 
+**Batch 6**: the rest of math (signal, special functions, complex
+numbers, draws, sparse matrices, `solve`, `stack`, `tensor`, `mod`), with
+parity 109. Every math function but `load`, an effect, is a row.
+
+- A rank, a window, a count or a sparse entry outside its matrix is the
+  reason. The kernels asserted them, and a sparse entry panicked the
+  sparse library.
+- `tensor[df]` unwrapped the frame's conversion compiled, a panic where
+  the interpreter stopped with the reason.
+- Kinds for sparse matrices, frames, lists of text, lists of tensors
+  taken as arguments, and no answer. Rows are chosen by a list of tensors
+  against a tensor, and by a sparse matrix against a dense one.
+
 ## Open questions (Vijay)
 
 1. **A handler passes a failed value to a helper.** By the spec's

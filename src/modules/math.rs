@@ -2,7 +2,6 @@ use crate::value::{CrowValue, Value};
 use crate::type_infer::CrowType;
 use crate::modules::CrowModule;
 use crow_runtime::tensor::CrowTensor;
-use crow_runtime::sparse::CrowSparse;
 
 
 pub struct MathModule;
@@ -82,56 +81,9 @@ impl CrowModule for MathModule {
 
 // ===== Helpers =====
 
-fn to_f64(v: &CrowValue, fname: &str) -> Result<f64, String> {
-    match &v.value {
-        Value::Int(n) => Ok(*n as f64),
-        Value::Float(f) => Ok(*f),
-        _ => Err(format!("{}: expected number, got {:?}", fname, v.value)),
-    }
-}
 
-fn to_usize(v: &CrowValue, fname: &str) -> Result<usize, String> {
-    match &v.value {
-        Value::Int(n) if *n >= 0 => Ok(*n as usize),
-        Value::Int(n) => Err(format!("{}: expected non-negative integer, got {}", fname, n)),
-        Value::Float(f) => Ok(*f as usize),
-        _ => Err(format!("{}: expected integer, got {:?}", fname, v.value)),
-    }
-}
 
-fn to_float(v: &CrowValue, fname: &str) -> Result<f64, String> {
-    match &v.value {
-        Value::Float(f) => Ok(*f),
-        Value::Int(n) => Ok(*n as f64),
-        _ => Err(format!("{}: expected number, got {:?}", fname, v.value)),
-    }
-}
 
-fn to_tensor(v: &CrowValue, fname: &str) -> Result<CrowTensor, String> {
-    match &v.value {
-        Value::NumArray(t) => Ok(*t.clone()),
-        // All-numeric plain arrays coerce (frame columns arrive this way in
-        // the interpreter — compiled mode already accepts columns)
-        Value::Array(items) => {
-            let mut data = Vec::with_capacity(items.len());
-            for item in items {
-                match &item.value {
-                    Value::Int(n) => data.push(*n as f64),
-                    Value::Float(f) => data.push(*f),
-                    other => {
-                        return Err(format!(
-                            "{}: expected numeric array, got element {:?}",
-                            fname, other
-                        ))
-                    }
-                }
-            }
-            let n = data.len();
-            Ok(CrowTensor::from_vec(data, vec![n]))
-        }
-        _ => Err(format!("{}: expected numarray, got {:?}", fname, v.value)),
-    }
-}
 
 
 // ===== Interpreter dispatch =====
@@ -146,52 +98,8 @@ fn call_math(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
     // builtin table, answered before this module's arms: crate::table)
     match name {
         // Tensor creation
-        "tensor" => {
-            if args.is_empty() || args.len() > 2 { return Err(format!("tensor: expected 1-2 arguments, got {}", args.len())); }
-            match &args[0].value {
-                Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(t.clone()))),
-                Value::Array(arr) => {
-                    let data: Result<Vec<f64>, String> = arr.iter().map(|v| match &v.value {
-                        Value::Int(n) => Ok(*n as f64),
-                        Value::Float(f) => Ok(*f),
-                        _ => Err("tensor: array elements must be numbers".into()),
-                    }).collect();
-                    Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::from_vec(data?, vec![arr.len()])))))
-                }
-                Value::Frame(frame) => {
-                    // tensor[df] or tensor[df, [col1, col2]]
-                    let col_names: Option<Vec<String>> = if args.len() == 2 {
-                        match &args[1].value {
-                            Value::Array(arr) => {
-                                let names: Result<Vec<String>, String> = arr.iter().map(|v| match &v.value {
-                                    Value::Str(s) => Ok(s.clone()),
-                                    _ => Err("tensor: column names must be strings".into()),
-                                }).collect();
-                                Some(names?)
-                            }
-                            _ => return Err("tensor: second argument must be an array of column names".into()),
-                        }
-                    } else { None };
-                    let (data, nrows, ncols) = crow_runtime::frame::frame_to_tensor_data(
-                        frame, col_names.as_deref(),
-                    )?;
-                    Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::from_vec(data, vec![nrows, ncols])))))
-                }
-                _ => Err(format!("tensor: expected array or frame, got {:?}", args[0].value)),
-            }
-        }
 
         // Element-wise math
-        "mod" => {
-            if args.len() != 2 { return Err(format!("mod: expected 2 arguments, got {}", args.len())); }
-            let a = to_tensor(&args[0], name)?;
-            match &args[1].value {
-                Value::NumArray(b) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.modulo(b))))),
-                Value::Int(n) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.modulo_scalar(*n as f64))))),
-                Value::Float(f) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.modulo_scalar(*f))))),
-                _ => Err("mod: second argument must be a number or tensor".into()),
-            }
-        }
 
         // Trigonometry
 
@@ -210,30 +118,6 @@ fn call_math_reductions(name: &str, args: &[CrowValue]) -> Result<CrowValue, Str
 fn call_math_ops(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
     match name {
         // Combining ops
-        "stack" => {
-            if args.is_empty() { return Err("stack: expected at least 1 argument (array of tensors, [axis])".into()); }
-            match args[0].unwrap_or_propagate()? {
-                Value::Array(items) => {
-                    let tensors: Result<Vec<CrowTensor>, String> = items.iter().map(|item| {
-                        match &item.value {
-                            Value::NumArray(t) => Ok(t.as_ref().clone()),
-                            _ => Err("stack: all elements must be tensors".into()),
-                        }
-                    }).collect();
-                    let tensors = tensors?;
-                    let axis = if args.len() >= 2 { to_f64(&args[1], name)? as usize } else { 0 };
-                    Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::stack(&tensors, axis)))))
-                }
-                // Array-of-tensor literals auto-build a stacked tensor now;
-                // accept it and restack along the requested axis
-                Value::NumArray(t) => {
-                    let tensors = t.rows();
-                    let axis = if args.len() >= 2 { to_f64(&args[1], name)? as usize } else { 0 };
-                    Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::stack(&tensors, axis)))))
-                }
-                _ => Err("stack: first argument must be an array of tensors".into()),
-            }
-        }
 
         // Sorting & selection
 
@@ -245,17 +129,6 @@ fn call_math_ops(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
 
 fn call_math_linalg(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
     match name {
-        "solve" => {
-            if args.len() != 2 { return Err(format!("solve: expected 2 arguments, got {}", args.len())); }
-            if let Value::Sparse(s) = &args[0].value {
-                let b = to_tensor(&args[1], name)?;
-                Ok(CrowValue::ok(Value::NumArray(Box::new(s.solve(&b)))))
-            } else {
-                let a = to_tensor(&args[0], name)?;
-                let b = to_tensor(&args[1], name)?;
-                Ok(CrowValue::ok(Value::NumArray(Box::new(a.solve(&b)))))
-            }
-        }
 
         _ => call_math_random(name, args),
     }
@@ -264,124 +137,12 @@ fn call_math_linalg(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
 
 fn call_math_random(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
     match name {
-        "seed" => {
-            if args.len() != 1 { return Err(format!("seed: expected 1 argument, got {}", args.len())); }
-            let n = match &args[0].value {
-                Value::Int(i) => *i as u64,
-                Value::Float(f) => *f as u64,
-                _ => return Err("seed: expected integer".into()),
-            };
-            crow_runtime::rng::set_seed(n);
-            Ok(CrowValue::done())
-        }
-        "shuffle" => {
-            if args.len() != 1 { return Err(format!("shuffle: expected 1 argument, got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(t.shuffle()))))
-        }
-        "choice" => {
-            if args.len() != 2 { return Err(format!("choice: expected 2 arguments (tensor, n), got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            let n = to_usize(&args[1], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(t.choice(n)))))
-        }
-        "permutation" => {
-            if args.len() != 1 { return Err(format!("permutation: expected 1 argument, got {}", args.len())); }
-            let n = to_usize(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::permutation(n)))))
-        }
         _ => call_math_signal(name, args),
     }
 }
 
 fn call_math_signal(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
     match name {
-        "fft" => {
-            if args.len() != 1 { return Err(format!("fft: expected 1 argument, got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            let (real, imag) = t.fft();
-            Ok(CrowValue::ok(Value::Array(vec![
-                CrowValue::ok(Value::NumArray(Box::new(real))),
-                CrowValue::ok(Value::NumArray(Box::new(imag))),
-            ])))
-        }
-        "ifft" => {
-            if args.len() != 2 { return Err(format!("ifft: expected 2 arguments (real, imag), got {}", args.len())); }
-            let real = to_tensor(&args[0], name)?;
-            let imag = to_tensor(&args[1], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::ifft(&real, &imag)))))
-        }
-        "fft2" => {
-            if args.len() != 1 { return Err(format!("fft2: expected 1 argument, got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            let (real, imag) = t.fft2();
-            Ok(CrowValue::ok(Value::Array(vec![
-                CrowValue::ok(Value::NumArray(Box::new(real))),
-                CrowValue::ok(Value::NumArray(Box::new(imag))),
-            ])))
-        }
-        "conv" => {
-            if args.len() != 2 { return Err(format!("conv: expected 2 arguments, got {}", args.len())); }
-            let a = to_tensor(&args[0], name)?;
-            let b = to_tensor(&args[1], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(a.conv(&b)))))
-        }
-        "conv2d" => {
-            if args.len() != 2 { return Err(format!("conv2d: expected 2 arguments, got {}", args.len())); }
-            let a = to_tensor(&args[0], name)?;
-            let b = to_tensor(&args[1], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(a.conv2d(&b)))))
-        }
-        "hamming" => {
-            if args.len() != 1 { return Err(format!("hamming: expected 1 argument, got {}", args.len())); }
-            let n = to_usize(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::hamming(n)))))
-        }
-        "hanning" => {
-            if args.len() != 1 { return Err(format!("hanning: expected 1 argument, got {}", args.len())); }
-            let n = to_usize(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::hanning(n)))))
-        }
-        "stft" => {
-            if args.len() != 3 { return Err(format!("stft: expected 3 arguments (signal, window_size, hop_size), got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            let win = to_usize(&args[1], name)?;
-            let hop = to_usize(&args[2], name)?;
-            let (real, imag) = t.stft(win, hop);
-            Ok(CrowValue::ok(Value::Array(vec![
-                CrowValue::ok(Value::NumArray(Box::new(real))),
-                CrowValue::ok(Value::NumArray(Box::new(imag))),
-            ])))
-        }
-        "spectrogram" => {
-            if args.len() != 3 { return Err(format!("spectrogram: expected 3 arguments (signal, window_size, hop_size), got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            let win = to_usize(&args[1], name)?;
-            let hop = to_usize(&args[2], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(t.spectrogram(win, hop)))))
-        }
-        "lowpass" => {
-            if args.len() != 3 { return Err(format!("lowpass: expected 3 arguments (signal, cutoff_hz, sample_rate), got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            let cutoff = to_float(&args[1], name)?;
-            let sr = to_float(&args[2], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(t.lowpass(cutoff, sr)))))
-        }
-        "highpass" => {
-            if args.len() != 3 { return Err(format!("highpass: expected 3 arguments (signal, cutoff_hz, sample_rate), got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            let cutoff = to_float(&args[1], name)?;
-            let sr = to_float(&args[2], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(t.highpass(cutoff, sr)))))
-        }
-        "bandpass" => {
-            if args.len() != 4 { return Err(format!("bandpass: expected 4 arguments (signal, low_hz, high_hz, sample_rate), got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            let low = to_float(&args[1], name)?;
-            let high = to_float(&args[2], name)?;
-            let sr = to_float(&args[3], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(t.bandpass(low, high, sr)))))
-        }
         _ => call_math_special(name, args),
     }
 }
@@ -389,145 +150,10 @@ fn call_math_signal(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
 fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
     match name {
         // Special functions
-        "gamma" => {
-            if args.len() != 1 { return Err(format!("gamma: expected 1 argument, got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(t.gamma()))))
-        }
-        "erf" => {
-            if args.len() != 1 { return Err(format!("erf: expected 1 argument, got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(t.erf()))))
-        }
-        "bessel" => {
-            if args.len() != 2 { return Err(format!("bessel: expected 2 arguments (x, n), got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            let n = to_f64(&args[1], name)? as i64;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(t.bessel(n)))))
-        }
-        "factorial" => {
-            if args.len() != 1 { return Err(format!("factorial: expected 1 argument, got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(t.factorial()))))
-        }
-        "choose" => {
-            if args.len() != 2 { return Err(format!("choose: expected 2 arguments (n, k), got {}", args.len())); }
-            let n = to_tensor(&args[0], name)?;
-            let k = to_tensor(&args[1], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(n.choose(&k)))))
-        }
 
         // Complex numbers
-        "complex" => {
-            if args.len() != 2 { return Err(format!("complex: expected 2 arguments (re, im), got {}", args.len())); }
-            let re = to_f64(&args[0], name)?;
-            let im = to_f64(&args[1], name)?;
-            let (r, i) = CrowTensor::complex(re, im);
-            Ok(CrowValue::ok(Value::Array(vec![
-                CrowValue::ok(Value::NumArray(Box::new(r))),
-                CrowValue::ok(Value::NumArray(Box::new(i))),
-            ])))
-        }
-        "real" => {
-            if args.len() != 1 { return Err(format!("real: expected 1 argument, got {}", args.len())); }
-            match &args[0].value {
-                Value::Array(arr) if arr.len() == 2 => Ok(arr[0].clone()),
-                _ => Err("real: expected complex value [real, imag]".to_string()),
-            }
-        }
-        "imag" => {
-            if args.len() != 1 { return Err(format!("imag: expected 1 argument, got {}", args.len())); }
-            match &args[0].value {
-                Value::Array(arr) if arr.len() == 2 => Ok(arr[1].clone()),
-                _ => Err("imag: expected complex value [real, imag]".to_string()),
-            }
-        }
-        "magnitude" => {
-            if args.len() != 1 { return Err(format!("magnitude: expected 1 argument, got {}", args.len())); }
-            match &args[0].value {
-                Value::Array(arr) if arr.len() == 2 => {
-                    let re = to_tensor(&arr[0], name)?;
-                    let im = to_tensor(&arr[1], name)?;
-                    Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::magnitude(&re, &im)))))
-                }
-                _ => Err("magnitude: expected complex value [real, imag]".to_string()),
-            }
-        }
-        "phase" => {
-            if args.len() != 1 { return Err(format!("phase: expected 1 argument, got {}", args.len())); }
-            match &args[0].value {
-                Value::Array(arr) if arr.len() == 2 => {
-                    let re = to_tensor(&arr[0], name)?;
-                    let im = to_tensor(&arr[1], name)?;
-                    Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::phase(&re, &im)))))
-                }
-                _ => Err("phase: expected complex value [real, imag]".to_string()),
-            }
-        }
-        "conjugate" => {
-            if args.len() != 1 { return Err(format!("conjugate: expected 1 argument, got {}", args.len())); }
-            match &args[0].value {
-                Value::Array(arr) if arr.len() == 2 => {
-                    let re = to_tensor(&arr[0], name)?;
-                    let im = to_tensor(&arr[1], name)?;
-                    let (cr, ci) = CrowTensor::conjugate(&re, &im);
-                    Ok(CrowValue::ok(Value::Array(vec![
-                        CrowValue::ok(Value::NumArray(Box::new(cr))),
-                        CrowValue::ok(Value::NumArray(Box::new(ci))),
-                    ])))
-                }
-                _ => Err("conjugate: expected complex value [real, imag]".to_string()),
-            }
-        }
 
         // Sparse arrays
-        "sparse" => {
-            if args.len() == 1 {
-                let t = to_tensor(&args[0], name)?;
-                Ok(CrowValue::ok(Value::Sparse(Box::new(CrowSparse::from_dense(&t)))))
-            } else if args.len() == 4 {
-                let rows_t = to_tensor(&args[0], name)?;
-                let cols_t = to_tensor(&args[1], name)?;
-                let vals_t = to_tensor(&args[2], name)?;
-                let shape_t = to_tensor(&args[3], name)?;
-                let rows: Vec<usize> = rows_t.to_vec().iter().map(|v| *v as usize).collect();
-                let cols: Vec<usize> = cols_t.to_vec().iter().map(|v| *v as usize).collect();
-                let vals = vals_t.to_vec();
-                let shape_data = shape_t.to_vec();
-                if shape_data.len() != 2 {
-                    return Err("sparse: shape must have 2 elements [nrows, ncols]".into());
-                }
-                let nrows = shape_data[0] as usize;
-                let ncols = shape_data[1] as usize;
-                Ok(CrowValue::ok(Value::Sparse(Box::new(CrowSparse::from_coo(&rows, &cols, &vals, nrows, ncols)))))
-            } else {
-                Err(format!("sparse: expected 1 or 4 arguments, got {}", args.len()))
-            }
-        }
-        "dense" => {
-            if args.len() != 1 { return Err(format!("dense: expected 1 argument, got {}", args.len())); }
-            match &args[0].value {
-                Value::Sparse(s) => Ok(CrowValue::ok(Value::NumArray(Box::new(s.to_dense())))),
-                Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(t.clone()))),
-                _ => Err(format!("dense: expected sparse or numarray, got {}", args[0].value.type_name())),
-            }
-        }
-        "nnz" => {
-            if args.len() != 1 { return Err(format!("nnz: expected 1 argument, got {}", args.len())); }
-            match &args[0].value {
-                Value::Sparse(s) => Ok(CrowValue::ok(Value::Int(s.nnz() as i64))),
-                _ => Err(format!("nnz: expected sparse, got {}", args[0].value.type_name())),
-            }
-        }
-        "spmv" => {
-            if args.len() != 2 { return Err(format!("spmv: expected 2 arguments, got {}", args.len())); }
-            match (&args[0].value, &args[1].value) {
-                (Value::Sparse(s), Value::NumArray(v)) => {
-                    Ok(CrowValue::ok(Value::NumArray(Box::new(s.matmul_dense(v)?))))
-                }
-                _ => Err("spmv: expected (sparse, numarray)".into()),
-            }
-        }
 
         // I/O: load numeric CSV directly to tensor
         "load" => {
@@ -551,50 +177,18 @@ fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String
 
 // ===== Rust emission =====
 
-fn emit_math_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String> {
+fn emit_math_rust(name: &str, arg_strs: &[String], _arg_types: &[CrowType]) -> Result<String, String> {
     let result = match name {
         // Tensor creation
-        "tensor" => {
-            // Check if argument is a Frame type
-            let is_frame = !arg_types.is_empty() && (matches!(arg_types[0], CrowType::Frame) || matches!(&arg_types[0], CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Frame)));
-            if is_frame {
-                if arg_strs.len() == 2 {
-                    format!("{{ let (_d, _r, _c) = crow_runtime::frame::frame_to_tensor_data(&{}, Some(&{})).unwrap(); CrowTensor::from_vec(_d, vec![_r, _c]) }}", arg_strs[0], arg_strs[1])
-                } else {
-                    format!("{{ let (_d, _r, _c) = crow_runtime::frame::frame_to_tensor_data(&{}, None).unwrap(); CrowTensor::from_vec(_d, vec![_r, _c]) }}", arg_strs[0])
-                }
-            } else if !arg_types.is_empty() && matches!(arg_types[0], CrowType::NumArray(_)) {
-                // an all-numeric array literal is already a tensor
-                arg_strs[0].clone()
-            } else {
-                format!("{{ let _arr = {}; CrowTensor::from_vec(_arr.iter().map(|v| *v as f64).collect(), vec![_arr.len()]) }}", arg_strs[0])
-            }
-        }
         // Element-wise math (ln replaces log)
-        "mod" => {
-            if arg_types.len() > 1 && matches!(arg_types[1], CrowType::NumArray(_)) {
-                format!("{}.modulo(&{})", arg_strs[0], arg_strs[1])
-            } else {
-                format!("{}.modulo_scalar({} as f64)", arg_strs[0], arg_strs[1])
-            }
-        }
         // Trig
         // Reductions
         // Cumulative
         // Combining. Array-of-tensor literals now build a stacked tensor,
         // so stack accepts either a Vec of tensors or a tensor (restack rows).
-        "stack" => {
-            let axis = if arg_strs.len() >= 2 { format!("{} as usize", arg_strs[1]) } else { "0".to_string() };
-            if matches!(arg_types.first(), Some(CrowType::NumArray(_))) {
-                format!("CrowTensor::stack(&{}.rows(), {})", arg_strs[0], axis)
-            } else {
-                format!("CrowTensor::stack(&{}, {})", arg_strs[0], axis)
-            }
-        }
         // Sorting & selection
         // Shape ops
         // Linear algebra
-        "solve" => format!("{}.solve(&{})", arg_strs[0], arg_strs[1]),
         "norm" if arg_strs.len() >= 2 => format!("{}.norm({} as f64)", arg_strs[0], arg_strs[1]),
         _ => return emit_math_rust_continued(name, arg_strs),
     };
@@ -604,43 +198,10 @@ fn emit_math_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Re
 fn emit_math_rust_continued(name: &str, arg_strs: &[String]) -> Result<String, String> {
     let result = match name {
         // Random & Distributions
-        "seed" => format!("crow_runtime::rng::set_seed({} as u64)", arg_strs[0]),
-        "shuffle" => format!("{}.shuffle()", arg_strs[0]),
-        "choice" => format!("{}.choice({} as usize)", arg_strs[0], arg_strs[1]),
-        "permutation" => format!("CrowTensor::permutation({} as usize)", arg_strs[0]),
         // Signal processing
-        "fft" => format!("{{ let (_re, _im) = {}.fft(); vec![_re, _im] }}", arg_strs[0]),
-        "ifft" => format!("CrowTensor::ifft(&{}, &{})", arg_strs[0], arg_strs[1]),
-        "fft2" => format!("{{ let (_re, _im) = {}.fft2(); vec![_re, _im] }}", arg_strs[0]),
-        "conv" => format!("{}.conv(&{})", arg_strs[0], arg_strs[1]),
-        "conv2d" => format!("{}.conv2d(&{})", arg_strs[0], arg_strs[1]),
-        "hamming" => format!("CrowTensor::hamming({} as usize)", arg_strs[0]),
-        "hanning" => format!("CrowTensor::hanning({} as usize)", arg_strs[0]),
-        "stft" => format!("{{ let (_re, _im) = {}.stft({} as usize, {} as usize); vec![_re, _im] }}", arg_strs[0], arg_strs[1], arg_strs[2]),
-        "spectrogram" => format!("{}.spectrogram({} as usize, {} as usize)", arg_strs[0], arg_strs[1], arg_strs[2]),
-        "lowpass" => format!("{}.lowpass({}, {})", arg_strs[0], arg_strs[1], arg_strs[2]),
-        "highpass" => format!("{}.highpass({}, {})", arg_strs[0], arg_strs[1], arg_strs[2]),
-        "bandpass" => format!("{}.bandpass({}, {}, {})", arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[3]),
         // Special functions
-        "gamma" => format!("{}.gamma()", arg_strs[0]),
-        "erf" => format!("{}.erf()", arg_strs[0]),
-        "bessel" => format!("{}.bessel({} as i64)", arg_strs[0], arg_strs[1]),
-        "factorial" => format!("{}.factorial()", arg_strs[0]),
-        "choose" => format!("{}.choose(&{})", arg_strs[0], arg_strs[1]),
         // Complex
-        "complex" => format!("{{ let (_re, _im) = CrowTensor::complex({} as f64, {} as f64); vec![_re, _im] }}", arg_strs[0], arg_strs[1]),
-        "real" => format!("{}[0].clone()", arg_strs[0]),
-        "imag" => format!("{}[1].clone()", arg_strs[0]),
-        "magnitude" => format!("CrowTensor::magnitude(&{}[0], &{}[1])", arg_strs[0], arg_strs[0]),
-        "phase" => format!("CrowTensor::phase(&{}[0], &{}[1])", arg_strs[0], arg_strs[0]),
-        "conjugate" => format!("{{ let (_re, _im) = CrowTensor::conjugate(&{}[0], &{}[1]); vec![_re, _im] }}", arg_strs[0], arg_strs[0]),
         // Sparse
-        "sparse" if arg_strs.len() == 1 => format!("CrowSparse::from_dense(&{})", arg_strs[0]),
-        "sparse" if arg_strs.len() == 4 => format!("{{ let _rows: Vec<usize> = {}.to_vec().iter().map(|v| *v as usize).collect(); let _cols: Vec<usize> = {}.to_vec().iter().map(|v| *v as usize).collect(); let _vals = {}.to_vec(); let _shape = {}.to_vec(); CrowSparse::from_coo(&_rows, &_cols, &_vals, _shape[0] as usize, _shape[1] as usize) }}", arg_strs[0], arg_strs[1], arg_strs[2], arg_strs[3]),
-        "sparse" => "/* sparse: unexpected arg count */".to_string(),
-        "dense" => format!("{}.to_dense()", arg_strs[0]),
-        "nnz" => format!("{}.nnz() as i64", arg_strs[0]),
-        "spmv" => format!("{}.matmul_dense(&{}).unwrap_or_else(|e| crow_stop({}, e))", arg_strs[0], arg_strs[1], super::STOP_LINE),
         // I/O
         "load" => format!("{{ match crow_runtime::io::load_csv_numeric(&{}) {{ Ok((data, nrows, ncols)) => CrowResult {{ value: CrowTensor::from_vec(data, vec![nrows, ncols]), ok: true, reason: String::new(), kind: String::new(), trace: vec![], captured: crow_runtime::moments::now() }}, Err(e) => CrowResult {{ value: CrowTensor::zeros(vec![0]), ok: false, reason: e, kind: \"load\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0]),
         _ => return Err(format!("{}: unknown math function for the Rust backend", name)),
@@ -651,39 +212,10 @@ fn emit_math_rust_continued(name: &str, arg_strs: &[String]) -> Result<String, S
 // ===== Type inference =====
 
 fn math_type_of(name: &str, _arg_count: usize) -> CrowType {
+    // (every other math function is a row of the builtin table, which
+    // types it: crate::table)
     match name {
-        // Tensor creation → NumArray(Float)
-        // (zeros, ones, eye, randn, linspace, arange, full and diag are rows
-        // of the builtin table, which types them: crate::table)
-        "tensor" => CrowType::NumArray(Box::new(CrowType::Float)),
-        // (the element-wise functions, the reductions, the shapes, sorting
-        // and selection, and linear algebra but solve are rows of the builtin
-        // table, which types them: crate::table)
-        "mod" => CrowType::NumArray(Box::new(CrowType::Float)),
-        "solve" => CrowType::NumArray(Box::new(CrowType::Float)),
-        // Combining
-        "concat" | "stack" => CrowType::NumArray(Box::new(CrowType::Float)),
-        // Random & Distributions
-        "seed" => CrowType::Void,
-        // (the distributions are rows of the builtin table)
-        "shuffle" | "choice" | "permutation" => CrowType::NumArray(Box::new(CrowType::Float)),
-        // Signal processing
-        "fft" | "fft2" | "stft" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
-        "ifft" | "conv" | "conv2d" | "hamming" | "hanning"
-        | "spectrogram" | "lowpass" | "highpass" | "bandpass" => CrowType::NumArray(Box::new(CrowType::Float)),
-        // Special functions
-        "gamma" | "erf" | "factorial" | "bessel" | "choose"
-        | "magnitude" | "phase" => CrowType::NumArray(Box::new(CrowType::Float)),
-        // Complex (returns [real, imag] pair)
-        "complex" | "conjugate" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
-        // Complex extraction
-        "real" | "imag" => CrowType::NumArray(Box::new(CrowType::Float)),
-        // Sparse
-        "sparse" => CrowType::Sparse,
-        "dense" => CrowType::NumArray(Box::new(CrowType::Float)),
-        "nnz" => CrowType::Int,
-        "spmv" => CrowType::NumArray(Box::new(CrowType::Float)),
-        // I/O
+        "concat" => CrowType::NumArray(Box::new(CrowType::Float)),
         "load" => CrowType::Result(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
         _ => CrowType::Unknown,
     }
