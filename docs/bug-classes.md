@@ -447,6 +447,22 @@ written twice.
   the interpreter, the emitter and inference — as module rows are: `min`
   of two ints is an int, of a float a float.
 
+**Batch 10**: a frame's column as numbers, everywhere, with parity 114.
+
+- A column in arithmetic (`+ - * / % ^ .* ./ .^`) is its numbers, as it
+  is when handed to a function that takes numbers: the lowering converts
+  it the same way in both modes, and a missing cell stops. The
+  interpreter had refused `df.a + df.b` outright; the compiled program
+  had bridged it through a tensor with missing cells read as `0`, and a
+  column times a number through a column method that parsed a column of
+  text as numbers. Both are gone.
+- A missing cell's error value holds its column's placeholder (the safe
+  default a failed value holds, spec §10). So a column the interpreter
+  copies keeps its kind even when every cell is missing: it had become
+  text interpreted and stayed an int compiled.
+- A list's failed item read where numbers are taken is the reason, never
+  its placeholder.
+
 ## Decisions (Vijay, 2026-09-28)
 
 The questions the work raised, each decided as recommended.

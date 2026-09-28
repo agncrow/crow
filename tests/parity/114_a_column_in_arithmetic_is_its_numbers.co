@@ -1,0 +1,25 @@
+--- A frame's column in arithmetic is its numbers, in both modes, as it is
+--- when handed to a function that takes numbers: the interpreter refused
+--- df.a + df.b, and the compiled program read a missing cell as 0 (and
+--- parsed a column of text). A column all of whose cells are missing keeps
+--- its kind when it is copied. A comparison is a mask, as before.
+use frame
+use db
+df = frame.new[]
+df = with[df, 'a', [1.0, 2.0, 3.0]]
+df = with[df, 'b', [10.0, 20.0, 30.0]]
+log[df.a + df.b]
+log[df.b - df.a]
+log[df.a .* df.b]
+log[df.a * 2.0]
+log[df.a gt 1.5]
+book = db.connect['sqlite://:memory:']
+exec[book, 'CREATE TABLE t (id INTEGER PRIMARY KEY, n INTEGER)']
+exec[book, 'INSERT INTO t (id, n) VALUES (?, ?)', [1, 5]]
+exec[book, 'INSERT INTO t (id) VALUES (?)', [2]]
+rows = query[book, 'SELECT n FROM t ORDER BY id']
+gone = filter[rows, [false, true]]
+copied = with[gone, 'm', gone.n]
+log[copied.dtypes]
+log[rows.n + 1]
+log['not reached']

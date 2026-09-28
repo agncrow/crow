@@ -428,9 +428,8 @@ impl Emitter {
         if l_sparse && matches!(rti, CrowType::NumArray(_)) && op == "mul" {
             return format!("{}.matmul_dense(&{}){}", l, r, self.or_stop());
         }
-        let col_bridge = matches!(op, "elemmul" | "elemdiv" | "elempow" | "add" | "sub");
-        let (l, lti) = if matches!(lti, CrowType::FrameCol) && col_bridge { (format!("({}).to_tensor()", l), CrowType::NumArray(Box::new(CrowType::Float))) } else { (l, lti) };
-        let (r, rti) = if matches!(rti, CrowType::FrameCol) && col_bridge { (format!("({}).to_tensor()", r), CrowType::NumArray(Box::new(CrowType::Float))) } else { (r, rti) };
+        // (a frame's column in arithmetic arrives as its numbers, converted
+        // by the lowering the same way in both modes)
         // numbers held two ways (a list built by `push` against a literal's
         // tensor, a list of rows against a matrix) compare by value and
         // shape, as in the interpreter; both sides evaluated, the left first
@@ -502,9 +501,6 @@ impl Emitter {
                 "add" | "sub" | "mul" | "div" => op,
                 _ => return format!("{} {} {}", l, op_str, r),
             };
-            if matches!(lti, CrowType::FrameCol) {
-                return format!("{}.arithmetic({} as f64, \"{}\")", l, r, arith);
-            }
             return format!("crow_runtime::frame::col_arithmetic(&{}, {} as f64, \"{}\")", l, r, arith);
         }
         if self.emitting_dual {

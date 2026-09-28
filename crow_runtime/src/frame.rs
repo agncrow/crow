@@ -328,49 +328,6 @@ impl CrowColumn {
         result
     }
 
-    /// Native vectorized arithmetic — no string parsing.
-    /// Returns a new CrowColumn with the result.
-    pub fn arithmetic(&self, scalar: f64, op: &str) -> CrowColumn {
-        let n = self.len();
-        let new_data = match self.data.as_ref() {
-            Column::Int(v) => {
-                let out: Vec<f64> = (0..n).map(|i| {
-                    if !self.valid[i] { return f64::NAN; }
-                    let val = v[i] as f64;
-                    arith_f64(val, scalar, op)
-                }).collect();
-                Column::Float(out)
-            }
-            Column::Float(v) => {
-                let out: Vec<f64> = (0..n).map(|i| {
-                    if !self.valid[i] { return f64::NAN; }
-                    arith_f64(v[i], scalar, op)
-                }).collect();
-                Column::Float(out)
-            }
-            Column::Str(v) => {
-                // Fallback: parse strings
-                let out: Vec<String> = (0..n).map(|i| {
-                    if !self.valid[i] { return "nan".to_string(); }
-                    if let Ok(val) = v[i].parse::<f64>() {
-                        let r = arith_f64(val, scalar, op);
-                        if r == (r as i64) as f64 && r.is_finite() {
-                            (r as i64).to_string()
-                        } else {
-                            r.to_string()
-                        }
-                    } else { v[i].clone() }
-                }).collect();
-                Column::Str(out)
-            }
-            other => other.clone(), // pass through
-        };
-        CrowColumn {
-            data: Arc::new(new_data),
-            valid: Arc::clone(&self.valid),
-        }
-    }
-
     /// Native vectorized string comparison — compare column values against a string scalar.
     pub fn compare_str(&self, scalar: &str, op: &str) -> Vec<bool> {
         let n = self.len();
@@ -540,17 +497,6 @@ fn cmp_f64(a: f64, b: f64, op: &str) -> bool {
         "eq" => (a - b).abs() < f64::EPSILON,
         "ne" => (a - b).abs() >= f64::EPSILON,
         _ => false,
-    }
-}
-
-#[inline]
-fn arith_f64(a: f64, b: f64, op: &str) -> f64 {
-    match op {
-        "add" => a + b,
-        "sub" => a - b,
-        "mul" => a * b,
-        "div" => a / b,
-        _ => a,
     }
 }
 

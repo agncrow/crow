@@ -604,6 +604,15 @@ pub fn frame_cell(frame: &crow_runtime::frame::CrowFrame, col: usize, row: usize
     if !frame.validity[col][row] {
         let mut missing = CrowValue::error_with_kind("nan", "missing", "");
         missing.status_mut().trace.clear();
+        // the safe default a failed value holds (spec §10), of the column's
+        // kind: a column copied from its cells keeps its kind even when every
+        // cell is missing
+        missing.value = match frame.data[col].as_ref() {
+            crow_runtime::frame::Column::Int(_) => Value::Int(0),
+            crow_runtime::frame::Column::Float(_) => Value::Float(f64::NAN),
+            crow_runtime::frame::Column::Bool(_) => Value::Bool(false),
+            crow_runtime::frame::Column::Str(_) | crow_runtime::frame::Column::DateTime(..) => Value::Str(String::new()),
+        };
         return missing;
     }
     CrowValue::ok(match frame.data[col].as_ref() {

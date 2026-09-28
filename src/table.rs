@@ -311,7 +311,11 @@ pub fn read_tensor(v: &CrowValue) -> Result<Cow<'_, CrowTensor>, String> {
         Value::NumArray(t) => Ok(Cow::Borrowed(t.as_ref())),
         Value::Array(items) => {
             let mut data = Vec::with_capacity(items.len());
-            for item in items {
+            for (i, item) in items.iter().enumerate() {
+                // a failed item holds a placeholder, never a number to read
+                if item.is_error() {
+                    return Err(if item.kind() == "missing" { crow_runtime::stops::missing_cell(i) } else { format!("item {} of the list failed: {}", i, item.reason()) });
+                }
                 data.push(read_float(item)?);
             }
             let n = data.len();
@@ -454,18 +458,21 @@ pub fn read_cells(v: &CrowValue) -> Result<crow_runtime::frames::Cells, String> 
         Value::NumArray(t) => return Ok(Cells::from(t.as_ref().clone())),
         _ => return read_cell(v).map(Cells::One),
     };
-    let present = || items.iter().filter(|i| !i.is_error());
+    // every cell says the column's kind, a missing one by the placeholder
+    // it holds (ops::frame_cell), so a column all of whose cells are missing
+    // keeps its kind, as the compiled program's column does
     let valid: Vec<bool> = items.iter().map(|i| !i.is_error()).collect();
-    let column = if present().all(|i| matches!(i.value, Value::Int(_))) && present().next().is_some() {
+    let all = |f: fn(&Value) -> bool| !items.is_empty() && items.iter().all(|i| f(&i.value));
+    let column = if all(|v| matches!(v, Value::Int(_))) {
         Column::Int(items.iter().map(|i| if let Value::Int(n) = i.value { n } else { 0 }).collect())
-    } else if present().all(|i| matches!(i.value, Value::Int(_) | Value::Float(_))) && present().next().is_some() {
-        Column::Float(items.iter().map(|i| read_float(i).unwrap_or(f64::NAN)).collect())
-    } else if present().all(|i| matches!(i.value, Value::Bool(_))) && present().next().is_some() {
+    } else if all(|v| matches!(v, Value::Int(_) | Value::Float(_))) {
+        Column::Float(items.iter().map(|i| match i.value { Value::Int(n) => n as f64, Value::Float(x) => x, _ => f64::NAN }).collect())
+    } else if all(|v| matches!(v, Value::Bool(_))) {
         Column::Bool(items.iter().map(|i| matches!(i.value, Value::Bool(true))).collect())
-    } else if present().all(|i| matches!(i.value, Value::Str(_))) {
+    } else if items.iter().all(|i| matches!(i.value, Value::Str(_))) {
         Column::Str(items.iter().map(|i| if let Value::Str(s) = &i.value { s.clone() } else { String::new() }).collect())
     } else {
-        let other = present().find(|i| !matches!(i.value, Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Str(_)));
+        let other = items.iter().find(|i| !matches!(i.value, Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Str(_)));
         return Err(format!("expected a column's values, got a list of {}", other.map(named).unwrap_or("mixed values")));
     };
     Ok(Cells::Column(column, valid))

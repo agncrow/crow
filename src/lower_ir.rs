@@ -1919,6 +1919,20 @@ impl<'a> Lowerer<'a> {
                 let mut l = self.lower_expr(left)?;
                 let mut r = self.lower_expr(right)?;
                 self.check_binop(op, self.checked(&l), self.checked(&r));
+                // a frame's column in arithmetic is its numbers, as it is
+                // handed to a function that takes them: converted the same
+                // way in both modes, a missing cell the reason it has none
+                // (the interpreter refused `df.a + df.b`, the compiled
+                // program read a missing cell as 0); a comparison is a
+                // mask, whose missing cells are false (spec, Boolean Masks)
+                if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow | BinOp::ElemMul | BinOp::ElemDiv | BinOp::ElemPow) {
+                    let numbers = |x: Expr| match x.ty() {
+                        Ty::Column(_) => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: Ty::Tensor(Box::new(Ty::Float)) },
+                        _ => x,
+                    };
+                    l = numbers(l);
+                    r = numbers(r);
+                }
                 self.check_shapes(op, &l, &r);
                 let ty = ty_of(&self.ctx.binop_type(op, read(&l), read(&r)));
                 let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow | BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte);
