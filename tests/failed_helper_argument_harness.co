@@ -1,0 +1,33 @@
+--- A helper called for what it writes, handed a failed value, stops the
+--- handler, as an effect given one does: nothing the click did lands and
+--- the reason is the session's notice (docs/bug-classes.md, decision 1).
+--- The helper's value is dropped, so auto-propagation made the error its
+--- value and nobody read it: the click counted, the helper never ran, and
+--- the page said nothing. CI runs it against the interpreter and against
+--- the compiled program (crow test --compiled).
+use web, ui
+entry = '5'
+count = 0
+total = 0.0
+fn add[x]
+    total = total + x
+fn apply[]
+    count = count + 1
+    add[float[entry]]
+view panel[]
+    return stack[
+        p['count `count` total `total`'],
+        p['`notice.text`'],
+        button['Apply', click = apply]
+    ]
+page['/', panel]
+
+test a_helper_handed_a_failed_value_stops_the_handler[]
+    a = app[panel]
+    click[a, apply]
+    assert[a.count eq 1 and a.total eq 5.0, 'count `a.count` total `a.total`']
+    change[a, 'entry', 'x']
+    r = click[a, apply]
+    assert[not r.ok, 'the click stopped']
+    assert[a.count eq 1, 'nothing the click did landed: `a.count`']
+    assert[contains[html[a], 'apply stopped: cannot convert'], 'the page `html[a]`']

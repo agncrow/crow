@@ -429,7 +429,13 @@ The questions the work raised, each decided as recommended.
    clock. **Decided:** a helper call whose value is dropped, handed a
    failed value, stops the handler with the error's reason, as an effect
    given a failed argument does (`effect_refused`): nothing the handler
-   did lands, and the reason is the session's notice.
+   did lands, and the reason is the session's notice. **Built:** the
+   lowering refuses such an argument before the call (a statement, or a
+   handler's last line, whose value nobody reads), as it refuses an item
+   pushed onto a list. Before, the modes disagreed on the click itself:
+   the interpreter's `click` answered the dropped error while landing the
+   click's writes, and the compiled program's answered success
+   (`tests/failed_helper_argument_harness.co`, run in both modes by CI).
 2. **A function that assigns a fact's name, called from a view.** The spec
    says "ordinary `fn` declarations are fully isolated even under
    `use ui`" (the assignment is a local), and also "a function a handler

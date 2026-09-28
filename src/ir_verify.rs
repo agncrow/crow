@@ -483,8 +483,9 @@ impl<'p> Verifier<'p> {
             return;
         }
         // a view renders a failed argument as its text; a call whose value
-        // is nothing drops the error it would hand on (a helper called for
-        // what it writes: docs/bug-classes.md, decision 1)
+        // is nothing drops the error it would hand on (a handler refuses
+        // such an argument before it calls a helper for what it writes:
+        // docs/bug-classes.md, decision 1)
         let renders = f.kind == FnKind::View || (propagates && *ty == Ty::Unit);
         for (i, ((p, pt), at)) in f.params.iter().zip(args).enumerate() {
             if at.is_result() && !pt.is_result() && *pt != Ty::Unknown {

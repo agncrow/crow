@@ -1400,7 +1400,12 @@ impl<'a> Lowerer<'a> {
                         CrowType::Result(inner) => matches!(inner.as_ref(), CrowType::Float),
                         t => matches!(t, CrowType::Float),
                     });
-                let x = if floats && x.ty() == Ty::Int { Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float } } else { x };
+                let mut x = if floats && x.ty() == Ty::Int { Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float } } else { x };
+                // a handler's value goes to nobody: a helper it returns is
+                // called for what it writes, as a statement's is
+                if self.at == Where::In(FnKind::Handler) {
+                    self.refuse_before_helper(&mut x);
+                }
                 vec![Stmt::Return(Some(x))]
             }
             S::Break => vec![Stmt::Break],
@@ -1413,6 +1418,7 @@ impl<'a> Lowerer<'a> {
                 if let Expr::Effect { answered, .. } = &mut x {
                     *answered = false;
                 }
+                self.refuse_before_helper(&mut x);
                 vec![Stmt::Do(x)]
             }
             S::FnDecl { name, .. } => return Err(format!("lowering: a function ('{}') declared inside a body", name)),
@@ -1599,6 +1605,47 @@ impl<'a> Lowerer<'a> {
     }
 
     /// An error leaving the body, for a provisional lowering's observer.
+    /// A helper called for what it writes — its value dropped — handed a
+    /// value that can fail: the value is refused before the call, so a
+    /// handler stops with its reason, as it does for an effect given one
+    /// (docs/bug-classes.md, decision 1). By auto-propagation the error was
+    /// the call's value, which nobody read: the click went on without the
+    /// helper's writes and said nothing (and the modes told the click's
+    /// own result apart).
+    fn refuse_before_helper(&mut self, x: &mut Expr) {
+        if !matches!(self.at, Where::In(FnKind::Handler | FnKind::Helper)) {
+            return;
+        }
+        let Expr::Call { target: Target::User(callee), args, propagates: true, .. } = x else {
+            return;
+        };
+        let Some(body) = self.ctx.functions.get(callee.as_str()).map(|sig| sig.body.clone()) else {
+            return;
+        };
+        if !matches!(self.kind_of(callee, &body, false), FnKind::Handler | FnKind::Helper) {
+            return;
+        }
+        let mut failing = Vec::new();
+        for a in args.iter_mut() {
+            if let Expr::Convert { how: Convert::Unwrap, expr: inner, ty } = a {
+                if inner.ty().is_result() {
+                    let t = self.fresh();
+                    self.pre.push(Stmt::Let { var: t.clone(), ty: inner.ty(), expr: (**inner).clone() });
+                    if let Some(scope) = self.scopes.last_mut() {
+                        scope.insert(t.clone());
+                    }
+                    // known good once refused: nothing propagates from it
+                    *a = Expr::Convert { how: Convert::Known, expr: Box::new(Expr::Local(t.clone(), inner.ty())), ty: ty.clone() };
+                    failing.push(t);
+                }
+            }
+        }
+        if !failing.is_empty() {
+            self.saw_refusal(&Decision::Branch);
+            self.pre.push(Stmt::Propagate { values: failing, at: Decision::Branch });
+        }
+    }
+
     fn saw_refusal(&mut self, at: &Decision) {
         let collecting = self.collecting > 0;
         if let Some(seen) = &mut self.seen {
