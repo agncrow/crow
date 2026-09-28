@@ -2,7 +2,8 @@
 
 **Status: C0–C2 shipped (September 2026) — candles, lines, volume,
 marker, tz, panes with levels, points, seek — plus `use chart`, the
-indicator module (`crow_runtime::ta`: sma, ema, rsi and bucketed rsi,
+indicator module (`crow_runtime::indicators`, rows of the builtin table
+over the kernels in `crow_runtime::ta`: sma, ema, rsi and bucketed rsi,
 macd, vwap and trailing vwap, rolling_sum, cvd). The finch app's
 simulation page (docs/finch-sim-design.md) is the driving application;
 the module is general. Next: C3 hover readout and shared x-windows.**

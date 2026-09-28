@@ -2266,6 +2266,7 @@ impl<'a> Lowerer<'a> {
                 }
                 return Ok(Expr::Effect { name: format!("{}.{}", m, name), args: lowered, ty, answered: true, propagates });
             }
+            let lowered = self.row_arguments(&m, &name, lowered);
             return Ok(Expr::Call { target: Target::Module(m, name), args: lowered, ty, propagates });
         }
         if self.ctx.functions.contains_key(&name) || self.ctx.specializations.contains_key(&name) {
@@ -2337,7 +2338,48 @@ impl<'a> Lowerer<'a> {
         }
         // a bare name a loaded module provides resolves at run time, by the
         // registry's own rule, as the interpreter resolves it
+        let lowered = match self.ctx.registry.module_name_for(&name) {
+            Some(m) => self.row_arguments(&m.to_string(), &name, lowered),
+            None => lowered,
+        };
         Ok(Expr::Call { target: Target::Runtime(name), args: lowered, ty, propagates })
+    }
+
+    /// A builtin row's arguments as its parameters take them (docs/
+    /// bug-classes.md §4): numbers held as a list, or a frame's column,
+    /// handed to a parameter that takes a tensor are converted where they
+    /// meet, the same way in both modes — compiled, a list did not build
+    /// and a column's missing cells were read as 0, where the interpreter
+    /// read the list and stopped at the missing cell. A name the core also
+    /// answers (`max`, `abs`) picks its builtin by the values at run time,
+    /// and an argument that can fail is handed on as its error, so both
+    /// are left as they are.
+    fn row_arguments(&self, module: &str, name: &str, lowered: Vec<Expr>) -> Vec<Expr> {
+        use crate::table::{self, Arg, Kind};
+        if CORE_RESERVED.contains(&name) {
+            return lowered;
+        }
+        let args: Vec<Arg> = lowered.iter().map(|x| Arg::of_type(&read(x))).collect();
+        let Some(kinds) = table::module(module, name, &args).and_then(|row| table::kinds_of(row.params, lowered.len())) else {
+            return lowered;
+        };
+        lowered
+            .into_iter()
+            .zip(kinds)
+            .map(|(x, k)| {
+                let numbers = match x.ty() {
+                    _ if matches!(x, Expr::Convert { how: Convert::Unwrap, .. }) => false,
+                    Ty::List(e) => *e != Ty::Unknown && !e.is_result(),
+                    Ty::Column(_) => true,
+                    _ => false,
+                };
+                if k == Kind::Tensor && numbers {
+                    Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: Ty::Tensor(Box::new(Ty::Float)) }
+                } else {
+                    x
+                }
+            })
+            .collect()
     }
 
     /// A call's type by inference's rules, from its arguments' types (each

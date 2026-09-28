@@ -8,6 +8,7 @@ pub mod display;
 pub mod distributed;
 pub mod frame;
 pub mod hash;
+pub mod indicators;
 pub mod gpu;
 pub mod io;
 pub mod json;

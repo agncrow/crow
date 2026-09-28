@@ -1,3 +1,9 @@
+//! `use math.nn`: activations, losses and a linear layer, each answering
+//! its value or the reason the arguments have none (docs/bug-classes.md
+//! §4): shapes that do not meet, where a kernel panicked; a target that is
+//! no class, where the loss read a logit of 0 (or the first class, for a
+//! negative one).
+
 use crate::tensor::CrowTensor;
 
 /// ReLU activation: max(x, 0) element-wise.
@@ -39,68 +45,77 @@ pub fn gelu(t: &CrowTensor) -> CrowTensor {
     })
 }
 
-/// Mean Squared Error: mean((pred - target)^2).
-pub fn mse(pred: &CrowTensor, target: &CrowTensor) -> f64 {
+/// Mean Squared Error: mean((pred - target)^2), the shapes broadcasting.
+pub fn mse(pred: &CrowTensor, target: &CrowTensor) -> Result<f64, String> {
+    pred.meets(target, "mse")?;
     let diff = pred.sub(target);
     let sq = diff.mul(&diff);
-    sq.mean()
+    Ok(sq.mean())
 }
 
-/// Cross-entropy loss with numerical stability (log-sum-exp trick).
-/// logits: raw unnormalized scores, targets: integer class indices (as floats).
-/// Computes: mean(-logits[target] + log(sum(exp(logits))))
-pub fn crossentropy(logits: &CrowTensor, targets: &CrowTensor) -> f64 {
-    let logits_data = logits.to_vec();
-    let targets_data = targets.to_vec();
-    let shape = logits.shape();
-
-    if shape.len() == 1 {
-        // Single sample: logits is [num_classes], targets is [1] (class index)
-        let max_val = logits_data.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let log_sum_exp: f64 = logits_data.iter().map(|&x| (x - max_val).exp()).sum::<f64>().ln() + max_val;
-        let target_idx = targets_data[0] as usize;
-        let target_logit = if target_idx < logits_data.len() { logits_data[target_idx] } else { 0.0 };
-        -target_logit + log_sum_exp
-    } else if shape.len() == 2 {
-        // Batch: logits is [batch, num_classes], targets is [batch]
-        let batch = shape[0];
-        let num_classes = shape[1];
-        let mut total = 0.0;
-        for b in 0..batch {
-            let row = &logits_data[b * num_classes..(b + 1) * num_classes];
-            let max_val = row.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let log_sum_exp = row.iter().map(|&x| (x - max_val).exp()).sum::<f64>().ln() + max_val;
-            let target_idx = targets_data[b] as usize;
-            let target_logit = if target_idx < num_classes { row[target_idx] } else { 0.0 };
-            total += -target_logit + log_sum_exp;
-        }
-        total / batch as f64
-    } else {
-        f64::NAN
+/// Cross-entropy of raw scores against class indices, with the log-sum-exp
+/// trick for stability: logits `[classes]` and one target, or `[batch,
+/// classes]` and a target per row, each a class from 0 up to classes − 1.
+/// Computes mean(-logits[target] + log(sum(exp(logits)))).
+pub fn crossentropy(logits: &CrowTensor, targets: &CrowTensor) -> Result<f64, String> {
+    let (batch, classes) = match *logits.shape() {
+        [c] => (1, c),
+        [b, c] => (b, c),
+        ref other => return Err(format!("crossentropy: logits are [classes] or [batch, classes], got {} dimensions", other.len())),
+    };
+    if classes == 0 {
+        return Err("crossentropy: the logits have no classes".to_string());
     }
+    if targets.len() != batch {
+        return Err(format!("crossentropy: needs one target per row of logits ({}), got {}", batch, targets.len()));
+    }
+    let logits_data = logits.to_vec();
+    let mut total = 0.0;
+    for (b, t) in targets.to_vec().into_iter().enumerate() {
+        if t.fract() != 0.0 || t < 0.0 || t >= classes as f64 {
+            return Err(format!("crossentropy: target {} is not a class of {} (0 to {})", t, classes, classes - 1));
+        }
+        let row = &logits_data[b * classes..(b + 1) * classes];
+        let max_val = row.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let log_sum_exp = row.iter().map(|&x| (x - max_val).exp()).sum::<f64>().ln() + max_val;
+        total += -row[t as usize] + log_sum_exp;
+    }
+    Ok(total / batch as f64)
 }
 
 /// Binary cross-entropy: -mean(target * ln(pred) + (1 - target) * ln(1 - pred)).
 /// Clamps pred to [epsilon, 1-epsilon] for numerical stability.
-pub fn bce(pred: &CrowTensor, target: &CrowTensor) -> f64 {
+pub fn bce(pred: &CrowTensor, target: &CrowTensor) -> Result<f64, String> {
+    if pred.len() != target.len() {
+        return Err(format!("bce: pred and target must be one length, got {} and {}", pred.len(), target.len()));
+    }
     let eps = 1e-12;
     let pd = pred.to_vec();
     let td = target.to_vec();
     let n = pd.len();
-    if n == 0 || td.len() != n {
-        return f64::NAN;
+    if n == 0 {
+        return Ok(f64::NAN);
     }
     let mut total = 0.0;
     for i in 0..n {
         let p = pd[i].max(eps).min(1.0 - eps);
         total += td[i] * p.ln() + (1.0 - td[i]) * (1.0 - p).ln();
     }
-    -total / n as f64
+    Ok(-total / n as f64)
 }
 
-/// Linear layer: x * w + b (matmul + bias).
-pub fn linear(x: &CrowTensor, w: &CrowTensor, b: &CrowTensor) -> CrowTensor {
-    x.matmul(w).add(b)
+/// Linear layer: x * w + b, matrices x and w, the bias broadcasting.
+pub fn linear(x: &CrowTensor, w: &CrowTensor, b: &CrowTensor) -> Result<CrowTensor, String> {
+    match (x.shape(), w.shape()) {
+        ([_, k], [r, _]) if k == r => {}
+        ([_, k], [r, _]) => return Err(format!("linear: x has {} columns and w {} rows — x * w needs them equal", k, r)),
+        (xs, ws) => return Err(format!("linear: x and w are matrices, got shapes {:?} and {:?}", xs, ws)),
+    }
+    let xw = x.matmul(w);
+    if xw.meets(b, "+").is_err() {
+        return Err(format!("linear: a bias of shape {:?} does not meet x * w of shape {:?}", b.shape(), xw.shape()));
+    }
+    Ok(xw.add(b))
 }
 
 #[cfg(test)]
@@ -172,7 +187,7 @@ mod tests {
     #[test]
     fn test_mse_zero() {
         let a = tensor(&[1.0, 2.0, 3.0]);
-        assert!(mse(&a, &a).abs() < 1e-10);
+        assert!(mse(&a, &a).expect("one shape").abs() < 1e-10);
     }
 
     #[test]
@@ -180,7 +195,7 @@ mod tests {
         let a = tensor(&[1.0, 2.0, 3.0]);
         let b = tensor(&[2.0, 3.0, 4.0]);
         // Each diff is 1, squared is 1, mean is 1
-        assert!((mse(&a, &b) - 1.0).abs() < 1e-10);
+        assert!((mse(&a, &b).expect("one shape") - 1.0).abs() < 1e-10);
     }
 
     #[test]
@@ -188,7 +203,7 @@ mod tests {
         // logits = [10, 0, 0], target = [0] → loss should be small
         let logits = tensor(&[10.0, 0.0, 0.0]);
         let targets = tensor(&[0.0]);
-        let loss = crossentropy(&logits, &targets);
+        let loss = crossentropy(&logits, &targets).expect("a class");
         assert!(loss < 0.01, "loss should be small for correct prediction, got {}", loss);
     }
 
@@ -197,7 +212,7 @@ mod tests {
         // logits = [0, 0, 10], target = [0] → loss should be large
         let logits = tensor(&[0.0, 0.0, 10.0]);
         let targets = tensor(&[0.0]);
-        let loss = crossentropy(&logits, &targets);
+        let loss = crossentropy(&logits, &targets).expect("a class");
         assert!(loss > 5.0, "loss should be large for wrong prediction, got {}", loss);
     }
 
@@ -205,7 +220,7 @@ mod tests {
     fn test_crossentropy_batch() {
         let logits = tensor2d(&[10.0, 0.0, 0.0, 10.0], 2, 2);
         let targets = tensor(&[0.0, 1.0]); // both correct
-        let loss = crossentropy(&logits, &targets);
+        let loss = crossentropy(&logits, &targets).expect("a class");
         assert!(loss < 0.01, "batch loss should be small, got {}", loss);
     }
 
@@ -213,7 +228,7 @@ mod tests {
     fn test_bce_perfect() {
         let pred = tensor(&[1.0, 0.0, 1.0]);
         let target = tensor(&[1.0, 0.0, 1.0]);
-        let loss = bce(&pred, &target);
+        let loss = bce(&pred, &target).expect("one length");
         assert!(loss < 0.01, "loss should be near zero, got {}", loss);
     }
 
@@ -221,7 +236,7 @@ mod tests {
     fn test_bce_wrong() {
         let pred = tensor(&[0.0, 1.0]);
         let target = tensor(&[1.0, 0.0]);
-        let loss = bce(&pred, &target);
+        let loss = bce(&pred, &target).expect("one length");
         assert!(loss > 10.0, "loss should be large, got {}", loss);
     }
 
@@ -231,7 +246,7 @@ mod tests {
         let x = tensor2d(&[1.0, 2.0], 1, 2);
         let w = tensor2d(&[1.0, 0.0, 0.0, 1.0], 2, 2);
         let b = tensor(&[1.0, 1.0]);
-        let r = linear(&x, &w, &b);
+        let r = linear(&x, &w, &b).expect("shapes that meet");
         let d = r.to_vec();
         assert!((d[0] - 2.0).abs() < 1e-10);
         assert!((d[1] - 3.0).abs() < 1e-10);
@@ -259,5 +274,20 @@ mod tests {
         let v = gelu(&t).to_vec()[0];
         // GELU(-3) ≈ -0.00404
         assert!(v.abs() < 0.01);
+    }
+
+    /// A misuse is the reason, where a kernel panicked (shapes) or a loss
+    /// read a logit of 0 (a target that is no class).
+    #[test]
+    fn a_misuse_is_the_reason() {
+        let (a, b) = (tensor(&[1.0, 2.0, 3.0]), tensor(&[1.0, 2.0]));
+        assert!(mse(&a, &b).expect_err("shapes that do not meet").starts_with("`mse` of tensors of shapes [3] and [2]"));
+        assert_eq!(bce(&a, &b), Err("bce: pred and target must be one length, got 3 and 2".to_string()));
+        assert_eq!(crossentropy(&a, &tensor(&[7.0])), Err("crossentropy: target 7 is not a class of 3 (0 to 2)".to_string()));
+        assert_eq!(crossentropy(&a, &tensor(&[-1.0])), Err("crossentropy: target -1 is not a class of 3 (0 to 2)".to_string()));
+        assert_eq!(crossentropy(&a, &tensor(&[])), Err("crossentropy: needs one target per row of logits (1), got 0".to_string()));
+        let (x, w) = (tensor2d(&[1.0, 2.0], 1, 2), tensor2d(&[1.0, 0.0, 0.0, 1.0, 1.0, 1.0], 3, 2));
+        assert_eq!(linear(&x, &w, &a).map(|_| ()), Err("linear: x has 2 columns and w 3 rows — x * w needs them equal".to_string()));
+        assert_eq!(linear(&a, &w, &a).map(|_| ()), Err("linear: x and w are matrices, got shapes [3] and [3, 2]".to_string()));
     }
 }

@@ -418,7 +418,28 @@ impl CrowColumn {
         total
     }
 
-    /// Return unique non-null values as a Vec<String>.
+    /// The column's numbers where a builtin takes numbers (docs/
+    /// bug-classes.md §4): its ints and floats, or the reason it has none —
+    /// a missing cell, a cell of text or a bool — found row by row, as the
+    /// interpreter reads the column's cells. (Compiled, a missing cell was
+    /// read as 0 where the interpreter stopped.)
+    pub fn numbers(&self) -> Result<crate::tensor::CrowTensor, String> {
+        let n = self.len();
+        let mut data = Vec::with_capacity(n);
+        for i in 0..n {
+            if !self.valid.get(i).copied().unwrap_or(false) {
+                return Err(crate::stops::missing_cell(i));
+            }
+            data.push(match self.data.as_ref() {
+                Column::Int(v) => v[i] as f64,
+                Column::Float(v) => v[i],
+                Column::Bool(_) => return Err(crate::stops::not_numbers("bools")),
+                Column::Str(_) | Column::DateTime(..) => return Err(crate::stops::not_numbers("text")),
+            });
+        }
+        Ok(crate::tensor::CrowTensor::from_vec(data, vec![n]))
+    }
+
     /// Numeric values as a tensor (invalid cells become 0.0) — the bridge
     /// from named columns into tensor math (mean, element-wise ops, ...).
     pub fn to_tensor(&self) -> crate::tensor::CrowTensor {
@@ -2070,5 +2091,34 @@ mod inference_tests {
         );
         assert!(frame.group("sym", &[("px", AggFn::Sum)]).is_ok());
         assert_eq!(frame.group("sym", &[("pxx", AggFn::Sum)]).err(), Some("group: column 'pxx' not found".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod numbers_tests {
+    use super::*;
+
+    /// A column where a builtin takes numbers: its numbers, or the reason
+    /// it has none, found row by row as the interpreter reads the cells.
+    /// (Compiled, a missing cell was read as 0 and text as zeros.)
+    #[test]
+    fn a_columns_numbers_or_the_reason() {
+        let frame = CrowFrame::new(
+            vec!["n".into(), "x".into(), "gap".into(), "name".into(), "flag".into()],
+            vec![
+                Column::Int(vec![1, 2]),
+                Column::Float(vec![0.5, f64::NAN]),
+                Column::Float(vec![1.0, 0.0]),
+                Column::Str(vec!["a".into(), "b".into()]),
+                Column::Bool(vec![true, false]),
+            ],
+            vec![vec![true, true], vec![true, true], vec![true, false], vec![true, true], vec![true, true]],
+        );
+        let numbers = |c: &str| frame.col_native(c).expect("the column").numbers().map(|t| t.to_vec());
+        assert_eq!(numbers("n"), Ok(vec![1.0, 2.0]));
+        assert!(numbers("x").expect("a present NaN is a number")[1].is_nan());
+        assert_eq!(numbers("gap"), Err("row 1 of the column is missing — fill the column first: fill[frame, 'column', value]".to_string()));
+        assert_eq!(numbers("name"), Err("a column of text is not numbers".to_string()));
+        assert_eq!(numbers("flag"), Err("a column of bools is not numbers".to_string()));
     }
 }

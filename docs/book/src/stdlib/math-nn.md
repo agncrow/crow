@@ -19,7 +19,7 @@ Import with `use math.nn`. Functions become top-level after import.
 | Function | Description | Example |
 |---|---|---|
 | `mse[pred, target]` | Mean squared error (Float) | [Neural-network building blocks: `use math.nn`](../by-example/nn.md) |
-| `crossentropy[logits, targets]` | Cross-entropy loss with log-sum-exp stability (Float) | [Neural-network building blocks: `use math.nn`](../by-example/nn.md) |
+| `crossentropy[logits, targets]` | Cross-entropy loss with log-sum-exp stability (Float): logits `[classes]` with one target, or `[batch, classes]` with a target per row, each a class from 0 up to classes − 1 | [Neural-network building blocks: `use math.nn`](../by-example/nn.md) |
 | `bce[pred, target]` | Binary cross-entropy with clamping (Float) | [Neural-network building blocks: `use math.nn`](../by-example/nn.md) |
 
 **Layers:**
@@ -27,6 +27,8 @@ Import with `use math.nn`. Functions become top-level after import.
 | Function | Description | Example |
 |---|---|---|
 | `linear[x, w, b]` | Linear layer: x @ w + b (NumArray) | [Neural-network building blocks: `use math.nn`](../by-example/nn.md) |
+
+Shapes `mse` cannot broadcast or `linear` cannot multiply, two lengths given to `bce`, and a `crossentropy` target that is no class stop the program with the reason (see When a Program Stops): a kernel had panicked on the shapes, and a target past the classes was read as a logit of 0.
 
 ```
 use math

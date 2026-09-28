@@ -1,0 +1,12 @@
+--- An indicator's window is 1 row or more, and the series it reads row by
+--- row are one length. A negative window was a huge one compiled (every
+--- value NaN) and a window of one row interpreted (the values themselves);
+--- a shorter series cut the others. Both modes stop with the reason now.
+use chart
+xs = [1.0, 2.0, 3.0, 4.0]
+log[ema[xs, 2]]
+log[rsi[xs, 2]]
+log[macd[xs, 2, 3, 2]]
+log[vwap[xs, [1.0, 1.0, 2.0, 2.0]]]
+log[sma[xs, -1]]
+log['not reached']

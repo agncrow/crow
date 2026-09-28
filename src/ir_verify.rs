@@ -347,8 +347,15 @@ impl<'p> Verifier<'p> {
                         }
                     })
                     .collect();
-                if let Target::User(name) = target {
-                    self.user_call(name, &ts, ty, *propagates);
+                match target {
+                    Target::User(name) => self.user_call(name, &ts, ty, *propagates),
+                    Target::Module(m, name) => self.row_call(m, name, &ts),
+                    Target::Runtime(id) if crate::table::by_id(id).is_some() => {
+                        if let Some(row) = crate::table::by_id(id) {
+                            self.row_call(row.module, row.name, &ts);
+                        }
+                    }
+                    _ => {}
                 }
                 ty.clone()
             }
@@ -494,6 +501,30 @@ impl<'p> Verifier<'p> {
         }
     }
 
+    /// A call of a builtin's row (docs/bug-classes.md §4): each argument of
+    /// the kind its parameter takes, as the interpreter reads it and the
+    /// compiled program is printed for it. A list of numbers or a column
+    /// handed to a tensor is converted by the lowering; one that is not
+    /// reached the compiled program as a list, which did not build.
+    fn row_call(&mut self, module: &str, name: &str, args: &[Ty]) {
+        // a name the core also answers picks its builtin by the values
+        if !module.is_empty() && crate::lower_ir::CORE_RESERVED.contains(&name) {
+            return;
+        }
+        let kinds: Vec<crate::table::Arg> = args.iter().map(|t| crate::table::Arg::of_type(&crate::lower_ir::crow_type(t))).collect();
+        let Some(row) = crate::table::module(module, name, &kinds) else {
+            return;
+        };
+        let Some(params) = crate::table::kinds_of(row.params, args.len()) else {
+            return;
+        };
+        for (i, (at, k)) in args.iter().zip(params).enumerate() {
+            if !row_takes(k, at.payload()) {
+                self.found(format!("hands {} to {} (argument {}), whose parameter takes {:?}", at, row.id, i + 1, k));
+            }
+        }
+    }
+
     fn conversion(&mut self, how: Convert, inner: &Ty, ty: &Ty) {
         let ok = match how {
             Convert::Unwrap | Convert::Known => match inner {
@@ -504,7 +535,8 @@ impl<'p> Verifier<'p> {
             },
             Convert::IntToFloat => matches!(inner.payload(), Ty::Int | Ty::Unknown) && matches!(ty, Ty::Float),
             Convert::ToStr => matches!(ty, Ty::Str | Ty::Markup),
-            Convert::ToTensor => matches!(ty, Ty::Tensor(_)),
+            // numbers held as a list, a frame's column, or already a tensor
+            Convert::ToTensor => matches!(ty, Ty::Tensor(_)) && matches!(inner.payload(), Ty::List(_) | Ty::Column(_) | Ty::Tensor(_) | Ty::Unknown),
             Convert::ToList => matches!(ty, Ty::List(_)),
         };
         if !ok {
@@ -536,6 +568,27 @@ pub fn fits(v: &Ty, slot: &Ty) -> bool {
         (Ty::Fn(..), Ty::Fn(..)) => true,
         _ => false,
     }
+}
+
+/// Whether a builtin row's parameter of kind `k` takes a value of type `t`
+/// as both backends read it: a tensor for a tensor (an empty literal is
+/// one), a number for a number, and so on; a value whose type is not known
+/// is read by the value it holds.
+fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
+    use crate::table::Kind;
+    let items = |t: &Ty, ok: &dyn std::ops::Fn(&Ty) -> bool| matches!(t, Ty::List(e) if **e == Ty::Unknown || ok(e));
+    *t == Ty::Unknown
+        || match k {
+            Kind::Int | Kind::Float | Kind::Sizes => matches!(t, Ty::Int | Ty::Float),
+            Kind::Bool => *t == Ty::Bool,
+            Kind::Str => matches!(t, Ty::Str | Ty::Markup),
+            Kind::Tensor | Kind::Groups => matches!(t, Ty::Tensor(_)) || items(t, &|_| false),
+            Kind::Tensors => items(t, &|e| matches!(e, Ty::Tensor(_))),
+            Kind::Strs => items(t, &|e| matches!(e, Ty::Str | Ty::Markup)),
+            Kind::Sparse => matches!(t, Ty::Handle(h) if h == "sparse"),
+            Kind::Frame => matches!(t, Ty::Frame(_)),
+            Kind::IntMap | Kind::FloatMap | Kind::Unit => true,
+        }
 }
 
 /// What a `return` hands back fits the body's type; an error of another
@@ -655,6 +708,26 @@ mod tests {
         p.parts[0].main.push(Stmt::Do(Expr::Local("nowhere".into(), Ty::Int)));
         let found = verify(&p);
         assert!(found.iter().any(|f| f.contains("reads 'nowhere', which is not bound")), "{:?}", found);
+    }
+
+    /// A list of numbers or a frame's column handed to a builtin row's
+    /// tensor parameter is converted where it is handed over (compiled, a
+    /// list did not build, and a column's missing cell was read as 0); a
+    /// call the lowering left unconverted is found.
+    #[test]
+    fn a_rows_tensor_parameter_is_handed_a_tensor() {
+        let p = lowered("use math\nuse chart\nxs = []\nfor i in range[3]\n    xs = push[xs, float[i]]\nlog[sum[xs]]\nlog[sma[xs, 2]]\nlog[math.mean[xs]]\n");
+        assert_eq!(verify(&p), Vec::<String>::new());
+        let mut converted = 0;
+        crate::ir::visit_stmts(&p.parts[0].main, &mut |st| {
+            crate::ir::visit_stmt(st, &mut |x| converted += matches!(x, Expr::Convert { how: Convert::ToTensor, .. }) as usize);
+        });
+        assert_eq!(converted, 3, "{:?}", p.parts[0].main);
+        let mut p = lowered("use math\nx = 1\n");
+        let list = Expr::ListLit(vec![Expr::Const(Const::Float(1.0), Ty::Float)], Ty::List(Box::new(Ty::Float)));
+        p.parts[0].main.push(Stmt::Do(Expr::Call { target: Target::Module("math".into(), "sum".into()), args: vec![list], ty: Ty::Float, propagates: true }));
+        let found = verify(&p);
+        assert!(found.iter().any(|f| f.contains("hands List(Float) to math.sum (argument 1), whose parameter takes Tensor")), "{:?}", found);
     }
 
     #[test]

@@ -21,6 +21,8 @@ Import with `use math.stats`. Functions become top-level after import.
 | `kstest[data, dist_name]` | Kolmogorov-Smirnov test → map with `d`, `p`. Distributions: `"normal"`, `"uniform"` | [Statistics: `use math.stats`](../by-example/stats.md) |
 | `fit[data, dist_name]` | Distribution fitting (MLE) → map of parameters. Distributions: `"normal"` → `{mu, sigma}`, `"exponential"` → `{lambda}`, `"uniform"` → `{a, b}`, `"poisson"` → `{lambda}` | [Statistics: `use math.stats`](../by-example/stats.md) |
 
+A statistic of no values is `NaN`. The series a function pairs up (`corr`, `cov`, `linreg`, `chisq`) are one length, `percentile`'s `p` is from 0 to 100, `anova` compares two groups or more, and `kstest` and `fit` know the distributions above; anything else stops the program with the reason (see When a Program Stops). They had answered `NaN`, `0.5` or an empty map.
+
 ```
 use math
 use math.stats

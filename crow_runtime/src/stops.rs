@@ -57,6 +57,17 @@ pub fn no_column(name: &str) -> String {
     format!("frame has no property or column '{}'", name)
 }
 
+/// A frame's column handed where numbers are taken, with a missing cell
+/// (spec: a missing cell is an error, not a placeholder).
+pub fn missing_cell(row: usize) -> String {
+    format!("row {} of the column is missing — fill the column first: fill[frame, 'column', value]", row)
+}
+
+/// A frame's column of text or of bools handed where numbers are taken.
+pub fn not_numbers(what: &str) -> String {
+    format!("a column of {} is not numbers", what)
+}
+
 // ── ints ────────────────────────────────────────────────────────────
 
 fn overflow(a: i64, op: &str, b: i64) -> String {

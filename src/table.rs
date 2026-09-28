@@ -42,17 +42,23 @@ pub enum Kind {
     Tensor,
     /// `BTreeMap<String, i64>` given.
     IntMap,
+    /// `BTreeMap<String, f64>` given: a test's numbers by name (`ttest`'s
+    /// `t` and `p`).
+    FloatMap,
     /// `&[i64]` taken: the rest of the arguments, each a size (`zeros[2, 3]`,
     /// `poisson[1.5, 4]`); the fixed parameters around it take theirs first.
     Sizes,
     /// `&[CrowTensor]` taken, `Vec<CrowTensor>` given: a decomposition's
     /// parts (`svd`, `qr`), a complex number's `[real, imag]`.
     Tensors,
+    /// `&[&CrowTensor]` taken: the rest of the arguments, each a tensor
+    /// (`anova[a, b, c]`).
+    Groups,
     /// Nothing given: a function run for what it sets (`seed`).
     Unit,
     /// `&CrowSparse` taken, `CrowSparse` given.
     Sparse,
-    /// `&CrowFrame` taken.
+    /// `&CrowFrame` taken, `CrowFrame` given.
     Frame,
     /// `&[String]` taken: a list of text (a frame's column names).
     Strs,
@@ -115,8 +121,9 @@ impl Kind {
             Kind::Str => CrowType::Str,
             Kind::Tensor => CrowType::NumArray(Box::new(CrowType::Float)),
             Kind::IntMap => CrowType::Map(Box::new(CrowType::Int)),
+            Kind::FloatMap => CrowType::Map(Box::new(CrowType::Float)),
             Kind::Sizes => CrowType::Array(Box::new(CrowType::Int)),
-            Kind::Tensors => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
+            Kind::Tensors | Kind::Groups => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
             Kind::Unit => CrowType::Void,
             Kind::Sparse => CrowType::Sparse,
             Kind::Frame => CrowType::Frame,
@@ -124,19 +131,31 @@ impl Kind {
         }
     }
 
-    /// An argument printed the way the runtime function takes it.
+    /// An argument printed the way the runtime function takes it (each of
+    /// a rest parameter's, as its [`Kind::each`]).
     pub fn print(self, arg: &str) -> String {
-        match self {
+        match self.each() {
             Kind::Int => format!("({}) as i64", arg),
             Kind::Float => format!("({}) as f64", arg),
             Kind::Bool => format!("({})", arg),
             Kind::Str => format!("&*({})", arg),
-            Kind::Tensor => format!("&({})", arg),
-            Kind::IntMap => format!("&({})", arg),
-            Kind::Sizes => format!("({}) as i64", arg),
-            Kind::Tensors => format!("&({})", arg),
             Kind::Unit => format!("({})", arg),
-            Kind::Sparse | Kind::Frame | Kind::Strs => format!("&({})", arg),
+            _ => format!("&({})", arg),
+        }
+    }
+
+    /// Whether the parameter takes the rest of the arguments.
+    pub fn is_rest(self) -> bool {
+        matches!(self, Kind::Sizes | Kind::Groups)
+    }
+
+    /// The kind of each argument a parameter takes: a size of the sizes, a
+    /// tensor of the groups.
+    pub fn each(self) -> Kind {
+        match self {
+            Kind::Sizes => Kind::Int,
+            Kind::Groups => Kind::Tensor,
+            k => k,
         }
     }
 
@@ -148,9 +167,9 @@ impl Kind {
             Kind::Bool => "false",
             Kind::Str => "String::new()",
             Kind::Tensor => "crow_runtime::tensor::CrowTensor::from_vec(vec![], vec![0])",
-            Kind::IntMap => "std::collections::BTreeMap::new()",
+            Kind::IntMap | Kind::FloatMap => "std::collections::BTreeMap::new()",
             Kind::Sizes => "Vec::<i64>::new()",
-            Kind::Tensors => "Vec::<crow_runtime::tensor::CrowTensor>::new()",
+            Kind::Tensors | Kind::Groups => "Vec::<crow_runtime::tensor::CrowTensor>::new()",
             Kind::Unit => "()",
             Kind::Sparse => "crow_runtime::sparse::CrowSparse::from_dense(&crow_runtime::tensor::CrowTensor::zeros(vec![0, 0]))",
             Kind::Frame => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])",
@@ -159,24 +178,32 @@ impl Kind {
     }
 }
 
-/// The arguments grouped by parameter: one each, and the sizes the rest
-/// (the same grouping both modes use: `groups` for the interpreter's
+/// The arguments grouped by parameter: one each, and a rest parameter the
+/// rest (the same grouping both modes use: `groups` for the interpreter's
 /// values, [`print`] for the compiled program's text).
 fn spans(params: &[Kind], argc: usize, name: &str) -> Result<Vec<(usize, usize)>, String> {
-    let fixed = params.iter().filter(|k| **k != Kind::Sizes).count();
-    let rest = params.contains(&Kind::Sizes);
+    let fixed = params.iter().filter(|k| !k.is_rest()).count();
+    let rest = params.iter().any(|k| k.is_rest());
     if (!rest && argc != fixed) || (rest && argc < fixed) {
         let wanted = if rest { format!("at least {}", fixed) } else { fixed.to_string() };
-        return Err(format!("{}[] takes {} arguments, got {}", name, wanted, argc));
+        return Err(miscount(name, &wanted, argc));
     }
     let mut at = 0;
     let mut out = Vec::with_capacity(params.len());
     for k in params {
-        let n = if *k == Kind::Sizes { argc - fixed } else { 1 };
+        let n = if k.is_rest() { argc - fixed } else { 1 };
         out.push((at, at + n));
         at += n;
     }
     Ok(out)
+}
+
+/// The kind each of `argc` arguments is read as by these parameters, or
+/// none when the count does not fit them (the lowering converts an
+/// argument to its kind: a list of numbers or a column to a tensor).
+pub fn kinds_of(params: &[Kind], argc: usize) -> Option<Vec<Kind>> {
+    let spans = spans(params, argc, "").ok()?;
+    Some(params.iter().zip(spans).flat_map(|(k, (a, b))| std::iter::repeat_n(k.each(), b - a)).collect())
 }
 
 /// The interpreter's arguments grouped by the row's parameters.
@@ -192,9 +219,10 @@ pub fn groups<'a>(params: &[Kind], args: &'a [CrowValue], name: &str) -> Result<
 pub fn print(row: &Row, args: &[String], line: &str, trace: Option<&str>) -> Result<String, String> {
     let mut printed = Vec::with_capacity(row.params.len());
     for (k, (a, b)) in row.params.iter().zip(spans(row.params, args.len(), row.name)?) {
-        match k {
-            Kind::Sizes => printed.push(format!("&[{}]", args[a..b].iter().map(|x| k.print(x)).collect::<Vec<_>>().join(", "))),
-            _ => printed.push(k.print(&args[a])),
+        if k.is_rest() {
+            printed.push(format!("&[{}]", args[a..b].iter().map(|x| k.print(x)).collect::<Vec<_>>().join(", ")));
+        } else {
+            printed.push(k.print(&args[a]));
         }
     }
     let call = format!("{}({})", row.rust_path(), printed.join(", "));
@@ -287,6 +315,14 @@ pub fn write_int_map(m: BTreeMap<String, i64>) -> CrowValue {
     CrowValue::ok(Value::Map(m.into_iter().map(|(k, v)| (k, write_int(v))).collect()))
 }
 
+pub fn write_float_map(m: BTreeMap<String, f64>) -> CrowValue {
+    CrowValue::ok(Value::Map(m.into_iter().map(|(k, v)| (k, write_float(v))).collect()))
+}
+
+pub fn write_frame(f: crow_runtime::frame::CrowFrame) -> CrowValue {
+    CrowValue::ok(Value::Frame(Box::new(f)))
+}
+
 pub fn write_tensors(ts: Vec<CrowTensor>) -> CrowValue {
     CrowValue::ok(Value::Array(ts.into_iter().map(write_tensor).collect()))
 }
@@ -338,6 +374,11 @@ pub fn read_sizes(group: &[CrowValue]) -> Result<Vec<i64>, String> {
     group.iter().map(read_int).collect()
 }
 
+/// The groups of a group, each a tensor.
+pub fn read_groups(group: &[CrowValue]) -> Result<Vec<Cow<'_, CrowTensor>>, String> {
+    group.iter().map(read_tensor).collect()
+}
+
 /// The reading of a parameter's group by its kind, as the function takes it.
 macro_rules! read {
     (Int, $g:expr) => { read_int(one($g)?)? };
@@ -350,6 +391,7 @@ macro_rules! read {
     (Frame, $g:expr) => { read_frame(one($g)?)? };
     (Strs, $g:expr) => { &read_strs(one($g)?)? };
     (Sizes, $g:expr) => { &read_sizes($g)? };
+    (Groups, $g:expr) => { &read_groups($g)?.iter().map(|t| &**t).collect::<Vec<&CrowTensor>>() };
 }
 
 /// The value of an answer by its kind.
@@ -360,6 +402,8 @@ macro_rules! answer {
     (Str, $x:expr) => { write_str($x) };
     (Tensor, $x:expr) => { write_tensor($x) };
     (IntMap, $x:expr) => { write_int_map($x) };
+    (FloatMap, $x:expr) => { write_float_map($x) };
+    (Frame, $x:expr) => { write_frame($x) };
     (Tensors, $x:expr) => { write_tensors($x) };
     (Unit, $x:expr) => { write_unit($x) };
     (Sparse, $x:expr) => { write_sparse($x) };
@@ -573,6 +617,45 @@ pub static ROWS: &[Row] = &[
     row!("math.tensor_of_frame", "math", "tensor", crow_runtime::math::tensor_of_frame, (Frame) -> Tensor, stops),
     row!("math.tensor_of_columns", "math", "tensor", crow_runtime::math::tensor_of_columns, (Frame, Strs) -> Tensor, stops),
     row!("math.tensor", "math", "tensor", crow_runtime::math::tensor, (Tensor) -> Tensor, never),
+    // math.stats (series of two lengths, a percent past 100, a distribution
+    // no test knows: the reason, where they were answered NaN, 0.5 or an
+    // empty map; anova of one group was NaN compiled and refused
+    // interpreted)
+    row!("stats.median", "math.stats", "median", crow_runtime::stats::median, (Tensor) -> Float, never),
+    row!("stats.std", "math.stats", "std", crow_runtime::stats::std, (Tensor) -> Float, never),
+    row!("stats.var", "math.stats", "var", crow_runtime::stats::var, (Tensor) -> Float, never),
+    row!("stats.percentile", "math.stats", "percentile", crow_runtime::stats::percentile, (Tensor, Float) -> Float, stops),
+    row!("stats.zscore", "math.stats", "zscore", crow_runtime::stats::zscore, (Tensor) -> Tensor, never),
+    row!("stats.corr", "math.stats", "corr", crow_runtime::stats::corr, (Tensor, Tensor) -> Float, stops),
+    row!("stats.cov", "math.stats", "cov", crow_runtime::stats::cov, (Tensor, Tensor) -> Float, stops),
+    row!("stats.ttest", "math.stats", "ttest", crow_runtime::stats::ttest, (Tensor, Tensor) -> FloatMap, never),
+    row!("stats.linreg", "math.stats", "linreg", crow_runtime::stats::linreg, (Tensor, Tensor) -> FloatMap, stops),
+    row!("stats.chisq", "math.stats", "chisq", crow_runtime::stats::chisq, (Tensor, Tensor) -> FloatMap, stops),
+    row!("stats.anova", "math.stats", "anova", crow_runtime::stats::anova, (Groups) -> FloatMap, stops),
+    row!("stats.kstest", "math.stats", "kstest", crow_runtime::stats::kstest, (Tensor, Str) -> FloatMap, stops),
+    row!("stats.fit", "math.stats", "fit", crow_runtime::stats::fit, (Tensor, Str) -> FloatMap, stops),
+    // math.nn (shapes that do not meet, a target that is no class: the
+    // reason, where a kernel panicked or a loss read a logit of 0)
+    row!("nn.relu", "math.nn", "relu", crow_runtime::nn::relu, (Tensor) -> Tensor, never),
+    row!("nn.sigmoid", "math.nn", "sigmoid", crow_runtime::nn::sigmoid, (Tensor) -> Tensor, never),
+    row!("nn.softmax", "math.nn", "softmax", crow_runtime::nn::softmax, (Tensor) -> Tensor, never),
+    row!("nn.gelu", "math.nn", "gelu", crow_runtime::nn::gelu, (Tensor) -> Tensor, never),
+    row!("nn.mse", "math.nn", "mse", crow_runtime::nn::mse, (Tensor, Tensor) -> Float, stops),
+    row!("nn.crossentropy", "math.nn", "crossentropy", crow_runtime::nn::crossentropy, (Tensor, Tensor) -> Float, stops),
+    row!("nn.bce", "math.nn", "bce", crow_runtime::nn::bce, (Tensor, Tensor) -> Float, stops),
+    row!("nn.linear", "math.nn", "linear", crow_runtime::nn::linear, (Tensor, Tensor, Tensor) -> Tensor, stops),
+    // chart (a window of no rows, series of two lengths: the reason, where
+    // a negative window was a huge one compiled and one row interpreted,
+    // and a shorter series cut the others)
+    row!("chart.sma", "chart", "sma", crow_runtime::indicators::sma, (Tensor, Int) -> Tensor, stops),
+    row!("chart.ema", "chart", "ema", crow_runtime::indicators::ema, (Tensor, Int) -> Tensor, stops),
+    row!("chart.rsi", "chart", "rsi", crow_runtime::indicators::rsi, (Tensor, Int) -> Tensor, stops),
+    row!("chart.rsi_buckets", "chart", "rsi", crow_runtime::indicators::rsi_buckets, (Tensor, Tensor, Int, Float) -> Tensor, stops),
+    row!("chart.macd", "chart", "macd", crow_runtime::indicators::macd, (Tensor, Int, Int, Int) -> Frame, stops),
+    row!("chart.vwap", "chart", "vwap", crow_runtime::indicators::vwap, (Tensor, Tensor) -> Tensor, stops),
+    row!("chart.vwap_trailing", "chart", "vwap", crow_runtime::indicators::vwap_trailing, (Tensor, Tensor, Tensor, Float) -> Tensor, stops),
+    row!("chart.rolling_sum", "chart", "rolling_sum", crow_runtime::indicators::rolling_sum, (Tensor, Tensor, Float) -> Tensor, stops),
+    row!("chart.cvd", "chart", "cvd", crow_runtime::indicators::cvd, (Tensor, Tensor) -> Tensor, stops),
 ];
 
 /// The row the IR names by `id`.
@@ -650,14 +733,14 @@ impl Kind {
         a == Arg::Unknown
             || match self {
                 Kind::Int | Kind::Float | Kind::Sizes => a == Arg::Number,
-                Kind::Tensor => a == Arg::Tensor,
+                Kind::Tensor | Kind::Groups => a == Arg::Tensor,
                 Kind::Tensors => a == Arg::Tensors,
                 Kind::Str => a == Arg::Text,
                 Kind::Strs => a == Arg::Texts,
                 Kind::Bool => a == Arg::Truth,
                 Kind::Sparse => a == Arg::Sparse,
                 Kind::Frame => a == Arg::Frame,
-                Kind::IntMap | Kind::Unit => true,
+                Kind::IntMap | Kind::FloatMap | Kind::Unit => true,
             }
     }
 }
@@ -680,6 +763,35 @@ pub fn module(module: &str, name: &str, args: &[Arg]) -> Option<&'static Row> {
         .find(|r| takes(r, args))
         .or_else(|| named().find(|r| spans(r.params, args.len(), r.name).is_ok()))
         .or_else(|| named().next())
+}
+
+/// The refusal of a call whose count of arguments no row of its name
+/// takes, naming every count the name takes (`rsi[] takes 2 or 4
+/// arguments, got 3`); none when a row takes it.
+pub fn miscounted(module: &str, name: &str, argc: usize) -> Option<String> {
+    let rows: Vec<&Row> = ROWS.iter().filter(|r| r.module == module && r.name == name).collect();
+    if rows.is_empty() || rows.iter().any(|r| spans(r.params, argc, name).is_ok()) {
+        return None;
+    }
+    let mut counts: Vec<String> = Vec::new();
+    for r in rows {
+        let fixed = r.params.iter().filter(|k| !k.is_rest()).count();
+        let count = if r.params.iter().any(|k| k.is_rest()) { format!("at least {}", fixed) } else { fixed.to_string() };
+        if !counts.contains(&count) {
+            counts.push(count);
+        }
+    }
+    let counts = match counts.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} or {}", rest.join(", "), last),
+        _ => counts.join(""),
+    };
+    Some(miscount(name, &counts, argc))
+}
+
+/// `sma[] takes 2 arguments, got 3`, `median[] takes 1 argument, got 2`.
+fn miscount(name: &str, counts: &str, argc: usize) -> String {
+    let noun = if counts == "1" || counts == "at least 1" { "argument" } else { "arguments" };
+    format!("{}[] takes {} {}, got {}", name, counts, noun, argc)
 }
 
 /// The core names with syntax or state of their own, which no row says: a
@@ -715,18 +827,12 @@ pub const MODULE_OWN_FORM: &[(&str, &str)] = &[("db", "connect"), ("db", "query"
 pub const MODULE_TO_MOVE: &[(&str, &str)] = &[
     // math
     ("math", "load"),
-    // math.stats
-    ("math.stats", "median"), ("math.stats", "std"), ("math.stats", "var"), ("math.stats", "percentile"), ("math.stats", "zscore"), ("math.stats", "corr"), ("math.stats", "cov"), ("math.stats", "ttest"), ("math.stats", "linreg"), ("math.stats", "chisq"), ("math.stats", "anova"), ("math.stats", "kstest"), ("math.stats", "fit"),
-    // math.nn
-    ("math.nn", "relu"), ("math.nn", "sigmoid"), ("math.nn", "softmax"), ("math.nn", "gelu"), ("math.nn", "mse"), ("math.nn", "crossentropy"), ("math.nn", "bce"), ("math.nn", "linear"),
     // frame
     ("frame", "load"), ("frame", "save"), ("frame", "select"), ("frame", "filter"), ("frame", "sort"), ("frame", "group"), ("frame", "join"), ("frame", "stack"), ("frame", "head"), ("frame", "tail"), ("frame", "fill"), ("frame", "unique"), ("frame", "rename"), ("frame", "stats"), ("frame", "datetime"), ("frame", "tz"), ("frame", "new"), ("frame", "with"),
     // io
     ("io", "csv"), ("io", "lines"),
     // doc
     ("doc", "markdown"), ("doc", "chapters"), ("doc", "menu"), ("doc", "pager"), ("doc", "plain"), ("doc", "document"),
-    // chart
-    ("chart", "sma"), ("chart", "ema"), ("chart", "rsi"), ("chart", "macd"), ("chart", "vwap"), ("chart", "rolling_sum"), ("chart", "cvd"),
 ];
 
 #[cfg(test)]
@@ -797,6 +903,22 @@ mod tests {
                 assert_eq!(places.iter().filter(|p| **p).count(), 1, "{}.{} is in {} of: the table, MODULE_OWN_FORM, MODULE_TO_MOVE", m, name, places.iter().filter(|p| **p).count());
             }
         }
+    }
+
+    /// A rest parameter takes each of the rest as its kind, and a count no
+    /// row of a name takes names every count the name takes.
+    #[test]
+    fn a_rest_takes_the_rest_and_a_miscount_names_the_counts() {
+        let anova = module("math.stats", "anova", &[Arg::Tensor; 3]).expect("the row");
+        assert_eq!(kinds_of(anova.params, 3), Some(vec![Kind::Tensor; 3]));
+        assert_eq!(kinds_of(by_id("math.full").expect("the row").params, 3), Some(vec![Kind::Int, Kind::Int, Kind::Float]));
+        assert_eq!(kinds_of(by_id("chart.sma").expect("the row").params, 3), None);
+        assert_eq!(miscounted("chart", "rsi", 3), Some("rsi[] takes 2 or 4 arguments, got 3".to_string()));
+        assert_eq!(miscounted("chart", "rsi", 4), None);
+        assert_eq!(miscounted("math", "zeros", 0), None);
+        assert_eq!(miscounted("math.stats", "median", 2), Some("median[] takes 1 argument, got 2".to_string()));
+        let printed = print(anova, &["a".to_string(), "b".to_string()], "7", None).expect("prints");
+        assert_eq!(printed, "crow_runtime::stats::anova(&[&(a), &(b)]).unwrap_or_else(|e| crow_stop(7, e))");
     }
 
     #[test]

@@ -120,11 +120,20 @@ impl Emitter {
                 }
                 Convert::ToTensor => {
                     let inner = self.expr(expr);
-                    if !matches!(self.tt(expr), CrowType::Array(_)) {
-                        return inner;
+                    match self.tt(expr) {
+                        CrowType::Array(_) => {
+                            self.needs_crow_runtime = true;
+                            format!("{{ let _v: Vec<f64> = ({}).iter().map(|x| *x as f64).collect(); let _n = _v.len(); crow_runtime::tensor::CrowTensor::from_vec(_v, vec![_n]) }}", inner)
+                        }
+                        // a frame's column where numbers are taken: its
+                        // numbers, or the reason it has none (a missing cell,
+                        // text) — the rule the interpreter reads its cells by
+                        CrowType::FrameCol => {
+                            self.needs_crow_runtime = true;
+                            format!("({}).numbers(){}", inner, self.or_stop())
+                        }
+                        _ => inner,
                     }
-                    self.needs_crow_runtime = true;
-                    format!("{{ let _v: Vec<f64> = ({}).iter().map(|x| *x as f64).collect(); let _n = _v.len(); crow_runtime::tensor::CrowTensor::from_vec(_v, vec![_n]) }}", inner)
                 }
             },
             Expr::Binary { op, l, r, .. } => self.binary(op, l, r),

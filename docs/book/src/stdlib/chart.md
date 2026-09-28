@@ -3,7 +3,7 @@
 Technical indicators for the chart element, computed by the kernel so both execution modes draw the same numbers.
 
 
-Import with `use chart`. Technical indicators for the chart element, computed by the kernel (`crow_runtime::ta`) so the interpreter and compiled programs draw the same numbers. Every function takes series — frame columns or arrays of numbers — and returns a series of the same length, `NaN` where the value is not yet defined (a 14-period RSI has no value on row 3), so a chart draws a gap instead of a guess. Put a result back into the frame with `with[frame, name, series]` and name the column in `lines = [...]` or `panes = [...]`.
+Import with `use chart`. Technical indicators for the chart element, computed by the runtime (`crow_runtime::indicators`, over the kernels in `crow_runtime::ta`) so the interpreter and compiled programs draw the same numbers. Every function takes series — frame columns or arrays of numbers — and returns a series of the same length, `NaN` where the value is not yet defined (a 14-period RSI has no value on row 3), so a chart draws a gap instead of a guess. Put a result back into the frame with `with[frame, name, series]` and name the column in `lines = [...]` or `panes = [...]`.
 
 | Function | Description | Example |
 |----------|-------------|---|
@@ -17,7 +17,7 @@ Import with `use chart`. Technical indicators for the chart element, computed by
 | `rolling_sum[ts, values, secs]` | Sum over the trailing `secs` seconds | [Charts and Styling](../ch12-06-charts-and-style.md) |
 | `cvd[close, vol]` | Cumulative volume delta: volume counted positive when the close rose, negative when it fell | [Charts and Styling](../ch12-06-charts-and-style.md) |
 
-`ts` is a column of moments (seconds). A wrong number of arguments is an error naming the forms.
+`ts` is a column of moments (seconds). A window is 1 row or more, a trailing window 0 seconds or more and a bucket more than 0, and the series an indicator reads row by row are one length; anything else stops the program with the reason (see When a Program Stops), as does a wrong number of arguments, naming the counts the function takes (`rsi[] takes 2 or 4 arguments, got 3`). A negative window had been a huge one compiled and one row interpreted, and a shorter series cut the others.
 
 ```
 use chart, frame

@@ -1016,14 +1016,21 @@ impl IrInterp {
                         }
                         _ => v,
                     },
-                    // a list's numbers as a tensor of one axis
+                    // a list's numbers as a tensor of one axis; a frame's
+                    // column's, read as the compiled program's
+                    // CrowColumn::numbers reads them: a missing cell or a
+                    // cell of text or a bool is the reason it has none
                     Convert::ToTensor => match &v.value {
                         Value::Array(items) if v.is_ok() => {
+                            let column = matches!(expr.ty(), Ty::Column(_));
                             let mut data = Vec::with_capacity(items.len());
-                            for item in items.iter() {
+                            for (i, item) in items.iter().enumerate() {
                                 match item.value {
+                                    _ if column && item.is_error() => return Err(crow_runtime::stops::missing_cell(i)),
                                     Value::Int(n) => data.push(n as f64),
                                     Value::Float(x) => data.push(x),
+                                    Value::Bool(_) if column => return Err(crow_runtime::stops::not_numbers("bools")),
+                                    _ if column => return Err(crow_runtime::stops::not_numbers("text")),
                                     _ => return Err(format!("a list of {} is not a list of numbers", item.value.type_name())),
                                 }
                             }

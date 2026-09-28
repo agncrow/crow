@@ -1,0 +1,32 @@
+--- stats, nn and chart are rows of the builtin table (docs/bug-classes.md
+--- §4). A list of numbers or a frame's column handed to a function that
+--- takes numbers is its numbers, the same way in both modes: compiled, a
+--- list built by push did not build, and a column's missing cell was read
+--- as 0 where the interpreter stopped. A missing cell stops both now.
+use math
+use math.stats
+use math.nn
+use chart
+use db
+xs = []
+for i in range[5]
+    xs = push[xs, float[i] * 2.0 + 1.0]
+log[sum[xs]]
+log[median[xs]]
+log[percentile[xs, 50]]
+log[relu[xs]]
+log[sma[xs, 2]]
+log[anova[xs, [2.0, 4.0, 6.0]]]
+book = db.connect['sqlite://:memory:']
+exec[book, 'CREATE TABLE bars (id INTEGER PRIMARY KEY, c REAL, vol INTEGER NOT NULL)']
+exec[book, 'INSERT INTO bars (c, vol) VALUES (?, ?)', [10.0, 100]]
+exec[book, 'INSERT INTO bars (c, vol) VALUES (?, ?)', [11.0, 200]]
+exec[book, 'INSERT INTO bars (c, vol) VALUES (?, ?)', [10.5, 150]]
+bars = query[book, 'SELECT c, vol FROM bars ORDER BY id']
+log[cvd[bars.c, bars.vol]]
+log[mean[bars.vol]]
+log[linreg[bars.vol, bars.c]]
+exec[book, 'INSERT INTO bars (vol) VALUES (?)', [50]]
+bars = query[book, 'SELECT c, vol FROM bars ORDER BY id']
+log[sma[bars.c, 2]]
+log['not reached']

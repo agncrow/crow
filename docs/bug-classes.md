@@ -97,6 +97,9 @@ with the bindings in scope, and checks that the parts agree:
 - a call hands a function as many arguments as it takes, each fitting its
   parameter, and an argument that can fail is handed on as the call's
   error;
+- a call of a builtin's row hands each parameter the kind it takes (§4:
+  a list of numbers or a column is converted to the tensor a parameter
+  takes);
 - a return fits the function's type;
 - a conversion converts what it says;
 - a render (a view or a derivation) calls nothing that writes facts.
@@ -337,6 +340,39 @@ parity 109. Every math function but `load`, an effect, is a row.
 - Kinds for sparse matrices, frames, lists of text, lists of tensors
   taken as arguments, and no answer. Rows are chosen by a list of tensors
   against a tensor, and by a sparse matrix against a dense one.
+
+**Batch 7**: `stats`, `nn` and `chart`, with parity 110 and 111. Every
+function of the three modules is a row, and a module whose functions are
+all rows is its name and its list. Probes of eight misuses found the
+modes apart on six and both wrong on the other two:
+
+- A list of numbers or a frame's column handed to a row's tensor
+  parameter is converted by the lowering where it is handed over, the
+  same way in both modes. Compiled, a list built by `push` did not build
+  (the interpreter read it); a column's missing cell was read as `0` and a
+  column of text as zeros, where the interpreter stopped. A missing cell,
+  or a column of text or of bools, now stops both modes with one reason:
+  `CrowColumn::numbers`, and the interpreter's reading of the column's
+  cells by the same rule, since the spec makes no missing cell a guess.
+  The verifier checks every argument of a row against its parameter's
+  kind.
+- A chart window of no rows stops both modes. A negative one had been a
+  huge window compiled (every value `NaN`) and one row interpreted (the
+  values themselves). Series of two lengths stop too: the kernels had cut
+  them to the shortest, so the answer was shorter than the frame it went
+  into.
+- `anova` of one group was `NaN` compiled and refused interpreted.
+  Shapes `mse` or `linear` cannot meet panicked a kernel, and the
+  compiled stop named no line.
+- Both modes answered garbage for a `crossentropy` target that is no
+  class (a logit of `0`, or class 0 for a negative target) and a
+  distribution `kstest` does not know (a reference CDF of `0.5`
+  everywhere); `fit` answered an empty map. Two lengths where one is
+  needed (`corr`, `cov`, `linreg`, `chisq`, `bce`) were `NaN`, and a
+  percent past 100 was the largest value. Each is the reason now.
+- Kinds for a map of floats answered, a rest of tensors (`anova[a, b,
+  c]`) and a frame answered. A count no row of a name takes names every
+  count the name takes (`rsi[] takes 2 or 4 arguments, got 3`).
 
 ## Open questions (Vijay)
 

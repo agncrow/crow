@@ -1,8 +1,10 @@
+//! `use math`: every function but `load` is a row of the builtin table
+//! (crate::table), its runtime function in `crow_runtime::math`, which both
+//! modes call. `load` reads a file, an effect with a form of its own.
 use crate::value::{CrowValue, Value};
 use crate::type_infer::CrowType;
 use crate::modules::CrowModule;
 use crow_runtime::tensor::CrowTensor;
-
 
 pub struct MathModule;
 
@@ -67,165 +69,48 @@ impl CrowModule for MathModule {
                 return Ok(a.clone());
             }
         }
-        call_math(name, args)
+        match name {
+            // a numeric CSV read straight into a tensor
+            "load" => {
+                if args.len() != 1 { return Err(format!("load: expected 1 argument (path), got {}", args.len())); }
+                let path = match &args[0].value {
+                    Value::Str(s) => s.as_str(),
+                    _ => return Err("load: expected string path".into()),
+                };
+                match crow_runtime::io::load_csv_numeric(path) {
+                    Ok((data, nrows, ncols)) => {
+                        let t = CrowTensor::from_vec(data, vec![nrows, ncols]);
+                        Ok(CrowValue::ok(Value::NumArray(Box::new(t))))
+                    }
+                    Err(e) => Ok(CrowValue::error_with_kind(&e, "load", "")),
+                }
+            }
+            _ => Err(format!("{}: unknown math function", name)),
+        }
     }
 
-    fn emit_rust(&self, name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String> {
-        emit_math_rust(name, arg_strs, arg_types)
+    fn emit_rust(&self, name: &str, arg_strs: &[String], _arg_types: &[CrowType]) -> Result<String, String> {
+        match name {
+            "load" => Ok(format!("{{ match crow_runtime::io::load_csv_numeric(&{}) {{ Ok((data, nrows, ncols)) => CrowResult {{ value: CrowTensor::from_vec(data, vec![nrows, ncols]), ok: true, reason: String::new(), kind: String::new(), trace: vec![], captured: crow_runtime::moments::now() }}, Err(e) => CrowResult {{ value: CrowTensor::zeros(vec![0]), ok: false, reason: e, kind: \"load\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0])),
+            _ => Err(format!("{}: unknown math function for the Rust backend", name)),
+        }
     }
 
-    fn type_of(&self, name: &str, arg_count: usize) -> CrowType {
-        math_type_of(name, arg_count)
+    fn type_of(&self, name: &str, _arg_count: usize) -> CrowType {
+        match name {
+            "load" => CrowType::Result(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
+            _ => CrowType::Unknown,
+        }
     }
 }
-
-// ===== Helpers =====
-
-
-
-
-
-
-// ===== Interpreter dispatch =====
 
 /// Element-wise functions that also take a plain number.
 pub(crate) const SCALAR_UNARY: &[&str] = &[
     "exp", "ln", "log2", "log10", "sign", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh",
 ];
 
-fn call_math(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
-    // (the element-wise functions of a number or a tensor are rows of the
-    // builtin table, answered before this module's arms: crate::table)
-    match name {
-        // Tensor creation
-
-        // Element-wise math
-
-        // Trigonometry
-
-        _ => call_math_reductions(name, args),
-    }
-}
-
-fn call_math_reductions(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
-    match name {
-        // Reductions
-
-        _ => call_math_ops(name, args),
-    }
-}
-
-fn call_math_ops(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
-    match name {
-        // Combining ops
-
-        // Sorting & selection
-
-        // Shape ops
-
-        _ => call_math_linalg(name, args),
-    }
-}
-
-fn call_math_linalg(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
-    match name {
-
-        _ => call_math_random(name, args),
-    }
-}
-
-
-fn call_math_random(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
-    match name {
-        _ => call_math_signal(name, args),
-    }
-}
-
-fn call_math_signal(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
-    match name {
-        _ => call_math_special(name, args),
-    }
-}
-
-fn call_math_special(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
-    match name {
-        // Special functions
-
-        // Complex numbers
-
-        // Sparse arrays
-
-        // I/O: load numeric CSV directly to tensor
-        "load" => {
-            if args.len() != 1 { return Err(format!("load: expected 1 argument (path), got {}", args.len())); }
-            let path = match &args[0].value {
-                Value::Str(s) => s.as_str(),
-                _ => return Err("load: expected string path".into()),
-            };
-            match crow_runtime::io::load_csv_numeric(path) {
-                Ok((data, nrows, ncols)) => {
-                    let t = CrowTensor::from_vec(data, vec![nrows, ncols]);
-                    Ok(CrowValue::ok(Value::NumArray(Box::new(t))))
-                }
-                Err(e) => Ok(CrowValue::error_with_kind(&e, "load", "")),
-            }
-        }
-
-        _ => Err(format!("{}: unknown math function", name)),
-    }
-}
-
-// ===== Rust emission =====
-
-fn emit_math_rust(name: &str, arg_strs: &[String], _arg_types: &[CrowType]) -> Result<String, String> {
-    let result = match name {
-        // Tensor creation
-        // Element-wise math (ln replaces log)
-        // Trig
-        // Reductions
-        // Cumulative
-        // Combining. Array-of-tensor literals now build a stacked tensor,
-        // so stack accepts either a Vec of tensors or a tensor (restack rows).
-        // Sorting & selection
-        // Shape ops
-        // Linear algebra
-        "norm" if arg_strs.len() >= 2 => format!("{}.norm({} as f64)", arg_strs[0], arg_strs[1]),
-        _ => return emit_math_rust_continued(name, arg_strs),
-    };
-    Ok(result)
-}
-
-fn emit_math_rust_continued(name: &str, arg_strs: &[String]) -> Result<String, String> {
-    let result = match name {
-        // Random & Distributions
-        // Signal processing
-        // Special functions
-        // Complex
-        // Sparse
-        // I/O
-        "load" => format!("{{ match crow_runtime::io::load_csv_numeric(&{}) {{ Ok((data, nrows, ncols)) => CrowResult {{ value: CrowTensor::from_vec(data, vec![nrows, ncols]), ok: true, reason: String::new(), kind: String::new(), trace: vec![], captured: crow_runtime::moments::now() }}, Err(e) => CrowResult {{ value: CrowTensor::zeros(vec![0]), ok: false, reason: e, kind: \"load\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0]),
-        _ => return Err(format!("{}: unknown math function for the Rust backend", name)),
-    };
-    Ok(result)
-}
-
-// ===== Type inference =====
-
-fn math_type_of(name: &str, _arg_count: usize) -> CrowType {
-    // (every other math function is a row of the builtin table, which
-    // types it: crate::table)
-    match name {
-        "concat" => CrowType::NumArray(Box::new(CrowType::Float)),
-        "load" => CrowType::Result(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
-        _ => CrowType::Unknown,
-    }
-}
-
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// A math function as a program calls it: through the registry, so a
     /// function with a row in the builtin table is its runtime function.
     fn call_math(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
@@ -244,7 +129,6 @@ mod tests {
         let len = data.len();
         CrowValue::ok(Value::NumArray(Box::new(CrowTensor::from_vec(data, vec![len]))))
     }
-    fn str_val(s: &str) -> CrowValue { CrowValue::ok(Value::Str(s.to_string())) }
 
     fn unwrap_tensor(r: Result<CrowValue, String>) -> CrowTensor {
         let cv = r.expect("call_math failed");

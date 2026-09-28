@@ -33,16 +33,27 @@ pub trait CrowModule: Send + Sync {
         vec![]
     }
 
+    // A function with a row in the builtin table (crate::table) is answered
+    // by its row, for the interpreter, the emitter and inference alike; a
+    // module's own arms answer the rest, and a module whose functions are
+    // all rows has none.
+
     /// Interpret a function call. Called by the interpreter.
-    fn call(&self, name: &str, args: &[CrowValue]) -> Result<CrowValue, String>;
+    fn call(&self, name: &str, _args: &[CrowValue]) -> Result<CrowValue, String> {
+        Err(format!("module '{}' has no function '{}'", self.name(), name))
+    }
 
     /// Emit Rust code for a function call. Called by the Rust backend.
     /// `arg_strs` are the argument expressions, already printed.
     /// `arg_types` are the inferred types of each argument.
-    fn emit_rust(&self, name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String>;
+    fn emit_rust(&self, name: &str, _arg_strs: &[String], _arg_types: &[CrowType]) -> Result<String, String> {
+        Err(format!("module '{}' has no function '{}'", self.name(), name))
+    }
 
     /// Infer the return type of a function call. Called by the type inference engine.
-    fn type_of(&self, name: &str, arg_count: usize) -> CrowType;
+    fn type_of(&self, _name: &str, _arg_count: usize) -> CrowType {
+        CrowType::Unknown
+    }
 }
 
 /// Registry of loaded modules. Provides generic dispatch.
@@ -162,6 +173,9 @@ impl ModuleRegistry {
     // (crate::table); the module's own arms answer the rest.
 
     fn call_at(&self, idx: usize, name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
+        if let Some(e) = crate::table::miscounted(self.modules[idx].name(), name, args.len()) {
+            return Err(e);
+        }
         let kinds: Vec<crate::table::Arg> = args.iter().map(crate::table::Arg::of_value).collect();
         match crate::table::module(self.modules[idx].name(), name, &kinds) {
             // a module's error value carries no trace, in either mode
@@ -171,6 +185,9 @@ impl ModuleRegistry {
     }
 
     fn emit_at(&self, idx: usize, name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String> {
+        if let Some(e) = crate::table::miscounted(self.modules[idx].name(), name, arg_strs.len()) {
+            return Err(e);
+        }
         let kinds: Vec<crate::table::Arg> = if arg_types.len() == arg_strs.len() {
             arg_types.iter().map(crate::table::Arg::of_type).collect()
         } else {

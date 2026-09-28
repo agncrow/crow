@@ -1138,6 +1138,7 @@ Some failures no value can carry. An index reads an element and an int operation
 | an int past 64 bits (`+`, `-`, `*`, `^`, `-x`, `abs`) | `integer overflow: 9223372036854775807 + 1 does not fit in 64 bits` |
 | an int to a negative power | `2 ^ -1: an int to a negative power is a fraction — write 2.0 ^ -1 for a float` |
 | `assert[c]` or `assert[c, message]` false | `assertion failed`, `assertion failed: message` |
+| a builtin given what it cannot take: a negative size, an axis or a window outside its range, shapes or lengths that do not meet, a frame's column with a missing cell where numbers are taken | the builtin's own reason: `zeros: a size cannot be negative (got -2)`, `sma: a window is 1 row or more (got 0)`, `corr: x and y must be one length, got 3 and 2` |
 
 An int never wraps round, in any mode or build, and a float never stops: a float divided by zero is IEEE's infinity, and a float too large for `int[]` gives the largest int. A `range` that would step past the last int ends there. A check Crow is missing, a panic inside the runtime, stops the program the same way and never crashes it.
 
@@ -1894,6 +1895,8 @@ Import with `use math.stats`. Functions become top-level after import.
 | `kstest[data, dist_name]` | Kolmogorov-Smirnov test → map with `d`, `p`. Distributions: `"normal"`, `"uniform"` |
 | `fit[data, dist_name]` | Distribution fitting (MLE) → map of parameters. Distributions: `"normal"` → `{mu, sigma}`, `"exponential"` → `{lambda}`, `"uniform"` → `{a, b}`, `"poisson"` → `{lambda}` |
 
+A statistic of no values is `NaN`. The series a function pairs up (`corr`, `cov`, `linreg`, `chisq`) are one length, `percentile`'s `p` is from 0 to 100, `anova` compares two groups or more, and `kstest` and `fit` know the distributions above; anything else stops the program with the reason (see When a Program Stops). They had answered `NaN`, `0.5` or an empty map.
+
 ```
 use math
 use math.stats
@@ -1933,7 +1936,7 @@ Import with `use math.nn`. Functions become top-level after import.
 | Function | Description |
 |---|---|
 | `mse[pred, target]` | Mean squared error (Float) |
-| `crossentropy[logits, targets]` | Cross-entropy loss with log-sum-exp stability (Float) |
+| `crossentropy[logits, targets]` | Cross-entropy loss with log-sum-exp stability (Float): logits `[classes]` with one target, or `[batch, classes]` with a target per row, each a class from 0 up to classes − 1 |
 | `bce[pred, target]` | Binary cross-entropy with clamping (Float) |
 
 **Layers:**
@@ -1941,6 +1944,8 @@ Import with `use math.nn`. Functions become top-level after import.
 | Function | Description |
 |---|---|
 | `linear[x, w, b]` | Linear layer: x @ w + b (NumArray) |
+
+Shapes `mse` cannot broadcast or `linear` cannot multiply, two lengths given to `bce`, and a `crossentropy` target that is no class stop the program with the reason (see When a Program Stops): a kernel had panicked on the shapes, and a target past the classes was read as a logit of 0.
 
 ```
 use math
@@ -2065,7 +2070,7 @@ for i in range[len[toc]]
 
 ### chart
 
-Import with `use chart`. Technical indicators for the chart element, computed by the kernel (`crow_runtime::ta`) so the interpreter and compiled programs draw the same numbers. Every function takes series — frame columns or arrays of numbers — and returns a series of the same length, `NaN` where the value is not yet defined (a 14-period RSI has no value on row 3), so a chart draws a gap instead of a guess. Put a result back into the frame with `with[frame, name, series]` and name the column in `lines = [...]` or `panes = [...]`.
+Import with `use chart`. Technical indicators for the chart element, computed by the runtime (`crow_runtime::indicators`, over the kernels in `crow_runtime::ta`) so the interpreter and compiled programs draw the same numbers. Every function takes series — frame columns or arrays of numbers — and returns a series of the same length, `NaN` where the value is not yet defined (a 14-period RSI has no value on row 3), so a chart draws a gap instead of a guess. Put a result back into the frame with `with[frame, name, series]` and name the column in `lines = [...]` or `panes = [...]`.
 
 | Function | Description |
 |----------|-------------|
@@ -2079,7 +2084,7 @@ Import with `use chart`. Technical indicators for the chart element, computed by
 | `rolling_sum[ts, values, secs]` | Sum over the trailing `secs` seconds |
 | `cvd[close, vol]` | Cumulative volume delta: volume counted positive when the close rose, negative when it fell |
 
-`ts` is a column of moments (seconds). A wrong number of arguments is an error naming the forms.
+`ts` is a column of moments (seconds). A window is 1 row or more, a trailing window 0 seconds or more and a bucket more than 0, and the series an indicator reads row by row are one length; anything else stops the program with the reason (see When a Program Stops), as does a wrong number of arguments, naming the counts the function takes (`rsi[] takes 2 or 4 arguments, got 3`). A negative window had been a huge one compiled and one row interpreted, and a shorter series cut the others.
 
 ```
 use chart, frame
@@ -2151,7 +2156,7 @@ rich_old = filter[df, df.age gt 50 and df.salary gt 100000]
 others = filter[df, not (df.name eq 'alice')]
 ```
 
-Missing values compare as `false` — they are excluded by any filter. A column's `.ok` is its rows' validity — `true` where the cell is present, `false` where it is missing — so `filter[df, df.age.ok]` keeps the complete rows. (Every other value's `.ok` is its own status: a list that did not fail is ok.) A column shows a missing cell as `nan`. Read one at a time (`df.age[3]`), a cell of a column that can have missing cells is fallible: a missing one is an error value of reason `missing`, which computes and cannot be decided on (§10), so `.ok` guards it and a guard narrows it to its value. The columns that can are a database column that can hold NULL (see db, Typed cells) and the side of a `join` a row can have no match on — a left join's right columns, a right join's left ones, all of an outer join's. `fill[df, 'age', 0]` gives a column a value where it had none, and its cells are plain again, as are a column's that cannot have missing cells. A mask decides every row, so a list of values that can fail — built from such cells — is refused as one, in both modes: fill the column first, or guard each value with `.ok`.
+Missing values compare as `false` — they are excluded by any filter. A column's `.ok` is its rows' validity — `true` where the cell is present, `false` where it is missing — so `filter[df, df.age.ok]` keeps the complete rows. (Every other value's `.ok` is its own status: a list that did not fail is ok.) A column shows a missing cell as `nan`. Read one at a time (`df.age[3]`), a cell of a column that can have missing cells is fallible: a missing one is an error value of reason `missing`, which computes and cannot be decided on (§10), so `.ok` guards it and a guard narrows it to its value. The columns that can are a database column that can hold NULL (see db, Typed cells) and the side of a `join` a row can have no match on — a left join's right columns, a right join's left ones, all of an outer join's. `fill[df, 'age', 0]` gives a column a value where it had none, and its cells are plain again, as are a column's that cannot have missing cells. A mask decides every row, so a list of values that can fail — built from such cells — is refused as one, in both modes: fill the column first, or guard each value with `.ok`. Handed whole to a function that takes numbers — `mean[df.age]`, `median`, `sma[bars.c, 3]` — a column is its numbers, as a list of numbers is; a missing cell stops the program (`row 3 of the column is missing — fill the column first: fill[frame, 'column', value]`), and so does a column of text or of bools, in both modes. (Compiled, a missing cell had been read as `0`, where the interpreter stopped.)
 
 **Design Note: a missing cell is an error, not a placeholder.** Considered: reading a missing cell as its column's placeholder in both modes — `NaN` in a number column, `0` in an int one, `false` in a bool one, `nan` in text — as a filter reads it, which both modes did. Honest for a number, since NaN compares as false; for an int or a bool it is a guess the program cannot tell from a value, of the kind §10 refuses elsewhere (an unmatched row's count read as `0`). Decided (Vijay, 2026-09-25, typed frames decision 3): where the schema says a column can have missing cells its cells are fallible, and where it says it cannot they are plain, so no cell is a guess.
 

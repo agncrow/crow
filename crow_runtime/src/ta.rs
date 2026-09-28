@@ -1,57 +1,13 @@
-//! Technical indicators — the `use chart` module's kernel.
+//! Technical indicators — the `use chart` module's kernels.
 //!
 //! Pure functions over slices: no I/O, no frames, no vnodes. Every
 //! indicator returns one value per input row and writes NaN where the
 //! value is not yet defined (a 14-period RSI has no value on row 3), so
-//! charts draw gaps instead of lies. Both execution modes call these —
-//! the interpreter through `src/modules/chart.rs`, compiled programs
-//! directly — so the numbers agree by construction.
+//! charts draw gaps instead of lies. Both execution modes call these
+//! through [`crate::indicators`], the functions a program calls, so the
+//! numbers agree by construction.
 
-use crate::frame::CrowColumn;
 use crate::tensor::CrowTensor;
-
-/// Anything that can be read as a series of floats: a tensor, a frame
-/// column, a plain vector. Compiled code goes through this so a module
-/// call compiles whatever the argument's static type turned out to be.
-pub trait Series {
-    fn f64s(&self) -> Vec<f64>;
-}
-
-impl Series for CrowTensor {
-    fn f64s(&self) -> Vec<f64> {
-        self.to_vec()
-    }
-}
-impl Series for CrowColumn {
-    fn f64s(&self) -> Vec<f64> {
-        self.to_f64_vec()
-    }
-}
-impl Series for Vec<f64> {
-    fn f64s(&self) -> Vec<f64> {
-        self.clone()
-    }
-}
-impl Series for Vec<i64> {
-    fn f64s(&self) -> Vec<f64> {
-        self.iter().map(|x| *x as f64).collect()
-    }
-}
-impl Series for [f64] {
-    fn f64s(&self) -> Vec<f64> {
-        self.to_vec()
-    }
-}
-impl<T: Series + ?Sized> Series for &T {
-    fn f64s(&self) -> Vec<f64> {
-        (**self).f64s()
-    }
-}
-
-/// Read any series as floats.
-pub fn f64s<T: Series + ?Sized>(s: &T) -> Vec<f64> {
-    s.f64s()
-}
 
 /// Wrap a result as a one-dimensional tensor (what Crow arrays are).
 pub fn tensor(v: Vec<f64>) -> CrowTensor {
