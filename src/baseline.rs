@@ -1632,6 +1632,11 @@ pub fn is_expected(file: &str, changed: &[String]) -> bool {
 mod tests {
     use super::*;
 
+    /// The tests that write into the repository's tree, or read it through
+    /// git, take turns: a store written while git is asked shows up in one
+    /// answer and not the other.
+    static TREE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn artifacts(src: &str) -> (Artifacts, Vec<Rule>) {
         let stmts = crate::build(src).expect("parses");
         let lowered = crate::lower::lower_program(&stmts).expect("lowers");
@@ -1792,14 +1797,17 @@ mod tests {
     /// The entry's own directory is an empty path; git is asked from here.
     #[test]
     fn an_empty_directory_is_the_current_one() {
-        let here = git_changed_files(std::path::Path::new("."));
-        let empty = git_changed_files(std::path::Path::new(""));
-        assert_eq!(here, empty);
+        let _tree = TREE.lock().unwrap_or_else(|e| e.into_inner());
+        // (another module's test can write into the tree between the two
+        // questions: the same answer twice in a row is the property)
+        let same = (0..3).any(|_| git_changed_files(std::path::Path::new(".")) == git_changed_files(std::path::Path::new("")));
+        assert!(same, "'.' and '' name different directories");
     }
 
     /// The store round-trips and the diff attributes removals.
     #[test]
     fn the_store_round_trips_and_compare_reports_changes() {
+        let _tree = TREE.lock().unwrap_or_else(|e| e.into_inner());
         let (a, _) = artifacts(APP);
         let entry = format!("scratch_baseline_{}.co", std::process::id());
         let dir = store_dir(&entry);

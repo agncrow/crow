@@ -104,17 +104,24 @@ fn canonical(html: &str) -> String {
     crate::harness::harness_canonical(&crate::harness::harness_parse_html(html))
 }
 
-/// Read what the server sends until it has been quiet for a moment; the
-/// page is what the renders made of it — each a whole page, or the changes
-/// a browser applies to the one it has. A change that does not fit fails
-/// the run: the server's idea of the page and the page's own have parted.
-fn settle(ws: &mut Socket, page: &mut CrowVNode, port: u16, jar: &mut Option<String>, files: &mut Vec<(String, String)>, picked: &mut Option<Vec<u8>>) -> Result<(), String> {
+/// Read what the server sends until it has answered the event sent (`seq`:
+/// the render the event caused carries its ack) and then been quiet for a
+/// moment; the page is what the renders made of it — each a whole page, or
+/// the changes a browser applies to the one it has. A change that does not
+/// fit fails the run: the server's idea of the page and the page's own
+/// have parted. (Waiting for quiet alone, a render slower than the quiet
+/// window under a loaded machine was missed, and the run failed.)
+fn settle(ws: &mut Socket, page: &mut CrowVNode, port: u16, jar: &mut Option<String>, files: &mut Vec<(String, String)>, picked: &mut Option<Vec<u8>>, seq: Option<u64>) -> Result<(), String> {
     let end = Instant::now() + Duration::from_secs(20);
     let mut quiet_since = Instant::now();
-    while Instant::now() < end && quiet_since.elapsed() < Duration::from_millis(500) {
+    let mut answered = seq.is_none();
+    while Instant::now() < end && (!answered || quiet_since.elapsed() < Duration::from_millis(500)) {
         match ws.read() {
             Ok(tungstenite::Message::Text(t)) => {
                 if let Ok(m) = serde_json::from_str::<serde_json::Value>(&t) {
+                    if let (Some(want), Some(n)) = (seq, m["ack"].as_u64()) {
+                        answered |= n >= want;
+                    }
                     if let Some(h) = m["html"].as_str() {
                         *page = CrowVNode::raw(h).as_built();
                     } else if m["type"] == "patches" {
@@ -196,7 +203,7 @@ fn drive(exe: &std::path::Path, mode: &[&str], file: &std::path::Path, port: u16
         let mut files: Vec<(String, String)> = Vec::new();
         let mut picked: Option<Vec<u8>> = None;
         let (mut page, mut ws) = open_page(port, &open, &jar)?;
-        settle(&mut ws, &mut page, port, &mut jar, &mut files, &mut picked)?;
+        settle(&mut ws, &mut page, port, &mut jar, &mut files, &mut picked, None)?;
         let mut pages = vec![canonical(&page.to_html())];
         let mut seq = 0;
         for (i, step) in steps.iter().enumerate() {
@@ -210,7 +217,7 @@ fn drive(exe: &std::path::Path, mode: &[&str], file: &std::path::Path, port: u16
                 let (p, w) = open_page(port, path, &jar)?;
                 page = p;
                 ws = w;
-                settle(&mut ws, &mut page, port, &mut jar, &mut files, &mut picked)?;
+                settle(&mut ws, &mut page, port, &mut jar, &mut files, &mut picked, None)?;
                 pages.push(canonical(&page.to_html()));
                 continue;
             }
@@ -256,7 +263,7 @@ fn drive(exe: &std::path::Path, mode: &[&str], file: &std::path::Path, port: u16
                 m
             };
             ws.send(tungstenite::Message::Text(msg.to_string().into())).map_err(|e| e.to_string())?;
-            settle(&mut ws, &mut page, port, &mut jar, &mut files, &mut picked)?;
+            settle(&mut ws, &mut page, port, &mut jar, &mut files, &mut picked, Some(seq))?;
             pages.push(canonical(&page.to_html()));
         }
         let _ = ws.close(None);
