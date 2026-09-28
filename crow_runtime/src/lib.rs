@@ -19,6 +19,7 @@ pub mod core;
 pub mod moments;
 pub mod linalg;
 pub mod markdown;
+pub mod math;
 pub mod nn;
 pub mod pool;
 pub mod rng;

@@ -1200,6 +1200,9 @@ impl Emitter {
         match target {
             Target::User(n) => self.fns.get(n).map_or(false, |f| matches!(f.ret, Ty::Result(_))),
             Target::Module(m, f) => self.registry.type_of_in(m, f, raw_args.len()).map_or(false, |t| matches!(t, CrowType::Result(_))),
+            Target::Runtime(p) if crate::table::by_id(p).is_some() => {
+                matches!(crate::table::by_id(p).map(|r| r.fails), Some(crate::table::Fails::Value(_)))
+            }
             Target::Runtime(_) => {
                 if name == "set" {
                     return false;
@@ -1418,11 +1421,24 @@ impl Emitter {
         match target {
             Target::User(n) => self.user_call(n, args, arg_strs.to_vec()),
             Target::Module(m, f) => self.module_call(m, f, args, arg_strs, whole),
+            Target::Runtime(p) if crate::table::by_id(p).is_some() => match crate::table::by_id(p) {
+                Some(row) => self.table_call(row, arg_strs),
+                None => String::new(),
+            },
             Target::Runtime(_) => match self.builtin(name, args, arg_strs, whole) {
                 Some(s) => s,
                 None => format!("{}({})", name, arg_strs.join(", ")),
             },
         }
+    }
+
+    /// A builtin with a row: its runtime function, each argument printed as
+    /// its kind takes it, its failure as the row says (crate::table). The
+    /// interpreter calls the same function through the same row.
+    fn table_call(&mut self, row: &crate::table::Row, arg_strs: &[String]) -> String {
+        self.needs_crow_runtime = true;
+        let trace = self.trace_format_expr();
+        crate::table::print(row, arg_strs, &self.current_line.to_string(), Some(&trace)).unwrap_or_else(|e| format!("compile_error!({:?})", e))
     }
 
     /// A user function's call: a view's or an element's tree handed to it

@@ -1452,6 +1452,11 @@ impl IrInterp {
 
     /// A runtime builtin by its table name (`core.push`) or its own name.
     fn runtime_call(&mut self, path: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
+        // a builtin with a row is its runtime function, read and dispatched
+        // as the row says, the same call the compiled program prints
+        if let Some(row) = crate::table::by_id(path) {
+            return (row.call)(&vals, &self.trace_entry());
+        }
         let name = RUNTIME_TABLE.iter().find(|(_, r)| *r == path).map(|(b, _)| *b).unwrap_or(path).to_string();
         self.bare_call(&name, vals)
     }

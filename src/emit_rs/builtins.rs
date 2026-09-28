@@ -402,7 +402,6 @@ impl Emitter {
             }
             "starts" if n == 2 => self.runtime("text::starts", &[format!("&({})", a[0]), format!("&({})", a[1])]),
             "ends" if n == 2 => self.runtime("text::ends", &[format!("&({})", a[0]), format!("&({})", a[1])]),
-            "repeat" if n == 2 => format!("{}{}", self.runtime("text::repeat", &[format!("&({})", a[0]), format!("({}) as i64", a[1])]), self.or_stop()),
             "captured" if n == 1 => {
                 self.needs_crow_runtime = true;
                 if matches!(ty0, CrowType::Result(_)) {
@@ -420,26 +419,6 @@ impl Emitter {
             "now" if n == 0 => {
                 self.needs_crow_runtime = true;
                 "crow_runtime::moments::now()".to_string()
-            }
-            "moment" if n == 7 => {
-                self.needs_crow_runtime = true;
-                self.needs_time_result = true;
-                format!(
-                    "__crow_time_result(crow_runtime::moments::moment(({}) as i64, ({}) as i64, ({}) as i64, ({}) as i64, ({}) as i64, ({}) as f64, &{}))",
-                    a[0], a[1], a[2], a[3], a[4], a[5], a[6]
-                )
-            }
-            "parse_time" if n == 2 => {
-                self.needs_crow_runtime = true;
-                self.needs_time_result = true;
-                format!("__crow_time_result(crow_runtime::moments::parse_time(&{}, &{}))", a[0], a[1])
-            }
-            "calendar" if n == 2 => {
-                self.needs_crow_runtime = true;
-                format!(
-                    "crow_runtime::moments::calendar(({}) as f64, &{}).map(|f| f.iter().map(|(k, v)| (k.to_string(), *v)).collect::<std::collections::BTreeMap<String, i64>>()).unwrap_or_else(|e| {{ eprintln!(\"calendar[]: {{}}\", e); std::collections::BTreeMap::new() }})",
-                    a[0], a[1]
-                )
             }
             "fmt" if n == 9 => {
                 self.needs_crow_runtime = true;
@@ -932,10 +911,6 @@ impl Emitter {
                 )
             }
             // regular expressions
-            "matches" if n == 2 => {
-                self.needs_crow_runtime = true;
-                format!("crow_runtime::text::matches(&*{}, &*{}){}", a[0], a[1], self.or_stop())
-            }
             "find" if n == 2 => {
                 self.needs_crow_runtime = true;
                 self.needs_find_struct = true;
@@ -944,10 +919,6 @@ impl Emitter {
                     "{{ match crow_runtime::text::find(&*{}, &*{}) {{ Ok(Some(_g)) => CrowResult {{ ok: true, value: CrowFindResult {{ groups: _g }}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Ok(None) => CrowResult {{ ok: false, value: CrowFindResult {{ groups: Vec::new() }}, reason: \"no match\".to_string(), kind: String::new(), trace: vec![{}], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: CrowFindResult {{ groups: Vec::new() }}, reason: e, kind: \"regex\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
                     a[0], a[1], tr, tr
                 )
-            }
-            "sub" if n == 3 => {
-                self.needs_crow_runtime = true;
-                format!("crow_runtime::text::sub(&*{}, &*{}, &*{}){}", a[0], a[1], a[2], self.or_stop())
             }
             "date" if n == 3 => {
                 self.needs_chrono = true;

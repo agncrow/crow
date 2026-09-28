@@ -54,8 +54,14 @@ pub fn repeat(s: &str, n: i64) -> Result<String, String> {
     Ok(s.repeat(n as usize))
 }
 
+/// A pattern compiled, or what is wrong with it on one line: the regex
+/// crate draws the pattern over several, and a stop is one line.
 fn compile(pattern: &str) -> Result<regex::Regex, String> {
-    regex::Regex::new(pattern).map_err(|e| format!("invalid regex: {}", e))
+    regex::Regex::new(pattern).map_err(|e| {
+        let said = e.to_string();
+        let why = said.lines().last().unwrap_or("").trim().trim_start_matches("error: ");
+        format!("invalid regex '{}': {}", pattern, why)
+    })
 }
 
 /// `matches[text, pattern]`.
@@ -104,7 +110,7 @@ mod tests {
         assert_eq!(find("ab", "(a)(x)?").unwrap(), Some(vec!["a".into(), "a".into(), String::new()]));
         assert_eq!(sub("a1b22", "[0-9]+", "#").unwrap(), "a#b#");
         assert_eq!(sub("2026-09-08", "([0-9]+)-([0-9]+)-([0-9]+)", "$3/$2/$1").unwrap(), "08/09/2026");
-        let e = matches("x", "(").unwrap_err();
-        assert!(e.starts_with("invalid regex: "), "{}", e);
+        // one line, naming the pattern and what is wrong with it
+        assert_eq!(matches("x", "(").unwrap_err(), "invalid regex '(': unclosed group");
     }
 }

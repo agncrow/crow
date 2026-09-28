@@ -128,6 +128,11 @@ pub fn calendar(t: f64, tz: &str) -> Result<[(&'static str, i64); 7], String> {
 
 /// Parse a timestamp string into a moment. Accepts RFC3339 (offset wins over
 /// tz), then naive datetime / date forms interpreted in the named timezone.
+/// `calendar[t, tz]` as the map a program reads: the same fields, by name.
+pub fn calendar_map(t: f64, tz: &str) -> Result<std::collections::BTreeMap<String, i64>, String> {
+    Ok(calendar(t, tz)?.iter().map(|(k, v)| (k.to_string(), *v)).collect())
+}
+
 pub fn parse_time(text: &str, tz: &str) -> Result<f64, String> {
     let s = text.trim();
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {

@@ -737,7 +737,7 @@ mod tests {
         let m = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]).to_gpu();
         let row = CrowTensor::from_vec(vec![10.0, 20.0], vec![2]);
         assert_eq!(m.zip_with(&row, |a, b| a + b).to_vec(), vec![11.0, 22.0, 13.0, 24.0]);
-        assert_eq!(CrowTensor::diag(&m).to_vec(), vec![1.0, 4.0]);
+        assert_eq!(CrowTensor::diag(&m).map(|d| d.to_vec()), Ok(vec![1.0, 4.0]));
     }
 
     #[test]

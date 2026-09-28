@@ -140,7 +140,7 @@ impl ModuleRegistry {
         let idx = self.idx_in(module_name, name).ok_or_else(|| {
             format!("module '{}' has no function '{}'", module_name, name)
         })?;
-        self.modules[idx].call(name, args)
+        self.call_at(idx, name, args)
     }
 
     /// Emit Rust for a function through its module prefix.
@@ -148,13 +148,39 @@ impl ModuleRegistry {
         let idx = self.idx_in(module_name, name).ok_or_else(|| {
             format!("module '{}' has no function '{}'", module_name, name)
         })?;
-        self.modules[idx].emit_rust(name, arg_strs, arg_types)
+        self.emit_at(idx, name, arg_strs, arg_types)
     }
 
     /// Infer return type through a module prefix.
     pub fn type_of_in(&self, module_name: &str, name: &str, arg_count: usize) -> Option<CrowType> {
         let idx = self.idx_in(module_name, name)?;
-        Some(self.modules[idx].type_of(name, arg_count))
+        Some(self.type_at(idx, name, arg_count))
+    }
+
+    // A module function with a row in the builtin table is its runtime
+    // function, for the interpreter, the emitter and inference alike
+    // (crate::table); the module's own arms answer the rest.
+
+    fn call_at(&self, idx: usize, name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
+        match crate::table::module(self.modules[idx].name(), name, args.len()) {
+            // a module's error value carries no trace, in either mode
+            Some(row) => (row.call)(args, ""),
+            None => self.modules[idx].call(name, args),
+        }
+    }
+
+    fn emit_at(&self, idx: usize, name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String> {
+        match crate::table::module(self.modules[idx].name(), name, arg_strs.len()) {
+            Some(row) => crate::table::print(row, arg_strs, STOP_LINE, None),
+            None => self.modules[idx].emit_rust(name, arg_strs, arg_types),
+        }
+    }
+
+    fn type_at(&self, idx: usize, name: &str, arg_count: usize) -> CrowType {
+        match crate::table::module(self.modules[idx].name(), name, arg_count) {
+            Some(row) => row.crow_type(),
+            None => self.modules[idx].type_of(name, arg_count),
+        }
     }
 
     /// Check if a constant name belongs to any loaded module.
@@ -192,7 +218,7 @@ impl ModuleRegistry {
         }
         let idx = self.fn_map.get(name).and_then(|v| v.first().copied())
             .ok_or_else(|| format!("unknown module function: {}", name))?;
-        self.modules[idx].call(name, args)
+        self.call_at(idx, name, args)
     }
 
     /// Emit Rust for a module function (the Rust backend, bare call).
@@ -202,7 +228,7 @@ impl ModuleRegistry {
         }
         let idx = self.fn_map.get(name).and_then(|v| v.first().copied())
             .ok_or_else(|| format!("unknown module function: {}", name))?;
-        self.modules[idx].emit_rust(name, arg_strs, arg_types)
+        self.emit_at(idx, name, arg_strs, arg_types)
     }
 
     /// Infer return type of a module function (bare call; None when ambiguous).
@@ -211,7 +237,7 @@ impl ModuleRegistry {
         if idxs.len() > 1 {
             return None;
         }
-        Some(self.modules[*idxs.first()?].type_of(name, arg_count))
+        Some(self.type_at(*idxs.first()?, name, arg_count))
     }
 
 

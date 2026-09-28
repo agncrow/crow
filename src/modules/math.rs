@@ -165,48 +165,6 @@ fn call_math(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
     }
     match name {
         // Tensor creation
-        "zeros" => {
-            let shape = shape_from_args(args, name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::zeros(shape)))))
-        }
-        "ones" => {
-            let shape = shape_from_args(args, name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::ones(shape)))))
-        }
-        "eye" => {
-            if args.len() != 1 { return Err(format!("eye: expected 1 argument, got {}", args.len())); }
-            let n = to_usize(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::eye(n)))))
-        }
-        "randn" => {
-            let shape = shape_from_args(args, name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::randn(shape)))))
-        }
-        "linspace" => {
-            if args.len() != 3 { return Err(format!("linspace: expected 3 arguments (start, stop, n), got {}", args.len())); }
-            let start = to_f64(&args[0], name)?;
-            let stop = to_f64(&args[1], name)?;
-            let n = to_usize(&args[2], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::linspace(start, stop, n)))))
-        }
-        "arange" => {
-            if args.len() != 3 { return Err(format!("arange: expected 3 arguments (start, stop, step), got {}", args.len())); }
-            let start = to_f64(&args[0], name)?;
-            let stop = to_f64(&args[1], name)?;
-            let step = to_f64(&args[2], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::arange(start, stop, step)))))
-        }
-        "full" => {
-            if args.len() < 2 { return Err(format!("full: expected at least 2 arguments (dims..., value), got {}", args.len())); }
-            let value = to_f64(args.last().unwrap(), name)?;
-            let shape = shape_from_args(&args[..args.len()-1], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::full(shape, value)))))
-        }
-        "diag" => {
-            if args.len() != 1 { return Err(format!("diag: expected 1 argument, got {}", args.len())); }
-            let t = to_tensor(&args[0], name)?;
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::diag(&t)))))
-        }
         "tensor" => {
             if args.is_empty() || args.len() > 2 { return Err(format!("tensor: expected 1-2 arguments, got {}", args.len())); }
             match &args[0].value {
@@ -519,59 +477,6 @@ fn call_math_random(name: &str, args: &[CrowValue]) -> Result<CrowValue, String>
             crow_runtime::rng::set_seed(n);
             Ok(CrowValue::done())
         }
-        "normal" => {
-            if args.len() < 2 { return Err(format!("normal: expected at least 2 arguments (mean, std, dims...), got {}", args.len())); }
-            let mean = to_f64(&args[0], name)?;
-            let std_val = to_f64(&args[1], name)?;
-            let shape = shape_from_args(&args[2..], name)?;
-            let shape = if shape.is_empty() { vec![1] } else { shape };
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::normal(shape, mean, std_val)))))
-        }
-        "uniform" => {
-            if args.len() < 2 { return Err(format!("uniform: expected at least 2 arguments (low, high, dims...), got {}", args.len())); }
-            let low = to_f64(&args[0], name)?;
-            let high = to_f64(&args[1], name)?;
-            let shape = shape_from_args(&args[2..], name)?;
-            let shape = if shape.is_empty() { vec![1] } else { shape };
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::rand_range(shape, low, high)))))
-        }
-        "poisson" => {
-            if args.is_empty() { return Err(format!("poisson: expected at least 1 argument (lambda, dims...), got 0")); }
-            let lambda = to_f64(&args[0], name)?;
-            let shape = shape_from_args(&args[1..], name)?;
-            let shape = if shape.is_empty() { vec![1] } else { shape };
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::poisson(shape, lambda)))))
-        }
-        "bernoulli" => {
-            if args.is_empty() { return Err(format!("bernoulli: expected at least 1 argument (p, dims...), got 0")); }
-            let p = to_f64(&args[0], name)?;
-            let shape = shape_from_args(&args[1..], name)?;
-            let shape = if shape.is_empty() { vec![1] } else { shape };
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::bernoulli(shape, p)))))
-        }
-        "gamma_dist" => {
-            if args.len() < 2 { return Err(format!("gamma_dist: expected at least 2 arguments (alpha, beta, dims...), got {}", args.len())); }
-            let alpha = to_f64(&args[0], name)?;
-            let beta = to_f64(&args[1], name)?;
-            let shape = shape_from_args(&args[2..], name)?;
-            let shape = if shape.is_empty() { vec![1] } else { shape };
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::gamma_dist(shape, alpha, beta)))))
-        }
-        "beta_dist" => {
-            if args.len() < 2 { return Err(format!("beta_dist: expected at least 2 arguments (alpha, beta, dims...), got {}", args.len())); }
-            let alpha = to_f64(&args[0], name)?;
-            let beta = to_f64(&args[1], name)?;
-            let shape = shape_from_args(&args[2..], name)?;
-            let shape = if shape.is_empty() { vec![1] } else { shape };
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::beta_dist(shape, alpha, beta)))))
-        }
-        "exponential" => {
-            if args.is_empty() { return Err(format!("exponential: expected at least 1 argument (lambda, dims...), got 0")); }
-            let lambda = to_f64(&args[0], name)?;
-            let shape = shape_from_args(&args[1..], name)?;
-            let shape = if shape.is_empty() { vec![1] } else { shape };
-            Ok(CrowValue::ok(Value::NumArray(Box::new(CrowTensor::exponential(shape, lambda)))))
-        }
         "shuffle" => {
             if args.len() != 1 { return Err(format!("shuffle: expected 1 argument, got {}", args.len())); }
             let t = to_tensor(&args[0], name)?;
@@ -862,17 +767,6 @@ fn emit_math_rust(name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Re
     }
     let result = match name {
         // Tensor creation
-        "zeros" => format!("CrowTensor::zeros(vec![{}])", arg_strs.iter().map(|a| format!("{} as usize", a)).collect::<Vec<_>>().join(", ")),
-        "ones" => format!("CrowTensor::ones(vec![{}])", arg_strs.iter().map(|a| format!("{} as usize", a)).collect::<Vec<_>>().join(", ")),
-        "randn" => format!("CrowTensor::randn(vec![{}])", arg_strs.iter().map(|a| format!("{} as usize", a)).collect::<Vec<_>>().join(", ")),
-        "eye" => format!("CrowTensor::eye({} as usize)", arg_strs[0]),
-        "linspace" => format!("CrowTensor::linspace({} as f64, {} as f64, {} as usize)", arg_strs[0], arg_strs[1], arg_strs[2]),
-        "arange" => format!("CrowTensor::arange({} as f64, {} as f64, {} as f64)", arg_strs[0], arg_strs[1], arg_strs[2]),
-        "full" => {
-            let shape_args: Vec<String> = arg_strs[..arg_strs.len()-1].iter().map(|a| format!("{} as usize", a)).collect();
-            format!("CrowTensor::full(vec![{}], {} as f64)", shape_args.join(", "), arg_strs.last().unwrap())
-        }
-        "diag" => format!("CrowTensor::diag(&{})", arg_strs[0]),
         "tensor" => {
             // Check if argument is a Frame type
             let is_frame = !arg_types.is_empty() && (matches!(arg_types[0], CrowType::Frame) || matches!(&arg_types[0], CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Frame)));
@@ -983,52 +877,6 @@ fn emit_math_rust_continued(name: &str, arg_strs: &[String]) -> Result<String, S
     let result = match name {
         // Random & Distributions
         "seed" => format!("crow_runtime::rng::set_seed({} as u64)", arg_strs[0]),
-        "normal" => {
-            let mean = &arg_strs[0];
-            let std = &arg_strs[1];
-            let shape_args: Vec<String> = arg_strs[2..].iter().map(|a| format!("{} as usize", a)).collect();
-            let shape = if shape_args.is_empty() { "1usize".to_string() } else { shape_args.join(", ") };
-            format!("CrowTensor::normal(vec![{}], {} as f64, {} as f64)", shape, mean, std)
-        }
-        "uniform" => {
-            let low = &arg_strs[0];
-            let high = &arg_strs[1];
-            let shape_args: Vec<String> = arg_strs[2..].iter().map(|a| format!("{} as usize", a)).collect();
-            let shape = if shape_args.is_empty() { "1usize".to_string() } else { shape_args.join(", ") };
-            format!("CrowTensor::rand_range(vec![{}], {} as f64, {} as f64)", shape, low, high)
-        }
-        "poisson" => {
-            let lambda = &arg_strs[0];
-            let shape_args: Vec<String> = arg_strs[1..].iter().map(|a| format!("{} as usize", a)).collect();
-            let shape = if shape_args.is_empty() { "1usize".to_string() } else { shape_args.join(", ") };
-            format!("CrowTensor::poisson(vec![{}], {} as f64)", shape, lambda)
-        }
-        "bernoulli" => {
-            let p = &arg_strs[0];
-            let shape_args: Vec<String> = arg_strs[1..].iter().map(|a| format!("{} as usize", a)).collect();
-            let shape = if shape_args.is_empty() { "1usize".to_string() } else { shape_args.join(", ") };
-            format!("CrowTensor::bernoulli(vec![{}], {} as f64)", shape, p)
-        }
-        "gamma_dist" => {
-            let alpha = &arg_strs[0];
-            let beta = &arg_strs[1];
-            let shape_args: Vec<String> = arg_strs[2..].iter().map(|a| format!("{} as usize", a)).collect();
-            let shape = if shape_args.is_empty() { "1usize".to_string() } else { shape_args.join(", ") };
-            format!("CrowTensor::gamma_dist(vec![{}], {} as f64, {} as f64)", shape, alpha, beta)
-        }
-        "beta_dist" => {
-            let alpha = &arg_strs[0];
-            let beta = &arg_strs[1];
-            let shape_args: Vec<String> = arg_strs[2..].iter().map(|a| format!("{} as usize", a)).collect();
-            let shape = if shape_args.is_empty() { "1usize".to_string() } else { shape_args.join(", ") };
-            format!("CrowTensor::beta_dist(vec![{}], {} as f64, {} as f64)", shape, alpha, beta)
-        }
-        "exponential" => {
-            let lambda = &arg_strs[0];
-            let shape_args: Vec<String> = arg_strs[1..].iter().map(|a| format!("{} as usize", a)).collect();
-            let shape = if shape_args.is_empty() { "1usize".to_string() } else { shape_args.join(", ") };
-            format!("CrowTensor::exponential(vec![{}], {} as f64)", shape, lambda)
-        }
         "shuffle" => format!("{}.shuffle()", arg_strs[0]),
         "choice" => format!("{}.choice({} as usize)", arg_strs[0], arg_strs[1]),
         "permutation" => format!("CrowTensor::permutation({} as usize)", arg_strs[0]),
@@ -1077,8 +925,9 @@ fn emit_math_rust_continued(name: &str, arg_strs: &[String]) -> Result<String, S
 fn math_type_of(name: &str, arg_count: usize) -> CrowType {
     match name {
         // Tensor creation → NumArray(Float)
-        "zeros" | "ones" | "eye" | "randn" | "linspace"
-        | "arange" | "full" | "diag" | "tensor" => CrowType::NumArray(Box::new(CrowType::Float)),
+        // (zeros, ones, eye, randn, linspace, arange, full and diag are rows
+        // of the builtin table, which types them: crate::table)
+        "tensor" => CrowType::NumArray(Box::new(CrowType::Float)),
         // Element-wise → NumArray(Float)
         "exp" | "ln" | "log2" | "log10" | "sqrt" | "sin" | "cos" | "abs"
         | "sign" | "floor" | "ceil" | "round" | "clip" | "mod"
@@ -1110,9 +959,8 @@ fn math_type_of(name: &str, arg_count: usize) -> CrowType {
         "svd" | "qr" | "eigen" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
         // Random & Distributions
         "seed" => CrowType::Void,
-        "normal" | "uniform" | "poisson" | "bernoulli"
-        | "gamma_dist" | "beta_dist" | "exponential"
-        | "shuffle" | "choice" | "permutation" => CrowType::NumArray(Box::new(CrowType::Float)),
+        // (the distributions are rows of the builtin table)
+        "shuffle" | "choice" | "permutation" => CrowType::NumArray(Box::new(CrowType::Float)),
         // Signal processing
         "fft" | "fft2" | "stft" => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
         "ifft" | "conv" | "conv2d" | "hamming" | "hanning"
@@ -1139,6 +987,12 @@ fn math_type_of(name: &str, arg_count: usize) -> CrowType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A math function as a program calls it: through the registry, so a
+    /// function with a row in the builtin table is its runtime function.
+    fn call_math(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
+        crate::modules::ModuleRegistry::with_stdlib().call_in("math", name, args)
+    }
     use crate::value::{CrowValue, Value};
     use crow_runtime::tensor::CrowTensor;
 

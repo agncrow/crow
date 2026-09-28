@@ -32,6 +32,7 @@ mod served;
 mod compiled_harness;
 mod served_parity;
 mod sql_types;
+mod table;
 mod token;
 mod type_infer;
 mod wireframe;

@@ -221,9 +221,9 @@ log[h]    --- '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824'
 
 | Function | Description | Example |
 |----------|-------------|---|
-| `matches[s, pattern]` | Check if string matches regex pattern (returns bool) | [Regular expressions](../by-example/regex.md) |
+| `matches[s, pattern]` | Check if string matches regex pattern (returns bool); an invalid pattern is an error value of kind `'regex'` | [Regular expressions](../by-example/regex.md) |
 | `find[s, pattern]` | The first match, as a record whose `groups` holds the whole match followed by each capture group. No match is an error value (`.ok` false, reason `no match`), as `find[arr, pred]` answers; an invalid pattern is one with kind `'regex'` | [Regular expressions](../by-example/regex.md) · [Searching with any, all, and find](../ch06-02-search-builtins.md) |
-| `sub[s, pattern, replacement]` | Replace all regex matches with replacement string | [Regular expressions](../by-example/regex.md) |
+| `sub[s, pattern, replacement]` | Replace all regex matches with replacement string; an invalid pattern is an error value of kind `'regex'` | [Regular expressions](../by-example/regex.md) |
 
 ```
 matches['hello', '[a-z]+']       --- true

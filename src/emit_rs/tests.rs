@@ -1188,25 +1188,26 @@ fn test_math_seed_transpile() {
 #[test]
 fn test_math_normal_transpile() {
     let rust = transpile("use math\nx = normal[0, 1, 3, 4]\n");
-    assert!(rust.contains("CrowTensor::normal("), "should emit CrowTensor::normal\n{}", rust);
+    // the builtin table's row: the runtime function, its sizes as a slice
+    assert!(rust.contains("crow_runtime::math::normal((0_i64) as f64, (1_i64) as f64, &[(3_i64) as i64, (4_i64) as i64]).unwrap_or_else(|e| crow_stop(2, e))"), "should call the runtime's normal\n{}", rust);
 }
 
 #[test]
 fn test_math_uniform_transpile() {
     let rust = transpile("use math\nx = uniform[2, 5, 6]\n");
-    assert!(rust.contains("CrowTensor::rand_range("), "should emit CrowTensor::rand_range\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::uniform("), "should call the runtime's uniform\n{}", rust);
 }
 
 #[test]
 fn test_math_poisson_transpile() {
     let rust = transpile("use math\nx = poisson[3.5, 4]\n");
-    assert!(rust.contains("CrowTensor::poisson("), "should emit CrowTensor::poisson\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::poisson((3.5_f64) as f64, &[(4_i64) as i64])"), "should call the runtime's poisson\n{}", rust);
 }
 
 #[test]
 fn test_math_bernoulli_transpile() {
     let rust = transpile("use math\nx = bernoulli[0.5, 8]\n");
-    assert!(rust.contains("CrowTensor::bernoulli("), "should emit CrowTensor::bernoulli\n{}", rust);
+    assert!(rust.contains("crow_runtime::math::bernoulli("), "should call the runtime's bernoulli\n{}", rust);
 }
 
 #[test]

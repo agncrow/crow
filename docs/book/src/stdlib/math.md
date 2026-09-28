@@ -156,7 +156,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | `seed[n]` | Set the program's RNG seed: every later draw, tensors and the core `rand[]` alike, is repeatable and identical in both modes. Statements run in the order written, and a loop that draws runs in order (§14), so a seeded program draws the same numbers on every run | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) |
 | `rand[d1, d2, ...]` | Uniform random in [0, 1) | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) |
 | `randn[d1, d2, ...]` | Standard normal (mean=0, std=1) | [Math: tensors](../by-example/math.md) |
-| `normal[mean, std, d1, d2, ...]` | Normal with custom mean/std | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
+| `normal[mean, std, d1, d2, ...]` | Normal with custom mean/std; a negative std stops the program | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `uniform[low, high, d1, d2, ...]` | Uniform in [low, high) | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `poisson[lambda, d1, d2, ...]` | Poisson distribution | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `bernoulli[p, d1, d2, ...]` | Bernoulli (0.0 or 1.0) | [Math: random, signal, special, and sparse](../by-example/math-more.md) |

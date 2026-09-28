@@ -405,9 +405,9 @@ impl CrowTensor {
         Self::from_vec(data, vec![n, n]).maybe_to_gpu()
     }
 
-    /// Create a diagonal matrix from a 1D tensor, or extract the diagonal of a 2D tensor.
-    #[expect(clippy::panic, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
-    pub fn diag(tensor: &CrowTensor) -> Self {
+    /// Create a diagonal matrix from a 1D tensor, or extract the diagonal of
+    /// a 2D tensor; any other rank is the reason.
+    pub fn diag(tensor: &CrowTensor) -> Result<Self, String> {
         if tensor.ndim() == 1 {
             // 1D → diagonal matrix
             let n = tensor.len();
@@ -415,7 +415,7 @@ impl CrowTensor {
             for i in 0..n {
                 data[i * n + i] = tensor.get_flat(i);
             }
-            Self::from_vec(data, vec![n, n])
+            Ok(Self::from_vec(data, vec![n, n]))
         } else if tensor.ndim() == 2 {
             // 2D → extract diagonal
             let n = tensor.shape[0].min(tensor.shape[1]);
@@ -426,9 +426,9 @@ impl CrowTensor {
                     cpu[physical]
                 })
                 .collect();
-            Self::from_vec(data, vec![n])
+            Ok(Self::from_vec(data, vec![n]))
         } else {
-            panic!("diag: expected 1D or 2D tensor, got {}D", tensor.ndim());
+            Err(format!("diag: expected a 1D or 2D tensor, got {}D", tensor.ndim()))
         }
     }
 
@@ -467,56 +467,56 @@ impl CrowTensor {
     }
 
     /// Create a tensor with Poisson-distributed random values.
-    #[expect(clippy::expect_used, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
-    pub fn poisson(shape: Vec<usize>, lambda: f64) -> Self {
+    /// (its parameters checked: the reason, never a panic)
+    pub fn poisson(shape: Vec<usize>, lambda: f64) -> Result<Self, String> {
         use rand_distr::Poisson;
-        let dist: Poisson<f64> = Poisson::new(lambda).expect("poisson: lambda must be > 0");
+        let dist: Poisson<f64> = Poisson::new(lambda).map_err(|_| "poisson: lambda must be > 0".to_string())?;
         let n = Self::numel(&shape);
         let data = rng::gen_random_vec(n, |r| {
             let v: f64 = dist.sample(r);
             v
         });
-        Self::from_vec(data, shape).maybe_to_gpu()
+        Ok(Self::from_vec(data, shape).maybe_to_gpu())
     }
 
     /// Create a tensor with Bernoulli-distributed random values (0.0 or 1.0).
-    #[expect(clippy::expect_used, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
-    pub fn bernoulli(shape: Vec<usize>, p: f64) -> Self {
+    /// (its parameters checked: the reason, never a panic)
+    pub fn bernoulli(shape: Vec<usize>, p: f64) -> Result<Self, String> {
         use rand_distr::Bernoulli;
-        let dist = Bernoulli::new(p).expect("bernoulli: p must be in [0, 1]");
+        let dist = Bernoulli::new(p).map_err(|_| "bernoulli: p must be in [0, 1]".to_string())?;
         let n = Self::numel(&shape);
         let data = rng::gen_random_vec(n, |r| if dist.sample(r) { 1.0 } else { 0.0 });
-        Self::from_vec(data, shape).maybe_to_gpu()
+        Ok(Self::from_vec(data, shape).maybe_to_gpu())
     }
 
     /// Create a tensor with Gamma-distributed random values.
-    #[expect(clippy::expect_used, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
-    pub fn gamma_dist(shape: Vec<usize>, alpha: f64, beta: f64) -> Self {
+    /// (its parameters checked: the reason, never a panic)
+    pub fn gamma_dist(shape: Vec<usize>, alpha: f64, beta: f64) -> Result<Self, String> {
         use rand_distr::Gamma;
-        let dist: Gamma<f64> = Gamma::new(alpha, beta).expect("gamma_dist: alpha and beta must be > 0");
+        let dist: Gamma<f64> = Gamma::new(alpha, beta).map_err(|_| "gamma_dist: alpha and beta must be > 0".to_string())?;
         let n = Self::numel(&shape);
         let data = rng::gen_random_vec(n, |r| dist.sample(r));
-        Self::from_vec(data, shape).maybe_to_gpu()
+        Ok(Self::from_vec(data, shape).maybe_to_gpu())
     }
 
     /// Create a tensor with Beta-distributed random values.
-    #[expect(clippy::expect_used, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
-    pub fn beta_dist(shape: Vec<usize>, alpha: f64, beta: f64) -> Self {
+    /// (its parameters checked: the reason, never a panic)
+    pub fn beta_dist(shape: Vec<usize>, alpha: f64, beta: f64) -> Result<Self, String> {
         use rand_distr::Beta;
-        let dist: Beta<f64> = Beta::new(alpha, beta).expect("beta_dist: alpha and beta must be > 0");
+        let dist: Beta<f64> = Beta::new(alpha, beta).map_err(|_| "beta_dist: alpha and beta must be > 0".to_string())?;
         let n = Self::numel(&shape);
         let data = rng::gen_random_vec(n, |r| dist.sample(r));
-        Self::from_vec(data, shape).maybe_to_gpu()
+        Ok(Self::from_vec(data, shape).maybe_to_gpu())
     }
 
     /// Create a tensor with Exponential-distributed random values.
-    #[expect(clippy::expect_used, reason = "a user's argument: returns its reason when the math builtins move to the table (docs/bug-classes.md §4)")]
-    pub fn exponential(shape: Vec<usize>, lambda: f64) -> Self {
+    /// (its parameters checked: the reason, never a panic)
+    pub fn exponential(shape: Vec<usize>, lambda: f64) -> Result<Self, String> {
         use rand_distr::Exp;
-        let dist: Exp<f64> = Exp::new(lambda).expect("exponential: lambda must be > 0");
+        let dist: Exp<f64> = Exp::new(lambda).map_err(|_| "exponential: lambda must be 0 or more".to_string())?;
         let n = Self::numel(&shape);
         let data = rng::gen_random_vec(n, |r| dist.sample(r));
-        Self::from_vec(data, shape).maybe_to_gpu()
+        Ok(Self::from_vec(data, shape).maybe_to_gpu())
     }
 
     /// Shuffle tensor elements randomly (returns new tensor).
@@ -1631,7 +1631,7 @@ pub(crate) mod tests {
     #[test]
     fn test_diag_from_1d() {
         let v = CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
-        let d = CrowTensor::diag(&v);
+        let d = CrowTensor::diag(&v).expect("a vector has a diagonal matrix");
         assert_eq!(d.shape(), &[3, 3]);
         assert_eq!(
             d.to_vec(),
@@ -1642,7 +1642,7 @@ pub(crate) mod tests {
     #[test]
     fn test_diag_from_2d() {
         let m = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], vec![3, 3]);
-        let d = CrowTensor::diag(&m);
+        let d = CrowTensor::diag(&m).expect("a matrix has a diagonal");
         assert_eq!(d.shape(), &[3]);
         assert_eq!(d.to_vec(), vec![1.0, 5.0, 9.0]);
     }
@@ -2216,7 +2216,7 @@ pub(crate) mod tests {
     #[test]
     fn test_poisson_shape() {
         let _rng = seeded(7);
-        let t = CrowTensor::poisson(vec![10], 3.5);
+        let t = CrowTensor::poisson(vec![10], 3.5).expect("its parameters are good");
         assert_eq!(t.shape, vec![10]);
         // All values should be non-negative integers
         for v in t.to_vec() {
@@ -2228,7 +2228,7 @@ pub(crate) mod tests {
     #[test]
     fn test_bernoulli_values() {
         let _rng = seeded(123);
-        let t = CrowTensor::bernoulli(vec![20], 0.5);
+        let t = CrowTensor::bernoulli(vec![20], 0.5).expect("its parameters are good");
         assert_eq!(t.shape, vec![20]);
         for v in t.to_vec() {
             assert!(v == 0.0 || v == 1.0, "expected 0.0 or 1.0, got {}", v);
@@ -2300,7 +2300,7 @@ pub(crate) mod tests {
     #[test]
     fn test_gamma_dist_shape_and_positive() {
         let _rng = seeded(42);
-        let t = CrowTensor::gamma_dist(vec![100], 2.0, 1.0);
+        let t = CrowTensor::gamma_dist(vec![100], 2.0, 1.0).expect("its parameters are good");
         assert_eq!(t.shape, vec![100]);
         // Gamma(alpha, beta) values should all be positive
         assert!(t.to_vec().iter().all(|&x| x > 0.0));
@@ -2312,7 +2312,7 @@ pub(crate) mod tests {
     #[test]
     fn test_beta_dist_shape_and_range() {
         let _rng = seeded(42);
-        let t = CrowTensor::beta_dist(vec![100], 2.0, 5.0);
+        let t = CrowTensor::beta_dist(vec![100], 2.0, 5.0).expect("its parameters are good");
         assert_eq!(t.shape, vec![100]);
         // Beta values should be in (0, 1)
         assert!(t.to_vec().iter().all(|&x| x > 0.0 && x < 1.0));
@@ -2324,7 +2324,7 @@ pub(crate) mod tests {
     #[test]
     fn test_exponential_shape_and_positive() {
         let _rng = seeded(42);
-        let t = CrowTensor::exponential(vec![100], 1.5);
+        let t = CrowTensor::exponential(vec![100], 1.5).expect("its parameters are good");
         assert_eq!(t.shape, vec![100]);
         // Exponential values should all be positive
         assert!(t.to_vec().iter().all(|&x| x > 0.0));
@@ -2334,7 +2334,7 @@ pub(crate) mod tests {
     #[test]
     fn test_exponential_2d() {
         let _rng = seeded(42);
-        let t = CrowTensor::exponential(vec![3, 4], 1.0);
+        let t = CrowTensor::exponential(vec![3, 4], 1.0).expect("its parameters are good");
         assert_eq!(t.shape, vec![3, 4]);
         assert_eq!(t.to_vec().len(), 12);
         crate::rng::clear_seed();

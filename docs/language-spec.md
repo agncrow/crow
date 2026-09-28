@@ -1067,6 +1067,7 @@ The kinds the language itself produces — branch on `.kind` when a category mat
 | `'env'` | `env[name]` when the variable is not set |
 | `'shell'` | `shell[cmd]` when the command cannot be started (a non-zero exit is not an error — read `.status`) |
 | `'time'` | `moment`, `parse_time`, `calendar`, `fmt[t, time =]` |
+| `'regex'` | `matches`, `find`, `sub` with a pattern that is not one |
 | `'no_capture'` | `captured[x]` on a value that was computed, not read |
 | `'conflict'` | a write refused by a database constraint (see `crow-check.md`) |
 | `''` | `error[reason]` with no kind; `find` with no match |
@@ -1367,9 +1368,9 @@ log[h]    --- '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824'
 
 | Function | Description |
 |----------|-------------|
-| `matches[s, pattern]` | Check if string matches regex pattern (returns bool) |
+| `matches[s, pattern]` | Check if string matches regex pattern (returns bool); an invalid pattern is an error value of kind `'regex'` |
 | `find[s, pattern]` | The first match, as a record whose `groups` holds the whole match followed by each capture group. No match is an error value (`.ok` false, reason `no match`), as `find[arr, pred]` answers; an invalid pattern is one with kind `'regex'` |
-| `sub[s, pattern, replacement]` | Replace all regex matches with replacement string |
+| `sub[s, pattern, replacement]` | Replace all regex matches with replacement string; an invalid pattern is an error value of kind `'regex'` |
 
 ```
 matches['hello', '[a-z]+']       --- true
@@ -1768,7 +1769,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | `seed[n]` | Set the program's RNG seed: every later draw, tensors and the core `rand[]` alike, is repeatable and identical in both modes. Statements run in the order written, and a loop that draws runs in order (§14), so a seeded program draws the same numbers on every run |
 | `rand[d1, d2, ...]` | Uniform random in [0, 1) |
 | `randn[d1, d2, ...]` | Standard normal (mean=0, std=1) |
-| `normal[mean, std, d1, d2, ...]` | Normal with custom mean/std |
+| `normal[mean, std, d1, d2, ...]` | Normal with custom mean/std; a negative std stops the program |
 | `uniform[low, high, d1, d2, ...]` | Uniform in [low, high) |
 | `poisson[lambda, d1, d2, ...]` | Poisson distribution |
 | `bernoulli[p, d1, d2, ...]` | Bernoulli (0.0 or 1.0) |

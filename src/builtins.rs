@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 /// A state-free builtin by name, or `None` when the name is one the
 /// walker itself must handle.
 /// The names answered here.
-pub const HANDLED: &[&str] = &["log", "type", "map", "range", "abs", "sqrt", "floor", "ceil", "round", "min", "max", "split", "trim", "replace", "upper", "lower", "join", "starts", "ends", "repeat", "pad", "fmt", "int", "float", "str", "len", "contains", "slice", "keys", "values", "has", "push", "pop", "sort", "reverse", "append", "concat", "set", "del", "args", "input", "rand", "time", "sleep", "env", "exit", "read", "write", "exists", "mkdir", "ls", "rm", "mv", "cp", "json", "encode", "shell", "hash", "matches", "sub", "now", "moment", "calendar", "parse_time", "assert", "error"];
+pub const HANDLED: &[&str] = &["log", "type", "map", "range", "abs", "sqrt", "floor", "ceil", "round", "min", "max", "split", "trim", "replace", "upper", "lower", "join", "starts", "ends", "pad", "fmt", "int", "float", "str", "len", "contains", "slice", "keys", "values", "has", "push", "pop", "sort", "reverse", "append", "concat", "set", "del", "args", "input", "rand", "time", "sleep", "env", "exit", "read", "write", "exists", "mkdir", "ls", "rm", "mv", "cp", "json", "encode", "shell", "hash", "now", "assert", "error"];
 
 /// A state-free builtin by name, or `None` when the name is one the
 /// walker itself must handle.
@@ -261,13 +261,6 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
             match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
                 (Value::Str(s), Value::Str(suffix)) => Ok(CrowValue::ok(Value::Bool(crow_runtime::text::ends(s, suffix)))),
                 _ => Err("ends_with[] requires two strings".into()),
-            }
-        }
-        "repeat" => {
-            if args.len() != 2 { return Err("repeat[] takes exactly 2 arguments".into()); }
-            match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                (Value::Str(s), Value::Int(n)) => Ok(CrowValue::ok(Value::Str(crow_runtime::text::repeat(s, *n)?))),
-                _ => Err("repeat[] requires a string and an int".into()),
             }
         }
         "pad" => {
@@ -830,78 +823,10 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                 Err(e) => Ok(CrowValue::error_with_kind(&e, "hash", trace)),
             }
         }
-        "matches" => {
-            if args.len() != 2 { return Err("matches[] takes exactly 2 arguments (string, pattern)".into()); }
-            let s = match args[0].unwrap_or_propagate()? {
-                Value::Str(s) => s.clone(),
-                _ => return Err("matches[] first argument must be a string".into()),
-            };
-            let pattern = match args[1].unwrap_or_propagate()? {
-                Value::Str(p) => p.clone(),
-                _ => return Err("matches[] second argument must be a string pattern".into()),
-            };
-            match crow_runtime::text::matches(&s, &pattern) {
-                Ok(b) => Ok(CrowValue::ok(Value::Bool(b))),
-                Err(e) => Ok(CrowValue::error_with_kind(&e, "regex", trace)),
-            }
-        }
-        "sub" => {
-            if args.len() != 3 { return Err("sub[] takes exactly 3 arguments (string, pattern, replacement)".into()); }
-            let s = match args[0].unwrap_or_propagate()? {
-                Value::Str(s) => s.clone(),
-                _ => return Err("sub[] first argument must be a string".into()),
-            };
-            let pattern = match args[1].unwrap_or_propagate()? {
-                Value::Str(p) => p.clone(),
-                _ => return Err("sub[] second argument must be a string pattern".into()),
-            };
-            let replacement = match args[2].unwrap_or_propagate()? {
-                Value::Str(r) => r.clone(),
-                _ => return Err("sub[] third argument must be a string replacement".into()),
-            };
-            match crow_runtime::text::sub(&s, &pattern, &replacement) {
-                Ok(out) => Ok(CrowValue::ok(Value::Str(out))),
-                Err(e) => Ok(CrowValue::error_with_kind(&e, "regex", trace)),
-            }
-        }
         // --- Date/time builtins ---
         "now" => {
             if !args.is_empty() { return Err("now[] takes no arguments".into()); }
             Ok(CrowValue::ok(Value::Float(crow_runtime::moments::now())))
-        }
-        "moment" => {
-            if args.len() != 7 { return Err("moment[] takes year, month, day + named hour, minute, second, tz".into()); }
-            let geti = |i: usize| -> Result<i64, String> {
-                match &args[i].value { Value::Int(n) => Ok(*n), Value::Float(f) => Ok(*f as i64), _ => Err("moment[]: components must be numbers".into()) }
-            };
-            let second = match &args[5].value { Value::Int(n) => *n as f64, Value::Float(f) => *f, _ => return Err("moment[]: second must be a number".into()) };
-            let tz = match &args[6].value { Value::Str(s) => s.clone(), _ => return Err("moment[]: tz must be a string".into()) };
-            match crow_runtime::moments::moment(geti(0)?, geti(1)?, geti(2)?, geti(3)?, geti(4)?, second, &tz) {
-                Ok(t) => Ok(CrowValue::ok(Value::Float(t))),
-                Err(e) => Ok(CrowValue::error_with_kind(&e, "time", trace)),
-            }
-        }
-        "calendar" => {
-            if args.len() != 2 { return Err("calendar[] takes a moment + named tz".into()); }
-            let t = match &args[0].value { Value::Int(n) => *n as f64, Value::Float(f) => *f, _ => return Err("calendar[]: takes a moment (a number)".into()) };
-            let tz = match &args[1].value { Value::Str(s) => s.clone(), _ => return Err("calendar[]: tz must be a string".into()) };
-            match crow_runtime::moments::calendar(t, &tz) {
-                Ok(fields) => {
-                    let mut map = std::collections::BTreeMap::new();
-                    for (k, v) in fields { map.insert(k.to_string(), CrowValue::ok(Value::Int(v))); }
-                    Ok(CrowValue::ok(Value::Map(map)))
-                }
-                Err(e) => Ok(CrowValue::error_with_kind(&e, "time", trace)),
-            }
-        }
-        "parse_time" => {
-            if args.len() != 2 { return Err("parse_time[] takes a string + named tz".into()); }
-            let text = match &args[0].value { Value::Str(s) => s.clone(), _ => return Err("parse_time[]: takes a string".into()) };
-            let tz = match &args[1].value { Value::Str(s) => s.clone(), _ => return Err("parse_time[]: tz must be a string".into()) };
-            match crow_runtime::moments::parse_time(&text, &tz) {
-                Ok(t) => Ok(CrowValue::ok(Value::Float(t))),
-                Err(e) => Ok(CrowValue::error_with_kind(&e, "time", trace)),
-            }
         }
         "assert" => {
             if args.is_empty() || args.len() > 2 {

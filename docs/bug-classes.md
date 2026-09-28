@@ -265,6 +265,41 @@ builtins. Each batch is gated by parity (one program per batch pinning
 the edges both modes must now share), the book, the served pages and
 the oracle.
 
+**Built** (`src/table.rs`):
+
+- The row type, the reading and printing of each kind, and a macro that
+  makes the interpreter's call from the same tokens the emitter prints.
+- A size kind for a rest of arguments (`zeros[2, 3]`, `poisson[1.5, 4]`).
+- The module registry consults the table before a module's own arms, so
+  a module function with a row is its runtime function for the
+  interpreter, the emitter and inference alike.
+- The drift test: every core builtin is a row, has a form of its own
+  (`OWN_FORM`), or is still to move (`TO_MOVE`, which only shrinks).
+
+**Batch 1**: `moment`, `calendar`, `parse_time`, `repeat`, `matches` and
+`sub`, with parity 105.
+
+- `calendar` of a zone that does not exist is an error value of kind
+  `'time'`, as the spec lists it. The compiled program printed to stderr
+  and answered an empty map, and its type said it could not fail.
+- An invalid pattern given to `matches` or `sub` is an error value of kind
+  `'regex'`, as `find`'s is. The interpreter answered one where the
+  compiled program stopped. The pattern's message is one line now.
+- A compiled time error carried an empty trace, where the interpreter's
+  names its place. Both name it now.
+
+**Batch 2**: the math constructors and distributions (`zeros`, `ones`,
+`randn`, `full`, `eye`, `linspace`, `arange`, `diag`, `normal`,
+`uniform`, `poisson`, `bernoulli`, `gamma_dist`, `beta_dist`,
+`exponential`), in `crow_runtime::math`, with parity 106.
+
+- A negative size stops both modes with one reason. The compiled program
+  had cast it to a huge `usize`.
+- A distribution's parameter is checked once, where both modes panicked.
+- `diag` of a rank above two answers its reason.
+- A negative `std` for `normal` stops the program. Both modes had
+  flipped the samples' sign.
+
 ## Open questions (Vijay)
 
 1. **A handler passes a failed value to a helper.** By the spec's

@@ -65,6 +65,13 @@ impl TypeContext {
             }
             return sig.return_type.clone();
         }
+        // a builtin with a row is typed by its row, the one place that says
+        // what it answers and whether it can fail (crate::table)
+        if !self.registry.has_function(name) {
+            if let Some(row) = crate::table::core(name) {
+                return row.crow_type();
+            }
+        }
         // Module function dispatch (overlapping builtins: check arg type)
         let is_overlapping = matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max");
         if is_overlapping && self.registry.has_function(name) {
@@ -154,7 +161,7 @@ impl TypeContext {
                 CrowType::Int
             }
             // String builtins
-            "trim" | "upper" | "lower" | "replace" | "join" | "repeat" | "fmt" => CrowType::Str,
+            "trim" | "upper" | "lower" | "replace" | "join" | "fmt" => CrowType::Str,
             // an algorithm it does not know, or a stored hash it cannot read
             "hash" => CrowType::Result(Box::new(CrowType::Str)),
             "split" => CrowType::Array(Box::new(CrowType::Str)),
@@ -295,9 +302,7 @@ impl TypeContext {
             // shell/env are readers: error values on failure, stamped with a
             // capture moment on success (same shape as read[])
             "shell" => CrowType::Result(Box::new(CrowType::Struct("CrowShell".to_string()))),
-            "calendar" => CrowType::Map(Box::new(CrowType::Int)),
             // Regex + search builtins
-            "matches" => CrowType::Bool,
             "any" | "all" => CrowType::Bool,
             "find" => {
                 // Dispatch: find[str, pattern] → Result(record with the groups);
@@ -312,7 +317,6 @@ impl TypeContext {
                     _ => CrowType::Result(Box::new(CrowType::Struct("CrowFindResult".to_string()))),
                 }
             }
-            "sub" => CrowType::Str,
             // CLI / IO
             "args" => CrowType::Array(Box::new(CrowType::Str)),
             "input" => CrowType::Result(Box::new(CrowType::Str)),
@@ -335,7 +339,6 @@ impl TypeContext {
             "now" => CrowType::Float,
             "captured" => CrowType::Result(Box::new(CrowType::Float)),
             "chart" => CrowType::Str,
-            "moment" | "parse_time" => CrowType::Result(Box::new(CrowType::Float)),
             "sleep" => CrowType::Int,
             // Background work: later[] is fire-and-forget (Void — ask
             // running[] for in-flight status)
