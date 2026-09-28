@@ -318,12 +318,24 @@ pub fn describe_with_tables(url: &str, sql: &str, ddl: &[String]) -> Result<Vec<
         if ddl.is_empty() {
             return Err(format!("{} does not exist yet", url));
         }
-        return describe_on(&format!("{}#program", url), "sqlite://:memory:", ddl, sql);
+        return describe_on(&program_key(url, ddl), "sqlite://:memory:", ddl, sql);
     }
     match describe_on(url, url, &[], sql) {
-        Err(e) if sqlite_path.is_some() && !ddl.is_empty() && e.contains("no such table") => describe_on(&format!("{}#program", url), "sqlite://:memory:", ddl, sql),
+        Err(e) if sqlite_path.is_some() && !ddl.is_empty() && e.contains("no such table") => describe_on(&program_key(url, ddl), "sqlite://:memory:", ddl, sql),
         other => other,
     }
+}
+
+/// The scratch database a program's own CREATE statements build: one per
+/// set of statements, so programs lowered in one process — the test suite,
+/// the language server — never meet each other's tables. (Keyed by the URL
+/// alone, every `sqlite://:memory:` program shared the first one's tables,
+/// and a later program's cells went untyped.)
+fn program_key(url: &str, ddl: &[String]) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    ddl.hash(&mut h);
+    format!("{}#program#{:016x}", url, h.finish())
 }
 
 /// Describe on the build's connection for `key` (opened on `url`, built from

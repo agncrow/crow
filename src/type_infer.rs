@@ -1079,6 +1079,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Two programs in one process, each making its own in-memory tables of
+    /// one name, are described from their own tables (the second had been
+    /// described from the first's, and its cells went untyped: a clean
+    /// clone's test suite refused parity 92)
+    #[test]
+    fn each_program_is_described_from_its_own_tables() {
+        let url = "sqlite://:memory:";
+        let a = describe_with_tables(url, "SELECT v FROM t_own_tables", &["CREATE TABLE t_own_tables (v INTEGER NOT NULL)".to_string()]).unwrap();
+        let b = describe_with_tables(url, "SELECT v, w FROM t_own_tables", &["CREATE TABLE t_own_tables (v TEXT NOT NULL, w REAL NOT NULL)".to_string()]).unwrap();
+        assert_eq!(a, vec![("v".to_string(), "int".to_string())]);
+        assert_eq!(b, vec![("v".to_string(), "str".to_string()), ("w".to_string(), "float".to_string())]);
+    }
+
     /// A new app makes its own SQLite tables when it starts: before its
     /// database exists, its first build types the columns from its own
     /// CREATE statements (a first build read them as text, a second as
