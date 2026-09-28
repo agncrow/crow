@@ -484,7 +484,7 @@ impl<'p> Verifier<'p> {
         }
         // a view renders a failed argument as its text; a call whose value
         // is nothing drops the error it would hand on (a helper called for
-        // what it writes: docs/bug-classes.md, open question 1)
+        // what it writes: docs/bug-classes.md, decision 1)
         let renders = f.kind == FnKind::View || (propagates && *ty == Ty::Unit);
         for (i, ((p, pt), at)) in f.params.iter().zip(args).enumerate() {
             if at.is_result() && !pt.is_result() && *pt != Ty::Unknown {
@@ -577,17 +577,22 @@ pub fn fits(v: &Ty, slot: &Ty) -> bool {
 fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
     use crate::table::Kind;
     let items = |t: &Ty, ok: &dyn std::ops::Fn(&Ty) -> bool| matches!(t, Ty::List(e) if **e == Ty::Unknown || ok(e));
+    let cell = |t: &Ty| matches!(t, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup);
     *t == Ty::Unknown
-        || match k {
-            Kind::Int | Kind::Float | Kind::Sizes => matches!(t, Ty::Int | Ty::Float),
+        || match k.each() {
+            Kind::Int | Kind::Float => matches!(t, Ty::Int | Ty::Float),
             Kind::Bool => *t == Ty::Bool,
             Kind::Str => matches!(t, Ty::Str | Ty::Markup),
-            Kind::Tensor | Kind::Groups => matches!(t, Ty::Tensor(_)) || items(t, &|_| false),
+            Kind::Tensor => matches!(t, Ty::Tensor(_)) || items(t, &|_| false),
             Kind::Tensors => items(t, &|e| matches!(e, Ty::Tensor(_))),
             Kind::Strs => items(t, &|e| matches!(e, Ty::Str | Ty::Markup)),
+            Kind::Bools => items(t, &|e| *e == Ty::Bool),
             Kind::Sparse => matches!(t, Ty::Handle(h) if h == "sparse"),
             Kind::Frame => matches!(t, Ty::Frame(_)),
-            Kind::IntMap | Kind::FloatMap | Kind::Unit => true,
+            Kind::Cell => cell(t),
+            // a column's values: a list of cells, a tensor, a column, a cell
+            Kind::Cells => cell(t) || matches!(t, Ty::Tensor(_) | Ty::Column(_)) || items(t, &|e| cell(e)),
+            _ => true,
         }
 }
 

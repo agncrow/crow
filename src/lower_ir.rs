@@ -2266,6 +2266,12 @@ impl<'a> Lowerer<'a> {
                 }
                 return Ok(Expr::Effect { name: format!("{}.{}", m, name), args: lowered, ty, answered: true, propagates });
             }
+            // a count no row of the name takes is refused before either
+            // mode runs (the interpreter stopped, the compiled program did
+            // not build)
+            if let Some(e) = crate::table::miscounted(&m, &name, lowered.len()) {
+                self.refuse(e);
+            }
             let lowered = self.row_arguments(&m, &name, lowered);
             return Ok(Expr::Call { target: Target::Module(m, name), args: lowered, ty, propagates });
         }
@@ -2338,8 +2344,18 @@ impl<'a> Lowerer<'a> {
         }
         // a bare name a loaded module provides resolves at run time, by the
         // registry's own rule, as the interpreter resolves it
-        let lowered = match self.ctx.registry.module_name_for(&name) {
-            Some(m) => self.row_arguments(&m.to_string(), &name, lowered),
+        let lowered = match self.ctx.registry.module_name_for(&name).map(str::to_string) {
+            Some(m) => {
+                // a name only a module answers — not the core's, not an
+                // element's — reaches it, so a count none of its rows take
+                // is refused as a qualified call's is
+                if !CORE_RESERVED.contains(&name.as_str()) && !crate::lower::UI_ELEMENTS.contains(&name.as_str()) {
+                    if let Some(e) = crate::table::miscounted(&m, &name, lowered.len()) {
+                        self.refuse(e);
+                    }
+                }
+                self.row_arguments(&m, &name, lowered)
+            }
             None => lowered,
         };
         Ok(Expr::Call { target: Target::Runtime(name), args: lowered, ty, propagates })
@@ -2351,14 +2367,13 @@ impl<'a> Lowerer<'a> {
     /// meet, the same way in both modes — compiled, a list did not build
     /// and a column's missing cells were read as 0, where the interpreter
     /// read the list and stopped at the missing cell. A name the core also
-    /// answers (`max`, `abs`) picks its builtin by the values at run time,
-    /// and an argument that can fail is handed on as its error, so both
-    /// are left as they are.
+    /// answers (`max`, `abs`) picks its builtin by the values at run time —
+    /// a list goes to the core's, a tensor to the module's — so a list
+    /// handed to it is left as it is, and a column, numbers either way, is
+    /// converted. An argument that can fail is handed on as its error.
     fn row_arguments(&self, module: &str, name: &str, lowered: Vec<Expr>) -> Vec<Expr> {
         use crate::table::{self, Arg, Kind};
-        if CORE_RESERVED.contains(&name) {
-            return lowered;
-        }
+        let core = CORE_RESERVED.contains(&name);
         let args: Vec<Arg> = lowered.iter().map(|x| Arg::of_type(&read(x))).collect();
         let Some(kinds) = table::module(module, name, &args).and_then(|row| table::kinds_of(row.params, lowered.len())) else {
             return lowered;
@@ -2369,7 +2384,7 @@ impl<'a> Lowerer<'a> {
             .map(|(x, k)| {
                 let numbers = match x.ty() {
                     _ if matches!(x, Expr::Convert { how: Convert::Unwrap, .. }) => false,
-                    Ty::List(e) => *e != Ty::Unknown && !e.is_result(),
+                    Ty::List(e) => !core && *e != Ty::Unknown && !e.is_result(),
                     Ty::Column(_) => true,
                     _ => false,
                 };

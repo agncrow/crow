@@ -151,8 +151,8 @@ The rest were bugs, each fixed with a test:
   already did for `concat`.
 - **A view calling a function that assigns a fact.** The interpreter
   wrote the fact mid-render, and the compiled program assigned a variable
-  it never declared and did not build. It is refused in both modes (open
-  question 2).
+  it never declared and did not build. It is refused in both modes
+  (decision 2).
 
 The corpus has no findings now.
 
@@ -374,24 +374,77 @@ modes apart on six and both wrong on the other two:
   c]`) and a frame answered. A count no row of a name takes names every
   count the name takes (`rsi[] takes 2 or 4 arguments, got 3`).
 
-## Open questions (Vijay)
+**Batch 8**: `frame`, with parity 112. Every frame function but `load`
+and `save`, which read and write files, is a row, in
+`crow_runtime::frames` over the frame kernels. Probes of fourteen calls
+found twelve apart or wrong in both modes:
+
+- A column the frame lacks (`select`, `sort`, `rename`, `join`), a mask
+  of another length (`filter`) and frames whose columns differ (`stack`)
+  were error values interpreted, which the type (a frame) said could not
+  happen, and stops compiled, with the function named twice. They stop
+  both modes now, as `df.col` of a missing column does (spec: Design
+  Note, a frame operation's misuse stops the program).
+- An aggregation `group` does not know panicked compiled with no line
+  (`invalid agg`), as `datetime` of text that is no time did (`invalid
+  datetime`), where the interpreter stopped and answered an error value.
+  The first stops both modes; `datetime` and `tz` answer an error value
+  of kind `'time'`, as `parse_time` does, typed as able to fail.
+- `tz` read an offset by two rules: `'+5:30'` was refused interpreted and
+  taken compiled. `'+HH:MM'` is the one form.
+- `head[df, 1.5]` was refused interpreted and one row compiled; it is one
+  row in both, as every row reads an int. `head[df, -1]` was the whole
+  frame in both; it stops.
+- `unique[df.name]` was refused interpreted and `[0]` compiled. A count
+  no row of a module function takes is refused before the program runs,
+  for a qualified call and for a name only a module answers.
+- A join type the kernel did not know (`'lefty'`) was an inner join. It
+  stops, naming the four.
+- A column copied with `with` lost its missing cells in both modes: the
+  cells became `0`, `NaN` or `false`. It keeps them (`with_valid`).
+- `fill`'s value was written as text by each mode's own display and parsed
+  back; it is a typed cell of the column's kind now.
+- The emitter turned every column handed to a module function into a
+  tensor, its missing cells `0`. The lowering converts a column where a
+  row takes a tensor, including for a name the core shares with math
+  (`max[df.age]`), and hands `with` the column itself.
+- Kinds for a mask, a cell, a column's values and a rest of lists of text.
+  A list of bools had been read as a list of numbers when a row was
+  chosen.
+
+Left: a column whose every cell is missing reads as text when the
+interpreter copies it (it has no cell to read the kind from); `save`
+fails as a value interpreted and stops compiled (the effects batch).
+
+## Decisions (Vijay, 2026-09-28)
+
+The questions the work raised, each decided as recommended.
 
 1. **A handler passes a failed value to a helper.** By the spec's
    auto-propagation, the helper does not run and the call's value is the
    error. A helper called for what it writes has its value dropped, so the
-   error vanishes and the handler commits its other writes. finch's
+   error vanished and the handler committed its other writes: finch's
    `start_session` calls `clock.begin[start, finish - start, open_at]`,
-   where `open_at` can fail: if it does, the session starts without its
-   clock. An effect given a failed argument stops the handler
-   (`effect_refused`). Should a helper call? The verifier accepts it today.
+   where `open_at` can fail, and the session would start without its
+   clock. **Decided:** a helper call whose value is dropped, handed a
+   failed value, stops the handler with the error's reason, as an effect
+   given a failed argument does (`effect_refused`): nothing the handler
+   did lands, and the reason is the session's notice.
 2. **A function that assigns a fact's name, called from a view.** The spec
    says "ordinary `fn` declarations are fully isolated even under
    `use ui`" (the assignment is a local), and also "a function a handler
    calls that assigns a module-level variable is a handler too". The
    lowering classes any function assigning a fact as a helper, which
-   writes it, and inference agreed. The program is refused now. The other
-   reading, a local, would be a small change if preferred.
+   writes it. **Decided:** refused, in both modes, as now: a render reads
+   state and never writes it.
 3. **Int division.** The spec said `3 / 2` is floor division, but both
    modes have always rounded toward zero (`-7 / 2` is `-3`, as in Rust, C
-   and Go; Python floors to `-4`). The spec now says what the language
-   does.
+   and Go; Python floors to `-4`). **Decided:** toward zero, as the spec
+   now says.
+4. **A frame operation's misuse.** The spec's table of error kinds listed
+   `filter`, `sort`, `group` and `join` as failing with error values of
+   kind `'frame'`, which the interpreter answered; their type said they
+   could not fail and the compiled program stopped. **Decided:** a misuse
+   stops the program, as `df.col` of a missing column does (spec: Design
+   Note, a frame operation's misuse stops the program); `load` and
+   `with`'s values stay error values.

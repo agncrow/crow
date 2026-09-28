@@ -85,11 +85,21 @@ impl CrowFrame {
     /// empty, in which case the column sets the row count.
     pub fn with_column(&self, name: &str, data: Column) -> Result<CrowFrame, String> {
         let n = data.len();
+        self.with_valid(name, data, vec![true; n])
+    }
+
+    /// `with_column` with each row's presence given: a column copied from
+    /// another frame keeps its missing cells.
+    pub fn with_valid(&self, name: &str, data: Column, valid: Vec<bool>) -> Result<CrowFrame, String> {
+        let n = data.len();
         if !self.columns.is_empty() && n != self.nrows() {
             return Err(format!("with: column '{}' has {} values but the frame has {} rows", name, n, self.nrows()));
         }
+        if valid.len() != n {
+            return Err(format!("with: column '{}' has {} values but {} rows of presence", name, n, valid.len()));
+        }
         let mut out = self.clone();
-        let validity = Arc::new(vec![true; n]);
+        let validity = Arc::new(valid);
         if let Some(i) = out.columns.iter().position(|c| c == name) {
             out.data[i] = Arc::new(data);
             out.validity[i] = validity;

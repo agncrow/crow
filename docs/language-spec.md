@@ -1062,11 +1062,11 @@ The kinds the language itself produces — branch on `.kind` when a category mat
 | `'parse'` | `int[]`, `float[]`, `json[]` |
 | `'io'` | `read`, `write`, `mkdir`, `ls`, `rm`, `mv`, `cp`, `input`, `csv`, `lines` |
 | `'db'` | `connect`, `query`, `exec`, `insert`, `transact`, `migrate` |
-| `'frame'` | frame operations (`load`, `filter`, `sort`, `group`, `join`, …) |
+| `'frame'` | `load`, and `with` given values of another length than the frame's rows |
 | `'load'` | `math.load` |
 | `'env'` | `env[name]` when the variable is not set |
 | `'shell'` | `shell[cmd]` when the command cannot be started (a non-zero exit is not an error — read `.status`) |
-| `'time'` | `moment`, `parse_time`, `calendar`, `fmt[t, time =]` |
+| `'time'` | `moment`, `parse_time`, `calendar`, `fmt[t, time =]`, and `use frame`'s `datetime` and `tz` |
 | `'regex'` | `matches`, `find`, `sub` with a pattern that is not one |
 | `'no_capture'` | `captured[x]` on a value that was computed, not read |
 | `'conflict'` | a write refused by a database constraint (see `crow-check.md`) |
@@ -2133,10 +2133,14 @@ Import with `use frame`. Column-oriented DataFrames for tabular data. See `docs/
 | `unique[frame, col]` | Unique values of a column: `unique[df, 'symbol']` |
 | `rename[frame, old, new]` | Rename a column: `rename[df, 'salary', 'pay']` |
 | `stats[frame]` | Summary statistics |
-| `datetime[s]` | Parse ISO 8601 datetime |
-| `tz[d, offset]` | Convert timezone: `tz[d, '+09:00']` |
+| `datetime[s]` | Parse ISO 8601 datetime; text that is no time is an error value of kind `'time'` |
+| `tz[d, offset]` | Convert timezone: `tz[d, '+09:00']`; the offset is `'UTC'` or `'+HH:MM'` / `'-HH:MM'`, and text or an offset that is no time is an error value of kind `'time'` |
 
-Properties: `.shape`, `.columns`, `.dtypes`. Column access: `df.age`. `len[df]` returns the row count. Aggregation names for `group`: `'sum'`, `'mean'`, `'min'`, `'max'`, `'count'`.
+Properties: `.shape`, `.columns`, `.dtypes`. Column access: `df.age`. `len[df]` returns the row count. Aggregation names for `group`: `'sum'`, `'mean'`, `'min'`, `'max'`, `'count'`. Join types: `'inner'` (the default), `'left'`, `'right'`, `'outer'`.
+
+A column the frame lacks, an aggregation or a join it does not know, a mask of another length than the rows, a negative count for `head` or `tail`, a `fill` value of another kind than the column's (an int fills a float column), and a count of arguments the function does not take stop the program with the reason (see When a Program Stops), in both modes, as `df.col` of a missing column does. A column copied with `with` keeps its missing cells.
+
+**Design Note: a frame operation's misuse stops the program.** Considered: error values of kind `'frame'`, which the table of kinds listed for `filter`, `sort`, `group` and `join`, and which the interpreter answered. Rejected: the operations are typed as giving a frame, which cannot fail, and the compiled program stopped — so a program that checked `.ok` worked in one mode only — and the same column the frame lacks, read as `df.col`, stops the program. A misuse is the program's mistake, not something it reads: an error value would carry it to wherever a decision first met it. Reading a file, `load`, and values from elsewhere, `with`, stay error values.
 
 #### Boolean Masks
 

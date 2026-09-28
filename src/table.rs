@@ -60,8 +60,19 @@ pub enum Kind {
     Sparse,
     /// `&CrowFrame` taken, `CrowFrame` given.
     Frame,
-    /// `&[String]` taken: a list of text (a frame's column names).
+    /// `&[String]` taken, `Vec<String>` given: a list of text (a frame's
+    /// column names, a column's distinct values).
     Strs,
+    /// `&[bool]` taken: a mask, one per row.
+    Bools,
+    /// `&Cell` taken: a number, text or a bool for a frame's cell (`fill`).
+    Cell,
+    /// `Cells` taken: a column's values — a list, a tensor, another frame's
+    /// column with its missing cells, or a cell for every row (`with`).
+    Cells,
+    /// `&[&[String]]` taken: the rest of the arguments, each a list of
+    /// text (`group`'s `[column, how]`).
+    Lists,
 }
 
 /// What a failure of the function is.
@@ -128,6 +139,9 @@ impl Kind {
             Kind::Sparse => CrowType::Sparse,
             Kind::Frame => CrowType::Frame,
             Kind::Strs => CrowType::Array(Box::new(CrowType::Str)),
+            Kind::Bools => CrowType::Array(Box::new(CrowType::Bool)),
+            Kind::Cell | Kind::Cells => CrowType::Unknown,
+            Kind::Lists => CrowType::Array(Box::new(CrowType::Array(Box::new(CrowType::Str)))),
         }
     }
 
@@ -140,13 +154,16 @@ impl Kind {
             Kind::Bool => format!("({})", arg),
             Kind::Str => format!("&*({})", arg),
             Kind::Unit => format!("({})", arg),
+            Kind::Strs | Kind::Bools => format!("&({})[..]", arg),
+            Kind::Cell => format!("&crow_runtime::frames::Cell::from(({}).clone())", arg),
+            Kind::Cells => format!("crow_runtime::frames::Cells::from(({}).clone())", arg),
             _ => format!("&({})", arg),
         }
     }
 
     /// Whether the parameter takes the rest of the arguments.
     pub fn is_rest(self) -> bool {
-        matches!(self, Kind::Sizes | Kind::Groups)
+        matches!(self, Kind::Sizes | Kind::Groups | Kind::Lists)
     }
 
     /// The kind of each argument a parameter takes: a size of the sizes, a
@@ -155,6 +172,7 @@ impl Kind {
         match self {
             Kind::Sizes => Kind::Int,
             Kind::Groups => Kind::Tensor,
+            Kind::Lists => Kind::Strs,
             k => k,
         }
     }
@@ -174,6 +192,10 @@ impl Kind {
             Kind::Sparse => "crow_runtime::sparse::CrowSparse::from_dense(&crow_runtime::tensor::CrowTensor::zeros(vec![0, 0]))",
             Kind::Frame => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])",
             Kind::Strs => "Vec::<String>::new()",
+            Kind::Bools => "Vec::<bool>::new()",
+            Kind::Cell => "crow_runtime::frames::Cell::Int(0)",
+            Kind::Cells => "crow_runtime::frames::Cells::One(crow_runtime::frames::Cell::Int(0))",
+            Kind::Lists => "Vec::<Vec<String>>::new()",
         }
     }
 }
@@ -261,7 +283,6 @@ pub fn read_float(v: &CrowValue) -> Result<f64, String> {
     }
 }
 
-#[allow(dead_code)] // no row takes a bool yet
 pub fn read_bool(v: &CrowValue) -> Result<bool, String> {
     match &v.value {
         Value::Bool(b) => Ok(*b),
@@ -356,6 +377,64 @@ pub fn read_strs(v: &CrowValue) -> Result<Vec<String>, String> {
     }
 }
 
+pub fn write_strs(ss: Vec<String>) -> CrowValue {
+    CrowValue::ok(Value::Array(ss.into_iter().map(write_str).collect()))
+}
+
+/// A mask: a list of bools.
+pub fn read_bools(v: &CrowValue) -> Result<Vec<bool>, String> {
+    match &v.value {
+        Value::Array(items) => items.iter().map(read_bool).collect(),
+        _ => Err(format!("expected a list of bools, got {}", named(v))),
+    }
+}
+
+/// A value for a frame's cell.
+pub fn read_cell(v: &CrowValue) -> Result<crow_runtime::frames::Cell, String> {
+    use crow_runtime::frames::Cell;
+    match &v.value {
+        Value::Int(n) => Ok(Cell::Int(*n)),
+        Value::Float(x) => Ok(Cell::Float(*x)),
+        Value::Bool(b) => Ok(Cell::Bool(*b)),
+        Value::Str(s) => Ok(Cell::Text(s.clone())),
+        _ => Err(format!("expected a number, text or a bool, got {}", named(v))),
+    }
+}
+
+/// A column's values, as the compiled program's `Cells::from` reads its
+/// typed value: a list of one kind (ints beside floats make floats), a
+/// tensor's numbers, a frame's column — whose missing cells, errors of
+/// reason `missing` here, stay missing — or a cell for every row.
+pub fn read_cells(v: &CrowValue) -> Result<crow_runtime::frames::Cells, String> {
+    use crow_runtime::frame::Column;
+    use crow_runtime::frames::Cells;
+    let items = match &v.value {
+        Value::Array(items) => items,
+        Value::NumArray(t) => return Ok(Cells::from(t.as_ref().clone())),
+        _ => return read_cell(v).map(Cells::One),
+    };
+    let present = || items.iter().filter(|i| !i.is_error());
+    let valid: Vec<bool> = items.iter().map(|i| !i.is_error()).collect();
+    let column = if present().all(|i| matches!(i.value, Value::Int(_))) && present().next().is_some() {
+        Column::Int(items.iter().map(|i| if let Value::Int(n) = i.value { n } else { 0 }).collect())
+    } else if present().all(|i| matches!(i.value, Value::Int(_) | Value::Float(_))) && present().next().is_some() {
+        Column::Float(items.iter().map(|i| read_float(i).unwrap_or(f64::NAN)).collect())
+    } else if present().all(|i| matches!(i.value, Value::Bool(_))) && present().next().is_some() {
+        Column::Bool(items.iter().map(|i| matches!(i.value, Value::Bool(true))).collect())
+    } else if present().all(|i| matches!(i.value, Value::Str(_))) {
+        Column::Str(items.iter().map(|i| if let Value::Str(s) = &i.value { s.clone() } else { String::new() }).collect())
+    } else {
+        let other = present().find(|i| !matches!(i.value, Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Str(_)));
+        return Err(format!("expected a column's values, got a list of {}", other.map(named).unwrap_or("mixed values")));
+    };
+    Ok(Cells::Column(column, valid))
+}
+
+/// The lists of text of a group, each a list.
+pub fn read_lists(group: &[CrowValue]) -> Result<Vec<Vec<String>>, String> {
+    group.iter().map(read_strs).collect()
+}
+
 /// A list of tensors: a decomposition's parts, a complex number.
 pub fn read_tensors(v: &CrowValue) -> Result<Vec<CrowTensor>, String> {
     match &v.value {
@@ -392,6 +471,10 @@ macro_rules! read {
     (Strs, $g:expr) => { &read_strs(one($g)?)? };
     (Sizes, $g:expr) => { &read_sizes($g)? };
     (Groups, $g:expr) => { &read_groups($g)?.iter().map(|t| &**t).collect::<Vec<&CrowTensor>>() };
+    (Bools, $g:expr) => { &read_bools(one($g)?)? };
+    (Cell, $g:expr) => { &read_cell(one($g)?)? };
+    (Cells, $g:expr) => { read_cells(one($g)?)? };
+    (Lists, $g:expr) => { &read_lists($g)?.iter().map(|l| l.as_slice()).collect::<Vec<&[String]>>() };
 }
 
 /// The value of an answer by its kind.
@@ -404,6 +487,7 @@ macro_rules! answer {
     (IntMap, $x:expr) => { write_int_map($x) };
     (FloatMap, $x:expr) => { write_float_map($x) };
     (Frame, $x:expr) => { write_frame($x) };
+    (Strs, $x:expr) => { write_strs($x) };
     (Tensors, $x:expr) => { write_tensors($x) };
     (Unit, $x:expr) => { write_unit($x) };
     (Sparse, $x:expr) => { write_sparse($x) };
@@ -656,6 +740,30 @@ pub static ROWS: &[Row] = &[
     row!("chart.vwap_trailing", "chart", "vwap", crow_runtime::indicators::vwap_trailing, (Tensor, Tensor, Tensor, Float) -> Tensor, stops),
     row!("chart.rolling_sum", "chart", "rolling_sum", crow_runtime::indicators::rolling_sum, (Tensor, Tensor, Float) -> Tensor, stops),
     row!("chart.cvd", "chart", "cvd", crow_runtime::indicators::cvd, (Tensor, Tensor) -> Tensor, stops),
+    // frame (a column the frame lacks, an aggregation or a join it does not
+    // know, a mask or a count that does not fit: the reason the program
+    // stops with, as df.col of a missing column is — the interpreter had
+    // answered error values its type said could not happen, the compiled
+    // program stopped or panicked; values with cannot fit are an error
+    // value, as text that is no time is)
+    row!("frame.new", "frame", "new", crow_runtime::frames::new, () -> Frame, never),
+    row!("frame.with", "frame", "with", crow_runtime::frames::with, (Frame, Str, Cells) -> Frame, value "frame"),
+    row!("frame.select", "frame", "select", crow_runtime::frames::select, (Frame, Strs) -> Frame, stops),
+    row!("frame.filter", "frame", "filter", crow_runtime::frames::filter, (Frame, Bools) -> Frame, stops),
+    row!("frame.sort", "frame", "sort", crow_runtime::frames::sort, (Frame, Str) -> Frame, stops),
+    row!("frame.sort_by", "frame", "sort", crow_runtime::frames::sort_by, (Frame, Str, Bool) -> Frame, stops),
+    row!("frame.group", "frame", "group", crow_runtime::frames::group, (Frame, Str, Lists) -> Frame, stops),
+    row!("frame.join", "frame", "join", crow_runtime::frames::join, (Frame, Frame, Str) -> Frame, stops),
+    row!("frame.join_how", "frame", "join", crow_runtime::frames::join_how, (Frame, Frame, Str, Str) -> Frame, stops),
+    row!("frame.stack", "frame", "stack", crow_runtime::frames::stack, (Frame, Frame) -> Frame, stops),
+    row!("frame.head", "frame", "head", crow_runtime::frames::head, (Frame, Int) -> Frame, stops),
+    row!("frame.tail", "frame", "tail", crow_runtime::frames::tail, (Frame, Int) -> Frame, stops),
+    row!("frame.fill", "frame", "fill", crow_runtime::frames::fill, (Frame, Str, Cell) -> Frame, stops),
+    row!("frame.unique", "frame", "unique", crow_runtime::frames::unique, (Frame, Str) -> Strs, stops),
+    row!("frame.rename", "frame", "rename", crow_runtime::frames::rename, (Frame, Str, Str) -> Frame, stops),
+    row!("frame.stats", "frame", "stats", crow_runtime::frames::stats, (Frame) -> Str, never),
+    row!("frame.datetime", "frame", "datetime", crow_runtime::frames::datetime, (Str) -> Str, value "time"),
+    row!("frame.tz", "frame", "tz", crow_runtime::frames::tz, (Str, Str) -> Str, value "time"),
 ];
 
 /// The row the IR names by `id`.
@@ -682,6 +790,8 @@ pub enum Arg {
     /// A list of text.
     Texts,
     Truth,
+    /// A list of bools.
+    Truths,
     Sparse,
     Frame,
     /// Not known here: any parameter takes it.
@@ -694,10 +804,11 @@ impl Arg {
             CrowType::Result(inner) => Arg::of_type(inner),
             CrowType::Int | CrowType::Float => Arg::Number,
             CrowType::Array(inner) => match Arg::of_type(inner) {
+                Arg::Number => Arg::Tensor,
                 Arg::Tensor => Arg::Tensors,
                 Arg::Text => Arg::Texts,
-                Arg::Unknown => Arg::Unknown,
-                _ => Arg::Tensor,
+                Arg::Truth => Arg::Truths,
+                _ => Arg::Unknown,
             },
             CrowType::NumArray(_) | CrowType::FrameCol => Arg::Tensor,
             CrowType::Str | CrowType::Markup => Arg::Text,
@@ -716,6 +827,7 @@ impl Arg {
                 Some(Arg::Tensor) => Arg::Tensors,
                 Some(Arg::Text) => Arg::Texts,
                 Some(Arg::Number) => Arg::Tensor,
+                Some(Arg::Truth) => Arg::Truths,
                 _ => Arg::Unknown,
             },
             Value::Str(_) => Arg::Text,
@@ -731,16 +843,19 @@ impl Kind {
     /// Whether a parameter of this kind takes an argument of that kind.
     fn takes(self, a: Arg) -> bool {
         a == Arg::Unknown
-            || match self {
-                Kind::Int | Kind::Float | Kind::Sizes => a == Arg::Number,
-                Kind::Tensor | Kind::Groups => a == Arg::Tensor,
+            || match self.each() {
+                Kind::Int | Kind::Float => a == Arg::Number,
+                Kind::Tensor => a == Arg::Tensor,
                 Kind::Tensors => a == Arg::Tensors,
                 Kind::Str => a == Arg::Text,
                 Kind::Strs => a == Arg::Texts,
                 Kind::Bool => a == Arg::Truth,
+                Kind::Bools => a == Arg::Truths,
                 Kind::Sparse => a == Arg::Sparse,
                 Kind::Frame => a == Arg::Frame,
-                Kind::IntMap | Kind::FloatMap | Kind::Unit => true,
+                Kind::Cell => matches!(a, Arg::Number | Arg::Text | Arg::Truth),
+                Kind::Cells => matches!(a, Arg::Number | Arg::Text | Arg::Truth | Arg::Tensor | Arg::Texts | Arg::Truths),
+                _ => true,
             }
     }
 }
@@ -828,7 +943,7 @@ pub const MODULE_TO_MOVE: &[(&str, &str)] = &[
     // math
     ("math", "load"),
     // frame
-    ("frame", "load"), ("frame", "save"), ("frame", "select"), ("frame", "filter"), ("frame", "sort"), ("frame", "group"), ("frame", "join"), ("frame", "stack"), ("frame", "head"), ("frame", "tail"), ("frame", "fill"), ("frame", "unique"), ("frame", "rename"), ("frame", "stats"), ("frame", "datetime"), ("frame", "tz"), ("frame", "new"), ("frame", "with"),
+    ("frame", "load"), ("frame", "save"),
     // io
     ("io", "csv"), ("io", "lines"),
     // doc

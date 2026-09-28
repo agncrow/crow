@@ -2112,7 +2112,7 @@ fn a_fact_a_handler_assigns_a_float_is_a_float_from_its_declaration() {
 /// state mid-render: the interpreter wrote the fact, and the compiled
 /// program assigned a variable it never declared and did not build (the IR
 /// verifier found the fact stored a float it did not hold). It is refused,
-/// in both modes (docs/bug-classes.md, open question 2).
+/// in both modes (docs/bug-classes.md, decision 2).
 #[test]
 fn a_view_calling_what_assigns_a_fact_is_refused() {
     let stmts = crate::build("use web, ui\nn = 0\nfn scale[x]\n    n = 2.5\n    return n * x\nview render[]\n    return p['`n` `scale[2]`']\npage['/', render]\n").expect("parses");

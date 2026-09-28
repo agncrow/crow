@@ -140,12 +140,9 @@ impl Emitter {
                 }
             }
         }
-        for (i, t) in arg_types.iter_mut().enumerate() {
-            if matches!(t, CrowType::FrameCol) {
-                strs[i] = format!("({}).to_tensor()", strs[i]);
-                *t = CrowType::NumArray(Box::new(CrowType::Float));
-            }
-        }
+        // (a frame's column handed where numbers are taken arrives converted
+        // by the lowering, the same way in both modes; handed to `with` it
+        // is the column, its missing cells kept)
         self.needs_crow_runtime = true;
         let emitted = match &self.pinned_module {
             Some(m) => self.registry.emit_rust_in(m, name, &strs, &arg_types),

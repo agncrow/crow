@@ -7,6 +7,7 @@
 pub mod display;
 pub mod distributed;
 pub mod frame;
+pub mod frames;
 pub mod hash;
 pub mod indicators;
 pub mod gpu;
