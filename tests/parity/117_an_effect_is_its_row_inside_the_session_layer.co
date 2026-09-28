@@ -1,0 +1,34 @@
+--- An effect's call is its row, inside what the session layer does around
+--- it, the same in both modes (docs/bug-classes.md §4). A file operation
+--- that answers nothing answers empty text (it had been `done`
+--- interpreted); only what reads the world is stamped with its capture
+--- moment (compiled, `write` and `rm` had been); `save`'s failure is an
+--- error value of kind 'frame' (compiled, it stopped the program); a
+--- command's record shows alike.
+use frame
+d = '/tmp/crow_parity_117'
+m = mkdir[d]
+log[m]
+log[type[m]]
+w = write['`d`/a.txt', 'hello']
+log[captured[w].ok]
+t = read['`d`/a.txt']
+log[t]
+log[captured[t].ok]
+log[ls[d]]
+df = frame.new[]
+df = with[df, 'a', [1, 2]]
+s = save[df, '`d`/f.csv']
+log[s.ok]
+f = load['`d`/f.csv']
+log[f.a]
+log[captured[f].ok]
+bad = save[df, '/nonexistent/dir/out.csv']
+log[bad.ok]
+log[bad.kind]
+sh = shell['echo hi']
+log[sh]
+log[sh.status]
+r = rm[d]
+log[captured[r].ok]
+log[exists[d]]

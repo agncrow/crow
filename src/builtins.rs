@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 /// The names answered here (a builtin with a row in crate::table is
 /// answered by its row, before this).
-pub const HANDLED: &[&str] = &["log", "type", "map", "abs", "sqrt", "floor", "ceil", "round", "pad", "str", "append", "args", "input", "time", "sleep", "env", "exit", "read", "write", "exists", "mkdir", "ls", "rm", "mv", "cp", "json", "encode", "shell", "now", "assert", "error"];
+pub const HANDLED: &[&str] = &["log", "type", "map", "abs", "sqrt", "floor", "ceil", "round", "pad", "str", "append", "args", "input", "time", "sleep", "env", "exit", "json", "encode", "now", "assert", "error"];
 
 /// A state-free builtin by name, or `None` when the name is one the
 /// walker itself must handle.
@@ -225,101 +225,6 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
             };
             std::process::exit(code);
         }
-        // --- File I/O builtins ---
-        "read" => {
-            if args.len() != 1 { return Err("read[] takes exactly 1 argument".into()); }
-            match args[0].unwrap_or_propagate()? {
-                Value::Str(path) => {
-                    match crow_runtime::io::fs_read(path) {
-                        Ok(content) => Ok(CrowValue::ok(Value::Str(content))),
-                        Err(e) => Ok(CrowValue::error_with_kind(&e, "io", trace)),
-                    }
-                }
-                _ => Err("read[] requires a string path".into()),
-            }
-        }
-        "write" => {
-            if args.len() != 2 { return Err("write[] takes exactly 2 arguments".into()); }
-            match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                (Value::Str(path), Value::Str(content)) => {
-                    match crow_runtime::io::fs_write(path, content) {
-                        Ok(_) => Ok(CrowValue::done()),
-                        Err(e) => Ok(CrowValue::error_with_kind(&e, "io", trace)),
-                    }
-                }
-                _ => Err("write[] requires a string path and string content".into()),
-            }
-        }
-        // --- File system builtins ---
-        "exists" => {
-            if args.len() != 1 { return Err("exists[] takes exactly 1 argument".into()); }
-            match args[0].unwrap_or_propagate()? {
-                Value::Str(path) => Ok(CrowValue::ok(Value::Bool(crow_runtime::io::fs_exists(path)))),
-                _ => Err("exists[] requires a string path".into()),
-            }
-        }
-        "mkdir" => {
-            if args.len() != 1 { return Err("mkdir[] takes exactly 1 argument".into()); }
-            match args[0].unwrap_or_propagate()? {
-                Value::Str(path) => {
-                    match crow_runtime::io::fs_mkdir(path) {
-                        Ok(_) => Ok(CrowValue::done()),
-                        Err(e) => Ok(CrowValue::error_with_kind(&e, "io", trace)),
-                    }
-                }
-                _ => Err("mkdir[] requires a string path".into()),
-            }
-        }
-        "ls" => {
-            if args.len() != 1 { return Err("ls[] takes exactly 1 argument".into()); }
-            match args[0].unwrap_or_propagate()? {
-                Value::Str(path) => {
-                    match crow_runtime::io::fs_ls(path) {
-                        Ok(names) => Ok(CrowValue::ok(Value::Array(
-                            names.into_iter().map(|n| CrowValue::ok(Value::Str(n))).collect(),
-                        ))),
-                        Err(e) => Ok(CrowValue::error_with_kind(&e, "io", trace)),
-                    }
-                }
-                _ => Err("ls[] requires a string path".into()),
-            }
-        }
-        "rm" => {
-            if args.len() != 1 { return Err("rm[] takes exactly 1 argument".into()); }
-            match args[0].unwrap_or_propagate()? {
-                Value::Str(path) => {
-                    match crow_runtime::io::fs_rm(path) {
-                        Ok(_) => Ok(CrowValue::done()),
-                        Err(e) => Ok(CrowValue::error_with_kind(&e, "io", trace)),
-                    }
-                }
-                _ => Err("rm[] requires a string path".into()),
-            }
-        }
-        "mv" => {
-            if args.len() != 2 { return Err("mv[] takes exactly 2 arguments".into()); }
-            match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                (Value::Str(src), Value::Str(dst)) => {
-                    match crow_runtime::io::fs_mv(src, dst) {
-                        Ok(_) => Ok(CrowValue::done()),
-                        Err(e) => Ok(CrowValue::error_with_kind(&e, "io", trace)),
-                    }
-                }
-                _ => Err("mv[] requires two string paths".into()),
-            }
-        }
-        "cp" => {
-            if args.len() != 2 { return Err("cp[] takes exactly 2 arguments".into()); }
-            match (args[0].unwrap_or_propagate()?, args[1].unwrap_or_propagate()?) {
-                (Value::Str(src), Value::Str(dst)) => {
-                    match crow_runtime::io::fs_cp(src, dst) {
-                        Ok(_) => Ok(CrowValue::done()),
-                        Err(e) => Ok(CrowValue::error_with_kind(&e, "io", trace)),
-                    }
-                }
-                _ => Err("cp[] requires two string paths".into()),
-            }
-        }
         // --- JSON builtins ---
         "json" => {
             if args.len() != 1 { return Err("json[] takes exactly 1 argument".into()); }
@@ -339,25 +244,6 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
             match jval {
                 Ok(v) => Ok(CrowValue::ok(Value::Str(v.to_string()))),
                 Err(e) => Ok(CrowValue::error(&e, trace)),
-            }
-        }
-        // --- Shell builtin ---
-        "shell" => {
-            if args.len() != 1 { return Err("shell[] takes exactly 1 argument".into()); }
-            match args[0].unwrap_or_propagate()? {
-                Value::Str(cmd) => {
-                    match crow_runtime::core::shell(cmd) {
-                        Ok(sh) => {
-                            let mut map = std::collections::BTreeMap::new();
-                            map.insert("status".to_string(), CrowValue::ok(Value::Int(sh.status)));
-                            map.insert("stdout".to_string(), CrowValue::ok(Value::Str(sh.stdout)));
-                            map.insert("stderr".to_string(), CrowValue::ok(Value::Str(sh.stderr)));
-                            Ok(CrowValue::ok(Value::Map(map)))
-                        }
-                        Err(e) => Ok(CrowValue::error_with_kind(&e, "shell", trace)),
-                    }
-                }
-                _ => Err("shell[] requires a string command".into()),
             }
         }
         // --- Hashing builtin ---

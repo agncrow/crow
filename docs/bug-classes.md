@@ -528,6 +528,30 @@ the same row; the interpreter's own in-place path is gone.
 `str`, `json` and `encode` (any value's display and JSON) and the effects
 are still written twice.
 
+**Batch 12**: the effects — `read`, `write`, `exists`, `mkdir`, `ls`,
+`rm`, `mv`, `cp`, `shell`, and the modules' `load`, `save`, `csv`,
+`lines` and `math.load` — and `doc`'s six functions, with parity 117. An
+effect's call is the IR's `Effect`, which the session layer performs (held
+to a handler's commit, recorded in a rehearsal); the call inside it is its
+row now, in both modes, and one list (`crate::table::READERS`) says what
+reads the world and is stamped with the moment it was read.
+
+- `frame.save`'s failure stopped the compiled program and was an error
+  value interpreted: an error value of kind `'frame'` in both, as `load`'s
+  is.
+- A file operation that answers nothing answered `done` interpreted and
+  empty text compiled, as its type says: empty text in both.
+- The compiled program stamped `write`'s and `rm`'s answers with a capture
+  moment and the interpreter did not; only what reads the world is stamped
+  now.
+- `shell`'s record is the runtime's in both (`CrowShell` is
+  `crow_runtime::core::Shell`), shown as the interpreter shows its record.
+- `doc`'s functions were written twice, as the interpreter's adapter and
+  the emitter's printing; each is a row.
+
+Every module function is a row now (`MODULE_TO_MOVE` is empty); of the
+core's, `str`, `json` and `encode` are left.
+
 ## Decisions (Vijay, 2026-09-28)
 
 The questions the work raised, each decided as recommended.

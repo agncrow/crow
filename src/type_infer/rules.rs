@@ -258,9 +258,6 @@ impl TypeContext {
                 CrowType::Unknown
             }
             "len" => CrowType::Int,
-            // shell/env are readers: error values on failure, stamped with a
-            // capture moment on success (same shape as read[])
-            "shell" => CrowType::Result(Box::new(CrowType::Struct("CrowShell".to_string()))),
             // Regex + search builtins
             "any" | "all" => CrowType::Bool,
             "find" => {
@@ -279,16 +276,6 @@ impl TypeContext {
             // CLI / IO
             "args" => CrowType::Array(Box::new(CrowType::Str)),
             "input" => CrowType::Result(Box::new(CrowType::Str)),
-            // File I/O
-            "read" => CrowType::Result(Box::new(CrowType::Str)),
-            "write" => CrowType::Result(Box::new(CrowType::Str)),
-            // File system builtins
-            "exists" => CrowType::Bool,
-            "mkdir" => CrowType::Result(Box::new(CrowType::Str)),
-            "ls" => CrowType::Result(Box::new(CrowType::Array(Box::new(CrowType::Str)))),
-            "rm" => CrowType::Result(Box::new(CrowType::Str)),
-            "mv" => CrowType::Result(Box::new(CrowType::Str)),
-            "cp" => CrowType::Result(Box::new(CrowType::Str)),
             // System builtins
             "time" => CrowType::Float,
             // Moments are numbers (epoch seconds); constructors are fallible

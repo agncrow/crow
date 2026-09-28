@@ -1477,6 +1477,9 @@ impl Emitter {
     fn table_call(&mut self, row: &crate::table::Row, args: &[Expr], arg_strs: &[String], whole: &Expr) -> String {
         use crate::table::Kind;
         self.needs_crow_runtime = true;
+        if row.ret == Kind::Shell {
+            self.needs_shell_struct = true;
+        }
         let mut strs = arg_strs.to_vec();
         if let Some(kinds) = crate::table::kinds_of(row.params, strs.len()) {
             let items = kinds.iter().zip(args).find_map(|(k, a)| match (k, Self::inner(&self.tt(a))) {

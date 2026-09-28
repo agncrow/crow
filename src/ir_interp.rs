@@ -15,7 +15,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-const READER_FNS: &[&str] = &["query", "read", "fetch", "recv", "input", "load", "env", "shell", "ls", "csv", "lines"];
 /// Scalar and tensor names both core and math answer: scalars go to the
 /// core builtin, as the AST walker routes them.
 const OVERLAPPING: &[&str] = &["abs", "sqrt", "floor", "ceil", "round", "min", "max"];
@@ -1430,7 +1429,7 @@ impl IrInterp {
     }
 
     fn stamp(name: &str, v: CrowValue) -> CrowValue {
-        if READER_FNS.contains(&name) && v.is_ok() {
+        if crate::table::READERS.contains(&name) && v.is_ok() {
             v.stamp_captured()
         } else {
             v
@@ -1501,6 +1500,11 @@ impl IrInterp {
             if !(frame_fn && core_too && !first_is_frame) {
                 return self.registry.call(name, &vals).map(|v| Self::stamp(name, v));
             }
+        }
+        // an effect with a row (the file system's): the row, inside what the
+        // session layer does around it
+        if let Some(r) = Self::core_rows(name, &vals, &self.trace_entry(), false) {
+            return r.map(|v| Self::stamp(name, v));
         }
         if let Some(r) = crate::builtins::call(name, &vals, &self.trace_entry()) {
             return r.map(|v| Self::stamp(name, v));

@@ -568,52 +568,6 @@ impl Emitter {
                 };
                 format!("{}.to_string()", s)
             }
-            // files
-            "read" if n == 1 => {
-                self.needs_crow_runtime = true;
-                let tr = self.trace_format_expr();
-                format!(
-                    "{{ match crow_runtime::io::fs_read(&*{}) {{ Ok(v) => CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![], captured: {} }}, Err(e) => CrowResult {{ ok: false, value: String::new(), reason: e, kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
-                    a[0], STAMP, tr
-                )
-            }
-            "write" if n == 2 => {
-                self.needs_crow_runtime = true;
-                let tr = self.trace_format_expr();
-                format!(
-                    "{{ match crow_runtime::io::fs_write(&*{}, &*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: {} }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e, kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
-                    a[0], a[1], STAMP, tr
-                )
-            }
-            "exists" if n == 1 => {
-                self.needs_crow_runtime = true;
-                format!("crow_runtime::io::fs_exists(&*{})", a[0])
-            }
-            "mkdir" | "rm" if n == 1 => {
-                self.needs_crow_runtime = true;
-                let tr = self.trace_format_expr();
-                let stamp = if name == "rm" { STAMP } else { "0.0" };
-                format!(
-                    "{{ match crow_runtime::io::fs_{}(&*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: {} }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e, kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
-                    name, a[0], stamp, tr
-                )
-            }
-            "ls" if n == 1 => {
-                self.needs_crow_runtime = true;
-                let tr = self.trace_format_expr();
-                format!(
-                    "{{ match crow_runtime::io::fs_ls(&*{}) {{ Ok(names) => CrowResult {{ ok: true, value: names, reason: String::new(), kind: String::new(), trace: vec![], captured: {} }}, Err(e) => CrowResult {{ ok: false, value: Vec::<String>::new(), reason: e, kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
-                    a[0], STAMP, tr
-                )
-            }
-            "mv" | "cp" if n == 2 => {
-                self.needs_crow_runtime = true;
-                let tr = self.trace_format_expr();
-                format!(
-                    "{{ match crow_runtime::io::fs_{}(&*{}, &*{}) {{ Ok(_) => CrowResult {{ ok: true, value: \"\".to_string(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: \"\".to_string(), reason: e, kind: \"io\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
-                    name, a[0], a[1], tr
-                )
-            }
             // JSON
             "json" if n == 1 && !(self.needs_crow_web && matches!(ty0, CrowType::Map(_))) => {
                 self.needs_serde_json = true;
@@ -644,15 +598,6 @@ impl Emitter {
                 } else {
                     ok(&format!("serde_json::to_string(&{}).unwrap_or_default()", a[0]))
                 }
-            }
-            "shell" if n == 1 => {
-                self.needs_shell_struct = true;
-                self.needs_crow_runtime = true;
-                let tr = self.trace_format_expr();
-                format!(
-                    "{{ match crow_runtime::core::shell(&*{}) {{ Ok(sh) => CrowResult {{ ok: true, value: CrowShell {{ status: sh.status, stdout: sh.stdout, stderr: sh.stderr }}, reason: String::new(), kind: String::new(), trace: vec![], captured: {} }}, Err(e) => CrowResult {{ ok: false, value: CrowShell {{ status: -1, stdout: String::new(), stderr: String::new() }}, reason: e, kind: \"shell\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
-                    a[0], STAMP, tr
-                )
             }
             // search: a parallel early exit
             "any" | "all" if n == 2 => {

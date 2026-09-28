@@ -103,6 +103,12 @@ pub fn exponential(lambda: f64, sizes: &[i64]) -> Result<CrowTensor, String> {
     CrowTensor::exponential(sample_shape("exponential", sizes)?, lambda)
 }
 
+/// `math.load[path]`: a CSV file of numbers as a matrix, a row per line.
+pub fn load(path: &str) -> Result<CrowTensor, String> {
+    let (data, nrows, ncols) = crate::io::load_csv_numeric(path)?;
+    Ok(CrowTensor::from_vec(data, vec![nrows, ncols]))
+}
+
 // ── linear algebra ──────────────────────────────────────────────────
 // The kernels take a matrix of the right shape; these check it, so a
 // vector, a rank-3 tensor or a rectangle where a square is needed is the

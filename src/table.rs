@@ -110,6 +110,14 @@ pub enum Kind {
     /// `&CrowColumn` taken: a frame's column, which only the compiled
     /// program holds as one (the interpreter holds its cells as a list).
     Column,
+    /// `String` given: markup a view places as markup (`doc.markdown`).
+    Markup,
+    /// `Vec<BTreeMap<String, String>>` given: rows of text by column
+    /// (`io.csv`).
+    TextRows,
+    /// `crow_runtime::core::Shell` given: a command's status and output,
+    /// the compiled program's `CrowShell` and the interpreter's record.
+    Shell,
 }
 
 /// What a failure of the function is.
@@ -189,6 +197,9 @@ impl Kind {
             Kind::Floats => CrowType::Array(Box::new(CrowType::Float)),
             Kind::Json => CrowType::Json,
             Kind::Column => CrowType::FrameCol,
+            Kind::Markup => CrowType::Markup,
+            Kind::TextRows => CrowType::Array(Box::new(CrowType::Map(Box::new(CrowType::Str)))),
+            Kind::Shell => CrowType::Struct("CrowShell".to_string()),
             // what the arguments' items are: inference types the call from
             // them (a generic row's answer is the list or map it was given)
             Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef | Kind::MapOf | Kind::MapRef => CrowType::Unknown,
@@ -270,6 +281,9 @@ impl Kind {
             Kind::Json => "serde_json::Value::Null",
             // taken, never given
             Kind::Column => "unreachable!()",
+            Kind::Markup => "String::new()",
+            Kind::TextRows => "Vec::<std::collections::BTreeMap<String, String>>::new()",
+            Kind::Shell => "crow_runtime::core::Shell { status: -1, stdout: String::new(), stderr: String::new() }",
             // a generic answer never fails as a value (its rows answer or stop)
             Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef => "Vec::new()",
             Kind::MapOf | Kind::MapRef => "std::collections::BTreeMap::new()",
@@ -323,6 +337,13 @@ pub fn groups_mut<'a>(params: &[Kind], args: &'a mut [CrowValue], name: &str) ->
     Ok(out)
 }
 
+/// The builtins that read the world outside the program: a value one
+/// answers is stamped with its capture moment (`captured[x]`), in both
+/// modes — the interpreter stamps what its call answers, the compiled
+/// program's printing of a row stamps it (the compiled `rm` had stamped its
+/// empty answer while the interpreter did not).
+pub const READERS: &[&str] = &["query", "read", "fetch", "recv", "input", "load", "env", "shell", "ls", "csv", "lines"];
+
 /// A row's call as the compiled program prints it: each argument as its
 /// kind takes it, the failure as the row says. `line` is the stop's line
 /// (a module's code carries `modules::STOP_LINE` for the emitter to fill),
@@ -338,12 +359,14 @@ pub fn print(row: &Row, args: &[String], line: &str, trace: Option<&str>) -> Res
         }
     }
     let call = format!("{}({})", row.rust_path(), printed.join(", "));
+    let captured = if READERS.contains(&row.name) { "crow_runtime::moments::now()" } else { "0.0" };
     Ok(match row.fails {
         Fails::Never => call,
         Fails::Stops => format!("{}.unwrap_or_else(|e| crow_stop({}, e))", call, line),
         Fails::Value(kind) => format!(
-            "match {} {{ Ok(_v) => CrowResult {{ ok: true, value: _v, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: {}, reason: _e, kind: \"{}\".to_string(), trace: vec![{}], captured: 0.0 }} }}",
+            "match {} {{ Ok(_v) => CrowResult {{ ok: true, value: _v, reason: String::new(), kind: String::new(), trace: vec![], captured: {} }}, Err(_e) => CrowResult {{ ok: false, value: {}, reason: _e, kind: \"{}\".to_string(), trace: vec![{}], captured: 0.0 }} }}",
             call,
+            captured,
             row.ret.default_rust(),
             kind,
             trace.unwrap_or("")
@@ -654,6 +677,24 @@ pub fn write_floats(xs: Vec<f64>) -> CrowValue {
     CrowValue::ok(Value::Array(xs.into_iter().map(write_float).collect()))
 }
 
+/// A command's answer as the interpreter's record: `status`, `stdout`,
+/// `stderr`.
+pub fn write_shell(sh: crow_runtime::core::Shell) -> CrowValue {
+    let mut m = BTreeMap::new();
+    m.insert("status".to_string(), write_int(sh.status));
+    m.insert("stdout".to_string(), write_str(sh.stdout));
+    m.insert("stderr".to_string(), write_str(sh.stderr));
+    CrowValue::ok(Value::Map(m))
+}
+
+pub fn write_markup(s: String) -> CrowValue {
+    CrowValue::markup(s)
+}
+
+pub fn write_text_rows(rows: Vec<BTreeMap<String, String>>) -> CrowValue {
+    CrowValue::ok(Value::Array(rows.into_iter().map(|r| CrowValue::ok(Value::Map(r.into_iter().map(|(k, v)| (k, write_str(v))).collect()))).collect()))
+}
+
 /// One argument of a group, the group of a single parameter.
 pub fn one(group: &[CrowValue]) -> Result<&CrowValue, String> {
     group.first().ok_or_else(|| "an argument is missing".to_string())
@@ -741,6 +782,9 @@ macro_rules! answer {
     (Ints, $x:expr) => { write_ints($x) };
     (Floats, $x:expr) => { write_floats($x) };
     (Texts, $x:expr) => { write_strs($x) };
+    (Markup, $x:expr) => { write_markup($x) };
+    (TextRows, $x:expr) => { write_text_rows($x) };
+    (Shell, $x:expr) => { write_shell($x) };
 }
 
 /// The taking of a parameter's group by its kind: a collection the
@@ -871,6 +915,21 @@ pub static ROWS: &[Row] = &[
     row!("core.has", "", "has", crow_runtime::core::has, (MapRef, Str) -> Bool, never),
     row!("core.set", "", "set", crow_runtime::core::set, (MapOf, Str, Item) -> MapOf, never),
     row!("core.del", "", "del", crow_runtime::core::map_del, (MapOf, Str) -> MapOf, never),
+    // the file system: an effect, which the session layer performs (held to
+    // a handler's commit, recorded in a rehearsal) and whose call inside is
+    // the row; a failure is an error value of kind 'io', a success of a
+    // write empty text, as its type says (it had been `done` interpreted)
+    row!("io.read", "", "read", crow_runtime::io::read, (Str) -> Str, value "io"),
+    row!("io.write", "", "write", crow_runtime::io::write, (Str, Str) -> Str, value "io"),
+    row!("io.exists", "", "exists", crow_runtime::io::exists, (Str) -> Bool, never),
+    row!("io.mkdir", "", "mkdir", crow_runtime::io::mkdir, (Str) -> Str, value "io"),
+    row!("io.ls", "", "ls", crow_runtime::io::ls, (Str) -> Strs, value "io"),
+    row!("io.rm", "", "rm", crow_runtime::io::rm, (Str) -> Str, value "io"),
+    row!("io.mv", "", "mv", crow_runtime::io::mv, (Str, Str) -> Str, value "io"),
+    row!("io.cp", "", "cp", crow_runtime::io::cp, (Str, Str) -> Str, value "io"),
+    // a command that cannot start is an error value of kind 'shell'; a
+    // non-zero exit is an answer, read from `.status`
+    row!("core.shell", "", "shell", crow_runtime::core::shell, (Str) -> Shell, value "shell"),
     // min and max of numbers (text was compared compiled and refused
     // interpreted: min['a', 'b'] is refused before the program runs)
     row!("core.min_ints", "", "min", crow_runtime::core::min_ints, (Whole, Whole) -> Int, never),
@@ -1115,6 +1174,21 @@ pub static ROWS: &[Row] = &[
     row!("frame.stats", "frame", "stats", crow_runtime::frames::stats, (Frame) -> Str, never),
     row!("frame.datetime", "frame", "datetime", crow_runtime::frames::datetime, (Str) -> Str, value "time"),
     row!("frame.tz", "frame", "tz", crow_runtime::frames::tz, (Str, Str) -> Str, value "time"),
+    // the modules' files: effects, as the file system's are. `save`'s
+    // failure is an error value of kind 'frame', as `load`'s is (compiled,
+    // it stopped the program)
+    row!("frame.load", "frame", "load", crow_runtime::frames::load, (Str) -> Frame, value "frame"),
+    row!("frame.save", "frame", "save", crow_runtime::frames::save, (Frame, Str) -> Str, value "frame"),
+    row!("io.csv", "io", "csv", crow_runtime::io::csv, (Str) -> TextRows, value "io"),
+    row!("io.lines", "io", "lines", crow_runtime::io::lines, (Str) -> Strs, value "io"),
+    row!("math.load", "math", "load", crow_runtime::math::load, (Str) -> Tensor, value "load"),
+    // doc: markdown rendered by the kernel
+    row!("doc.markdown", "doc", "markdown", crow_runtime::markdown::to_html, (Str) -> Markup, never),
+    row!("doc.chapters", "doc", "chapters", crow_runtime::markdown::chapters_frame, (Str) -> Frame, never),
+    row!("doc.menu", "doc", "menu", crow_runtime::markdown::menu_from_frame, (Frame, Str) -> Markup, never),
+    row!("doc.pager", "doc", "pager", crow_runtime::markdown::pager_from_frame, (Frame, Str) -> Markup, never),
+    row!("doc.plain", "doc", "plain", crow_runtime::markdown::plain_text, (Str) -> Str, never),
+    row!("doc.document", "doc", "document", crow_runtime::markdown::document, (Str, Str) -> Str, never),
 ];
 
 /// The row of an id (the tests name rows so).
@@ -1349,6 +1423,9 @@ impl Kind {
             Kind::Texts => "a list of text",
             Kind::Json => "a JSON value",
             Kind::Column => "a frame's column",
+            Kind::Markup => "markup",
+            Kind::TextRows => "rows of text",
+            Kind::Shell => "a command's answer",
         }
     }
 
@@ -1462,7 +1539,7 @@ pub const OWN_FORM: &[&str] = &[
 /// bug-classes.md §4). The list only shrinks: a builtin added outside the
 /// table fails `every_core_builtin_is_a_row_or_says_why_not`.
 #[cfg_attr(not(test), allow(dead_code))] // read by the drift test
-pub const TO_MOVE: &[&str] = &["str", "read", "write", "exists", "mkdir", "ls", "rm", "mv", "cp", "json", "encode", "shell"];
+pub const TO_MOVE: &[&str] = &["str", "json", "encode"];
 
 /// The module functions with a form of their own: the database's effects,
 /// which the session layer performs (a connection, a transaction, a write
@@ -1473,16 +1550,7 @@ pub const MODULE_OWN_FORM: &[(&str, &str)] = &[("db", "connect"), ("db", "query"
 /// The module functions still written twice, each to become a row (docs/
 /// bug-classes.md §4); like TO_MOVE, it only shrinks.
 #[cfg_attr(not(test), allow(dead_code))] // read by the drift test
-pub const MODULE_TO_MOVE: &[(&str, &str)] = &[
-    // math
-    ("math", "load"),
-    // frame
-    ("frame", "load"), ("frame", "save"),
-    // io
-    ("io", "csv"), ("io", "lines"),
-    // doc
-    ("doc", "markdown"), ("doc", "chapters"), ("doc", "menu"), ("doc", "pager"), ("doc", "plain"), ("doc", "document"),
-];
+pub const MODULE_TO_MOVE: &[(&str, &str)] = &[];
 
 #[cfg(test)]
 mod tests {

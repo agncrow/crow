@@ -1064,7 +1064,7 @@ The kinds the language itself produces — branch on `.kind` when a category mat
 | `'parse'` | `int[]`, `float[]`, `json[]` |
 | `'io'` | `read`, `write`, `mkdir`, `ls`, `rm`, `mv`, `cp`, `input`, `csv`, `lines` |
 | `'db'` | `connect`, `query`, `exec`, `insert`, `transact`, `migrate` |
-| `'frame'` | `load`, and `with` given values of another length than the frame's rows |
+| `'frame'` | `load`, `save`, and `with` given values of another length than the frame's rows |
 | `'load'` | `math.load` |
 | `'env'` | `env[name]` when the variable is not set |
 | `'shell'` | `shell[cmd]` when the command cannot be started (a non-zero exit is not an error — read `.status`) |
@@ -1310,6 +1310,8 @@ A collection builtin takes the kinds its forms above say — a list, a map, text
 | `args[]` | CLI arguments as array of strings |
 | `input[]` | Read a line from stdin (error-value on failure) |
 | `input[prompt]` | Print prompt, then read a line (error-value on failure) |
+
+A file operation that answers nothing — `write`, `mkdir`, `rm`, `mv`, `cp`, and `use frame`'s `save` — answers empty text when it succeeds, as its type says, in both modes. (The interpreter had answered `done`, and the compiled program `''`.) What reads the world outside the program — `read`, `ls`, `shell`, and the modules' `load`, `csv` and `lines` — is stamped with the moment it was read (`captured[x]`), in both modes, and nothing else is: the compiled program had stamped `rm`'s answer.
 
 ### JSON
 
@@ -2128,7 +2130,7 @@ Import with `use frame`. Column-oriented DataFrames for tabular data. See `docs/
 | `new[]` | The empty frame (`frame.new[]`, since `new` reads best qualified); add columns with `with` |
 | `with[frame, col, values]` | A frame with one more (or replaced) column: `values` is an array, a tensor, or a scalar repeated for every row; the length must match the rows (error-value otherwise) |
 | `load[path]` | Load CSV → frame (error-value on failure) |
-| `save[frame, path]` | Write frame → CSV |
+| `save[frame, path]` | Write frame → CSV; a failure is an error value of kind `'frame'`, as `load`'s is (compiled, it had stopped the program) |
 | `select[frame, cols]` | Pick columns: `select[df, ['name', 'age']]` |
 | `filter[frame, mask]` | Keep rows where mask is true: `filter[df, df.age gt 50]` |
 | `sort[frame, col]` | Sort ascending: `sort[df, 'age']`. Descending: `sort[df, 'age', desc = true]` |

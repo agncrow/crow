@@ -1,10 +1,9 @@
-//! `use math`: every function but `load` is a row of the builtin table
+//! `use math`: every function is a row of the builtin table
 //! (crate::table), its runtime function in `crow_runtime::math`, which both
-//! modes call. `load` reads a file, an effect with a form of its own.
+//! modes call — `load` too, whose call is an effect the session layer
+//! performs.
 use crate::value::{CrowValue, Value};
-use crate::type_infer::CrowType;
 use crate::modules::CrowModule;
-use crow_runtime::tensor::CrowTensor;
 
 pub struct MathModule;
 
@@ -60,47 +59,6 @@ impl CrowModule for MathModule {
             ("inf", CrowValue::ok(Value::Float(f64::INFINITY))),
             ("nan", CrowValue::ok(Value::Float(f64::NAN))),
         ]
-    }
-
-    fn call(&self, name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
-        // Auto-propagation: if any argument is an error-value, return the first error.
-        for a in args {
-            if !a.is_ok() {
-                return Ok(a.clone());
-            }
-        }
-        match name {
-            // a numeric CSV read straight into a tensor
-            "load" => {
-                if args.len() != 1 { return Err(format!("load: expected 1 argument (path), got {}", args.len())); }
-                let path = match &args[0].value {
-                    Value::Str(s) => s.as_str(),
-                    _ => return Err("load: expected string path".into()),
-                };
-                match crow_runtime::io::load_csv_numeric(path) {
-                    Ok((data, nrows, ncols)) => {
-                        let t = CrowTensor::from_vec(data, vec![nrows, ncols]);
-                        Ok(CrowValue::ok(Value::NumArray(Box::new(t))))
-                    }
-                    Err(e) => Ok(CrowValue::error_with_kind(&e, "load", "")),
-                }
-            }
-            _ => Err(format!("{}: unknown math function", name)),
-        }
-    }
-
-    fn emit_rust(&self, name: &str, arg_strs: &[String], _arg_types: &[CrowType]) -> Result<String, String> {
-        match name {
-            "load" => Ok(format!("{{ match crow_runtime::io::load_csv_numeric(&{}) {{ Ok((data, nrows, ncols)) => CrowResult {{ value: CrowTensor::from_vec(data, vec![nrows, ncols]), ok: true, reason: String::new(), kind: String::new(), trace: vec![], captured: crow_runtime::moments::now() }}, Err(e) => CrowResult {{ value: CrowTensor::zeros(vec![0]), ok: false, reason: e, kind: \"load\".to_string(), trace: vec![], captured: 0.0 }} }} }}", arg_strs[0])),
-            _ => Err(format!("{}: unknown math function for the Rust backend", name)),
-        }
-    }
-
-    fn type_of(&self, name: &str, _arg_count: usize) -> CrowType {
-        match name {
-            "load" => CrowType::Result(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
-            _ => CrowType::Unknown,
-        }
     }
 }
 

@@ -31,6 +31,61 @@ pub fn append_file(path: &str, content: &str) -> Result<(), String> {
 // program sees in `.reason`, so they live here and nowhere else.
 
 /// `read[path]`: the file's text.
+// ── the effects a program calls ─────────────────────────────────────
+// One function each, the row both modes call (docs/bug-classes.md §4). A
+// file operation that answers nothing answers empty text, as its type
+// says (the interpreter's `done` beside the compiled program's `""`).
+
+/// `read[path]`: the file's text.
+pub fn read(path: &str) -> Result<String, String> {
+    fs_read(path)
+}
+
+/// `write[path, text]`.
+pub fn write(path: &str, content: &str) -> Result<String, String> {
+    fs_write(path, content).map(|_| String::new())
+}
+
+/// `exists[path]`.
+pub fn exists(path: &str) -> bool {
+    fs_exists(path)
+}
+
+/// `mkdir[path]`, its parents too.
+pub fn mkdir(path: &str) -> Result<String, String> {
+    fs_mkdir(path).map(|_| String::new())
+}
+
+/// `ls[path]`: the names in a directory, in order.
+pub fn ls(path: &str) -> Result<Vec<String>, String> {
+    fs_ls(path)
+}
+
+/// `rm[path]`: a file, or a directory and what it holds.
+pub fn rm(path: &str) -> Result<String, String> {
+    fs_rm(path).map(|_| String::new())
+}
+
+/// `mv[from, to]`.
+pub fn mv(src: &str, dst: &str) -> Result<String, String> {
+    fs_mv(src, dst).map(|_| String::new())
+}
+
+/// `cp[from, to]`.
+pub fn cp(src: &str, dst: &str) -> Result<String, String> {
+    fs_cp(src, dst).map(|_| String::new())
+}
+
+/// `io.csv[path]`: each row a map from its column's name to its text.
+pub fn csv(path: &str) -> Result<Vec<BTreeMap<String, String>>, String> {
+    parse_csv(path)
+}
+
+/// `io.lines[path]`.
+pub fn lines(path: &str) -> Result<Vec<String>, String> {
+    read_lines(path)
+}
+
 pub fn fs_read(path: &str) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| format!("cannot read '{}': {}", path, e))
 }

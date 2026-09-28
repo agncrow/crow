@@ -13,6 +13,19 @@ use crate::tensor::CrowTensor;
 
 pub use crate::cell::Cell;
 
+/// `frame.load[path]`: a CSV file as a frame, each column's type read from
+/// its cells.
+pub fn load(path: &str) -> Result<CrowFrame, String> {
+    crate::frame::load_csv(path)
+}
+
+/// `frame.save[frame, path]`: a frame as a CSV file. A failure is an error
+/// value of kind 'frame', as `load`'s is (compiled, it stopped the
+/// program while the interpreter answered the error).
+pub fn save(f: &CrowFrame, path: &str) -> Result<String, String> {
+    f.save(path).map(|_| String::new())
+}
+
 /// A cell as a column of one row, for `with` to repeat.
 fn one_row(cell: Cell) -> Result<Column, String> {
     match cell {

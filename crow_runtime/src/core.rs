@@ -353,11 +353,19 @@ pub fn join_floats(v: &[f64], sep: &str) -> String {
 }
 
 /// What `shell[cmd]` answers: the exit status and what the command wrote,
-/// trailing whitespace trimmed from both streams.
+/// trailing whitespace trimmed from both streams. It is the compiled
+/// program's `CrowShell`, shown as the interpreter shows its record.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Shell {
     pub status: i64,
     pub stdout: String,
     pub stderr: String,
+}
+
+impl crate::display::CrowDisplay for Shell {
+    fn crow_repr(&self) -> String {
+        format!("[status = {}, stderr = {}, stdout = {}]", self.status.crow_repr(), self.stderr.crow_repr(), self.stdout.crow_repr())
+    }
 }
 
 /// `shell[cmd]` through `sh -c`. Only a command that cannot start is an

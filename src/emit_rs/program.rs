@@ -1373,13 +1373,11 @@ impl Emitter {
             self.line("}");
         }
         if self.needs_shell_struct {
+            // the runtime's own record, which `shell`'s row answers
             self.needs_crow_runtime = true;
             self.line("");
-            self.line("#[derive(Clone, Debug)]");
-            self.line("struct CrowShell { status: i64, stdout: String, stderr: String }");
-            self.line("impl crow_runtime::display::CrowDisplay for CrowShell {");
-            self.line("    fn crow_repr(&self) -> String { use crow_runtime::display::CrowDisplay as _; format!(\"[status = {}, stderr = {}, stdout = {}]\", self.status.crow_repr(), self.stderr.crow_repr(), self.stdout.crow_repr()) }");
-            self.line("}");
+            self.line("#[allow(dead_code)]");
+            self.line("type CrowShell = crow_runtime::core::Shell;");
         }
         if self.needs_elapsed_struct {
             self.line("");

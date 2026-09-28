@@ -1440,37 +1440,37 @@ fn test_stats_ttest_transpile() {
 #[test]
 fn test_fs_exists_transpile() {
     let rust = transpile("e = exists['foo.txt']\n");
-    assert!(rust.contains("crow_runtime::io::fs_exists("), "exists goes through the runtime\n{}", rust);
+    assert!(rust.contains("crow_runtime::io::exists(&*"), "exists goes through the runtime\n{}", rust);
 }
 
 #[test]
 fn test_fs_mkdir_transpile() {
     let rust = transpile("mkdir['dir']\n");
-    assert!(rust.contains("crow_runtime::io::fs_mkdir("), "mkdir goes through the runtime\n{}", rust);
+    assert!(rust.contains("crow_runtime::io::mkdir(&*"), "mkdir goes through the runtime\n{}", rust);
 }
 
 #[test]
 fn test_fs_ls_transpile() {
     let rust = transpile("f = ls['.']\n");
-    assert!(rust.contains("crow_runtime::io::fs_ls("), "ls goes through the runtime\n{}", rust);
+    assert!(rust.contains("crow_runtime::io::ls(&*"), "ls goes through the runtime\n{}", rust);
 }
 
 #[test]
 fn test_fs_rm_transpile() {
     let rust = transpile("rm['file.txt']\n");
-    assert!(rust.contains("crow_runtime::io::fs_rm(&*"), "rm goes through the runtime and borrows its path\n{}", rust);
+    assert!(rust.contains("crow_runtime::io::rm(&*"), "rm is its row, which borrows its path\n{}", rust);
 }
 
 #[test]
 fn test_fs_mv_transpile() {
     let rust = transpile("mv['a.txt', 'b.txt']\n");
-    assert!(rust.contains("crow_runtime::io::fs_mv("), "mv goes through the runtime\n{}", rust);
+    assert!(rust.contains("crow_runtime::io::mv(&*"), "mv goes through the runtime\n{}", rust);
 }
 
 #[test]
 fn test_fs_cp_transpile() {
     let rust = transpile("cp['a.txt', 'b.txt']\n");
-    assert!(rust.contains("crow_runtime::io::fs_cp("), "cp goes through the runtime\n{}", rust);
+    assert!(rust.contains("crow_runtime::io::cp(&*"), "cp goes through the runtime\n{}", rust);
 }
 
 // ===== env builtin =====
