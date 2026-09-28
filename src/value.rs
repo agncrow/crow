@@ -210,14 +210,6 @@ pub struct StructInstance {
 }
 
 impl Value {
-    /// Format a value with quotes around strings (for display inside containers)
-    fn fmt_repr(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Value::Str(s) => write!(f, "'{}'", s),
-            other => write!(f, "{}", other),
-        }
-    }
-
     /// Return the Crow type name for this value
     pub fn type_name(&self) -> &'static str {
         match self {
@@ -251,41 +243,23 @@ impl fmt::Display for Value {
             Value::Float(n) => write!(f, "{}", n),
             Value::Str(s) => write!(f, "{}", s),
             Value::Bool(b) => write!(f, "{}", b),
+            // a list, a map and a record as the one display writes them
+            // (crow_runtime::display), the compiled program's typed values alike
             Value::Array(items) => {
-                write!(f, "[")?;
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    item.fmt_item(f)?;
-                }
-                write!(f, "]")
+                use crow_runtime::display::CrowDisplay as _;
+                write!(f, "{}", crow_runtime::display::list(items.iter().map(|i| i.crow_repr())))
             }
             // Delegate to the shared display kernel (crow_runtime::display) so
             // interpreter and compiled output are identical, including nesting
             Value::NumArray(tensor) => write!(f, "{}", tensor),
             Value::Map(map) => {
-                write!(f, "[")?;
-                for (i, (k, v)) in map.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{} = ", k)?;
-                    v.fmt_item(f)?;
-                }
-                write!(f, "]")
+                use crow_runtime::display::CrowDisplay as _;
+                write!(f, "{}", crow_runtime::display::entries(map.iter().map(|(k, v)| (k, v.crow_repr()))))
             }
             Value::Fn(func) => write!(f, "<fn {}>", func.name),
             Value::StructInstance(si) => {
-                write!(f, "{}[", si.name)?;
-                for (i, (k, v)) in si.fields.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{} = ", k)?;
-                    v.fmt_item(f)?;
-                }
-                write!(f, "]")
+                use crow_runtime::display::CrowDisplay as _;
+                write!(f, "{}", crow_runtime::display::record(&si.name, si.fields.iter().map(|(k, v)| (k, v.crow_repr()))))
             }
             Value::Sparse(s) => write!(f, "{}", s),
             Value::Frame(frame) => write!(f, "{}", frame),
@@ -305,18 +279,34 @@ impl fmt::Display for Value {
     }
 }
 
-impl CrowValue {
-    /// An item of a list, a map or a struct as the container shows it: a
-    /// string quoted, an error by its reason
-    fn fmt_item(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+/// A value as both modes show it (crow_runtime::display): inside a list
+/// (`crow_repr`, text quoted) or alone (`crow_fmt`), a failed one as its
+/// reason. `str` is this display, called through its row.
+impl crow_runtime::display::CrowDisplay for CrowValue {
+    fn crow_repr(&self) -> String {
         if self.is_ok() {
-            self.value.fmt_repr(f)
+            match &self.value {
+                Value::Str(s) => s.crow_repr(),
+                other => other.to_string(),
+            }
         } else if self.kind() == "missing" && self.reason() == "nan" {
             // a frame column's missing cell, as the display kernel shows it
-            write!(f, "nan")
+            "nan".to_string()
         } else {
-            write!(f, "error: {}", self.reason())
+            crow_runtime::display::failed(&self.reason())
         }
+    }
+    fn crow_fmt(&self) -> String {
+        self.to_string()
+    }
+}
+
+/// A value's JSON (`encode`), by the rule the compiled program's values
+/// follow (crow_runtime::json::ToJson): a failed value is `null`, a record
+/// an object of its fields, what JSON holds no form of `null`.
+impl crow_runtime::json::ToJson for CrowValue {
+    fn to_json(&self) -> serde_json::Value {
+        crate::builtins::crow_to_json("", self).unwrap_or(serde_json::Value::Null)
     }
 }
 

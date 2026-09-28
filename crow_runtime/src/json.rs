@@ -14,6 +14,105 @@ pub fn len(v: &serde_json::Value) -> i64 {
     }
 }
 
+/// A JSON value, as a generated program names it without naming serde.
+pub type Json = serde_json::Value;
+
+/// JSON's `null`: what a value that failed encodes as.
+pub fn null() -> Json {
+    serde_json::Value::Null
+}
+
+/// A record's JSON: an object of its fields.
+pub fn object(fields: Vec<(&str, Json)>) -> Json {
+    serde_json::Value::Object(fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+}
+
+/// `json[text]`: the value the text is. A top-level `null` is an error of
+/// reason `null` (spec, json[]); text that is no JSON is the parser's
+/// reason.
+pub fn parse(s: &str) -> Result<serde_json::Value, String> {
+    match serde_json::from_str::<serde_json::Value>(s) {
+        Ok(serde_json::Value::Null) => Err("null".to_string()),
+        Ok(v) => Ok(v),
+        Err(e) => Err(format!("invalid JSON: {}", e)),
+    }
+}
+
+/// `type[j]` of a parsed JSON value: the word the interpreter's value of it
+/// says (a list of numbers is an array there too, `null` an error).
+pub fn type_word(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Object(_) => "map",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::String(_) => "str",
+        serde_json::Value::Number(n) if n.is_i64() => "int",
+        serde_json::Value::Number(_) => "float",
+        serde_json::Value::Bool(_) => "bool",
+        serde_json::Value::Null => "error",
+    }
+}
+
+/// `encode[x]`: a value's JSON text, by the one rule every type follows.
+pub fn encode<T: ToJson + ?Sized>(x: &T) -> String {
+    x.to_json().to_string()
+}
+
+/// The refusal a JSON value that is no object is given, in the words the
+/// interpreter gives the value it parsed to (a list of numbers is a tensor
+/// there): the table's, naming the forms (`form`), or — for a list whose
+/// kind no item says (an empty one, one starting with `null`) — the words
+/// of reading one as a map.
+fn not_a_map(name: &str, form: &str, rest: &str, v: &serde_json::Value) -> String {
+    use serde_json::Value;
+    let got = match v {
+        Value::Number(n) if n.is_i64() => "an int",
+        Value::Number(_) => "a number",
+        Value::String(_) => "text",
+        Value::Bool(_) => "a bool",
+        Value::Object(_) => "a map",
+        Value::Array(items) if !items.is_empty() && items.iter().all(|i| i.is_number()) => "numbers",
+        Value::Array(items) => match items.first() {
+            Some(Value::Number(n)) if n.is_i64() => "a list of ints",
+            Some(Value::Number(_)) => "a list of numbers",
+            Some(Value::String(_)) => "a list of text",
+            Some(Value::Bool(_)) => "a list of bools",
+            Some(Value::Object(_)) => "a list of maps",
+            Some(Value::Array(inner)) => match inner.first() {
+                Some(Value::Number(_)) => "a list of tensors",
+                Some(Value::Null) | None => return "expected a map, got array".to_string(),
+                Some(_) => "a list",
+            },
+            _ => return "expected a map, got array".to_string(),
+        },
+        Value::Null => "null",
+    };
+    format!("{}[] takes {}, got {}{}", name, form, got, rest)
+}
+
+/// `keys[j]` of a parsed JSON object, in order.
+pub fn keys(j: &serde_json::Value) -> Result<Vec<String>, String> {
+    match j {
+        serde_json::Value::Object(m) => Ok(m.keys().cloned().collect()),
+        other => Err(not_a_map("keys", "a map", "", other)),
+    }
+}
+
+/// `values[j]` of a parsed JSON object, in its keys' order.
+pub fn values(j: &serde_json::Value) -> Result<Vec<serde_json::Value>, String> {
+    match j {
+        serde_json::Value::Object(m) => Ok(m.values().cloned().collect()),
+        other => Err(not_a_map("values", "a map", "", other)),
+    }
+}
+
+/// `has[j, key]` of a parsed JSON object.
+pub fn has(j: &serde_json::Value, key: &str) -> Result<bool, String> {
+    match j {
+        serde_json::Value::Object(m) => Ok(m.contains_key(key)),
+        other => Err(not_a_map("has", "a map and text", " and text", other)),
+    }
+}
+
 /// How a float encodes: JSON has no NaN or infinity, so those encode as
 /// `null`, as serde writes them; anything else is the number.
 pub fn float_to_json(f: f64) -> serde_json::Value {
@@ -58,14 +157,43 @@ impl ToJson for String {
 impl ToJson for str {
     fn to_json(&self) -> serde_json::Value { serde_json::json!(self) }
 }
+/// A parsed value encodes as the interpreter's value of it does: a list of
+/// numbers is a tensor there, whose whole numbers encode as ints (the
+/// compiled program had written `[1,2.0]` back where the interpreter wrote
+/// `[1,2]`).
 impl ToJson for serde_json::Value {
-    fn to_json(&self) -> serde_json::Value { self.clone() }
+    fn to_json(&self) -> serde_json::Value {
+        use serde_json::Value;
+        match self {
+            Value::Array(items) if !items.is_empty() && items.iter().all(|i| i.is_number()) => Value::Array(
+                items
+                    .iter()
+                    .map(|n| {
+                        let f = n.as_f64().unwrap_or(0.0);
+                        if f == (f as i64) as f64 && f.is_finite() { serde_json::json!(f as i64) } else { float_to_json(f) }
+                    })
+                    .collect(),
+            ),
+            Value::Array(items) => Value::Array(items.iter().map(|i| i.to_json()).collect()),
+            Value::Object(m) => Value::Object(m.iter().map(|(k, v)| (k.clone(), v.to_json())).collect()),
+            other => other.clone(),
+        }
+    }
 }
 impl ToJson for crate::tensor::CrowTensor {
     fn to_json(&self) -> serde_json::Value { tensor_to_json(self) }
 }
 impl<T: ToJson> ToJson for Vec<T> {
     fn to_json(&self) -> serde_json::Value { serde_json::Value::Array(self.iter().map(|v| v.to_json()).collect()) }
+}
+/// A recursive link: the record it holds, or the empty sentinel `0`.
+impl<T: ToJson> ToJson for Option<Box<T>> {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            Some(r) => r.to_json(),
+            None => serde_json::json!(0),
+        }
+    }
 }
 impl<T: ToJson> ToJson for std::collections::BTreeMap<String, T> {
     fn to_json(&self) -> serde_json::Value {

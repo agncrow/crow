@@ -723,6 +723,10 @@ impl Emitter {
                 "    fn crow_repr(&self) -> String { if !self.ok { format!(\"error: {}\", self.reason) } else { self.value.crow_repr() } }",
                 "    fn crow_fmt(&self) -> String { if !self.ok { format!(\"error: {}\", self.reason) } else { self.value.crow_fmt() } }",
                 "}",
+                // a value that failed encodes as `null`
+                "impl<T: Clone + crow_runtime::json::ToJson> crow_runtime::json::ToJson for CrowResult<T> {",
+                "    fn to_json(&self) -> crow_runtime::json::Json { if self.ok { self.value.to_json() } else { crow_runtime::json::null() } }",
+                "}",
             ] {
                 self.line(l);
             }
@@ -760,22 +764,11 @@ impl Emitter {
     fn emit_json_display(&mut self) {
         for l in [
             "#[allow(dead_code)]",
+            // a parsed JSON value as the one display shows it (a whole float
+            // as an int, JSON's null as the error it reads as)
             "fn crow_json_display(v: &serde_json::Value) -> String {",
-            "    match v {",
-            "        serde_json::Value::String(s) => s.clone(),",
-            // a JSON null is an error value (spec, json[]), shown as one
-            "        serde_json::Value::Null => \"error: null\".to_string(),",
-            "        serde_json::Value::Array(items) => format!(\"[{}]\", items.iter().map(crow_json_repr).collect::<Vec<_>>().join(\", \")),",
-            "        serde_json::Value::Object(m) => format!(\"[{}]\", m.iter().map(|(k, v)| format!(\"{} = {}\", k, crow_json_repr(v))).collect::<Vec<_>>().join(\", \")),",
-            "        other => other.to_string(),",
-            "    }",
-            "}",
-            "#[allow(dead_code)]",
-            "fn crow_json_repr(v: &serde_json::Value) -> String {",
-            "    match v {",
-            "        serde_json::Value::String(s) => format!(\"'{}'\", s),",
-            "        other => crow_json_display(other),",
-            "    }",
+            "    use crow_runtime::display::CrowDisplay as _;",
+            "    v.crow_fmt()",
             "}",
             "",
         ] {
@@ -894,20 +887,24 @@ impl Emitter {
         self.line("#[allow(dead_code)]");
         self.line(&format!("impl {} {{ fn crow_default() -> Self {{ {} {{ {} }} }} }}", s.name, s.name, defaults.join(", ")));
         self.line("");
+        // a record as the one display shows it, `P[x = 1, y = 2]`, and as the
+        // one JSON rule encodes it, an object of its fields
         if self.struct_kernel_displayable(&s.name) {
             self.needs_crow_runtime = true;
-            let mut sorted: Vec<&(String, Ty)> = s.fields.iter().collect();
-            sorted.sort_by(|a, b| a.0.cmp(&b.0));
-            let parts: Vec<String> = sorted.iter().map(|(f, _)| format!("{} = {{}}", f)).collect();
-            let vals: Vec<String> = sorted.iter().map(|(f, _)| format!("self.{}.crow_repr()", Self::rust_field(f))).collect();
+            let fields: Vec<String> = s.fields.iter().map(|(f, _)| format!("(\"{}\", self.{}.crow_repr())", f, Self::rust_field(f))).collect();
             self.line(&format!("impl crow_runtime::display::CrowDisplay for {} {{", s.name));
             self.line("    fn crow_repr(&self) -> String {");
-            self.line(&format!(
-                "        {{ use crow_runtime::display::CrowDisplay as _; format!(\"{}[{}]\", {}) }}",
-                s.name,
-                parts.join(", "),
-                vals.join(", ")
-            ));
+            self.line(&format!("        {{ use crow_runtime::display::CrowDisplay as _; crow_runtime::display::record(\"{}\", vec![{}]) }}", s.name, fields.join(", ")));
+            self.line("    }");
+            self.line("}");
+            self.line("");
+        }
+        if self.struct_encodes(&s.name) {
+            self.needs_crow_runtime = true;
+            let fields: Vec<String> = s.fields.iter().map(|(f, _)| format!("(\"{}\", self.{}.to_json())", f, Self::rust_field(f))).collect();
+            self.line(&format!("impl crow_runtime::json::ToJson for {} {{", s.name));
+            self.line("    fn to_json(&self) -> crow_runtime::json::Json {");
+            self.line(&format!("        {{ use crow_runtime::json::ToJson as _; crow_runtime::json::object(vec![{}]) }}", fields.join(", ")));
             self.line("    }");
             self.line("}");
             self.line("");
@@ -943,44 +940,76 @@ impl Emitter {
         }
     }
 
+    /// Whether a record shows through the one display
+    /// (crow_runtime::display): every field does. Every such record has a
+    /// `CrowDisplay` written with the program — a record holding a list, a
+    /// list of records and a map of them had shown in Rust's debug form.
     pub(crate) fn struct_kernel_displayable(&self, name: &str) -> bool {
-        if matches!(name, "CrowShell" | "CrowFindResult") {
+        self.record_is(name, &|e, t, seen| e.ty_shows(t, seen), &mut BTreeSet::new())
+    }
+
+    /// Whether a record's values encode by the one JSON rule
+    /// (crow_runtime::json::ToJson): every field does.
+    pub(crate) fn struct_encodes(&self, name: &str) -> bool {
+        self.record_is(name, &|e, t, seen| e.ty_encodes(t, seen), &mut BTreeSet::new())
+    }
+
+    /// Whether every field of a record has a property; the runtime's own
+    /// records have it, and a record reached again through its own fields
+    /// has it if the rest does.
+    fn record_is(&self, name: &str, field: &dyn std::ops::Fn(&Emitter, &Ty, &mut BTreeSet<String>) -> bool, seen: &mut BTreeSet<String>) -> bool {
+        match name {
+            "CrowShell" | "CrowFindResult" => return true,
+            "CrowElapsed" => return false,
+            _ => {}
+        }
+        if !seen.insert(name.to_string()) {
             return true;
         }
-        if name == "CrowElapsed" {
-            return false;
-        }
-        self.structs.get(name).map_or(false, |s| s.fields.iter().all(|(_, t)| matches!(t, Ty::Int | Ty::Float | Ty::Bool | Ty::Str)))
+        self.structs.get(name).map_or(false, |s| s.fields.iter().all(|(_, t)| field(self, t, seen)))
     }
 
+    /// Whether a value of this type shows through the one display.
+    fn ty_shows(&self, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
+        match t {
+            Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(_) | Ty::Frame(_) | Ty::Column(_) => true,
+            Ty::Handle(h) => h == "sparse",
+            Ty::List(i) | Ty::Map(i) | Ty::Result(i) => self.ty_shows(i, seen),
+            Ty::Record(n) | Ty::OptRecord(n) => self.record_is(n, &|e, t, seen| e.ty_shows(t, seen), seen),
+            _ => false,
+        }
+    }
+
+    /// Whether a value of this type encodes by the one JSON rule.
+    fn ty_encodes(&self, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
+        match t {
+            Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(_) => true,
+            Ty::List(i) | Ty::Map(i) | Ty::Result(i) => self.ty_encodes(i, seen),
+            Ty::Record(n) | Ty::OptRecord(n) => self.record_is(n, &|e, t, seen| e.ty_encodes(t, seen), seen),
+            _ => false,
+        }
+    }
+
+    /// Whether a list, a map or a record shows through the one display: its
+    /// type's `CrowDisplay`, the runtime's or one written with the program.
+    /// (A number, a bool, text, a tensor and a frame show as Rust displays
+    /// them, which is the one display's; a JSON value through its own.)
     pub(crate) fn kernel_displayable(&self, ty: &CrowType) -> bool {
         match ty {
-            CrowType::Array(inner) => match inner.as_ref() {
-                CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Bool => true,
-                // an item that can fail shows its value or its reason
-                // (`CrowResult`'s CrowDisplay, written with the program)
-                CrowType::Result(item) => matches!(item.as_ref(), CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Bool),
-                CrowType::NumArray(_) => true,
-                nested @ CrowType::Array(_) => self.kernel_displayable(nested),
-                _ => false,
-            },
-            CrowType::Map(inner) => match inner.as_ref() {
-                CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Bool | CrowType::Unknown | CrowType::NumArray(_) => true,
-                nested @ (CrowType::Array(_) | CrowType::Map(_)) => self.kernel_displayable(nested),
-                _ => false,
-            },
-            CrowType::Struct(n) => self.struct_kernel_displayable(n),
+            // an empty map's values are no type yet
+            CrowType::Map(inner) if matches!(inner.as_ref(), CrowType::Unknown) => true,
+            CrowType::Array(inner) | CrowType::Map(inner) | CrowType::Result(inner) => self.shows_inside(inner),
+            CrowType::Struct(n) | CrowType::OptBoxStruct(n) => self.struct_kernel_displayable(n),
             _ => false,
         }
     }
 
-    pub(crate) fn json_encodable(&self, ty: &CrowType) -> bool {
-        match ty {
-            CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Bool | CrowType::NumArray(_) | CrowType::Json => true,
-            CrowType::Array(inner) | CrowType::Map(inner) => self.json_encodable(inner),
-            _ => false,
-        }
+    /// Whether a value shows inside a list, a map or a record.
+    fn shows_inside(&self, t: &CrowType) -> bool {
+        matches!(t, CrowType::Int | CrowType::Float | CrowType::Bool | CrowType::Str | CrowType::Markup | CrowType::Json | CrowType::NumArray(_) | CrowType::Frame | CrowType::FrameCol | CrowType::Sparse)
+            || self.kernel_displayable(t)
     }
+
 
     fn emit_json_to_frame(&mut self) {
         self.needs_serde_json = true;
@@ -1039,9 +1068,12 @@ impl Emitter {
         self.line("}");
         self.line("");
         // a record reads as the map of its fields, each as JSON — when every
-        // field has a JSON form (a detector's result read by a test)
+        // field has a JSON form (a detector's result read by a test); one the
+        // program encodes has its `ToJson` already, as `CrowResult` has
+        // (written with the program: a value that failed encodes as null)
         let records = self.json_records();
-        for name in &records {
+        let unwritten: Vec<String> = records.iter().filter(|n| !self.struct_encodes(n)).cloned().collect();
+        for name in &unwritten {
             let def = self.structs.get(name).cloned().expect("a record the program defines");
             let inserts: Vec<String> = def
                 .fields
@@ -1054,9 +1086,8 @@ impl Emitter {
                 inserts.join(" ")
             ));
         }
-        if !records.is_empty() {
+        if !unwritten.is_empty() {
             self.needs_crow_runtime = true;
-            self.line("impl<T: Clone + crow_runtime::json::ToJson> crow_runtime::json::ToJson for CrowResult<T> { fn to_json(&self) -> serde_json::Value { if self.ok { self.value.to_json() } else { serde_json::json!({ \"ok\": false, \"reason\": self.reason, \"kind\": self.kind }) } } }");
         }
         self.line("#[allow(unused_variables, dead_code)]");
         self.line("fn __crow_derived(state: &CrowLiveState, name: &str) -> Option<serde_json::Value> {");
@@ -1370,6 +1401,9 @@ impl Emitter {
             self.line("struct CrowFindResult { groups: Vec<String> }");
             self.line("impl crow_runtime::display::CrowDisplay for CrowFindResult {");
             self.line("    fn crow_repr(&self) -> String { use crow_runtime::display::CrowDisplay as _; format!(\"[groups = {}]\", self.groups.crow_repr()) }");
+            self.line("}");
+            self.line("impl crow_runtime::json::ToJson for CrowFindResult {");
+            self.line("    fn to_json(&self) -> crow_runtime::json::Json { use crow_runtime::json::ToJson as _; crow_runtime::json::object(vec![(\"groups\", self.groups.to_json())]) }");
             self.line("}");
         }
         if self.needs_shell_struct {

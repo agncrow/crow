@@ -58,10 +58,86 @@ impl CrowDisplay for &str {
     }
 }
 
+/// A list as both modes show it: `[a, b]`, each item as it shows inside
+/// a list (the interpreter's values and the compiled program's alike).
+pub fn list(items: impl IntoIterator<Item = String>) -> String {
+    format!("[{}]", items.into_iter().collect::<Vec<_>>().join(", "))
+}
+
+/// A map's entries, or a record's fields, as both modes show them:
+/// `[key = value, ...]`, in the order given.
+pub fn entries<K: AsRef<str>>(pairs: impl IntoIterator<Item = (K, String)>) -> String {
+    list(pairs.into_iter().map(|(k, v)| format!("{} = {}", k.as_ref(), v)))
+}
+
+/// A record: its name, then its fields in name order (`P[x = 1, y = 2]`).
+pub fn record<K: AsRef<str>>(name: &str, fields: impl IntoIterator<Item = (K, String)>) -> String {
+    let mut fields: Vec<(K, String)> = fields.into_iter().collect();
+    fields.sort_by(|a, b| a.0.as_ref().cmp(b.0.as_ref()));
+    format!("{}{}", name, entries(fields))
+}
+
+/// A value that failed, shown in place of its value.
+pub fn failed(reason: &str) -> String {
+    format!("error: {}", reason)
+}
+
+/// `str[x]`: a value as it shows (text bare, a number as it displays).
+pub fn shown<T: CrowDisplay + ?Sized>(x: &T) -> String {
+    x.crow_fmt()
+}
+
 impl<T: CrowDisplay> CrowDisplay for Vec<T> {
     fn crow_repr(&self) -> String {
-        let parts: Vec<String> = self.iter().map(|v| v.crow_repr()).collect();
-        format!("[{}]", parts.join(", "))
+        list(self.iter().map(|v| v.crow_repr()))
+    }
+}
+
+/// A recursive link: the record it holds, or the empty sentinel `0`.
+impl<T: CrowDisplay> CrowDisplay for Option<Box<T>> {
+    fn crow_repr(&self) -> String {
+        match self {
+            Some(r) => r.crow_repr(),
+            None => "0".to_string(),
+        }
+    }
+}
+
+/// A parsed JSON value, as the interpreter shows the value it parsed to:
+/// a number as it displays (a whole float as an int), text quoted inside a
+/// list, `null` as the error it reads as. (The compiled program had shown a
+/// whole float as `2.0`, and `str` of a list its JSON text.)
+impl CrowDisplay for serde_json::Value {
+    fn crow_repr(&self) -> String {
+        match self {
+            serde_json::Value::String(s) => s.crow_repr(),
+            other => other.crow_fmt(),
+        }
+    }
+    fn crow_fmt(&self) -> String {
+        match self {
+            serde_json::Value::Null => failed("null"),
+            serde_json::Value::Bool(b) => b.crow_repr(),
+            serde_json::Value::Number(n) => match n.as_i64() {
+                Some(i) => i.crow_repr(),
+                None => n.as_f64().unwrap_or(f64::NAN).crow_repr(),
+            },
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Array(items) => list(items.iter().map(|v| v.crow_repr())),
+            serde_json::Value::Object(m) => entries(m.iter().map(|(k, v)| (k, v.crow_repr()))),
+        }
+    }
+}
+
+impl CrowDisplay for crate::frame::CrowFrame {
+    fn crow_repr(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl CrowDisplay for crate::sparse::CrowSparse {
+    fn crow_repr(&self) -> String {
+        self.to_string()
     }
 }
 
@@ -91,11 +167,7 @@ impl CrowDisplay for crate::frame::CrowColumn {
 
 impl<T: CrowDisplay> CrowDisplay for std::collections::BTreeMap<String, T> {
     fn crow_repr(&self) -> String {
-        let parts: Vec<String> = self
-            .iter()
-            .map(|(k, v)| format!("{} = {}", k, v.crow_repr()))
-            .collect();
-        format!("[{}]", parts.join(", "))
+        entries(self.iter().map(|(k, v)| (k, v.crow_repr())))
     }
 }
 

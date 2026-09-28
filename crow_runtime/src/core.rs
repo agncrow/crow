@@ -368,6 +368,14 @@ impl crate::display::CrowDisplay for Shell {
     }
 }
 
+/// A command's answer as JSON: the object the interpreter's record encodes
+/// as.
+impl crate::json::ToJson for Shell {
+    fn to_json(&self) -> serde_json::Value {
+        crate::json::object(vec![("status", self.status.to_json()), ("stderr", self.stderr.to_json()), ("stdout", self.stdout.to_json())])
+    }
+}
+
 /// `shell[cmd]` through `sh -c`. Only a command that cannot start is an
 /// error; a non-zero exit is an answer, read from `.status`.
 pub fn shell(cmd: &str) -> Result<Shell, String> {

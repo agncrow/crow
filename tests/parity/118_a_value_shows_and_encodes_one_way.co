@@ -1,0 +1,28 @@
+--- A value shows through one display and encodes by one JSON rule, in both
+--- modes (docs/bug-classes.md §4). Compiled, a record holding a list, a
+--- list of records and a map of them had shown in Rust's debug form, a
+--- JSON float as `2.0`, and `str` of a JSON list its JSON text; the
+--- interpreter had refused to encode a record, and the compiled program
+--- did not build one. An int given a record's float field is a float.
+struct P [x, y]
+struct L [name, items]
+log[L['a', [1, 2]]]
+log[[P[1, 2.5], P[3, 4]]]
+log[map[a = [P[1, 2]]]]
+log[str[L['b', [3]]]]
+log['in text: `[P[5, 6]]`']
+q = P[1, 2]
+log[q.y / 4]
+j = json['{"a": [1, 2.0, 2.5, "x"], "n": [1, 2.0], "z": {"k": null}}']
+log[j]
+log[str[j.a]]
+log[keys[j]]
+log[has[j, 'z']]
+log[encode[j]]
+log[encode[P[1, 2.5]]]
+log[encode[[L['c', [1.0, 2.0]]]]]
+nums = for s in ['1', 'b']
+    int[s]
+log[encode[nums]]
+log[keys[j.n]]
+log['not reached']

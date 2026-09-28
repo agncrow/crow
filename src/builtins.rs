@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 /// The names answered here (a builtin with a row in crate::table is
 /// answered by its row, before this).
-pub const HANDLED: &[&str] = &["log", "type", "map", "abs", "sqrt", "floor", "ceil", "round", "pad", "str", "append", "args", "input", "time", "sleep", "env", "exit", "json", "encode", "now", "assert", "error"];
+pub const HANDLED: &[&str] = &["log", "type", "map", "abs", "sqrt", "floor", "ceil", "round", "pad", "append", "args", "input", "time", "sleep", "env", "exit", "now", "assert", "error"];
 
 /// A state-free builtin by name, or `None` when the name is one the
 /// walker itself must handle.
@@ -141,11 +141,6 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
         // fmt: value formatting via the shared display kernel. The lowering
         // pass guarantees exactly 7 positional args (sentinel defaults).
         // --- Conversion builtins ---
-        "str" => {
-            if args.len() != 1 { return Err("str[] takes exactly 1 argument".into()); }
-            let val = args[0].unwrap_or_propagate()?;
-            Ok(CrowValue::ok(Value::Str(format!("{}", val))))
-        }
         "append" => {
             Err("append was removed — use concat[a, b] (one merge operation, see language-spec.md)".into())
         }
@@ -224,27 +219,6 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                 }
             };
             std::process::exit(code);
-        }
-        // --- JSON builtins ---
-        "json" => {
-            if args.len() != 1 { return Err("json[] takes exactly 1 argument".into()); }
-            match args[0].unwrap_or_propagate()? {
-                Value::Str(s) => {
-                    match serde_json::from_str::<serde_json::Value>(s) {
-                        Ok(jval) => Ok(json_to_crow(trace, &jval)),
-                        Err(e) => Ok(CrowValue::error_with_kind(&format!("invalid JSON: {}", e), "parse", trace)),
-                    }
-                }
-                _ => Err("json[] requires a string argument".into()),
-            }
-        }
-        "encode" => {
-            if args.len() != 1 { return Err("encode[] takes exactly 1 argument".into()); }
-            let jval = crow_to_json(trace, &args[0]);
-            match jval {
-                Ok(v) => Ok(CrowValue::ok(Value::Str(v.to_string()))),
-                Err(e) => Ok(CrowValue::error(&e, trace)),
-            }
         }
         // --- Hashing builtin ---
         // --- Date/time builtins ---
@@ -388,6 +362,15 @@ pub fn crow_to_json(trace: &str, val: &CrowValue) -> Result<serde_json::Value, S
         Value::Map(map) => {
             let mut obj = serde_json::Map::new();
             for (k, v) in map {
+                obj.insert(k.clone(), crow_to_json(trace, v)?);
+            }
+            Ok(serde_json::Value::Object(obj))
+        }
+        // a record is an object of its fields, as the compiled program's is
+        // (it had been refused here, and did not build compiled)
+        Value::StructInstance(si) => {
+            let mut obj = serde_json::Map::new();
+            for (k, v) in &si.fields {
                 obj.insert(k.clone(), crow_to_json(trace, v)?);
             }
             Ok(serde_json::Value::Object(obj))

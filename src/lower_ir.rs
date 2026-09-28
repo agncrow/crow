@@ -2165,10 +2165,14 @@ impl<'a> Lowerer<'a> {
                 checks.push(self.checked(&value));
                 // a list of numbers is held as a list or as a tensor: a
                 // field holds the form its record was settled on, so a value
-                // in the other is converted (`[h]` beside a list pushed to)
+                // in the other is converted (`[h]` beside a list pushed to);
+                // an int given a float field is a float, as one handed to a
+                // float parameter is (compiled, `P[1, 2]` beside `P[1, 2.5]`
+                // did not build, and the interpreter kept the int)
                 let how = match (declared.get(i).map(|t| t.payload()), value.ty()) {
                     (Some(Ty::List(_)), Ty::Tensor(_)) => Some(Convert::ToList),
                     (Some(Ty::Tensor(_)), Ty::List(_)) => Some(Convert::ToTensor),
+                    (Some(Ty::Float), Ty::Int) if !matches!(value, Expr::Convert { how: Convert::Unwrap, .. }) => Some(Convert::IntToFloat),
                     _ => None,
                 };
                 fields.push(match how {

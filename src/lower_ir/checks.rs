@@ -574,6 +574,11 @@ impl<'a> Lowerer<'a> {
             return;
         }
         let kinds: Vec<crate::table::Arg> = (0..argc).map(|i| types.get(i).map_or(crate::table::Arg::Unknown, crate::table::Arg::of_type)).collect();
+        // `json[map]` is web's JSON response (use web), a form of its own
+        let web = self.v.bare_import_lines.keys().any(|p| p == "web" || p.starts_with("web."));
+        if name == "json" && web && kinds.first() == Some(&crate::table::Arg::Map) {
+            return;
+        }
         let providers: Vec<String> = self.ctx.registry.providers_of(name).into_iter().map(str::to_string).collect();
         let mut modules: Vec<&str> = vec![""];
         modules.extend(providers.iter().map(String::as_str));
@@ -857,7 +862,6 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "log" | "assert" => argc >= 1,
         "type" => argc == 1,
         "abs" | "sqrt" | "floor" | "ceil" | "round" => argc == 1,
-        "str" => argc == 1,
         "now" => argc == 0,
         "captured" => argc == 1,
         "notice" => argc == 1,
@@ -875,7 +879,6 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "sleep" => argc == 1,
         "env" => argc == 1 || argc == 2,
         "exit" => argc <= 1,
-        "json" | "encode" => argc == 1,
         "error" => (1..=2).contains(&argc),
         "cpu" => argc == 1,
         "gpu" => argc <= 1,

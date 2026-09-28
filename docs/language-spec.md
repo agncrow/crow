@@ -53,7 +53,7 @@ An empty list cannot fail either: `xs = []`, then `xs = push[xs, float[s]]`, hol
 
 **Design Note: a plain variable refuses an error.** Considered: letting the variable hold the error, its type widening to one that can fail, which the interpreter did while the compiled program returned at the assignment. Decided (Vijay, 2026-09-25): the compiled program's rule, in both modes. A variable's type does not change (above), and an error that silently took the variable's place would surface lines later, far from its cause; refused where it is assigned, it names the line and the variable.
 
-**A variable that is ever assigned a float is a float for its whole scope.** Assigning an int to it stores the float value (`x = 1` above stores `1.0`), and so does handing an int to a parameter that is a float: `half[3]`, where `fn half[x]` is also called with `2.5`, divides `3.0`. (The compiled program handed the function its int and did not build.) Note for interpreted mode: the widening applies from the first float assignment onward, so an int division performed *before* any float assignment may differ from compiled mode, where the variable is float from its declaration — don't depend on int division of variables that later hold floats.
+**A variable that is ever assigned a float is a float for its whole scope.** Assigning an int to it stores the float value (`x = 1` above stores `1.0`), and so does handing an int to a parameter that is a float: `half[3]`, where `fn half[x]` is also called with `2.5`, divides `3.0`. (The compiled program handed the function its int and did not build.) So does a record's field that holds floats — `P[1, 2]` beside `P[1, 2.5]` holds `2.0` — and a list, a map or a comparison of floats given an int: `push[xs, 2]` onto floats pushes `2.0`, and `map[lr = 0.01, epochs = 100]` holds `100.0`. (Compiled, those did not build; interpreted, the int was kept, so `type[m.epochs]` said `int` beside a float division.) Note for interpreted mode: the widening applies from the first float assignment onward, so an int division performed *before* any float assignment may differ from compiled mode, where the variable is float from its declaration — don't depend on int division of variables that later hold floats.
 
 
 ### Types
@@ -1163,7 +1163,7 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 
 | Function | Description |
 |----------|-------------|
-| `log[value]` | Print a value to stdout |
+| `log[value]` | Print a value to stdout, as it shows: text bare, a number as it displays (a whole float as an int), a list as `[1, 'a']` with its text quoted, a map as `[key = value]`, a record as `Point[x = 1, y = 2]` (its fields in name order), a value that failed as `error: reason` — the same in both modes, through one display (`crow_runtime::display`) |
 | `range[stop]` | Array of ints from 0 to stop (exclusive); every argument of `range` is an int (`range[2.5]` is refused) |
 | `range[start, stop]` | Array of ints from start to stop (exclusive) |
 | `range[start, stop, step]` | Array of ints with custom step; a negative step counts down (`range[5, 0, -2]` is `[5, 3, 1]`); a zero step is an error |
@@ -1252,8 +1252,8 @@ log['P&L: `money[pnl]`']
 |----------|-------------|
 | `int[value]` | Convert to int: a float is cut toward zero (the largest int past its range), a bool is 1 or 0, text is parsed as written — no spaces around it — and text or a JSON value that names no int is an error value of kind `'parse'` |
 | `float[value]` | Convert to float, as `int` reads its value |
-| `str[value]` | Convert to string |
-| `type[value]` | Type name as string: `'int'`, `'float'`, `'str'`, `'bool'`, `'array'`, `'map'`, `'fn'`, `'none'`, `'error'`, or struct name |
+| `str[value]` | The text a value shows as, as `log` shows it (`str[[1, 2]]` is `'[1, 2]'`). (Compiled, a record holding a list, a list of records and a map of them had shown in Rust's debug form, and a JSON list as its JSON text.) |
+| `type[value]` | Type name as string: `'int'`, `'float'`, `'str'`, `'bool'`, `'array'`, `'map'`, `'fn'`, `'none'`, `'error'`, `'frame'`, `'sparse'`, `'db'`, or struct name — the same in both modes: a frame's column is an `'array'`, a parsed JSON value what it maps to, and `shell`'s and `find`'s records `'map'` |
 
 ```
 type[42]          --- 'int'
@@ -1318,9 +1318,9 @@ A file operation that answers nothing — `write`, `mkdir`, `rm`, `mv`, `cp`, an
 | Function | Description |
 |----------|-------------|
 | `json[str]` | Parse JSON string into a Crow value (error-value on failure). Indexing the value reads its elements; a parse that failed, indexed, hands its error on, and an element that is JSON's `null` is an error value of reason `null` (kind `'parse'`), in both modes |
-| `encode[value]` | Encode a Crow value as a JSON string; a whole float prints as an int, a NaN or infinite float as `null`, an error value as `null` |
+| `encode[value]` | Encode a Crow value as a JSON string: a record as an object of its fields, a tensor's whole numbers as ints (a float alone keeps its point: `encode[2.0]` is `2.0`), a NaN or infinite float as `null`, an error value as `null`; a function, a frame and a sparse matrix have no JSON and are refused. (The interpreter had refused to encode a record, and the compiled program did not build one.) |
 
-JSON type mapping: objects → maps, arrays → arrays, strings → str, numbers → int/float, booleans → bool, `null` → error-value. Parsed JSON is dynamic data — the map homogeneity rule applies to maps you construct, not to values parsed from JSON (open-schema data is exactly what `json[]` is for). JSON `null` maps to an error-value with `ok: false` and `reason: 'null'`, which auto-propagates through the error-value system (section 10).
+JSON type mapping: objects → maps, arrays → arrays (an array of numbers a tensor), strings → str, numbers → int/float, booleans → bool, `null` → error-value. A parsed value shows as what it maps to (`[1, 2.0]` shows as `[1, 2]`), encodes back as it would (`[1,2]`), and a parsed object answers `keys`, `values` and `has`, in both modes (compiled, those did not build). Parsed JSON is dynamic data — the map homogeneity rule applies to maps you construct, not to values parsed from JSON (open-schema data is exactly what `json[]` is for). JSON `null` maps to an error-value with `ok: false` and `reason: 'null'`, which auto-propagates through the error-value system (section 10).
 
 ```
 items = json['[1, 2, 3]']

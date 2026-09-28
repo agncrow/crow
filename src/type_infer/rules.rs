@@ -146,7 +146,6 @@ impl TypeContext {
             "floor" | "ceil" | "round" => CrowType::Int,
             // String builtins
             "contains" => CrowType::Bool,
-            "str" => CrowType::Str,
             // Immutable collection builtins (return same type as first arg)
             "push" => {
                 // push[array, val] returns Array/NumArray with element type from val
@@ -307,15 +306,14 @@ impl TypeContext {
             "__notice_at" => CrowType::Float,
             "env" => CrowType::Result(Box::new(CrowType::Str)),
             "exit" => CrowType::Int,
-            // JSON builtins
-            "json" => CrowType::Result(Box::new(CrowType::Json)),
-            "encode" => CrowType::Result(Box::new(CrowType::Str)),
             // Web builtins (available when `use web` is active)
             "route" => CrowType::WebApp,
             "serve" => CrowType::Void,
             "respond" => CrowType::WebResponse,
             "redirect" => CrowType::WebResponse,
             "html" => CrowType::WebResponse,
+            // `json[map]` (use web): `json[text]` is its row
+            "json" => CrowType::WebResponse,
             "text" => CrowType::WebResponse,
             // Web.db builtins
             "sqlite" => CrowType::WebDb,

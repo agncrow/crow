@@ -118,6 +118,14 @@ pub enum Kind {
     /// `crow_runtime::core::Shell` given: a command's status and output,
     /// the compiled program's `CrowShell` and the interpreter's record.
     Shell,
+    /// `&T` taken, any value that shows (`str`): the compiled program's
+    /// `CrowDisplay`, the interpreter's value's.
+    Shown,
+    /// `&T` taken, any value JSON can hold (`encode`): the compiled
+    /// program's `ToJson`, the interpreter's value's.
+    Encoded,
+    /// `Vec<serde_json::Value>` given: a parsed JSON object's values.
+    JsonList,
 }
 
 /// What a failure of the function is.
@@ -200,6 +208,8 @@ impl Kind {
             Kind::Markup => CrowType::Markup,
             Kind::TextRows => CrowType::Array(Box::new(CrowType::Map(Box::new(CrowType::Str)))),
             Kind::Shell => CrowType::Struct("CrowShell".to_string()),
+            Kind::Shown | Kind::Encoded => CrowType::Unknown,
+            Kind::JsonList => CrowType::Array(Box::new(CrowType::Json)),
             // what the arguments' items are: inference types the call from
             // them (a generic row's answer is the list or map it was given)
             Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef | Kind::MapOf | Kind::MapRef => CrowType::Unknown,
@@ -284,6 +294,8 @@ impl Kind {
             Kind::Markup => "String::new()",
             Kind::TextRows => "Vec::<std::collections::BTreeMap<String, String>>::new()",
             Kind::Shell => "crow_runtime::core::Shell { status: -1, stdout: String::new(), stderr: String::new() }",
+            Kind::Shown | Kind::Encoded => "unreachable!()",
+            Kind::JsonList => "Vec::<serde_json::Value>::new()",
             // a generic answer never fails as a value (its rows answer or stop)
             Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef => "Vec::new()",
             Kind::MapOf | Kind::MapRef => "std::collections::BTreeMap::new()",
@@ -687,6 +699,16 @@ pub fn write_shell(sh: crow_runtime::core::Shell) -> CrowValue {
     CrowValue::ok(Value::Map(m))
 }
 
+/// A parsed JSON value as the interpreter holds it: arrays, maps and
+/// scalars, a `null` inside an error value of reason `null`.
+pub fn write_json(v: serde_json::Value) -> CrowValue {
+    crate::builtins::json_to_crow("", &v)
+}
+
+pub fn write_json_list(vs: Vec<serde_json::Value>) -> CrowValue {
+    CrowValue::ok(Value::Array(vs.iter().map(|v| crate::builtins::json_to_crow("", v)).collect()))
+}
+
 pub fn write_markup(s: String) -> CrowValue {
     CrowValue::markup(s)
 }
@@ -761,6 +783,8 @@ macro_rules! read {
     (Texts, $g:expr) => { read_strs(one($g)?)? };
     (Json, $g:expr) => { &read_json(one($g)?)? };
     (Column, $g:expr) => { &read_column(one($g)?)? };
+    (Shown, $g:expr) => { one($g)? };
+    (Encoded, $g:expr) => { one($g)? };
 }
 
 /// The value of an answer by its kind.
@@ -785,6 +809,8 @@ macro_rules! answer {
     (Markup, $x:expr) => { write_markup($x) };
     (TextRows, $x:expr) => { write_text_rows($x) };
     (Shell, $x:expr) => { write_shell($x) };
+    (Json, $x:expr) => { write_json($x) };
+    (JsonList, $x:expr) => { write_json_list($x) };
 }
 
 /// The taking of a parameter's group by its kind: a collection the
@@ -915,6 +941,20 @@ pub static ROWS: &[Row] = &[
     row!("core.has", "", "has", crow_runtime::core::has, (MapRef, Str) -> Bool, never),
     row!("core.set", "", "set", crow_runtime::core::set, (MapOf, Str, Item) -> MapOf, never),
     row!("core.del", "", "del", crow_runtime::core::map_del, (MapOf, Str) -> MapOf, never),
+    // a parsed JSON object's keys, values and entries: the compiled program
+    // holds the parsed value, the interpreter what it parsed to, whose map
+    // rows it picks (compiled, these did not build)
+    row!("json.keys", "", "keys", crow_runtime::json::keys, (Json) -> Strs, stops),
+    row!("json.values", "", "values", crow_runtime::json::values, (Json) -> JsonList, stops),
+    row!("json.has", "", "has", crow_runtime::json::has, (Json, Str) -> Bool, stops),
+    // a value's display and its JSON: one display (crow_runtime::display)
+    // and one encoding (crow_runtime::json::ToJson) that both modes' values
+    // follow — the compiled program had shown a record holding a list, or a
+    // list of records, in Rust's debug form, and `str` of a JSON list as its
+    // JSON text; the interpreter had refused to encode a record
+    row!("display.str", "", "str", crow_runtime::display::shown, (Shown) -> Str, never),
+    row!("json.parse", "", "json", crow_runtime::json::parse, (Str) -> Json, value "parse"),
+    row!("json.encode", "", "encode", crow_runtime::json::encode, (Encoded) -> Str, never),
     // the file system: an effect, which the session layer performs (held to
     // a handler's commit, recorded in a rehearsal) and whose call inside is
     // the row; a failure is an error value of kind 'io', a success of a
@@ -1426,6 +1466,9 @@ impl Kind {
             Kind::Markup => "markup",
             Kind::TextRows => "rows of text",
             Kind::Shell => "a command's answer",
+            Kind::Shown => "a value",
+            Kind::Encoded => "a value JSON can hold",
+            Kind::JsonList => "a list of JSON values",
         }
     }
 
@@ -1455,6 +1498,9 @@ impl Kind {
                 Kind::Floats => a == Arg::Floats,
                 Kind::Json => a == Arg::Json,
                 Kind::Column => a == Arg::Column,
+                // a function shows as nothing, and JSON holds no function, frame or matrix
+                Kind::Shown => a != Arg::Fn,
+                Kind::Encoded => !matches!(a, Arg::Fn | Arg::Frame | Arg::Sparse | Arg::Column),
                 _ => true,
             }
     }
@@ -1539,7 +1585,7 @@ pub const OWN_FORM: &[&str] = &[
 /// bug-classes.md §4). The list only shrinks: a builtin added outside the
 /// table fails `every_core_builtin_is_a_row_or_says_why_not`.
 #[cfg_attr(not(test), allow(dead_code))] // read by the drift test
-pub const TO_MOVE: &[&str] = &["str", "json", "encode"];
+pub const TO_MOVE: &[&str] = &[];
 
 /// The module functions with a form of their own: the database's effects,
 /// which the session layer performs (a connection, a transaction, a write

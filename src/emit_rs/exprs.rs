@@ -1480,6 +1480,10 @@ impl Emitter {
         if row.ret == Kind::Shell {
             self.needs_shell_struct = true;
         }
+        // a parsed JSON value is serde's, which the program then names
+        if row.ret == Kind::Json || row.ret == Kind::JsonList || row.params.contains(&Kind::Json) {
+            self.needs_serde_json = true;
+        }
         let mut strs = arg_strs.to_vec();
         if let Some(kinds) = crate::table::kinds_of(row.params, strs.len()) {
             let items = kinds.iter().zip(args).find_map(|(k, a)| match (k, Self::inner(&self.tt(a))) {

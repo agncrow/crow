@@ -504,7 +504,7 @@ fn test_crow_result_display_shows_error() {
 fn test_json_builtin_emits_serde() {
     let src = "items = json['[1,2,3]']\nlog[items[0]]\n";
     let rust = transpile(src);
-    assert!(rust.contains("serde_json::from_str"), "json[] should use serde_json\n{}", rust);
+    assert!(rust.contains("crow_runtime::json::parse(&*("), "json[] is its row, the runtime's parse\n{}", rust);
     assert!(rust.contains("CrowResult"), "json[] should return CrowResult\n{}", rust);
 }
 
@@ -512,8 +512,10 @@ fn test_json_builtin_emits_serde() {
 fn test_json_null_returns_error() {
     let src = "n = json['null']\nlog[n.ok]\n";
     let rust = transpile(src);
-    assert!(rust.contains("is_null()"), "json[] should check for null\n{}", rust);
-    assert!(rust.contains("ok: false"), "null should map to ok: false\n{}", rust);
+    // the runtime's parse answers a top-level null as its reason, which the
+    // row makes an error value of kind 'parse'
+    assert!(rust.contains("crow_runtime::json::parse(&*("), "json[] is its row\n{}", rust);
+    assert!(rust.contains("kind: \"parse\".to_string()"), "a failed parse is kind 'parse'\n{}", rust);
 }
 
 #[test]

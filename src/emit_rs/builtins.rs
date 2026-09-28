@@ -8,10 +8,6 @@ use super::*;
 /// The moment a reader stamps its answer with.
 const STAMP: &str = "std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)";
 
-fn ok(value: &str) -> String {
-    format!("CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", value)
-}
-
 impl Emitter {
     fn lit_str(e: &Expr) -> Option<&str> {
         match Emitter::raw(e) {
@@ -374,16 +370,6 @@ impl Emitter {
                 self.needs_crow_runtime = true;
                 "crow_runtime::moments::now()".to_string()
             }
-            // conversions
-            "str" if n == 1 => match in0 {
-                CrowType::Str => a[0].clone(),
-                CrowType::Json => format!("{{ let _j = &({}); match _j.as_str() {{ Some(s) => s.to_string(), None => _j.to_string() }} }}", a[0]),
-                ref t if self.kernel_displayable(t) => {
-                    self.needs_crow_runtime = true;
-                    format!("{{ use crow_runtime::display::CrowDisplay as _; ({}).crow_fmt() }}", a[0])
-                }
-                _ => format!("format!(\"{{}}\", {})", a[0]),
-            },
             // a web queue's push (crow_web): a collection's is its row
             "push" if n == 2 => format!("{}.push({})", a[0], a[1]),
             // the command line and the terminal
@@ -543,61 +529,38 @@ impl Emitter {
                 format!("CrowResult {{ ok: false, value: {}, reason: {}.to_string(), kind: {}, trace: vec![{}], captured: 0.0 }}", default, a[0], kind, tr)
             }
             "type" if n == 1 => {
-                let s = match &ty0 {
-                    CrowType::Int => "\"int\"".to_string(),
-                    CrowType::Float => "\"float\"".to_string(),
-                    CrowType::Str | CrowType::Markup => "\"str\"".to_string(),
-                    CrowType::Bool => "\"bool\"".to_string(),
-                    CrowType::Array(_) | CrowType::NumArray(_) => "\"array\"".to_string(),
-                    CrowType::Sparse => "\"sparse\"".to_string(),
-                    CrowType::Map(_) => "\"map\"".to_string(),
-                    CrowType::Fn(_, _) => "\"fn\"".to_string(),
-                    CrowType::Void => "\"none\"".to_string(),
-                    CrowType::Struct(nm) => format!("\"{}\"", nm),
-                    CrowType::Result(inner) => {
-                        let t = match inner.as_ref() {
-                            CrowType::Int => "int",
-                            CrowType::Float => "float",
-                            CrowType::Str => "str",
-                            CrowType::Bool => "bool",
-                            _ => "unknown",
-                        };
-                        format!("{{ let _v = &{}; if _v.ok {{ \"{}\" }} else {{ \"error\" }} }}", a[0], t)
+                // the words the interpreter's values say, a value that can
+                // fail by the value it holds (compiled, a list, a map, a
+                // record, a frame or a JSON value had been "unknown")
+                fn word(t: &CrowType, v: &str) -> String {
+                    match t {
+                        CrowType::Int => "\"int\"".to_string(),
+                        CrowType::Float => "\"float\"".to_string(),
+                        CrowType::Str | CrowType::Markup => "\"str\"".to_string(),
+                        CrowType::Bool => "\"bool\"".to_string(),
+                        // a frame's column is the list of its cells there
+                        CrowType::Array(_) | CrowType::NumArray(_) | CrowType::FrameCol => "\"array\"".to_string(),
+                        CrowType::Sparse => "\"sparse\"".to_string(),
+                        CrowType::Map(_) => "\"map\"".to_string(),
+                        CrowType::Fn(_, _) => "\"fn\"".to_string(),
+                        CrowType::Void => "\"none\"".to_string(),
+                        CrowType::Frame => "\"frame\"".to_string(),
+                        CrowType::DbHandle => "\"db\"".to_string(),
+                        // the runtime's records are the interpreter's maps
+                        CrowType::Struct(nm) if matches!(nm.as_str(), "CrowShell" | "CrowFindResult") => "\"map\"".to_string(),
+                        CrowType::Struct(nm) => format!("\"{}\"", nm),
+                        CrowType::Json => format!("crow_runtime::json::type_word(&({}))", v),
+                        CrowType::Result(inner) => format!("{{ let _v = &({}); if _v.ok {{ {} }} else {{ \"error\" }} }}", v, word(inner, "_v.value")),
+                        _ => "\"unknown\"".to_string(),
                     }
-                    _ => "\"unknown\"".to_string(),
-                };
-                format!("{}.to_string()", s)
+                }
+                self.needs_crow_runtime = true;
+                format!("({}).to_string()", word(&ty0, &a[0]))
             }
-            // JSON
-            "json" if n == 1 && !(self.needs_crow_web && matches!(ty0, CrowType::Map(_))) => {
-                self.needs_serde_json = true;
-                let tr = self.trace_format_expr();
-                format!(
-                    "match serde_json::from_str::<serde_json::Value>(&*{}) {{ Ok(v) => if v.is_null() {{ CrowResult {{ ok: false, value: serde_json::Value::Null, reason: \"null\".to_string(), kind: \"parse\".to_string(), trace: vec![{}], captured: 0.0 }} }} else {{ CrowResult {{ ok: true, value: v, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }}, Err(e) => CrowResult {{ ok: false, value: serde_json::Value::Null, reason: format!(\"invalid JSON: {{}}\", e), kind: \"parse\".to_string(), trace: vec![{}], captured: 0.0 }} }}",
-                    a[0], tr, tr
-                )
-            }
+            // `json[map]`, a web response (use web): `json[text]` is its row
             "json" if n == 1 => {
                 self.needs_serde_json = true;
                 format!("CrowResponse::json(serde_json::to_value(&{}).unwrap())", a[0])
-            }
-            "encode" if n == 1 => {
-                self.needs_serde_json = true;
-                if let CrowType::Array(el) = &in0 {
-                    if matches!(el.as_ref(), CrowType::Result(_)) {
-                        let src = if matches!(ty0, CrowType::Result(_)) { format!("({}).value", a[0]) } else { format!("({})", a[0]) };
-                        return Some(format!(
-                            "{{ let _vals: Vec<serde_json::Value> = {}.iter().map(|_e| if _e.ok {{ serde_json::to_value(&_e.value).unwrap_or(serde_json::Value::Null) }} else {{ serde_json::Value::Null }}).collect(); CrowResult {{ ok: true, value: serde_json::to_string(&_vals).unwrap_or_default(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }}",
-                            src
-                        ));
-                    }
-                }
-                if self.json_encodable(&in0) {
-                    self.needs_crow_runtime = true;
-                    ok(&format!("{{ use crow_runtime::json::ToJson as _; ({}).to_json().to_string() }}", a[0]))
-                } else {
-                    ok(&format!("serde_json::to_string(&{}).unwrap_or_default()", a[0]))
-                }
             }
             // search: a parallel early exit
             "any" | "all" if n == 2 => {

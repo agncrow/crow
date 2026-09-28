@@ -552,6 +552,43 @@ reads the world and is stamped with the moment it was read.
 Every module function is a row now (`MODULE_TO_MOVE` is empty); of the
 core's, `str`, `json` and `encode` are left.
 
+**Batch 13**: a value's display and its JSON — `str`, `json`, `encode`,
+and `keys`, `values` and `has` of a parsed JSON object — with parity 118.
+A value shows through one display (`crow_runtime::display`) and encodes by
+one JSON rule (`crow_runtime::json::ToJson`): the compiled program's typed
+values through their implementations — every record whose fields show has
+a `CrowDisplay` written with the program, every one whose fields encode a
+`ToJson` — and the interpreter's values through theirs, built on the same
+helpers (`display::list`, `entries`, `record`). `str` and `encode` are rows
+over any value that shows or encodes (`Kind::Shown`, `Kind::Encoded`), and
+`json` a row answering the parsed value, which the interpreter turns into
+its own.
+
+- Compiled, a record holding a list, a list of records and a map of them
+  showed in Rust's debug form (`CrowResult { ok: true, value: [{"a": …` for
+  `io.csv`'s rows), and `str` of one did not build.
+- A parsed JSON float showed as `2.0` compiled and `2` interpreted, and
+  `str` of a JSON list was its JSON text compiled. A parsed value shows as
+  what it maps to now, in both.
+- The interpreter refused to encode a record, and the compiled program did
+  not build one: a record encodes as an object of its fields. A parsed
+  list of numbers is a tensor to the interpreter, whose whole numbers
+  encode as ints; the compiled program had written the parsed `2.0` back.
+- `keys`, `values` and `has` of a parsed JSON object answered interpreted
+  and did not build compiled: rows over the parsed value, refusing a
+  value that is no object in the words the interpreter gives the value it
+  parsed to.
+- An int given a record's float field stayed an int interpreted and did
+  not build compiled (`P[1, 2]` beside `P[1, 2.5]`): a float, as one handed
+  to a float parameter is.
+- `type` answered `unknown` compiled for a frame, a frame's column, a JSON
+  value, a `shell` record, and a value that can fail holding a list, a map
+  or a record, where the interpreter named them: the interpreter's words in
+  both (a runtime record is a map there, a parsed value what it maps to).
+
+Every core builtin is a row now, or has a form of its own that the table
+says (`TO_MOVE` is empty).
+
 ## Decisions (Vijay, 2026-09-28)
 
 The questions the work raised, each decided as recommended.
