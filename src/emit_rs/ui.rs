@@ -23,7 +23,7 @@ impl Emitter {
         }
         // table[frame]: the frame's rows; a table of element children is an
         // ordinary element
-        if element == "table" && children.len() == 1 && matches!(Self::inner(&self.tt(&children[0])), CrowType::Frame) {
+        if element == "table" && children.len() == 1 && matches!(Self::inner(&self.tt(&children[0])), CrowType::Frame(_)) {
             return self.frame_table(attrs, &children[0]);
         }
         let is_container = crow_runtime::layout::CONTAINERS.contains(&element);

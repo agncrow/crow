@@ -9,7 +9,6 @@ pub(crate) struct FnScan {
     saved_vars: BTreeMap<String, CrowType>,
     saved_fn_name: Option<String>,
     saved_in_view: bool,
-    saved_frames: Vec<(String, Option<BTreeMap<String, CrowType>>)>,
     saved_assigned: Option<std::collections::HashSet<String>>,
 }
 
@@ -53,11 +52,11 @@ impl TypeContext {
                         (Expr::Ident(s), Expr::Str(col)) | (Expr::Str(s), Expr::Str(col)) if s == "key" => Some(col.clone()),
                         _ => None,
                     });
-                    let schema = self.frame_schema_of(&args[1]);
-                    let key_type = match (&key_name, &schema) {
-                        (Some(col), Some(sc)) => sc.get(col).cloned().unwrap_or(CrowType::Str),
-                        (None, Some(sc)) => sc.values().next().cloned().unwrap_or(CrowType::Str),
-                        _ => CrowType::Str,
+                    let schema = arg_types.get(1).and_then(|t| t.frame_cols()).cloned().flatten();
+                    let known = match (&key_name, &schema) {
+                        (Some(col), Some(sc)) => sc.cols.get(col).cloned(),
+                        (None, Some(sc)) => sc.cols.values().next().cloned(),
+                        _ => None,
                     };
                     let mut handlers: Vec<String> = Vec::new();
                     for (k, v) in pairs {
@@ -79,11 +78,17 @@ impl TypeContext {
                             _ => {}
                         }
                     }
+                    // (the key column the frame's type knows is the handlers'
+                    // parameter, over a guess an earlier round made before
+                    // the frame's columns were known; unknown, a key reads as
+                    // text)
                     for h in handlers {
                         if let Some(sig) = self.functions.get_mut(&h) {
                             if let Some(p) = sig.params.first_mut() {
-                                if matches!(p.1, CrowType::Unknown) {
-                                    p.1 = key_type.clone();
+                                match &known {
+                                    Some(t) => p.1 = t.clone(),
+                                    None if matches!(p.1, CrowType::Unknown) => p.1 = CrowType::Str,
+                                    None => {}
                                 }
                             }
                         }
@@ -166,26 +171,6 @@ impl TypeContext {
                     }
                 }
                 self.functions.get_mut(name).unwrap().params = new_params;
-
-                // a frame argument's columns are its parameter's, when
-                // every call agrees on them
-                for (i, arg) in args.iter().enumerate() {
-                    let Some((pname, _)) = sig.params.get(i) else { continue };
-                    let Some(schema) = self.frame_schema_of(arg) else { continue };
-                    if schema.is_empty() {
-                        continue;
-                    }
-                    let key = (name.clone(), pname.clone());
-                    match self.param_frame_schemas_next.get(&key) {
-                        None => {
-                            self.param_frame_schemas_next.insert(key, Some(schema));
-                        }
-                        Some(Some(seen)) if *seen != schema => {
-                            self.param_frame_schemas_next.insert(key, None);
-                        }
-                        _ => {}
-                    }
-                }
 
                 // Propagate types to functions passed as arguments:
                 // If param type is Fn(...) and arg is a function name, update that function's signature
@@ -307,40 +292,14 @@ impl TypeContext {
     }
 
     /// After an assignment's value's calls are read: a connection it
-    /// makes, and the columns of the frame it holds.
+    /// makes.
     pub(crate) fn note_scanned_value(&mut self, name: &str, value: &Expr) {
         self.note_connection(name, value);
-        if let Some(schema) = self.frame_schema_of(value) {
-            self.frame_schemas.insert(name.to_string(), schema);
-        }
-    }
-
-    /// A value returned while calls are read: the columns of the frame the
-    /// function returns.
-    pub(crate) fn note_return_frame(&mut self, e: &Expr) {
-        if let Some(f) = self.current_fn_name.clone() {
-            if let Some(schema) = self.frame_schema_of(e) {
-                self.fn_frame_schemas.insert(f, schema);
-            }
-        }
-    }
-
-    /// Before a round's call scan: the frames each parameter is given are
-    /// found again.
-    pub(crate) fn begin_scan(&mut self) {
-        self.param_frame_schemas_next.clear();
-    }
-
-    /// After a round's call scan: whether a parameter's frame moved.
-    pub(crate) fn end_scan(&mut self) -> bool {
-        let moved = self.param_frame_schemas_next != self.param_frame_schemas;
-        self.param_frame_schemas = std::mem::take(&mut self.param_frame_schemas_next);
-        moved
     }
 
     /// Into a function's body while its calls are read: its parameters
-    /// typed from its signature and bound, inside a view an element is
-    /// markup, and a frame a parameter is given keeps its columns.
+    /// typed from its signature and bound (a frame's with its columns), and
+    /// inside a view an element is markup.
     pub(crate) fn enter_fn_scan(&mut self, name: &str) -> FnScan {
         let saved_vars = self.vars.clone();
         let saved_fn_name = self.current_fn_name.replace(name.to_string());
@@ -353,18 +312,16 @@ impl TypeContext {
                 assigned.insert(pname.clone());
             }
         }
-        let saved_frames = self.param_frames_in_view(name);
         let saved_assigned = self.body_assigned.replace(assigned);
-        FnScan { saved_vars, saved_fn_name, saved_in_view, saved_frames, saved_assigned }
+        FnScan { saved_vars, saved_fn_name, saved_in_view, saved_assigned }
     }
 
     /// Out of a function's body after its calls were read: reactive state
     /// it refined keeps the refinement, and a parameter called as a
     /// function keeps what its calls said of it.
     pub(crate) fn leave_fn_scan(&mut self, name: &str, scan: FnScan) {
-        let FnScan { saved_vars, saved_fn_name, saved_in_view, saved_frames, saved_assigned } = scan;
+        let FnScan { saved_vars, saved_fn_name, saved_in_view, saved_assigned } = scan;
         self.body_assigned = saved_assigned;
-        self.param_frames_out_of_view(saved_frames);
         // A module-level variable assigned in this body (reactive
         // state written by a handler) keeps the refined type: an
         // empty default learns its element type from the handler.
@@ -416,21 +373,11 @@ impl TypeContext {
         DeriveScan { saved_vars, saved_fn_name, saved_assigned }
     }
 
-    /// Out of a derivation's body after its calls were read: the frame it
-    /// returns keeps its columns' types under its name, as a variable's
-    /// would.
-    pub(crate) fn leave_derive_scan(&mut self, name: &str, body: &[Stmt], scan: DeriveScan) {
+    /// Out of a derivation's body after its calls were read (the frame it
+    /// returns keeps its columns in the derivation's type).
+    pub(crate) fn leave_derive_scan(&mut self, scan: DeriveScan) {
         let DeriveScan { saved_vars, saved_fn_name, saved_assigned } = scan;
         self.body_assigned = saved_assigned;
-        let returned: Vec<Expr> = body.iter().filter_map(|s| if let Stmt::Return(Some(e)) = s { Some(e.clone()) } else { None }).collect();
-        for e in returned {
-            if let Some(schema) = self.frame_schema_of(&e) {
-                if !schema.is_empty() {
-                    self.frame_schemas.insert(name.to_string(), schema);
-                    break;
-                }
-            }
-        }
         self.current_fn_name = saved_fn_name;
         self.vars = saved_vars;
     }

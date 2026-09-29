@@ -246,7 +246,7 @@ impl Emitter {
             if Emitter::place_read(base) {
                 let t = self.tt(e);
                 let non_copy = matches!(t, CrowType::Result(_))
-                    || matches!(Self::inner(&t), CrowType::NumArray(_) | CrowType::Array(_) | CrowType::Map(_) | CrowType::Str | CrowType::Markup | CrowType::Frame | CrowType::Struct(_) | CrowType::Json);
+                    || matches!(Self::inner(&t), CrowType::NumArray(_) | CrowType::Array(_) | CrowType::Map(_) | CrowType::Str | CrowType::Markup | CrowType::Frame(_) | CrowType::Struct(_) | CrowType::Json);
                 if non_copy && !s.ends_with(".clone()") {
                     return format!("{}.clone()", s);
                 }
@@ -265,7 +265,7 @@ impl Emitter {
             }
             let non_copy = matches!(
                 t.text(),
-                CrowType::Str | CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Map(_) | CrowType::Struct(_) | CrowType::Frame | CrowType::Json | CrowType::Result(_)
+                CrowType::Str | CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Map(_) | CrowType::Struct(_) | CrowType::Frame(_) | CrowType::Json | CrowType::Result(_)
             );
             if non_copy {
                 return format!("{}.clone()", s);
@@ -283,7 +283,7 @@ impl Emitter {
                 return s;
             }
             let t = self.local_ty(name).unwrap_or_else(|| crow_type(ty));
-            if matches!(t.text(), CrowType::Str | CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Map(_) | CrowType::Struct(_) | CrowType::Frame | CrowType::Json | CrowType::Result(_)) {
+            if matches!(t.text(), CrowType::Str | CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Map(_) | CrowType::Struct(_) | CrowType::Frame(_) | CrowType::Json | CrowType::Result(_)) {
                 return format!("{}.clone()", s);
             }
         }
@@ -765,7 +765,7 @@ impl Emitter {
             return format!("{}.get(\"{}\").cloned().unwrap_or(serde_json::Value::Null)", o, field);
         }
         if field == "len" {
-            if matches!(oty, CrowType::Frame) {
+            if matches!(oty, CrowType::Frame(_)) {
                 return format!("({}.nrows() as i64)", obj);
             }
             if matches!(oty, CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Str | CrowType::FrameCol) {
@@ -785,7 +785,7 @@ impl Emitter {
                 _ => {}
             }
         }
-        if matches!(oinner, CrowType::Frame) {
+        if matches!(oinner, CrowType::Frame(_)) {
             let f = if matches!(oty, CrowType::Result(_)) { format!("{}.value.clone()", obj) } else { obj.clone() };
             return match field {
                 "shape" => format!("vec![{f}.nrows() as i64, {f}.ncols() as i64]", f = f),
@@ -1315,7 +1315,7 @@ impl Emitter {
                     && local_read
                     && matches!(
                         Self::inner(&self.tt(a)),
-                        CrowType::NumArray(_) | CrowType::Array(_) | CrowType::Map(_) | CrowType::Str | CrowType::Markup | CrowType::Frame | CrowType::Struct(_) | CrowType::DbHandle
+                        CrowType::NumArray(_) | CrowType::Array(_) | CrowType::Map(_) | CrowType::Str | CrowType::Markup | CrowType::Frame(_) | CrowType::Struct(_) | CrowType::DbHandle
                     );
                 let s = self.expr(a);
                 arg_strs.push(if needs_clone && !(matches!(a, Expr::Load(n, _) if self.static_handle_vars.contains(n))) { format!("{}.clone()", s) } else { s });
@@ -1337,7 +1337,7 @@ impl Emitter {
                 let renders = match &target {
                     Target::User(v) => self.views.contains(v),
                     Target::Runtime(_) | Target::Row(_) => {
-                        self.in_view() && crate::lower::is_ui_control(&name, raw_args.first().map_or(false, |x| matches!(Self::inner(&self.tt(x)), CrowType::Frame)))
+                        self.in_view() && crate::lower::is_ui_control(&name, raw_args.first().map_or(false, |x| matches!(Self::inner(&self.tt(x)), CrowType::Frame(_))))
                     }
                     Target::Module(..) => false,
                 };

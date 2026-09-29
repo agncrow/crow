@@ -1,0 +1,33 @@
+--- A frame's type is its columns, in both modes (second-half-design.md
+--- §2, columns in the type): a reassignment binds it anew to the columns
+--- of what it is given, and its cells read as those columns' types; a
+--- function is a copy per set of columns it is handed; where branches meet,
+--- a frame has the columns they share; and a value a guard knows has
+--- failed hands back its failure, never its frame's columns.
+use frame, math
+df = with[frame.new[], 'price', [1.5, 2.5, 4.0]]
+df = with[df, 'who', ['a', 'b', 'c']]
+log[df.who[1]]
+log[df.price[2] * 2.0]
+fn total[f]
+    return sum[f.price]
+log[total[df]]
+cheap = filter[df, df.price lt 3.0]
+log[total[select[cheap, ['price']]]]
+log[len[cheap]]
+only = select[df, ['who']]
+log[only.who[0]]
+if len[df] gt 2
+    df = with[df, 'n', [1, 2, 3]]
+log[df.price[0]]
+log[len[df]]
+fn first[path]
+    a = frame.load[path]
+    if not a.ok
+        return a
+    return head[a, 1]
+missing = first['no-such-file.csv']
+log[missing.ok]
+g = group[df, 'who', ['price', 'sum']]
+log[len[g]]
+log[g.price_sum[2]]

@@ -95,7 +95,7 @@ impl TypeContext {
         let arg0 = args.first().map(|a| Self::walked(arg_ty(a)));
         let frame_core_fallback = self.registry.module_name_of(name) == Some("frame")
             && crate::checker::BUILTINS.contains(&name)
-            && !matches!(arg0, Some(CrowType::Frame | CrowType::FrameCol));
+            && !matches!(arg0, Some(CrowType::Frame(_) | CrowType::FrameCol));
         if frame_core_fallback && matches!(arg0, Some(CrowType::Unknown | CrowType::Void)) {
             return CrowType::Unknown;
         }
@@ -109,7 +109,7 @@ impl TypeContext {
                 let arg0 = args.first().map(|a| arg_ty(a));
                 let arg0 = arg0.map(|t| if let CrowType::Result(i) = t { *i } else { t });
                 let pick = match arg0 {
-                    Some(CrowType::Frame) | Some(CrowType::FrameCol) => Some("frame"),
+                    Some(CrowType::Frame(_)) | Some(CrowType::FrameCol) => Some("frame"),
                     Some(CrowType::NumArray(_)) | Some(CrowType::Array(_)) => Some("math"),
                     _ => None,
                 };
@@ -332,7 +332,7 @@ impl TypeContext {
             "sign" => CrowType::Str,
             "verify" => CrowType::Json,
             // Reactive data sources (UI)
-            "poll" | "fetch" => CrowType::Frame,
+            "poll" | "fetch" => CrowType::Frame(None),
             "today" => CrowType::Str,
             // Autograd
             "grad" => {
@@ -386,13 +386,6 @@ impl TypeContext {
             return CrowType::Fn(param_types, Box::new(sig.return_type.clone()));
         }
         CrowType::Unknown
-    }
-
-    /// The type the database told us for a frame's column, `frame.col`:
-    /// the type of each of its cells.
-    pub(crate) fn column_type(&self, object: &Expr, field: &str) -> Option<CrowType> {
-        let v = read_var(object)?;
-        self.frame_schemas.get(v).and_then(|s| s.get(field)).cloned()
     }
 
     /// An operator's type from its operands'.
@@ -527,7 +520,7 @@ impl TypeContext {
         let skip = matches!(name, "log" | "assert" | "type" | "cpu" | "gpu" | "error" | "table" | "chart" | "__known")
             || self.structs.contains_key(name)
             || crate::lower::UI_ELEMENTS.contains(&name)
-            || (self.in_view && crate::lower::is_ui_control(name, matches!(arg_types.first().cloned().map(Self::walked), Some(CrowType::Frame))))
+            || (self.in_view && crate::lower::is_ui_control(name, matches!(arg_types.first().cloned().map(Self::walked), Some(CrowType::Frame(_)))))
             || self.views.contains(name);
         if !skip && !matches!(base, CrowType::Result(_) | CrowType::Void) {
             let has_result_arg = arg_types.iter().any(|t| matches!(t, CrowType::Result(_)));
@@ -652,8 +645,8 @@ impl TypeContext {
             }
         }
         // Frame properties
-        let is_frame = matches!(obj_type, CrowType::Frame)
-            || matches!(&obj_type, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Frame));
+        let is_frame = matches!(obj_type, CrowType::Frame(_))
+            || matches!(&obj_type, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Frame(_)));
         if is_frame {
             match field {
                 "shape" => return CrowType::Array(Box::new(CrowType::Int)),

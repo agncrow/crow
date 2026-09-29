@@ -182,7 +182,7 @@ fn emit_db_rust(_name: &str, _arg_strs: &[String], _arg_types: &[CrowType]) -> R
 fn db_type_of(name: &str) -> CrowType {
     match name {
         "connect" => CrowType::DbHandle,
-        "query" => CrowType::Result(Box::new(CrowType::Frame)),
+        "query" => CrowType::Result(Box::new(CrowType::Frame(None))),
         "exec" => CrowType::Result(Box::new(CrowType::Int)),
         "insert" => CrowType::Int,
         "migrate" => CrowType::Int,

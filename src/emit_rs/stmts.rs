@@ -221,7 +221,7 @@ impl Emitter {
             if is_reactive_render {
                 for v in self.data_source_vars.clone() {
                     self.line(&format!("let {} = __json_to_frame(state.get(\"{}\").unwrap_or(&serde_json::Value::Null));", v, v));
-                    self.declare(&v, CrowType::Frame);
+                    self.declare(&v, CrowType::Frame(None));
                 }
             }
         }
@@ -329,7 +329,7 @@ impl Emitter {
         }
         for v in self.data_source_vars.clone() {
             self.line(&format!("let {} = __json_to_frame(state.get(\"{}\").unwrap_or(&serde_json::Value::Null));", v, v));
-            self.declare(&v, CrowType::Frame);
+            self.declare(&v, CrowType::Frame(None));
         }
         let mut body = d.body.clone();
         if let Some(i) = body.iter().rposition(|s| !matches!(s, Stmt::Line(_))) {
@@ -925,7 +925,10 @@ impl Emitter {
                 self.line(&format!("return CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }};", text));
             } else if let CrowType::Result(got) = &ety {
                 let known = |t: &CrowType| !matches!(t, CrowType::Unknown);
-                if known(got) && known(&inner) && got.as_ref() != inner.as_ref() {
+                // (two frames of other columns are one Rust type: the error
+                // passes as it is)
+                let frames = matches!((got.as_ref(), inner.as_ref()), (CrowType::Frame(_), CrowType::Frame(_)));
+                if known(got) && known(&inner) && got.as_ref() != inner.as_ref() && !frames {
                     self.line(&format!(
                         "return {{ let _r = {}; CrowResult {{ ok: _r.ok, value: {}, reason: _r.reason.clone(), kind: _r.kind.clone(), trace: _r.trace.clone(), captured: 0.0 }} }};",
                         text,

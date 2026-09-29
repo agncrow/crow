@@ -946,3 +946,10 @@ weeks; the core stages are weeks each.
   scan reads them from the tree. Carrying them in `Ty::Frame` needs each
   such reassignment to be a new binding: a decision for the language,
   not a port.
+- **2026-09-29, a frame's columns in its type.** The third decision made
+  outside the IR (2026-09-28) is in it now: a frame's type carries its
+  columns, a reassignment that changes them is a new binding, branches
+  and loops join them, and a function is a copy per set of columns it is
+  handed (second-half-design.md §2, columns in the type). The side maps
+  and `frame_schema_of` are gone, and the syntax tree's expression typer
+  with them: nothing reads the tree for a type any more.

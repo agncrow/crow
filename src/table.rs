@@ -206,7 +206,7 @@ impl Kind {
             Kind::Tensors | Kind::Groups => CrowType::Array(Box::new(CrowType::NumArray(Box::new(CrowType::Float)))),
             Kind::Unit => CrowType::Void,
             Kind::Sparse => CrowType::Sparse,
-            Kind::Frame => CrowType::Frame,
+            Kind::Frame => CrowType::Frame(None),
             Kind::Strs => CrowType::Array(Box::new(CrowType::Str)),
             Kind::Bools => CrowType::Array(Box::new(CrowType::Bool)),
             Kind::Cell | Kind::Cells => CrowType::Unknown,
@@ -1460,7 +1460,7 @@ impl Arg {
             CrowType::Map(_) => Arg::Map,
             CrowType::Struct(_) | CrowType::OptBoxStruct(_) => Arg::Record,
             CrowType::Sparse => Arg::Sparse,
-            CrowType::Frame => Arg::Frame,
+            CrowType::Frame(_) => Arg::Frame,
             CrowType::Fn(..) => Arg::Fn,
             _ => Arg::Unknown,
         }

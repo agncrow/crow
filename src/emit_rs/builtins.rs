@@ -263,7 +263,7 @@ impl Emitter {
         let frame_select_widget = name == "select" && self.needs_ui && n == 2 && self.registry.module_name_for(name).map_or(false, |m| m == "frame");
         let frame_core = self.registry.module_name_for(name).map_or(false, |m| m == "frame")
             && crate::checker::BUILTINS.contains(&name)
-            && !args.first().map(|x| matches!(Self::inner(&self.tt(x)), CrowType::Frame | CrowType::FrameCol)).unwrap_or(false);
+            && !args.first().map(|x| matches!(Self::inner(&self.tt(x)), CrowType::Frame(_) | CrowType::FrameCol)).unwrap_or(false);
         let element_in_view = self.in_view() && crate::lower::UI_ELEMENTS.contains(&name);
         if !overlapping && !frame_select_widget && !frame_core && !element_in_view && self.registry.has_function(name) {
             return Some(self.registry_call(name, args, a));
@@ -322,7 +322,7 @@ impl Emitter {
             "download" if n == 2 => {
                 let stop = self.stop_check();
                 match in0 {
-                    CrowType::Frame => format!("{{ match ({}).to_csv() {{ Ok(_t) => state.download(&{}, _t.into_bytes()), Err(_e) => state.stop(format!(\"download: {{}}\", _e)) }} {} }}", a[0], a[1], stop),
+                    CrowType::Frame(_) => format!("{{ match ({}).to_csv() {{ Ok(_t) => state.download(&{}, _t.into_bytes()), Err(_e) => state.stop(format!(\"download: {{}}\", _e)) }} {} }}", a[0], a[1], stop),
                     CrowType::Map(_) => format!(
                         "{{ match ({}).get(\"path\").map(|_p| std::fs::read(_p)) {{ Some(Ok(_b)) => state.download(&{}, _b), Some(Err(_e)) => state.stop(format!(\"download: {{}}\", _e)), None => state.stop(\"download: a file to hand on is a picked file, with a path\".to_string()) }} {} }}",
                         a[0], a[1], stop
@@ -452,7 +452,7 @@ impl Emitter {
                         CrowType::Map(_) => "\"map\"".to_string(),
                         CrowType::Fn(_, _) => "\"fn\"".to_string(),
                         CrowType::Void => "\"none\"".to_string(),
-                        CrowType::Frame => "\"frame\"".to_string(),
+                        CrowType::Frame(_) => "\"frame\"".to_string(),
                         CrowType::DbHandle => "\"db\"".to_string(),
                         // the runtime's records are the interpreter's maps
                         CrowType::Struct(nm) if matches!(nm.as_str(), "CrowShell" | "CrowFindResult") => "\"map\"".to_string(),

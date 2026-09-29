@@ -1006,7 +1006,7 @@ impl Emitter {
 
     /// Whether a value shows inside a list, a map or a record.
     fn shows_inside(&self, t: &CrowType) -> bool {
-        matches!(t, CrowType::Int | CrowType::Float | CrowType::Bool | CrowType::Str | CrowType::Markup | CrowType::Json | CrowType::NumArray(_) | CrowType::Frame | CrowType::FrameCol | CrowType::Sparse)
+        matches!(t, CrowType::Int | CrowType::Float | CrowType::Bool | CrowType::Str | CrowType::Markup | CrowType::Json | CrowType::NumArray(_) | CrowType::Frame(_) | CrowType::FrameCol | CrowType::Sparse)
             || self.kernel_displayable(t)
     }
 
@@ -1096,7 +1096,7 @@ impl Emitter {
         self.indent += 1;
         let as_json = |t: &CrowType, v: &str| -> Option<String> {
             match t {
-                CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Markup | CrowType::Bool | CrowType::Json | CrowType::Frame => {
+                CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Markup | CrowType::Bool | CrowType::Json | CrowType::Frame(_) => {
                     Some(format!("serde_json::to_value(&{}).unwrap_or(serde_json::Value::Null)", v))
                 }
                 CrowType::NumArray(_) => Some(format!("crow_runtime::json::ToJson::to_json(&{})", v)),

@@ -126,6 +126,78 @@ as dynamic). Moving finch across found a handler's specialized copies
 lowered as plain functions (their fact writes lost) and an int handed to
 a float parameter left unconverted in the compiled program, both fixed.
 
+**Columns in the type (2026-09-29, Vijay: "implement the full version:
+frames get a new binding on each reassignment").** Until now a frame's
+columns lived beside the types, in maps keyed by a variable's name
+(`frame_schemas`, `fn_frame_schemas`, `param_frame_schemas`), computed on
+the syntax tree (`frame_schema_of`, which typed `with`'s new column with
+the tree's own typer). The IR's `Ty::Frame(Option<…>)` was never filled,
+a function's frame parameter kept its columns only when every call
+agreed, and a column the program misnamed stopped it as it ran.
+
+- *The type.* A frame's type is its columns, `Frame{price: Float, n:
+  Int?}`, each column's cell type, `?` where a cell can be missing. Where a
+  column is named by a variable (`with[df, col, xs]`) the type keeps the
+  columns it knows and is *open*, `Frame{price: Float, …}`: a column it
+  cannot name may be there. Where nothing is known (a file loaded as the
+  program runs, a query no database described) it is `Frame`, all open.
+- *A reassignment binds anew.* A frame variable's type is its last
+  assignment's: after `df = with[df, 'x', xs]` it is `Frame{…, x: Float}`
+  from that line on, and before it the frame it was. In the block the
+  variable was first bound in, a reassignment that changes the columns is
+  a new `Let` of the name in the IR (Rust shadows a `let` the same way).
+  Inside a block within it (an `if`'s, a loop's) it is the variable's
+  assignment, and after that block the variable has the columns every way
+  through gives it: the columns all paths share, their types joined, open
+  where a path's columns differ. A loop's body reads, at its top, what the
+  loop's entry and its end both give. A fact, which a view may read at
+  any time, has the columns every assignment to it shares.
+- *Operations* compute their result's columns from their arguments'
+  types, by the rules the side map had: `filter`, `sort`, `head`, `tail`
+  keep the columns; `select` gives the named ones (closed); `with` adds or
+  replaces one, typed by the value it is given; `fill` makes a column's
+  cells plain; `stack` keeps the first's, `?` where any side's can be
+  missing; `join` the left's and the right's but the key (`_right` for a
+  name both have), `?` on the side a row can miss; `group` its key and a
+  float per aggregate; `rename` the columns renamed; `new[]` none (closed);
+  a described query, `doc.chapters` and `chart.macd` theirs.
+- *Functions.* A frame parameter's columns are its argument's. A function
+  called with frames of different columns is a specialized copy per set
+  of columns (the monomorphization every other type gets), and a returned
+  frame's columns are the function's result type. So what a function
+  reads of a frame, `df.amount`, is checked against the columns each call
+  hands it.
+- *What it catches.* A column a frame is known not to have — `df.x`, or
+  `'x'` named where a column is taken — is refused before the program
+  runs, in both modes, when the frame's columns are known and closed. An
+  open or unknown frame's column is checked as it runs, as before.
+
+*Built (2026-09-29).* `CrowType::Frame(Option<Arc<Cols>>)` and
+`Ty::Frame(Option<Box<FrameCols>>)`; `lower_ir/frames.rs` computes each
+operation's columns from its arguments' types (`frame_typed`), rebinds a
+frame local at each assignment (`rebind_frame`, a new `Let` in the block
+it was bound in), joins at the end of an `if` and a loop (`join_frames`,
+a loop's body read once first where it rebinds a frame), and refuses a
+column a closed frame lacks (`refuse_column_read`, `check_columns`).
+`frame_schemas`, `fn_frame_schemas`, `param_frame_schemas` and
+`frame_schema_of` are gone, and with them the last use of the syntax
+tree's expression typer (`infer_expr`, deleted). Two kinds of unknown are
+told apart: a frame whose columns inference has not worked out yet
+(`Frame(None)`, which yields to what a later round learns, and makes no
+specialization) and one whose columns show only as it runs (none known,
+open: `load`, a query no database described). A value a guard knows has
+failed (`if not x.ok` … `return x`) hands back its failure, not its
+frame's columns. The generated Rust is byte-identical over the corpus but
+for the new bindings (`let f = …` where it was `f = …`) and a frame read
+inline (`with[g, 'day', 'today'].day[1]`, now read as the text it is).
+
+Moving across found what the side map had hidden: it kept a branch's
+columns after the branch, as though the branch had run (a column only one
+branch adds read as present); it typed a column read only through a
+variable; and a table's click handler took its key's type in the first
+round of inference, before the frame's columns were known, and kept
+text. Parity 123.
+
 ## 3. Shapes
 
 **What for.** A tensor's rank and dimensions, when the program says them

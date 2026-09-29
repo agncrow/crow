@@ -15,6 +15,7 @@ use crate::type_infer::{CrowType, TypeContext};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod checks;
+mod frames;
 mod shapes;
 pub(crate) use checks::{BUILTINS, CORE_RESERVED, UI_RESERVED, WEB_EXTRA_FUNCTIONS, WEB_RESERVED};
 
@@ -441,7 +442,7 @@ pub fn ty_of(t: &CrowType) -> Ty {
         CrowType::Map(inner) => Ty::Map(Box::new(ty_of(inner))),
         CrowType::Struct(n) => Ty::Record(n.clone()),
         CrowType::OptBoxStruct(n) => Ty::OptRecord(n.clone()),
-        CrowType::Frame => Ty::Frame(None),
+        CrowType::Frame(cols) => Ty::Frame(cols.as_ref().map(|c| Box::new(FrameCols { cols: c.cols.iter().map(|(n, t)| (n.clone(), ty_of(t))).collect(), open: c.open }))),
         CrowType::FrameCol => Ty::Column(Box::new(Ty::Unknown)),
         CrowType::Json => Ty::Json,
         CrowType::Result(inner) => Ty::Result(Box::new(ty_of(inner))),
@@ -473,7 +474,7 @@ pub fn crow_type(t: &Ty) -> CrowType {
         Ty::List(inner) => CrowType::Array(Box::new(crow_type(inner))),
         Ty::Map(inner) => CrowType::Map(Box::new(crow_type(inner))),
         Ty::Tensor(inner) => CrowType::NumArray(Box::new(crow_type(inner))),
-        Ty::Frame(_) => CrowType::Frame,
+        Ty::Frame(cols) => CrowType::Frame(cols.as_ref().map(|c| std::sync::Arc::new(crate::type_infer::Cols { cols: c.cols.iter().map(|(n, t)| (n.clone(), crow_type(t))).collect(), open: c.open }))),
         Ty::Column(_) => CrowType::FrameCol,
         Ty::Json => CrowType::Json,
         Ty::Record(n) => CrowType::Struct(n.clone()),
@@ -580,6 +581,10 @@ struct Lowerer<'a> {
     /// The shapes of the body's tensor locals the program states
     /// (`shapes.rs`).
     shapes: HashMap<String, shapes::Shape>,
+    /// The names a guard knows have failed where the lowering is (`if not
+    /// x.ok`'s body, `if x.ok`'s else): a return of one hands back its
+    /// failure, never its value's type.
+    failed: Vec<String>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -604,6 +609,7 @@ impl<'a> Lowerer<'a> {
             held: Vec::new(),
             clicks: None,
             shapes: HashMap::new(),
+            failed: Vec::new(),
         }
     }
 
@@ -723,7 +729,7 @@ impl<'a> Lowerer<'a> {
                     self.at = Where::Derive;
                     self.current_fn = name.clone();
                     self.provisional(Pass::Scan, Some(HashSet::new()), body);
-                    self.ctx.leave_derive_scan(name, body, scan);
+                    self.ctx.leave_derive_scan(scan);
                 }
                 S::TestBlock { .. } | S::StructDecl { .. } | S::Use { .. } | S::Resource { .. } => {}
                 other => {
@@ -1367,12 +1373,7 @@ impl<'a> Lowerer<'a> {
                     // calls are read, with the value's type
                     self.ctx.note_scanned_assign(name, full(&expr));
                     self.ctx.note_scanned_value(name, value);
-                } else if let Some(schema) = self.ctx.frame_schema_of(value) {
-                    // the columns a local reads are those of the value
-                    // assigned here, in this function — not the last
-                    // function's local of the same name (inference keeps
-                    // one map by name)
-                    self.ctx.frame_schemas.insert(name.clone(), schema);
+                    self.rebind_frame(name, &full(&expr));
                 }
                 let stmt = self.assign(name, expr);
                 if matches!(stmt, Stmt::Store { .. }) {
@@ -1430,27 +1431,52 @@ impl<'a> Lowerer<'a> {
             S::If { condition, then_body, else_body } => {
                 let cond = self.lower_cond(condition)?;
                 let mut prelude = std::mem::take(&mut self.pre);
+                // a frame the branches bind anew has, after them, the columns
+                // both ways give it
+                let before = self.frames_in_view();
+                let (failed_then, failed_else) = frames::guarded_failure(condition);
                 self.scopes.push(HashSet::new());
-                let then = self.lower_block(then_body)?;
+                self.failed.extend(failed_then.clone());
+                let then = self.lower_block(then_body);
+                self.failed.truncate(self.failed.len() - failed_then.len());
+                let then = then?;
                 self.scopes.pop();
+                let after_then = self.frames_now(&before);
+                for (n, t) in &before {
+                    self.ctx.vars.insert(n.clone(), t.clone());
+                }
                 let els = match else_body {
                     Some(b) => {
                         self.scopes.push(HashSet::new());
-                        let e = self.lower_block(b)?;
+                        self.failed.extend(failed_else.clone());
+                        let e = self.lower_block(b);
+                        self.failed.truncate(self.failed.len() - failed_else.len());
+                        let e = e?;
                         self.scopes.pop();
                         Some(e)
                     }
                     None => None,
                 };
+                let after_else = self.frames_now(&before);
+                self.join_frames(&after_then, &after_else);
                 prelude.push(Stmt::If { cond, then, els });
                 prelude
             }
             S::While { condition, body } => {
+                // a body that binds a frame anew reads, at its top, what the
+                // loop's entry and its end both give
+                let before = self.frames_in_view();
+                if self.pass == Pass::Final && !before.is_empty() && Self::body_assigns(body, &before) {
+                    self.pre_join_loop(&before, body);
+                }
+                let top = self.frames_now(&before);
                 let cond = self.lower_cond(condition)?;
                 let prelude = std::mem::take(&mut self.pre);
                 self.scopes.push(HashSet::new());
                 let b = if self.pass == Pass::Scan { self.scan_loop_body(body)? } else { self.lower_block(body)? };
                 self.scopes.pop();
+                let end = self.frames_now(&before);
+                self.join_frames(&top, &end);
                 if prelude.is_empty() {
                     vec![Stmt::While { cond, body: b }]
                 } else {
@@ -1478,14 +1504,27 @@ impl<'a> Lowerer<'a> {
                     // inference binds the variable to an item of what the
                     // loop walks, read as text, and leaves it bound
                     self.ctx.scan_loop_var(var, walks);
-                    if self.pass == Pass::Scan {
+                    let before = self.frames_in_view();
+                    let b = if self.pass == Pass::Scan {
                         self.scan_loop_body(body)?
                     } else {
                         self.lower_block(body)?
-                    }
+                    };
+                    let end = self.frames_now(&before);
+                    self.join_frames(&before, &end);
+                    b
                 } else {
                     let saved = self.bind_loop_var(var, &it.ty());
+                    // a body that binds a frame anew reads, at its top, what
+                    // the loop's entry and its end both give
+                    let before = self.frames_in_view();
+                    if !before.is_empty() && Self::body_assigns(body, &before) {
+                        self.pre_join_loop(&before, body);
+                    }
+                    let top = self.frames_now(&before);
                     let b = self.lower_block(body)?;
+                    let end = self.frames_now(&before);
+                    self.join_frames(&top, &end);
                     self.unbind_loop_var(var, saved);
                     b
                 };
@@ -1503,11 +1542,12 @@ impl<'a> Lowerer<'a> {
             }
             S::Return(Some(e)) => {
                 let x = self.lower_expr(e)?;
+                // a value a guard knows has failed hands back its failure:
+                // its value's type (a frame's columns) is none of the
+                // function's
+                let failure_only = matches!(e, A::Ident(v) if self.failed.contains(v)) && x.ty().is_result();
                 if let (Some(seen), 0) = (&mut self.seen, self.collecting) {
-                    seen.returns.push(full(&x));
-                }
-                if self.pass == Pass::Scan {
-                    self.ctx.note_return_frame(e);
+                    seen.returns.push(if failure_only { CrowType::Result(Box::new(CrowType::Unknown)) } else { full(&x) });
                 }
                 // an int returned by a function whose value is a float is a
                 // float (spec §1), as one assigned to a float variable is: the
@@ -1648,6 +1688,25 @@ impl<'a> Lowerer<'a> {
             Pass::Final => {}
         }
         let expr = if self.declared(name) && !(self.is_fact(name) && self.sees_facts()) { self.held_by(name, expr) } else { expr };
+        let before = self.ctx.vars.get(name).cloned();
+        self.rebind_frame(name, &full(&expr));
+        // a frame given other columns in the block it was bound in is bound
+        // anew there (a Rust `let` shadows it the same way), when it is held
+        // the same way — a frame, or one that can fail
+        let rebinding = match (&before, self.ctx.vars.get(name)) {
+            (Some(was), Some(now)) => {
+                self.scopes.last().is_some_and(|s| s.contains(name))
+                    && !(self.is_fact(name) && self.sees_facts())
+                    && was.frame_cols().is_some()
+                    && was.frame_cols() != now.frame_cols()
+                    && expr.ty().is_result() == matches!(now, CrowType::Result(_))
+            }
+            _ => false,
+        };
+        if rebinding {
+            let ty = ty_of(self.ctx.vars.get(name).unwrap_or(&CrowType::Unknown));
+            return Stmt::Let { var: name.to_string(), ty, expr };
+        }
         // an int assigned to a float variable is a float (spec §1): the
         // conversion is explicit in the form
         let expr = if matches!(self.ctx.vars.get(name), Some(CrowType::Float)) && expr.ty() == Ty::Int {
@@ -1796,12 +1855,13 @@ impl<'a> Lowerer<'a> {
         let store = self.is_fact(name) && self.sees_facts();
         self.note_held(name, &ty, store);
         let settled = if self.ctx.fresh_binding(name) {
-            ty
+            ty.clone()
         } else {
             let existing = self.ctx.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-            crate::type_infer::settle::settle(&existing, ty, self.ctx.body_assigned.is_some())
+            crate::type_infer::settle::settle(&existing, ty.clone(), self.ctx.body_assigned.is_some())
         };
         self.ctx.vars.insert(name.to_string(), settled);
+        self.rebind_frame(name, &ty);
         if !store && !self.declared(name) {
             self.scopes.last_mut().unwrap().insert(name.to_string());
         }
@@ -2110,6 +2170,20 @@ impl<'a> Lowerer<'a> {
                             self.check_field(&read(&base), field);
                         }
                         let ty = ty_of(&self.ctx.field_type(object, read(&base), field));
+                        // a frame's column is typed by its cells as the frame's
+                        // type says them; one it does not name shows as the
+                        // program runs; and of a frame whose columns are not
+                        // worked out yet, nothing is known yet (inference
+                        // reads it again once they are)
+                        if matches!(ty, Ty::Column(_)) {
+                            self.refuse_column_read(&read(&base), field);
+                        }
+                        let ty = match (&ty, read(&base).frame_cols()) {
+                            (Ty::Column(_), Some(Some(cols))) => Ty::Column(Box::new(ty_of(cols.cols.get(field).unwrap_or(&CrowType::Json)))),
+                            (Ty::Column(_), Some(None)) if self.pass != Pass::Final => Ty::Unknown,
+                            (Ty::Column(_), Some(None)) => Ty::Column(Box::new(Ty::Json)),
+                            _ => ty,
+                        };
                         Expr::Field { base: Box::new(base), name: field.clone(), ty }
                     }
                 }
@@ -2155,7 +2229,7 @@ impl<'a> Lowerer<'a> {
                 self.scopes.push([var.clone()].into_iter().collect());
                 // inference's walk reads a collecting loop's yield, never its
                 // body: a provisional lowering's body leaves nothing behind
-                let outer = (self.pass == Pass::Settle).then(|| (self.ctx.vars.clone(), self.ctx.body_assigned.clone(), self.ctx.frame_schemas.clone()));
+                let outer = (self.pass == Pass::Settle).then(|| (self.ctx.vars.clone(), self.ctx.body_assigned.clone()));
                 // the call scan reads the body with the variable bound as
                 // an item, what it assigns left behind
                 let fn_list = match iter.as_ref() {
@@ -2185,10 +2259,9 @@ impl<'a> Lowerer<'a> {
                 if let Some(saved) = saved {
                     self.unbind_loop_var(var, saved);
                 }
-                if let Some((vars, assigned, frames)) = outer {
+                if let Some((vars, assigned)) = outer {
                     self.ctx.vars = vars;
                     self.ctx.body_assigned = assigned;
-                    self.ctx.frame_schemas = frames;
                 }
                 self.scopes.pop();
                 let left = std::mem::replace(&mut self.pre, before);
@@ -2256,6 +2329,19 @@ impl<'a> Lowerer<'a> {
             self.scan_call(callee, args, &full_types);
             let checks: Vec<CrowType> = idx.iter().map(|x| self.checked(x)).collect();
             self.check_callee(callee, args, &checks);
+            // (an indexed column is read as it is lowered here, not where
+            // it was lowered muted)
+            if let Expr::Field { base: frame, name, ty: Ty::Column(_) } = &base {
+                self.refuse_column_read(&read(frame), name);
+            }
+            // a cell of a column its frame's type knows, not a gather by a
+            // list of indices: frame.col[i]
+            if let (Ty::Column(cell), [index]) = (base.ty().payload(), arg_types.as_slice()) {
+                if **cell != Ty::Unknown && !matches!(index, CrowType::NumArray(_) | CrowType::Array(_)) {
+                    let ty = (**cell).clone();
+                    return Ok(Expr::Index { base: Box::new(base), indices: idx, ty });
+                }
+            }
             let ty = self.call_type(callee, args, &arg_types, &full_types, Some(read(&base)));
             return Ok(Expr::Index { base: Box::new(base), indices: idx, ty });
         }
@@ -2450,6 +2536,7 @@ impl<'a> Lowerer<'a> {
             }
         }
         let ty = self.call_type(callee, args, &arg_types, &full_types, None);
+        let ty = self.frame_typed(callee, args, &arg_types, ty);
         let current = self.current_fn.clone();
         if let Some(m) = module {
             let m = self.ctx.module_aliases.get(&m).cloned().unwrap_or(m);
@@ -2606,7 +2693,7 @@ impl<'a> Lowerer<'a> {
         let tensor_among = types.iter().any(|t| matches!(t, CrowType::NumArray(_)));
         let frame_fn = registry.module_name_for(name) == Some("frame");
         let control = name == "select" && self.in_ui && lowered.len() == 2 && frame_fn;
-        let frame_core = frame_fn && crate::checker::BUILTINS.contains(&name) && !types.first().is_some_and(|t| matches!(t, CrowType::Frame | CrowType::FrameCol));
+        let frame_core = frame_fn && crate::checker::BUILTINS.contains(&name) && !types.first().is_some_and(|t| matches!(t, CrowType::Frame(_) | CrowType::FrameCol));
         let element = matches!(self.at, Where::In(FnKind::View)) && crate::lower::UI_ELEMENTS.contains(&name);
         if !(overlapping && tensor_among) && (overlapping || control || frame_core || element) {
             return None;
@@ -2762,14 +2849,6 @@ impl<'a> Lowerer<'a> {
     /// callee was lowered as a value, the callee's. The rule is picked by the
     /// callee's form, as the walk picks it.
     fn call_type(&self, callee: &A, args: &[A], arg_types: &[CrowType], full_types: &[CrowType], callee_type: Option<CrowType>) -> Ty {
-        // a cell of a column whose type the database told us: frame.col[i]
-        if let A::FieldAccess { object, field } = callee {
-            if let (Some(t), [index]) = (self.ctx.column_type(object, field), arg_types) {
-                if !matches!(index, CrowType::NumArray(_) | CrowType::Array(_)) {
-                    return ty_of(&t);
-                }
-            }
-        }
         let t = match callee {
             A::Ident(name) => self.ctx.named_call_type(name, args, callee, arg_types, full_types),
             _ => {
@@ -2947,13 +3026,11 @@ pub(crate) fn infer_by_lowering(ctx: &mut TypeContext, stmts: &[S]) {
     for round in 0..16 {
         let before = ctx.signatures();
         ctx.sync_derive_types();
-        ctx.begin_scan();
         Lowerer::for_inference(ctx, in_ui, stmts).scan_program(stmts);
-        let frames_moved = ctx.end_scan();
         // types from indirect calls back to the functions named
         ctx.propagate_indirect_fn_types(stmts);
         infer_bodies(ctx, in_ui, stmts);
-        if round >= 4 && before == ctx.signatures() && !frames_moved {
+        if round >= 4 && before == ctx.signatures() {
             break;
         }
     }
@@ -3630,6 +3707,79 @@ mod tests {
         assert!(ir.contains("store count ← (load count add 1)"), "{}", ir);
         assert!(ir.contains("view render() -> Node"), "{}", ir);
         assert!(ir.contains("tree button(click: fn inc)[\"+\"]"), "{}", ir);
+    }
+
+    /// What the lowering refuses of a program.
+    fn refusal_of(src: &str) -> String {
+        let stmts = crate::lower::lower_program(&crate::build(src).expect("parses")).expect("lowers to the tree");
+        let mut ctx = TypeContext::new();
+        ctx.describe_queries = false;
+        ctx.infer_program(&stmts);
+        lower(&stmts, &mut ctx, "t").err().unwrap_or_default()
+    }
+
+    /// A frame's type is its columns (second-half-design.md §2, columns in
+    /// the type), and a reassignment binds it anew: in the block it was
+    /// bound in, a new `let` of the frame the value is, whose columns every
+    /// later read has.
+    #[test]
+    fn a_frame_reassigned_is_bound_anew() {
+        let ir = ir_of("use frame\ndf = with[frame.new[], 'a', [1.5]]\ndf = with[df, 'b', ['x']]\nlog[df.b[0]]\n");
+        assert!(ir.contains("let df: Result(Frame{a: Float}) = frame.with(frame.new()"), "{}", ir);
+        assert!(ir.contains("let df: Result(Frame{a: Float, b: Str}) = frame.with(unwrap df, \"b\""), "{}", ir);
+    }
+
+    /// Where ways through meet, a frame has the columns they share: one a
+    /// branch adds, or a loop's body, is one it may not have (open); what
+    /// they share keeps its type.
+    #[test]
+    fn a_frame_after_branches_has_the_columns_they_share() {
+        let ir = ir_of("use frame\ndf = with[frame.new[], 'a', [1.5]]\nif len[df] gt 0\n    df = with[df, 'b', ['x']]\nafter = df\nlog[after.a[0]]\n");
+        assert!(ir.contains("let after: Result(Frame{a: Float, …}) = move df"), "{}", ir);
+        let ir = ir_of("use frame\ndf = with[frame.new[], 'a', [1.5]]\nfor i in range[2]\n    df = with[df, 'c`i`', [2.0]]\nafter = df\nlog[after.a[0]]\n");
+        assert!(ir.contains("let after: Result(Frame{a: Float, …}) = move df"), "{}", ir);
+    }
+
+    /// A function given frames of other columns is a copy per set of them,
+    /// as for any other type, so each reads the columns it is handed.
+    #[test]
+    fn a_function_is_specialized_per_frame_columns() {
+        let ir = ir_of("use frame, math\nfn total[f]\n    return sum[f.amount]\nx = with[frame.new[], 'amount', [1.5]]\ny = with[x, 'who', ['a']]\nlog[total[x]]\nlog[total[y]]\n");
+        assert!(ir.contains("(f: Frame{amount: Float}) -> Float"), "{}", ir);
+        assert!(ir.contains("(f: Frame{amount: Float, who: Str}) -> Float"), "{}", ir);
+    }
+
+    /// A column a frame whose columns are all known does not have is
+    /// refused before the program runs, in the runtime's words: read, or
+    /// named where an operation takes a column, or read by a function the
+    /// frame is handed to.
+    #[test]
+    fn a_column_a_known_frame_lacks_is_refused() {
+        let frame = "use frame, math\ndf = with[frame.new[], 'price', [1.5, 2.5]]\n";
+        for (line, words) in [
+            ("log[df.cost[0]]", "frame has no property or column 'cost' — its columns are 'price'"),
+            ("log[sort[df, 'cost']]", "sort: column 'cost' not found — the frame's columns are 'price'"),
+            ("log[select[df, ['cost']]]", "select: column 'cost' not found"),
+            ("log[fill[df, 'cost', 0.0]]", "fill: column 'cost' not found"),
+            ("log[group[df, 'cost', ['price', 'sum']]]", "group: column 'cost' not found"),
+            ("log[join[df, df, 'cost']]", "join: column 'cost' not found"),
+        ] {
+            let refused = refusal_of(&format!("{}{}\n", frame, line));
+            assert!(refused.contains(words), "{}: {}", line, refused);
+        }
+        let refused = refusal_of("use frame, math\nfn total[f]\n    return sum[f.amount]\nprices = with[frame.new[], 'price', [1.5]]\nlog[total[prices]]\n");
+        assert!(refused.contains("frame has no property or column 'amount' — its columns are 'price'"), "{}", refused);
+        // a frame whose columns show only as it runs is checked as it runs
+        assert_eq!(refusal_of("use frame\ndf = load['x.csv']\nlog[df.cost[0]]\n"), "");
+    }
+
+    /// A value a guard knows has failed, handed back, hands back its
+    /// failure: the frame it would have held is none of the function's
+    /// columns.
+    #[test]
+    fn a_guarded_failure_hands_back_no_columns() {
+        let ir = ir_of("use frame\nfn pick[n]\n    a = with[frame.new[], 'k', [1.5]]\n    if not a.ok\n        return a\n    return with[frame.new[], 'v', ['s']]\nr = pick[1]\nlog[r.v[0]]\n");
+        assert!(ir.contains("pick(n: Int) -> Result(Frame{v: Str})"), "{}", ir);
     }
 
     /// Each builtin call names the row it runs, picked once from its

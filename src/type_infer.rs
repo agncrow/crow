@@ -29,8 +29,9 @@ pub enum CrowType {
     NumArray(Box<CrowType>),
     /// Sparse matrix backed by CrowSparse (CSR format).
     Sparse,
-    /// Column-oriented data frame.
-    Frame,
+    /// Column-oriented data frame: its columns, when the program knows
+    /// them (none: nothing is known of them).
+    Frame(Option<std::sync::Arc<Cols>>),
     /// A single typed column from a frame (CrowColumn wrapper).
     FrameCol,
     /// Web application (crow_web::server::CrowApp).
@@ -87,7 +88,7 @@ impl CrowType {
             CrowType::Json => "serde_json::Value".into(),
             CrowType::NumArray(_) => "crow_runtime::tensor::CrowTensor".into(),
             CrowType::Sparse => "crow_runtime::sparse::CrowSparse".into(),
-            CrowType::Frame => "crow_runtime::frame::CrowFrame".into(),
+            CrowType::Frame(_) => "crow_runtime::frame::CrowFrame".into(),
             CrowType::FrameCol => "crow_runtime::frame::CrowColumn".into(),
             CrowType::WebApp => "crow_web::server::CrowApp".into(),
             CrowType::WebResponse => "crow_web::core::CrowResponse".into(),
@@ -122,7 +123,7 @@ impl CrowType {
             CrowType::Json => "serde_json::Value::Null".into(),
             CrowType::NumArray(_) => "crow_runtime::tensor::CrowTensor::zeros(vec![0])".into(),
             CrowType::Sparse => "CrowSparse::from_coo(&[], &[], &[], 0, 0)".into(),
-            CrowType::Frame => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])".into(),
+            CrowType::Frame(_) => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])".into(),
             CrowType::FrameCol => "crow_runtime::frame::CrowColumn { data: std::sync::Arc::new(crow_runtime::frame::Column::Int(vec![])), valid: std::sync::Arc::new(vec![]) }".into(),
             CrowType::WebApp => "crow_web::server::CrowApp::new()".into(),
             CrowType::WebResponse => "crow_web::core::CrowResponse::default()".into(),
@@ -161,6 +162,17 @@ impl CrowType {
         }
     }
 
+    /// A frame's columns — of a frame, or of one that can fail: two call
+    /// signatures whose frames differ in their columns are two
+    /// specializations, so each reads the columns it is handed.
+    pub fn frame_cols(&self) -> Option<&Option<std::sync::Arc<Cols>>> {
+        match self {
+            CrowType::Frame(c) => Some(c),
+            CrowType::Result(t) => t.frame_cols(),
+            _ => None,
+        }
+    }
+
     /// Human-readable Crow type name for error messages.
     pub fn crow_name(&self) -> String {
         match self {
@@ -172,7 +184,7 @@ impl CrowType {
             CrowType::Array(inner) => format!("array[{}]", inner.crow_name()),
             CrowType::NumArray(_) => "array".into(),
             CrowType::Sparse => "sparse".into(),
-            CrowType::Frame => "frame".into(),
+            CrowType::Frame(_) => "frame".into(),
             CrowType::FrameCol => "column".into(),
             CrowType::Map(inner) => format!("map[{}]", inner.crow_name()),
             CrowType::Struct(name) => name.clone(),
@@ -219,6 +231,9 @@ impl CrowType {
                 matches!(inner.as_ref(), CrowType::Int | CrowType::Float | CrowType::Unknown)
             }
             (CrowType::NumArray(_), CrowType::NumArray(_)) => true,
+            // a frame is a frame whatever its columns: a reassignment that
+            // changes them binds the variable anew
+            (CrowType::Frame(_), CrowType::Frame(_)) => true,
             (CrowType::Int, CrowType::Struct(_)) | (CrowType::Struct(_), CrowType::Int) => true, // OptBoxStruct
             (CrowType::OptBoxStruct(_), CrowType::Int) | (CrowType::Int, CrowType::OptBoxStruct(_)) => true,
             (CrowType::OptBoxStruct(_), CrowType::Struct(_)) | (CrowType::Struct(_), CrowType::OptBoxStruct(_)) => true,
@@ -242,6 +257,15 @@ impl CrowType {
             (CrowType::Array(a), CrowType::NumArray(b)) => CrowType::Array(Box::new(a.unify(b))),
             (CrowType::NumArray(a), CrowType::Array(b)) => CrowType::NumArray(Box::new(a.unify(b))),
             (CrowType::Map(a), CrowType::Map(b)) => CrowType::Map(Box::new(a.unify(b))),
+            // two ways a frame could have come: the columns both give (a
+            // frame whose columns are not worked out yet adds nothing — one
+            // whose columns show only as it runs is a frame of none known,
+            // open)
+            (CrowType::Frame(a), CrowType::Frame(b)) => CrowType::Frame(match (a, b) {
+                (Some(a), Some(b)) => Some(std::sync::Arc::new(Cols::join(a, b))),
+                (Some(c), None) | (None, Some(c)) => Some(c.clone()),
+                (None, None) => None,
+            }),
             (CrowType::Void, t) | (t, CrowType::Void) => t.clone(),
             // Int + Struct => OptBoxStruct (recursive struct with sentinel)
             (CrowType::Int, CrowType::Struct(name)) | (CrowType::Struct(name), CrowType::Int) => {
@@ -272,6 +296,43 @@ impl CrowType {
     }
 }
 
+/// A frame's columns, as the program knows them: each one's cell type (a
+/// `Result` where a cell can be missing), and `open` when a column the
+/// program cannot name may be there too (one added under a name a variable
+/// holds).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cols {
+    pub cols: BTreeMap<String, CrowType>,
+    pub open: bool,
+}
+
+impl Cols {
+    /// Exactly these columns.
+    pub fn closed(cols: BTreeMap<String, CrowType>) -> std::sync::Arc<Cols> {
+        std::sync::Arc::new(Cols { cols, open: false })
+    }
+
+    /// A frame whose columns show only as the program runs (a file loaded
+    /// then, a query no database described): none known, open.
+    pub fn dynamic() -> std::sync::Arc<Cols> {
+        std::sync::Arc::new(Cols { cols: BTreeMap::new(), open: true })
+    }
+
+    /// The columns two ways through give: those both have, their types
+    /// joined (a cell one side can miss can be missed); open where their
+    /// columns differ, or either is.
+    pub fn join(a: &Cols, b: &Cols) -> Cols {
+        let mut cols = BTreeMap::new();
+        for (name, ta) in &a.cols {
+            if let Some(tb) = b.cols.get(name) {
+                cols.insert(name.clone(), ta.unify(tb));
+            }
+        }
+        let open = a.open || b.open || cols.len() != a.cols.len() || cols.len() != b.cols.len();
+        Cols { cols, open }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FnSig {
     pub params: Vec<(String, CrowType)>,
@@ -287,7 +348,6 @@ pub struct StructSig {
 /// What `enter_body` saved: restored by `leave_body`.
 pub(crate) struct BodyScope {
     saved_vars: BTreeMap<String, CrowType>,
-    saved_frames: Vec<(String, Option<BTreeMap<String, CrowType>>)>,
     outer_assigned: Option<std::collections::HashSet<String>>,
     outer_in_view: bool,
 }
@@ -339,18 +399,6 @@ pub struct TypeContext {
     /// a SQLite database that does not exist yet, or lacks one of them, is
     /// described from these
     pub ddl: Vec<String>,
-    /// Frame variables whose columns are known: from a described query,
-    /// or derived through select/filter/sort/join from one.
-    pub frame_schemas: BTreeMap<String, BTreeMap<String, CrowType>>,
-    /// Functions whose returned frame has known columns.
-    pub fn_frame_schemas: BTreeMap<String, BTreeMap<String, CrowType>>,
-    /// The columns of the frame each function's parameter is given, when
-    /// its calls agree on them — `(function, parameter) → columns`, `None`
-    /// when they do not — as the last pass over the call sites found them:
-    /// a frame handed to a function keeps its cells' types there
-    pub param_frame_schemas: BTreeMap<(String, String), Option<BTreeMap<String, CrowType>>>,
-    /// What the pass under way finds (the one before it is read meanwhile)
-    param_frame_schemas_next: BTreeMap<(String, String), Option<BTreeMap<String, CrowType>>>,
     /// Keep each body's locals as the lowering types them (`crow build
     /// --types`, the oracle every step of inference's rewrite is held to).
     pub record_envs: bool,
@@ -424,12 +472,8 @@ impl TypeContext {
             registry: crate::modules::ModuleRegistry::new(),
             conn_urls: Vec::new(),
             ddl: Vec::new(),
-            frame_schemas: BTreeMap::new(),
-            fn_frame_schemas: BTreeMap::new(),
-            param_frame_schemas: BTreeMap::new(),
             record_envs: false,
             body_envs: BTreeMap::new(),
-            param_frame_schemas_next: BTreeMap::new(),
             describe_queries: false,
             describe_cache: BTreeMap::new(),
             describe_notes: Vec::new(),
@@ -589,49 +633,12 @@ impl TypeContext {
         }
     }
 
-    /// Parse string interpolations and collect call types from embedded expressions.
-    /// True when any backtick span of the string evaluates to a fallible
-    /// value — the string is then fallible itself (errors propagate through
-    /// interpolation).
-    fn string_has_fallible_span(&self, s: &str) -> bool {
-        if !s.contains('`') { return false; }
-        let chars: Vec<char> = s.chars().collect();
-        let mut i = 0;
-        while i < chars.len() {
-            if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '`' { i += 2; continue; }
-            if chars[i] == '`' {
-                let start = i + 1;
-                i += 1;
-                let mut in_str = false;
-                while i < chars.len() {
-                    let c = chars[i];
-                    if in_str {
-                        if c == '\\' && i + 1 < chars.len() { i += 2; continue; }
-                        if c == '\'' { in_str = false; }
-                    } else if c == '\'' { in_str = true; } else if c == '`' { break; }
-                    i += 1;
-                }
-                let expr_str: String = chars[start..i.min(chars.len())].iter().collect();
-                i += 1;
-                let mut lexer = crate::lexer::Lexer::new(&expr_str);
-                if let Ok(tokens) = lexer.tokenize() {
-                    let mut parser = crate::parser::Parser::new(tokens);
-                    if let Ok(stmts) = parser.parse() {
-                        let stmts = crate::lower::lower_fragment(&stmts).unwrap_or(stmts);
-                        if let Some(crate::ast::Stmt::ExprStmt(expr)) = stmts.iter().find(|s| !matches!(s, Stmt::Line(_))) {
-                            if matches!(self.infer_expr(expr), CrowType::Result(_)) { return true; }
-                        }
-                    }
-                }
-            } else { i += 1; }
-        }
-        false
-    }
-
     /// A type is concrete if it contains no Unknown anywhere (used to decide
     /// whether a call signature is usable for monomorphization).
     pub(crate) fn type_is_concrete(t: &CrowType) -> bool {
-        !format!("{:?}", t).contains("Unknown")
+        // (a frame whose columns are not worked out yet is not either)
+        let shown = format!("{:?}", t);
+        !shown.contains("Unknown") && !shown.contains("Frame(None)")
     }
 
     /// One round of the F2 monomorphization pass: each function called with
@@ -735,15 +742,13 @@ impl TypeContext {
         }
         let outer_assigned = self.body_assigned.replace(assigned);
         let outer_in_view = std::mem::replace(&mut self.in_view, self.views.contains(name));
-        let saved_frames = self.param_frames_in_view(name);
-        BodyScope { saved_vars, saved_frames, outer_assigned, outer_in_view }
+        BodyScope { saved_vars, outer_assigned, outer_in_view }
     }
 
     pub(crate) fn leave_body(&mut self, scope: BodyScope) {
         self.vars = scope.saved_vars;
         self.body_assigned = scope.outer_assigned;
         self.in_view = scope.outer_in_view;
-        self.param_frames_out_of_view(scope.saved_frames);
     }
 
     /// Out of a function's body once a provisional lowering typed it: its
@@ -752,7 +757,7 @@ impl TypeContext {
     /// lowering handed an error out of it (`fails`), and a fact a view or
     /// handler gives a float widened for the program.
     pub(crate) fn finish_body(&mut self, name: &str, scope: BodyScope, returns: &[CrowType], fails: bool) {
-        let BodyScope { saved_vars, saved_frames, outer_assigned, outer_in_view } = scope;
+        let BodyScope { saved_vars, outer_assigned, outer_in_view } = scope;
         self.body_assigned = outer_assigned;
         self.in_view = outer_in_view;
 
@@ -801,7 +806,6 @@ impl TypeContext {
         for f in widened {
             self.vars.insert(f, CrowType::Float);
         }
-        self.param_frames_out_of_view(saved_frames);
     }
 
     /// Inside a function, the first assignment of a name that is neither a
@@ -834,7 +838,7 @@ impl TypeContext {
     /// argument fits, and markup meets markup — a view given markup is not
     /// the same view given text.
     pub fn same_signature(a: &[CrowType], b: &[CrowType]) -> bool {
-        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && x.has_markup() == y.has_markup())
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && x.has_markup() == y.has_markup() && x.frame_cols() == y.frame_cols())
     }
 
     /// The specialization of `name` a call reaches, given its arguments'
@@ -871,92 +875,6 @@ impl TypeContext {
             // where the body computes with them
             CrowType::Json => CrowType::Json,
             _ => CrowType::Unknown,
-        }
-    }
-
-    pub(crate) fn loop_yield_type(&self, var: &str, iter_type: CrowType, body: &[Stmt]) -> CrowType {
-        let elem = Self::loop_item(Self::walked(iter_type));
-        fn body_yield_type(ctx: &TypeContext, body: &[Stmt]) -> CrowType {
-            match body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
-                Some(Stmt::ExprStmt(e)) => ctx.infer_expr_full(e),
-                Some(Stmt::If { then_body, else_body, .. }) => {
-                    let t = body_yield_type(ctx, then_body);
-                    match else_body {
-                        Some(eb) => t.unify(&body_yield_type(ctx, eb)),
-                        None => t,
-                    }
-                }
-                _ => CrowType::Unknown,
-            }
-        }
-        if elem != CrowType::Unknown {
-            let mut sub = self.clone();
-            sub.vars.insert(var.to_string(), elem);
-            body_yield_type(&sub, body)
-        } else {
-            body_yield_type(self, body)
-        }
-    }
-
-    /// An expression's type as every reader of strings sees it: markup is
-    /// a string. Placing a child is the one place that asks for more
-    /// (`infer_expr_full`).
-    pub fn infer_expr(&self, expr: &Expr) -> CrowType {
-        self.infer_expr_full(expr).text()
-    }
-
-    /// An expression's type, markup told apart from text.
-    pub fn infer_expr_full(&self, expr: &Expr) -> CrowType {
-        // a cell of a column whose type the database told us: frame.col[i]
-        if let Expr::Call { callee, args } = expr {
-            if args.len() == 1 {
-                if let Expr::FieldAccess { object, field } = callee.as_ref() {
-                    if let Some(t) = self.column_type(object, field) {
-                        // a cell, not a gather by a list of indices
-                        if !matches!(self.infer_expr(&args[0]), CrowType::NumArray(_) | CrowType::Array(_)) {
-                            return t;
-                        }
-                    }
-                }
-            }
-        }
-        match expr {
-            Expr::Int(_) => CrowType::Int,
-            Expr::Float(_) => CrowType::Float,
-            Expr::Bool(_) => CrowType::Bool,
-            Expr::Str(s) => {
-                if self.string_has_fallible_span(s) { CrowType::Result(Box::new(CrowType::Str)) } else { CrowType::Str }
-            }
-            // Lowering resolves named args before inference; type is the value's
-            Expr::Named { value, .. } => self.infer_expr_full(value),
-            Expr::Ident(name) => self.ident_type(name),
-            Expr::BinOp { left, op, right } => self.binop_type(op, self.infer_expr(left), self.infer_expr(right)),
-            Expr::UnaryOp { op, expr: e } => self.unary_type(op, self.infer_expr(e)),
-            Expr::Call { callee, args } => {
-                // every argument inferred once, here: its type with markup
-                // told apart, which choosing a specialization reads, and the
-                // text every other rule reads (walked twice, a nesting of
-                // calls cost twice per level — the layout engine never ended)
-                let full: Vec<CrowType> = args.iter().map(|a| self.infer_expr_full(a)).collect();
-                let arg_types: Vec<CrowType> = full.iter().map(|t| t.text()).collect();
-                if let Expr::Ident(name) = callee.as_ref() {
-                    return self.named_call_type(name, args, callee, &arg_types, &full);
-                }
-                // Module call: module.func[args] or module.Struct[args]
-                if let Expr::FieldAccess { object, field } = callee.as_ref() {
-                    if let Expr::Ident(module) = object.as_ref() {
-                        if let Some(t) = self.module_call_type(module, field, &arg_types) {
-                            return t;
-                        }
-                    }
-                }
-                // Array/Map/Json indexing or indirect function call
-                self.index_type(self.infer_expr(callee), arg_types.into_iter().next())
-            }
-            Expr::FieldAccess { object, field } => self.field_type(object, self.infer_expr(object), field),
-            Expr::Array(items) => Self::array_type(items.iter().map(|i| self.infer_expr_full(i))),
-            Expr::Map(pairs) => Self::map_type(pairs.iter().map(|(_, v)| self.infer_expr(v))),
-            Expr::ForExpr { var, iter, body } => Self::for_type(self.loop_yield_type(var, self.infer_expr(iter), body)),
         }
     }
 
@@ -1002,18 +920,6 @@ pub fn dump_types(ctx: &TypeContext) -> String {
     for (n, t) in &ctx.vars {
         let _ = writeln!(out, "  {}: {:?}", n, t);
     }
-    let _ = writeln!(out, "frames:");
-    for (n, s) in &ctx.frame_schemas {
-        let _ = writeln!(out, "  {}: {:?}", n, s);
-    }
-    let _ = writeln!(out, "function frames:");
-    for (n, s) in &ctx.fn_frame_schemas {
-        let _ = writeln!(out, "  {}: {:?}", n, s);
-    }
-    let _ = writeln!(out, "parameter frames:");
-    for ((f, p), s) in &ctx.param_frame_schemas {
-        let _ = writeln!(out, "  {}.{}: {:?}", f, p, s);
-    }
     let set = |s: &std::collections::BTreeSet<String>| s.iter().cloned().collect::<Vec<_>>().join(" ");
     let _ = writeln!(out, "views: {}", set(&ctx.views));
     let _ = writeln!(out, "handlers: {}", set(&ctx.view_handlers));
@@ -1025,17 +931,6 @@ pub fn dump_types(ctx: &TypeContext) -> String {
         let _ = writeln!(out, "  {} {{ {} }}", n, fields.join(", "));
     }
     out
-}
-
-/// The variable an expression reads, seen through a guard's narrowing:
-/// `__known[x]` reads x's value, and what is known of x (a frame's schema)
-/// holds for it.
-fn read_var(e: &Expr) -> Option<&str> {
-    match e {
-        Expr::Ident(v) => Some(v),
-        Expr::Call { callee, args } if matches!(callee.as_ref(), Expr::Ident(k) if k == crate::lower::KNOWN) && args.len() == 1 => read_var(&args[0]),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -1126,7 +1021,7 @@ mod tests {
         let mut ctx = TypeContext::new();
         ctx.describe_queries = true;
         ctx.infer_program(&stmts);
-        let schema = ctx.frame_schemas.get("rows").cloned().unwrap_or_default();
+        let schema = ctx.vars.get("rows").and_then(|t| t.frame_cols().cloned().flatten()).map(|c| c.cols.clone()).unwrap_or_default();
         // an INTEGER PRIMARY KEY is the row's id, never NULL; the others
         // are not declared NOT NULL, so their cells can be missing
         assert_eq!(schema.get("id"), Some(&CrowType::Int), "{:?}", schema);
@@ -1172,7 +1067,7 @@ mod tests {
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
         let both = ctx.vars.get("both").cloned().map(TypeContext::walked);
-        assert_eq!(both, Some(CrowType::Frame), "{:?}", ctx.vars.get("both"));
+        assert!(matches!(both, Some(CrowType::Frame(_))), "{:?}", ctx.vars.get("both"));
     }
 
     /// A function's local is its own: one named like a module variable

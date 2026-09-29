@@ -29,7 +29,8 @@ pub enum Ty {
     Tensor(Box<Ty>),
     /// A frame, with its columns and their types when `describe` or a
     /// literal knew them.
-    Frame(Option<Vec<(String, Ty)>>),
+    /// A frame, with its columns when they are known.
+    Frame(Option<Box<FrameCols>>),
     /// A frame column read.
     Column(Box<Ty>),
     /// A parsed JSON value, dynamic until read through int[], float[], str[].
@@ -64,6 +65,14 @@ impl Ty {
     }
 }
 
+/// A frame's columns in the IR: each one's cell type, in name order, and
+/// whether a column the program cannot name may be there too.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrameCols {
+    pub cols: Vec<(String, Ty)>,
+    pub open: bool,
+}
+
 impl std::fmt::Display for Ty {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -79,11 +88,14 @@ impl std::fmt::Display for Ty {
             Ty::Frame(None) => write!(f, "Frame"),
             Ty::Frame(Some(cols)) => {
                 write!(f, "Frame{{")?;
-                for (i, (n, t)) in cols.iter().enumerate() {
+                for (i, (n, t)) in cols.cols.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
                     write!(f, "{}: {}", n, t)?;
+                }
+                if cols.open {
+                    write!(f, "{}…", if cols.cols.is_empty() { "" } else { ", " })?;
                 }
                 write!(f, "}}")
             }

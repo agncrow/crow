@@ -1,6 +1,7 @@
-//! Frames' columns: what a query returns, asked of its databases and
-//! kept in `.crow/schema`, and how a frame's columns pass through
-//! frame operations and function calls.
+//! Frames' columns as a database says them: what a query returns, asked
+//! of the program's databases and kept in `.crow/schema` (how columns pass
+//! through frame operations and calls is the lowering's, in each frame's
+//! type: `lower_ir/frames.rs`).
 
 use super::*;
 
@@ -23,135 +24,6 @@ impl TypeContext {
         }
     }
 
-    /// The columns of the frame an expression produces, when they can be
-    /// known: a literal query (described by the database), a function that
-    /// returns one, or a frame operation over a known frame.
-    pub fn frame_schema_of(&mut self, e: &Expr) -> Option<BTreeMap<String, CrowType>> {
-        if let Some(v) = read_var(e) {
-            return self.frame_schemas.get(v).cloned();
-        }
-        match e {
-            Expr::Ident(v) => self.frame_schemas.get(v).cloned(),
-            Expr::Call { callee, args } => {
-                // the frames the standard modules build have fixed columns:
-                // doc.chapters as crow_runtime::markdown::chapters_frame
-                // builds it, chart.macd as crow_runtime::ta::macd_frame does
-                if let Expr::FieldAccess { object, field } = callee.as_ref() {
-                    let cols: &[(&str, CrowType)] = match (object.as_ref(), field.as_str()) {
-                        (Expr::Ident(m), "chapters") if m == "doc" => &[("title", CrowType::Str), ("path", CrowType::Str), ("depth", CrowType::Int), ("part", CrowType::Str)],
-                        (Expr::Ident(m), "macd") if m == "chart" => &[("line", CrowType::Float), ("signal", CrowType::Float), ("hist", CrowType::Float)],
-                        _ => &[],
-                    };
-                    if !cols.is_empty() {
-                        return Some(cols.iter().map(|(n, t)| (n.to_string(), t.clone())).collect());
-                    }
-                }
-                let name = match callee.as_ref() {
-                    Expr::Ident(n) => n.clone(),
-                    Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if m == "db" || m == "frame") => field.clone(),
-                    _ => return None,
-                };
-                match name.as_str() {
-                    "query" => match args.get(1) {
-                        Some(Expr::Str(sql)) => {
-                            let handle = match args.first() { Some(Expr::Ident(v)) => Some(v.clone()), _ => None };
-                            self.describe_sql(sql, handle.as_deref())
-                        }
-                        _ => None,
-                    },
-                    "filter" | "sort" | "head" | "tail" => args.first().and_then(|a| self.frame_schema_of(a)),
-                    // fill[df, 'col', value]: that column has no missing cell
-                    "fill" => {
-                        let mut base = args.first().and_then(|a| self.frame_schema_of(a))?;
-                        if let Some(Expr::Str(col)) = args.get(1) {
-                            if let Some(CrowType::Result(inner)) = base.get(col).cloned() {
-                                base.insert(col.clone(), *inner);
-                            }
-                        }
-                        Some(base)
-                    }
-                    // stack[a, b]: the same columns, missing where either's can be
-                    "stack" => {
-                        let mut base = args.first().and_then(|a| self.frame_schema_of(a))?;
-                        for other in args.iter().skip(1).filter_map(|a| self.frame_schema_of(a)) {
-                            for (k, t) in other {
-                                if let (CrowType::Result(_), Some(mine)) = (&t, base.get_mut(&k)) {
-                                    if !matches!(mine, CrowType::Result(_)) {
-                                        *mine = CrowType::Result(Box::new(mine.clone()));
-                                    }
-                                }
-                            }
-                        }
-                        Some(base)
-                    }
-                    "new" => Some(BTreeMap::new()),
-                    "with" => {
-                        let mut base = args.first().and_then(|a| self.frame_schema_of(a)).unwrap_or_default();
-                        if let (Some(Expr::Str(col)), Some(v)) = (args.get(1), args.get(2)) {
-                            let vt = self.infer_expr(v);
-                            let vt = if let CrowType::Result(i) = vt { *i } else { vt };
-                            let cell = match vt { CrowType::Array(inner) => *inner, CrowType::NumArray(_) => CrowType::Float, CrowType::Int => CrowType::Int, CrowType::Float => CrowType::Float, CrowType::Bool => CrowType::Bool, _ => CrowType::Str };
-                            base.insert(col.clone(), cell);
-                        }
-                        Some(base)
-                    }
-                    "select" => {
-                        let base = args.first().and_then(|a| self.frame_schema_of(a))?;
-                        let mut out = BTreeMap::new();
-                        if let Some(Expr::Array(cols)) = args.get(1) {
-                            for c in cols {
-                                if let Expr::Str(n) = c { if let Some(t) = base.get(n) { out.insert(n.clone(), t.clone()); } }
-                            }
-                        }
-                        Some(out)
-                    }
-                    // join[a, b, 'key', how]: a's columns, then b's but its key
-                    // (one a has too is named `_right`); the side a row can
-                    // have no match on has missing cells — b's in a left join,
-                    // a's in a right one, both in an outer one
-                    "join" => {
-                        let left = args.first().and_then(|a| self.frame_schema_of(a))?;
-                        let key = match args.get(2) { Some(Expr::Str(k)) => k.clone(), _ => String::new() };
-                        let how = match args.get(3) { Some(Expr::Str(h)) => h.clone(), _ => "inner".to_string() };
-                        let missing = |t: CrowType, can: bool| match t {
-                            CrowType::Result(_) => t,
-                            t if can => CrowType::Result(Box::new(t)),
-                            t => t,
-                        };
-                        let mut out: BTreeMap<String, CrowType> = left.iter().map(|(k, t)| (k.clone(), missing(t.clone(), how == "right" || how == "outer"))).collect();
-                        if let Some(right) = args.get(1).and_then(|a| self.frame_schema_of(a)) {
-                            for (k, t) in right {
-                                if k == key { continue; }
-                                let name = if left.contains_key(&k) { format!("{}_right", k) } else { k };
-                                out.insert(name, missing(t, how == "left" || how == "outer"));
-                            }
-                        }
-                        Some(out)
-                    }
-                    // group[f, 'key', ['col', 'agg'], …]: the key as it was,
-                    // and each aggregate a float named col_agg
-                    "group" => {
-                        let base = args.first().and_then(|a| self.frame_schema_of(a))?;
-                        let mut out = BTreeMap::new();
-                        if let Some(Expr::Str(key)) = args.get(1) {
-                            out.insert(key.clone(), base.get(key).cloned().unwrap_or(CrowType::Str));
-                        }
-                        for a in args.iter().skip(2) {
-                            if let Expr::Array(pair) = a {
-                                if let (Some(Expr::Str(col)), Some(Expr::Str(agg))) = (pair.first(), pair.get(1)) {
-                                    out.insert(format!("{}_{}", col, agg), CrowType::Float);
-                                }
-                            }
-                        }
-                        Some(out)
-                    }
-                    other => self.fn_frame_schemas.get(other).cloned(),
-                }
-            }
-            _ => None,
-        }
-    }
-
     /// Ask each declared database, in order, what the statement returns.
     /// Interpolated spans and `?` placeholders are unknown at compile
     /// time and stand in as NULL. A database that cannot be reached or
@@ -160,7 +32,7 @@ impl TypeContext {
     /// The query's own connection answers when the handle is a known
     /// top-level one; a handle that is a parameter (a helper's `conn`) is
     /// unknown here, and every connection is asked until one answers.
-    pub(super) fn describe_sql(&mut self, sql: &str, handle: Option<&str>) -> Option<BTreeMap<String, CrowType>> {
+    pub(crate) fn describe_sql(&mut self, sql: &str, handle: Option<&str>) -> Option<BTreeMap<String, CrowType>> {
         if self.conn_urls.is_empty() { return None; }
         if let Some(cached) = self.describe_cache.get(sql) {
             if std::env::var("CROW_DEBUG_SCHEMAS").is_ok() {
@@ -222,32 +94,6 @@ impl TypeContext {
         found
     }
 
-    /// A function's frame parameters with the columns their calls agree
-    /// on, in view while its body is read (the frame schemas are kept by
-    /// name); what they replaced, to put back.
-    pub(super) fn param_frames_in_view(&mut self, name: &str) -> Vec<(String, Option<BTreeMap<String, CrowType>>)> {
-        let params: Vec<String> = self.functions.get(name).map(|s| s.params.iter().map(|(p, _)| p.clone()).collect()).unwrap_or_default();
-        let mut saved = Vec::new();
-        for p in params {
-            if let Some(Some(schema)) = self.param_frame_schemas.get(&(name.to_string(), p.clone())).cloned() {
-                saved.push((p.clone(), self.frame_schemas.insert(p, schema)));
-            }
-        }
-        saved
-    }
-
-    pub(super) fn param_frames_out_of_view(&mut self, saved: Vec<(String, Option<BTreeMap<String, CrowType>>)>) {
-        for (p, old) in saved.into_iter().rev() {
-            match old {
-                Some(s) => {
-                    self.frame_schemas.insert(p, s);
-                }
-                None => {
-                    self.frame_schemas.remove(&p);
-                }
-            }
-        }
-    }
 }
 
 thread_local! {
