@@ -127,7 +127,7 @@ impl<'a> Lowerer<'a> {
 
     /// A call's type with the columns of the frame it answers, when it is a
     /// frame operation: its result's columns are its arguments'.
-    pub(super) fn frame_typed(&mut self, callee: &A, args: &[A], arg_types: &[CrowType], ty: Ty) -> Ty {
+    pub(super) fn frame_typed(&mut self, callee: &A, args: &[A], arg_types: &[CrowType], lowered: &[Expr], ty: Ty) -> Ty {
         if !matches!(ty.payload(), Ty::Frame(None)) {
             return ty;
         }
@@ -141,7 +141,17 @@ impl<'a> Lowerer<'a> {
         };
         // a builtin that answers a frame no rule here reads the columns of
         // answers one whose columns show as it runs (`load`, `stats`)
-        let cols = self.frame_columns(module.as_deref(), &name, args, arg_types).unwrap_or_else(|| Some(Cols::dynamic()));
+        // (a column handed on whole is its cells, as its type says them: the
+        // lowered argument's, which a column's CrowType does not carry)
+        let arg_types: Vec<CrowType> = arg_types
+            .iter()
+            .zip(lowered.iter().map(Some).chain(std::iter::repeat(None)))
+            .map(|(t, x)| match x.map(|x| x.ty()) {
+                Some(Ty::Column(cell)) if *cell != Ty::Unknown => CrowType::Array(Box::new(crow_type(&cell))),
+                _ => t.clone(),
+            })
+            .collect();
+        let cols = self.frame_columns(module.as_deref(), &name, args, &arg_types).unwrap_or_else(|| Some(Cols::dynamic()));
         let frame = ty_of(&CrowType::Frame(cols));
         match ty {
             Ty::Result(_) => Ty::Result(Box::new(frame)),
@@ -160,7 +170,7 @@ impl<'a> Lowerer<'a> {
             }
         };
         match name {
-            "sort" | "fill" => {
+            "sort" | "fill" | "rename" => {
                 if let Some(col) = lit(1) {
                     self.refuse_missing(name, &base(0), &col);
                 }
@@ -199,10 +209,77 @@ impl<'a> Lowerer<'a> {
     /// A column read (`df.x`) of a frame whose columns are all known, that
     /// it does not have: refused before the program runs, in the runtime's
     /// words, with the columns it has.
-    pub(super) fn refuse_column_read(&mut self, frame: &CrowType, field: &str) {
-        if let Some(Some(cols)) = frame.frame_cols() {
+    pub(super) fn refuse_column_read(&mut self, frame: &Expr, field: &str) {
+        if let Some(Some(cols)) = read(frame).frame_cols() {
             if !cols.open && !cols.cols.contains_key(field) && self.pass == Pass::Final {
-                self.refuse(format!("frame has no property or column '{}' — its columns are {}", field, names(cols)));
+                let handed = self.handed(frame);
+                self.refuse(format!("frame has no property or column '{}' — its columns are {}{}", field, names(cols), handed));
+            }
+        }
+    }
+
+    /// Where a frame a function reads came from, when a call handed it: the
+    /// function and the parameter it came as (each call's columns are its
+    /// own copy's, so the call to look at is one handing these).
+    fn handed(&self, frame: &Expr) -> String {
+        let mut e = frame;
+        while let Expr::Convert { expr, .. } = e {
+            e = expr;
+        }
+        let (Expr::Local(p, _) | Expr::Move(p, _)) = e else {
+            return String::new();
+        };
+        let is_param = self.ctx.functions.get(&self.current_fn).is_some_and(|s| s.params.iter().any(|(n, _)| n == p));
+        if !is_param {
+            return String::new();
+        }
+        let base = self.current_fn.split("__").next().unwrap_or(&self.current_fn);
+        format!(" (the frame {}[] is handed as `{}`)", crate::lower::shown(base), crate::lower::shown(p))
+    }
+
+    /// The columns a table or a chart names (`key = 'id'`, `lines = […]`),
+    /// each checked against the frame it draws.
+    pub(super) fn check_tree_columns(&mut self, element: &str, attrs: &[(String, Expr)], children: &[Expr]) {
+        let named: &[&str] = match element {
+            "table" => &["key", "mark", "delta", "hide"],
+            "chart" => &["x", "candles", "lines", "bars_y"],
+            _ => return,
+        };
+        let Some(frame) = children.iter().find_map(|c| c.ty().frame_cols_ty()) else {
+            return;
+        };
+        for (k, v) in attrs {
+            if !named.contains(&k.as_str()) {
+                continue;
+            }
+            let names: Vec<&str> = match v {
+                Expr::Const(Const::Str(n), _) => vec![n.as_str()],
+                Expr::ListLit(items, _) => items.iter().filter_map(|i| if let Expr::Const(Const::Str(n), _) = i { Some(n.as_str()) } else { None }).collect(),
+                _ => Vec::new(),
+            };
+            for n in names {
+                self.refuse_missing(element, &frame, n);
+            }
+        }
+    }
+
+    /// The columns a chart names — its candles, lines and volume pane —
+    /// each checked against the frame it draws (its x axis's default, `ts`,
+    /// is not told apart from one given, and is left to the chart).
+    pub(super) fn check_chart_columns(&mut self, lowered: &[Expr]) {
+        let Some(frame) = lowered.first().and_then(|f| f.ty().frame_cols_ty()) else {
+            return;
+        };
+        let strings = |x: Option<&Expr>| -> Vec<String> {
+            match x {
+                Some(Expr::Const(Const::Str(n), _)) if !n.is_empty() => vec![n.clone()],
+                Some(Expr::ListLit(items, _)) => items.iter().filter_map(|i| if let Expr::Const(Const::Str(n), _) = i { Some(n.clone()) } else { None }).collect(),
+                _ => Vec::new(),
+            }
+        };
+        for i in 2..=4 {
+            for n in strings(lowered.get(i)) {
+                self.refuse_missing("chart", &frame, &n);
             }
         }
     }
@@ -354,6 +431,19 @@ impl<'a> Lowerer<'a> {
                         None => open = true,
                     }
                     Arc::new(Cols { cols, open })
+                }),
+                // rename[f, 'old', 'new']: the column under its new name
+                "rename" => base(0).map(|b| {
+                    let mut c = (*b).clone();
+                    match (lit(1), lit(2)) {
+                        (Some(old), Some(new)) => {
+                            if let Some(t) = c.cols.remove(&old) {
+                                c.cols.insert(new, t);
+                            }
+                        }
+                        _ => c.open = true,
+                    }
+                    Arc::new(c)
                 }),
                 // group[f, 'key', ['col', 'agg'], …]: the key as it was, and
                 // each aggregate a float named col_agg

@@ -2176,7 +2176,7 @@ impl<'a> Lowerer<'a> {
                         // worked out yet, nothing is known yet (inference
                         // reads it again once they are)
                         if matches!(ty, Ty::Column(_)) {
-                            self.refuse_column_read(&read(&base), field);
+                            self.refuse_column_read(&base, field);
                         }
                         let ty = match (&ty, read(&base).frame_cols()) {
                             (Ty::Column(_), Some(Some(cols))) => Ty::Column(Box::new(ty_of(cols.cols.get(field).unwrap_or(&CrowType::Json)))),
@@ -2332,7 +2332,7 @@ impl<'a> Lowerer<'a> {
             // (an indexed column is read as it is lowered here, not where
             // it was lowered muted)
             if let Expr::Field { base: frame, name, ty: Ty::Column(_) } = &base {
-                self.refuse_column_read(&read(frame), name);
+                self.refuse_column_read(frame, name);
             }
             // a cell of a column its frame's type knows, not a gather by a
             // list of indices: frame.col[i]
@@ -2456,6 +2456,7 @@ impl<'a> Lowerer<'a> {
             let checks: Vec<CrowType> = types.iter().map(|t| t.text()).collect();
             self.check_call(&name, args, &checks);
             self.scan_call(callee, args, &types);
+            self.check_tree_columns(&name, &attrs, &children);
             return Ok(Expr::Tree { element: name, attrs, children });
         }
         // arguments: a fallible one reaches the callee as its payload, and
@@ -2536,7 +2537,10 @@ impl<'a> Lowerer<'a> {
             }
         }
         let ty = self.call_type(callee, args, &arg_types, &full_types, None);
-        let ty = self.frame_typed(callee, args, &arg_types, ty);
+        let ty = self.frame_typed(callee, args, &arg_types, &lowered, ty);
+        if name == "chart" && matches!(module.as_deref(), None | Some("chart")) {
+            self.check_chart_columns(&lowered);
+        }
         let current = self.current_fn.clone();
         if let Some(m) = module {
             let m = self.ctx.module_aliases.get(&m).cloned().unwrap_or(m);
@@ -3729,6 +3733,26 @@ mod tests {
         assert!(ir.contains("let df: Result(Frame{a: Float, b: Str}) = frame.with(unwrap df, \"b\""), "{}", ir);
     }
 
+    /// A frame a handler stores into a fact joins the fact's columns: the
+    /// fact holds its default's or the handler's (it had kept its default's,
+    /// no columns, and a table naming the handler's column was refused).
+    #[test]
+    fn a_frame_fact_holds_what_its_handlers_store() {
+        let src = "use web, ui, frame\nuniverse = frame.new[]\nfn keep[u]\n    universe = u\nfn fill_in[]\n    keep[with[frame.new[], 'symbol', ['a']]]\nview v[]\n    return stack[table[universe, key = 'symbol'], button['Load', click = fill_in]]\npage['/', v]\n";
+        assert_eq!(refusal_of(src), "");
+        assert!(ir_of(src).contains("fact universe: Frame{…} = frame.new()"), "{}", ir_of(src));
+    }
+
+    /// A column handed on whole keeps its cells' type (`with` copying one
+    /// had typed it as text, so arithmetic on the copy was refused), and a
+    /// renamed column keeps its type under its new name.
+    #[test]
+    fn a_copied_or_renamed_column_keeps_its_type() {
+        let ir = ir_of("use frame\ndf = with[frame.new[], 'a', [1.5, 2.5]]\ndf = with[df, 'b', df.a]\nlog[df.b[0] * 2.0]\nr = rename[df, 'a', 'z']\nlog[r.z[0]]\n");
+        assert!(ir.contains("let df: Result(Frame{a: Float, b: Float})"), "{}", ir);
+        assert!(ir.contains("let r: Frame{b: Float, z: Float}") || ir.contains("let r: Result(Frame{b: Float, z: Float})"), "{}", ir);
+    }
+
     /// Where ways through meet, a frame has the columns they share: one a
     /// branch adds, or a loop's body, is one it may not have (open); what
     /// they share keeps its type.
@@ -3768,7 +3792,19 @@ mod tests {
             assert!(refused.contains(words), "{}: {}", line, refused);
         }
         let refused = refusal_of("use frame, math\nfn total[f]\n    return sum[f.amount]\nprices = with[frame.new[], 'price', [1.5]]\nlog[total[prices]]\n");
-        assert!(refused.contains("frame has no property or column 'amount' — its columns are 'price'"), "{}", refused);
+        assert!(refused.contains("frame has no property or column 'amount' — its columns are 'price' (the frame total[] is handed as `f`)"), "{}", refused);
+        let refused = refusal_of(&format!("{}log[rename[df, 'cost', 'c']]\n", frame));
+        assert!(refused.contains("rename: column 'cost' not found"), "{}", refused);
+        // what a table or a chart names of the frame it draws
+        let view = "use web, ui, frame\ndf = with[frame.new[], 'price', [1.5, 2.5]]\nview v[]\n    return ";
+        for (tree, words) in [
+            ("table[df, key = 'id']", "table: column 'id' not found — the frame's columns are 'price'"),
+            ("table[df, hide = ['id']]", "table: column 'id' not found"),
+            ("chart[df, lines = ['close']]", "chart: column 'close' not found"),
+        ] {
+            let refused = refusal_of(&format!("{}{}\npage['/', v]\n", view, tree));
+            assert!(refused.contains(words), "{}: {}", tree, refused);
+        }
         // a frame whose columns show only as it runs is checked as it runs
         assert_eq!(refusal_of("use frame\ndf = load['x.csv']\nlog[df.cost[0]]\n"), "");
     }

@@ -57,6 +57,15 @@ impl Ty {
         matches!(self, Ty::Result(_))
     }
     /// The payload type of a result, or the type itself.
+    /// A frame's columns, of a frame or of one that can fail, as the
+    /// lowering's types carry them.
+    pub fn frame_cols_ty(&self) -> Option<Option<std::sync::Arc<crate::type_infer::Cols>>> {
+        match crate::lower_ir::crow_type(self.payload()) {
+            crate::type_infer::CrowType::Frame(c) => Some(c),
+            _ => None,
+        }
+    }
+
     pub fn payload(&self) -> &Ty {
         match self {
             Ty::Result(inner) => inner,

@@ -790,21 +790,26 @@ impl TypeContext {
         // float widens it from its declaration. In a ui program a function's
         // assignment of a fact's name is the fact (fresh_binding), a helper's
         // too, which the lowering stores: a helper no handler reaches (a
-        // part's, tested alone) stored a float into a fact typed int.
-        let mut widened: Vec<String> = Vec::new();
+        // part's, tested alone) stored a float into a fact typed int. A
+        // frame a function stores into a fact joins the fact's columns: the
+        // fact holds either (it had kept its default's, and a table naming a
+        // column the handler's frame has was refused).
+        let mut widened: Vec<(String, CrowType)> = Vec::new();
         if self.is_ui || self.views.contains(name) || self.view_handlers.contains(name) {
             for f in &self.facts {
                 let before = saved_vars.get(f).cloned().unwrap_or(CrowType::Unknown);
-                if matches!(before, CrowType::Int | CrowType::Unknown)
-                    && matches!(self.vars.get(f), Some(CrowType::Float))
-                {
-                    widened.push(f.clone());
+                match (&before, self.vars.get(f)) {
+                    (CrowType::Int | CrowType::Unknown, Some(CrowType::Float)) => widened.push((f.clone(), CrowType::Float)),
+                    (was, Some(now)) if was.frame_cols().is_some() && now.frame_cols().is_some() && was.frame_cols() != now.frame_cols() => {
+                        widened.push((f.clone(), was.unify(now)));
+                    }
+                    _ => {}
                 }
             }
         }
         self.vars = saved_vars;
-        for f in widened {
-            self.vars.insert(f, CrowType::Float);
+        for (f, t) in widened {
+            self.vars.insert(f, t);
         }
     }
 

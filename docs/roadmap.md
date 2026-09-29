@@ -24,7 +24,7 @@ What's done, what's remaining, and in what order.
 | Editor | `crow lsp` (diagnostics, completion, hover, go-to-definition, signature help) + VS Code extension in `editors/vscode` |
 | Project structure | `crow new` scaffolding (--web, --ml, --db), `crow run <job>`, convention-based views/jobs/layout/db, dot-path imports (`use views.home`), multi-import (`use web, ui`) |
 | DX | Default welcome page for empty web apps, friendly error messages (e.g. "port 3000 is already in use") |
-| Tests | cargo unit tests, 33-file parity corpus (`crow test --parity`), every book block in both modes (`crow test --book`), docs-vs-compiler coverage (`crow test --docs`), db-check fixtures in `tests/db_check`, chart harness; CI runs all of them (`.github/workflows/ci.yml`) |
+| Tests | cargo unit tests, 123-file parity corpus (`crow test --parity`), the served pages in both modes (`crow test --served`), every book block in both modes (`crow test --book`), docs-vs-compiler coverage (`crow test --docs`), db-check fixtures in `tests/db_check`, chart harness; CI runs all of them (`.github/workflows/ci.yml`) |
 | Documentation | The Crow Book (`docs/book`, 13 chapters + 5 appendices), language-spec.md, crow-for-llms.md, usage.md, crow-check.md, crow-lsp.md, module references, design records — indexed in `docs/README.md` |
 
 ## Remaining Work
@@ -145,21 +145,24 @@ Goal: `fetch[url]`, `poll[url, seconds]`, `field[label, var]`, `select[options, 
 
 ##### Phase 3: Multi-Page App (routing + layout) — next
 
-- [ ] **Multiple `page` routes** — several routes on one app
+- [x] **Multiple `page` routes** — several routes on one app (`page[path, view]` per route)
 - [ ] **URL parameters** — route params (`:id`), query params (`?q=foo`)
-- [ ] **Layout functions** — Crow functions wrapping route content
+- [x] **Layout functions** — `layout.co`, applied to every page
 - [ ] **`title[]`, `meta[]`** — per-route head management
-- [ ] **CSS** — `static_dir` for stylesheets (already exists)
+- [x] **CSS** — `static_dir` for stylesheets, and the default stylesheet (`css/app.css` hatch)
 
 ##### Phase 4: Real App Features
 
-- [ ] **Sessions** — `session.set/get/clear`, signed cookies
-- [ ] **Auth** — `auth = true` on routes, redirect to login
+- [x] **Sessions** — the session layer: per-reader facts, `reader`, `sign_in`/`sign_out` (docs/session-layer-design.md)
+- [ ] **Auth** — `auth = true` on routes, redirect to login (the reader and signing in shipped with the session layer; route-level protection has not)
 - [ ] **Channels** — `channel.join/send/broadcast`, server push
 - [ ] **Debounce** — `debounce = ms` option on input events
-- [ ] **Loading states, keyboard events, file upload**
-- [ ] **Table features** — sorting, filtering, row click
-- [ ] **Modals, pagination, accessibility**
+- [x] **Loading states, file upload** — `running[h]`, uploads
+- [ ] **Keyboard events**
+- [x] **Row click** — `table[frame, click = h, key = 'col']`, row actions
+- [ ] **Table features** — sorting, filtering
+- [x] **Modals, pagination** — `modal[child, open = var]`, `table[frame, page = 50]`
+- [ ] **Accessibility** — an audit (nav's `aria-current` and tabs' roles are in)
 
 ##### Phase 5: Developer Experience
 

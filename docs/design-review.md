@@ -127,8 +127,8 @@ Two ~6,000-line implementations of every feature, forever; already produced the 
 **Still open (structural, discovered by the harness):**
 
 - [x] **Heterogeneous maps: resolved — "maps are dictionaries, structs are records"** (July 2026). Decision analysis: sorting map uses by keys-known-vs-dynamic × values-uniform-vs-mixed shows the true map uses (counts, caches, headers — dynamic keys) are naturally homogeneous, mixed-value uses have static keys (anonymous structs in disguise), and the one dynamic-and-mixed case is open JSON — already the `Json` type's job. Every typed language separates these; every dynamic one that didn't grew record types anyway (Python dataclasses, Ruby `Data.define` 2022, Elixir structs) or pays Julia's `Dict{String,Any}` performance cliff. Implementation: interpreter now enforces homogeneity at every insert (parity with the transpiler's typed maps — same friendly error in both modes: "map values must all be the same type… use a struct for mixed named data"); validator reports `set[]` type changes at compile time in Crow terms; int/float unify. Spec: new Design Note "Maps Are Dictionaries, Not Records", map-of-structs addresses example as the teaching pattern, Unified-Arrays and map-arithmetic notes corrected (they recommended heterogeneous maps). Parity corpus exercises map-of-structs with dynamic keys in both modes. No boxed value type was added — the gap closed by subtraction.
-- [ ] **No brace escape in strings** — `{` always starts interpolation, so JSON object literals (`json['{"a": 1}']`) are unwritable. Needs `\{` or equivalent.
-- [ ] **Lexer rejects non-ASCII** (e.g. an em-dash in a comment is a syntax error). Decide and document intended behavior.
+- [x] **No brace escape in strings** — resolved: interpolation is paired backticks, so a brace is plain text (`json['{"a": 1}']` is written as it reads; spec, String Interpolation).
+- [x] **Lexer rejects non-ASCII** — resolved: comments and string literals accept any Unicode text; identifiers are ASCII (spec, Lexical structure).
 
 ## Fundamental audit (July 2026, after the maps decision)
 
@@ -237,7 +237,7 @@ New parity corpus: `19_fn_values.co` (fn values in arrays/for-exprs/maps), `20_d
 3. Deepen `crow check`
 4. Ecosystem/registry last — packages follow users
 
-## The 1.0 namespace round — DECIDED (July 2026), implementation pending
+## The 1.0 namespace round — DECIDED and implemented (July 2026)
 
 Post-campaign design session triggered by the question "can we call it 1.0?" — the last open
 semantic (builtin shadowing) plus everything it pulled in. All rulings are Vijay's; the
