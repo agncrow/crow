@@ -16,7 +16,7 @@ m = [[1, 2], [3, 4]]                      --- 2D
 --- creation
 z = zeros[3, 4]                            --- 3x4 of zeros
 o = ones[2, 3]                             --- 2x3 of ones
-r = rand[2, 3]                             --- 2x3 uniform random
+r = uniform[0.0, 1.0, 2, 3]                --- 2x3 uniform random
 f = full[3, 4, 7.0]                        --- 3x4 filled with 7.0
 
 --- ranges
@@ -147,7 +147,7 @@ Reproducible random number generation and sampling from distributions.
 seed[42]                                   --- set global seed
 
 --- sampling
-r = rand[3, 4]                             --- uniform [0, 1)
+r = uniform[0.0, 1.0, 3, 4]                --- uniform [0, 1)
 n = normal[0, 1, [3, 4]]                  --- normal distribution
 u = uniform[5, 10, [3, 4]]                --- uniform [5, 10)
 p = poisson[3.0, [100]]                   --- poisson distribution
@@ -240,7 +240,7 @@ Array operations on GPU. Crow uses `gpu` as a language-level directive — the p
 gpu[]                    --- all GPUs on this machine
 gpu[2]                   --- 2 GPUs on this machine
 
-w = rand[784, 128] .* 0.01
+w = randn[784, 128] .* 0.01
 
 --- compiler auto-dispatches numeric ops to GPU
 h = relu[data * w + b]
@@ -762,9 +762,9 @@ log['w = `w`, b = `b`']
 
 ```
 w = [
-  w1 = rand[784, 128] .* 0.01,
+  w1 = randn[784, 128] .* 0.01,
   b1 = zeros[128],
-  w2 = rand[128, 10] .* 0.01,
+  w2 = randn[128, 10] .* 0.01,
   b2 = zeros[10]
 ]
 
@@ -806,7 +806,7 @@ for epoch in range[10]
 gpu[]
 
 w = [
-  w1 = rand[784, 128] .* 0.01,
+  w1 = randn[784, 128] .* 0.01,
   b1 = zeros[128]
 ]
 
@@ -864,8 +864,8 @@ How easy is it to write ML code?
 Crow 2-layer neural network — 10 lines:
 
 ```
-w = [w1 = rand[784, 128] .* 0.01, b1 = zeros[128],
-     w2 = rand[128, 10] .* 0.01, b2 = zeros[10]]
+w = [w1 = randn[784, 128] .* 0.01, b1 = zeros[128],
+     w2 = randn[128, 10] .* 0.01, b2 = zeros[10]]
 
 fn loss[w, x, y]
   h = relu[x * w.w1 + w.b1]

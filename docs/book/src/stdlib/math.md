@@ -154,10 +154,9 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | Function | Description | Example |
 |---|---|---|
 | `seed[n]` | Set the program's RNG seed: every later draw, tensors and the core `rand[]` alike, is repeatable and identical in both modes. Statements run in the order written, and a loop that draws runs in order (§14), so a seeded program draws the same numbers on every run | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) |
-| `rand[d1, d2, ...]` | Uniform random in [0, 1) | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) |
 | `randn[d1, d2, ...]` | Standard normal (mean=0, std=1) | [Math: tensors](../by-example/math.md) |
 | `normal[mean, std, d1, d2, ...]` | Normal with custom mean/std; a negative std stops the program | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
-| `uniform[low, high, d1, d2, ...]` | Uniform in [low, high) | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
+| `uniform[low, high, d1, d2, ...]` | Uniform in [low, high): `uniform[0.0, 1.0, 2, 3]` is a 2×3 tensor of values in [0, 1) | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `poisson[lambda, d1, d2, ...]` | Poisson distribution | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `bernoulli[p, d1, d2, ...]` | Bernoulli (0.0 or 1.0) | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `gamma_dist[alpha, beta, d1, ...]` | Gamma distribution | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
@@ -166,6 +165,10 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | `shuffle[x]` | Random permutation of tensor elements | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `choice[x, n]` | Random sample of n elements (no replacement) | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `permutation[n]` | Random permutation of 0..n | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
+
+`rand` is core's: `rand[]` is one float in [0, 1), and `rand[n]` and `rand[min, max]` are ints (see Core Builtins). A tensor of values in [0, 1) is `uniform[0.0, 1.0, d1, …]`.
+
+**Design Note: no tensor `rand`.** Considered: `rand[d1, d2, …]` for a tensor of uniform values in [0, 1), as NumPy spells it. The math module had it until March 2026, when its functions became callable without `math.` and core's `rand` kept the name; this table went on listing it, and its examples made ints (`rand[2, 3]` is 2 or 3). Rejected: `rand[5]` and `rand[2, 3]` are core's, an int below 5 and an int from 2 to 3, so the same call would mean two things, and `use math` would change what a program computes. Decided: `uniform[0.0, 1.0, …]` makes the tensor, the one way to.
 
 ### Signal Processing
 

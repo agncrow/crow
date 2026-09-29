@@ -615,6 +615,83 @@ fn cmd_test_book() {
     }
 }
 
+/// The spec's reference-table rows (`| `name[…` |`) that name no function
+/// of the section they are in: Core Builtins' rows name core builtins, and
+/// a module's section of the Standard Library its own functions. Checked
+/// against every table at once, math's `rand[d1, d2, …]` had passed as
+/// core's `rand`, an int, from when math's functions became callable
+/// without `math.`, which gave core the name.
+fn phantom_rows(spec: &str, tables: &[(&str, Vec<&str>)]) -> Vec<String> {
+    let keywords = ["map", "struct", "fn", "view", "test", "use"];
+    // a module's own form under a core builtin's name, where core's takes
+    // other kinds: web's `json[map]` answers a response (`json[text]`
+    // parses), and `push[queue, fn]` queues a task (`push[list, x]`)
+    const OWN_FORMS: &[(&str, &str)] = &[("web", "json"), ("web", "push")];
+    let (mut h2, mut h3, mut h4) = (String::new(), String::new(), String::new());
+    let mut phantom = Vec::new();
+    for (i, line) in spec.lines().enumerate() {
+        if let Some(h) = line.strip_prefix("## ") {
+            (h2, h3, h4) = (h.to_string(), String::new(), String::new());
+            continue;
+        }
+        if let Some(h) = line.strip_prefix("### ") {
+            (h3, h4) = (h.to_string(), String::new());
+            continue;
+        }
+        if let Some(h) = line.strip_prefix("#### ") {
+            h4 = h.to_string();
+            continue;
+        }
+        let Some(section) = reference_tables(&h2, &h3, &h4) else { continue };
+        let l = line.trim_start();
+        let Some(rest) = l.strip_prefix("| `") else { continue };
+        let name: String = rest.chars().take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_').collect();
+        let after = rest[name.len()..].chars().next().unwrap_or(' ');
+        if after != '[' || name.is_empty() || keywords.contains(&name.as_str()) {
+            continue;
+        }
+        let of_section = tables.iter().filter(|(t, _)| section.contains(t)).any(|(_, names)| names.contains(&name.as_str()))
+            || OWN_FORMS.iter().any(|(module, n)| section.contains(module) && *n == name);
+        if of_section {
+            continue;
+        }
+        let elsewhere: Vec<&str> = tables.iter().filter(|(_, names)| names.contains(&name.as_str())).map(|(t, _)| *t).collect();
+        phantom.push(if elsewhere.is_empty() {
+            format!("line {}: `{}[` is documented but the compiler has no such builtin", i + 1, name)
+        } else {
+            format!("line {}: `{}[` is documented under {} but is {}'s", i + 1, name, section.join(" and "), elsewhere.join(" and "))
+        });
+    }
+    phantom
+}
+
+/// The compiler's tables a reference section's rows name: Core Builtins'
+/// the core's, each module's section of the Standard Library the
+/// module's (web's the ui names, the elements, the controls and charts
+/// too); none outside the two reference sections.
+fn reference_tables(h2: &str, h3: &str, h4: &str) -> Option<Vec<&'static str>> {
+    if h2.starts_with("11.") {
+        return Some(vec!["core"]);
+    }
+    if !h2.starts_with("13.") {
+        return None;
+    }
+    let sub = |module: &str| h4.contains(&format!("`{}`", module));
+    Some(match h3 {
+        "math" if sub("math.stats") => vec!["math.stats"],
+        "math" if sub("math.nn") => vec!["math.nn"],
+        "math" => vec!["math"],
+        "io" => vec!["io"],
+        "doc" => vec!["doc"],
+        "chart" => vec!["chart"],
+        "frame" => vec!["frame"],
+        "db" => vec!["db"],
+        h if h == "web" || h.starts_with("Layout") => vec!["web", "ui", "element", "control", "chart"],
+        // the section's opening, before any module's heading
+        _ => vec!["core", "web", "ui", "element", "control", "math", "math.stats", "math.nn", "frame", "db", "io", "doc", "chart"],
+    })
+}
+
 /// `crow test --docs` — the documentation cannot drift from the compiler.
 ///
 /// Reads the compiler's own name tables (core builtins, module exports, ui
@@ -636,6 +713,7 @@ fn cmd_test_docs() {
         ("web", lower_ir::WEB_RESERVED.iter().chain(lower_ir::WEB_EXTRA_FUNCTIONS.iter()).copied().collect()),
         ("ui", lower_ir::UI_RESERVED.iter().copied().filter(|n| *n != "today").collect()),
         ("element", lower::UI_ELEMENTS.to_vec()),
+        ("control", lower::UI_CONTROLS.to_vec()),
         ("math", modules::math::MATH_FUNCTIONS.to_vec()),
         ("math.stats", modules::stats::STATS_FUNCTIONS.to_vec()),
         ("math.nn", modules::nn::NN_FUNCTIONS.to_vec()),
@@ -665,29 +743,12 @@ fn cmd_test_docs() {
 
     // 2. spec reference rows → compiler (phantom entries)
     println!("docs: spec reference rows name real builtins");
-    let keywords = ["map", "struct", "fn", "view", "test", "use"];
-    let mut phantom: Vec<String> = vec![];
-    let mut in_reference = false; // only the Core Builtins / Standard Library sections
-    for (i, line) in spec.lines().enumerate() {
-        if line.starts_with("## ") {
-            in_reference = line.starts_with("## 11.") || line.starts_with("## 13.");
-            continue;
-        }
-        if !in_reference { continue; }
-        let l = line.trim_start();
-        if !l.starts_with("| `") { continue; }
-        let rest = &l[3..];
-        let name: String = rest.chars().take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_').collect();
-        let after = rest[name.len()..].chars().next().unwrap_or(' ');
-        if after != '[' || name.is_empty() { continue; }
-        if known.contains(name.as_str()) || keywords.contains(&name.as_str()) { continue; }
-        phantom.push(format!("line {}: `{}[`", i + 1, name));
-    }
+    let phantom = phantom_rows(&spec, &tables);
     if phantom.is_empty() {
-        println!("  ok    every `name[` table row is a compiler name");
+        println!("  ok    every `name[` table row is a compiler name of its section");
     } else {
         failures += phantom.len();
-        for p in &phantom { println!("  FAIL  {} is documented but the compiler has no such builtin", p); }
+        for p in &phantom { println!("  FAIL  {}", p); }
     }
 
     // 3. book blocks: every module used, every core builtin called
@@ -5617,6 +5678,52 @@ mod book_port_tests {
         assert_eq!(serve_port_of("use web, ui\nserve[3100, refresh = 1, wide = true]\npage['/', v]\n"), Some(3100));
         assert_eq!(serve_port_of("--- serve[9999] in a comment does not count\nserve[ 3000 ]\n"), Some(3000));
         assert_eq!(serve_port_of("use web\npage['/', v]\n"), None);
+    }
+}
+
+#[cfg(test)]
+mod docs_check_tests {
+    use super::*;
+
+    /// A reference row names a function of its own section's table: math's
+    /// `rand[d1, d2, …]` had passed as core's `rand`, an int, checked
+    /// against every table at once.
+    #[test]
+    fn a_reference_row_names_a_function_of_its_own_section() {
+        let tables: Vec<(&str, Vec<&str>)> = vec![
+            ("core", vec!["json", "len", "rand"]),
+            ("web", vec!["serve"]),
+            ("math", vec!["randn", "uniform"]),
+            ("math.stats", vec!["mean"]),
+        ];
+        let spec = [
+            "## 11. Core Builtins",
+            "| `rand[n]` | an int |",
+            "| `len[x]` | a length |",
+            "## 13. Standard Library",
+            "### math",
+            "#### Random",
+            "| `rand[d1, d2]` | a tensor |",
+            "| `uniform[low, high, d1]` | a tensor |",
+            "#### Statistics (sub-module: `math.stats`)",
+            "| `mean[x]` | the mean |",
+            "| `uniform[low, high]` | math's, not stats' |",
+            "### web",
+            "| `json[map]` | a response: web's own form of the name |",
+            "| `serve[port]` | serves |",
+            "| `ghost[x]` | nothing |",
+            "## 14. Parallelism",
+            "| `ghost[x]` | not a reference section |",
+        ]
+        .join("\n");
+        assert_eq!(
+            phantom_rows(&spec, &tables),
+            vec![
+                "line 7: `rand[` is documented under math but is core's".to_string(),
+                "line 11: `uniform[` is documented under math.stats but is math's".to_string(),
+                "line 15: `ghost[` is documented but the compiler has no such builtin".to_string(),
+            ]
+        );
     }
 }
 

@@ -715,7 +715,7 @@ m[1][2]                       --- 6
 
 --- creation by shape
 z = zeros[3, 4]               --- 3x4 of zeros
-r = rand[2, 3]                --- 2x3 random
+r = uniform[0.0, 1.0, 2, 3]   --- 2x3 random in [0, 1)
 
 --- growing (immutable: returns a new tensor)
 m2 = push[m, [7, 8, 9]]       --- append one row (shape-checked)
@@ -1799,10 +1799,9 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | Function | Description |
 |---|---|
 | `seed[n]` | Set the program's RNG seed: every later draw, tensors and the core `rand[]` alike, is repeatable and identical in both modes. Statements run in the order written, and a loop that draws runs in order (§14), so a seeded program draws the same numbers on every run |
-| `rand[d1, d2, ...]` | Uniform random in [0, 1) |
 | `randn[d1, d2, ...]` | Standard normal (mean=0, std=1) |
 | `normal[mean, std, d1, d2, ...]` | Normal with custom mean/std; a negative std stops the program |
-| `uniform[low, high, d1, d2, ...]` | Uniform in [low, high) |
+| `uniform[low, high, d1, d2, ...]` | Uniform in [low, high): `uniform[0.0, 1.0, 2, 3]` is a 2×3 tensor of values in [0, 1) |
 | `poisson[lambda, d1, d2, ...]` | Poisson distribution |
 | `bernoulli[p, d1, d2, ...]` | Bernoulli (0.0 or 1.0) |
 | `gamma_dist[alpha, beta, d1, ...]` | Gamma distribution |
@@ -1811,6 +1810,10 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | `shuffle[x]` | Random permutation of tensor elements |
 | `choice[x, n]` | Random sample of n elements (no replacement) |
 | `permutation[n]` | Random permutation of 0..n |
+
+`rand` is core's: `rand[]` is one float in [0, 1), and `rand[n]` and `rand[min, max]` are ints (see Core Builtins). A tensor of values in [0, 1) is `uniform[0.0, 1.0, d1, …]`.
+
+**Design Note: no tensor `rand`.** Considered: `rand[d1, d2, …]` for a tensor of uniform values in [0, 1), as NumPy spells it. The math module had it until March 2026, when its functions became callable without `math.` and core's `rand` kept the name; this table went on listing it, and its examples made ints (`rand[2, 3]` is 2 or 3). Rejected: `rand[5]` and `rand[2, 3]` are core's, an int below 5 and an int from 2 to 3, so the same call would mean two things, and `use math` would change what a program computes. Decided: `uniform[0.0, 1.0, …]` makes the tensor, the one way to.
 
 #### Signal Processing
 
@@ -2913,7 +2916,7 @@ fn task_b[]
 
 When `gpu[]` or `gpu[n]` is called, a global GPU-enabled flag is set. This has two effects:
 
-1. **Tensor auto-placement**: Tensor creation functions (`zeros`, `ones`, `full`, `arange`, `linspace`, `eye`, `rand`, `randn`) automatically place data on GPU memory when the flag is set and a GPU is available.
+1. **Tensor auto-placement**: Tensor creation functions (`zeros`, `ones`, `full`, `arange`, `linspace`, `eye`, `randn`, `uniform` and the other distributions) automatically place data on GPU memory when the flag is set and a GPU is available.
 
 2. **Op auto-dispatch**: Element-wise operations (`+`, `-`, `*`, `/`, `neg`, `abs`, `exp`, `log`, `sqrt`, `sin`, `cos`) and scalar operations automatically dispatch to GPU compute shaders (WGSL via wgpu) when both operands are on GPU. Reductions (`sum`) also dispatch to GPU. If tensors are on CPU, the CPU path is used as fallback.
 
@@ -3774,7 +3777,7 @@ Every error names the source and both fixes: rename your definition, or import t
 ['a', 'b', 'c']              --- str array
 [[1, 2], [3, 4]]             --- 2D int array
 zeros[3, 4]                  --- 3x4 of zeros
-rand[2, 3]                   --- 2x3 random
+uniform[0.0, 1.0, 2, 3]      --- 2x3 random in [0, 1)
 
 --- mixed named data → use a struct
 struct User [name, age]
@@ -3852,7 +3855,7 @@ at all — the question resolves at the type level.
 ```
 struct Config [lr, optimizer]
 
-weights = map[w = rand[784, 128], b = zeros[128]]
+weights = map[w = randn[784, 128] * 0.01, b = zeros[128]]
 config = Config[0.01, 'adam']
 
 g = dloss[weights, x, y]
