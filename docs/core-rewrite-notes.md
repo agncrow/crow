@@ -930,3 +930,19 @@ weeks; the core stages are weeks each.
   for the top level), the call scan's environment, the checks' first
   types, and the frames' columns. The renaming keeps all of them right
   meanwhile, since two blocks' variables never share a name.
+- **2026-09-28, each call names its row; a test is lowered whole.**
+  Asked whether both modes use the IR entirely: they run only from it,
+  but three kinds of decision were still made outside it. Each backend
+  picked a builtin's row itself, the interpreter by the values and the
+  emitter by the types; the lowering now picks it and the IR names it
+  (docs/bug-classes.md §4, rows picked once), leaving by name only a call
+  on a value of unknown kind or a parsed one. The test runner decided a
+  test's truths and its inputs' types on the syntax tree, with a second
+  inference of its own (`checker.rs`); the lowering decides both now
+  (`lower_test`), and the runner lowers each block once and runs it per
+  input. What remains outside is a frame's columns: `frames.rs` keys them
+  by name, flow-sensitively (`df = with[df, …]` gives the same variable
+  new columns, where a variable has one type in its scope), and the call
+  scan reads them from the tree. Carrying them in `Ty::Frame` needs each
+  such reassignment to be a new binding: a decision for the language,
+  not a port.

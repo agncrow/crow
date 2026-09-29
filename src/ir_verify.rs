@@ -83,7 +83,7 @@ pub fn verify(program: &Program) -> Vec<String> {
             v.kind = None;
             v.testing = true;
             v.ret = None;
-            v.scopes = vec![t.params.iter().map(|p| (p.clone(), Ty::Unknown)).collect()];
+            v.scopes = vec![t.params.iter().cloned().collect()];
             v.block(&t.body);
         }
         v.body = format!("{} main", part.name);

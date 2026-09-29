@@ -311,7 +311,16 @@ impl TypeContext {
             "serve" => CrowType::Void,
             "respond" => CrowType::WebResponse,
             "redirect" => CrowType::WebResponse,
-            "html" => CrowType::WebResponse,
+            // a test's page as its html, from its app session; in a web app,
+            // the response
+            "html" => match arg_types.first() {
+                Some(CrowType::App) => CrowType::Str,
+                _ => CrowType::WebResponse,
+            },
+            // a test's app session, and the elements a selector picks from
+            // its page: records of text (tag, text, class, each attribute)
+            "app" => CrowType::App,
+            "elements" => CrowType::Array(Box::new(CrowType::Map(Box::new(CrowType::Str)))),
             // `json[map]` (use web): `json[text]` is its row
             "json" => CrowType::WebResponse,
             "text" => CrowType::WebResponse,

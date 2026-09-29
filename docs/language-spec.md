@@ -3228,6 +3228,10 @@ test[n]
 | `test[a, b]` | params are **generated inputs** — boundaries first |
 | no params | runs once |
 
+A param's type is what its use in the body gives it: the parameter of the
+function it is handed to (as the test's other calls of that function type
+it, when nothing else does), or a number, when it meets one in arithmetic.
+
 A bare boolean line is a truth to check. `assert` is for steps inside
 scenarios, and reports both operands on failure. Preconditions are plain
 `if`s. Bindings are plain assignments. A test body is ordinary Crow.

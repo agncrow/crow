@@ -226,8 +226,12 @@ pub fn first_line(b: &[Stmt]) -> usize {
 #[derive(Debug, Clone)]
 pub struct Test {
     pub name: Option<String>,
-    pub params: Vec<String>,
+    /// Its inputs, typed by their use in the body: the runner generates
+    /// values of these types.
+    pub params: Vec<(String, Ty)>,
     pub body: Block,
+    /// How many of its bare lines are truths, each lowered as an assertion.
+    pub truths: usize,
 }
 
 // ── Statements ────────────────────────────────────────────────────────
@@ -835,7 +839,8 @@ pub fn print(program: &Program) -> String {
             block(&mut out, &f.body, 2);
         }
         for t in &part.tests {
-            let _ = writeln!(out, "  test {}({})", t.name.clone().unwrap_or_default(), t.params.join(", "));
+            let params: Vec<String> = t.params.iter().map(|(n, ty)| format!("{}: {}", n, ty)).collect();
+            let _ = writeln!(out, "  test {}({})", t.name.clone().unwrap_or_default(), params.join(", "));
             block(&mut out, &t.body, 2);
         }
         if part.main.iter().any(|s| !matches!(s, Stmt::Line(_))) {

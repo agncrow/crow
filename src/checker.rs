@@ -300,9 +300,10 @@ pub struct TestCounts {
 /// Execute every test block: attached (unnamed — the fn above's examples and
 /// laws) and named (standalone scenarios). Params are generated inputs,
 /// boundaries first; bodies run in the interpreter against declarations only
-/// (the verification boundary: tests see what callers see). Bare boolean
-/// lines are truths — transformed into assert calls so failures carry
-/// operand introspection.
+/// (the verification boundary: tests see what callers see). The lowering
+/// types the params by their use and lowers each bare boolean line as an
+/// assertion, so a failed truth reports its operands; each block is lowered
+/// once and run for each of its inputs.
 pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
     let mut issues = Vec::new();
     let mut counts = TestCounts::default();
@@ -350,58 +351,30 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
     std::panic::set_hook(Box::new(|_| {}));
 
     for block in &blocks {
-        // Type the block: wrap as a synthetic fn so params infer from usage.
-        let mut ctx2 = TypeContext::new();
-        let mut infer_input = decls.clone();
-        infer_input.push(Stmt::FnDecl {
-            name: "__testblock".into(),
-            params: block.params.clone(),
-            defaults: vec![None; block.params.len()],
-            body: block.body.clone(),
-            is_view: false,
-        });
-        ctx2.infer_program(&infer_input);
-        let mut sig = match ctx2.functions.get("__testblock") {
-            Some(s) => s.clone(),
-            None => continue,
+        // the block lowered with the declarations, once: its inputs typed by
+        // their use and its bare boolean lines asserted (lower_ir's
+        // lower_test); what the lowering refuses is the block's failure
+        let prepared = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| crate::ir_interp::prepare_test(&decls, &block.label, &block.params, &block.body)));
+        let (program, pctx) = match prepared {
+            Ok(Ok(p)) => p,
+            Ok(Err(e)) => {
+                issues.push(Issue::TestFailure { block: block.label.clone(), line: block.line, detail: e });
+                continue;
+            }
+            Err(_) => {
+                issues.push(Issue::TestFailure { block: block.label.clone(), line: block.line, detail: "panicked".into() });
+                continue;
+            }
         };
-        // Nothing calls a test block, so param types come from usage: find
-        // each param as an argument to a known fn and adopt that param type.
-        // Two passes: `dt` in `a - dt` types from `a`, which itself may
-        // resolve only in the first pass.
-        for _ in 0..2 {
-            for (i, (pname, pty)) in sig.params.clone().iter().enumerate() {
-                if !matches!(pty, CrowType::Unknown) {
-                    continue;
-                }
-                if let Some(t) = infer_param_from_usage(&block.body, pname, &ctx2) {
-                    sig.params[i].1 = t.clone();
-                    ctx2.vars.insert(pname.clone(), t);
-                }
-            }
-        }
-        // Params visible to per-line inference below.
-        for (pname, pty) in &sig.params {
-            ctx2.vars.insert(pname.clone(), pty.clone());
-        }
-
-        // Bare boolean lines become assert calls (operand introspection).
-        let mut transformed = Vec::with_capacity(block.body.len());
-        for st in &block.body {
-            match st {
-                Stmt::ExprStmt(e)
-                    if matches!(ctx2.infer_expr(e), CrowType::Bool)
-                        || matches!(ctx2.infer_expr(e), CrowType::Result(ref inner) if matches!(**inner, CrowType::Bool)) =>
-                {
-                    counts.truths += 1;
-                    transformed.push(Stmt::ExprStmt(Expr::Call {
-                        callee: Box::new(Expr::Ident("assert".into())),
-                        args: vec![e.clone()],
-                    }));
-                }
-                other => transformed.push(other.clone()),
-            }
-        }
+        let Some(test) = program.parts.iter().flat_map(|p| p.tests.iter()).last() else {
+            continue;
+        };
+        counts.truths += test.truths;
+        let sig = FnSig {
+            params: test.params.iter().map(|(p, t)| (p.clone(), crate::lower_ir::crow_type(t))).collect(),
+            return_type: CrowType::Void,
+            body: Vec::new(),
+        };
 
         // Input tuples: none → run once; params → generated, boundaries first.
         let combos: Vec<Vec<CrowValue>> = if block.params.is_empty() {
@@ -431,7 +404,7 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
             // such — not the "undefined variable" every later test would see
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let inputs: Vec<(String, CrowValue)> = block.params.iter().cloned().zip(combo.iter().cloned()).collect();
-                crate::ir_interp::run_test(&decls, &block.label, &inputs, &transformed)
+                crate::ir_interp::run_prepared_test(&program, &pctx, &inputs)
             }));
             let failure = match result {
                 Ok(Ok(_)) => None,
@@ -462,80 +435,6 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
 
     std::panic::set_hook(prev_hook);
     (issues, counts)
-}
-
-/// Find `param` used as an argument to a known fn/builtin and adopt the
-/// corresponding parameter type — how a test block's generated inputs get
-/// their types.
-fn infer_param_from_usage(body: &[Stmt], param: &str, ctx: &TypeContext) -> Option<CrowType> {
-    fn walk(e: &Expr, param: &str, ctx: &TypeContext) -> Option<CrowType> {
-        if let Expr::Call { callee, args } = e {
-            if let Expr::Ident(fname) = callee.as_ref() {
-                for (i, a) in args.iter().enumerate() {
-                    if matches!(a, Expr::Ident(n) if n == param) {
-                        if let Some(sig) = ctx.functions.get(fname) {
-                            if let Some((_, ty)) = sig.params.get(i) {
-                                if !matches!(ty, CrowType::Unknown) {
-                                    return Some(ty.clone());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            for a in args {
-                if let Some(t) = walk(a, param, ctx) {
-                    return Some(t);
-                }
-            }
-            return walk(callee, param, ctx);
-        }
-        match e {
-            Expr::BinOp { left, right, op } => {
-                // Arithmetic with a known numeric side types the param:
-                // `a - dt` where a is float makes dt a float.
-                use crate::ast::BinOp as B;
-                if matches!(op, B::Add | B::Sub | B::Mul | B::Div | B::Pow) {
-                    let param_on_left = matches!(left.as_ref(), Expr::Ident(n) if n == param);
-                    let param_on_right = matches!(right.as_ref(), Expr::Ident(n) if n == param);
-                    if param_on_left || param_on_right {
-                        let other = if param_on_left { right } else { left };
-                        let t = ctx.infer_expr(other);
-                        if matches!(t, CrowType::Int | CrowType::Float) {
-                            return Some(t);
-                        }
-                    }
-                }
-                walk(left, param, ctx).or_else(|| walk(right, param, ctx))
-            }
-            Expr::UnaryOp { expr, .. } => walk(expr, param, ctx),
-            Expr::FieldAccess { object, .. } => walk(object, param, ctx),
-            Expr::Array(items) => items.iter().find_map(|i| walk(i, param, ctx)),
-            Expr::Named { value, .. } => walk(value, param, ctx),
-            _ => None,
-        }
-    }
-    for st in body {
-        let found = match st {
-            Stmt::ExprStmt(e) | Stmt::Return(Some(e)) => walk(e, param, ctx),
-            Stmt::Assign { value, .. } => walk(value, param, ctx),
-            Stmt::If { condition, then_body, else_body } => walk(condition, param, ctx)
-                .or_else(|| infer_param_from_usage(then_body, param, ctx))
-                .or_else(|| {
-                    else_body
-                        .as_ref()
-                        .and_then(|eb| infer_param_from_usage(eb, param, ctx))
-                }),
-            Stmt::For { body, .. } | Stmt::While { body, .. } => {
-                infer_param_from_usage(body, param, ctx)
-            }
-            _ => None,
-        };
-        if found.is_some() {
-            return found;
-        }
-    }
-    None
 }
 
 // --- Layer 0: determinism contract ---

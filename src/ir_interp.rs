@@ -366,25 +366,30 @@ pub fn run_scenario(decls: &[crate::ast::Stmt], label: &str, body: &[crate::ast:
     (result, changed, mailed)
 }
 
-pub fn run_test(decls: &[crate::ast::Stmt], label: &str, params: &[(String, CrowValue)], body: &[crate::ast::Stmt]) -> Result<(), String> {
+/// A test block lowered with the program's declarations: its inputs typed
+/// by their use and its truths asserted (the lowering's `lower_test`), the
+/// last of the program's tests, which the runner reads for both.
+pub fn prepare_test(decls: &[crate::ast::Stmt], label: &str, params: &[String], body: &[crate::ast::Stmt]) -> Result<(Program, crate::type_infer::TypeContext), String> {
     let mut all = decls.to_vec();
     // named, so the gate reads it as the block it was in its file (an
     // unnamed block is one attached to the function before it)
-    all.push(crate::ast::Stmt::TestBlock {
-        name: Some(label.to_string()),
-        params: params.iter().map(|(p, _)| p.clone()).collect(),
-        body: body.to_vec(),
-    });
+    all.push(crate::ast::Stmt::TestBlock { name: Some(label.to_string()), params: params.to_vec(), body: body.to_vec() });
     let (program, ctx) = prepare(&all, "test")?;
     // CROW_IR_SHOW=1 prints the lowered test program, as `crow build --ir` does for a file
     if std::env::var("CROW_IR_SHOW").is_ok() {
         eprintln!("{}", crate::ir::print(&program));
     }
+    Ok((program, ctx))
+}
+
+/// A prepared test run with these inputs: the declarations first, then the
+/// block, each run in an interpreter of its own.
+pub fn run_prepared_test(program: &Program, ctx: &crate::type_infer::TypeContext, params: &[(String, CrowValue)]) -> Result<(), String> {
     let mut it = IrInterp::new(&ctx.registry, "test");
     // a test records what the program would send, and sends nothing
     it.testing = true;
-    it.load(&program);
-    it.guard(|it| it.run_main(&program)).map_err(|e| format!("a declaration failed before the test ran: {}", e))?;
+    it.load(program);
+    it.guard(|it| it.run_main(program)).map_err(|e| format!("a declaration failed before the test ran: {}", e))?;
     let test = program.parts.iter().flat_map(|p| p.tests.iter()).last().ok_or("lowering: the test block is missing")?;
     // the block runs at the program's top level, in a scope of its own: it
     // sees the declarations' variables as a caller would, and its inputs

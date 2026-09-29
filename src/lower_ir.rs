@@ -454,6 +454,7 @@ pub fn ty_of(t: &CrowType) -> Ty {
         CrowType::WebDb => Ty::Handle("web.db".into()),
         CrowType::Sparse => Ty::Handle("sparse".into()),
         CrowType::Mailer => Ty::Handle("mailer".into()),
+        CrowType::App => Ty::Handle("app".into()),
         CrowType::Void => Ty::Unit,
         CrowType::Unknown => Ty::Unknown,
     }
@@ -488,6 +489,7 @@ pub fn crow_type(t: &Ty) -> CrowType {
             "web.request" => CrowType::WebRequest,
             "web.db" => CrowType::WebDb,
             "mailer" => CrowType::Mailer,
+            "app" => CrowType::App,
             _ => CrowType::Unknown,
         },
         // a view's tree has no inference type of its own: the backends
@@ -620,6 +622,12 @@ impl<'a> Lowerer<'a> {
     /// environment is left in the context. `own` is the body's first scope
     /// (its parameters). An error is the final lowering's to report.
     fn provisional(&mut self, pass: Pass, own: Option<HashSet<String>>, body: &[S]) -> Seen {
+        self.provisional_block(pass, own, body).0
+    }
+
+    /// A provisional lowering, and the block it lowered to (read, and
+    /// thrown away).
+    fn provisional_block(&mut self, pass: Pass, own: Option<HashSet<String>>, body: &[S]) -> (Seen, Result<Block, String>) {
         let outer = self.seen.replace(Seen::default());
         let outer_pass = std::mem::replace(&mut self.pass, pass);
         let temp = self.temp;
@@ -635,7 +643,7 @@ impl<'a> Lowerer<'a> {
         if let Some(own) = own {
             self.scopes.push(own);
         }
-        let _ = self.lower_block(body);
+        let lowered = self.lower_block(body);
         self.scopes.truncate(depth);
         // a variable holds no error when it is declared with a type that
         // cannot fail: an assignment of a failed value to it refuses the
@@ -666,7 +674,7 @@ impl<'a> Lowerer<'a> {
         self.pre = pre;
         self.temp = temp;
         self.pass = outer_pass;
-        std::mem::replace(&mut self.seen, outer).unwrap_or_default()
+        (std::mem::replace(&mut self.seen, outer).unwrap_or_default(), lowered)
     }
 
     /// Whose the top-level statement being lowered is: the part its
@@ -1184,17 +1192,122 @@ impl<'a> Lowerer<'a> {
         }
         self.at = Where::Test;
         self.current_fn = name.clone().unwrap_or_default();
-        self.provisional(Pass::Settle, Some(params.iter().cloned().collect()), body);
+        let own: HashSet<String> = params.iter().cloned().collect();
+        // its inputs are typed by their use, for the runner to generate: a
+        // parameter handed to a function takes that parameter's type, one in
+        // arithmetic with a number is a number — read twice, as an input
+        // typed by the first reading can type another (`dt` in `a - dt`)
+        for _ in 0..2 {
+            if params.iter().all(|p| !matches!(self.ctx.vars.get(p), Some(CrowType::Unknown) | None)) {
+                break;
+            }
+            let Ok(lowered) = self.provisional_block(Pass::Settle, Some(own.clone()), body).1 else {
+                break;
+            };
+            for p in params {
+                if matches!(self.ctx.vars.get(p), Some(CrowType::Unknown) | None) {
+                    if let Some(t) = self.input_type_by_use(&lowered, p) {
+                        self.ctx.vars.insert(p.clone(), t);
+                    }
+                }
+            }
+        }
+        self.provisional(Pass::Settle, Some(own.clone()), body);
         self.record_env(&format!("test {}", name.clone().unwrap_or_default()), params, body);
-        self.scopes.push(params.iter().cloned().collect());
+        self.scopes.push(own.clone());
         let outer_shapes = std::mem::take(&mut self.shapes);
-        let block = self.lower_block(body);
+        let block = self.lower_test_body(body);
         self.shapes = outer_shapes;
-        let mut block = block?;
+        let (mut block, truths) = block?;
         self.scopes.pop();
+        let typed: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), self.ctx.vars.get(p).map(ty_of).unwrap_or(Ty::Unknown))).collect();
         self.ctx.vars = saved;
-        place_moves_in(&mut block, &HashSet::new(), Some(&params.iter().cloned().collect()));
-        Ok(Test { name, params: params.to_vec(), body: block })
+        place_moves_in(&mut block, &HashSet::new(), Some(&own));
+        Ok(Test { name, params: typed, body: block, truths })
+    }
+
+    /// A test's body, each bare line that is a truth (a bool, or a bool
+    /// that can fail) lowered as an assertion, which reports its operands
+    /// when it fails; and how many there are.
+    fn lower_test_body(&mut self, body: &[S]) -> Result<(Block, usize), String> {
+        let mut out = Vec::new();
+        let mut truths = 0;
+        for s in body {
+            let mut lowered = self.lower_stmt(s)?;
+            self.flush_pre_into(&mut out);
+            if let (S::ExprStmt(_), [Stmt::Do(x)]) = (s, lowered.as_slice()) {
+                if matches!(x.ty(), Ty::Bool) || matches!(x.ty(), Ty::Result(inner) if *inner == Ty::Bool) {
+                    let Some(Stmt::Do(x)) = lowered.pop() else { unreachable!() };
+                    truths += 1;
+                    lowered.push(Stmt::Do(Expr::Call { target: Target::Runtime("assert".to_string()), args: vec![x], ty: Ty::Unit, propagates: false }));
+                }
+            }
+            out.extend(lowered);
+        }
+        Ok((out, truths))
+    }
+
+    /// The type a test's input takes from its use in the lowered body: a
+    /// function's parameter it is handed to, or the number on the other
+    /// side of arithmetic it is in; the first use that says.
+    fn input_type_by_use(&self, block: &[Stmt], param: &str) -> Option<CrowType> {
+        fn read_through(e: &Expr) -> &Expr {
+            match e {
+                Expr::Convert { expr, .. } => read_through(expr),
+                other => other,
+            }
+        }
+        let is_param = |e: &Expr| matches!(read_through(e), Expr::Local(v, _) | Expr::Move(v, _) if v == param);
+        // what a function's parameter is handed where the test calls it with
+        // a value of known type (`half[4]` beside `half[n]`): a function only
+        // the test calls has no other signature
+        let handed = |base: &str, i: usize| -> Option<CrowType> {
+            let mut seen: Option<CrowType> = None;
+            crate::ir::visit_block(block, &mut |e| {
+                if let (None, Expr::Call { target: Target::User(g), args, .. }) = (&seen, e) {
+                    if g.split("__").next() == Some(base) {
+                        if let Some(a) = args.get(i).filter(|a| !is_param(a)) {
+                            let t = crow_type(&read_through(a).ty());
+                            if !matches!(t, CrowType::Unknown) {
+                                seen = Some(t);
+                            }
+                        }
+                    }
+                }
+            });
+            seen
+        };
+        let mut found: Option<CrowType> = None;
+        crate::ir::visit_block(block, &mut |e| {
+            if found.is_some() {
+                return;
+            }
+            match e {
+                Expr::Call { target: Target::User(f), args, .. } => {
+                    let base = f.split("__").next().unwrap_or(f);
+                    for (i, a) in args.iter().enumerate() {
+                        if is_param(a) {
+                            let sig = self.ctx.functions.get(f.as_str()).or_else(|| self.ctx.functions.get(base));
+                            let declared = sig.and_then(|s| s.params.get(i)).map(|(_, t)| t.clone()).filter(|t| !matches!(t, CrowType::Unknown));
+                            if let Some(t) = declared.or_else(|| handed(base, i)) {
+                                found = Some(t);
+                                return;
+                            }
+                        }
+                    }
+                }
+                Expr::Binary { op, l, r, .. } if matches!(op.as_str(), "add" | "sub" | "mul" | "div" | "pow") => {
+                    let other = if is_param(l) { Some(r) } else if is_param(r) { Some(l) } else { None };
+                    if let Some(t) = other.map(|o| crow_type(&o.ty())) {
+                        if matches!(t, CrowType::Int | CrowType::Float) {
+                            found = Some(t);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        });
+        found
     }
 
     // ── statements ──────────────────────────────────────────────────
@@ -3548,6 +3661,24 @@ mod tests {
         assert!(ir.contains("return len(move x)"), "{}", ir);
         // a parsed value's kind shows as it runs
         assert!(ir.contains("len(unwrap move j)"), "{}", ir);
+    }
+
+    /// A test's inputs are typed by their use in the lowered body — a
+    /// function's parameter they are handed to, the number on the other
+    /// side of arithmetic — and its bare boolean lines are truths, each
+    /// lowered as an assertion: decisions the test runner had made on the
+    /// syntax tree, with a second inference of its own.
+    #[test]
+    fn a_test_types_its_inputs_and_asserts_its_truths() {
+        let src = "fn area[w, h]\n    return w * h\nlog[area[2.0, 3.0]]\ntest[a, dt]\n    t = 1.5 - dt\n    area[a, t] gte 0.0 or true\n    assert[a eq a]\n    t lt 100.0 or true\n    log[t]\n";
+        let stmts = crate::build(src).expect("parses");
+        let (program, _) = crate::ir_interp::prepare(&stmts, "t").expect("lowers");
+        let test = &program.parts[0].tests[0];
+        assert_eq!(test.params, vec![("a".to_string(), Ty::Float), ("dt".to_string(), Ty::Float)], "{:?}", test.params);
+        // two bare boolean lines; an assert written as one is not a truth
+        assert_eq!(test.truths, 2);
+        let asserts = test.body.iter().filter(|s| matches!(s, Stmt::Do(Expr::Call { target: Target::Runtime(n), .. }) if n == "assert")).count();
+        assert_eq!(asserts, 3);
     }
 
     #[test]
