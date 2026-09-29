@@ -1,0 +1,20 @@
+[
+  {"open": "/"},
+  {"expect": "aria-keyshortcuts=\"Control+S Meta+S\""},
+  {"expect": "aria-keyshortcuts=\"?\""},
+  {"expect": "aria-keyshortcuts=\"Escape\""},
+  {"event": "save"},
+  {"expect": "saved 1 added 0 wiped 0"},
+  {"event": "show"},
+  {"expect": "data-open=\"true\""},
+  {"event": "hide"},
+  {"expect": "data-open=\"false\""},
+  {"event": "add"},
+  {"expect": "saved 1 added 1 wiped 0"},
+  {"ask": "wipe"},
+  {"expect": "role=\"dialog\""},
+  {"expect": "<button aria-keyshortcuts=\"Escape\" data-crow-click=\"__cancel\">Cancel</button>"},
+  {"event": "__cancel"},
+  {"absent": "role=\"dialog\""},
+  {"expect": "saved 1 added 1 wiped 0"}
+]

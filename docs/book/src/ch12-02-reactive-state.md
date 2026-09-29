@@ -194,6 +194,64 @@ sit beside the actions: `actions = map[Delete = delete_session], confirm =
 map[Delete = 'Delete this session?']`. In a test `click[a, end_session]`
 runs the handler itself — the question is the page's, not the program's.
 
+## Keys and forms
+
+A key presses a button. `shortcut` names the keys, and the button keeps
+its one handler:
+
+```crow
+use web, ui
+
+saved = 0
+added = 0
+helping = false
+note = ''
+
+fn save[]
+    saved = saved + 1
+
+fn show[]
+    helping = true
+
+fn hide[]
+    helping = false
+
+fn add[]
+    added = added + 1
+
+view desk[]
+    return stack[
+        p['saved `saved` added `added`'],
+        button['Save', click = save, shortcut = 'ctrl+s meta+s'],
+        button['Help', click = show, shortcut = '?'],
+        modal[stack[p['Press ? for this help.'], button['Close', click = hide, shortcut = 'escape']], open = helping],
+        form[field['Note', note, type = 'text'], button['Add'], submit = add]
+    ]
+
+test the_keys_are_the_buttons[]
+    a = app[desk]
+    b = elements[a, 'button'][0]
+    assert[b['aria-keyshortcuts'] eq 'Control+S Meta+S']
+    click[a, add]
+    assert[a.added eq 1]
+
+page['/', desk]
+log['desk defined']
+```
+
+```text
+desk defined
+```
+
+Ctrl+S, or Command+S on a Mac, presses Save as a click would; `?` opens
+the help and Escape closes it. A key works only while its button is on
+the page and can be pressed, so it reaches nothing the reader could not
+click. While the reader types in the Note field the keys are theirs: a
+`?` typed there is a question mark. Enter in the field presses the
+form's first button, and the form's `submit = add` runs `add` once; a
+form never reloads the page. A shortcut that names no key, or sits on
+something a press does nothing to, is refused before the program runs.
+
 ## Pages, their addresses and their titles
 
 An app serves every `page` it registers, in both modes, and each page is

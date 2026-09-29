@@ -684,6 +684,15 @@ impl<'a> Lowerer<'a> {
                 for e in crow_runtime::layout::render(name, &literal).errors {
                     self.refuse(format!("{}: {}", name, e));
                 }
+                // a shortcut presses its element, which must do something
+                // when pressed
+                let named = |want: &str| pairs.iter().any(|(k, _)| matches!(k, A::Ident(s) | A::Str(s) if s == want));
+                if named("shortcut") && !named("click") && !matches!(name, "a" | "button") {
+                    self.refuse(format!(
+                        "{}: shortcut = … presses the element, and pressing a {} does nothing: give it click = a handler",
+                        name, name
+                    ));
+                }
                 // a widget's events each name a handler
                 if name == "widget" {
                     for (k, v) in pairs {
@@ -1102,6 +1111,22 @@ mod tests {
         assert!(check_source("use math\nlog[zeros[2, 3] + ones[3], zeros[2, 3] * 2.0, eye[3] * zeros[3, 4]]\n").is_ok());
         assert!(check_source("use math\nn = 4\nlog[zeros[n, 3] + zeros[5, 3]]\n").is_ok());
         assert!(check_source("use math\nfn f[k]\n    a = zeros[2, 3]\n    if k gt 1\n        a = zeros[3, 3]\n    return a + zeros[3, 3]\nlog[f[2]]\n").is_ok());
+    }
+
+    /// A shortcut is a literal the kernel can name, on an element a press
+    /// does something to: a click, a button (its form's submit), a link.
+    #[test]
+    fn a_shortcut_presses_something() {
+        let page = |element: &str| format!("use web, ui\nn = 0\nfn save[]\n    log['saved']\nview v[]\n    return stack[p['`n`'], {}]\npage['/', v]\n", element);
+        assert!(check_source(&page("button['Save', click = save, shortcut = 'ctrl+s']")).is_ok());
+        assert!(check_source(&page("a['Home', href = '/', shortcut = 'g']")).is_ok());
+        assert!(check_source(&page("div['row', click = save, shortcut = 'enter']")).is_ok());
+        let err = check_source(&page("p['Save', shortcut = 'ctrl+s']")).unwrap_err();
+        assert!(err.contains("p: shortcut = … presses the element, and pressing a p does nothing: give it click = a handler"), "{}", err);
+        let err = check_source(&page("button['Save', click = save, shortcut = 'hyper+s']")).unwrap_err();
+        assert!(err.contains("button: shortcut = 'hyper+s' is not a shortcut ('ctrl+s', 'escape', '?', 'ctrl+s meta+s')"), "{}", err);
+        let err = check_source(&page("button['Save', click = save, shortcut = str[n]]")).unwrap_err();
+        assert!(err.contains("button: 'shortcut' is a layout attribute and must be a literal"), "{}", err);
     }
 
     /// A tensor's shape is in its type (second-half-design.md §3), so it

@@ -36,8 +36,61 @@ pub const LAYOUT_ATTRS: &[&str] = &[
     "width", "height", "min_width", "max_width", "aspect", "fill", "fit",
     "surface", "radius", "border", "shadow", "color", "background",
     "size", "weight", "lines", "anchor", "below", "becomes", "hidden_below",
-    "tip", "open", "active", "side", "font",
+    "tip", "open", "active", "side", "font", "shortcut",
 ];
+
+/// A shortcut as the browser names it (`aria-keyshortcuts`): `'ctrl+s'` is
+/// `Control+S`, `'escape'` is `Escape`, `'?'` is `?`; alternatives are
+/// separated by spaces (`'ctrl+s meta+s'`). None when one is not a key: a
+/// modifier other than ctrl, alt, shift and meta, a name no key has, or
+/// shift with a character it changes (`'shift+/'` is written `'?'`).
+pub fn shortcut_aria(v: &str) -> Option<String> {
+    const NAMED: &[(&str, &str)] = &[
+        ("enter", "Enter"), ("escape", "Escape"), ("tab", "Tab"), ("space", "Space"),
+        ("backspace", "Backspace"), ("delete", "Delete"), ("up", "ArrowUp"), ("down", "ArrowDown"),
+        ("left", "ArrowLeft"), ("right", "ArrowRight"), ("home", "Home"), ("end", "End"),
+        ("pageup", "PageUp"), ("pagedown", "PageDown"),
+    ];
+    let mut alternatives = Vec::new();
+    for alt in v.split_whitespace() {
+        // `ctrl++` presses ctrl and `+`
+        let (mods, key) = match alt.strip_suffix("++") {
+            Some(rest) => (rest, "+"),
+            None if alt == "+" => ("", "+"),
+            None => alt.rsplit_once('+').unwrap_or(("", alt)),
+        };
+        let mut held = [false; 4];
+        if !mods.is_empty() {
+            for m in mods.split('+') {
+                let i = ["ctrl", "alt", "shift", "meta"].iter().position(|x| x.eq_ignore_ascii_case(m))?;
+                if held[i] {
+                    return None;
+                }
+                held[i] = true;
+            }
+        }
+        let lower = key.to_ascii_lowercase();
+        let named = NAMED.iter().find(|(n, _)| *n == lower).map(|(_, a)| a.to_string());
+        let function = lower.strip_prefix('f').and_then(|n| n.parse::<u8>().ok()).filter(|n| (1..=12).contains(n)).map(|n| format!("F{}", n));
+        let mut chars = key.chars();
+        let key_aria = match (named.or(function), chars.next(), chars.next()) {
+            (Some(a), _, _) => a,
+            (None, Some(c), None) if c.is_alphabetic() => c.to_uppercase().to_string(),
+            // a character shift makes is written as that character
+            (None, Some(c), None) if !c.is_whitespace() && !held[2] => c.to_string(),
+            _ => return None,
+        };
+        let names = ["Control", "Alt", "Shift", "Meta"];
+        let mut parts: Vec<String> = (0..4).filter(|i| held[*i]).map(|i| names[i].to_string()).collect();
+        parts.push(key_aria);
+        alternatives.push(parts.join("+"));
+    }
+    if alternatives.is_empty() {
+        None
+    } else {
+        Some(alternatives.join(" "))
+    }
+}
 
 /// The spacing scale, in px.
 pub fn space_px(name: &str) -> Option<u32> {
@@ -160,6 +213,12 @@ pub fn render(tag: &str, attrs: &[(String, String)]) -> Rendered {
             "fit" => match v { "cover" | "contain" => css.push(format!("object-fit:{};width:100%", v)), _ => bad("fit (cover contain)", &mut errors) },
             // a tooltip is the browser's own: the title attribute
             "tip" => passthrough.push(("title".to_string(), v.to_string())),
+            // the keys that press the element, by the browser's names for
+            // them, which the page's script reads too
+            "shortcut" => match shortcut_aria(v) {
+                Some(keys) => passthrough.push(("aria-keyshortcuts".to_string(), keys)),
+                None => bad("shortcut ('ctrl+s', 'escape', '?', 'ctrl+s meta+s')", &mut errors),
+            },
             // figures and code read in the monospace face with tabular digits
             "font" => match v { "mono" => css.push("font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.01em".into()), _ => bad("font (mono)", &mut errors) },
             // open: a real attribute on details (the browser needs it), a
@@ -643,6 +702,34 @@ mod tests {
         let refused = frame_table_html(&numbers(1001), None, None, None, &[], &[], &[], &[], None);
         assert!(refused.contains("table: 1001 rows — a table shows at most 1000 at a time"), "{}", refused);
         assert!(!frame_table_html(&numbers(1000), None, None, None, &[], &[], &[], &[], None).contains("crow-refused"));
+    }
+    /// A shortcut is written as a person reads it and rendered as the
+    /// browser names it; a key no keyboard has, or a shift the character
+    /// already says, is not a shortcut.
+    #[test]
+    fn a_shortcut_is_rendered_as_the_browser_names_its_keys() {
+        for (written, named) in [
+            ("ctrl+s", "Control+S"),
+            ("Ctrl+S", "Control+S"),
+            ("escape", "Escape"),
+            ("?", "?"),
+            ("/", "/"),
+            ("shift+a", "Shift+A"),
+            ("meta+shift+z", "Shift+Meta+Z"),
+            ("alt+up", "Alt+ArrowUp"),
+            ("f5", "F5"),
+            ("ctrl++", "Control++"),
+            ("ctrl+s meta+s", "Control+S Meta+S"),
+        ] {
+            assert_eq!(shortcut_aria(written).as_deref(), Some(named), "{}", written);
+        }
+        for wrong in ["", "hyper+s", "ctrl+", "ctrl+ctrl+s", "enterr", "shift+/", "f13", "ctrl+ab"] {
+            assert_eq!(shortcut_aria(wrong), None, "{:?}", wrong);
+        }
+        let r = render("button", &[("shortcut".into(), "ctrl+s".into())]);
+        assert_eq!(r.passthrough, vec![("aria-keyshortcuts".to_string(), "Control+S".to_string())]);
+        let r = render("button", &[("shortcut".into(), "hyper+s".into())]);
+        assert_eq!(r.errors, vec!["shortcut = 'hyper+s' is not a shortcut ('ctrl+s', 'escape', '?', 'ctrl+s meta+s') (see the layout vocabulary in the spec)".to_string()]);
     }
     #[test]
     fn containers_render_as_divs_with_their_rule() {

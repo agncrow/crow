@@ -158,7 +158,7 @@ Goal: `fetch[url]`, `poll[url, seconds]`, `field[label, var]`, `select[options, 
 - ~~**Channels**~~ — rejected (Design Note: no channels): a write already reaches every reader, and a process outside the program is seen through `fresh`
 - ~~**Debounce**~~ — rejected (Design Note: no debounce): a derivation has one recompute in flight, the latest input winning, and a second click on a running handler is dropped
 - [x] **Loading states, file upload** — `running[h]`, uploads
-- [ ] **Keyboard events**
+- [x] **Keyboard events** — a key presses a drawn element: `shortcut = 'ctrl+s'` (drawn as `aria-keyshortcuts`), Escape on a dialog's Close and the runtime's question, Enter in a form presses its first button, and a form never reloads the page; `keydown` handlers rejected (Design Note: keys press elements)
 - [x] **Row click** — `table[frame, click = h, key = 'col']`, row actions
 - [ ] **Table features** — sorting, filtering
 - [x] **Modals, pagination** — `modal[child, open = var]`, `table[frame, page = 50]`

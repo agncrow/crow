@@ -879,7 +879,7 @@ fn with_dialog(vnode: CrowVNode, text: &str) -> CrowVNode {
     let dialog = CrowVNode::tag("div", vec![CrowVNode::tag("div", vec![
         CrowVNode::p(vec![CrowVNode::text(text)]),
         CrowVNode::tag("div", vec![
-            CrowVNode::button(vec![CrowVNode::text("Cancel")]).on_click("__cancel"),
+            CrowVNode::button(vec![CrowVNode::text("Cancel")]).on_click("__cancel").attr("aria-keyshortcuts", "Escape"),
             CrowVNode::button(vec![CrowVNode::text("Confirm")]).on_click("__confirm").attr("class", "primary"),
         ]).attr("class", "crow-confirm-actions"),
     ]).attr("class", "crow-confirm-box")])
@@ -2179,6 +2179,56 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
     }}
   }});
 
+  // Keys: an element drawn with shortcut = … carries the browser's names
+  // for its keys (aria-keyshortcuts), and pressing one presses the element
+  // as a click does, while it can be pressed: drawn, visible, not disabled
+  // or busy. An open dialog's elements come first. A key without ctrl, alt
+  // or meta is the reader's while they type in a field (escape excepted),
+  // and Enter and Space are a focused control's own.
+  function keyName(e) {{
+    var k = e.key;
+    if (!k || /^(Control|Alt|Shift|Meta|Dead|Unidentified|Process)$/.test(k)) return null;
+    k = {{' ': 'Space', 'Esc': 'Escape', 'Up': 'ArrowUp', 'Down': 'ArrowDown', 'Left': 'ArrowLeft', 'Right': 'ArrowRight'}}[k] || k;
+    // alt makes another character of a letter or a digit on some keyboards
+    if (e.altKey && /^(Key[A-Z]|Digit[0-9])$/.test(e.code || '')) k = e.code.slice(-1);
+    var letter = k.length === 1 && k.toLowerCase() !== k.toUpperCase();
+    var mods = [];
+    if (e.ctrlKey) mods.push('Control');
+    if (e.altKey) mods.push('Alt');
+    if (e.shiftKey && (letter || k.length > 1)) mods.push('Shift');
+    if (e.metaKey) mods.push('Meta');
+    mods.push(letter ? k.toUpperCase() : k);
+    return mods.join('+');
+  }}
+  function canPress(el) {{
+    if (el.disabled || el.getAttribute('aria-busy') === 'true') return false;
+    if (el.checkVisibility) return el.checkVisibility({{visibilityProperty: true}});
+    return el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+  }}
+  document.addEventListener('keydown', function(e) {{
+    if (e.defaultPrevented || e.isComposing) return;
+    var name = keyName(e);
+    if (!name) return;
+    var t = document.activeElement;
+    var plain = !(e.ctrlKey || e.altKey || e.metaKey);
+    var typing = t && (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' ||
+      (t.tagName === 'INPUT' && !/^(button|submit|reset|checkbox|radio|range|color|file|image)$/i.test(t.type)));
+    if (plain && typing && name !== 'Escape') return;
+    if (plain && (name === 'Enter' || name === 'Space') && t && t.closest && t.closest('button, a, summary')) return;
+    var all = document.querySelectorAll('[aria-keyshortcuts]');
+    var found = [];
+    for (var i = 0; i < all.length; i++) {{
+      var keys = all[i].getAttribute('aria-keyshortcuts').split(' ');
+      for (var j = 0; j < keys.length; j++) {{
+        if (keys[j].toLowerCase() === name.toLowerCase() && canPress(all[i])) {{ found.push(all[i]); break; }}
+      }}
+    }}
+    if (!found.length) return;
+    var layered = found.filter(function(el) {{ return el.closest('[role=dialog], .modal, .drawer'); }});
+    e.preventDefault();
+    (layered.length ? layered : found)[0].click();
+  }});
+
   // Event delegation: input
   document.addEventListener('input', function(e) {{
     var ev = e.target.getAttribute('data-crow-input');
@@ -2237,6 +2287,10 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
   // Event delegation: submit
   document.addEventListener('submit', function(e) {{
     var ev = e.target.getAttribute('data-crow-submit');
+    // a form never reloads the page: Enter in a field presses its first
+    // button, and submit = h runs h (a form with an action posts as the
+    // web does)
+    if (!e.target.hasAttribute('action')) e.preventDefault();
     if (ev) {{
       e.preventDefault();
       var data = {{}};
@@ -3900,6 +3954,121 @@ mod tests {
             assert_eq!(b.eval("location.search"), serde_json::json!("?day=tue"));
             b.eval("history.back(); 1");
             b.until("document.body.innerText.indexOf('card 3 marks 1') >= 0", "the back button resuming the card's session");
+        })
+        .await
+        .unwrap();
+    }
+
+    /// Keys in a real browser (spec, Keys): a shortcut presses its element,
+    /// either of its keys; a plain key is the reader's while they type in a
+    /// field; Escape presses an open dialog's Close, and cancels the
+    /// runtime's question; Enter in a form presses its first button; and no
+    /// form reloads the page, one with nothing to press included (it had
+    /// reloaded). `cargo test -p crow_web --features live,http keys_in_a_browser -- --ignored`
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore]
+    async fn keys_in_a_browser() {
+        let handle = |s: &mut CrowLiveState, event: &str, _: Option<&str>| {
+            let bump = |s: &mut CrowLiveState, k: &str| {
+                let n = s.get_i64(k, 0);
+                s.set(k, serde_json::json!(n + 1));
+            };
+            match event {
+                "save" => bump(s, "saved"),
+                "add" => bump(s, "added"),
+                "wipe" => bump(s, "wiped"),
+                "open" => s.set("open", serde_json::json!(true)),
+                "close" => s.set("open", serde_json::json!(false)),
+                _ => {}
+            }
+        };
+        let mut initial = CrowLiveState::new();
+        for k in ["saved", "added", "wiped"] {
+            initial.set(k, serde_json::json!(0));
+        }
+        initial.set("open", serde_json::json!(false));
+        initial.set("text", serde_json::json!(""));
+        let page = |s: &CrowLiveState| {
+            let open = s.get("open").and_then(|v| v.as_bool()).unwrap_or(false);
+            CrowVNode::div(vec![
+                CrowVNode::p(vec![CrowVNode::text(&format!(
+                    "saved {} added {} wiped {} open {}",
+                    s.get_i64("saved", 0),
+                    s.get_i64("added", 0),
+                    s.get_i64("wiped", 0),
+                    open
+                ))]),
+                CrowVNode::button(vec![CrowVNode::text("Save")]).on_click("save").attr("aria-keyshortcuts", "Control+S Meta+S"),
+                CrowVNode::button(vec![CrowVNode::text("Open")]).on_click("open").attr("aria-keyshortcuts", "O"),
+                CrowVNode::div(vec![CrowVNode::div(vec![
+                    CrowVNode::p(vec![CrowVNode::text("a dialog")]),
+                    CrowVNode::button(vec![CrowVNode::text("Close")]).on_click("close").attr("aria-keyshortcuts", "Escape"),
+                ])])
+                .attr("class", "modal")
+                .attr("data-open", if open { "true" } else { "false" }),
+                CrowVNode::form(vec![
+                    CrowVNode::input().attr("id", "entry").attr("type", "text").attr("data-crow-input", "__field:text"),
+                    CrowVNode::button(vec![CrowVNode::text("Add")]).on_click("add"),
+                ]),
+                CrowVNode::form(vec![CrowVNode::input().attr("id", "lone").attr("type", "text")]),
+                CrowVNode::button(vec![CrowVNode::text("Wipe")]).on_click("wipe").confirm("Wipe everything?"),
+            ])
+        };
+        let router = CrowLiveView::new("/_ws/", initial, page, handle).into_router("/");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        tokio::task::spawn_blocking(move || {
+            let Some(mut b) = Browser::open("keys") else { return };
+            // a key as a keyboard sends it: down (typing its text, if any), up
+            let press = |b: &mut Browser, key: &str, code: &str, vk: u32, modifiers: u32, text: &str| {
+                let mut down = serde_json::json!({ "type": if text.is_empty() { "rawKeyDown" } else { "keyDown" }, "key": key, "code": code, "windowsVirtualKeyCode": vk, "modifiers": modifiers });
+                if !text.is_empty() {
+                    down["text"] = serde_json::json!(text);
+                }
+                b.call("Input.dispatchKeyEvent", down);
+                b.call("Input.dispatchKeyEvent", serde_json::json!({ "type": "keyUp", "key": key, "code": code, "windowsVirtualKeyCode": vk, "modifiers": modifiers }));
+            };
+            let (ctrl, meta) = (2, 4);
+            b.call("Page.enable", serde_json::json!({}));
+            b.call("Page.navigate", serde_json::json!({ "url": format!("http://127.0.0.1:{}/", port) }));
+            b.until("!!document.body && document.body.innerText.indexOf('saved 0') >= 0", "the page");
+            b.until("!!sessionStorage.getItem('crow-session:' + location.pathname)", "the page's socket");
+            // a reload would lose this
+            b.eval("window.stayed = true; 1");
+            assert_eq!(b.eval("getComputedStyle(document.querySelector('.modal')).display"), serde_json::json!("none"), "a closed dialog is hidden");
+            press(&mut b, "s", "KeyS", 83, ctrl, "");
+            b.until("!!document.body && document.body.innerText.indexOf('saved 1') >= 0", "ctrl+s pressing Save");
+            press(&mut b, "s", "KeyS", 83, meta, "");
+            b.until("!!document.body && document.body.innerText.indexOf('saved 2') >= 0", "meta+s, its other key");
+            // escape with the dialog closed: its Close cannot be pressed
+            press(&mut b, "Escape", "Escape", 27, 0, "");
+            press(&mut b, "o", "KeyO", 79, 0, "o");
+            b.until("!!document.body && document.body.innerText.indexOf('open true') >= 0", "o pressing Open");
+            press(&mut b, "Escape", "Escape", 27, 0, "");
+            b.until("!!document.body && document.body.innerText.indexOf('open false') >= 0", "escape pressing the open dialog's Close");
+            // typing in a field: the o is the reader's
+            b.eval("document.getElementById('entry').focus(); 1");
+            press(&mut b, "o", "KeyO", 79, 0, "o");
+            b.until("document.getElementById('entry').value === 'o'", "the o typed into the field");
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            assert!(b.eval("document.body.innerText").as_str().unwrap_or("").contains("open false"), "a key typed into a field presses nothing");
+            // Enter in a form presses its first button, once, and stays
+            press(&mut b, "Enter", "Enter", 13, 0, "\r");
+            b.until("!!document.body && document.body.innerText.indexOf('added 1') >= 0", "enter pressing the form's Add");
+            b.eval("document.getElementById('lone').focus(); 1");
+            press(&mut b, "Enter", "Enter", 13, 0, "\r");
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            assert_eq!(b.eval("window.stayed === true"), serde_json::json!(true), "no form reloaded the page");
+            assert!(b.eval("document.body.innerText").as_str().unwrap_or("").contains("added 1"), "one press, one add");
+            // the runtime's question: escape cancels it, and nothing runs
+            b.eval("Array.from(document.querySelectorAll('button')).find(x => x.textContent === 'Wipe').click(); 1");
+            b.until("!!document.querySelector('[role=dialog]')", "the question opening");
+            press(&mut b, "Escape", "Escape", 27, 0, "");
+            b.until("!document.querySelector('[role=dialog]')", "escape cancelling the question");
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            assert!(b.eval("document.body.innerText").as_str().unwrap_or("").contains("wiped 0"), "a cancelled question runs nothing");
+            assert_eq!(b.eval("window.stayed === true"), serde_json::json!(true));
         })
         .await
         .unwrap();

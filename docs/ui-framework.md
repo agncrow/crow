@@ -693,6 +693,8 @@ ui.input[type = 'file', change = file_selected, max_size = 10_000_000]
 
 ### 13. Keyboard Events
 
+*Superseded (2026-09-29): a key presses a drawn element, `button['Save', click = save, shortcut = 'ctrl+s']`, instead of `keydown` handlers (spec, Design Note "keys press elements").*
+
 `keydown` and `keyup` events on any element. Keyboard shortcuts on the document level.
 
 ```

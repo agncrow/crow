@@ -1,0 +1,39 @@
+--- Keys (spec, Keys): a shortcut is drawn as the browser names its keys
+--- (aria-keyshortcuts), the same in both modes, and presses its element;
+--- a dialog's Close says escape; a form's submit runs its handler once;
+--- and the runtime's question offers escape on its Cancel.
+use web, ui
+
+saved = 0
+added = 0
+wiped = 0
+open = false
+note = ''
+
+fn save[]
+    saved = saved + 1
+
+fn show[]
+    open = true
+
+fn hide[]
+    open = false
+
+fn add[]
+    added = added + 1
+
+fn wipe[]
+    wiped = wiped + 1
+
+view desk[]
+    return stack[
+        p['saved `saved` added `added` wiped `wiped`'],
+        button['Save', click = save, shortcut = 'ctrl+s meta+s'],
+        button['Help', click = show, shortcut = '?'],
+        modal[stack[p['help'], button['Close', click = hide, shortcut = 'escape']], open = open],
+        form[field['Note', note, type = 'text'], button['Add'], submit = add],
+        button['Wipe', click = wipe, confirm = 'Wipe everything?']
+    ]
+
+serve[3417]
+page['/', desk]
