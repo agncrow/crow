@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod checks;
 mod frames;
+pub(crate) mod schema;
 mod shapes;
 pub(crate) use checks::{BUILTINS, CORE_RESERVED, UI_RESERVED, WEB_EXTRA_FUNCTIONS, WEB_RESERVED};
 
@@ -81,6 +82,8 @@ fn lower_checked(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &Ha
     let mut program = Program { parts: vec![part.map_err(Refusal::Unlowered)?] };
     decide_loops(&mut program);
     decide_answers(&mut program);
+    // each connection opens with the tables the program declares on it
+    schema::attach(&mut program);
     // the parts agree before a backend reads them (ir_verify): a lowering
     // that disagrees with itself is refused as the bug in Crow it is, in a
     // debug build and in every harness; a release build checks when asked
@@ -3720,6 +3723,31 @@ mod tests {
         ctx.describe_queries = false;
         ctx.infer_program(&stmts);
         lower(&stmts, &mut ctx, "t").err().unwrap_or_default()
+    }
+
+    /// The tables a program declares on each connection: every literal
+    /// `CREATE TABLE` handed to it, directly or through the functions the
+    /// connection is handed to (the task board's `setup[book]`), but one the
+    /// program drops there too, remaking it each run; a connection handed
+    /// none declares nothing, and its `connect` is as written.
+    #[test]
+    fn a_program_declares_the_tables_it_creates_on_each_connection() {
+        let src = "use db\nbook = db.connect['sqlite://app.db']\nother = db.connect['sqlite://:memory:']\nfn setup[c]\n    exec[c, 'CREATE TABLE IF NOT EXISTS people (name TEXT PRIMARY KEY)']\n    exec[c, 'INSERT INTO people VALUES (?)', ['ada']]\nfn more[c]\n    setup[c]\n    exec[c, 'create table if not exists boards (id INTEGER PRIMARY KEY)']\n    exec[c, 'DROP TABLE IF EXISTS scratch']\n    exec[c, 'CREATE TABLE scratch (n INTEGER)']\nmore[book]\nlog[query[other, 'SELECT 1 AS one']]\n";
+        let stmts = crate::lower::lower_program(&crate::build(src).expect("parses")).expect("lowers to the tree");
+        let mut ctx = TypeContext::new();
+        ctx.describe_queries = false;
+        ctx.infer_program(&stmts);
+        let program = lower(&stmts, &mut ctx, "t").expect("lowers");
+        let declared = schema::declared(&program);
+        let people = "CREATE TABLE IF NOT EXISTS people (name TEXT PRIMARY KEY)".to_string();
+        let boards = "create table if not exists boards (id INTEGER PRIMARY KEY)".to_string();
+        assert_eq!(declared.get("book").cloned().unwrap_or_default(), vec![people.clone(), boards.clone()], "{:?}", declared);
+        assert!(!declared.contains_key("other"), "{:?}", declared);
+        assert_eq!(schema::plan(&program), vec![("book".to_string(), Some("sqlite://app.db".to_string()), vec![people, boards])]);
+        // each connection opens with what is declared on it
+        let ir = crate::ir::print(&program);
+        assert!(ir.contains("db.connect!now(\"sqlite://app.db\", 0, [\"CREATE TABLE IF NOT EXISTS people (name TEXT PRIMARY KEY)\", \"create table if not exists boards"), "{}", ir);
+        assert!(ir.contains("db.connect!now(\"sqlite://:memory:\")"), "{}", ir);
     }
 
     /// A frame's type is its columns (second-half-design.md §2, columns in

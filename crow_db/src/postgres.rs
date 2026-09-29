@@ -175,6 +175,9 @@ fn rows_to_frame(rows: &[tokio_postgres::Row]) -> Result<CrowFrame, String> {
     Ok(CrowFrame::new(col_names, columns, validities))
 }
 
+/// The advisory lock reconciling a schema holds: "crowSCHA".
+const SCHEMA_LOCK: i64 = 0x6372_6f77_5343_4841;
+
 fn pg_kind(t: &tokio_postgres::types::Type) -> &'static str {
     use tokio_postgres::types::Type;
     match *t {
@@ -438,6 +441,16 @@ impl CrowDb for CrowPostgresDb {
 
     fn migrate(&self, dir: &str) -> Result<i64, String> {
         crate::migrate::run_migrations(self, dir)
+    }
+
+    /// One transaction holding an advisory lock, released as it ends:
+    /// processes starting at once reconcile one after the other, and
+    /// Postgres changes a schema inside a transaction.
+    fn schema_lock(&self, f: &dyn Fn(&dyn DbTx) -> Result<(), String>) -> Result<(), String> {
+        self.transact(&|tx| {
+            tx.exec(&format!("SELECT pg_advisory_xact_lock({})", SCHEMA_LOCK), &[])?;
+            f(tx)
+        })
     }
 
     fn backend_name(&self) -> &str {

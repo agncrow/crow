@@ -1,0 +1,7 @@
+--- A Postgres server that does not answer stops the program as the
+--- connection opens, with the driver's reason, the same in both modes. A
+--- compiled program that used Postgres without the web layer had not built:
+--- the driver's tokio lacked the features it uses.
+use db
+pg = connect['postgres://nobody@127.0.0.1:1/none']
+log[query[pg, 'SELECT 1 AS one']]

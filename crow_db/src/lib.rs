@@ -31,6 +31,8 @@ pub mod clickhouse;
 
 pub mod migrate;
 
+pub mod schema;
+
 /// Resolves when the work under `flag` — or the whole program — should
 /// stop: a driver that can stop a running query on its server races the
 /// query against this and stops it.
@@ -123,11 +125,34 @@ pub trait CrowDb: Send + Sync {
         Err(format!("{}: describe is not supported", self.backend_name()))
     }
 
+    /// Run `f` holding the database's lock for changing its schema, in one
+    /// transaction where the database has them: two processes starting at
+    /// once reconcile one after the other (crate::schema). A backend with
+    /// neither (ClickHouse) runs `f` as it is, and the statements it is
+    /// handed say `IF NOT EXISTS`.
+    fn schema_lock(&self, f: &dyn Fn(&dyn DbTx) -> Result<(), String>) -> Result<(), String> {
+        f(&Unlocked(self))
+    }
+
     /// Open a transaction for a handler's scope on a connection of its own.
     /// `None` for a backend without transactions (ClickHouse): its writes
     /// land as they are made.
     fn begin_scope(&self) -> Option<Result<Box<dyn ScopeTx>, String>> {
         None
+    }
+}
+
+/// A backend's statements outside any transaction: what a backend without
+/// a schema lock reconciles through.
+struct Unlocked<'a, D: ?Sized>(&'a D);
+
+impl<D: CrowDb + ?Sized> DbTx for Unlocked<'_, D> {
+    fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
+        self.0.query(sql, params)
+    }
+
+    fn exec(&self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
+        self.0.exec(sql, params)
     }
 }
 
@@ -331,6 +356,11 @@ impl DbHandle {
 
     pub fn migrate(&self, dir: &str) -> Result<i64, String> {
         self.inner.migrate(dir)
+    }
+
+    /// Run `f` under the database's schema lock (CrowDb::schema_lock).
+    pub(crate) fn schema_lock(&self, f: &dyn Fn(&dyn DbTx) -> Result<(), String>) -> Result<(), String> {
+        self.inner.schema_lock(f)
     }
 
     pub fn backend_name(&self) -> &str {

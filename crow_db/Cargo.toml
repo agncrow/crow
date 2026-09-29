@@ -13,7 +13,9 @@ rusqlite = { version = "0.38.0", features = ["bundled", "column_decltype"], opti
 # PostgreSQL backend
 tokio-postgres = { version = "0.7.16", optional = true }
 deadpool-postgres = { version = "0.14", optional = true }
-tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
+# macros and time: the drivers race a query against a stop (tokio::select!);
+# a program without the web layer brings no tokio features of its own
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"], optional = true }
 
 # ClickHouse backend
 klickhouse = { version = "0.13", optional = true }

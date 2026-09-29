@@ -1,0 +1,19 @@
+--- A connection opens holding the tables the program declares on it (spec,
+--- db, The schema a program declares). Run from its source a program
+--- reconciles: a column its CREATE statement declares, that a table the
+--- database already has lacks, is added as the connection opens — the
+--- same in both modes.
+use db
+
+--- an earlier version of the program made the table without a title
+old = connect['sqlite:///tmp/crow_parity_124.db']
+exec[old, 'DROP TABLE IF EXISTS cards']
+exec[old, 'CREATE TABLE cards (id INTEGER PRIMARY KEY)']
+exec[old, 'INSERT INTO cards (id) VALUES (1)']
+
+--- this version declares it with a title and a flag
+book = connect['sqlite:///tmp/crow_parity_124.db']
+exec[book, 'CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY, title TEXT, done INTEGER NOT NULL DEFAULT 0)']
+exec[book, 'UPDATE cards SET title = ? WHERE id = 1', ['first']]
+log[query[book, 'SELECT id, title, done FROM cards']]
+rm['/tmp/crow_parity_124.db']

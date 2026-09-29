@@ -104,6 +104,21 @@ fn crow_main() {
     crow_runtime::stops::quiet_under_guards();
     let args: Vec<String> = std::env::args().collect();
 
+    // a program run from its source reconciles the tables it declares (spec,
+    // db, The schema a program declares): crow's own run of it, and every
+    // program crow starts, open those connections in the crowfile's mode or
+    // reconciling; a program `crow build` makes starts in the crowfile's
+    // mode, or verifies
+    let runs = match args.get(1).map(|a| a.as_str()) {
+        None | Some("run" | "test" | "check" | "launch" | "db") => true,
+        Some(a) => is_source(a) || is_bytecode(a),
+    };
+    if runs && std::env::var_os("CROW_SCHEMA").is_none() {
+        let mode = crowfile_schema_or_stop().unwrap_or(crow_db::schema::Mode::Reconcile);
+        // Rust 2024: the environment is process-global; nothing else runs yet
+        unsafe { std::env::set_var("CROW_SCHEMA", mode.name()) };
+    }
+
     if args.len() < 2 {
         cmd_repl();
         return;
@@ -119,6 +134,7 @@ fn crow_main() {
         "fmt" => cmd_fmt(),
         "build" => cmd_build(),
         "launch" => cmd_launch(),
+        "db" => cmd_db(&args[2..]),
         "check" => {
             let mut verbose = false;
             let mut strict = false;
@@ -342,6 +358,7 @@ fn print_usage() {
     eprintln!("  crow check --db <url>  + schema-aware db checks (or db = '…' in crowfile)");
     eprintln!("  crow check --record-fixtures  the scenarios read the real databases; keep what each statement answers");
     eprintln!("  crow fix file.co --hazard N [--option M]   apply a fix from the check report");
+    eprintln!("  crow db diff [file.co] the SQL that makes each database hold the tables the program declares (a migration draft)");
     eprintln!("  crow lsp               language server over stdio (see docs/crow-lsp.md)");
     eprintln!("  crow fmt               format project (uses crowfile)");
     eprintln!("  crow fmt file.co     format a specific file");
@@ -1863,7 +1880,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     }
     // The Rust backend: the program's IR printed as Rust
     let test_control = TEST_CONTROL.load(std::sync::atomic::Ordering::SeqCst);
-    let emitted = emit_rs::emit_with(&program, ctx.registry.clone(), &entry_file, shown, cpu, test_control).unwrap_or_else(|e| {
+    let emitted = emit_rs::emit_with(&program, ctx.registry.clone(), &entry_file, shown, cpu, test_control, crowfile_schema_or_stop()).unwrap_or_else(|e| {
         eprintln!("error: {}", e);
         process::exit(1);
     });
@@ -3405,6 +3422,11 @@ fn types_of_file(entry: &str, describe: bool) -> Result<String, String> {
 }
 
 fn ir_of_file(entry: &str, describe: bool) -> Result<String, String> {
+    program_of_file(entry, describe).map(|program| ir::print(&program))
+}
+
+/// A program's IR, lowered as every pipeline lowers it.
+fn program_of_file(entry: &str, describe: bool) -> Result<ir::Program, String> {
     let source = read_file(entry);
     let stmts = build(&source).map_err(|e| e.to_string())?;
     let source_dir = std::path::Path::new(entry).parent().unwrap_or(std::path::Path::new("."));
@@ -3419,7 +3441,7 @@ fn ir_of_file(entry: &str, describe: bool) -> Result<String, String> {
     for note in &ctx.describe_notes {
         eprintln!("{}", note);
     }
-    Ok(ir::print(&program))
+    Ok(program)
 }
 
 #[cfg(test)]
@@ -4266,15 +4288,81 @@ fn crowfile_db_url() -> Option<String> {
 
 /// Same lookup rooted at an arbitrary directory (the LSP workspace root).
 pub(crate) fn crowfile_db_url_at(dir: &std::path::Path) -> Option<String> {
+    crowfile_text_at(dir, "db")
+}
+
+/// A text variable of the crowfile in `dir`, read leniently: no crowfile,
+/// or no such variable, is `None`.
+fn crowfile_text_at(dir: &std::path::Path, var: &str) -> Option<String> {
     let source = std::fs::read_to_string(dir.join("crowfile")).ok()?;
     let stmts = build(&source).ok()?;
     let it = ir_interp::run_script(&stmts, "crowfile").ok()?;
-    match it.var("db") {
+    match it.var(var) {
         Some(val) => match &val.value {
             value::Value::Str(s) => Some(s.clone()),
             _ => None,
         },
         None => None,
+    }
+}
+
+/// The crowfile's `schema`: the mode a program opens the connections it
+/// declares tables on in (spec, db, The schema a program declares).
+fn crowfile_schema() -> Result<Option<crow_db::schema::Mode>, String> {
+    match crowfile_text_at(std::path::Path::new("."), "schema") {
+        Some(s) => crow_db::schema::Mode::parse(&s).map(Some).map_err(|e| format!("crowfile: schema = '{}': {}", s, e)),
+        None => Ok(None),
+    }
+}
+
+/// The crowfile's `schema`, for a command that runs or builds a program:
+/// a mode that is not one stops the command.
+fn crowfile_schema_or_stop() -> Option<crow_db::schema::Mode> {
+    crowfile_schema().unwrap_or_else(|e| {
+        eprintln!("error: {}", e);
+        process::exit(1);
+    })
+}
+
+/// `crow db diff [file.co]`: for each connection the program declares
+/// tables on and opens with a url it writes, the SQL that would make its
+/// database hold what the program declares — what reconciling would run,
+/// and, commented out, what it will not — a draft for a migration. Only
+/// the catalog is read.
+fn cmd_db(args: &[String]) {
+    if args.first().map(|s| s.as_str()) != Some("diff") {
+        eprintln!("usage: crow db diff [file.co]");
+        process::exit(1);
+    }
+    let file = args.iter().skip(1).find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| parse_crowfile().entry);
+    let program = program_of_file(&file, false).unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        process::exit(1);
+    });
+    let plan = lower_ir::schema::plan(&program);
+    if plan.is_empty() {
+        println!("-- {} declares no tables on its connections", file);
+        return;
+    }
+    let mut failed = false;
+    for (var, url, declared) in plan {
+        let Some(url) = url else {
+            println!("-- {}: opens with a url the program computes, not read\n", lower::shown(&var));
+            continue;
+        };
+        let shown = crow_db::schema::shown_url(&url);
+        let declared: Vec<&str> = declared.iter().map(|s| s.as_str()).collect();
+        match crow_db::schema::diff(&url, &declared) {
+            Ok(sql) if sql.is_empty() => println!("-- {} ({}): the database holds what the program declares\n", shown, lower::shown(&var)),
+            Ok(sql) => println!("-- {} ({})\n{}", shown, lower::shown(&var), sql),
+            Err(e) => {
+                eprintln!("error: {} ({}): {}", shown, lower::shown(&var), e);
+                failed = true;
+            }
+        }
+    }
+    if failed {
+        process::exit(1);
     }
 }
 

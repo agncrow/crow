@@ -125,6 +125,23 @@ fn json_to_sql_params(params: &[serde_json::Value]) -> Vec<Box<dyn rusqlite::typ
         .collect()
 }
 
+impl CrowSqliteDb {
+    /// Run `f` in one transaction on the connection, begun as `begin` says:
+    /// committed when it finishes, rolled back when it fails.
+    fn in_transaction(&self, begin: &str, f: &dyn Fn(&dyn DbTx) -> Result<(), String>) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute_batch(begin).map_err(|e| e.to_string())?;
+        let wrapper = SqliteTransactWrapper { conn: &conn };
+        match f(&wrapper) {
+            Ok(()) => conn.execute_batch("COMMIT").map_err(|e| e.to_string()),
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    }
+}
+
 impl CrowDb for CrowSqliteDb {
     /// The columns a statement would return, typed from the declared types
     /// of the table columns they come straight from (INTEGER → int, REAL →
@@ -260,20 +277,13 @@ impl CrowDb for CrowSqliteDb {
     }
 
     fn transact(&self, f: &dyn Fn(&dyn DbTx) -> Result<(), String>) -> Result<(), String> {
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
+        self.in_transaction("BEGIN", f)
+    }
 
-        let wrapper = SqliteTransactWrapper { conn: &conn };
-        match f(&wrapper) {
-            Ok(()) => {
-                conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
-                Ok(())
-            }
-            Err(e) => {
-                let _ = conn.execute_batch("ROLLBACK");
-                Err(e)
-            }
-        }
+    /// The write lock at once, in an immediate transaction: a second
+    /// process starting waits here, then finds the schema made.
+    fn schema_lock(&self, f: &dyn Fn(&dyn DbTx) -> Result<(), String>) -> Result<(), String> {
+        self.in_transaction("BEGIN IMMEDIATE", f)
     }
 
     fn migrate(&self, dir: &str) -> Result<i64, String> {

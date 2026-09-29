@@ -47,25 +47,28 @@ fn to_db<'a>(v: &'a CrowValue, fname: &str) -> Result<&'a crow_db::DbHandle, Str
 fn call_db(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
     match name {
         "connect" => {
-            // connect[url] or connect[url, pool_size]
-            if args.is_empty() || args.len() > 2 {
+            // connect[url] or connect[url, pool_size]; the lowering hands a
+            // connection the program declares tables on the statements that
+            // declare them, third (a pool of 0: the backend's)
+            if args.is_empty() || args.len() > 3 {
                 return Err("connect[] takes 1 or 2 arguments".into());
             }
             let url = to_str(&args[0], "connect")?;
-            let pool_size = if args.len() == 2 {
-                match &args[1].value {
-                    Value::Int(n) => Some(*n as usize),
-                    _ => return Err("connect[] pool_size must be an integer".into()),
-                }
-            } else {
-                None
+            let pool_size = match args.get(1).map(|a| &a.value) {
+                None => None,
+                Some(Value::Int(n)) => Some(*n as usize),
+                Some(_) => return Err("connect[] pool_size must be an integer".into()),
             };
             // in a rehearsal nothing connects: the rehearsal's own database
             // answers (rehearsal.rs)
             if crate::rehearsal::active().is_some() {
                 return Ok(CrowValue::ok(Value::DbConn(crate::rehearsal::connect(url))));
             }
-            let handle = crow_db::connect(url, pool_size)?;
+            let declared: Vec<&str> = match args.get(2).map(|a| &a.value) {
+                Some(Value::Array(items)) => items.iter().filter_map(|i| if let Value::Str(s) = &i.value { Some(s.as_str()) } else { None }).collect(),
+                _ => Vec::new(),
+            };
+            let handle = crow_db::schema::connect(url, pool_size, &declared)?;
             Ok(CrowValue::ok(Value::DbConn(handle)))
         }
         "query" => {

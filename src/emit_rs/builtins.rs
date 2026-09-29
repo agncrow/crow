@@ -118,6 +118,29 @@ impl Emitter {
         self.db_guard(&fallible, "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])", body)
     }
 
+    /// `connect[url]`, with a pool, and with the statements the lowering
+    /// found declaring tables on the connection (spec, db, The schema a
+    /// program declares): one call in both modes, which checks the database
+    /// holds them, and a connection that fails stops the program with its
+    /// reason, as the interpreter stops.
+    fn db_connect(&mut self, args: &[Expr], a: &[String]) -> String {
+        let pool = match a.get(1) {
+            Some(n) => format!("Some({} as usize)", n),
+            None => "None".to_string(),
+        };
+        let declared: Vec<String> = match args.get(2) {
+            Some(Expr::ListLit(items, _)) => items.iter().filter_map(|i| if let Expr::Const(Const::Str(s), _) = i { Some(format!("{:?}", s)) } else { None }).collect(),
+            _ => Vec::new(),
+        };
+        format!(
+            "crow_db::schema::connect(&{}, {}, &[{}]).unwrap_or_else(|e| crow_runtime::stops::halt({}, &e))",
+            a.first().cloned().unwrap_or_default(),
+            pool,
+            declared.join(", "),
+            self.current_line
+        )
+    }
+
     fn db_exec(&mut self, conn: &str, sql: &str, params: &[Expr]) -> String {
         self.needs_serde_json = true;
         let (p, fallible) = self.db_params(params);
@@ -170,10 +193,7 @@ impl Emitter {
                 "connect" => {
                     let url = arg_strs.first().cloned().unwrap_or_default();
                     self.note_db_backend(&url);
-                    if arg_strs.len() == 2 {
-                        return format!("crow_db::connect(&{}, Some({} as usize)).unwrap()", arg_strs[0], arg_strs[1]);
-                    }
-                    return format!("crow_db::connect(&{}, None).unwrap()", url);
+                    return self.db_connect(args, arg_strs);
                 }
                 "query" if arg_strs.len() >= 2 => return self.db_query(&arg_strs[0], &arg_strs[1], &args[2..]),
                 "exec" if arg_strs.len() >= 2 => return self.db_exec(&arg_strs[0], &arg_strs[1], &args[2..]),
@@ -593,15 +613,11 @@ impl Emitter {
             }
             "connect" if db && !web => {
                 self.note_db_backend(&a[0]);
-                if n == 2 {
-                    format!("crow_db::connect(&{}, Some({} as usize)).unwrap()", a[0], a[1])
-                } else {
-                    format!("crow_db::connect(&{}, None).unwrap()", a[0])
-                }
+                self.db_connect(args, a)
             }
             "connect" if db && web && matches!(Self::lit_str(&args[0]), Some(u) if u.contains("://") && !u.starts_with("ws")) => {
                 self.note_db_backend(&a[0]);
-                format!("crow_db::connect(&{}, None).unwrap()", a[0])
+                self.db_connect(args, a)
             }
             "query" if db && n >= 2 => self.db_query(&a[0], &a[1], &args[2..]),
             "exec" if db && n >= 2 => self.db_exec(&a[0], &a[1], &args[2..]),

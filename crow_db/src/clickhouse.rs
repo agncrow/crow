@@ -523,7 +523,7 @@ fn ch_nullable(t: &str) -> bool {
 }
 
 /// A ClickHouse type name to the kinds the compiler knows.
-fn ch_kind(t: &str) -> &'static str {
+pub(crate) fn ch_kind(t: &str) -> &'static str {
     let mut t = t.trim();
     loop {
         let inner = t.strip_prefix("Nullable(").or_else(|| t.strip_prefix("LowCardinality("));

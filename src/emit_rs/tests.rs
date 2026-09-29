@@ -208,7 +208,7 @@ fn transpile(source: &str) -> String {
     let mut ctx = TypeContext::new();
     ctx.infer_program(&stmts);
     let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").expect("lowering to the IR failed");
-    crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false).expect("emitting failed").source
+    crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false, None).expect("emitting failed").source
 }
 
 #[test]
@@ -1733,28 +1733,44 @@ fn test_web_uploads() {
 #[test]
 fn test_db_connect() {
     let rust = transpile("use db\nconn = connect['sqlite://test.db']\n");
-    assert!(rust.contains("crow_db::connect("), "should emit crow_db::connect()\n{}", rust);
+    assert!(rust.contains("crow_db::schema::connect("), "should emit crow_db::schema::connect()\n{}", rust);
     assert!(rust.contains("None"), "should pass None for default pool\n{}", rust);
+    // a connection that cannot open stops as the interpreter stops
+    assert!(rust.contains(".unwrap_or_else(|e| crow_runtime::stops::halt(2, &e))"), "should stop with the reason\n{}", rust);
 }
 
 #[test]
 fn test_db_connect_pool_size() {
     let rust = transpile("use db\nconn = connect['sqlite://test.db', 5]\n");
-    assert!(rust.contains("crow_db::connect("), "should emit crow_db::connect()\n{}", rust);
+    assert!(rust.contains("crow_db::schema::connect("), "should emit crow_db::schema::connect()\n{}", rust);
     assert!(rust.contains("Some(5"), "should pass Some(5) for pool size\n{}", rust);
 }
 
 #[test]
 fn test_db_connect_prefixed() {
     let rust = transpile("use db\nconn = db.connect['sqlite://test.db']\n");
-    assert!(rust.contains("crow_db::connect("), "should emit crow_db::connect() for db.connect\n{}", rust);
+    assert!(rust.contains("crow_db::schema::connect("), "should emit crow_db::schema::connect() for db.connect\n{}", rust);
+}
+
+/// A connection the program declares tables on opens with the statements
+/// declaring them (spec, db, The schema a program declares).
+#[test]
+fn test_db_connect_declared() {
+    let rust = transpile("use db\nconn = connect['sqlite://test.db']\nexec[conn, 'CREATE TABLE IF NOT EXISTS t (id INTEGER, name TEXT)']\n");
+    assert!(
+        rust.contains("crow_db::schema::connect(&\"sqlite://test.db\".to_string(), Some(0_i64 as usize), &[\"CREATE TABLE IF NOT EXISTS t (id INTEGER, name TEXT)\"])"),
+        "should open with the declared statements\n{}",
+        rust
+    );
 }
 
 #[test]
 fn test_db_exec() {
     let rust = transpile("use db\nconn = connect['sqlite://test.db']\nexec[conn, 'CREATE TABLE t [id INT]']\n");
     assert!(rust.contains(".exec("), "should emit .exec()\n{}", rust);
-    assert!(rust.contains(".unwrap()"), "should unwrap result\n{}", rust);
+    // a statement that fails answers its reason (the `.unwrap()` this had
+    // looked for was the connection's, which now stops with its reason)
+    assert!(rust.contains("Err(_e) => CrowResult { ok: false, value: 0_i64, reason: _e"), "should answer the reason\n{}", rust);
 }
 
 #[test]
@@ -1823,11 +1839,11 @@ fn a_test_build_answers_the_harness() {
     let mut ctx = crate::type_infer::TypeContext::new();
     ctx.infer_program(&stmts);
     let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").unwrap();
-    let rust = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, true).expect("emitting failed").source;
+    let rust = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, true, None).expect("emitting failed").source;
     assert!(rust.contains("fn __crow_view(") && rust.contains("\"v\" => Some(v(state)),"), "{}", rust);
     assert!(rust.contains("fn __crow_derived(") && rust.contains("\"twice\" =>"), "{}", rust);
     assert!(rust.contains("crow_web::live::test_control::router(") && rust.contains("__crow_app.serve(0)"), "{}", rust);
-    let plain = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false).map(|e| e.source).unwrap_or_default();
+    let plain = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false, None).map(|e| e.source).unwrap_or_default();
     assert!(!plain.contains("test_control"), "{}", plain);
 }
 

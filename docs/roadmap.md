@@ -17,14 +17,14 @@ What's done, what's remaining, and in what order.
 | Web framework (P4) | 17 modules: server, client, db, auth, cors, session, template, cache, rate, upload, sse, ws, live, static, mail, queue, docs — all with transpiler codegen + interpreter support |
 | Autograd | `grad[f]` functional transformation |
 | Parallel execution | Auto-parallel `for` loops (rayon), statement-level parallelism via dependency analysis |
-| CLI | `crow run`, `crow build`, `crow stop`, `crow fmt`, `crow check` (+ `--db`, `--strict`), `crow fix`, `crow test` (blocks, `--parity`, `--book`), `crow lsp`, `crow new`, `crow install`, `crow launch`, REPL |
+| CLI | `crow run`, `crow build`, `crow stop`, `crow fmt`, `crow check` (+ `--db`, `--strict`), `crow fix`, `crow db diff`, `crow test` (blocks, `--parity`, `--book`), `crow lsp`, `crow new`, `crow install`, `crow launch`, REPL |
 | Verification | `test` blocks (attached examples/laws, named scenarios, generated inputs, `app[]` harness for views); `crow check` hazards for the live loop (blocking, stale snapshots) and, with a schema, the concurrency catalog (write skew, lost update, latch, assumed-unique, unpaired writes) |
 | Live apps | `view` blocks, reactive state, named-argument attributes, deferred event calls, `later[]`/`running[]`, `serve[port, refresh =, budget =]`, default stylesheet (8 classes + 8 tokens, `css/app.css` hatch), `chart[]` element |
 | Book runner | `crow book`: the book served by the compiler with every block runnable in place (interpret / compile / test / stop) |
 | Editor | `crow lsp` (diagnostics, completion, hover, go-to-definition, signature help) + VS Code extension in `editors/vscode` |
 | Project structure | `crow new` scaffolding (--web, --ml, --db), `crow run <job>`, convention-based views/jobs/layout/db, dot-path imports (`use views.home`), multi-import (`use web, ui`) |
 | DX | Default welcome page for empty web apps, friendly error messages (e.g. "port 3000 is already in use") |
-| Tests | cargo unit tests, 123-file parity corpus (`crow test --parity`), the served pages in both modes (`crow test --served`), every book block in both modes (`crow test --book`), docs-vs-compiler coverage (`crow test --docs`), db-check fixtures in `tests/db_check`, chart harness; CI runs all of them (`.github/workflows/ci.yml`) |
+| Tests | cargo unit tests, 128-file parity corpus (`crow test --parity`), the served pages in both modes (`crow test --served`), every book block in both modes (`crow test --book`), docs-vs-compiler coverage (`crow test --docs`), db-check fixtures in `tests/db_check`, chart harness; CI runs all of them (`.github/workflows/ci.yml`) |
 | Documentation | The Crow Book (`docs/book`, 13 chapters + 5 appendices), language-spec.md, crow-for-llms.md, usage.md, crow-check.md, crow-lsp.md, module references, design records — indexed in `docs/README.md` |
 
 ## Remaining Work
@@ -180,6 +180,7 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. All three backen
 - [x] **`insert[conn, table, frame]`** — Bulk insert using backend-specific fast paths.
 - [x] **`transact[conn, fn]`** — Named function executes inside a transaction with auto commit/rollback.
 - [x] **`migrate[conn, dir]`** — Forward-only SQL migrations with `_crow_migrations` tracking table.
+- [x] **Schema modes** (Sept 2026) — the literal `CREATE TABLE` statements a program hands a connection declare its tables; opening it reconciles (run from source: missing columns added under a lock), verifies (a built program: the catalog read, a difference stops at connect with the mending SQL) or trusts (warns every start). Crowfile `schema`, `CROW_SCHEMA`; `crow db diff` drafts the migration. Parity 124–128 (127–128: a compiled program using Postgres or ClickHouse without the web layer had not built).
 - [x] **Conflict resolution** — Language-level disambiguation for `module.fn[]` when multiple modules export the same name.
 - [x] **Interpreter support** — All 6 builtins work in `crow run -i` mode.
 - [x] **Transpiler codegen** — `use db` → `needs_crow_db` flag, `crow_db` in generated `Cargo.toml`, Rust codegen for all builtins.

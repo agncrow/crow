@@ -49,10 +49,12 @@ pub fn emit_with(
     shown_names: BTreeMap<String, String>,
     cpu: Option<usize>,
     test_control: bool,
+    schema: Option<crow_db::schema::Mode>,
 ) -> Result<Emitted, String> {
     let part = program.parts.first().cloned().ok_or("an empty program")?;
     let mut e = Emitter::new(part, registry, source_file, shown_names);
     e.test_control = test_control;
+    e.schema_mode = schema;
     if let Some(n) = cpu {
         e.cpu_count = Some(n);
     }
@@ -117,6 +119,9 @@ pub(crate) struct Emitter {
     /// module names from `use` (a user module's variables are `mod_x`)
     pub(crate) modules: HashSet<String>,
     pub(crate) cpu_count: Option<usize>,
+    /// The mode the crowfile says a built program opens its connections in
+    /// (spec, db, The schema a program declares); without one, verify.
+    pub(crate) schema_mode: Option<crow_db::schema::Mode>,
     pub(crate) by_ref_params: BTreeMap<String, HashSet<String>>,
     pub(crate) grad_functions: BTreeSet<String>,
     pub(crate) web_handlers: HashSet<String>,
@@ -198,6 +203,7 @@ impl Emitter {
             views,
             modules: HashSet::new(),
             cpu_count: None,
+            schema_mode: None,
             by_ref_params: BTreeMap::new(),
             grad_functions: BTreeSet::new(),
             web_handlers: HashSet::new(),

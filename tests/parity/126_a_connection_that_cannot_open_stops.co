@@ -1,0 +1,5 @@
+--- A connection that cannot open stops the program with its reason, the
+--- same in both modes (compiled, it had stopped on a Rust unwrap).
+use db
+c = connect['nosuch://x']
+log['not reached']

@@ -215,6 +215,48 @@ log[picked.name]
 ['ann', 'cat']
 ```
 
+## Your tables are the ones your program makes
+
+The `CREATE TABLE` statements your program runs are its schema. Each
+literal one it hands a connection declares that table, and opening the
+connection checks the tables the database already has against them:
+
+```crow,norun
+use db
+
+book = connect['sqlite://board.db']
+exec[book, 'CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY, title TEXT, due TEXT)']
+```
+
+Add `due` to that statement after `board.db` was made without it, and
+`CREATE TABLE IF NOT EXISTS` alone would do nothing: the first query that
+reads `due` would fail. Run from its source (`crow run`, `crow run -i`,
+`crow test`), the program *reconciles* instead: the connection opens,
+finds `cards` without `due`, and adds it, under a lock so two processes
+starting at once add it once. What it cannot add without guessing — a
+`NOT NULL` column with no default on a table that has rows, a column of
+another kind than the database holds — stops the program with the SQL
+that would make it.
+
+A program `crow build` makes *verifies*: it changes nothing, reads the
+catalog, and stops at connect if a table lacks a column the program
+declares, printing the statement that would mend it — the database in
+production is someone else's to change. `crow db diff` prints every such
+statement as a migration to review, with what reconciling would not make
+commented out:
+
+```text
+$ crow db diff app.co
+-- sqlite://board.db (book)
+-- table 'cards' lacks column 'due'
+ALTER TABLE "cards" ADD COLUMN due TEXT;
+```
+
+`schema = 'verify'` in the crowfile (or `'reconcile'`, or `'trust'`,
+which checks nothing and says so at every start) changes the mode for
+both; `CROW_SCHEMA=trust` changes it for one run. A table your program
+does not make is not its to check.
+
 ## The compiler asks your database
 
 A query's result is a frame, and a frame's cells are typed by the

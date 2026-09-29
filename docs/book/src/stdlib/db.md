@@ -25,8 +25,8 @@ conn = connect['postgres://user:pass@host/mydb', 20]
 
 | Function | Description | Example |
 |---|---|---|
-| `connect[url]` | Open a database connection (pool) with default pool size | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
-| `connect[url, pool_size]` | Open a database connection (pool) with custom pool size | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `connect[url]` | Open a database connection (pool) with default pool size, checking its database holds the tables the program declares on it (The schema a program declares, below) | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `connect[url, pool_size]` | Open a database connection (pool) with custom pool size; a pool size of 0 is the default | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
 
 Note: `connect` is also exported by `web.ws`. If both `use db` and `use web` are active, bare `connect[...]` is ambiguous — use `db.connect[...]` or `web.connect[...]`.
 
@@ -112,6 +112,35 @@ conn = connect['postgres://user:pass@host/mydb']
 n = migrate[conn, 'migrations/']
 log['`n` migrations applied']
 ```
+
+### The schema a program declares
+
+**A program's tables are the ones its own statements make.** Every literal `CREATE TABLE` a program hands a connection — `exec[book, 'CREATE TABLE IF NOT EXISTS cards (…)']`, directly or through a function the connection is handed to (`setup[book]`) — declares that table, with its columns, on that connection. A table the program also drops there (`DROP TABLE IF EXISTS scratch`) is one it remakes each run, and declares nothing. A connection the program declares no table on is one it does not own: nothing below reads or changes it, and the tables and columns a database has beyond the declared ones are its own.
+
+**Opening a connection checks that the tables the database has hold what the program declares**, in one of three modes, the same in both modes of running. A declared table the database does not have yet is not a difference: the program's own statement makes it as it runs, so a fresh database starts as it always has.
+
+| Mode | At connect | Example |
+|---|---|---|
+| `reconcile` | What a table lacks is made: a declared column it does not have is added (`ALTER TABLE … ADD COLUMN`, as the statement declares it), under the database's lock (Postgres: an advisory lock, in one transaction; SQLite: an immediate transaction), so two processes starting at once make it once. A column SQLite cannot add in place — a key, or `NOT NULL` without a default — is made by making a table with no rows anew. A difference reconciling cannot make without losing data or guessing — a column of another kind than declared, a `NOT NULL` column without a default for a table that has rows — stops the program with each difference and the statements that would make it, and nothing is made. |  |
+| `verify` | Nothing is changed. The database's catalog is read (reading it needs no right beyond reading), and every declared column of every table the database has must be there, of the declared kind; a difference stops the program at connect with each difference and the statements that would mend it. |  |
+| `trust` | Nothing is read, and every start says so: `schema not verified — schema = 'trust'`. |  |
+
+A column's kind is the kind Crow reads its cells as (int, float, str, bool, datetime): `TEXT` and `VARCHAR(20)` are one kind, `INTEGER` and `TEXT` two. A column declared without a type is of any kind.
+
+A program run from its source — `crow run`, `crow run -i`, `crow test` — reconciles: it is being developed, against a database of its own. A program `crow build` makes verifies: it runs where the database is someone else's to change. The crowfile's `schema = 'verify'` (or `'reconcile'`, `'trust'`) says otherwise for both, and is what a built program starts with; the environment's `CROW_SCHEMA` says otherwise for one run (`CROW_SCHEMA=trust ./app`).
+
+`crow db diff [file.co]` prints, for each connection a program declares tables on and opens with a url it writes, the SQL that would make its database hold what the program declares: the `CREATE TABLE` of each declared table it lacks, the `ADD COLUMN` statements reconciling would run and, commented out, the changes reconciling will not make (a column of another kind, a `NOT NULL` column a table with rows cannot take without a default) — a draft for a migration to review. It only reads the catalog; a SQLite file that is not there is not made.
+
+```
+$ crow db diff app.co
+-- sqlite://board.db (book)
+-- table 'cards' lacks column 'due'
+ALTER TABLE "cards" ADD COLUMN due TEXT;
+-- table 'labels' is missing
+CREATE TABLE IF NOT EXISTS labels (card INTEGER, name TEXT);
+```
+
+**Design Note: schema modes.** Considered: migrations alone (`migrate[conn, dir]`), which leave a table the program changed — a new column — to fail at the first query that reads it, in development and in production alike; making the schema everywhere (Prisma's `db push`, Django's old `syncdb`), which alters production databases the program's user has no right to alter and must not; and a check only in production. Decided (Vijay, July 2026; approved September 2026): a program's `CREATE` statements declare its tables; development makes what is missing under a lock, a built program checks it at connect, and `crow db diff` drafts the migration for what making would lose (as Terraform's `plan` drafts before an `apply`, and Prisma's `db push` in development meets `migrate deploy` in production). At connect a missing table is left to the program's own `CREATE`, which runs moments later: checking it there stopped every built program on its first run against a fresh database, and making it there broke a program whose own `CREATE TABLE` (without `IF NOT EXISTS`) then found it made — the drift worth stopping for is the table that exists with other columns, which `CREATE TABLE IF NOT EXISTS` silently keeps.
 
 ### Pool Defaults
 

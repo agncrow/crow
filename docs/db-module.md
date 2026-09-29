@@ -32,6 +32,8 @@ Opens a database connection pool. URL scheme determines the backend.
 
 Returns a connection handle. The handle is internally a pool — users never manage individual connections.
 
+Both modes open every connection through one function, `crow_db::schema::connect(url, pool, declared)`: the lowering (`src/lower_ir/schema.rs`) finds the literal `CREATE TABLE` statements the program hands the connection — directly, or through the functions it is handed to, less the tables the program also drops there — and passes them as `declared`. Opening the connection checks the tables the database has against them (`crow_db/src/schema.rs`): the statements are parsed there (no SQL library), each table's columns read from the catalog (`pragma_table_xinfo`, `information_schema.columns`, `system.columns`), and a column compared by the kind Crow reads its cells as. `reconcile` adds what a table lacks inside `CrowDb::schema_lock` (SQLite: `BEGIN IMMEDIATE`; Postgres: a transaction holding `pg_advisory_xact_lock`; ClickHouse: `ADD COLUMN IF NOT EXISTS`, no lock); `verify` only reads; `trust` reads nothing. The mode comes from `CROW_SCHEMA` (crow sets it for what it runs from source: `reconcile`, or the crowfile's `schema`), else what a built program was built with (`schema::set_mode`, from the crowfile), else `verify`. `crow db diff` prints `schema::diff`. See the spec, db, The schema a program declares.
+
 ### `query[conn, sql]`
 
 Executes a SELECT statement and returns results as a **frame**. Same data type as `load['file.csv']` — all frame operations (`filter`, `sort`, `group`, `join`, etc.) work on query results.

@@ -1,0 +1,7 @@
+--- A ClickHouse server that does not answer stops the program as the
+--- connection opens, with the driver's reason, the same in both modes. A
+--- compiled program that used ClickHouse without the web layer had not
+--- built: the driver's tokio lacked the features it uses.
+use db
+ch = connect['clickhouse://default@127.0.0.1:1/none']
+log[query[ch, 'SELECT 1 AS one']]

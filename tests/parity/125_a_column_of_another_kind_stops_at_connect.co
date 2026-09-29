@@ -1,0 +1,13 @@
+--- What reconciling will not make stops the program as the connection
+--- opens, with the statements that would mend it, in both modes (spec, db,
+--- The schema a program declares): here a column the database holds as
+--- text that the program declares an integer.
+use db
+
+old = connect['sqlite:///tmp/crow_parity_125.db']
+exec[old, 'DROP TABLE IF EXISTS cards']
+exec[old, 'CREATE TABLE cards (id INTEGER PRIMARY KEY, points TEXT)']
+
+book = connect['sqlite:///tmp/crow_parity_125.db']
+exec[book, 'CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY, points INTEGER)']
+log['not reached']

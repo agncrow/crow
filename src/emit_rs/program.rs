@@ -1257,6 +1257,9 @@ impl Emitter {
         // Crow's words (crow_runtime::stops)
         self.line("fn main() {");
         self.line("    crow_runtime::stops::install_hook();");
+        if let (true, Some(mode)) = (self.needs_crow_db, self.schema_mode) {
+            self.line(&format!("    crow_db::schema::set_mode(crow_db::schema::Mode::{:?});", mode));
+        }
         if self.needs_crow_web {
             // the runtime's threads compute a page's derivations and run its
             // handlers: their stacks are sized for that work, not tokio's
