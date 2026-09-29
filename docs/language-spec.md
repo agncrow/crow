@@ -270,20 +270,40 @@ c = full[3, 2] .^ 3    --- element-wise power
 d = ones[3] * 2        --- scalar multiply
 ```
 
-A shape the program states is known before it runs — a literal
-(`[[1.0, 2.0], [3.0, 4.0]]` is 2×2), a constructor given literal sizes
-(`zeros[2, 3]`, `ones`, `full`, `rand`, `randn`, `eye[3]`, `linspace`),
-and what `transpose`, the element-wise operators and `*` make of them —
-so an operation two known dimensions make certainly wrong is refused
-before it runs, in both modes: `*` of tensors that are not both 2-D, or
-whose inner dimensions differ (`matmul: incompatible shapes [2, 2] × [3,
-3] — …`), and an element-wise operation of two shapes that do not
-broadcast (each pair of dimensions, aligned from the innermost, equal or
-one of them 1: `` `+` of tensors of shapes [2, 2] and [2, 3]: dimension 2
-is 2 in one and 3 in the other — … ``). A dimension the program computes
-(`zeros[n, 3]`) is not known, and nothing about it is refused before the
-program runs: an operation whose shapes do not meet stops the program
-where it runs, with the same words, in both modes.
+**A tensor's shape is in its type.** A shape the program states is
+known before it runs — a literal (`[[1.0, 2.0], [3.0, 4.0]]` is 2×2), a
+constructor given literal sizes (`zeros[2, 3]`, `ones`, `full`, `randn`,
+`eye[3]`, `linspace`), `reshape` given literal sizes, and what
+`transpose` (its last two dimensions swapped), the element-wise operators
+and `*` make of them. The type carries the shape where the tensor goes: a
+reassignment binds the variable anew, as a frame's does (see Frames), so
+after `x = zeros[3, 3]` it is 3×3 from that line on; where branches, or a
+loop's rounds, meet, it has the dimensions they agree on; a function's
+parameter has the dimensions its calls agree on, and a call has the shape
+of what the function returns. An operation two known dimensions make
+certainly wrong is refused before it runs, in both modes: `*` of tensors
+that are not both 2-D, or whose inner dimensions differ (`matmul:
+incompatible shapes [2, 2] × [3, 3] — …`), and an element-wise operation
+of two shapes that do not broadcast (each pair of dimensions, aligned
+from the innermost, equal or one of them 1: `` `+` of tensors of shapes
+[2, 2] and [2, 3]: dimension 2 is 2 in one and 3 in the other — … ``),
+read in a function with the parameters the tensors were handed as (``(the
+tensors add[] is handed as `a` and `b`)``). A dimension the program
+computes (`zeros[n, 3]`), one a function's calls disagree on, and any of
+a tensor's once a cell or a row of it is assigned (`m[0] = …`) are not
+known, and nothing about them is refused before the program runs: an
+operation whose shapes do not meet stops the program where it runs, with
+the same words, in both modes.
+
+**Design Note: a function is one function whatever shapes it is
+handed.** Considered: a copy of a function for each shape its calls hand
+it, as a frame's columns make one (see Frames), so that each copy's
+operations are checked against its own shapes. Rejected: a frame's
+columns are its row type, but a tensor compiles alike whatever its
+shape, so a copy per shape would grow the build for nothing but earlier
+refusals inside the function. Decided: a parameter has the dimensions all
+its calls agree on; a call whose shapes the others do not share is
+checked where it runs.
 
 Scalar-array operations broadcast the scalar:
 
@@ -1730,7 +1750,7 @@ c = a + b                                          --- shape [3, 4]
 
 Broadcasting works with all element-wise operators: `+`, `-`, `.*`, `./`, `.^`.
 
-Incompatible shapes (e.g. `[3] + [4]`) produce a runtime error.
+Incompatible shapes (e.g. `[3] + [4]`) are refused before the program runs where both shapes are known (see Tensor Arithmetic), and stop the program where it runs where they are not, with the same words in both modes.
 
 #### Advanced Indexing
 
@@ -3405,6 +3425,8 @@ fn first[arr]
 log[first[[1, 2, 3]]]      --- compiles a tensor version
 log[first[['a', 'b']]]     --- compiles a string-array version
 ```
+
+A parameter nothing in the program types — a function only tests call — takes the type every test call agrees on, and stays unknown where they disagree, so a test never makes the program refuse what it did not. A part's tests type its functions the same way in a program that imports the part, whose build leaves the part's tests out: a part's function has the same types whichever file is the entry. (Such a function had its calls run by name, chosen as the program ran.) A tensor's shape is not a signature: a function handed tensors of different shapes is one function, whose parameter has the dimensions its calls agree on (see Tensor Arithmetic).
 
 Specialization propagates through call chains and works with recursion and struct arguments. A version is what its function is: a view's versions are views, and a handler's are handlers, moving state as the handler does. (A handler's version was made a plain function, so its fact writes landed in locals the page never saw — `scan.focus` handed a symbol from a query and one from a click.) Two documented limits: a function used at multiple signatures cannot itself be passed *as a value* (a function value has one type — wrap it in a single-type function), and a generic function with *function-typed parameters* can be reused across predicates of the same element type but not across element types (specializing the predicate per clone is future work).
 

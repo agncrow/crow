@@ -953,3 +953,18 @@ weeks; the core stages are weeks each.
   handed (second-half-design.md §2, columns in the type). The side maps
   and `frame_schema_of` are gone, and the syntax tree's expression typer
   with them: nothing reads the tree for a type any more.
+- **2026-09-29, a tensor's shape in its type; what tests type.** The
+  shape analysis's side map is gone: a tensor's dimensions are in
+  `Ty::Tensor`, bound anew at a reassignment and joined where ways through
+  meet by the code that does it for a frame's columns, and a function's
+  parameter has the dimensions its calls agree on (second-half-design.md
+  §3, in the type). Of the calls still made by name (93 over the corpus
+  and finch after 2026-09-28), 54 had types the program knew: a test's
+  harness values (`box`'s list, a test session's read of a fact or a
+  derivation, `len[bob.boards]`), and the parameters of a function only
+  tests call, which take what those calls agree on, a part's tests' calls
+  included in the program importing the part, whose build leaves them
+  out. By name stay a call on a parsed JSON value, whose kind shows only
+  as it runs (35), and one whose arguments come from outside Crow: a
+  function handed to `grad`, and the layout engine's functions Rust calls
+  (4).

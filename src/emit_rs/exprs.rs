@@ -109,7 +109,7 @@ impl Emitter {
                 // holds ints; a list's numbers as a tensor of one axis
                 Convert::ToList => {
                     let inner = self.expr(expr);
-                    if !matches!(self.tt(expr), CrowType::NumArray(_)) {
+                    if !matches!(self.tt(expr), CrowType::NumArray(..)) {
                         return inner;
                     }
                     if matches!(ty, Ty::List(e) if **e == Ty::Int) {
@@ -246,7 +246,7 @@ impl Emitter {
             if Emitter::place_read(base) {
                 let t = self.tt(e);
                 let non_copy = matches!(t, CrowType::Result(_))
-                    || matches!(Self::inner(&t), CrowType::NumArray(_) | CrowType::Array(_) | CrowType::Map(_) | CrowType::Str | CrowType::Markup | CrowType::Frame(_) | CrowType::Struct(_) | CrowType::Json);
+                    || matches!(Self::inner(&t), CrowType::NumArray(..) | CrowType::Array(_) | CrowType::Map(_) | CrowType::Str | CrowType::Markup | CrowType::Frame(_) | CrowType::Struct(_) | CrowType::Json);
                 if non_copy && !s.ends_with(".clone()") {
                     return format!("{}.clone()", s);
                 }
@@ -265,7 +265,7 @@ impl Emitter {
             }
             let non_copy = matches!(
                 t.text(),
-                CrowType::Str | CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Map(_) | CrowType::Struct(_) | CrowType::Frame(_) | CrowType::Json | CrowType::Result(_)
+                CrowType::Str | CrowType::Array(_) | CrowType::NumArray(..) | CrowType::Map(_) | CrowType::Struct(_) | CrowType::Frame(_) | CrowType::Json | CrowType::Result(_)
             );
             if non_copy {
                 return format!("{}.clone()", s);
@@ -283,7 +283,7 @@ impl Emitter {
                 return s;
             }
             let t = self.local_ty(name).unwrap_or_else(|| crow_type(ty));
-            if matches!(t.text(), CrowType::Str | CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Map(_) | CrowType::Struct(_) | CrowType::Frame(_) | CrowType::Json | CrowType::Result(_)) {
+            if matches!(t.text(), CrowType::Str | CrowType::Array(_) | CrowType::NumArray(..) | CrowType::Map(_) | CrowType::Struct(_) | CrowType::Frame(_) | CrowType::Json | CrowType::Result(_)) {
                 return format!("{}.clone()", s);
             }
         }
@@ -317,8 +317,8 @@ impl Emitter {
     /// A tensor, or a list whose items are numbers or lists of numbers.
     fn holds_numbers(t: &CrowType) -> bool {
         match t {
-            CrowType::NumArray(_) => true,
-            CrowType::Array(inner) => matches!(inner.as_ref(), CrowType::Int | CrowType::Float) || (matches!(inner.as_ref(), CrowType::Array(_) | CrowType::NumArray(_)) && Self::holds_numbers(inner)),
+            CrowType::NumArray(..) => true,
+            CrowType::Array(inner) => matches!(inner.as_ref(), CrowType::Int | CrowType::Float) || (matches!(inner.as_ref(), CrowType::Array(_) | CrowType::NumArray(..)) && Self::holds_numbers(inner)),
             _ => false,
         }
     }
@@ -435,7 +435,7 @@ impl Emitter {
         if l_sparse && r_sparse && op == "add" {
             return format!("{}.add(&{})", l, r);
         }
-        if l_sparse && matches!(rti, CrowType::NumArray(_)) && op == "mul" {
+        if l_sparse && matches!(rti, CrowType::NumArray(..)) && op == "mul" {
             return format!("{}.matmul_dense(&{}){}", l, r, self.or_stop());
         }
         // (a frame's column in arithmetic arrives as its numbers, converted
@@ -447,8 +447,8 @@ impl Emitter {
             let not = if op == "ne" { "!" } else { "" };
             return format!("({}{{ let _l = &({}); let _r = &({}); crow_runtime::tensor::numbers_equal(_l, _r) }})", not, l, r);
         }
-        let l_t = matches!(lti, CrowType::NumArray(_));
-        let r_t = matches!(rti, CrowType::NumArray(_));
+        let l_t = matches!(lti, CrowType::NumArray(..));
+        let r_t = matches!(rti, CrowType::NumArray(..));
         let cmp = matches!(op, "gt" | "lt" | "gte" | "lte" | "eq" | "ne");
         if l_t && r_t {
             return match op {
@@ -558,7 +558,7 @@ impl Emitter {
         let ty = Self::inner(&self.tt(e));
         match op {
             "neg" => {
-                if matches!(ty, CrowType::NumArray(_)) {
+                if matches!(ty, CrowType::NumArray(..)) {
                     format!("{}.neg()", inner)
                 } else if matches!(ty, CrowType::Int) && !matches!(Emitter::raw(e), Expr::Const(..)) && !self.emitting_dual {
                     // only the smallest int has no negation
@@ -664,13 +664,13 @@ impl Emitter {
         let idx = idx_strs.first().cloned().unwrap_or_default();
         let idx_ty = indices.first().map(|x| Self::inner(&self.tt(x)));
         match &inner {
-            CrowType::NumArray(el) => {
-                if matches!(idx_ty, Some(CrowType::NumArray(_))) {
+            CrowType::NumArray(el, _) => {
+                if matches!(idx_ty, Some(CrowType::NumArray(..))) {
                     return format!("{}.try_gather(&{}){}", b, idx, self.or_stop());
                 }
                 // an index outside stops the program with the runtime's words
                 let line = self.current_line;
-                if matches!(el.as_ref(), CrowType::NumArray(_)) {
+                if matches!(el.as_ref(), CrowType::NumArray(..)) {
                     return format!("{{ let _i = {}; let _t = &{}; _t.index0(crow_runtime::stops::row(_i, _t.shape()[0]).unwrap_or_else(|e| crow_stop({}, e))) }}", idx, b, line);
                 }
                 let cast = if matches!(el.as_ref(), CrowType::Int) { " as i64" } else { "" };
@@ -768,14 +768,14 @@ impl Emitter {
             if matches!(oty, CrowType::Frame(_)) {
                 return format!("({}.nrows() as i64)", obj);
             }
-            if matches!(oty, CrowType::Array(_) | CrowType::NumArray(_) | CrowType::Str | CrowType::FrameCol) {
+            if matches!(oty, CrowType::Array(_) | CrowType::NumArray(..) | CrowType::Str | CrowType::FrameCol) {
                 return format!("({}.len() as i64)", obj);
             }
         }
         if matches!(field, "year" | "month" | "day" | "hour" | "minute" | "second" | "offset") && matches!(oty, CrowType::Str) {
             return format!("crow_runtime::frame::datetime_field(&{}, \"{}\").unwrap_or(0)", obj, field);
         }
-        if matches!(oinner, CrowType::NumArray(_)) {
+        if matches!(oinner, CrowType::NumArray(..)) {
             let t = if matches!(oty, CrowType::Result(_)) { format!("{}.value.clone()", obj) } else { obj.clone() };
             match field {
                 "shape" => return format!("{}.shape().iter().map(|&s| s as i64).collect::<Vec<i64>>()", t),
@@ -916,9 +916,9 @@ impl Emitter {
 
     fn list_lit(&mut self, items: &[Expr], ty: &Ty) -> String {
         let lt = crow_type(ty).text();
-        if let CrowType::NumArray(_) = &lt {
+        if let CrowType::NumArray(..) = &lt {
             if !items.is_empty() {
-                let elem_is_tensor = items.iter().any(|i| matches!(self.tt(i), CrowType::NumArray(_)));
+                let elem_is_tensor = items.iter().any(|i| matches!(self.tt(i), CrowType::NumArray(..)));
                 self.needs_crow_runtime = true;
                 if elem_is_tensor {
                     let elems: Vec<String> = items.iter().map(|i| self.expr(i)).collect();
@@ -1315,7 +1315,7 @@ impl Emitter {
                     && local_read
                     && matches!(
                         Self::inner(&self.tt(a)),
-                        CrowType::NumArray(_) | CrowType::Array(_) | CrowType::Map(_) | CrowType::Str | CrowType::Markup | CrowType::Frame(_) | CrowType::Struct(_) | CrowType::DbHandle
+                        CrowType::NumArray(..) | CrowType::Array(_) | CrowType::Map(_) | CrowType::Str | CrowType::Markup | CrowType::Frame(_) | CrowType::Struct(_) | CrowType::DbHandle
                     );
                 let s = self.expr(a);
                 arg_strs.push(if needs_clone && !(matches!(a, Expr::Load(n, _) if self.static_handle_vars.contains(n))) { format!("{}.clone()", s) } else { s });
@@ -1498,7 +1498,7 @@ impl Emitter {
     pub(crate) fn queue_push(&self, args: &[Expr]) -> bool {
         self.needs_crow_web
             && self.web_features.contains("queue")
-            && !matches!(args.first().map(|x| Self::inner(&self.tt(x))), Some(CrowType::Array(_) | CrowType::NumArray(_)))
+            && !matches!(args.first().map(|x| Self::inner(&self.tt(x))), Some(CrowType::Array(_) | CrowType::NumArray(..)))
     }
 
     /// A builtin with a row: its runtime function, each argument printed as
@@ -1567,7 +1567,7 @@ impl Emitter {
             }
             // an empty list where the function takes numbers as a tensor (a
             // numeric literal at another call typed the parameter)
-            if matches!(Emitter::raw(a), Expr::ListLit(items, _) if items.is_empty()) && matches!(params.get(i), Some(Ty::Tensor(_))) {
+            if matches!(Emitter::raw(a), Expr::ListLit(items, _) if items.is_empty()) && matches!(params.get(i), Some(Ty::Tensor(..))) {
                 self.needs_crow_runtime = true;
                 if let Some(s) = arg_strs.get_mut(i) {
                     *s = "crow_runtime::tensor::CrowTensor::from_vec(vec![], vec![0])".to_string();

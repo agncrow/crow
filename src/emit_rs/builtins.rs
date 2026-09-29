@@ -39,9 +39,9 @@ impl Emitter {
     fn pred_cast(&self, pred: &Expr, items: &CrowType) -> &'static str {
         let param = fn_named(pred).and_then(|f| self.fns.get(f)).and_then(|sig| sig.params.first()).map(|(_, t)| t.clone());
         match (items, param) {
-            (CrowType::NumArray(_), Some(Ty::Int)) => " as i64",
-            (CrowType::NumArray(_), Some(Ty::Float)) => "",
-            (CrowType::NumArray(inner), _) if matches!(inner.as_ref(), CrowType::Int) => " as i64",
+            (CrowType::NumArray(..), Some(Ty::Int)) => " as i64",
+            (CrowType::NumArray(..), Some(Ty::Float)) => "",
+            (CrowType::NumArray(inner, _), _) if matches!(inner.as_ref(), CrowType::Int) => " as i64",
             (CrowType::Array(inner), Some(Ty::Float)) if matches!(inner.as_ref(), CrowType::Int) => " as f64",
             _ => "",
         }
@@ -78,7 +78,7 @@ impl Emitter {
             let value = if f { format!("({}).value", s) } else { format!("({})", s) };
             let json = if Self::is_empty_list(e) {
                 "serde_json::Value::Array(vec![])".to_string()
-            } else if matches!(inner, CrowType::NumArray(_)) {
+            } else if matches!(inner, CrowType::NumArray(..)) {
                 format!("serde_json::json!({}.to_vec().iter().map(|&_f| if _f.is_finite() && _f == (_f as i64) as f64 {{ serde_json::json!(_f as i64) }} else {{ serde_json::json!(_f) }}).collect::<Vec<_>>())", value)
             } else {
                 format!("serde_json::json!({})", value)
@@ -277,7 +277,7 @@ impl Emitter {
         // module functions: a scalar name core and math both answer goes to
         // the module only when a tensor is among the arguments
         let overlapping = matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max");
-        if overlapping && self.registry.has_function(name) && args.iter().any(|x| matches!(self.tt(x), CrowType::NumArray(_))) {
+        if overlapping && self.registry.has_function(name) && args.iter().any(|x| matches!(self.tt(x), CrowType::NumArray(..))) {
             return Some(self.registry_call(name, args, a));
         }
         let frame_select_widget = name == "select" && self.needs_ui && n == 2 && self.registry.module_name_for(name).map_or(false, |m| m == "frame");
@@ -467,7 +467,7 @@ impl Emitter {
                         CrowType::Str | CrowType::Markup => "\"str\"".to_string(),
                         CrowType::Bool => "\"bool\"".to_string(),
                         // a frame's column is the list of its cells there
-                        CrowType::Array(_) | CrowType::NumArray(_) | CrowType::FrameCol => "\"array\"".to_string(),
+                        CrowType::Array(_) | CrowType::NumArray(..) | CrowType::FrameCol => "\"array\"".to_string(),
                         CrowType::Sparse => "\"sparse\"".to_string(),
                         CrowType::Map(_) => "\"map\"".to_string(),
                         CrowType::Fn(_, _) => "\"fn\"".to_string(),
@@ -493,7 +493,7 @@ impl Emitter {
             // search: a parallel early exit
             "any" | "all" if n == 2 => {
                 self.needs_rayon = true;
-                if matches!(in0, CrowType::NumArray(_)) {
+                if matches!(in0, CrowType::NumArray(..)) {
                     let cast = self.pred_cast(&args[1], &in0);
                     return Some(format!("{}.to_vec().par_iter().{}(|&_x| {}(_x{}))", a[0], name, a[1], cast));
                 }
@@ -504,14 +504,14 @@ impl Emitter {
                 };
                 format!("{}.par_iter().{}(|_x| {}{})", a[0], name, a[1], call)
             }
-            "find" if n == 2 && matches!(in0, CrowType::Array(_) | CrowType::NumArray(_)) => {
+            "find" if n == 2 && matches!(in0, CrowType::Array(_) | CrowType::NumArray(..)) => {
                 self.needs_rayon = true;
                 let el = match &in0 {
-                    CrowType::Array(i) | CrowType::NumArray(i) => i.as_ref().clone(),
+                    CrowType::Array(i) | CrowType::NumArray(i, _) => i.as_ref().clone(),
                     _ => CrowType::Unknown,
                 };
                 let default = el.default_rust_value();
-                if matches!(in0, CrowType::NumArray(_)) {
+                if matches!(in0, CrowType::NumArray(..)) {
                     let cast = if matches!(el, CrowType::Int) { " as i64" } else { "" };
                     let call_cast = self.pred_cast(&args[1], &in0);
                     return Some(format!(

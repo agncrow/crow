@@ -1778,7 +1778,7 @@ fn boundary_values(ty: &CrowType) -> Option<Vec<CrowValue>> {
                 _ => None, // unsupported inner type
             }
         }
-        CrowType::NumArray(inner) => {
+        CrowType::NumArray(inner, _) => {
             // Same boundary values as Array but for numeric arrays
             match inner.as_ref() {
                 CrowType::Int | CrowType::Float => Some(vec![

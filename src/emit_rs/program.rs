@@ -384,11 +384,11 @@ impl Emitter {
             fn has(t: &Ty, want: &dyn std::ops::Fn(&Ty) -> bool) -> bool {
                 want(t)
                     || match t {
-                        Ty::List(i) | Ty::Map(i) | Ty::Result(i) | Ty::Tensor(i) | Ty::Column(i) => has(i, want),
+                        Ty::List(i) | Ty::Map(i) | Ty::Result(i) | Ty::Tensor(i, _) | Ty::Column(i) => has(i, want),
                         _ => false,
                     }
             }
-            if has(t, &|t| matches!(t, Ty::Tensor(_))) {
+            if has(t, &|t| matches!(t, Ty::Tensor(..))) {
                 tensor = true;
             }
             if has(t, &|t| matches!(t, Ty::Json)) {
@@ -742,7 +742,7 @@ impl Emitter {
         fn has(t: &Ty, pred: &dyn std::ops::Fn(&Ty) -> bool) -> bool {
             pred(t)
                 || match t {
-                    Ty::List(i) | Ty::Map(i) | Ty::Result(i) | Ty::Tensor(i) | Ty::Column(i) => has(i, pred),
+                    Ty::List(i) | Ty::Map(i) | Ty::Result(i) | Ty::Tensor(i, _) | Ty::Column(i) => has(i, pred),
                     Ty::Fn(ps, r) => ps.iter().any(|p| has(p, pred)) || has(r, pred),
                     _ => false,
                 }
@@ -848,7 +848,7 @@ impl Emitter {
     fn record_compares(&self, name: &str, seen: &mut BTreeSet<String>) -> bool {
         fn compares(e: &Emitter, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
             match t {
-                Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(_) | Ty::Frame(_) | Ty::Column(_) => true,
+                Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) => true,
                 Ty::Handle(h) => h == "sparse",
                 Ty::List(i) | Ty::Map(i) | Ty::Result(i) => compares(e, i, seen),
                 Ty::Record(n) | Ty::OptRecord(n) => e.record_compares(n, seen),
@@ -916,7 +916,7 @@ impl Emitter {
     fn json_records(&self) -> BTreeSet<String> {
         fn jsonable(t: &CrowType, ok: &BTreeSet<String>) -> bool {
             match t {
-                CrowType::Int | CrowType::Float | CrowType::Bool | CrowType::Str | CrowType::Markup | CrowType::Json | CrowType::NumArray(_) => true,
+                CrowType::Int | CrowType::Float | CrowType::Bool | CrowType::Str | CrowType::Markup | CrowType::Json | CrowType::NumArray(..) => true,
                 CrowType::Array(i) | CrowType::Map(i) | CrowType::Result(i) => jsonable(i, ok),
                 CrowType::Struct(n) => ok.contains(n),
                 _ => false,
@@ -972,7 +972,7 @@ impl Emitter {
     /// Whether a value of this type shows through the one display.
     fn ty_shows(&self, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
         match t {
-            Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(_) | Ty::Frame(_) | Ty::Column(_) => true,
+            Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) => true,
             Ty::Handle(h) => h == "sparse",
             Ty::List(i) | Ty::Map(i) | Ty::Result(i) => self.ty_shows(i, seen),
             Ty::Record(n) | Ty::OptRecord(n) => self.record_is(n, &|e, t, seen| e.ty_shows(t, seen), seen),
@@ -983,7 +983,7 @@ impl Emitter {
     /// Whether a value of this type encodes by the one JSON rule.
     fn ty_encodes(&self, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
         match t {
-            Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(_) => true,
+            Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) => true,
             Ty::List(i) | Ty::Map(i) | Ty::Result(i) => self.ty_encodes(i, seen),
             Ty::Record(n) | Ty::OptRecord(n) => self.record_is(n, &|e, t, seen| e.ty_encodes(t, seen), seen),
             _ => false,
@@ -1006,7 +1006,7 @@ impl Emitter {
 
     /// Whether a value shows inside a list, a map or a record.
     fn shows_inside(&self, t: &CrowType) -> bool {
-        matches!(t, CrowType::Int | CrowType::Float | CrowType::Bool | CrowType::Str | CrowType::Markup | CrowType::Json | CrowType::NumArray(_) | CrowType::Frame(_) | CrowType::FrameCol | CrowType::Sparse)
+        matches!(t, CrowType::Int | CrowType::Float | CrowType::Bool | CrowType::Str | CrowType::Markup | CrowType::Json | CrowType::NumArray(..) | CrowType::Frame(_) | CrowType::FrameCol | CrowType::Sparse)
             || self.kernel_displayable(t)
     }
 
@@ -1099,7 +1099,7 @@ impl Emitter {
                 CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Markup | CrowType::Bool | CrowType::Json | CrowType::Frame(_) => {
                     Some(format!("serde_json::to_value(&{}).unwrap_or(serde_json::Value::Null)", v))
                 }
-                CrowType::NumArray(_) => Some(format!("crow_runtime::json::ToJson::to_json(&{})", v)),
+                CrowType::NumArray(..) => Some(format!("crow_runtime::json::ToJson::to_json(&{})", v)),
                 CrowType::Array(i) | CrowType::Map(i) if matches!(i.as_ref(), CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Markup | CrowType::Bool | CrowType::Json) => {
                     Some(format!("serde_json::to_value(&{}).unwrap_or(serde_json::Value::Null)", v))
                 }
@@ -1122,7 +1122,7 @@ impl Emitter {
                 }
                 other => {
                     if let Some(value) = as_json(other, &read) {
-                        if matches!(other, CrowType::NumArray(_)) {
+                        if matches!(other, CrowType::NumArray(..)) {
                             self.needs_crow_runtime = true;
                         }
                         self.line(&format!("\"{}\" => Some(serde_json::json!({{ \"ok\": true, \"value\": {} }})),", d, value));
@@ -1173,7 +1173,7 @@ impl Emitter {
             let params: Vec<(String, Ty)> = self.fns.get(&target).map(|f| f.params.clone()).unwrap_or_default();
             // a list, a tensor, a frame or a record arrives as JSON its own
             // serde reads (a test clicks a handler with one as it clicks any)
-            let by_serde = |t: &Ty| matches!(t, Ty::List(_) | Ty::Map(_) | Ty::Tensor(_) | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_));
+            let by_serde = |t: &Ty| matches!(t, Ty::List(_) | Ty::Map(_) | Ty::Tensor(..) | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_));
             let callable = params.iter().all(|(_, t)| matches!(t, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Unknown) || by_serde(t));
             if params.is_empty() {
                 self.line(&format!("\"{}\" => {}(state),", h, rust));

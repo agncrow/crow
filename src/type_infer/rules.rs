@@ -73,7 +73,7 @@ impl TypeContext {
         let is_overlapping = matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max");
         if is_overlapping && self.registry.has_function(name) {
             let arg_types: Vec<CrowType> = args.iter().map(|a| arg_ty(a)).collect();
-            let has_numarray = arg_types.iter().any(|t| matches!(t, CrowType::NumArray(_)));
+            let has_numarray = arg_types.iter().any(|t| matches!(t, CrowType::NumArray(..)));
             if has_numarray {
                 if let Some(t) = self.registry.type_of(name, &arg_types) {
                     return t;
@@ -110,7 +110,7 @@ impl TypeContext {
                 let arg0 = arg0.map(|t| if let CrowType::Result(i) = t { *i } else { t });
                 let pick = match arg0 {
                     Some(CrowType::Frame(_)) | Some(CrowType::FrameCol) => Some("frame"),
-                    Some(CrowType::NumArray(_)) | Some(CrowType::Array(_)) => Some("math"),
+                    Some(CrowType::NumArray(..)) | Some(CrowType::Array(_)) => Some("math"),
                     _ => None,
                 };
                 if let Some(m) = pick {
@@ -157,16 +157,16 @@ impl TypeContext {
                         let val_type = Self::walked(arg_ty(&args[1]));
                         let existing_inner = match &arr_type {
                             CrowType::Array(inner) => *inner.clone(),
-                            CrowType::NumArray(inner) => *inner.clone(),
+                            CrowType::NumArray(inner, _) => *inner.clone(),
                             _ => CrowType::Unknown,
                         };
                         let unified = existing_inner.unify(&val_type);
                         // Preserve NumArray if input was NumArray and new value is numeric
-                        if matches!(&arr_type, CrowType::NumArray(_)) && matches!(unified, CrowType::Int | CrowType::Float) {
-                            return CrowType::NumArray(Box::new(unified));
+                        if matches!(&arr_type, CrowType::NumArray(..)) && matches!(unified, CrowType::Int | CrowType::Float) {
+                            return CrowType::tensor(unified);
                         }
                         // push[m, row] on a rank-2 tensor keeps the tensor type
-                        if matches!(&arr_type, CrowType::NumArray(_)) && matches!(val_type, CrowType::NumArray(_)) {
+                        if matches!(&arr_type, CrowType::NumArray(..)) && matches!(val_type, CrowType::NumArray(..)) {
                             return arr_type;
                         }
                         return CrowType::Array(Box::new(unified));
@@ -182,8 +182,8 @@ impl TypeContext {
                 let first = Self::walked(arg_ty(&args[0]));
                 let second = Self::walked(arg_ty(&args[1]));
                 match (&first, &second) {
-                    (CrowType::Array(a), CrowType::Array(b) | CrowType::NumArray(b)) => CrowType::Array(Box::new(a.unify(b))),
-                    (CrowType::NumArray(a), CrowType::NumArray(b) | CrowType::Array(b)) => CrowType::NumArray(Box::new(a.unify(b))),
+                    (CrowType::Array(a), CrowType::Array(b) | CrowType::NumArray(b, _)) => CrowType::Array(Box::new(a.unify(b))),
+                    (CrowType::NumArray(a, _), CrowType::NumArray(b, _) | CrowType::Array(b)) => CrowType::tensor(a.unify(b)),
                     (CrowType::Unknown, _) => second,
                     _ => first,
                 }
@@ -265,8 +265,8 @@ impl TypeContext {
                 let arg0 = args.first().map(|a| arg_ty(a)).unwrap_or(CrowType::Unknown);
                 match arg0 {
                     CrowType::Array(inner) => CrowType::Result(inner),
-                    CrowType::NumArray(inner) => match inner.as_ref() {
-                        CrowType::NumArray(_) => CrowType::Result(inner),
+                    CrowType::NumArray(inner, _) => match inner.as_ref() {
+                        CrowType::NumArray(..) => CrowType::Result(inner),
                         _ => CrowType::Result(inner),
                     },
                     _ => CrowType::Result(Box::new(CrowType::Struct("CrowFindResult".to_string()))),
@@ -321,6 +321,9 @@ impl TypeContext {
             // its page: records of text (tag, text, class, each attribute)
             "app" => CrowType::App,
             "elements" => CrowType::Array(Box::new(CrowType::Map(Box::new(CrowType::Str)))),
+            // the layout engine's boxes a selector picks: a list, each box
+            // read by its field as the program runs
+            "box" => CrowType::Array(Box::new(CrowType::Unknown)),
             // `json[map]` (use web): `json[text]` is its row
             "json" => CrowType::WebResponse,
             "text" => CrowType::WebResponse,
@@ -404,9 +407,9 @@ impl TypeContext {
                 // logical ops on boolean arrays are element-wise → Array(Bool)
                 let is_bool_mask = |t: &CrowType| matches!(t, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Bool));
                 // Tensor vs scalar comparisons broadcast to masks too
-                let tensor_vs_scalar = (matches!(lt_inner, CrowType::NumArray(_))
+                let tensor_vs_scalar = (matches!(lt_inner, CrowType::NumArray(..))
                     && matches!(rt_inner, CrowType::Int | CrowType::Float))
-                    || (matches!(rt_inner, CrowType::NumArray(_))
+                    || (matches!(rt_inner, CrowType::NumArray(..))
                         && matches!(lt_inner, CrowType::Int | CrowType::Float));
                 if is_frame_col(&lt_inner) || is_frame_col(&rt_inner)
                     || is_bool_mask(&lt_inner) || is_bool_mask(&rt_inner)
@@ -432,10 +435,10 @@ impl TypeContext {
                 if matches!(&lt_inner, CrowType::FrameCol)
                     || matches!(&rt_inner, CrowType::FrameCol)
                 {
-                    CrowType::NumArray(Box::new(CrowType::Float))
-                } else if matches!(&lt_inner, CrowType::NumArray(_)) {
+                    CrowType::tensor(CrowType::Float)
+                } else if matches!(&lt_inner, CrowType::NumArray(..)) {
                     lt_inner.clone()
-                } else if matches!(&rt_inner, CrowType::NumArray(_)) {
+                } else if matches!(&rt_inner, CrowType::NumArray(..)) {
                     rt_inner.clone()
                 } else {
                     lt_inner.unify(&rt_inner)
@@ -448,11 +451,11 @@ impl TypeContext {
                 } else if is_frame_col(&rt_inner) && matches!(&lt_inner, CrowType::Int | CrowType::Float) {
                     CrowType::FrameCol
                 // sparse * dense → NumArray (matmul result)
-                } else if matches!(&lt_inner, CrowType::Sparse) && matches!(&rt_inner, CrowType::NumArray(_)) {
-                    CrowType::NumArray(Box::new(CrowType::Float))
+                } else if matches!(&lt_inner, CrowType::Sparse) && matches!(&rt_inner, CrowType::NumArray(..)) {
+                    CrowType::tensor(CrowType::Float)
                 // * on tensor-tensor is matmul (returns NumArray)
-                } else if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
-                    CrowType::NumArray(Box::new(CrowType::Float))
+                } else if matches!(&lt_inner, CrowType::NumArray(..)) || matches!(&rt_inner, CrowType::NumArray(..)) {
+                    CrowType::tensor(CrowType::Float)
                 } else {
                     lt_inner.unify(&rt_inner)
                 }
@@ -465,8 +468,8 @@ impl TypeContext {
                 // sparse + sparse → Sparse
                 } else if matches!(&lt_inner, CrowType::Sparse) && matches!(&rt_inner, CrowType::Sparse) {
                     CrowType::Sparse
-                } else if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
-                    CrowType::NumArray(Box::new(CrowType::Float))
+                } else if matches!(&lt_inner, CrowType::NumArray(..)) || matches!(&rt_inner, CrowType::NumArray(..)) {
+                    CrowType::tensor(CrowType::Float)
                 } else {
                     lt_inner.unify(&rt_inner)
                 }
@@ -477,8 +480,8 @@ impl TypeContext {
                     || (is_frame_col(&rt_inner) && matches!(&lt_inner, CrowType::Int | CrowType::Float)) {
                     CrowType::FrameCol
                 // scalar - tensor, tensor - scalar, etc. → NumArray
-                } else if matches!(&lt_inner, CrowType::NumArray(_)) || matches!(&rt_inner, CrowType::NumArray(_)) {
-                    CrowType::NumArray(Box::new(CrowType::Float))
+                } else if matches!(&lt_inner, CrowType::NumArray(..)) || matches!(&rt_inner, CrowType::NumArray(..)) {
+                    CrowType::tensor(CrowType::Float)
                 } else {
                     lt_inner.unify(&rt_inner)
                 }
@@ -575,10 +578,10 @@ impl TypeContext {
                 t => CrowType::Result(Box::new(t)),
             },
             CrowType::Array(inner) => *inner,
-            CrowType::NumArray(inner) => {
+            CrowType::NumArray(inner, _) => {
                 // Advanced indexing: tensor[tensor] → tensor (gather)
-                if matches!(index, Some(CrowType::NumArray(_))) {
-                    return CrowType::NumArray(inner);
+                if matches!(index, Some(CrowType::NumArray(..))) {
+                    return CrowType::NumArray(inner, None);
                 }
                 *inner
             }
@@ -619,6 +622,11 @@ impl TypeContext {
                 _ => {}
             }
         }
+        // a test's app session reads its own reactive state: a derivation
+        // or a fact of that name, as the harness reads it
+        if matches!(&obj_type, CrowType::App) && !matches!(field, "ok" | "reason" | "kind" | "trace") {
+            return if self.derives.contains(field) || self.facts.contains(field) { self.vars.get(field).cloned().unwrap_or(CrowType::Unknown) } else { CrowType::Unknown };
+        }
         // Error-value metadata fields
         match field {
             "ok" => return CrowType::Bool,
@@ -634,8 +642,8 @@ impl TypeContext {
             }
         }
         // NumArray properties (also handle Result(NumArray))
-        let is_numarray = matches!(obj_type, CrowType::NumArray(_))
-            || matches!(&obj_type, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::NumArray(_)));
+        let is_numarray = matches!(obj_type, CrowType::NumArray(..))
+            || matches!(&obj_type, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::NumArray(..)));
         if is_numarray {
             match field {
                 "shape" => return CrowType::Array(Box::new(CrowType::Int)),
@@ -720,9 +728,9 @@ impl TypeContext {
         // Nested numeric literals build higher-rank tensors: the inner
         // type of a rank-2 tensor is the rank-1 row tensor.
         if matches!(inner, CrowType::Int | CrowType::Float) {
-            CrowType::NumArray(Box::new(inner))
-        } else if matches!(inner, CrowType::NumArray(_)) {
-            CrowType::NumArray(Box::new(inner))
+            CrowType::tensor(inner)
+        } else if matches!(inner, CrowType::NumArray(..)) {
+            CrowType::tensor(inner)
         } else {
             CrowType::Array(Box::new(inner))
         }

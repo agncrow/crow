@@ -2,18 +2,21 @@
 //! type): a frame operation's result has the columns its arguments' types
 //! give it, and a frame variable reassigned is bound anew to the columns of
 //! what it is given — where ways through join, it has the columns they
-//! share.
+//! share. A tensor's shape is rebound and joined the same way (a local's
+//! detail, `CrowType::detail`; shapes.rs computes it).
 
 use super::*;
-use crate::type_infer::Cols;
+use crate::type_infer::{Cols, Detail};
 use std::sync::Arc;
 
-/// A frame local reassigned: its columns are the value's (a new binding),
-/// and its shape — a frame, or one that can fail — is what reassignment
-/// settles it to, so the variable is held the same way throughout.
+/// A frame or tensor local reassigned: its columns or its shape are the
+/// value's (a new binding), and how it is held — a frame, or one that can
+/// fail; a tensor of its element type — is what reassignment settles it
+/// to, so the variable is held the same way throughout.
 pub(super) fn rebound(settled: &CrowType, value: &CrowType) -> CrowType {
-    match (settled, value.frame_cols()) {
-        (CrowType::Frame(_), Some(cols)) => CrowType::Frame(cols.clone()),
+    match (settled, value.detail()) {
+        (CrowType::Frame(_), Some(Detail::Columns(cols))) => CrowType::Frame(cols.clone()),
+        (CrowType::NumArray(elem, _), Some(Detail::Shape(dims))) => CrowType::NumArray(elem.clone(), dims.cloned()),
         (CrowType::Result(inner), Some(_)) => CrowType::Result(Box::new(rebound(inner, value))),
         _ => settled.clone(),
     }
@@ -52,7 +55,7 @@ fn cell_of(t: &CrowType) -> CrowType {
     };
     match t {
         CrowType::Array(inner) => *inner,
-        CrowType::NumArray(_) => CrowType::Float,
+        CrowType::NumArray(..) => CrowType::Float,
         CrowType::Int => CrowType::Int,
         CrowType::Float => CrowType::Float,
         CrowType::Bool => CrowType::Bool,
@@ -61,29 +64,29 @@ fn cell_of(t: &CrowType) -> CrowType {
 }
 
 impl<'a> Lowerer<'a> {
-    /// A frame local given a frame: bound anew to that frame's columns (a
-    /// fact, which a view reads at any time, keeps the columns every
-    /// assignment to it shares, as reassignment settles it).
-    pub(super) fn rebind_frame(&mut self, name: &str, value: &CrowType) {
+    /// A frame local given a frame, or a tensor local a tensor: bound anew
+    /// to its columns or its shape (a fact, which a view reads at any time,
+    /// keeps what every assignment to it shares, as reassignment settles it).
+    pub(super) fn rebind(&mut self, name: &str, value: &CrowType) {
         if self.is_fact(name) && self.sees_facts() {
             return;
         }
         if let Some(settled) = self.ctx.vars.get(name) {
-            if settled.frame_cols().is_some() && value.frame_cols().is_some() {
+            if settled.detail().zip(value.detail()).is_some_and(|(a, b)| a.same_kind(&b)) {
                 let t = rebound(settled, value);
                 self.ctx.vars.insert(name.to_string(), t);
             }
         }
     }
 
-    /// The frame locals in view: their types now, to join with what a block
-    /// leaves them.
-    pub(super) fn frames_in_view(&self) -> Vec<(String, CrowType)> {
+    /// The frame and tensor locals in view: their types now, to join with
+    /// what a block leaves them.
+    pub(super) fn detailed_in_view(&self) -> Vec<(String, CrowType)> {
         let mut out: Vec<(String, CrowType)> = self
             .ctx
             .vars
             .iter()
-            .filter(|(n, t)| t.frame_cols().is_some() && self.declared(n) && !(self.is_fact(n) && self.sees_facts()))
+            .filter(|(n, t)| t.detail().is_some() && self.declared(n) && !(self.is_fact(n) && self.sees_facts()))
             .map(|(n, t)| (n.clone(), t.clone()))
             .collect();
         out.sort_by(|a, b| a.0.cmp(&b.0));
@@ -91,27 +94,28 @@ impl<'a> Lowerer<'a> {
     }
 
     /// The same locals' types as they stand now.
-    pub(super) fn frames_now(&self, before: &[(String, CrowType)]) -> Vec<(String, CrowType)> {
+    pub(super) fn detailed_now(&self, before: &[(String, CrowType)]) -> Vec<(String, CrowType)> {
         before.iter().map(|(n, t)| (n.clone(), self.ctx.vars.get(n).cloned().unwrap_or_else(|| t.clone()))).collect()
     }
 
     /// Where ways through a block meet: each frame local has the columns
-    /// they share.
-    pub(super) fn join_frames(&mut self, a: &[(String, CrowType)], b: &[(String, CrowType)]) {
+    /// they share, each tensor local the dimensions they agree on.
+    pub(super) fn join_detailed(&mut self, a: &[(String, CrowType)], b: &[(String, CrowType)]) {
         for ((n, ta), (_, tb)) in a.iter().zip(b) {
             self.ctx.vars.insert(n.clone(), ta.unify(tb));
         }
     }
 
-    /// A loop's body read once, provisionally, for the frames it leaves:
+    /// A loop's body read once, provisionally, for the frames and tensors
+    /// it leaves:
     /// each is joined with what it was on entry, so the body's top reads
     /// what either gives (the body is then lowered for good).
     pub(super) fn pre_join_loop(&mut self, before: &[(String, CrowType)], body: &[S]) {
         let saved = self.ctx.vars.clone();
         let _ = self.provisional_block(Pass::Settle, Some(HashSet::new()), body);
-        let end = self.frames_now(before);
+        let end = self.detailed_now(before);
         self.ctx.vars = saved;
-        self.join_frames(before, &end);
+        self.join_detailed(before, &end);
     }
 
     /// Whether a body assigns one of these names, in any block within it.
@@ -212,7 +216,7 @@ impl<'a> Lowerer<'a> {
     pub(super) fn refuse_column_read(&mut self, frame: &Expr, field: &str) {
         if let Some(Some(cols)) = read(frame).frame_cols() {
             if !cols.open && !cols.cols.contains_key(field) && self.pass == Pass::Final {
-                let handed = self.handed(frame);
+                let handed = self.handed(frame, "frame");
                 self.refuse(format!("frame has no property or column '{}' — its columns are {}{}", field, names(cols), handed));
             }
         }
@@ -221,20 +225,29 @@ impl<'a> Lowerer<'a> {
     /// Where a frame a function reads came from, when a call handed it: the
     /// function and the parameter it came as (each call's columns are its
     /// own copy's, so the call to look at is one handing these).
-    fn handed(&self, frame: &Expr) -> String {
-        let mut e = frame;
+    pub(super) fn handed(&self, value: &Expr, what: &str) -> String {
+        match self.handed_as(value) {
+            Some((f, p)) => format!(" (the {} {}[] is handed as `{}`)", what, f, p),
+            None => String::new(),
+        }
+    }
+
+    /// The function and the parameter a value came as, when it is a
+    /// parameter of the function being lowered, as the program names them.
+    pub(super) fn handed_as(&self, value: &Expr) -> Option<(String, String)> {
+        let mut e = value;
         while let Expr::Convert { expr, .. } = e {
             e = expr;
         }
         let (Expr::Local(p, _) | Expr::Move(p, _)) = e else {
-            return String::new();
+            return None;
         };
         let is_param = self.ctx.functions.get(&self.current_fn).is_some_and(|s| s.params.iter().any(|(n, _)| n == p));
         if !is_param {
-            return String::new();
+            return None;
         }
         let base = self.current_fn.split("__").next().unwrap_or(&self.current_fn);
-        format!(" (the frame {}[] is handed as `{}`)", crate::lower::shown(base), crate::lower::shown(p))
+        Some((crate::lower::shown(base), crate::lower::shown(p)))
     }
 
     /// The columns a table or a chart names (`key = 'id'`, `lines = […]`),

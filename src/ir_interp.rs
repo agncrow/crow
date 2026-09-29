@@ -1251,7 +1251,7 @@ impl IrInterp {
                 CrowValue::ok(Value::StructInstance(Box::new(StructInstance { name: name.clone(), fields: vals })))
             }
             Expr::ForExpr { var, iter, body, parallel, ty } => {
-                let as_tensor = matches!(ty.payload(), Ty::Tensor(_));
+                let as_tensor = matches!(ty.payload(), Ty::Tensor(..));
                 let it = self.eval(iter)?;
                 // refused like the statement form's; a function hands the
                 // error back from here, as from a return inside the loop

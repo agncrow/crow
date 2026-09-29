@@ -1,0 +1,20 @@
+--- A tensor's shape is in its type (second-half-design.md §3): it reaches
+--- the function a tensor is handed to and the caller one is returned to,
+--- a function called with two shapes keeps what they agree on, and
+--- `transpose` swaps the last two axes (it had reversed them all, and this
+--- sum of a rank-3 tensor was refused before it ran), in both modes.
+use math
+
+fn add[a, b]
+    return a + b
+
+fn make[]
+    return zeros[2, 3]
+
+t = transpose[zeros[2, 3, 4]]
+log[t.shape]
+log[(t + ones[2, 4, 3]).shape]
+log[add[zeros[2, 3], ones[2, 3]]]
+log[add[zeros[3, 1], ones[3, 1]]]
+m = make[]
+log[(m * ones[3, 2]).shape]

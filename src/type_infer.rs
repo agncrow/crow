@@ -3,6 +3,21 @@
 use std::collections::BTreeMap;
 use crate::ast::*;
 
+/// A tensor's dimensions as its type knows them, outermost first: a size,
+/// or unknown where the program computes it.
+pub type Dims = Vec<Option<usize>>;
+
+/// Two tensors' shapes where ways through meet, or a function's calls hand
+/// it tensors: the dimensions they agree on; any other rank, or no shape,
+/// is no shape. What is not known stays not known: a join never invents a
+/// dimension.
+pub fn join_dims(a: &Option<Dims>, b: &Option<Dims>) -> Option<Dims> {
+    match (a, b) {
+        (Some(a), Some(b)) if a.len() == b.len() => Some(a.iter().zip(b).map(|(x, y)| if x == y { *x } else { None }).collect()),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CrowType {
     Int,
@@ -25,8 +40,11 @@ pub enum CrowType {
     Result(Box<CrowType>),
     /// Dynamic JSON value (serde_json::Value) — returned by json[]
     Json,
-    /// Numeric array backed by CrowTensor (f64 internally). Inner type tracks original element type.
-    NumArray(Box<CrowType>),
+    /// Numeric array backed by CrowTensor (f64 internally). Inner type
+    /// tracks original element type; the shape is its dimensions where the
+    /// program states them (second-half-design.md §3) — none where its
+    /// rank shows only as it runs.
+    NumArray(Box<CrowType>, Option<Dims>),
     /// Sparse matrix backed by CrowSparse (CSR format).
     Sparse,
     /// Column-oriented data frame: its columns, when the program knows
@@ -69,7 +87,47 @@ pub(crate) use frames::schema_record;
 
 const SESSION_EFFECTS: &[&str] = &["notice", "sign_in", "sign_out", "download", "mail"];
 
+/// What a type knows beyond its kind that an assignment can change
+/// (`CrowType::detail`).
+#[derive(Debug, PartialEq)]
+pub enum Detail<'a> {
+    Columns(&'a Option<std::sync::Arc<Cols>>),
+    Shape(Option<&'a Dims>),
+}
+
+impl Detail<'_> {
+    /// Whether two details are of one kind: columns and columns, a shape
+    /// and a shape.
+    pub fn same_kind(&self, other: &Detail<'_>) -> bool {
+        matches!((self, other), (Detail::Columns(_), Detail::Columns(_)) | (Detail::Shape(_), Detail::Shape(_)))
+    }
+}
+
+/// A shape as a message prints it: `[2, 3]`, `?` for an unknown dimension.
+pub fn shown_dims(dims: &Dims) -> String {
+    let each: Vec<String> = dims.iter().map(|d| d.map_or("?".to_string(), |n| n.to_string())).collect();
+    format!("[{}]", each.join(", "))
+}
+
 impl CrowType {
+    /// A tensor of `elem`s whose shape nothing states.
+    pub fn tensor(elem: CrowType) -> CrowType {
+        CrowType::NumArray(Box::new(elem), None)
+    }
+
+    /// What a local's type knows beyond its kind that an assignment can
+    /// change: a frame's columns, a tensor's shape. A local holding either
+    /// is bound anew where it changes, and has what ways through share
+    /// where they meet (lower_ir/frames.rs).
+    pub fn detail(&self) -> Option<Detail<'_>> {
+        match self {
+            CrowType::Frame(cols) => Some(Detail::Columns(cols)),
+            CrowType::NumArray(_, dims) => Some(Detail::Shape(dims.as_ref())),
+            CrowType::Result(inner) => inner.detail(),
+            _ => None,
+        }
+    }
+
     pub fn to_rust_type(&self) -> String {
         match self {
             CrowType::Int => "i64".into(),
@@ -86,7 +144,7 @@ impl CrowType {
             }
             CrowType::Result(inner) => format!("CrowResult<{}>", inner.to_rust_type()),
             CrowType::Json => "serde_json::Value".into(),
-            CrowType::NumArray(_) => "crow_runtime::tensor::CrowTensor".into(),
+            CrowType::NumArray(..) => "crow_runtime::tensor::CrowTensor".into(),
             CrowType::Sparse => "crow_runtime::sparse::CrowSparse".into(),
             CrowType::Frame(_) => "crow_runtime::frame::CrowFrame".into(),
             CrowType::FrameCol => "crow_runtime::frame::CrowColumn".into(),
@@ -121,7 +179,7 @@ impl CrowType {
             CrowType::Fn(_, _) => "panic!(\"unreachable\")".into(),
             CrowType::Result(inner) => format!("CrowResult {{ ok: false, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", inner.default_rust_value()),
             CrowType::Json => "serde_json::Value::Null".into(),
-            CrowType::NumArray(_) => "crow_runtime::tensor::CrowTensor::zeros(vec![0])".into(),
+            CrowType::NumArray(..) => "crow_runtime::tensor::CrowTensor::zeros(vec![0])".into(),
             CrowType::Sparse => "CrowSparse::from_coo(&[], &[], &[], 0, 0)".into(),
             CrowType::Frame(_) => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])".into(),
             CrowType::FrameCol => "crow_runtime::frame::CrowColumn { data: std::sync::Arc::new(crow_runtime::frame::Column::Int(vec![])), valid: std::sync::Arc::new(vec![]) }".into(),
@@ -182,7 +240,7 @@ impl CrowType {
             CrowType::Str => "str".into(),
             CrowType::Markup => "markup".into(),
             CrowType::Array(inner) => format!("array[{}]", inner.crow_name()),
-            CrowType::NumArray(_) => "array".into(),
+            CrowType::NumArray(..) => "array".into(),
             CrowType::Sparse => "sparse".into(),
             CrowType::Frame(_) => "frame".into(),
             CrowType::FrameCol => "column".into(),
@@ -227,10 +285,10 @@ impl CrowType {
                 p1.iter().zip(p2.iter()).all(|(a, b)| a.compatible(b)) && r1.compatible(r2)
             }
             // NumArray is compatible with Array of numeric types
-            (CrowType::NumArray(_), CrowType::Array(inner)) | (CrowType::Array(inner), CrowType::NumArray(_)) => {
+            (CrowType::NumArray(..), CrowType::Array(inner)) | (CrowType::Array(inner), CrowType::NumArray(..)) => {
                 matches!(inner.as_ref(), CrowType::Int | CrowType::Float | CrowType::Unknown)
             }
-            (CrowType::NumArray(_), CrowType::NumArray(_)) => true,
+            (CrowType::NumArray(..), CrowType::NumArray(..)) => true,
             // a frame is a frame whatever its columns: a reassignment that
             // changes them binds the variable anew
             (CrowType::Frame(_), CrowType::Frame(_)) => true,
@@ -248,14 +306,14 @@ impl CrowType {
             (CrowType::Int, CrowType::Float) | (CrowType::Float, CrowType::Int) => CrowType::Float,
             // markup mixed with text is text: nothing a string holds makes it markup
             (CrowType::Markup, CrowType::Str) | (CrowType::Str, CrowType::Markup) => CrowType::Str,
-            (CrowType::NumArray(a), CrowType::NumArray(b)) => CrowType::NumArray(Box::new(a.unify(b))),
+            (CrowType::NumArray(a, da), CrowType::NumArray(b, db)) => CrowType::NumArray(Box::new(a.unify(b)), join_dims(da, db)),
             (CrowType::Array(a), CrowType::Array(b)) => CrowType::Array(Box::new(a.unify(b))),
             // numbers held as a list meet numbers held as a tensor: the
             // first form stays (the lowering converts the other where they
             // meet), and what either knows of the items is kept (an empty
             // list and a tensor of floats are floats)
-            (CrowType::Array(a), CrowType::NumArray(b)) => CrowType::Array(Box::new(a.unify(b))),
-            (CrowType::NumArray(a), CrowType::Array(b)) => CrowType::NumArray(Box::new(a.unify(b))),
+            (CrowType::Array(a), CrowType::NumArray(b, _)) => CrowType::Array(Box::new(a.unify(b))),
+            (CrowType::NumArray(a, _), CrowType::Array(b)) => CrowType::tensor(a.unify(b)),
             (CrowType::Map(a), CrowType::Map(b)) => CrowType::Map(Box::new(a.unify(b))),
             // two ways a frame could have come: the columns both give (a
             // frame whose columns are not worked out yet adds nothing — one
@@ -414,6 +472,11 @@ pub struct TypeContext {
     /// their cells as text, so the build prints them; the interpreter types
     /// cells from the rows and has nothing to say.
     pub describe_notes: Vec<String>,
+    /// What the program's own tests call its functions with, as they type
+    /// them (`type_tested`): a program that imports this one as a part
+    /// types the part's functions from them, since a part's tests are not
+    /// its importer's.
+    pub(crate) tested: Vec<(String, Vec<CrowType>)>,
     current_fn_name: Option<String>,
 }
 
@@ -477,6 +540,7 @@ impl TypeContext {
             describe_queries: false,
             describe_cache: BTreeMap::new(),
             describe_notes: Vec::new(),
+            tested: Vec::new(),
             current_fn_name: None,
         }
     }
@@ -530,6 +594,60 @@ impl TypeContext {
             }
         }
         moved
+    }
+
+    /// What only a test's calls type (F5): a parameter nothing in the
+    /// program types takes the type every test call of its function agrees
+    /// on — a function only tests call is called by nothing in the
+    /// program, and its body had been typed with its parameters unknown. A
+    /// parameter the calls disagree on stays unknown, so a test's call never
+    /// makes the program's body refuse what it did not. The calls are the
+    /// program's tests' and its parts' tests' (a part's function is typed
+    /// alike whichever file is the entry); a type naming a struct the
+    /// program does not declare types nothing. Whether any moved.
+    pub(crate) fn type_tested(&mut self, calls: &[(String, Vec<CrowType>)]) -> bool {
+        let mut agreed: BTreeMap<(String, usize), Option<CrowType>> = BTreeMap::new();
+        for (f, types) in calls {
+            let Some(sig) = self.functions.get(f) else { continue };
+            if sig.params.len() != types.len() {
+                continue;
+            }
+            for (i, t) in types.iter().enumerate() {
+                // as a call's argument reaches its parameter (note_call)
+                let t = match t {
+                    CrowType::OptBoxStruct(n) => CrowType::Struct(n.clone()),
+                    CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Void) => CrowType::Unknown,
+                    CrowType::Result(inner) => *inner.clone(),
+                    other => other.clone(),
+                };
+                let entry = agreed.entry((f.clone(), i)).or_insert_with(|| Some(t.clone()));
+                let keep = match entry.as_ref() {
+                    Some(a) => !matches!(t, CrowType::Unknown) && self.declares(&t) && a.compatible(&t),
+                    None => false,
+                };
+                *entry = if keep { entry.as_ref().map(|a| a.unify(&t)) } else { None };
+            }
+        }
+        let mut moved = false;
+        for ((f, i), t) in agreed {
+            let Some(t) = t.filter(|t| !matches!(t, CrowType::Unknown)) else { continue };
+            let param = self.functions.get_mut(&f).and_then(|sig| sig.params.get_mut(i));
+            if let Some(p) = param.filter(|p| matches!(p.1, CrowType::Unknown)) {
+                p.1 = t;
+                moved = true;
+            }
+        }
+        moved
+    }
+
+    /// Whether every struct a type names is one the program declares.
+    fn declares(&self, t: &CrowType) -> bool {
+        match t {
+            CrowType::Struct(n) | CrowType::OptBoxStruct(n) => self.structs.contains_key(n),
+            CrowType::Array(e) | CrowType::Map(e) | CrowType::Result(e) | CrowType::NumArray(e, _) => self.declares(e),
+            CrowType::Fn(params, ret) => params.iter().all(|p| self.declares(p)) && self.declares(ret),
+            _ => true,
+        }
     }
 
     /// Propagate types from indirect function calls back to original function declarations.
@@ -791,16 +909,17 @@ impl TypeContext {
         // assignment of a fact's name is the fact (fresh_binding), a helper's
         // too, which the lowering stores: a helper no handler reaches (a
         // part's, tested alone) stored a float into a fact typed int. A
-        // frame a function stores into a fact joins the fact's columns: the
-        // fact holds either (it had kept its default's, and a table naming a
-        // column the handler's frame has was refused).
+        // frame (or a tensor) a function stores into a fact joins the fact's
+        // columns (its shape): the fact holds either (it had kept its
+        // default's, and a table naming a column the handler's frame has was
+        // refused).
         let mut widened: Vec<(String, CrowType)> = Vec::new();
         if self.is_ui || self.views.contains(name) || self.view_handlers.contains(name) {
             for f in &self.facts {
                 let before = saved_vars.get(f).cloned().unwrap_or(CrowType::Unknown);
                 match (&before, self.vars.get(f)) {
                     (CrowType::Int | CrowType::Unknown, Some(CrowType::Float)) => widened.push((f.clone(), CrowType::Float)),
-                    (was, Some(now)) if was.frame_cols().is_some() && now.frame_cols().is_some() && was.frame_cols() != now.frame_cols() => {
+                    (was, Some(now)) if was.detail().zip(now.detail()).is_some_and(|(a, b)| a.same_kind(&b) && a != b) => {
                         widened.push((f.clone(), was.unify(now)));
                     }
                     _ => {}
@@ -875,7 +994,7 @@ impl TypeContext {
     /// tensor (a row of a matrix), an item of a parsed JSON list.
     pub(crate) fn loop_item(iter_type: CrowType) -> CrowType {
         match iter_type {
-            CrowType::Array(inner) | CrowType::NumArray(inner) => *inner,
+            CrowType::Array(inner) | CrowType::NumArray(inner, _) => *inner,
             // a parsed value's items are parsed values, read as one type
             // where the body computes with them
             CrowType::Json => CrowType::Json,

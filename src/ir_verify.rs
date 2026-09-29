@@ -279,14 +279,14 @@ impl<'p> Verifier<'p> {
     fn walked(&mut self, iter: &Expr) -> Ty {
         let t = self.expr(iter);
         match &t {
-            Ty::List(e) | Ty::Tensor(e) | Ty::Column(e) => e.as_ref().clone(),
+            Ty::List(e) | Ty::Tensor(e, _) | Ty::Column(e) => e.as_ref().clone(),
             Ty::Map(_) => Ty::Str,
             Ty::Str | Ty::Markup => Ty::Str,
             Ty::Frame(_) | Ty::Json | Ty::Unknown => Ty::Unknown,
             // refused where it runs, by both backends: `cannot loop over an
             // error value`
             Ty::Result(inner) => match inner.as_ref() {
-                Ty::List(e) | Ty::Tensor(e) | Ty::Column(e) => e.as_ref().clone(),
+                Ty::List(e) | Ty::Tensor(e, _) | Ty::Column(e) => e.as_ref().clone(),
                 _ => Ty::Unknown,
             },
             other => {
@@ -429,7 +429,7 @@ impl<'p> Verifier<'p> {
             }
             Expr::ListLit(items, ty) => {
                 let el = match ty {
-                    Ty::List(el) | Ty::Tensor(el) => Some(el.as_ref().clone()),
+                    Ty::List(el) | Ty::Tensor(el, _) => Some(el.as_ref().clone()),
                     _ => None,
                 };
                 for i in items {
@@ -568,7 +568,7 @@ impl<'p> Verifier<'p> {
             Convert::IntToFloat => matches!(inner.payload(), Ty::Int | Ty::Unknown) && matches!(ty, Ty::Float),
             Convert::ToStr => matches!(ty, Ty::Str | Ty::Markup),
             // numbers held as a list, a frame's column, or already a tensor
-            Convert::ToTensor => matches!(ty, Ty::Tensor(_)) && matches!(inner.payload(), Ty::List(_) | Ty::Column(_) | Ty::Tensor(_) | Ty::Unknown),
+            Convert::ToTensor => matches!(ty, Ty::Tensor(..)) && matches!(inner.payload(), Ty::List(_) | Ty::Column(_) | Ty::Tensor(..) | Ty::Unknown),
             Convert::ToList => matches!(ty, Ty::List(_)),
         };
         if !ok {
@@ -593,8 +593,8 @@ pub fn fits(v: &Ty, slot: &Ty) -> bool {
         // a view's tree placed where markup goes is its markup
         (Ty::Node, Ty::Markup | Ty::Str) | (Ty::Markup, Ty::Node) => true,
         // an empty list literal handed where numbers go is an empty tensor
-        (Ty::List(a), Ty::Tensor(_)) if **a == Ty::Unknown => true,
-        (Ty::List(a), Ty::List(b)) | (Ty::Map(a), Ty::Map(b)) | (Ty::Tensor(a), Ty::Tensor(b)) | (Ty::Column(a), Ty::Column(b)) => fits(a, b),
+        (Ty::List(a), Ty::Tensor(..)) if **a == Ty::Unknown => true,
+        (Ty::List(a), Ty::List(b)) | (Ty::Map(a), Ty::Map(b)) | (Ty::Tensor(a, _), Ty::Tensor(b, _)) | (Ty::Column(a), Ty::Column(b)) => fits(a, b),
         (Ty::Frame(_), Ty::Frame(_)) => true,
         (Ty::Record(a), Ty::OptRecord(b)) | (Ty::OptRecord(a), Ty::Record(b)) => a == b,
         (Ty::Fn(..), Ty::Fn(..)) => true,
@@ -617,18 +617,18 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
         || match k.each() {
             Kind::Int | Kind::Float => matches!(t, Ty::Int | Ty::Float),
             Kind::Whole => *t == Ty::Int,
-            Kind::Words => matches!(t, Ty::Tensor(_) | Ty::Column(_)) || items(t, &|e| matches!(e, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup)),
+            Kind::Words => matches!(t, Ty::Tensor(..) | Ty::Column(_)) || items(t, &|e| matches!(e, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup)),
             Kind::Bool => *t == Ty::Bool,
             Kind::Str => matches!(t, Ty::Str | Ty::Markup),
-            Kind::Tensor => matches!(t, Ty::Tensor(_)) || items(t, &|_| false),
-            Kind::Tensors => items(t, &|e| matches!(e, Ty::Tensor(_))),
+            Kind::Tensor => matches!(t, Ty::Tensor(..)) || items(t, &|_| false),
+            Kind::Tensors => items(t, &|e| matches!(e, Ty::Tensor(..))),
             Kind::Strs => items(t, &|e| matches!(e, Ty::Str | Ty::Markup)),
             Kind::Bools => items(t, &|e| *e == Ty::Bool),
             Kind::Sparse => matches!(t, Ty::Handle(h) if h == "sparse"),
             Kind::Frame => matches!(t, Ty::Frame(_)),
             Kind::Cell => cell(t) || *t == Ty::Json,
             // a column's values: a list of cells, a tensor, a column, a cell
-            Kind::Cells => cell(t) || matches!(t, Ty::Tensor(_) | Ty::Column(_)) || items(t, &|e| cell(e)),
+            Kind::Cells => cell(t) || matches!(t, Ty::Tensor(..) | Ty::Column(_)) || items(t, &|e| cell(e)),
             // a collection of anything: its items are the function's own type
             Kind::List | Kind::Seq => matches!(t, Ty::List(_)),
             Kind::MapOf | Kind::MapRef => matches!(t, Ty::Map(_)),
@@ -672,7 +672,7 @@ fn sentinel(e: &Expr, slot: &Ty) -> bool {
 /// A tensor and a list of the same numbers.
 fn same_numbers(a: &Ty, b: &Ty) -> bool {
     match (a, b) {
-        (Ty::Tensor(x), Ty::List(y)) | (Ty::List(x), Ty::Tensor(y)) => fits(x, y) || numbers(x, y) || numbers(y, x),
+        (Ty::Tensor(x, _), Ty::List(y)) | (Ty::List(x), Ty::Tensor(y, _)) => fits(x, y) || numbers(x, y) || numbers(y, x),
         _ => false,
     }
 }

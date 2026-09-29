@@ -74,7 +74,7 @@ pub(crate) fn json_to_typed(j: &serde_json::Value, ty: &crate::ir::Ty, template:
             let none = CrowValue::ok(Value::Done);
             CrowValue::ok(Value::Array(items.iter().map(|x| json_to_typed(x, item, template, &none)).collect()))
         }
-        (Ty::Tensor(_), serde_json::Value::Array(items)) if items.iter().all(|x| x.is_number()) => {
+        (Ty::Tensor(..), serde_json::Value::Array(items)) if items.iter().all(|x| x.is_number()) => {
             let data: Vec<f64> = items.iter().filter_map(|x| x.as_f64()).collect();
             let n = data.len();
             CrowValue::ok(Value::NumArray(Box::new(crow_runtime::tensor::CrowTensor::from_vec(data, vec![n]))))
@@ -278,7 +278,7 @@ mod tests {
         assert!(matches!(&listed.value, Value::Array(items) if items.len() == 2 && items.iter().all(|x| matches!(x.value, Value::Float(_)))), "{}", listed.value);
         let ints = json_to_typed(&serde_json::json!([1, 2]), &Ty::List(Box::new(Ty::Int)), &it, &done);
         assert!(matches!(&ints.value, Value::Array(items) if items.iter().all(|x| matches!(x.value, Value::Int(_)))), "{}", ints.value);
-        let tensor = json_to_typed(&serde_json::json!([1.5, 2.0]), &Ty::Tensor(Box::new(Ty::Float)), &it, &done);
+        let tensor = json_to_typed(&serde_json::json!([1.5, 2.0]), &Ty::tensor(Ty::Float), &it, &done);
         assert!(matches!(tensor.value, Value::NumArray(_)), "{}", tensor.value);
     }
 }

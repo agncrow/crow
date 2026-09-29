@@ -510,7 +510,7 @@ impl<'a> Lowerer<'a> {
         // Numeric ops: both must be numeric (including NumArray, Sparse,
         // FrameCol, and legacy Array(Str))
         let is_num_like = |t: &CrowType| {
-            matches!(t, CrowType::Int | CrowType::Float | CrowType::NumArray(_) | CrowType::Sparse | CrowType::FrameCol)
+            matches!(t, CrowType::Int | CrowType::Float | CrowType::NumArray(..) | CrowType::Sparse | CrowType::FrameCol)
                 || matches!(t, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Str))
         };
         if !is_num_like(&lt) || !is_num_like(&rt) {
@@ -1102,6 +1102,29 @@ mod tests {
         assert!(check_source("use math\nlog[zeros[2, 3] + ones[3], zeros[2, 3] * 2.0, eye[3] * zeros[3, 4]]\n").is_ok());
         assert!(check_source("use math\nn = 4\nlog[zeros[n, 3] + zeros[5, 3]]\n").is_ok());
         assert!(check_source("use math\nfn f[k]\n    a = zeros[2, 3]\n    if k gt 1\n        a = zeros[3, 3]\n    return a + zeros[3, 3]\nlog[f[2]]\n").is_ok());
+    }
+
+    /// A tensor's shape is in its type (second-half-design.md §3), so it
+    /// reaches the function it is handed to and the caller it is returned
+    /// to; a function's parameter has the dimensions its calls agree on (a
+    /// function called with two shapes is refused nothing either could
+    /// meet); `transpose` swaps the last two axes (it had reversed them all,
+    /// and a rank-3 tensor's valid sum was refused); `reshape` states its
+    /// dimensions; and a loop keeps what its rounds agree on.
+    #[test]
+    fn shapes_are_in_the_type() {
+        let err = check_source("use math\nfn add[a, b]\n    return a + b\nlog[add[zeros[2, 3], zeros[3, 2]]]\n").unwrap_err();
+        assert!(err.contains("`+` of tensors of shapes [2, 3] and [3, 2]: dimension 1 is 2 in one and 3 in the other — an element-wise operation needs each pair equal, or one of them 1 (the tensors add[] is handed as `a` and `b`)"), "{}", err);
+        assert!(check_source("use math\nfn add[a, b]\n    return a + b\nlog[add[zeros[2, 3], zeros[2, 3]], add[zeros[3, 3], zeros[3, 3]]]\n").is_ok());
+        let err = check_source("use math\nfn make[]\n    return zeros[2, 3]\nm = make[]\nlog[m * zeros[2, 2]]\n").unwrap_err();
+        assert!(err.contains("matmul: incompatible shapes [2, 3] × [2, 2]"), "{}", err);
+        assert!(check_source("use math\na = zeros[2, 3, 4]\nt = transpose[a]\nlog[t + zeros[2, 4, 3]]\n").is_ok());
+        let err = check_source("use math\nlog[reshape[zeros[6], 2, 3] + zeros[3, 2]]\n").unwrap_err();
+        assert!(err.contains("`+` of tensors of shapes [2, 3] and [3, 2]"), "{}", err);
+        let err = check_source("use math\nx = zeros[2, 2]\nfor i in range[3]\n    x = x + 1.0\nlog[x * zeros[3, 3]]\n").unwrap_err();
+        assert!(err.contains("matmul: incompatible shapes [2, 2] × [3, 3]"), "{}", err);
+        let err = check_source("use math\nx = zeros[2, 3]\nx = zeros[3, 3]\nlog[x + zeros[2, 3]]\n").unwrap_err();
+        assert!(err.contains("`+` of tensors of shapes [3, 3] and [2, 3]"), "the local bound anew: {}", err);
     }
 
     /// The checks read the lowering's types, a pure function's locals

@@ -24,9 +24,10 @@ pub enum Ty {
     Markup,
     List(Box<Ty>),
     Map(Box<Ty>),
-    /// A tensor of its element type (Int or Float); rank is known at run
-    /// time, the storage is f64 today.
-    Tensor(Box<Ty>),
+    /// A tensor of its element type (Int or Float), with its shape where
+    /// the program states it (its dimensions, each a size or unknown; none
+    /// where its rank shows only as it runs); the storage is f64 today.
+    Tensor(Box<Ty>, Option<crate::type_infer::Dims>),
     /// A frame, with its columns and their types when `describe` or a
     /// literal knew them.
     /// A frame, with its columns when they are known.
@@ -53,6 +54,20 @@ pub enum Ty {
 }
 
 impl Ty {
+    /// A tensor of `elem`s whose shape nothing states.
+    pub fn tensor(elem: Ty) -> Ty {
+        Ty::Tensor(Box::new(elem), None)
+    }
+
+    /// A tensor's shape, of a tensor or of one that can fail, when its type
+    /// knows it.
+    pub fn tensor_dims(&self) -> Option<&crate::type_infer::Dims> {
+        match self.payload() {
+            Ty::Tensor(_, dims) => dims.as_ref(),
+            _ => None,
+        }
+    }
+
     pub fn is_result(&self) -> bool {
         matches!(self, Ty::Result(_))
     }
@@ -93,7 +108,8 @@ impl std::fmt::Display for Ty {
             Ty::Unit => write!(f, "Unit"),
             Ty::List(t) => write!(f, "List({})", t),
             Ty::Map(t) => write!(f, "Map({})", t),
-            Ty::Tensor(t) => write!(f, "Tensor({})", t),
+            Ty::Tensor(t, None) => write!(f, "Tensor({})", t),
+            Ty::Tensor(t, Some(dims)) => write!(f, "Tensor({}, {})", t, crate::type_infer::shown_dims(dims)),
             Ty::Frame(None) => write!(f, "Frame"),
             Ty::Frame(Some(cols)) => {
                 write!(f, "Frame{{")?;

@@ -4660,6 +4660,21 @@ fn expand_module_imports(
             process::exit(1);
         }
     }
+    // a part's function is typed from its tests' calls whichever file is
+    // the entry, though the tests are the part's alone (set last, after
+    // each part validated alone set its own)
+    let tested: TestedCalls = ex
+        .done
+        .iter()
+        .flat_map(|(path, names)| {
+            let calls = PART_TEST_CALLS.with(|c| c.borrow().get(path).cloned().unwrap_or_default());
+            calls.into_iter().map(|(f, types)| {
+                let f = names.get(&f).cloned().unwrap_or(f);
+                (f, types.iter().map(|t| spelled_as(t, names)).collect())
+            })
+        })
+        .collect();
+    TESTED_BY_PARTS.with(|t| *t.borrow_mut() = tested);
     // an entry that does not import ui keeps its top-level variables plain
     // however its parts' state is held: a script that imports a part runs
     // its top level in order (set last, after each part validated alone
@@ -4674,6 +4689,30 @@ fn expand_module_imports(
 /// project's `.crow/schema`, once a file of it has been expanded.
 pub(crate) fn schema_dir() -> Option<std::path::PathBuf> {
     SCHEMA_DIR.with(|d| d.borrow().clone())
+}
+
+/// What the tests of the entry expanded last's parts call the parts'
+/// functions with (`TypeContext::type_tested`).
+pub(crate) fn tested_by_parts() -> TestedCalls {
+    TESTED_BY_PARTS.with(|t| t.borrow().clone())
+}
+
+/// A type a part alone gave, as a program importing the part spells it: the
+/// part's own structs by their prefixed names.
+fn spelled_as(t: &type_infer::CrowType, names: &std::collections::BTreeMap<String, String>) -> type_infer::CrowType {
+    use type_infer::CrowType as T;
+    let named = |n: &String| names.get(n).cloned().unwrap_or_else(|| n.clone());
+    let spelled = |t: &T| Box::new(spelled_as(t, names));
+    match t {
+        T::Struct(n) => T::Struct(named(n)),
+        T::OptBoxStruct(n) => T::OptBoxStruct(named(n)),
+        T::Array(e) => T::Array(spelled(e)),
+        T::Map(e) => T::Map(spelled(e)),
+        T::Result(e) => T::Result(spelled(e)),
+        T::NumArray(e, dims) => T::NumArray(spelled(e), dims.clone()),
+        T::Fn(params, ret) => T::Fn(params.iter().map(|p| spelled_as(p, names)).collect(), spelled(ret)),
+        other => other.clone(),
+    }
 }
 
 /// A top-level name of an entry file that does not import ui, in a program
@@ -5016,7 +5055,17 @@ thread_local! {
     /// error's line against the part's own text
     static EXPANSION_FILES: std::cell::RefCell<std::collections::BTreeMap<String, std::path::PathBuf>> =
         std::cell::RefCell::new(std::collections::BTreeMap::new());
+    /// part file → what its tests call its functions with, as the part
+    /// alone typed them (its own names unprefixed)
+    static PART_TEST_CALLS: std::cell::RefCell<std::collections::BTreeMap<std::path::PathBuf, TestedCalls>> =
+        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+    /// The same for every part of the entry expanded last, spelled as the
+    /// entry spells each part
+    static TESTED_BY_PARTS: std::cell::RefCell<TestedCalls> = const { std::cell::RefCell::new(Vec::new()) };
 }
+
+/// A function's name and the types a test calls it with, call by call.
+type TestedCalls = Vec<(String, Vec<type_infer::CrowType>)>;
 
 /// Validate one part as the entry of its own program: parsed, its imports
 /// inlined, lowered and passed through the same gate as the whole app.
@@ -5040,7 +5089,7 @@ fn validate_part_alone(path: &std::path::Path) -> Result<(), String> {
     let expanded = expand_module_imports(&stmts, &dir, &mut visited);
     let lowered = lower::lower_program(&expanded).map_err(|e| format!("{}: error: {}", rel, e))?;
     let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
-    infer_and_validate(&lowered, describing()).map(|_| ()).map_err(|e| {
+    let ctx = infer_and_validate(&lowered, describing()).map_err(|e| {
         refine_error_lines(&source, &e)
             .lines()
             .map(|l| {
@@ -5054,7 +5103,10 @@ fn validate_part_alone(path: &std::path::Path) -> Result<(), String> {
             })
             .collect::<Vec<_>>()
             .join("\n")
-    })
+    })?;
+    // what its tests call its functions with, for the programs importing it
+    PART_TEST_CALLS.with(|c| c.borrow_mut().insert(path.to_path_buf(), ctx.tested));
+    Ok(())
 }
 
 #[derive(Default)]
@@ -5712,6 +5764,32 @@ mod module_parts_tests {
         assert!(text.contains("pure lib_calc_spread("), "a plain function, not a handler:\n{}", text);
         assert!(text.contains("let ch__lib_calc: List(Float) = []"), "{}", text);
         assert!(text.contains("secs__lib_calc: Float"), "{}", text);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A part's function only its own tests call is typed from their calls
+    /// whichever file is the entry: the entry's build leaves the part's
+    /// tests out, and the function's calls had been run by name there
+    /// (finch's `cut`, `minute` and `channel_tape`, in the app)
+    #[test]
+    fn a_parts_function_its_tests_call_is_typed_in_the_whole_program() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_tested_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(
+            dir.join("lib/tape.co"),
+            "struct Tape [t, px]\nfn cut[tape, upto]\n    return Tape[min[tape.t, upto], abs[tape.px]]\ntest cuts[]\n    assert[cut[Tape[3.0, -1.0], 2.0].t eq 2.0]\n",
+        )
+        .unwrap();
+        let stmts = build("use lib.tape\nlog['ready']\n").unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let stmts = expand_module_imports(&stmts, &dir, &mut visited);
+        let lowered = lower::lower_program(&stmts).unwrap();
+        let mut ctx = infer_and_validate(&lowered, false).unwrap();
+        let program = lower_ir::lower(&lowered, &mut ctx, "parts").unwrap();
+        let text = ir::print(&program);
+        assert!(text.contains("lib_tape_cut(tape: Record(lib_tape_Tape), upto: Float)"), "{}", text);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

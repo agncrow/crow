@@ -331,7 +331,7 @@ pub fn type_name(ty: &CrowType) -> String {
         ),
         CrowType::Result(inner) => format!("result of {}", type_name(inner)),
         CrowType::Json => "json".into(),
-        CrowType::NumArray(inner) => format!("tensor of {}", type_name(inner)),
+        CrowType::NumArray(inner, _) => format!("tensor of {}", type_name(inner)),
         other => format!("{:?}", other).to_lowercase(),
     }
 }

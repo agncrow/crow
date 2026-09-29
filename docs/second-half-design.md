@@ -240,6 +240,23 @@ the refusal uses (`CrowTensor::try_elementwise`; the compiled program's
 `crow test --parity` counts two modes stopping alike as agreeing
 (parity 96).
 
+*In the type (2026-09-29):* the shape moved into `Ty::Tensor(elem,
+dims)` (`CrowType::NumArray`), so it goes where the tensor goes: into a
+function's parameter, as the dimensions all its calls agree on (joined as
+types are: a dimension two calls disagree on is unknown, and nothing
+unknown is refused), out of its result, through `reshape` given literal
+sizes, and across a reassignment, which binds the local anew as a
+frame's columns do. The rebinding and the joins where ways through meet
+that typed frames built now serve any type with a detail, a frame's
+columns or a tensor's shape. A function is not copied per shape, as it
+is per set of a frame's columns: every tensor compiles alike, so a copy
+would buy only earlier refusals (spec, Design Note "a function is one
+function whatever shapes it is handed"). A refusal inside a function
+names the parameters the tensors were handed as. Found on the way:
+`transpose` had been read as reversing every dimension, where the
+runtime swaps the last two, so a rank-3 tensor's transpose met by an
+element-wise operation was refused though it runs (parity 129).
+
 ## 4. Order
 
 Typed frames' first step comes first, because it unblocks the lowering's

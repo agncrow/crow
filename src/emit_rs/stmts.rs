@@ -891,7 +891,7 @@ impl Emitter {
                 let idx = self.expr(i);
                 match &ty {
                     CrowType::Map(_) => self.line_after(&found, &format!("{}.insert({}, {});", obj, idx, val)),
-                    CrowType::NumArray(_) => {
+                    CrowType::NumArray(..) => {
                         self.needs_crow_runtime = true;
                         self.line_after(&found, &format!(
                             "{{ let _i = {}; let mut _tmp = {}.to_vec(); let _idx = crow_runtime::stops::item(_i, _tmp.len()).unwrap_or_else(|e| crow_stop({}, e)); _tmp[_idx] = {} as f64; {} = crow_runtime::tensor::CrowTensor::from_vec(_tmp, {}.shape().to_vec()); }}",
@@ -951,9 +951,9 @@ impl Emitter {
     /// a list itself.
     pub(crate) fn loop_items(&mut self, iter_str: String, it: &CrowType) -> (String, CrowType) {
         match it {
-            CrowType::NumArray(inner) => {
+            CrowType::NumArray(inner, _) => {
                 let elem = inner.as_ref().clone();
-                let walked = if matches!(elem, CrowType::NumArray(_)) {
+                let walked = if matches!(elem, CrowType::NumArray(..)) {
                     format!("{}.rows()", iter_str)
                 } else if matches!(elem, CrowType::Int) {
                     format!("{}.to_vec().iter().map(|&v| v as i64).collect::<Vec<i64>>()", iter_str)

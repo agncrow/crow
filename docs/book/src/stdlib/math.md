@@ -105,7 +105,7 @@ c = a + b                                          --- shape [3, 4]
 
 Broadcasting works with all element-wise operators: `+`, `-`, `.*`, `./`, `.^`.
 
-Incompatible shapes (e.g. `[3] + [4]`) produce a runtime error.
+Incompatible shapes (e.g. `[3] + [4]`) are refused before the program runs where both shapes are known (see Tensor Arithmetic), and stop the program where it runs where they are not, with the same words in both modes.
 
 ### Advanced Indexing
 
