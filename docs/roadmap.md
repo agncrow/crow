@@ -154,9 +154,9 @@ Goal: `fetch[url]`, `poll[url, seconds]`, `field[label, var]`, `select[options, 
 ##### Phase 4: Real App Features
 
 - [x] **Sessions** — the session layer: per-reader facts, `reader`, `sign_in`/`sign_out` (docs/session-layer-design.md)
-- [ ] **Auth** — `auth = true` on routes, redirect to login (the reader and signing in shipped with the session layer; route-level protection has not)
-- [ ] **Channels** — `channel.join/send/broadcast`, server push
-- [ ] **Debounce** — `debounce = ms` option on input events
+- [x] **Auth** — a page for signed-in readers checks `reader` in its view: it draws the sign-in form in place, offers none of the page's handlers and runs none of its queries (spec, Who the reader is). `auth = true` on a page is rejected (Design Note: no `auth` on a page)
+- ~~**Channels**~~ — rejected (Design Note: no channels): a write already reaches every reader, and a process outside the program is seen through `fresh`
+- ~~**Debounce**~~ — rejected (Design Note: no debounce): a derivation has one recompute in flight, the latest input winning, and a second click on a running handler is dropped
 - [x] **Loading states, file upload** — `running[h]`, uploads
 - [ ] **Keyboard events**
 - [x] **Row click** — `table[frame, click = h, key = 'col']`, row actions

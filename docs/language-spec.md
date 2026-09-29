@@ -2332,6 +2332,8 @@ Before its first value, a derivation whose value can be an error — a query's f
 
 **A write reaches every reader.** When a handler writes a table, every session whose page read a derivation over that table renders again, recomputing it off the render: a reader sees another reader's change without waiting for a refresh tick, and without a line of code to publish it. A write made outside the program — another service, a person at a SQL prompt — is seen through `fresh` and the ticks, as above.
 
+**Design Note: no channels.** Considered: `channel.join[name]`, `channel.send[name, message]` and an `on_channel` handler, so that a route, a job or another process could push to the pages that joined a channel (ui-framework.md, Server Push). Rejected: a write already reaches every reader. The database is the channel, and a page learns of another's change the way it learns of its own, by reading a derivation over the table; a channel would be a second way to say that something changed, and a message pushed past the database could say what the database does not. A process outside the program is seen through `fresh`.
+
 **Rows keep their identity through `id`.** The live client patches the page in place: an element with an `id` is matched to the element with that `id` in the previous render, so a row rendered from data — `p['`s.name`', id = 's-`s.id`']` — moves when its list is reordered and is dropped when its item is gone, while its neighbours are untouched. Elements without an `id` match by position. A node that survives a render keeps its focus, caret and scroll, so the field a reader is typing in is never rebuilt under them.
 
 **The checker teaches the form.** A top-level variable assigned from a query and read by a view (a launch-time snapshot), and a query against a remote database inside a view, are errors in `crow check`; `d` in the check loop rewrites the first into `derive x` and hoists the second above its view as `derive rows[fresh = 60]`.
@@ -2375,7 +2377,25 @@ fn log_out[]
 
 Signing in sets `reader` for the session and gives the browser a cookie, so the reader is signed in on every page and tab they open next — after a restart too — for thirty days, or until they sign out. Signing out clears `reader` and the cookie, and ends that sign-in everywhere: every session holding it, another tab included, is signed out and redrawn at once, and the cookie is refused if it is ever sent again. A tab already open when someone signs in shows it the next time it opens the page. The program never sees the cookie: the runtime reads it when a page opens and fills `reader`. Nothing on the page can write `reader` — no input binds it and no handler assigns it; in a test, `change[a, 'reader', record]` stands for a reader who signed in. Authorization is ordinary code in the handler that needs it: `if reader.role ne 'admin'`. A signed-out reader has no `role`: reading it is an error, and a handler that meets one stops — nothing it did lands, and the reader is told why — so the check fails closed (in a test, `click` reports the error); `has[reader, 'role']` asks first. A derivation that reads `reader` is computed per session; a plain function is handed the reader as a parameter (`is_admin[reader]`), as it is handed a module variable. The record travels in the cookie, so it stays small: at most 1 KB — an id, a name, a role; look the rest up. The cookie is `HttpOnly`, `SameSite=Lax`, and `Secure` when the page came over https through a proxy (`X-Forwarded-Proto: https`). It is signed with the app's secret: `CROW_SECRET` (at least 32 characters) when set, otherwise a key the runtime writes to `.crow/keys/` on first use, a directory that ignores itself in version control. Changing the secret signs everyone out. Passwords are stored as `hash[password, 'password']` and checked with `hash[attempt, stored] eq stored` (### Hashing).
 
+**A page for signed-in readers** checks `reader` in its view:
+
+```
+view orders[]
+    if not has[reader, 'id']
+        return sign_in_form[]
+    return stack[
+        table[open_orders, actions = map[Refund = refund]],
+        button['Log out', click = log_out]
+    ]
+```
+
+While the reader is signed out the page draws the sign-in form, and nothing else of the page reaches them: a session accepts only the events a render it sent offered, so `refund` is refused even in a message written by hand, and a derivation is computed only where it is read, so `open_orders` is never queried for them. When `log_in` commits, the same session draws the orders, at the same address, so nothing has to send the reader back. A page for one role checks the role the same way (`reader.role ne 'admin'`, after `has[reader, 'role']`).
+
+**Design Note: no `auth` on a page.** Considered: `page['/admin', admin, auth = true]`, sending a signed-out reader to a login page and back once they sign in (ui-framework.md, Authentication). Rejected: the view's check already does all of it and fails closed. It draws the sign-in form in place, offers none of the page's handlers and runs none of its queries, and a second way to guard a page would leave two places to look for why a page is shown. The page keeps its address while the reader signs in, so there is nowhere to send them back to.
+
 **A handler runs off the page's loop.** While it runs the page stays live — refresh ticks render and landed values render, from the committed facts — and `running[h]`, true while a `later` schedule of `h` is in flight, is also true while `h` runs as a handler: every element that offers `h` renders `disabled` with `aria-busy="true"`, so a button shows it is working with no flag in the program. Events are applied one at a time, in arrival order, bound inputs included: a change that arrives while a handler runs waits its turn, and the browser keeps showing what the reader typed. A second click on the handler that is running is dropped, as `later` skips a schedule in flight. `later[f]` is the one way to say the session's other clicks need not wait for this work (Design Note: *Handlers and later*).
+
+**Design Note: no debounce.** Considered: `debounce = ms` on an input or a button, holding its events in the browser until the reader pauses (ui-framework.md, Debounce). Rejected: what it guards against is already kept small where it happens. A derivation over a field's fact has one recompute in flight, and a value its inputs moved past is dropped for the latest, so a search typed a key at a time runs at most one query at a time, always for the latest text; a second click on a handler that is running is dropped; and the events that arrive while a render runs are answered by one render. A delay the program chose would slow every reader to spare a server the runtime already spares.
 
 #### Views render wherever they are called
 

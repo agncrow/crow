@@ -335,6 +335,55 @@ someone who signed in, without a password. The cookie is signed with the
 app's secret — `CROW_SECRET`, or a key the runtime writes to
 `.crow/keys/` the first time it needs one.
 
+A page only signed-in readers may see checks `reader` in its view, and
+draws the sign-in form until someone signs in:
+
+```crow
+use web, ui
+
+name = ''
+refunded = 0
+
+fn log_in[]
+    sign_in[map[name = name]]
+
+fn refund[]
+    refunded = refunded + 1
+
+view sign_in_form[]
+    return stack[
+        field['Name', name, type = 'text'],
+        button['Log in', click = log_in]
+    ]
+
+view orders[]
+    if not has[reader, 'name']
+        return sign_in_form[]
+    return stack[
+        p['orders for `reader.name`, `refunded` refunded'],
+        button['Refund', click = refund]
+    ]
+
+test the_orders_wait_for_a_sign_in[]
+    a = app[orders]
+    assert[len[elements[a, 'button']] eq 1]
+    change[a, 'reader', map[name = 'ada']]
+    assert[elements[a, 'p'][0].text eq 'orders for ada, 0 refunded']
+
+page['/orders', orders]
+log['orders defined']
+```
+
+```text
+orders defined
+```
+
+Nothing else of the page reaches a signed-out reader. The page answers
+only the buttons its render drew, so `refund` can't be pressed, not even
+by a message written by hand, and a query the orders view reads never
+runs for them. When `log_in` succeeds, the same page, at the same
+address, shows the orders.
+
 ## Files, and tables too big to show
 
 A file is an input: `field['Trades', upload, type = 'file']` binds

@@ -1,0 +1,13 @@
+[
+  {"open": "/orders"},
+  {"expect": "Log in"},
+  {"absent": "Refund"},
+  {"event": "refund"},
+  {"event": "refund"},
+  {"event": "__field:name", "value": "ada"},
+  {"event": "log_in"},
+  {"expect": "orders for ada, 0 refunded"},
+  {"expect": "address: /orders"},
+  {"event": "refund"},
+  {"expect": "orders for ada, 1 refunded"}
+]

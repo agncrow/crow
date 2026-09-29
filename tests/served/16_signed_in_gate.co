@@ -1,0 +1,32 @@
+--- A page for signed-in readers (spec, Who the reader is): a view that
+--- draws the sign-in form while `reader` is empty offers none of the
+--- page's own handlers, so a message naming one is refused and changes
+--- nothing; once the reader signs in, the same page at the same address
+--- draws the view, whose handler then runs.
+use web, ui
+
+name = ''
+refunded = 0
+
+fn log_in[]
+    sign_in[map[name = name]]
+
+fn refund[]
+    refunded = refunded + 1
+
+view sign_in_form[]
+    return stack[
+        field['Name', name, type = 'text'],
+        button['Log in', click = log_in]
+    ]
+
+view orders[]
+    if not has[reader, 'name']
+        return sign_in_form[]
+    return stack[
+        p['orders for `reader.name`, `refunded` refunded'],
+        button['Refund', click = refund]
+    ]
+
+serve[3416]
+page['/orders', orders]

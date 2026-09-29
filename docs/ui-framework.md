@@ -454,6 +454,8 @@ For high-frequency interactions (drag, scroll, resize), these stay client-side i
 
 ### 8. Authentication and Sessions
 
+*Superseded (2026-09-29): the session layer's `reader`, `sign_in` and `sign_out` shipped instead of `session.get/set`, and a page for signed-in readers checks `reader` in its view; `auth = true` on a page was rejected (spec, Who the reader is, and the Design Note "no `auth` on a page").*
+
 Each WebSocket connection has its own `state`. Authentication adds a `session` that persists across page navigations within the same browser. The `session` is a signed cookie — the server validates it on each WebSocket connect.
 
 ```
@@ -625,6 +627,8 @@ page['/positions', pos_render]
 The layout is a function that takes data and a content VNode. No special component system — just functions calling functions.
 
 ### 11. Debounce
+
+*Rejected (2026-09-29): a derivation has one recompute in flight, the latest input winning, and a second click on a running handler is dropped (spec, Design Note "no debounce").*
 
 Typing in a search input fires `input` on every keystroke. Debounce delays the server call until the user stops typing.
 
@@ -1726,6 +1730,8 @@ page['/', render, on_channel = on_channel]
 `channel` is the building block for both multi-tab sync and multi-user presence (see Future Features).
 
 ## Server Push
+
+*Rejected (2026-09-29): a write already reaches every reader, and a process outside the program is seen through `fresh` (spec, Design Note "no channels").*
 
 `interval` polls on a timer. But sometimes an external process needs to push an update immediately — a trade execution engine fills an order, a background job completes, a price alert triggers.
 
