@@ -444,6 +444,9 @@ fn lay_explicit_width[node, avail]
 fn lay_hidden[node, viewport]
     if has[node.attrs, 'hidden']
         return true
+    --- a page's title and metas are its head's: they take no room
+    if node.tag eq 'title' or node.tag eq 'meta'
+        return true
     below = lay_attr[node, 'hidden_below', '']
     if below ne ''
         if viewport lt lay_named_width[below]

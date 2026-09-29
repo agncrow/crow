@@ -509,6 +509,14 @@ Key API:
 
 ### 9. URL Parameters
 
+> **Shipped (September 2026), differently:** a path's `:name` segment is a
+> fact in the page's address — `page['/trade/:trade', trade_render]` opens a
+> session with the fact `trade` read from the path, and the address follows
+> the fact — as `url = […]` puts facts in the query string. There is no
+> `init` function or `params` record: the page's state is its facts. See
+> the spec, Core (Server), and its Design Note *a page's address and its
+> head*.
+
 Dynamic route segments and query parameters. Route params use `:name` syntax.
 
 ```
@@ -744,6 +752,13 @@ page['/', render]
 Since Crow is server-side and synchronous, the runtime sends an intermediate render before the slow operation starts (showing the loading state), then sends the final render when the operation completes.
 
 ### 15. Page Title and Head
+
+> **Shipped (September 2026):** `title[text]` and `meta[name = …, content =
+> …]` are elements a view places anywhere in its tree (not statements before
+> its `return`); a served page carries them in its head, and a render that
+> changes them changes the tab. `meta` takes attributes, which pass through
+> as HTML. `link[…]` was not built: a stylesheet is `css/app.css`, and files
+> are `static_dir`. See the spec, LiveView / Pages.
 
 Set the page title, favicon, and meta tags per route.
 

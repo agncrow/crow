@@ -27,6 +27,10 @@ pub type CrowHandler = Arc<dyn Fn(CrowRequest) -> CrowResponse + Send + Sync>;
 /// The Crow web application — wraps axum's Router.
 pub struct CrowApp {
     router: Router,
+    /// whether a route or a page was registered: an app with none shows the
+    /// welcome page at every address, an app with some a 404 at an address
+    /// none answers
+    routed: bool,
 }
 
 impl CrowApp {
@@ -34,6 +38,7 @@ impl CrowApp {
     pub fn new() -> Self {
         Self {
             router: Router::new(),
+            routed: false,
         }
     }
 
@@ -41,6 +46,7 @@ impl CrowApp {
     pub fn route(mut self, path: &str, handler: CrowHandler) -> Self {
         let axum_path = crow_path_to_axum(path);
         self.router = self.router.route(&axum_path, get(make_axum_handler(handler)));
+        self.routed = true;
         self
     }
 
@@ -58,6 +64,7 @@ impl CrowApp {
             _ => get(make_axum_handler(handler)), // fallback to GET
         };
         self.router = self.router.route(&axum_path, method_router);
+        self.routed = true;
         self
     }
 
@@ -87,8 +94,7 @@ impl CrowApp {
                 std::process::exit(1);
             }
         };
-        // Add a default welcome fallback so new projects don't show a blank page
-        let router = self.router.fallback(default_welcome_handler);
+        let router = self.served();
         println!("crow server listening on http://{}", addr);
         tokio::spawn(stop_on_signal());
         axum::serve(listener, router).await?;
@@ -105,6 +111,7 @@ impl CrowApp {
             &axum_path,
             get(crate::ws::make_ws_axum_handler(handler)),
         );
+        self.routed = true;
         self
     }
 
@@ -119,6 +126,7 @@ impl CrowApp {
             &axum_path,
             get(crate::sse::make_sse_axum_handler(handler)),
         );
+        self.routed = true;
         self
     }
 
@@ -131,6 +139,7 @@ impl CrowApp {
     pub fn cors(self, config: crate::cors::CrowCors) -> Self {
         Self {
             router: config.apply(self.router),
+            routed: self.routed,
         }
     }
 
@@ -149,6 +158,7 @@ impl CrowApp {
     pub fn static_dir(self, url_path: &str, dir_path: &str) -> Self {
         Self {
             router: crate::static_files::serve_dir(self.router, url_path, dir_path),
+            routed: true,
         }
     }
 
@@ -188,12 +198,24 @@ impl CrowApp {
     pub fn merge(self, other: Router) -> Self {
         Self {
             router: self.router.merge(other),
+            routed: true,
         }
     }
 
     /// Get the inner router (for testing or advanced composition).
     pub fn into_router(self) -> Router {
         self.router
+    }
+
+    /// The router `serve` runs: an app with no routes shows the welcome page
+    /// at every address, so a new project never shows a blank one; an app
+    /// with some answers an address none of them does with a 404.
+    fn served(self) -> Router {
+        if self.routed {
+            self.router.fallback(not_found_handler)
+        } else {
+            self.router.fallback(default_welcome_handler)
+        }
     }
 }
 
@@ -214,37 +236,10 @@ pub fn listen_host(crow_host: Option<String>) -> String {
         .unwrap_or_else(|| "127.0.0.1".to_string())
 }
 
-/// Convert Crow path syntax (`:id`) to axum 0.8 path syntax (`{id}`).
-///
-/// Axum 0.8 uses `{param}` for capture groups instead of `:param`.
-/// Crow uses the more common `:param` syntax, so we convert here.
+/// Convert Crow path syntax (`:id`) to axum 0.8 path syntax (`{id}`),
+/// as a page's path is (crate::core::path).
 fn crow_path_to_axum(path: &str) -> String {
-    let mut result = String::with_capacity(path.len());
-    let mut chars = path.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == ':' {
-            // Collect the parameter name
-            let mut param = String::new();
-            while let Some(&c) = chars.peek() {
-                if c.is_alphanumeric() || c == '_' {
-                    param.push(c);
-                    chars.next();
-                } else {
-                    break;
-                }
-            }
-            if param.is_empty() {
-                result.push(':');
-            } else {
-                result.push('{');
-                result.push_str(&param);
-                result.push('}');
-            }
-        } else {
-            result.push(ch);
-        }
-    }
-    result
+    crate::core::path::to_axum(path)
 }
 
 /// Create an axum handler from a CrowHandler.
@@ -276,6 +271,12 @@ fn make_axum_handler(
             response_to_axum(crow_resp)
         })
     }
+}
+
+/// An address no route or page answers, in an app that has some.
+async fn not_found_handler(uri: axum::http::Uri) -> (axum::http::StatusCode, axum::response::Html<String>) {
+    let path = uri.path().replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    (axum::http::StatusCode::NOT_FOUND, axum::response::Html(format!("<!DOCTYPE html><title>Not found</title><p>no page at {}</p>", path)))
 }
 
 /// Default welcome page shown when no routes match.
@@ -409,6 +410,27 @@ mod tests {
 
         let resp = app.into_router().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), 404);
+    }
+
+    /// An app with no routes welcomes at every address; an app with routes
+    /// or pages answers an address none of them does with a 404 (it had
+    /// shown the welcome page there too).
+    #[tokio::test]
+    async fn an_address_no_route_answers_is_not_found() {
+        let get = |uri: &str| HttpRequest::builder().uri(uri).body(Body::empty()).unwrap();
+        let resp = CrowApp::new().served().oneshot(get("/anything")).await.unwrap();
+        assert_eq!(resp.status(), 200, "a new project is welcomed");
+        let app = CrowApp::new().route("/hello", Arc::new(hello_handler));
+        let resp = app.served().oneshot(get("/nothere")).await.unwrap();
+        assert_eq!(resp.status(), 404);
+        let body = axum::body::to_bytes(resp.into_body(), 1 << 16).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("no page at /nothere"));
+        let pages = CrowApp::new().merge(Router::new().route("/card/{card}", get_handler()));
+        assert_eq!(pages.served().oneshot(get("/cards")).await.unwrap().status(), 404, "a page counts as a route");
+    }
+
+    fn get_handler() -> axum::routing::MethodRouter {
+        axum::routing::get(|| async { "a page" })
     }
 
     #[tokio::test]

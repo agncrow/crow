@@ -213,6 +213,8 @@ impl<'a> Wire<'a> {
                     "img" => { out.push_str("<img>"); emitted.push(Emitted { path: format!("{}/img.", parent), text: "image".into(), kind: "chart" }); }
                     "icon" => { out.push_str("<svg width=\"20\" height=\"20\"></svg>"); emitted.push(Emitted { path: format!("{}/svg.", parent), text: String::new(), kind: "icon" }); }
                     "divider" => { out.push_str("<hr class=\"divider\">"); emitted.push(Emitted { path: format!("{}/hr.divider", parent), text: String::new(), kind: "line" }); }
+                    // a page's head takes no room on it
+                    "title" | "meta" => {}
                     "progress" => { out.push_str("<progress></progress>"); emitted.push(Emitted { path: format!("{}/progress.", parent), text: String::new(), kind: "input" }); }
                     _ if CONTAINERS.contains(&tag) => {
                         out.push_str(&open_tag(&rclass, &rstyle, &r.3));

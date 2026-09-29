@@ -1,0 +1,34 @@
+--- Pages (spec, Core (Server); LiveView / Pages): a program serves every
+--- page it registers, each a session of its own; a `:name` segment of a
+--- page's path is a fact in its address, read in the fact's shape, as a
+--- `url` fact is from the query string, and the address follows both as
+--- they change; a page's title and meta are its head, which follows its
+--- render.
+use web, ui
+
+card = 1
+day = 'sun'
+opened = 0
+
+fn next_card[]
+    card = card + 1
+    opened = opened + 1
+
+view board[]
+    return stack[
+        title['Board'],
+        p['the board, card `card`'],
+        nav[a['Card 7', href = '/card/7?day=mon'], a['Card 9', href = '/card/9']]
+    ]
+
+view card_page[]
+    return stack[
+        title['Card `card`'],
+        meta[name = 'description', content = 'card `card` on `day`'],
+        p['card `card` day `day` opened `opened`'],
+        button['Next', click = next_card]
+    ]
+
+serve[3415]
+page['/', board]
+page['/card/:card', card_page, url = ['day']]

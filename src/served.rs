@@ -138,31 +138,9 @@ fn bool_of(v: Option<&CrowValue>) -> bool {
     matches!(v.map(|v| &v.value), Some(Value::Bool(true)))
 }
 
-/// Serve the page the program's main asked for, from the interpreter.
-pub fn serve(template: IrInterp) -> Result<(), String> {
-    let (path, view, url_names) = template.page_config.clone().ok_or("the program serves no page: add page['/', render]")?;
-    let serve_args = template.serve_config.clone().unwrap_or_default();
-    let port = int_of(serve_args.first()).max(0) as u16;
-
-    let mut initial = CrowLiveState::new();
-    for name in &template.fact_names {
-        if let Some(v) = template.var(name).filter(|v| is_data(v)) {
-            initial.set(name, fact_to_json(v));
-        }
-    }
-    let mut url_pairs: Vec<(String, String)> = Vec::new();
-    for written in &url_names {
-        let fact = url_fact(&template, written).ok_or_else(|| format!("page[…, url = …]: no reactive fact named '{}'", written))?;
-        url_pairs.push((written.rsplit('.').next().unwrap_or(written).to_string(), fact));
-    }
-    // the runtime draws the toast for a served page
-    let mut template = template;
-    template.harness_toast = false;
-    let template = Arc::new(template);
-
-    let t = template.clone();
-    let view_name = view.clone();
-    let render = move |state: &CrowLiveState| -> CrowVNode {
+/// A page's view rendered for a session, as the live runtime asks for it.
+fn page_render(t: Arc<IrInterp>, view_name: String) -> impl Fn(&CrowLiveState) -> CrowVNode + Clone + Send + Sync + 'static {
+    move |state: &CrowLiveState| -> CrowVNode {
         let mut it = with_session(&t, state);
         match it.guard(|it| it.render_view(&view_name)) {
             Ok(html) => {
@@ -174,7 +152,43 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
             }
             Err(e) => CrowVNode::text(&format!("error: {}", e)),
         }
-    };
+    }
+}
+
+/// Serve the pages the program's main asked for, from the interpreter:
+/// every one, each a session of its own (spec, Core (Server)).
+pub fn serve(template: IrInterp) -> Result<(), String> {
+    if template.pages.is_empty() {
+        return Err("the program serves no page: add page['/', render]".to_string());
+    }
+    let serve_args = template.serve_config.clone().unwrap_or_default();
+    let port = int_of(serve_args.first()).max(0) as u16;
+
+    let mut initial = CrowLiveState::new();
+    for name in &template.fact_names {
+        if let Some(v) = template.var(name).filter(|v| is_data(v)) {
+            initial.set(name, fact_to_json(v));
+        }
+    }
+    // each page's address: the facts its path's `:name` segments name, and
+    // its `url` facts, as the Rust backend resolves them
+    let mut pages: Vec<(String, String, Vec<(String, String)>)> = Vec::new();
+    for (path, view, url_names) in &template.pages {
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        for name in crow_web::core::path::params(path) {
+            let fact = url_fact(&template, &name).ok_or_else(|| format!("page['{}', …]: ':{}' names no fact — a page's path holds facts, as url = […] does", path, name))?;
+            pairs.push((name, fact));
+        }
+        for written in url_names {
+            let fact = url_fact(&template, written).ok_or_else(|| format!("page[…, url = …]: no reactive fact named '{}'", written))?;
+            pairs.push((written.rsplit('.').next().unwrap_or(written).to_string(), fact));
+        }
+        pages.push((path.clone(), view.clone(), pairs));
+    }
+    // the runtime draws the toast for a served page
+    let mut template = template;
+    template.harness_toast = false;
+    let template = Arc::new(template);
 
     let t = template.clone();
     let handle = move |state: &mut CrowLiveState, event: &str, value: Option<&str>| {
@@ -232,10 +246,13 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
     // a handler's thread holds the interpreter's frames to the recursion limit
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(crow_runtime::stops::STACK).build().map_err(|e| format!("cannot start the server: {}", e))?;
     rt.block_on(async move {
-        let ws_path = format!("/_ws{}", path);
-        let pairs: Vec<(&str, &str)> = url_pairs.iter().map(|(n, f)| (n.as_str(), f.as_str())).collect();
-        let live = CrowLiveView::new(&ws_path, initial, render, handle).with_url(pairs);
-        let app = crow_web::server::CrowApp::new().merge(live.into_router(&path));
+        let mut app = crow_web::server::CrowApp::new();
+        for (path, view, pairs) in pages {
+            let ws_path = format!("/_ws{}", path);
+            let pairs: Vec<(&str, &str)> = pairs.iter().map(|(n, f)| (n.as_str(), f.as_str())).collect();
+            let live = CrowLiveView::new(&ws_path, initial.clone(), page_render(template.clone(), view), handle.clone()).with_url(pairs);
+            app = app.merge(live.into_router(&path));
+        }
         crow_web::live::configure(int_of(serve_args.get(1)), int_of(serve_args.get(2)));
         crow_web::live::configure_look(&text_of(serve_args.get(3)), &text_of(serve_args.get(4)), &text_of(serve_args.get(5)), bool_of(serve_args.get(6)));
         crow_web::live::configure_keep(bool_of(serve_args.get(7)));

@@ -249,6 +249,18 @@ fn callee_name(callee: &Expr) -> Option<String> {
     }
 }
 
+/// The element, control or chart a call draws: its name written bare
+/// (`stack[…]`), or under `ui` — never a value's field, whose name may be
+/// an element's (`card.title[0]` reads a column, since `title` is one).
+fn drawn_name(callee: &Expr) -> Option<String> {
+    let name = match callee {
+        Expr::Ident(n) => n.clone(),
+        Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if m == "ui") => field.clone(),
+        _ => return None,
+    };
+    (crate::lower::UI_ELEMENTS.contains(&name.as_str()) || BOUND.contains(&name.as_str()) || name == "chart" || name == "table").then_some(name)
+}
+
 // ---------------------------------------------------------------- signatures
 
 /// Calls whose value is a read of the world: named `q1`, `q2`, ... on the
@@ -631,7 +643,7 @@ fn tree(m: &Model, e: &Expr, env: &Env, depth: usize, view: &str, w: &mut Wiring
         Expr::Call { callee, args } => {
             let name = callee_name(callee);
             if let Some(n) = &name {
-                if crate::lower::UI_ELEMENTS.contains(&n.as_str()) || BOUND.contains(&n.as_str()) || n == "chart" || n == "table" {
+                if drawn_name(callee).is_some() {
                     let mut attrs: Vec<String> = Vec::new();
                     let mut children: Vec<&Expr> = Vec::new();
                     for (i, a) in args.iter().enumerate() {
@@ -776,7 +788,7 @@ fn label_of(args: &[Expr], env: &Env) -> String {
 
 fn is_node(m: &Model, e: &Expr, env: &Env) -> bool {
     match e {
-        Expr::Call { callee, .. } => callee_name(callee).map_or(false, |n| crate::lower::UI_ELEMENTS.contains(&n.as_str()) || BOUND.contains(&n.as_str()) || n == "chart" || n == "table" || m.is_view(&n)),
+        Expr::Call { callee, .. } => drawn_name(callee).is_some() || callee_name(callee).is_some_and(|n| m.is_view(&n)),
         Expr::Array(items) => items.iter().any(|i| is_node(m, i, env)),
         Expr::ForExpr { .. } => true,
         Expr::Ident(n) => env.locals.get(n).map_or(false, |t| t.starts_with('\u{1}')),
@@ -1676,6 +1688,19 @@ mod tests {
         let (art, _) = artifacts(src);
         let shown: Vec<String> = art.structure.wires["render"].iter().map(|(_, node)| node.kids.iter().map(|k| k.view.clone()).collect::<Vec<_>>().join(",")).collect();
         assert!(shown.contains(&"first".to_string()) && shown.contains(&"second".to_string()), "{:?}", shown);
+    }
+
+    /// A value's field read in a view is a read, whatever its name: a
+    /// frame's `title` column (`card.title[0]`) is not the `title` element,
+    /// which is drawn by its bare name (the task board's page changed its
+    /// baseline when `title` joined the vocabulary).
+    #[test]
+    fn a_field_named_like_an_element_is_read_not_drawn() {
+        let src = "use web, ui, frame\ncards = with[frame.new[], 'title', ['ship']]\nview render[]\n    return stack[h2[cards.title[0]], title['Board']]\npage['/', render]\n";
+        let (art, _) = artifacts(src);
+        let tree = &art.entries["view render"];
+        assert!(tree.contains("h2[] cards.title[0]"), "the column is read: {}", tree);
+        assert_eq!(tree.matches("title[]").count(), 1, "the element alone is drawn: {}", tree);
     }
 
     /// Each page's reachable states: every control with when it is offered,

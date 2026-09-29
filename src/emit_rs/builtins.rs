@@ -656,15 +656,25 @@ impl Emitter {
         })
     }
 
-    /// `page[path, view]`, with its handlers and the facts in its address.
+    /// `page[path, view]`, with its handlers and the facts in its address:
+    /// those its path's `:name` segments name, and its `url` facts.
     fn page_route(&mut self, args: &[Expr], a: &[String]) -> String {
         let handle_all = if self.reactive_event_handlers.is_empty() {
             "|_: &mut CrowLiveState, _: &str, _: Option<&str>| {}".to_string()
         } else {
             "__crow_handle".to_string()
         };
+        let mut pairs = Vec::new();
+        if let Some(path) = Self::lit_str(&args[0]) {
+            for name in crow_web::core::path::params(path) {
+                match self.url_fact(&name) {
+                    Some(fact) => pairs.push(format!("(\"{}\", \"{}\")", name, fact)),
+                    None => return format!("compile_error!(\"page['{}', …]: ':{}' names no fact\")", path, name),
+                }
+            }
+        }
+        let listed = matches!(args.get(2).map(Emitter::raw), Some(Expr::ListLit(..)));
         if let Some(Expr::ListLit(names, _)) = args.get(2).map(Emitter::raw) {
-            let mut pairs = Vec::new();
             for n in names {
                 let Some(written) = Self::lit_str(n) else {
                     return "compile_error!(\"page[…, url = …] takes fact names as text: url = ['day', 'sym']\")".to_string();
@@ -674,19 +684,12 @@ impl Emitter {
                     None => return format!("compile_error!(\"page[…, url = …]: no reactive fact named '{}'\")", written),
                 }
             }
-            return format!(
-                "{{ let _ws_path = format!(\"/_ws{{}}\", {}); let _lv = CrowLiveView::new(&_ws_path, __crow_state.clone(), {}, {}).with_url(vec![{}]); let _lr = _lv.into_router(&{}); __crow_app = __crow_app.merge(_lr); }}",
-                a[0],
-                a[1],
-                handle_all,
-                pairs.join(", "),
-                a[0]
-            );
         }
-        let handle = if a.len() == 3 { a[2].clone() } else { handle_all };
+        let handle = if a.len() == 3 && !listed { a[2].clone() } else { handle_all };
+        let with_url = if pairs.is_empty() { String::new() } else { format!(".with_url(vec![{}])", pairs.join(", ")) };
         format!(
-            "{{ let _ws_path = format!(\"/_ws{{}}\", {}); let _lv = CrowLiveView::new(&_ws_path, __crow_state.clone(), {}, {}); let _lr = _lv.into_router(&{}); __crow_app = __crow_app.merge(_lr); }}",
-            a[0], a[1], handle, a[0]
+            "{{ let _ws_path = format!(\"/_ws{{}}\", {}); let _lv = CrowLiveView::new(&_ws_path, __crow_state.clone(), {}, {}){}; let _lr = _lv.into_router(&{}); __crow_app = __crow_app.merge(_lr); }}",
+            a[0], a[1], handle, with_url, a[0]
         )
     }
 

@@ -587,6 +587,19 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// The fact a page's address names, as both backends resolve it: the
+    /// fact of that name, or the one fact of a part it is the last name of.
+    fn address_fact(&self, written: &str) -> Option<String> {
+        let flat = written.replace('.', "_");
+        if self.ctx.facts.contains(&flat) {
+            return Some(flat);
+        }
+        let suffix = format!("_{}", flat);
+        let mut found = self.ctx.facts.iter().filter(|k| k.ends_with(&suffix));
+        let first = found.next()?.clone();
+        found.next().is_none().then_some(first)
+    }
+
     pub(super) fn check_call(&mut self, name: &str, args: &[A], types: &[CrowType]) {
         let arg_type = |_: &Self, i: usize| -> CrowType { types.get(i).cloned().unwrap_or(CrowType::Unknown) };
         // Test-harness builtins exist only inside test blocks (which never
@@ -598,6 +611,28 @@ impl<'a> Lowerer<'a> {
             return;
         }
         let argc = args.len();
+
+        // a page's address holds facts (spec, Core (Server)): each name its
+        // path's `:name` segments give, and each `url` name, is a fact —
+        // one of a part by its last name — refused here, in both modes
+        if name == "page" {
+            if let Some(A::Str(path)) = args.first() {
+                for p in crow_web::core::path::params(path) {
+                    if self.address_fact(&p).is_none() {
+                        self.refuse(format!("page['{}', …]: ':{}' names no fact — a page's path holds facts, as url = […] does", path, p));
+                    }
+                }
+            }
+            if let Some(A::Array(names)) = args.get(2) {
+                for n in names {
+                    if let A::Str(written) = n {
+                        if self.address_fact(written).is_none() {
+                            self.refuse(format!("page[…, url = …]: no reactive fact named '{}'", written));
+                        }
+                    }
+                }
+            }
+        }
 
         // Maps are dictionaries: set[] must not change the map's value type
         // (spec Design Note "Maps Are Dictionaries, Not Records"), said in

@@ -1,0 +1,1 @@
+[{"open": "/"}, {"expect": "title: Board"}, {"open": "/card/7?day=mon"}, {"expect": "card 7 day mon opened 0"}, {"expect": "title: Card 7"}, {"event": "next_card"}, {"expect": "address: /card/8?day=mon"}, {"expect": "title: Card 8"}, {"open": "/card/9"}, {"expect": "card 9 day sun opened 0"}]

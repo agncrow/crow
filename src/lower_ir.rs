@@ -3725,6 +3725,20 @@ mod tests {
         lower(&stmts, &mut ctx, "t").err().unwrap_or_default()
     }
 
+    /// A page's address holds facts (spec, Core (Server)): a path's `:name`
+    /// or a `url` name that names none is refused before the program runs,
+    /// in both modes (the compiled program had not built, and `run -i` had
+    /// stopped as it served); a part's fact is named by its last name.
+    #[test]
+    fn a_page_s_address_names_facts() {
+        let src = "use web, ui\ncard = 1\nview v[]\n    return stack[title['Card `card`'], p['`card`']]\nserve[3999]\npage['/card/:card', v]\npage['/x/:nope', v]\npage['/', v, url = ['gone']]\n";
+        let refused = refusal_of(src);
+        assert!(refused.contains("page['/x/:nope', …]: ':nope' names no fact — a page's path holds facts, as url = […] does"), "{}", refused);
+        assert!(refused.contains("page[…, url = …]: no reactive fact named 'gone'"), "{}", refused);
+        assert!(!refused.contains("':card'"), "{}", refused);
+        assert_eq!(refusal_of("use web, ui\ncard = 1\nview v[]\n    return p['`card`']\nserve[3999]\npage['/card/:card', v]\n"), "");
+    }
+
     /// The tables a program declares on each connection: every literal
     /// `CREATE TABLE` handed to it, directly or through the functions the
     /// connection is handed to (the task board's `setup[book]`), but one the

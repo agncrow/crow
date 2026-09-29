@@ -177,6 +177,10 @@ impl CrowVNode {
     pub fn details(children: Vec<CrowVNode>) -> Self { Self::tag("details", children) }
     pub fn summary(children: Vec<CrowVNode>) -> Self { Self::tag("summary", children) }
     pub fn hr() -> Self { Self::el("hr", HashMap::new(), vec![]) }
+    /// A page's title and its metas: a served page carries them in its head
+    /// (`split_head`).
+    pub fn title(children: Vec<CrowVNode>) -> Self { Self::tag("title", children) }
+    pub fn meta() -> Self { Self::el("meta", HashMap::new(), vec![]) }
 
     /// `open = expr` at render time: a real `open` attribute on details, a
     /// data attribute on the layers — the same rule the kernel applies to
@@ -1328,6 +1332,102 @@ fn fmt_num(v: f64) -> String {
     if (v - v.round()).abs() < 1e-9 { format!("{}", v.round() as i64) } else { format!("{}", v) }
 }
 
+/// What a page's render places in its head (spec, LiveView / Pages): the
+/// last `title` it places, and each `meta` with its attributes, in order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Head {
+    pub title: Option<String>,
+    pub metas: Vec<Vec<(String, String)>>,
+}
+
+impl Head {
+    /// A page that places no title of its own is titled this.
+    pub const UNTITLED: &'static str = "Crow App";
+
+    /// The title a page shows.
+    pub fn shown_title(&self) -> &str {
+        self.title.as_deref().unwrap_or(Self::UNTITLED)
+    }
+
+    /// The head as a page's markup writes it: its title, and each meta
+    /// marked as the render's (`data-crow-head`), which a later head
+    /// replaces.
+    pub fn to_html(&self) -> String {
+        let mut out = format!("<title>{}</title>", html_escape(self.shown_title()));
+        for attrs in &self.metas {
+            out.push_str("\n<meta data-crow-head=\"\"");
+            for (k, v) in attrs {
+                out.push_str(&format!(" {}=\"{}\"", k, html_escape(v)));
+            }
+            out.push('>');
+        }
+        out
+    }
+}
+
+impl CrowVNode {
+    /// A render with its head taken out: the `title` and `meta` elements
+    /// it places anywhere, pre-built markup included, which a served page
+    /// carries in its head rather than its body.
+    pub fn split_head(self) -> (CrowVNode, Head) {
+        let mut head = Head::default();
+        let body = strip_head(self, &mut head).unwrap_or_else(|| CrowVNode::text(""));
+        (body, head)
+    }
+}
+
+/// A node without the head elements under it, which land in `head`: `None`
+/// for one that is itself a head element.
+fn strip_head(node: CrowVNode, head: &mut Head) -> Option<CrowVNode> {
+    match node {
+        // a view the interpreter rendered is markup: read once, when it
+        // holds a head element, and written again without it — unless the
+        // browser would repair it, when the page is sent as it stands
+        // (as_built) and the head elements, which the browser does not
+        // draw, stay in it
+        CrowVNode::Raw(html) if html.contains("<title") || html.contains("<meta") => {
+            let (nodes, repaired) = read_markup(&html);
+            let without: String = nodes.into_iter().filter_map(|n| strip_tree(n, head)).map(|n| n.to_html()).collect();
+            Some(CrowVNode::Raw(if repaired.is_some() { html } else { without }))
+        }
+        other => strip_tree(other, head),
+    }
+}
+
+/// `strip_head` over a tree; markup its reading kept whole stays as it is.
+fn strip_tree(node: CrowVNode, head: &mut Head) -> Option<CrowVNode> {
+    match node {
+        CrowVNode::Element { tag, children, .. } if tag.eq_ignore_ascii_case("title") => {
+            head.title = Some(text_of(&children));
+            None
+        }
+        CrowVNode::Element { tag, attrs, .. } if tag.eq_ignore_ascii_case("meta") => {
+            let mut attrs: Vec<(String, String)> = attrs.into_iter().collect();
+            attrs.sort();
+            head.metas.push(attrs);
+            None
+        }
+        CrowVNode::Element { tag, attrs, children } => {
+            Some(CrowVNode::Element { tag, attrs, children: children.into_iter().filter_map(|c| strip_head(c, head)).collect() })
+        }
+        other => Some(other),
+    }
+}
+
+/// The text a node's children hold, their tags left out.
+fn text_of(children: &[CrowVNode]) -> String {
+    children
+        .iter()
+        .map(|c| match c {
+            CrowVNode::Text(t) => t.clone(),
+            CrowVNode::Element { children, .. } => text_of(children),
+            // a title's text is read as it stands, as a browser reads it:
+            // its entities decoded, no tags in it
+            CrowVNode::Raw(html) => unescape_markup(html),
+        })
+        .collect()
+}
+
 /// Escape HTML special characters.
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -1772,6 +1872,40 @@ document.getElementById('out').textContent = JSON.stringify({{checked: cases.len
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A render's head is taken out of its body (spec, LiveView / Pages):
+    /// the last title it places, each meta in order, from a built tree and
+    /// from the markup the interpreter renders; markup the browser would
+    /// repair is sent as it stands, its head still read.
+    #[test]
+    fn a_render_s_head_is_taken_out_of_its_body() {
+        let meta = |name: &str, content: &str| {
+            CrowVNode::el("meta", [("name".to_string(), name.to_string()), ("content".to_string(), content.to_string())].into_iter().collect(), vec![])
+        };
+        let tree = CrowVNode::div(vec![
+            CrowVNode::tag("title", vec![CrowVNode::text("Board")]),
+            CrowVNode::p(vec![CrowVNode::text("hi")]),
+            CrowVNode::div(vec![CrowVNode::tag("title", vec![CrowVNode::text("Card 7")])]),
+            meta("description", "a card"),
+        ]);
+        let (body, head) = tree.split_head();
+        assert_eq!(head.title.as_deref(), Some("Card 7"), "the last title placed");
+        assert_eq!(head.metas, vec![vec![("content".to_string(), "a card".to_string()), ("name".to_string(), "description".to_string())]]);
+        assert_eq!(body.to_html(), "<div><p>hi</p><div></div></div>");
+        let raw = CrowVNode::raw("<div><title>A &amp; B</title><p>hi</p><meta name=\"description\" content=\"y\"></div>");
+        let (body, head) = raw.split_head();
+        assert_eq!(head.title.as_deref(), Some("A & B"));
+        assert_eq!(head.metas.len(), 1);
+        assert_eq!(body.to_html(), "<div><p>hi</p></div>");
+        let repaired = CrowVNode::raw("<p><div>x</div><title>T</title></p>");
+        let (body, head) = repaired.split_head();
+        assert_eq!(head.title.as_deref(), Some("T"));
+        assert!(body.to_html().contains("<title>T</title>"), "{}", body.to_html());
+        let (body, head) = CrowVNode::p(vec![CrowVNode::text("x")]).split_head();
+        assert_eq!(head, Head::default());
+        assert_eq!(head.shown_title(), "Crow App");
+        assert_eq!(body.to_html(), "<p>x</p>");
+    }
 
     #[test]
     fn test_component_builder() {

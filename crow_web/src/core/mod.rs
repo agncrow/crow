@@ -4,6 +4,7 @@
 //! Every module depends on `core`. No module depends on any other module.
 
 pub mod headers;
+pub mod path;
 pub mod request;
 pub mod response;
 

@@ -37,6 +37,8 @@ pub const UI_ELEMENTS: &[&str] = &[
     "divider",
     // the one way out of the vocabulary: the program's own module draws it
     "widget",
+    // a page's head: what a served page carries in its head, not its body
+    "title", "meta",
 ];
 
 /// The controls a view draws that are builtins, not elements: like an

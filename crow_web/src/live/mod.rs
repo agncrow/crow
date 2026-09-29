@@ -24,7 +24,7 @@
 //! ```
 
 use std::collections::HashMap;
-use crate::view::CrowVNode;
+use crate::view::{CrowVNode, Head};
 
 pub mod files;
 pub mod signin;
@@ -792,6 +792,7 @@ struct Parked {
     until: std::time::Instant,
     state: CrowLiveState,
     vnode: CrowVNode,
+    head: Head,
     /// a session that had a page before: its tab shows an old render, so it
     /// is sent its render when it comes back
     resumed: bool,
@@ -810,13 +811,13 @@ impl PendingSessions {
     /// At most this many sessions wait at once; the soonest to expire give way.
     const MAX: usize = 1000;
 
-    fn park(&self, state: CrowLiveState, vnode: CrowVNode) -> String {
+    fn park(&self, state: CrowLiveState, vnode: CrowVNode, head: Head) -> String {
         let token = new_token();
-        self.park_as(token.clone(), state, vnode, Self::WAIT, false);
+        self.park_as(token.clone(), state, vnode, head, Self::WAIT, false);
         token
     }
 
-    fn park_as(&self, token: String, state: CrowLiveState, vnode: CrowVNode, wait: std::time::Duration, resumed: bool) {
+    fn park_as(&self, token: String, state: CrowLiveState, vnode: CrowVNode, head: Head, wait: std::time::Duration, resumed: bool) {
         let now = std::time::Instant::now();
         let mut parked = self.parked.lock().unwrap_or_else(|p| p.into_inner());
         parked.retain(|_, p| p.until > now);
@@ -827,14 +828,14 @@ impl PendingSessions {
                 None => break,
             }
         }
-        parked.insert(token, Parked { until: now + wait, state, vnode, resumed });
+        parked.insert(token, Parked { until: now + wait, state, vnode, head, resumed });
     }
 
     /// Take a waiting session by its token — once: a token is good once.
-    fn claim(&self, token: &str) -> Option<(CrowLiveState, CrowVNode, bool)> {
+    fn claim(&self, token: &str) -> Option<(CrowLiveState, CrowVNode, Head, bool)> {
         let mut parked = self.parked.lock().unwrap_or_else(|p| p.into_inner());
         match parked.remove(token) {
-            Some(p) if p.until > std::time::Instant::now() => Some((p.state, p.vnode, p.resumed)),
+            Some(p) if p.until > std::time::Instant::now() => Some((p.state, p.vnode, p.head, p.resumed)),
             _ => None,
         }
     }
@@ -1831,18 +1832,40 @@ pub fn live_js(ws_path: &str) -> String {
 /// keeps the token of its session (`sessionStorage`), replaced at every
 /// connect, and brings it back when it reconnects or reloads.
 pub fn live_js_for(ws_path: &str, page_token: &str) -> String {
+    page_js(None, ws_path, page_token)
+}
+
+/// The client for a page. With `ws_base`, the page's socket is its own
+/// path after the base (`/_ws` + `/card/7`), taken from the tab's address
+/// at each connect, so a page whose address moved reconnects at the new one.
+fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
+    let socket_path = match ws_base {
+        Some(base) => format!("'{}' + location.pathname", base),
+        None => format!("'{}'", ws_path),
+    };
     format!(r#"<script>
 (function() {{
-  var ws, reconDelay = 100, seq = 0, busy = [];
-  var pageToken = '{page_token}', key = 'crow-session:' + location.pathname;
+  var ws, reconDelay = 100, seq = 0, busy = [], first = true;
+  var pageToken = '{page_token}';
+  // the tab's session is kept under its address's path
+  function key() {{ return 'crow-session:' + location.pathname; }}
+  // a page a link or a typed address opened starts from that address: its
+  // first socket brings the page's session, not the tab's; a reload, the
+  // back button and every reconnect bring the tab's own
+  var navigated = false;
+  try {{ var nav = performance.getEntriesByType('navigation')[0]; navigated = !!nav && nav.type === 'navigate'; }} catch (e) {{}}
   function tabToken() {{
-    try {{ return sessionStorage.getItem(key) || ''; }} catch (e) {{ return ''; }}
+    if (first && navigated) return '';
+    try {{ return sessionStorage.getItem(key()) || ''; }} catch (e) {{ return ''; }}
   }}
   function wsUrl() {{
     var q = [], t = tabToken();
+    first = false;
     if (t) q.push('t=' + t);
     if (pageToken) q.push('p=' + pageToken);
-    var path = '{ws_path}';
+    // the address's query, which a fresh session starts from
+    if (location.search.length > 1) q.push('q=' + encodeURIComponent(location.search.slice(1)));
+    var path = {socket_path};
     return location.origin.replace('http','ws') + path + (q.length ? (path.indexOf('?') >= 0 ? '&' : '?') + q.join('&') : '');
   }}
 
@@ -1873,6 +1896,20 @@ pub fn live_js_for(ws_path: &str, page_token: &str) -> String {
     return false;
   }}
 
+  // the head a render placed: its title, and its metas in place of the
+  // last render's
+  function applyHead(head) {{
+    if (document.title !== head.title) document.title = head.title;
+    var old = document.head.querySelectorAll('meta[data-crow-head]');
+    for (var i = 0; i < old.length; i++) old[i].remove();
+    (head.meta || []).forEach(function(attrs) {{
+      var m = document.createElement('meta');
+      m.setAttribute('data-crow-head', '');
+      for (var k in attrs) m.setAttribute(k, attrs[k]);
+      document.head.appendChild(m);
+    }});
+  }}
+
   function connect() {{
     ws = new WebSocket(wsUrl());
     ws.onopen = function() {{ reconDelay = 100; offline(false); answered(Infinity); }};
@@ -1883,8 +1920,10 @@ pub fn live_js_for(ws_path: &str, page_token: &str) -> String {
     }};
     ws.onmessage = function(e) {{
       var msg = JSON.parse(e.data);
+      if (msg.head) applyHead(msg.head);
+      if (msg.type === 'head') return;
       if (msg.type === 'session') {{
-        try {{ sessionStorage.setItem(key, msg.token); }} catch (err) {{}}
+        try {{ sessionStorage.setItem(key(), msg.token); }} catch (err) {{}}
         return;
       }}
       if (msg.type === 'upload') {{
@@ -1910,10 +1949,19 @@ pub fn live_js_for(ws_path: &str, page_token: &str) -> String {
         return;
       }}
       if (msg.type === 'url') {{
-        var target = location.pathname + (msg.query ? '?' + msg.query : '') + location.hash;
-        if (target !== location.pathname + location.search + location.hash) history.replaceState(null, '', target);
+        var target = (msg.path || location.pathname) + (msg.query ? '?' + msg.query : '') + location.hash;
+        if (target !== location.pathname + location.search + location.hash) {{
+          // the tab's session moves with its address
+          var before = key(), token = '';
+          try {{ token = sessionStorage.getItem(before) || ''; }} catch (err) {{}}
+          history.replaceState(null, '', target);
+          if (token && key() !== before) {{
+            try {{ sessionStorage.removeItem(before); sessionStorage.setItem(key(), token); }} catch (err) {{}}
+          }}
+        }}
         return;
       }}
+
       if (msg.type === 'html') {{
         // the whole page, morphed into place
         var root = document.getElementById('crow-root');
@@ -2200,7 +2248,7 @@ pub fn live_js_for(ws_path: &str, page_token: &str) -> String {
   connect();
   widgets();
 }})();
-</script>"#, ws_path = ws_path, page_token = page_token)
+</script>"#, socket_path = socket_path, page_token = page_token)
 }
 
 /// The default stylesheet — Crow's whole styling story ships here.
@@ -2219,15 +2267,16 @@ fn project_css() -> String {
     }
 }
 
-/// Generate a full HTML page shell wrapping the initial content.
-fn page_shell(body_html: &str, js: &str) -> String {
+/// The page's shell around its first render, with the head that render
+/// placed: its title and its metas.
+fn page_shell(body_html: &str, head: &Head, js: &str) -> String {
     format!(
         r#"<!DOCTYPE html>
 <html{look}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Crow App</title>
+{head}
 <style>{css}</style>
 <style>{offline}{live}</style>
 {project}
@@ -2238,6 +2287,7 @@ fn page_shell(body_html: &str, js: &str) -> String {
 </body>
 </html>"#,
         look = look_attrs(),
+        head = head.to_html(),
         css = format!("{}\n{}", DEFAULT_CSS, crow_runtime::layout::RESPONSIVE_CSS),
         project = project_css(),
         offline = OFFLINE_CSS,
@@ -2287,31 +2337,109 @@ where
     pub url: Vec<(String, String)>,
 }
 
-/// Percent-encode a query value: letters, digits and `-_.~` stay.
-fn url_encode(text: &str) -> String {
-    let mut out = String::new();
-    for b in text.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
-            _ => out.push_str(&format!("%{:02X}", b)),
-        }
+/// A fact as its address writes it: text as it stands, anything else as
+/// JSON; none for a fact with no value.
+fn address_text(state: &CrowLiveState, fact: &str) -> Option<String> {
+    match state.get(fact)? {
+        serde_json::Value::String(t) => Some(t.clone()),
+        serde_json::Value::Null => None,
+        other => Some(other.to_string()),
     }
-    out
 }
 
 /// The page's address for a session: its `url` facts as a query string.
 fn url_query(state: &CrowLiveState, url: &[(String, String)]) -> String {
     url.iter()
         .filter_map(|(name, fact)| {
-            let text = match state.get(fact)? {
-                serde_json::Value::String(t) => t.clone(),
-                serde_json::Value::Null => return None,
-                other => other.to_string(),
-            };
-            Some(format!("{}={}", url_encode(name), url_encode(&text)))
+            let text = address_text(state, fact)?;
+            Some(format!("{}={}", crate::core::path::encode(name), crate::core::path::encode(&text)))
         })
         .collect::<Vec<_>>()
         .join("&")
+}
+
+/// The facts a page's address carries (spec, Core (Server)): those its
+/// path's `:name` segments name, and those its query string does.
+#[derive(Clone, Default)]
+struct Address {
+    /// the page's path as the program wrote it (`/card/:card`)
+    pattern: String,
+    /// (the path's name, the fact)
+    path: Vec<(String, String)>,
+    /// (the query's name, the fact)
+    query: Vec<(String, String)>,
+}
+
+impl Address {
+    fn new(pattern: &str, facts: &[(String, String)]) -> Address {
+        let names = crate::core::path::params(pattern);
+        let (path, query) = facts.iter().cloned().partition(|(n, _)| names.contains(n));
+        Address { pattern: pattern.to_string(), path, query }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.path.is_empty() && self.query.is_empty()
+    }
+
+    /// Set a session's facts from an address: the path's values by name,
+    /// the query's, each read in its fact's shape. Whether the path's all
+    /// fit their facts: a path names which thing a page shows, so one that
+    /// does not (`/card/x` for a number) is no page; a query value that
+    /// does not fit is passed over, its fact keeping its value.
+    fn read_into(&self, state: &mut CrowLiveState, path: &HashMap<String, String>, query: &HashMap<String, String>) -> bool {
+        let mut fits = true;
+        for (name, fact) in &self.path {
+            if let Some(text) = path.get(name) {
+                match coerce_field_value(state.get(fact), text) {
+                    Some(v) => state.set(fact, v),
+                    None => fits = false,
+                }
+            }
+        }
+        for (name, fact) in &self.query {
+            if let Some(text) = query.get(name)
+                && let Some(v) = coerce_field_value(state.get(fact), text)
+            {
+                state.set(fact, v);
+            }
+        }
+        fits
+    }
+
+    /// The address a session's facts make: its path with their values in
+    /// place, and its query string.
+    fn of(&self, state: &CrowLiveState) -> (String, String) {
+        let path = crate::core::path::fill(&self.pattern, |name| {
+            let (_, fact) = self.path.iter().find(|(n, _)| n == name)?;
+            address_text(state, fact)
+        });
+        (path, url_query(state, &self.query))
+    }
+
+    /// The message that moves the page's address to a session's facts.
+    fn message(&self, state: &CrowLiveState) -> ((String, String), serde_json::Value) {
+        let (path, query) = self.of(state);
+        let msg = serde_json::json!({ "type": "url", "path": path, "query": query });
+        ((path, query), msg)
+    }
+}
+
+/// A page's head as a message carries it (`head`): its title and its
+/// metas. It rides with a render, or goes alone when only the head changed.
+fn head_message(head: &Head) -> serde_json::Value {
+    let metas: Vec<serde_json::Value> = head
+        .metas
+        .iter()
+        .map(|attrs| serde_json::Value::Object(attrs.iter().map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone()))).collect()))
+        .collect();
+    serde_json::json!({ "title": head.shown_title(), "meta": metas })
+}
+
+/// A render as a served page takes it: its head taken out, then read as
+/// the browser builds it.
+fn served_render<R: Fn(&CrowLiveState) -> CrowVNode>(state: &CrowLiveState, render: &R) -> (CrowVNode, Head) {
+    let (body, head) = state.render_with(render).split_head();
+    (body.as_built(), head)
 }
 
 impl<R, H> CrowLiveView<R, H>
@@ -2366,7 +2494,12 @@ where
         let upload_path = format!("/_upload{}", page_path);
         let widget_path = format!("/_widget{}", page_path);
         let pending = std::sync::Arc::new(PendingSessions::default());
-        let url = std::sync::Arc::new(self.url.clone());
+        // the facts the address carries: the path's `:name` segments name
+        // some, the query string the rest
+        let url = std::sync::Arc::new(Address::new(page_path, &self.url));
+        // the socket's path follows the page's: the tab's own address, after
+        // the prefix the socket's routes share
+        let ws_base = ws_path.strip_suffix(page_path).map(|b| b.to_string());
 
         // GET page: the session rendered once and parked for its socket,
         // which the page's token claims
@@ -2374,42 +2507,48 @@ where
         let s1 = init_state.clone();
         let p1 = pending.clone();
         let ws_p = ws_path.clone();
+        let ws_b = ws_base.clone();
         let u1 = url.clone();
-        let page_route = axum::routing::get(move |query: axum::extract::Query<HashMap<String, String>>, headers: axum::http::HeaderMap| {
+        let page_route = axum::routing::get(
+            move |path: Option<axum::extract::Path<HashMap<String, String>>>,
+                  uri: axum::http::Uri,
+                  query: axum::extract::Query<HashMap<String, String>>,
+                  headers: axum::http::HeaderMap| {
             let r1 = r1.clone();
             let s1 = s1.clone();
             let p1 = p1.clone();
             let ws_p = ws_p.clone();
+            let ws_b = ws_b.clone();
             let u1 = u1.clone();
             async move {
+                use axum::response::IntoResponse;
                 let mut state = start_session(&s1);
                 // who the reader is: the sign-in their cookie carries
                 if let Some((record, sid)) = signin::from_headers(&headers) {
                     state.set_reader(record, sid);
                 }
-                // the address's facts, each in its fact's shape
-                for (name, fact) in u1.iter() {
-                    if let Some(text) = query.get(name) {
-                        if let Some(v) = coerce_field_value(state.get(fact), text) {
-                            state.set(fact, v);
-                        }
-                    }
+                // the address's facts, each in its fact's shape: a path its
+                // facts cannot hold is no page
+                let path = path.map(|p| p.0).unwrap_or_default();
+                if !u1.read_into(&mut state, &path, &query) {
+                    let shown = uri.path().replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+                    return (axum::http::StatusCode::NOT_FOUND, axum::response::Html(format!("<!DOCTYPE html><title>Not found</title><p>no page at {}</p>", shown))).into_response();
                 }
                 fetch_sources(&mut state).await;
                 state.next_tick();
                 // a render runs off the threads that carry the sockets
                 let rendered = tokio::task::spawn_blocking(move || {
-                    let vnode = state.render_with(&*r1).as_built();
-                    (state, vnode)
+                    let (vnode, head) = served_render(&state, &*r1);
+                    (state, vnode, head)
                 })
                 .await;
-                let Ok((state, vnode)) = rendered else {
-                    return axum::response::Html("<p>the page failed to render; the server log says why</p>".to_string());
+                let Ok((state, vnode, head)) = rendered else {
+                    return axum::response::Html("<p>the page failed to render; the server log says why</p>".to_string()).into_response();
                 };
                 let body_html = vnode.to_html();
-                let token = p1.park(state, vnode);
-                let js = live_js_for(&ws_p, &token);
-                axum::response::Html(page_shell(&body_html, &js))
+                let token = p1.park(state, vnode, head.clone());
+                let js = page_js(ws_b.as_deref(), &ws_p, &token);
+                axum::response::Html(page_shell(&body_html, &head, &js)).into_response()
             }
         });
 
@@ -2423,6 +2562,7 @@ where
         let u2 = url.clone();
         let ws_route = axum::routing::get(
             move |ws: axum::extract::WebSocketUpgrade,
+                  path: Option<axum::extract::Path<HashMap<String, String>>>,
                   headers: axum::http::HeaderMap,
                   query: axum::extract::Query<HashMap<String, String>>| {
                 let r2 = r2.clone();
@@ -2444,6 +2584,11 @@ where
                     // the tab's own session, if it had one; else the page's
                     let tab_token = query.get("t").cloned();
                     let page_token = query.get("p").cloned();
+                    // the page's address, which a fresh session starts from:
+                    // its path is the socket's, its query string handed on
+                    let address_path = path.map(|p| p.0).unwrap_or_default();
+                    let address_query: HashMap<String, String> =
+                        crate::core::path::parse_query(query.get("q").map(|q| q.as_str()).unwrap_or("")).into_iter().collect();
                     let signed = signin::from_headers(&headers);
                     let sign_path = sign_path.clone();
                     let download_path = download_path.clone();
@@ -2467,36 +2612,39 @@ where
                                     state.next_tick();
                                     let r = r2.clone();
                                     let rendered = tokio::task::spawn_blocking(move || {
-                                        let vnode = state.render_with(&*r).as_built();
-                                        (state, vnode)
+                                        let (vnode, head) = served_render(&state, &*r);
+                                        (state, vnode, head)
                                     })
                                     .await;
-                                    let Ok((state, vnode)) = rendered else { return };
-                                    Some((state, vnode, true))
+                                    let Ok((state, vnode, head)) = rendered else { return };
+                                    Some((state, vnode, head, true))
                                 }
                                 None => None,
                             },
                         };
-                        let (mut state, mut last_vnode, mut send_first) =
+                        let (mut state, mut last_vnode, mut last_head, mut send_first) =
                             match claimed {
                                 // a session its tab comes back to is sent its
                                 // render: the tab shows an old one
-                                Some((state, vnode, resumed)) => (state, vnode, resumed),
+                                Some((state, vnode, head, resumed)) => (state, vnode, head, resumed),
                                 None => {
                                     let mut state = start_session(&s2);
                                     if let Some((record, sid)) = signed {
                                         state.set_reader(record, sid);
                                     }
+                                    // a fresh session starts from its address
+                                    // (one its page could not show was a 404)
+                                    let _ = u2.read_into(&mut state, &address_path, &address_query);
                                     fetch_sources(&mut state).await;
                                     state.next_tick();
                                     let r = r2.clone();
                                     let rendered = tokio::task::spawn_blocking(move || {
-                                        let vnode = state.render_with(&*r).as_built();
-                                        (state, vnode)
+                                        let (vnode, head) = served_render(&state, &*r);
+                                        (state, vnode, head)
                                     })
                                     .await;
-                                    let Ok((state, vnode)) = rendered else { return };
-                                    (state, vnode, true)
+                                    let Ok((state, vnode, head)) = rendered else { return };
+                                    (state, vnode, head, true)
                                 }
                             };
                         // a sign-in signed out while the tab was away is gone:
@@ -2504,13 +2652,14 @@ where
                         if state.drop_ended_sign_in() {
                             let r = r2.clone();
                             let rendered = tokio::task::spawn_blocking(move || {
-                                let vnode = state.render_with(&*r).as_built();
-                                (state, vnode)
+                                let (vnode, head) = served_render(&state, &*r);
+                                (state, vnode, head)
                             })
                             .await;
-                            let Ok((s, vnode)) = rendered else { return };
+                            let Ok((s, vnode, head)) = rendered else { return };
                             state = s;
                             last_vnode = vnode;
+                            last_head = head;
                             send_first = true;
                         }
                         let (later_tx, mut later_rx) = tokio::sync::mpsc::unbounded_channel::<
@@ -2530,7 +2679,8 @@ where
                             }
                         };
                         if send_first {
-                            let payload = serde_json::json!({ "type": "html", "html": last_vnode.to_html() });
+                            // with its head: the tab shows another session's
+                            let payload = serde_json::json!({ "type": "html", "html": last_vnode.to_html(), "head": head_message(&last_head) });
                             if futures_util::SinkExt::send(&mut socket, Message::Text(payload.to_string().into()))
                                 .await
                                 .is_err()
@@ -2553,11 +2703,11 @@ where
                         }
                         keep_session(&resume, &state);
                         let mut kept_versions = state.versions.clone();
-                        // the address follows the page's url facts
-                        let mut sent_query = String::new();
+                        // the address follows the facts it carries
+                        let mut sent_address = (String::new(), String::new());
                         if !u2.is_empty() {
-                            sent_query = url_query(&state, &u2);
-                            let msg = serde_json::json!({ "type": "url", "query": sent_query });
+                            let (address, msg) = u2.message(&state);
+                            sent_address = address;
                             if futures_util::SinkExt::send(&mut socket, Message::Text(msg.to_string().into())).await.is_err() {
                                 return;
                             }
@@ -2885,7 +3035,7 @@ where
                                     state.next_tick();
                                 }
                                 let t0 = std::time::Instant::now();
-                                let mut v = state.render_with(&*r).as_built();
+                                let (mut v, head) = served_render(&state, &*r);
                                 if let Some(budget) = budget_ms() {
                                     let ms = t0.elapsed().as_millis();
                                     if ms > budget {
@@ -2898,10 +3048,10 @@ where
                                 if let Some(h) = &busy {
                                     v = mark_running(v, h);
                                 }
-                                (state, v)
+                                (state, v, head)
                             })
                             .await;
-                            let (moved_state, new_vnode) = match turn {
+                            let (moved_state, new_vnode, new_head) = match turn {
                                 Ok(t) => t,
                                 // a render panicked: the session is gone
                                 Err(_) => break,
@@ -2938,6 +3088,17 @@ where
                                 ack.map(|n| serde_json::json!({ "type": "ack", "ack": n }))
                             };
                             last_vnode = new_vnode;
+                            // a head the render changed rides with its answer,
+                            // or goes alone
+                            let payload = match (payload, new_head != last_head) {
+                                (Some(mut msg), true) => {
+                                    msg["head"] = head_message(&new_head);
+                                    Some(msg)
+                                }
+                                (None, true) => Some(serde_json::json!({ "type": "head", "head": head_message(&new_head) })),
+                                (payload, false) => payload,
+                            };
+                            last_head = new_head;
                             if let Some(msg) = payload {
                                 if futures_util::SinkExt::send(&mut socket, Message::Text(msg.to_string().into()))
                                     .await
@@ -2947,13 +3108,12 @@ where
                                 }
                             }
                             if !u2.is_empty() {
-                                let query = url_query(&state, &u2);
-                                if query != sent_query {
-                                    let msg = serde_json::json!({ "type": "url", "query": query });
+                                let (address, msg) = u2.message(&state);
+                                if address != sent_address {
                                     if futures_util::SinkExt::send(&mut socket, Message::Text(msg.to_string().into())).await.is_err() {
                                         break;
                                     }
-                                    sent_query = query;
+                                    sent_address = address;
                                 }
                             }
                         }
@@ -2970,7 +3130,7 @@ where
                         // a session lost to a panicking render has nothing to keep
                         if state.session_id == session_id && session_id != 0 {
                             keep_session(&resume, &state);
-                            p2.park_as(resume, state, last_vnode, PendingSessions::GRACE, true);
+                            p2.park_as(resume, state, last_vnode, last_head, PendingSessions::GRACE, true);
                         }
                     })
                     .into_response()
@@ -3072,13 +3232,15 @@ where
             }
         });
 
+        // each as axum matches it: a `:name` segment is `{name}`
+        let axum_path = |p: &str| crate::core::path::to_axum(p);
         axum::Router::new()
-            .route(page_path, page_route)
-            .route(&ws_path, ws_route)
-            .route(&format!("/_sign{}", page_path), sign_route)
-            .route(&format!("/_download{}", page_path), download_route)
-            .route(&format!("/_upload{}", page_path), upload_route)
-            .route(&widget_path, widget_route)
+            .route(&axum_path(page_path), page_route)
+            .route(&axum_path(&ws_path), ws_route)
+            .route(&axum_path(&format!("/_sign{}", page_path)), sign_route)
+            .route(&axum_path(&format!("/_download{}", page_path)), download_route)
+            .route(&axum_path(&format!("/_upload{}", page_path)), upload_route)
+            .route(&axum_path(&widget_path), widget_route)
     }
 }
 
@@ -3194,11 +3356,13 @@ mod tests {
         let pending = PendingSessions::default();
         let mut state = CrowLiveState::new();
         state.set("n", serde_json::json!(4));
-        let token = pending.park(state, CrowVNode::text("four"));
+        let head = Head { title: Some("Four".to_string()), metas: Vec::new() };
+        let token = pending.park(state, CrowVNode::text("four"), head.clone());
         assert_eq!(token.len(), 32, "a random token: {}", token);
-        let (claimed, vnode, resumed) = pending.claim(&token).expect("the page's socket claims its session");
+        let (claimed, vnode, held, resumed) = pending.claim(&token).expect("the page's socket claims its session");
         assert_eq!(claimed.get_i64("n", 0), 4);
         assert_eq!(vnode.to_html(), "four");
+        assert_eq!(held, head, "and the head its render placed");
         assert!(!resumed, "a page's own session: its page already shows the render");
         assert!(pending.claim(&token).is_none(), "a token claims once");
         assert!(pending.claim("not-a-token").is_none());
@@ -3211,12 +3375,12 @@ mod tests {
         let pending = PendingSessions::default();
         let mut state = CrowLiveState::new();
         state.set("n", serde_json::json!(9));
-        pending.park_as("tabtoken".to_string(), state, CrowVNode::text("nine"), PendingSessions::GRACE, true);
-        let (back, _, resumed) = pending.claim("tabtoken").expect("the tab resumes its session");
+        pending.park_as("tabtoken".to_string(), state, CrowVNode::text("nine"), Head::default(), PendingSessions::GRACE, true);
+        let (back, _, _, resumed) = pending.claim("tabtoken").expect("the tab resumes its session");
         assert_eq!(back.get_i64("n", 0), 9, "the same facts");
         assert!(resumed, "a resumed session is sent its render");
         assert!(pending.claim("tabtoken").is_none(), "the token is good once");
-        pending.park_as("gone".to_string(), CrowLiveState::new(), CrowVNode::text(""), std::time::Duration::from_millis(0), true);
+        pending.park_as("gone".to_string(), CrowLiveState::new(), CrowVNode::text(""), Head::default(), std::time::Duration::from_millis(0), true);
         assert!(pending.claim("gone").is_none(), "a session past its wait is gone");
     }
 
@@ -3226,12 +3390,20 @@ mod tests {
     fn the_page_shows_when_it_is_offline() {
         let js = live_js_for("/_ws/", "abc");
         assert!(js.contains("pageToken = 'abc'"), "the socket carries the page's token");
-        assert!(js.contains("sessionStorage.getItem(key)"), "and the tab's own session's");
+        assert!(js.contains("sessionStorage.getItem(key())"), "and the tab's own session's");
+        assert!(js.contains("var path = '/_ws/';"), "{}", js);
+        // a link opens its address's session; a reload resumes the tab's
+        assert!(js.contains("if (first && navigated) return '';"), "{}", js);
+        assert!(js.contains("nav.type === 'navigate'"), "{}", js);
+        // a page whose socket follows its address
+        let js = page_js(Some("/_ws"), "/_ws/card/:card", "abc");
+        assert!(js.contains("var path = '/_ws' + location.pathname;"), "{}", js);
+        assert!(js.contains("if (msg.head) applyHead(msg.head);"), "{}", js);
         assert!(js.contains("r.setAttribute('data-crow-offline', '')"));
         assert!(js.contains("ws.onclose = function() {\n      offline(true);"), "{}", js);
         assert!(js.contains("if (ws && ws.readyState === 1)"));
         assert_eq!(js.matches("ws.send(").count(), 1, "one guarded send: {}", js);
-        let page = page_shell("<p>hi</p>", &js);
+        let page = page_shell("<p>hi</p>", &Head::default(), &js);
         assert!(page.contains("html[data-crow-offline] #crow-root{opacity:.5;pointer-events:none"));
         assert!(page.contains("reconnecting\u{2026}"));
     }
@@ -3536,6 +3708,10 @@ mod tests {
             std::fs::create_dir_all(&dir).unwrap();
             let child = std::process::Command::new(&chrome)
                 .args(["--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--remote-debugging-port=0", "--remote-allow-origins=*"])
+                // a page left is unloaded, its socket closed, as in a browser
+                // that keeps no page in its back-forward cache (Chrome froze
+                // one with its socket open, and when that happens is Chrome's)
+                .arg("--disable-features=BackForwardCache")
                 .arg(format!("--user-data-dir={}", dir.join("profile").display()))
                 .arg("about:blank")
                 .stdout(std::process::Stdio::null())
@@ -3639,6 +3815,94 @@ mod tests {
             let _ = self.child.wait();
             let _ = std::fs::remove_dir_all(&self.dir);
         }
+    }
+
+    /// Pages in a real browser (spec, Core (Server); A page and its
+    /// session): a page's title follows its render; its address follows its
+    /// path's fact; a reload and the back button resume the tab's session;
+    /// and a link to another address of the same page opens that address's
+    /// session — the tab's own had been resumed, and the address followed it
+    /// back. `cargo test -p crow_web --features live,http pages_in_a_browser -- --ignored`
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore]
+    async fn pages_in_a_browser() {
+        let handle = |s: &mut CrowLiveState, event: &str, _: Option<&str>| match event {
+            "next" => {
+                let c = s.get_i64("card", 0);
+                s.set("card", serde_json::json!(c + 1));
+            }
+            "mark" => {
+                let m = s.get_i64("marks", 0);
+                s.set("marks", serde_json::json!(m + 1));
+            }
+            _ => {}
+        };
+        let mut initial = CrowLiveState::new();
+        initial.set("card", serde_json::json!(1));
+        initial.set("day", serde_json::json!("sun"));
+        initial.set("marks", serde_json::json!(0));
+        let day_page = |s: &CrowLiveState| {
+            CrowVNode::div(vec![
+                CrowVNode::p(vec![CrowVNode::text(&format!("day {} marks {}", s.get_str("day", ""), s.get_i64("marks", 0)))]),
+                CrowVNode::button(vec![CrowVNode::text("mark")]).on_click("mark"),
+                CrowVNode::a(vec![CrowVNode::text("tuesday")]).attr("href", "/?day=tue").attr("id", "tue"),
+            ])
+        };
+        let card_page = |s: &CrowLiveState| {
+            let card = s.get_i64("card", 0);
+            CrowVNode::div(vec![
+                CrowVNode::title(vec![CrowVNode::text(&format!("Card {}", card))]),
+                CrowVNode::p(vec![CrowVNode::text(&format!("card {} marks {}", card, s.get_i64("marks", 0)))]),
+                CrowVNode::button(vec![CrowVNode::text("next")]).on_click("next"),
+                CrowVNode::button(vec![CrowVNode::text("mark")]).on_click("mark"),
+                CrowVNode::a(vec![CrowVNode::text("tuesday")]).attr("href", "/?day=tue").attr("id", "tue"),
+            ])
+        };
+        let router = CrowLiveView::new("/_ws/", initial.clone(), day_page, handle)
+            .with_url(vec![("day", "day")])
+            .into_router("/")
+            .merge(CrowLiveView::new("/_ws/card/:card", initial, card_page, handle).with_url(vec![("card", "card")]).into_router("/card/:card"));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        tokio::task::spawn_blocking(move || {
+            let Some(mut b) = Browser::open("pages") else { return };
+            let text = |b: &mut Browser| b.eval("document.body.innerText").as_str().unwrap_or("").to_string();
+            // the page's socket is open once it holds its session's token
+            let socket = "!!sessionStorage.getItem('crow-session:' + location.pathname)";
+            b.call("Page.enable", serde_json::json!({}));
+            // a day, marked: the tab's session at `/`
+            b.call("Page.navigate", serde_json::json!({ "url": format!("http://127.0.0.1:{}/?day=mon", port) }));
+            b.until("document.body.innerText.indexOf('day mon marks 0') >= 0", "the day page");
+            assert_eq!(b.eval("document.title"), serde_json::json!("Crow App"), "a page with no title of its own");
+            b.until(socket, "the day page's socket");
+            b.eval("document.querySelectorAll('button')[0].click(); 1");
+            b.until("document.body.innerText.indexOf('day mon marks 1') >= 0", "the mark's render");
+            // a card: its title follows its render, its address its fact
+            b.call("Page.navigate", serde_json::json!({ "url": format!("http://127.0.0.1:{}/card/2", port) }));
+            b.until("document.body.innerText.indexOf('card 2 marks 0') >= 0", "the card page");
+            assert_eq!(b.eval("document.title"), serde_json::json!("Card 2"), "the render's title");
+            b.until(socket, "the card page's socket");
+            b.eval("document.querySelectorAll('button')[1].click(); 1");
+            b.until("document.body.innerText.indexOf('card 2 marks 1') >= 0", "the mark's render");
+            b.eval("document.querySelectorAll('button')[0].click(); 1");
+            b.until("document.title === 'Card 3'", "the title following the render");
+            b.until("location.pathname === '/card/3'", "the address following the fact");
+            b.call("Page.reload", serde_json::json!({}));
+            b.until("document.body.innerText.indexOf('card 3 marks 1') >= 0", "the reload resuming the tab's session");
+            b.until(socket, "the reloaded page's socket");
+            // a link to another address of the day page, whose session waits
+            // for the tab: the link's address is what opens
+            b.eval("document.getElementById('tue').click(); 1");
+            b.until("document.body.innerText.indexOf('day tue marks 0') >= 0", "the link opening its address's session");
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            assert!(text(&mut b).contains("day tue marks 0"), "and staying there: {}", text(&mut b));
+            assert_eq!(b.eval("location.search"), serde_json::json!("?day=tue"));
+            b.eval("history.back(); 1");
+            b.until("document.body.innerText.indexOf('card 3 marks 1') >= 0", "the back button resuming the card's session");
+        })
+        .await
+        .unwrap();
     }
 
     /// A widget in a real browser: the program's module mounts once and
@@ -4119,6 +4383,120 @@ mod tests {
                 }
             };
             assert!(post(&url2, b"too many bytes").starts_with("HTTP/1.1 400"));
+        })
+        .await
+        .unwrap();
+    }
+
+    /// The facts a page's address carries: the path's `:name` segments
+    /// name some, the query string the rest; each is read in its fact's
+    /// shape, and the address is written back from the facts.
+    #[test]
+    fn a_page_s_address_is_its_path_s_facts_and_its_query_s() {
+        let facts = vec![("card".to_string(), "card".to_string()), ("day".to_string(), "day".to_string())];
+        let address = Address::new("/board/:card", &facts);
+        assert_eq!(address.path, vec![("card".to_string(), "card".to_string())]);
+        assert_eq!(address.query, vec![("day".to_string(), "day".to_string())]);
+        let mut state = CrowLiveState::new();
+        state.set("card", serde_json::json!(1));
+        state.set("day", serde_json::json!("sun"));
+        let path: HashMap<String, String> = [("card".to_string(), "7".to_string())].into_iter().collect();
+        let query: HashMap<String, String> = [("day".to_string(), "mon day".to_string())].into_iter().collect();
+        assert!(address.read_into(&mut state, &path, &query));
+        assert_eq!(state.get("card"), Some(&serde_json::json!(7)), "in its fact's shape");
+        assert_eq!(address.of(&state), ("/board/7".to_string(), "day=mon%20day".to_string()));
+        assert!(Address::new("/", &[]).is_empty());
+        // a path its fact cannot hold is no page; a query value is passed over
+        let bad: HashMap<String, String> = [("card".to_string(), "x".to_string())].into_iter().collect();
+        assert!(!address.read_into(&mut state, &bad, &HashMap::new()));
+    }
+
+    /// A page at `/card/:card`: the path's value and the query's are facts,
+    /// the render's title and meta are the page's head (not its body), and
+    /// when a handler moves the card the head and the address follow (spec,
+    /// Core (Server); LiveView / Pages). A socket that brings no token starts
+    /// from the address it opened at.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_page_s_path_holds_facts_and_its_head_follows_the_render() {
+        let mut initial = CrowLiveState::new();
+        initial.set("card", serde_json::json!(1));
+        initial.set("day", serde_json::json!("sun"));
+        let render = |s: &CrowLiveState| {
+            let card = s.get_i64("card", 0);
+            let meta: HashMap<String, String> = [("name".to_string(), "description".to_string()), ("content".to_string(), format!("card {}", card))].into_iter().collect();
+            CrowVNode::div(vec![
+                CrowVNode::tag("title", vec![CrowVNode::text(&format!("Card {}", card))]),
+                CrowVNode::el("meta", meta, vec![]),
+                CrowVNode::p(vec![CrowVNode::text(&format!("card={} day={}", card, s.get_str("day", "")))]),
+                CrowVNode::button(vec![CrowVNode::text("next")]).on_click("next"),
+            ])
+        };
+        let handle = |s: &mut CrowLiveState, event: &str, _: Option<&str>| {
+            if event == "next" {
+                let c = s.get_i64("card", 0);
+                s.set("card", serde_json::json!(c + 1));
+            }
+        };
+        let router = CrowLiveView::new("/_ws/card/:card", initial, render, handle).with_url(vec![("card", "card"), ("day", "day")]).into_router("/card/:card");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        tokio::task::spawn_blocking(move || {
+            use std::io::{Read, Write};
+            use tungstenite::Message as M;
+            type Socket = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>;
+            fn read(ws: &mut Socket) -> serde_json::Value {
+                loop {
+                    match ws.read() {
+                        Ok(M::Text(t)) => {
+                            let m: serde_json::Value = serde_json::from_str(&t).unwrap();
+                            if m["type"] != "session" {
+                                return m;
+                            }
+                        }
+                        other => panic!("expected a message, got {:?}", other),
+                    }
+                }
+            }
+            fn open(url: String) -> Socket {
+                let (mut ws, _) = tungstenite::connect(url).expect("the socket opens at the page's path");
+                if let tungstenite::stream::MaybeTlsStream::Plain(s) = ws.get_mut() {
+                    s.set_read_timeout(Some(std::time::Duration::from_millis(5000))).unwrap();
+                }
+                ws
+            }
+            let mut http = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(http, "GET /card/7?day=mon HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n", port).unwrap();
+            let mut page = String::new();
+            http.read_to_string(&mut page).unwrap();
+            assert!(page.contains("card=7 day=mon"), "the path and the query are facts: {}", page);
+            assert!(page.contains("<title>Card 7</title>"), "the render's title is the page's: {}", page);
+            assert!(page.contains("<meta data-crow-head=\"\" content=\"card 7\" name=\"description\">"), "{}", page);
+            let root = page.split("<div id=\"crow-root\">").nth(1).unwrap().split("<script>").next().unwrap();
+            assert!(!root.contains("<title") && !root.contains("<meta"), "the head is not the body's: {}", root);
+            assert!(page.contains("var path = '/_ws' + location.pathname;"), "the socket follows the address");
+            // a path its fact cannot hold is no page
+            let mut http = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(http, "GET /card/x HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n", port).unwrap();
+            let mut missing = String::new();
+            http.read_to_string(&mut missing).unwrap();
+            assert!(missing.starts_with("HTTP/1.1 404"), "{}", missing);
+            assert!(missing.contains("no page at /card/x"), "{}", missing);
+            let token: String = page.split("pageToken = '").nth(1).unwrap().chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+            let mut ws = open(format!("ws://127.0.0.1:{}/_ws/card/7?p={}", port, token));
+            let first = read(&mut ws);
+            assert_eq!((first["type"].as_str(), first["path"].as_str(), first["query"].as_str()), (Some("url"), Some("/card/7"), Some("day=mon")), "{}", first);
+            ws.send(M::Text(r#"{"event":"next","seq":1}"#.into())).unwrap();
+            let answer = read(&mut ws);
+            assert_eq!(answer["head"]["title"], "Card 8", "the title follows the render: {}", answer);
+            assert_eq!(answer["head"]["meta"][0]["content"], "card 8");
+            let moved = read(&mut ws);
+            assert_eq!((moved["path"].as_str(), moved["query"].as_str()), (Some("/card/8"), Some("day=mon")), "the address follows the fact: {}", moved);
+            // a socket with no token: a fresh session from its own address
+            let mut fresh = open(format!("ws://127.0.0.1:{}/_ws/card/3?q=day%3Dtue", port));
+            let first = read(&mut fresh);
+            assert!(first["html"].as_str().unwrap().contains("card=3 day=tue"), "{}", first);
+            assert_eq!(first["head"]["title"], "Card 3");
         })
         .await
         .unwrap();
@@ -4707,7 +5085,7 @@ mod tests {
         assert!(js.contains("/ws/live"));
         assert!(js.contains("data-crow-click"));
         // The default stylesheet ships in every page shell
-        let shell = page_shell("<p>x</p>", "");
+        let shell = page_shell("<p>x</p>", &Head::default(), "");
         assert!(shell.contains("--crow-bg"));
         assert!(shell.contains(".card{"));
         assert!(shell.contains("prefers-color-scheme"));
@@ -4719,11 +5097,31 @@ mod tests {
 
     #[test]
     fn test_page_shell() {
-        let shell = page_shell("<h1>Hello</h1>", "<script>alert(1)</script>");
+        let shell = page_shell("<h1>Hello</h1>", &Head::default(), "<script>alert(1)</script>");
         assert!(shell.contains("<!DOCTYPE html>"));
         assert!(shell.contains("crow-root"));
         assert!(shell.contains("<h1>Hello</h1>"));
         assert!(shell.contains("<script>alert(1)</script>"));
+        assert!(shell.contains("<title>Crow App</title>"), "a page with no title of its own");
+    }
+
+    /// A page's shell carries the head its first render placed: its title
+    /// (escaped) and each meta, marked as the render's so a later head
+    /// replaces it (spec, LiveView / Pages).
+    #[test]
+    fn a_page_s_shell_carries_the_head_its_render_placed() {
+        let head = Head {
+            title: Some("Cards & <boards>".to_string()),
+            metas: vec![vec![("content".to_string(), "A \"board\"".to_string()), ("name".to_string(), "description".to_string())]],
+        };
+        let shell = page_shell("<p>x</p>", &head, "");
+        assert!(shell.contains("<title>Cards &amp; &lt;boards&gt;</title>"), "{}", shell);
+        assert!(shell.contains("<meta data-crow-head=\"\" content=\"A &quot;board&quot;\" name=\"description\">"), "{}", shell);
+        assert!(!shell.contains("Crow App"), "{}", shell);
+        let msg = head_message(&head);
+        assert_eq!(msg["title"], "Cards & <boards>");
+        assert_eq!(msg["meta"][0]["name"], "description");
+        assert_eq!(head_message(&Head::default())["title"], "Crow App");
     }
 
     #[test]

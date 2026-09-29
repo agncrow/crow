@@ -5624,7 +5624,7 @@ mod validation_gate_tests {
 
     #[test]
     fn the_interpreter_serves_what_the_program_asks_for() {
-        let app = "use web, ui\nn = 1\nview render[]\n    return p['`n`']\n\nserve[3100, refresh = 1, keep = true]\npage['/', render, url = ['n']]\n";
+        let app = "use web, ui\nn = 1\nview render[]\n    return p['`n`']\n\nserve[3100, refresh = 1, keep = true]\npage['/', render, url = ['n']]\npage['/n/:n', render]\n";
         let lowered = lower::lower_program(&build(app).unwrap()).unwrap();
         assert_eq!(serve_line(&lowered), Some(6));
         let script = lower::lower_program(&build("x = 1\nlog[x]\n").unwrap()).unwrap();
@@ -5632,8 +5632,11 @@ mod validation_gate_tests {
         // main runs and records the page and the serve it asks for
         let (program, ctx) = ir_interp::prepare(&build(app).unwrap(), "app").unwrap();
         let it = ir_interp::run_to_serve(&program, &ctx.registry, "app.co").unwrap();
-        let (path, view, url) = it.page_config.clone().expect("page recorded");
-        assert_eq!((path.as_str(), view.as_str(), url), ("/", "render", vec!["n".to_string()]));
+        // every page, in order (the last alone had been served)
+        assert_eq!(it.pages, vec![
+            ("/".to_string(), "render".to_string(), vec!["n".to_string()]),
+            ("/n/:n".to_string(), "render".to_string(), vec![]),
+        ]);
         let serve = it.serve_config.clone().expect("serve recorded");
         assert_eq!(serve.len(), 9, "the lowered serve: port, refresh, budget, theme, density, accent, wide, keep, uploads");
     }

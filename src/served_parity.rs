@@ -74,9 +74,25 @@ fn trade_ticket(port: u16, url: &str, jar: &mut Option<String>) -> Result<(), St
 }
 
 /// The page opened at `path` with the jar's cookie, and its socket.
-fn open_page(port: u16, path: &str, jar: &Option<String>) -> Result<(CrowVNode, Socket), String> {
+/// What the tab shows beside the page: its title and its address, which
+/// the two modes must agree on as they agree on the page.
+struct Shown {
+    title: String,
+    address: String,
+}
+
+impl Shown {
+    /// The page with what the tab shows, as the modes are compared.
+    fn with(&self, page: &CrowVNode) -> String {
+        format!("{} | title: {} | address: {}", canonical(&page.to_html()), self.title, self.address)
+    }
+}
+
+fn open_page(port: u16, path: &str, jar: &Option<String>) -> Result<(CrowVNode, Socket, Shown), String> {
     use tungstenite::client::IntoClientRequest;
     let first = request(port, "GET", path, jar)?;
+    let title = first.split("<title>").nth(1).and_then(|t| t.split("</title>").next()).unwrap_or("").to_string();
+    let shown = Shown { title, address: path.to_string() };
     let token: String = first.split("pageToken = '").nth(1).unwrap_or("").chars().take_while(|c| c.is_ascii_hexdigit()).collect();
     let page = CrowVNode::raw(
         &first
@@ -96,7 +112,7 @@ fn open_page(port: u16, path: &str, jar: &Option<String>) -> Result<(CrowVNode, 
     if let tungstenite::stream::MaybeTlsStream::Plain(s) = ws.get_mut() {
         let _ = s.set_read_timeout(Some(Duration::from_millis(100)));
     }
-    Ok((page, ws))
+    Ok((page, ws, shown))
 }
 
 /// What the page shows, in one canonical form.
@@ -111,7 +127,8 @@ fn canonical(html: &str) -> String {
 /// fit fails the run: the server's idea of the page and the page's own
 /// have parted. (Waiting for quiet alone, a render slower than the quiet
 /// window under a loaded machine was missed, and the run failed.)
-fn settle(ws: &mut Socket, page: &mut CrowVNode, port: u16, jar: &mut Option<String>, files: &mut Vec<(String, String)>, picked: &mut Option<Vec<u8>>, seq: Option<u64>) -> Result<(), String> {
+#[allow(clippy::too_many_arguments)]
+fn settle(ws: &mut Socket, page: &mut CrowVNode, shown: &mut Shown, port: u16, jar: &mut Option<String>, files: &mut Vec<(String, String)>, picked: &mut Option<Vec<u8>>, seq: Option<u64>) -> Result<(), String> {
     let end = Instant::now() + Duration::from_secs(20);
     let mut quiet_since = Instant::now();
     let mut answered = seq.is_none();
@@ -121,6 +138,15 @@ fn settle(ws: &mut Socket, page: &mut CrowVNode, port: u16, jar: &mut Option<Str
                 if let Ok(m) = serde_json::from_str::<serde_json::Value>(&t) {
                     if let (Some(want), Some(n)) = (seq, m["ack"].as_u64()) {
                         answered |= n >= want;
+                    }
+                    // the head a render placed, and the address it moved to
+                    if let Some(t) = m["head"]["title"].as_str() {
+                        shown.title = t.to_string();
+                    }
+                    if m["type"] == "url" {
+                        let (path, query) = (m["path"].as_str().unwrap_or(""), m["query"].as_str().unwrap_or(""));
+                        let path = if path.is_empty() { shown.address.split('?').next().unwrap_or("/").to_string() } else { path.to_string() };
+                        shown.address = if query.is_empty() { path } else { format!("{}?{}", path, query) };
                     }
                     if let Some(h) = m["html"].as_str() {
                         *page = CrowVNode::raw(h).as_built();
@@ -202,9 +228,9 @@ fn drive(exe: &std::path::Path, mode: &[&str], file: &std::path::Path, port: u16
         let mut jar: Option<String> = None;
         let mut files: Vec<(String, String)> = Vec::new();
         let mut picked: Option<Vec<u8>> = None;
-        let (mut page, mut ws) = open_page(port, &open, &jar)?;
-        settle(&mut ws, &mut page, port, &mut jar, &mut files, &mut picked, None)?;
-        let mut pages = vec![canonical(&page.to_html())];
+        let (mut page, mut ws, mut shown) = open_page(port, &open, &jar)?;
+        settle(&mut ws, &mut page, &mut shown, port, &mut jar, &mut files, &mut picked, None)?;
+        let mut pages = vec![shown.with(&page)];
         let mut seq = 0;
         for (i, step) in steps.iter().enumerate() {
             // the first step's address opened the page above; a later one
@@ -214,11 +240,12 @@ fn drive(exe: &std::path::Path, mode: &[&str], file: &std::path::Path, port: u16
                     continue;
                 }
                 let _ = ws.close(None);
-                let (p, w) = open_page(port, path, &jar)?;
+                let (p, w, t) = open_page(port, path, &jar)?;
                 page = p;
                 ws = w;
-                settle(&mut ws, &mut page, port, &mut jar, &mut files, &mut picked, None)?;
-                pages.push(canonical(&page.to_html()));
+                shown = t;
+                settle(&mut ws, &mut page, &mut shown, port, &mut jar, &mut files, &mut picked, None)?;
+                pages.push(shown.with(&page));
                 continue;
             }
             let now = pages.last().cloned().unwrap_or_default();
@@ -263,8 +290,8 @@ fn drive(exe: &std::path::Path, mode: &[&str], file: &std::path::Path, port: u16
                 m
             };
             ws.send(tungstenite::Message::Text(msg.to_string().into())).map_err(|e| e.to_string())?;
-            settle(&mut ws, &mut page, port, &mut jar, &mut files, &mut picked, Some(seq))?;
-            pages.push(canonical(&page.to_html()));
+            settle(&mut ws, &mut page, &mut shown, port, &mut jar, &mut files, &mut picked, Some(seq))?;
+            pages.push(shown.with(&page));
         }
         let _ = ws.close(None);
         Ok(pages)

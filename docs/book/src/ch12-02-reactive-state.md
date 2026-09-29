@@ -194,6 +194,67 @@ sit beside the actions: `actions = map[Delete = delete_session], confirm =
 map[Delete = 'Delete this session?']`. In a test `click[a, end_session]`
 runs the handler itself — the question is the page's, not the program's.
 
+## Pages, their addresses and their titles
+
+An app serves every `page` it registers, in both modes, and each page is
+a session of its own. A `:name` segment of a page's path is a fact in its
+address, the way `url = […]` puts facts in the query string:
+
+```crow
+use web, ui
+
+card = 1
+
+fn next_card[]
+    card = card + 1
+
+view board[]
+    return stack[
+        title['Cards'],
+        nav[a['Card 1', href = '/card/1'], a['Card 2', href = '/card/2']]
+    ]
+
+view card_page[]
+    return stack[
+        title['Card `card`'],
+        meta[name = 'description', content = 'The card numbered `card`'],
+        p['card `card`'],
+        button['Next', click = next_card]
+    ]
+
+test a_card_names_itself[]
+    a = app[card_page]
+    click[a, next_card]
+    assert[elements[a, 'title'][0].text eq 'Card 2']
+
+page['/', board]
+page['/card/:card', card_page]
+log['two pages']
+```
+
+```text
+two pages
+```
+
+`/card/7` opens a session with `card` set to `7`, read in the fact's shape,
+and when Next makes it `8` the address becomes `/card/8`, so a reload or a
+shared link opens that card. A value the fact cannot hold, `/card/x`, is no
+page: a 404, as is an address no page or route answers. The path says
+which thing the page shows; the query string (`url = […]`) tunes how, and
+a page can have both. A `:name` must name a fact, or the program is refused
+before it runs.
+
+A link is an `a` with an `href`, alone or in a `nav`. Following one opens
+the session of the address it names, even to the page you are on: a link
+to `/?day=tue` from `/?day=mon` starts from Tuesday. Reloading the tab, or
+coming back with the browser's back button, resumes the tab's own session.
+
+`title` and `meta` are the page's head. They take no room on the page: the
+tab shows the title, and a render that changes it changes the tab. The last
+title a page places wins, so a layout's default gives way to the page's
+own, and a page that places none is titled `Crow App`. In a test they are
+elements of the render, as above.
+
 ## Who the reader is
 
 A page knows who is reading it through `reader`: a map of strings, empty

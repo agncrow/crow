@@ -5,7 +5,7 @@ use super::program::{fn_named, map_literal_pairs};
 use super::*;
 
 /// Elements with no children.
-const VOID_ELEMENTS: &[&str] = &["input", "img", "divider"];
+const VOID_ELEMENTS: &[&str] = &["input", "img", "divider", "meta"];
 
 impl Emitter {
     fn lit(e: &Expr) -> Option<String> {

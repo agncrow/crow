@@ -110,7 +110,7 @@ All 17 server-side modules implemented with 119 tests passing:
 #### Client-side WASM — rejected
 Rejected in favor of the Crow UI framework (see below). Building a WASM frontend pipeline would require `wasm-bindgen`, `web-sys`, and a reactive runtime — essentially building React/Svelte from scratch. The UI framework approach achieves the same goal (one-language full-stack) with pure Crow libraries and server-rendered HTML.
 
-#### P8 — UI Framework — in progress (Phases 1–2 done; `view` blocks, `later`, style and chart modules shipped since — see the status table above)
+#### P8 — UI Framework — in progress (Phases 1–3 done; `view` blocks, `later`, style and chart modules shipped since — see the status table above)
 
 > **See [docs/ui-framework.md](ui-framework.md) for the full design document.**
 
@@ -143,12 +143,12 @@ Goal: `fetch[url]`, `poll[url, seconds]`, `field[label, var]`, `select[options, 
 - [x] **JS runtime** — `morphChildren` preserves input focus and values during re-render
 - [x] **VNode constructors** — all HTML elements in transpiler have matching `CrowVNode` methods
 
-##### Phase 3: Multi-Page App (routing + layout) — next
+##### Phase 3: Multi-Page App (routing + layout) ✅
 
-- [x] **Multiple `page` routes** — several routes on one app (`page[path, view]` per route)
-- [ ] **URL parameters** — route params (`:id`), query params (`?q=foo`)
+- [x] **Multiple `page` routes** — several routes on one app (`page[path, view]` per route), each a session of its own, served in both modes (`crow run -i` had served only the last); an address no page answers is a 404
+- [x] **URL parameters** — a path's `:name` is a fact in the page's address (`page['/card/:card', card_page]`), a query's facts are `url = […]`; the address follows both, and a link to another address of the page opens that address's session
 - [x] **Layout functions** — `layout.co`, applied to every page
-- [ ] **`title[]`, `meta[]`** — per-route head management
+- [x] **`title[]`, `meta[]`** — per-route head management: elements a view places, which a served page carries in its head and a render keeps current
 - [x] **CSS** — `static_dir` for stylesheets, and the default stylesheet (`css/app.css` hatch)
 
 ##### Phase 4: Real App Features

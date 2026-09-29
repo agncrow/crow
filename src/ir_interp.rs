@@ -144,8 +144,9 @@ pub struct IrInterp {
     /// Whether a render adds the harness's own toast for a page that shows
     /// no notice — the test's page; a served page gets the runtime's.
     pub(crate) harness_toast: bool,
-    /// What `page[…]` asked for: the path, the view, the url facts.
-    pub(crate) page_config: Option<(String, String, Vec<String>)>,
+    /// What each `page[…]` asked for, in order: the path, the view, the url
+    /// facts. `crow run -i` serves every one.
+    pub(crate) pages: Vec<(String, String, Vec<String>)>,
     /// What `serve[…]` asked for, as its lowered arguments.
     pub(crate) serve_config: Option<Vec<CrowValue>>,
     /// Why the last transaction stopped, when it did.
@@ -447,7 +448,7 @@ impl IrInterp {
             session_mails: HashMap::new(),
             held: None,
             notice_read: false,
-            page_config: None,
+            pages: Vec::new(),
             serve_config: None,
             last_stop: None,
             returning: None,
@@ -2526,7 +2527,7 @@ impl IrInterp {
                     Some(Value::Array(items)) => items.iter().map(|i| format!("{}", i.value)).collect(),
                     _ => Vec::new(),
                 };
-                self.page_config = Some((path, view, url));
+                self.pages.push((path, view, url));
                 CrowValue::done()
             }
             "serve" => {
