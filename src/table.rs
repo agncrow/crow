@@ -147,7 +147,7 @@ pub enum Fails {
 }
 
 pub struct Row {
-    /// The id the IR names the row by, as `Target::Runtime`.
+    /// The id the IR names the row by (`Target::Row`, an effect's `row`).
     pub id: &'static str,
     /// The Crow name, and the module it is in ("" for the core).
     pub name: &'static str,
@@ -167,6 +167,12 @@ pub struct Row {
     /// interpreter's `xs = push[xs, x]` grows the list where it lies, as the
     /// compiled program's does).
     pub take: fn(Vec<CrowValue>, &str) -> Result<CrowValue, String>,
+}
+
+impl std::fmt::Debug for Row {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Row({})", self.id)
+    }
 }
 
 impl Row {
@@ -1282,8 +1288,9 @@ pub fn core(name: &str) -> Option<&'static Row> {
 
 /// A core builtin's row for a call with these arguments: the first whose
 /// count and kinds take them (`min` of two ints, or of numbers). The
-/// interpreter reads the arguments from its values, the emitter and
-/// inference from their types, so the modes pick one row.
+/// lowering reads the arguments from their types and the IR names the row
+/// it picks; a call it leaves by name (an argument of unknown kind, a
+/// parsed value) has its row picked from the values as the program runs.
 pub fn core_row(name: &str, args: &[Arg]) -> Option<&'static Row> {
     ROWS.iter().filter(|r| r.module.is_empty() && r.name == name).find(|r| takes(r, args))
 }
@@ -1349,8 +1356,9 @@ fn listed(items: &[String], last: &str) -> String {
 }
 
 /// What an argument is, as the choice among a name's rows reads it: from
-/// the interpreter's value, or from the IR's type (the verifier keeps the
-/// two agreeing, so both modes choose the same row).
+/// the IR's type, where the lowering picks the row the IR names; or, for a
+/// call the IR leaves by name, from the interpreter's value and the
+/// emitter's type.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Arg {
     Int,
@@ -1392,6 +1400,10 @@ pub enum Arg {
     Frame,
     /// A function.
     Fn,
+    /// A list whose items are not known here — an empty one, or one of
+    /// parsed values: any parameter that takes a list takes it, and no
+    /// other (it is a list, whatever it holds).
+    AnyList,
     /// Not known here: any parameter takes it.
     Unknown,
 }
@@ -1422,6 +1434,7 @@ impl Arg {
             Arg::Sparse => "a sparse matrix",
             Arg::Frame => "a frame",
             Arg::Fn => "a function",
+            Arg::AnyList => "a list",
             Arg::Unknown => "a value",
         }
     }
@@ -1435,7 +1448,7 @@ impl Arg {
             CrowType::Float => Arg::Float,
             CrowType::Json => Arg::Json,
             CrowType::Array(inner) => match inner.as_ref() {
-                CrowType::Unknown => Arg::Unknown,
+                CrowType::Unknown => Arg::AnyList,
                 CrowType::Result(item) if matches!(item.as_ref(), CrowType::Int | CrowType::Float) => Arg::FallibleNumbers,
                 CrowType::Result(_) => Arg::Fallible,
                 i => Arg::of_items(Arg::of_type(i)),
@@ -1465,7 +1478,7 @@ impl Arg {
             Arg::Map => Arg::Maps,
             // a list of parsed values (or of cells no description typed yet)
             // is one whose items' kind shows as the program runs
-            Arg::Unknown | Arg::Json => Arg::Unknown,
+            Arg::Unknown | Arg::Json | Arg::AnyList => Arg::AnyList,
             _ => Arg::Items,
         }
     }
@@ -1480,7 +1493,7 @@ impl Arg {
             Value::NumArray(_) => Arg::Tensor,
             Value::Array(items) => match items.first() {
                 Some(first) => Arg::of_items(Arg::of_value(first)),
-                None => Arg::Unknown,
+                None => Arg::AnyList,
             },
             Value::Str(_) => Arg::Text,
             Value::Bool(_) => Arg::Truth,
@@ -1534,6 +1547,10 @@ impl Kind {
 
     /// Whether a parameter of this kind takes an argument of that kind.
     fn takes(self, a: Arg) -> bool {
+        // a list whose items are not known could be any list
+        if a == Arg::AnyList {
+            return [Arg::Ints, Arg::Floats, Arg::Texts, Arg::Truths, Arg::Tensors, Arg::Records, Arg::Maps, Arg::Items].iter().any(|l| self.takes(*l));
+        }
         a == Arg::Unknown
             || match self.each() {
                 Kind::Int | Kind::Float => matches!(a, Arg::Int | Arg::Float),
@@ -1788,7 +1805,13 @@ mod tests {
         assert_eq!(Arg::of_type(&fallible), Arg::FallibleNumbers);
         assert!(core_row("sum", &[Arg::FallibleNumbers]).is_none(), "sum is math's");
         assert!(module("math", "sum", &[Arg::FallibleNumbers]).is_some_and(|r| takes(r, &[Arg::FallibleNumbers])));
-        assert_eq!(Arg::of_type(&CrowType::Array(Box::new(CrowType::Json))), Arg::Unknown);
+        // a list of parsed values is a list, whatever its items turn out to
+        // be: a list's parameter takes it, a text's does not
+        assert_eq!(Arg::of_type(&CrowType::Array(Box::new(CrowType::Json))), Arg::AnyList);
+        assert_eq!(Arg::of_type(&CrowType::Array(Box::new(CrowType::Unknown))), Arg::AnyList);
+        assert_eq!(core_row("len", &[Arg::AnyList]).map(|r| r.id), Some("core.len"));
+        assert!(core_row("upper", &[Arg::AnyList]).is_none());
+        assert!(refusal(&[""], "upper", &[Arg::AnyList]).is_some());
         assert!(refusal(&[""], "upper", &[Arg::Json]).is_some_and(|e| e.ends_with(READ_FIRST)));
     }
 

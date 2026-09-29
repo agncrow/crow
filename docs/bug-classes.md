@@ -653,6 +653,58 @@ session's state (`later`, `running`, `notice`), a function argument the
 walker calls (`any`, `all`, `find`, `grad`), placement (`cpu`, `gpu`,
 `nodes`), a test block, and a chart's tree.
 
+**Rows picked once** (2026-09-28), with parity 121. A name has several
+rows (`len` of text, of a list, of a map, …), and each backend had picked
+among them: the interpreter by the values (`runtime_call`, the module
+registry's `call_at`), the emitter by the types (`row_for`, `emit_at`).
+The emitter also turned a qualified `math.sqrt` back into a bare call, and
+worked out again from the registry whether a module's call can fail. Two
+decisions of one thing can drift. The lowering now picks the row from the
+arguments' types, by the rule the emitter had: the core's row first; a
+name the core and math both answer is math's for a tensor; a frame
+function the core answers too is the frame's given a frame; a ui control,
+or an element in a view, is a form of its own. The IR names the row
+(`Target::Row`, and an effect's `row`): the interpreter calls it (grad's
+dual numbers keep their own form), and the emitter prints it.
+
+- The oracle: the Rust the emitter prints is byte-identical before and
+  after for every tracked program, doc block and finch (1,128 outputs,
+  their types too), so the lowering's pick is the emitter's. The IR
+  differs only in naming each call's row. The verifier checks each
+  argument against the named row, and reports a call left by name whose
+  arguments pick a row: none.
+- A list whose items are not known (an empty literal's, or one of parsed
+  values) was read as a value of unknown kind, which any parameter takes,
+  so the first row of the name was picked, whatever it took. It is read
+  as a list now (`Arg::AnyList`): a list's parameter takes it, and no
+  other.
+- Running the named rows found where the interpreter held numbers in
+  another form than the IR types them, which its own choice of row had
+  read past. A collecting loop of numbers was a tensor of floats, where
+  the IR and the compiled program have a list of ints. A numeric literal
+  was a tensor wherever the IR typed it. A list of numbers read back from
+  a compiled session (the app a test opens) came back a tensor. Each is
+  held as the IR types it now: parity 57 and 58, the collecting bench and
+  three of finch's test files found them.
+- And one the compiled program had: a tensor assigned to a variable that
+  holds a list (`xs = []`, then `xs = [1.5]`) did not build ("expected
+  array but got CrowTensor") while the interpreter ran it. The lowering
+  converts where they meet now, either way round (parity 122).
+- Checking the named row found the verifier and the table disagreeing:
+  finch hands a list of parsed values to `with`'s cells, which the table
+  takes (any list) and the verifier's own reading refused. The call had
+  never been checked, being left by name. The verifier reads such a list
+  as the table does.
+- What stays by name, measured on the corpus: 226 calls in 62 files,
+  against 5,872 that name their row. They are calls on a value the
+  lowering does not type — a harness's answer in a test
+  (`contains[html[a], …]`), a parameter of a function nothing types — and
+  calls on a parsed JSON value, which the interpreter holds as the value it
+  parsed to and the compiled program as JSON, so a JSON row in the
+  interpreter would convert the value at every call. Typing a test's
+  harness answers, and the parameters of functions only a test or `grad`
+  calls, is what takes the first kind away.
+
 ## Decisions (Vijay, 2026-09-28)
 
 The questions the work raised, each decided as recommended.

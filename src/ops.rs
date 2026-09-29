@@ -805,14 +805,16 @@ pub fn array_literal(vals: Vec<CrowValue>) -> Result<CrowValue, String> {
     Ok(CrowValue::ok(Value::Array(vals)))
 }
 
-/// What a collecting loop yields: iterations that produced nothing are
-/// skipped, all numbers make a tensor, anything else a list.
-pub fn collect_loop(results: Vec<CrowValue>) -> CrowValue {
+/// What a collecting loop gathers, held as the IR types it: numbers it
+/// holds as a tensor are one, and anything else is the list of what was
+/// yielded, ints kept ints — the compiled program's `Vec` (a loop of ints
+/// had been a tensor of floats, whose own rows the values then picked).
+pub fn collect_loop(results: Vec<CrowValue>, as_tensor: bool) -> CrowValue {
     // an iteration that yielded nothing is skipped; one that yielded an
     // error keeps it as its item (an error's value is `Done` too)
     let filtered: Vec<CrowValue> = results.into_iter().filter(|v| !(v.is_ok() && matches!(v.value, Value::Done))).collect();
     let all_numeric = !filtered.is_empty() && filtered.iter().all(|v| v.is_ok() && matches!(v.value, Value::Int(_) | Value::Float(_)));
-    if all_numeric {
+    if as_tensor && all_numeric {
         let data: Vec<f64> = filtered.iter().map(|v| match &v.value {
             Value::Int(n) => *n as f64,
             Value::Float(f) => *f,

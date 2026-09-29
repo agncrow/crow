@@ -34,14 +34,14 @@ pub(crate) fn map_literal_pairs(e: &Expr) -> Option<Vec<(String, Expr)>> {
     let mut cur = Emitter::raw(e);
     loop {
         match cur {
-            Expr::Call { target: Target::Runtime(p), args, .. } if (p == "core.map_set" || p == "set") && args.len() == 3 => {
+            Expr::Call { target: Target::Runtime(_) | Target::Row(_), args, .. } if crate::ir::call_name(cur).as_deref() == Some("set") && args.len() == 3 => {
                 match Emitter::raw(&args[1]) {
                     Expr::Const(Const::Str(k), _) => out.push((k.clone(), Emitter::raw(&args[2]).clone())),
                     _ => return None,
                 }
                 cur = Emitter::raw(&args[0]);
             }
-            Expr::Call { target: Target::Runtime(p), args, .. } if p == "map" && args.is_empty() => {
+            Expr::Call { target: Target::Runtime(_) | Target::Row(_), args, .. } if crate::ir::call_name(cur).as_deref() == Some("map") && args.is_empty() => {
                 out.reverse();
                 return Some(out);
             }
@@ -506,7 +506,7 @@ impl Emitter {
             let text = self.top_level_expr(&value);
             let open_list = matches!(Emitter::raw(&value), Expr::ListLit(items, _) if items.is_empty());
             let open_map = matches!(Emitter::raw(&value), Expr::MapLit(p, _) if p.is_empty())
-                || matches!(Emitter::raw(&value), Expr::Call { target: Target::Runtime(n), args, .. } if n == "map" && args.is_empty());
+                || matches!(Emitter::raw(&value), e @ Expr::Call { target: Target::Runtime(_) | Target::Row(_), args, .. } if crate::ir::call_name(e).as_deref() == Some("map") && args.is_empty());
             let default = if widened {
                 format!("({}) as f64", text)
             } else if open_list {

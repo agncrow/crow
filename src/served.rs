@@ -52,8 +52,10 @@ pub(crate) fn json_to_fact(j: &serde_json::Value, declared: &CrowValue) -> CrowV
 }
 
 /// A value back from JSON by the type the program gives it: a record
-/// from the object of its fields, a list of records item by item, a
-/// tensor from its numbers; anything else as `json_to_fact` reads it.
+/// from the object of its fields, a list item by item (numbers the program
+/// holds as a list are a list, not a tensor: the rows the IR names read
+/// them as one), a tensor from its numbers; anything else as `json_to_fact`
+/// reads it.
 pub(crate) fn json_to_typed(j: &serde_json::Value, ty: &crate::ir::Ty, template: &IrInterp, declared: &CrowValue) -> CrowValue {
     use crate::ir::Ty;
     match (ty, j) {
@@ -68,7 +70,7 @@ pub(crate) fn json_to_typed(j: &serde_json::Value, ty: &crate::ir::Ty, template:
             }
             None => json_to_fact(j, declared),
         },
-        (Ty::List(item), serde_json::Value::Array(items)) if matches!(item.payload(), Ty::Record(_) | Ty::OptRecord(_) | Ty::List(_) | Ty::Tensor(_)) => {
+        (Ty::List(item), serde_json::Value::Array(items)) => {
             let none = CrowValue::ok(Value::Done);
             CrowValue::ok(Value::Array(items.iter().map(|x| json_to_typed(x, item, template, &none)).collect()))
         }
@@ -240,4 +242,26 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
         crow_web::live::files::configure_uploads(int_of(serve_args.get(8)));
         app.serve(port).await.map_err(|e| format!("the server stopped: {}", e))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::Ty;
+
+    /// A value read back from a compiled session is held as the IR types it:
+    /// numbers the program holds as a list are a list, a tensor's numbers a
+    /// tensor (finch's `clock.chain.v`, read from the compiled app, had come
+    /// back a tensor, which the row the IR names for `len` does not read).
+    #[test]
+    fn a_value_back_from_json_is_held_as_the_ir_types_it() {
+        let it = crate::ir_interp::run_script(&crate::build("x = 1\n").unwrap(), "t").unwrap();
+        let done = CrowValue::ok(Value::Done);
+        let listed = json_to_typed(&serde_json::json!([1.5, 2.0]), &Ty::List(Box::new(Ty::Float)), &it, &done);
+        assert!(matches!(&listed.value, Value::Array(items) if items.len() == 2 && items.iter().all(|x| matches!(x.value, Value::Float(_)))), "{}", listed.value);
+        let ints = json_to_typed(&serde_json::json!([1, 2]), &Ty::List(Box::new(Ty::Int)), &it, &done);
+        assert!(matches!(&ints.value, Value::Array(items) if items.iter().all(|x| matches!(x.value, Value::Int(_)))), "{}", ints.value);
+        let tensor = json_to_typed(&serde_json::json!([1.5, 2.0]), &Ty::Tensor(Box::new(Ty::Float)), &it, &done);
+        assert!(matches!(tensor.value, Value::NumArray(_)), "{}", tensor.value);
+    }
 }

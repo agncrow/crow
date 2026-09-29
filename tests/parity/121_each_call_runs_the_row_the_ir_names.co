@@ -1,0 +1,33 @@
+--- Each builtin call runs the row the IR names: the lowering picks it once,
+--- from its arguments' types, and both modes call that function (docs/
+--- bug-classes.md §4), where the interpreter had picked a row by the values
+--- and the compiled program one by the types. A name the core and math both
+--- answer is math's for a tensor; a qualified call to math is its bare call;
+--- a list whose items are not known is a list; an effect's call is its row.
+use math
+s = 'héllo'
+xs = ['b', 'a', 'c']
+m = map[a = 1, b = 2]
+t = [3.0, -4.0]
+log[len[s]]
+log[len[xs]]
+log[len[m]]
+log[len[t]]
+log[abs[-2]]
+log[abs[-2.5]]
+log[abs[t]]
+log[max[1, 2]]
+log[max[1.5, 2]]
+log[min[t]]
+log[mean[t]]
+log[math.sqrt[16.0]]
+log[sort[xs]]
+log[contains[xs, 'a']]
+log[contains[s, 'll']]
+log[slice[s, 1, 3]]
+log[slice[xs, 0, 2]]
+empty = []
+log[len[empty]]
+log[pop[empty]]
+r = read['no-such-file.txt']
+log[r.ok]

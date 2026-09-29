@@ -322,11 +322,17 @@ pub enum Const {
 
 #[derive(Debug, Clone)]
 pub enum Target {
-    /// A runtime function by its table name: `core.push`, `io.fs_read`.
+    /// A builtin's row (crate::table): the runtime function both backends
+    /// call, picked once by the lowering from its arguments' types.
+    Row(&'static crate::table::Row),
+    /// A builtin by its name or table path (`core.push`): one with a form
+    /// of its own (the table's OWN_FORM, the harness's words, a ui
+    /// control), or one whose row its values pick as the program runs —
+    /// an argument whose kind the lowering does not know.
     Runtime(String),
     /// A user function, by its (specialised) name.
     User(String),
-    /// A module function: `math.sqrt`, `frame.load`, `db.connect`.
+    /// A module function with a form of its own: `db.connect`.
     Module(String, String),
 }
 
@@ -384,7 +390,9 @@ pub enum Expr {
     Call { target: Target, args: Vec<Expr>, ty: Ty, propagates: bool },
     /// A call that reaches outside the program's values; `answered` when
     /// its value is used (runs when asked), held to commit otherwise.
-    Effect { name: String, args: Vec<Expr>, ty: Ty, answered: bool, propagates: bool },
+    /// `row`: the builtin's row the call inside is, picked by the lowering
+    /// as a call's is (none: a form of its own, or a row its values pick).
+    Effect { name: String, row: Option<&'static crate::table::Row>, args: Vec<Expr>, ty: Ty, answered: bool, propagates: bool },
     Convert { how: Convert, expr: Box<Expr>, ty: Ty },
     Binary { op: String, l: Box<Expr>, r: Box<Expr>, ty: Ty },
     Unary { op: String, expr: Box<Expr>, ty: Ty },
@@ -660,6 +668,7 @@ pub fn call_name(e: &Expr) -> Option<String> {
         Expr::Call { target: Target::Runtime(path), .. } => {
             Some(RUNTIME_TABLE.iter().find(|(_, r)| *r == path.as_str()).map(|(b, _)| b.to_string()).unwrap_or_else(|| path.clone()))
         }
+        Expr::Call { target: Target::Row(row), .. } => Some(row.name.to_string()),
         Expr::Call { target: Target::User(n), .. } => Some(n.clone()),
         Expr::Call { target: Target::Module(_, n), .. } => Some(n.clone()),
         Expr::Effect { name, .. } => Some(name.rsplit('.').next().unwrap_or(name).to_string()),
@@ -939,16 +948,17 @@ pub fn expr(e: &Expr) -> String {
         Expr::FnRef(f, _) => format!("fn {}", f),
         Expr::Call { target, args, .. } => {
             let t = match target {
+                Target::Row(row) => row.id.to_string(),
                 Target::Runtime(n) => n.clone(),
                 Target::User(n) => format!("call {}", n),
                 Target::Module(m, n) => format!("{}.{}", m, n),
             };
             format!("{}({})", t, args.iter().map(expr).collect::<Vec<_>>().join(", "))
         }
-        Expr::Effect { name, args, answered, .. } => {
+        Expr::Effect { name, row, args, answered, .. } => {
             format!(
                 "{}!{}({})",
-                name,
+                row.map_or(name.as_str(), |r| r.id),
                 if *answered { "now" } else { "held" },
                 args.iter().map(expr).collect::<Vec<_>>().join(", ")
             )

@@ -819,7 +819,12 @@ impl Emitter {
     /// `x = push[x, v]`: an in-place builtin whose collection is `x` itself.
     fn in_place_call_on(e: &Expr, var: &str) -> bool {
         match e {
-            Expr::Call { target: Target::Runtime(path), args, .. } => {
+            Expr::Call { target: target @ (Target::Runtime(_) | Target::Row(_)), args, .. } => {
+                let path = match target {
+                    Target::Row(row) if row.module.is_empty() => row.name,
+                    Target::Runtime(path) => path.as_str(),
+                    _ => return false,
+                };
                 // only when the right side reads the variable once (spec:
                 // `xs = push[xs, float[len[xs]]]` reads it again after the
                 // move, and is a copy)

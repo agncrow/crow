@@ -19,6 +19,16 @@ use std::sync::Arc;
 /// core builtin, as the AST walker routes them.
 const OVERLAPPING: &[&str] = &["abs", "sqrt", "floor", "ceil", "round", "min", "max"];
 
+/// A call of the core's `len`: by the row the IR names, or by the name its
+/// values pick a row for.
+fn is_len(target: &Target) -> bool {
+    match target {
+        Target::Row(row) => row.module.is_empty() && row.name == "len",
+        Target::Runtime(name) => name == "len",
+        _ => false,
+    }
+}
+
 enum Flow {
     Next,
     Return(CrowValue),
@@ -950,8 +960,8 @@ impl IrInterp {
             }
             // the length of a local, read where it lies: a list is not
             // copied to be measured (a loop over a growing list was quadratic)
-            Expr::Call { target: Target::Runtime(name), args, .. }
-                if name == "len" && args.len() == 1 && matches!(unwrapped(&args[0]), Expr::Local(..)) && !self.registry.has_function("len") =>
+            Expr::Call { target, args, .. }
+                if is_len(target) && args.len() == 1 && matches!(unwrapped(&args[0]), Expr::Local(..)) && !self.registry.has_function("len") =>
             {
                 let Expr::Local(v, _) = unwrapped(&args[0]) else { unreachable!() };
                 let trace = self.trace_entry();
@@ -959,11 +969,11 @@ impl IrInterp {
                 if b.is_error() {
                     return Ok(b.clone());
                 }
-                Self::core_rows("len", std::slice::from_ref(b), &trace, false).unwrap_or_else(|| Err("len[] is not a builtin".into()))?
+                Self::len_of(target, b, &trace)?
             }
             // ... and of a local's field: a struct's list, a frame's column
-            Expr::Call { target: Target::Runtime(name), args, .. }
-                if name == "len" && args.len() == 1 && !self.registry.has_function("len") && matches!(unwrapped(&args[0]), Expr::Field { base, name, .. } if self.field_in_place(base, name)) =>
+            Expr::Call { target, args, .. }
+                if is_len(target) && args.len() == 1 && !self.registry.has_function("len") && matches!(unwrapped(&args[0]), Expr::Field { base, name, .. } if self.field_in_place(base, name)) =>
             {
                 let Expr::Field { base: owner, name: field, .. } = unwrapped(&args[0]) else { unreachable!() };
                 let trace = self.trace_entry();
@@ -974,7 +984,7 @@ impl IrInterp {
                     Value::Map(m) => &m[field.as_str()],
                     _ => unreachable!(),
                 };
-                Self::core_rows("len", std::slice::from_ref(item), &trace, false).unwrap_or_else(|| Err("len[] is not a builtin".into()))?
+                Self::len_of(target, item, &trace)?
             }
             Expr::Call { target, args, propagates, .. } => {
                 let vals = self.eval_args(args)?;
@@ -984,12 +994,13 @@ impl IrInterp {
                     }
                 }
                 match target {
+                    Target::Row(row) => self.row_call(row, vals)?,
                     Target::Runtime(path) => self.runtime_call(path, vals)?,
                     Target::User(name) => self.call_user(name, vals)?,
                     Target::Module(m, f) => self.module_call(m, f, vals)?,
                 }
             }
-            Expr::Effect { name, args, propagates, answered, .. } => {
+            Expr::Effect { name, row, args, propagates, answered, .. } => {
                 let vals = self.eval_args(args)?;
                 if *propagates {
                     if let Some(err) = self.first_error(&vals) {
@@ -997,7 +1008,7 @@ impl IrInterp {
                     }
                 }
                 let asked = std::mem::replace(&mut self.answering, *answered);
-                let r = self.effect(name, vals);
+                let r = self.effect(name, *row, vals);
                 self.answering = asked;
                 r?
             }
@@ -1201,12 +1212,19 @@ impl IrInterp {
                 }
                 CrowValue::ok(Value::Str(out))
             }
-            Expr::ListLit(items, _) => {
+            Expr::ListLit(items, ty) => {
                 let mut vals = Vec::with_capacity(items.len());
                 for i in items {
                     vals.push(self.eval(i)?);
                 }
-                crate::ops::array_literal(vals)?
+                // held as the IR types it: a list the program grows as one
+                // is a list, the compiled program's `Vec` (numbers written
+                // as a list literal had been a tensor however the IR typed
+                // them, whose own rows the values then picked)
+                match ty.payload() {
+                    Ty::List(_) => CrowValue::ok(Value::Array(vals)),
+                    _ => crate::ops::array_literal(vals)?,
+                }
             }
             Expr::MapLit(pairs, _) => {
                 let mut map = std::collections::BTreeMap::new();
@@ -1226,7 +1244,8 @@ impl IrInterp {
                 }
                 CrowValue::ok(Value::StructInstance(Box::new(StructInstance { name: name.clone(), fields: vals })))
             }
-            Expr::ForExpr { var, iter, body, parallel, .. } => {
+            Expr::ForExpr { var, iter, body, parallel, ty } => {
+                let as_tensor = matches!(ty.payload(), Ty::Tensor(_));
                 let it = self.eval(iter)?;
                 // refused like the statement form's; a function hands the
                 // error back from here, as from a return inside the loop
@@ -1242,7 +1261,7 @@ impl IrInterp {
                 let items = crate::ops::iter_items(&it)?;
                 if *parallel && items.len() > 1 {
                     let results = self.run_parallel(&items, var, body, true)?;
-                    return Ok(crate::ops::collect_loop(results));
+                    return Ok(crate::ops::collect_loop(results, as_tensor));
                 }
                 let mut results = Vec::with_capacity(items.len());
                 for item in items {
@@ -1265,7 +1284,7 @@ impl IrInterp {
                     }
                     results.push(yielded.unwrap_or_else(CrowValue::done));
                 }
-                crate::ops::collect_loop(results)
+                crate::ops::collect_loop(results, as_tensor)
             }
         })
     }
@@ -1278,8 +1297,9 @@ impl IrInterp {
     /// module's function of the same name, a kind no row takes) goes the
     /// ordinary way.
     fn assign_in_place(&mut self, var: &str, expr: &Expr) -> Result<bool, String> {
-        let (name, args) = match expr {
-            Expr::Call { target: Target::Runtime(name), args, .. } => (name.rsplit('.').next().unwrap_or(name), args),
+        let (name, args, named) = match expr {
+            Expr::Call { target: Target::Runtime(name), args, .. } => (name.rsplit('.').next().unwrap_or(name), args, None),
+            Expr::Call { target: Target::Row(row), args, .. } if row.module.is_empty() => (row.name, args, Some(*row)),
             _ => return Ok(false),
         };
         // the runtime table's names for the map builtins (ir::RUNTIME_TABLE)
@@ -1298,7 +1318,7 @@ impl IrInterp {
         if !crate::ast::IN_PLACE_BUILTINS.contains(&name) || !matches!(list, Some(Expr::Move(v, _)) if v == var) {
             return Ok(false);
         }
-        if self.registry.has_function(name) && name != "sort" {
+        if named.is_none() && self.registry.has_function(name) && name != "sort" {
             return Ok(false);
         }
         let rest = self.eval_args(&args[1..])?;
@@ -1314,7 +1334,7 @@ impl IrInterp {
             };
             let mut kinds = vec![crate::table::Arg::of_value(cur)];
             kinds.extend(rest.iter().map(crate::table::Arg::of_value));
-            match crate::table::core_row(name, &kinds) {
+            match named.or_else(|| crate::table::core_row(name, &kinds)) {
                 Some(row) if row.params.first().is_some_and(|k| k.owned()) => row,
                 _ => return Ok(false),
             }
@@ -1441,12 +1461,36 @@ impl IrInterp {
         }
     }
 
-    /// A runtime builtin by its table name (`core.push`) or its own name.
+    /// A builtin's row, as the IR names it: its runtime function, the call
+    /// the compiled program prints (a dual number a function grad
+    /// differentiates takes the derivative's own form).
+    fn row_call(&mut self, row: &'static crate::table::Row, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
+        if vals.iter().any(|v| matches!(v.value, Value::Dual(..))) {
+            return self.bare_call(row.name, vals);
+        }
+        if row.module.is_empty() {
+            (row.take)(vals, &self.trace_entry()).map(|v| Self::stamp(row.name, v))
+        } else {
+            // a module's error value carries no trace, in either mode
+            (row.take)(vals, "").map(|v| Self::stamp(row.name, v))
+        }
+    }
+
+    /// The length of a value read where it lies, by the row the IR names
+    /// (or, when the values pick it, the row they pick).
+    fn len_of(target: &Target, v: &CrowValue, trace: &str) -> Result<CrowValue, String> {
+        match target {
+            Target::Row(row) => (row.call)(std::slice::from_ref(v), trace),
+            _ => Self::core_rows("len", std::slice::from_ref(v), trace, false).unwrap_or_else(|| Err("len[] is not a builtin".into())),
+        }
+    }
+
+    /// A builtin the IR leaves by name (`core.push`, or its own name): a
+    /// form of its own, or a row its values pick — an argument whose kind
+    /// the lowering did not know, a parsed value.
     fn runtime_call(&mut self, path: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
         // a builtin with a row is its runtime function, read and dispatched
-        // as the row says, the same call the compiled program prints: the
-        // row its arguments' kinds pick, as the emitter picks it by their
-        // types
+        // as the row says: the row the values' kinds pick
         let name = RUNTIME_TABLE.iter().find(|(_, r)| *r == path).map(|(b, _)| *b).unwrap_or(path).to_string();
         // a dual number a function grad differentiates takes the
         // derivative's own form (a plain number's math is its row)
@@ -2053,7 +2097,23 @@ impl IrInterp {
 
     /// An effect by name: qualified (`frame.load`) through its module,
     /// bare as any bare call.
-    fn effect(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
+    fn effect(&mut self, name: &str, row: Option<&'static crate::table::Row>, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
+        // the row the IR names, inside what the session layer does around
+        // it: an effect held for a handler's commit given a failed value
+        // stops the handler, and a rehearsal records what would reach past
+        // the program
+        if let Some(row) = row {
+            let short = name.rsplit('.').next().unwrap_or(name);
+            if let Some(stop) = self.effect_refused(short, &vals) {
+                return stop;
+            }
+            if !name.contains('.') {
+                if let Some(v) = crate::rehearsal::outside(name, &vals) {
+                    return Ok(v);
+                }
+            }
+            return self.row_call(row, vals);
+        }
         if let Some((m, f)) = name.split_once('.') {
             let (m, f) = (m.to_string(), f.to_string());
             return self.module_call(&m, &f, vals);
@@ -2373,8 +2433,8 @@ impl IrInterp {
                 Ok(f) => CrowValue::ok(Value::Frame(Box::new(f))),
                 Err(_) => crate::builtins::json_to_crow("", &value),
             },
-            Ty::Float => CrowValue::ok(Value::Float(value.as_f64().unwrap_or(0.0))),
-            _ => crate::builtins::json_to_crow("", &value),
+            // by the type the IR gives it, as a fact is read
+            ty => crate::served::json_to_typed(&value, &ty, self, &CrowValue::ok(Value::Done)),
         })
     }
 

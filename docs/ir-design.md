@@ -137,8 +137,8 @@ nothing else with errors.
 Expr ::= Const(value, ty)
        | Local(var) | Move(var)                     -- read; read for the last time (moves)
        | Load(fact) | Derived(name)
-       | Call    { target: Runtime(name) | User(name) | Module(mod, name), args, ty }
-       | Effect  { kind, args, ty, answered: bool }  -- query exec insert read write fetch shell mail later notice now
+       | Call    { target: Row(row) | Runtime(name) | User(name) | Module(mod, name), args, ty }
+       | Effect  { kind, row, args, ty, answered: bool }  -- query exec insert read write fetch shell mail later notice now
        | Convert { how: IntToFloat | Unwrap | ToStr | ..., expr }
        | Binary  { op, l, r, ty } | Unary { op, expr }
        | Index { base, index } | Field { base, name } | Slice {..}
@@ -166,6 +166,20 @@ match: it says `Call(Runtime("core.push"), ...)`. One table maps every
 runtime name to its Rust path and signature; the Rust backend prints
 the path, the IR interpreter dispatches through the same table with
 its typed values. A builtin added later is one row and one function.
+
+*2026-09-28: the row is picked once, by the lowering.* A name has
+several rows (`len` of text, of a list, of a map, …), and each backend
+had picked among them, the interpreter by the values and the emitter
+by the types. The lowering now picks the row from the arguments' types
+and the IR names it: `core.len_text(s)`, `math.abs_t(t)`,
+`io.read!now(path)` (an effect's call is its row too). Both backends
+call that row; the verifier checks each argument against it, and
+reports a call left by name whose arguments pick a row. A call stays
+`Runtime(name)` when it is a form of its own, or when an argument's
+kind is not known to the lowering — a value nothing typed, a harness's
+answer in a test, or a parsed JSON value, which the interpreter holds
+as the value it parsed to and the compiled program as JSON: its values
+pick the row as it runs (docs/bug-classes.md §4, rows picked once).
 
 ## 4. Typing decided once
 

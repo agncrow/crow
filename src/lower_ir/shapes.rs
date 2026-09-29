@@ -29,6 +29,7 @@ fn size(x: &Expr) -> Option<usize> {
 /// The name a call reaches, a runtime builtin or a module's function.
 fn callee(t: &Target) -> Option<&str> {
     match t {
+        Target::Row(row) => Some(row.name),
         Target::Runtime(n) | Target::Module(_, n) => Some(n.rsplit('.').next().unwrap_or(n)),
         Target::User(_) => None,
     }

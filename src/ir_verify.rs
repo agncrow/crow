@@ -349,11 +349,23 @@ impl<'p> Verifier<'p> {
                     .collect();
                 match target {
                     Target::User(name) => self.user_call(name, &ts, ty, *propagates),
+                    // the row the lowering picked: each argument is of the
+                    // kind its parameter takes
+                    Target::Row(row) => self.check_row(row, &ts, true),
                     Target::Module(m, name) => self.row_call(m, name, &ts),
                     // a core builtin with rows: the row the arguments' types
                     // pick, as both backends pick it
+                    // a builtin by name: a form of its own, or one an
+                    // argument of unknown kind leaves to its values — the
+                    // lowering names the row of any other
                     Target::Runtime(path) => {
                         let name = crate::ir::RUNTIME_TABLE.iter().find(|(_, r)| r == path).map_or(path.as_str(), |(b, _)| b);
+                        let kinds: Vec<crate::table::Arg> = ts.iter().map(|t| crate::table::Arg::of_type(&crate::lower_ir::crow_type(t))).collect();
+                        if !kinds.iter().any(|k| matches!(k, crate::table::Arg::Unknown | crate::table::Arg::Json)) {
+                            if let Some(row) = crate::table::core_row(name, &kinds) {
+                                self.found(format!("calls {} by name, where its arguments pick the row {}", name, row.id));
+                            }
+                        }
                         if crate::table::has_core_rows(name) {
                             self.row_call("", name, &ts);
                         }
@@ -526,7 +538,16 @@ impl<'p> Verifier<'p> {
         let Some(row) = row else {
             return;
         };
+        self.check_row(row, args, false);
+    }
+
+    /// A row's call: each argument of the kind its parameter takes; a row
+    /// the IR names takes the count it is handed, too.
+    fn check_row(&mut self, row: &crate::table::Row, args: &[Ty], named: bool) {
         let Some(params) = crate::table::kinds_of(row.params, args.len()) else {
+            if named {
+                self.found(format!("hands {} arguments to {}, which takes another count", args.len(), row.id));
+            }
             return;
         };
         for (i, (at, k)) in args.iter().zip(params).enumerate() {
@@ -587,7 +608,10 @@ pub fn fits(v: &Ty, slot: &Ty) -> bool {
 /// is read by the value it holds.
 fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
     use crate::table::Kind;
-    let items = |t: &Ty, ok: &dyn std::ops::Fn(&Ty) -> bool| matches!(t, Ty::List(e) if **e == Ty::Unknown || ok(e));
+    // (a list whose items are not known — nothing typed them, or they are
+    // parsed values — is any list, as the table reads it: its items are
+    // read as the parameter takes them)
+    let items = |t: &Ty, ok: &dyn std::ops::Fn(&Ty) -> bool| matches!(t, Ty::List(e) if matches!(**e, Ty::Unknown | Ty::Json) || ok(e));
     let cell = |t: &Ty| matches!(t, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup);
     *t == Ty::Unknown
         || match k.each() {
@@ -631,6 +655,7 @@ fn agrees(a: &Ty, b: &Ty) -> bool {
 /// What a value is, where a finding needs it: the call it comes from.
 fn what(e: &Expr) -> String {
     match e {
+        Expr::Call { target: Target::Row(row), .. } => format!(" (from the runtime's {})", row.id),
         Expr::Call { target: Target::Runtime(n), .. } => format!(" (from the runtime's {})", n),
         Expr::Call { target: Target::Module(m, n), .. } => format!(" (from {}.{})", m, n),
         Expr::Call { target: Target::User(n), .. } => format!(" (from {})", n),

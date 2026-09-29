@@ -390,7 +390,7 @@ impl LoopOrder {
 fn shows_order(e: &Expr) -> bool {
     match e {
         Expr::Effect { .. } => true,
-        Expr::Call { target: Target::Runtime(_) | Target::Module(..), .. } => {
+        Expr::Call { target: Target::Runtime(_) | Target::Row(_) | Target::Module(..), .. } => {
             let n = call_name(e).unwrap_or_default();
             is_effect(&n) || DRAWS.contains(&n.as_str()) || matches!(n.as_str(), "assert" | "running")
         }
@@ -1542,6 +1542,16 @@ impl<'a> Lowerer<'a> {
         } else {
             expr
         };
+        // numbers held as a tensor assigned to a variable that holds a list,
+        // or the other way, are converted where they meet: `xs = [1.5]` into
+        // a list the program grows (compiled, the tensor did not build into
+        // the `Vec`, and the interpreter held a tensor where the IR said a
+        // list)
+        let expr = match (self.ctx.vars.get(name), expr.ty()) {
+            (Some(var @ CrowType::Array(_)), Ty::Tensor(_)) => Expr::Convert { how: Convert::ToList, expr: Box::new(expr), ty: ty_of(var) },
+            (Some(var @ CrowType::NumArray(_)), Ty::List(e)) if matches!(*e, Ty::Int | Ty::Float) => Expr::Convert { how: Convert::ToTensor, expr: Box::new(expr), ty: ty_of(var) },
+            _ => expr,
+        };
         if self.is_fact(name) && self.sees_facts() {
             return Stmt::Store { fact: name.to_string(), expr };
         }
@@ -1580,8 +1590,13 @@ impl<'a> Lowerer<'a> {
         // `xs = push[xs, float[s]]`: the list holds no error, so only an item
         // can fail; the item is refused before the call, and the list still
         // grows where it lies
-        if let Expr::Call { target: Target::Runtime(path), args, ty: _, propagates } = &expr {
+        if let Expr::Call { target: target @ (Target::Runtime(_) | Target::Row(_)), args, ty: _, propagates } = &expr {
             let own = matches!(args.first(), Some(Expr::Local(v, _)) if v == name);
+            let path = match target {
+                Target::Row(row) if row.module.is_empty() => row.name,
+                Target::Runtime(path) => path.as_str(),
+                _ => "",
+            };
             if own && in_place_builtin(path) {
                 let mut out = vec![args[0].clone()];
                 let mut failing = Vec::new();
@@ -1601,7 +1616,7 @@ impl<'a> Lowerer<'a> {
                 if !failing.is_empty() {
                     self.saw_refusal(&at);
                     self.pre.push(Stmt::Propagate { values: failing, at });
-                    return Expr::Call { target: Target::Runtime(path.clone()), args: out, ty: payload, propagates: *propagates };
+                    return Expr::Call { target: target.clone(), args: out, ty: payload, propagates: *propagates };
                 }
             }
         }
@@ -2332,10 +2347,15 @@ impl<'a> Lowerer<'a> {
                     self.direct_effects.entry(current).or_default().insert(name.clone());
                 }
                 let lowered = self.row_arguments(&m, &name, lowered);
-                return Ok(Expr::Effect { name: format!("{}.{}", m, name), args: lowered, ty, answered: true, propagates });
+                let row = self.builtin_row(Some(&m), &name, &lowered);
+                return Ok(Expr::Effect { name: format!("{}.{}", m, name), row, args: lowered, ty, answered: true, propagates });
             }
             let lowered = self.row_arguments(&m, &name, lowered);
-            return Ok(Expr::Call { target: Target::Module(m, name), args: lowered, ty, propagates });
+            let target = match self.builtin_row(Some(&m), &name, &lowered) {
+                Some(row) => Target::Row(row),
+                None => Target::Module(m, name),
+            };
+            return Ok(Expr::Call { target, args: lowered, ty, propagates });
         }
         if self.ctx.functions.contains_key(&name) || self.ctx.specializations.contains_key(&name) {
             if let Some(seen) = &mut self.seen {
@@ -2386,7 +2406,8 @@ impl<'a> Lowerer<'a> {
             if self.pass == Pass::Final {
                 self.direct_effects.entry(current).or_default().insert(name.clone());
             }
-            return Ok(Expr::Effect { name, args: lowered, ty, answered: true, propagates });
+            let row = self.builtin_row(None, &name, &lowered);
+            return Ok(Expr::Effect { name, row, args: lowered, ty, answered: true, propagates });
         }
         if RUNTIME_TABLE.iter().any(|(b, _)| *b == name) {
             // a list of numbers is held as a list or as a tensor: `concat`
@@ -2403,10 +2424,14 @@ impl<'a> Lowerer<'a> {
                 }
             }
             let lowered = self.core_row_arguments(&name, lowered);
-            return Ok(Expr::Call { target: Target::Runtime(runtime_name(&name)), args: lowered, ty, propagates });
+            let target = match self.builtin_row(None, &name, &lowered) {
+                Some(row) => Target::Row(row),
+                None => Target::Runtime(runtime_name(&name)),
+            };
+            return Ok(Expr::Call { target, args: lowered, ty, propagates });
         }
-        // a bare name a loaded module provides resolves at run time, by the
-        // registry's own rule, as the interpreter resolves it
+        // a bare name a loaded module provides reaches it by the registry's
+        // rule (`builtin_row`)
         let lowered = match self.ctx.registry.module_name_for(&name).map(str::to_string) {
             Some(m) => {
                 // a name only a module answers — not the core's, not an
@@ -2423,7 +2448,65 @@ impl<'a> Lowerer<'a> {
             }
             None => self.core_row_arguments(&name, lowered),
         };
-        Ok(Expr::Call { target: Target::Runtime(name), args: lowered, ty, propagates })
+        let target = match self.builtin_row(None, &name, &lowered) {
+            Some(row) => Target::Row(row),
+            None => Target::Runtime(name),
+        };
+        Ok(Expr::Call { target, args: lowered, ty, propagates })
+    }
+
+    /// The row a builtin's call runs, decided once, here, from its
+    /// arguments' types, and named by the IR: both backends call it, where
+    /// each had picked one of its own — the interpreter by the values, the
+    /// emitter by the types (docs/bug-classes.md §4). The core's row the
+    /// kinds pick comes first; else, where a loaded module answers the name,
+    /// the module's row: a name the core and math both answer (`abs`,
+    /// `max`) is math's only with a tensor among the arguments, a frame
+    /// function the core answers too (`sort`, `join`) is the frame's only
+    /// given a frame, and a ui control, or an element in a view, is a form
+    /// of its own. A qualified call to a module the registry holds is its
+    /// bare call, pinned to the module. None when an argument's kind is not
+    /// known here (a harness's answer, a value nothing typed), or is a
+    /// parsed value's, whose kind shows only as it runs — the interpreter
+    /// holds it as the value it parsed to, the compiled program as JSON: its
+    /// values pick the row as the program runs.
+    fn builtin_row(&self, module: Option<&str>, name: &str, lowered: &[Expr]) -> Option<&'static crate::table::Row> {
+        use crate::table::Arg;
+        let pinned = match module {
+            Some(m) if matches!(m, "math" | "io" | "frame" | "doc" | "chart" | "math.stats" | "math.nn") && self.ctx.registry.has_function(name) => Some(m),
+            Some(_) => return None,
+            None => None,
+        };
+        let types: Vec<CrowType> = lowered.iter().map(read).collect();
+        let kinds: Vec<Arg> = types.iter().map(Arg::of_type).collect();
+        if kinds.iter().any(|k| matches!(k, Arg::Unknown | Arg::Json)) {
+            return None;
+        }
+        if let Some(row) = crate::table::core_row(name, &kinds) {
+            return Some(row);
+        }
+        let registry = &self.ctx.registry;
+        if !registry.has_function(name) {
+            return None;
+        }
+        let overlapping = matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max");
+        let tensor_among = types.iter().any(|t| matches!(t, CrowType::NumArray(_)));
+        let frame_fn = registry.module_name_for(name) == Some("frame");
+        let control = name == "select" && self.in_ui && lowered.len() == 2 && frame_fn;
+        let frame_core = frame_fn && crate::checker::BUILTINS.contains(&name) && !types.first().is_some_and(|t| matches!(t, CrowType::Frame | CrowType::FrameCol));
+        let element = matches!(self.at, Where::In(FnKind::View)) && crate::lower::UI_ELEMENTS.contains(&name);
+        if !(overlapping && tensor_among) && (overlapping || control || frame_core || element) {
+            return None;
+        }
+        let m = match pinned {
+            Some(m) => m,
+            None if registry.providers_of(name).len() == 1 => registry.module_name_for(name)?,
+            None => return None,
+        };
+        if crate::table::miscounted(m, name, lowered.len()).is_some() {
+            return None;
+        }
+        crate::table::module(m, name, &kinds)
     }
 
     /// A builtin row's arguments as its parameters take them (docs/
@@ -3420,7 +3503,8 @@ mod tests {
     #[test]
     fn a_collecting_loop_moves_its_list_into_push() {
         let ir = ir_of("xs = [1]\ni = 0\nwhile i lt 3\n    xs = push[xs, i]\n    i = i + 1\nlog[xs]\n");
-        assert!(ir.contains("xs = core.push(move xs, i)"), "{}", ir);
+        // (a numeric literal is a tensor: the IR names the row that grows one)
+        assert!(ir.contains("xs = core.push_number(move xs, i)"), "{}", ir);
         assert!(ir.contains("log!held(move xs)"), "{}", ir);
         assert!(ir.contains("i = (i add 1)"), "{}", ir);
     }
@@ -3435,15 +3519,46 @@ mod tests {
         assert!(ir.contains("tree button(click: fn inc)[\"+\"]"), "{}", ir);
     }
 
+    /// Each builtin call names the row it runs, picked once from its
+    /// arguments' types: both backends call that function, where each had
+    /// picked a row of its own (docs/bug-classes.md §4). An argument whose
+    /// kind is not known leaves the call by name, its values picking.
+    #[test]
+    fn a_builtin_call_names_the_row_it_runs() {
+        let ir = ir_of(
+            "use math\ns = 'héllo'\nxs = ['a', 'b']\nm = map[a = 1]\nt = [1.0, -2.0]\nj = json['[1, 2, 3]']\nlog[len[s]]\nlog[len[xs]]\nlog[len[m]]\nlog[len[j]]\nlog[abs[-2]]\nlog[abs[t]]\nlog[max[1, 2]]\nlog[mean[t]]\nlog[math.sqrt[16.0]]\nr = read['nothing.txt']\nlog[r.ok]\nfn f[x]\n    return len[x]\n",
+        );
+        for named in [
+            "core.len_text(move s)",
+            "core.len(move xs)",
+            "core.len_map(move m)",
+            "core.abs_int((neg 2))",
+            // a name the core and math both answer is math's for a tensor
+            "math.abs_t(t)",
+            "core.max_ints(1, 2)",
+            "math.mean(move t)",
+            // a qualified call to a module the registry holds is its bare call
+            "core.sqrt(16.0)",
+            // an effect's call is its row too, inside the session layer
+            "io.read!now(\"nothing.txt\")",
+            "display.log!held(",
+        ] {
+            assert!(ir.contains(named), "{}\n{}", named, ir);
+        }
+        assert!(ir.contains("return len(move x)"), "{}", ir);
+        // a parsed value's kind shows as it runs
+        assert!(ir.contains("len(unwrap move j)"), "{}", ir);
+    }
+
     #[test]
     fn a_fallible_argument_reaches_the_callee_as_its_payload() {
         // the call propagates an error among its arguments (spec §10); the
         // IR says so on the call and hoists nothing
         let ir = ir_of("r = read['x.txt']\nn = len[r]\nlog[n]\n");
-        assert!(ir.contains("let r: Result(Str) = read!now(\"x.txt\")"), "{}", ir);
+        assert!(ir.contains("let r: Result(Str) = io.read!now(\"x.txt\")"), "{}", ir);
         assert!(!ir.contains("propagate r"), "{}", ir);
         // len[] of an error is the error, as every call's is: the value can fail
-        assert!(ir.contains("let n: Result(Int) = len(unwrap move r)"), "{}", ir);
+        assert!(ir.contains("let n: Result(Int) = core.len_text(unwrap move r)"), "{}", ir);
     }
 
     #[test]

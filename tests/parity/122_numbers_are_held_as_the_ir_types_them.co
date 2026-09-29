@@ -1,0 +1,25 @@
+--- Numbers are held as the IR types them, in both modes: a list the
+--- program grows as a list is a list, a tensor is a tensor, and where one
+--- is assigned to a variable that holds the other it is converted where
+--- they meet. Compiled, `xs = [1.5]` into a list did not build (a tensor is
+--- not a `Vec`); the interpreter held a tensor where the IR said a list, and
+--- a collecting loop of ints was a tensor of floats, which only its values'
+--- own choice of row had read.
+use math
+xs = []
+if len[xs] eq 0
+    xs = [1.5]
+xs = push[xs, 2.5]
+log[len[xs]]
+log[xs]
+t = [1.0, 2.0]
+if len[t] gt 0
+    t = range[3]
+log[t]
+log[sum[t]]
+out = for i in range[4]
+    i * 3
+log[len[out]]
+out = push[out, 12]
+log[out]
+log[out[1] + 1]

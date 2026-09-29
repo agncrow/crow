@@ -1217,6 +1217,7 @@ impl Emitter {
     /// through it) already carry a status?
     fn base_is_result(&self, name: &str, target: &Target, raw_args: &[Expr]) -> bool {
         match target {
+            Target::Row(row) => matches!(row.fails, crate::table::Fails::Value(_)),
             Target::User(n) => self.fns.get(n).map_or(false, |f| matches!(f.ret, Ty::Result(_))),
             Target::Module(m, f) => self.registry.type_of_in(m, f, &raw_args.iter().map(|a| self.tt(a)).collect::<Vec<_>>()).map_or(false, |t| matches!(t, CrowType::Result(_))),
             Target::Runtime(_) if self.row_for(name, raw_args).is_some() => {
@@ -1239,10 +1240,11 @@ impl Emitter {
     fn call(&mut self, e: &Expr) -> String {
         let (mut target, args, propagates) = match e {
             Expr::Call { target, args, propagates, .. } => (target.clone(), args.clone(), *propagates),
-            Expr::Effect { name, args, propagates, .. } => {
-                let t = match name.split_once('.') {
-                    Some((m, f)) => Target::Module(m.to_string(), f.to_string()),
-                    None => Target::Runtime(name.clone()),
+            Expr::Effect { name, row, args, propagates, .. } => {
+                let t = match (row, name.split_once('.')) {
+                    (Some(row), _) => Target::Row(row),
+                    (None, Some((m, f))) => Target::Module(m.to_string(), f.to_string()),
+                    (None, None) => Target::Runtime(name.clone()),
                 };
                 (t, args.clone(), *propagates)
             }
@@ -1256,7 +1258,14 @@ impl Emitter {
                 target = Target::Runtime(f.clone());
             }
         }
+        // a module's row is its module's
+        if let Target::Row(row) = &target {
+            if !row.module.is_empty() {
+                pinned = Some(row.module.to_string());
+            }
+        }
         let name = match &target {
+            Target::Row(row) => row.name.to_string(),
             Target::Runtime(p) => RUNTIME_TABLE.iter().find(|(_, r)| *r == p.as_str()).map(|(b, _)| b.to_string()).unwrap_or_else(|| p.clone()),
             Target::User(n) => n.clone(),
             Target::Module(_, f) => f.clone(),
@@ -1316,7 +1325,7 @@ impl Emitter {
         // an argument's error is the call's value (spec, auto-propagation),
         // unless the IR says the call takes it as it is (a collecting loop
         // gathering what an iteration yielded, errors included)
-        let skip = (!propagates && matches!(target, Target::Runtime(_)))
+        let skip = (!propagates && matches!(target, Target::Runtime(_) | Target::Row(_)))
             || matches!(name.as_str(), "log" | "assert" | "cpu" | "gpu" | "nodes" | "type" | "error" | "captured" | "running")
             || (self.needs_ui && !from_module && (name == "chart" || name == "table" || crate::lower::UI_ELEMENTS.contains(&name.as_str())))
             || (self.needs_crow_web && name == "arrow");
@@ -1327,7 +1336,7 @@ impl Emitter {
                 // a view, or a control, renders a failed argument as its reason
                 let renders = match &target {
                     Target::User(v) => self.views.contains(v),
-                    Target::Runtime(_) => {
+                    Target::Runtime(_) | Target::Row(_) => {
                         self.in_view() && crate::lower::is_ui_control(&name, raw_args.first().map_or(false, |x| matches!(Self::inner(&self.tt(x)), CrowType::Frame)))
                     }
                     Target::Module(..) => false,
@@ -1432,8 +1441,9 @@ impl Emitter {
         None
     }
 
-    /// A core builtin's row for a call: the one its arguments' types pick,
-    /// as the interpreter picks it by their values (crate::table).
+    /// A core builtin's row for a call the IR leaves by name: the one its
+    /// arguments' types pick (crate::table); the interpreter picks by the
+    /// values.
     fn row_for(&self, name: &str, args: &[Expr]) -> Option<&'static crate::table::Row> {
         let kinds: Vec<crate::table::Arg> = args.iter().map(|x| crate::table::Arg::of_type(&self.tt(x))).collect();
         crate::table::core_row(name, &kinds)
@@ -1442,6 +1452,13 @@ impl Emitter {
     /// A call, by what it names.
     fn dispatch(&mut self, target: &Target, name: &str, args: &[Expr], arg_strs: &[String], whole: &Expr) -> String {
         match target {
+            // math on the dual numbers a function grad differentiates is the
+            // derivative's own form
+            Target::Row(row) if row.module.is_empty() && self.emitting_dual && matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round") => {
+                self.builtin(name, args, arg_strs, whole).unwrap_or_else(|| format!("{}({})", name, arg_strs.join(", ")))
+            }
+            Target::Row(row) if row.module.is_empty() => self.table_call(row, args, arg_strs, whole),
+            Target::Row(row) => self.module_row_call(row, args, arg_strs),
             Target::User(n) => self.user_call(n, args, arg_strs.to_vec()),
             Target::Module(m, f) => self.module_call(m, f, args, arg_strs, whole),
             // (a web queue's push is the queue's; math on the dual numbers a
@@ -1457,6 +1474,24 @@ impl Emitter {
                 },
             },
         }
+    }
+
+    /// A module's row: its runtime function, each argument printed, a view's
+    /// tree handed to it as its markup; it stops on the line its call is on
+    /// (modules::STOP_LINE).
+    fn module_row_call(&mut self, row: &crate::table::Row, args: &[Expr], arg_strs: &[String]) -> String {
+        let mut strs = arg_strs.to_vec();
+        for (i, a) in args.iter().enumerate() {
+            if let Expr::Call { target: Target::User(v), .. } = a {
+                if self.views.contains(v) {
+                    strs[i] = format!("({}).to_html()", strs[i]);
+                }
+            }
+        }
+        self.needs_crow_runtime = true;
+        crate::table::print(row, &strs, crate::modules::STOP_LINE, None)
+            .map(|code| code.replace(crate::modules::STOP_LINE, &self.current_line.to_string()))
+            .unwrap_or_else(|e| format!("compile_error!({:?})", e))
     }
 
     /// `push[queue, task]`: a web queue's own push, no collection's.

@@ -211,6 +211,34 @@ mod tests {
         assert_eq!(format!("{}", val.value), "[2, 4]");
     }
 
+    /// A collecting loop's numbers are held as the IR types them: a loop of
+    /// ints is a list of ints, the compiled program's `Vec<i64>`. It had
+    /// been a tensor of floats, whose own rows its values then picked; with
+    /// each call running the row the IR names, `len` of it read a list and
+    /// found a tensor (parity 57 and 58).
+    #[test]
+    fn a_collecting_loop_of_ints_is_a_list_of_ints() {
+        let val = get_var("out = for i in range[3]\n    i * 2\n", "out");
+        match &val.value {
+            Value::Array(items) => assert!(items.iter().all(|x| matches!(x.value, Value::Int(_))), "{}", val.value),
+            other => panic!("a list of ints, got {}", other),
+        }
+        assert!(matches!(run_program("out = for i in range[3]\n    i\nlen[out]\n").value, Value::Int(3)));
+    }
+
+    /// Numbers are held as the IR types them: a literal assigned to a list
+    /// the program grows is converted to a list where they meet (compiled,
+    /// the tensor did not build into the `Vec`; the interpreter held a tensor
+    /// where the IR said a list), and a numeric literal the IR holds as a
+    /// tensor is one (parity 122).
+    #[test]
+    fn numbers_are_held_as_the_ir_types_them() {
+        let xs = get_var("xs = []\nif len[xs] eq 0\n    xs = [1.5]\nxs = push[xs, 2.5]\n", "xs");
+        assert!(matches!(&xs.value, Value::Array(items) if items.len() == 2 && items.iter().all(|x| matches!(x.value, Value::Float(_)))), "{}", xs.value);
+        let t = get_var("t = [1.0, 2.0]\n", "t");
+        assert!(matches!(t.value, Value::NumArray(_)), "{}", t.value);
+    }
+
     // ===== §7: Structs =====
 
     #[test]
