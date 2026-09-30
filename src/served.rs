@@ -47,6 +47,8 @@ pub(crate) fn json_to_fact(j: &serde_json::Value, declared: &CrowValue) -> CrowV
             Some(x) => CrowValue::ok(Value::Float(x)),
             None => crate::builtins::json_to_crow("", j),
         },
+        // a parsed value comes back JSON, as it was held
+        Value::Json(_) => CrowValue::ok(Value::Json(Box::new(j.clone()))),
         _ => crate::builtins::json_to_crow("", j),
     }
 }
@@ -80,6 +82,7 @@ pub(crate) fn json_to_typed(j: &serde_json::Value, ty: &crate::ir::Ty, template:
             CrowValue::ok(Value::NumArray(Box::new(crow_runtime::tensor::CrowTensor::from_vec(data, vec![n]))))
         }
         (Ty::Float, serde_json::Value::Number(n)) => CrowValue::ok(Value::Float(n.as_f64().unwrap_or(0.0))),
+        (Ty::Json, _) => CrowValue::ok(Value::Json(Box::new(j.clone()))),
         _ => json_to_fact(j, declared),
     }
 }

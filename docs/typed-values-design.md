@@ -187,3 +187,10 @@ benchmark.
   - *Builtins from the table* (§4 step 2): form and one implementation
     per builtin; the state-free builtins are shared already
     (`core-runtime-builtins.md`).
+- **`Json` (2026-09-30).** The interpreter holds a parsed value as the
+  compiled program does, a `serde_json::Value` (`Value::Json`): the rows
+  that take JSON borrow it, a field or an item read from it is JSON, and
+  `encode` writes it by the runtime's own rule. The conversion to lists,
+  maps and tensors, and back at every JSON row, is gone, and with it two
+  divergences (an item or a field a parsed value lacks read `null`
+  compiled and stopped the interpreter).

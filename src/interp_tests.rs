@@ -3009,8 +3009,30 @@ mod tests {
 
     #[test]
     fn test_json_object_literal_raw() {
+        // a parsed value's field is JSON, as the compiled program holds it
         let val = get_var("j = json['{\"n\": 7}']\nx = j.n\n", "x");
-        assert!(matches!(val.value, Value::Int(7)));
+        assert!(matches!(&val.value, Value::Json(j) if **j == serde_json::json!(7)), "{:?}", val.value);
+        let val = get_var("j = json['{\"n\": 7}']\nx = int[j.n] + 1\n", "x");
+        assert!(matches!(val.value, Value::Int(8)), "{:?}", val.value);
+    }
+
+    /// A parsed value is JSON, as the compiled program holds it: an item it
+    /// lacks is an error value of reason `null` where the interpreter had
+    /// stopped, a field it lacks is JSON's null, its items are JSON, and
+    /// `encode` writes a list of numbers by the runtime's rule
+    #[test]
+    fn a_parsed_value_is_json() {
+        let it = run("j = json['{\"a\": [1, 2.0, \"x\"], \"m\": {\"k\": 1}}']\nitem = j.a[9]\nfield = j.m.nope\nkinds = for x in j.a\n    type[x]\nn = len[j.a]\nout = encode[j.a]\n").unwrap();
+        let item = it.var("item").unwrap();
+        assert!(item.is_error() && item.reason() == "null", "{:?}", item);
+        assert!(matches!(&it.var("field").unwrap().value, Value::Json(j) if j.is_null()));
+        let kinds: Vec<String> = match &it.var("kinds").unwrap().value {
+            Value::Array(xs) => xs.iter().map(|x| format!("{}", x.value)).collect(),
+            other => panic!("{:?}", other),
+        };
+        assert_eq!(kinds, vec!["int", "float", "str"]);
+        assert!(matches!(it.var("n").unwrap().value, Value::Int(3)));
+        assert!(matches!(&it.var("out").unwrap().value, Value::Str(s) if s == "[1,2.0,\"x\"]"), "{:?}", it.var("out").unwrap().value);
     }
 
     // ===== 2-D tensors from literals (F3) =====

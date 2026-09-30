@@ -204,6 +204,14 @@ fn scoped(stmts: Vec<Stmt>) -> Result<Vec<Stmt>, String> {
 /// The suffix a renamed binding carries, and the name a message prints.
 const SCOPED: &str = "__s";
 
+/// The name a block's variable was written with: `x__s2` is `x`.
+pub fn written(name: &str) -> &str {
+    match name.rfind(SCOPED) {
+        Some(i) if i > 0 && name.len() > i + SCOPED.len() && name[i + SCOPED.len()..].chars().all(|c| c.is_ascii_digit()) => &name[..i],
+        _ => name,
+    }
+}
+
 /// A name as the program wrote it: `x__s2` is `x`, in every message.
 pub fn shown(msg: &str) -> String {
     let mut out = String::with_capacity(msg.len());

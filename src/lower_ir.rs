@@ -82,6 +82,7 @@ fn lower_checked(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &Ha
     let mut program = Program { parts: vec![part.map_err(Refusal::Unlowered)?] };
     decide_loops(&mut program);
     decide_answers(&mut program);
+    written_names(&mut program);
     // each connection opens with the tables the program declares on it
     schema::attach(&mut program);
     // the parts agree before a backend reads them (ir_verify): a lowering
@@ -117,6 +118,111 @@ fn lower_checked(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &Ha
 /// function every caller calls as a statement. An effect such a function
 /// returns is one whose answer nobody uses, so it waits for the commit as
 /// a statement's does (spec, "A handler is a transaction").
+/// Each block's variable as the program wrote it (S11). The passes before
+/// the IR keep a variable's type by its name, so the front end names a
+/// binding apart when its name's earlier block has ended (`x__s2`,
+/// lower::scoped); only one binding of a name is ever in view, so the IR
+/// the backends read, and prints, says `x` again — Rust's blocks keep the
+/// two apart as the program's do.
+fn written_names(program: &mut Program) {
+    fn name(v: &mut String) {
+        let w = crate::lower::written(v);
+        if w.len() != v.len() {
+            *v = w.to_string();
+        }
+    }
+    fn block(b: &mut Block) {
+        for s in b.iter_mut() {
+            stmt(s);
+        }
+    }
+    fn stmt(s: &mut Stmt) {
+        match s {
+            Stmt::Let { var, expr, .. } | Stmt::Set { var, expr } => {
+                name(var);
+                expr_(expr);
+            }
+            Stmt::SetPath { var, path, expr } => {
+                name(var);
+                for p in path.iter_mut() {
+                    if let PathStep::Index(i) = p {
+                        expr_(i);
+                    }
+                }
+                expr_(expr);
+            }
+            Stmt::Store { expr, .. } | Stmt::Do(expr) | Stmt::Return(Some(expr)) => expr_(expr),
+            Stmt::If { cond, then, els } => {
+                expr_(cond);
+                block(then);
+                if let Some(e) = els {
+                    block(e);
+                }
+            }
+            Stmt::While { cond, body } => {
+                expr_(cond);
+                block(body);
+            }
+            Stmt::For { var, iter, body, .. } => {
+                name(var);
+                expr_(iter);
+                block(body);
+            }
+            Stmt::Propagate { values, .. } => values.iter_mut().for_each(name),
+            Stmt::Stop { value } => name(value),
+            _ => {}
+        }
+    }
+    fn expr_(e: &mut Expr) {
+        match e {
+            Expr::Local(v, _) | Expr::Move(v, _) => name(v),
+            Expr::Call { args, .. } | Expr::Effect { args, .. } | Expr::Deferred { args, .. } => args.iter_mut().for_each(expr_),
+            Expr::Convert { expr, .. } | Expr::Unary { expr, .. } => expr_(expr),
+            Expr::Binary { l, r, .. } => {
+                expr_(l);
+                expr_(r);
+            }
+            Expr::Index { base, indices, .. } => {
+                expr_(base);
+                indices.iter_mut().for_each(expr_);
+            }
+            Expr::Field { base, .. } | Expr::Meta { base, .. } => expr_(base),
+            Expr::Interp(pieces) => {
+                for p in pieces.iter_mut() {
+                    if let Piece::Expr(x) = p {
+                        expr_(x);
+                    }
+                }
+            }
+            Expr::ListLit(items, _) => items.iter_mut().for_each(expr_),
+            Expr::MapLit(pairs, _) => pairs.iter_mut().for_each(|(_, v)| expr_(v)),
+            Expr::RecordLit { fields, .. } => fields.iter_mut().for_each(expr_),
+            Expr::Tree { attrs, children, .. } => {
+                attrs.iter_mut().for_each(|(_, a)| expr_(a));
+                children.iter_mut().for_each(expr_);
+            }
+            Expr::ForExpr { var, iter, body, .. } => {
+                name(var);
+                expr_(iter);
+                block(body);
+            }
+            _ => {}
+        }
+    }
+    for part in &mut program.parts {
+        for f in &mut part.fns {
+            block(&mut f.body);
+        }
+        for d in &mut part.derives {
+            block(&mut d.body);
+        }
+        for t in &mut part.tests {
+            block(&mut t.body);
+        }
+        block(&mut part.main);
+    }
+}
+
 fn decide_answers(program: &mut Program) {
     for part in &mut program.parts {
         let used = values_used(part);
@@ -2692,10 +2798,10 @@ impl<'a> Lowerer<'a> {
     /// given a frame, and a ui control, or an element in a view, is a form
     /// of its own. A qualified call to a module the registry holds is its
     /// bare call, pinned to the module. None when an argument's kind is not
-    /// known here (a harness's answer, a value nothing typed), or is a
-    /// parsed value's, whose kind shows only as it runs — the interpreter
-    /// holds it as the value it parsed to, the compiled program as JSON: its
-    /// values pick the row as the program runs.
+    /// known here (a harness's answer, a value nothing typed): its values
+    /// pick the row as the program runs. A parsed value is JSON in both
+    /// modes, and names the rows that take JSON (it had been left by name:
+    /// the interpreter held it as the value it parsed to).
     fn builtin_row(&self, module: Option<&str>, name: &str, lowered: &[Expr]) -> Option<&'static crate::table::Row> {
         use crate::table::Arg;
         let pinned = match module {
@@ -2705,7 +2811,7 @@ impl<'a> Lowerer<'a> {
         };
         let types: Vec<CrowType> = lowered.iter().map(read).collect();
         let kinds: Vec<Arg> = types.iter().map(Arg::of_type).collect();
-        if kinds.iter().any(|k| matches!(k, Arg::Unknown | Arg::Json)) {
+        if kinds.contains(&Arg::Unknown) {
             return None;
         }
         if let Some(row) = crate::table::core_row(name, &kinds) {
@@ -3864,6 +3970,18 @@ mod tests {
         assert_eq!(refusal_of("use web\nfn lines[put, n]\n    put['`n`']\nfn flow[req]\n    return stream[lines, 3]\nroute['/flow', flow]\nserve[3999]\n"), "");
     }
 
+    /// A variable bound again after its name's block has ended is a new
+    /// variable, and the IR names it as the program wrote it (S11): it had
+    /// said `t__s2`, the front end's name for the passes that key a type by
+    /// a name
+    #[test]
+    fn a_blocks_variable_keeps_its_written_name() {
+        let ir = ir_of("fn f[c]\n    if c\n        t = 1\n        log[t]\n    for i in range[2]\n        t = 'x'\n        log[t]\n    return 0\nlog[f[true]]\n");
+        assert!(ir.contains("let t: Int = 1"), "{}", ir);
+        assert!(ir.contains("let t: Str = \"x\""), "{}", ir);
+        assert!(!ir.contains("__s"), "{}", ir);
+    }
+
     /// A function handed to grad is a function of floats, however grad is
     /// written (`grad[f][3]` had left its parameters untyped where
     /// `df = grad[f]` did not), and its body's builtins are the ones for
@@ -4009,8 +4127,9 @@ mod tests {
             assert!(ir.contains(named), "{}\n{}", named, ir);
         }
         assert!(ir.contains("return len(move x)"), "{}", ir);
-        // a parsed value's kind shows as it runs
-        assert!(ir.contains("len(unwrap move j)"), "{}", ir);
+        // a parsed value is JSON in both modes, and names JSON's row (it had
+        // been left by name, its kind showing as it ran)
+        assert!(ir.contains("core.len_json(unwrap move j)"), "{}", ir);
     }
 
     /// A test's inputs are typed by their use in the lowered body — a

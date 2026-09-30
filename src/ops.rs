@@ -487,6 +487,11 @@ pub fn values_equal(a: &CrowValue, b: &CrowValue) -> bool {
         return false;
     }
     match (&a.value, &b.value) {
+        // parsed values compare as JSON, and one with a value the program
+        // built compares with that value's JSON
+        (Value::Json(x), Value::Json(y)) => x == y,
+        (Value::Json(x), _) => crate::builtins::crow_to_json("", b).is_ok_and(|y| **x == y),
+        (_, Value::Json(y)) => crate::builtins::crow_to_json("", a).is_ok_and(|x| x == **y),
         (Value::Int(x), Value::Int(y)) => x == y,
         (Value::Float(x), Value::Float(y)) => x == y,
         (Value::Int(x), Value::Float(y)) => (*x as f64) == *y,
@@ -527,6 +532,23 @@ pub fn values_equal(a: &CrowValue, b: &CrowValue) -> bool {
 /// `Point[1, 2]`.
 pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, String> {
     match &callee.value {
+    // a parsed value's item or key, as the compiled program reads its JSON:
+    // one it lacks (or a negative position) is JSON's null, an error value
+    // of reason `null`
+    Value::Json(j) => {
+        if arg_vals.len() != 1 {
+            return Err("a JSON value is indexed by one position or key".to_string());
+        }
+        let found = match &arg_vals[0].unwrap_or_propagate()? {
+            Value::Int(i) => usize::try_from(*i).ok().and_then(|i| j.get(i)),
+            Value::Str(k) => j.get(k.as_str()),
+            other => return Err(format!("a JSON value is indexed by a position or a key, got {}", other.type_name())),
+        };
+        Ok(match found {
+            Some(x) if !x.is_null() => CrowValue::ok(Value::Json(Box::new(x.clone()))),
+            _ => CrowValue::error_with_kind("null", "parse", ""),
+        })
+    }
     Value::Array(items) => {
         // array[index] - indexing
         if arg_vals.len() != 1 {
@@ -650,6 +672,18 @@ pub fn list_position(index: &CrowValue, len: usize) -> Result<usize, String> {
 }
 
 pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
+    // a parsed value, as the compiled program reads its JSON: JSON's null
+    // is an error value of reason `null`, and a field it lacks is null
+    if let (Value::Json(j), true) = (&obj.value, obj.is_ok()) {
+        let null = j.is_null();
+        return Ok(match field {
+            "ok" => CrowValue::ok(Value::Bool(!null)),
+            "reason" => CrowValue::ok(Value::Str(if null { "null" } else { "" }.to_string())),
+            "kind" => CrowValue::ok(Value::Str(if null { "parse" } else { "" }.to_string())),
+            "trace" => CrowValue::ok(Value::Array(Vec::new())),
+            name => CrowValue::ok(Value::Json(Box::new(j.get(name).cloned().unwrap_or(serde_json::Value::Null)))),
+        });
+    }
 
     // special fields: .ok, .reason, .kind, .trace — always work, even on errors.
     // `.ok` is the value's own status: a list that did not fail is ok,
@@ -831,6 +865,8 @@ pub fn collect_loop(results: Vec<CrowValue>, as_tensor: bool) -> CrowValue {
 pub fn iter_items(iter_val: &CrowValue) -> Result<Vec<CrowValue>, String> {
     match &iter_val.value {
         Value::Array(items) => Ok(items.clone()),
+        // a parsed list's items, each JSON, as the compiled program walks it
+        Value::Json(j) => Ok(crow_runtime::json::items(j)?.into_iter().map(|x| CrowValue::ok(Value::Json(Box::new(x)))).collect()),
         Value::NumArray(tensor) => {
             if tensor.ndim() >= 2 {
                 Ok(tensor.rows().into_iter().map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))).collect())

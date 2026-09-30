@@ -39,8 +39,8 @@ Vijay (Sept 30 2026): no 1.0 until the language and its modules are bug-free and
 - [ ] **A soak test** — an app under load for a day, its memory and latency steady.
 - [ ] **A security review of crow_web** — sessions, cookies, origin checks, uploads, static paths, request size limits.
 - [ ] **Fixture recording** — an app's tests run without live databases.
-- [ ] **S11** — a scoped environment, so the IR and the Rust say `x` where they say `x__s2`.
-- [ ] **Every call names its row** — the calls on parsed JSON values, and the four whose arguments come from outside Crow.
+- [x] **S11** — the IR and the Rust say `x` where they said `x__s2`: the lowering's last step gives each block's variable the name the program wrote (the passes before it still name a later binding apart, which cost nothing to keep). Found on the way: a parameter the body changes had not built compiled.
+- [x] **Every call names its row** — the calls on parsed JSON values (a parsed value is JSON in both modes), and the four whose arguments come from outside Crow (`grad`'s functions, the layout engine's nodes). Left by name: a call on a value nothing types, one in finch's parts lowered alone.
 - [ ] **The language server** — sub-line ranges, rename, code actions, incremental analysis.
 - [ ] **The ecosystem** — P7, below.
 

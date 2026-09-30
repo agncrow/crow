@@ -968,3 +968,32 @@ weeks; the core stages are weeks each.
   as it runs (35), and one whose arguments come from outside Crow: a
   function handed to `grad`, and the layout engine's functions Rust calls
   (4).
+- **2026-09-30, every call that can run names its row.** A function
+  handed to `grad` is a function of floats (`grad[f][3]` too, which the
+  call scan does not read), and a test's record literal types the fields
+  the program leaves untyped, as its calls type parameters: the layout
+  engine's own test builds the node Rust builds for the harness. A parsed
+  value is JSON in the interpreter too (`Value::Json`, typed-values
+  design): the rows that take JSON read it as it is, a field or an item
+  read from it is JSON, and the lowering names those rows (`core.len_json`,
+  `core.float_of`, `display.str`, `json.keys`) where it had left the call
+  by name. Two divergences went with the conversion to lists, maps and
+  tensors: an item past a parsed list's end, and a field a parsed object
+  lacked, had stopped the interpreter where the compiled program read
+  `null`. Over the corpus, the book and finch (418 programs) one call is
+  left by name, on a list a finch part lowered alone only ever builds
+  empty; the verifier counts calls left by name only in the functions a
+  program can run (`ir::reached_fns`; `CROW_IR_BY_NAME=1` lists them).
+- **2026-09-30, S11: the IR says `x`.** What S11 was for is the names:
+  the IR and the Rust said `x__s2` for a variable bound again after its
+  name's block had ended. The front end still names such a binding apart
+  (`lower::scoped`), for the passes that keep a type by a name, but the
+  lowering's last step gives each back the name the program wrote
+  (`written_names`): only one binding of a name is ever in view, and
+  Rust's blocks keep two siblings apart as the program's do, so the IR
+  the backends read, and prints, and the Rust say `x`. Making every table
+  inference, the lowering and the checks keep follow blocks — the cost
+  this note's S11 weighed — bought nothing more. Found on the way: a
+  parameter the body changes (`c = false`, `xs[0] = 5`, `p.x = 3`) had
+  not built compiled; it is the body's own copy (`mut`, never passed by
+  reference), as the interpreter's always was (parity 133).

@@ -176,10 +176,11 @@ and the IR names it: `core.len_text(s)`, `math.abs_t(t)`,
 call that row; the verifier checks each argument against it, and
 reports a call left by name whose arguments pick a row. A call stays
 `Runtime(name)` when it is a form of its own, or when an argument's
-kind is not known to the lowering — a value nothing typed, a harness's
-answer in a test, or a parsed JSON value, which the interpreter holds
-as the value it parsed to and the compiled program as JSON: its values
-pick the row as it runs (docs/bug-classes.md §4, rows picked once).
+kind is not known to the lowering — a value nothing typed, as a list a
+program only ever builds empty: its values pick the row as it runs
+(docs/bug-classes.md §4, rows picked once). A parsed JSON value is JSON
+in both modes and names the rows that take JSON; a function nothing in
+the program reaches is not counted (`ir::reached_fns`).
 
 ## 4. Typing decided once
 

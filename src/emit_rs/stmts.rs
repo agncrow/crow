@@ -133,12 +133,18 @@ impl Emitter {
                 })
                 .collect()
         } else {
+            let changed = Self::mutated_in(&f.body);
             f.params
                 .iter()
                 .map(|(p, t)| {
                     let rt = param_ty(t).to_rust_type();
                     if refs.contains(p) {
                         format!("{}: &{}", p, rt)
+                    } else if changed.contains(p) {
+                        // a parameter the body changes — `c = false`,
+                        // `xs[0] = 5`, `p.x = 3` — is the body's own copy,
+                        // as the interpreter's is (compiled, it had not built)
+                        format!("mut {}: {}", p, rt)
                     } else {
                         format!("{}: {}", p, rt)
                     }

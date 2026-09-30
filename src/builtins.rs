@@ -48,6 +48,8 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                     Value::DbConn(_) => "db".to_string(),
                     Value::Mailer(..) => "mailer".to_string(),
                     Value::Response(_) => "response".to_string(),
+                    // a JSON value's word is its value's, as the compiled program says it
+                    Value::Json(j) => crow_runtime::json::type_word(j).to_string(),
                     Value::Done => "none".to_string(),
                 }
             };
@@ -234,12 +236,30 @@ pub fn json_to_crow(trace: &str, jval: &serde_json::Value) -> CrowValue {
 }
 
 /// Convert a CrowValue to a serde_json::Value for encoding.
+/// A value's JSON as `encode` writes it (crow_runtime::json::ToJson): a
+/// parsed value by the runtime's own rule, at any depth, as the compiled
+/// program's does; anything else as [`crow_to_json`] has it.
+pub fn crow_to_encoded(val: &CrowValue) -> serde_json::Value {
+    use crow_runtime::json::ToJson as _;
+    if val.is_error() {
+        return serde_json::Value::Null;
+    }
+    match &val.value {
+        Value::Json(j) => j.to_json(),
+        Value::Array(items) => serde_json::Value::Array(items.iter().map(crow_to_encoded).collect()),
+        Value::Map(m) => serde_json::Value::Object(m.iter().map(|(k, v)| (k.clone(), crow_to_encoded(v))).collect()),
+        Value::StructInstance(si) => serde_json::Value::Object(si.fields.iter().map(|(k, v)| (k.clone(), crow_to_encoded(v))).collect()),
+        _ => crow_to_json("", val).unwrap_or(serde_json::Value::Null),
+    }
+}
+
 pub fn crow_to_json(trace: &str, val: &CrowValue) -> Result<serde_json::Value, String> {
     if val.is_error() {
         // Error-values encode as JSON null (round-trip with json[])
         return Ok(serde_json::Value::Null);
     }
     match &val.value {
+        Value::Json(j) => Ok((**j).clone()),
         Value::Int(n) => Ok(serde_json::Value::Number(serde_json::Number::from(*n))),
         // JSON has no NaN or infinity: those encode as null (json.rs)
         Value::Float(f) => Ok(crow_runtime::json::float_to_json(*f)),

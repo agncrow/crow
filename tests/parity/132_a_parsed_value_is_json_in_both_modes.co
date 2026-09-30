@@ -1,0 +1,24 @@
+--- A parsed value is JSON in both modes: an item or a key it lacks is
+--- JSON's null, an error value of reason `null`; its items are JSON too;
+--- and a builtin that takes JSON takes it as it is. (The interpreter had
+--- converted it to lists, maps and tensors: an item past a parsed list's
+--- end stopped the program where the compiled one read null, and calls on
+--- parsed values were left for each mode to pick as it ran.)
+j = json['{"a": [1, 2.5, "x"], "n": [3, 4.0], "m": {"k": "v"}}']
+log[j.a[5].ok]
+log[j.a[5].reason]
+log[j.a[-1].ok]
+log[j.missing.ok]
+log[j.missing.reason]
+log[type[j.n]]
+log[len[j.a]]
+for x in j.a
+    log[type[x]]
+log[encode[j.n]]
+log[encode[j]]
+log[keys[j.m]]
+log[has[j.m, 'k']]
+log[str[j.m.k]]
+log[float[j.a[1]] + 1.0]
+log[int[j.n[0]] * 2]
+log[j]

@@ -180,6 +180,11 @@ pub enum Value {
     /// What a route's handler answers: `text[…]`, `html[…]`, `json[…]`,
     /// `respond[status, body]`, `redirect[url]`, `bytes[…]` (use web).
     Response(Box<crow_web::core::CrowResponse>),
+    /// A parsed JSON value, held as the compiled program holds it: the rows
+    /// that take JSON read it as it is, and a field or an item read from it
+    /// is JSON too (typed-values-design.md, `Json`). It had been converted
+    /// to lists, maps and tensors, which JSON's own rows then converted back.
+    Json(Box<serde_json::Value>),
     Dual(f64, f64), // dual number for autograd: (real, derivative)
     App(Box<AppSession>), // headless app session for test blocks
     GradFn(FnValue), // gradient function wrapping a user function
@@ -231,6 +236,7 @@ impl Value {
             Value::DbConn(_) => "db",
             Value::Mailer(..) => "mailer",
             Value::Response(_) => "response",
+            Value::Json(j) => crow_runtime::json::type_word(j),
             Value::Dual(_, _) => "float", // Dual appears as float to user
             Value::GradFn(_) => "fn",
             Value::Done => "done",
@@ -270,6 +276,10 @@ impl fmt::Display for Value {
             Value::DbConn(h) => write!(f, "<db:{}>", h.backend_name()),
             Value::Mailer(_, host) => write!(f, "<mailer:{}>", host),
             Value::Response(r) => write!(f, "<response {}>", r.status),
+            Value::Json(j) => {
+                use crow_runtime::display::CrowDisplay as _;
+                write!(f, "{}", j.crow_fmt())
+            }
             Value::GradFn(func) => write!(f, "<grad {}>", func.name),
             Value::Dual(real, _) => {
                 // Display as float (user never sees the derivative)
@@ -292,6 +302,7 @@ impl crow_runtime::display::CrowDisplay for CrowValue {
         if self.is_ok() {
             match &self.value {
                 Value::Str(s) => s.crow_repr(),
+                Value::Json(j) => j.crow_repr(),
                 other => other.to_string(),
             }
         } else if self.kind() == "missing" && self.reason() == "nan" {
@@ -311,7 +322,7 @@ impl crow_runtime::display::CrowDisplay for CrowValue {
 /// an object of its fields, what JSON holds no form of `null`.
 impl crow_runtime::json::ToJson for CrowValue {
     fn to_json(&self) -> serde_json::Value {
-        crate::builtins::crow_to_json("", self).unwrap_or(serde_json::Value::Null)
+        crate::builtins::crow_to_encoded(self)
     }
 }
 

@@ -544,6 +544,12 @@ pub fn read_cell(v: &CrowValue) -> Result<crow_runtime::cell::Cell, String> {
         Value::Done => Ok(Cell::Null),
         Value::Array(_) => Ok(Cell::Other("a list")),
         Value::Map(_) => Ok(Cell::Other("a map")),
+        // a parsed value, as the compiled program reads its JSON
+        Value::Json(j) => Ok(match &**j {
+            serde_json::Value::Array(_) => Cell::Other("a list"),
+            serde_json::Value::Object(_) => Cell::Other("a map"),
+            scalar => Cell::from(scalar.clone()),
+        }),
         _ => Err(format!("expected a number, text or a bool, got {}", named(v))),
     }
 }
@@ -676,8 +682,13 @@ pub fn read_floats(v: &CrowValue) -> Result<Vec<f64>, String> {
 
 /// A parsed JSON value: the interpreter holds what it parsed to, whose
 /// own row it picks, so it reads one only for a row it cannot pick.
-pub fn read_json(v: &CrowValue) -> Result<serde_json::Value, String> {
-    crate::builtins::crow_to_json("", v)
+/// A JSON argument: a parsed value as it is, borrowed; a value the program
+/// built (a list, a map) as its JSON.
+pub fn read_json(v: &CrowValue) -> Result<std::borrow::Cow<'_, serde_json::Value>, String> {
+    match &v.value {
+        Value::Json(j) if v.is_ok() => Ok(std::borrow::Cow::Borrowed(&**j)),
+        _ => crate::builtins::crow_to_json("", v).map(std::borrow::Cow::Owned),
+    }
 }
 
 /// A frame's column: the interpreter holds its cells as a list, whose own
@@ -714,12 +725,13 @@ pub fn write_shell(sh: crow_runtime::core::Shell) -> CrowValue {
 
 /// A parsed JSON value as the interpreter holds it: arrays, maps and
 /// scalars, a `null` inside an error value of reason `null`.
+/// A JSON answer, kept as the compiled program keeps it.
 pub fn write_json(v: serde_json::Value) -> CrowValue {
-    crate::builtins::json_to_crow("", &v)
+    CrowValue::ok(Value::Json(Box::new(v)))
 }
 
 pub fn write_json_list(vs: Vec<serde_json::Value>) -> CrowValue {
-    CrowValue::ok(Value::Array(vs.iter().map(|v| crate::builtins::json_to_crow("", v)).collect()))
+    CrowValue::ok(Value::Array(vs.into_iter().map(write_json).collect()))
 }
 
 pub fn write_markup(s: String) -> CrowValue {
@@ -795,7 +807,7 @@ macro_rules! read {
     (Ints, $g:expr) => { read_ints(one($g)?)? };
     (Floats, $g:expr) => { read_floats(one($g)?)? };
     (Texts, $g:expr) => { read_strs(one($g)?)? };
-    (Json, $g:expr) => { &read_json(one($g)?)? };
+    (Json, $g:expr) => { &*read_json(one($g)?)? };
     (Column, $g:expr) => { &read_column(one($g)?)? };
     (Shown, $g:expr) => { one($g)? };
     (Encoded, $g:expr) => { one($g)? };
@@ -1502,6 +1514,7 @@ impl Arg {
             Value::Sparse(_) => Arg::Sparse,
             Value::Frame(_) => Arg::Frame,
             Value::Fn(_) | Value::GradFn(_) => Arg::Fn,
+            Value::Json(_) => Arg::Json,
             _ => Arg::Unknown,
         }
     }

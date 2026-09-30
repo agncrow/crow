@@ -358,19 +358,21 @@ impl Emitter {
             }
         }
 
-        // a struct parameter a function never reassigns passes by reference
-        // (a handler's are its own: it may be sent them as an event's
-        // arguments, so it takes them by value, and so do its callers)
+        // a struct parameter a function never changes — reassigns, or
+        // assigns a field or an item of — passes by reference (a handler's
+        // are its own: it may be sent them as an event's arguments, so it
+        // takes them by value, and so do its callers)
         let names: Vec<String> = self.fns.keys().cloned().collect();
         for n in names {
             if self.reactive_event_handlers.contains(&n) || self.live_handle_fns.contains(&n) {
                 continue;
             }
             let f = self.fns.get(&n).unwrap().clone();
+            let changed = Self::mutated_in(&f.body);
             let mut refs = HashSet::new();
             for (p, t) in &f.params {
                 if let Ty::Record(s) = t {
-                    if !self.struct_is_copy(s) && !Self::assigns(&f.body, p) {
+                    if !self.struct_is_copy(s) && !changed.contains(p) {
                         refs.insert(p.clone());
                     }
                 }
@@ -425,17 +427,6 @@ impl Emitter {
         if json {
             self.needs_serde_json = true;
         }
-    }
-
-    /// Does the block assign this local (a whole rebinding)?
-    pub(crate) fn assigns(block: &[Stmt], name: &str) -> bool {
-        let mut found = false;
-        visit_stmts(block, &mut |s| {
-            if matches!(s, Stmt::Set { var, .. } if var == name) {
-                found = true;
-            }
-        });
-        found
     }
 
     /// Every function the compiled program can run: what its top level,

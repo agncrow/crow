@@ -367,15 +367,15 @@ impl<'p> Verifier<'p> {
                     Target::Runtime(path) => {
                         let name = crate::ir::RUNTIME_TABLE.iter().find(|(_, r)| r == path).map_or(path.as_str(), |(b, _)| b);
                         let kinds: Vec<crate::table::Arg> = ts.iter().map(|t| crate::table::Arg::of_type(&crate::lower_ir::crow_type(t))).collect();
-                        if !kinds.iter().any(|k| matches!(k, crate::table::Arg::Unknown | crate::table::Arg::Json)) {
-                            if let Some(row) = crate::table::core_row(name, &kinds) {
-                                self.found(format!("calls {} by name, where its arguments pick the row {}", name, row.id));
-                            }
+                        if !kinds.contains(&crate::table::Arg::Unknown)
+                            && let Some(row) = crate::table::core_row(name, &kinds)
+                        {
+                            self.found(format!("calls {} by name, where its arguments pick the row {}", name, row.id));
                         }
                         if crate::table::has_core_rows(name) {
-                            // (the census of calls still left by name, while
-                            // they are taken away: CROW_IR_BY_NAME=1)
-                            // (web's `json[map]` is a response, a form of its own)
+                            // the calls still left by name, in what can run
+                            // (CROW_IR_BY_NAME=1): a value nothing types;
+                            // web's `json[map]` is a response, a form of its own
                             let response = name == "json" && matches!(ts.first(), Some(Ty::Map(_)));
                             if std::env::var_os("CROW_IR_BY_NAME").is_some() && self.runs && !response {
                                 let shown: Vec<String> = ts.iter().map(|t| format!("{:?}", t)).collect();

@@ -1,0 +1,36 @@
+--- A function's parameter is the function's own copy, which its body may
+--- change — reassign, or assign a field or an item of — leaving the
+--- caller's value as it was, in both modes. (The interpreter ran it; the
+--- compiled program had not built a parameter reassigned or changed
+--- through a field or an item.)
+struct P [x, y]
+struct N [name, tags]
+
+fn bump[xs]
+    xs[0] = 5
+    return xs
+
+fn moved[p]
+    p.x = 3
+    return p.x + p.y
+
+fn renamed[n]
+    n.name = 'b'
+    return n.name
+
+fn once[c]
+    while c
+        log['once']
+        c = false
+    return 0
+
+nums = [1, 2]
+log[bump[nums]]
+log[nums]
+q = P[1, 2]
+log[moved[q]]
+log[q.x]
+m = N['a', ['t']]
+log[renamed[m]]
+log[m.name]
+log[once[true]]
