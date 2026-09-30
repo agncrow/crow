@@ -228,6 +228,7 @@ impl Emitter {
         let (mut click, mut key, mut mark) = ("None".to_string(), "None".to_string(), "None".to_string());
         let (mut delta, mut actions, mut hide, mut confirm) = ("&[]".to_string(), "&[]".to_string(), "&[]".to_string(), "&[]".to_string());
         let mut page = "None".to_string();
+        let mut sort = "None".to_string();
         let live = self.reactive_render_fns.contains(&self.cur_fn);
         let names = |e: &Expr| -> Vec<String> {
             match Emitter::raw(e) {
@@ -273,12 +274,15 @@ impl Emitter {
                     let size = format!("(({}) as i64).max(1) as usize", self.expr(v));
                     page = if live { format!("Some(state.table_page({}, _f.nrows()))", size) } else { format!("Some(crow_runtime::layout::Paging {{ size: {}, index: 0, at: 0 }})", size) };
                 }
+                "sort" if matches!(Emitter::raw(v), Expr::Const(Const::Bool(true), _)) => {
+                    sort = if live { "Some(state.table_sort())".to_string() } else { "Some(crow_runtime::layout::Sorting::default())".to_string() };
+                }
                 _ => {}
             }
         }
         let rows = format!(
-            "CrowVNode::table(vec![CrowVNode::raw(&crow_runtime::layout::frame_table_html(_f, {}, {}, {}, {}, {}, {}, {}, {}))])",
-            click, key, mark, delta, actions, hide, confirm, page
+            "CrowVNode::table(vec![CrowVNode::raw(&crow_runtime::layout::frame_table_html(_f, {}, {}, {}, {}, {}, {}, {}, {}, {}))])",
+            click, key, mark, delta, actions, hide, confirm, page, sort
         );
         if matches!(frame_ty, CrowType::Result(_)) {
             return format!("{{ let _fr = &({}); if !_fr.ok {{ CrowVNode::text(&format!(\"error: {{}}\", _fr.reason)) }} else {{ let _f = &_fr.value; {} }} }}", f, rows);

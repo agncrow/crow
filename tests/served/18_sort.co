@@ -1,0 +1,14 @@
+--- A table the reader sorts (spec, Tables over frames): the headers of a
+--- sort = true table sort its rows by their column, ascending and then
+--- descending, the same in both modes; the session keeps the order, and a
+--- paged table pages through the sorted rows.
+use web, ui, frame
+
+view render[]
+    prices = with[with[frame.new[], 'sym', ['b', 'A', 'c', 'a']], 'px', [2, 10, 7, 2]]
+    return stack[
+        table[prices, sort = true, page = 2]
+    ]
+
+serve[3418]
+page['/', render]

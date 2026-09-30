@@ -1,0 +1,15 @@
+[
+  {"expect": "<button data-crow-args=\"[0,&quot;px&quot;]\" data-crow-click=\"__sort\">px</button>"},
+  {"absent": "aria-sort"},
+  {"expect": "<tbody><tr><td>b</td><td class=\"num\">2</td></tr><tr><td>A</td><td class=\"num\">10</td></tr></tbody>"},
+  {"event": "__sort", "value": "[0,\"px\"]"},
+  {"expect": "aria-sort=\"ascending\""},
+  {"expect": "<tbody><tr><td>b</td><td class=\"num\">2</td></tr><tr><td>a</td><td class=\"num\">2</td></tr></tbody>"},
+  {"event": "__sort", "value": "[0,\"px\"]"},
+  {"expect": "aria-sort=\"descending\""},
+  {"expect": "<tbody><tr><td>A</td><td class=\"num\">10</td></tr><tr><td>c</td><td class=\"num\">7</td></tr></tbody>"},
+  {"event": "__page", "value": "[0,1]"},
+  {"expect": "<tbody><tr><td>b</td><td class=\"num\">2</td></tr><tr><td>a</td><td class=\"num\">2</td></tr></tbody>"},
+  {"event": "__sort", "value": "[0,\"sym\"]"},
+  {"expect": "<tbody><tr><td>b</td><td class=\"num\">2</td></tr><tr><td>c</td><td class=\"num\">7</td></tr></tbody>"}
+]

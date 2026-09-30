@@ -313,11 +313,21 @@ pub struct Paging {
     pub at: usize,
 }
 
+/// A table the reader sorts (`sort = true`): which of the render's sorted
+/// tables it is, and the column the session sorts it by, with whether it
+/// is descending.
+#[derive(Clone, Debug, Default)]
+pub struct Sorting {
+    pub index: usize,
+    pub by: Option<(String, bool)>,
+}
+
 /// The most rows a table draws without `page` — as a chart has a point
 /// budget, never a silent cut.
 pub const TABLE_BUDGET: usize = 1000;
 
-pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: Option<&str>, mark: Option<&str>, delta: &[String], actions: &[(String, String)], hide: &[String], confirm: &[(String, String)], page: Option<Paging>) -> String {
+#[allow(clippy::too_many_arguments)]
+pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: Option<&str>, mark: Option<&str>, delta: &[String], actions: &[(String, String)], hide: &[String], confirm: &[(String, String)], page: Option<Paging>, sort: Option<Sorting>) -> String {
     use crate::frame::Column;
     let total = f.nrows();
     if page.is_none() && total > TABLE_BUDGET {
@@ -339,10 +349,57 @@ pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: O
     let numeric: Vec<bool> = f.data.iter().map(|c| matches!(c.as_ref(), Column::Int(_) | Column::Float(_))).collect();
     let is_delta: Vec<bool> = f.columns.iter().map(|c| delta.iter().any(|d| d == c)).collect();
     let shown: Vec<usize> = (0..f.ncols()).filter(|i| !hide.iter().any(|h| h == &f.columns[*i])).collect();
+    // the order the rows show in: the frame's, or the column the reader
+    // sorted by (numbers as numbers, moments by when, text alphabetically)
+    // — missing cells last either way, equal cells in the frame's order
+    let mut order: Vec<usize> = (0..total).collect();
+    let sorted_by = sort.as_ref().and_then(|s| s.by.as_ref()).and_then(|(col, desc)| Some((f.columns.iter().position(|x| x == col)?, *desc)));
+    if let Some((c, desc)) = sorted_by {
+        order.sort_by(|&a, &b| {
+            use std::cmp::Ordering;
+            match (f.validity[c][a], f.validity[c][b]) {
+                (false, false) => Ordering::Equal,
+                (false, true) => Ordering::Greater,
+                (true, false) => Ordering::Less,
+                (true, true) => {
+                    let o = match f.data[c].as_ref() {
+                        Column::Int(v) => v[a].cmp(&v[b]),
+                        Column::Float(v) => v[a].partial_cmp(&v[b]).unwrap_or(Ordering::Equal),
+                        Column::Bool(v) => v[a].cmp(&v[b]),
+                        // a moment by when it is, whatever its offset
+                        Column::DateTime(ms, _) => ms[a].cmp(&ms[b]),
+                        other => {
+                            let (x, y) = (other.fmt_cell(a, true), other.fmt_cell(b, true));
+                            x.to_lowercase().cmp(&y.to_lowercase()).then_with(|| x.cmp(&y))
+                        }
+                    };
+                    if desc { o.reverse() } else { o }
+                }
+            }
+        });
+    }
     let mut out = String::from("<thead><tr>");
     for &i in &shown {
         let c = &f.columns[i];
-        if numeric[i] { out.push_str(&format!("<th class=\"num\">{}</th>", esc(c))); } else { out.push_str(&format!("<th>{}</th>", esc(c))); }
+        let class = if numeric[i] { " class=\"num\"" } else { "" };
+        match &sort {
+            // a header the reader presses to sort by its column
+            Some(s) => {
+                let sorted = match &s.by {
+                    Some((col, desc)) if col == c => if *desc { " aria-sort=\"descending\"" } else { " aria-sort=\"ascending\"" },
+                    _ => "",
+                };
+                out.push_str(&format!(
+                    "<th{}{}><button data-crow-args=\"[{},{}]\" data-crow-click=\"__sort\">{}</button></th>",
+                    class,
+                    sorted,
+                    s.index,
+                    esc(&serde_json::json!(c).to_string()),
+                    esc(c)
+                ));
+            }
+            None => out.push_str(&format!("<th{}>{}</th>", class, esc(c))),
+        }
     }
     if !actions.is_empty() { out.push_str("<th></th>"); }
     out.push_str("</tr></thead><tbody>");
@@ -357,7 +414,7 @@ pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: O
         let cell = f.data[key_i].fmt_cell(r, f.validity[key_i][r]);
         if numeric[key_i] && f.validity[key_i][r] { format!("[{}]", cell.trim()) } else { serde_json::json!([cell]).to_string() }
     };
-    for r in first..last {
+    for &r in &order[first..last] {
         let mut tr = String::from("<tr");
         if let Some(i) = mark_i {
             if f.data[i].truthy(r) && f.validity[i][r] { tr.push_str(" class=\"marked\""); }
@@ -573,6 +630,9 @@ pre,code{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:0.9em}
 table{border-collapse:collapse;width:100%;font-size:0.92rem}
 th{text-align:left;font-weight:600;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.08em;color:var(--crow-muted);border-bottom:1px solid var(--crow-border);padding:0.45rem 0.9rem 0.45rem 0}
 td{border-bottom:1px solid var(--crow-border);padding:0.5rem 0.9rem 0.5rem 0;font-variant-numeric:tabular-nums}
+th button{font:inherit;text-transform:inherit;letter-spacing:inherit;color:inherit;background:none;border:0;border-radius:0;padding:0;cursor:pointer}
+th[aria-sort="ascending"] button::after{content:" ▲"}
+th[aria-sort="descending"] button::after{content:" ▼"}
 td.crow-pager{border-bottom:0;text-align:right;color:var(--crow-muted)}
 td.crow-pager span{margin:0 0.75rem}
 td.crow-refused{color:var(--crow-down)}
@@ -688,20 +748,56 @@ mod tests {
         crate::frame::CrowFrame::new(vec!["n".to_string()], vec![crate::frame::Column::Int((0..n as i64).collect())], vec![vec![true; n]])
     }
 
+    /// A sorted table's headers sort its rows: numbers as numbers, text
+    /// alphabetically, missing cells last either way, equal cells in the
+    /// frame's order; the sorted header says so, and a page shows the
+    /// sorted rows
+    #[test]
+    fn a_sorted_table_shows_the_rows_in_its_columns_order() {
+        use crate::frame::{Column, CrowFrame};
+        let f = CrowFrame::new(
+            vec!["sym".to_string(), "px".to_string()],
+            vec![Column::Str(vec!["b".into(), "A".into(), "c".into(), "a".into()]), Column::Float(vec![2.0, 10.0, 0.0, 2.0])],
+            vec![vec![true; 4], vec![true, true, false, true]],
+        );
+        // the first cell of each body row
+        let rows = |html: &str| -> Vec<String> {
+            let body = html.split("<tbody>").nth(1).and_then(|b| b.split("</tbody>").next()).unwrap_or("");
+            body.split("<tr>").skip(1).map(|r| r.split("</td>").next().unwrap_or("").trim_start_matches("<td>").to_string()).collect()
+        };
+        let sorted = |by: Option<(&str, bool)>| Some(Sorting { index: 3, by: by.map(|(c, d)| (c.to_string(), d)) });
+        let unsorted = frame_table_html(&f, None, None, None, &[], &[], &[], &[], None, sorted(None));
+        assert!(unsorted.contains("<th><button data-crow-args=\"[3,&quot;sym&quot;]\" data-crow-click=\"__sort\">sym</button></th>"), "{}", unsorted);
+        assert!(unsorted.contains("<th class=\"num\"><button data-crow-args=\"[3,&quot;px&quot;]\" data-crow-click=\"__sort\">px</button></th>"), "{}", unsorted);
+        assert!(!unsorted.contains("aria-sort"), "{}", unsorted);
+        assert_eq!(rows(&unsorted), ["b", "A", "c", "a"], "the frame's own order");
+        let by_px = frame_table_html(&f, None, None, None, &[], &[], &[], &[], None, sorted(Some(("px", false))));
+        assert!(by_px.contains("<th class=\"num\" aria-sort=\"ascending\">"), "{}", by_px);
+        assert_eq!(rows(&by_px), ["b", "a", "A", "c"], "2.0, 2.0 in the frame's order, 10.0, then the missing cell");
+        let down = frame_table_html(&f, None, None, None, &[], &[], &[], &[], None, sorted(Some(("px", true))));
+        assert!(down.contains("aria-sort=\"descending\""), "{}", down);
+        assert_eq!(rows(&down), ["A", "b", "a", "c"], "descending, the missing cell still last");
+        let by_sym = frame_table_html(&f, None, None, None, &[], &[], &[], &[], None, sorted(Some(("sym", false))));
+        assert_eq!(rows(&by_sym), ["A", "a", "b", "c"], "alphabetically");
+        let paged = frame_table_html(&f, None, None, None, &[], &[], &[], &[], Some(Paging { size: 2, index: 0, at: 1 }), sorted(Some(("sym", false))));
+        assert_eq!(rows(&paged), ["b", "c"], "the second page of the sorted rows");
+        assert!(!frame_table_html(&f, None, None, None, &[], &[], &[], &[], None, None).contains("__sort"), "a table not sorted draws plain headers");
+    }
+
     /// A paged table draws its page and says which; past its last page it
     /// shows the last; a table over the budget without a page is refused
     #[test]
     fn a_big_table_pages_and_a_bigger_one_is_refused() {
         let page = |at| Some(Paging { size: 50, index: 0, at });
-        let html = frame_table_html(&numbers(120), None, None, None, &[], &[], &[], &[], page(1));
+        let html = frame_table_html(&numbers(120), None, None, None, &[], &[], &[], &[], page(1), None);
         assert!(html.contains("<td class=\"num\">50</td>") && !html.contains("<td class=\"num\">49</td>"), "{}", html);
         assert!(html.contains("<span>51–100 of 120</span>"), "{}", html);
         assert!(html.contains("data-crow-args=\"[0,0]\"") && html.contains("data-crow-args=\"[0,2]\""), "{}", html);
-        let last = frame_table_html(&numbers(120), None, None, None, &[], &[], &[], &[], page(9));
+        let last = frame_table_html(&numbers(120), None, None, None, &[], &[], &[], &[], page(9), None);
         assert!(last.contains("<span>101–120 of 120</span>") && last.contains("<button disabled=\"\">Next</button>"), "{}", last);
-        let refused = frame_table_html(&numbers(1001), None, None, None, &[], &[], &[], &[], None);
+        let refused = frame_table_html(&numbers(1001), None, None, None, &[], &[], &[], &[], None, None);
         assert!(refused.contains("table: 1001 rows — a table shows at most 1000 at a time"), "{}", refused);
-        assert!(!frame_table_html(&numbers(1000), None, None, None, &[], &[], &[], &[], None).contains("crow-refused"));
+        assert!(!frame_table_html(&numbers(1000), None, None, None, &[], &[], &[], &[], None, None).contains("crow-refused"));
     }
     /// A shortcut is written as a person reads it and rendered as the
     /// browser names it; a key no keyboard has, or a shift the character

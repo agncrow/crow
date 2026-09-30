@@ -1140,6 +1140,8 @@ fn pagination_bar[pg, total, per_page]
 
 ### Table Features
 
+*Superseded (2026-09-29): `table[frame, sort = true]` shipped, the session keeping each table's order; click, key, actions and hide are the table's other named arguments, and filtering stays the program's (spec, Tables over frames, and the Design Note "no filter on a table").*
+
 The `table` element supports sorting, filtering, and column configuration.
 
 ```

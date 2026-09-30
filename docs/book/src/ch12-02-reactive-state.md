@@ -451,7 +451,9 @@ the server's copy — read it like any file. The other way, `download[value,
 name]` hands the reader's browser a file when the handler commits: a
 frame as CSV, a string as text. And a table that could grow past a screen
 pages: `table[frame, page = 50]` draws fifty rows at a time, with the
-count and the previous and next pages under it.
+count and the previous and next pages under it. `sort = true` lets the
+reader sort it: each header becomes a button that orders the rows by its
+column, ascending and then descending.
 
 ```crow
 use web, ui, frame
@@ -469,7 +471,7 @@ fn export[]
 view desk[]
     return stack[
         field['Trades', upload, type = 'file'],
-        table[trades, page = 50],
+        table[trades, page = 50, sort = true],
         button['Export', click = export]
     ]
 
@@ -478,6 +480,7 @@ test a_file_in_and_out[]
     a = app[desk]
     change[a, 'upload', map[name = 'trades.csv', type = 'text/csv', size = '29', path = 'desk_trades.csv']]
     assert[len[elements[a, 'tbody tr']] eq 2]
+    assert[elements[a, 'th button'][0].text eq 'symbol']
     click[a, export]
     assert[downloads[a][0].name eq 'trades.csv']
     assert[contains[downloads[a][0].text, 'IMRN,100']]
@@ -497,7 +500,9 @@ server's copy belongs to the session and goes when the session does; a
 handler that wants to keep it copies it. A table of more than 1,000 rows
 without `page` is refused in place, as an over-budget chart is: the page
 says how many rows there are and how to page them, rather than quietly
-cutting some off.
+cutting some off. The session keeps each table's page and its order, and
+the frame stays as it was: sorting the program's own data is
+`sort[df, 'col']`.
 
 ## Mail
 

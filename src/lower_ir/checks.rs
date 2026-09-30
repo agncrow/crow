@@ -684,6 +684,11 @@ impl<'a> Lowerer<'a> {
                 for e in crow_runtime::layout::render(name, &literal).errors {
                     self.refuse(format!("{}: {}", name, e));
                 }
+                // a table sorts by its headers when the program says so
+                let sort = pairs.iter().find(|(k, _)| matches!(k, A::Ident(s) | A::Str(s) if s == "sort"));
+                if name == "table" && sort.is_some_and(|(_, v)| !matches!(v, A::Bool(_))) {
+                    self.refuse("table: sort takes true or false as written: sort = true makes each header sort the rows by its column".to_string());
+                }
                 // a shortcut presses its element, which must do something
                 // when pressed
                 let named = |want: &str| pairs.iter().any(|(k, _)| matches!(k, A::Ident(s) | A::Str(s) if s == want));
@@ -1127,6 +1132,17 @@ mod tests {
         assert!(err.contains("button: shortcut = 'hyper+s' is not a shortcut ('ctrl+s', 'escape', '?', 'ctrl+s meta+s')"), "{}", err);
         let err = check_source(&page("button['Save', click = save, shortcut = str[n]]")).unwrap_err();
         assert!(err.contains("button: 'shortcut' is a layout attribute and must be a literal"), "{}", err);
+    }
+
+    /// A table sorts by its headers when the program says so in so many
+    /// words: `sort = true`, never a value that would sort in one mode.
+    #[test]
+    fn a_tables_sort_is_written_true() {
+        let page = |table: &str| format!("use web, ui, frame\nlong = true\nview v[]\n    f = with[frame.new[], 'n', [2, 1]]\n    return stack[p['`long`'], {}]\npage['/', v]\n", table);
+        assert!(check_source(&page("table[f, sort = true]")).is_ok());
+        assert!(check_source(&page("table[f, sort = false]")).is_ok());
+        let err = check_source(&page("table[f, sort = long]")).unwrap_err();
+        assert!(err.contains("table: sort takes true or false as written: sort = true makes each header sort the rows by its column"), "{}", err);
     }
 
     /// A tensor's shape is in its type (second-half-design.md §3), so it

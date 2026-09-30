@@ -256,6 +256,8 @@ const READER: &str = "reader";
 const READER_SID: &str = "__reader_sid";
 /// The page each paged table shows, kept with the session's facts.
 const PAGES: &str = "__pages";
+/// The column each sorted table is sorted by, kept with the session's facts.
+const SORTS: &str = "__sorts";
 
 /// How long a handler may run before its page shows it working: a quick
 /// one is answered by one render, a slow one by two.
@@ -384,6 +386,8 @@ pub struct CrowLiveState {
     pub(crate) signing: Option<Option<String>>,
     /// paged tables drawn so far in the render under way
     tables_drawn: std::sync::atomic::AtomicUsize,
+    /// sorted tables drawn so far in the render under way
+    sorts_drawn: std::sync::atomic::AtomicUsize,
     /// files the last commits handed the reader, for the page to fetch
     pub(crate) downloads: Vec<(String, Vec<u8>)>,
     /// the messages the session sent, kept for a test (`mails[a]`)
@@ -1023,6 +1027,7 @@ impl CrowLiveState {
             asking: None,
             signing: None,
             tables_drawn: std::sync::atomic::AtomicUsize::new(0),
+            sorts_drawn: std::sync::atomic::AtomicUsize::new(0),
             downloads: Vec::new(),
             mails: Vec::new(),
         }
@@ -1258,6 +1263,37 @@ impl CrowLiveState {
         self.set(PAGES, serde_json::Value::Object(pages));
     }
 
+    /// `table[frame, sort = true]` drawn: which sorted table of this render
+    /// it is, and the column the session sorts it by.
+    pub fn table_sort(&self) -> crow_runtime::layout::Sorting {
+        let index = self.sorts_drawn.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        crow_runtime::layout::Sorting { index, by: self.table_sorts().remove(&index) }
+    }
+
+    /// The column each sorted table is sorted by, and whether descending, by
+    /// its place among the render's.
+    pub fn table_sorts(&self) -> HashMap<usize, (String, bool)> {
+        match self.data.get(SORTS) {
+            Some(serde_json::Value::Object(m)) => m
+                .iter()
+                .filter_map(|(k, v)| Some((k.parse().ok()?, serde_json::from_value::<(String, bool)>(v.clone()).ok()?)))
+                .collect(),
+            _ => HashMap::new(),
+        }
+    }
+
+    /// A sorted table's header pressed: the rows follow its column,
+    /// ascending, or descending when they already followed it ascending.
+    fn sort_table(&mut self, index: usize, column: String) {
+        let desc = matches!(self.table_sorts().get(&index), Some((c, false)) if *c == column);
+        let mut sorts = match self.data.get(SORTS) {
+            Some(serde_json::Value::Object(m)) => m.clone(),
+            _ => serde_json::Map::new(),
+        };
+        sorts.insert(index.to_string(), serde_json::json!([column, desc]));
+        self.set(SORTS, serde_json::Value::Object(sorts));
+    }
+
     /// The reader this session holds, and the sign-in it came from.
     pub fn set_reader(&mut self, record: std::collections::BTreeMap<String, String>, sid: String) {
         if let Some(h) = &self.handle {
@@ -1344,6 +1380,7 @@ impl CrowLiveState {
             asking: None,
             signing: None,
             tables_drawn: std::sync::atomic::AtomicUsize::new(0),
+            sorts_drawn: std::sync::atomic::AtomicUsize::new(0),
             downloads: Vec::new(),
             mails: Vec::new(),
         }
@@ -1358,6 +1395,7 @@ impl CrowLiveState {
     pub fn begin_render(&self) {
         self.mode.store(MODE_RENDER, std::sync::atomic::Ordering::SeqCst);
         self.tables_drawn.store(0, std::sync::atomic::Ordering::SeqCst);
+        self.sorts_drawn.store(0, std::sync::atomic::Ordering::SeqCst);
         self.notice_read.store(false, std::sync::atomic::Ordering::SeqCst);
         self.view_stale.lock().unwrap_or_else(|p| p.into_inner()).clear();
         if let Some(h) = &self.handle {
@@ -1809,6 +1847,7 @@ impl Clone for CrowLiveState {
             asking: None,
             signing: None,
             tables_drawn: std::sync::atomic::AtomicUsize::new(0),
+            sorts_drawn: std::sync::atomic::AtomicUsize::new(0),
             downloads: Vec::new(),
             mails: Vec::new(),
         }
@@ -2541,6 +2580,9 @@ where
         if !initial_state.data.contains_key(PAGES) {
             initial_state.set(PAGES, serde_json::json!({}));
         }
+        if !initial_state.data.contains_key(SORTS) {
+            initial_state.set(SORTS, serde_json::json!({}));
+        }
         let init_state = std::sync::Arc::new(initial_state);
         // where a page trades its ticket for its cookie, and fetches a file
         let sign_path = format!("/_sign{}", page_path);
@@ -3001,6 +3043,15 @@ where
                                         render = true;
                                         continue;
                                     }
+                                    // a sorted table's header
+                                    "__sort" => {
+                                        if let Some((index, column)) = value.as_deref().and_then(|v| serde_json::from_str::<(usize, String)>(v).ok()) {
+                                            state.sort_table(index, column);
+                                        }
+                                        acks.extend(seq);
+                                        render = true;
+                                        continue;
+                                    }
                                     "__confirm" => match state.asking.take() {
                                         Some((h, args, _)) => (h, args),
                                         None => {
@@ -3379,6 +3430,32 @@ mod tests {
         assert!(!offers.allows("say", Some("[\"hi\"]")), "a helper no button names");
         assert!(!offers.allows("__field:session_id", Some("5")), "a fact no input binds");
         assert!(!offers.allows("delete_confirmed", None), "a confirmation's second step without its first");
+    }
+
+    /// A sorted table's header orders its rows by its column, ascending,
+    /// and a second press descending; each sorted table of a render keeps
+    /// its own order, counted from the render's start (spec, Tables over
+    /// frames)
+    #[test]
+    fn a_sorted_tables_order_is_the_sessions() {
+        let mut s = CrowLiveState::new();
+        s.begin_render();
+        let first = s.table_sort();
+        assert_eq!((first.index, first.by), (0, None), "the frame's own order");
+        assert_eq!(s.table_sort().index, 1, "the render's second sorted table");
+        s.sort_table(0, "px".to_string());
+        assert_eq!(s.table_sorts().get(&0), Some(&("px".to_string(), false)));
+        s.sort_table(0, "px".to_string());
+        assert_eq!(s.table_sorts().get(&0), Some(&("px".to_string(), true)), "a second press");
+        s.sort_table(0, "px".to_string());
+        assert_eq!(s.table_sorts().get(&0), Some(&("px".to_string(), false)), "and a third, ascending again");
+        s.sort_table(0, "sym".to_string());
+        s.sort_table(1, "px".to_string());
+        assert_eq!(s.table_sorts().get(&0), Some(&("sym".to_string(), false)), "another column starts ascending");
+        s.begin_render();
+        let again = s.table_sort();
+        assert_eq!((again.index, again.by), (0, Some(("sym".to_string(), false))), "the next render counts from its start");
+        assert_eq!(s.table_sort().by, Some(("px".to_string(), false)));
     }
 
     /// A closed modal offers nothing: its confirm button is in the page but

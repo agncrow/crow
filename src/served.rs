@@ -102,8 +102,9 @@ fn with_session(template: &IrInterp, state: &CrowLiveState) -> IrInterp {
     // the session's signed-in reader, as the runtime holds it
     let reader = state.reader().into_iter().map(|(k, v)| (k, CrowValue::ok(Value::Str(v)))).collect();
     it.session_reader.insert(0, reader);
-    // the page each paged table shows
+    // the page each paged table shows, and the order each sorted one is in
     it.session_pages = state.table_pages();
+    it.session_sorts = state.table_sorts();
     it
 }
 

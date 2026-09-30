@@ -398,7 +398,7 @@ fn shows_order(e: &Expr) -> bool {
             let n = call_name(e).unwrap_or_default();
             is_effect(&n) || DRAWS.contains(&n.as_str()) || matches!(n.as_str(), "assert" | "running")
         }
-        Expr::Tree { element, attrs, .. } => element == "table" && attrs.iter().any(|(k, _)| k == "page"),
+        Expr::Tree { element, attrs, .. } => element == "table" && attrs.iter().any(|(k, _)| k == "page" || k == "sort"),
         _ => false,
     }
 }

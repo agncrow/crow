@@ -160,7 +160,7 @@ Goal: `fetch[url]`, `poll[url, seconds]`, `field[label, var]`, `select[options, 
 - [x] **Loading states, file upload** — `running[h]`, uploads
 - [x] **Keyboard events** — a key presses a drawn element: `shortcut = 'ctrl+s'` (drawn as `aria-keyshortcuts`), Escape on a dialog's Close and the runtime's question, Enter in a form presses its first button, and a form never reloads the page; `keydown` handlers rejected (Design Note: keys press elements)
 - [x] **Row click** — `table[frame, click = h, key = 'col']`, row actions
-- [ ] **Table features** — sorting, filtering
+- [x] **Table features** — `sort = true`: a header sorts the rows by its column, and the session keeps the order as it keeps a page (spec, Tables over frames); filtering stays the program's (Design Note: no filter on a table)
 - [x] **Modals, pagination** — `modal[child, open = var]`, `table[frame, page = 50]`
 - [ ] **Accessibility** — an audit (nav's `aria-current` and tabs' roles are in)
 

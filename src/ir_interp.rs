@@ -134,6 +134,12 @@ pub struct IrInterp {
     pub(crate) session_pages: HashMap<usize, usize>,
     /// Paged tables drawn so far in the render under way.
     paged_tables: usize,
+    /// The column each sorted table of the served session is sorted by, and
+    /// whether descending (by its place among the render's sorted tables); a
+    /// test sees the frame's own order.
+    pub(crate) session_sorts: HashMap<usize, (String, bool)>,
+    /// Sorted tables drawn so far in the render under way.
+    sorted_tables: usize,
     /// The files each session's handlers handed its reader, in order.
     pub(crate) session_downloads: HashMap<u64, Vec<(String, Vec<u8>)>>,
     /// While the harness runs a handler: the effects held to its commit.
@@ -440,6 +446,8 @@ impl IrInterp {
             session_sign: None,
             session_pages: HashMap::new(),
             paged_tables: 0,
+            session_sorts: HashMap::new(),
+            sorted_tables: 0,
             session_downloads: HashMap::new(),
             remote: None,
             remote_sessions: HashMap::new(),
@@ -915,6 +923,16 @@ impl IrInterp {
                     let at = self.session_pages.get(&index).copied().unwrap_or(0);
                     map.insert("__page_index".to_string(), CrowValue::ok(Value::Int(index as i64)));
                     map.insert("__page_at".to_string(), CrowValue::ok(Value::Int(at as i64)));
+                }
+                // a sorted table: which one it is in this render, and its order
+                if element == "table" && matches!(map.get("sort").map(|v| &v.value), Some(Value::Bool(true))) {
+                    let index = self.sorted_tables;
+                    self.sorted_tables += 1;
+                    map.insert("__sort_index".to_string(), CrowValue::ok(Value::Int(index as i64)));
+                    if let Some((column, desc)) = self.session_sorts.get(&index) {
+                        map.insert("__sort_by".to_string(), CrowValue::ok(Value::Str(column.clone())));
+                        map.insert("__sort_desc".to_string(), CrowValue::ok(Value::Bool(*desc)));
+                    }
                 }
                 let mut vals = vec![CrowValue::ok(Value::Map(map))];
                 for c in children {
@@ -2489,6 +2507,7 @@ impl IrInterp {
         self.tick += 1;
         self.notice_read = false;
         self.paged_tables = 0;
+        self.sorted_tables = 0;
         let r = self.call_user(view, Vec::new())?;
         let html = match &r.value {
             Value::Str(s) => s.clone(),

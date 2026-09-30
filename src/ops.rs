@@ -914,6 +914,8 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
     // table[frame, page = 50]: the page size, and — from the session the
     // interpreter renders for — which paged table this is and its page
     let (mut table_page, mut page_index, mut page_at): (Option<i64>, usize, usize) = (None, 0, 0);
+    // table[frame, sort = true]: which sorted table this is, and its order
+    let (mut table_sort, mut sort_index, mut sort_by, mut sort_desc): (bool, usize, Option<String>, bool) = (false, 0, None, false);
     // the wiring, as the compiled page writes it: the handler a click, an
     // input or a form calls, and the arguments a click froze
     let mut events: Vec<(String, String)> = Vec::new();
@@ -972,6 +974,22 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
                                 page_at = (*n).max(0) as usize;
                                 continue;
                             }
+                            ("sort", Value::Bool(b)) => {
+                                table_sort = *b;
+                                continue;
+                            }
+                            ("__sort_index", Value::Int(n)) => {
+                                sort_index = (*n).max(0) as usize;
+                                continue;
+                            }
+                            ("__sort_by", Value::Str(s)) => {
+                                sort_by = Some(s.clone());
+                                continue;
+                            }
+                            ("__sort_desc", Value::Bool(b)) => {
+                                sort_desc = *b;
+                                continue;
+                            }
                             _ => {}
                         }
                     }
@@ -1021,6 +1039,7 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
                 &table_hide,
                 &table_confirm,
                 table_page.map(|size| crow_runtime::layout::Paging { size: size.max(1) as usize, index: page_index, at: page_at }),
+                table_sort.then(|| crow_runtime::layout::Sorting { index: sort_index, by: sort_by.clone().map(|c| (c, sort_desc)) }),
             )),
             Value::Array(items) => splice(&mut inner, items),
             other => inner.push_str(&crate::harness::html_escape_text(&format!("{}", other))),
