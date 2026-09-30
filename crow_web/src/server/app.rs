@@ -95,6 +95,15 @@ impl CrowApp {
             }
         };
         let router = self.served();
+        // under crow dev: its routes, and an end when crow dev ends
+        #[cfg(feature = "live")]
+        let router = match crate::live::dev_router() {
+            Some(dev) => {
+                crate::live::end_with_parent();
+                router.merge(dev)
+            }
+            None => router,
+        };
         println!("crow server listening on http://{}", addr);
         tokio::spawn(stop_on_signal());
         axum::serve(listener, router).await?;

@@ -520,8 +520,106 @@ pub fn configure_keep(on: bool) {
 }
 
 fn keeping() -> bool {
-    KEEP.load(std::sync::atomic::Ordering::SeqCst)
+    KEEP.load(std::sync::atomic::Ordering::SeqCst) || dev_token().is_some()
 }
+
+/// The token `crow dev` hands the program it serves (`CROW_DEV`); none
+/// outside `crow dev`. Under it sessions are kept across restarts, pages
+/// carry the dev part of the page, and the dev routes answer.
+pub fn dev_token() -> Option<&'static str> {
+    static TOKEN: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    TOKEN.get_or_init(|| std::env::var("CROW_DEV").ok().filter(|t| !t.is_empty())).as_deref()
+}
+
+/// `crow dev`'s last word for the pages, and how many words there have been.
+static DEV_NOTE: std::sync::Mutex<(u64, Option<serde_json::Value>)> = std::sync::Mutex::new((0, None));
+
+/// A word for every open page: kept, and every session woken to send it.
+fn dev_note(note: serde_json::Value) {
+    {
+        let mut n = DEV_NOTE.lock().unwrap_or_else(|p| p.into_inner());
+        n.0 += 1;
+        n.1 = Some(note);
+    }
+    wake_sessions(u64::MAX, |_| true);
+}
+
+fn dev_note_now() -> (u64, Option<serde_json::Value>) {
+    DEV_NOTE.lock().unwrap_or_else(|p| p.into_inner()).clone()
+}
+
+/// `crow dev`'s routes, under `crow dev` alone, each taken only from the
+/// `crow dev` that holds the token: a change's refusal for every page
+/// (`/_dev/error`), and a reload of the tabs (`/_dev/reload`).
+pub fn dev_router() -> Option<axum::Router> {
+    let token = dev_token()?;
+    let allowed = move |headers: &axum::http::HeaderMap| headers.get("x-crow-dev").and_then(|v| v.to_str().ok()) == Some(token);
+    Some(
+        axum::Router::new()
+            .route(
+                "/_dev/error",
+                axum::routing::post(move |headers: axum::http::HeaderMap, body: String| async move {
+                    if !allowed(&headers) {
+                        return axum::http::StatusCode::FORBIDDEN;
+                    }
+                    dev_note(serde_json::json!({ "type": "dev", "error": body }));
+                    axum::http::StatusCode::NO_CONTENT
+                }),
+            )
+            .route(
+                "/_dev/reload",
+                axum::routing::post(move |headers: axum::http::HeaderMap| async move {
+                    if !allowed(&headers) {
+                        return axum::http::StatusCode::FORBIDDEN;
+                    }
+                    dev_note(serde_json::json!({ "type": "dev", "reload": true }));
+                    axum::http::StatusCode::NO_CONTENT
+                }),
+            ),
+    )
+}
+
+/// A program `crow dev` started ends when `crow dev` does, however it
+/// ended: it looks for its parent every half second.
+pub fn end_with_parent() {
+    #[cfg(unix)]
+    {
+        let parent = std::os::unix::process::parent_id();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            if std::os::unix::process::parent_id() != parent {
+                std::process::exit(0);
+            }
+        });
+    }
+}
+
+/// `crow dev`'s part of a page: a change's refusal over the page until a
+/// change mends it (a click on it uncovers the last good page), and a
+/// reload when what the page's shell carries changed.
+const DEV_JS: &str = r#"<script>
+(function() {
+  var box = null;
+  function hide() { if (box) { box.remove(); box = null; } }
+  window.crowDev = {
+    open: hide,
+    message: function(msg) {
+      if (msg.reload) { location.reload(); return; }
+      if (!msg.error) return;
+      if (!box) {
+        box = document.createElement('div');
+        box.id = 'crow-dev-error';
+        box.setAttribute('role', 'alert');
+        box.title = 'click to use the last good page';
+        box.onclick = hide;
+        box.style.cssText = 'position:fixed;inset:0;z-index:2147483647;overflow:auto;padding:24px 28px;white-space:pre-wrap;background:rgba(24,12,12,.94);color:#f7e3e3;font:13px/1.55 ui-monospace,Menlo,monospace';
+        document.body.appendChild(box);
+      }
+      box.textContent = 'crow dev: this change was refused, and the last good program is serving\n\n' + msg.error;
+    }
+  };
+})();
+</script>"#;
 
 /// Where kept sessions wait for a restarted program, one file per tab token.
 const KEPT_DIR: &str = ".crow/sessions";
@@ -1963,7 +2061,7 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
 
   function connect() {{
     ws = new WebSocket(wsUrl());
-    ws.onopen = function() {{ reconDelay = 100; offline(false); answered(Infinity); }};
+    ws.onopen = function() {{ reconDelay = 100; offline(false); answered(Infinity); if (window.crowDev) window.crowDev.open(); }};
     ws.onclose = function() {{
       offline(true);
       setTimeout(connect, Math.min(reconDelay, 5000));
@@ -1971,6 +2069,7 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
     }};
     ws.onmessage = function(e) {{
       var msg = JSON.parse(e.data);
+      if (msg.type === 'dev') {{ if (window.crowDev) window.crowDev.message(msg); return; }}
       if (msg.head) applyHead(msg.head);
       if (msg.type === 'head') return;
       if (msg.type === 'session') {{
@@ -2438,7 +2537,7 @@ fn page_shell(body_html: &str, head: &Head, js: &str) -> String {
 </head>
 <body>
 <div id="crow-root">{body}</div>
-{js}
+{js}{dev}
 </body>
 </html>"#,
         look = look_attrs(),
@@ -2448,7 +2547,8 @@ fn page_shell(body_html: &str, head: &Head, js: &str) -> String {
         offline = OFFLINE_CSS,
         live = LIVE_CSS,
         body = body_html,
-        js = js
+        js = js,
+        dev = if dev_token().is_some() { DEV_JS } else { "" }
     )
 }
 
@@ -2760,12 +2860,17 @@ where
                         // keeps showing what the server no longer holds.
                         let claimed = tab_token.as_deref().and_then(|t| p2.claim(t))
                             .or_else(|| page_token.as_deref().and_then(|t| p2.claim(t)));
-                        if let Some(t) = tab_token.as_deref() {
-                            forget_kept(t);
-                        }
-                        // a restarted program: the tab's session may have been kept
+                        // a restarted program: the tab's session may have been
+                        // kept (a kept copy is read once; a session still held
+                        // here makes it stale — it had been forgotten before
+                        // it was read, and no kept session came back)
                         let claimed = match claimed {
-                            Some(c) => Some(c),
+                            Some(c) => {
+                                if let Some(t) = tab_token.as_deref() {
+                                    forget_kept(t);
+                                }
+                                Some(c)
+                            }
                             None => match tab_token.as_deref().and_then(|t| kept_session(t, &s2)) {
                                 Some(mut state) => {
                                     state.next_tick();
@@ -2921,6 +3026,16 @@ where
                         let mut whole_page = false;
                         let mut running: Option<(String, Option<u64>, tokio::task::JoinHandle<CrowLiveState>)> = None;
                         let mut acks: Vec<u64> = Vec::new();
+                        // crow dev's word for the pages: a refusal standing
+                        // now is shown to a page that opens meanwhile; a later
+                        // word goes to every page as it comes
+                        let mut dev_seen = match dev_note_now() {
+                            (seen, Some(note)) if note.get("error").is_some() => {
+                                let _ = futures_util::SinkExt::send(&mut socket, Message::Text(note.to_string().into())).await;
+                                seen
+                            }
+                            (seen, _) => seen,
+                        };
 
                         loop {
                             let action = tokio::select! {
@@ -2946,6 +3061,14 @@ where
                                     }
                                 } => LiveAction::HandlerDone(done.map_err(panic_reason)),
                             };
+
+                            if let (seen, Some(note)) = dev_note_now() {
+                                let fresh = seen > dev_seen;
+                                dev_seen = seen;
+                                if fresh && futures_util::SinkExt::send(&mut socket, Message::Text(note.to_string().into())).await.is_err() {
+                                    break;
+                                }
+                            }
 
                             let mut render = false;
                             // A refresh tick is the clock (derive-design §3.3):

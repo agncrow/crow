@@ -166,7 +166,7 @@ Goal: `fetch[url]`, `poll[url, seconds]`, `field[label, var]`, `select[options, 
 
 ##### Phase 5: Developer Experience
 
-- [ ] **`crow dev`** — hot reload server, error overlay
+- [x] **`crow dev`** — serves the program with the interpreter and reloads it as its files change: each change checked first, every tab's session kept across the restart, a refused change shown over the open pages while the last good program serves, a change to the page's shell reloading the tabs (spec, Execution Modes)
 - [x] **Chart engine** — shipped as the `chart[frame, ...]` element (server-rendered SVG, `chart-module-design.md`)
 - [ ] **Dev tools** — state inspector, event log
 

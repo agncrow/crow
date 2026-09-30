@@ -21,6 +21,7 @@ mod states;
 mod checker;
 mod db_check;
 mod derive;
+mod dev;
 mod lsp;
 mod lexer;
 mod lower;
@@ -299,6 +300,11 @@ fn crow_main() {
         "book" => {
             cmd_book();
         }
+        // crow dev [file.co]: served by the interpreter, reloaded as its
+        // files change
+        "dev" => {
+            dev::cmd_dev(args.get(2).map(String::as_str));
+        }
         "run" => {
             // Check for -i flag (interpreter mode)
             if args.len() > 2 && args[2] == "-i" {
@@ -352,6 +358,7 @@ fn print_usage() {
     eprintln!("  crow run train         run a named job from crowfile");
     eprintln!("  crow run -i file.co  run with interpreter (slow, for debugging)");
     eprintln!("  crow stop              stop the running app (pidfile, then project binary)");
+    eprintln!("  crow dev [file.co]     serve with the interpreter, reloading as files change (sessions kept)");
     eprintln!("  crow book [--port N]   serve the book with every code block runnable in place (default port 3008)");
     eprintln!("  crow check             auto-verify project (uses crowfile)");
     eprintln!("  crow check file.co   auto-verify a specific file");
