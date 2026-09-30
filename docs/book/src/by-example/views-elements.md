@@ -56,7 +56,7 @@ view render[]
             h1['h1'], h2['h2'], h3['h3'], h4['h4'], h5['h5'], h6['h6'],
             p['paragraph'],
             pre[code['x = 1']],
-            img[src = '/logo.png'],
+            img[src = '/logo.png', alt = 'the logo'],
             ul[li['one'], li['two']],
             details[summary['More'], p['body']],
             dropdown[summary['Actions'], stack[a['Help', href = '/help']]],

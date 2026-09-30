@@ -1,0 +1,16 @@
+[
+  {"expect": "<input aria-label=\"Name\" data-crow-input=\"__field:name\" type=\"text\" value=\"\">"},
+  {"expect": "<div data-crow-click=\"open_card\" role=\"button\" tabindex=\"0\">a card</div>"},
+  {"expect": "data-crow-click=\"pick\" tabindex=\"0\"><td>IMRN</td>"},
+  {"expect": "role=\"dialog\""},
+  {"expect": "aria-modal=\"true\""},
+  {"expect": "role=\"status\""},
+  {"expect": "alt=\"the logo\""},
+  {"absent": "<button data-crow-click=\"show\" role="},
+  {"event": "open_card"},
+  {"expect": "opened 1"},
+  {"event": "pick", "value": "[\"FFIE\"]"},
+  {"expect": "opened 11"},
+  {"event": "show"},
+  {"expect": "data-open=\"true\""}
+]

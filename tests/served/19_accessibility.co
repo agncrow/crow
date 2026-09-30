@@ -1,0 +1,35 @@
+--- What a page tells a reader on a keyboard or with a screen reader
+--- (spec, Accessibility), the same in both modes: a field's label names
+--- its input, a card with a click is a tab stop with a button's role, a
+--- table row with a click is a tab stop, a modal is a dialog, a toast a
+--- status, and an image says what it shows.
+use web, ui, frame
+
+name = ''
+opened = 0
+showing = false
+
+fn open_card[]
+    opened = opened + 1
+
+fn pick[sym]
+    opened = opened + 10
+
+fn show[]
+    showing = true
+
+view render[]
+    picks = with[frame.new[], 'sym', ['IMRN', 'FFIE']]
+    return stack[
+        p['opened `opened`'],
+        field['Name', name, type = 'text'],
+        div['a card', click = open_card],
+        table[picks, click = pick, key = 'sym'],
+        modal[stack[p['help']], open = showing],
+        toast['saved', open = showing],
+        img[src = '/logo.png', alt = 'the logo'],
+        button['Show', click = show]
+    ]
+
+serve[3420]
+page['/', render]

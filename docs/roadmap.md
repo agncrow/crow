@@ -162,7 +162,7 @@ Goal: `fetch[url]`, `poll[url, seconds]`, `field[label, var]`, `select[options, 
 - [x] **Row click** — `table[frame, click = h, key = 'col']`, row actions
 - [x] **Table features** — `sort = true`: a header sorts the rows by its column, and the session keeps the order as it keeps a page (spec, Tables over frames); filtering stays the program's (Design Note: no filter on a table)
 - [x] **Modals, pagination** — `modal[child, open = var]`, `table[frame, page = 50]`
-- [ ] **Accessibility** — an audit (nav's `aria-current` and tabs' roles are in)
+- [x] **Accessibility** — audited: a field's label names its input, a click on any element is pressable from the keyboard, a modal holds and returns focus, toasts are announced, charts are named, a reconnecting page takes no keyboard input, an `img` needs `alt`, and the light theme's accent meets AA contrast (spec, Accessibility)
 
 ##### Phase 5: Developer Experience
 

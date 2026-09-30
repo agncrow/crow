@@ -3271,6 +3271,16 @@ mod tests {
         issues.iter().map(|i| format!("{:?}", i)).collect()
     }
 
+    /// html[a] is the page as the browser builds it, the same text in both
+    /// modes: a table's rows carry their attributes in one order (the
+    /// interpreter had handed back the kernel's own markup and the compiled
+    /// harness the browser's, so an assertion on a row held in one mode only)
+    #[test]
+    fn a_pages_html_is_the_browsers_in_both_modes() {
+        let issues = harness_issues("use web, ui, frame\nn = 0\nfn pick[k]\n    n = k\nview v[]\n    f = with[frame.new[], 'k', [4]]\n    return stack[p['`n`'], table[f, click = pick, key = 'k']]\ntest t[]\n    a = app[v]\n    assert[contains[html[a], '<tr data-crow-args=\"[4]\" data-crow-click=\"pick\" tabindex=\"0\"><td class=\"num\">4</td></tr>']]\n");
+        assert!(issues.is_empty(), "{:?}", issues);
+    }
+
     const TWO_PEOPLE: &str = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\nmin_qty = 0\nfn setup[]\n    exec[book, 'CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, qty INTEGER)']\nderive orders\n    return query[book, 'SELECT qty FROM orders ORDER BY id']\nfn reset[]\n    min_qty = 0\nfn order[]\n    exec[book, 'INSERT INTO orders (qty) VALUES (?)', [min_qty]]\nview panel[]\n    return stack[p['min `min_qty`'], p['orders: `len[orders]`'], button['Reset', click = reset], button['Order', click = order]]\n";
 
     /// widget[name, props = …, on = map[event = handler]]: one element the

@@ -115,16 +115,32 @@ impl CrowVNode {
         }
     }
 
-    /// Add a click event handler name. Sets `data-crow-click` attribute.
+    /// Add a click event handler name. Sets `data-crow-click` attribute,
+    /// and makes an element the browser does not press pressable from the
+    /// keyboard (crow_runtime::layout::press_attrs).
     pub fn on_click(self, event_name: &str) -> Self {
-        self.attr("data-crow-click", event_name)
+        self.pressable().attr("data-crow-click", event_name)
+    }
+
+    /// A tab stop and a button's role for an element with a click that the
+    /// browser does not press itself.
+    fn pressable(self) -> Self {
+        let extra = match &self {
+            CrowVNode::Element { tag, attrs, .. } => {
+                let set: Vec<(String, String)> = attrs.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                crow_runtime::layout::press_attrs(tag, &set)
+            }
+            _ => Vec::new(),
+        };
+        extra.into_iter().fold(self, |node, (k, v)| node.attr(&k, &v))
     }
 
     /// A click handler with frozen arguments (F-11): the handler name plus
     /// a JSON array of values captured at render, delivered back with the
     /// event. `click = set_speed[10.0]` lowers to this.
     pub fn on_click_args(self, event_name: &str, args_json: &str) -> Self {
-        self.attr("data-crow-click", event_name)
+        self.pressable()
+            .attr("data-crow-click", event_name)
             .attr("data-crow-args", args_json)
     }
 
@@ -266,7 +282,7 @@ impl CrowVNode {
         if kind == "file" {
             let mut kids = vec![
                 CrowVNode::label(vec![CrowVNode::text(label)]),
-                CrowVNode::input().attr("type", "file").attr("data-crow-upload", &bound),
+                CrowVNode::input().attr("type", "file").attr("data-crow-upload", &bound).attr("aria-label", label),
             ];
             if !current_value.is_empty() {
                 kids.push(CrowVNode::tag("span", vec![CrowVNode::text(current_value)]).attr("class", "crow-file"));
@@ -277,11 +293,13 @@ impl CrowVNode {
             CrowVNode::textarea(vec![CrowVNode::text(current_value)])
                 .attr("rows", &lines.to_string())
                 .attr("data-crow-input", &bound)
+                .attr("aria-label", label)
         } else {
             CrowVNode::input()
                 .attr("type", if kind.is_empty() { "text" } else { kind })
                 .attr("value", current_value)
                 .attr("data-crow-input", &bound)
+                .attr("aria-label", label)
         };
         CrowVNode::div(vec![CrowVNode::label(vec![CrowVNode::text(label)]), control]).attr("class", "crow-field")
     }
@@ -461,7 +479,8 @@ impl CrowVNode {
             CrowVNode::input()
                 .attr("type", "text")
                 .attr("value", current_value)
-                .attr("data-crow-input", &format!("__field:{}", key)),
+                .attr("data-crow-input", &format!("__field:{}", key))
+                .attr("aria-label", label),
         ]).attr("class", "crow-field")
     }
 
@@ -475,7 +494,8 @@ impl CrowVNode {
                 .attr("max", &format!("{}", max))
                 .attr("step", &format!("{}", step))
                 .attr("value", current_value)
-                .attr("data-crow-input", &format!("__field:{}", key)),
+                .attr("data-crow-input", &format!("__field:{}", key))
+                .attr("aria-label", label),
         ]).attr("class", "crow-field crow-slider")
     }
 

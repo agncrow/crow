@@ -698,6 +698,10 @@ impl<'a> Lowerer<'a> {
                         name, name
                     ));
                 }
+                // an image says what it shows, or that it only decorates
+                if name == "img" && !named("alt") {
+                    self.refuse("img: alt = '…' says what the image shows to a reader who cannot see it, or alt = '' that it only decorates".to_string());
+                }
                 // a widget's events each name a handler
                 if name == "widget" {
                     for (k, v) in pairs {
@@ -1132,6 +1136,17 @@ mod tests {
         assert!(err.contains("button: shortcut = 'hyper+s' is not a shortcut ('ctrl+s', 'escape', '?', 'ctrl+s meta+s')"), "{}", err);
         let err = check_source(&page("button['Save', click = save, shortcut = str[n]]")).unwrap_err();
         assert!(err.contains("button: 'shortcut' is a layout attribute and must be a literal"), "{}", err);
+    }
+
+    /// An image says what it shows to a reader who cannot see it, or that
+    /// it only decorates (spec, Accessibility)
+    #[test]
+    fn an_image_says_what_it_shows() {
+        let page = |element: &str| format!("use web, ui\nview v[]\n    return stack[{}]\npage['/', v]\n", element);
+        assert!(check_source(&page("img[src = '/logo.png', alt = 'the logo']")).is_ok());
+        assert!(check_source(&page("img[src = '/rule.png', alt = '']")).is_ok());
+        let err = check_source(&page("img[src = '/logo.png']")).unwrap_err();
+        assert!(err.contains("img: alt = '…' says what the image shows to a reader who cannot see it, or alt = '' that it only decorates"), "{}", err);
     }
 
     /// A table sorts by its headers when the program says so in so many

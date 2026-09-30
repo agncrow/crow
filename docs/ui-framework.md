@@ -1244,6 +1244,8 @@ page['/reports', render]
 
 ### Accessibility
 
+*Audited (2026-09-29): the runtime names fields, makes clicks pressable from the keyboard, holds focus in a dialog and returns it, announces toasts and names charts; `aria_*` attributes pass through as written (spec, Accessibility).*
+
 HTML accessibility attributes are passed as regular attributes. The framework generates semantic HTML by default.
 
 ```

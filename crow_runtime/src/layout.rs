@@ -156,6 +156,16 @@ pub fn render(tag: &str, attrs: &[(String, String)]) -> Rendered {
     let mut passthrough = Vec::new();
     let mut errors = Vec::new();
     if is_container || is_aliased { classes.push(tag.to_string()); }
+    // the layers say what they are: a dialog over the page, a side panel,
+    // a notice a screen reader announces
+    if !attrs.iter().any(|(k, _)| k == "role") {
+        match tag {
+            "modal" => passthrough.extend([("role".to_string(), "dialog".to_string()), ("aria-modal".to_string(), "true".to_string())]),
+            "drawer" => passthrough.push(("role".to_string(), "dialog".to_string())),
+            "toast" => passthrough.push(("role".to_string(), "status".to_string())),
+            _ => {}
+        }
+    }
     match tag {
         "stack" => css.push("display:flex;flex-direction:column".into()),
         "row" => {
@@ -298,6 +308,25 @@ pub fn confirm_wiring(events: Vec<(String, String)>, confirm: Option<&str>) -> V
     out
 }
 
+/// Elements the browser presses itself: focusable, and pressed by Enter
+/// (and Space).
+const NATIVE_PRESS: &[&str] = &["a", "button", "input", "select", "textarea", "summary", "label", "option"];
+
+/// What an element with a click needs to be pressed from the keyboard: a
+/// tab stop, and the role of a button, for an element the browser does not
+/// press itself (a table row keeps its role; the page's script presses a
+/// focused one on Enter and Space). None where the program set either.
+pub fn press_attrs(tag: &str, attrs: &[(String, String)]) -> Vec<(String, String)> {
+    if NATIVE_PRESS.contains(&tag) || attrs.iter().any(|(k, _)| k == "role" || k == "tabindex") {
+        return Vec::new();
+    }
+    let mut out = vec![("tabindex".to_string(), "0".to_string())];
+    if tag != "tr" {
+        out.push(("role".to_string(), "button".to_string()));
+    }
+    out
+}
+
 /// The question a confirmed click sends: the handler, its frozen arguments
 /// (as the text its click would have sent) and what to ask.
 pub fn ask_args(handler: &str, args: Option<&str>, text: &str) -> String {
@@ -421,7 +450,7 @@ pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: O
         }
         if let Some(h) = click {
             if f.ncols() > 0 {
-                tr.push_str(&format!(" data-crow-click=\"{}\" data-crow-args=\"{}\"", esc(h), key_json(r)));
+                tr.push_str(&format!(" data-crow-click=\"{}\" data-crow-args=\"{}\" tabindex=\"0\"", esc(h), key_json(r)));
             }
         }
         tr.push('>');
@@ -608,10 +637,10 @@ pub fn look_attrs(theme: &str, density: &str, accent: &str) -> Result<String, St
 
 /// The kernel stylesheet: theme tokens, element defaults, and the eight
 /// classes — every served page and every exported document starts here.
-pub const DEFAULT_CSS: &str = r#":root{--crow-bg:#f6f7f9;--crow-surface:#ffffff;--crow-text:#1b222b;--crow-muted:#5d6773;--crow-border:#dce1e8;--crow-accent:#a86e1c;--crow-up:#177a4e;--crow-down:#bd3a3a;--crow-series-2:#2f6fb5;--crow-series-3:#7c4dbd;--crow-series-4:#178a8a;--crow-series-5:#c23d7a;--crow-series-6:#d2701a}
+pub const DEFAULT_CSS: &str = r#":root{--crow-bg:#f6f7f9;--crow-surface:#ffffff;--crow-text:#1b222b;--crow-muted:#5d6773;--crow-border:#dce1e8;--crow-accent:#9a6519;--crow-up:#177a4e;--crow-down:#bd3a3a;--crow-series-2:#2f6fb5;--crow-series-3:#7c4dbd;--crow-series-4:#178a8a;--crow-series-5:#c23d7a;--crow-series-6:#d2701a}
 @media (prefers-color-scheme:dark){:root{--crow-bg:#0f1317;--crow-surface:#171d24;--crow-text:#e6e9ec;--crow-muted:#8b95a1;--crow-border:#28313c;--crow-accent:#e8a940;--crow-up:#3dbd85;--crow-down:#e06060;--crow-series-2:#5b9cf0;--crow-series-3:#a884ee;--crow-series-4:#3cc0c0;--crow-series-5:#ee6fa8;--crow-series-6:#f09a4a}}
 :root[data-theme="dark"]{--crow-bg:#0f1317;--crow-surface:#171d24;--crow-text:#e6e9ec;--crow-muted:#8b95a1;--crow-border:#28313c;--crow-accent:#e8a940;--crow-up:#3dbd85;--crow-down:#e06060;--crow-series-2:#5b9cf0;--crow-series-3:#a884ee;--crow-series-4:#3cc0c0;--crow-series-5:#ee6fa8;--crow-series-6:#f09a4a}
-:root[data-theme="light"]{--crow-bg:#f6f7f9;--crow-surface:#ffffff;--crow-text:#1b222b;--crow-muted:#5d6773;--crow-border:#dce1e8;--crow-accent:#a86e1c;--crow-up:#177a4e;--crow-down:#bd3a3a;--crow-series-2:#2f6fb5;--crow-series-3:#7c4dbd;--crow-series-4:#178a8a;--crow-series-5:#c23d7a;--crow-series-6:#d2701a}
+:root[data-theme="light"]{--crow-bg:#f6f7f9;--crow-surface:#ffffff;--crow-text:#1b222b;--crow-muted:#5d6773;--crow-border:#dce1e8;--crow-accent:#9a6519;--crow-up:#177a4e;--crow-down:#bd3a3a;--crow-series-2:#2f6fb5;--crow-series-3:#7c4dbd;--crow-series-4:#178a8a;--crow-series-5:#c23d7a;--crow-series-6:#d2701a}
 *{box-sizing:border-box}
 body{margin:0 auto;max-width:860px;padding:2.2rem 1.25rem 4rem;background:var(--crow-bg);color:var(--crow-text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:15px;line-height:1.55}
 h1{font-size:1.45rem;font-weight:650;letter-spacing:-0.015em;margin:0 0 0.25rem}
@@ -634,6 +663,8 @@ th button{font:inherit;text-transform:inherit;letter-spacing:inherit;color:inher
 th[aria-sort="ascending"] button::after{content:" ▲"}
 th[aria-sort="descending"] button::after{content:" ▼"}
 td.crow-pager{border-bottom:0;text-align:right;color:var(--crow-muted)}
+[data-crow-click][tabindex]:focus-visible{outline:2px solid var(--crow-accent);outline-offset:-2px}
+@media (prefers-reduced-motion:reduce){.drawer{transition:none}}
 td.crow-pager span{margin:0 0.75rem}
 td.crow-refused{color:var(--crow-down)}
 .controls{display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;margin:0.9rem 0}
@@ -746,6 +777,60 @@ mod tests {
 
     fn numbers(n: usize) -> crate::frame::CrowFrame {
         crate::frame::CrowFrame::new(vec!["n".to_string()], vec![crate::frame::Column::Int((0..n as i64).collect())], vec![vec![true; n]])
+    }
+
+    /// The layers say what they are; an element with a click the browser
+    /// does not press is a tab stop with a button's role (a row keeps its
+    /// own), and one the program gave a role or a tab stop is left alone
+    #[test]
+    fn what_the_page_tells_a_screen_reader() {
+        let roles = |tag: &str| render(tag, &[]).passthrough;
+        assert_eq!(roles("modal"), vec![("role".to_string(), "dialog".to_string()), ("aria-modal".to_string(), "true".to_string())]);
+        assert_eq!(roles("drawer"), vec![("role".to_string(), "dialog".to_string())]);
+        assert_eq!(roles("toast"), vec![("role".to_string(), "status".to_string())]);
+        assert!(roles("stack").is_empty());
+        assert_eq!(render("modal", &[("role".into(), "alertdialog".into())]).passthrough, vec![("role".to_string(), "alertdialog".to_string())]);
+        let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
+        assert_eq!(press_attrs("div", &[]), vec![pair("tabindex", "0"), pair("role", "button")]);
+        assert_eq!(press_attrs("tr", &[]), vec![pair("tabindex", "0")]);
+        assert!(press_attrs("button", &[]).is_empty() && press_attrs("a", &[]).is_empty());
+        assert!(press_attrs("div", &[pair("role", "tab")]).is_empty());
+        let f = crate::frame::CrowFrame::new(vec!["sym".to_string()], vec![crate::frame::Column::Str(vec!["IMRN".into()])], vec![vec![true]]);
+        let rows = frame_table_html(&f, Some("focus"), None, None, &[], &[], &[], &[], None, None);
+        assert!(rows.contains("data-crow-click=\"focus\" data-crow-args=\"[&quot;IMRN&quot;]\" tabindex=\"0\""), "{}", rows);
+    }
+
+    /// The default stylesheet's text colours meet WCAG AA (4.5:1) on both
+    /// grounds, in both themes (the light accent, which links are drawn
+    /// in, had been 3.99:1)
+    #[test]
+    fn the_default_text_colours_meet_aa_contrast() {
+        fn lum(hex: &str) -> f64 {
+            let c = |i: usize| {
+                let v = u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(0) as f64 / 255.0;
+                if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+            };
+            0.2126 * c(1) + 0.7152 * c(3) + 0.0722 * c(5)
+        }
+        let ratio = |a: &str, b: &str| {
+            let (x, y) = (lum(a), lum(b));
+            (x.max(y) + 0.05) / (x.min(y) + 0.05)
+        };
+        let mut themes = 0;
+        for block in DEFAULT_CSS.split('}') {
+            if !block.contains("--crow-bg:") {
+                continue;
+            }
+            themes += 1;
+            let token = |name: &str| block.split(&format!("--crow-{}:", name)).nth(1).map(|v| v[..7].to_string()).unwrap_or_default();
+            for fg in ["text", "muted", "accent", "up", "down"] {
+                for bg in ["bg", "surface"] {
+                    let r = ratio(&token(fg), &token(bg));
+                    assert!(r >= 4.5, "{} {} on {} {}: {:.2} in {}", fg, token(fg), bg, token(bg), r, block.split('{').next().unwrap_or(""));
+                }
+            }
+        }
+        assert!(themes >= 2, "both themes were read");
     }
 
     /// A sorted table's headers sort its rows: numbers as numbers, text

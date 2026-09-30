@@ -446,12 +446,40 @@ fn extent(series: &[&[f64]]) -> (f64, f64) {
     }
 }
 
+/// Text inside an attribute of the drawing.
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// What a chart shows, for a reader who cannot see it: its marks and how
+/// many moments they span (`a chart of candles, vwap and volume, 390
+/// points`).
+fn chart_label(spec: &ChartSpec) -> String {
+    let mut marks: Vec<String> = Vec::new();
+    if !spec.candles.0.is_empty() {
+        marks.push("candles".to_string());
+    }
+    marks.extend(spec.lines.iter().map(|(name, _)| name.to_string()));
+    for pane in &spec.panes {
+        marks.extend(pane.lines.iter().map(|(name, _)| name.to_string()));
+    }
+    if !spec.volume.is_empty() {
+        marks.push("volume".to_string());
+    }
+    let listed = match marks.len() {
+        0 => String::new(),
+        1 => format!(" of {}", marks[0]),
+        n => format!(" of {} and {}", marks[..n - 1].join(", "), marks[n - 1]),
+    };
+    format!("a chart{}, {} points", listed, spec.ts.len())
+}
+
 pub fn render_svg(spec: &ChartSpec) -> Result<String, String> {
     let n = spec.ts.len();
     check_budget(n, "chart")?;
     if n == 0 {
         return Ok(format!(
-            "<svg class=\"crow-chart\" viewBox=\"0 0 {w} {h}\" width=\"100%\" height=\"{h}\"><text x=\"{cx}\" y=\"{cy}\" text-anchor=\"middle\" fill=\"var(--crow-muted)\" font-size=\"13\">no data yet</text></svg>",
+            "<svg class=\"crow-chart\" role=\"img\" aria-label=\"a chart, no data yet\" viewBox=\"0 0 {w} {h}\" width=\"100%\" height=\"{h}\"><text x=\"{cx}\" y=\"{cy}\" text-anchor=\"middle\" fill=\"var(--crow-muted)\" font-size=\"13\">no data yet</text></svg>",
             w = spec.width, h = spec.height, cx = spec.width / 2.0, cy = spec.height / 2.0
         ));
     }
@@ -486,8 +514,8 @@ pub fn render_svg(spec: &ChartSpec) -> Result<String, String> {
 
     let mut svg = String::with_capacity(32 * 1024);
     svg.push_str(&format!(
-        "<svg class=\"crow-chart\" viewBox=\"0 0 {w} {h}\" width=\"100%\" height=\"{h}\" font-family=\"ui-monospace,monospace\">",
-        w = spec.width, h = spec.height
+        "<svg class=\"crow-chart\" role=\"img\" aria-label=\"{label}\" viewBox=\"0 0 {w} {h}\" width=\"100%\" height=\"{h}\" font-family=\"ui-monospace,monospace\">",
+        w = spec.width, h = spec.height, label = xml_escape(&chart_label(spec))
     ));
 
     // Gridlines + y ticks
@@ -733,5 +761,19 @@ mod render_tests {
         assert_eq!(svg.matches("crow-seek").count(), 3);
         // the pane's own series takes the next palette color
         assert!(svg.contains("var(--crow-series-2)"));
+    }
+
+    /// A chart is an image whose name says what it draws, for a reader who
+    /// cannot see it — an empty one too
+    #[test]
+    fn a_chart_names_what_it_draws() {
+        let ts = [0.0, 60.0, 120.0];
+        let close = [1.0, 2.0, 1.5];
+        let rsi = [f64::NAN, 80.0, 40.0];
+        let svg = render_svg(&spec(&ts, &close, &rsi)).unwrap();
+        assert!(svg.starts_with("<svg class=\"crow-chart\" role=\"img\" aria-label=\"a chart of close and rsi, 3 points\""), "{}", &svg[..160]);
+        let none = ChartSpec { ts: &[], candles: (&[], &[], &[], &[]), lines: vec![], volume: &[], marker: f64::NAN, tz: "UTC", width: 400.0, height: 200.0, panes: vec![], points: vec![], seek: None };
+        let empty = render_svg(&none).unwrap_or_default();
+        assert!(empty.contains("role=\"img\" aria-label=\"a chart, no data yet\""), "{}", empty);
     }
 }

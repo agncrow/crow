@@ -2498,6 +2498,21 @@ tokens    --crow-bg  --crow-surface  --crow-text  --crow-muted
 
 Use the classes as ordinary attributes — `div[..., class = 'card']`. To restyle, put plain CSS in `css/app.css` in the project; it is inlined after the defaults, and overriding a token (`:root { --crow-accent: #c60; }`) recolors every element and chart that uses it. `crow check` flags unknown `--crow-*` names with a did-you-mean. CSS never appears inside `.co` files. Design: `style-module-design.md`. Where this is going — a closed layout vocabulary with an engine written in Crow, so tests can state where things are and what colour they have without a browser — is `ui-engine-design.md`.
 
+#### Accessibility
+
+A page works for a reader on a keyboard or with a screen reader without a line of the program saying so, the same in both modes:
+
+- A field's label names its input (`aria-label`), as a checkbox's and a radio's label wraps its input. A `select` is named by a `label[...]` around it: `label['Symbol', select[symbols, sym]]`.
+- An element with a `click` that the browser does not press itself — a `div`, a card, a table row — is a tab stop with a button's role (a row keeps its own), and Enter and Space press it.
+- A `modal` is a dialog (`role="dialog"`, `aria-modal`): when it opens, focus moves into it and Tab stays inside, and when it closes, focus goes back where it was. The runtime's question behaves the same way. A `drawer` is a dialog that does not hold focus, and a `toast` is a status a screen reader announces, as the runtime's own notice is.
+- A chart is an image with a name that says what it draws (`a chart of candles, vwap and volume, 390 points`); an icon is hidden from screen readers, since words go beside it.
+- While the page is reconnecting it takes no input from the mouse or the keyboard, and a screen reader is told.
+- A key presses only what a click could (see Keys press elements), and a shortcut is announced (`aria-keyshortcuts`).
+- An `img` says what it shows, `alt = 'the logo'`, or that it only decorates, `alt = ''`; one that says neither is refused before the program runs, in both modes.
+- The default stylesheet's text meets WCAG AA contrast (4.5:1) in both themes, focus is always visible, and a drawer's motion stops for a reader who asks for less (`prefers-reduced-motion`). The page's language is English (`lang="en"`).
+
+What stays the program's: headings in order, a `main` for the page's content, and words on every button — a button that shows only an icon names itself with `tip`.
+
 #### Core (Server)
 
 ```
@@ -3345,7 +3360,7 @@ A named test is a scenario and reads the program back: the facts and derivations
 |---------|---------|
 | `app[view]` | a headless session rendering `view` against its own copy of the program's reactive state |
 | `click[a, handler]` | run `handler` on the session as one transaction (deferred calls: `click[a, set_speed[10.0]]`, whose arguments may be numbers, text, lists, maps, tensors, frames or records, in both modes); when it stops, `click` evaluates to the error and the session is as it was |
-| `html[a]` | the rendered view as one HTML string |
+| `html[a]` | the rendered view as one HTML string, as the browser builds it (each element's attributes in name order), the same text in both modes |
 | `elements[a, sel]` | matching elements as records — `tag`, `text`, `class`, and every attribute (`href`, `name`, …) as keys; `sel` is `tag`, `.class`, `tag.class`, or a space-separated descendant chain (`'div.controls button'`) |
 | `change[a, 'var', value]` | what typing into a bound `field` does: set the reactive variable, so the next render and handler see it. A part's fact is named as the code reads it: `change[a, 'session.day', '2026-09-04']` |
 | `change[a, 'now', t]` | set the session's clock: `now[]` in its handlers, renders and derivations is `t` until the test moves it again |

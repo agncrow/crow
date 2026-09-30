@@ -2634,7 +2634,10 @@ impl IrInterp {
             }
             "html" => {
                 let (f, _, _, id) = vals.first().and_then(app_view).ok_or("html[] takes an app session: html[a]")?;
-                CrowValue::ok(Value::Str(self.session_html(&f.name, id)?))
+                // the page as the browser builds it, as the compiled harness
+                // hands it back: a table's rows read the same in both modes
+                let built = crow_web::view::CrowVNode::raw(&self.session_html(&f.name, id)?).as_built().to_html();
+                CrowValue::ok(Value::Str(built))
             }
             "elements" => {
                 let (f, _, _, id) = vals.first().and_then(app_view).ok_or("elements[] takes an app session and a selector: elements[a, 'button']")?;

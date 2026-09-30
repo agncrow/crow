@@ -1063,6 +1063,11 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
     }
     out_attrs.extend(rendered.data.iter().cloned());
     out_attrs.extend(crow_runtime::layout::confirm_wiring(events, confirm.as_deref()));
+    // an element with a click the browser does not press gets a tab stop
+    if out_attrs.iter().any(|(k, _)| k == "data-crow-click") {
+        let extra = crow_runtime::layout::press_attrs(&rendered.tag, &out_attrs);
+        out_attrs.extend(extra);
+    }
     out_attrs.sort();
     let attr_str: String = out_attrs.iter().map(|(k, v)| format!(" {}=\"{}\"", k, crate::harness::html_escape_attr(v))).collect();
     Ok(format!("<{0}{2}>{1}</{0}>", rendered.tag, inner, attr_str))

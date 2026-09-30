@@ -252,6 +252,13 @@ form's first button, and the form's `submit = add` runs `add` once; a
 form never reloads the page. A shortcut that names no key, or sits on
 something a press does nothing to, is refused before the program runs.
 
+The keyboard reaches everything a click does. A card or a table row with
+a `click` is a tab stop that Enter presses; when the help opens, focus
+moves into it and Tab stays inside, and when it closes focus goes back
+to the Help button. A field's label names its input for a screen reader,
+and an `img` must say what it shows (`alt = 'the logo'`, or `alt = ''`
+when it only decorates).
+
 ## Pages, their addresses and their titles
 
 An app serves every `page` it registers, in both modes, and each page is

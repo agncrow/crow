@@ -1928,6 +1928,18 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
   function offline(on) {{
     var r = document.documentElement;
     if (on) r.setAttribute('data-crow-offline', ''); else r.removeAttribute('data-crow-offline');
+    // no input from the keyboard either, and a screen reader is told
+    var root = document.getElementById('crow-root');
+    if (root) root.inert = on;
+    var s = document.getElementById('crow-status');
+    if (!s && document.body) {{
+      s = document.createElement('div');
+      s.id = 'crow-status';
+      s.setAttribute('role', 'status');
+      s.className = 'crow-sr';
+      document.body.appendChild(s);
+    }}
+    if (s) s.textContent = on ? 'reconnecting\u2026' : '';
   }}
   function send(msg) {{
     if (ws && ws.readyState === 1) {{ ws.send(JSON.stringify(msg)); return true; }}
@@ -2020,6 +2032,7 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
       if (msg.ack) answered(msg.ack);
       remark();
       widgets();
+      dialogs();
     }};
   }}
 
@@ -2239,11 +2252,51 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
     mods.push(letter ? k.toUpperCase() : k);
     return mods.join('+');
   }}
-  function canPress(el) {{
-    if (el.disabled || el.getAttribute('aria-busy') === 'true') return false;
+  function canSee(el) {{
     if (el.checkVisibility) return el.checkVisibility({{visibilityProperty: true}});
     return el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
   }}
+  function canPress(el) {{
+    return !el.disabled && el.getAttribute('aria-busy') !== 'true' && canSee(el);
+  }}
+
+  // Dialogs: when one opens, focus moves into it and Tab stays inside it;
+  // when it closes, focus goes back to where it was.
+  var dialogOpen = null, dialogFrom = null;
+  function openDialog() {{
+    var all = document.querySelectorAll('[role=dialog][aria-modal=true]');
+    for (var i = all.length - 1; i >= 0; i--) if (canSee(all[i])) return all[i];
+    return null;
+  }}
+  function tabStops(d) {{
+    return Array.prototype.filter.call(
+      d.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])'),
+      function(el) {{ return !el.disabled && canSee(el); }});
+  }}
+  function dialogs() {{
+    var d = openDialog();
+    if (d && d !== dialogOpen) {{
+      if (!dialogOpen) dialogFrom = document.activeElement;
+      dialogOpen = d;
+      if (!d.contains(document.activeElement)) {{
+        var stops = tabStops(d);
+        if (stops.length) stops[0].focus();
+      }}
+    }} else if (!d && dialogOpen) {{
+      dialogOpen = null;
+      if (dialogFrom && document.contains(dialogFrom) && canSee(dialogFrom)) dialogFrom.focus();
+      dialogFrom = null;
+    }}
+  }}
+  document.addEventListener('keydown', function(e) {{
+    if (e.key !== 'Tab' || !dialogOpen) return;
+    var stops = tabStops(dialogOpen);
+    if (!stops.length) {{ e.preventDefault(); return; }}
+    var first = stops[0], last = stops[stops.length - 1], at = document.activeElement;
+    if (!dialogOpen.contains(at)) {{ e.preventDefault(); first.focus(); }}
+    else if (e.shiftKey && at === first) {{ e.preventDefault(); last.focus(); }}
+    else if (!e.shiftKey && at === last) {{ e.preventDefault(); first.focus(); }}
+  }});
   document.addEventListener('keydown', function(e) {{
     if (e.defaultPrevented || e.isComposing) return;
     var name = keyName(e);
@@ -2253,6 +2306,14 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
     var typing = t && (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' ||
       (t.tagName === 'INPUT' && !/^(button|submit|reset|checkbox|radio|range|color|file|image)$/i.test(t.type)));
     if (plain && typing && name !== 'Escape') return;
+    // a focused element with a click the browser does not press: Enter and
+    // Space press it
+    if (plain && (name === 'Enter' || name === 'Space') && t && t.hasAttribute && t.hasAttribute('data-crow-click') &&
+        !/^(A|BUTTON|INPUT|SELECT|TEXTAREA|SUMMARY|LABEL|OPTION)$/.test(t.tagName)) {{
+      e.preventDefault();
+      t.click();
+      return;
+    }}
     if (plain && (name === 'Enter' || name === 'Space') && t && t.closest && t.closest('button, a, summary')) return;
     var all = document.querySelectorAll('[aria-keyshortcuts]');
     var found = [];
@@ -2340,6 +2401,7 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
 
   connect();
   widgets();
+  dialogs();
 }})();
 </script>"#, socket_path = socket_path, page_token = page_token)
 }
@@ -2365,7 +2427,7 @@ fn project_css() -> String {
 fn page_shell(body_html: &str, head: &Head, js: &str) -> String {
     format!(
         r#"<!DOCTYPE html>
-<html{look}>
+<html lang="en"{look}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -2394,6 +2456,7 @@ fn page_shell(body_html: &str, head: &Head, js: &str) -> String {
 /// with a value being recomputed — dimmed after a moment, so a fast answer
 /// never flashes.
 const LIVE_CSS: &str = "[data-crow-busy]{cursor:progress;opacity:.75}\
+.crow-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}\
 .crow-confirm{position:fixed;inset:0;z-index:2147483645;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45)}\
 .crow-confirm-box{max-width:min(440px,calc(100vw - 32px));padding:18px 20px;border-radius:10px;background:var(--crow-surface,#fff);\
 color:var(--crow-text,#111);border:1px solid var(--crow-border,#ccc);box-shadow:0 8px 32px rgba(0,0,0,.3)}\
@@ -3432,6 +3495,31 @@ mod tests {
         assert!(!offers.allows("delete_confirmed", None), "a confirmation's second step without its first");
     }
 
+    /// What the page tells a reader on a keyboard or with a screen reader
+    /// (spec, Accessibility): a field's label names its input, a click on
+    /// an element the browser does not press makes it a tab stop with a
+    /// button's role, the page says its language, and its script moves
+    /// focus into a dialog and takes the page out of reach while it is
+    /// reconnecting
+    #[test]
+    fn the_page_is_built_for_a_keyboard_and_a_screen_reader() {
+        let f = CrowVNode::field_typed("Name", "name", "", "text", 0).to_html();
+        assert!(f.contains("aria-label=\"Name\""), "{}", f);
+        let t = CrowVNode::field_typed("Note", "note", "", "text", 3).to_html();
+        assert!(t.contains("<textarea aria-label=\"Note\""), "{}", t);
+        let s = CrowVNode::slider("Speed", "speed", "1", 0.0, 10.0, 1.0).to_html();
+        assert!(s.contains("aria-label=\"Speed\""), "{}", s);
+        let card = CrowVNode::div(vec![CrowVNode::text("card")]).on_click_args("open", "[3]").to_html();
+        assert!(card.contains("role=\"button\"") && card.contains("tabindex=\"0\""), "{}", card);
+        let b = CrowVNode::button(vec![CrowVNode::text("Go")]).on_click("go").to_html();
+        assert!(!b.contains("role=") && !b.contains("tabindex"), "a button is pressed by the browser: {}", b);
+        let page = page_shell("<p>hi</p>", &Head::default(), "");
+        assert!(page.contains("<html lang=\"en\""), "{}", &page[..60]);
+        let js = page_js(None, "/_ws", "0");
+        assert!(js.contains("if (root) root.inert = on;"), "a reconnecting page takes no keyboard input");
+        assert!(js.contains("function dialogs()") && js.contains("dialogs();\n    };"), "focus follows the dialogs after each render");
+    }
+
     /// A sorted table's header orders its rows by its column, ascending,
     /// and a second press descending; each sorted table of a render keeps
     /// its own order, counted from the render's start (spec, Tables over
@@ -4004,33 +4092,33 @@ mod tests {
             b.call("Page.enable", serde_json::json!({}));
             // a day, marked: the tab's session at `/`
             b.call("Page.navigate", serde_json::json!({ "url": format!("http://127.0.0.1:{}/?day=mon", port) }));
-            b.until("document.body.innerText.indexOf('day mon marks 0') >= 0", "the day page");
+            b.until("!!document.body && document.body.innerText.indexOf('day mon marks 0') >= 0", "the day page");
             assert_eq!(b.eval("document.title"), serde_json::json!("Crow App"), "a page with no title of its own");
             b.until(socket, "the day page's socket");
             b.eval("document.querySelectorAll('button')[0].click(); 1");
-            b.until("document.body.innerText.indexOf('day mon marks 1') >= 0", "the mark's render");
+            b.until("!!document.body && document.body.innerText.indexOf('day mon marks 1') >= 0", "the mark's render");
             // a card: its title follows its render, its address its fact
             b.call("Page.navigate", serde_json::json!({ "url": format!("http://127.0.0.1:{}/card/2", port) }));
-            b.until("document.body.innerText.indexOf('card 2 marks 0') >= 0", "the card page");
+            b.until("!!document.body && document.body.innerText.indexOf('card 2 marks 0') >= 0", "the card page");
             assert_eq!(b.eval("document.title"), serde_json::json!("Card 2"), "the render's title");
             b.until(socket, "the card page's socket");
             b.eval("document.querySelectorAll('button')[1].click(); 1");
-            b.until("document.body.innerText.indexOf('card 2 marks 1') >= 0", "the mark's render");
+            b.until("!!document.body && document.body.innerText.indexOf('card 2 marks 1') >= 0", "the mark's render");
             b.eval("document.querySelectorAll('button')[0].click(); 1");
             b.until("document.title === 'Card 3'", "the title following the render");
             b.until("location.pathname === '/card/3'", "the address following the fact");
             b.call("Page.reload", serde_json::json!({}));
-            b.until("document.body.innerText.indexOf('card 3 marks 1') >= 0", "the reload resuming the tab's session");
+            b.until("!!document.body && document.body.innerText.indexOf('card 3 marks 1') >= 0", "the reload resuming the tab's session");
             b.until(socket, "the reloaded page's socket");
             // a link to another address of the day page, whose session waits
             // for the tab: the link's address is what opens
             b.eval("document.getElementById('tue').click(); 1");
-            b.until("document.body.innerText.indexOf('day tue marks 0') >= 0", "the link opening its address's session");
+            b.until("!!document.body && document.body.innerText.indexOf('day tue marks 0') >= 0", "the link opening its address's session");
             std::thread::sleep(std::time::Duration::from_millis(600));
             assert!(text(&mut b).contains("day tue marks 0"), "and staying there: {}", text(&mut b));
             assert_eq!(b.eval("location.search"), serde_json::json!("?day=tue"));
             b.eval("history.back(); 1");
-            b.until("document.body.innerText.indexOf('card 3 marks 1') >= 0", "the back button resuming the card's session");
+            b.until("!!document.body && document.body.innerText.indexOf('card 3 marks 1') >= 0", "the back button resuming the card's session");
         })
         .await
         .unwrap();
@@ -4146,6 +4234,90 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(300));
             assert!(b.eval("document.body.innerText").as_str().unwrap_or("").contains("wiped 0"), "a cancelled question runs nothing");
             assert_eq!(b.eval("window.stayed === true"), serde_json::json!(true));
+        })
+        .await
+        .unwrap();
+    }
+
+    /// A keyboard in a real browser (spec, Accessibility): a card with a
+    /// click is a tab stop Enter and Space press; an opened dialog takes
+    /// focus and Tab stays inside it, both ways; and Escape closes it and
+    /// gives focus back to the button that opened it.
+    /// `cargo test -p crow_web --features live,http a_keyboard_in_a_browser -- --ignored`
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore]
+    async fn a_keyboard_in_a_browser() {
+        let handle = |s: &mut CrowLiveState, event: &str, _: Option<&str>| match event {
+            "press" => {
+                let n = s.get_i64("pressed", 0);
+                s.set("pressed", serde_json::json!(n + 1));
+            }
+            "open" => s.set("open", serde_json::json!(true)),
+            "close" => s.set("open", serde_json::json!(false)),
+            _ => {}
+        };
+        let mut initial = CrowLiveState::new();
+        initial.set("pressed", serde_json::json!(0));
+        initial.set("open", serde_json::json!(false));
+        let page = |s: &CrowLiveState| {
+            let open = s.get("open").and_then(|v| v.as_bool()).unwrap_or(false);
+            CrowVNode::div(vec![
+                CrowVNode::p(vec![CrowVNode::text(&format!("pressed {} open {}", s.get_i64("pressed", 0), open))]),
+                CrowVNode::button(vec![CrowVNode::text("Help")]).on_click("open").attr("id", "help"),
+                CrowVNode::div(vec![CrowVNode::text("a card")]).on_click("press").attr("id", "card"),
+                CrowVNode::div(vec![CrowVNode::div(vec![
+                    CrowVNode::button(vec![CrowVNode::text("First")]).on_click("noop"),
+                    CrowVNode::button(vec![CrowVNode::text("Close")]).on_click("close").attr("aria-keyshortcuts", "Escape"),
+                ])])
+                .attr("class", "modal")
+                .attr("role", "dialog")
+                .attr("aria-modal", "true")
+                .attr("data-open", if open { "true" } else { "false" }),
+            ])
+        };
+        let router = CrowLiveView::new("/_ws/", initial, page, handle).into_router("/");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        tokio::task::spawn_blocking(move || {
+            let Some(mut b) = Browser::open("keyboard") else { return };
+            let press = |b: &mut Browser, key: &str, code: &str, vk: u32, modifiers: u32, text: &str| {
+                let mut down = serde_json::json!({ "type": if text.is_empty() { "rawKeyDown" } else { "keyDown" }, "key": key, "code": code, "windowsVirtualKeyCode": vk, "modifiers": modifiers });
+                if !text.is_empty() {
+                    down["text"] = serde_json::json!(text);
+                }
+                b.call("Input.dispatchKeyEvent", down);
+                b.call("Input.dispatchKeyEvent", serde_json::json!({ "type": "keyUp", "key": key, "code": code, "windowsVirtualKeyCode": vk, "modifiers": modifiers }));
+            };
+            let shift = 8;
+            let focused = "document.activeElement && (document.activeElement.id || document.activeElement.textContent)";
+            b.call("Page.enable", serde_json::json!({}));
+            b.call("Page.navigate", serde_json::json!({ "url": format!("http://127.0.0.1:{}/", port) }));
+            b.until("!!document.body && document.body.innerText.indexOf('pressed 0') >= 0", "the page");
+            b.until("!!sessionStorage.getItem('crow-session:' + location.pathname)", "the page's socket");
+            assert_eq!(b.eval("document.documentElement.lang"), serde_json::json!("en"));
+            // the card: a tab stop, pressed by Enter and by Space
+            b.eval("document.getElementById('card').focus(); 1");
+            assert_eq!(b.eval(focused), serde_json::json!("card"), "the card takes focus");
+            press(&mut b, "Enter", "Enter", 13, 0, "\r");
+            b.until("document.body.innerText.indexOf('pressed 1') >= 0", "enter pressing the card");
+            press(&mut b, " ", "Space", 32, 0, " ");
+            b.until("document.body.innerText.indexOf('pressed 2') >= 0", "space pressing the card");
+            // the dialog takes focus, and Tab stays inside it both ways
+            b.eval("document.getElementById('help').focus(); 1");
+            press(&mut b, "Enter", "Enter", 13, 0, "\r");
+            b.until("document.body.innerText.indexOf('open true') >= 0", "the dialog opening");
+            b.until("document.activeElement && document.activeElement.textContent === 'First'", "focus moving into the dialog");
+            press(&mut b, "Tab", "Tab", 9, 0, "");
+            assert_eq!(b.eval(focused), serde_json::json!("Close"));
+            press(&mut b, "Tab", "Tab", 9, 0, "");
+            assert_eq!(b.eval(focused), serde_json::json!("First"), "Tab wraps inside the dialog");
+            press(&mut b, "Tab", "Tab", 9, shift, "");
+            assert_eq!(b.eval(focused), serde_json::json!("Close"), "and Shift+Tab wraps back");
+            // Escape closes it, and focus goes back to the button that opened it
+            press(&mut b, "Escape", "Escape", 27, 0, "");
+            b.until("document.body.innerText.indexOf('open false') >= 0", "escape closing the dialog");
+            b.until("document.activeElement && document.activeElement.id === 'help'", "focus back on Help");
         })
         .await
         .unwrap();
