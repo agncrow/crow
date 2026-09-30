@@ -21,8 +21,29 @@ use axum::{
 use crate::core::{CrowRequest, CrowResponse};
 use super::convert::{request_from_axum, response_to_axum};
 
-/// Handler function type: takes a CrowRequest, returns a CrowResponse.
-pub type CrowHandler = Arc<dyn Fn(CrowRequest) -> CrowResponse + Send + Sync>;
+/// A route's handler: its name, which the answer to a stop and the log
+/// give, and what answers the request.
+#[derive(Clone)]
+pub struct CrowHandler {
+    name: String,
+    answer: Arc<dyn Fn(CrowRequest) -> CrowResponse + Send + Sync>,
+}
+
+impl CrowHandler {
+    /// The handler named `name` (the program's function), answering with
+    /// `answer`.
+    pub fn new(name: &str, answer: impl Fn(CrowRequest) -> CrowResponse + Send + Sync + 'static) -> Self {
+        Self { name: name.to_string(), answer: Arc::new(answer) }
+    }
+}
+
+/// What a route answers when its handler fails or stops: 500, with the
+/// handler's name and the reason, which the log says too — the same in
+/// both modes.
+pub fn route_stopped(handler: &str, reason: &str) -> CrowResponse {
+    eprintln!("crow: {} stopped: {}", handler, reason);
+    CrowResponse::stopped(handler, reason)
+}
 
 /// The Crow web application — wraps axum's Router.
 pub struct CrowApp {
@@ -253,8 +274,12 @@ fn crow_path_to_axum(path: &str) -> String {
 
 /// Create an axum handler from a CrowHandler.
 ///
-/// Extracts route params, converts axum Request → CrowRequest,
-/// calls the user's handler, converts CrowResponse → axum Response.
+/// Extracts route params, converts axum Request → CrowRequest, calls the
+/// user's handler, converts CrowResponse → axum Response. The handler runs
+/// off the server's threads, as a page's does, so a slow one delays only
+/// its own request; one that stops answers 500 with the reason, as the
+/// interpreter's route does (the compiled program had dropped the
+/// connection, saying nothing).
 fn make_axum_handler(
     handler: CrowHandler,
 ) -> impl Fn(
@@ -276,7 +301,12 @@ fn make_axum_handler(
                 crow_req.params = params.into_iter().collect();
             }
 
-            let crow_resp = handler(crow_req);
+            let CrowHandler { name, answer } = handler;
+            let crow_resp = match tokio::task::spawn_blocking(move || crow_runtime::stops::guarded(|| answer(crow_req))).await {
+                Ok(Ok(resp)) => resp,
+                Ok(Err(why)) => route_stopped(&name, &why),
+                Err(e) => route_stopped(&name, &e.to_string()),
+            };
             response_to_axum(crow_resp)
         })
     }
@@ -377,7 +407,7 @@ mod tests {
     #[tokio::test]
     async fn test_crow_app_get_route() {
         let app = CrowApp::new()
-            .route("/hello", Arc::new(hello_handler));
+            .route("/hello", CrowHandler::new("hello", hello_handler));
 
         let req = HttpRequest::builder()
             .uri("/hello")
@@ -395,7 +425,7 @@ mod tests {
     #[tokio::test]
     async fn test_crow_app_post_route() {
         let app = CrowApp::new()
-            .route_method("/data", "POST", Arc::new(hello_handler));
+            .route_method("/data", "POST", CrowHandler::new("hello", hello_handler));
 
         let req = HttpRequest::builder()
             .method("POST")
@@ -410,7 +440,7 @@ mod tests {
     #[tokio::test]
     async fn test_crow_app_404_on_unknown_route() {
         let app = CrowApp::new()
-            .route("/hello", Arc::new(hello_handler));
+            .route("/hello", CrowHandler::new("hello", hello_handler));
 
         let req = HttpRequest::builder()
             .uri("/unknown")
@@ -429,13 +459,30 @@ mod tests {
         let get = |uri: &str| HttpRequest::builder().uri(uri).body(Body::empty()).unwrap();
         let resp = CrowApp::new().served().oneshot(get("/anything")).await.unwrap();
         assert_eq!(resp.status(), 200, "a new project is welcomed");
-        let app = CrowApp::new().route("/hello", Arc::new(hello_handler));
+        let app = CrowApp::new().route("/hello", CrowHandler::new("hello", hello_handler));
         let resp = app.served().oneshot(get("/nothere")).await.unwrap();
         assert_eq!(resp.status(), 404);
         let body = axum::body::to_bytes(resp.into_body(), 1 << 16).await.unwrap();
         assert!(String::from_utf8_lossy(&body).contains("no page at /nothere"));
         let pages = CrowApp::new().merge(Router::new().route("/card/{card}", get_handler()));
         assert_eq!(pages.served().oneshot(get("/cards")).await.unwrap().status(), 404, "a page counts as a route");
+    }
+
+    /// A handler that stops answers 500 with its name and the reason, as
+    /// the interpreter's route does (the compiled program had dropped the
+    /// connection), and the server answers the next request
+    #[tokio::test]
+    async fn a_handler_that_stops_answers_500() {
+        fn boom(_req: CrowRequest) -> CrowResponse {
+            crow_runtime::stops::halt(5, "index 9 is out of range for an array of 2 items")
+        }
+        let get = |uri: &str| HttpRequest::builder().uri(uri).body(Body::empty()).unwrap();
+        let router = CrowApp::new().route("/boom", CrowHandler::new("boom", boom)).route("/hello", CrowHandler::new("hello", hello_handler)).into_router();
+        let resp = router.clone().oneshot(get("/boom")).await.unwrap();
+        assert_eq!(resp.status(), 500);
+        let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(String::from_utf8_lossy(&body), "boom stopped: line 5: index 9 is out of range for an array of 2 items");
+        assert_eq!(router.oneshot(get("/hello")).await.unwrap().status(), 200);
     }
 
     fn get_handler() -> axum::routing::MethodRouter {
@@ -445,7 +492,7 @@ mod tests {
     #[tokio::test]
     async fn test_crow_app_route_params() {
         let app = CrowApp::new()
-            .route("/users/:id", Arc::new(echo_param_handler));
+            .route("/users/:id", CrowHandler::new("echo", echo_param_handler));
 
         let req = HttpRequest::builder()
             .uri("/users/42")

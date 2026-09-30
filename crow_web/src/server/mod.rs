@@ -13,6 +13,6 @@
 mod app;
 mod convert;
 
-pub use app::{CrowApp, CrowHandler};
+pub use app::{route_stopped, CrowApp, CrowHandler};
 pub use convert::{request_from_axum, response_to_axum};
 

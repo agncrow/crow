@@ -561,18 +561,21 @@ impl Emitter {
         })
     }
 
-    /// A route's handler as the server takes it: one whose value can fail
-    /// answers its failure as the interpreter's route does (500, with its
-    /// name and the reason), where it had not built.
+    /// A route's handler as the server takes it, named: one whose value can
+    /// fail answers its failure as the interpreter's route does (500, with
+    /// its name and the reason), where it had not built; the server answers
+    /// a stop the same way.
     fn route_handler(&self, arg: &Expr, text: &str) -> String {
-        match fn_named(arg) {
+        let name = fn_named(arg).unwrap_or(text);
+        let answer = match fn_named(arg) {
             Some(f) if self.fns.get(f).is_some_and(|sig| sig.ret.is_result()) => format!(
-                "move |__req: crow_web::core::CrowRequest| {{ let _r = {}(__req); if _r.ok {{ _r.value }} else {{ CrowResponse::stopped(\"{}\", &_r.reason) }} }}",
+                "move |__req: crow_web::core::CrowRequest| {{ let _r = {}(__req); if _r.ok {{ _r.value }} else {{ crow_web::server::route_stopped(\"{}\", &_r.reason) }} }}",
                 Self::rust_fn_name(f),
                 f
             ),
             _ => text.to_string(),
-        }
+        };
+        format!("crow_web::server::CrowHandler::new(\"{}\", {})", name, answer)
     }
 
     /// The web module's builtins, the databases', and the page's.
@@ -581,10 +584,10 @@ impl Emitter {
         let web = self.needs_crow_web;
         let db = self.needs_crow_db;
         Some(match name {
-            "route" if web && n == 2 => format!("__crow_app = __crow_app.route(&{}, Arc::new({}))", a[0], self.route_handler(&args[1], &a[1])),
-            "route" if web && n == 3 && matches!(self.tt(&args[0]), CrowType::Str) => format!("__crow_app = __crow_app.route_method(&{}, &{}, Arc::new({}))", a[0], a[1], self.route_handler(&args[2], &a[2])),
-            "route" if web && n == 3 => format!("{}.route(&{}, Arc::new({}))", a[0], a[1], self.route_handler(&args[2], &a[2])),
-            "route" if web && n == 4 => format!("{}.route_method(&{}, {}, Arc::new({}))", a[0], a[1], a[2], self.route_handler(&args[3], &a[3])),
+            "route" if web && n == 2 => format!("__crow_app = __crow_app.route(&{}, {})", a[0], self.route_handler(&args[1], &a[1])),
+            "route" if web && n == 3 && matches!(self.tt(&args[0]), CrowType::Str) => format!("__crow_app = __crow_app.route_method(&{}, &{}, {})", a[0], a[1], self.route_handler(&args[2], &a[2])),
+            "route" if web && n == 3 => format!("{}.route(&{}, {})", a[0], a[1], self.route_handler(&args[2], &a[2])),
+            "route" if web && n == 4 => format!("{}.route_method(&{}, {}, {})", a[0], a[1], a[2], self.route_handler(&args[3], &a[3])),
             "serve" if web && n == 1 => format!("__crow_app.serve({} as u16).await.unwrap()", a[0]),
             "serve" if web && n == 9 => {
                 if self.has_page_routes {

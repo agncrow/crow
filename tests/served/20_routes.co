@@ -21,9 +21,16 @@ fn made[req]
 fn away[req]
     return redirect['/hello/you']
 
+--- a handler that stops answers 500 with the reason, in both modes (the
+--- compiled program had dropped the connection), and the server goes on
+fn boom[req]
+    xs = [1, 2]
+    return text['`xs[9]`']
+
 route['/hello/:name', hello]
 route['/heading', heading]
 route['/found', found]
 route['/made', 'POST', made]
 route['/away', away]
+route['/boom', boom]
 serve[3421]

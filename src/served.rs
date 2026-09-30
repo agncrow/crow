@@ -178,12 +178,12 @@ fn route_answer(template: &IrInterp, handler: &str, req: crow_web::core::CrowReq
     .collect();
     let mut it = template.clone();
     match it.guard(|it| it.call(handler, vec![CrowValue::ok(Value::Map(request))])) {
-        Ok(v) if v.is_error() => CrowResponse::stopped(handler, v.reason()),
+        Ok(v) if v.is_error() => crow_web::server::route_stopped(handler, v.reason()),
         Ok(v) => match v.value {
             Value::Response(r) => *r,
             other => CrowResponse::respond(500, format!("{}[] answered {}, not a response: text[…], html[…], json[…], respond[…], redirect[…], bytes[…], msgpack[…], arrow[…] or stream[…]", handler, other.type_name())),
         },
-        Err(e) => CrowResponse::stopped(handler, &e),
+        Err(e) => crow_web::server::route_stopped(handler, &e),
     }
 }
 
@@ -282,7 +282,7 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
         let mut app = crow_web::server::CrowApp::new();
         for (method, path, handler) in template.routes.clone() {
             let t = template.clone();
-            let answer: crow_web::server::CrowHandler = Arc::new(move |req| route_answer(&t, &handler, req));
+            let answer = crow_web::server::CrowHandler::new(&handler.clone(), move |req| route_answer(&t, &handler, req));
             app = if method == "GET" { app.route(&path, answer) } else { app.route_method(&path, &method, answer) };
         }
         for (path, view, pairs) in pages {

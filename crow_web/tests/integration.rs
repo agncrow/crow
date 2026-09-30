@@ -228,9 +228,8 @@ mod core_types {
 
 #[cfg(feature = "http")]
 mod server_integration {
-    use std::sync::Arc;
     use crow_web::core::{CrowRequest, CrowResponse};
-    use crow_web::server::CrowApp;
+    use crow_web::server::{CrowApp, CrowHandler};
     use axum::body::Body;
     use axum::http::Request as HttpRequest;
     use tower::ServiceExt;
@@ -251,8 +250,8 @@ mod server_integration {
     #[tokio::test]
     async fn multiple_routes_and_methods() {
         let app = CrowApp::new()
-            .route("/greet/:name", Arc::new(json_handler))
-            .route_method("/echo", "POST", Arc::new(echo_body));
+            .route("/greet/:name", CrowHandler::new("json_handler", json_handler))
+            .route_method("/echo", "POST", CrowHandler::new("echo_body", echo_body));
 
         let router = app.into_router();
 
@@ -282,8 +281,8 @@ mod server_integration {
     #[tokio::test]
     async fn redirect_and_custom_status() {
         let app = CrowApp::new()
-            .route("/old", Arc::new(|_| CrowResponse::redirect("/new")))
-            .route("/gone", Arc::new(|_| CrowResponse::respond(410, "gone")));
+            .route("/old", CrowHandler::new("old", |_| CrowResponse::redirect("/new")))
+            .route("/gone", CrowHandler::new("gone", |_| CrowResponse::respond(410, "gone")));
 
         let router = app.into_router();
 
@@ -613,9 +612,8 @@ mod upload_integration {
 
 #[cfg(all(feature = "cors", feature = "http"))]
 mod cors_server {
-    use std::sync::Arc;
     use crow_web::core::{CrowRequest, CrowResponse};
-    use crow_web::server::CrowApp;
+    use crow_web::server::{CrowApp, CrowHandler};
     use crow_web::cors::CrowCors;
     use axum::body::Body;
     use axum::http::Request as HttpRequest;
@@ -628,7 +626,7 @@ mod cors_server {
     #[tokio::test]
     async fn cors_permissive_adds_headers() {
         let app = CrowApp::new()
-            .route("/api", Arc::new(|_: CrowRequest| CrowResponse::json(serde_json::json!({"ok": true}))))
+            .route("/api", CrowHandler::new("api", |_: CrowRequest| CrowResponse::json(serde_json::json!({"ok": true}))))
             .cors_permissive();
 
         let router = app.into_router();
@@ -649,7 +647,7 @@ mod cors_server {
     async fn cors_specific_origins() {
         let cors = CrowCors::origins(vec!["http://allowed.com".to_string()]);
         let app = CrowApp::new()
-            .route("/data", Arc::new(|_: CrowRequest| CrowResponse::text("ok")))
+            .route("/data", CrowHandler::new("data", |_: CrowRequest| CrowResponse::text("ok")))
             .cors(cors);
 
         let router = app.into_router();

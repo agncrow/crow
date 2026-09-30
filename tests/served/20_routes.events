@@ -12,5 +12,9 @@
   {"get": "/away"},
   {"expect": "302 Found | content-type: text/plain | location: /hello/you"},
   {"get": "/nowhere"},
-  {"expect": "404 Not Found"}
+  {"expect": "404 Not Found"},
+  {"get": "/boom"},
+  {"expect": "500 Internal Server Error | content-type: text/plain | boom stopped: line 28: index 9 is out of range for an array of 2 items"},
+  {"get": "/hello/crow"},
+  {"expect": "200 OK | content-type: text/plain | hello crow"}
 ]

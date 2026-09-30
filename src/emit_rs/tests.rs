@@ -1521,7 +1521,8 @@ fn test_web_async_main() {
 fn test_web_route_transpile() {
     let rust = transpile("use web\nfn handler[req]\n    return text['hello']\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
     assert!(rust.contains(".route("), "should emit .route()\n{}", rust);
-    assert!(rust.contains("Arc::new("), "should wrap handler in Arc\n{}", rust);
+    // the handler goes by its name: a stop answers 500 naming it
+    assert!(rust.contains("crow_web::server::CrowHandler::new(\"handler\", handler)"), "should name the handler\n{}", rust);
 }
 
 #[test]
@@ -1821,7 +1822,7 @@ fn test_web_fallible_handler_answers_its_failure() {
     let rust = transpile("use web, frame\nfn table[req]\n    return arrow[frame.load['data.csv']]\nroute['/table', table]\nserve[3999]\n");
     assert!(rust.contains("fn table(req: crow_web::core::CrowRequest) -> CrowResult<crow_web::core::CrowResponse>"), "the handler keeps its Result\n{}", rust);
     assert!(
-        rust.contains("Arc::new(move |__req: crow_web::core::CrowRequest| { let _r = table(__req); if _r.ok { _r.value } else { CrowResponse::stopped(\"table\", &_r.reason) } })"),
+        rust.contains("crow_web::server::CrowHandler::new(\"table\", move |__req: crow_web::core::CrowRequest| { let _r = table(__req); if _r.ok { _r.value } else { crow_web::server::route_stopped(\"table\", &_r.reason) } })"),
         "the route answers the failure\n{}",
         rust
     );
