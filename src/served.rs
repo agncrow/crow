@@ -17,7 +17,7 @@ use crow_web::view::CrowVNode;
 /// session shares (a database handle, a mailer) or a function: resources stay the
 /// template's, never copied into a session.
 pub(crate) fn is_data(v: &CrowValue) -> bool {
-    !matches!(v.value, Value::DbConn(_) | Value::Mailer(..) | Value::Fn(_) | Value::GradFn(_) | Value::App(..))
+    !matches!(v.value, Value::DbConn(_) | Value::Mailer(..) | Value::Response(_) | Value::Fn(_) | Value::GradFn(_) | Value::App(..))
 }
 
 /// A fact as the session keeps it: JSON, a frame by its own shape, a
@@ -156,11 +156,43 @@ fn page_render(t: Arc<IrInterp>, view_name: String) -> impl Fn(&CrowLiveState) -
     }
 }
 
-/// Serve the pages the program's main asked for, from the interpreter:
-/// every one, each a session of its own (spec, Core (Server)).
+/// A route's answer: its handler run on a copy of the program, handed the
+/// request (its method, path, headers, query, body and the path's params),
+/// and what it returns sent as the response. A handler that stops answers
+/// 500 with the reason, as a value that is no response does.
+fn route_answer(template: &IrInterp, handler: &str, req: crow_web::core::CrowRequest) -> crow_web::core::CrowResponse {
+    use crow_web::core::CrowResponse;
+    let pairs = |m: &std::collections::BTreeMap<String, String>| -> CrowValue {
+        CrowValue::ok(Value::Map(m.iter().map(|(k, v)| (k.clone(), CrowValue::ok(Value::Str(v.clone())))).collect()))
+    };
+    let text = |s: &str| CrowValue::ok(Value::Str(s.to_string()));
+    let request: std::collections::BTreeMap<String, CrowValue> = [
+        ("method".to_string(), text(&req.method)),
+        ("path".to_string(), text(&req.path)),
+        ("body".to_string(), text(&req.body)),
+        ("headers".to_string(), pairs(&req.headers)),
+        ("query".to_string(), pairs(&req.query)),
+        ("params".to_string(), pairs(&req.params)),
+    ]
+    .into_iter()
+    .collect();
+    let mut it = template.clone();
+    match it.guard(|it| it.call(handler, vec![CrowValue::ok(Value::Map(request))])) {
+        Ok(v) if v.is_error() => CrowResponse::respond(500, format!("{} stopped: {}", handler, v.reason())),
+        Ok(v) => match v.value {
+            Value::Response(r) => *r,
+            other => CrowResponse::respond(500, format!("{}[] answered {}, not a response: text[…], html[…], json[…], respond[…], redirect[…] or bytes[…]", handler, other.type_name())),
+        },
+        Err(e) => CrowResponse::respond(500, format!("{} stopped: {}", handler, e)),
+    }
+}
+
+/// Serve the pages and the routes the program's main asked for, from the
+/// interpreter: every page, each a session of its own, and every route
+/// (spec, Core (Server)).
 pub fn serve(template: IrInterp) -> Result<(), String> {
-    if template.pages.is_empty() {
-        return Err("the program serves no page: add page['/', render]".to_string());
+    if template.pages.is_empty() && template.routes.is_empty() {
+        return Err("the program serves no page and no route: add page['/', render] or route['/health', health]".to_string());
     }
     let serve_args = template.serve_config.clone().unwrap_or_default();
     let port = int_of(serve_args.first()).max(0) as u16;
@@ -248,6 +280,11 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(crow_runtime::stops::STACK).build().map_err(|e| format!("cannot start the server: {}", e))?;
     rt.block_on(async move {
         let mut app = crow_web::server::CrowApp::new();
+        for (method, path, handler) in template.routes.clone() {
+            let t = template.clone();
+            let answer: crow_web::server::CrowHandler = Arc::new(move |req| route_answer(&t, &handler, req));
+            app = if method == "GET" { app.route(&path, answer) } else { app.route_method(&path, &method, answer) };
+        }
         for (path, view, pairs) in pages {
             let ws_path = format!("/_ws{}", path);
             let pairs: Vec<(&str, &str)> = pairs.iter().map(|(n, f)| (n.as_str(), f.as_str())).collect();

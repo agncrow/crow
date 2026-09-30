@@ -153,6 +153,12 @@ pub struct IrInterp {
     /// What each `page[…]` asked for, in order: the path, the view, the url
     /// facts. `crow run -i` serves every one.
     pub(crate) pages: Vec<(String, String, Vec<String>)>,
+    /// What each `route[…]` asked for, in order: the method, the path, the
+    /// handler. `crow run -i` answers every one.
+    pub(crate) routes: Vec<(String, String, String)>,
+    /// The program uses web: `text`, `html`, `json`, `respond`, `redirect`
+    /// and `bytes` make a route's response.
+    web: bool,
     /// What `serve[…]` asked for, as its lowered arguments.
     pub(crate) serve_config: Option<Vec<CrowValue>>,
     /// Why the last transaction stopped, when it did.
@@ -457,6 +463,8 @@ impl IrInterp {
             held: None,
             notice_read: false,
             pages: Vec::new(),
+            routes: Vec::new(),
+            web: false,
             serve_config: None,
             last_stop: None,
             returning: None,
@@ -499,6 +507,7 @@ impl IrInterp {
     }
 
     pub fn load(&mut self, program: &Program) {
+        self.web = program.parts.iter().any(|p| p.uses.iter().any(|u| u == "web" || u.starts_with("web.")));
         for part in &program.parts {
             for f in &part.fns {
                 self.fns.insert(f.name.clone(), Arc::new(f.clone()));
@@ -1516,6 +1525,9 @@ impl IrInterp {
         // a builtin with a row is its runtime function, read and dispatched
         // as the row says: the row the values' kinds pick
         let name = RUNTIME_TABLE.iter().find(|(_, r)| *r == path).map(|(b, _)| *b).unwrap_or(path).to_string();
+        if let Some(answer) = self.web_response(&name, &vals) {
+            return answer;
+        }
         // a dual number a function grad differentiates takes the
         // derivative's own form (a plain number's math is its row)
         if vals.iter().any(|v| matches!(v.value, Value::Dual(..))) {
@@ -1565,7 +1577,10 @@ impl IrInterp {
         if name == "transact" {
             return self.transact(vals);
         }
-        if matches!(name, "serve" | "page" | "fetch" | "poll" | "app" | "html" | "elements" | "change" | "click" | "box" | "fits" | "style" | "downloads" | "mails") {
+        if let Some(answer) = self.web_response(name, &vals) {
+            return answer;
+        }
+        if matches!(name, "serve" | "page" | "route" | "fetch" | "poll" | "app" | "html" | "elements" | "change" | "click" | "box" | "fits" | "style" | "downloads" | "mails") {
             return self.harness(name, vals);
         }
         // a scalar name both core and math answer goes to the core builtin
@@ -2035,6 +2050,36 @@ impl IrInterp {
             }
             _ => Err(format!("the IR interpreter does not run '{}' yet", name)),
         }
+    }
+
+    /// A web program's response forms, as the compiled program makes them
+    /// (emit_rs/builtins.rs): none for another name, or for a form given
+    /// what it does not answer (`json` of text parses it; `html` of a test's
+    /// app session is the harness's).
+    fn web_response(&self, name: &str, vals: &[CrowValue]) -> Option<Result<CrowValue, String>> {
+        use crow_web::core::CrowResponse;
+        if !self.web {
+            return None;
+        }
+        let text = |v: &CrowValue| format!("{}", v.value);
+        let is_text = |v: &CrowValue| matches!(v.value, Value::Str(_));
+        let response = match (name, vals) {
+            ("text", [body]) if is_text(body) => CrowResponse::text(text(body)),
+            ("html", [body]) if is_text(body) => CrowResponse::html(text(body)),
+            ("json", [value]) if !is_text(value) && !value.is_error() => match crate::builtins::crow_to_json("json", value) {
+                Ok(j) => CrowResponse::json(j),
+                Err(e) => return Some(Err(e)),
+            },
+            ("respond", [status, body]) => match status.value {
+                Value::Int(n) => CrowResponse::respond(n.clamp(100, 599) as u16, text(body)),
+                _ => return Some(Err("respond[] takes a status and a body: respond[404, 'no such thing']".into())),
+            },
+            ("redirect", [url]) => CrowResponse::redirect(text(url)),
+            ("bytes", [data]) => CrowResponse::binary(200, text(data).into_bytes(), "application/octet-stream"),
+            ("msgpack" | "arrow" | "stream", [_]) => return Some(Err(format!("{}[]: the interpreter does not answer it yet — crow run does", name))),
+            _ => return None,
+        };
+        Some(Ok(CrowValue::ok(Value::Response(Box::new(response)))))
     }
 
     /// `transact[conn, f]`: BEGIN, the function on the same connection,
@@ -2551,6 +2596,21 @@ impl IrInterp {
             }
             "serve" => {
                 self.serve_config = Some(vals);
+                CrowValue::done()
+            }
+            // route[path, handler] answers GET, route[path, method, handler]
+            // the method named
+            "route" => {
+                let (path, method, handler) = match vals.as_slice() {
+                    [path, handler] => (path, "GET".to_string(), handler),
+                    [path, method, handler] => (path, format!("{}", method.value).to_uppercase(), handler),
+                    _ => return Err("route[] takes a path and a handler: route['/health', health] (or a method between them)".into()),
+                };
+                let handler = match &handler.value {
+                    Value::Fn(f) => f.name.clone(),
+                    _ => return Err("route[] takes a handler, a function of the request: route['/health', health]".into()),
+                };
+                self.routes.push((method, format!("{}", path.value), handler));
                 CrowValue::done()
             }
             "fetch" | "poll" => CrowValue::ok(Value::Map(std::collections::BTreeMap::new())),

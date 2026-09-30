@@ -15,7 +15,10 @@
 //! page is handed, and `{"downloaded": "name.csv", "holds": "…"}` says one
 //! came, holding that text. `{"upload": "__field:upload", "file":
 //! "fixtures/trades.csv"}` picks that file for the page's file field, and
-//! the runner sends it the way the page's script does.
+//! the runner sends it the way the page's script does. A program that
+//! answers routes is asked them: `{"get": "/hello/ada"}` or `{"post":
+//! "/made", "body": "a widget"}`, its answer's status, content type,
+//! location and body compared.
 
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
@@ -58,6 +61,54 @@ fn request_with_body(port: u16, path: &str, body: &[u8]) -> Result<String, Strin
     let mut answer = String::new();
     http.read_to_string(&mut answer).map_err(|e| e.to_string())?;
     Ok(answer)
+}
+
+/// A program that answers routes: each step asks one (`{"get":
+/// "/hello/ada"}`, `{"post": "/made", "body": "a widget"}`), and its answer
+/// is what both modes must agree on; `expect` and `absent` read the last
+/// answer.
+fn http_steps(port: u16, steps: &[serde_json::Value]) -> Result<Vec<String>, String> {
+    let mut answers: Vec<String> = Vec::new();
+    for step in steps {
+        let raw = if let Some(path) = step["get"].as_str() {
+            request(port, "GET", path, &None)?
+        } else if let Some(path) = step["post"].as_str() {
+            request_with_body(port, path, step["body"].as_str().unwrap_or("").as_bytes())?
+        } else if let Some(want) = step["expect"].as_str() {
+            let now = answers.last().cloned().unwrap_or_default();
+            if !now.contains(want) {
+                return Err(format!("the answer does not hold {:?}: {}", want, now));
+            }
+            continue;
+        } else if let Some(unwanted) = step["absent"].as_str() {
+            let now = answers.last().cloned().unwrap_or_default();
+            if now.contains(unwanted) {
+                return Err(format!("the answer holds {:?}: {}", unwanted, now));
+            }
+            continue;
+        } else {
+            return Err(format!("a program that answers routes takes get, post, expect and absent steps: {}", step));
+        };
+        answers.push(answer_of(&raw));
+    }
+    Ok(answers)
+}
+
+/// An answer as both modes must agree on it: its status line, its content
+/// type and where it sends the reader, and its body.
+fn answer_of(raw: &str) -> String {
+    let (head, body) = raw.split_once("\r\n\r\n").unwrap_or((raw, ""));
+    let mut lines = head.lines();
+    let status = lines.next().unwrap_or("").to_string();
+    let mut kept: Vec<String> = lines
+        .filter_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            let k = k.trim().to_ascii_lowercase();
+            matches!(k.as_str(), "content-type" | "location").then(|| format!("{}: {}", k, v.trim()))
+        })
+        .collect();
+    kept.sort();
+    format!("{} | {} | {}", status, kept.join(" | "), body)
 }
 
 /// Trade a sign-in's ticket for its cookie, as the page's script does: the
@@ -223,6 +274,10 @@ fn drive(exe: &std::path::Path, mode: &[&str], file: &std::path::Path, port: u16
                 return Err(format!("it exited ({}) before serving: {}", status, err.lines().last().unwrap_or("")));
             }
             std::thread::sleep(Duration::from_millis(200));
+        }
+        // a program that answers routes: each step asks one
+        if steps.first().is_some_and(|s| s.get("get").is_some() || s.get("post").is_some()) {
+            return http_steps(port, steps);
         }
         let open = steps.first().and_then(|s| s["open"].as_str()).unwrap_or("/").to_string();
         let mut jar: Option<String> = None;

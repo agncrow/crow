@@ -610,6 +610,15 @@ impl TypeContext {
                 return CrowType::Json;
             }
         }
+        // a route's request: its method, path and body are text, its
+        // headers, query and path params maps of text
+        if matches!(&obj_type, CrowType::WebRequest) {
+            return match field {
+                "method" | "path" | "body" => CrowType::Str,
+                "headers" | "query" | "params" => CrowType::Map(Box::new(CrowType::Str)),
+                _ => CrowType::Unknown,
+            };
+        }
         // .ok on a frame column → its rows' validity; every other
         // value's .ok is its own status, a list's included
         if field == "ok" && matches!(&obj_type, CrowType::FrameCol) {

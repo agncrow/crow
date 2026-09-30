@@ -3271,6 +3271,31 @@ mod tests {
         issues.iter().map(|i| format!("{:?}", i)).collect()
     }
 
+    /// A web program's response forms make a route's answer in the
+    /// interpreter as the compiled program makes them (it had served no
+    /// route at all); `json` of text still parses it
+    #[test]
+    fn a_web_programs_responses_are_answers() {
+        let it = run("use web\nt = text['hi']\nh = html['<p>x</p>']\nj = json[map[a = 'b']]\nr = respond[201, 'made']\nw = redirect['/there']\nb = bytes['raw']\np = json['[1, 2]']\n").unwrap();
+        let answer = |n: &str| match &it.var(n).unwrap().value {
+            Value::Response(r) => (r.status, r.headers.get("content-type").cloned().unwrap_or_default(), r.body.clone()),
+            other => panic!("{} is {:?}", n, other),
+        };
+        assert_eq!(answer("t"), (200, "text/plain".to_string(), "hi".to_string()));
+        assert_eq!(answer("h"), (200, "text/html".to_string(), "<p>x</p>".to_string()));
+        assert_eq!(answer("j"), (200, "application/json".to_string(), "{\"a\":\"b\"}".to_string()));
+        assert_eq!(answer("r").0, 201);
+        match &it.var("w").unwrap().value {
+            Value::Response(r) => assert_eq!((r.status, r.headers.get("location").map(String::as_str)), (302, Some("/there"))),
+            other => panic!("{:?}", other),
+        }
+        match &it.var("b").unwrap().value {
+            Value::Response(r) => assert_eq!(r.binary_body.as_deref(), Some("raw".as_bytes())),
+            other => panic!("{:?}", other),
+        }
+        assert!(!matches!(it.var("p").unwrap().value, Value::Response(_)), "json of text parses it");
+    }
+
     /// html[a] is the page as the browser builds it, the same text in both
     /// modes: a table's rows carry their attributes in one order (the
     /// interpreter had handed back the kernel's own markup and the compiled

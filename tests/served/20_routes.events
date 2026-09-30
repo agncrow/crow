@@ -1,0 +1,16 @@
+[
+  {"get": "/hello/ada"},
+  {"expect": "200 OK | content-type: text/plain | hello ada"},
+  {"get": "/heading"},
+  {"expect": "content-type: text/html | <h1>GET /heading</h1>"},
+  {"get": "/found?q=wings"},
+  {"expect": "content-type: application/json | {\"name\":\"crow\",\"q\":\"wings\"}"},
+  {"post": "/made", "body": "a nest"},
+  {"expect": "201 Created | content-type: text/plain | made a nest"},
+  {"get": "/made"},
+  {"expect": "405 Method Not Allowed"},
+  {"get": "/away"},
+  {"expect": "302 Found | content-type: text/plain | location: /hello/you"},
+  {"get": "/nowhere"},
+  {"expect": "404 Not Found"}
+]

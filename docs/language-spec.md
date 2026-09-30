@@ -2535,6 +2535,8 @@ If the port is already in use, the server prints a friendly error: `error: port 
 | `page[path, view]` | Add a LiveView page rendered by `view` |
 | `route[path, handler]` | Add a route; `handler` is a named `fn handler[req]` that receives the request and returns a response (implicit app; `route[path, method, handler]` for other methods) |
 
+A route's handler is handed the request: `req.method`, `req.path` and `req.body` are text, and `req.headers` (their names in lower case), `req.query` and `req.params` are maps of text, so `/hello/:name` reads its name as `req.params.name` and `/find?q=crow` its query as `req.query.q`. A route that names a method answers only it, and another method at its path is `405 Method Not Allowed`. Both modes serve routes, answering `text`, `html`, `json`, `respond`, `redirect` and `bytes` alike; `msgpack`, `arrow` and `stream` are answered by the compiled program (`crow run`), and under `crow run -i` a handler that makes one stops, saying so. (The interpreter had served no route at all, and a compiled route that read a param or named a method had not built.)
+
 #### Responses
 
 | Function | Description |

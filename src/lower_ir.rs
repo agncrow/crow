@@ -3810,6 +3810,16 @@ mod tests {
         assert!(ir.contains("pick(k: Int) -> Tensor(Float, [2, ?])"), "{}", ir);
     }
 
+    /// A route's handler is handed the request: its parameter is typed so,
+    /// the request's params, query and headers being maps of text and its
+    /// method, path and body text (untyped, the compiled program had read
+    /// `req.params.name` as a record's field and not built)
+    #[test]
+    fn a_routes_handler_is_handed_the_request() {
+        let ir = ir_of("use web\nfn hello[req]\n    return text['hello `req.params.name` `req.body`']\nroute['/hello/:name', hello]\nroute['/made', 'POST', hello]\nserve[3999]\n");
+        assert!(ir.contains("pure hello(req: Handle(web.request)) -> Handle(web.response)"), "{}", ir);
+    }
+
     /// A frame a handler stores into a fact joins the fact's columns: the
     /// fact holds its default's or the handler's (it had kept its default's,
     /// no columns, and a table naming the handler's column was refused).

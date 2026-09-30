@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// HTTP request as seen by Crow route handlers.
 ///
@@ -17,13 +17,13 @@ pub struct CrowRequest {
     /// Request path, e.g. "/users/42"
     pub path: String,
     /// Request headers (lowercase keys)
-    pub headers: HashMap<String, String>,
+    pub headers: BTreeMap<String, String>,
     /// Query string parameters, e.g. ?page=1&limit=10
-    pub query: HashMap<String, String>,
+    pub query: BTreeMap<String, String>,
     /// Raw request body as string
     pub body: String,
     /// Route parameters extracted from path patterns, e.g. /users/:id → {"id": "42"}
-    pub params: HashMap<String, String>,
+    pub params: BTreeMap<String, String>,
 }
 
 impl CrowRequest {
@@ -32,10 +32,10 @@ impl CrowRequest {
         Self {
             method: String::new(),
             path: String::new(),
-            headers: HashMap::new(),
-            query: HashMap::new(),
+            headers: BTreeMap::new(),
+            query: BTreeMap::new(),
             body: String::new(),
-            params: HashMap::new(),
+            params: BTreeMap::new(),
         }
     }
 
@@ -60,8 +60,8 @@ impl CrowRequest {
     }
 
     /// Parse query string from a raw query string like "page=1&limit=10".
-    pub fn parse_query_string(qs: &str) -> HashMap<String, String> {
-        let mut map = HashMap::new();
+    pub fn parse_query_string(qs: &str) -> BTreeMap<String, String> {
+        let mut map = BTreeMap::new();
         if qs.is_empty() {
             return map;
         }

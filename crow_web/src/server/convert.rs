@@ -3,7 +3,6 @@
 //! This module is the bridge: axum's `Request` → `CrowRequest`,
 //! and `CrowResponse` → axum's `Response`.
 
-use std::collections::HashMap;
 
 use axum::{
     body::Body,
@@ -23,14 +22,14 @@ pub async fn request_from_axum(req: Request) -> CrowRequest {
     let method = req.method().to_string();
     let path = req.uri().path().to_string();
 
-    // Headers → HashMap (lowercase keys)
-    let headers: HashMap<String, String> = req
+    // Headers → a map (lowercase keys), in Crow's own map order
+    let headers: std::collections::BTreeMap<String, String> = req
         .headers()
         .iter()
         .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
 
-    // Query string → HashMap
+    // Query string → a map
     let query = req
         .uri()
         .query()
@@ -49,7 +48,7 @@ pub async fn request_from_axum(req: Request) -> CrowRequest {
         headers,
         query,
         body,
-        params: HashMap::new(), // filled by handler wrapper
+        params: std::collections::BTreeMap::new(), // filled by handler wrapper
     }
 }
 

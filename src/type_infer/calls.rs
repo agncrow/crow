@@ -127,6 +127,16 @@ impl TypeContext {
                 }
             }
 
+            // route[path, handler], route[path, method, handler]: the
+            // handler's parameter is the request
+            let handler = match (name.as_str(), args.last()) {
+                ("route", Some(Expr::Ident(f))) if args.len() == 2 || args.len() == 3 => Some(f.clone()),
+                _ => None,
+            };
+            if let Some(p) = handler.and_then(|f| self.functions.get_mut(&f)).and_then(|sig| sig.params.first_mut()) {
+                p.1 = CrowType::WebRequest;
+            }
+
             // db transact[conn, fn]: the callback's parameter is a
             // db connection handle
             if name == "transact" && args.len() == 2 {

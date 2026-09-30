@@ -1,0 +1,29 @@
+--- Routes (spec, Core (Server)): a handler is handed the request — its
+--- path's params, its query, its body — and answers text, html, json,
+--- respond[status, body] or redirect[url], the same in both modes; a
+--- route that names a method answers only it. The interpreter had not
+--- served routes at all, and the compiled program had not built one that
+--- read a param or named a method.
+use web
+
+fn hello[req]
+    return text['hello `req.params.name`']
+
+fn heading[req]
+    return html['<h1>`req.method` `req.path`</h1>']
+
+fn found[req]
+    return json[map[name = 'crow', q = req.query.q]]
+
+fn made[req]
+    return respond[201, 'made `req.body`']
+
+fn away[req]
+    return redirect['/hello/you']
+
+route['/hello/:name', hello]
+route['/heading', heading]
+route['/found', found]
+route['/made', 'POST', made]
+route['/away', away]
+serve[3421]

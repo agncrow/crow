@@ -568,7 +568,7 @@ impl Emitter {
         let db = self.needs_crow_db;
         Some(match name {
             "route" if web && n == 2 => format!("__crow_app = __crow_app.route(&{}, Arc::new({}))", a[0], a[1]),
-            "route" if web && n == 3 && matches!(self.tt(&args[0]), CrowType::Str) => format!("__crow_app = __crow_app.route_method(&{}, {}, Arc::new({}))", a[0], a[1], a[2]),
+            "route" if web && n == 3 && matches!(self.tt(&args[0]), CrowType::Str) => format!("__crow_app = __crow_app.route_method(&{}, &{}, Arc::new({}))", a[0], a[1], a[2]),
             "route" if web && n == 3 => format!("{}.route(&{}, Arc::new({}))", a[0], a[1], a[2]),
             "route" if web && n == 4 => format!("{}.route_method(&{}, {}, Arc::new({}))", a[0], a[1], a[2], a[3]),
             "serve" if web && n == 1 => format!("__crow_app.serve({} as u16).await.unwrap()", a[0]),

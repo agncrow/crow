@@ -264,7 +264,7 @@ fn make_axum_handler(
 
             // Inject route params from axum's Path extractor
             if let Some(Path(params)) = path_params {
-                crow_req.params = params;
+                crow_req.params = params.into_iter().collect();
             }
 
             let crow_resp = handler(crow_req);

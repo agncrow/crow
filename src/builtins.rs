@@ -47,6 +47,7 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                     Value::Frame(_) => "frame".to_string(),
                     Value::DbConn(_) => "db".to_string(),
                     Value::Mailer(..) => "mailer".to_string(),
+                    Value::Response(_) => "response".to_string(),
                     Value::Done => "none".to_string(),
                 }
             };
