@@ -1185,7 +1185,7 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 
 | Function | Description |
 |----------|-------------|
-| `log[value]` | Print a value to stdout, as it shows: text bare, a number as it displays (a whole float as an int), a list as `[1, 'a']` with its text quoted, a map as `[key = value]`, a record as `Point[x = 1, y = 2]` (its fields in name order), a value that failed as `error: reason` — the same in both modes, through one display (`crow_runtime::display`) |
+| `log[value]` | Print a value to stdout, as it shows: text bare, a number as it displays (a whole float as an int), a list as `[1, 'a']` with its text quoted, a map as `[key = value]`, a record as `Point[x = 1, y = 2]` (its fields in name order; a module's record by the name it was declared by, as `type` names it), a value that failed as `error: reason` — the same in both modes, through one display (`crow_runtime::display`) |
 | `range[stop]` | Array of ints from 0 to stop (exclusive); every argument of `range` is an int (`range[2.5]` is refused) |
 | `range[start, stop]` | Array of ints from start to stop (exclusive) |
 | `range[start, stop, step]` | Array of ints with custom step; a negative step counts down (`range[5, 0, -2]` is `[5, 3, 1]`); a zero step is an error |
@@ -1290,7 +1290,7 @@ type[error['x']]  --- 'error'
 
 | Function | Description |
 |----------|-------------|
-| `len[x]` | Length of a list, of text (in characters), of a map (its entries), of a tensor, of a frame (its rows), of a frame's column (its cells, a missing one too) |
+| `len[x]` | Length of a list, of text (in characters), of a map (its entries), of a tensor (what a loop walks and an index reads: a vector's numbers, a matrix's rows — `len[flatten[m]]` counts every number), of a frame (its rows), of a frame's column (its cells, a missing one too). `x.len` is the same length; a record's field, a map's key or a frame's column named `len` is its own |
 | `push[arr, value]` | Return new array with value appended; onto a tensor, a number onto a vector or a row onto a matrix |
 | `pop[arr]` | Return new array without last element; an empty array stays empty |
 | `concat[a, b]` | Return new array merging two arrays: `a`'s items, then `b`'s. An empty `a` takes its items from `b` (`idx = []`, then `idx = concat[idx, [i]]` makes a list of ints) |
@@ -2017,7 +2017,7 @@ log[linear[input, w, b]]  --- input + bias
 | Property | Description |
 |---|---|
 | `.shape` | Array of dimension sizes |
-| `.len` | Total number of elements |
+| `.len` | Its length, as `len[t]` gives it: a vector's numbers, a matrix's rows |
 | `.dtype` | Data type (`'float'`) |
 | `.device` | Where the tensor lives (`'cpu'` or `'gpu'`) |
 | `.grad` | Gradient status (`'none'` if no gradient) |
@@ -3763,7 +3763,7 @@ A package is a git repository, a version is one of its tags (or a branch, or a c
 deps = map[models = 'github.com/agncrow/crow-models@v0.1.0', mine = '../mine']
 ```
 
-`crow install` checks each one out into `crow_modules/<name>`, and the program imports its files with `use` (`use models.line` reads `crow_modules/models/line.co`). The first install of a dependency takes the commit its version names and writes it to `crow.lock`; every install after that — on another machine, in CI — checks out that commit, whatever the tag names by then, and says so when a tag has moved. `crow install --update models` takes what `models`'s version names now, and `--update` alone every dependency's; both rewrite the lock. Commit `crow.lock` with the program, and leave `crow_modules/` out of version control (`crow new` writes that `.gitignore`). A program run before its dependencies are installed is told which one is missing and to run `crow install`.
+`crow install` checks each one out into `crow_modules/<name>`, and the program imports its files with `use` (`use models.line` reads `crow_modules/models/line.co`). A package is rooted at itself: its files reach each other by their paths inside it, so `use line` in one of its files is the package's `line.co`, whatever the program beside it holds (it had been the program's own `line.co` when there was one). The first install of a dependency takes the commit its version names and writes it to `crow.lock`; every install after that — on another machine, in CI — checks out that commit, whatever the tag names by then, and says so when a tag has moved. `crow install --update models` takes what `models`'s version names now, and `--update` alone every dependency's; both rewrite the lock. Commit `crow.lock` with the program, and leave `crow_modules/` out of version control (`crow new` writes that `.gitignore`). A program run before its dependencies are installed is told which one is missing and to run `crow install`.
 
 A repository on a forge (`github.com`, `gitlab.com`, `codeberg.org`, `bitbucket.org`) is the first two segments of its path, and what follows is the directory inside it that is the package: `github.com/agncrow/crow/packages/models@v0.6.0`. Any other place is a url, with the package's directory after a `//`: `https://git.example.com/pkgs.git//models@v1`, `file:///srv/pkgs.git@v2`. A local path is linked as it is, for working on a package beside a program.
 

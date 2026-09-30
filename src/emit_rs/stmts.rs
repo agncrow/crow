@@ -896,7 +896,10 @@ impl Emitter {
             Some(PathStep::Index(i)) => {
                 let idx = self.expr(i);
                 match &ty {
-                    CrowType::Map(_) => self.line_after(&found, &format!("{}.insert({}, {});", obj, idx, val)),
+                    // the value first, then a copy of the key: `m[k] = m[k] + 1`
+                    // reads the key after the insert would have taken it, and
+                    // the program may read it again after
+                    CrowType::Map(_) => self.line_after(&found, &format!("{{ let _v = {}; {}.insert(({}).to_string(), _v); }}", val, obj, idx)),
                     CrowType::NumArray(..) => {
                         self.needs_crow_runtime = true;
                         self.line_after(&found, &format!(
@@ -955,7 +958,10 @@ impl Emitter {
     /// numbers (ints where it holds ints), a parsed JSON value's items (the
     /// runtime's, walked as the interpreter walks the value it parsed to),
     /// a list itself.
-    pub(crate) fn loop_items(&mut self, iter_str: String, it: &CrowType) -> (String, CrowType) {
+    pub(crate) fn loop_items(&mut self, iter_str: String, it: &CrowType, iter: &Expr) -> (String, CrowType) {
+        if let Ty::Column(cell) = iter.ty().payload().clone() {
+            return self.column_items(&iter_str, &cell);
+        }
         match it {
             CrowType::NumArray(inner, dims) => {
                 let elem = crate::type_infer::TypeContext::tensor_item(inner, dims);
@@ -978,10 +984,26 @@ impl Emitter {
         }
     }
 
+    /// A frame's column walked cell by cell, as the interpreter walks it:
+    /// each cell as its column's type holds it, and where the column can
+    /// have missing cells, each a result — a missing one an error of reason
+    /// `missing`, as an index reads it. (A loop over a column did not build
+    /// compiled.)
+    fn column_items(&mut self, iter_str: &str, cell: &Ty) -> (String, CrowType) {
+        let cell_ty = crow_type(cell);
+        let getter = Self::cell_getter(&Self::inner(&cell_ty));
+        let walked = if matches!(cell_ty, CrowType::Result(_)) {
+            format!("{{ let _c = {}; (0.._c.len()).map(|_i| {{ let _ok = _c.valid[_i]; let _why = if _ok {{ String::new() }} else {{ \"missing\".to_string() }}; CrowResult {{ ok: _ok, value: _c.{}(_i), reason: _why.clone(), kind: _why, trace: vec![], captured: 0.0 }} }}).collect::<Vec<_>>() }}", iter_str, getter)
+        } else {
+            format!("{{ let _c = {}; (0.._c.len()).map(|_i| _c.{}(_i)).collect::<Vec<_>>() }}", iter_str, getter)
+        };
+        (walked, cell_ty)
+    }
+
     fn emit_for(&mut self, var: &str, iter: &Expr, body: &[Stmt], parallel: bool) {
         let iter_str = self.expr(iter);
         let iter_ty = self.tt(iter);
-        let (actual, elem) = self.loop_items(iter_str, &iter_ty);
+        let (actual, elem) = self.loop_items(iter_str, &iter_ty, iter);
         let is_copy = Self::is_copy_type(&elem);
         // in parallel as the lowering decided, unless cpu[1] asked for one core
         let forced_sequential = self.cpu_count.map_or(false, |n| n <= 1);

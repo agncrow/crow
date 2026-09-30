@@ -213,7 +213,12 @@ pub struct FnValue {
 
 #[derive(Debug, Clone)]
 pub struct StructInstance {
+    /// Its declaration's name in the program, unique (a module's record is
+    /// prefixed with the module's path)
     pub name: String,
+    /// The name it was declared by, which it shows (`Day`, not
+    /// `sessions_Day`)
+    pub shown: String,
     pub fields: BTreeMap<String, CrowValue>,
 }
 
@@ -269,7 +274,7 @@ impl fmt::Display for Value {
             Value::Fn(func) => write!(f, "<fn {}>", func.name),
             Value::StructInstance(si) => {
                 use crow_runtime::display::CrowDisplay as _;
-                write!(f, "{}", crow_runtime::display::record(&si.name, si.fields.iter().map(|(k, v)| (k, v.crow_repr()))))
+                write!(f, "{}", crow_runtime::display::record(&si.shown, si.fields.iter().map(|(k, v)| (k, v.crow_repr()))))
             }
             Value::Sparse(s) => write!(f, "{}", s),
             Value::Frame(frame) => write!(f, "{}", frame),

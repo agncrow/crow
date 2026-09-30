@@ -477,6 +477,11 @@ pub struct TypeContext {
     /// types the part's functions from them, since a part's tests are not
     /// its importer's.
     pub(crate) tested: Vec<(String, Vec<CrowType>)>,
+    /// The parameters (and record fields) only a test's call or click
+    /// typed, with the type it gave each: a later reading of the tests
+    /// refines one nothing else has changed since, as the functions its
+    /// arguments come from settle.
+    by_tests: BTreeMap<(String, usize), CrowType>,
     current_fn_name: Option<String>,
 }
 
@@ -541,6 +546,7 @@ impl TypeContext {
             describe_cache: BTreeMap::new(),
             describe_notes: Vec::new(),
             tested: Vec::new(),
+            by_tests: BTreeMap::new(),
             current_fn_name: None,
         }
     }
@@ -580,20 +586,46 @@ impl TypeContext {
     /// takes the click's (the program's own evidence — a view's call, a
     /// table's action, a widget's text — comes first). Whether any moved.
     pub(crate) fn type_clicked(&mut self, clicks: &[(String, Vec<CrowType>)]) -> bool {
-        let mut moved = false;
+        // every click of a handler met, argument by argument: an int and a
+        // float make a float, whichever click comes first
+        let mut met: BTreeMap<(String, usize), CrowType> = BTreeMap::new();
         for (h, types) in clicks {
-            if let Some(sig) = self.functions.get_mut(h) {
-                if sig.params.len() == types.len() {
-                    for (p, t) in sig.params.iter_mut().zip(types) {
-                        if matches!(p.1, CrowType::Unknown) && !matches!(t, CrowType::Unknown) {
-                            p.1 = t.clone();
-                            moved = true;
-                        }
-                    }
+            if self.functions.get(h).is_none_or(|sig| sig.params.len() != types.len()) {
+                continue;
+            }
+            for (i, t) in types.iter().enumerate() {
+                if !matches!(t, CrowType::Unknown) {
+                    met.entry((h.clone(), i)).and_modify(|m| *m = m.unify(t)).or_insert_with(|| t.clone());
                 }
             }
         }
+        let mut moved = false;
+        for ((h, i), t) in met {
+            moved |= self.type_by_tests(&h, i, &t, true);
+        }
         moved
+    }
+
+    /// A parameter (or a record's field) typed by what the tests hand it:
+    /// one nothing typed yet, or one the tests typed before whose type
+    /// nothing else has changed since — the tests are read again once the
+    /// functions their arguments come from settle, and a frame whose
+    /// columns were not worked out then is known now. Whether it moved.
+    fn type_by_tests(&mut self, f: &str, i: usize, t: &CrowType, params_only: bool) -> bool {
+        let before = self.by_tests.get(&(f.to_string(), i)).cloned();
+        let slot = match self.functions.get_mut(f) {
+            Some(sig) => sig.params.get_mut(i),
+            None if params_only => None,
+            None => self.structs.get_mut(f).and_then(|st| st.fields.get_mut(i)),
+        };
+        let Some(p) = slot else { return false };
+        let ours = matches!(p.1, CrowType::Unknown) || before.as_ref() == Some(&p.1);
+        if !ours || p.1 == *t {
+            return false;
+        }
+        p.1 = t.clone();
+        self.by_tests.insert((f.to_string(), i), t.clone());
+        true
     }
 
     /// What only a test's calls type (F5): a parameter nothing in the
@@ -638,14 +670,7 @@ impl TypeContext {
         let mut moved = false;
         for ((f, i), t) in agreed {
             let Some(t) = t.filter(|t| !matches!(t, CrowType::Unknown)) else { continue };
-            let slot = match self.functions.get_mut(&f) {
-                Some(sig) => sig.params.get_mut(i),
-                None => self.structs.get_mut(&f).and_then(|st| st.fields.get_mut(i)),
-            };
-            if let Some(p) = slot.filter(|p| matches!(p.1, CrowType::Unknown)) {
-                p.1 = t;
-                moved = true;
-            }
+            moved |= self.type_by_tests(&f, i, &t, false);
         }
         moved
     }
@@ -1204,6 +1229,20 @@ mod tests {
         ctx.infer_program(&stmts);
         assert!(ctx.view_handlers.contains("begin"));
         assert_eq!(ctx.functions["begin"].params[0].1, CrowType::Float);
+    }
+
+    /// A handler two clicks hand an int and a float takes a float, in
+    /// either order (the clicks' types are met before the parameter takes
+    /// them, so a later reading of the tests does not undo an earlier)
+    #[test]
+    fn a_handler_clicked_with_an_int_and_a_float_takes_a_float() {
+        for (first, second) in [("1", "2.5"), ("2.5", "1")] {
+            let src = format!("use web, ui\nbase = 0.0\nfn begin[start]\n    base = start * 1.0\nview v[]\n    return p['`base`']\npage['/', v]\ntest t[]\n    a = app[v]\n    click[a, begin[{}]]\n    click[a, begin[{}]]\n", first, second);
+            let stmts = crate::lower::lower_program(&crate::build(&src).unwrap()).unwrap();
+            let mut ctx = TypeContext::new();
+            ctx.infer_program(&stmts);
+            assert_eq!(ctx.functions["begin"].params[0].1, CrowType::Float, "{} then {}", first, second);
+        }
     }
 
     /// A frame function over a value not typed yet is not guessed to be

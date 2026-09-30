@@ -188,6 +188,9 @@ pub struct Part {
 #[derive(Debug, Clone)]
 pub struct StructDef {
     pub name: String,
+    /// The name the program declared it by, as a value shows it: a
+    /// module's `Day`, which the expansion prefixed `sessions_Day`.
+    pub shown: String,
     pub fields: Vec<(String, Ty)>,
 }
 

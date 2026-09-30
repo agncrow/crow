@@ -1,0 +1,10 @@
+--- A module's record shows by the name it was declared by, as `type`
+--- names it: `SNode`, not the module-prefixed `lib_scene_SNode` the
+--- expansion keeps it apart by (both modes had shown that).
+use lib/scene
+
+leaf = scene.mesh['rock', x = 5]
+log[leaf]
+log[type[leaf]]
+log[scene.group[leaf, leaf]]
+log['`leaf`']

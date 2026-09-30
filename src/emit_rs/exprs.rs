@@ -811,14 +811,6 @@ impl Emitter {
             let o = if matches!(oty, CrowType::Result(_)) { format!("{}.value", obj) } else { obj.clone() };
             return format!("{}.get(\"{}\").cloned().unwrap_or(serde_json::Value::Null)", o, field);
         }
-        if field == "len" {
-            if matches!(oty, CrowType::Frame(_)) {
-                return format!("({}.nrows() as i64)", obj);
-            }
-            if matches!(oty, CrowType::Array(_) | CrowType::NumArray(..) | CrowType::Str | CrowType::FrameCol) {
-                return format!("({}.len() as i64)", obj);
-            }
-        }
         if matches!(field, "year" | "month" | "day" | "hour" | "minute" | "second" | "offset") && matches!(oty, CrowType::Str) {
             return format!("crow_runtime::frame::datetime_field(&{}, \"{}\").unwrap_or(0)", obj, field);
         }
@@ -917,9 +909,12 @@ impl Emitter {
                         continue;
                     }
                     match &inner {
+                        // a column as the one display shows it, numbers bare
+                        // (it had been its cells' text, quoted)
                         CrowType::FrameCol => {
-                            fmt.push_str("{:?}");
-                            args.push(format!("{}.to_strings()", rust));
+                            self.needs_crow_runtime = true;
+                            fmt.push_str("{}");
+                            args.push(format!("{{ use crow_runtime::display::CrowDisplay as _; ({}).crow_fmt() }}", rust));
                         }
                         t if self.kernel_displayable(t) => {
                             self.needs_crow_runtime = true;
@@ -1138,7 +1133,7 @@ impl Emitter {
         }
         let method = if use_par { "par_iter" } else { "iter" };
         let it = self.tt(iter);
-        let (iter_str, elem) = self.loop_items(iter_str, &it);
+        let (iter_str, elem) = self.loop_items(iter_str, &it, iter);
         let is_copy = Self::is_copy_type(&elem);
         // an item that is not Copy is borrowed from what the loop walks; the
         // body reads it as its own value, as the interpreter's does

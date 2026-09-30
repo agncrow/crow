@@ -837,8 +837,9 @@ fn test_numarray_type_builtin_transpile() {
 
 #[test]
 fn test_numarray_len_field_transpile() {
+    // `a.len` is `len[a]`: the one row, a matrix's rows
     let rust = transpile("a = [1, 2, 3]\nn = a.len\n");
-    assert!(rust.contains(".len() as i64"), "NumArray .len should use .len() as i64\n{}", rust);
+    assert!(rust.contains("crow_runtime::core::len_tensor(&(a))"), "a tensor's .len is len[]'s row\n{}", rust);
 }
 
 #[test]

@@ -1880,189 +1880,36 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     binary_path
 }
 
-/// Map Rust type names to Crow type names.
-fn rust_type_to_crow(rust_type: &str) -> String {
-    let t = rust_type.trim().trim_matches('`').trim_matches('&');
-    match t {
-        "i64" | "i64_" => "int".to_string(),
-        "f64" | "f64_" => "float".to_string(),
-        "bool" => "bool".to_string(),
-        "String" | "&str" | "str" => "string".to_string(),
-        s if s.starts_with("Vec<") => "array".to_string(),
-        s if s.starts_with("HashMap<") => "map".to_string(),
-        s if s.contains("CrowResult") => "result".to_string(),
-        other => other.to_string(),
-    }
-}
-
-/// Translate Rust compiler errors into Crow-friendly messages.
-/// If a known pattern is found, return a clean Crow error.
-/// Otherwise, fall back to showing the raw output.
+/// What a build says when the program's Rust does not compile. Crow's own
+/// checks refuse a program before any Rust is written, so the Rust compiler
+/// refusing what Crow accepted is a bug in Crow: said as one, after the
+/// compiler's first error and where it points, so it can be reported. (The
+/// compiler's words had been reworded as if they were the program's — a
+/// borrow of a moved value in the printed Rust read "value was already used
+/// and cannot be accessed again".) A division by a literal zero, or a
+/// literal that overflows, the compiler sees before the program runs: that
+/// one is the program's.
 fn translate_rust_compile_error(stderr: &str) -> String {
-    // --- Division by zero (compile-time constant) ---
     if stderr.contains("attempt to divide") && stderr.contains("by zero") {
         return "error: cannot divide by zero".to_string();
     }
     if stderr.contains("attempt to calculate the remainder") && stderr.contains("a divisor of zero") {
         return "error: cannot divide by zero".to_string();
     }
-
-    // --- Arithmetic overflow ---
     if stderr.contains("arithmetic operation overflowed") || stderr.contains("overflow") && stderr.contains("attempt to") {
         return "error: arithmetic overflow".to_string();
     }
-
-    // --- Type mismatch (E0308) ---
-    // e.g. "expected `&str`, found `i64`"
-    if stderr.contains("mismatched types") {
-        if let Some(msg) = extract_type_mismatch(stderr) {
-            return format!("error: {}", msg);
+    let lines: Vec<&str> = stderr.lines().collect();
+    let first = lines.iter().position(|l| l.starts_with("error") && !l.contains("could not compile") && !l.contains("aborting due to"));
+    let said = match first {
+        Some(i) => {
+            let at = lines[i + 1..].iter().take(3).find(|l| l.trim_start().starts_with("-->")).map(|l| format!("\n  {}", l.trim())).unwrap_or_default();
+            format!("{}{}", lines[i], at)
         }
-    }
-
-    // --- Cannot apply operator (E0277) ---
-    // e.g. "cannot add `i64` to `String`"
-    if let Some(msg) = extract_cannot_op(stderr) {
-        return format!("error: {}", msg);
-    }
-
-    // --- Non-primitive cast (E0605) ---
-    // e.g. "non-primitive cast: `String` as `usize`"
-    if stderr.contains("non-primitive cast") {
-        return "error: type mismatch — cannot use string as list index (use int)".to_string();
-    }
-
-    // --- Undefined variable (E0425) ---
-    // e.g. "cannot find value `x` in this scope"
-    if stderr.contains("cannot find value") {
-        if let Some(name) = extract_between(stderr, "cannot find value `", "`") {
-            return format!("error: undefined variable '{}'", name);
-        }
-        return "error: undefined variable".to_string();
-    }
-
-    // --- Undefined function (E0425) ---
-    if stderr.contains("cannot find function") {
-        if let Some(name) = extract_between(stderr, "cannot find function `", "`") {
-            return format!("error: undefined function '{}'", name);
-        }
-        return "error: undefined function".to_string();
-    }
-
-    // --- Immutable variable (E0384) ---
-    if stderr.contains("cannot assign twice to immutable variable") {
-        if let Some(name) = extract_between(stderr, "immutable variable `", "`") {
-            return format!("error: cannot reassign '{}' — variable is immutable", name);
-        }
-        return "error: cannot reassign immutable variable".to_string();
-    }
-
-    // --- Borrow checker (E0502, E0505, E0382) ---
-    if stderr.contains("borrow of moved value") || stderr.contains("value used here after move") {
-        return "error: value was already used and cannot be accessed again".to_string();
-    }
-    if stderr.contains("cannot borrow") && stderr.contains("as mutable") {
-        return "error: cannot modify value while it is being read".to_string();
-    }
-
-    // --- Missing field on struct ---
-    if stderr.contains("no field") && stderr.contains("on type") {
-        if let Some(field) = extract_between(stderr, "no field `", "`") {
-            return format!("error: no field '{}' on this value", field);
-        }
-    }
-
-    // --- Wrong number of arguments ---
-    if stderr.contains("this function takes") && stderr.contains("but") && stderr.contains("supplied") {
-        if let Some(msg) = extract_between(stderr, "this function takes ", " but") {
-            if let Some(got) = extract_between(stderr, "but ", " was supplied")
-                .or_else(|| extract_between(stderr, "but ", " were supplied")) {
-                return format!("error: wrong number of arguments — expected {} but got {}", msg, got);
-            }
-        }
-        return "error: wrong number of arguments".to_string();
-    }
-
-    // --- Index out of bounds (compile-time) ---
-    if stderr.contains("index out of bounds") {
-        return "error: index out of range".to_string();
-    }
-
-    // --- Fallback: extract just the error lines and clean them up ---
-    let error_lines: Vec<&str> = stderr.lines()
-        .filter(|l| l.starts_with("error"))
-        .filter(|l| !l.contains("could not compile") && !l.contains("aborting due to"))
-        .collect();
-    if !error_lines.is_empty() {
-        let cleaned: Vec<String> = error_lines.iter()
-            .map(|l| {
-                let mut s = l.to_string();
-                // Strip error codes like [E0308]
-                if let Some(_start) = s.find('[') {
-                    if let Some(end) = s.find("]: ") {
-                        s = format!("error: {}", &s[end + 3..]);
-                    }
-                }
-                // Replace Rust types with Crow types
-                // `&str` before `String`: the other order turns `&String`
-                // into `stringing`
-                s = s.replace("i64", "int").replace("f64", "float")
-                     .replace("&str", "string").replace("String", "string")
-                     .replace("bool", "bool").replace("usize", "int");
-                s
-            })
-            .collect();
-        return cleaned.join("\n");
-    }
-
-    // Absolute fallback
-    format!("compilation failed:\n{}", stderr)
+        None => stderr.trim().to_string(),
+    };
+    format!("{}\nerror: the compiled program does not build — the Rust compiler refused what Crow accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)", said)
 }
-
-/// Extract "expected X, found Y" from a type mismatch error.
-fn extract_type_mismatch(stderr: &str) -> Option<String> {
-    let expected = extract_between(stderr, "expected `", "`")?;
-    let found = extract_between(stderr, "found `", "`")?;
-    Some(format!(
-        "type mismatch — expected {} but got {}",
-        rust_type_to_crow(&expected),
-        rust_type_to_crow(&found)
-    ))
-}
-
-/// Extract "cannot add/multiply/etc" operator errors.
-fn extract_cannot_op(stderr: &str) -> Option<String> {
-    for op in &["add", "subtract", "multiply", "divide"] {
-        let pattern = format!("cannot {} `", op);
-        if stderr.contains(&pattern) {
-            let rhs = extract_between(stderr, &pattern, "`")?;
-            let lhs = extract_between(stderr, &format!("` to `"), "`")?;
-            let crow_op = match *op {
-                "add" => "+",
-                "subtract" => "-",
-                "multiply" => "*",
-                "divide" => "/",
-                _ => op,
-            };
-            return Some(format!(
-                "cannot use '{}' with {} and {}",
-                crow_op,
-                rust_type_to_crow(&lhs),
-                rust_type_to_crow(&rhs)
-            ));
-        }
-    }
-    None
-}
-
-/// Extract text between two markers in a string.
-fn extract_between<'a>(text: &'a str, start_marker: &str, end_marker: &str) -> Option<String> {
-    let start = text.find(start_marker)? + start_marker.len();
-    let rest = &text[start..];
-    let end = rest.find(end_marker)?;
-    Some(rest[..end].to_string())
-}
-
 
 fn cmd_fmt() {
     let args: Vec<String> = std::env::args().collect();
@@ -4916,6 +4763,16 @@ thread_local! {
     /// The same for every part of the entry expanded last, spelled as the
     /// entry spells each part
     static TESTED_BY_PARTS: std::cell::RefCell<TestedCalls> = const { std::cell::RefCell::new(Vec::new()) };
+    /// a module's record, prefixed (`sessions_Day`) → the name it was
+    /// declared by (`Day`), which a value of it shows
+    static DECLARED_RECORDS: std::cell::RefCell<std::collections::BTreeMap<String, String>> =
+        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+/// The name a record was declared by: a module's `Day`, not the
+/// `sessions_Day` its expansion made of it.
+pub(crate) fn declared_record_name(name: &str) -> String {
+    DECLARED_RECORDS.with(|d| d.borrow().get(name).cloned()).unwrap_or_else(|| name.to_string())
 }
 
 /// A function's name and the types a test calls it with, call by call.
@@ -5101,12 +4958,22 @@ fn expand_into(
         in_progress.remove(&key);
 
         // The prefix is the module's path: unique per file, the same from
-        // every importer
-        let prefix = file_rel.replace('/', "_");
+        // every importer. A package's own import is spelled inside the
+        // package, so its path there carries the package's name: `use b` in
+        // package `pk` is `pk.b` to the program, never the program's `b`
+        let package = package_dir(&root).and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
+        let prefix = match &package {
+            Some(pk) => format!("{}_{}", pk, file_rel.replace('/', "_")),
+            None => file_rel.replace('/', "_"),
+        };
         // the baseline attributes each declaration to its part's file
         EXPANSION_PARTS.with(|p| {
             let root = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
             let rel = canon.strip_prefix(&root).map(|p| p.display().to_string()).unwrap_or_else(|_| file_path.display().to_string());
+            let rel = match &package {
+                Some(pk) => format!("crow_modules/{}/{}", pk, rel),
+                None => rel,
+            };
             p.borrow_mut().insert(format!("{}_", prefix), rel);
         });
         EXPANSION_FILES.with(|f| {
@@ -5153,6 +5020,7 @@ fn expand_into(
                     });
                 }
                 ast::Stmt::StructDecl { name, fields } => {
+                    DECLARED_RECORDS.with(|d| d.borrow_mut().insert(format!("{}_{}", prefix, name), name.clone()));
                     ex.hoisted.push(ast::Stmt::StructDecl {
                         name: format!("{}_{}", prefix, name),
                         fields: fields.clone(),
@@ -5467,6 +5335,11 @@ fn rewrite_qualified_refs_expr(
 /// ancestor holding a crowfile, else the entry file's own directory.
 pub(crate) fn project_root(source_dir: &std::path::Path) -> std::path::PathBuf {
     let start = if source_dir.as_os_str().is_empty() { std::path::Path::new(".") } else { source_dir };
+    // an installed package is rooted at itself: its files reach each other
+    // by their paths inside it, whatever the program beside it holds
+    if let Some(package) = package_dir(start) {
+        return std::fs::canonicalize(&package).unwrap_or(package);
+    }
     let mut dir = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
     loop {
         if dir.join("crowfile").exists() {
@@ -5477,6 +5350,16 @@ pub(crate) fn project_root(source_dir: &std::path::Path) -> std::path::PathBuf {
             None => return start.to_path_buf(),
         }
     }
+}
+
+/// The installed package a directory lies in — `crow_modules/<name>`, as
+/// the path spells it (a linked package's own path does not say it) — or
+/// none.
+fn package_dir(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let dir = if dir.is_absolute() { dir.to_path_buf() } else { std::env::current_dir().ok()?.join(dir) };
+    dir.ancestors()
+        .find(|a| a.parent().and_then(|p| p.file_name()).is_some_and(|n| n == "crow_modules"))
+        .map(|a| a.to_path_buf())
 }
 
 #[cfg(test)]
@@ -5933,6 +5816,28 @@ mod module_parts_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// An installed package's own imports are its own files: `use b` in
+    /// package `pk` is `crow_modules/pk/b.co`, beside a program with a
+    /// `b.co` of its own, which keeps its own (the package's import had
+    /// resolved to the program's file and run its code)
+    #[test]
+    fn a_packages_imports_are_its_own_files() {
+        let dir = std::env::temp_dir().join(format!("crow_package_own_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("crow_modules/pk")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'app'\n").unwrap();
+        std::fs::write(dir.join("crow_modules/pk/a.co"), "use b\nfn g[]\n    return b.f[]\n").unwrap();
+        std::fs::write(dir.join("crow_modules/pk/b.co"), "fn f[]\n    return 'package b'\n").unwrap();
+        std::fs::write(dir.join("b.co"), "fn f[]\n    return 'program b'\n").unwrap();
+        let stmts = build("use b\nuse pk.a\nx = a.g[]\ny = b.f[]\n").unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let stmts = expand_module_imports(&stmts, &dir, &mut visited);
+        let it = ir_interp::run_script(&stmts, "app").unwrap();
+        assert!(matches!(it.var("x").map(|v| &v.value), Some(crate::value::Value::Str(s)) if s == "package b"), "{:?}", it.var("x"));
+        assert!(matches!(it.var("y").map(|v| &v.value), Some(crate::value::Value::Str(s)) if s == "program b"), "{:?}", it.var("y"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A test sets a part's fact by the name the code reads it by:
     /// `change[a, 'calc.rate', 2.0]` (the harness knew it only by its
     /// prefixed name)
@@ -6140,14 +6045,15 @@ fn rewrite_refs_expr(
 
 #[cfg(test)]
 mod compile_error_translation_tests {
-    /// `&str` is replaced before `String`: the other order turned the
-    /// `&String` in "the trait bound `String: Borrow<&String>`" into
-    /// `stringing`.
+    /// Rust the compiler refuses is a bug in Crow, said as one after the
+    /// compiler's own first error and where it points (a moved value had
+    /// read "value was already used and cannot be accessed again")
     #[test]
-    fn a_reference_to_a_string_reads_as_a_string() {
-        let stderr = "error[E0277]: the trait bound `String: Borrow<&String>` is not satisfied\n  --> src/main.rs:65:32\n";
+    fn rust_that_does_not_build_is_a_bug_in_crow() {
+        let stderr = "   Compiling app v0.1.0\nerror[E0382]: borrow of moved value: `x`\n  --> src/main.rs:65:32\n   |\nerror: could not compile `app`\n";
         let out = super::translate_rust_compile_error(stderr);
-        assert!(out.contains("string: Borrow<&string>"), "{}", out);
-        assert!(!out.contains("stringing"), "{}", out);
+        assert!(out.starts_with("error[E0382]: borrow of moved value: `x`\n  --> src/main.rs:65:32\n"), "{}", out);
+        assert!(out.lines().last().is_some_and(|l| l.contains("a bug in Crow, not in this program")), "{}", out);
+        assert_eq!(super::translate_rust_compile_error("error: this operation will panic at runtime\nattempt to divide `1_i64` by zero"), "error: cannot divide by zero");
     }
 }

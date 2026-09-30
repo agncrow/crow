@@ -172,9 +172,14 @@ pub fn len_map<T>(m: &BTreeMap<String, T>) -> i64 {
     m.len() as i64
 }
 
-/// `len[tensor]`.
+/// `len[tensor]`: the items a loop walks and an index reads — a vector's
+/// numbers, a matrix's rows (its first dimension). (It had counted every
+/// number, so `for i in range[len[m]]` read past a matrix's last row.)
 pub fn len_tensor(t: &crate::tensor::CrowTensor) -> i64 {
-    t.len() as i64
+    match t.shape() {
+        [rows, _, ..] => *rows as i64,
+        _ => t.len() as i64,
+    }
 }
 
 /// `len[frame]`: its rows.

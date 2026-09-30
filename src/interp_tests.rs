@@ -3068,7 +3068,7 @@ mod tests {
     #[test]
     fn test_tensor_push_row_and_errors() {
         let val = get_var("m = [[1, 2], [3, 4]]\nm2 = push[m, [5, 6]]\nn = len[m2]\n", "n");
-        assert!(matches!(val.value, Value::Int(6)), "3x2 tensor has 6 elements");
+        assert!(matches!(val.value, Value::Int(3)), "a 3x2 matrix has 3 rows: {:?}", val.value);
         // wrong row length
         let r = std::panic::catch_unwind(|| run_program("m = [[1, 2], [3, 4]]\nm2 = push[m, [5, 6, 7]]\n"));
         assert!(r.is_err(), "wrong row length should error");
@@ -3087,8 +3087,11 @@ mod tests {
 
     #[test]
     fn test_concat_tensor_axis() {
+        // a 2x4 matrix: 2 rows, 8 numbers
         let val = get_var("use math\nm = [[1, 2], [3, 4]]\nc = concat[m, m, 1]\nn = len[c]\n", "n");
-        assert!(matches!(val.value, Value::Int(8)), "2x4 tensor has 8 elements");
+        assert!(matches!(val.value, Value::Int(2)), "a 2x4 matrix has 2 rows: {:?}", val.value);
+        let val = get_var("use math\nm = [[1, 2], [3, 4]]\nc = concat[m, m, 1]\nn = len[flatten[c]]\n", "n");
+        assert!(matches!(val.value, Value::Int(8)), "and 8 numbers: {:?}", val.value);
     }
 
     // ===== Function scope: module variables are invisible (F1) =====

@@ -888,7 +888,7 @@ impl Emitter {
             let fields: Vec<String> = s.fields.iter().map(|(f, _)| format!("(\"{}\", self.{}.crow_repr())", f, Self::rust_field(f))).collect();
             self.line(&format!("impl crow_runtime::display::CrowDisplay for {} {{", s.name));
             self.line("    fn crow_repr(&self) -> String {");
-            self.line(&format!("        {{ use crow_runtime::display::CrowDisplay as _; crow_runtime::display::record(\"{}\", vec![{}]) }}", s.name, fields.join(", ")));
+            self.line(&format!("        {{ use crow_runtime::display::CrowDisplay as _; crow_runtime::display::record(\"{}\", vec![{}]) }}", s.shown, fields.join(", ")));
             self.line("    }");
             self.line("}");
             self.line("");

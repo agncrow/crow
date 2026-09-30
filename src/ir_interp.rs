@@ -1279,7 +1279,7 @@ impl IrInterp {
                 for ((fname, _), e) in def.fields.iter().zip(fields) {
                     vals.insert(fname.clone(), self.eval(e)?);
                 }
-                CrowValue::ok(Value::StructInstance(Box::new(StructInstance { name: name.clone(), fields: vals })))
+                CrowValue::ok(Value::StructInstance(Box::new(StructInstance { name: name.clone(), shown: def.shown.clone(), fields: vals })))
             }
             Expr::ForExpr { var, iter, body, parallel, ty } => {
                 let as_tensor = matches!(ty.payload(), Ty::Tensor(..));
@@ -2986,7 +2986,7 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
     fn step<'v>(cur: &'v mut Value, p: &PathStep, idx: &mut std::slice::Iter<'_, CrowValue>) -> Result<&'v mut CrowValue, String> {
         match p {
             PathStep::Field(f) => match cur {
-                Value::StructInstance(si) => si.fields.get_mut(f).ok_or_else(|| format!("struct '{}' has no field '{}'", si.name, f)),
+                Value::StructInstance(si) => si.fields.get_mut(f).ok_or_else(|| format!("struct '{}' has no field '{}'", si.shown, f)),
                 Value::Map(m) => {
                     crow_runtime::stops::key(m, f)?;
                     m.get_mut(f).ok_or_else(|| format!("map has no key '{}'", f))
@@ -3025,7 +3025,7 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
         PathStep::Field(f) => match cur {
             Value::StructInstance(si) => {
                 if !si.fields.contains_key(f) {
-                    return Err(format!("struct '{}' has no field '{}'", si.name, f));
+                    return Err(format!("struct '{}' has no field '{}'", si.shown, f));
                 }
                 si.fields.insert(f.clone(), new);
                 Ok(())

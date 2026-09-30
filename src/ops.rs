@@ -712,19 +712,15 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
         return Ok(obj);
     }
 
-    // .length property for lists and strings
+    // `x.len` is `len[x]` (the lowering calls the row wherever it knows x
+    // is measured); a record's field, a map's key or a frame's column named
+    // `len` is its own
     if field == "len" {
         match &obj.value {
-            Value::Array(items) => {
-                return Ok(CrowValue::ok(Value::Int(items.len() as i64)));
-            }
-            Value::NumArray(t) => {
-                return Ok(CrowValue::ok(Value::Int(t.len() as i64)));
-            }
-            Value::Str(s) => {
-                return Ok(CrowValue::ok(Value::Int(s.len() as i64)));
-            }
-            _ => return Err("only arrays and strings have .len".to_string()),
+            Value::Array(items) => return Ok(CrowValue::ok(Value::Int(items.len() as i64))),
+            Value::NumArray(t) => return Ok(CrowValue::ok(Value::Int(crow_runtime::core::len_tensor(t)))),
+            Value::Str(s) => return Ok(CrowValue::ok(Value::Int(crow_runtime::core::len_text(s)))),
+            _ => {}
         }
     }
 
@@ -805,7 +801,7 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
                 Some(val) => Ok(val.clone()),
                 None => Err(format!(
                     "struct '{}' has no field '{}'",
-                    si.name, field
+                    si.shown, field
                 )),
             }
         }

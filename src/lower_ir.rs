@@ -1033,7 +1033,7 @@ impl<'a> Lowerer<'a> {
                         Some(sig) => sig.fields.iter().map(|(n, t)| (n.clone(), ty_of(t))).collect(),
                         None => fields.iter().map(|f| (f.clone(), Ty::Unknown)).collect(),
                     };
-                    part.structs.push(StructDef { name: name.clone(), fields });
+                    part.structs.push(StructDef { name: name.clone(), shown: crate::declared_record_name(name), fields });
                 }
                 S::FnDecl { name, params, body, is_view, .. } => {
                     self.check_reserved(name, if *is_view { "view" } else { "function" });
@@ -1613,7 +1613,12 @@ impl<'a> Lowerer<'a> {
                 self.check_reserved(var, "loop variable");
                 // a list that can fail is refused like a condition
                 let it = self.lower_expr(iter)?;
-                let walks = read(&it);
+                let walks = match it.ty().payload() {
+                    // a frame's column walks its cells, as its type says them
+                    // (a column's CrowType does not carry them)
+                    Ty::Column(cell) if **cell != Ty::Unknown => CrowType::Array(Box::new(crow_type(cell))),
+                    _ => read(&it),
+                };
                 let it = self.decided(it, Decision::Loop);
                 let mut prelude = std::mem::take(&mut self.pre);
                 self.scopes.push([var.clone()].into_iter().collect());
@@ -2100,7 +2105,13 @@ impl<'a> Lowerer<'a> {
     /// context, so the lowering's context has not seen the variable).
     fn bind_loop_var(&mut self, var: &str, iter_ty: &Ty) -> Option<CrowType> {
         let saved = self.ctx.vars.get(var).cloned();
-        let elem = crate::type_infer::TypeContext::loop_item(crow_type(iter_ty.payload()));
+        let elem = match iter_ty.payload() {
+            // a frame's column walks its cells, as its type says them (the
+            // variable had been unknown here and a float cell in the IR, so
+            // `n = n + cell` kept `n` an int that a float was given)
+            Ty::Column(cell) => crow_type(cell),
+            t => crate::type_infer::TypeContext::loop_item(crow_type(t)),
+        };
         if !matches!(elem, CrowType::Unknown) {
             self.ctx.vars.insert(var.to_string(), elem);
         }
@@ -2278,6 +2289,23 @@ impl<'a> Lowerer<'a> {
                             if self.is_module(m) && !self.declared(m) {
                                 let ty = ty_of(&self.qualified_type(object, field));
                                 return Ok(Expr::Constant(format!("{}.{}", m, field), ty));
+                            }
+                        }
+                        // `x.len` is `len[x]`: one length whichever way it
+                        // is asked — a list's items, text's characters, a
+                        // matrix's rows, a column's cells. (Text's had been
+                        // its bytes in both modes and a matrix's every
+                        // number.) A record's field, a map's key and a
+                        // frame's column named `len` stay what they are.
+                        if field == "len" && !member {
+                            // (typed without lowering it twice: `f[x].len`
+                            // calls `f` once)
+                            let measured = match self.target_type(object) {
+                                CrowType::Result(inner) => *inner,
+                                t => t,
+                            };
+                            if matches!(measured, CrowType::Array(_) | CrowType::NumArray(..) | CrowType::Str | CrowType::FrameCol) {
+                                return self.call(&A::Ident("len".to_string()), std::slice::from_ref(object.as_ref()));
                             }
                         }
                         let base = if member { self.muted(|l| l.lower_expr(object))? } else { self.lower_expr(object)? };
@@ -2651,7 +2679,7 @@ impl<'a> Lowerer<'a> {
                         Some(A::Ident(v)) => format!("'{}'", crate::lower::shown(v)),
                         _ => "the mask".to_string(),
                     };
-                    self.refuse(format!("filter: {} holds values that can fail — a cell of a column that can be missing — and a mask decides every row: fill the column first (fill[frame, 'column', value]) or guard each value with .ok", what));
+                    self.refuse(format!("filter: {} holds values that can fail, and a mask decides every row: guard each value with .ok (cells of a column that can be missing: fill the column first, fill[frame, 'column', value])", what));
                 }
             }
         }
@@ -3170,8 +3198,14 @@ pub(crate) fn infer_by_lowering(ctx: &mut TypeContext, stmts: &[S]) {
     ctx.sync_derive_types();
     // what only a test's clicks and calls type, last, and then the program's
     // calls again: a body those types reach calls other functions with
-    // them (a helper only tests call hands another its float)
-    if Lowerer::for_inference(ctx, in_ui, stmts).type_clicks(stmts) {
+    // them (a helper only tests call hands another its float). The tests
+    // are read again once those rounds settle, since what they hand a
+    // function may come from another that only now has: a frame another
+    // function builds, whose columns were not worked out the first time
+    for _ in 0..4 {
+        if !Lowerer::for_inference(ctx, in_ui, stmts).type_clicks(stmts) {
+            break;
+        }
         for _ in 0..8 {
             let before = ctx.signatures();
             ctx.sync_derive_types();

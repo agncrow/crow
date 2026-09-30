@@ -41,7 +41,7 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                     Value::Sparse(_) => "sparse".to_string(),
                     Value::Map(_) => "map".to_string(),
                     Value::Fn(_) => "fn".to_string(),
-                    Value::StructInstance(si) => si.name.clone(),
+                    Value::StructInstance(si) => si.shown.clone(),
                     Value::Dual(_, _) => "float".to_string(),
                     Value::GradFn(_) => "fn".to_string(),
                     Value::Frame(_) => "frame".to_string(),
@@ -303,7 +303,7 @@ pub fn map_value_kind(v: &Value) -> (String, String) {
         Value::Bool(_) => ("bool".to_string(), "bool".to_string()),
         Value::Array(_) | Value::NumArray(_) => ("array".to_string(), "array".to_string()),
         Value::Map(_) => ("map".to_string(), "map".to_string()),
-        Value::StructInstance(si) => (format!("struct {}", si.name), format!("struct {}", si.name)),
+        Value::StructInstance(si) => (format!("struct {}", si.shown), format!("struct {}", si.shown)),
         Value::Fn(_) | Value::GradFn(_) => ("fn".to_string(), "fn".to_string()),
         other => (other.type_name().to_string(), other.type_name().to_string()),
     }

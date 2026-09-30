@@ -460,7 +460,9 @@ impl Emitter {
                 // the words the interpreter's values say, a value that can
                 // fail by the value it holds (compiled, a list, a map, a
                 // record, a frame or a JSON value had been "unknown")
-                fn word(t: &CrowType, v: &str) -> String {
+                // a record by the name it was declared by (a module's `Day`)
+                let shown: std::collections::BTreeMap<String, String> = self.structs.iter().map(|(n, d)| (n.clone(), d.shown.clone())).collect();
+                fn word(t: &CrowType, v: &str, shown: &std::collections::BTreeMap<String, String>) -> String {
                     match t {
                         CrowType::Int => "\"int\"".to_string(),
                         CrowType::Float => "\"float\"".to_string(),
@@ -476,14 +478,14 @@ impl Emitter {
                         CrowType::DbHandle => "\"db\"".to_string(),
                         // the runtime's records are the interpreter's maps
                         CrowType::Struct(nm) if matches!(nm.as_str(), "CrowShell" | "CrowFindResult") => "\"map\"".to_string(),
-                        CrowType::Struct(nm) => format!("\"{}\"", nm),
+                        CrowType::Struct(nm) => format!("\"{}\"", shown.get(nm).unwrap_or(nm)),
                         CrowType::Json => format!("crow_runtime::json::type_word(&({}))", v),
-                        CrowType::Result(inner) => format!("{{ let _v = &({}); if _v.ok {{ {} }} else {{ \"error\" }} }}", v, word(inner, "_v.value")),
+                        CrowType::Result(inner) => format!("{{ let _v = &({}); if _v.ok {{ {} }} else {{ \"error\" }} }}", v, word(inner, "_v.value", shown)),
                         _ => "\"unknown\"".to_string(),
                     }
                 }
                 self.needs_crow_runtime = true;
-                format!("({}).to_string()", word(&ty0, &a[0]))
+                format!("({}).to_string()", word(&ty0, &a[0], &shown))
             }
             // `json[map]`, a web response (use web): `json[text]` is its row
             "json" if n == 1 => {

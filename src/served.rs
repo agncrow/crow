@@ -68,7 +68,7 @@ pub(crate) fn json_to_typed(j: &serde_json::Value, ty: &crate::ir::Ty, template:
                     let fj = obj.get(field).cloned().unwrap_or(serde_json::Value::Null);
                     fields.insert(field.clone(), json_to_typed(&fj, fty, template, &CrowValue::ok(Value::Done)));
                 }
-                CrowValue::ok(Value::StructInstance(Box::new(crate::value::StructInstance { name: name.clone(), fields })))
+                CrowValue::ok(Value::StructInstance(Box::new(crate::value::StructInstance { name: name.clone(), shown: def.shown.clone(), fields })))
             }
             None => json_to_fact(j, declared),
         },

@@ -1,0 +1,48 @@
+--- `len` counts what a loop walks and an index reads: a vector's numbers,
+--- a matrix's rows. `x.len` is the same length, and text's is its
+--- characters. A record's field and a frame's column named `len` are
+--- their own. (A matrix's `len` had counted every number, so a loop over
+--- `range[len[m]]` read past its last row; text's `.len` had been its
+--- bytes; a record's field named `len` stopped the interpreter, and a
+--- frame's column named `len` was its row count compiled.)
+use math, frame
+
+m = zeros[3, 2]
+log[len[m]]
+log[m.len]
+for i in range[len[m]]
+    log[m[i]]
+
+grid = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+log[len[grid]]
+log[len[tensor[grid]]]
+log[len[flatten[tensor[grid]]]]
+v = [1.0, 2.0, 3.0, 4.0]
+log[len[tensor[v]]]
+log[tensor[v].len]
+
+cube = reshape[tensor[[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]], 2, 2, 2]
+log[len[cube]]
+log[len[cube[0]]]
+
+word = 'héllo'
+log[len[word]]
+log[word.len]
+
+df = frame.new[]
+df = with[df, 'a', [1, 2, 3]]
+log[len[df]]
+log[df.a.len]
+df = with[df, 'len', [9, 8, 7]]
+log[df.len[0]]
+
+struct Bag [len, items]
+b = Bag[7, [1, 2]]
+log[b.len]
+log[b.items.len]
+
+--- a length asked of a call calls it once
+fn noisy[]
+    log['called']
+    return [1, 2, 3]
+log[noisy[].len]

@@ -1,0 +1,37 @@
+--- A frame's column is walked cell by cell in both modes, shown in text as
+--- `log` shows it, and a map's entry set from itself keeps its key for
+--- later. (Compiled, a loop over a column did not build, a column in text
+--- showed its cells quoted, and `m[k] = m[k] + 1` did not build.)
+use frame, math
+
+df = frame.new[]
+df = with[df, 'price', [10.5, 11.0, 9.75]]
+df = with[df, 'n', [3, 1, 2]]
+df = with[df, 'sym', ['a', 'b', 'c']]
+total = 0.0
+for p in df.price
+    total = total + p
+log[total]
+for s in df.sym
+    log[upper[s]]
+count = 0
+for n in df.n
+    count = count + n
+log[count]
+log['prices: `df.price`, counts: `df.n`, symbols: `df.sym`']
+
+seen = map[]
+for w in ['x', 'y', 'x', 'x']
+    if has[seen, w]
+        seen[w] = seen[w] + 1
+    else
+        seen[w] = 1
+    log[w]
+log[seen]
+
+--- a column of ints stays ints, divided as ints are; a tensor's are floats
+df = with[df, 'half', df.n / 2]
+log[df.n[0] / 2]
+log[df.half]
+t = with[frame.new[], 'z', tensor[[1, 2, 3]]]
+log[t.z[0] / 2]

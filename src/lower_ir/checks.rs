@@ -1138,8 +1138,20 @@ mod tests {
     fn a_mask_of_values_that_can_fail_is_refused() {
         let src = "use frame\na = with[with[frame.new[], 'k', [0, 1]], 'p', [1.5, 2.5]]\nb = with[with[frame.new[], 'k', [0]], 'q', [7.5]]\nj = join[a, b, 'k', 'left']\nkeep = for i in range[len[j]]\n    j.q[i] gt 1.0\nlog[len[filter[j, keep]]]\n";
         let err = check_source(src).unwrap_err();
-        assert!(err.contains("filter: 'keep' holds values that can fail — a cell of a column that can be missing — and a mask decides every row: fill the column first (fill[frame, 'column', value]) or guard each value with .ok"), "{}", err);
+        assert!(err.contains("filter: 'keep' holds values that can fail, and a mask decides every row: guard each value with .ok (cells of a column that can be missing: fill the column first, fill[frame, 'column', value])"), "{}", err);
         assert!(check_source(&src.replace("j = join[a, b, 'k', 'left']", "j = fill[join[a, b, 'k', 'left'], 'q', 0.0]")).is_ok());
+    }
+
+    /// A function only tests call, handed a frame another function builds
+    /// from a list, reads the frame's columns as the numbers they are: the
+    /// tests are read again once the builder settles. (The frame's column
+    /// was not worked out when the tests were first read, the parameter
+    /// kept that, and its cells were refused as JSON: market's `resample`.)
+    #[test]
+    fn a_tested_function_reads_a_built_frames_columns() {
+        let src = "use frame\nfn table[xs]\n    out = frame.new[]\n    out = with[out, 'x', xs]\n    return out\nfn build[v]\n    hi = []\n    for x in v\n        hi = push[hi, x]\n    return table[hi]\nfn again[f]\n    hi = []\n    for i in range[f.shape[0]]\n        k = len[hi]\n        if k eq 0\n            hi = push[hi, f.x[i]]\n        else\n            hi[k - 1] = max[hi[k - 1], f.x[i]]\n    return table[hi]\ntest t[]\n    f = build[[1.0, 2.0]]\n    g = again[f]\n    assert[g.x[0] eq 2.0]\n";
+        let checked = check_source(src);
+        assert!(checked.is_ok(), "{:?}", checked);
     }
 
     /// A cell of a column nothing typed is dynamic: arithmetic on it is
