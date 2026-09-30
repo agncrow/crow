@@ -110,7 +110,7 @@ All 17 server-side modules implemented with 119 tests passing:
 #### Client-side WASM — rejected
 Rejected in favor of the Crow UI framework (see below). Building a WASM frontend pipeline would require `wasm-bindgen`, `web-sys`, and a reactive runtime — essentially building React/Svelte from scratch. The UI framework approach achieves the same goal (one-language full-stack) with pure Crow libraries and server-rendered HTML.
 
-#### P8 — UI Framework — in progress (Phases 1–3 done; `view` blocks, `later`, style and chart modules shipped since — see the status table above)
+#### P8 — UI Framework — in progress (Phases 1–4 done; `view` blocks, `later`, style and chart modules shipped since — see the status table above)
 
 > **See [docs/ui-framework.md](ui-framework.md) for the full design document.**
 
@@ -151,7 +151,7 @@ Goal: `fetch[url]`, `poll[url, seconds]`, `field[label, var]`, `select[options, 
 - [x] **`title[]`, `meta[]`** — per-route head management: elements a view places, which a served page carries in its head and a render keeps current
 - [x] **CSS** — `static_dir` for stylesheets, and the default stylesheet (`css/app.css` hatch)
 
-##### Phase 4: Real App Features
+##### Phase 4: Real App Features ✅
 
 - [x] **Sessions** — the session layer: per-reader facts, `reader`, `sign_in`/`sign_out` (docs/session-layer-design.md)
 - [x] **Auth** — a page for signed-in readers checks `reader` in its view: it draws the sign-in form in place, offers none of the page's handlers and runs none of its queries (spec, Who the reader is). `auth = true` on a page is rejected (Design Note: no `auth` on a page)
