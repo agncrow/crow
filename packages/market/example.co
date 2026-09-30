@@ -1,0 +1,36 @@
+--- The calendar and the bars at work, the same answers in both modes (the
+--- repository's `crow test --packages` runs this interpreted and compiled
+--- and compares the two).
+use sessions, bars
+
+d = sessions.Day[2026, 11, 25]
+log['`d.year`-`d.month`-`d.day` trades: `sessions.trading[d]`, early close: `sessions.early[d]`']
+n = sessions.next[d]
+closing = fmt[sessions.closes[n], time = 'time', tz = 'America/New_York']
+log['next trading day: `n.month`/`n.day`, early close: `sessions.early[n]`, closes at `closing`']
+year = sessions.between[sessions.Day[2026, 1, 1], sessions.Day[2026, 12, 31]]
+log['trading days in 2026: `len[year]`']
+before = sessions.phase[sessions.at[d, 9, 29]]
+bell = sessions.phase[sessions.at[d, 9, 30]]
+after = sessions.phase[sessions.at[d, 16, 0]]
+log['9:29 is `before`, 9:30 is `bell`, 16:00 is `after`']
+e = sessions.easter[2027]
+log['Easter 2027: `e.month`/`e.day`']
+
+--- a minute of trades each second from 09:29:30, a price that climbs
+open_at = 1784035770.0
+ts = []
+price = []
+size = []
+for i in range[120]
+    ts = push[ts, open_at + float[i]]
+    price = push[price, 10.0 + float[i % 7] * 0.01 + float[i] * 0.002]
+    size = push[size, float[100 + (i % 5) * 20]]
+minute = bars.build[ts, price, size, 60]
+log['minute bars: `minute.shape[0]`, first open `minute.o[0]`, last close `minute.c[minute.shape[0] - 1]`']
+log['volumes: `minute.vol`']
+log['counts: `minute.n`']
+two = bars.resample[minute, 120]
+log['two-minute bars: `two.shape[0]`, high `two.hi[0]`, low `two.lo[0]`']
+regular = bars.during[minute, 'regular']
+log['regular-session minute bars: `regular.shape[0]`']

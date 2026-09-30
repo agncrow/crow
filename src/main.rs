@@ -263,7 +263,7 @@ fn crow_main() {
             // the harnesses check every program's IR before running it
             // (ir_verify): a lowering that disagrees with itself fails its
             // program as the bug it is, in whichever suite reaches it
-            if args.iter().any(|a| matches!(a.as_str(), "--parity" | "--served" | "--book" | "--bench")) && std::env::var_os("CROW_IR_VERIFY").is_none() {
+            if args.iter().any(|a| matches!(a.as_str(), "--parity" | "--served" | "--book" | "--bench" | "--packages")) && std::env::var_os("CROW_IR_VERIFY").is_none() {
                 // Rust 2024: the environment is process-global; nothing else
                 // runs yet
                 unsafe { std::env::set_var("CROW_IR_VERIFY", "strict") };
@@ -278,6 +278,10 @@ fn crow_main() {
                 // hold one of the words
                 let only: Vec<String> = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect();
                 process::exit(served_parity::run(&only));
+            } else if args.iter().any(|a| a == "--packages") {
+                // `crow test --packages models`: only the packages named
+                let only: Vec<String> = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect();
+                cmd_test_packages(&only);
             } else if args.iter().any(|a| a == "--bench") {
                 cmd_test_bench();
             } else if args.iter().any(|a| a == "--book") {
@@ -957,6 +961,86 @@ fn cmd_test_docs() {
         println!("\u{2713} documentation covers the compiler ({} names)", known.len());
     } else {
         println!("\u{2717} {} documentation gaps", failures);
+        process::exit(1);
+    }
+}
+
+/// `crow test --packages`: the packages the repository ships (packages/)
+/// held to the language's own bar — every file's test blocks pass, and each
+/// package's `example.co` runs in both modes with the same output. The
+/// example is the compiled side: a test block runs in the interpreter, only
+/// the apps it opens compiled.
+fn cmd_test_packages(only: &[String]) {
+    let dir = std::path::Path::new("packages");
+    let mut packages: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.is_dir()).collect())
+        .unwrap_or_default();
+    packages.retain(|p| only.is_empty() || only.iter().any(|w| p.file_name().is_some_and(|n| n.to_string_lossy() == w.as_str())));
+    packages.sort();
+    if packages.is_empty() {
+        eprintln!("error: no packages under packages/ match (run from the repository's root)");
+        process::exit(1);
+    }
+    let exe = std::env::current_exe().unwrap_or_else(|e| {
+        eprintln!("error locating crow binary: {}", e);
+        process::exit(1);
+    });
+    let run = |args: &[&str], file: &std::path::Path| -> (bool, String, String) {
+        match std::process::Command::new(&exe).args(args).arg(file).env("CROW_BUILD_PROFILE", "dev").output() {
+            Ok(o) => (o.status.success(), String::from_utf8_lossy(&o.stdout).to_string(), String::from_utf8_lossy(&o.stderr).to_string()),
+            Err(e) => (false, String::new(), format!("failed to spawn: {}", e)),
+        }
+    };
+    let last = |text: &str| text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
+    let start = std::time::Instant::now();
+    let (mut checked, mut failures) = (0, 0);
+    println!("packages: {} under packages/, test blocks and each example in both modes\n", packages.len());
+    for package in &packages {
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(package)
+            .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "co")).collect())
+            .unwrap_or_default();
+        files.sort();
+        for file in &files {
+            let name = file.display().to_string();
+            if file.file_name().is_some_and(|n| n == "example.co") {
+                checked += 1;
+                let (i_ok, i_out, i_err) = run(&["run", "-i"], file);
+                let (c_ok, c_out, c_err) = run(&["run"], file);
+                if i_ok && c_ok && i_out == c_out {
+                    println!("  ok    {} (both modes, {} lines)", name, i_out.lines().count());
+                } else {
+                    failures += 1;
+                    println!("  FAIL  {}", name);
+                    if !i_ok { println!("        interpreter: {}", last(&i_err)); }
+                    if !c_ok { println!("        compiled: {}", last(&c_err)); }
+                    if i_ok && c_ok {
+                        let at = i_out.lines().zip(c_out.lines()).position(|(a, b)| a != b).unwrap_or(i_out.lines().count().min(c_out.lines().count()));
+                        println!("        line {}: interpreter {:?}, compiled {:?}", at + 1, i_out.lines().nth(at).unwrap_or(""), c_out.lines().nth(at).unwrap_or(""));
+                    }
+                }
+                continue;
+            }
+            if !std::fs::read_to_string(file).unwrap_or_default().lines().any(|l| l.starts_with("test ")) {
+                continue;
+            }
+            checked += 1;
+            let (ok, out, err) = run(&["test"], file);
+            if ok {
+                println!("  ok    {} ({})", name, last(&out).trim_start_matches("\x1b[32m").replace("\x1b[0m", ""));
+            } else {
+                failures += 1;
+                println!("  FAIL  {}\n        {}", name, if last(&out).is_empty() { last(&err) } else { last(&out) });
+            }
+        }
+        if !package.join("example.co").exists() {
+            failures += 1;
+            println!("  FAIL  {}: no example.co — a package shows each of its files at work, in both modes", package.display());
+        }
+    }
+    if failures == 0 {
+        println!("\n✓ {} checks pass across {} packages ({:.1}s)", checked, packages.len(), start.elapsed().as_secs_f64());
+    } else {
+        println!("\n✗ {} of {} checks fail", failures, checked);
         process::exit(1);
     }
 }

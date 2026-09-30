@@ -1,0 +1,104 @@
+--- A decision tree for classes: each node splits the samples on the
+--- feature and threshold that leave the purest halves (the least Gini
+--- impurity), down to `depth` levels or a pure node; a leaf answers its
+--- samples' most common class. `x` holds a row of features per sample, `y`
+--- an int class for each.
+use math
+
+struct Node [leaf, label, feature, threshold, left, right]
+
+--- how mixed a set of classes is: 0 when all are one class
+fn gini[y]
+    n = len[y]
+    if n eq 0
+        return 0.0
+    seen = map[]
+    for c in y
+        key = '`c`'
+        if has[seen, key]
+            seen[key] = seen[key] + 1
+        else
+            seen[key] = 1
+    out = 1.0
+    for key in keys[seen]
+        share = seen[key] / n
+        out = out - share * share
+    return out
+
+--- the most common class
+fn majority[y]
+    best = y[0]
+    best_n = 0
+    for c in y
+        count = 0
+        for d in y
+            if d eq c
+                count = count + 1
+        if count gt best_n
+            best = c
+            best_n = count
+    return best
+
+--- the samples' indices on each side of a split
+fn side[x, idx, feature, threshold, want_left]
+    out = []
+    for i in idx
+        goes_left = x[i][feature] lte threshold
+        if goes_left eq want_left
+            out = push[out, i]
+    return out
+
+fn labels_of[y, idx]
+    out = []
+    for i in idx
+        out = push[out, y[i]]
+    return out
+
+fn grow[x, y, idx, depth]
+    here = labels_of[y, idx]
+    leaf = Node[true, majority[here], 0, 0.0, 0, 0]
+    if depth eq 0 or gini[here] eq 0.0
+        return leaf
+    best_score = gini[here]
+    best_feature = -1
+    best_threshold = 0.0
+    for f in range[len[x[0]]]
+        for i in idx
+            t = x[i][f]
+            left = labels_of[y, side[x, idx, f, t, true]]
+            right = labels_of[y, side[x, idx, f, t, false]]
+            if len[left] gt 0 and len[right] gt 0
+                n = len[idx]
+                score = gini[left] * len[left] / n + gini[right] * len[right] / n
+                if score lt best_score
+                    best_score = score
+                    best_feature = f
+                    best_threshold = t
+    if best_feature lt 0
+        return leaf
+    l = grow[x, y, side[x, idx, best_feature, best_threshold, true], depth - 1]
+    r = grow[x, y, side[x, idx, best_feature, best_threshold, false], depth - 1]
+    return Node[false, 0, best_feature, best_threshold, l, r]
+
+fn fit[x, y, depth]
+    return grow[x, y, range[len[y]], depth]
+
+--- a sample's class, down the tree
+fn classify[node, r]
+    if node.leaf
+        return node.label
+    if r[node.feature] lte node.threshold
+        return classify[node.left, r]
+    return classify[node.right, r]
+
+--- the classes switch at 2.5 on the first feature, and the second says
+--- nothing: the tree splits on the first, and classifies new samples
+test splits_on_the_telling_feature[]
+    x = [[1.0, 9.0], [2.0, 1.0], [3.0, 8.0], [4.0, 2.0], [0.5, 3.0], [3.5, 7.0]]
+    y = [0, 0, 1, 1, 0, 1]
+    t = fit[x, y, 3]
+    assert[t.feature eq 0]
+    assert[classify[t, [1.5, 5.0]] eq 0]
+    assert[classify[t, [3.8, 5.0]] eq 1]
+    assert[gini[[1, 1, 1]] eq 0.0]
+    assert[majority[[2, 1, 2, 3]] eq 2]

@@ -1,0 +1,214 @@
+--- US equity hours and the NYSE calendar. A day is a year, a month and a
+--- day in New York, where the exchange keeps its hours; a moment is epoch
+--- seconds, as everywhere in Crow. The regular session runs 09:30–16:00,
+--- the early session from 04:00 and the late one to 20:00; on an early
+--- close the regular session ends at 13:00 and the late one at 17:00.
+---
+--- The holidays follow the exchange's standing rules — a holiday on a
+--- Saturday is kept the Friday before and one on a Sunday the Monday
+--- after, except New Year's Day, whose Saturday closes nothing — and the
+--- one-off closings since 2001. They are exact from 2001 on.
+
+struct Day [year, month, day]
+
+--- a day's weekday, 1 for Monday to 7 for Sunday
+fn weekday[d]
+    noon = moment[d.year, d.month, d.day, hour = 12, tz = 'America/New_York']
+    return calendar[noon, tz = 'America/New_York'].weekday
+
+--- the day a moment falls on in New York
+fn day_of[t]
+    c = calendar[t, tz = 'America/New_York']
+    return Day[c.year, c.month, c.day]
+
+--- the day `n` days after `d` (before it, when `n` is negative)
+fn shift[d, n]
+    noon = moment[d.year, d.month, d.day, hour = 12, tz = 'America/New_York']
+    return day_of[noon + n * 86400]
+
+fn days_in[year, month]
+    lengths = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    if month eq 2 and year % 4 eq 0 and (year % 100 ne 0 or year % 400 eq 0)
+        return 29
+    return lengths[month - 1]
+
+--- the day of the month of the `n`th `wd` (1 = Monday) in a month
+fn nth_weekday[year, month, wd, n]
+    first = weekday[Day[year, month, 1]]
+    return 1 + (wd - first + 7) % 7 + 7 * (n - 1)
+
+--- the day of the month of the last `wd` in a month
+fn last_weekday[year, month, wd]
+    end = days_in[year, month]
+    last = weekday[Day[year, month, end]]
+    return end - (last - wd + 7) % 7
+
+--- Easter Sunday of a year, by the Gregorian computus
+fn easter[year]
+    a = year % 19
+    b = year / 100
+    c = year % 100
+    h = (19 * a + b - b / 4 - (b - (b + 8) / 25 + 1) / 3 + 15) % 30
+    l = (32 + 2 * (b % 4) + 2 * (c / 4) - h - c % 4) % 7
+    m = (a + 11 * h + 22 * l) / 451
+    month = (h + l - 7 * m + 114) / 31
+    day = (h + l - 7 * m + 114) % 31 + 1
+    return Day[year, month, day]
+
+--- whether `d` is the day a fixed-date holiday is kept: the Friday before
+--- one on a Saturday, the Monday after one on a Sunday
+fn kept[d, month, day]
+    h = Day[d.year, month, day]
+    wd = weekday[h]
+    if wd eq 6
+        return shift[h, -1] eq d
+    if wd eq 7
+        return shift[h, 1] eq d
+    return h eq d
+
+--- the days the exchange closed for something no rule names
+fn one_off[d]
+    closed = [Day[2001, 9, 11], Day[2001, 9, 12], Day[2001, 9, 13], Day[2001, 9, 14], Day[2004, 6, 11], Day[2007, 1, 2], Day[2012, 10, 29], Day[2012, 10, 30], Day[2018, 12, 5], Day[2025, 1, 9]]
+    return contains[closed, d]
+
+--- whether the exchange is closed all of a weekday
+fn holiday[d]
+    y = d.year
+    m = d.month
+    if one_off[d]
+        return true
+    --- New Year's Day, kept on the Monday when it is a Sunday
+    if m eq 1 and d.day eq 1 and weekday[d] lte 5
+        return true
+    if m eq 1 and d.day eq 2 and weekday[d] eq 1
+        return true
+    if m eq 1 and d.day eq nth_weekday[y, 1, 1, 3] and y gte 1998
+        return true
+    if m eq 2 and d.day eq nth_weekday[y, 2, 1, 3]
+        return true
+    if shift[easter[y], -2] eq d
+        return true
+    if m eq 5 and d.day eq last_weekday[y, 5, 1]
+        return true
+    if y gte 2022 and kept[d, 6, 19]
+        return true
+    if kept[d, 7, 4]
+        return true
+    if m eq 9 and d.day eq nth_weekday[y, 9, 1, 1]
+        return true
+    if m eq 11 and d.day eq nth_weekday[y, 11, 4, 4]
+        return true
+    return kept[d, 12, 25]
+
+--- whether the exchange trades on a day
+fn trading[d]
+    return weekday[d] lte 5 and not holiday[d]
+
+--- whether a trading day's regular session ends at 13:00: the day before
+--- Independence Day and Christmas when those fall later in the week, and
+--- the day after Thanksgiving
+fn early[d]
+    if not trading[d]
+        return false
+    if d.month eq 7 and d.day eq 3
+        return true
+    if d.month eq 12 and d.day eq 24
+        return true
+    return d.month eq 11 and d.day eq nth_weekday[d.year, 11, 4, 4] + 1
+
+--- the moment a day's clock in New York reads `hour`:`minute`
+fn at[d, hour, minute]
+    return moment[d.year, d.month, d.day, hour = hour, minute = minute, tz = 'America/New_York']
+
+--- the moment the regular session opens on a day
+fn opens[d]
+    return at[d, 9, 30]
+
+--- the moment the regular session closes on a day
+fn closes[d]
+    if early[d]
+        return at[d, 13, 0]
+    return at[d, 16, 0]
+
+--- which part of the trading day a moment falls in: 'early', 'regular',
+--- 'late', or 'closed' (outside 04:00–20:00, or a day the exchange does
+--- not trade)
+fn phase[t]
+    d = day_of[t]
+    if not trading[d]
+        return 'closed'
+    if t lt at[d, 4, 0] or t gte closes[d] + 4 * 3600
+        return 'closed'
+    if t lt opens[d]
+        return 'early'
+    if t lt closes[d]
+        return 'regular'
+    return 'late'
+
+--- the first trading day after `d`
+fn next[d]
+    n = shift[d, 1]
+    while not trading[n]
+        n = shift[n, 1]
+    return n
+
+--- the last trading day before `d`
+fn previous[d]
+    n = shift[d, -1]
+    while not trading[n]
+        n = shift[n, -1]
+    return n
+
+--- the trading days from `first` to `last`, both included
+fn between[first, last]
+    out = []
+    d = first
+    while opens[d] lte opens[last]
+        if trading[d]
+            out = push[out, d]
+        d = shift[d, 1]
+    return out
+
+--- the exchange's published holidays for 2024–2026, each year's early
+--- closes, and the days kept for a holiday on a weekend
+test the_calendar_matches_the_exchange[]
+    closed = [Day[2024, 1, 1], Day[2024, 1, 15], Day[2024, 2, 19], Day[2024, 3, 29], Day[2024, 5, 27], Day[2024, 6, 19], Day[2024, 7, 4], Day[2024, 9, 2], Day[2024, 11, 28], Day[2024, 12, 25], Day[2025, 1, 1], Day[2025, 1, 9], Day[2025, 1, 20], Day[2025, 2, 17], Day[2025, 4, 18], Day[2025, 5, 26], Day[2025, 6, 19], Day[2025, 7, 4], Day[2025, 9, 1], Day[2025, 11, 27], Day[2025, 12, 25], Day[2026, 1, 1], Day[2026, 1, 19], Day[2026, 2, 16], Day[2026, 4, 3], Day[2026, 5, 25], Day[2026, 6, 19], Day[2026, 7, 3], Day[2026, 9, 7], Day[2026, 11, 26], Day[2026, 12, 25]]
+    for d in closed
+        assert[holiday[d]]
+        assert[not trading[d]]
+    --- 252, 250 and 251 trading days
+    assert[len[between[Day[2024, 1, 1], Day[2024, 12, 31]]] eq 252]
+    assert[len[between[Day[2025, 1, 1], Day[2025, 12, 31]]] eq 250]
+    assert[len[between[Day[2026, 1, 1], Day[2026, 12, 31]]] eq 251]
+    halves = [Day[2024, 7, 3], Day[2024, 11, 29], Day[2024, 12, 24], Day[2025, 7, 3], Day[2025, 11, 28], Day[2025, 12, 24], Day[2026, 11, 27], Day[2026, 12, 24]]
+    for d in halves
+        assert[early[d]]
+    assert[not early[Day[2026, 7, 2]]]
+    --- New Year's Day on a Saturday closes nothing; Sundays move to Monday
+    assert[trading[Day[2021, 12, 31]]]
+    assert[holiday[Day[2022, 6, 20]]]
+    assert[holiday[Day[2022, 12, 26]]]
+    assert[holiday[Day[2021, 7, 5]]]
+    assert[holiday[Day[2021, 12, 24]]]
+    assert[easter[2026] eq Day[2026, 4, 5]]
+    assert[easter[2027] eq Day[2027, 3, 28]]
+
+--- a July day's phases, an early close, a weekend, and the open on either
+--- side of the clocks moving
+test phases_follow_the_clock[]
+    d = Day[2026, 7, 14]
+    assert[phase[at[d, 3, 59]] eq 'closed']
+    assert[phase[at[d, 4, 0]] eq 'early']
+    assert[phase[at[d, 9, 29]] eq 'early']
+    assert[phase[at[d, 9, 30]] eq 'regular']
+    assert[phase[at[d, 15, 59]] eq 'regular']
+    assert[phase[at[d, 16, 0]] eq 'late']
+    assert[phase[at[d, 20, 0]] eq 'closed']
+    assert[phase[at[Day[2026, 11, 27], 13, 0]] eq 'late']
+    assert[phase[at[Day[2026, 11, 27], 17, 0]] eq 'closed']
+    assert[phase[at[Day[2026, 7, 18], 11, 0]] eq 'closed']
+    assert[fmt[opens[Day[2026, 3, 6]], time = 'iso'] eq '2026-03-06T14:30:00Z']
+    assert[fmt[opens[Day[2026, 3, 9]], time = 'iso'] eq '2026-03-09T13:30:00Z']
+    assert[next[Day[2026, 7, 2]] eq Day[2026, 7, 6]]
+    assert[previous[Day[2026, 1, 20]] eq Day[2026, 1, 16]]
+    assert[day_of[opens[d]] eq d]

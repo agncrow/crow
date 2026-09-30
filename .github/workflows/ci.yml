@@ -42,6 +42,8 @@ jobs:
         run: ./target/release/crow test --parity && df -h / | tail -1
       - name: Served pages match across both modes
         run: ./target/release/crow test --served && df -h / | tail -1
+      - name: The packages the repository ships (tests, and each example in both modes)
+        run: ./target/release/crow test --packages && df -h / | tail -1
       - name: Benchmarks run in both modes (small sizes, no timing thresholds)
         run: ./target/release/crow test --bench --quick
       - name: Free the suites' shared build (the book's workers build their own)

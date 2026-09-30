@@ -1,0 +1,57 @@
+--- k-means: `k` centres, each sample given to its nearest, each centre
+--- moved to the mean of its samples, for `rounds` rounds or until no
+--- sample changes centre. The first `k` samples are the first centres, so
+--- a fit is the same every run.
+use math
+
+struct Clusters [centres, labels]
+
+--- the index of the centre nearest a sample
+fn nearest[centres, r]
+    best = 0
+    best_d = norm[r - centres[0]]
+    for j in range[1, len[centres]]
+        d = norm[r - centres[j]]
+        if d lt best_d
+            best = j
+            best_d = d
+    return best
+
+--- the mean of the samples labelled `j`, or the old centre when none is
+fn centre_of[x, labels, j, old]
+    total = zeros[len[x[0]]]
+    count = 0
+    for i in range[len[labels]]
+        if labels[i] eq j
+            total = total + x[i]
+            count = count + 1
+    if count eq 0
+        return old
+    return total / count
+
+fn fit[x, k, rounds]
+    centres = for j in range[k]
+        x[j]
+    labels = for r in x
+        nearest[centres, r]
+    for step in range[rounds]
+        centres = for j in range[k]
+            centre_of[x, labels, j, centres[j]]
+        next = for r in x
+            nearest[centres, r]
+        if next eq labels
+            return Clusters[centres, labels]
+        labels = next
+    return Clusters[centres, labels]
+
+--- which cluster a new sample falls in
+fn assign[c, r]
+    return nearest[c.centres, r]
+
+--- two tight groups, far apart: each sample lands with its own
+test finds_two_groups[]
+    x = [[0.0, 0.0], [5.0, 5.0], [0.1, 0.2], [5.1, 4.9], [0.2, 0.1], [4.9, 5.2]]
+    c = fit[x, 2, 20]
+    assert[c.labels eq [0, 1, 0, 1, 0, 1]]
+    assert[abs[c.centres[0][0] - 0.1] lt 0.0001]
+    assert[assign[c, [4.8, 5.0]] eq 1]

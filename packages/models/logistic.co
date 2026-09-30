@@ -1,0 +1,44 @@
+--- Logistic regression: the probability that a sample belongs to the
+--- class, 1 / (1 + e^-(x·w + b)), fitted by gradient descent on the mean
+--- binary cross-entropy. `x` holds a row of features per sample, `y` a
+--- 0 or 1 for each.
+use math, math.nn
+
+struct Logistic [coef, intercept]
+
+--- the weights as a column, so x * w is the matrix product
+fn fit[x, y, steps, rate]
+    n = len[y]
+    k = len[x[0]]
+    w = zeros[k, 1]
+    b = 0.0
+    target = reshape[tensor[y], n, 1]
+    for s in range[steps]
+        p = sigmoid[x * w + b]
+        err = p - target
+        w = w - (transpose[x] * err) * (rate / n)
+        b = b - sum[err] * (rate / n)
+    return Logistic[w, b]
+
+--- each sample's probability of the class
+fn probability[m, x]
+    return flatten[sigmoid[x * m.coef + m.intercept]]
+
+--- each sample's class: 1 where its probability is at least a half
+fn classify[m, x]
+    ps = probability[m, x]
+    out = for p in ps
+        int[p gte 0.5]
+    return out
+
+--- one feature, the class switching between 2 and 3: the fit separates
+--- them, and its probabilities rise with the feature
+test separates_two_classes[]
+    x = [[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]]
+    y = [0, 0, 0, 1, 1, 1]
+    m = fit[x, y, 3000, 0.5]
+    assert[classify[m, x] eq [0, 0, 0, 1, 1, 1]]
+    ps = probability[m, x]
+    assert[ps[0] lt ps[5]]
+    assert[ps[0] lt 0.1]
+    assert[ps[5] gt 0.9]

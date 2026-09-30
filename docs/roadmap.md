@@ -224,8 +224,10 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. All three backen
 ### P7 — Ecosystem (before 1.0)
 
 - [x] **Packages** (Sept 30 2026, Vijay: git tags and a lockfile): a package is a git repository, a version its tag, and `crow.lock` pins the commit each dependency checked out; `crow install --update` moves them. No registry (the central index `crow install` had read is gone): a dependency names its repository, a directory inside it on a forge (`github.com/org/repo/sub/dir@v1`).
-- [ ] **Community packages**: Seed the ecosystem with useful packages (plotting, data connectors, model zoo).
-- [ ] **Pretrained models**: Common models (linear regression, decision trees, simple NNs) as installable packages.
+- [ ] **Seed packages** (Sept 30 2026, Vijay: models, market data, data connectors), in `packages/`, each held to both modes by `crow test --packages`:
+  - [x] `models`: least squares, logistic regression, k-means, a decision tree, a one-hidden-layer network.
+  - [x] `market`: the US equity sessions and the NYSE calendar (holidays, early closes, `phase`), bars from trades and from finer bars.
+  - [ ] data connectors: Parquet, S3 and HTTP JSON sources for `load`.
 - [ ] **Notebook integration**: Jupyter kernel or similar interactive environment for exploratory data science.
 - [x] **Editor support**: `crow lsp` + VS Code extension (Neovim/Helix/Zed via native LSP clients) — see `crow-lsp.md`.
 

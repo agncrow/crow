@@ -1,0 +1,147 @@
+--- Bars from trades, and bars from finer bars. A bar covers `secs` seconds
+--- of the clock, aligned to it (a minute bar times on the minute), and
+--- holds its start `ts`, its open `o`, high `hi`, low `lo` and close `c`,
+--- its volume `vol`, its trade count `n` and its volume-weighted price
+--- `vwap`. A stretch of the clock with no trade has no bar. Draw one with
+--- chart[bars, candles = ['o', 'hi', 'lo', 'c'], bars_y = 'vol'], and
+--- compute indicators on its columns with the chart module.
+use frame
+use sessions
+
+--- the bars `secs` seconds long of trades at moments `ts` (in time order),
+--- each trade a price and a size
+fn build[ts, price, size, secs]
+    times = []
+    o = []
+    hi = []
+    lo = []
+    c = []
+    vol = []
+    n = []
+    pv = []
+    for i in range[len[ts]]
+        b = float[floor[ts[i] / secs] * secs]
+        k = len[times]
+        --- (`or` reads both sides: the last bar is read only when there is one)
+        fresh = k eq 0
+        if not fresh
+            fresh = times[k - 1] ne b
+        if fresh
+            times = push[times, b]
+            o = push[o, price[i]]
+            hi = push[hi, price[i]]
+            lo = push[lo, price[i]]
+            c = push[c, price[i]]
+            vol = push[vol, size[i]]
+            n = push[n, 1]
+            pv = push[pv, price[i] * size[i]]
+        else
+            hi[k - 1] = max[hi[k - 1], price[i]]
+            lo[k - 1] = min[lo[k - 1], price[i]]
+            c[k - 1] = price[i]
+            vol[k - 1] = vol[k - 1] + size[i]
+            n[k - 1] = n[k - 1] + 1
+            pv[k - 1] = pv[k - 1] + price[i] * size[i]
+    return table[times, o, hi, lo, c, vol, n, pv]
+
+--- the bars `secs` seconds long of finer bars (as `build` makes them): the
+--- first open, the highest high, the lowest low, the last close, the
+--- volumes and counts summed and the vwap weighted by volume
+fn resample[bars, secs]
+    times = []
+    o = []
+    hi = []
+    lo = []
+    c = []
+    vol = []
+    n = []
+    pv = []
+    for i in range[bars.shape[0]]
+        b = float[floor[bars.ts[i] / secs] * secs]
+        k = len[times]
+        --- (`or` reads both sides: the last bar is read only when there is one)
+        fresh = k eq 0
+        if not fresh
+            fresh = times[k - 1] ne b
+        if fresh
+            times = push[times, b]
+            o = push[o, bars.o[i]]
+            hi = push[hi, bars.hi[i]]
+            lo = push[lo, bars.lo[i]]
+            c = push[c, bars.c[i]]
+            vol = push[vol, bars.vol[i]]
+            n = push[n, bars.n[i]]
+            pv = push[pv, bars.vwap[i] * bars.vol[i]]
+        else
+            hi[k - 1] = max[hi[k - 1], bars.hi[i]]
+            lo[k - 1] = min[lo[k - 1], bars.lo[i]]
+            c[k - 1] = bars.c[i]
+            vol[k - 1] = vol[k - 1] + bars.vol[i]
+            n[k - 1] = n[k - 1] + bars.n[i]
+            pv[k - 1] = pv[k - 1] + bars.vwap[i] * bars.vol[i]
+    return table[times, o, hi, lo, c, vol, n, pv]
+
+--- the columns as a frame of bars, the vwap from price × size
+fn table[times, o, hi, lo, c, vol, n, pv]
+    vwap = []
+    for i in range[len[pv]]
+        vwap = push[vwap, pv[i] / vol[i]]
+    out = frame.new[]
+    out = with[out, 'ts', times]
+    out = with[out, 'o', o]
+    out = with[out, 'hi', hi]
+    out = with[out, 'lo', lo]
+    out = with[out, 'c', c]
+    out = with[out, 'vol', vol]
+    out = with[out, 'n', n]
+    out = with[out, 'vwap', vwap]
+    return out
+
+--- the bars that start in a part of the trading day: 'early', 'regular'
+--- or 'late' (sessions.phase); a start no calendar reads (not a finite
+--- moment) is in none
+fn during[bars, part]
+    keep = []
+    for t in bars.ts
+        p = sessions.phase[t]
+        if p.ok
+            keep = push[keep, p eq part]
+        else
+            keep = push[keep, false]
+    return filter[bars, keep]
+
+--- five trades over two minutes make two minute bars; resampled to two
+--- minutes they are one bar again
+test builds_and_resamples[]
+    t0 = 1784035800.0
+    ts = [t0, t0 + 10.0, t0 + 50.0, t0 + 60.0, t0 + 90.0]
+    price = [10.0, 10.5, 9.8, 10.2, 10.4]
+    size = [100.0, 50.0, 50.0, 200.0, 100.0]
+    b = build[ts, price, size, 60]
+    assert[b.shape[0] eq 2]
+    assert[b.o[0] eq 10.0]
+    assert[b.hi[0] eq 10.5]
+    assert[b.lo[0] eq 9.8]
+    assert[b.c[0] eq 9.8]
+    assert[b.vol[0] eq 200.0]
+    assert[b.n[0] eq 3]
+    assert[abs[b.vwap[0] - 10.075] lt 0.000001]
+    assert[b.ts[1] eq t0 + 60.0]
+    two = resample[b, 120]
+    assert[two.shape[0] eq 1]
+    assert[two.hi[0] eq 10.5]
+    assert[two.c[0] eq 10.4]
+    assert[two.vol[0] eq 500.0]
+    assert[two.n[0] eq 5]
+    whole = build[ts, price, size, 120]
+    assert[abs[two.vwap[0] - whole.vwap[0]] lt 0.000001]
+
+--- 09:29 is early and 09:30 regular: a bar keeps to its part of the day
+test keeps_to_a_part_of_the_day[]
+    --- 09:29 in New York on 14 July 2026
+    t = 1784035740.0
+    b = build[[t, t + 60.0, t + 120.0], [10.0, 11.0, 12.0], [1.0, 1.0, 1.0], 60]
+    regular = during[b, 'regular']
+    assert[regular.shape[0] eq 2]
+    assert[regular.o[0] eq 11.0]
+    assert[during[b, 'early'].shape[0] eq 1]

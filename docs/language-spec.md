@@ -3704,6 +3704,7 @@ crow book [--port N]        --- in the crow repository: serve the Crow Book with
                                 its runner answers only the book's own page on this machine
 crow test                   --- run the test blocks of the project (or: crow test file.co)
 crow test --parity          --- run tests/parity/ in both modes and diff output
+crow test --packages        --- in the crow repository: each package's tests, and its example.co in both modes
 crow test --book            --- execute every code block of the book in both modes
 crow test --docs            --- the docs cover every compiler name, and name nothing the compiler lacks
 crow test --bench           --- run tests/bench/ in both modes and print each section's seconds side by side (--quick: small sizes; --write: record docs/benchmarks.md)

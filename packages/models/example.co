@@ -1,0 +1,24 @@
+--- Each model of the package fitted to a small set and asked a question,
+--- the same answers in both modes (CI runs this interpreted and compiled
+--- and compares the two).
+use math
+use regression, logistic, kmeans, tree, mlp
+
+lin = regression.fit[[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [2.0, 1.0]], [1.0, 3.0, -2.0, 0.0, 2.0]]
+log['regression: `round[lin.coef[0] * 1000.0] / 1000.0` `round[lin.coef[1] * 1000.0] / 1000.0` `round[lin.intercept * 1000.0] / 1000.0`']
+
+x1 = [[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]]
+lg = logistic.fit[x1, [0, 0, 0, 1, 1, 1], 3000, 0.5]
+log['logistic: `logistic.classify[lg, x1]`']
+
+pts = [[0.0, 0.0], [5.0, 5.0], [0.1, 0.2], [5.1, 4.9], [0.2, 0.1], [4.9, 5.2]]
+km = kmeans.fit[pts, 2, 20]
+log['kmeans: `km.labels`']
+
+xt = [[1.0, 9.0], [2.0, 1.0], [3.0, 8.0], [4.0, 2.0], [0.5, 3.0], [3.5, 7.0]]
+t = tree.fit[xt, [0, 0, 1, 1, 0, 1], 3]
+log['tree: splits on `t.feature`, [1.5, 5] is `tree.classify[t, [1.5, 5.0]]`, [3.8, 5] is `tree.classify[t, [3.8, 5.0]]`']
+
+xo = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]
+net = mlp.fit[xo, [0, 1, 1, 0], 8, 4000, 0.5, 7]
+log['mlp: `mlp.classify[net, xo]`']
