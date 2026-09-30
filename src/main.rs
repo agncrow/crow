@@ -1852,10 +1852,16 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     }
     if emitted.needs_crow_runtime {
         let runtime_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_runtime");
+        // what the program's paths may name (sources), and Arrow for a
+        // response in it
+        let mut features: Vec<String> = emitted.runtime_features.iter().cloned().collect();
         if emitted.web_features.contains("arrow_ipc") {
-            dep_list.push(format!("crow_runtime = {{ path = \"{}\", features = [\"arrow\"] }}", runtime_path));
-        } else {
+            features.push("arrow".to_string());
+        }
+        if features.is_empty() {
             dep_list.push(format!("crow_runtime = {{ path = \"{}\" }}", runtime_path));
+        } else {
+            dep_list.push(format!("crow_runtime = {{ path = \"{}\", features = [{}] }}", runtime_path, features.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", ")));
         }
     }
     if emitted.needs_regex {

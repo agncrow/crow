@@ -36,13 +36,20 @@ pub fn append_file(path: &str, content: &str) -> Result<(), String> {
 // file operation that answers nothing answers empty text, as its type
 // says (the interpreter's `done` beside the compiled program's `""`).
 
-/// `read[path]`: the file's text.
+/// `read[path]`: the file's text, or a URL's, or an S3 object's
+/// (crate::sources).
 pub fn read(path: &str) -> Result<String, String> {
+    if crate::sources::is_remote(path) {
+        return crate::sources::fetch_text(path);
+    }
     fs_read(path)
 }
 
-/// `write[path, text]`.
+/// `write[path, text]`: a file, or an S3 object.
 pub fn write(path: &str, content: &str) -> Result<String, String> {
+    if crate::sources::is_remote(path) {
+        return crate::sources::put(path, content.as_bytes()).map(|_| String::new());
+    }
     fs_write(path, content).map(|_| String::new())
 }
 
@@ -78,11 +85,17 @@ pub fn cp(src: &str, dst: &str) -> Result<String, String> {
 
 /// `io.csv[path]`: each row a map from its column's name to its text.
 pub fn csv(path: &str) -> Result<Vec<BTreeMap<String, String>>, String> {
+    if crate::sources::is_remote(path) {
+        return parse_csv_string(&crate::sources::fetch_text(path)?);
+    }
     parse_csv(path)
 }
 
 /// `io.lines[path]`.
 pub fn lines(path: &str) -> Result<Vec<String>, String> {
+    if crate::sources::is_remote(path) {
+        return Ok(crate::sources::fetch_text(path)?.lines().map(str::to_string).collect());
+    }
     read_lines(path)
 }
 

@@ -38,6 +38,9 @@ pub struct Emitted {
     pub needs_crow_db: bool,
     pub web_features: BTreeSet<String>,
     pub db_features: BTreeSet<String>,
+    /// crow_runtime's features the program's paths may need (`net`,
+    /// `parquet`: crow_runtime::sources)
+    pub runtime_features: BTreeSet<String>,
 }
 
 /// Emit a lowered program as `main.rs`; for `crow test --compiled`
@@ -71,6 +74,7 @@ pub fn emit_with(
         needs_crow_db: e.needs_crow_db,
         web_features: e.web_features.clone(),
         db_features: e.db_features.clone(),
+        runtime_features: e.runtime_features.clone(),
     })
 }
 
@@ -110,6 +114,7 @@ pub(crate) struct Emitter {
     pub(crate) needs_ui: bool,
     pub(crate) db_features: BTreeSet<String>,
     pub(crate) web_features: BTreeSet<String>,
+    pub(crate) runtime_features: BTreeSet<String>,
 
     // the program, by name
     pub(crate) fns: BTreeMap<String, Fn>,
@@ -197,6 +202,7 @@ impl Emitter {
             needs_ui: false,
             db_features: BTreeSet::new(),
             web_features: BTreeSet::new(),
+            runtime_features: BTreeSet::new(),
             fns,
             structs,
             derives,

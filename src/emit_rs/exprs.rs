@@ -1279,6 +1279,49 @@ impl Emitter {
         }
     }
 
+    /// A compiled program reads a URL or an S3 object, or a Parquet table,
+    /// only where it is built to (crow_runtime's `net` and `parquet`
+    /// features, crow_runtime::sources): a builtin that reads or writes a
+    /// path asks for them, unless its path is text that shows it names
+    /// neither — a literal, or an interpolation whose first text is a
+    /// local path and whose last text an extension other than Parquet's.
+    fn note_sources(&mut self, name: &str, args: &[Expr]) {
+        use crow_runtime::sources::{format_of, is_remote, Format};
+        let at = match name {
+            "read" | "write" | "lines" | "csv" | "load" => 0,
+            "save" => 1,
+            _ => return,
+        };
+        let tables = matches!(name, "load" | "save");
+        // whether the path may be remote, and the format it names: known to
+        // be none (an extensionless path), one, or not known at all
+        let (remote, named) = match args.get(at) {
+            Some(Expr::Const(Const::Str(p), _)) => (is_remote(p), Some(format_of(p))),
+            Some(Expr::Interp(pieces)) => {
+                let text = |p: Option<&Piece>| match p {
+                    Some(Piece::Text(t)) => t.clone(),
+                    _ => String::new(),
+                };
+                let (head, tail) = (text(pieces.first()), text(pieces.last()));
+                let scheme = ["http://", "https://", "s3://"].iter().any(|s| s.starts_with(head.as_str()) || head.starts_with(s));
+                (scheme, format_of(&tail).map(Some))
+            }
+            _ => (true, None),
+        };
+        // a Parquet table: named so, or a remote one whose server may answer one
+        let parquet = match named {
+            Some(Some(f)) => f == Format::Parquet,
+            Some(None) => remote,
+            None => true,
+        };
+        if remote {
+            self.runtime_features.insert("net".to_string());
+        }
+        if tables && parquet {
+            self.runtime_features.insert("parquet".to_string());
+        }
+    }
+
     fn call(&mut self, e: &Expr) -> String {
         let (mut target, args, propagates) = match e {
             Expr::Call { target, args, propagates, .. } => (target.clone(), args.clone(), *propagates),
@@ -1313,6 +1356,9 @@ impl Emitter {
             Target::Module(_, f) => f.clone(),
         };
         let raw_args: Vec<Expr> = args.iter().map(|a| Emitter::raw(a).clone()).collect();
+        if !matches!(target, Target::User(_)) {
+            self.note_sources(&name, &raw_args);
+        }
         let current_pin = self.pinned_module.clone();
         // a module's function named like an element (`frame.stack`) is the
         // module's: it propagates, where the element renders a failed child

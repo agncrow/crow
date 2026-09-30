@@ -1,0 +1,45 @@
+--- A table's format is its extension: `save` writes a frame as Parquet or
+--- as JSON records, and `load` reads it back, the same in both modes — its
+--- columns in name order, ints, floats, text and bools as they were, a
+--- missing cell still missing. A JSON API's answer, an object holding one
+--- list of records, loads as that list.
+use frame
+
+df = frame.new[]
+df = with[df, 'sym', ['AAPL', 'MSFT', 'NVDA']]
+df = with[df, 'price', [187.5, 402.25, 121.0]]
+df = with[df, 'shares', [10, 5, 40]]
+df = with[df, 'open', [true, false, true]]
+
+p = save[df, '/tmp/crow_parity_138.parquet']
+log[p.ok]
+back = load['/tmp/crow_parity_138.parquet']
+log[back.columns]
+log[back.sym]
+log[float[back.price[1]] + 0.75]
+log[int[back.shares[2]] * 2]
+log[back.open]
+
+j = save[df, '/tmp/crow_parity_138.json']
+log[read['/tmp/crow_parity_138.json']]
+again = load['/tmp/crow_parity_138.json']
+log[again.columns]
+log[int[again.shares[0]] + int[again.shares[1]]]
+
+w = write['/tmp/crow_parity_138_api.json', '{"status": "OK", "count": 2, "results": [{"t": 1, "c": 10.5, "v": 100}, {"t": 2, "c": 10.75}]}']
+api = load['/tmp/crow_parity_138_api.json']
+log[api.columns]
+log[len[api]]
+log[api.v.ok]
+log[float[api.c[1]]]
+
+w2 = write['/tmp/crow_parity_138_two.json', '{"a": [{"x": 1}], "b": [{"y": 2}]}']
+two = load['/tmp/crow_parity_138_two.json']
+log[two.ok]
+log[two.reason]
+
+bad = load['/tmp/crow_parity_138_missing.parquet']
+log[bad.ok]
+
+for f in ['/tmp/crow_parity_138.parquet', '/tmp/crow_parity_138.json', '/tmp/crow_parity_138_api.json', '/tmp/crow_parity_138_two.json']
+    r = rm[f]

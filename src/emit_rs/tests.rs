@@ -211,6 +211,33 @@ fn transpile(source: &str) -> String {
     crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false, None).expect("emitting failed").source
 }
 
+/// The runtime features a program's build asks for (crow_runtime::sources).
+fn runtime_features(source: &str) -> Vec<String> {
+    let stmts = crate::lower::lower_program(&crate::build(source).expect("parse failed")).expect("lowering failed");
+    let mut ctx = TypeContext::new();
+    ctx.infer_program(&stmts);
+    let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").expect("lowering to the IR failed");
+    let emitted = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false, None).expect("emitting failed");
+    emitted.runtime_features.into_iter().collect()
+}
+
+/// A build asks for network sources and Parquet only where the program's
+/// paths may name them: a local CSV asks for neither, a local Parquet file
+/// for Parquet, a URL naming JSON for the network alone, an extensionless
+/// URL for both (its server may answer Parquet), and a path the program
+/// computes for both
+#[test]
+fn a_build_asks_for_what_its_paths_may_name() {
+    assert!(runtime_features("use frame\ndf = load['data.csv']\nlog[len[df]]\n").is_empty());
+    assert!(runtime_features("t = read['notes/a.txt']\nlog[t]\n").is_empty());
+    assert_eq!(runtime_features("use frame\ndf = load['bars.parquet']\nlog[len[df]]\n"), vec!["parquet"]);
+    assert_eq!(runtime_features("use frame\ns = 'AAPL'\ndf = load['https://api.test/`s`.json']\nlog[len[df]]\n"), vec!["net"]);
+    assert_eq!(runtime_features("use frame\ndf = load['https://api.test/v2/aggs']\nlog[len[df]]\n"), vec!["net", "parquet"]);
+    assert_eq!(runtime_features("use frame\nd = 'x'\ndf = load['data/`d`.csv']\nlog[len[df]]\n").len(), 0);
+    assert_eq!(runtime_features("use frame\np = args[][0]\ndf = load[p]\nlog[len[df]]\n"), vec!["net", "parquet"]);
+    assert_eq!(runtime_features("p = args[][0]\nt = read[p]\nlog[t]\n"), vec!["net"]);
+}
+
 #[test]
 fn test_multi_assign() {
     let src = "x, y = 10, 20\nlog['{x} {y}']\n";

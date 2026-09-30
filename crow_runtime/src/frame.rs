@@ -505,10 +505,13 @@ fn cmp_f64(a: f64, b: f64, op: &str) -> bool {
 
 /// Load a CSV file into a CrowFrame with auto type inference.
 pub fn load_csv(path: &str) -> Result<CrowFrame, String> {
-    use std::fs;
+    let content = std::fs::read_to_string(path).map_err(|e| format!("load: {}", e))?;
+    csv_frame(&content)
+}
 
-    // Read entire file into memory
-    let content = fs::read_to_string(path).map_err(|e| format!("load: {}", e))?;
+/// CSV text as a frame, each column's type read from its cells: a file's,
+/// or what a URL answered.
+pub fn csv_frame(content: &str) -> Result<CrowFrame, String> {
     let bytes = content.as_bytes();
 
     // Find header end
@@ -1894,9 +1897,23 @@ impl fmt::Display for CrowFrame {
 /// The validity bitmap is applied as null masks.
 #[cfg(feature = "arrow")]
 pub fn to_arrow_ipc(frame: &CrowFrame) -> Result<Vec<u8>, String> {
+    use arrow::ipc::writer::StreamWriter;
+    let batch = record_batch(frame)?;
+    let mut buf = Vec::new();
+    {
+        let mut writer = StreamWriter::try_new(&mut buf, &batch.schema()).map_err(|e| format!("arrow: {}", e))?;
+        writer.write(&batch).map_err(|e| format!("arrow: {}", e))?;
+        writer.finish().map_err(|e| format!("arrow: {}", e))?;
+    }
+    Ok(buf)
+}
+
+/// A frame as one Arrow record batch, as the IPC stream and a Parquet file
+/// carry it (the column mapping above).
+#[cfg(feature = "arrow")]
+pub fn record_batch(frame: &CrowFrame) -> Result<arrow::record_batch::RecordBatch, String> {
     use arrow::array::*;
     use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-    use arrow::ipc::writer::StreamWriter;
     use arrow::record_batch::RecordBatch;
 
     let mut fields = Vec::new();
@@ -1960,17 +1977,267 @@ pub fn to_arrow_ipc(frame: &CrowFrame) -> Result<Vec<u8>, String> {
         }
     }
 
-    // a frame's columns are one length, so these fail only for a frame
+    // a frame's columns are one length, so this fails only for a frame
     // built wrongly: its reason, not a panic
     let schema = Arc::new(Schema::new(fields));
-    let batch = RecordBatch::try_new(schema.clone(), arrays).map_err(|e| format!("arrow: {}", e))?;
-    let mut buf = Vec::new();
-    {
-        let mut writer = StreamWriter::try_new(&mut buf, &schema).map_err(|e| format!("arrow: {}", e))?;
-        writer.write(&batch).map_err(|e| format!("arrow: {}", e))?;
-        writer.finish().map_err(|e| format!("arrow: {}", e))?;
+    RecordBatch::try_new(schema, arrays).map_err(|e| format!("arrow: {}", e))
+}
+
+// ===== JSON and Parquet tables (spec, frame: load and save) =====
+
+/// A frame from JSON: a list of records, a row each, or an object holding
+/// exactly one such list (an API's `{"results": [...]}`). A column is every
+/// key a record holds, in name order (as a map's keys are); its cells are ints, numbers
+/// (an int among floats is a float), bools or text, and a record that
+/// lacks the key, or holds `null`, has a missing cell there. A column whose
+/// values are of mixed kinds, or lists or objects, is their JSON text.
+pub fn from_json(text: &str) -> Result<CrowFrame, String> {
+    use serde_json::Value;
+    let value: Value = serde_json::from_str(text).map_err(|e| format!("load: not JSON: {}", e))?;
+    let records: &Vec<Value> = match &value {
+        Value::Array(items) => items,
+        Value::Object(map) => {
+            let lists: Vec<(&String, &Vec<Value>)> = map
+                .iter()
+                .filter_map(|(k, v)| match v {
+                    Value::Array(items) if items.iter().all(Value::is_object) => Some((k, items)),
+                    _ => None,
+                })
+                .collect();
+            match lists.as_slice() {
+                [(_, items)] => items,
+                [] => return Err("load: the JSON holds no list of records — a table is a list of objects, or an object holding one".to_string()),
+                many => {
+                    let names: Vec<String> = many.iter().map(|(k, _)| format!("'{}'", k)).collect();
+                    return Err(format!("load: the JSON holds more than one list of records ({}) — read it with json[read[path]] and take the one wanted", names.join(", ")));
+                }
+            }
+        }
+        _ => return Err("load: the JSON is not a list of records".to_string()),
+    };
+    let mut keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for (i, record) in records.iter().enumerate() {
+        let Value::Object(fields) = record else {
+            return Err(format!("load: item {} of the JSON's list is not a record", i));
+        };
+        keys.extend(fields.keys().cloned());
     }
-    Ok(buf)
+    let names: Vec<String> = keys.into_iter().collect();
+    let mut columns = Vec::with_capacity(names.len());
+    let mut validity = Vec::with_capacity(names.len());
+    for name in &names {
+        let cells: Vec<Option<&Value>> = records.iter().map(|r| r.get(name).filter(|v| !v.is_null())).collect();
+        let valid: Vec<bool> = cells.iter().map(Option::is_some).collect();
+        let present = || cells.iter().flatten();
+        let column = if present().all(|v| v.is_i64()) {
+            Column::Int(cells.iter().map(|c| c.and_then(Value::as_i64).unwrap_or(0)).collect())
+        } else if present().all(|v| v.is_number()) {
+            Column::Float(cells.iter().map(|c| c.and_then(Value::as_f64).unwrap_or(f64::NAN)).collect())
+        } else if present().all(|v| v.is_boolean()) {
+            Column::Bool(cells.iter().map(|c| c.and_then(Value::as_bool).unwrap_or(false)).collect())
+        } else {
+            Column::Str(
+                cells
+                    .iter()
+                    .map(|c| match c {
+                        Some(Value::String(s)) => s.clone(),
+                        Some(v) => v.to_string(),
+                        None => String::new(),
+                    })
+                    .collect(),
+            )
+        };
+        columns.push(column);
+        validity.push(valid);
+    }
+    Ok(CrowFrame::new(names, columns, validity))
+}
+
+/// A frame as JSON: a list of records, a missing cell `null`, a moment its
+/// ISO text, a float that is not finite `null`.
+pub fn to_json(frame: &CrowFrame) -> String {
+    use serde_json::{Map, Value};
+    let rows: Vec<Value> = (0..frame.nrows())
+        .map(|r| {
+            let mut record = Map::new();
+            for (i, name) in frame.columns.iter().enumerate() {
+                let cell = if !frame.validity[i][r] {
+                    Value::Null
+                } else {
+                    match frame.data[i].as_ref() {
+                        Column::Int(v) => Value::from(v[r]),
+                        Column::Float(v) => crate::json::float_to_json(v[r]),
+                        Column::Bool(v) => Value::Bool(v[r]),
+                        Column::Str(v) => Value::String(v[r].clone()),
+                        Column::DateTime(ms, offsets) => Value::String(format_datetime(ms[r], offsets[r])),
+                    }
+                };
+                record.insert(name.clone(), cell);
+            }
+            Value::Object(record)
+        })
+        .collect();
+    Value::Array(rows).to_string()
+}
+
+/// A frame from a Parquet file's bytes: integers are ints, floating and
+/// decimal numbers floats, text (and dictionary-encoded text) text, bools
+/// bools, timestamps and dates moments, and a null a missing cell. A
+/// column of another kind (a list, a struct, bytes) is refused, named.
+#[cfg(feature = "parquet")]
+pub fn from_parquet(bytes: Vec<u8>) -> Result<CrowFrame, String> {
+    use arrow::array::{Array, AsArray};
+    use arrow::datatypes::{DataType, Float64Type, Int64Type, TimeUnit, TimestampMillisecondType};
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(bytes)).map_err(|e| format!("load: not a Parquet file: {}", e))?;
+    let schema = builder.schema().clone();
+    // each column's kind, and the Arrow type it is read as
+    let mut kinds: Vec<(&'static str, DataType)> = Vec::new();
+    for field in schema.fields() {
+        let kind = match field.data_type() {
+            DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 | DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => ("int", DataType::Int64),
+            DataType::Float16 | DataType::Float32 | DataType::Float64 | DataType::Decimal128(..) | DataType::Decimal256(..) => ("float", DataType::Float64),
+            DataType::Boolean => ("bool", DataType::Boolean),
+            DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => ("text", DataType::Utf8),
+            DataType::Dictionary(_, v) if matches!(v.as_ref(), DataType::Utf8 | DataType::LargeUtf8) => ("text", DataType::Utf8),
+            // an instant stays the instant it is: a zoned timestamp keeps
+            // its zone and only its unit changes (a cast to no zone reads
+            // the zone's wall clock), and a date is its midnight in UTC
+            DataType::Timestamp(_, tz) => ("moment", DataType::Timestamp(TimeUnit::Millisecond, tz.clone())),
+            DataType::Date32 | DataType::Date64 => ("moment", DataType::Timestamp(TimeUnit::Millisecond, None)),
+            other => return Err(format!("load: column '{}' is {} — a frame's cells are numbers, text, bools and moments", field.name(), other)),
+        };
+        kinds.push(kind);
+    }
+    let reader = builder.build().map_err(|e| format!("load: {}", e))?;
+    let mut columns: Vec<Column> = kinds
+        .iter()
+        .map(|(k, _)| match *k {
+            "int" => Column::Int(Vec::new()),
+            "float" => Column::Float(Vec::new()),
+            "bool" => Column::Bool(Vec::new()),
+            "text" => Column::Str(Vec::new()),
+            _ => Column::DateTime(Vec::new(), Vec::new()),
+        })
+        .collect();
+    let mut validity: Vec<Vec<bool>> = vec![Vec::new(); kinds.len()];
+    let options = arrow::compute::CastOptions { safe: false, ..Default::default() };
+    for batch in reader {
+        let batch = batch.map_err(|e| format!("load: {}", e))?;
+        for (i, array) in batch.columns().iter().enumerate() {
+            let name = schema.field(i).name();
+            let cast = arrow::compute::cast_with_options(array, &kinds[i].1, &options).map_err(|e| format!("load: column '{}': {}", name, e))?;
+            validity[i].extend((0..cast.len()).map(|r| cast.is_valid(r)));
+            match &mut columns[i] {
+                Column::Int(v) => v.extend(cast.as_primitive::<Int64Type>().values().iter().copied()),
+                Column::Float(v) => v.extend(cast.as_primitive::<Float64Type>().values().iter().copied()),
+                Column::Bool(v) => {
+                    let b = cast.as_boolean();
+                    v.extend((0..b.len()).map(|r| b.value(r)));
+                }
+                Column::Str(v) => {
+                    let s = cast.as_string::<i32>();
+                    v.extend((0..s.len()).map(|r| if s.is_valid(r) { s.value(r).to_string() } else { String::new() }));
+                }
+                Column::DateTime(ms, offsets) => {
+                    let t = cast.as_primitive::<TimestampMillisecondType>();
+                    ms.extend(t.values().iter().copied());
+                    offsets.extend(std::iter::repeat(0).take(t.len()));
+                }
+            }
+        }
+    }
+    let names: Vec<String> = schema.fields().iter().map(|f| f.name().clone()).collect();
+    Ok(CrowFrame::new(names, columns, validity))
+}
+
+/// A frame as a Parquet file's bytes, compressed with Snappy (what pandas
+/// and Spark write by default, so every reader reads it).
+#[cfg(feature = "parquet")]
+pub fn to_parquet(frame: &CrowFrame) -> Result<Vec<u8>, String> {
+    use parquet::arrow::ArrowWriter;
+    use parquet::basic::Compression;
+    use parquet::file::properties::WriterProperties;
+    let batch = record_batch(frame)?;
+    let props = WriterProperties::builder().set_compression(Compression::SNAPPY).build();
+    let mut out = Vec::new();
+    let mut writer = ArrowWriter::try_new(&mut out, batch.schema(), Some(props)).map_err(|e| format!("save: {}", e))?;
+    writer.write(&batch).map_err(|e| format!("save: {}", e))?;
+    writer.close().map_err(|e| format!("save: {}", e))?;
+    Ok(out)
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+
+    /// JSON records are rows: columns in name order, an int among floats a
+    /// float, a key a record lacks (or its null) a missing cell, a nested
+    /// value its JSON text; an API's object holding one list of records is
+    /// that list, and one holding two is refused, naming them
+    #[test]
+    fn json_records_are_rows() {
+        let f = from_json(r#"{"status": "OK", "results": [{"t": 1, "c": 10.5, "v": 100, "x": [1]}, {"t": 2, "c": 11, "x": {"a": 1}, "v": null}]}"#).unwrap_or_else(|e| panic!("{}", e));
+        assert_eq!(f.columns, vec!["c", "t", "v", "x"]);
+        assert!(matches!(f.data[0].as_ref(), Column::Float(v) if v == &vec![10.5, 11.0]));
+        assert!(matches!(f.data[1].as_ref(), Column::Int(v) if v == &vec![1, 2]));
+        assert_eq!(f.validity[2].as_ref(), &vec![true, false]);
+        assert!(matches!(f.data[3].as_ref(), Column::Str(v) if v == &vec!["[1]".to_string(), "{\"a\":1}".to_string()]));
+        let two = from_json(r#"{"a": [{"x": 1}], "b": [{"y": 2}]}"#).err().unwrap_or_default();
+        assert!(two.contains("more than one list of records ('a', 'b')"), "{}", two);
+        assert!(from_json("[1, 2]").err().unwrap_or_default().contains("item 0 of the JSON's list is not a record"));
+        assert!(from_json("{\"n\": 3}").err().unwrap_or_default().contains("holds no list of records"));
+        assert!(from_json("[").err().unwrap_or_default().starts_with("load: not JSON"));
+        let empty = from_json("[]").unwrap_or_else(|e| panic!("{}", e));
+        assert_eq!((empty.nrows(), empty.ncols()), (0, 0));
+    }
+
+    fn sample() -> CrowFrame {
+        CrowFrame::new(
+            vec!["sym".into(), "price".into(), "shares".into(), "open".into(), "at".into()],
+            vec![
+                Column::Str(vec!["AAPL".into(), "".into(), "NVDA".into()]),
+                Column::Float(vec![187.5, 402.25, f64::NAN]),
+                Column::Int(vec![10, 5, 40]),
+                Column::Bool(vec![true, false, true]),
+                Column::DateTime(vec![1_784_035_800_000, 0, 1_784_035_860_000], vec![0, 0, 0]),
+            ],
+            vec![vec![true, false, true], vec![true, true, false], vec![true, true, true], vec![true, true, true], vec![true, false, true]],
+        )
+    }
+
+    /// A frame written as JSON reads back as the frame it was, its columns
+    /// in name order
+    #[test]
+    fn a_frame_round_trips_through_json() {
+        let f = sample();
+        let back = from_json(&to_json(&f)).unwrap_or_else(|e| panic!("{}", e));
+        assert_eq!(back.columns, vec!["at", "open", "price", "shares", "sym"]);
+        assert_eq!(back.validity[4].as_ref(), &vec![true, false, true]);
+        assert!(matches!(back.data[3].as_ref(), Column::Int(v) if v == &vec![10, 5, 40]));
+        assert!(matches!(back.data[1].as_ref(), Column::Bool(v) if v == &vec![true, false, true]));
+    }
+
+    /// A frame written as Parquet reads back as the frame it was: its
+    /// columns in their order, each of its kind, a missing cell missing
+    #[cfg(feature = "parquet")]
+    #[test]
+    fn a_frame_round_trips_through_parquet() {
+        let f = sample();
+        let bytes = to_parquet(&f).unwrap_or_else(|e| panic!("{}", e));
+        assert!(bytes.starts_with(b"PAR1"));
+        let back = from_parquet(bytes).unwrap_or_else(|e| panic!("{}", e));
+        assert_eq!(back.columns, f.columns);
+        for i in 0..f.ncols() {
+            assert_eq!(back.validity[i].as_ref(), f.validity[i].as_ref(), "column {}", f.columns[i]);
+        }
+        assert!(matches!(back.data[0].as_ref(), Column::Str(v) if v[0] == "AAPL" && v[2] == "NVDA"));
+        assert!(matches!(back.data[1].as_ref(), Column::Float(v) if v[0] == 187.5 && v[1] == 402.25));
+        assert!(matches!(back.data[2].as_ref(), Column::Int(v) if v == &vec![10, 5, 40]));
+        assert!(matches!(back.data[3].as_ref(), Column::Bool(v) if v == &vec![true, false, true]));
+        assert!(matches!(back.data[4].as_ref(), Column::DateTime(ms, _) if ms[0] == 1_784_035_800_000 && ms[2] == 1_784_035_860_000));
+        assert!(from_parquet(b"not parquet".to_vec()).err().unwrap_or_default().starts_with("load: not a Parquet file"));
+    }
 }
 
 #[cfg(feature = "arrow")]

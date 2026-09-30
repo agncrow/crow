@@ -178,7 +178,7 @@ Both modes serve pages. `crow run file.co` compiles and serves; `crow run -i fil
 
 ### Client (`use web.client`)
 
-An outbound HTTP client (`get`, `post`, …) is on the roadmap and not yet part of the language. Today a page pulls remote data with `fetch[url]` / `poll[url, seconds]` (reactive, see above), and scripts shell out (`shell['curl …']`).
+A program reads a URL with `read` and `load` (Files, URLs and S3), and a page pulls remote data with `fetch[url]` / `poll[url, seconds]` (reactive, see above). An outbound client for other methods, headers or a body (`post`, …) is on the roadmap and not yet part of the language.
 
 
 

@@ -920,8 +920,8 @@ These builtins can fail and return an error-value:
 
 | Builtin | When it fails |
 |---------|---------------|
-| `read[path]` | File doesn't exist or can't be read |
-| `write[path, content]` | File can't be written |
+| `read[path]` | File doesn't exist or can't be read; a URL or an S3 object that does not answer (Files, URLs and S3) |
+| `write[path, content]` | File or S3 object can't be written; a URL, which is read, not written |
 | `mkdir[path]` | Directory can't be created |
 | `ls[path]` | Path doesn't exist or can't be read |
 | `rm[path]` | Path doesn't exist or can't be removed |
@@ -932,8 +932,8 @@ These builtins can fail and return an error-value:
 | `int[string]` | String can't be parsed as integer |
 | `float[string]` | String can't be parsed as float |
 | `json[string]` | String is not valid JSON, or value is `null` |
-| `load[path]` (frame, math) | File missing or unparsable |
-| `csv[path]` / `lines[path]` (io) | File missing or unreadable |
+| `load[path]` (frame, math) | File, URL or S3 object missing or unparsable |
+| `csv[path]` / `lines[path]` (io) | File, URL or S3 object missing or unreadable |
 | `query[conn, sql]` | SQL syntax error or query execution fails |
 | `exec[conn, sql]` | SQL syntax error or execution fails |
 | `insert[conn, table, frame]` | Bulk insert fails (schema mismatch, connection error) |
@@ -1321,8 +1321,8 @@ A collection builtin takes the kinds its forms above say — a list, a map, text
 
 | Function | Description |
 |----------|-------------|
-| `read[path]` | Read file contents (error-value on failure) |
-| `write[path, content]` | Write string to file (error-value on failure) |
+| `read[path]` | The text of a file, a URL or an S3 object (error-value on failure; Files, URLs and S3) |
+| `write[path, content]` | Write text to a file or an S3 object (error-value on failure) |
 | `exists[path]` | Check if file/directory exists (returns bool) |
 | `mkdir[path]` | Create directory (and parents). Error-value on failure |
 | `ls[path]` | List directory entries as sorted array of strings. Error-value on failure |
@@ -1334,6 +1334,22 @@ A collection builtin takes the kinds its forms above say — a list, a map, text
 | `input[prompt]` | Print prompt, then read a line (error-value on failure) |
 
 A file operation that answers nothing — `write`, `mkdir`, `rm`, `mv`, `cp`, and `use frame`'s `save` — answers empty text when it succeeds, as its type says, in both modes. (The interpreter had answered `done`, and the compiled program `''`.) What reads the world outside the program — `read`, `ls`, `shell`, and the modules' `load`, `csv` and `lines` — is stamped with the moment it was read (`captured[x]`), in both modes, and nothing else is: the compiled program had stamped `rm`'s answer.
+
+#### Files, URLs and S3
+
+A path is a file on this machine, a URL (`http://…`, `https://…`), or an S3 object (`s3://bucket/key`) wherever the program reads one — `read`, `use io`'s `csv` and `lines`, and both modules' `load` — and a file or an S3 object wherever it writes one (`write`, `use frame`'s `save`):
+
+```
+bars = load['https://data.example.com/aapl/2026-07-14.parquet']
+trades = load['s3://market-archive/2026/07/14/trades.csv']
+r = save[bars, 's3://reports/aapl.parquet']
+```
+
+A table's format is its extension: `.csv`, `.json` or `.parquet`. A URL with none is read as the media type its server names (`application/json`, `text/csv`, Parquet's), and failing that as its bytes show — Parquet's `PAR1`, JSON's opening bracket, CSV otherwise. A JSON table is a list of records, a row each, or an object holding exactly one list of records, as an API's answer `{"status": "OK", "results": [...]}` does; an object holding two is refused, naming them, and `json[read[url]]` reads it whole. An S3 object is read and written with the environment's credentials — `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` when there is one, `AWS_REGION` (`us-east-1` when unset) — signed as AWS's Signature Version 4 says; `AWS_ENDPOINT_URL` points it at an S3-compatible store (MinIO, R2) by path. Without credentials an object is read unsigned, as a public bucket's is. A URL is read, never written.
+
+What goes wrong is the read's error value, as a missing file's is, its reason naming the path: a server that answers an error (`cannot read 'https://…': the server answered 404 Not Found`, and S3's own words after it), one that does not answer within 30 seconds, a transfer longer than ten minutes, more than 4 GB. A program's own URL, built from what a reader typed, reaches wherever it names: a served program checks it as it checks any input.
+
+**Design Note: one `load`, wherever the data is.** Considered: an HTTP client (`get`, `post`), an `s3` module and a `parquet` module, each with its own readers. Decided: where the data is and what shape it is in are the path's, not the program's, so every reader takes a URL or an S3 object as it takes a file, and the extension names the format — one way, which a new source or format joins without a new name. An outbound HTTP client, for APIs that need headers, other methods or a body, stays on the roadmap.
 
 ### JSON
 
@@ -1899,7 +1915,7 @@ x = solve[s2, [10, 12, 14]]
 
 | Function | Description |
 |---|---|
-| `load[path]` | Load numeric CSV file directly into a 2D tensor (error-value on failure) |
+| `load[path]` | Load a table of numbers directly into a 2D tensor: a CSV file, or JSON records or Parquet, from a file, a URL or an S3 object (error-value on failure) |
 
 `load[path]` reads a CSV file with a header row and parses all values as floats into a 2D tensor (rows × columns). This is much faster than `csv[path]` (io module) for numeric data because it avoids creating intermediate string maps.
 
@@ -2046,8 +2062,8 @@ Import with `use io`. Provides structured file parsing beyond the built-in `read
 
 | Function | Description |
 |----------|-------------|
-| `csv[path]` | Parse CSV file into array of maps (error-value on failure) |
-| `lines[path]` | Read file as array of lines (error-value on failure) |
+| `csv[path]` | Parse CSV — a file, a URL or an S3 object — into array of maps (error-value on failure) |
+| `lines[path]` | Read a file, a URL or an S3 object as array of lines (error-value on failure) |
 
 **Note:** Basic file I/O (`read[path]`, `write[path, content]`) are builtins available without any import. The io module adds structured parsing only.
 
@@ -2156,8 +2172,8 @@ Import with `use frame`. Column-oriented DataFrames for tabular data. See `docs/
 |---|---|
 | `new[]` | The empty frame (`frame.new[]`, since `new` reads best qualified); add columns with `with` |
 | `with[frame, col, values]` | A frame with one more (or replaced) column: `values` is an array, a tensor, or a scalar repeated for every row; the length must match the rows (error-value otherwise) |
-| `load[path]` | Load CSV → frame (error-value on failure) |
-| `save[frame, path]` | Write frame → CSV; a failure is an error value of kind `'frame'`, as `load`'s is (compiled, it had stopped the program) |
+| `load[path]` | Load a table → frame, in the format its extension names — CSV, JSON records (columns in name order), Parquet — from a file, a URL or an S3 object (error-value on failure; Files, URLs and S3) |
+| `save[frame, path]` | Write frame → a file or an S3 object, as CSV, JSON records or Parquet by its extension (CSV otherwise); a failure is an error value of kind `'frame'`, as `load`'s is (compiled, it had stopped the program) |
 | `select[frame, cols]` | Pick columns: `select[df, ['name', 'age']]` |
 | `filter[frame, mask]` | Keep rows where mask is true: `filter[df, df.age gt 50]` |
 | `sort[frame, col]` | Sort ascending: `sort[df, 'age']`. Descending: `sort[df, 'age', desc = true]` |
@@ -2691,7 +2707,7 @@ Both modes serve pages. `crow run file.co` compiles and serves; `crow run -i fil
 
 #### Client (`use web.client`)
 
-An outbound HTTP client (`get`, `post`, …) is on the roadmap and not yet part of the language. Today a page pulls remote data with `fetch[url]` / `poll[url, seconds]` (reactive, see above), and scripts shell out (`shell['curl …']`).
+A program reads a URL with `read` and `load` (Files, URLs and S3), and a page pulls remote data with `fetch[url]` / `poll[url, seconds]` (reactive, see above). An outbound client for other methods, headers or a body (`post`, …) is on the roadmap and not yet part of the language.
 
 
 ### db

@@ -47,6 +47,48 @@ df = load['trades.csv']   --- error: 'load' is ambiguous — provided by
                           --- math.load[...]
 ```
 
+## Other Formats, Other Places
+
+A file's extension names its format. `save` writes a frame as CSV, as
+JSON records or as Parquet — the columnar format data tools share — and
+`load` reads each one back:
+
+```crow
+use frame
+
+prices = frame.new[]
+prices = with[prices, 'symbol', ['AAPL', 'MSFT']]
+prices = with[prices, 'price', [191.5, 415.2]]
+save[prices, 'ch10_prices.parquet']
+back = frame.load['ch10_prices.parquet']
+log[back.columns]
+log[back.symbol]
+save[prices, 'ch10_prices.json']
+log[read['ch10_prices.json']]
+rm['ch10_prices.parquet']
+rm['ch10_prices.json']
+```
+
+```text
+['symbol', 'price']
+['AAPL', 'MSFT']
+[{"price":191.5,"symbol":"AAPL"},{"price":415.2,"symbol":"MSFT"}]
+```
+
+A path can also be a URL or an S3 object — wherever a program reads a
+file, it reads those the same way. A JSON API's answer that holds its rows
+in one list (`{"status": "OK", "results": [...]}`) loads as those rows, and
+an S3 bucket is reached with the credentials in the environment
+(`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`):
+
+```crow,norun
+use frame
+
+day = frame.load['https://data.example.com/aapl/2026-07-14.parquet']
+archive = frame.load['s3://market-archive/2026/07/14/trades.csv']
+save[day, 's3://reports/aapl-2026-07-14.parquet']
+```
+
 ## Filtering and Sorting
 
 Column access (`trades.qty`) plus a comparison gives a *mask*, and

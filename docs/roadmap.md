@@ -227,7 +227,7 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. All three backen
 - [ ] **Seed packages** (Sept 30 2026, Vijay: models, market data, data connectors), in `packages/`, each held to both modes by `crow test --packages`:
   - [x] `models`: least squares, logistic regression, k-means, a decision tree, a one-hidden-layer network.
   - [x] `market`: the US equity sessions and the NYSE calendar (holidays, early closes, `phase`), bars from trades and from finer bars.
-  - [ ] data connectors: Parquet, S3 and HTTP JSON sources for `load`.
+  - [x] data connectors (built into the language, not a package): every reader takes a URL or an `s3://` object as it takes a file, and `load`/`save` read and write CSV, JSON records and Parquet by the extension (spec, Files, URLs and S3).
 - [ ] **Notebook integration**: Jupyter kernel or similar interactive environment for exploratory data science.
 - [x] **Editor support**: `crow lsp` + VS Code extension (Neovim/Helix/Zed via native LSP clients) — see `crow-lsp.md`.
 

@@ -192,3 +192,6 @@ need to read it, but it is there.
 |---|---|
 | `CROW_BUILD_PROFILE=dev` | Compile checked programs without optimisation (the verification harnesses set it). |
 | `CROW_NO_DESCRIBE=1` | Do not ask the program's databases what each query returns at compile time; frame cells then read as text in the compiled program. |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | The credentials an `s3://` path is read and written with (without them an object is read unsigned, as a public bucket's is). |
+| `AWS_REGION` | The region of an `s3://` path's bucket (`us-east-1` when unset). |
+| `AWS_ENDPOINT_URL` | An S3-compatible store (MinIO, R2) an `s3://` path is reached at, by path. |

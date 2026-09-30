@@ -28,6 +28,7 @@ pub mod pool;
 pub mod rng;
 pub mod signal;
 pub mod signin;
+pub mod sources;
 pub mod sparse;
 pub mod special;
 pub mod sql;
