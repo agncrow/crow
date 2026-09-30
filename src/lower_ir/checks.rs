@@ -345,7 +345,18 @@ impl<'a> Lowerer<'a> {
                 prefix, name
             ));
         } else {
-            self.refuse(format!("undefined variable '{}'", name));
+            // the names in view: this body's, and the program's where a
+            // plain function sees them
+            let plain_fn = matches!(self.at, Where::In(_)) && !self.v.reactive;
+            let hidden = plain_fn || (self.at == Where::Test && self.v.attached_test);
+            let mut seen: Vec<String> = self.scopes.iter().skip(1).flat_map(|s| s.iter().cloned()).collect();
+            seen.extend(self.v.stored.iter().cloned());
+            if !hidden {
+                seen.extend(self.scopes[0].iter().cloned());
+                seen.extend(self.v.module_vars.iter().cloned());
+            }
+            let near = self.nearest(name, seen.iter().map(String::as_str));
+            self.refuse(format!("undefined variable '{}'{}", name, near));
         }
     }
 
@@ -936,7 +947,34 @@ impl<'a> Lowerer<'a> {
             return;
         }
 
-        self.refuse(format!("undefined function '{}'", name));
+        // a stdlib module's function the program does not import says which;
+        // a name near one in view says that one
+        match crate::modules::ModuleRegistry::with_stdlib().module_name_of(name) {
+            Some(m) => self.refuse(format!("{}[] is {}'s: add `use {}`", name, m, m)),
+            None => {
+                let near = self.nearest(name, BUILTINS.iter().copied().chain(self.v.used.iter().map(String::as_str)).chain(self.ctx.functions.keys().map(String::as_str)));
+                self.refuse(format!("undefined function '{}'{}", name, near));
+            }
+        }
+    }
+
+    /// ` — did you mean 'len'?` for the name among `candidates` nearest the
+    /// one written, when it is near enough to be a slip (one edit in a name
+    /// of up to five characters, two in a longer one; none for a name of one
+    /// or two); empty otherwise.
+    fn nearest<'n>(&self, name: &str, candidates: impl Iterator<Item = &'n str>) -> String {
+        let limit = match name.chars().count() {
+            0..=2 => return String::new(),
+            3..=5 => 1,
+            _ => 2,
+        };
+        candidates
+            .filter(|c| *c != name && !c.starts_with("__"))
+            .map(|c| (crate::db_check::catalog::levenshtein(name, c), c))
+            .filter(|(d, _)| *d <= limit)
+            .min()
+            .map(|(_, c)| format!(" — did you mean '{}'?", c))
+            .unwrap_or_default()
     }
 }
 

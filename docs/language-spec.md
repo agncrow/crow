@@ -1142,6 +1142,8 @@ line 3: undefined variable 'z'
 runtime error: line 7: assertion failed: expected positive
 ```
 
+An undefined name one slip from a name in view says which — `undefined function 'lenn' — did you mean 'len'?`, `undefined variable 'totl' — did you mean 'total'?` (one edit in a name of up to five characters, two in a longer one) — and a function a module provides that the program does not import says what to import: ``mean[] is math's: add `use math` ``. The language server offers each as a quick fix.
+
 
 ### When a Program Stops
 

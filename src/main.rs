@@ -4667,6 +4667,20 @@ fn expand_module_imports(
     source_dir: &std::path::Path,
     visited: &mut std::collections::HashSet<String>,
 ) -> Vec<ast::Stmt> {
+    expand_module_imports_checked(stmts, source_dir, visited).unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        process::exit(1);
+    })
+}
+
+/// The program with its imports inlined, or the first error a part it
+/// imports has when validated alone — for a caller that goes on after it
+/// (the language server, which had exited on it).
+pub(crate) fn expand_module_imports_checked(
+    stmts: &[ast::Stmt],
+    source_dir: &std::path::Path,
+    visited: &mut std::collections::HashSet<String>,
+) -> Result<Vec<ast::Stmt>, String> {
     // the entry's own imports and their lines: a part's, hoisted ahead of
     // the entry, carries no line of the entry's
     let use_key = |path: &str, alias: &Option<String>| format!("{}|{}", path, alias.clone().unwrap_or_default());
@@ -4717,10 +4731,7 @@ fn expand_module_imports(
     // by what it imports, or a handler nothing in the part wires, is
     // refused whichever file is the entry
     for path in ex.done.keys() {
-        if let Err(e) = validate_part_alone(path) {
-            eprintln!("{}", e);
-            process::exit(1);
-        }
+        validate_part_alone(path)?;
     }
     // a part's function is typed from its tests' calls whichever file is
     // the entry, though the tests are the part's alone (set last, after
@@ -4744,7 +4755,7 @@ fn expand_module_imports(
     let is_ui = |s: &ast::Stmt| matches!(s, ast::Stmt::Use { path, .. } if path == "ui" || path == "web.ui");
     let plain = !stmts.iter().any(is_ui) && out.iter().any(is_ui);
     PLAIN_ENTRY.with(|p| p.set(plain));
-    out
+    Ok(out)
 }
 
 /// Where the program being built keeps what its databases answered: the
@@ -5108,8 +5119,11 @@ thread_local! {
     static PLAIN_ENTRY: std::cell::Cell<bool> = std::cell::Cell::new(false);
     /// The project's record of what its databases answered (`.crow/schema`)
     static SCHEMA_DIR: std::cell::RefCell<Option<std::path::PathBuf>> = std::cell::RefCell::new(None);
-    static VALIDATED_PARTS: std::cell::RefCell<std::collections::HashSet<std::path::PathBuf>> =
-        std::cell::RefCell::new(std::collections::HashSet::new());
+    /// Each part validated alone, by its file: the fingerprint of its text
+    /// and its imports' when it was, and what the validation found. A part
+    /// is validated again only once one of them changes (a language
+    /// server's parts change under it; a run's never do).
+    static VALIDATED_PARTS: std::cell::RefCell<PartValidations> = std::cell::RefCell::new(std::collections::HashMap::new());
     /// module prefix (`sim_session_`) → the part's project-relative file
     static EXPANSION_PARTS: std::cell::RefCell<std::collections::BTreeMap<String, String>> =
         std::cell::RefCell::new(std::collections::BTreeMap::new());
@@ -5129,15 +5143,58 @@ thread_local! {
 /// A function's name and the types a test calls it with, call by call.
 type TestedCalls = Vec<(String, Vec<type_infer::CrowType>)>;
 
+/// Each part validated alone: its fingerprint then, and what it found.
+type PartValidations = std::collections::HashMap<std::path::PathBuf, (u64, Result<(), String>)>;
+
+/// A part's fingerprint: its text and the texts of the parts it imports,
+/// transitively — what its validation depends on.
+fn part_fingerprint(path: &std::path::Path) -> u64 {
+    use std::hash::{Hash, Hasher};
+    fn walk(path: &std::path::Path, root: &std::path::Path, seen: &mut std::collections::BTreeSet<std::path::PathBuf>, h: &mut std::collections::hash_map::DefaultHasher) {
+        if !seen.insert(path.to_path_buf()) {
+            return;
+        }
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        path.hash(h);
+        text.hash(h);
+        for line in text.lines() {
+            let Some(rest) = line.trim_start().strip_prefix("use ") else { continue };
+            for used in rest.split(',') {
+                let name = used.split_whitespace().next().unwrap_or("");
+                let file = root.join(format!("{}.co", name.replace('.', "/")));
+                if file.exists() {
+                    walk(&file, root, seen, h);
+                }
+            }
+        }
+    }
+    let dir = path.parent().unwrap_or(std::path::Path::new("."));
+    let root = project_root(dir);
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    walk(path, &root, &mut std::collections::BTreeSet::new(), &mut h);
+    h.finish()
+}
+
 /// Validate one part as the entry of its own program: parsed, its imports
 /// inlined, lowered and passed through the same gate as the whole app.
-/// Each part is validated once per process, and reports under its
-/// project-relative path.
+/// A part is validated once per fingerprint (`VALIDATED_PARTS`), and
+/// reports under its project-relative path.
 fn validate_part_alone(path: &std::path::Path) -> Result<(), String> {
-    let first = VALIDATED_PARTS.with(|v| v.borrow_mut().insert(path.to_path_buf()));
-    if !first {
-        return Ok(());
+    let print = part_fingerprint(path);
+    if let Some((seen, found)) = VALIDATED_PARTS.with(|v| v.borrow().get(path).cloned())
+        && seen == print
+    {
+        return found;
     }
+    // (an import that reaches back to this part while it is validated
+    // finds it good, as it had)
+    VALIDATED_PARTS.with(|v| v.borrow_mut().insert(path.to_path_buf(), (print, Ok(()))));
+    let found = validate_part_alone_now(path);
+    VALIDATED_PARTS.with(|v| v.borrow_mut().insert(path.to_path_buf(), (print, found.clone())));
+    found
+}
+
+fn validate_part_alone_now(path: &std::path::Path) -> Result<(), String> {
     let dir = path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
     let root = project_root(&dir);
     let root = std::fs::canonicalize(&root).unwrap_or_else(|_| root.to_path_buf());
@@ -5148,7 +5205,7 @@ fn validate_part_alone(path: &std::path::Path) -> Result<(), String> {
     let source = std::fs::read_to_string(path).map_err(|e| format!("{}: {}", rel, e))?;
     let stmts = build(&source).map_err(|e| format!("{}: {}", rel, e))?;
     let mut visited = std::collections::HashSet::new();
-    let expanded = expand_module_imports(&stmts, &dir, &mut visited);
+    let expanded = expand_module_imports_checked(&stmts, &dir, &mut visited)?;
     let lowered = lower::lower_program(&expanded).map_err(|e| format!("{}: error: {}", rel, e))?;
     let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
     let ctx = infer_and_validate(&lowered, describing()).map_err(|e| {

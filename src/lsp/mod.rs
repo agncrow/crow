@@ -26,6 +26,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 pub fn run_server() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
+    // the server answers from the program's text and what its databases
+    // answered last (`.crow/schema`), never a database asked on every
+    // keystroke: a part validated alone had asked one
+    // (Rust 2024: the environment is process-global; no thread runs yet)
+    unsafe { std::env::set_var("CROW_NO_DESCRIBE", "1") };
     let (connection, io_threads) = Connection::stdio();
     let capabilities = ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
@@ -39,6 +44,8 @@ pub fn run_server() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
+        code_action_provider: Some(lsp_types::CodeActionProviderCapability::Simple(true)),
+        rename_provider: Some(OneOf::Right(lsp_types::RenameOptions { prepare_provider: Some(true), work_done_progress_options: Default::default() })),
         ..Default::default()
     };
     let init_params = connection.initialize(serde_json::to_value(capabilities)?)?;
@@ -79,7 +86,24 @@ fn main_loop(
         db_url,
     };
 
-    for msg in &connection.receiver {
+    // messages waiting behind a document's change, read ahead while a later
+    // change to the same document was looked for
+    let mut waiting: std::collections::VecDeque<Message> = std::collections::VecDeque::new();
+    loop {
+        let msg = match waiting.pop_front() {
+            Some(m) => m,
+            None => match connection.receiver.recv() {
+                Ok(m) => m,
+                Err(_) => break,
+            },
+        };
+        // a change another change to the same document has overtaken is not
+        // analysed: typing into a file that takes seconds to analyse had
+        // queued an analysis per keystroke
+        let msg = match msg {
+            Message::Notification(not) => Message::Notification(latest_change(connection, not, &mut waiting)),
+            other => other,
+        };
         match msg {
             Message::Request(req) => {
                 if connection.handle_shutdown(&req)? {
@@ -106,6 +130,31 @@ fn main_loop(
         }
     }
     Ok(())
+}
+
+/// A document's open or change, or the latest change to it already waiting
+/// behind it; every other message waiting is kept, in order.
+fn latest_change(connection: &Connection, not: ServerNotification, waiting: &mut std::collections::VecDeque<Message>) -> ServerNotification {
+    let uri_of = |n: &ServerNotification| -> Option<String> {
+        if n.method != DidChangeTextDocument::METHOD && n.method != DidOpenTextDocument::METHOD {
+            return None;
+        }
+        n.params.get("textDocument")?.get("uri")?.as_str().map(str::to_string)
+    };
+    let Some(uri) = uri_of(&not) else { return not };
+    let mut latest = not;
+    while let Ok(next) = connection.receiver.try_recv() {
+        match next {
+            Message::Notification(n) if n.method == DidChangeTextDocument::METHOD && uri_of(&n).as_deref() == Some(uri.as_str()) => latest = n,
+            other => {
+                waiting.push_back(other);
+                // (what follows a request is answered after it, from this
+                // document's analysis)
+                break;
+            }
+        }
+    }
+    latest
 }
 
 /// didOpen/didChange → (uri, Some(full text)); didClose → (uri, None).
@@ -245,6 +294,40 @@ fn handle_request(state: &State, req: lsp_server::Request) -> Response {
                 .map(DocumentSymbolResponse::Nested)
                 .unwrap_or(DocumentSymbolResponse::Nested(Vec::new()));
             Response::new_ok(req.id, syms)
+        }
+        lsp_types::request::CodeActionRequest::METHOD => {
+            let p: lsp_types::CodeActionParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return Response::new_err(req.id, -32602, e.to_string()),
+            };
+            let uri = p.text_document.uri;
+            let actions = state.docs.get(uri.as_str()).map(|a| features::code_actions(a, &uri, &p.context.diagnostics)).unwrap_or_default();
+            Response::new_ok(req.id, actions)
+        }
+        lsp_types::request::PrepareRenameRequest::METHOD => {
+            let p: lsp_types::TextDocumentPositionParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return Response::new_err(req.id, -32602, e.to_string()),
+            };
+            let answer = state.docs.get(p.text_document.uri.as_str()).and_then(|a| features::prepare_rename(a, p.position));
+            match answer {
+                Some(Ok(range)) => Response::new_ok(req.id, lsp_types::PrepareRenameResponse::Range(range)),
+                Some(Err(why)) => Response::new_err(req.id, -32803, why), // RequestFailed
+                None => Response::new_ok(req.id, serde_json::Value::Null),
+            }
+        }
+        lsp_types::request::Rename::METHOD => {
+            let p: lsp_types::RenameParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return Response::new_err(req.id, -32602, e.to_string()),
+            };
+            let uri = p.text_document_position.text_document.uri;
+            let pos = p.text_document_position.position;
+            match state.docs.get(uri.as_str()).map(|a| features::rename(a, pos, &p.new_name, &uri)) {
+                Some(Ok(edit)) => Response::new_ok(req.id, edit),
+                Some(Err(why)) => Response::new_err(req.id, -32803, why),
+                None => Response::new_ok(req.id, serde_json::Value::Null),
+            }
         }
         _ => Response::new_err(
             req.id,

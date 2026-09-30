@@ -41,7 +41,7 @@ Vijay (Sept 30 2026): no 1.0 until the language and its modules are bug-free and
 - [ ] **Fixture recording** — an app's tests run without live databases.
 - [x] **S11** — the IR and the Rust say `x` where they said `x__s2`: the lowering's last step gives each block's variable the name the program wrote (the passes before it still name a later binding apart, which cost nothing to keep). Found on the way: a parameter the body changes had not built compiled.
 - [x] **Every call names its row** — the calls on parsed JSON values (a parsed value is JSON in both modes), and the four whose arguments come from outside Crow (`grad`'s functions, the layout engine's nodes). Left by name: a call on a value nothing types, one in finch's parts lowered alone.
-- [ ] **The language server** — sub-line ranges, rename, code actions, incremental analysis.
+- [x] **The language server** — ranges under the name a diagnostic names, rename (scoped, and across the project's files for a part's name), quick fixes (a slip's nearest name, a missing import — both said by the refusals themselves now), and parts validated once per text with overtaken changes skipped. Found on the way: a part with an error of its own had made `crow lsp` exit.
 - [ ] **The ecosystem** — P7, below.
 
 Decided and kept: `connect` stops rather than failing as a value, a function has one copy whatever the shapes it is handed, and `stream[feed, a, …]` hands its feed `put`.

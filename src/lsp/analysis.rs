@@ -83,11 +83,24 @@ pub fn analyze(
         }
     }
 
-    // Module expansion (missing modules are skipped, never fatal).
+    // Module expansion (missing modules are skipped, never fatal). A part
+    // that fails validated alone is a diagnostic at the line that imports
+    // it — or the first import, for one a part imports — and the document
+    // is analysed as it stands (the server had exited on it).
+    let mut parts_good = true;
     let stmts = match doc_dir {
         Some(dir) => {
             let mut visited = std::collections::HashSet::new();
-            crate::expand_module_imports(&stmts, dir, &mut visited)
+            match crate::expand_module_imports_checked(&stmts, dir, &mut visited) {
+                Ok(expanded) => expanded,
+                Err(e) => {
+                    for entry in e.lines().filter(|l| !l.trim().is_empty()) {
+                        diagnostics.push(diag(import_line(&stmts, entry), 0, text, entry.to_string(), DiagnosticSeverity::ERROR));
+                    }
+                    parts_good = false;
+                    stmts
+                }
+            }
         }
         None => stmts,
     };
@@ -107,8 +120,9 @@ pub fn analyze(
     ctx.infer_program(&stmts);
 
     // the lowering refuses what is not a program, one "line N: message"
-    // entry per error
-    if let Err(refusal) = crate::lower_ir::check(&stmts, &ctx) {
+    // entry per error (not while a part it imports fails: its names would
+    // all read as undefined)
+    if parts_good && let Err(refusal) = crate::lower_ir::check(&stmts, &ctx) {
         let e = refusal.message();
         for entry in e.lines().filter(|l| !l.trim().is_empty()) {
             let (line, _) = extract_line_col(entry);
@@ -160,9 +174,57 @@ pub fn analyze(
     }
 }
 
+/// The line of the import a part's error belongs to: the `use` naming the
+/// part's file (`sim/clock.co: line 3: …` is `use sim.clock`), else the
+/// document's first import.
+fn import_line(stmts: &[crate::ast::Stmt], error: &str) -> usize {
+    let file = error.split(": ").next().unwrap_or("");
+    let mut line = 1usize;
+    let mut first = None;
+    for s in stmts {
+        match s {
+            crate::ast::Stmt::Line(n) => line = *n,
+            crate::ast::Stmt::Use { path, .. } => {
+                if file == format!("{}.co", path.replace('.', "/")) {
+                    return line;
+                }
+                first.get_or_insert(line);
+            }
+            _ => {}
+        }
+    }
+    first.unwrap_or(1)
+}
+
+/// Where on its line a message points: the first name it quotes
+/// (`undefined function 'lenn'`) or calls (`msgpack[] is web's`) that the
+/// line holds as a whole word, as character columns.
+fn narrowed(line: &str, message: &str) -> Option<(u32, u32)> {
+    let mut names: Vec<&str> = message.split('\'').skip(1).step_by(2).collect();
+    if let Some(call) = message.split("[]").next().filter(|c| message.contains("[]") && c.chars().all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.')) {
+        names.push(call);
+    }
+    let chars: Vec<char> = line.chars().collect();
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    for name in names.into_iter().filter(|n| !n.is_empty() && n.chars().all(|c| word(c) || c == '.')) {
+        let want: Vec<char> = name.chars().collect();
+        let mut i = 0;
+        while i + want.len() <= chars.len() {
+            let at_word = chars[i..i + want.len()] == want[..]
+                && (i == 0 || !word(chars[i - 1]))
+                && chars.get(i + want.len()).is_none_or(|c| !word(*c));
+            if at_word {
+                return Some((i as u32, (i + want.len()) as u32));
+            }
+            i += 1;
+        }
+    }
+    None
+}
+
 /// Build a diagnostic. Lines are 1-based on the Crow side, 0-based in LSP.
-/// Ranges are line-granular in v1: start at `col` (0-based) and run to the
-/// end of the line's text.
+/// The range is the name the message points at on its line, else the
+/// line's text from `col` (0-based), past its indentation, to its end.
 fn diag(
     line_1based: usize,
     col_0based: u32,
@@ -171,20 +233,19 @@ fn diag(
     severity: DiagnosticSeverity,
 ) -> Diagnostic {
     let line0 = line_1based.saturating_sub(1) as u32;
-    let line_len = text
-        .lines()
-        .nth(line0 as usize)
-        .map(|l| l.chars().count() as u32)
-        .unwrap_or(0);
+    let line_text = text.lines().nth(line0 as usize).unwrap_or("");
+    let line_len = line_text.chars().count() as u32;
+    let indent = line_text.chars().take_while(|c| c.is_whitespace()).count() as u32;
+    let (start, end) = narrowed(line_text, &message).unwrap_or((col_0based.max(indent).min(line_len), line_len.max(col_0based + 1)));
     Diagnostic {
         range: Range {
             start: Position {
                 line: line0,
-                character: col_0based.min(line_len),
+                character: start,
             },
             end: Position {
                 line: line0,
-                character: line_len.max(col_0based + 1),
+                character: end,
             },
         },
         severity: Some(severity),
@@ -313,5 +374,37 @@ mod tests {
         let a = analyze(src, None, None, "t.co");
         // y should still be known to inference despite line 1 being broken.
         assert!(a.ctx.vars.contains_key("y"), "vars: {:?}", a.ctx.vars.keys());
+    }
+
+    /// A part the document imports that fails validated alone is a
+    /// diagnostic at the line that imports it, and the analysis goes on:
+    /// the server had exited on it (process::exit in the expansion)
+    #[test]
+    fn a_failing_part_is_a_diagnostic_not_an_exit() {
+        let dir = std::env::temp_dir().join(format!("crow_lsp_failing_part_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'p'\n").unwrap();
+        std::fs::write(dir.join("lib/part.co"), "fn helper[x]\n    return nope[x]\n").unwrap();
+        let src = "x = 1\nuse lib.part\nlog[part.helper[1]]\n";
+        let a = analyze(src, Some(&dir), None, "main.co");
+        assert_eq!(a.diagnostics.len(), 1, "{:?}", a.diagnostics);
+        assert_eq!(a.diagnostics[0].range.start.line, 1);
+        assert!(a.diagnostics[0].message.contains("lib/part.co: line 2: undefined function 'nope'"), "{:?}", a.diagnostics);
+        // mended, the part is validated again (its text changed) and good
+        std::fs::write(dir.join("lib/part.co"), "fn helper[x]\n    return x + 1\n").unwrap();
+        assert!(analyze(src, Some(&dir), None, "main.co").diagnostics.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A diagnostic points at the name its message names on its line; one
+    /// that names none spans the line's text past its indentation
+    #[test]
+    fn a_diagnostic_points_at_the_name() {
+        let a = analyze("x = [1]\ny = lenn[x]\nfn f[t]\n    return t + zzz\n", None, None, "t.co");
+        let at = |line: u32| a.diagnostics.iter().find(|d| d.range.start.line == line).map(|d| (d.range.start.character, d.range.end.character));
+        assert_eq!(at(1), Some((4, 8)), "{:?}", a.diagnostics);
+        assert_eq!(at(3), Some((15, 18)), "{:?}", a.diagnostics);
+        assert_eq!(narrowed("    s = x + y", "no name here"), None);
     }
 }
