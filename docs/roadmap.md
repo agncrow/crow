@@ -228,7 +228,7 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. All three backen
   - [x] `models`: least squares, logistic regression, k-means, a decision tree, a one-hidden-layer network.
   - [x] `market`: the US equity sessions and the NYSE calendar (holidays, early closes, `phase`), bars from trades and from finer bars.
   - [x] data connectors (built into the language, not a package): every reader takes a URL or an `s3://` object as it takes a file, and `load`/`save` read and write CSV, JSON records and Parquet by the extension (spec, Files, URLs and S3).
-- [ ] **Notebook integration**: Jupyter kernel or similar interactive environment for exploratory data science.
+- [x] **Notebook integration** (Sept 30 2026, Vijay: a Jupyter kernel): `crow kernel install`; a notebook is one interpreter session, a cell's logs stream, its value is its result (a frame as a table), an interrupt stops a running cell (spec, Notebooks).
 - [x] **Editor support**: `crow lsp` + VS Code extension (Neovim/Helix/Zed via native LSP clients) — see `crow-lsp.md`.
 
 ## Overall Rating (current)

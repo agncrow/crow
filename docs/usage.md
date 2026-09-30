@@ -45,6 +45,7 @@ crow run -i hello.co        # interpret (instant start)
 | `crow stop` | Stop the running app — by pidfile, then by the project binary's name. `crow run` on a busy port tells you to use it. |
 | `crow launch N file.co` | Build, then run on N distributed processes (`nodes[N]` programs). |
 | `crow` | The REPL: variables and functions persist between lines, expression results print automatically. |
+| `crow kernel install` | Make Crow a Jupyter kernel: notebooks, JupyterLab, VS Code's notebooks and `jupyter console` then offer *Crow*. Each notebook is one REPL session; a cell's logs stream under it, its last value is its result (a frame as a table), and interrupting stops a running cell. |
 | `crow book [--port N]` | Render the book with `docs/book/site.co` and serve it with every code block runnable in place: ▶ Run interprets, ⚙ Compile builds the native binary, ✓ Test runs the block's test blocks, every block is editable in place with line numbers (Tab indents, Ctrl/Cmd-Enter runs, ↺ Reset restores the book's text), ■ Stop kills a served app. A run of the unedited example reports whether its output matches the book. Builds the HTML with `mdbook` if needed. Default port 3008. |
 
 ### The book is a Crow program

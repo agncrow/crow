@@ -25,7 +25,14 @@ crow_db = { version = "0.1.0", path = "crow_db", features = ["postgres", "sqlite
 # the interpreter answers every response the compiled program does:
 # msgpack and arrow among them (spec, Core (Server))
 crow_web = { version = "0.1.0", path = "crow_web", default-features = false, features = ["live", "http", "mail", "msgpack", "arrow_ipc"] }
-tokio = { version = "1", features = ["rt-multi-thread"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+# `crow kernel`: Jupyter's protocol over ZeroMQ (in Rust, no libzmq to
+# install), its messages signed with HMAC-SHA256, a cell's output read from
+# the process's own stdout and stderr
+zeromq = { version = "0.6", default-features = false, features = ["tokio-runtime", "tcp-transport"] }
+hmac = "0.12"
+bytes = "1"
+libc = "0.2"
 tungstenite = "0.28.0"
 sqlparser = "0.62.0"
 lsp-server = "0.10.0"

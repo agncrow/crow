@@ -41,7 +41,14 @@ pub fn mode() -> Mode {
 
 /// What the checks found, one line each: the body, the line, what
 /// disagrees. Empty for a program whose parts agree.
+#[cfg(test)]
 pub fn verify(program: &Program) -> Vec<String> {
+    verify_in(program, &HashMap::new())
+}
+
+/// `verify`, for a session's fragment: the names earlier fragments bound
+/// are in scope for its main, with their types.
+pub fn verify_in(program: &Program, known: &HashMap<String, Ty>) -> Vec<String> {
     let mut v = Verifier::new(program);
     for part in &program.parts {
         for f in &part.facts {
@@ -93,7 +100,7 @@ pub fn verify(program: &Program) -> Vec<String> {
         v.kind = None;
         v.testing = false;
         v.ret = None;
-        v.scopes = vec![HashMap::new()];
+        v.scopes = vec![known.clone()];
         v.block(&part.main);
     }
     v.out

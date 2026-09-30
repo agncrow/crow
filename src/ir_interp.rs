@@ -294,11 +294,17 @@ impl Session {
         Session { it: IrInterp::new(&ctx.registry, "repl"), ctx }
     }
 
+    /// A fragment fed after `flag` is set stops at its next loop turn
+    /// (a notebook's interrupt), as a served session's cancelled work does.
+    pub fn cancel_with(&mut self, flag: Arc<AtomicBool>) {
+        self.it.cancel = Some(flag);
+    }
+
     pub fn feed(&mut self, stmts: &[crate::ast::Stmt]) -> Result<Option<CrowValue>, String> {
         let stmts = crate::lower::lower_program(stmts)?;
         self.ctx.infer_program(&stmts);
         let known: HashSet<String> = self.it.frames[0].scopes[0].keys().cloned().collect();
-        let program = crate::lower_ir::lower_with_known(&stmts, &mut self.ctx, "repl", &known)?;
+        let program = crate::lower_ir::lower_fragment(&stmts, &mut self.ctx, "repl", &known)?;
         // a `use` in the fragment loaded its module into the context's registry
         self.it.registry = self.ctx.registry.clone();
         self.it.load(&program);
@@ -3115,5 +3121,27 @@ mod tests {
         assert!(matches!(r.var("n").unwrap().value, Value::Float(x) if x == 6.5));
         let far = run_script(&parse("struct Bars [c]\nb = Bars[[4.0, 5.0]]\nx = b.c[2]\n"), "t");
         assert!(far.is_err_and(|e| e.contains("index 2 is out of range for an array of 2 items")));
+    }
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    fn feed(s: &mut Session, src: &str) -> Result<Option<String>, String> {
+        s.feed(&crate::build(src)?).map(|v| v.map(|v| format!("{}", v)))
+    }
+
+    /// A notebook's cells are whole fragments: a name one cell defines
+    /// among several statements is the next cell's, its type with it
+    #[test]
+    fn a_cells_names_are_the_next_cells() {
+        let mut s = Session::new();
+        assert_eq!(feed(&mut s, "use frame, math\nprices = [187.5, 402.25, 121.0]\nlog['mean: `mean[tensor[prices]]`']\nlen[prices]"), Ok(Some("3".to_string())));
+        // (a loop's last value is its log's `done`, which shows nothing)
+        assert_eq!(feed(&mut s, "for p in prices\n    log[p * 2.0]"), Ok(Some("done".to_string())));
+        assert_eq!(feed(&mut s, "df = with[frame.new[], 'price', prices]\nlen[df]"), Ok(Some("3".to_string())));
+        assert_eq!(feed(&mut s, "df.price[0]"), Ok(Some("187.5".to_string())));
+        assert!(feed(&mut s, "df").map(|v| v.unwrap_or_default().contains("price")).unwrap_or(false));
     }
 }

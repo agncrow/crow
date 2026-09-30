@@ -3735,6 +3735,8 @@ crow fmt --check            --- check if formatting needed (exit 1 if not)
 crow fmt --fix-interpolation  --- migrate {expr} strings to `expr`
 crow fmt --fix-views        --- migrate ui-building fns to view declarations
 crow lsp                    --- language server over stdio (see crow-lsp.md)
+crow kernel install         --- make Crow a Jupyter kernel (notebooks, JupyterLab, VS Code, jupyter console)
+crow kernel <connection>    --- the kernel itself, as Jupyter starts it
 crow launch 4 file.co     --- build + run on 4 distributed processes
 ```
 
@@ -3770,6 +3772,10 @@ Running `crow` with no arguments starts an interactive REPL. Variables and funct
 ```
 
 Multi-line blocks (functions, if, for, while, struct) are entered by typing the first line, then indenting the body. An empty line or a non-indented line ends the block.
+
+### Notebooks
+
+`crow kernel install` makes Crow a Jupyter kernel: it writes the kernel's spec where Jupyter looks (`jupyter --data-dir`'s `kernels/crow`), so JupyterLab, the notebook, VS Code's notebooks and `jupyter console` offer *Crow*. A notebook is one interpreter session, the REPL's: a cell sees what the cells before it defined, what it logs appears under it as it runs, and its last expression's value is its result — a frame shown as a table of its first 50 rows. A cell that fails shows why, and the session goes on. Interrupting the kernel stops the running cell at its next loop turn, and the session keeps what it had. `crow kernel <connection-file>` is the kernel itself, which Jupyter starts with the file naming its sockets and the key each message is signed with (the Jupyter messaging protocol, 5.3). A cell is a fragment as a REPL line is, and a name it defines outlives it however many statements the cell has (a list a cell defined and read had reached the next cell as `done`).
 
 
 ### Package Manager

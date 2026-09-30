@@ -23,6 +23,7 @@ mod db_check;
 mod derive;
 mod dev;
 mod lsp;
+mod kernel;
 mod lexer;
 mod lower;
 mod parallel;
@@ -181,6 +182,10 @@ fn crow_main() {
                 return;
             }
             cmd_check(&filename, verbose, db_url, strict, accept_all);
+        }
+        // Crow in Jupyter: `crow kernel install`, and the kernel Jupyter starts
+        "kernel" => {
+            kernel::cmd_kernel(&args);
         }
         "lsp" => {
             if let Err(e) = lsp::run_server() {
@@ -374,6 +379,7 @@ fn print_usage() {
     eprintln!("  crow fix file.co --hazard N [--option M]   apply a fix from the check report");
     eprintln!("  crow db diff [file.co] the SQL that makes each database hold the tables the program declares (a migration draft)");
     eprintln!("  crow lsp               language server over stdio (see docs/crow-lsp.md)");
+    eprintln!("  crow kernel install    make Crow a Jupyter kernel (notebooks, JupyterLab, VS Code)");
     eprintln!("  crow fmt               format project (uses crowfile)");
     eprintln!("  crow fmt file.co     format a specific file");
     eprintln!("  crow fmt --check       check formatting without changing files");

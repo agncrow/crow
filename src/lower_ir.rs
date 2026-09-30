@@ -22,13 +22,17 @@ pub(crate) use checks::{BUILTINS, CORE_RESERVED, UI_RESERVED, WEB_EXTRA_FUNCTION
 
 /// Lower a whole (expanded, lowered, inferred) program.
 pub fn lower(stmts: &[S], ctx: &mut TypeContext, part_name: &str) -> Result<Program, String> {
-    lower_with_known(stmts, ctx, part_name, &HashSet::new())
+    lower_checked(stmts, ctx, part_name, &HashSet::new()).map_err(|r| r.message())
 }
 
-/// Lowering with names already bound by an earlier fragment (the REPL's
-/// session): a read of one is a local, an assignment to one is a `set`.
-pub fn lower_with_known(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &HashSet<String>) -> Result<Program, String> {
-    lower_checked(stmts, ctx, part_name, known).map_err(|r| r.message())
+/// A fragment of a session — the REPL's, a notebook's: a name an earlier
+/// fragment bound is known (a read of one is a local, an assignment a
+/// `set`), and the fragment's own top-level names outlive it, so none is
+/// moved at its last read here, since a later fragment may read it. (A
+/// notebook cell that defined a list and read it lost the list: the next
+/// cell read `done`.)
+pub fn lower_fragment(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &HashSet<String>) -> Result<Program, String> {
+    lower_checked_as(stmts, ctx, part_name, known, true).map_err(|r| r.message())
 }
 
 /// Why a program was not lowered.
@@ -69,8 +73,13 @@ pub fn check(stmts: &[S], ctx: &TypeContext) -> Result<(), Refusal> {
 }
 
 fn lower_checked(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &HashSet<String>) -> Result<Program, Refusal> {
+    lower_checked_as(stmts, ctx, part_name, known, false)
+}
+
+fn lower_checked_as(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &HashSet<String>, fragment: bool) -> Result<Program, Refusal> {
     let in_ui = stmts.iter().any(|s| matches!(s, S::Use { path, .. } if path == "ui" || path == "web.ui"));
     let mut l = Lowerer::new(ctx, in_ui);
+    l.fragment = fragment;
     l.scopes[0].extend(known.iter().cloned());
     l.prescan(stmts, known);
     let part = l.lower_part(stmts, part_name);
@@ -91,12 +100,12 @@ fn lower_checked(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &Ha
     match crate::ir_verify::mode() {
         crate::ir_verify::Mode::Off => {}
         crate::ir_verify::Mode::Report => {
-            for f in crate::ir_verify::verify(&program) {
+            for f in crate::ir_verify::verify_in(&program, &known_types(ctx, known)) {
                 eprintln!("ir-verify: {}", f);
             }
         }
         crate::ir_verify::Mode::Strict => {
-            let found = crate::ir_verify::verify(&program);
+            let found = crate::ir_verify::verify_in(&program, &known_types(ctx, known));
             if let Some(first) = found.first() {
                 let more = if found.len() > 1 { format!(" (and {} more)", found.len() - 1) } else { String::new() };
                 return Err(Refusal::Unlowered(format!(
@@ -652,8 +661,17 @@ enum Where {
     Test,
 }
 
+/// The names an earlier fragment bound, with the types inference holds for
+/// them: the scope a fragment's main is checked in.
+fn known_types(ctx: &TypeContext, known: &HashSet<String>) -> HashMap<String, Ty> {
+    known.iter().map(|n| (n.clone(), ctx.vars.get(n).map(ty_of).unwrap_or(Ty::Unknown))).collect()
+}
+
 struct Lowerer<'a> {
     ctx: &'a mut TypeContext,
+    /// A session's fragment (`lower_fragment`): its top-level names
+    /// outlive it.
+    fragment: bool,
     /// Locals declared so far, innermost scope last.
     scopes: Vec<HashSet<String>>,
     /// Statements hoisted in front of the one being lowered (propagation).
@@ -705,6 +723,7 @@ impl<'a> Lowerer<'a> {
     fn new(ctx: &'a mut TypeContext, in_ui: bool) -> Self {
         Lowerer {
             ctx,
+            fragment: false,
             scopes: vec![HashSet::new()],
             pre: Vec::new(),
             temp: 0,
@@ -1095,7 +1114,9 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
-        place_moves_in(&mut part.main, &HashSet::new(), None);
+        // (a session's top-level names are read by the fragments after it)
+        let outlive = if self.fragment { defined_in(&part.main) } else { HashSet::new() };
+        place_moves_in(&mut part.main, &outlive, None);
         // what a derivation and each part's top level reach, transitively,
         // as a function's does below
         let reach = |start: &str, l: &Self| -> Vec<String> {
