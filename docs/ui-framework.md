@@ -1410,6 +1410,8 @@ No special theming API. CSS variables + state + session. The developer controls 
 
 ## Dev Tools
 
+*Shipped (2026-09-30) as `crow dev`'s panel, watching only: the facts, the event log with each event's changes and render timing (spec, Execution Modes, and the Design Note "the dev panel watches"). `crow dev` runs the interpreter and reloads as files change.*
+
 ### State inspector
 
 `crow dev` includes a built-in state inspector panel in the browser. Toggle with `Ctrl+Shift+D`.

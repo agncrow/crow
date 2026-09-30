@@ -110,7 +110,7 @@ All 17 server-side modules implemented with 119 tests passing:
 #### Client-side WASM — rejected
 Rejected in favor of the Crow UI framework (see below). Building a WASM frontend pipeline would require `wasm-bindgen`, `web-sys`, and a reactive runtime — essentially building React/Svelte from scratch. The UI framework approach achieves the same goal (one-language full-stack) with pure Crow libraries and server-rendered HTML.
 
-#### P8 — UI Framework — in progress (Phases 1–4 done; `view` blocks, `later`, style and chart modules shipped since — see the status table above)
+#### P8 — UI Framework ✅ (Phases 1–5 done; `view` blocks, `later`, style and chart modules shipped since — see the status table above)
 
 > **See [docs/ui-framework.md](ui-framework.md) for the full design document.**
 
@@ -164,11 +164,11 @@ Goal: `fetch[url]`, `poll[url, seconds]`, `field[label, var]`, `select[options, 
 - [x] **Modals, pagination** — `modal[child, open = var]`, `table[frame, page = 50]`
 - [x] **Accessibility** — audited: a field's label names its input, a click on any element is pressable from the keyboard, a modal holds and returns focus, toasts are announced, charts are named, a reconnecting page takes no keyboard input, an `img` needs `alt`, and the light theme's accent meets AA contrast (spec, Accessibility)
 
-##### Phase 5: Developer Experience
+##### Phase 5: Developer Experience ✅
 
 - [x] **`crow dev`** — serves the program with the interpreter and reloads it as its files change: each change checked first, every tab's session kept across the restart, a refused change shown over the open pages while the last good program serves, a change to the page's shell reloading the tabs (spec, Execution Modes)
 - [x] **Chart engine** — shipped as the `chart[frame, ...]` element (server-rendered SVG, `chart-module-design.md`)
-- [ ] **Dev tools** — state inspector, event log
+- [x] **Dev tools** — the dev panel under `crow dev` (Ctrl+Shift+D): the session's facts live, each event with the facts it changed and its render's time and size, the renders' timing; it watches only (Design Note: the dev panel watches)
 
 ### P4.5 — Database module ✅
 

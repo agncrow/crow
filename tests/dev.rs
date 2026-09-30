@@ -1,7 +1,8 @@
 //! `crow dev` from the outside: the program served by the interpreter and
-//! reloaded as its file changes, each tab's session kept; a change that
-//! breaks it leaves the last good program serving, whose pages are told
-//! the refusal; and the program stops with `crow dev`.
+//! reloaded as its file changes, each tab's session kept and its dev panel
+//! told each event; a change that breaks it leaves the last good program
+//! serving, whose pages are told the refusal; and the program stops with
+//! `crow dev`.
 
 use std::io::{BufRead, Read, Write};
 use std::process::{Command, Stdio};
@@ -138,6 +139,9 @@ fn crow_dev_reloads_a_program_as_its_file_changes() {
     ws.send(tungstenite::Message::Text(serde_json::json!({ "event": "inc", "seq": 1 }).to_string().into())).unwrap();
     let after = read_until(&mut ws, "first 1");
     assert!(after.iter().any(|w| w.contains("first 1")), "the click lands: {:?}", after);
+    // the dev panel hears it: the event, the fact it moved, the render
+    let heard = read_until(&mut ws, "\"panel\"");
+    assert!(heard.iter().any(|w| w.contains("\"changed\":{\"n\":[0,1]}") && w.contains("\"events\":[\"inc\"]") && w.contains("\"render_ms\"")), "the panel hears the click: {:?}", heard);
     drop(ws);
     std::fs::write(dir.join("app.co"), program("second")).unwrap();
     until("the change reloading it", || get(port, "/").contains("<p>second 0</p>"));

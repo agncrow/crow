@@ -73,7 +73,9 @@ the change is good: every open tab reconnects and resumes its session,
 drawn by the new code, so the page you were testing stays where it was.
 A change that breaks the program leaves the last good one serving, and
 the page shows the refusal with its file and line until you mend it. A
-change to `css/app.css` reloads the tabs.
+change to `css/app.css` reloads the tabs. Ctrl+Shift+D opens the dev
+panel: the session's facts, each event with the facts it changed and how
+long its render took, and the renders' timing.
 
 **A render sends what changed.** After the first page, the server sends
 the page only what a render changed — a text, an attribute, a row added

@@ -579,6 +579,33 @@ pub fn dev_router() -> Option<axum::Router> {
     )
 }
 
+/// How the dev panel names an event: a bound input by its fact, the
+/// runtime's own by what they do, a handler by its name.
+fn dev_label(event: &str) -> String {
+    match event.strip_prefix("__field:").or_else(|| event.strip_prefix("__select:")) {
+        Some(fact) => format!("{} ← input", fact),
+        None => event.strip_prefix("__").unwrap_or(event).to_string(),
+    }
+}
+
+/// The dev panel's word after a render: the session's facts (the runtime's
+/// own left out), those that changed since the last word, before and after,
+/// the events the render answers, and its time and size.
+fn dev_panel(data: &HashMap<String, serde_json::Value>, before: &mut serde_json::Map<String, serde_json::Value>, events: Vec<String>, render_ms: f64, bytes: usize) -> serde_json::Value {
+    let facts: serde_json::Map<String, serde_json::Value> = data.iter().filter(|(k, _)| !k.starts_with("__")).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut changed = serde_json::Map::new();
+    for (k, v) in &facts {
+        if !before.is_empty() && before.get(k) != Some(v) {
+            changed.insert(k.clone(), serde_json::json!([before.get(k).cloned().unwrap_or(serde_json::Value::Null), v]));
+        }
+    }
+    *before = facts.clone();
+    serde_json::json!({
+        "type": "dev",
+        "panel": { "facts": facts, "changed": changed, "events": events, "render_ms": (render_ms * 10.0).round() / 10.0, "bytes": bytes }
+    })
+}
+
 /// A program `crow dev` started ends when `crow dev` does, however it
 /// ended: it looks for its parent every half second.
 pub fn end_with_parent() {
@@ -601,10 +628,55 @@ const DEV_JS: &str = r#"<script>
 (function() {
   var box = null;
   function hide() { if (box) { box.remove(); box = null; } }
+  // the panel (Ctrl+Shift+D): it watches, and changes nothing
+  var panel = null, shown = false, facts = {}, log = [], times = [];
+  function esc(s) { return String(s).replace(/[&<>"]/g, function(c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; }); }
+  function brief(v) { var s = JSON.stringify(v); return s.length > 140 ? s.slice(0, 140) + '\u2026' : s; }
+  function draw() {
+    if (!shown) { if (panel) { panel.remove(); panel = null; } return; }
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'crow-dev-panel';
+      panel.setAttribute('role', 'complementary');
+      panel.setAttribute('aria-label', 'crow dev');
+      panel.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:2147483646;width:min(440px,calc(100vw - 24px));max-height:70vh;overflow:auto;padding:10px 12px;background:#12161b;color:#dfe5ea;border:1px solid #2a323b;border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.35);font:12px/1.5 ui-monospace,Menlo,monospace';
+      document.body.appendChild(panel);
+    }
+    var last = times.length ? times[times.length - 1] : 0;
+    var avg = times.length ? times.reduce(function(a, b) { return a + b; }, 0) / times.length : 0;
+    var most = times.length ? Math.max.apply(null, times) : 0;
+    var dim = 'color:#8d99a6';
+    var h = '<div style="display:flex;justify-content:space-between;' + dim + '"><b>crow dev</b><span>Ctrl+Shift+D</span></div>';
+    h += '<div style="margin-top:8px;' + dim + '">renders</div><div>last ' + last.toFixed(1) + ' ms \u00b7 average ' + avg.toFixed(1) + ' ms \u00b7 slowest ' + most.toFixed(1) + ' ms \u00b7 ' + times.length + '</div>';
+    h += '<div style="margin-top:8px;' + dim + '">facts</div>';
+    Object.keys(facts).sort().forEach(function(k) { h += '<div>' + esc(k) + ' = ' + esc(brief(facts[k])) + '</div>'; });
+    h += '<div style="margin-top:8px;' + dim + '">events</div>';
+    log.slice().reverse().forEach(function(e) {
+      h += '<div style="border-top:1px solid #222a33;padding:3px 0"><span style="' + dim + '">' + esc(e.at) + '</span> ' + esc(e.what) + ' <span style="' + dim + '">' + e.ms.toFixed(1) + ' ms, ' + e.bytes + ' bytes</span>';
+      Object.keys(e.changed).forEach(function(k) { h += '<div style="padding-left:12px">' + esc(k) + ': ' + esc(brief(e.changed[k][0])) + ' \u2192 ' + esc(brief(e.changed[k][1])) + '</div>'; });
+      h += '</div>';
+    });
+    panel.innerHTML = h;
+  }
+  document.addEventListener('keydown', function(e) {
+    if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && (e.key === 'D' || e.key === 'd')) { e.preventDefault(); shown = !shown; draw(); }
+  });
   window.crowDev = {
     open: hide,
     message: function(msg) {
       if (msg.reload) { location.reload(); return; }
+      if (msg.panel) {
+        var p = msg.panel;
+        facts = p.facts;
+        times.push(p.render_ms);
+        if (times.length > 1000) times.shift();
+        if (p.events.length || Object.keys(p.changed).length) {
+          log.push({at: new Date().toLocaleTimeString(), what: p.events.join(', ') || 'render', changed: p.changed, ms: p.render_ms, bytes: p.bytes});
+          if (log.length > 200) log.shift();
+        }
+        draw();
+        return;
+      }
       if (!msg.error) return;
       if (!box) {
         box = document.createElement('div');
@@ -3036,6 +3108,14 @@ where
                             }
                             (seen, _) => seen,
                         };
+                        // the dev panel's facts as last sent, and the events
+                        // the next render answers (under crow dev alone)
+                        let mut dev_facts = serde_json::Map::new();
+                        let mut dev_events: Vec<String> = Vec::new();
+                        if dev_token().is_some() {
+                            let first = dev_panel(&state.data, &mut dev_facts, Vec::new(), 0.0, 0);
+                            let _ = futures_util::SinkExt::send(&mut socket, Message::Text(first.to_string().into())).await;
+                        }
 
                         loop {
                             let action = tokio::select! {
@@ -3176,6 +3256,9 @@ where
                                     eprintln!("crow live: refused '{}' — the page did not offer it", event);
                                     acks.extend(seq);
                                     continue;
+                                }
+                                if dev_token().is_some() {
+                                    dev_events.push(dev_label(&event));
                                 }
                                 if apply_field(&mut state, &event, value.as_deref()) {
                                     acks.extend(seq);
@@ -3320,6 +3403,7 @@ where
                             let r = r2.clone();
                             let busy = running.as_ref().map(|(h, _, _)| h.clone());
                             let mut state_out = std::mem::take(&mut state);
+                            let render_began = std::time::Instant::now();
                             let turn = tokio::task::spawn_blocking(move || {
                                 let mut state = std::mem::take(&mut state_out);
                                 if tick {
@@ -3390,11 +3474,20 @@ where
                                 (payload, false) => payload,
                             };
                             last_head = new_head;
+                            let render_ms = render_began.elapsed().as_secs_f64() * 1000.0;
+                            let sent = payload.as_ref().map_or(0, |m| m.to_string().len());
                             if let Some(msg) = payload {
                                 if futures_util::SinkExt::send(&mut socket, Message::Text(msg.to_string().into()))
                                     .await
                                     .is_err()
                                 {
+                                    break;
+                                }
+                            }
+                            // the dev panel's word on this render
+                            if dev_token().is_some() {
+                                let word = dev_panel(&state.data, &mut dev_facts, std::mem::take(&mut dev_events), render_ms, sent);
+                                if futures_util::SinkExt::send(&mut socket, Message::Text(word.to_string().into())).await.is_err() {
                                     break;
                                 }
                             }
@@ -3616,6 +3709,28 @@ mod tests {
         assert!(!offers.allows("say", Some("[\"hi\"]")), "a helper no button names");
         assert!(!offers.allows("__field:session_id", Some("5")), "a fact no input binds");
         assert!(!offers.allows("delete_confirmed", None), "a confirmation's second step without its first");
+    }
+
+    /// crow dev's panel follows the session: its facts, the runtime's own
+    /// left out; those a render changed, before and after (the first word
+    /// changes nothing); the events it answers, a bound input by its fact;
+    /// and the render's time and size
+    #[test]
+    fn the_dev_panel_follows_the_session() {
+        let mut data: HashMap<String, serde_json::Value> = HashMap::new();
+        data.insert("n".into(), serde_json::json!(0));
+        data.insert("__pages".into(), serde_json::json!({}));
+        let mut before = serde_json::Map::new();
+        let first = dev_panel(&data, &mut before, Vec::new(), 0.0, 0);
+        assert_eq!(first["panel"]["facts"], serde_json::json!({ "n": 0 }));
+        assert_eq!(first["panel"]["changed"], serde_json::json!({}));
+        data.insert("n".into(), serde_json::json!(1));
+        let next = dev_panel(&data, &mut before, vec![dev_label("inc"), dev_label("__field:q"), dev_label("__sort")], 1.234, 90);
+        assert_eq!(next["panel"]["changed"], serde_json::json!({ "n": [0, 1] }));
+        assert_eq!(next["panel"]["events"], serde_json::json!(["inc", "q ← input", "sort"]));
+        assert_eq!((next["panel"]["render_ms"].clone(), next["panel"]["bytes"].clone()), (serde_json::json!(1.2), serde_json::json!(90)));
+        let quiet = dev_panel(&data, &mut before, Vec::new(), 0.5, 0);
+        assert_eq!(quiet["panel"]["changed"], serde_json::json!({}), "a render that moved nothing");
     }
 
     /// What the page tells a reader on a keyboard or with a screen reader
