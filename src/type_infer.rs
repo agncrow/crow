@@ -608,8 +608,15 @@ impl TypeContext {
     pub(crate) fn type_tested(&mut self, calls: &[(String, Vec<CrowType>)]) -> bool {
         let mut agreed: BTreeMap<(String, usize), Option<CrowType>> = BTreeMap::new();
         for (f, types) in calls {
-            let Some(sig) = self.functions.get(f) else { continue };
-            if sig.params.len() != types.len() {
+            // a function's parameters, or a record's fields: a test that
+            // builds a record the program only receives (the layout engine's
+            // node, which Rust builds) types its fields as a call does
+            let takes = match (self.functions.get(f), self.structs.get(f)) {
+                (Some(sig), _) => sig.params.len(),
+                (None, Some(st)) => st.fields.len(),
+                (None, None) => continue,
+            };
+            if takes != types.len() {
                 continue;
             }
             for (i, t) in types.iter().enumerate() {
@@ -631,8 +638,11 @@ impl TypeContext {
         let mut moved = false;
         for ((f, i), t) in agreed {
             let Some(t) = t.filter(|t| !matches!(t, CrowType::Unknown)) else { continue };
-            let param = self.functions.get_mut(&f).and_then(|sig| sig.params.get_mut(i));
-            if let Some(p) = param.filter(|p| matches!(p.1, CrowType::Unknown)) {
+            let slot = match self.functions.get_mut(&f) {
+                Some(sig) => sig.params.get_mut(i),
+                None => self.structs.get_mut(&f).and_then(|st| st.fields.get_mut(i)),
+            };
+            if let Some(p) = slot.filter(|p| matches!(p.1, CrowType::Unknown)) {
                 p.1 = t;
                 moved = true;
             }

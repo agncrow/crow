@@ -580,6 +580,46 @@ pub const DRAWS: &[&str] = &[
 
 // ── walking the IR ──────────────────────────────────────────────────
 
+/// The functions a part can run: what its top level, its facts' defaults,
+/// its derivations and its tests call or hold as values, the views and
+/// handlers a page runs by itself, and what each of those reaches in turn.
+/// A function nothing reaches (a shared part's, in another part's program)
+/// never runs there.
+pub fn reached_fns(part: &Part) -> std::collections::BTreeSet<String> {
+    let mut todo: Vec<String> = Vec::new();
+    let note = |e: &Expr, todo: &mut Vec<String>| match e {
+        Expr::Call { target: Target::User(n), .. } | Expr::FnRef(n, _) => todo.push(n.clone()),
+        Expr::Deferred { name, .. } => todo.push(name.clone()),
+        _ => {}
+    };
+    visit_block(&part.main, &mut |e| note(e, &mut todo));
+    for fact in &part.facts {
+        visit_expr(&fact.default, &mut |e| note(e, &mut todo));
+    }
+    for d in &part.derives {
+        visit_block(&d.body, &mut |e| note(e, &mut todo));
+    }
+    for t in &part.tests {
+        visit_block(&t.body, &mut |e| note(e, &mut todo));
+    }
+    for f in &part.fns {
+        if !matches!(f.kind, FnKind::Pure | FnKind::Helper) {
+            todo.push(f.name.clone());
+        }
+    }
+    let fns: std::collections::HashMap<&str, &Fn> = part.fns.iter().map(|f| (f.name.as_str(), f)).collect();
+    let mut reached = std::collections::BTreeSet::new();
+    while let Some(n) = todo.pop() {
+        if !reached.insert(n.clone()) {
+            continue;
+        }
+        if let Some(f) = fns.get(n.as_str()) {
+            visit_block(&f.body, &mut |e| note(e, &mut todo));
+        }
+    }
+    reached
+}
+
 pub fn visit_block(b: &[Stmt], f: &mut dyn FnMut(&Expr)) {
     for s in b {
         visit_stmt(s, f);

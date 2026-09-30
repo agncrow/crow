@@ -2405,6 +2405,10 @@ impl<'a> Lowerer<'a> {
             }
             self.check_call(&name, args, &checks);
             self.scan_call(callee, args, &types);
+            // a test's record, for what only tests type (`type_clicks`)
+            if let Some(tested) = &mut self.tested {
+                tested.push((name.clone(), types.iter().map(|t| t.text()).collect()));
+            }
             if let Some(seen) = &mut self.seen {
                 seen.calls.push((name.clone(), types));
             }
@@ -3858,6 +3862,31 @@ mod tests {
         // a program's own function of that name is its own
         assert_eq!(refusal_of("fn stream[x]\n    return x + 1\nlog[stream[2]]\n"), "");
         assert_eq!(refusal_of("use web\nfn lines[put, n]\n    put['`n`']\nfn flow[req]\n    return stream[lines, 3]\nroute['/flow', flow]\nserve[3999]\n"), "");
+    }
+
+    /// A function handed to grad is a function of floats, however grad is
+    /// written (`grad[f][3]` had left its parameters untyped where
+    /// `df = grad[f]` did not), and its body's builtins are the ones for
+    /// floats; a direct call's int is converted
+    #[test]
+    fn a_function_grad_differentiates_takes_floats() {
+        let ir = ir_of("fn root[x]\n    sqrt[x]\nfn sq[x]\n    x * x\nlog[grad[root][4]]\ndf = grad[sq]\nlog[df[3]]\nlog[sq[2]]\n");
+        assert!(ir.contains("pure root(x: Float) -> Float"), "{}", ir);
+        assert!(ir.contains("return core.sqrt(x)"), "{}", ir);
+        assert!(ir.contains("pure sq(x: Float) -> Float"), "{}", ir);
+        assert!(ir.contains("call sq(float(2))"), "{}", ir);
+    }
+
+    /// A test that builds a record the program only receives types the
+    /// record's fields where the program leaves them untyped, as its calls
+    /// type a function's parameters (the layout engine's node, which Rust
+    /// builds, had fields of no type, and the engine's calls on them were
+    /// left by name)
+    #[test]
+    fn a_tests_record_types_the_fields_nothing_else_types() {
+        let ir = ir_of("struct Node [tag, kids]\nfn tag_of[n]\n    return upper[n.tag]\ntest t[]\n    n = Node['div', []]\n    assert[tag_of[n] eq 'DIV']\n");
+        assert!(ir.contains("struct Node { tag: Str"), "{}", ir);
+        assert!(ir.contains("text.upper(n.tag)"), "{}", ir);
     }
 
     /// A route's handler whose value can fail keeps its Result (the Rust

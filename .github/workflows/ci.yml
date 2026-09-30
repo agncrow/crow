@@ -54,6 +54,8 @@ jobs:
           ./target/release/crow run -i docs/book/site.co
       - name: Layout engine agrees with the browser (fixtures measured once, checked without one)
         run: ./target/release/crow test tests/layout/conformance.co
+      - name: Layout engine's own example (the one place Crow builds its nodes, which types them)
+        run: ./target/release/crow test src/modules/layout.co
       - name: Layout example
         run: ./target/release/crow test examples/layout_dashboard.co
       - name: Parts (a page composed of modules with facts, derivations and views)

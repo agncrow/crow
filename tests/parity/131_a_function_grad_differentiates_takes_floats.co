@@ -1,0 +1,22 @@
+--- A function handed to grad is a function of floats: its parameters are
+--- floats, and a builtin its body calls is the one for floats in both
+--- modes. (Its parameters had no type, and its body's calls were left
+--- for each mode to pick as the program ran.)
+fn square[x]
+    x * x
+
+fn root[x]
+    sqrt[x]
+
+fn size[x]
+    abs[x]
+
+fn both[x, y]
+    x * x + y * y
+
+log[grad[square][3]]
+log[grad[root][4]]
+log[grad[size][-3]]
+log[grad[size][2.5]]
+log[grad[both][3, 4]]
+log[square[2]]

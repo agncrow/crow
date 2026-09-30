@@ -423,12 +423,18 @@ impl TypeContext {
             // first parameter is a float whether or not a call site says so.
             // A widget's handler receives what its module sends, as a field's
             // handler receives its text: a parameter nothing else types is a
-            // string.
+            // string. A function grad differentiates is a function of floats
+            // (`grad[f][3]` too, whose call the scan does not read).
             fn seek_expr(e: &Expr, out: &mut Vec<String>, widgets: &mut Vec<String>) {
                 match e {
                     Expr::Call { callee, args } => {
                         if let Some(f) = crate::lower::chart_seek_handler(callee, args) {
                             out.push(f.to_string());
+                        }
+                        if matches!(callee.as_ref(), Expr::Ident(n) if n == "grad") {
+                            if let Some(Expr::Ident(f)) = args.first() {
+                                out.push(format!("grad:{}", f));
+                            }
                         }
                         if matches!(callee.as_ref(), Expr::Ident(n) if n == "widget") {
                             for a in args {
@@ -477,7 +483,13 @@ impl TypeContext {
             let mut widgets = Vec::new();
             seek_stmts(stmts, &mut seeks, &mut widgets);
             for f in seeks {
-                if let Some(sig) = self.functions.get_mut(&f) {
+                if let Some(g) = f.strip_prefix("grad:") {
+                    if let Some(sig) = self.functions.get_mut(g) {
+                        for p in sig.params.iter_mut() {
+                            p.1 = p.1.unify(&CrowType::Float);
+                        }
+                    }
+                } else if let Some(sig) = self.functions.get_mut(&f) {
                     if let Some(p) = sig.params.first_mut() {
                         p.1 = CrowType::Float;
                     }

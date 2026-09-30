@@ -67,10 +67,12 @@ pub fn verify(program: &Program) -> Vec<String> {
             .iter()
             .filter_map(|f| f.name.rsplit_once("__").filter(|(_, n)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())).map(|(b, _)| b))
             .collect();
+        let reached = crate::ir::reached_fns(part);
         for f in &part.fns {
             if specialized.contains(f.name.as_str()) {
                 continue;
             }
+            v.runs = reached.contains(&f.name) || f.name.rsplit_once("__").is_some_and(|(b, _)| reached.contains(b));
             v.body = format!("fn {}", f.name);
             v.kind = Some(f.kind);
             v.testing = false;
@@ -78,6 +80,7 @@ pub fn verify(program: &Program) -> Vec<String> {
             v.scopes = vec![f.params.iter().cloned().collect()];
             v.block(&f.body);
         }
+        v.runs = true;
         for t in &part.tests {
             v.body = format!("test {}", t.name.clone().unwrap_or_default());
             v.kind = None;
@@ -113,6 +116,9 @@ struct Verifier<'p> {
     body: String,
     ret: Option<Ty>,
     line: usize,
+    /// Whether the body being checked can run: a function nothing in the
+    /// program reaches (a shared part's, in another part's program) cannot.
+    runs: bool,
     out: Vec<String>,
 }
 
@@ -138,7 +144,7 @@ impl<'p> Verifier<'p> {
                 derives.insert(d.name.as_str(), &d.ty);
             }
         }
-        Verifier { fns, facts, derives, globals, kind: None, testing: false, scopes: vec![HashMap::new()], body: String::new(), ret: None, line: 0, out: Vec::new() }
+        Verifier { fns, facts, derives, globals, kind: None, testing: false, scopes: vec![HashMap::new()], body: String::new(), ret: None, line: 0, runs: true, out: Vec::new() }
     }
 
     fn found(&mut self, what: String) {
@@ -367,6 +373,14 @@ impl<'p> Verifier<'p> {
                             }
                         }
                         if crate::table::has_core_rows(name) {
+                            // (the census of calls still left by name, while
+                            // they are taken away: CROW_IR_BY_NAME=1)
+                            // (web's `json[map]` is a response, a form of its own)
+                            let response = name == "json" && matches!(ts.first(), Some(Ty::Map(_)));
+                            if std::env::var_os("CROW_IR_BY_NAME").is_some() && self.runs && !response {
+                                let shown: Vec<String> = ts.iter().map(|t| format!("{:?}", t)).collect();
+                                self.found(format!("by name: {}({})", name, shown.join(", ")));
+                            }
                             self.row_call("", name, &ts);
                         }
                     }

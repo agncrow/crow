@@ -3026,6 +3026,8 @@ All arithmetic operations (`+`, `-`, `*`, `/`) and these math builtins are diffe
 
 Uses forward-mode AD with dual numbers. Each number carries a value and a derivative component. For N parameters, N forward passes compute the full gradient. The `grad` builtin works identically in both modes.
 
+A function handed to `grad` is a function of floats: its parameters are floats wherever it is called, so an int handed to it is a float, as it is to any float parameter, and the builtins its body calls are the ones for floats. (Its parameters had no type, `grad[f][3]` left them so even where `df = grad[f]` did not, and a compiled program that called such a function with an int had not built.)
+
 
 ### Distributed Support
 

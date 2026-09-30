@@ -803,3 +803,16 @@ fn crow_layout[root, viewport, wide]
     content = body_w - 40.0
     x = (viewport - body_w) / 2.0 + 20.0
     return lay_node[root, x, 35.2, content, viewport, '']
+
+--- The engine's own example: a card holding a heading and a line of text,
+--- laid out at a desktop width. The harness builds nodes like these from a
+--- rendered page; this is the one place Crow builds them, which types a
+--- node's fields and the engine's entry (untyped, a node's text and class
+--- had been read by calls left for the program to pick as it ran).
+test a_card_is_laid_out[]
+    title = LNode['h3', '', 'Title', map[id = 'h'], []]
+    line = LNode['p', '', 'A line of text', map[id = 'p'], []]
+    root = LNode['div', 'card', '', map[id = 'c'], [title, line]]
+    boxes = crow_layout[root, 1024.0, false]
+    assert[len[boxes] eq 3]
+    assert[boxes[0].width eq 820.0]
