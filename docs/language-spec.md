@@ -3641,7 +3641,7 @@ entry = 'main.co'                 --- optional: main.co is the default
 db = 'sqlite://dev.db'              --- optional: lets crow check read the schema
 cpu = 4                             --- optional: default thread count
 
-deps = map[utils = './libs/utils', http = '2.3']
+deps = map[models = 'github.com/agncrow/crow-models@v0.1.0', utils = './libs/utils']
 jobs = map[train = 'jobs/train.co', migrate = 'jobs/migrate.co']
 ```
 
@@ -3652,7 +3652,7 @@ jobs = map[train = 'jobs/train.co', migrate = 'jobs/migrate.co']
 | `db` | Database url used by `crow check` and the editor for schema-aware checks |
 | `schema` | `'reconcile'`, `'verify'` or `'trust'`: what opening a connection does with the tables the program declares (see db, The schema a program declares); run from source reconciles, a built program verifies |
 | `cpu`, `gpu` | Default resource counts (integers) — see Resource Control |
-| `deps` | Map of dependency name → version, git url, or local path (`crow install`) |
+| `deps` | Map of dependency name → a git repository and its version (`github.com/org/repo@v1.0.0`), or a local path (`crow install`; see Package Manager) |
 | `jobs` | Map of job name → file, run with `crow run <name>` |
 
 `crow new` writes only `name`; add keys as you need them. No need to list `main.co` — it is the default entry point by convention.
@@ -3661,9 +3661,8 @@ Dependencies can be:
 
 | Format | Example | Description |
 |--------|---------|-------------|
-| Version | `math = '1.0'` | Registry package (resolved via central index) |
-| Git URL | `math = 'https://github.com/user/crow-math'` | Cloned from git |
-| Local path | `utils = './libs/utils'` | Symlinked from local directory |
+| Repository and version | `models = 'github.com/agncrow/crow-models@v0.1.0'` | A git repository at a tag (or a branch, or a commit), pinned by `crow.lock` |
+| Local path | `utils = './libs/utils'` | Linked from a directory on this machine |
 
 
 ### File Extension
@@ -3687,7 +3686,7 @@ crow new myapp --web        --- create web project (+ views/home.co)
 crow new myapp --ml         --- create ML project (+ jobs/train.co, lib/model.co)
 crow new myapp --db         --- create DB project (+ db/schema.co, jobs/migrate.co)
 crow new myapp --web --ml --db  --- all capabilities
-crow install                --- install deps from crowfile into crow_modules/
+crow install                --- install deps into crow_modules/, pinned by crow.lock (--update [name] moves them)
 crow build                  --- transpile to Rust and compile to native binary
 crow build file.co        --- transpile a specific file
 crow build --ir file.co   --- print the program's one typed form, the IR (docs/ir-design.md); nothing is compiled
@@ -3758,48 +3757,17 @@ Multi-line blocks (functions, if, for, while, struct) are entered by typing the 
 
 ### Package Manager
 
-`crow install` reads deps from the `crowfile` and installs them into `crow_modules/`.
+A package is a git repository, a version is one of its tags (or a branch, or a commit), and `crow.lock` pins the commit each dependency checked out. The crowfile names each dependency by its repository and version, or by a path for a package beside the program:
 
-```bash
-crow new myapp
-cd myapp
---- edit crowfile to add deps
-crow install
-crow run
+```
+deps = map[models = 'github.com/agncrow/crow-models@v0.1.0', mine = '../mine']
 ```
 
-**Registry packages** (version strings like `'1.0'`) are resolved via a central index hosted on GitHub. The registry is a git repository containing an `index.json` that maps package names to git repositories and available versions. When installing, Crow clones the registry repo locally, reads the index, finds the package repo URL, and clones it at the matching git tag (`v1.0`, `v2.3`, etc.). If the exact tag is not found, the latest commit is used with a warning.
+`crow install` checks each one out into `crow_modules/<name>`, and the program imports its files with `use` (`use models.line` reads `crow_modules/models/line.co`). The first install of a dependency takes the commit its version names and writes it to `crow.lock`; every install after that — on another machine, in CI — checks out that commit, whatever the tag names by then, and says so when a tag has moved. `crow install --update models` takes what `models`'s version names now, and `--update` alone every dependency's; both rewrite the lock. Commit `crow.lock` with the program, and leave `crow_modules/` out of version control (`crow new` writes that `.gitignore`). A program run before its dependencies are installed is told which one is missing and to run `crow install`.
 
-**Git dependencies** are cloned directly from the URL. **Local path dependencies** are symlinked.
+A repository on a forge (`github.com`, `gitlab.com`, `codeberg.org`, `bitbucket.org`) is the first two segments of its path, and what follows is the directory inside it that is the package: `github.com/agncrow/crow/packages/models@v0.6.0`. Any other place is a url, with the package's directory after a `//`: `https://git.example.com/pkgs.git//models@v1`, `file:///srv/pkgs.git@v2`. A local path is linked as it is, for working on a package beside a program.
 
-Installed modules are imported with `use`.
-
-#### Registry
-
-The default registry is the git repo at `https://github.com/vsriram/registry.git`. On first `crow install`, the registry is cloned to `~/.crow/registry/`. On subsequent runs, it is updated via `git pull`.
-
-Override the registry repo with the `CROW_REGISTRY` environment variable:
-
-```bash
-CROW_REGISTRY=https://github.com/myorg/my-registry.git crow install
-```
-
-#### Registry Format
-
-The registry repo must contain an `index.json` at its root:
-
-```json
-{
-  "packages": {
-    "mylib": {
-      "repo": "https://github.com/user/crow-mylib",
-      "versions": ["0.1", "0.2", "1.0"]
-    }
-  }
-}
-```
-
-Each package entry has a `repo` (git URL) and `versions` (list of available version strings). Version strings correspond to git tags prefixed with `v` (e.g., version `1.0` maps to tag `v1.0`).
+**Design Note: no registry.** Considered: a central index mapping package names to repositories and versions (the `index.json` repository `crow install` had read), and a registry server that packages are published to, as crates.io and npm are. Decided: a dependency names its repository, as Go modules do. There is nothing to run or keep up, a name cannot be taken by someone else, and a tag is the one version there is; the lock is what makes every install the same, which a registry's immutable versions otherwise give.
 
 
 ## 19. Design Notes

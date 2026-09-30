@@ -223,7 +223,7 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. All three backen
 
 ### P7 — Ecosystem (before 1.0)
 
-- [ ] **Package registry**: `crow install` command exists but needs a real registry backend (GitHub-based or custom).
+- [x] **Packages** (Sept 30 2026, Vijay: git tags and a lockfile): a package is a git repository, a version its tag, and `crow.lock` pins the commit each dependency checked out; `crow install --update` moves them. No registry (the central index `crow install` had read is gone): a dependency names its repository, a directory inside it on a forge (`github.com/org/repo/sub/dir@v1`).
 - [ ] **Community packages**: Seed the ecosystem with useful packages (plotting, data connectors, model zoo).
 - [ ] **Pretrained models**: Common models (linear regression, decision trees, simple NNs) as installable packages.
 - [ ] **Notebook integration**: Jupyter kernel or similar interactive environment for exploratory data science.

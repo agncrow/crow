@@ -104,7 +104,7 @@ variables win).
 | `crow new myapp --web` | Adds `views/home.co`, wired into `main.co` with `page['/', home.render]`. |
 | `crow new myapp --ml` | Adds `jobs/train.co`, `lib/model.co`. |
 | `crow new myapp --db` | Adds `db/schema.co`, `jobs/migrate.co`. Flags combine. |
-| `crow install` | Install the crowfile's `deps` into `crow_modules/`. |
+| `crow install` | Install the crowfile's `deps` into `crow_modules/`, each pinned by `crow.lock`; `--update [name]` moves them to what their versions name now. |
 
 Every scaffolded file is working code — `crow run` succeeds right after
 `crow new`.
@@ -125,7 +125,8 @@ myapp/
   migrations/           .sql files applied by migrate[] and written by crow fix
   css/app.css           optional stylesheet overrides (inlined after the defaults)
   tests/                integration tests
-  crow_modules/         installed dependencies (crow install)
+  crow.lock             the commit each dependency checked out (commit it)
+  crow_modules/         installed dependencies (crow install; not committed)
   .crow_build/          the generated Rust project — safe to delete
 ```
 
@@ -145,22 +146,25 @@ entry = 'main.co'                 --- optional: main.co is the default
 db = 'sqlite://dev.db'              --- optional: schema for crow check and the editor
 cpu = 4                             --- optional: default thread count (integer)
 
-deps = map[utils = './libs/utils', http = '2.3']
+deps = map[models = 'github.com/agncrow/crow-models@v0.1.0', utils = './libs/utils']
 jobs = map[train = 'jobs/train.co', migrate = 'jobs/migrate.co']
 ```
 
-Dependencies (`deps`) take three forms:
+Dependencies (`deps`) take two forms:
 
 | Form | Example | How it is installed |
 |------|---------|---------------------|
-| Version | `http = '2.3'` | From the registry, cloned at git tag `v2.3` |
-| Git URL | `lib = 'https://github.com/user/crow-lib'` | Cloned from the URL |
-| Local path | `utils = './libs/utils'` | Symlinked into `crow_modules/` |
+| Repository and version | `models = 'github.com/agncrow/crow-models@v0.1.0'` | Checked out at the tag (or branch, or commit), the commit pinned in `crow.lock` |
+| Local path | `utils = './libs/utils'` | Linked into `crow_modules/` |
 
-Installed modules are imported like any user module — qualified:
-`use utils` then `utils.helper[...]`. The registry is the git repo at
-`https://github.com/vsriram/registry.git`, cloned to `~/.crow/registry/`;
-override it with the `CROW_REGISTRY` environment variable.
+A package is a git repository and a version is its tag: there is no
+registry. The first `crow install` of a dependency records the commit its
+version names in `crow.lock`; every install after that checks out that
+commit, so every machine runs the same code. On a forge the repository is
+the first two path segments and the rest is a directory inside it
+(`github.com/agncrow/crow/packages/models@v0.6.0`). Installed modules are
+imported like any user module — qualified: `use models.line` then
+`line.slope[...]`.
 
 ## The two execution modes
 

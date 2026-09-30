@@ -26,6 +26,7 @@ mod lsp;
 mod lexer;
 mod lower;
 mod parallel;
+mod packages;
 mod parser;
 mod rehearsal;
 mod rust_names;
@@ -44,7 +45,6 @@ mod value;
 use lexer::Lexer;
 use parser::Parser;
 use std::process;
-use std::collections::HashMap;
 
 /// Load `.env` file from the current directory if it exists.
 /// Each line should be `KEY=VALUE`. Lines starting with `#` are comments.
@@ -1611,11 +1611,15 @@ fn cmd_new() {
     }
 
     write_file(&project_dir.join("crowfile"), &crowfile);
+    // what crow builds and installs is rebuilt from the project: crow.lock,
+    // committed, is what makes `crow install` the same everywhere
+    write_file(&project_dir.join(".gitignore"), "crow_modules/\n.crow_build/\n");
 
     println!("created project '{}'", short_name);
     let mut files: Vec<String> = Vec::new();
     files.push("  crowfile".to_string());
     files.push("  main.co".to_string());
+    files.push("  .gitignore".to_string());
     if has_web { files.push("  views/home.co".to_string()); }
     if has_ml {
         files.push("  jobs/train.co".to_string());
@@ -1631,260 +1635,29 @@ fn cmd_new() {
     println!("\ncd {} && crow run", name);
 }
 
+/// `crow install [--update [name …]]`: the crowfile's deps into
+/// `crow_modules/`, each pinned by `crow.lock` (packages.rs; spec, Package
+/// Manager).
 fn cmd_install() {
     let config = parse_crowfile();
-
     if config.deps.is_empty() {
         println!("no deps in crowfile");
         return;
     }
-
-    let modules_dir = std::path::PathBuf::from("crow_modules");
-    std::fs::create_dir_all(&modules_dir).unwrap_or_else(|e| {
-        eprintln!("error creating crow_modules/: {}", e);
-        process::exit(1);
-    });
-
-    for (name, source) in &config.deps {
-        let dest = modules_dir.join(&name);
-
-        if source.starts_with("https://") || source.starts_with("git://") || source.starts_with("http://") {
-            // Git dependency
-            if dest.exists() {
-                // Pull latest
-                println!("updating {}...", name);
-                let status = std::process::Command::new("git")
-                    .args(["pull", "--quiet"])
-                    .current_dir(&dest)
-                    .status();
-                match status {
-                    Ok(s) if s.success() => println!("  updated {}", name),
-                    _ => eprintln!("  warning: failed to update {}", name),
-                }
-            } else {
-                // Clone
-                println!("installing {}...", name);
-                let status = std::process::Command::new("git")
-                    .args(["clone", "--quiet", source, &dest.to_string_lossy()])
-                    .status();
-                match status {
-                    Ok(s) if s.success() => println!("  installed {}", name),
-                    _ => {
-                        eprintln!("error: failed to clone {}", source);
-                        process::exit(1);
-                    }
-                }
+    let args: Vec<String> = std::env::args().skip(2).collect();
+    let updating = args.iter().any(|a| a == "--update");
+    let named: Vec<String> = args.iter().filter(|a| !a.starts_with("--")).cloned().collect();
+    let root = project_root(&std::env::current_dir().unwrap_or_default());
+    match packages::install(&root, &config.deps, &named, updating && named.is_empty()) {
+        Ok(said) => {
+            for line in said {
+                println!("  {}", line);
             }
-        } else if source.starts_with("./") || source.starts_with("/") || source.starts_with("../") {
-            // Local path dependency - symlink
-            let src_path = std::path::PathBuf::from(source);
-            if !src_path.exists() {
-                eprintln!("error: local dep path '{}' not found", source);
-                process::exit(1);
-            }
-            if dest.exists() {
-                println!("  {} already linked", name);
-            } else {
-                #[cfg(unix)]
-                {
-                    let abs_src = std::fs::canonicalize(&src_path).unwrap_or_else(|e| {
-                        eprintln!("error resolving path '{}': {}", source, e);
-                        process::exit(1);
-                    });
-                    std::os::unix::fs::symlink(&abs_src, &dest).unwrap_or_else(|e| {
-                        eprintln!("error symlinking {}: {}", name, e);
-                        process::exit(1);
-                    });
-                    println!("  linked {} -> {}", name, abs_src.display());
-                }
-                #[cfg(not(unix))]
-                {
-                    // On non-unix, copy instead
-                    copy_dir_all(&src_path, &dest).unwrap_or_else(|e| {
-                        eprintln!("error copying {}: {}", name, e);
-                        process::exit(1);
-                    });
-                    println!("  copied {}", name);
-                }
-            }
-        } else {
-            // Version string - resolve from registry
-            if !install_from_registry(name, source, &dest) {
-                process::exit(1);
-            }
+            println!("done");
         }
-    }
-
-    println!("done");
-}
-
-#[cfg(not(unix))]
-fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let ty = entry.file_type()?;
-        if ty.is_dir() {
-            copy_dir_all(&entry.path(), &dst.join(entry.file_name()))?;
-        } else {
-            std::fs::copy(entry.path(), dst.join(entry.file_name()))?;
-        }
-    }
-    Ok(())
-}
-
-// --- Package Registry ---
-
-const DEFAULT_REGISTRY_REPO: &str = "https://github.com/vsriram/registry.git";
-
-#[derive(serde::Deserialize, Debug)]
-struct RegistryIndex {
-    packages: HashMap<String, RegistryPackage>,
-}
-
-#[derive(serde::Deserialize, Debug)]
-struct RegistryPackage {
-    repo: String,
-    versions: Vec<String>,
-}
-
-fn get_registry_repo() -> String {
-    std::env::var("CROW_REGISTRY").unwrap_or_else(|_| DEFAULT_REGISTRY_REPO.to_string())
-}
-
-fn registry_cache_dir() -> std::path::PathBuf {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".to_string());
-    std::path::PathBuf::from(home).join(".crow").join("registry")
-}
-
-fn fetch_registry_index() -> Option<RegistryIndex> {
-    let cache_dir = registry_cache_dir();
-    let index_path = cache_dir.join("index.json");
-    let repo_url = get_registry_repo();
-
-    if cache_dir.join(".git").exists() {
-        // Registry already cloned — pull latest
-        let status = std::process::Command::new("git")
-            .args(["pull", "--quiet", "--ff-only"])
-            .current_dir(&cache_dir)
-            .stderr(std::process::Stdio::null())
-            .status();
-        if let Ok(s) = status {
-            if !s.success() {
-                eprintln!("warning: failed to update registry, using cached");
-            }
-        }
-    } else {
-        // Fresh clone
-        let _ = std::fs::create_dir_all(cache_dir.parent().unwrap_or(std::path::Path::new(".")));
-        let status = std::process::Command::new("git")
-            .args(["clone", "--quiet", "--depth", "1", &repo_url, &cache_dir.to_string_lossy()])
-            .status();
-        match status {
-            Ok(s) if s.success() => {}
-            _ => {
-                eprintln!("warning: failed to clone registry from {}", repo_url);
-            }
-        }
-    }
-
-    // Read index.json from the cloned/cached repo
-    if index_path.exists() {
-        if let Ok(json) = std::fs::read_to_string(&index_path) {
-            match serde_json::from_str(&json) {
-                Ok(index) => return Some(index),
-                Err(e) => {
-                    eprintln!("warning: failed to parse registry index.json: {}", e);
-                }
-            }
-        }
-    }
-
-    eprintln!("error: no registry index found at {}", index_path.display());
-    None
-}
-
-fn install_from_registry(name: &str, version: &str, dest: &std::path::Path) -> bool {
-    let index = match fetch_registry_index() {
-        Some(idx) => idx,
-        None => {
-            eprintln!("error: could not fetch package registry");
-            return false;
-        }
-    };
-
-    let pkg = match index.packages.get(name) {
-        Some(p) => p,
-        None => {
-            eprintln!("error: package '{}' not found in registry", name);
-            eprintln!("  available packages: {}", index.packages.keys().cloned().collect::<Vec<_>>().join(", "));
-            return false;
-        }
-    };
-
-    if !pkg.versions.contains(&version.to_string()) {
-        eprintln!("error: package '{}' has no version '{}'", name, version);
-        eprintln!("  available versions: {}", pkg.versions.join(", "));
-        return false;
-    }
-
-    // Clone at the specific version tag
-    let tag = format!("v{}", version);
-    println!("installing {} v{} from {}...", name, version, pkg.repo);
-
-    if dest.exists() {
-        // Check out the right version
-        println!("  updating {}...", name);
-        let status = std::process::Command::new("git")
-            .args(["fetch", "--quiet", "--tags"])
-            .current_dir(dest)
-            .status();
-        if let Ok(s) = status {
-            if s.success() {
-                let _ = std::process::Command::new("git")
-                    .args(["checkout", "--quiet", &tag])
-                    .current_dir(dest)
-                    .status();
-                println!("  updated {} to v{}", name, version);
-                return true;
-            }
-        }
-        eprintln!("  warning: failed to update {}", name);
-        return false;
-    }
-
-    // Fresh clone at specific tag
-    let status = std::process::Command::new("git")
-        .args([
-            "clone", "--quiet", "--depth", "1",
-            "--branch", &tag,
-            &pkg.repo, &dest.to_string_lossy(),
-        ])
-        .status();
-
-    match status {
-        Ok(s) if s.success() => {
-            println!("  installed {} v{}", name, version);
-            true
-        }
-        _ => {
-            // Tag might not exist, try cloning without tag
-            eprintln!("  warning: tag '{}' not found, cloning latest", tag);
-            let status = std::process::Command::new("git")
-                .args(["clone", "--quiet", "--depth", "1", &pkg.repo, &dest.to_string_lossy()])
-                .status();
-            match status {
-                Ok(s) if s.success() => {
-                    println!("  installed {} (latest)", name);
-                    true
-                }
-                _ => {
-                    eprintln!("error: failed to clone {}", pkg.repo);
-                    false
-                }
-            }
+        Err(e) => {
+            eprintln!("error: {}", e);
+            process::exit(1);
         }
     }
 }
@@ -4221,17 +3994,11 @@ fn cmd_run_job(job_name: &str) {
 
 fn cmd_run_interpreted() {
     let config = parse_crowfile();
-    if !config.deps.is_empty() {
-        let modules_dir = std::path::PathBuf::from("crow_modules");
-        if !modules_dir.exists() {
-            eprintln!("warning: deps defined but 'crow_modules/' directory not found");
-        }
-        for (name, version) in &config.deps {
-            let dep_file = std::path::PathBuf::from("crow_modules").join(format!("{}.co", name));
-            let dep_dir = std::path::PathBuf::from("crow_modules").join(name).join("main.co");
-            if !dep_file.exists() && !dep_dir.exists() {
-                eprintln!("warning: dependency '{}' v{} not found in crow_modules/", name, version);
-            }
+    // a dependency not installed is said before the program runs
+    let root = project_root(&std::env::current_dir().unwrap_or_default());
+    for (name, spec) in &config.deps {
+        if !root.join("crow_modules").join(name).exists() {
+            eprintln!("warning: '{}' ({}) is not installed — run crow install", name, spec);
         }
     }
     // the crowfile's cpu count bounds the parallel loops, as it does the
