@@ -957,8 +957,8 @@ impl Emitter {
     /// a list itself.
     pub(crate) fn loop_items(&mut self, iter_str: String, it: &CrowType) -> (String, CrowType) {
         match it {
-            CrowType::NumArray(inner, _) => {
-                let elem = inner.as_ref().clone();
+            CrowType::NumArray(inner, dims) => {
+                let elem = crate::type_infer::TypeContext::tensor_item(inner, dims);
                 let walked = if matches!(elem, CrowType::NumArray(..)) {
                     format!("{}.rows()", iter_str)
                 } else if matches!(elem, CrowType::Int) {

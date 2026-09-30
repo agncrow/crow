@@ -3970,6 +3970,17 @@ mod tests {
         assert_eq!(refusal_of("use web\nfn lines[put, n]\n    put['`n`']\nfn flow[req]\n    return stream[lines, 3]\nroute['/flow', flow]\nserve[3999]\n"), "");
     }
 
+    /// A tensor whose shape is in its type is walked and indexed by its
+    /// rows, as a literal's nested rows are: `transpose[m]`'s items and
+    /// `zeros[2, 3][1]` are rows (they had been numbers, and the compiled
+    /// program walked the numbers)
+    #[test]
+    fn a_shaped_matrix_is_walked_by_its_rows() {
+        let ir = ir_of("use math\nm = [[1.0, 2.0], [3.0, 4.0]]\nfor c in transpose[m]\n    log[mean[c]]\nz = zeros[2, 3]\nr = z[1]\nlog[r]\n");
+        assert!(ir.contains("math.mean(c)"), "{}", ir);
+        assert!(ir.contains("let r: Tensor(Float, [3]) = z[1]"), "{}", ir);
+    }
+
     /// A variable bound again after its name's block has ended is a new
     /// variable, and the IR names it as the program wrote it (S11): it had
     /// said `t__s2`, the front end's name for the passes that key a type by

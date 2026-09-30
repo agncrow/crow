@@ -1,0 +1,25 @@
+--- A matrix is walked, and indexed, by its rows, whatever made it: a
+--- literal's rows, and `transpose`'s or `zeros`'s, whose shape is in their
+--- type. (A loop over `transpose[m]` walked the rows in the interpreter
+--- and the numbers in the compiled program, `zeros[2, 3][1]` was a row in
+--- one and a number in the other, and logging a row in a loop over a
+--- matrix had not built compiled.)
+use math
+
+m = [[1.0, 2.0], [3.0, 4.0]]
+for c in transpose[m]
+    log[c]
+    log[mean[c]]
+t = transpose[m]
+log[t[0]]
+log[t[1][0]]
+z = zeros[2, 3]
+log[z[1]]
+log[z[1][2]]
+for r in z
+    log[sum[r]]
+for r in m
+    log[r]
+sums = for r in transpose[m]
+    sum[r]
+log[sums]

@@ -285,14 +285,16 @@ impl<'p> Verifier<'p> {
     fn walked(&mut self, iter: &Expr) -> Ty {
         let t = self.expr(iter);
         match &t {
-            Ty::List(e) | Ty::Tensor(e, _) | Ty::Column(e) => e.as_ref().clone(),
+            Ty::List(e) | Ty::Column(e) => e.as_ref().clone(),
+            Ty::Tensor(e, dims) => Ty::tensor_item(e, dims),
             Ty::Map(_) => Ty::Str,
             Ty::Str | Ty::Markup => Ty::Str,
             Ty::Frame(_) | Ty::Json | Ty::Unknown => Ty::Unknown,
             // refused where it runs, by both backends: `cannot loop over an
             // error value`
             Ty::Result(inner) => match inner.as_ref() {
-                Ty::List(e) | Ty::Tensor(e, _) | Ty::Column(e) => e.as_ref().clone(),
+                Ty::List(e) | Ty::Column(e) => e.as_ref().clone(),
+                Ty::Tensor(e, dims) => Ty::tensor_item(e, dims),
                 _ => Ty::Unknown,
             },
             other => {

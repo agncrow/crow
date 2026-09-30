@@ -157,7 +157,7 @@ impl TypeContext {
                         let val_type = Self::walked(arg_ty(&args[1]));
                         let existing_inner = match &arr_type {
                             CrowType::Array(inner) => *inner.clone(),
-                            CrowType::NumArray(inner, _) => *inner.clone(),
+                            CrowType::NumArray(inner, dims) => Self::tensor_item(inner, dims),
                             _ => CrowType::Unknown,
                         };
                         let unified = existing_inner.unify(&val_type);
@@ -265,10 +265,7 @@ impl TypeContext {
                 let arg0 = args.first().map(|a| arg_ty(a)).unwrap_or(CrowType::Unknown);
                 match arg0 {
                     CrowType::Array(inner) => CrowType::Result(inner),
-                    CrowType::NumArray(inner, _) => match inner.as_ref() {
-                        CrowType::NumArray(..) => CrowType::Result(inner),
-                        _ => CrowType::Result(inner),
-                    },
+                    CrowType::NumArray(inner, dims) => CrowType::Result(Box::new(Self::tensor_item(&inner, &dims))),
                     _ => CrowType::Result(Box::new(CrowType::Struct("CrowFindResult".to_string()))),
                 }
             }
@@ -581,12 +578,12 @@ impl TypeContext {
                 t => CrowType::Result(Box::new(t)),
             },
             CrowType::Array(inner) => *inner,
-            CrowType::NumArray(inner, _) => {
+            CrowType::NumArray(inner, dims) => {
                 // Advanced indexing: tensor[tensor] → tensor (gather)
                 if matches!(index, Some(CrowType::NumArray(..))) {
                     return CrowType::NumArray(inner, None);
                 }
-                *inner
+                Self::tensor_item(&inner, &dims)
             }
             // a cell of a column whose type nothing told: dynamic until
             // int[], float[] or str[] reads it (typed frames)

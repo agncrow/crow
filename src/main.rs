@@ -585,9 +585,17 @@ fn cmd_test_book() {
                 else { (false, format!("  FAIL  {} (does not build)\n        {}\n", label, err.lines().last().unwrap_or("(no stderr)"))) }
             }
             Mode::Error => {
-                let (ok, _, _) = run_mode(&["build"], &path);
-                if !ok { (true, format!("  ok    {} (fails as documented)\n", label)) }
-                else { (false, format!("  FAIL  {} (documented as an error, but builds)\n", label)) }
+                // it fails as the book says, with Crow's refusal: a lowering
+                // that disagrees with itself, or Rust that does not compile,
+                // is a bug in Crow, not the documented error
+                let (ok, _, err) = run_mode(&["build"], &path);
+                if ok {
+                    (false, format!("  FAIL  {} (documented as an error, but builds)\n", label))
+                } else if err.contains("a bug in Crow") || err.contains("error[E") {
+                    (false, format!("  FAIL  {} (fails, but as a bug in Crow)\n        {}\n", label, err.lines().find(|l| l.contains("bug in Crow") || l.contains("error[E")).unwrap_or("")))
+                } else {
+                    (true, format!("  ok    {} (fails as documented)\n", label))
+                }
             }
         }
     };
@@ -1004,9 +1012,12 @@ fn cmd_test_parity(only: &[String]) {
             continue;
         }
         // both modes stopping at the same point with the same words is
-        // parity too (a crash's last line, a backtrace's note, never is)
+        // parity too (a crash's last line, a backtrace's note, never is; nor
+        // is the lowering disagreeing with itself — the program never ran,
+        // and that had passed as both modes stopping alike)
         let i_last = i_err.lines().last();
-        if !i_ok && !t_ok && i_out == t_out && i_last.is_some() && i_last == t_err.lines().last() {
+        let crow_bug = i_last.is_some_and(|l| l.contains("a bug in Crow, not in this program"));
+        if !i_ok && !t_ok && !crow_bug && i_out == t_out && i_last.is_some() && i_last == t_err.lines().last() {
             println!("  ok    {} (both stop: {})", name, i_last.unwrap_or_default());
             continue;
         }

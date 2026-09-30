@@ -102,7 +102,7 @@ impl TypeContext {
                 if let Expr::Ident(fn_name) = &args[1] {
                     let elem = match arg_types.first() {
                         Some(CrowType::Array(inner)) => Some(inner.as_ref().clone()),
-                        Some(CrowType::NumArray(inner, _)) => Some(inner.as_ref().clone()),
+                        Some(CrowType::NumArray(inner, dims)) => Some(Self::tensor_item(inner, dims)),
                         _ => None,
                     };
                     if let Some(elem) = elem {

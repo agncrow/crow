@@ -1002,9 +1002,25 @@ impl TypeContext {
     /// body says nothing yet (a later pass settles it).
     /// What a loop's variable holds: an item of the list, a number of the
     /// tensor (a row of a matrix), an item of a parsed JSON list.
+    /// A tensor's item — what a loop walks and an index reads: a row when
+    /// it has two or more dimensions, by its element type (a literal's
+    /// nested rows) or by the dimensions its type carries (`transpose`,
+    /// `zeros[2, 3]`); else one of its numbers. (The dimensions had been
+    /// passed over: a loop over `transpose[m]`, or `zeros[2, 3][1]`, read
+    /// numbers where both modes' values held rows, and the compiled program
+    /// walked the numbers.)
+    pub(crate) fn tensor_item(inner: &CrowType, dims: &Option<Dims>) -> CrowType {
+        match (inner, dims) {
+            (CrowType::NumArray(..), _) => inner.clone(),
+            (number, Some(d)) if d.len() >= 2 => CrowType::NumArray(Box::new(number.clone()), Some(d[1..].to_vec())),
+            (number, _) => number.clone(),
+        }
+    }
+
     pub(crate) fn loop_item(iter_type: CrowType) -> CrowType {
         match iter_type {
-            CrowType::Array(inner) | CrowType::NumArray(inner, _) => *inner,
+            CrowType::Array(inner) => *inner,
+            CrowType::NumArray(inner, dims) => Self::tensor_item(&inner, &dims),
             // a parsed value's items are parsed values, read as one type
             // where the body computes with them
             CrowType::Json => CrowType::Json,

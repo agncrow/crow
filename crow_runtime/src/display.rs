@@ -49,12 +49,24 @@ impl CrowDisplay for String {
     }
 }
 
-impl CrowDisplay for &str {
+impl CrowDisplay for str {
     fn crow_repr(&self) -> String {
         format!("'{}'", self)
     }
     fn crow_fmt(&self) -> String {
         self.to_string()
+    }
+}
+
+/// A value borrowed shows as the value: an item a loop walks by reference
+/// (a matrix's row, a list's record) is logged as itself (a row had not
+/// built compiled).
+impl<T: CrowDisplay + ?Sized> CrowDisplay for &T {
+    fn crow_repr(&self) -> String {
+        (**self).crow_repr()
+    }
+    fn crow_fmt(&self) -> String {
+        (**self).crow_fmt()
     }
 }
 

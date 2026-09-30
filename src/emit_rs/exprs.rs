@@ -668,13 +668,13 @@ impl Emitter {
         let idx = idx_strs.first().cloned().unwrap_or_default();
         let idx_ty = indices.first().map(|x| Self::inner(&self.tt(x)));
         match &inner {
-            CrowType::NumArray(el, _) => {
+            CrowType::NumArray(el, dims) => {
                 if matches!(idx_ty, Some(CrowType::NumArray(..))) {
                     return format!("{}.try_gather(&{}){}", b, idx, self.or_stop());
                 }
                 // an index outside stops the program with the runtime's words
                 let line = self.current_line;
-                if matches!(el.as_ref(), CrowType::NumArray(..)) {
+                if matches!(crate::type_infer::TypeContext::tensor_item(el, dims), CrowType::NumArray(..)) {
                     return format!("{{ let _i = {}; let _t = &{}; _t.index0(crow_runtime::stops::row(_i, _t.shape()[0]).unwrap_or_else(|e| crow_stop({}, e))) }}", idx, b, line);
                 }
                 let cast = if matches!(el.as_ref(), CrowType::Int) { " as i64" } else { "" };
