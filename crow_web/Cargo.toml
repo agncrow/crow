@@ -48,7 +48,9 @@ mail = ["dep:lettre", "dep:tokio"]
 cache = ["dep:moka", "dep:tokio"]
 queue = ["dep:tokio"]
 docs = ["dep:axum", "dep:tokio"]
-live = ["dep:axum", "dep:tokio", "dep:tokio-stream", "dep:futures-util", "dep:reqwest", "dep:uuid", "dep:hmac", "dep:sha2", "dep:base64"]
+# a live page is served, so live carries the server (http): a program that
+# imports ui and not web had not built compiled
+live = ["http", "dep:axum", "dep:tokio", "dep:tokio-stream", "dep:futures-util", "dep:reqwest", "dep:uuid", "dep:hmac", "dep:sha2", "dep:base64"]
 view = []
 msgpack = ["dep:rmp-serde"]
 arrow_ipc = ["dep:arrow"]
