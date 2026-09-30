@@ -14,7 +14,7 @@ What's done, what's remaining, and in what order.
 | Neural networks (8) | relu, sigmoid, softmax, gelu, mse, crossentropy, bce, linear |
 | DataFrames (16+) | load, save, select, filter, sort, group, join, stack, head, tail, fill, unique, rename, stats, datetime, tz |
 | General-purpose (P3) | regex (find, matches, sub), moments (now, moment, calendar, parse_time — a moment is a number), freshness (captured), shell, hashing (sha256/sha512/md5) |
-| Web framework (P4) | 17 modules: server, client, db, auth, cors, session, template, cache, rate, upload, sse, ws, live, static, mail, queue, docs — all with transpiler codegen + interpreter support |
+| Web framework (P4) | 17 modules: server, client, db, auth, cors, session, template, cache, rate, upload, sse, ws, live, static, mail, queue, docs. Pages, routes, responses, auth for pages and mail work in both modes; the rest are audited for 1.0 (see The 1.0 bar): several are mocks in the interpreter, and a cache, a rate limiter or a session store can be made but not used |
 | Autograd | `grad[f]` functional transformation |
 | Parallel execution | Auto-parallel `for` loops (rayon), statement-level parallelism via dependency analysis |
 | CLI | `crow run`, `crow build`, `crow stop`, `crow fmt`, `crow check` (+ `--db`, `--strict`), `crow fix`, `crow db diff`, `crow test` (blocks, `--parity`, `--book`), `crow lsp`, `crow new`, `crow install`, `crow launch`, REPL |
@@ -24,8 +24,29 @@ What's done, what's remaining, and in what order.
 | Editor | `crow lsp` (diagnostics, completion, hover, go-to-definition, signature help) + VS Code extension in `editors/vscode` |
 | Project structure | `crow new` scaffolding (--web, --ml, --db), `crow run <job>`, convention-based views/jobs/layout/db, dot-path imports (`use views.home`), multi-import (`use web, ui`) |
 | DX | Default welcome page for empty web apps, friendly error messages (e.g. "port 3000 is already in use") |
-| Tests | cargo unit tests, 128-file parity corpus (`crow test --parity`), the served pages in both modes (`crow test --served`), every book block in both modes (`crow test --book`), docs-vs-compiler coverage (`crow test --docs`), db-check fixtures in `tests/db_check`, chart harness; CI runs all of them (`.github/workflows/ci.yml`) |
+| Tests | cargo unit tests, 130-file parity corpus (`crow test --parity`), the served pages in both modes (`crow test --served`), every book block in both modes (`crow test --book`), docs-vs-compiler coverage (`crow test --docs`), db-check fixtures in `tests/db_check`, chart harness; `.github/workflows/ci.yml` runs all of them, as the local gate does (GitHub's billing stops CI from starting today) |
 | Documentation | The Crow Book (`docs/book`, 13 chapters + 5 appendices), language-spec.md, crow-for-llms.md, usage.md, crow-check.md, crow-lsp.md, module references, design records — indexed in `docs/README.md` |
+
+## The 1.0 bar
+
+Vijay (Sept 30 2026): no 1.0 until the language and its modules are bug-free and robust for production. What that takes, checked off as each lands:
+
+- [x] **Route handlers** — a handler that stops answers 500 with the reason, as the interpreter's does (the compiled program dropped the connection), and a route's handler runs off the server's threads, as a page's does.
+- [ ] **No mocks, no half-features** — every builtin works the same in both modes, with a test and an example: the docs check's spec-only list is empty. The web module's P4 submodules are audited, each finished in today's style or removed with a Design Note: several are mocks in the interpreter (`render` answers `[rendered: name]`, `uploads` an empty list), a cache, a rate limiter or a session store can be made but not used, and `web.queue` does what `later` does.
+- [ ] **A lost connection** — `connect` stays a stop at boot, and a connection that drops later answers errors while it is gone and reconnects on its own: tested by restarting a scratch database under a running app.
+- [ ] **Differential fuzzing** — generated programs agree in both modes, and the compiler never panics on any input.
+- [ ] **Failure tests for the server** — a database that drops and comes back, slow and stopping handlers, malformed and oversized requests: every request answered, the server never down.
+- [ ] **A soak test** — an app under load for a day, its memory and latency steady.
+- [ ] **A security review of crow_web** — sessions, cookies, origin checks, uploads, static paths, request size limits.
+- [ ] **Fixture recording** — an app's tests run without live databases.
+- [ ] **S11** — a scoped environment, so the IR and the Rust say `x` where they say `x__s2`.
+- [ ] **Every call names its row** — the calls on parsed JSON values, and the four whose arguments come from outside Crow.
+- [ ] **The language server** — sub-line ranges, rename, code actions, incremental analysis.
+- [ ] **The ecosystem** — P7, below.
+
+Decided and kept: `connect` stops rather than failing as a value, a function has one copy whatever the shapes it is handed, and `stream[feed, a, …]` hands its feed `put`.
+
+Not in 1.0: CI on every push waits (the local gate is the check), and so does the distributed runtime (P6).
 
 ## Remaining Work
 
@@ -193,14 +214,14 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. All three backen
 - [x] **GPU benchmarks**: `cargo test -p crow_runtime bench_gpu -- --nocapture --ignored` runs matmul, elementwise, and reduction benchmarks at multiple sizes.
 - [x] **GPU memory management**: `gpu_memory_info()` queries device limits, `gpu_try_alloc()` checks max_buffer_size before allocation for graceful OOM handling.
 
-### P6 — Distributed runtime (weeks)
+### P6 — Distributed runtime (after 1.0)
 
 - [ ] **Multi-node execution**: `nodes[n]` directive exists but needs real multi-node testing.
 - [ ] **Data sharding**: Verify automatic data partitioning across nodes.
 - [ ] **Gradient synchronization**: Verify all-reduce for distributed training.
 - [ ] **Strategy directives**: Test pipeline parallelism, tensor parallelism beyond data parallelism.
 
-### P7 — Ecosystem (months)
+### P7 — Ecosystem (before 1.0)
 
 - [ ] **Package registry**: `crow install` command exists but needs a real registry backend (GitHub-based or custom).
 - [ ] **Community packages**: Seed the ecosystem with useful packages (plotting, data connectors, model zoo).
