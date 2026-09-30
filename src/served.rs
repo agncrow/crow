@@ -178,12 +178,12 @@ fn route_answer(template: &IrInterp, handler: &str, req: crow_web::core::CrowReq
     .collect();
     let mut it = template.clone();
     match it.guard(|it| it.call(handler, vec![CrowValue::ok(Value::Map(request))])) {
-        Ok(v) if v.is_error() => CrowResponse::respond(500, format!("{} stopped: {}", handler, v.reason())),
+        Ok(v) if v.is_error() => CrowResponse::stopped(handler, v.reason()),
         Ok(v) => match v.value {
             Value::Response(r) => *r,
-            other => CrowResponse::respond(500, format!("{}[] answered {}, not a response: text[…], html[…], json[…], respond[…], redirect[…] or bytes[…]", handler, other.type_name())),
+            other => CrowResponse::respond(500, format!("{}[] answered {}, not a response: text[…], html[…], json[…], respond[…], redirect[…], bytes[…], msgpack[…], arrow[…] or stream[…]", handler, other.type_name())),
         },
-        Err(e) => CrowResponse::respond(500, format!("{} stopped: {}", handler, e)),
+        Err(e) => CrowResponse::stopped(handler, &e),
     }
 }
 

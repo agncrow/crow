@@ -1802,15 +1802,29 @@ fn test_db_insert() {
 #[test]
 fn test_web_msgpack_response() {
     let rust = transpile("use web\nfn handler[req]\n    m = map[]\n    return msgpack[m]\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
-    assert!(rust.contains("CrowResponse::msgpack("), "should emit CrowResponse::msgpack()\n{}", rust);
-    assert!(rust.contains("rmp_serde::to_vec"), "should use rmp_serde\n{}", rust);
+    // packed by crow_web, which the interpreter calls too
+    assert!(rust.contains("CrowResponse::msgpack_of(&serde_json::to_value("), "should emit CrowResponse::msgpack_of()\n{}", rust);
 }
 
 #[test]
 fn test_web_arrow_response() {
     let rust = transpile("use web\nuse frame\nfn handler[req]\n    f = load['data.csv']\n    return arrow[f]\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
-    assert!(rust.contains("CrowResponse::arrow_ipc("), "should emit CrowResponse::arrow_ipc()\n{}", rust);
-    assert!(rust.contains("to_arrow_ipc"), "should use to_arrow_ipc\n{}", rust);
+    // written by crow_web, which the interpreter calls too
+    assert!(rust.contains("CrowResponse::arrow_of("), "should emit CrowResponse::arrow_of()\n{}", rust);
+}
+
+/// A route's handler whose value can fail answers the failure as the
+/// interpreter's route does — 500, its name and the reason — where it had
+/// been declared to answer a plain response and had not built
+#[test]
+fn test_web_fallible_handler_answers_its_failure() {
+    let rust = transpile("use web, frame\nfn table[req]\n    return arrow[frame.load['data.csv']]\nroute['/table', table]\nserve[3999]\n");
+    assert!(rust.contains("fn table(req: crow_web::core::CrowRequest) -> CrowResult<crow_web::core::CrowResponse>"), "the handler keeps its Result\n{}", rust);
+    assert!(
+        rust.contains("Arc::new(move |__req: crow_web::core::CrowRequest| { let _r = table(__req); if _r.ok { _r.value } else { CrowResponse::stopped(\"table\", &_r.reason) } })"),
+        "the route answers the failure\n{}",
+        rust
+    );
 }
 
 #[test]
@@ -1822,9 +1836,11 @@ fn test_web_bytes_response() {
 
 #[test]
 fn test_web_stream_response() {
-    let rust = transpile("use web\nfn sender[emit]\n    emit['chunk1']\n\nfn handler[req]\n    return stream[sender]\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
-    assert!(rust.contains("mpsc::channel"), "should use mpsc channel for streaming\n{}", rust);
-    assert!(rust.contains("Body::from_stream"), "should use Body::from_stream\n{}", rust);
+    let rust = transpile("use web\nfn sender[emit, n]\n    emit['chunk `n`']\n\nfn handler[req]\n    return stream[sender, 3]\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
+    // the feed runs when the response is sent, handed put and the
+    // arguments taken by value
+    assert!(rust.contains("CrowResponse::stream(\"sender\", move |put| { let _ = sender(put, __s0); Ok(()) })"), "should hand the feed put and its arguments\n{}", rust);
+    assert!(rust.contains("fn sender(emit: fn(String) -> bool, n: i64)"), "the feed takes put, a function of text\n{}", rust);
 }
 
 // --- UI / LiveView tests ---

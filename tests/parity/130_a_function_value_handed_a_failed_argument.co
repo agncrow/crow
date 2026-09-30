@@ -1,0 +1,28 @@
+--- A function value handed an argument that failed answers the failure,
+--- as a named call does (spec, auto-propagation): the function it names
+--- never runs, and the caller's value is the error. (The compiled program
+--- stopped on the argument, and a function returning such a call did not
+--- build; the interpreter handed the error on.)
+fn shout[s]
+    return upper[s]
+
+fn apply[f, word]
+    n = int[word]
+    return f['`n`!']
+
+log[apply[shout, '7']]
+r = apply[shout, 'x']
+log[r.ok]
+log[r.reason]
+
+--- the function it names does not run: nothing it would say is said
+fn noisy[s]
+    log['noisy ran with `s`']
+    return s
+
+fn relay[f, word]
+    n = int[word]
+    return f['`n`']
+
+log[relay[noisy, '5']]
+log[relay[noisy, 'y'].ok]

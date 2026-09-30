@@ -224,7 +224,10 @@ impl Emitter {
                 if let Some(p) = f.params.first_mut() {
                     p.1 = Ty::Handle("web.request".into());
                 }
-                f.ret = Ty::Handle("web.response".into());
+                // a handler whose value can fail keeps its Result, and its
+                // route answers the failure (route_handler)
+                let response = Ty::Handle("web.response".into());
+                f.ret = if f.ret.is_result() { Ty::Result(Box::new(response)) } else { response };
             }
         }
 

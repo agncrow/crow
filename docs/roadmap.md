@@ -100,12 +100,11 @@ All 17 server-side modules implemented with 119 tests passing:
 
 #### Response formats ✅
 - [x] **Binary body support** — `CrowResponse` extended with `binary_body: Option<Vec<u8>>` for binary responses; Axum converter prioritizes binary body over string body.
-- [x] **`msgpack[value]`** — MessagePack binary response via `rmp-serde`. Transpiler emits `CrowResponse::msgpack(rmp_serde::to_vec(...))`. Feature-gated (`msgpack` feature in crow_web).
-- [x] **`arrow[frame]`** — Arrow IPC response for DataFrames. `crow_runtime::frame::to_arrow_ipc()` converts `CrowFrame` → Arrow `RecordBatch` → IPC stream bytes. Feature-gated (`arrow` feature in crow_runtime, `arrow_ipc` feature in crow_web).
+- [x] **`msgpack[value]`** — MessagePack binary response: `CrowResponse::msgpack_of` packs the value as JSON holds it (`rmp-serde`, crow_web's `msgpack` feature), and both modes call it.
+- [x] **`arrow[frame]`** — Arrow IPC response for DataFrames: `CrowResponse::arrow_of` writes `crow_runtime::frame::to_arrow_ipc()` (crow_web's `arrow_ipc` feature, which turns on crow_runtime's `arrow`), and both modes call it.
 - [x] **`bytes[data]`** — Raw binary response with `application/octet-stream` content type.
-- [x] **`stream[fn]`** — Streaming/chunked response via `tokio::sync::mpsc` channel + `axum::body::Body::from_stream`. Feature-gated (`stream` feature in crow_web).
-- [x] **Interpreter mocks** — All four builtins (`msgpack`, `arrow`, `bytes`, `stream`) work in `crow run -i` mode.
-- [x] **Tests** — 10 new tests (4 transpiler codegen + 4 interpreter + 2 arrow IPC unit tests). Total: 702 tests passing.
+- [x] **`stream[feed, a, …]`** — A text response sent as `feed[put, a, …]` puts it: `CrowResponse::stream` holds the feed, and the server runs it on a blocking thread when the response is sent, each `put` a chunk down a channel into `Body::from_stream` (crow_web's `http` feature). `put` answers whether the reader still listens.
+- [x] **Both modes** (Sept 30 2026) — the interpreter answers all four through the same crow_web functions (it had stopped on `msgpack`, `arrow` and `stream`, and before that answered them with a map that only looked like a response); the compiled `stream` had not built; a feed's loop calling `put` had been marked parallel; a compiled route whose handler's value can fail had not built. `tests/served/21_formats` holds both modes to the same bytes.
 
 #### Client-side WASM — rejected
 Rejected in favor of the Crow UI framework (see below). Building a WASM frontend pipeline would require `wasm-bindgen`, `web-sys`, and a reactive runtime — essentially building React/Svelte from scratch. The UI framework approach achieves the same goal (one-language full-stack) with pure Crow libraries and server-rendered HTML.

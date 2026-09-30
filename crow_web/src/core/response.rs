@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 /// HTTP response returned by Crow route handlers.
 ///
@@ -9,8 +11,8 @@ use std::collections::HashMap;
 /// ]
 /// ```
 ///
-/// Supports both text and binary bodies. Binary body takes priority
-/// when converting to an axum response (used by `msgpack[]`, `arrow[]`).
+/// Supports text, binary and streamed bodies. A feed takes priority, then
+/// the binary body, when converting to an axum response.
 #[derive(Debug, Clone)]
 pub struct CrowResponse {
     /// HTTP status code (e.g. 200, 404, 500)
@@ -22,6 +24,70 @@ pub struct CrowResponse {
     /// Binary response body (used by msgpack, arrow, bytes)
     /// When Some, takes priority over `body` in response_to_axum.
     pub binary_body: Option<Vec<u8>>,
+    /// A streamed body (`stream[feed]`): its chunks go to the reader as the
+    /// feed puts them. When Some, takes priority over both bodies.
+    pub feed: Option<Feed>,
+}
+
+/// What a feed is handed: `put`, which sends a chunk and answers whether
+/// the reader still listens.
+pub type Put = fn(String) -> bool;
+
+/// What a feed runs: handed put, it answers why it failed, if it did.
+type FeedFn = Box<dyn FnOnce(Put) -> Result<(), String> + Send>;
+
+/// A streamed response's feed (`stream[feed]`): its name, and what it runs
+/// once, when the response is sent, on a thread of its own. Copies of the
+/// response share it, and only the first run puts anything.
+#[derive(Clone)]
+pub struct Feed(Arc<Mutex<Option<(String, FeedFn)>>>);
+
+impl std::fmt::Debug for Feed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Feed")
+    }
+}
+
+/// Where a feed's chunks go: handed each, it answers whether the reader
+/// still listens.
+type Sink = Box<dyn FnMut(Vec<u8>) -> bool>;
+
+thread_local! {
+    /// Where this thread's feed puts its chunks, while it runs.
+    static SINK: RefCell<Option<Sink>> = const { RefCell::new(None) };
+}
+
+impl Feed {
+    /// Run the feed on this thread, each chunk it puts handed to `sink`,
+    /// which answers whether the reader still listens. A feed that fails
+    /// or stops ends the body there, and the log says why — the same words
+    /// in both modes.
+    pub fn run(&self, sink: impl FnMut(Vec<u8>) -> bool + 'static) {
+        let feed = match self.0.lock() {
+            Ok(mut held) => held.take(),
+            Err(poisoned) => poisoned.into_inner().take(),
+        };
+        let Some((name, feed)) = feed else { return };
+        SINK.with(|s| *s.borrow_mut() = Some(Box::new(sink)));
+        let ended = crow_runtime::stops::guarded(|| feed(put));
+        SINK.with(|s| *s.borrow_mut() = None);
+        match ended {
+            Ok(Ok(())) => {}
+            Ok(Err(why)) | Err(why) => eprintln!("crow: {} stopped: {}", name, why),
+        }
+    }
+}
+
+/// A feed's put (the function `stream[feed]` hands `feed`): the chunk goes
+/// to the reader, and the answer is whether the reader still listens —
+/// false once it has gone, and outside a running feed.
+pub fn put(chunk: String) -> bool {
+    // the sink is taken while it runs, so a put it made would find none
+    let taken = SINK.with(|s| s.borrow_mut().take());
+    let Some(mut sink) = taken else { return false };
+    let listening = sink(chunk.into_bytes());
+    SINK.with(|s| *s.borrow_mut() = Some(sink));
+    listening
 }
 
 impl CrowResponse {
@@ -32,6 +98,7 @@ impl CrowResponse {
             headers: HashMap::new(),
             body: body.into(),
             binary_body: None,
+            feed: None,
         }
     }
 
@@ -67,6 +134,38 @@ impl CrowResponse {
         Self::binary(200, bytes, "application/vnd.apache.arrow.stream")
     }
 
+    /// `msgpack[value]`: the value as JSON holds it, packed — both modes
+    /// hand it here, so their bytes agree. A value MessagePack cannot hold
+    /// answers 500 with the reason.
+    #[cfg(feature = "msgpack")]
+    pub fn msgpack_of(value: &serde_json::Value) -> Self {
+        match rmp_serde::to_vec(value) {
+            Ok(bytes) => Self::msgpack(bytes),
+            Err(e) => Self::respond(500, format!("msgpack: {}", e)),
+        }
+    }
+
+    /// `arrow[frame]`: the frame as an Arrow IPC stream. A frame Arrow
+    /// cannot hold answers 500 with the reason.
+    #[cfg(feature = "arrow_ipc")]
+    pub fn arrow_of(frame: &crow_runtime::frame::CrowFrame) -> Self {
+        match crow_runtime::frame::to_arrow_ipc(frame) {
+            Ok(bytes) => Self::arrow_ipc(bytes),
+            Err(e) => Self::respond(500, format!("arrow: {}", e)),
+        }
+    }
+
+    /// `stream[feed]`: a text response (status 200) whose body is what the
+    /// feed puts, each chunk sent as it is put. `name` is the feed's, which
+    /// the log names if it fails (answering the reason) or stops.
+    pub fn stream(name: &str, feed: impl FnOnce(Put) -> Result<(), String> + Send + 'static) -> Self {
+        let mut resp = Self::new(200, "");
+        resp.headers.insert("content-type".to_string(), "text/plain".to_string());
+        let feed: FeedFn = Box::new(feed);
+        resp.feed = Some(Feed(Arc::new(Mutex::new(Some((name.to_string(), feed))))));
+        resp
+    }
+
     /// HTML response (status 200, content-type: text/html).
     pub fn html(body: impl Into<String>) -> Self {
         let mut resp = Self::new(200, body);
@@ -86,6 +185,12 @@ impl CrowResponse {
     /// Response with a specific status code and body.
     pub fn respond(status: u16, body: impl Into<String>) -> Self {
         Self::new(status, body)
+    }
+
+    /// What a route answers when its handler fails or stops: 500, with the
+    /// handler's name and the reason — the same words in both modes.
+    pub fn stopped(handler: &str, reason: &str) -> Self {
+        Self::respond(500, format!("{} stopped: {}", handler, reason))
     }
 
     /// Redirect response (302 Found).
@@ -184,6 +289,90 @@ mod tests {
         assert_eq!(resp.status, 200);
         assert_eq!(resp.headers.get("content-type").unwrap(), "application/msgpack");
         assert!(resp.binary_body.is_some());
+    }
+
+    #[test]
+    fn test_response_stream_puts_in_order() {
+        let resp = CrowResponse::stream("chunks", |put| {
+            for i in 0..3 {
+                put(format!("chunk {}\n", i));
+            }
+            Ok(())
+        });
+        assert_eq!(resp.headers.get("content-type").unwrap(), "text/plain");
+        let got = Arc::new(Mutex::new(Vec::new()));
+        let into = got.clone();
+        resp.feed.clone().unwrap().run(move |chunk| {
+            into.lock().unwrap().extend(chunk);
+            true
+        });
+        assert_eq!(String::from_utf8(got.lock().unwrap().clone()).unwrap(), "chunk 0\nchunk 1\nchunk 2\n");
+        // a feed runs once: a copy of the response puts nothing more
+        resp.feed.unwrap().run(|_| panic!("a feed ran twice"));
+    }
+
+    #[test]
+    fn test_put_answers_whether_the_reader_listens() {
+        // outside a feed, nobody listens
+        assert!(!put("lost".to_string()));
+        let answers = Arc::new(Mutex::new(Vec::new()));
+        let seen = answers.clone();
+        let resp = CrowResponse::stream("xs", move |put| {
+            for _ in 0..3 {
+                seen.lock().unwrap().push(put("x".to_string()));
+            }
+            Ok(())
+        });
+        let mut room = 2;
+        resp.feed.unwrap().run(move |_| {
+            room -= 1;
+            room >= 0
+        });
+        assert_eq!(*answers.lock().unwrap(), vec![true, true, false]);
+    }
+
+    #[test]
+    fn test_a_feed_that_fails_or_stops_ends_the_body_there() {
+        let body = |resp: CrowResponse| {
+            let got = Arc::new(Mutex::new(Vec::new()));
+            let into = got.clone();
+            resp.feed.unwrap().run(move |chunk| {
+                into.lock().unwrap().extend(chunk);
+                true
+            });
+            let got = got.lock().unwrap().clone();
+            String::from_utf8(got).unwrap()
+        };
+        // a value that failed, and a stop: what was put before stays sent,
+        // and the stop goes no further than the feed
+        assert_eq!(body(CrowResponse::stream("broke", |put| {
+            put("a".to_string());
+            Err("no more rows".to_string())
+        })), "a");
+        assert_eq!(body(CrowResponse::stream("halted", |put| {
+            put("b".to_string());
+            crow_runtime::stops::halt(3, "index 9 is out of range for an array of 2 items")
+        })), "b");
+    }
+
+    #[cfg(feature = "msgpack")]
+    #[test]
+    fn test_msgpack_of_packs_the_value() {
+        let resp = CrowResponse::msgpack_of(&serde_json::json!({"name": "crow", "kind": "bird"}));
+        assert_eq!(resp.headers.get("content-type").unwrap(), "application/msgpack");
+        // a map of two, in JSON's order, each key and value a short string
+        assert_eq!(resp.binary_body.unwrap(), b"\x82\xa4kind\xa4bird\xa4name\xa4crow");
+    }
+
+    #[cfg(feature = "arrow_ipc")]
+    #[test]
+    fn test_arrow_of_writes_the_frame() {
+        use crow_runtime::frame::{Column, CrowFrame};
+        let frame = CrowFrame::new(vec!["n".to_string()], vec![Column::Int(vec![1, 2, 3])], vec![vec![true; 3]]);
+        let resp = CrowResponse::arrow_of(&frame);
+        assert_eq!(resp.status, 200);
+        assert_eq!(resp.headers.get("content-type").unwrap(), "application/vnd.apache.arrow.stream");
+        assert_eq!(resp.binary_body.unwrap(), crow_runtime::frame::to_arrow_ipc(&frame).unwrap());
     }
 
     #[test]

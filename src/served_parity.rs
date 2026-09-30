@@ -18,7 +18,9 @@
 //! the runner sends it the way the page's script does. A program that
 //! answers routes is asked them: `{"get": "/hello/ada"}` or `{"post":
 //! "/made", "body": "a widget"}`, its answer's status, content type,
-//! location and body compared.
+//! location and body compared — a streamed body put together from its
+//! chunks, and a body that is not text shown as its bytes
+//! (`<21 bytes: 82a4…>`).
 
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
@@ -43,9 +45,50 @@ fn request(port: u16, method: &str, path: &str, cookie: &Option<String>) -> Resu
         method, path, cookie_line, p = port
     )
     .map_err(|e| e.to_string())?;
-    let mut page = String::new();
-    http.read_to_string(&mut page).map_err(|e| e.to_string())?;
-    Ok(page)
+    read_answer(&mut http)
+}
+
+/// An answer as the runner reads it: its head, then its body — a chunked
+/// body put together from its chunks, and a body that is not text shown
+/// as its bytes, so two modes' answers compare as text.
+fn read_answer(http: &mut std::net::TcpStream) -> Result<String, String> {
+    let mut raw = Vec::new();
+    http.read_to_end(&mut raw).map_err(|e| e.to_string())?;
+    let (head, body) = match raw.windows(4).position(|w| w == b"\r\n\r\n") {
+        Some(i) => (&raw[..i], &raw[i + 4..]),
+        None => (&raw[..], &[][..]),
+    };
+    let head = String::from_utf8_lossy(head).to_string();
+    let chunked = head.lines().any(|l| {
+        let l = l.to_ascii_lowercase();
+        l.starts_with("transfer-encoding:") && l.contains("chunked")
+    });
+    let body = if chunked { dechunk(body) } else { body.to_vec() };
+    let body = match String::from_utf8(body) {
+        Ok(text) => text,
+        Err(e) => {
+            let bytes = e.into_bytes();
+            format!("<{} bytes: {}>", bytes.len(), bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>())
+        }
+    };
+    Ok(format!("{}\r\n\r\n{}", head, body))
+}
+
+/// A chunked body's chunks, put together: each is its size in hex, a line
+/// break, the bytes and a line break, up to the chunk of size 0.
+fn dechunk(mut body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    while let Some(eol) = body.windows(2).position(|w| w == b"\r\n") {
+        let size = std::str::from_utf8(&body[..eol]).ok().and_then(|s| usize::from_str_radix(s.split(';').next().unwrap_or("").trim(), 16).ok());
+        match size {
+            Some(n) if n > 0 && body.len() >= eol + 2 + n => {
+                out.extend_from_slice(&body[eol + 2..eol + 2 + n]);
+                body = &body[(eol + 4 + n).min(body.len())..];
+            }
+            _ => break,
+        }
+    }
+    out
 }
 
 /// POST a file's bytes, as the page's script sends a picked file.
@@ -58,9 +101,7 @@ fn request_with_body(port: u16, path: &str, body: &[u8]) -> Result<String, Strin
     )
     .map_err(|e| e.to_string())?;
     http.write_all(body).map_err(|e| e.to_string())?;
-    let mut answer = String::new();
-    http.read_to_string(&mut answer).map_err(|e| e.to_string())?;
-    Ok(answer)
+    read_answer(&mut http)
 }
 
 /// A program that answers routes: each step asks one (`{"get":
@@ -418,7 +459,9 @@ fn fresh_copy(app: &std::path::Path) -> Result<std::path::PathBuf, String> {
 }
 
 /// Run the corpus; the process's exit status.
-pub fn run() -> i32 {
+/// `only`: when given, the pages whose paths hold one of its words
+/// (`crow test --served formats`), as `--parity` narrows its programs.
+pub fn run(only: &[String]) -> i32 {
     let dir = std::path::Path::new("tests/served");
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
         .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map_or(false, |x| x == "co")).collect())
@@ -426,6 +469,9 @@ pub fn run() -> i32 {
     files.sort();
     let apps = reference_apps();
     files.extend(apps.iter().map(|a| a.join("main.co")));
+    if !only.is_empty() {
+        files.retain(|f| only.iter().any(|w| f.to_string_lossy().contains(w.as_str())));
+    }
     if files.is_empty() {
         eprintln!("error: no tests/served/*.co found (run from the project root)");
         return 1;

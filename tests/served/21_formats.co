@@ -1,0 +1,51 @@
+--- The other responses (spec, Core (Server)): msgpack packs a value,
+--- arrow writes a frame as an Arrow IPC stream, and stream sends what its
+--- feed puts, chunk by chunk, the arguments after the feed handed to it —
+--- through the same crow_web functions in both modes, so the bytes agree.
+--- A handler whose value fails answers 500 with its name and the reason,
+--- and a feed that fails or stops ends the body where it is.
+--- The interpreter had stopped on all three; the compiled stream had not
+--- built, and threw its body away; and a compiled handler whose value can
+--- fail had not built at all.
+use web, frame
+
+fn packed[req]
+    return msgpack[map[name = 'crow', kind = 'bird']]
+
+fn table[req]
+    f = with[frame.new[], 'n', [1, 2, 3]]
+    return arrow[f]
+
+fn lines[put, n]
+    for i in range[n]
+        put['line `i`\n']
+
+fn flow[req]
+    return stream[lines, int[req.query.n]]
+
+fn broken[req]
+    return arrow[frame.load['no-such-file.csv']]
+
+--- a feed that fails or stops ends the body where it is (the log says why)
+fn failing[put, word]
+    put['one\n']
+    n = int[word]
+    put['`n`\n']
+
+fn halting[put, xs]
+    put['one\n']
+    put['`xs[9]`\n']
+
+fn fail[req]
+    return stream[failing, req.query.word]
+
+fn halt[req]
+    return stream[halting, [1, 2]]
+
+route['/packed', packed]
+route['/table', table]
+route['/flow', flow]
+route['/broken', broken]
+route['/fail', fail]
+route['/halt', halt]
+serve[3422]

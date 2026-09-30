@@ -2600,54 +2600,20 @@ mod tests {
 
     // ===== Response format tests (P4) =====
 
+    /// msgpack, arrow, bytes and stream are web's: outside a web program
+    /// they are refused before it runs (the interpreter had answered them
+    /// with a map that only looked like a response, and the compiled program
+    /// had not built); in one they are answers (msgpack_arrow_and_stream_are_answers)
     #[test]
-    fn test_msgpack_builtin() {
-        let val = get_var("resp = msgpack['hello']", "resp");
-        match &val.value {
-            Value::Map(m) => {
-                assert!(matches!(m.get("status").unwrap().value, Value::Int(200)));
-                assert!(matches!(&m.get("type").unwrap().value, Value::Str(s) if s == "application/msgpack"));
-                assert!(matches!(m.get("binary").unwrap().value, Value::Bool(true)));
-            }
-            _ => panic!("expected map, got {:?}", val.value),
-        }
-    }
-
-    #[test]
-    fn test_arrow_builtin() {
-        let val = get_var("resp = arrow['frame_placeholder']", "resp");
-        match &val.value {
-            Value::Map(m) => {
-                assert!(matches!(m.get("status").unwrap().value, Value::Int(200)));
-                assert!(matches!(&m.get("type").unwrap().value, Value::Str(s) if s == "application/vnd.apache.arrow.stream"));
-                assert!(matches!(m.get("binary").unwrap().value, Value::Bool(true)));
-            }
-            _ => panic!("expected map, got {:?}", val.value),
-        }
-    }
-
-    #[test]
-    fn test_bytes_builtin() {
-        let val = get_var("resp = bytes['raw data']", "resp");
-        match &val.value {
-            Value::Map(m) => {
-                assert!(matches!(m.get("status").unwrap().value, Value::Int(200)));
-                assert!(matches!(&m.get("type").unwrap().value, Value::Str(s) if s == "application/octet-stream"));
-                assert!(matches!(m.get("binary").unwrap().value, Value::Bool(true)));
-            }
-            _ => panic!("expected map, got {:?}", val.value),
-        }
-    }
-
-    #[test]
-    fn test_stream_builtin() {
-        let val = get_var("resp = stream['handler_placeholder']", "resp");
-        match &val.value {
-            Value::Map(m) => {
-                assert!(matches!(m.get("status").unwrap().value, Value::Int(200)));
-                assert!(matches!(m.get("streaming").unwrap().value, Value::Bool(true)));
-            }
-            _ => panic!("expected map, got {:?}", val.value),
+    fn the_responses_outside_a_web_program_are_refused() {
+        for (src, name) in [
+            ("resp = msgpack['hello']\n", "msgpack"),
+            ("resp = arrow['frame_placeholder']\n", "arrow"),
+            ("resp = bytes['raw data']\n", "bytes"),
+            ("fn f[put]\n    put['a']\nresp = stream[f]\n", "stream"),
+        ] {
+            let refused = run(src).err().unwrap_or_default();
+            assert!(refused.contains(&format!("{}[] is web's: add `use web`", name)), "{}: {}", name, refused);
         }
     }
 
@@ -3294,6 +3260,33 @@ mod tests {
             other => panic!("{:?}", other),
         }
         assert!(!matches!(it.var("p").unwrap().value, Value::Response(_)), "json of text parses it");
+    }
+
+    /// msgpack, arrow and stream answer in the interpreter through
+    /// crow_web's own functions, as the compiled program's do (the
+    /// interpreter had stopped on all three): a stream's feed runs when the
+    /// response is sent, handed put and the arguments after it
+    #[test]
+    fn msgpack_arrow_and_stream_are_answers() {
+        let it = run("use web, frame\nfn lines[put, n]\n    for i in range[n]\n        put['line `i`\\n']\nm = msgpack[map[name = 'crow']]\na = arrow[with[frame.new[], 'n', [1, 2]]]\ns = stream[lines, 2]\n").unwrap();
+        let response = |n: &str| match &it.var(n).unwrap().value {
+            Value::Response(r) => r.as_ref().clone(),
+            other => panic!("{} is {:?}", n, other),
+        };
+        let m = response("m");
+        assert_eq!(m.headers.get("content-type").map(String::as_str), Some("application/msgpack"));
+        assert_eq!(m.binary_body.as_deref(), Some(&b"\x81\xa4name\xa4crow"[..]));
+        let a = response("a");
+        assert_eq!(a.headers.get("content-type").map(String::as_str), Some("application/vnd.apache.arrow.stream"));
+        assert!(a.binary_body.as_ref().is_some_and(|b| b.starts_with(&[0xff, 0xff, 0xff, 0xff])), "{:?}", a.binary_body);
+        let s = response("s");
+        let got = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let into = got.clone();
+        s.feed.expect("a feed").run(move |chunk| {
+            into.lock().unwrap().push(String::from_utf8(chunk).unwrap());
+            true
+        });
+        assert_eq!(*got.lock().unwrap(), vec!["line 0\n".to_string(), "line 1\n".to_string()]);
     }
 
     /// html[a] is the page as the browser builds it, the same text in both

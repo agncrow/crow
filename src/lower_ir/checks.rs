@@ -611,6 +611,38 @@ impl<'a> Lowerer<'a> {
             return;
         }
         let argc = args.len();
+        let own = self.ctx.functions.contains_key(name);
+
+        // a route and its responses are web's: without `use web` neither
+        // mode has them (the interpreter had answered msgpack, arrow, bytes
+        // and stream with a map that only looked like a response)
+        let web_program = self.ctx.bare_modules.iter().any(|m| m == "web" || m.starts_with("web."));
+        if !own && !web_program && matches!(name, "route" | "serve" | "respond" | "redirect" | "msgpack" | "arrow" | "bytes" | "stream") {
+            self.refuse(format!("{}[] is web's: add `use web`", name));
+            return;
+        }
+
+        // stream[feed, a, …] calls feed[put, a, …]: the feed is a function
+        // of the program, taking put and then what the call hands it
+        if name == "stream" && !own {
+            match args.first() {
+                Some(A::Ident(f)) if self.ctx.functions.contains_key(f) => {
+                    let takes = self.ctx.functions.get(f).map_or(0, |sig| sig.params.len());
+                    if takes != argc {
+                        self.refuse(format!(
+                            "stream[] calls {}[put{}], and {} takes {} parameter{}: its first is put, and the rest are what stream[{}, …] hands it",
+                            f,
+                            ", …".repeat(usize::from(argc > 1)),
+                            f,
+                            takes,
+                            if takes == 1 { "" } else { "s" },
+                            f
+                        ));
+                    }
+                }
+                _ => self.refuse("stream[] takes a function of the program, which it calls with put: stream[rows], with fn rows[put]".to_string()),
+            }
+        }
 
         // a page's address holds facts (spec, Core (Server)): each name its
         // path's `:name` segments give, and each `url` name, is a fact —
@@ -884,10 +916,21 @@ impl<'a> Lowerer<'a> {
 
         // A variable holding a function, a list or a map
         if self.defined(name) {
-            if let Some(CrowType::Fn(params, _)) = self.ctx.vars.get(name) {
+            if let Some(CrowType::Fn(params, _)) = self.ctx.vars.get(name).cloned() {
                 let expected = params.len();
                 if argc != expected {
                     self.refuse(format!("'{}' expects {} argument{}, got {}", name, expected, if expected == 1 { "" } else { "s" }, argc));
+                }
+                // a function that takes text is handed text — a feed's put
+                // among them (the compiled program did not build otherwise)
+                for (i, p) in params.iter().enumerate() {
+                    let given = match arg_type(self, i) {
+                        CrowType::Result(inner) => *inner,
+                        other => other,
+                    };
+                    if matches!(p, CrowType::Str) && !matches!(given, CrowType::Str | CrowType::Markup | CrowType::Unknown | CrowType::Void) {
+                        self.refuse(format!("{}[] takes text, and this is {}: write it into text, {}['`…`']", name, given.crow_name(), name));
+                    }
                 }
             }
             return;
@@ -947,7 +990,8 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "serve" => argc == 1 || argc == 9,   // serve[port] (pre-lower) or serve[port, refresh, budget, theme, density, accent, wide, keep, uploads]
         "respond" => argc == 2,
         "redirect" | "html" | "text" => argc == 1,
-        "msgpack" | "arrow" | "bytes" | "stream" => argc == 1,
+        "msgpack" | "arrow" | "bytes" => argc == 1,
+        "stream" => argc >= 1, // stream[feed, a, …] calls feed[put, a, …]
         "sqlite" => argc == 1,
         "exec" | "query" => argc >= 2,
         "sign" | "verify" => argc == 2,

@@ -7,7 +7,7 @@ edition = "2024"
 axum = { version = "0.8", features = ["tokio", "json", "query", "form", "matched-path", "original-uri", "ws"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "signal"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "signal", "sync"], optional = true }
 reqwest = { version = "0.12", features = ["blocking", "json"], optional = true }
 tungstenite = { version = "0.28.0", optional = true }
 tokio-stream = { version = "0.1", optional = true }
@@ -22,7 +22,6 @@ moka = { version = "0.12.14", features = ["future"], optional = true }
 redis = { version = "1.0.4", features = ["tokio-comp"], optional = true }
 uuid = { version = "1.21.0", features = ["v4"], optional = true }
 rmp-serde = { version = "1.3.1", optional = true }
-arrow = { version = "58.0.0", features = ["ipc"], optional = true }
 # the signed cookie a sign-in travels in
 hmac = { version = "0.12", optional = true }
 sha2 = { version = "0.10", optional = true }
@@ -32,7 +31,8 @@ crow_runtime = { version = "0.1.0", path = "../crow_runtime" }
 
 [features]
 default = []
-http = ["dep:axum", "dep:tokio"]
+# a streamed response (`stream[feed]`) is a body the server sends as it comes
+http = ["dep:axum", "dep:tokio", "dep:tokio-stream"]
 client = ["dep:reqwest"]
 ws = ["dep:tungstenite"]
 sse = ["dep:tokio-stream", "dep:futures-util", "dep:axum", "dep:tokio"]
@@ -53,8 +53,8 @@ docs = ["dep:axum", "dep:tokio"]
 live = ["http", "dep:axum", "dep:tokio", "dep:tokio-stream", "dep:futures-util", "dep:reqwest", "dep:uuid", "dep:hmac", "dep:sha2", "dep:base64"]
 view = []
 msgpack = ["dep:rmp-serde"]
-arrow_ipc = ["dep:arrow"]
-stream = ["dep:tokio-stream", "dep:futures-util", "dep:axum", "dep:tokio"]
+# the frame as Arrow is the runtime's (crow_runtime::frame::to_arrow_ipc)
+arrow_ipc = ["crow_runtime/arrow"]
 
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }

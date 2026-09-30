@@ -24,7 +24,7 @@ If the port is already in use, the server prints a friendly error: `error: port 
 | `page[path, view]` | Add a LiveView page rendered by `view` | [Views: the whole element vocabulary](../by-example/views-elements.md) · [View Blocks](../ch12-01-views.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Components](../ch12-03-components.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Derivations](../ch12-08-derive.md) · [Views and Live Updates](../ch13-03-views.md) |
 | `route[path, handler]` | Add a route; `handler` is a named `fn handler[req]` that receives the request and returns a response (implicit app; `route[path, method, handler]` for other methods) | [Web: responses and submodules](../by-example/web-more.md) · [Web: a JSON route](../by-example/web.md) |
 
-A route's handler is handed the request: `req.method`, `req.path` and `req.body` are text, and `req.headers` (their names in lower case), `req.query` and `req.params` are maps of text, so `/hello/:name` reads its name as `req.params.name` and `/find?q=crow` its query as `req.query.q`. A route that names a method answers only it, and another method at its path is `405 Method Not Allowed`. Both modes serve routes, answering `text`, `html`, `json`, `respond`, `redirect` and `bytes` alike; `msgpack`, `arrow` and `stream` are answered by the compiled program (`crow run`), and under `crow run -i` a handler that makes one stops, saying so. (The interpreter had served no route at all, and a compiled route that read a param or named a method had not built.)
+A route's handler is handed the request: `req.method`, `req.path` and `req.body` are text, and `req.headers` (their names in lower case), `req.query` and `req.params` are maps of text, so `/hello/:name` reads its name as `req.params.name` and `/find?q=crow` its query as `req.query.q`. A route that names a method answers only it, and another method at its path is `405 Method Not Allowed`. Both modes serve routes and make every response below through the same functions, so they answer alike, to the byte of a `msgpack` or an `arrow` body. A handler whose value fails — `int[req.query.n]` of a query that is no number, a frame that did not load — answers `500` with its name and the reason, `flow stopped: cannot convert 'x' to int`, in both modes. A route and its responses are web's: a program that calls one without `use web` is refused before it runs. (The interpreter had served no route at all, and then none of `msgpack`, `arrow` and `stream`; a compiled route that read a param or named a method had not built, nor one whose handler's value can fail, and the compiled `stream` had not built either.)
 
 ### Responses
 
@@ -35,10 +35,29 @@ A route's handler is handed the request: `req.method`, `req.path` and `req.body`
 | `json[map]` | JSON response from a map | [JSON](../by-example/json.md) · [Web: a JSON route](../by-example/web.md) |
 | `respond[status, body]` | Response with custom status code | [Web: responses and submodules](../by-example/web-more.md) |
 | `redirect[url]` | HTTP redirect response | [Web: responses and submodules](../by-example/web-more.md) |
-| `msgpack[value]` | MessagePack binary response (requires `rmp-serde`) | [Web: responses and submodules](../by-example/web-more.md) |
-| `arrow[frame]` | Arrow IPC binary response for DataFrames | [Web: responses and submodules](../by-example/web-more.md) |
+| `msgpack[value]` | MessagePack binary response: the value as JSON holds it, packed (`application/msgpack`) | [Web: responses and submodules](../by-example/web-more.md) |
+| `arrow[frame]` | The frame as an Arrow IPC stream (`application/vnd.apache.arrow.stream`), which pandas, polars and every Arrow reader take | [Web: responses and submodules](../by-example/web-more.md) |
 | `bytes[data]` | Raw binary response (`application/octet-stream`) | [Web: responses and submodules](../by-example/web-more.md) |
-| `stream[handler_fn]` | Streaming/chunked response via channel |  |
+| `stream[feed]` | A text response sent as `feed` puts it, chunk by chunk; `stream[feed, a, …]` hands `feed` the rest | [Web: responses and submodules](../by-example/web-more.md) |
+
+**A stream is sent as its feed puts it.** `stream[feed, a, …]` answers at once, and when the response is sent it calls `feed[put, a, …]` on a thread of its own. Each `put[text]` sends that chunk to the reader as it is put, and answers whether the reader still listens: `false` once they have gone, so a long feed can stop early. The arguments after the feed are the values they have when the handler answers, which is how a feed reads the request. A feed puts text — a value is written into text first, ``put['`row`\n']`` — and a `put` handed anything else is refused before the program runs; the chunks go out in the order they are put, a loop's included. A feed that fails or stops ends the body where it is, and the log says why. The body is `text/plain`, sent chunked.
+
+```
+use web
+
+fn numbered[put, n]
+    for i in range[n]
+        if not put['line `i`\n']
+            return
+
+fn flow[req]
+    return stream[numbered, int[req.query.n]]
+
+route['/flow', flow]
+serve[3000]
+```
+
+**Design Note: a stream's feed.** Considered: a feed that returns a list the runtime sends (it holds the whole body, which a stream exists not to); a channel value a handler writes to (a new kind of value for one builtin); `send[out, chunk]` on a handle (WebSocket's `send` would name two things); and chunks of any value, sent as JSON lines. Decided: the feed is a named function, as Crow has no lambdas, handed `put`, a function value the program already knows how to call; `stream[feed, a, …]` hands it what it needs from the request, as `later[f, a, …]` does. Text chunks keep one way to write a value (interpolation), and `put` answering whether the reader listens lets a feed stop with the `return` it already has.
 
 A response is what a route returns. A page shows elements and text, so a view that places one — `row[text['3 items']]` — is refused in both modes: place the text itself, or `p[…]` or `span[…]`.
 

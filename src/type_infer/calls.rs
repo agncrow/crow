@@ -137,6 +137,36 @@ impl TypeContext {
                 p.1 = CrowType::WebRequest;
             }
 
+            // stream[feed, a, …] IS a call of feed[put, a, …], read as one
+            // (as later's is): put takes a chunk of text and answers whether
+            // the reader still listens, and the rest are the arguments given,
+            // an error among them the stream call's own
+            if name == "stream"
+                && let Some(Expr::Ident(feed)) = args.first()
+                && let Some(sig) = self.functions.get(feed).cloned()
+            {
+                let mut given = vec![CrowType::Fn(vec![CrowType::Str], Box::new(CrowType::Bool))];
+                given.extend(arg_types.get(1..).unwrap_or(&[]).iter().map(|t| match t {
+                    CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Void) => CrowType::Unknown,
+                    CrowType::Result(inner) => *inner.clone(),
+                    other => other.clone(),
+                }));
+                let mut params = sig.params.clone();
+                for (i, (p, t)) in params.iter_mut().zip(&given).enumerate() {
+                    // put is the runtime's, whatever an earlier round guessed
+                    p.1 = if i == 0 { t.clone() } else { p.1.unify(t) };
+                }
+                if given.len() == params.len() && given.iter().all(Self::type_is_concrete) {
+                    let entry = self.call_signatures.entry(feed.clone()).or_default();
+                    if !entry.iter().any(|existing| Self::same_signature(existing, &given)) {
+                        entry.push(given);
+                    }
+                }
+                if let Some(sig) = self.functions.get_mut(feed) {
+                    sig.params = params;
+                }
+            }
+
             // db transact[conn, fn]: the callback's parameter is a
             // db connection handle
             if name == "transact" && args.len() == 2 {

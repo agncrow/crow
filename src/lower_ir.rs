@@ -198,8 +198,8 @@ fn used_in_expr(e: &Expr, used: &mut BTreeSet<String>, refs: &mut BTreeMap<Strin
 /// One node: a call's value is read where it is written (a collecting
 /// loop's last line is what it yields), and each naming of a function is
 /// counted, with the namings that only run it: a control's handler
-/// (`click = save`, a widget's `on = map[pick = choose]`), `later[f]` and
-/// the harness's `click[a, save]`.
+/// (`click = save`, a widget's `on = map[pick = choose]`), `later[f]`,
+/// `stream[feed]` and the harness's `click[a, save]`.
 fn note_used(e: &Expr, used: &mut BTreeSet<String>, refs: &mut BTreeMap<String, (usize, usize)>) {
     let run = |x: &Expr, refs: &mut BTreeMap<String, (usize, usize)>| {
         if let Expr::FnRef(n, _) = x {
@@ -219,7 +219,7 @@ fn note_used(e: &Expr, used: &mut BTreeSet<String>, refs: &mut BTreeMap<String, 
                 }
             }
         }
-        Expr::Effect { args, .. } | Expr::Call { args, .. } if matches!(call_name(e).as_deref(), Some("later" | "click")) => {
+        Expr::Effect { args, .. } | Expr::Call { args, .. } if matches!(call_name(e).as_deref(), Some("later" | "click" | "stream")) => {
             args.iter().for_each(|a| run(a, refs));
         }
         _ => {}
@@ -306,12 +306,16 @@ impl LoopOrder {
             calls.insert(f.name.clone(), (callees, through));
         }
         // every function the program holds as a value: a call through one
-        // may reach any of them
+        // may reach any of them — and the runtime's put, which stream[feed]
+        // hands its feed, sends a chunk, so its order shows (a feed's loop
+        // had run in parallel, its chunks in any order)
         let mut values: BTreeSet<String> = BTreeSet::new();
+        let mut puts = false;
         let mut note = |e: &Expr| {
             if let Expr::FnRef(n, _) = e {
                 values.insert(n.clone());
             }
+            puts |= call_name(e).as_deref() == Some("stream");
         };
         for f in &part.fns {
             visit_block(&f.body, &mut note);
@@ -327,7 +331,7 @@ impl LoopOrder {
         }
         visit_block(&part.main, &mut note);
         loop {
-            let through_values = values.iter().any(|v| ordered.contains(v) || !known.contains(v));
+            let through_values = puts || values.iter().any(|v| ordered.contains(v) || !known.contains(v));
             let mut grew = false;
             for (name, (callees, through)) in &calls {
                 if ordered.contains(name) {
@@ -3818,6 +3822,50 @@ mod tests {
     fn a_routes_handler_is_handed_the_request() {
         let ir = ir_of("use web\nfn hello[req]\n    return text['hello `req.params.name` `req.body`']\nroute['/hello/:name', hello]\nroute['/made', 'POST', hello]\nserve[3999]\n");
         assert!(ir.contains("pure hello(req: Handle(web.request)) -> Handle(web.response)"), "{}", ir);
+    }
+
+    /// stream[feed, a, …] calls feed[put, a, …]: put is a function of text
+    /// that answers whether the reader still listens, the rest are typed by
+    /// what the call hands, and the feed's loop keeps its order — a call
+    /// through put sends a chunk (untyped, put's loop had been marked
+    /// parallel, its chunks going out in any order); the responses are
+    /// responses
+    #[test]
+    fn a_streams_feed_is_handed_put_and_keeps_its_order() {
+        let ir = ir_of("use web\nfn lines[put, n]\n    for i in range[n]\n        put['line `i`']\nfn flow[req]\n    return stream[lines, 3]\nfn packed[req]\n    return msgpack[map[a = 1]]\nroute['/flow', flow]\nroute['/packed', packed]\nserve[3999]\n");
+        assert!(ir.contains("pure lines(put: Fn(Str) -> Bool, n: Int) -> Unit"), "{}", ir);
+        assert!(ir.contains("for i in core.range_to(n)\n"), "{}", ir);
+        assert!(!ir.contains("parallel"), "{}", ir);
+        assert!(ir.contains("pure flow(req: Handle(web.request)) -> Handle(web.response)"), "{}", ir);
+        assert!(ir.contains("pure packed(req: Handle(web.request)) -> Handle(web.response)"), "{}", ir);
+    }
+
+    /// What stream is handed is checked before either mode runs: a function
+    /// of the program taking put and then what the call hands it, whose put
+    /// is handed text; and the responses are web's (the interpreter had
+    /// answered msgpack, arrow, bytes and stream with a map that only looked
+    /// like a response)
+    #[test]
+    fn a_stream_and_the_responses_are_checked() {
+        let refused = refusal_of("use web\nfn lines[put]\n    put['a']\nfn flow[req]\n    return stream[lines, 3]\nroute['/flow', flow]\nserve[3999]\n");
+        assert!(refused.contains("stream[] calls lines[put, …], and lines takes 1 parameter: its first is put, and the rest are what stream[lines, …] hands it"), "{}", refused);
+        let refused = refusal_of("use web\nfn lines[put]\n    put[42]\nfn flow[req]\n    return stream[lines]\nroute['/flow', flow]\nserve[3999]\n");
+        assert!(refused.contains("put[] takes text, and this is int: write it into text, put['`…`']"), "{}", refused);
+        let refused = refusal_of("use web\nx = 3\nfn flow[req]\n    return stream[x]\nroute['/flow', flow]\nserve[3999]\n");
+        assert!(refused.contains("stream[] takes a function of the program, which it calls with put"), "{}", refused);
+        assert!(refusal_of("x = msgpack[map[a = 1]]\n").contains("msgpack[] is web's: add `use web`"));
+        assert!(refusal_of("x = respond[200, 'ok']\n").contains("respond[] is web's: add `use web`"));
+        // a program's own function of that name is its own
+        assert_eq!(refusal_of("fn stream[x]\n    return x + 1\nlog[stream[2]]\n"), "");
+        assert_eq!(refusal_of("use web\nfn lines[put, n]\n    put['`n`']\nfn flow[req]\n    return stream[lines, 3]\nroute['/flow', flow]\nserve[3999]\n"), "");
+    }
+
+    /// A route's handler whose value can fail keeps its Result (the Rust
+    /// backend's route answers the failure: emit_rs tests)
+    #[test]
+    fn a_fallible_routes_handler_keeps_its_result() {
+        let ir = ir_of("use web, frame\nfn table[req]\n    return arrow[frame.load['data.csv']]\nroute['/table', table]\nserve[3999]\n");
+        assert!(ir.contains("pure table(req: Handle(web.request)) -> Result(Handle(web.response))"), "{}", ir);
     }
 
     /// A frame a handler stores into a fact joins the fact's columns: the

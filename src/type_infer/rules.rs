@@ -311,6 +311,9 @@ impl TypeContext {
             "serve" => CrowType::Void,
             "respond" => CrowType::WebResponse,
             "redirect" => CrowType::WebResponse,
+            // the other responses: a value packed, a frame as Arrow, bytes,
+            // and a body its feed puts as it goes
+            "msgpack" | "arrow" | "bytes" | "stream" => CrowType::WebResponse,
             // a test's page as its html, from its app session; in a web app,
             // the response
             "html" => match arg_types.first() {

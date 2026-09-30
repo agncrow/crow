@@ -252,6 +252,10 @@ const STOP: &str = "\u{1}stop\u{1}";
 /// the function it leaves; the value waits in `returning`.
 const RETURN: &str = "\u{1}return\u{1}";
 
+/// The function `stream[feed]` hands its feed, as a value: a name no
+/// program's function can have.
+const PUT: &str = "<put>";
+
 /// The pipeline every runner shares: the front end's lowering, inference,
 /// then the lowering to the IR.
 pub fn prepare(stmts: &[crate::ast::Stmt], name: &str) -> Result<(Program, crate::type_infer::TypeContext), String> {
@@ -1933,24 +1937,6 @@ impl IrInterp {
                     Err(e) => Ok(CrowValue::error_with_kind(&format!("mail to {} failed: {}", mail.to, e), "mail", &self.trace_entry())),
                 }
             }
-            "msgpack" | "arrow" | "bytes" | "stream" => {
-                if vals.len() != 1 {
-                    return Err(format!("{}[] takes 1 argument", name));
-                }
-                if name != "stream" {
-                    let _ = vals[0].unwrap_or_propagate()?;
-                }
-                let kind = match name {
-                    "msgpack" => "application/msgpack",
-                    "arrow" => "application/vnd.apache.arrow.stream",
-                    _ => "application/octet-stream",
-                };
-                let mut map = std::collections::BTreeMap::new();
-                map.insert("status".to_string(), CrowValue::ok(Value::Int(200)));
-                map.insert("type".to_string(), CrowValue::ok(Value::Str(kind.to_string())));
-                map.insert(if name == "stream" { "streaming" } else { "binary" }.to_string(), CrowValue::ok(Value::Bool(true)));
-                Ok(CrowValue::ok(Value::Map(map)))
-            }
             // progress[value, max] (lowered)
             "progress" if vals.len() == 2 => {
                 if self.in_view == 0 {
@@ -2053,9 +2039,9 @@ impl IrInterp {
     }
 
     /// A web program's response forms, as the compiled program makes them
-    /// (emit_rs/builtins.rs): none for another name, or for a form given
-    /// what it does not answer (`json` of text parses it; `html` of a test's
-    /// app session is the harness's).
+    /// (emit_rs/builtins.rs), through the same crow_web functions: none for
+    /// another name, or for a form given what it does not answer (`json` of
+    /// text parses it; `html` of a test's app session is the harness's).
     fn web_response(&self, name: &str, vals: &[CrowValue]) -> Option<Result<CrowValue, String>> {
         use crow_web::core::CrowResponse;
         if !self.web {
@@ -2076,10 +2062,47 @@ impl IrInterp {
             },
             ("redirect", [url]) => CrowResponse::redirect(text(url)),
             ("bytes", [data]) => CrowResponse::binary(200, text(data).into_bytes(), "application/octet-stream"),
-            ("msgpack" | "arrow" | "stream", [_]) => return Some(Err(format!("{}[]: the interpreter does not answer it yet — crow run does", name))),
+            ("msgpack", [value]) => match crate::builtins::crow_to_json("msgpack", value) {
+                Ok(j) => CrowResponse::msgpack_of(&j),
+                Err(e) => return Some(Err(e)),
+            },
+            ("arrow", [frame]) => match &frame.value {
+                Value::Frame(f) => CrowResponse::arrow_of(f),
+                other => return Some(Err(format!("arrow[] takes a frame, got {}", other.type_name()))),
+            },
+            ("stream", [feed, rest @ ..]) => match &feed.value {
+                Value::Fn(f) => self.stream_response(&f.name, rest),
+                other => return Some(Err(format!("stream[] takes a named function, got {}", other.type_name()))),
+            },
             _ => return None,
         };
         Some(Ok(CrowValue::ok(Value::Response(Box::new(response)))))
+    }
+
+    /// `stream[feed, a, …]`: a response whose body is what `feed[put, a, …]`
+    /// puts, each chunk sent as it is put. The feed runs on a copy of the
+    /// program when the response is sent; one that fails or stops ends the
+    /// body there, and crow_web's log says why, as for the compiled feed.
+    fn stream_response(&self, feed: &str, rest: &[CrowValue]) -> crow_web::core::CrowResponse {
+        let mut it = self.clone();
+        let name = feed.to_string();
+        let mut args = vec![CrowValue::ok(Value::Fn(FnValue { name: PUT.to_string() }))];
+        args.extend(rest.iter().cloned());
+        crow_web::core::CrowResponse::stream(feed, move |_put| match it.guard(|it| it.call_user(&name, args)) {
+            Ok(v) if v.is_error() => Err(v.reason().to_string()),
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        })
+    }
+
+    /// The runtime's put, as a feed calls it: the chunk goes to the reader
+    /// (crow_web's put, which the compiled feed is handed), and the answer
+    /// is whether the reader still listens.
+    fn put(vals: &[CrowValue]) -> Result<CrowValue, String> {
+        match vals {
+            [chunk] => Ok(CrowValue::ok(Value::Bool(crow_web::core::response::put(format!("{}", chunk.value))))),
+            _ => Err("put[] takes one chunk of text: put['a line\\n']".to_string()),
+        }
     }
 
     /// `transact[conn, f]`: BEGIN, the function on the same connection,
@@ -2199,6 +2222,9 @@ impl IrInterp {
 
     fn call_user(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
         self.check_cancel()?;
+        if name == PUT {
+            return Self::put(&vals);
+        }
         // a specialised name (first__1) is the one body to this walker
         let f = match self.fns.get(name) {
             Some(f) => f.clone(),

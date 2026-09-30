@@ -963,13 +963,13 @@ fn metrics[req]
   df = query[db, 'SELECT * FROM metrics']
   return arrow[df]
 
---- Streaming batch inference (handler passed by name)
-fn send_batches[send]
-  for batch in chunks[req_data, 100]
-    send[model[tensor[batch]]]
+--- Streaming batch inference: the feed is handed put, and what stream hands it
+fn send_batches[put, rows]
+  for batch in chunks[rows, 100]
+    put['`model[tensor[batch]]`\n']
 
 fn batch[req]
-  return stream[send_batches]
+  return stream[send_batches, req.json.data]
 
 --- Raw model weights download
 fn weights[req]

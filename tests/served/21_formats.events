@@ -1,0 +1,18 @@
+[
+  {"get": "/packed"},
+  {"expect": "200 OK | content-type: application/msgpack | <21 bytes: 82a46b696e64a462697264a46e616d65a463726f77>"},
+  {"get": "/table"},
+  {"expect": "200 OK | content-type: application/vnd.apache.arrow.stream | <456 bytes: ffffffff"},
+  {"get": "/flow?n=3"},
+  {"expect": "200 OK | content-type: text/plain | line 0\nline 1\nline 2\n"},
+  {"get": "/flow?n=x"},
+  {"expect": "500 Internal Server Error | content-type: text/plain | flow stopped: "},
+  {"get": "/broken"},
+  {"expect": "500 Internal Server Error | content-type: text/plain | broken stopped: "},
+  {"get": "/fail?word=2"},
+  {"expect": "200 OK | content-type: text/plain | one\n2\n"},
+  {"get": "/fail?word=x"},
+  {"expect": "200 OK | content-type: text/plain | one\n"},
+  {"get": "/halt"},
+  {"expect": "200 OK | content-type: text/plain | one\n"}
+]

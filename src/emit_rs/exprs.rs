@@ -648,6 +648,10 @@ impl Emitter {
         let inner = Self::inner(&bty);
         let raw_base = self.expr(base);
         let b = if is_result { format!("{}.value", raw_base) } else { raw_base };
+        // a function value applied is a call, whose arguments are not indexes
+        if let CrowType::Fn(ps, ret) = &inner {
+            return self.apply_fn_value(&b, ps, ret, indices, whole);
+        }
         // an index that failed halts with its reason, as in the interpreter;
         // one that did not is its value
         let idx_strs: Vec<String> = indices
@@ -712,16 +716,59 @@ impl Emitter {
                     b, ie
                 )
             }
-            CrowType::Fn(ps, _) => {
-                let casted: Vec<String> = idx_strs
-                    .iter()
-                    .enumerate()
-                    .map(|(i, s)| if matches!(ps.get(i), Some(CrowType::Float)) && matches!(indices.get(i).map(|x| self.tt(x)), Some(CrowType::Int)) { format!("{} as f64", s) } else { s.clone() })
-                    .collect();
-                format!("{}({})", b, casted.join(", "))
-            }
             _ => format!("{}({})", b, idx_strs.join(", ")),
         }
+    }
+
+    /// A function value applied, `f[x]`: an argument that failed is the
+    /// call's value, the first such in order, and the function never runs,
+    /// as the interpreter hands it on (the compiled program had stopped on
+    /// it, and had not built a function returning such a call). Otherwise
+    /// each argument goes as its parameter takes it: one that can fail, to a
+    /// parameter that can fail, as it is; an int to a float, as a float.
+    fn apply_fn_value(&mut self, f: &str, ps: &[CrowType], ret: &CrowType, args: &[Expr], whole: &Expr) -> String {
+        let answers_failure = matches!(self.tt(whole), CrowType::Result(_));
+        let mut binds = String::new();
+        let mut failing: Vec<usize> = Vec::new();
+        let mut vals: Vec<String> = Vec::new();
+        for (k, a) in args.iter().enumerate() {
+            let s = self.expr(a);
+            let param = ps.get(k).cloned().unwrap_or(CrowType::Unknown);
+            let takes_failure = matches!(param, CrowType::Result(_));
+            let as_float = |v: String, t: &CrowType| if matches!(param, CrowType::Float) && matches!(t, CrowType::Int) { format!("{} as f64", v) } else { v };
+            vals.push(match self.tt(a) {
+                CrowType::Result(t) if answers_failure => {
+                    binds.push_str(&format!("let _fa{} = {}; ", k, s));
+                    failing.push(k);
+                    if takes_failure { format!("_fa{}.clone()", k) } else { as_float(format!("_fa{}.value.clone()", k), &t) }
+                }
+                // (a call the IR says cannot fail: the argument goes as its
+                // parameter takes it, and a failed one stops)
+                CrowType::Result(_) if takes_failure => s,
+                CrowType::Result(t) => as_float(format!("{{ let _ix = &({}); if !_ix.ok {{ crow_stop({}, _ix.reason.clone()); }} _ix.value.clone() }}", s, self.current_line), &t),
+                t => as_float(s, &t),
+            });
+        }
+        let call = format!("{}({})", f, vals.join(", "));
+        if failing.is_empty() {
+            return call;
+        }
+        let default = Self::inner(&self.tt(whole)).default_rust_value();
+        let good = if matches!(ret, CrowType::Result(_)) {
+            call
+        } else {
+            format!("CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", call)
+        };
+        let mut out = format!("{{ {}", binds);
+        for k in failing {
+            out.push_str(&format!(
+                "if !_fa{k}.ok {{ CrowResult {{ ok: false, value: {d}, reason: _fa{k}.reason.clone(), kind: _fa{k}.kind.clone(), trace: _fa{k}.trace.clone(), captured: 0.0 }} }} else ",
+                k = k,
+                d = default
+            ));
+        }
+        out.push_str(&format!("{{ {} }} }}", good));
+        out
     }
 
     pub(crate) fn cell_getter(t: &CrowType) -> &'static str {
@@ -1327,8 +1374,7 @@ impl Emitter {
         // gathering what an iteration yielded, errors included)
         let skip = (!propagates && matches!(target, Target::Runtime(_) | Target::Row(_)))
             || matches!(name.as_str(), "log" | "assert" | "cpu" | "gpu" | "nodes" | "type" | "error" | "captured" | "running")
-            || (self.needs_ui && !from_module && (name == "chart" || name == "table" || crate::lower::UI_ELEMENTS.contains(&name.as_str())))
-            || (self.needs_crow_web && name == "arrow");
+            || (self.needs_ui && !from_module && (name == "chart" || name == "table" || crate::lower::UI_ELEMENTS.contains(&name.as_str())));
         if !skip {
             let result_idx: Vec<usize> = raw_args.iter().enumerate().filter(|(_, a)| matches!(self.tt(a), CrowType::Result(_))).map(|(i, _)| i).collect();
             if !result_idx.is_empty() {

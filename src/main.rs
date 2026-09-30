@@ -274,7 +274,10 @@ fn crow_main() {
                 let only: Vec<String> = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect();
                 cmd_test_parity(&only);
             } else if args.iter().any(|a| a == "--served") {
-                process::exit(served_parity::run());
+                // `crow test --served formats`: only the pages whose paths
+                // hold one of the words
+                let only: Vec<String> = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect();
+                process::exit(served_parity::run(&only));
             } else if args.iter().any(|a| a == "--bench") {
                 cmd_test_bench();
             } else if args.iter().any(|a| a == "--book") {
@@ -798,7 +801,6 @@ fn cmd_test_docs() {
         "sign", "verify", "templates", "render", "uploads", // auth/template/upload codegen
         "connect", "send", "recv", "close",                // websocket client
         "sse", "ws", "cors", "static_dir", "sqlite",       // legacy app-parameter APIs
-        "stream",                                           // handler contract undocumented
         "app", "click",                                     // test-harness names (used in test blocks, not run blocks)
     ];
     // names a program reads as values, not calls: used when read at all
@@ -2004,14 +2006,6 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         ));
         // crow_web needs tokio for async runtime
         dep_list.push("tokio = { version = \"1\", features = [\"full\"] }".to_string());
-        // msgpack[] needs rmp-serde in the generated project
-        if emitted.web_features.contains("msgpack") {
-            dep_list.push("rmp-serde = \"1\"".to_string());
-        }
-        // stream[] needs tokio-stream in the generated project
-        if emitted.web_features.contains("stream") {
-            dep_list.push("tokio-stream = \"0.1\"".to_string());
-        }
     }
     if emitted.needs_crow_db {
         let db_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_db");

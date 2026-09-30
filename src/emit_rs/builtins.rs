@@ -561,16 +561,30 @@ impl Emitter {
         })
     }
 
+    /// A route's handler as the server takes it: one whose value can fail
+    /// answers its failure as the interpreter's route does (500, with its
+    /// name and the reason), where it had not built.
+    fn route_handler(&self, arg: &Expr, text: &str) -> String {
+        match fn_named(arg) {
+            Some(f) if self.fns.get(f).is_some_and(|sig| sig.ret.is_result()) => format!(
+                "move |__req: crow_web::core::CrowRequest| {{ let _r = {}(__req); if _r.ok {{ _r.value }} else {{ CrowResponse::stopped(\"{}\", &_r.reason) }} }}",
+                Self::rust_fn_name(f),
+                f
+            ),
+            _ => text.to_string(),
+        }
+    }
+
     /// The web module's builtins, the databases', and the page's.
     fn web_builtin(&mut self, name: &str, args: &[Expr], a: &[String]) -> Option<String> {
         let n = a.len();
         let web = self.needs_crow_web;
         let db = self.needs_crow_db;
         Some(match name {
-            "route" if web && n == 2 => format!("__crow_app = __crow_app.route(&{}, Arc::new({}))", a[0], a[1]),
-            "route" if web && n == 3 && matches!(self.tt(&args[0]), CrowType::Str) => format!("__crow_app = __crow_app.route_method(&{}, &{}, Arc::new({}))", a[0], a[1], a[2]),
-            "route" if web && n == 3 => format!("{}.route(&{}, Arc::new({}))", a[0], a[1], a[2]),
-            "route" if web && n == 4 => format!("{}.route_method(&{}, {}, Arc::new({}))", a[0], a[1], a[2], a[3]),
+            "route" if web && n == 2 => format!("__crow_app = __crow_app.route(&{}, Arc::new({}))", a[0], self.route_handler(&args[1], &a[1])),
+            "route" if web && n == 3 && matches!(self.tt(&args[0]), CrowType::Str) => format!("__crow_app = __crow_app.route_method(&{}, &{}, Arc::new({}))", a[0], a[1], self.route_handler(&args[2], &a[2])),
+            "route" if web && n == 3 => format!("{}.route(&{}, Arc::new({}))", a[0], a[1], self.route_handler(&args[2], &a[2])),
+            "route" if web && n == 4 => format!("{}.route_method(&{}, {}, Arc::new({}))", a[0], a[1], a[2], self.route_handler(&args[3], &a[3])),
             "serve" if web && n == 1 => format!("__crow_app.serve({} as u16).await.unwrap()", a[0]),
             "serve" if web && n == 9 => {
                 if self.has_page_routes {
@@ -586,30 +600,38 @@ impl Emitter {
             "redirect" if web && n == 1 => format!("CrowResponse::redirect({})", a[0]),
             "html" if web && n == 1 => format!("CrowResponse::html({})", a[0]),
             "text" if web && n == 1 => format!("CrowResponse::text({})", a[0]),
+            // packed and as Arrow by crow_web, as the interpreter's are
             "msgpack" if web && n == 1 => {
                 self.needs_serde_json = true;
                 self.web_features.insert("msgpack".to_string());
-                format!("CrowResponse::msgpack(rmp_serde::to_vec(&serde_json::to_value(&{}).unwrap()).unwrap())", a[0])
+                format!("CrowResponse::msgpack_of(&serde_json::to_value(&{}).unwrap())", a[0])
             }
             "arrow" if web && n == 1 => {
                 self.web_features.insert("arrow_ipc".to_string());
-                self.needs_crow_runtime = true;
-                if matches!(self.tt(&args[0]), CrowType::Result(_)) {
-                    format!(
-                        "{{ let _fr = &({}); if !_fr.ok {{ CrowResponse::text(format!(\"error: {{}}\", _fr.reason)) }} else {{ match crow_runtime::frame::to_arrow_ipc(&_fr.value) {{ Ok(_b) => CrowResponse::arrow_ipc(_b), Err(_e) => CrowResponse::text(format!(\"error: {{}}\", _e)) }} }} }}",
-                        a[0]
-                    )
-                } else {
-                    format!("match crow_runtime::frame::to_arrow_ipc(&{}) {{ Ok(_b) => CrowResponse::arrow_ipc(_b), Err(_e) => CrowResponse::text(format!(\"error: {{}}\", _e)) }}", a[0])
-                }
+                format!("CrowResponse::arrow_of(&{})", a[0])
             }
             "bytes" if web && n == 1 => format!("CrowResponse::binary(200, {}.into_bytes(), \"application/octet-stream\")", a[0]),
-            "stream" if web && n == 1 => {
-                self.web_features.insert("stream".to_string());
-                format!(
-                    "{{ let (tx, rx) = tokio::sync::mpsc::channel::<Result<String, std::io::Error>>(256); tokio::spawn(async move {{ let send = |data: String| {{ let tx = tx.clone(); tokio::task::block_in_place(|| {{ tx.blocking_send(Ok(data)).ok(); }}); }}; ({})(&send); }}); let stream = tokio_stream::wrappers::ReceiverStream::new(rx); let body = axum::body::Body::from_stream(stream); CrowResponse {{ status: 200, headers: std::collections::HashMap::from([(\"content-type\".to_string(), \"application/octet-stream\".to_string())]), body: String::new(), binary_body: None }} }}",
-                    a[0]
-                )
+            // stream[feed, a, …]: feed[put, a, …] runs when the response is
+            // sent, the arguments taken by value where the call is; a feed
+            // whose value fails answers the reason, which crow_web logs
+            "stream" if web && n >= 1 => {
+                let fname = match fn_named(&args[0]) {
+                    Some(f) => f.to_string(),
+                    None => return Some("compile_error!(\"stream[] takes a function\")".to_string()),
+                };
+                let mut captures = String::new();
+                let mut params = vec!["put".to_string()];
+                for (i, x) in a.iter().skip(1).enumerate() {
+                    captures.push_str(&format!("let __s{} = ({}).clone(); ", i, x));
+                    params.push(format!("__s{}", i));
+                }
+                let call = format!("{}({})", Self::rust_fn_name(&fname), params.join(", "));
+                let run = if self.fns.get(&fname).is_some_and(|f| f.ret.is_result()) {
+                    format!("let _r = {}; if _r.ok {{ Ok(()) }} else {{ Err(_r.reason) }}", call)
+                } else {
+                    format!("let _ = {}; Ok(())", call)
+                };
+                format!("{{ {}CrowResponse::stream(\"{}\", move |put| {{ {} }}) }}", captures, fname, run)
             }
             "connect" if db && !web => {
                 self.note_db_backend(&a[0]);
