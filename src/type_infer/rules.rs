@@ -334,6 +334,11 @@ impl TypeContext {
             // not (expired, a signature that does not match, not a token)
             "sign" if args.len() == 2 => CrowType::Result(Box::new(CrowType::Str)),
             "verify" => CrowType::Result(Box::new(CrowType::Json)),
+            // Web.ws: a socket, or why not; send answers empty text or why
+            // not, recv the next message or why not (closed, a wait passed)
+            "socket" => CrowType::Result(Box::new(CrowType::Socket)),
+            "send" | "recv" if matches!(args.first().map(&arg_ty), Some(CrowType::Socket)) => CrowType::Result(Box::new(CrowType::Str)),
+            "close" if matches!(args.first().map(&arg_ty), Some(CrowType::Socket)) => CrowType::Str,
             // Reactive data sources (UI)
             "poll" | "fetch" => CrowType::Frame(None),
             "today" => CrowType::Str,

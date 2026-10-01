@@ -97,8 +97,23 @@ smtp['smtp.example.com', 587, 'user', 'pass']
 serve[3000]
 ```
 
-The WebSocket client (`connect send recv close`) is specified in section 13
-of the spec but does not yet have a compiled example; `crow test --docs`
-lists it as *spec only* so the gap stays visible.
+A socket reads a live feed. Each failure is the call's error value — here,
+a server that does not answer — so a program decides what to do about it:
+
+```crow
+use web, web.ws
+
+feed = socket['ws://127.0.0.1:1/stocks']
+if feed.ok
+    send[feed, 'subscribe']
+    log[recv[feed, 5]]
+    close[feed]
+else
+    log['no feed: `feed.kind`']
+```
+
+```text
+no feed: socket
+```
 
 Reference: spec section 13 (web).

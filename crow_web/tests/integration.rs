@@ -432,23 +432,6 @@ mod view_integration {
     }
 }
 
-// ── WebSocket: client-side (no server needed) ───────────────────────
-
-#[cfg(feature = "ws")]
-mod ws_integration {
-    use crow_web::ws::connect;
-
-    #[test]
-    fn ws_connect_to_invalid_host() {
-        let sock = connect("ws://127.0.0.1:1");
-        assert!(!sock.ok());
-        // All operations on failed socket should be no-ops
-        sock.send("test");
-        assert!(sock.recv().is_none());
-        sock.close();
-    }
-}
-
 // ── Mail: email struct (no SMTP server needed) ──────────────────────
 
 #[cfg(feature = "mail")]

@@ -1636,17 +1636,13 @@ fn mail_in_a_handler_goes_through_the_session() {
 }
 
 #[test]
-fn test_web_connect() {
-    let rust = transpile("use web\nuse web.ws\nurl = 'ws://localhost:3000'\nsock = connect[url]\n");
-    assert!(rust.contains("ws::connect("), "should emit ws::connect()\n{}", rust);
-}
-
-#[test]
-fn test_web_send_recv_close() {
-    let rust = transpile("use web\nuse web.ws\nurl = 'ws://localhost:3000'\nsock = connect[url]\nsend[sock, 'hi']\nmsg = recv[sock]\nclose[sock]\n");
-    assert!(rust.contains(".send("), "should emit .send()\n{}", rust);
-    assert!(rust.contains(".recv()"), "should emit .recv()\n{}", rust);
-    assert!(rust.contains(".close()"), "should emit .close()\n{}", rust);
+fn test_web_socket() {
+    // a socket, and what acts on it, are crow_web's
+    let rust = transpile("use web\nuse web.ws\nurl = 'ws://localhost:3000'\nsock = socket[url]\nsend[sock, 'hi']\nmsg = recv[sock, 5]\nclose[sock]\n");
+    assert!(rust.contains("crow_web::ws::open("), "should open a socket\n{}", rust);
+    assert!(rust.contains(".send(&"), "should emit .send()\n{}", rust);
+    assert!(rust.contains(".recv(Some((5_i64) as f64))"), "should emit .recv() with its wait\n{}", rust);
+    assert!(rust.contains(".close();"), "should emit .close()\n{}", rust);
 }
 
 // --- DB module codegen tests ---

@@ -24,7 +24,7 @@ chrono = "0.4.44"
 crow_db = { version = "0.1.0", path = "crow_db", features = ["postgres", "sqlite", "clickhouse"] }
 # the interpreter answers every response the compiled program does:
 # msgpack and arrow among them (spec, Core (Server))
-crow_web = { version = "0.1.0", path = "crow_web", default-features = false, features = ["live", "http", "mail", "msgpack", "arrow_ipc", "auth"] }
+crow_web = { version = "0.1.0", path = "crow_web", default-features = false, features = ["live", "http", "mail", "msgpack", "arrow_ipc", "auth", "ws"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 # `crow kernel`: Jupyter's protocol over ZeroMQ (in Rust, no libzmq to
 # install), its messages signed with HMAC-SHA256, a cell's output read from

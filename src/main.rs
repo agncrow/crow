@@ -816,7 +816,6 @@ fn cmd_test_docs() {
     // the gap is visible (they have no example link in the standard library pages).
     const SPEC_ONLY: &[&str] = &[
         "test", "today",                                    // keyword / removed name
-        "connect", "send", "recv", "close",                // websocket client
         "app", "click",                                     // test-harness names (used in test blocks, not run blocks)
     ];
     // names a program reads as values, not calls: used when read at all

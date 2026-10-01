@@ -47,6 +47,7 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                     Value::Frame(_) => "frame".to_string(),
                     Value::DbConn(_) => "db".to_string(),
                     Value::Mailer(..) => "mailer".to_string(),
+                    Value::Socket(_) => "socket".to_string(),
                     Value::Response(_) => "response".to_string(),
                     // a JSON value's word is its value's, as the compiled program says it
                     Value::Json(j) => crow_runtime::json::type_word(j).to_string(),

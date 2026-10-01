@@ -671,10 +671,22 @@ impl Emitter {
                     a[0], a[1]
                 )
             }
-            "connect" if web && n == 1 => format!("ws::connect(&{})", a[0]),
-            "send" if web && n == 2 => format!("{}.send(&{})", a[0], a[1]),
-            "recv" if web && n == 1 => format!("{}.recv().unwrap_or_default()", a[0]),
-            "close" if web && n == 1 => format!("{}.close()", a[0]),
+            // a socket is crow_web's, as the interpreter's is; each failure
+            // the call's error value of kind 'socket'
+            "socket" if web && n == 1 => format!(
+                "match crow_web::ws::open(&{}) {{ Ok(_s) => CrowResult {{ ok: true, value: _s, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: crow_web::ws::CrowSocket::closed(), reason: _e, kind: \"socket\".to_string(), trace: vec![], captured: 0.0 }} }}",
+                a[0]
+            ),
+            "send" if web && n == 2 => format!(
+                "match {}.send(&{}) {{ Ok(()) => CrowResult {{ ok: true, value: String::new(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: String::new(), reason: _e, kind: \"socket\".to_string(), trace: vec![], captured: 0.0 }} }}",
+                a[0], a[1]
+            ),
+            "recv" if web && (n == 1 || n == 2) => format!(
+                "match {}.recv({}) {{ Ok(_m) => CrowResult {{ ok: true, value: _m, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: String::new(), reason: _e, kind: \"socket\".to_string(), trace: vec![], captured: 0.0 }} }}",
+                a[0],
+                if n == 2 { format!("Some(({}) as f64)", a[1]) } else { "None".to_string() }
+            ),
+            "close" if web && n == 1 => format!("{{ {}.close(); String::new() }}", a[0]),
             "page" if web && (n == 2 || n == 3) => self.page_route(args, a),
             "smtp" if web && n == 4 => format!("CrowMailer::new(&{}, {} as u16, &{}, &{}).unwrap()", a[0], a[1], a[2], a[3]),
             "fetch" if n == 1 => format!("{{ __crow_state.register_fetch(\"_anon\", &{}); serde_json::Value::Null }}", a[0]),

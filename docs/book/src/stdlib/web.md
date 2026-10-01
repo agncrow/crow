@@ -76,10 +76,27 @@ A token is how an API, which has no page session, says who calls it: `sign` give
 
 | Function | Description | Example |
 |---|---|---|
-| `connect[url]` | Connect to a WebSocket server | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
-| `send[sock, msg]` | Send a message on a WebSocket |  |
-| `recv[sock]` | Receive a message from a WebSocket |  |
-| `close[sock]` | Close a WebSocket connection |  |
+| `socket[url]` | A connection to a WebSocket server, `ws://` or `wss://` | [Web: responses and submodules](../by-example/web-more.md) |
+| `send[s, text]` | Send a text message; answers empty text | [Web: responses and submodules](../by-example/web-more.md) |
+| `recv[s]` / `recv[s, secs]` | The next message, as text — waiting for it, or at most `secs` seconds | [Web: responses and submodules](../by-example/web-more.md) |
+| `close[s]` | Close the connection, for every value that holds it | [Web: responses and submodules](../by-example/web-more.md) |
+
+A socket is a live feed a program reads — a market's trades, a service's events — in a script, a job, or a handler's background work. Each failure is the call's error value, of kind `'socket'`: a server that does not answer is `socket`'s (`cannot open a socket to …`), a wait that passes its seconds is `recv`'s (`no message in 5 s`), and a server that closed answers `closed`, after which every call says `the socket is closed`. A binary message reads as text, and a ping is answered and passed over. A socket is one connection however many values hold it — a function handed it, a loop — and `close` closes it for all of them. Both modes talk through the same client.
+
+```
+use web, web.ws
+
+feed = socket['wss://feed.example.com/stocks']
+send[feed, '{"action": "subscribe", "params": "T.AAPL"}']
+while true
+    m = recv[feed, 30]
+    if not m.ok
+        log['the feed stopped: `m.reason`']
+        break
+    log[m]
+```
+
+**Design Note: a socket's name.** Considered: `connect[url]`, the client's first name, which the database's `connect` already is — one name two ways, told apart by the URL's scheme; and `dial`, `open` and `ws`, which name a mechanism, a verb many things do, or the protocol's initials. Decided: `socket`, the thing a program holds, as `smtp` names a mailer and `connect` a database; `send`, `recv` and `close` act on it.
 
 ### LiveView / Pages
 

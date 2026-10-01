@@ -46,7 +46,7 @@ pub(crate) const WEB_RESERVED: &[&str] = &[
     "route", "serve", "respond", "redirect", "html", "text",
     "sign", "verify",
     "app", "click", "elements", "change", "box", "fits", "style",
-    "connect", "send", "recv", "close",
+    "socket", "send", "recv", "close",
     "page", "smtp", "mail", "mails", "msgpack", "arrow", "bytes", "stream",
     "reader", "sign_in", "sign_out", "download", "downloads",
 ];
@@ -110,7 +110,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     "route", "serve", "respond", "redirect", "html", "text",
     "msgpack", "arrow", "bytes", "stream",
     "exec", "query", "sign", "verify",
-    "connect", "send", "recv", "close",
+    "connect", "socket", "send", "recv", "close",
     "page", "smtp", "mail",
     // UI reactive builtins
     "fetch", "poll", "field", "slider", "checkbox", "toggle", "radio", "tabs", "select", "progress", "icon", "today",
@@ -1050,10 +1050,11 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "stream" => argc >= 1, // stream[feed, a, …] calls feed[put, a, …]
         "exec" | "query" => argc >= 2,
         "sign" | "verify" => argc == 2,
-        "connect" => argc == 1,               // connect[url]
-        "send" => argc == 2,                  // send[sock, msg] or send[sender, data]
-        "recv" => argc == 1,                  // recv[sock]
-        "close" => argc == 1,                 // close[sock]
+        "connect" => argc == 1,               // connect[url] (db)
+        "socket" => argc == 1,                // socket[url]
+        "send" => argc == 2,                  // send[socket, text]
+        "recv" => argc == 1 || argc == 2,     // recv[socket] or recv[socket, secs]
+        "close" => argc == 1,                 // close[socket]
         "page" => argc == 2 || argc == 3,     // page[path, render] or page[path, render, handle]
         "smtp" => argc == 4,                  // smtp[host, port, user, pass]
         "mail" => argc == 4,                  // mail[mailer, to, subject, body]

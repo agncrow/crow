@@ -2473,28 +2473,14 @@ mod tests {
 
     // --- P4: Web builtin interpreter mock tests ---
 
+    /// A socket to a server that does not answer is the call's error value
+    /// (the client's calls had been stand-ins: a map, `true`, empty text)
     #[test]
-    fn test_connect_builtin() {
-        let val = get_var("sock = connect['ws://localhost:3000']", "sock");
-        match &val.value {
-            Value::Map(m) => {
-                let url = m.get("url").unwrap();
-                assert_eq!(format!("{}", url.value), "ws://localhost:3000");
-            }
-            _ => panic!("expected map"),
-        }
-    }
-
-    #[test]
-    fn test_send_recv_close_builtins() {
-        let val = get_var("sock = connect['ws://localhost:3000']\nresult = send[sock, 'hi']", "result");
-        assert!(matches!(&val.value, Value::Bool(true)));
-
-        let val = get_var("sock = connect['ws://localhost:3000']\nmsg = recv[sock]", "msg");
-        assert!(matches!(&val.value, Value::Str(_)));
-
-        let val = get_var("sock = connect['ws://localhost:3000']\nresult = close[sock]", "result");
-        assert!(matches!(&val.value, Value::Bool(true)));
+    fn a_socket_nobody_answers_is_an_error_value() {
+        let val = get_var("use web, web.ws\ns = socket['ws://127.0.0.1:1/feed']\nok = s.ok\nkind = s.kind\n", "kind");
+        assert_eq!(format!("{}", val.value), "socket");
+        let ok = get_var("use web, web.ws\ns = socket['ws://127.0.0.1:1/feed']\nok = s.ok\n", "ok");
+        assert!(matches!(ok.value, Value::Bool(false)));
     }
 
     /// `live[...]` was a mock of a retired API; `page[]` is the one way. The

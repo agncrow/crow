@@ -17,7 +17,7 @@ use crow_web::view::CrowVNode;
 /// session shares (a database handle, a mailer) or a function: resources stay the
 /// template's, never copied into a session.
 pub(crate) fn is_data(v: &CrowValue) -> bool {
-    !matches!(v.value, Value::DbConn(_) | Value::Mailer(..) | Value::Response(_) | Value::Fn(_) | Value::GradFn(_) | Value::App(..))
+    !matches!(v.value, Value::DbConn(_) | Value::Mailer(..) | Value::Socket(_) | Value::Response(_) | Value::Fn(_) | Value::GradFn(_) | Value::App(..))
 }
 
 /// A fact as the session keeps it: JSON, a frame by its own shape, a

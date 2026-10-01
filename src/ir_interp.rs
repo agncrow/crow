@@ -1841,31 +1841,37 @@ impl IrInterp {
                     Err(e) => CrowValue::error_with_kind(&e, "auth", ""),
                 })
             }
-            "connect" => {
-                if vals.len() != 1 {
-                    return Err("connect[] takes 1 argument".into());
-                }
+            // socket[url] and its send, recv and close: crow_web's, as the
+            // compiled program's are; each failure an error value of kind
+            // 'socket' (they had been stand-ins: a map, `true`, empty text)
+            "socket" if vals.len() == 1 => {
                 let url = match vals[0].unwrap_or_propagate()? {
                     Value::Str(s) => s.clone(),
-                    _ => return Err("connect[] url must be a string".into()),
+                    _ => return Err("socket[] takes a URL: socket['wss://feed.example.com']".into()),
                 };
-                let mut map = std::collections::BTreeMap::new();
-                map.insert("url".to_string(), CrowValue::ok(Value::Str(url)));
-                map.insert("ok".to_string(), CrowValue::ok(Value::Bool(false)));
-                Ok(CrowValue::ok(Value::Map(map)))
+                Ok(match crow_web::ws::open(&url) {
+                    Ok(s) => CrowValue::ok(Value::Socket(s)),
+                    Err(e) => CrowValue::error_with_kind(&e, "socket", ""),
+                })
             }
-            "send" | "close" => {
-                let want = if name == "send" { 2 } else { 1 };
-                if vals.len() != want {
-                    return Err(format!("{}[] takes {} argument{}", name, want, if want == 1 { "" } else { "s" }));
-                }
-                Ok(CrowValue::ok(Value::Bool(true)))
-            }
-            "recv" => {
-                if vals.len() != 1 {
-                    return Err("recv[] takes 1 argument".into());
-                }
-                Ok(CrowValue::ok(Value::Str(String::new())))
+            "send" | "recv" | "close" if matches!(vals.first().map(|v| &v.value), Some(Value::Socket(_))) => {
+                let Some(Value::Socket(s)) = vals.first().map(|v| &v.value) else { unreachable!() };
+                let answer = |r: Result<String, String>| match r {
+                    Ok(t) => CrowValue::ok(Value::Str(t)),
+                    Err(e) => CrowValue::error_with_kind(&e, "socket", ""),
+                };
+                Ok(match (name, vals.get(1).map(|v| &v.value)) {
+                    ("send", Some(Value::Str(text))) => answer(s.send(text).map(|_| String::new())),
+                    ("send", _) => return Err("send[] takes a socket and text".into()),
+                    ("recv", None) => answer(s.recv(None)),
+                    ("recv", Some(Value::Int(n))) => answer(s.recv(Some(*n as f64))),
+                    ("recv", Some(Value::Float(x))) => answer(s.recv(Some(*x))),
+                    ("recv", _) => return Err("recv[] takes a socket and, at most, the seconds to wait".into()),
+                    _ => {
+                        s.close();
+                        CrowValue::ok(Value::Str(String::new()))
+                    }
+                })
             }
             "smtp" => {
                 if vals.len() != 4 {

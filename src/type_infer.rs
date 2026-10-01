@@ -64,6 +64,8 @@ pub enum CrowType {
     DbTx,
     /// An SMTP mailer (crow_web::mail::CrowMailer) — `use web.mail` smtp[].
     Mailer,
+    /// A WebSocket client's connection (crow_web::ws::CrowSocket) — `socket[url]`.
+    Socket,
     /// A test's app session (`a = app[render]`), which the harness's words
     /// read and drive: `html[a]`, `elements[a, …]`, `click[a, …]`.
     App,
@@ -152,6 +154,7 @@ impl CrowType {
             CrowType::DbHandle => "crow_db::DbHandle".into(),
             CrowType::DbTx => "&dyn crow_db::DbTx".into(),
             CrowType::Mailer => "crow_web::mail::CrowMailer".into(),
+            CrowType::Socket => "crow_web::ws::CrowSocket".into(),
             // (a test's session: a test block runs interpreted)
             CrowType::App => "()".into(),
             CrowType::Void => "()".into(),
@@ -186,6 +189,7 @@ impl CrowType {
             CrowType::DbHandle => "panic!(\"no default db connection\")".into(),
             CrowType::DbTx => "panic!(\"no default db transaction\")".into(),
             CrowType::Mailer => "panic!(\"no default mailer\")".into(),
+            CrowType::Socket => "crow_web::ws::CrowSocket::closed()".into(),
             CrowType::App => "()".into(),
             CrowType::Void => "()".into(),
             CrowType::Unknown => "String::new()".into(),
@@ -255,6 +259,7 @@ impl CrowType {
             CrowType::DbHandle => "db.conn".into(),
             CrowType::DbTx => "db.tx".into(),
             CrowType::Mailer => "mailer".into(),
+            CrowType::Socket => "socket".into(),
             CrowType::App => "app".into(),
             CrowType::Void => "void".into(),
             CrowType::Unknown => "unknown".into(),

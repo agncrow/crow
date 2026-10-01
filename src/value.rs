@@ -177,6 +177,9 @@ pub enum Value {
     /// A mailer `smtp[…]` made: its place among the interpreter's mailers
     /// and its host. The password stays with the mailer, out of every value.
     Mailer(usize, std::sync::Arc<str>),
+    /// A WebSocket client's connection (`socket[url]`), shared by every
+    /// value that holds it.
+    Socket(crow_web::ws::CrowSocket),
     /// What a route's handler answers: `text[…]`, `html[…]`, `json[…]`,
     /// `respond[status, body]`, `redirect[url]`, `bytes[…]` (use web).
     Response(Box<crow_web::core::CrowResponse>),
@@ -240,6 +243,7 @@ impl Value {
             Value::Frame(_) => "frame",
             Value::DbConn(_) => "db",
             Value::Mailer(..) => "mailer",
+            Value::Socket(_) => "socket",
             Value::Response(_) => "response",
             Value::Json(j) => crow_runtime::json::type_word(j),
             Value::Dual(_, _) => "float", // Dual appears as float to user
@@ -280,6 +284,7 @@ impl fmt::Display for Value {
             Value::Frame(frame) => write!(f, "{}", frame),
             Value::DbConn(h) => write!(f, "<db:{}>", h.backend_name()),
             Value::Mailer(_, host) => write!(f, "<mailer:{}>", host),
+            Value::Socket(s) => write!(f, "<{:?}>", s),
             Value::Response(r) => write!(f, "<response {}>", r.status),
             Value::Json(j) => {
                 use crow_runtime::display::CrowDisplay as _;
