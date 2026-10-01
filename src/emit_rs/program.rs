@@ -495,10 +495,19 @@ impl Emitter {
             }
             let value = fact.default.clone();
             let declared = crow_type(&fact.ty).text();
-            let vty = self.tt(&value);
+            // (a declared value that can fail is refused where the facts are
+            // set: what it holds is the payload)
+            let vty = match self.tt(&value) {
+                CrowType::Result(inner) if fact.refuses => *inner,
+                other => other,
+            };
             let ty = if matches!(declared, CrowType::Unknown) { vty.clone() } else { declared };
             let widened = matches!(vty, CrowType::Int) && matches!(ty, CrowType::Float);
+            let saved_line = self.current_line;
+            self.current_line = fact.line;
             let text = self.top_level_expr(&value);
+            let text = Self::refused_fact(&fact, text);
+            self.current_line = saved_line;
             let open_list = matches!(Emitter::raw(&value), Expr::ListLit(items, _) if items.is_empty());
             let open_map = matches!(Emitter::raw(&value), Expr::MapLit(p, _) if p.is_empty())
                 || matches!(Emitter::raw(&value), e @ Expr::Call { target: Target::Runtime(_) | Target::Row(_), args, .. } if crate::ir::call_name(e).as_deref() == Some("map") && args.is_empty());
@@ -520,7 +529,9 @@ impl Emitter {
                     reads_a_fact = true;
                 }
             });
-            if reads_a_fact {
+            // (a refused value is computed once, where the facts are set:
+            // a render's getter does not read the file again)
+            if reads_a_fact || fact.refuses {
                 self.fact_inits.insert(fact.name.clone(), default);
                 let fallback = ty.default_rust_value();
                 self.reactive_vars.insert(fact.name.clone(), (ty, fallback));
@@ -528,6 +539,20 @@ impl Emitter {
             }
             self.reactive_vars.insert(fact.name.clone(), (ty, default));
         }
+    }
+
+    /// A fact's declared value as main sets it: one that can fail is
+    /// refused there, with the reason, and the fact holds the payload.
+    fn refused_fact(fact: &Fact, text: String) -> String {
+        if !fact.refuses {
+            return text;
+        }
+        format!(
+            "{{ let _rv = {}; if !_rv.ok {{ crow_stop({}, format!(\"{} — {{}}\", _rv.reason)) }} _rv.value }}",
+            text,
+            fact.line,
+            Decision::Assign(fact.name.clone()).refusal().replace('{', "{{").replace('}', "}}")
+        )
     }
 
     /// An expression printed as main prints it.
@@ -1315,11 +1340,13 @@ impl Emitter {
                 }
                 for v in declared.iter().chain(rest.iter()) {
                     let d = self.fact_inits.get(v).cloned().unwrap_or_else(|| self.reactive_vars[v].1.clone());
+                    // (a value written as a block is an expression to json!,
+                    // not an object, once it is in parentheses)
                     if read_later.contains(v) {
                         self.line(&format!("let {} = {};", v, d));
                         self.line(&format!("__crow_state.set(\"{}\", serde_json::json!({}));", v, v));
                     } else {
-                        self.line(&format!("__crow_state.set(\"{}\", serde_json::json!({}));", v, d));
+                        self.line(&format!("__crow_state.set(\"{}\", serde_json::json!(({})));", v, d));
                     }
                 }
             }
@@ -1361,9 +1388,16 @@ impl Emitter {
             // the interpreter sets them
             let facts = self.part.facts.clone();
             for fact in &facts {
+                let saved_line = self.current_line;
+                self.current_line = fact.line;
                 let v = self.owned_expr(&fact.default);
+                self.current_line = saved_line;
+                let v = Self::refused_fact(fact, v);
                 let ty = crow_type(&fact.ty).text();
-                let vty = self.tt(&fact.default);
+                let vty = match self.tt(&fact.default) {
+                    CrowType::Result(inner) if fact.refuses => *inner,
+                    other => other,
+                };
                 let (ty, v) = if matches!(ty, CrowType::Float) && matches!(vty, CrowType::Int) { (ty, format!("({}) as f64", v)) } else if matches!(ty, CrowType::Unknown) { (vty, v) } else { (ty, v) };
                 let kw = if self.mutated.contains(&fact.name) { "let mut" } else { "let" };
                 if format!("{:?}", ty).contains("Unknown") {

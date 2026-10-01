@@ -1,0 +1,15 @@
+--- A fact holds no error: a ui program's fact declared from a value that
+--- can fail — a file that is not there — stops the program where the facts
+--- are set, with the reason, before anything is served, in both modes.
+--- (The interpreter had held the error in the fact; the compiled program
+--- had not built, a session's state unable to keep it.)
+use web, ui, frame
+
+trades = load['/no/such/trades.csv']
+clicks = 0
+
+view render[]
+    return p['`len[trades]` rows, `clicks` clicks']
+
+page['/', render]
+serve[3000]

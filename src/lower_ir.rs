@@ -1093,13 +1093,20 @@ impl<'a> Lowerer<'a> {
                     if self.ctx.derives.contains(name) {
                         self.refuse(format!("'{}' is derived — it follows what it reads; change those facts instead of assigning it", name));
                     }
+                    let line = self.v.line;
                     self.in_fact_default = true;
                     let default = self.lower_expr(value);
                     self.in_fact_default = false;
                     let default = default?;
                     self.check_assign(name, &self.checked(&default));
                     self.flush_pre_into(&mut part.main);
+                    // a fact holds no error: a declared value that can fail
+                    // is refused where the facts are set, and the fact holds
+                    // the payload (it had held the error, and a compiled
+                    // program could not keep it in a session's state)
+                    let refuses = default.ty().is_result();
                     let ty = self.ctx.vars.get(name).map(ty_of).unwrap_or_else(|| default.ty());
+                    let ty = if refuses { ty.payload().clone() } else { ty };
                     // an int default of a fact that holds floats is a float
                     // (spec §1): the interpreter held the int until a handler
                     // stored a float, where the compiled program converted it
@@ -1110,7 +1117,7 @@ impl<'a> Lowerer<'a> {
                     };
                     self.scopes[0].insert(name.clone());
                     self.v.fact_lines.insert(name.clone(), self.v.line);
-                    part.facts.push(Fact { name: name.clone(), ty, default, session: written.contains(name) });
+                    part.facts.push(Fact { name: name.clone(), ty, default, session: written.contains(name), line, refuses });
                 }
                 other => {
                     self.at = Where::Top;
@@ -1491,6 +1498,17 @@ impl<'a> Lowerer<'a> {
         self.in_ui && self.ctx.facts.contains(name) && !self.scopes.iter().skip(1).any(|s| s.contains(name))
     }
 
+    /// The type a variable takes from a value: a fact a ui program declares
+    /// at its top level holds no error, so one declared from a value that
+    /// can fail holds the payload (the failure stops the program where the
+    /// facts are set).
+    fn held_by_fact(&self, name: &str, ty: CrowType) -> CrowType {
+        match ty {
+            CrowType::Result(inner) if self.in_ui && self.at == Where::Top && self.ctx.facts.contains(name) => *inner,
+            other => other,
+        }
+    }
+
     fn sees_facts(&self) -> bool {
         matches!(self.at, Where::Top | Where::Derive | Where::Test | Where::In(FnKind::View) | Where::In(FnKind::Handler) | Where::In(FnKind::Helper))
     }
@@ -1516,9 +1534,10 @@ impl<'a> Lowerer<'a> {
                 if self.pass == Pass::Scan {
                     // the call scan settles the variable once its value's
                     // calls are read, with the value's type
-                    self.ctx.note_scanned_assign(name, full(&expr));
+                    let held = self.held_by_fact(name, full(&expr));
+                    self.ctx.note_scanned_assign(name, held.clone());
                     self.ctx.note_scanned_value(name, value);
-                    self.rebind(name, &full(&expr));
+                    self.rebind(name, &held);
                 }
                 let stmt = self.assign(name, expr);
                 if matches!(stmt, Stmt::Store { .. }) {
@@ -1999,7 +2018,7 @@ impl<'a> Lowerer<'a> {
     /// final lowering keeps them. A failed value's refusal is observed
     /// (`held_by`), the value's own type settling.
     fn settled(&mut self, name: &str, expr: Expr) -> Stmt {
-        let ty = full(&expr);
+        let ty = self.held_by_fact(name, full(&expr));
         let store = self.is_fact(name) && self.sees_facts();
         self.note_held(name, &ty, store);
         let settled = if self.ctx.fresh_binding(name) {

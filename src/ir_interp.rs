@@ -504,7 +504,13 @@ impl IrInterp {
                 }
             }
             for fact in &part.facts {
+                if fact.line > 0 {
+                    self.line = fact.line;
+                }
                 let v = self.eval(&fact.default).map_err(|e| self.with_line(e))?;
+                if fact.refuses && v.is_error() {
+                    return Err(self.with_line(format!("{} — {}", Decision::Assign(fact.name.clone()).refusal(), v.reason())));
+                }
                 self.set_fact(&fact.name, v);
                 if !self.fact_names.contains(&fact.name) {
                     self.fact_names.push(fact.name.clone());

@@ -1944,7 +1944,8 @@ fn test_reactive_counter() {
     assert!(rust.contains(".on_click(\"inc\")"), "click = inc should emit .on_click(\"inc\")\n{}", rust);
     assert!(rust.contains(".on_click(\"dec\")"), "click = dec should emit .on_click(\"dec\")\n{}", rust);
     // Main should register defaults
-    assert!(rust.contains("__crow_state.set(\"count\", serde_json::json!(0"), "should register count default in main\n{}", rust);
+    // (in parentheses: a value written as a block is an expression to json!)
+    assert!(rust.contains("__crow_state.set(\"count\", serde_json::json!((0"), "should register count default in main\n{}", rust);
     // page[] should auto-inject __crow_handle
     assert!(rust.contains("__crow_handle"), "page should auto-inject __crow_handle\n{}", rust);
 }

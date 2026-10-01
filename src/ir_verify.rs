@@ -53,8 +53,14 @@ pub fn verify_in(program: &Program, known: &HashMap<String, Ty>) -> Vec<String> 
     for part in &program.parts {
         for f in &part.facts {
             v.body = format!("fact {}", f.name);
-            v.line = 0;
+            v.line = f.line;
             let t = v.expr(&f.default);
+            // a refused default is a result of the fact's type: the payload
+            // is what the fact holds
+            let t = if f.refuses && t.is_result() { t.payload().clone() } else { t };
+            if f.refuses && !f.default.ty().is_result() {
+                v.found(format!("the fact refuses a failed default, but its default ({}) cannot fail", f.default.ty()));
+            }
             if !fits(&t, &f.ty) {
                 v.found(format!("the default ({}) does not fit the fact's type {}", t, f.ty));
             }

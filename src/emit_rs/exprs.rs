@@ -928,6 +928,13 @@ impl Emitter {
                             fmt.push_str("{}");
                             args.push(format!("{{ use crow_runtime::display::CrowDisplay as _; ({}).crow_fmt() }}", rust));
                         }
+                        // a dynamic value as the one display shows it, text
+                        // bare (it had shown with JSON's quotes: `"x"`)
+                        CrowType::Json => {
+                            self.needs_crow_runtime = true;
+                            fmt.push_str("{}");
+                            args.push(format!("{{ use crow_runtime::display::CrowDisplay as _; ({}).crow_fmt() }}", rust));
+                        }
                         t if self.kernel_displayable(t) => {
                             self.needs_crow_runtime = true;
                             fmt.push_str("{}");

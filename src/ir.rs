@@ -201,6 +201,12 @@ pub struct Fact {
     pub default: Expr,
     /// Written by a handler, so held per session.
     pub session: bool,
+    /// The line it is declared on.
+    pub line: usize,
+    /// Its declared value can fail: a failure stops the program where the
+    /// facts are set (`cannot assign an error value to 'name' — reason`),
+    /// and the fact holds the payload, `ty` — a fact never holds an error.
+    pub refuses: bool,
 }
 
 #[derive(Debug, Clone, Default)]

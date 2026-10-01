@@ -1,0 +1,14 @@
+--- A dynamic value in text shows as the one display shows it — text bare,
+--- a list and a map as they print, JSON's null as the error it is — the
+--- same in both modes: a parsed document's members, and the cells of a
+--- frame loaded as the program runs. (Compiled, text had shown with JSON's
+--- quotes: `"x"`.)
+use frame
+
+j = json['{"a": "x", "n": 3, "f": 2.5, "b": true, "l": [1, "two"], "o": {"k": "v"}, "z": null}']
+log['a `j.a` n `j.n` f `j.f` b `j.b`']
+log['l `j.l` o `j.o`']
+log['z `j.z` missing `j.missing`']
+w = write['/tmp/crow_parity_143.csv', 'sym,price\nAAPL,187.5\nMSFT,402.25\n']
+t = load['/tmp/crow_parity_143.csv']
+log['first is `t.sym[0]`, second costs `t.price[1]`']

@@ -142,9 +142,10 @@ pub(crate) struct Emitter {
     /// facts: name → (type, the Rust default)
     pub(crate) reactive_vars: BTreeMap<String, (CrowType, String)>,
     /// Each fact's declared value as main computes it, where it reads a fact
-    /// declared before it: a render or a handler cannot compute it (its
-    /// getter falls back on the type's default, which no session reaches —
-    /// every session starts from the declared values).
+    /// declared before it or can fail (refused where the facts are set): a
+    /// render or a handler does not compute it again (its getter falls back
+    /// on the type's default, which no session reaches — every session
+    /// starts from the declared values).
     pub(crate) fact_inits: BTreeMap<String, String>,
     /// top-level connections in a page program: process-wide statics
     pub(crate) static_handle_vars: BTreeSet<String>,

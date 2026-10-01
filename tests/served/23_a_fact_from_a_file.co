@@ -1,0 +1,22 @@
+--- A fact declared from a file: the frame a load answers is the fact's,
+--- and a page reads it, in both modes. A fact holds no error, so a load
+--- that failed stops the program where the facts are set (parity 142).
+--- (Compiled, a fact a load declared had not built: a session's state could
+--- not keep a value that can fail.)
+use web, ui, frame
+
+trades = load['fixtures/trades.csv']
+first = trades.symbol[0]
+clicks = 0
+
+fn more[]
+    clicks = clicks + 1
+
+view render[]
+    return stack[
+        p['`first` first of `len[trades]`, `clicks` clicks'],
+        button['+', click = more]
+    ]
+
+serve[3424]
+page['/', render]
