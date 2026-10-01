@@ -1,0 +1,26 @@
+--- A fact declared from a connection: the facts and the connections are
+--- set in the order they are declared, so a statement a declaration makes
+--- on a connection declared above it runs once the connection is there, in
+--- both modes. (Compiled, the declaration read the connection before it
+--- was set, and the program stopped as it started.)
+use web, ui, db
+
+book = connect['sqlite://:memory:']
+made = exec[book, 'CREATE TABLE marks (sym TEXT NOT NULL)']
+filled = exec[book, 'INSERT INTO marks VALUES (?), (?)', ['AB', 'CD']]
+clicks = 0
+
+derive marks
+    return query[book, 'SELECT sym FROM marks ORDER BY sym']
+
+fn more[]
+    clicks = clicks + 1
+
+view render[]
+    return stack[
+        p['`len[marks]` marks, first `marks.sym[0]`, filled `filled`, `clicks` clicks'],
+        button['+', click = more]
+    ]
+
+serve[3425]
+page['/', render]

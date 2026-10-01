@@ -314,9 +314,26 @@ pub fn start_session(init: &CrowLiveState) -> CrowLiveState {
         reads: std::sync::Mutex::new(ReadSet::default()),
         reader_sid: std::sync::Mutex::new(sid),
     });
-    SESSIONS.lock().unwrap_or_else(|p| p.into_inner()).insert(state.session_id, std::sync::Arc::downgrade(&handle));
+    register_session(state.session_id, &handle);
     state.handle = Some(handle);
     state
+}
+
+/// A session listed where the app can wake it. The ones that have ended
+/// are dropped from the list as it grows — each time it doubles since the
+/// last time — so the ended never outnumber the live by much: a page that
+/// loads and is never opened ends a session, and an app that writes no
+/// table had kept every one of them (a soak's memory grew a few KB a
+/// second, each listed session's handle kept by the list).
+fn register_session(id: u64, handle: &std::sync::Arc<SessionHandle>) {
+    static PRUNED_AT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    use std::sync::atomic::Ordering::SeqCst;
+    let mut sessions = SESSIONS.lock().unwrap_or_else(|p| p.into_inner());
+    if sessions.len() >= (2 * PRUNED_AT.load(SeqCst)).max(64) {
+        sessions.retain(|_, w| w.strong_count() > 0);
+        PRUNED_AT.store(sessions.len(), SeqCst);
+    }
+    sessions.insert(id, std::sync::Arc::downgrade(handle));
 }
 
 /// Server-side component state.
@@ -5535,6 +5552,23 @@ mod tests {
         assert!(html.contains("<p data-crow-stale"), "the view that read it is marked: {}", html);
         assert!(!html.contains("<div data-crow-stale"), "its parent is not: {}", html);
         settle(&s, "test_bg_marked");
+    }
+
+    /// Sessions that end — a page that loads and is never opened — leave the
+    /// list of sessions the app can wake as they go: it stays near the live
+    /// ones however many have come and gone (it had kept every one)
+    #[test]
+    fn ended_sessions_leave_the_list_of_sessions() {
+        let init = CrowLiveState::new();
+        let kept: Vec<CrowLiveState> = (0..10).map(|_| start_session(&init)).collect();
+        for _ in 0..20_000 {
+            drop(start_session(&init));
+        }
+        let listed = SESSIONS.lock().unwrap().len();
+        // (other tests' sessions may be listed too)
+        assert!(listed < 2_000, "{} sessions listed after 20,000 ended", listed);
+        let live = SESSIONS.lock().unwrap().values().filter(|w| w.strong_count() > 0).count();
+        assert!(live >= kept.len(), "the live ones stay: {}", live);
     }
 
     /// A view that showed text for what it read as it caught up — `error:

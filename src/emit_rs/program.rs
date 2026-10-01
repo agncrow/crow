@@ -541,6 +541,19 @@ impl Emitter {
         }
     }
 
+    /// One fact's declared value set in main's state: bound by its name too
+    /// when a later declaration reads it. (A value written as a block is an
+    /// expression to json!, not an object, once it is in parentheses.)
+    fn set_fact_in_main(&mut self, v: &str, bound: bool) {
+        let d = self.fact_inits.get(v).cloned().unwrap_or_else(|| self.reactive_vars[v].1.clone());
+        if bound {
+            self.line(&format!("let {} = {};", v, d));
+            self.line(&format!("__crow_state.set(\"{}\", serde_json::json!({}));", v, v));
+        } else {
+            self.line(&format!("__crow_state.set(\"{}\", serde_json::json!(({})));", v, d));
+        }
+    }
+
     /// A fact's declared value as main sets it: one that can fail is
     /// refused there, with the reason, and the fact holds the payload.
     fn refused_fact(fact: &Fact, text: String) -> String {
@@ -1320,37 +1333,23 @@ impl Emitter {
         if self.has_page_routes {
             self.line("let mut __crow_app = CrowApp::new();");
             self.line("let mut __crow_state = CrowLiveState::new();");
+            // the facts in the order they are declared — a connection, a data
+            // source, or a value the sessions start from — so a declaration
+            // can read one declared before it: a value (`tripled = base * 3`,
+            // which had read a name nothing bound) or a connection (`made =
+            // exec[book, …]`, which had read the connection before it was
+            // set, and the program stopped as it started)
+            let mut read_later = BTreeSet::new();
+            for f in &self.part.facts {
+                crate::ir::visit_expr(&f.default, &mut |e| {
+                    if let Expr::Load(n, _) = e {
+                        read_later.insert(n.clone());
+                    }
+                });
+            }
             if !self.reactive_vars.is_empty() {
                 self.needs_serde_json = true;
-                // in the order they are declared, each bound by its name as
-                // a handler binds it: a fact's declared value can read one
-                // declared before it (`tripled = base * 3`), which had read
-                // a name nothing bound, so the program did not build
-                let declared: Vec<String> = self.part.facts.iter().map(|f| f.name.clone()).filter(|n| self.reactive_vars.contains_key(n)).collect();
-                let rest: Vec<String> = self.reactive_vars.keys().filter(|k| !declared.contains(k)).cloned().collect();
-                // (only a fact another declaration reads is bound: the rest
-                // live in the state alone)
-                let mut read_later = BTreeSet::new();
-                for f in &self.part.facts {
-                    crate::ir::visit_expr(&f.default, &mut |e| {
-                        if let Expr::Load(n, _) = e {
-                            read_later.insert(n.clone());
-                        }
-                    });
-                }
-                for v in declared.iter().chain(rest.iter()) {
-                    let d = self.fact_inits.get(v).cloned().unwrap_or_else(|| self.reactive_vars[v].1.clone());
-                    // (a value written as a block is an expression to json!,
-                    // not an object, once it is in parentheses)
-                    if read_later.contains(v) {
-                        self.line(&format!("let {} = {};", v, d));
-                        self.line(&format!("__crow_state.set(\"{}\", serde_json::json!({}));", v, v));
-                    } else {
-                        self.line(&format!("__crow_state.set(\"{}\", serde_json::json!(({})));", v, d));
-                    }
-                }
             }
-            // connections and data sources: set once, before anything reads them
             let facts = self.part.facts.clone();
             for fact in &facts {
                 if self.static_handle_vars.contains(&fact.name) {
@@ -1366,7 +1365,15 @@ impl Emitter {
                         let secs = self.expr(&args[1]);
                         self.line(&format!("__crow_state.register_poll(\"{}\", &{}, {} as u64);", fact.name, url, secs));
                     }
+                } else if self.reactive_vars.contains_key(&fact.name) {
+                    self.set_fact_in_main(&fact.name, read_later.contains(&fact.name));
                 }
+            }
+            // (a session's value no declaration here holds keeps its place
+            // after them)
+            let rest: Vec<String> = self.reactive_vars.keys().filter(|k| !facts.iter().any(|f| &f.name == *k)).cloned().collect();
+            for v in &rest {
+                self.set_fact_in_main(v, read_later.contains(v));
             }
             // serve comes last, after every page is registered; a fact's
             // later top-level assignment set its default above

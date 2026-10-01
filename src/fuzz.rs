@@ -1,7 +1,8 @@
 //! `crow test --fuzz [n] [--seed s]`: differential fuzzing (docs/roadmap.md,
 //! the 1.0 bar). Programs generated from a seed — ints, floats, text,
-//! lists and maps, arithmetic and comparisons, the text and list builtins,
-//! branches, loops and functions — each case a function of its own, all of
+//! lists and maps, records, parsed documents read and spliced into text,
+//! arithmetic and comparisons, the text, list and map builtins, branches,
+//! loops and functions — each case a function of its own, all of
 //! them in one program, run by the interpreter and compiled; a line where
 //! the two disagree is a bug in Crow, and the program is kept to reproduce
 //! it. The same seed makes the same programs.
@@ -47,9 +48,12 @@ enum Kind {
     Texts,
     /// a map of ints
     Counts,
+    /// a parsed document: an object with a text `a`, a number `n` and a
+    /// list `l`, read, shown and spliced into text as it is
+    Doc,
 }
 
-const KINDS: &[Kind] = &[Kind::Int, Kind::Float, Kind::Text, Kind::Bool, Kind::Ints, Kind::Texts, Kind::Counts];
+const KINDS: &[Kind] = &[Kind::Int, Kind::Float, Kind::Text, Kind::Bool, Kind::Ints, Kind::Texts, Kind::Counts, Kind::Doc];
 
 /// The helper functions every generated program declares, which its cases
 /// call: two ints in, an int out.
@@ -87,7 +91,8 @@ impl<'r> Case<'r> {
         }
         let d = depth - 1;
         match kind {
-            Kind::Int => match self.rng.below(15) {
+            Kind::Int => match self.rng.below(16) {
+                15 => format!("len[{}.l]", self.expr(Kind::Doc, d)),
                 9 => format!("floor[{}]", self.expr(Kind::Float, d)),
                 10 => format!("ceil[{}]", self.expr(Kind::Float, d)),
                 11 => format!("min[{}, {}]", self.expr(Kind::Int, d), self.expr(Kind::Int, d)),
@@ -112,7 +117,14 @@ impl<'r> Case<'r> {
                 4 => format!("({} - {})", self.expr(Kind::Float, d), self.expr(Kind::Float, d)),
                 _ => format!("({} + {})", self.expr(Kind::Float, d), self.expr(Kind::Int, d)),
             },
-            Kind::Text => match self.rng.below(10) {
+            Kind::Text => match self.rng.below(12) {
+                10 => format!("str[{}.a]", self.expr(Kind::Doc, d)),
+                // a document's members spliced into text — of a variable,
+                // since a span holds no quotes
+                11 => match self.var_of(Kind::Doc) {
+                    Some(v) => format!("'a `{}.a` n `{}.n` l `{}.l`'", v, v, v),
+                    None => self.leaf(Kind::Text),
+                },
                 7 => format!("replace[{}, 'a', 'b']", self.expr(Kind::Text, d)),
                 8 => format!("repeat[{}, {}]", self.expr(Kind::Text, d), self.rng.below(3)),
                 9 => format!("str[{}]", self.expr(Kind::Float, d)),
@@ -150,6 +162,7 @@ impl<'r> Case<'r> {
                 0 => format!("set[{}, '{}', {}]", self.expr(Kind::Counts, d), self.rng.pick(&["a", "b", "zz"]), self.expr(Kind::Int, d)),
                 _ => format!("del[{}, 'a']", self.expr(Kind::Counts, d)),
             },
+            Kind::Doc => self.leaf(Kind::Doc),
             Kind::Texts => match self.rng.below(4) {
                 3 => format!("keys[{}]", self.expr(Kind::Counts, d)),
                 0 => format!("split[{}, ' ']", self.expr(Kind::Text, d)),
@@ -186,6 +199,14 @@ impl<'r> Case<'r> {
             Kind::Ints => self.rng.pick(&["[1, 2, 3]", "[5, -1]", "[0]", "[3, 1, 2, 3]"]).to_string(),
             Kind::Texts => self.rng.pick(&["['b', 'a']", "['crow']", "['x', 'y', 'z']"]).to_string(),
             Kind::Counts => self.rng.pick(&["map[a = 1, b = 2]", "map[zz = 7]", "map[b = -4, a = 0]"]).to_string(),
+            Kind::Doc => self
+                .rng
+                .pick(&[
+                    "json['{\"a\": \"x\", \"n\": 3, \"l\": [1, 2]}']",
+                    "json['{\"a\": \"crow\", \"n\": -2.5, \"l\": []}']",
+                    "json['{\"a\": \"\", \"n\": 0, \"l\": [\"p\", 1]}']",
+                ])
+                .to_string(),
         }
     }
 
@@ -409,6 +430,11 @@ mod tests {
             }
         }
         assert!(taken >= 36, "most generated programs run: {} of 40, and the first refused:\n{}", taken, why.iter().take(4).cloned().collect::<Vec<_>>().join("\n"));
+        // the kinds that found bugs are generated: a parsed document, and its
+        // members spliced into text (compiled, they had shown JSON's quotes)
+        let all: String = (0..40).map(|s| program(s, 6)).collect();
+        assert!(all.contains("json['{"), "no parsed document generated");
+        assert!(all.contains(".a` n `"), "no document's members spliced into text");
     }
 
     /// Whatever the text, the compiler answers with a program or a reason:
