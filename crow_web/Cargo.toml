@@ -13,6 +13,9 @@ tungstenite = { version = "0.28.0", optional = true }
 tokio-stream = { version = "0.1", optional = true }
 futures-util = { version = "0.3", optional = true }
 tower-http = { version = "0.6.8", features = ["cors", "fs"], optional = true }
+# a route's multipart body: its fields and files
+multer = { version = "3", optional = true }
+bytes = { version = "1", optional = true }
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"], optional = true }
 lettre = { version = "0.11.19", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"], optional = true }
 uuid = { version = "1.21.0", features = ["v4"], optional = true }
@@ -27,13 +30,11 @@ crow_runtime = { version = "0.1.0", path = "../crow_runtime" }
 [features]
 default = []
 # a streamed response (`stream[feed]`) is a body the server sends as it comes
-http = ["dep:axum", "dep:tokio", "dep:tokio-stream"]
+# the server: routes, their CORS, files, rate limits and uploads (serve's
+# and route's options)
+http = ["dep:axum", "dep:tokio", "dep:tokio-stream", "dep:tower-http", "dep:multer", "dep:bytes", "dep:futures-util"]
 client = ["dep:reqwest"]
 ws = ["dep:tungstenite"]
-cors = ["dep:tower-http", "dep:axum", "dep:tokio"]
-static_files = ["dep:tower-http", "dep:axum", "dep:tokio"]
-upload = ["dep:axum", "dep:tokio"]
-rate = ["dep:axum", "dep:tokio"]
 auth = ["dep:jsonwebtoken", "dep:axum", "dep:tokio", "dep:uuid"]
 mail = ["dep:lettre", "dep:tokio"]
 # a live page is served, so live carries the server (http): a program that

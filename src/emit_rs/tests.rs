@@ -1524,14 +1524,8 @@ fn test_env_two_arg_transpile() {
 // ===== Web tests =====
 
 #[test]
-fn test_web_new_transpile() {
-    let rust = transpile("use web\nsite = web.new[]\n");
-    assert!(rust.contains("CrowApp::new()"), "should emit CrowApp::new()\n{}", rust);
-}
-
-#[test]
 fn test_web_imports() {
-    let rust = transpile("use web\nsite = web.new[]\n");
+    let rust = transpile("use web\nfn h[req]\n    return text['ok']\nroute['/', h]\n");
     assert!(rust.contains("use crow_web::server::CrowApp;"), "should import CrowApp\n{}", rust);
     assert!(rust.contains("use crow_web::core::{CrowRequest, CrowResponse};"), "should import CrowRequest/CrowResponse\n{}", rust);
     assert!(rust.contains("use std::sync::Arc;"), "should import Arc\n{}", rust);
@@ -1539,7 +1533,7 @@ fn test_web_imports() {
 
 #[test]
 fn test_web_async_main() {
-    let rust = transpile("use web\nsite = web.new[]\n");
+    let rust = transpile("use web\nfn h[req]\n    return text['ok']\nroute['/', h]\n");
     assert!(rust.contains("async fn __crow_main()"), "should emit an async main\n{}", rust);
     // the runtime's threads get stacks sized for a page's work
     assert!(rust.contains(".thread_stack_size(64 * 1024 * 1024)"), "should size the runtime's stacks\n{}", rust);
@@ -1547,7 +1541,7 @@ fn test_web_async_main() {
 
 #[test]
 fn test_web_route_transpile() {
-    let rust = transpile("use web\nfn handler[req]\n    return text['hello']\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
+    let rust = transpile("use web\nfn handler[req]\n    return text['hello']\n\nroute['/', handler]\n");
     assert!(rust.contains(".route("), "should emit .route()\n{}", rust);
     // the handler goes by its name: a stop answers 500 naming it
     assert!(rust.contains("crow_web::server::CrowHandler::new(\"handler\", handler)"), "should name the handler\n{}", rust);
@@ -1556,37 +1550,37 @@ fn test_web_route_transpile() {
 #[test]
 fn test_web_serve_transpile() {
     let rust = transpile("use web\nuse ui\nview render[s]\n    return div[h1['hi']]\n\nfn handle[s, e, v]\n    log[e]\n\nserve[3000]\npage['/', render, handle]\n");
-    assert!(rust.contains("__crow_app.serve("), "should emit __crow_app.serve()\n{}", rust);
+    assert!(rust.contains(".files_from(&\"\".to_string()).serve(3000_i64 as u16)"), "should serve with the server's options\n{}", rust);
     assert!(rust.contains(".await"), "should emit .await\n{}", rust);
 }
 
 #[test]
 fn test_web_text_response() {
-    let rust = transpile("use web\nfn handler[req]\n    return text['hello']\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
+    let rust = transpile("use web\nfn handler[req]\n    return text['hello']\n\nroute['/', handler]\n");
     assert!(rust.contains("CrowResponse::text("), "should emit CrowResponse::text()\n{}", rust);
 }
 
 #[test]
 fn test_web_html_response() {
-    let rust = transpile("use web\nfn handler[req]\n    return html['<h1>hi</h1>']\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
+    let rust = transpile("use web\nfn handler[req]\n    return html['<h1>hi</h1>']\n\nroute['/', handler]\n");
     assert!(rust.contains("CrowResponse::html("), "should emit CrowResponse::html()\n{}", rust);
 }
 
 #[test]
 fn test_web_redirect_response() {
-    let rust = transpile("use web\nfn handler[req]\n    return redirect['/home']\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
+    let rust = transpile("use web\nfn handler[req]\n    return redirect['/home']\n\nroute['/', handler]\n");
     assert!(rust.contains("CrowResponse::redirect("), "should emit CrowResponse::redirect()\n{}", rust);
 }
 
 #[test]
 fn test_web_respond_response() {
-    let rust = transpile("use web\nfn handler[req]\n    return respond[404, 'not found']\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
+    let rust = transpile("use web\nfn handler[req]\n    return respond[404, 'not found']\n\nroute['/', handler]\n");
     assert!(rust.contains("CrowResponse::respond("), "should emit CrowResponse::respond()\n{}", rust);
 }
 
 #[test]
 fn test_web_handler_types() {
-    let rust = transpile("use web\nfn handler[req]\n    return text['hello']\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
+    let rust = transpile("use web\nfn handler[req]\n    return text['hello']\n\nroute['/', handler]\n");
     // Handler should have CrowRequest param and CrowResponse return
     assert!(rust.contains("crow_web::core::CrowRequest"), "handler param should be CrowRequest\n{}", rust);
     assert!(rust.contains("crow_web::core::CrowResponse"), "handler return should be CrowResponse\n{}", rust);
@@ -1728,14 +1722,14 @@ fn test_db_insert() {
 
 #[test]
 fn test_web_msgpack_response() {
-    let rust = transpile("use web\nfn handler[req]\n    m = map[]\n    return msgpack[m]\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
+    let rust = transpile("use web\nfn handler[req]\n    m = map[]\n    return msgpack[m]\n\nroute['/', handler]\n");
     // packed by crow_web, which the interpreter calls too
     assert!(rust.contains("CrowResponse::msgpack_of(&serde_json::to_value("), "should emit CrowResponse::msgpack_of()\n{}", rust);
 }
 
 #[test]
 fn test_web_arrow_response() {
-    let rust = transpile("use web\nuse frame\nfn handler[req]\n    f = load['data.csv']\n    return arrow[f]\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
+    let rust = transpile("use web\nuse frame\nfn handler[req]\n    f = load['data.csv']\n    return arrow[f]\n\nroute['/', handler]\n");
     // written by crow_web, which the interpreter calls too
     assert!(rust.contains("CrowResponse::arrow_of("), "should emit CrowResponse::arrow_of()\n{}", rust);
 }
@@ -1756,14 +1750,14 @@ fn test_web_fallible_handler_answers_its_failure() {
 
 #[test]
 fn test_web_bytes_response() {
-    let rust = transpile("use web\nfn handler[req]\n    return bytes['binary data']\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
+    let rust = transpile("use web\nfn handler[req]\n    return bytes['binary data']\n\nroute['/', handler]\n");
     assert!(rust.contains("CrowResponse::binary("), "should emit CrowResponse::binary()\n{}", rust);
     assert!(rust.contains("application/octet-stream"), "should set octet-stream content-type\n{}", rust);
 }
 
 #[test]
 fn test_web_stream_response() {
-    let rust = transpile("use web\nfn sender[emit, n]\n    emit['chunk `n`']\n\nfn handler[req]\n    return stream[sender, 3]\n\nsite = web.new[]\nsite = route[site, '/', handler]\n");
+    let rust = transpile("use web\nfn sender[emit, n]\n    emit['chunk `n`']\n\nfn handler[req]\n    return stream[sender, 3]\n\nroute['/', handler]\n");
     // the feed runs when the response is sent, handed put and the
     // arguments taken by value
     assert!(rust.contains("CrowResponse::stream(\"sender\", move |put| { let _ = sender(put, __s0); Ok(()) })"), "should hand the feed put and its arguments\n{}", rust);
@@ -1792,7 +1786,7 @@ fn a_test_build_answers_the_harness() {
 
 #[test]
 fn test_ui_imports() {
-    let rust = transpile("use web\nuse ui\nsite = web.new[]\n");
+    let rust = transpile("use web\nuse ui\nview v[]\n    return p['x']\npage['/', v]\n");
     assert!(rust.contains("use crow_web::view::CrowVNode;"), "should import CrowVNode\n{}", rust);
     assert!(rust.contains("use crow_web::live::{CrowLiveView, CrowLiveState};"), "should import CrowLiveView/CrowLiveState\n{}", rust);
 }
@@ -1941,7 +1935,7 @@ fn test_serve_refresh_budget_emission() {
         "serve named args should configure the live runtime\n{}",
         rust
     );
-    assert!(rust.contains("__crow_app.serve(3000_i64 as u16)"), "{}", rust);
+    assert!(rust.contains(".serve(3000_i64 as u16)"), "{}", rust);
 }
 
 #[test]

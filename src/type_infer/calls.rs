@@ -129,8 +129,16 @@ impl TypeContext {
 
             // route[path, handler], route[path, method, handler]: the
             // handler's parameter is the request
-            let handler = match (name.as_str(), args.last()) {
-                ("route", Some(Expr::Ident(f))) if args.len() == 2 || args.len() == 3 => Some(f.clone()),
+            // (route[path, method, handler, limit]: the handler before the limit)
+            let handler = match (name.as_str(), args.len()) {
+                ("route", 2 | 3) => match args.last() {
+                    Some(Expr::Ident(f)) => Some(f.clone()),
+                    _ => None,
+                },
+                ("route", 4) => match &args[2] {
+                    Expr::Ident(f) => Some(f.clone()),
+                    _ => None,
+                },
                 _ => None,
             };
             if let Some(p) = handler.and_then(|f| self.functions.get_mut(&f)).and_then(|sig| sig.params.first_mut()) {

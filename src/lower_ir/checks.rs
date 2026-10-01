@@ -578,6 +578,12 @@ impl<'a> Lowerer<'a> {
     pub(super) fn check_module_call(&mut self, module: &str, field: &str) {
         let prefixed = format!("{}_{}", module, field);
         let real = self.ctx.module_aliases.get(module).cloned().unwrap_or_else(|| module.to_string());
+        // the app is implicit (an app value, and the calls that took one,
+        // had built compiled only, and the interpreter read it as a path)
+        if real == "web" && field == "new" {
+            self.refuse("web.new[] is gone: the app is implicit — route[…], page[…] and serve[…] need none".to_string());
+            return;
+        }
         let registry_module = REGISTRY_MODULES.contains(&real.as_str()) || real == "db";
         let registry_module = registry_module && self.ctx.registry.has_function(field);
         if !registry_module && !self.ctx.functions.contains_key(&prefixed) && !self.ctx.structs.contains_key(&prefixed) && !self.defined(module) {
@@ -622,6 +628,9 @@ impl<'a> Lowerer<'a> {
 
     pub(super) fn check_call(&mut self, name: &str, args: &[A], types: &[CrowType]) {
         let arg_type = |_: &Self, i: usize| -> CrowType { types.get(i).cloned().unwrap_or(CrowType::Unknown) };
+        if name == "route" && !self.defined("route") && !matches!(arg_type(self, 0), CrowType::Str | CrowType::Unknown) {
+            self.refuse("route[] takes a path first — the app is implicit: route['/', handler]".to_string());
+        }
         // Test-harness builtins exist only inside test blocks (which never
         // reach a build) — accept them there, refuse them anywhere else.
         if matches!(name, "app" | "click" | "elements" | "change" | "box" | "fits" | "style" | "downloads" | "mails") {
@@ -1033,8 +1042,8 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "date" => argc == 3,
         "elapsed" => argc == 2,
         // Web
-        "route" => (2..=4).contains(&argc), // route[path, handler] / +method / legacy app-first
-        "serve" => argc == 1 || argc == 9,   // serve[port] (pre-lower) or serve[port, refresh, budget, theme, density, accent, wide, keep, uploads]
+        "route" => (2..=4).contains(&argc), // route[path, handler] / +method / path, method, handler, limit
+        "serve" => argc == 1 || argc == 11,  // serve[port] (pre-lower) or serve[port, refresh, budget, theme, density, accent, wide, keep, uploads, cors, files]
         "respond" => argc == 2,
         "redirect" | "html" | "text" => argc == 1,
         "msgpack" | "arrow" | "bytes" => argc == 1,
@@ -1137,6 +1146,16 @@ mod tests {
         let err = check_source(src).unwrap_err();
         assert!(err.contains("filter: 'keep' holds values that can fail, and a mask decides every row: guard each value with .ok (cells of a column that can be missing: fill the column first, fill[frame, 'column', value])"), "{}", err);
         assert!(check_source(&src.replace("j = join[a, b, 'k', 'left']", "j = fill[join[a, b, 'k', 'left'], 'q', 0.0]")).is_ok());
+    }
+
+    /// The app is implicit: `web.new[]` and a route handed an app are
+    /// refused, with the form to write
+    #[test]
+    fn the_app_is_implicit() {
+        let err = check_source("use web\nsite = web.new[]\n").unwrap_err();
+        assert!(err.contains("web.new[] is gone: the app is implicit"), "{}", err);
+        let err = check_source("use web\nfn h[req]\n    return text['ok']\nroute[3, '/', h]\n").unwrap_err();
+        assert!(err.contains("route[] takes a path first — the app is implicit: route['/', handler]"), "{}", err);
     }
 
     /// The web module's modules are web.auth, web.mail and web.ws: another

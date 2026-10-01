@@ -31,18 +31,6 @@ pub mod client;
 #[cfg(feature = "ws")]
 pub mod ws;
 
-#[cfg(feature = "cors")]
-pub mod cors;
-
-#[cfg(feature = "static_files")]
-pub mod static_files;
-
-#[cfg(feature = "upload")]
-pub mod upload;
-
-#[cfg(feature = "rate")]
-pub mod rate;
-
 #[cfg(feature = "auth")]
 pub mod auth;
 

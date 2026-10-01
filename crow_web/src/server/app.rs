@@ -52,6 +52,12 @@ pub struct CrowApp {
     /// welcome page at every address, an app with some a 404 at an address
     /// none answers
     routed: bool,
+    /// `serve[…, cors = […]]`: the origins a page on another site may call
+    /// this app from (`'*'` any)
+    cors: Vec<String>,
+    /// `serve[…, files = 'public']`: the directory whose files an address
+    /// no route or page answers is
+    files: Option<String>,
 }
 
 impl CrowApp {
@@ -60,32 +66,60 @@ impl CrowApp {
         Self {
             router: Router::new(),
             routed: false,
+            cors: Vec::new(),
+            files: None,
         }
     }
 
-    /// Add a GET route (`route[app, path, handler]` in Crow).
-    pub fn route(mut self, path: &str, handler: CrowHandler) -> Self {
+    /// Add a GET route (`route[path, handler]` in Crow).
+    pub fn route(self, path: &str, handler: CrowHandler) -> Self {
+        self.route_limited(path, "GET", handler, 0)
+    }
+
+    /// Add a route with a specific HTTP method (`route[path, method, handler]` in Crow).
+    pub fn route_method(self, path: &str, method: &str, handler: CrowHandler) -> Self {
+        self.route_limited(path, method, handler, 0)
+    }
+
+    /// Add a route that answers each client at most `per_minute` times a
+    /// minute (`route[path, handler, limit = 60]`; 0 is no limit): a request
+    /// over it is answered `429 Too Many Requests`, with the seconds to wait
+    /// in `Retry-After`.
+    pub fn route_limited(mut self, path: &str, method: &str, handler: CrowHandler, per_minute: u64) -> Self {
         let axum_path = crow_path_to_axum(path);
-        self.router = self.router.route(&axum_path, get(make_axum_handler(handler)));
+        let limit = (per_minute > 0).then(|| super::limit::Limit::new(per_minute));
+        let h = make_axum_handler(handler, limit);
+        let method_router = match method.to_uppercase().as_str() {
+            "POST" => post(h),
+            "PUT" => put(h),
+            "DELETE" => delete(h),
+            "PATCH" => patch(h),
+            "HEAD" => head(h),
+            "OPTIONS" => options(h),
+            _ => get(h),
+        };
+        self.router = self.router.route(&axum_path, method_router);
         self.routed = true;
         self
     }
 
-    /// Add a route with a specific HTTP method (`route[app, path, method, handler]` in Crow).
-    pub fn route_method(mut self, path: &str, method: &str, handler: CrowHandler) -> Self {
-        let axum_path = crow_path_to_axum(path);
-        let method_router = match method.to_uppercase().as_str() {
-            "GET" => get(make_axum_handler(handler)),
-            "POST" => post(make_axum_handler(handler)),
-            "PUT" => put(make_axum_handler(handler)),
-            "DELETE" => delete(make_axum_handler(handler)),
-            "PATCH" => patch(make_axum_handler(handler)),
-            "HEAD" => head(make_axum_handler(handler)),
-            "OPTIONS" => options(make_axum_handler(handler)),
-            _ => get(make_axum_handler(handler)), // fallback to GET
-        };
-        self.router = self.router.route(&axum_path, method_router);
-        self.routed = true;
+    /// `serve[…, cors = ['https://app.example.com']]`: the origins a page on
+    /// another site may call this app from, `'*'` for any; a preflight is
+    /// answered for them, and none other is told the app answers.
+    pub fn cors_origins(mut self, origins: &[String]) -> Self {
+        self.cors = origins.iter().map(|o| o.trim().to_string()).filter(|o| !o.is_empty()).collect();
+        self
+    }
+
+    /// `serve[…, files = 'public']`: an address no route or page answers is
+    /// the directory's file at that path (`/logo.png` is
+    /// `public/logo.png`, `/` its `index.html`), and a 404 when there is
+    /// none.
+    pub fn files_from(mut self, dir: &str) -> Self {
+        if !dir.trim().is_empty() {
+            self.files = Some(dir.trim().to_string());
+            self.routed = true;
+        }
         self
     }
 
@@ -127,51 +161,8 @@ impl CrowApp {
         };
         println!("crow server listening on http://{}", addr);
         tokio::spawn(stop_on_signal());
-        axum::serve(listener, router).await?;
+        axum::serve(listener, router.into_make_service_with_connect_info::<std::net::SocketAddr>()).await?;
         Ok(())
-    }
-
-    // ── Convenience methods for feature-gated modules ──────────────
-
-    /// Apply CORS middleware (`cors[app, {origins, '*'}]` in Crow).
-    ///
-    /// Available only when the `cors` feature is enabled.
-    #[cfg(feature = "cors")]
-    pub fn cors(self, config: crate::cors::CrowCors) -> Self {
-        Self {
-            router: config.apply(self.router),
-            routed: self.routed,
-        }
-    }
-
-    /// Apply permissive CORS (allow all origins/methods/headers).
-    ///
-    /// Shorthand for `app.cors(CrowCors::permissive())`.
-    #[cfg(feature = "cors")]
-    pub fn cors_permissive(self) -> Self {
-        self.cors(crate::cors::CrowCors::permissive())
-    }
-
-    /// Serve a static file directory (`static[app, '/assets', './public']` in Crow).
-    ///
-    /// Available only when the `static_files` feature is enabled.
-    #[cfg(feature = "static_files")]
-    pub fn static_dir(self, url_path: &str, dir_path: &str) -> Self {
-        Self {
-            router: crate::static_files::serve_dir(self.router, url_path, dir_path),
-            routed: true,
-        }
-    }
-
-    /// Attach a rate limiter (`limit[app, 100, 60]` in Crow).
-    ///
-    /// Returns the `CrowRateLimiter` so the user can call `limiter.check(key)`
-    /// in route handlers.
-    ///
-    /// Available only when the `rate` feature is enabled.
-    #[cfg(feature = "rate")]
-    pub fn rate_limiter(max_requests: u64, window_secs: u64) -> crate::rate::CrowRateLimiter {
-        crate::rate::CrowRateLimiter::new(max_requests, window_secs)
     }
 
     /// Merge an external axum Router into this app.
@@ -180,6 +171,7 @@ impl CrowApp {
         Self {
             router: self.router.merge(other),
             routed: true,
+            ..self
         }
     }
 
@@ -188,15 +180,30 @@ impl CrowApp {
         self.router
     }
 
+    /// The router as `serve` runs it: its fallback, its files and its CORS.
+    pub fn served_router(self) -> Router {
+        self.served()
+    }
+
     /// The router `serve` runs: an app with no routes shows the welcome page
     /// at every address, so a new project never shows a blank one; an app
     /// with some answers an address none of them does with a 404.
     fn served(self) -> Router {
-        if self.routed {
-            self.router.fallback(not_found_handler)
-        } else {
-            self.router.fallback(default_welcome_handler)
+        let router = match (&self.files, self.routed) {
+            (Some(dir), _) => self.router.fallback_service(tower_http::services::ServeDir::new(dir).not_found_service(get(not_found_handler))),
+            (None, true) => self.router.fallback(not_found_handler),
+            (None, false) => self.router.fallback(default_welcome_handler),
+        };
+        if self.cors.is_empty() {
+            return router;
         }
+        use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+        let origin = if self.cors.iter().any(|o| o == "*") {
+            AllowOrigin::any()
+        } else {
+            AllowOrigin::list(self.cors.iter().filter_map(|o| o.parse().ok()))
+        };
+        router.layer(CorsLayer::new().allow_origin(origin).allow_methods(Any).allow_headers(Any))
     }
 }
 
@@ -233,6 +240,7 @@ fn crow_path_to_axum(path: &str) -> String {
 /// connection, saying nothing).
 fn make_axum_handler(
     handler: CrowHandler,
+    limit: Option<super::limit::Limit>,
 ) -> impl Fn(
     Option<Path<std::collections::HashMap<String, String>>>,
     Request<Body>,
@@ -244,20 +252,38 @@ fn make_axum_handler(
     move |path_params: Option<Path<std::collections::HashMap<String, String>>>,
           req: Request<Body>| {
         let handler = handler.clone();
+        let limit = limit.clone();
         Box::pin(async move {
-            let mut crow_req = request_from_axum(req).await;
+            if let Some(limit) = &limit {
+                let peer = req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>().map(|c| c.0);
+                let forwarded = req.headers().get("x-forwarded-for").and_then(|v| v.to_str().ok());
+                if let Err(wait) = limit.check(&super::limit::client_of(peer, forwarded)) {
+                    return axum::response::IntoResponse::into_response((
+                        axum::http::StatusCode::TOO_MANY_REQUESTS,
+                        [(axum::http::header::RETRY_AFTER, wait.to_string())],
+                        format!("too many requests: try again in {} s", wait),
+                    ));
+                }
+            }
+            let mut crow_req = match request_from_axum(req).await {
+                Ok(r) => r,
+                Err(refused) => return refused,
+            };
 
             // Inject route params from axum's Path extractor
             if let Some(Path(params)) = path_params {
                 crow_req.params = params.into_iter().collect();
             }
 
+            let files = crow_req.files.clone();
             let CrowHandler { name, answer } = handler;
             let crow_resp = match tokio::task::spawn_blocking(move || crow_runtime::stops::guarded(|| answer(crow_req))).await {
                 Ok(Ok(resp)) => resp,
                 Ok(Err(why)) => route_stopped(&name, &why),
                 Err(e) => route_stopped(&name, &e.to_string()),
             };
+            // the request's uploads are its handler's while it runs
+            super::uploads::release(&files);
             response_to_axum(crow_resp)
         })
     }

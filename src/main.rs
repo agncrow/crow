@@ -816,7 +816,6 @@ fn cmd_test_docs() {
     // the gap is visible (they have no example link in the standard library pages).
     const SPEC_ONLY: &[&str] = &[
         "test", "today",                                    // keyword / removed name
-        "sign", "verify",                                   // auth codegen
         "connect", "send", "recv", "close",                // websocket client
         "app", "click",                                     // test-harness names (used in test blocks, not run blocks)
     ];
@@ -1936,6 +1935,11 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     } else {
         cmd.args(["build"]).current_dir(&build_dir);
     }
+    // the binary lands where the run looks for it, whatever target
+    // directory the environment names (a CARGO_TARGET_DIR set for other
+    // projects had sent it elsewhere, and `crow run` found nothing to run)
+    // (absolute: cargo runs inside the build directory)
+    cmd.env("CARGO_TARGET_DIR", std::env::current_dir().unwrap_or_default().join(&build_dir).join("target"));
     if quiet {
         cmd.stdout(std::process::Stdio::null())
            .stderr(std::process::Stdio::piped());
@@ -5611,7 +5615,7 @@ mod validation_gate_tests {
             ("/n/:n".to_string(), "render".to_string(), vec![]),
         ]);
         let serve = it.serve_config.clone().expect("serve recorded");
-        assert_eq!(serve.len(), 9, "the lowered serve: port, refresh, budget, theme, density, accent, wide, keep, uploads");
+        assert_eq!(serve.len(), 11, "the lowered serve: port, refresh, budget, theme, density, accent, wide, keep, uploads, cors, files");
     }
 }
 

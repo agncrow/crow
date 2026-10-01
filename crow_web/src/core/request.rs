@@ -24,6 +24,13 @@ pub struct CrowRequest {
     pub body: String,
     /// Route parameters extracted from path patterns, e.g. /users/:id → {"id": "42"}
     pub params: BTreeMap<String, String>,
+    /// A form's text fields: an urlencoded body's, or a multipart body's
+    /// fields that are not files
+    pub form: BTreeMap<String, String>,
+    /// A multipart body's files, each as a page's picked file is: its
+    /// `name`, `type`, `size` (as text) and the `path` of the copy the server
+    /// keeps while the handler runs
+    pub files: Vec<BTreeMap<String, String>>,
 }
 
 impl CrowRequest {
@@ -36,6 +43,8 @@ impl CrowRequest {
             query: BTreeMap::new(),
             body: String::new(),
             params: BTreeMap::new(),
+            form: BTreeMap::new(),
+            files: Vec::new(),
         }
     }
 
@@ -62,18 +71,41 @@ impl CrowRequest {
     /// Parse query string from a raw query string like "page=1&limit=10".
     pub fn parse_query_string(qs: &str) -> BTreeMap<String, String> {
         let mut map = BTreeMap::new();
-        if qs.is_empty() {
-            return map;
-        }
-        for pair in qs.split('&') {
-            if let Some((k, v)) = pair.split_once('=') {
-                map.insert(k.to_string(), v.to_string());
-            } else if !pair.is_empty() {
-                map.insert(pair.to_string(), String::new());
-            }
+        for pair in qs.split('&').filter(|p| !p.is_empty()) {
+            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+            map.insert(decode_component(k), decode_component(v));
         }
         map
     }
+}
+
+/// A query string's or a form's name or value as it was typed: `+` is a
+/// space and `%XX` the byte it names (`q=hello%20world` is `hello world`);
+/// a `%` that names no byte stays as it is. (The text had reached the
+/// program still encoded.)
+pub fn decode_component(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let hex = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => out.push(b' '),
+            b'%' => {
+                match (bytes.get(i + 1).copied().and_then(hex), bytes.get(i + 2).copied().and_then(hex)) {
+                    (Some(h), Some(l)) => {
+                        out.push(h * 16 + l);
+                        i += 3;
+                        continue;
+                    }
+                    _ => out.push(b'%'),
+                }
+            }
+            b => out.push(b),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 impl Default for CrowRequest {
@@ -142,5 +174,16 @@ mod tests {
         let qs = CrowRequest::parse_query_string("");
         assert!(qs.is_empty());
     }
-}
 
+    /// A query or a form reaches the program as it was typed: decoded
+    #[test]
+    fn a_query_is_decoded() {
+        let q = CrowRequest::parse_query_string("q=hello%20world&name=J%C3%B6rg&sum=1+2&pct=100%&bad=%zz&flag");
+        assert_eq!(q["q"], "hello world");
+        assert_eq!(q["name"], "Jörg");
+        assert_eq!(q["sum"], "1 2");
+        assert_eq!(q["pct"], "100%");
+        assert_eq!(q["bad"], "%zz");
+        assert_eq!(q["flag"], "");
+    }
+}

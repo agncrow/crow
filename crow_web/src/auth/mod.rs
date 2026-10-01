@@ -29,56 +29,51 @@ pub struct CrowClaims {
     pub iat: Option<u64>,
 }
 
-/// Sign a JWT token from claims and a secret.
-///
-/// Returns the encoded JWT string, or an empty string on failure.
-pub fn sign(claims: serde_json::Value, secret: &str) -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+/// A secret shorter than this is refused: a token signed with one is
+/// guessed (the sign-in cookie's `CROW_SECRET` keeps the same floor).
+const SECRET_FLOOR: usize = 32;
 
-    let mut data: HashMap<String, serde_json::Value> = match claims {
-        serde_json::Value::Object(map) => map.into_iter().collect(),
-        _ => HashMap::new(),
-    };
-
-    // Set iat if not present
-    data.entry("iat".to_string())
-        .or_insert(serde_json::Value::Number(now.into()));
-
-    // Set default exp (1 hour) if not present
-    data.entry("exp".to_string())
-        .or_insert(serde_json::Value::Number((now + 3600).into()));
-
-    let crow_claims = CrowClaims {
-        exp: data.remove("exp").and_then(|v| v.as_u64()),
-        iat: data.remove("iat").and_then(|v| v.as_u64()),
-        data,
-    };
-
-    encode(
-        &Header::default(),
-        &crow_claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .unwrap_or_default()
+fn now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-/// Verify a JWT token and return the claims.
-///
-/// Returns `None` if the token is invalid or expired.
-pub fn verify(token: &str, secret: &str) -> Option<serde_json::Value> {
+/// `sign[claims, secret]`: a token — a JSON Web Token signed with HS256 —
+/// carrying the claims (a map or a record of them), issued now (`iat`) and
+/// expiring in an hour (`exp`) unless the claims say when. A secret shorter
+/// than 32 characters is refused, and claims that are not a map.
+pub fn sign_claims(claims: &serde_json::Value, secret: &str) -> Result<String, String> {
+    if secret.chars().count() < SECRET_FLOOR {
+        return Err(format!("a token's secret is {} characters or more (got {})", SECRET_FLOOR, secret.chars().count()));
+    }
+    let serde_json::Value::Object(map) = claims else {
+        return Err("a token's claims are a map or a record of them".to_string());
+    };
+    let mut data: HashMap<String, serde_json::Value> = map.clone().into_iter().collect();
+    let issued = now();
+    data.entry("iat".to_string()).or_insert(serde_json::Value::Number(issued.into()));
+    data.entry("exp".to_string()).or_insert(serde_json::Value::Number((issued + 3600).into()));
+    let crow_claims = CrowClaims {
+        exp: data.remove("exp").and_then(|v| v.as_f64()).map(|x| x as u64),
+        iat: data.remove("iat").and_then(|v| v.as_f64()).map(|x| x as u64),
+        data,
+    };
+    encode(&Header::default(), &crow_claims, &EncodingKey::from_secret(secret.as_bytes())).map_err(|e| format!("cannot sign the token: {}", e))
+}
+
+/// `verify[token, secret]`: the claims a token carries, when it was signed
+/// with this secret and has not expired; otherwise why not — the token has
+/// expired, its signature does not match, it is not a token.
+pub fn verify_token(token: &str, secret: &str) -> Result<serde_json::Value, String> {
+    use jsonwebtoken::errors::ErrorKind;
     let mut validation = Validation::new(Algorithm::HS256);
     validation.required_spec_claims.clear();
-
-    let token_data = decode::<CrowClaims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &validation,
-    )
-    .ok()?;
-
+    validation.leeway = 0;
+    let token_data = decode::<CrowClaims>(token, &DecodingKey::from_secret(secret.as_bytes()), &validation).map_err(|e| match e.kind() {
+        ErrorKind::ExpiredSignature => "the token has expired".to_string(),
+        ErrorKind::InvalidSignature => "the token's signature does not match".to_string(),
+        ErrorKind::InvalidAlgorithm => "the token is not signed with HS256".to_string(),
+        _ => "not a token".to_string(),
+    })?;
     let mut map = serde_json::Map::new();
     for (k, v) in token_data.claims.data {
         map.insert(k, v);
@@ -89,48 +84,36 @@ pub fn verify(token: &str, secret: &str) -> Option<serde_json::Value> {
     if let Some(iat) = token_data.claims.iat {
         map.insert("iat".to_string(), serde_json::Value::Number(iat.into()));
     }
-    Some(serde_json::Value::Object(map))
+    Ok(serde_json::Value::Object(map))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_sign_and_verify() {
-        let token = sign(serde_json::json!({"user": "alice", "role": "admin"}), "secret123");
-        assert!(!token.is_empty());
+    const SECRET: &str = "a-secret-of-at-least-thirty-two-chars";
 
-        let claims = verify(&token, "secret123").unwrap();
+    #[test]
+    fn a_token_carries_its_claims() {
+        let token = sign_claims(&serde_json::json!({"user": "alice", "role": "admin"}), SECRET).unwrap();
+        let claims = verify_token(&token, SECRET).unwrap();
         assert_eq!(claims["user"], "alice");
         assert_eq!(claims["role"], "admin");
+        assert!(claims["iat"].is_number() && claims["exp"].is_number());
     }
 
     #[test]
-    fn test_verify_wrong_secret() {
-        let token = sign(serde_json::json!({"user": "bob"}), "correct");
-        assert!(verify(&token, "wrong").is_none());
+    fn a_token_is_refused_with_its_reason() {
+        let token = sign_claims(&serde_json::json!({"user": "bob"}), SECRET).unwrap();
+        assert_eq!(verify_token(&token, "another-secret-of-thirty-two-chars!!"), Err("the token's signature does not match".to_string()));
+        assert_eq!(verify_token("not.a.token", SECRET), Err("not a token".to_string()));
+        let old = sign_claims(&serde_json::json!({"user": "bob", "exp": 1_000}), SECRET).unwrap();
+        assert_eq!(verify_token(&old, SECRET), Err("the token has expired".to_string()));
     }
 
     #[test]
-    fn test_verify_invalid_token() {
-        assert!(verify("not.a.token", "secret").is_none());
-    }
-
-    #[test]
-    fn test_sign_sets_iat_and_exp() {
-        let token = sign(serde_json::json!({"x": 1}), "secret");
-        let claims = verify(&token, "secret").unwrap();
-        assert!(claims["iat"].is_number());
-        assert!(claims["exp"].is_number());
-    }
-
-    #[test]
-    fn test_sign_empty_claims() {
-        let token = sign(serde_json::json!({}), "secret");
-        assert!(!token.is_empty());
-        let claims = verify(&token, "secret").unwrap();
-        assert!(claims["iat"].is_number());
+    fn a_short_secret_or_claims_that_are_not_a_map_are_refused() {
+        assert!(sign_claims(&serde_json::json!({"x": 1}), "short").unwrap_err().contains("32 characters or more (got 5)"));
+        assert!(sign_claims(&serde_json::json!([1, 2]), SECRET).unwrap_err().contains("a map or a record"));
     }
 }
-

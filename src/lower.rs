@@ -985,15 +985,37 @@ impl Lowerer {
                     // serve[port, refresh = secs, budget = ms] — 0 means unset.
                     // refresh: the runtime re-renders every session on this
                     // interval; budget: handlers/renders over this many ms are
-                    // logged. Both modes receive exactly 3 positional args.
-                    // Plus the look: theme ('' = system), density ('' =
-                    // comfortable), accent ('' = the theme's), wide (false).
+                    // logged. Plus the look: theme ('' = system), density ('' =
+                    // comfortable), accent ('' = the theme's), wide (false);
+                    // keep, the uploads' megabytes, and the server's CORS
+                    // origins and files directory. Both modes receive all
+                    // eleven, positionally.
                     Some("serve") if !self.fns.contains_key("serve") => {
                         let params: Vec<String> =
-                            ["port", "refresh", "budget", "theme", "density", "accent", "wide", "keep", "uploads"].iter().map(|s| s.to_string()).collect();
+                            ["port", "refresh", "budget", "theme", "density", "accent", "wide", "keep", "uploads", "cors", "files"].iter().map(|s| s.to_string()).collect();
                         let defaults: Vec<Option<Expr>> =
-                            vec![None, Some(Expr::Int(0)), Some(Expr::Int(0)), Some(Expr::Str(String::new())), Some(Expr::Str(String::new())), Some(Expr::Str(String::new())), Some(Expr::Bool(false)), Some(Expr::Bool(false)), Some(Expr::Int(10))];
+                            vec![None, Some(Expr::Int(0)), Some(Expr::Int(0)), Some(Expr::Str(String::new())), Some(Expr::Str(String::new())), Some(Expr::Str(String::new())), Some(Expr::Bool(false)), Some(Expr::Bool(false)), Some(Expr::Int(10)), Some(Expr::Array(vec![])), Some(Expr::Str(String::new()))];
                         let resolved = self.resolve_args("serve", &params, &defaults, args)?;
+                        Expr::Call { callee: Box::new(callee), args: resolved }
+                    }
+                    // route[path, handler, limit = n] (or with a method between):
+                    // the method made GET where none is written, the limit last
+                    Some("route") if !self.fns.contains_key("route") && has_named => {
+                        let mut positional: Vec<Expr> = Vec::new();
+                        let mut limit: Option<Expr> = None;
+                        for a in args {
+                            match a {
+                                Expr::Named { name, value } if name == "limit" => limit = Some(*value),
+                                Expr::Named { name, .. } => return Err(self.err(format!("route[] has no option '{}' — its option is limit = n requests a minute", name))),
+                                other => positional.push(other),
+                            }
+                        }
+                        let limit = limit.unwrap_or(Expr::Int(0));
+                        let resolved = match positional.len() {
+                            2 => vec![positional[0].clone(), Expr::Str("GET".to_string()), positional[1].clone(), limit],
+                            3 => vec![positional[0].clone(), positional[1].clone(), positional[2].clone(), limit],
+                            _ => return Err(self.err("route[] takes a path, a method if not GET, and a handler: route['/api', api, limit = 60]".to_string())),
+                        };
                         Expr::Call { callee: Box::new(callee), args: resolved }
                     }
                     // page[path, view, url = ['day', 'sym']]: the facts the page's

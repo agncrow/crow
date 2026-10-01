@@ -210,8 +210,9 @@ impl Emitter {
         // route handlers take the request and answer a response
         for b in &blocks {
             for f in Self::fn_args_of_calls(b, "route", &|args| {
+                // the handler: the last function named (a limit may follow it)
                 if args.len() >= 2 {
-                    args.last().and_then(fn_named).map(|s| vec![s.to_string()]).unwrap_or_default()
+                    args.iter().rev().find_map(fn_named).map(|s| vec![s.to_string()]).unwrap_or_default()
                 } else {
                     vec![]
                 }
@@ -554,7 +555,6 @@ impl Emitter {
             self.line("#[allow(unused_imports)]");
             self.line("use std::sync::Arc;");
             let web: Vec<(&str, &str)> = vec![
-                ("auth", "use crow_web::auth::CrowJwt;"),
                 ("mail", "use crow_web::mail::CrowMailer;"),
                 ("ws", "use crow_web::ws;"),
             ];
@@ -1220,9 +1220,8 @@ impl Emitter {
                 if let Stmt::Do(e) = s {
                     let name = call_name(e);
                     let args = call_args(e);
-                    let noapp_route = name.as_deref() == Some("route")
-                        && (args.len() == 2 || (args.len() == 3 && matches!(self.tt(&args[0]), CrowType::Str)));
-                    let noapp_serve = name.as_deref() == Some("serve") && (args.len() == 1 || args.len() == 9);
+                    let noapp_route = name.as_deref() == Some("route") && (2..=4).contains(&args.len());
+                    let noapp_serve = name.as_deref() == Some("serve") && (args.len() == 1 || args.len() == 11);
                     if noapp_route || noapp_serve {
                         self.has_noapp_web = true;
                     }

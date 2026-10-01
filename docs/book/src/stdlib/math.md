@@ -29,7 +29,7 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 | `log10[t]` | Element-wise base-10 logarithm | [Math: tensors](../by-example/math.md) |
 | `sqrt[t]` | Element-wise square root | [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) |
 | `abs[t]` | Element-wise absolute value | [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
-| `sign[t]` | Element-wise sign (-1, 0, or 1) | [Math: tensors](../by-example/math.md) |
+| `sign[t]` | Element-wise sign (-1, 0, or 1) | [Math: tensors](../by-example/math.md) · [Web: responses and submodules](../by-example/web-more.md) |
 | `floor[t]` | Element-wise floor | [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) |
 | `ceil[t]` | Element-wise ceiling | [Numbers and conversion](../by-example/numbers.md) |
 | `round[t]` | Element-wise round to nearest | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) |
@@ -268,7 +268,7 @@ log[sum[data]]         --- total of all values
 
 | Constant | Description | Example |
 |---|---|---|
-| `pi` | π = 3.14159... |  |
+| `pi` | π = 3.14159... | [Web: responses and submodules](../by-example/web-more.md) |
 | `e` | Euler's number e = 2.71828... | [Arrays](../by-example/arrays.md) · [Databases: `use db`](../by-example/db.md) · [Documentation: `use doc`](../by-example/doc.md) · [Files and directories](../by-example/files.md) · [Frames: `use frame`](../by-example/frames.md) · [Structured files: `use io`](../by-example/io.md) · [JSON](../by-example/json.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Moments and freshness](../by-example/moments.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) · [Numbers and conversion](../by-example/numbers.md) · [Statistics: `use math.stats`](../by-example/stats.md) · [Strings](../by-example/strings.md) · [The system: shell, environment, time, arguments](../by-example/system.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Web: responses and submodules](../by-example/web-more.md) · [Web: a JSON route](../by-example/web.md) · [Strings and Interpolation](../ch03-03-strings.md) · [Defining and Calling Functions](../ch04-01-defining-functions.md) · [Structs Are Records](../ch05-03-structs.md) · [for as an Expression](../ch06-01-for-as-expression.md) · [Searching with any, all, and find](../ch06-02-search-builtins.md) · [Writing Your Own Modules](../ch08-04-writing-modules.md) · [Testing](../ch09-00-testing.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [View Blocks](../ch12-01-views.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Components](../ch12-03-components.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Derivations](../ch12-08-derive.md) · [Views and Live Updates](../ch13-03-views.md) |
 | `inf` | Positive infinity |  |
 | `nan` | Not a number |  |

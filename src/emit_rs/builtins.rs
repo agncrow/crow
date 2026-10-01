@@ -583,18 +583,25 @@ impl Emitter {
         let db = self.needs_crow_db;
         Some(match name {
             "route" if web && n == 2 => format!("__crow_app = __crow_app.route(&{}, {})", a[0], self.route_handler(&args[1], &a[1])),
-            "route" if web && n == 3 && matches!(self.tt(&args[0]), CrowType::Str) => format!("__crow_app = __crow_app.route_method(&{}, &{}, {})", a[0], a[1], self.route_handler(&args[2], &a[2])),
-            "route" if web && n == 3 => format!("{}.route(&{}, {})", a[0], a[1], self.route_handler(&args[2], &a[2])),
-            "route" if web && n == 4 => format!("{}.route_method(&{}, {}, {})", a[0], a[1], a[2], self.route_handler(&args[3], &a[3])),
+            "route" if web && n == 3 => format!("__crow_app = __crow_app.route_method(&{}, &{}, {})", a[0], a[1], self.route_handler(&args[2], &a[2])),
+            // route[path, method, handler, limit]: a limit a minute per client
+            "route" if web && n == 4 => format!("__crow_app = __crow_app.route_limited(&{}, &{}, {}, ({}).max(0) as u64)", a[0], a[1], self.route_handler(&args[2], &a[2]), a[3]),
             "serve" if web && n == 1 => format!("__crow_app.serve({} as u16).await.unwrap()", a[0]),
-            "serve" if web && n == 9 => {
+            // the server's options are both modes' (crow_web): the uploads'
+            // megabytes bound every route's body, the CORS origins and the
+            // files directory are the app's
+            "serve" if web && n == 11 => {
+                let server = format!(
+                    "crow_web::server::configure_uploads({} as i64); __crow_app.cors_origins(&({})[..]).files_from(&{}).serve({} as u16).await.unwrap()",
+                    a[8], a[9], a[10], a[0]
+                );
                 if self.has_page_routes {
                     format!(
-                        "{{ crow_web::live::configure({} as i64, {} as i64); crow_web::live::configure_look(&{}, &{}, &{}, {}); crow_web::live::configure_keep({}); crow_web::live::files::configure_uploads({} as i64); __crow_app.serve({} as u16).await.unwrap() }}",
-                        a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[0]
+                        "{{ crow_web::live::configure({} as i64, {} as i64); crow_web::live::configure_look(&{}, &{}, &{}, {}); crow_web::live::configure_keep({}); crow_web::live::files::configure_uploads({} as i64); {} }}",
+                        a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], server
                     )
                 } else {
-                    format!("__crow_app.serve({} as u16).await.unwrap()", a[0])
+                    format!("{{ {} }}", server)
                 }
             }
             "respond" if web && n == 2 => format!("CrowResponse::respond({} as u16, {})", a[0], a[1]),
@@ -647,8 +654,23 @@ impl Emitter {
             "insert" if db && n == 3 => format!("{}.insert(&{}, &{}).unwrap()", a[0], a[1], a[2]),
             "migrate" if db && n == 2 => format!("{}.migrate(&{}).unwrap()", a[0], a[1]),
             "transact" if db && n == 2 => format!("{}.transact(&|_tx| {{ {}(_tx); Ok(()) }}).unwrap()", a[0], a[1]),
-            "sign" if web && n == 2 => format!("CrowJwt::sign({}, {})", a[0], a[1]),
-            "verify" if web && n == 2 => format!("CrowJwt::verify({}, {})", a[0], a[1]),
+            // a token and its claims are crow_web's, as the interpreter's are
+            "sign" if web && n == 2 => {
+                self.needs_crow_runtime = true;
+                self.web_features.insert("auth".to_string());
+                format!(
+                    "match crow_web::auth::sign_claims(&{{ use crow_runtime::json::ToJson as _; ({}).to_json() }}, &{}) {{ Ok(_t) => CrowResult {{ ok: true, value: _t, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: String::new(), reason: _e, kind: \"auth\".to_string(), trace: vec![], captured: 0.0 }} }}",
+                    a[0], a[1]
+                )
+            }
+            "verify" if web && n == 2 => {
+                self.needs_serde_json = true;
+                self.web_features.insert("auth".to_string());
+                format!(
+                    "match crow_web::auth::verify_token(&{}, &{}) {{ Ok(_c) => CrowResult {{ ok: true, value: _c, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: serde_json::Value::Null, reason: _e, kind: \"auth\".to_string(), trace: vec![], captured: 0.0 }} }}",
+                    a[0], a[1]
+                )
+            }
             "connect" if web && n == 1 => format!("ws::connect(&{})", a[0]),
             "send" if web && n == 2 => format!("{}.send(&{})", a[0], a[1]),
             "recv" if web && n == 1 => format!("{}.recv().unwrap_or_default()", a[0]),

@@ -53,6 +53,41 @@ the response is sent: each `put` sends a chunk as it is put, and answers
 whether the reader still listens, so `numbered` stops when they have gone.
 Both modes answer every one of these alike, to the byte.
 
+A server's options are `serve`'s and a route's: the sites whose pages may
+call the app, a directory of files for the addresses no route answers, and
+how often each client may call a route:
+
+```crow,norun
+use web
+
+fn api[req]
+    return json[map[ok = 'yes']]
+
+route['/api', api, limit = 60]
+serve[3000, cors = ['https://app.example.com'], files = 'public']
+```
+
+A form's fields arrive in `req.form` and its files in `req.files`, each a
+copy the handler reads by its `path`.
+
+An API has no page session, so it says who calls it with a token: `sign`
+gives one, and `verify` reads its claims back — or says why not:
+
+```crow
+use web, web.auth
+
+secret = 'a-secret-of-at-least-thirty-two-chars'
+token = sign[map[user = 'alice'], secret]
+claims = verify[token, secret]
+log[str[claims.user]]
+log[verify[token, 'another-secret-of-thirty-two-chars!!'].reason]
+```
+
+```text
+alice
+the token's signature does not match
+```
+
 A mailer is made from `web.mail`:
 
 ```crow,norun
@@ -62,9 +97,8 @@ smtp['smtp.example.com', 587, 'user', 'pass']
 serve[3000]
 ```
 
-The remaining `web` names — `sign`/`verify` (JWT) and the WebSocket client
-(`connect send recv close`) — are specified in section 13 of the spec but do
-not yet have a compiled example; `crow test --docs` lists them as *spec
-only* so the gap stays visible.
+The WebSocket client (`connect send recv close`) is specified in section 13
+of the spec but does not yet have a compiled example; `crow test --docs`
+lists it as *spec only* so the gap stays visible.
 
 Reference: spec section 13 (web).

@@ -122,208 +122,110 @@ mod server_integration {
     }
 }
 
-// ── Rate limiting ────────────────────────────────────────────────────
+// ── Server options: CORS, files, rate limits, forms and uploads ─────
 
-#[cfg(feature = "rate")]
-mod rate_integration {
-    use crow_web::rate::CrowRateLimiter;
-
-    #[test]
-    fn rate_limiter_per_ip_isolation() {
-        let limiter = CrowRateLimiter::new(2, 60);
-
-        // IP A uses 2 requests
-        assert!(limiter.check("192.168.1.1"));
-        assert!(limiter.check("192.168.1.1"));
-        assert!(!limiter.check("192.168.1.1")); // blocked
-
-        // IP B is independent
-        assert!(limiter.check("192.168.1.2"));
-        assert!(limiter.check("192.168.1.2"));
-        assert!(!limiter.check("192.168.1.2")); // blocked
-
-        // Reset IP A
-        limiter.reset("192.168.1.1");
-        assert!(limiter.check("192.168.1.1")); // allowed again
-    }
-
-    #[test]
-    fn rate_limiter_remaining_accuracy() {
-        let limiter = CrowRateLimiter::new(5, 60);
-        assert_eq!(limiter.remaining("new-key"), 5);
-        limiter.check("new-key");
-        limiter.check("new-key");
-        // Remaining should be around 3 (may vary slightly due to refill)
-        let rem = limiter.remaining("new-key");
-        assert!(rem >= 2 && rem <= 4, "remaining was {}", rem);
-    }
-}
-
-// ── Queue: background jobs ───────────────────────────────────────────
-
-// ── Template + DB: render database data ──────────────────────────────
-
-// ── Session + Rate: session-aware rate limiting ──────────────────────
-
-// ── Docs: OpenAPI generation ─────────────────────────────────────────
-
-// ── Upload: multipart parsing ───────────────────────────────────────
-
-#[cfg(feature = "upload")]
-mod upload_integration {
-    use crow_web::upload::{CrowUploadResult, CrowUploadedFile, parse_multipart_boundary};
-    use std::collections::HashMap;
-
-    #[test]
-    fn upload_result_multi_file_lookup() {
-        let result = CrowUploadResult {
-            files: vec![
-                CrowUploadedFile {
-                    name: "doc.pdf".to_string(),
-                    content_type: "application/pdf".to_string(),
-                    data: vec![0x25, 0x50, 0x44, 0x46], // %PDF
-                    field_name: "document".to_string(),
-                },
-                CrowUploadedFile {
-                    name: "photo.png".to_string(),
-                    content_type: "image/png".to_string(),
-                    data: vec![0x89, 0x50, 0x4E, 0x47], // PNG header
-                    field_name: "avatar".to_string(),
-                },
-            ],
-            fields: HashMap::from([
-                ("title".to_string(), "My Upload".to_string()),
-                ("description".to_string(), "Test file".to_string()),
-            ]),
-        };
-
-        assert_eq!(result.count(), 2);
-        assert_eq!(result.file("document").unwrap().name, "doc.pdf");
-        assert_eq!(result.file("avatar").unwrap().content_type, "image/png");
-        assert_eq!(result.field("title"), Some("My Upload"));
-        assert!(result.file("missing").is_none());
-        assert!(result.field("missing").is_none());
-    }
-
-    #[test]
-    fn upload_file_save_and_text() {
-        let file = CrowUploadedFile {
-            name: "test.txt".to_string(),
-            content_type: "text/plain".to_string(),
-            data: b"hello world".to_vec(),
-            field_name: "file".to_string(),
-        };
-        assert_eq!(file.size(), 11);
-        assert_eq!(file.text(), Some("hello world".to_string()));
-
-        // Save to temp
-        let path = std::env::temp_dir().join("crow_upload_test.txt");
-        assert!(file.save(path.to_str().unwrap()));
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(content, "hello world");
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn boundary_parsing() {
-        assert_eq!(
-            parse_multipart_boundary("multipart/form-data; boundary=abc123"),
-            Some("abc123".to_string())
-        );
-        assert_eq!(
-            parse_multipart_boundary(r#"multipart/form-data; boundary="quoted""#),
-            Some("quoted".to_string())
-        );
-        assert_eq!(parse_multipart_boundary("text/plain"), None);
-    }
-}
-
-// ── CORS + Server: cross-origin with routing ────────────────────────
-
-#[cfg(all(feature = "cors", feature = "http"))]
-mod cors_server {
+#[cfg(feature = "http")]
+mod server_options {
+    use axum::body::Body;
+    use axum::http::Request as HttpRequest;
     use crow_web::core::{CrowRequest, CrowResponse};
     use crow_web::server::{CrowApp, CrowHandler};
-    use crow_web::cors::CrowCors;
-    use axum::body::Body;
-    use axum::http::Request as HttpRequest;
     use tower::ServiceExt;
 
-    async fn send(router: axum::Router, req: HttpRequest<Body>) -> axum::http::Response<Body> {
-        router.oneshot(req).await.unwrap()
+    fn ok(_: CrowRequest) -> CrowResponse {
+        CrowResponse::text("ok")
     }
 
+    async fn body_of(resp: axum::http::Response<Body>) -> String {
+        String::from_utf8_lossy(&axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap()).to_string()
+    }
+
+    /// `serve[…, cors = [origin]]`: a page on that site may call the app —
+    /// its preflight is answered and its request carries the origin back —
+    /// and a page on another is told nothing
     #[tokio::test]
-    async fn cors_permissive_adds_headers() {
-        let app = CrowApp::new()
-            .route("/api", CrowHandler::new("api", |_: CrowRequest| CrowResponse::json(serde_json::json!({"ok": true}))))
-            .cors_permissive();
-
-        let router = app.into_router();
-
-        let req = HttpRequest::builder()
-            .uri("/api")
-            .header("origin", "http://evil.com")
-            .body(Body::empty())
-            .unwrap();
-        let resp = send(router, req).await;
-        assert_eq!(resp.status(), 200);
-        // CORS should allow any origin
-        let acao = resp.headers().get("access-control-allow-origin");
-        assert!(acao.is_some(), "Missing access-control-allow-origin header");
+    async fn cors_names_the_sites_that_may_call() {
+        let router = CrowApp::new().route("/api", CrowHandler::new("ok", ok)).cors_origins(&["https://app.example".to_string()]).served_router();
+        let pre = router.clone().oneshot(HttpRequest::builder().method("OPTIONS").uri("/api").header("origin", "https://app.example").header("access-control-request-method", "GET").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(pre.headers().get("access-control-allow-origin").unwrap(), "https://app.example");
+        let other = router.clone().oneshot(HttpRequest::builder().uri("/api").header("origin", "https://evil.example").body(Body::empty()).unwrap()).await.unwrap();
+        assert!(other.headers().get("access-control-allow-origin").is_none());
+        let any = CrowApp::new().route("/api", CrowHandler::new("ok", ok)).cors_origins(&["*".to_string()]).served_router();
+        let resp = any.oneshot(HttpRequest::builder().uri("/api").header("origin", "https://elsewhere.example").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(resp.headers().get("access-control-allow-origin").unwrap(), "*");
     }
 
+    /// `serve[…, files = dir]`: an address no route answers is the
+    /// directory's file, a route wins over a file, and a file there is not
+    /// is the app's 404
     #[tokio::test]
-    async fn cors_specific_origins() {
-        let cors = CrowCors::origins(vec!["http://allowed.com".to_string()]);
-        let app = CrowApp::new()
-            .route("/data", CrowHandler::new("data", |_: CrowRequest| CrowResponse::text("ok")))
-            .cors(cors);
-
-        let router = app.into_router();
-        let req = HttpRequest::builder()
-            .uri("/data")
-            .header("origin", "http://allowed.com")
-            .body(Body::empty())
-            .unwrap();
-        let resp = send(router, req).await;
-        assert_eq!(resp.status(), 200);
-    }
-}
-
-// ── Static files + Server ───────────────────────────────────────────
-
-#[cfg(all(feature = "static_files", feature = "http"))]
-mod static_server {
-    use crow_web::server::CrowApp;
-    use axum::body::Body;
-    use axum::http::Request as HttpRequest;
-    use tower::ServiceExt;
-
-    async fn send(router: axum::Router, req: HttpRequest<Body>) -> axum::http::Response<Body> {
-        router.oneshot(req).await.unwrap()
-    }
-
-    #[tokio::test]
-    async fn serve_static_file_through_app() {
-        let dir = std::env::temp_dir().join("crow_static_integration");
+    async fn files_answer_what_no_route_does() {
+        let dir = std::env::temp_dir().join(format!("crow_files_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("style.css"), "body { color: red; }").unwrap();
-
-        let app = CrowApp::new()
-            .static_dir("/assets", dir.to_str().unwrap());
-
-        let router = app.into_router();
-        let req = HttpRequest::builder()
-            .uri("/assets/style.css")
-            .body(Body::empty())
-            .unwrap();
-        let resp = send(router, req).await;
-        assert_eq!(resp.status(), 200);
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        assert_eq!(body, "body { color: red; }");
-
+        std::fs::write(dir.join("logo.txt"), "a logo").unwrap();
+        std::fs::write(dir.join("api"), "shadowed").unwrap();
+        let router = CrowApp::new().route("/api", CrowHandler::new("ok", ok)).files_from(dir.to_str().unwrap()).served_router();
+        let file = router.clone().oneshot(HttpRequest::builder().uri("/logo.txt").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(file.status(), 200);
+        assert_eq!(body_of(file).await, "a logo");
+        let route = router.clone().oneshot(HttpRequest::builder().uri("/api").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(body_of(route).await, "ok");
+        let missing = router.clone().oneshot(HttpRequest::builder().uri("/nope.txt").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(missing.status(), 404);
+        assert!(body_of(missing).await.contains("no page at /nope.txt"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `route[…, limit = 2]`: a client's third request in the minute is
+    /// answered 429 with the seconds to wait
+    #[tokio::test]
+    async fn a_route_limits_each_client() {
+        let router = CrowApp::new().route_limited("/api", "GET", CrowHandler::new("ok", ok), 2).served_router();
+        let ask = || HttpRequest::builder().uri("/api").header("x-forwarded-for", "198.51.100.7").body(Body::empty()).unwrap();
+        assert_eq!(router.clone().oneshot(ask()).await.unwrap().status(), 200);
+        assert_eq!(router.clone().oneshot(ask()).await.unwrap().status(), 200);
+        let third = router.clone().oneshot(ask()).await.unwrap();
+        assert_eq!(third.status(), 429);
+        assert!(third.headers().get("retry-after").is_some());
+        let other = HttpRequest::builder().uri("/api").header("x-forwarded-for", "198.51.100.8").body(Body::empty()).unwrap();
+        assert_eq!(router.clone().oneshot(other).await.unwrap().status(), 200);
+    }
+
+    /// A form's fields and a multipart body's files reach the handler —
+    /// each file a copy it reads by its path, gone once it has answered —
+    /// and an urlencoded body's fields are decoded
+    #[tokio::test]
+    async fn a_form_and_its_files_reach_the_handler() {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let kept = seen.clone();
+        let router = CrowApp::new()
+            .route_method("/up", "POST", CrowHandler::new("up", move |req: CrowRequest| {
+                let f = &req.files[0];
+                let text = std::fs::read_to_string(&f["path"]).unwrap_or_default();
+                *kept.lock().unwrap() = f["path"].clone();
+                CrowResponse::text(format!("{} {} {} {} {} | {}", req.form["title"], f["field"], f["name"], f["type"], f["size"], text))
+            }))
+            .route_method("/form", "POST", CrowHandler::new("form", |req: CrowRequest| CrowResponse::text(req.form["q"].to_string())))
+            .served_router();
+        let body = "--XYZ\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nQ3 trades\r\n--XYZ\r\nContent-Disposition: form-data; name=\"sheet\"; filename=\"t.csv\"\r\nContent-Type: text/csv\r\n\r\na,b\n1,2\n\r\n--XYZ--\r\n";
+        let resp = router.clone().oneshot(HttpRequest::builder().method("POST").uri("/up").header("content-type", "multipart/form-data; boundary=XYZ").body(Body::from(body)).unwrap()).await.unwrap();
+        assert_eq!(body_of(resp).await, "Q3 trades sheet t.csv text/csv 8 | a,b\n1,2\n");
+        let path = seen.lock().unwrap().clone();
+        assert!(path.starts_with(".crow/uploads/") && path.ends_with(".csv"), "{}", path);
+        assert!(!std::path::Path::new(&path).exists(), "the copy is gone once the handler has answered");
+        let resp = router.clone().oneshot(HttpRequest::builder().method("POST").uri("/form").header("content-type", "application/x-www-form-urlencoded").body(Body::from("q=hello+world%21")).unwrap()).await.unwrap();
+        assert_eq!(body_of(resp).await, "hello world!");
+    }
+
+    /// A body bigger than the app takes is refused before the handler
+    #[tokio::test]
+    async fn a_body_too_big_is_refused() {
+        crow_web::server::configure_uploads(1);
+        let router = CrowApp::new().route_method("/up", "POST", CrowHandler::new("ok", ok)).served_router();
+        let big = vec![b'x'; 2 * 1024 * 1024];
+        let resp = router.oneshot(HttpRequest::builder().method("POST").uri("/up").body(Body::from(big)).unwrap()).await.unwrap();
+        crow_web::server::configure_uploads(10);
+        assert_eq!(resp.status(), 413);
     }
 }
 

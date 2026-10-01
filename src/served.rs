@@ -176,6 +176,8 @@ fn route_answer(template: &IrInterp, handler: &str, req: crow_web::core::CrowReq
         ("headers".to_string(), pairs(&req.headers)),
         ("query".to_string(), pairs(&req.query)),
         ("params".to_string(), pairs(&req.params)),
+        ("form".to_string(), pairs(&req.form)),
+        ("files".to_string(), CrowValue::ok(Value::Array(req.files.iter().map(pairs).collect()))),
     ]
     .into_iter()
     .collect();
@@ -283,10 +285,10 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(crow_runtime::stops::STACK).build().map_err(|e| format!("cannot start the server: {}", e))?;
     rt.block_on(async move {
         let mut app = crow_web::server::CrowApp::new();
-        for (method, path, handler) in template.routes.clone() {
+        for (method, path, handler, limit) in template.routes.clone() {
             let t = template.clone();
             let answer = crow_web::server::CrowHandler::new(&handler.clone(), move |req| route_answer(&t, &handler, req));
-            app = if method == "GET" { app.route(&path, answer) } else { app.route_method(&path, &method, answer) };
+            app = app.route_limited(&path, &method, answer, limit);
         }
         for (path, view, pairs) in pages {
             let ws_path = format!("/_ws{}", path);
@@ -298,7 +300,13 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
         crow_web::live::configure_look(&text_of(serve_args.get(3)), &text_of(serve_args.get(4)), &text_of(serve_args.get(5)), bool_of(serve_args.get(6)));
         crow_web::live::configure_keep(bool_of(serve_args.get(7)));
         crow_web::live::files::configure_uploads(int_of(serve_args.get(8)));
-        app.serve(port).await.map_err(|e| format!("the server stopped: {}", e))
+        // the server's options, as the compiled program's are
+        crow_web::server::configure_uploads(int_of(serve_args.get(8)));
+        let origins: Vec<String> = match serve_args.get(9).map(|v| &v.value) {
+            Some(Value::Array(items)) => items.iter().map(|i| format!("{}", i.value)).collect(),
+            _ => Vec::new(),
+        };
+        app.cors_origins(&origins).files_from(&text_of(serve_args.get(10))).serve(port).await.map_err(|e| format!("the server stopped: {}", e))
     })
 }
 

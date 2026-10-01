@@ -40,7 +40,7 @@ fn fmt_piece(s: &str) -> String {
 /// The builtins whose own value is a result, whatever their arguments.
 const FALLIBLE_BUILTINS: &[&str] = &[
     "error", "hash", "shell", "find", "input", "read", "write", "mkdir", "ls", "rm", "mv", "cp", "captured", "moment", "parse_time", "env", "json", "encode", "mail", "query",
-    "exec",
+    "exec", "sign", "verify",
 ];
 
 impl Emitter {
@@ -1274,7 +1274,8 @@ impl Emitter {
                         return matches!(t, CrowType::Result(_));
                     }
                 }
-                FALLIBLE_BUILTINS.contains(&name)
+                // (math's sign[x] is no token's)
+                FALLIBLE_BUILTINS.contains(&name) && !(name == "sign" && raw_args.len() != 2)
             }
         }
     }

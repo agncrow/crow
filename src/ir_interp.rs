@@ -155,7 +155,9 @@ pub struct IrInterp {
     pub(crate) pages: Vec<(String, String, Vec<String>)>,
     /// What each `route[…]` asked for, in order: the method, the path, the
     /// handler. `crow run -i` answers every one.
-    pub(crate) routes: Vec<(String, String, String)>,
+    /// method, path, handler and the requests a minute each client may
+    /// make (0: no limit)
+    pub(crate) routes: Vec<(String, String, String, u64)>,
     /// The program uses web: `text`, `html`, `json`, `respond`, `redirect`
     /// and `bytes` make a route's response.
     web: bool,
@@ -1814,6 +1816,31 @@ impl IrInterp {
                 }
                 Ok(CrowValue::done())
             }
+            // sign[claims, secret] and verify[token, secret]: crow_web's, as
+            // the compiled program's are; a refusal is an error value of
+            // kind 'auth'
+            "sign" if vals.len() == 2 => {
+                let claims = crate::builtins::crow_to_encoded(&vals[0]);
+                let secret = match vals[1].unwrap_or_propagate()? {
+                    Value::Str(s) => s.clone(),
+                    _ => return Err("sign[] takes the claims and a secret, text".into()),
+                };
+                Ok(match crow_web::auth::sign_claims(&claims, &secret) {
+                    Ok(t) => CrowValue::ok(Value::Str(t)),
+                    Err(e) => CrowValue::error_with_kind(&e, "auth", ""),
+                })
+            }
+            "verify" if vals.len() == 2 => {
+                let text = |v: &CrowValue| match &v.value {
+                    Value::Str(s) => Ok(s.clone()),
+                    _ => Err("verify[] takes a token and a secret, both text".to_string()),
+                };
+                let (token, secret) = (text(&vals[0])?, text(&vals[1])?);
+                Ok(match crow_web::auth::verify_token(&token, &secret) {
+                    Ok(c) => CrowValue::ok(Value::Json(Box::new(c))),
+                    Err(e) => CrowValue::error_with_kind(&e, "auth", ""),
+                })
+            }
             "connect" => {
                 if vals.len() != 1 {
                     return Err("connect[] takes 1 argument".into());
@@ -2578,18 +2605,23 @@ impl IrInterp {
                 CrowValue::done()
             }
             // route[path, handler] answers GET, route[path, method, handler]
-            // the method named
+            // the method named; a limit, last, is the requests a minute each
+            // client may make
             "route" => {
-                let (path, method, handler) = match vals.as_slice() {
-                    [path, handler] => (path, "GET".to_string(), handler),
-                    [path, method, handler] => (path, format!("{}", method.value).to_uppercase(), handler),
+                let (path, method, handler, limit) = match vals.as_slice() {
+                    [path, handler] => (path, "GET".to_string(), handler, 0),
+                    [path, method, handler] => (path, format!("{}", method.value).to_uppercase(), handler, 0),
+                    [path, method, handler, limit] => (path, format!("{}", method.value).to_uppercase(), handler, match limit.value {
+                        Value::Int(n) => n.max(0),
+                        _ => 0,
+                    }),
                     _ => return Err("route[] takes a path and a handler: route['/health', health] (or a method between them)".into()),
                 };
                 let handler = match &handler.value {
                     Value::Fn(f) => f.name.clone(),
                     _ => return Err("route[] takes a handler, a function of the request: route['/health', health]".into()),
                 };
-                self.routes.push((method, format!("{}", path.value), handler));
+                self.routes.push((method, format!("{}", path.value), handler, limit as u64));
                 CrowValue::done()
             }
             "fetch" | "poll" => CrowValue::ok(Value::Map(std::collections::BTreeMap::new())),

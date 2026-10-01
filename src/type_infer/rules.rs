@@ -330,9 +330,10 @@ impl TypeContext {
             // db builtins
             "exec" => CrowType::Void,
             "query" => CrowType::Array(Box::new(CrowType::Json)),
-            // Web.auth builtins
-            "sign" => CrowType::Str,
-            "verify" => CrowType::Json,
+            // Web.auth builtins: a token, or why not; a token's claims, or why
+            // not (expired, a signature that does not match, not a token)
+            "sign" if args.len() == 2 => CrowType::Result(Box::new(CrowType::Str)),
+            "verify" => CrowType::Result(Box::new(CrowType::Json)),
             // Reactive data sources (UI)
             "poll" | "fetch" => CrowType::Frame(None),
             "today" => CrowType::Str,
@@ -610,11 +611,13 @@ impl TypeContext {
             }
         }
         // a route's request: its method, path and body are text, its
-        // headers, query and path params maps of text
+        // headers, query, path params and form maps of text, and its files
+        // a list of maps of text (name, type, size, path, field)
         if matches!(&obj_type, CrowType::WebRequest) {
             return match field {
                 "method" | "path" | "body" => CrowType::Str,
-                "headers" | "query" | "params" => CrowType::Map(Box::new(CrowType::Str)),
+                "headers" | "query" | "params" | "form" => CrowType::Map(Box::new(CrowType::Str)),
+                "files" => CrowType::Array(Box::new(CrowType::Map(Box::new(CrowType::Str)))),
                 _ => CrowType::Unknown,
             };
         }

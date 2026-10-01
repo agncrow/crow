@@ -122,7 +122,7 @@ log['`n` migrations applied']
 | Mode | At connect | Example |
 |---|---|---|
 | `reconcile` | What a table lacks is made: a declared column it does not have is added (`ALTER TABLE … ADD COLUMN`, as the statement declares it), under the database's lock (Postgres: an advisory lock, in one transaction; SQLite: an immediate transaction), so two processes starting at once make it once. A column SQLite cannot add in place — a key, or `NOT NULL` without a default — is made by making a table with no rows anew. A difference reconciling cannot make without losing data or guessing — a column of another kind than declared, a `NOT NULL` column without a default for a table that has rows — stops the program with each difference and the statements that would make it, and nothing is made. |  |
-| `verify` | Nothing is changed. The database's catalog is read (reading it needs no right beyond reading), and every declared column of every table the database has must be there, of the declared kind; a difference stops the program at connect with each difference and the statements that would mend it. |  |
+| `verify` | Nothing is changed. The database's catalog is read (reading it needs no right beyond reading), and every declared column of every table the database has must be there, of the declared kind; a difference stops the program at connect with each difference and the statements that would mend it. | [Web: responses and submodules](../by-example/web-more.md) |
 | `trust` | Nothing is read, and every start says so: `schema not verified — schema = 'trust'`. |  |
 
 A column's kind is the kind Crow reads its cells as (int, float, str, bool, datetime): `TEXT` and `VARCHAR(20)` are one kind, `INTEGER` and `TEXT` two. A column declared without a type is of any kind.

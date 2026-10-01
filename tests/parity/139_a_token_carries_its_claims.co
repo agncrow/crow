@@ -1,0 +1,24 @@
+--- A token carries its claims, and is refused with its reason: signed
+--- with another secret, or not a token at all; a secret shorter than 32
+--- characters signs nothing. (Neither mode had built `sign` or `verify`:
+--- the compiled program named a type crow_web did not have, and the
+--- interpreter had no such builtin.)
+use web, web.auth
+
+secret = 'a-secret-of-at-least-thirty-two-chars'
+token = sign[map[user = 'alice', role = 'admin'], secret]
+log[len[split[token, '.']]]
+claims = verify[token, secret]
+log[str[claims.user]]
+log[str[claims.role]]
+log[int[claims.exp] - int[claims.iat]]
+
+bad = verify[token, 'another-secret-of-thirty-two-chars!!']
+log[bad.ok]
+log[bad.reason]
+log[bad.kind]
+junk = verify['not.a.token', secret]
+log[junk.reason]
+short = sign[map[user = 'bob'], 'short']
+log[short.ok]
+log[short.reason]

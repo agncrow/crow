@@ -13,12 +13,14 @@ use axum::{
 
 use crate::core::{CrowRequest, CrowResponse};
 
-/// Extract a `CrowRequest` from an axum `Request`.
+/// Extract a `CrowRequest` from an axum `Request`: its method, path,
+/// headers, query string, body and form. Route params are not set here —
+/// the handler wrapper in `app.rs` injects them from axum's `Path`.
 ///
-/// This pulls out method, path, headers, query string, and body.
-/// Route params are NOT set here — they are injected by the handler
-/// wrapper in `app.rs` via axum's `Path` extractor.
-pub async fn request_from_axum(req: Request) -> CrowRequest {
+/// A body bigger than the app allows is answered `413 Payload Too Large`
+/// before a handler sees it, and one that does not parse as the form it
+/// says it is `400 Bad Request` (a body had been read whatever its size).
+pub async fn request_from_axum(req: Request) -> Result<CrowRequest, Response> {
     let method = req.method().to_string();
     let path = req.uri().path().to_string();
 
@@ -36,20 +38,37 @@ pub async fn request_from_axum(req: Request) -> CrowRequest {
         .map(CrowRequest::parse_query_string)
         .unwrap_or_default();
 
-    // Consume body
-    let body_bytes = axum::body::to_bytes(req.into_body(), usize::MAX)
-        .await
-        .unwrap_or_default();
-    let body = String::from_utf8_lossy(&body_bytes).to_string();
+    let limit = super::uploads::limit();
+    let body_bytes = match axum::body::to_bytes(req.into_body(), limit).await {
+        Ok(b) => b,
+        Err(e) => {
+            let too_big = e.to_string().contains("length limit");
+            let (status, why) = if too_big {
+                (StatusCode::PAYLOAD_TOO_LARGE, format!("the body is bigger than this app takes ({} MB): serve[…, uploads = N] raises it", limit / (1024 * 1024)))
+            } else {
+                (StatusCode::BAD_REQUEST, format!("the body could not be read: {}", e))
+            };
+            return Err((status, why).into_response());
+        }
+    };
+    let content_type = headers.get("content-type").cloned().unwrap_or_default();
+    let (form, files) = match super::uploads::form_of(&content_type, &body_bytes).await {
+        Ok(f) => f,
+        Err(e) => return Err((StatusCode::BAD_REQUEST, e).into_response()),
+    };
+    // a multipart body is its fields and files, not text
+    let body = if content_type.to_ascii_lowercase().starts_with("multipart/") { String::new() } else { String::from_utf8_lossy(&body_bytes).to_string() };
 
-    CrowRequest {
+    Ok(CrowRequest {
         method,
         path,
         headers,
         query,
         body,
         params: std::collections::BTreeMap::new(), // filled by handler wrapper
-    }
+        form,
+        files,
+    })
 }
 
 /// Convert a `CrowResponse` into an axum `Response`.
@@ -105,7 +124,7 @@ mod tests {
             .body(Body::from(r#"{"name":"alice"}"#))
             .unwrap();
 
-        let crow_req = request_from_axum(req).await;
+        let crow_req = request_from_axum(req).await.unwrap_or_else(|_| panic!("a request"));
         assert_eq!(crow_req.method, "POST");
         assert_eq!(crow_req.path, "/users");
         assert_eq!(crow_req.query.get("page").unwrap(), "2");
@@ -127,7 +146,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let crow_req = request_from_axum(req).await;
+        let crow_req = request_from_axum(req).await.unwrap_or_else(|_| panic!("a request"));
         assert_eq!(crow_req.method, "GET");
         assert_eq!(crow_req.path, "/health");
         assert!(crow_req.query.is_empty());
