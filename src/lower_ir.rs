@@ -2529,6 +2529,15 @@ impl<'a> Lowerer<'a> {
                 _ => self.lower_expr(callee)?,
             };
             self.unscanned -= 1;
+            // an item of a value that can fail is read from its payload,
+            // refused first when it failed — a function hands the error
+            // back, a handler stops, the top level halts — as a field read
+            // is (Vijay, 2026-10-01: one rule for reading into a value; the
+            // item had been the error, carried on). A fact's declared value
+            // has no statement to stand in front of: its own refusal, where
+            // the facts are set, takes the error the read carries.
+            let refused = !self.in_fact_default && base.ty().is_result() && !matches!(base.ty().payload(), Ty::Fn(..) | Ty::Unknown);
+            let base = if refused { self.decided(base, Decision::Item) } else { base };
             let mut idx = Vec::new();
             for a in args {
                 idx.push(self.lower_expr(a)?);
@@ -2552,6 +2561,11 @@ impl<'a> Lowerer<'a> {
                 }
             }
             let ty = self.call_type(callee, args, &arg_types, &full_types, Some(read(&base)));
+            // (an item of a refused value is the payload's item: the call's
+            // type, read from the variable, still said it could fail — but
+            // a parsed value's item can fail itself, JSON's null where it
+            // has none)
+            let ty = if refused && !matches!(base.ty(), Ty::Json) { ty.payload().clone() } else { ty };
             return Ok(Expr::Index { base: Box::new(base), indices: idx, ty });
         }
         let (module, name) = match callee {

@@ -103,6 +103,8 @@ fn builtin_named_params(name: &str) -> Option<&'static [&'static str]> {
         "sort" => Some(&["desc"]),
         // test harness: app[view, width = 1280, wide = true]
         "app" => Some(&["width", "wide"]),
+        // a reader of a URL sends headers with it: load[url, headers = map[…]]
+        "read" | "lines" | "csv" | "load" => Some(&["headers"]),
         _ => None,
     }
 }
@@ -1050,6 +1052,14 @@ impl Lowerer {
                     Some(name) if builtin_named_params(name).is_some() && has_named => {
                         let named_params = builtin_named_params(name).unwrap();
                         let resolved = self.resolve_builtin_args(name, named_params, args)?;
+                        Expr::Call { callee: Box::new(callee), args: resolved }
+                    }
+                    // a module's reader named by its module: frame.load[url,
+                    // headers = map[…]], math.load, io.read, io.lines, io.csv
+                    None if has_named
+                        && matches!(&callee, Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if matches!(m.as_str(), "frame" | "math" | "io")) && matches!(field.as_str(), "read" | "lines" | "csv" | "load")) =>
+                    {
+                        let resolved = self.resolve_builtin_args("load", &["headers"], args)?;
                         Expr::Call { callee: Box::new(callee), args: resolved }
                     }
                     _ => {

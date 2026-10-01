@@ -189,8 +189,11 @@ impl CrowResponse {
 
     /// What a route answers when its handler fails or stops: 500, with the
     /// handler's name and the reason — the same words in both modes.
-    pub fn stopped(handler: &str, reason: &str) -> Self {
-        Self::respond(500, format!("{} stopped: {}", handler, reason))
+    /// A failure's answer: 500, with the id the server's log files its
+    /// reason under — the client is told no more (a reason names what the
+    /// program reaches: a database's address, a file's path).
+    pub fn stopped(id: &str) -> Self {
+        Self::respond(500, format!("the request could not be answered — the server's log has why, as {}", id))
     }
 
     /// Redirect response (302 Found).

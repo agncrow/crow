@@ -1,0 +1,45 @@
+--- A value that failed has no items to read, as it has no fields: a list
+--- that did not load, text that could not be read, a parsed value that did
+--- not parse, a map a function could not make. Reading an item refuses the
+--- value first — a function hands the error back, the top level halts —
+--- with the reason it failed, the same in both modes. (The item had been
+--- the error, carried on; Vijay, 2026-10-01: one rule for reading into a
+--- value.) A parsed value's item that is not there is JSON's null, as ever.
+use io
+
+fn first_line[path]
+    got = lines[path]
+    return got[0]
+
+fn first_char[path]
+    t = read[path]
+    return t[0]
+
+fn first_item[text]
+    j = json[text]
+    return j[0]
+
+fn scores[s]
+    n = int[s]
+    if n gt 5
+        return map[a = n]
+    return map[a = 0]
+
+fn score_of[s]
+    m = scores[s]
+    return m['a']
+
+a = first_line['/no/such/file.txt']
+log[a.ok]
+log[a.reason]
+b = first_char['/no/such/file.txt']
+log[b.reason]
+c = first_item['[bad']
+log[c.reason]
+log[str[first_item['["x", 2]']]]
+d = score_of['x']
+log[d.reason]
+log[score_of['9']]
+got = lines['/no/such/file.txt']
+log[got[0]]
+log['not reached']

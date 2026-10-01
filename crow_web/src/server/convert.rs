@@ -82,8 +82,9 @@ pub fn response_to_axum(crow_resp: CrowResponse) -> Response {
     // response — answers 500 with the reason, and the server's log says so
     // (it had answered `internal error`, and said nothing)
     if let Some(why) = unsendable(&crow_resp) {
-        eprintln!("crow: a response could not be sent: {}", why);
-        return (StatusCode::INTERNAL_SERVER_ERROR, format!("the response could not be sent: {}", why)).into_response();
+        let id = super::app::failure_id();
+        eprintln!("crow: a response could not be sent [{}]: {}", id, why);
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("the request could not be answered — the server's log has why, as {}", id)).into_response();
     }
     let mut builder = Builder::new().status(
         StatusCode::from_u16(crow_resp.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
@@ -232,11 +233,14 @@ mod tests {
         let resp = response_to_axum(split);
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert!(resp.headers().get("set-cookie").is_none());
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        assert_eq!(String::from_utf8_lossy(&body), "the response could not be sent: the header 'x-name' holds a line break or another control character");
+        let body = String::from_utf8_lossy(&axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap()).to_string();
+        // the client is told an id; the reason is the log's
+        assert!(body.starts_with("the request could not be answered — the server's log has why, as "), "{}", body);
+        assert!(!body.contains("x-name") && !body.contains("set-cookie"), "{}", body);
+        assert_eq!(unsendable(&{ let mut r = CrowResponse::new(200, "x"); r.headers.insert("x-name".to_string(), "a\nb".to_string()); r }).unwrap(), "the header 'x-name' holds a line break or another control character");
+        assert_eq!(unsendable(&CrowResponse::new(42, "odd")).unwrap(), "42 is not an HTTP status (100 to 999)");
         let resp = response_to_axum(CrowResponse::new(42, "odd"));
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        assert_eq!(String::from_utf8_lossy(&body), "the response could not be sent: 42 is not an HTTP status (100 to 999)");
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
         let mut accented = CrowResponse::new(200, "ok");
         accented.headers.insert("x-city".to_string(), "Zürich".to_string());
         let resp = response_to_axum(accented);

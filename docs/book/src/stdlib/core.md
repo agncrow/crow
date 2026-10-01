@@ -170,13 +170,17 @@ A path is a file on this machine, a URL (`http://…`, `https://…`), or an S3 
 bars = load['https://data.example.com/aapl/2026-07-14.parquet']
 trades = load['s3://market-archive/2026/07/14/trades.csv']
 r = save[bars, 's3://reports/aapl.parquet']
+token = env['API_TOKEN']
+fills = load['https://api.example.com/fills.json', headers = map[authorization = 'Bearer `token`']]
 ```
+
+Every reader takes `headers = map[…]`, sent with a URL's request — an API's key, a token — in both modes; without them a server's refusal is the read's error (`cannot read 'https://…': the server answered 401 Unauthorized`). A file has none to send and an S3 object is signed with the environment's credentials, so either given headers is refused: `cannot read 'trades.csv' with headers: headers go with an http:// or https:// URL`.
 
 A table's format is its extension: `.csv`, `.json` or `.parquet`. A URL with none is read as the media type its server names (`application/json`, `text/csv`, Parquet's), and failing that as its bytes show — Parquet's `PAR1`, JSON's opening bracket, CSV otherwise. A JSON table is a list of records, a row each, or an object holding exactly one list of records, as an API's answer `{"status": "OK", "results": [...]}` does; an object holding two is refused, naming them, and `json[read[url]]` reads it whole. An S3 object is read and written with the environment's credentials — `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` when there is one, `AWS_REGION` (`us-east-1` when unset) — signed as AWS's Signature Version 4 says; `AWS_ENDPOINT_URL` points it at an S3-compatible store (MinIO, R2) by path. Without credentials an object is read unsigned, as a public bucket's is. A URL is read, never written.
 
 What goes wrong is the read's error value, as a missing file's is, its reason naming the path: a server that answers an error (`cannot read 'https://…': the server answered 404 Not Found`, and S3's own words after it), one that does not answer within 30 seconds, a transfer longer than ten minutes, more than 4 GB. A program's own URL, built from what a reader typed, reaches wherever it names: a served program checks it as it checks any input.
 
-**Design Note: one `load`, wherever the data is.** Considered: an HTTP client (`get`, `post`), an `s3` module and a `parquet` module, each with its own readers. Decided: where the data is and what shape it is in are the path's, not the program's, so every reader takes a URL or an S3 object as it takes a file, and the extension names the format — one way, which a new source or format joins without a new name. An outbound HTTP client, for APIs that need headers, other methods or a body, stays on the roadmap.
+**Design Note: one `load`, wherever the data is.** Considered: an HTTP client (`get`, `post`), an `s3` module and a `parquet` module, each with its own readers. Decided: where the data is and what shape it is in are the path's, not the program's, so every reader takes a URL or an S3 object as it takes a file, and the extension names the format — one way, which a new source or format joins without a new name. A key an API asks for is part of where the data is, so a reader sends headers with its URL (`headers = map[…]`, Vijay, 2026-10-01); an outbound HTTP client, for other methods and a body, stays on the roadmap.
 
 ## JSON
 

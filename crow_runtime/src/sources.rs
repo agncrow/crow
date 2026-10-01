@@ -68,24 +68,45 @@ pub fn format_sniffed(media: Option<&str>, bytes: &[u8]) -> Format {
 /// environment's AWS credentials (without them, unsigned, as a public
 /// bucket is read).
 pub fn fetch(path: &str) -> Result<Fetched, String> {
+    fetch_with(path, &[])
+}
+
+/// `fetch`, with headers sent beside an HTTP GET — an API's key, a token.
+pub fn fetch_with(path: &str, headers: &[(String, String)]) -> Result<Fetched, String> {
     #[cfg(feature = "net")]
     {
         if path.starts_with("s3://") {
             net::s3(path, "GET", None).map(|(bytes, media)| Fetched { bytes, media })
         } else {
-            net::http_get(path)
+            net::http_get(path, headers)
         }
     }
     #[cfg(not(feature = "net"))]
     {
+        let _ = headers;
         Err(format!("cannot read '{}': this program was built without network sources", path))
     }
 }
 
 /// A remote source's text.
 pub fn fetch_text(path: &str) -> Result<String, String> {
-    let fetched = fetch(path)?;
+    fetch_text_with(path, &[])
+}
+
+/// A remote source's text, with headers sent beside an HTTP GET.
+pub fn fetch_text_with(path: &str, headers: &[(String, String)]) -> Result<String, String> {
+    let fetched = fetch_with(path, headers)?;
     String::from_utf8(fetched.bytes).map_err(|_| format!("cannot read '{}': it is not text (UTF-8)", path))
+}
+
+/// A reader's `headers = map[…]`, each as the one display shows its value:
+/// they go with an `http://` or `https://` URL — a file has none to send,
+/// and an S3 object is signed with the environment's credentials.
+pub fn header_pairs<T: crate::display::CrowDisplay>(path: &str, headers: &std::collections::BTreeMap<String, T>) -> Result<Vec<(String, String)>, String> {
+    if !(path.starts_with("http://") || path.starts_with("https://")) {
+        return Err(format!("cannot read '{}' with headers: headers go with an http:// or https:// URL", path));
+    }
+    Ok(headers.iter().map(|(k, v)| (k.clone(), v.crow_fmt())).collect())
 }
 
 /// Bytes written to a remote destination: an S3 object. A URL is read, not
@@ -234,8 +255,12 @@ mod net {
         Ok((bytes, media))
     }
 
-    pub fn http_get(url: &str) -> Result<Fetched, String> {
-        let resp = agent().get(url).call().map_err(|e| format!("cannot read '{}': {}", url, e))?;
+    pub fn http_get(url: &str, headers: &[(String, String)]) -> Result<Fetched, String> {
+        let mut request = agent().get(url);
+        for (name, value) in headers {
+            request = request.header(name.as_str(), value.as_str());
+        }
+        let resp = request.call().map_err(|e| format!("cannot read '{}': {}", url, e))?;
         let (bytes, media) = answered(url, resp)?;
         Ok(Fetched { bytes, media })
     }

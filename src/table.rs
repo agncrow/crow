@@ -1016,6 +1016,8 @@ pub static ROWS: &[Row] = &[
     // the row; a failure is an error value of kind 'io', a success of a
     // write empty text, as its type says (it had been `done` interpreted)
     row!("io.read", "", "read", crow_runtime::io::read, (Str) -> Str, value "io"),
+    // a URL read with headers sent beside it (`read[url, headers = map[…]]`)
+    row!("io.read_with", "", "read", crow_runtime::io::read_with, (Str, MapRef) -> Str, value "io"),
     row!("io.write", "", "write", crow_runtime::io::write, (Str, Str) -> Str, value "io"),
     row!("io.exists", "", "exists", crow_runtime::io::exists, (Str) -> Bool, never),
     row!("io.mkdir", "", "mkdir", crow_runtime::io::mkdir, (Str) -> Str, value "io"),
@@ -1274,10 +1276,14 @@ pub static ROWS: &[Row] = &[
     // failure is an error value of kind 'frame', as `load`'s is (compiled,
     // it stopped the program)
     row!("frame.load", "frame", "load", crow_runtime::frames::load, (Str) -> Frame, value "frame"),
+    row!("frame.load_with", "frame", "load", crow_runtime::frames::load_with, (Str, MapRef) -> Frame, value "frame"),
     row!("frame.save", "frame", "save", crow_runtime::frames::save, (Frame, Str) -> Str, value "frame"),
     row!("io.csv", "io", "csv", crow_runtime::io::csv, (Str) -> TextRows, value "io"),
+    row!("io.csv_with", "io", "csv", crow_runtime::io::csv_with, (Str, MapRef) -> TextRows, value "io"),
     row!("io.lines", "io", "lines", crow_runtime::io::lines, (Str) -> Strs, value "io"),
+    row!("io.lines_with", "io", "lines", crow_runtime::io::lines_with, (Str, MapRef) -> Strs, value "io"),
     row!("math.load", "math", "load", crow_runtime::math::load, (Str) -> Tensor, value "load"),
+    row!("math.load_with", "math", "load", crow_runtime::math::load_with, (Str, MapRef) -> Tensor, value "load"),
     // doc: markdown rendered by the kernel
     row!("doc.markdown", "doc", "markdown", crow_runtime::markdown::to_html, (Str) -> Markup, never),
     row!("doc.chapters", "doc", "chapters", crow_runtime::markdown::chapters_frame, (Str) -> Frame, never),

@@ -85,13 +85,14 @@ Found and fixed:
   (`a_response_http_cannot_carry_says_why`). Header text beyond ASCII,
   which was refused the same way, is sent as its bytes.
 
-Left (a decision for Vijay):
-- A handler that fails answers 500 with its name and its reason —
+Found and fixed (Vijay's decision, 2026-10-01):
+- A handler that failed answered 500 with its name and its reason —
   `count stopped: the database does not answer: error connecting to server
-  (Connection refused …)` — so a client learns the program's internals: a
-  database's address, a file's path. Recommendation: the client is told the
-  handler stopped and an id the log carries beside the reason, in both
-  modes; the reason stays in the server's log, where the developer reads it.
+  (Connection refused …)` — so a client learned the program's internals: a
+  database's address, a file's path. The client is now told an id, and the
+  server's log names the handler and the reason beside it, in both modes
+  (`a_handler_that_stops_answers_500`; the lost-connection test reads the
+  log for it). A response HTTP cannot carry answers the same way.
 
 ## Uploads
 

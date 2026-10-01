@@ -116,6 +116,14 @@ pub fn load(path: &str) -> Result<CrowTensor, String> {
     Ok(CrowTensor::from_vec(data, vec![nrows, ncols]))
 }
 
+/// `math.load[url, headers = map[…]]`: a URL's table of numbers, the
+/// headers sent with it.
+pub fn load_with<T: crate::display::CrowDisplay>(path: &str, headers: &std::collections::BTreeMap<String, T>) -> Result<CrowTensor, String> {
+    let frame = crate::frames::load_from(path, &crate::sources::header_pairs(path, headers)?)?;
+    let (data, nrows, ncols) = crate::frame::frame_to_tensor_data(&frame, None)?;
+    Ok(CrowTensor::from_vec(data, vec![nrows, ncols]))
+}
+
 // ── linear algebra ──────────────────────────────────────────────────
 // The kernels take a matrix of the right shape; these check it, so a
 // vector, a rank-3 tensor or a rectangle where a square is needed is the

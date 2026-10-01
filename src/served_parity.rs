@@ -149,6 +149,15 @@ fn answer_of(raw: &str) -> String {
         })
         .collect();
     kept.sort();
+    // a failure's id is random, a line in each mode's own log: the answers
+    // agree on everything but it
+    let marker = "the server's log has why, as ";
+    let body = match body.find(marker) {
+        Some(at) if body[at + marker.len()..].chars().take(8).all(|c| c.is_ascii_hexdigit()) => {
+            format!("{}<id>{}", &body[..at + marker.len()], body[at + marker.len()..].chars().skip(8).collect::<String>())
+        }
+        _ => body.to_string(),
+    };
     format!("{} | {} | {}", status, kept.join(" | "), body)
 }
 

@@ -18,6 +18,17 @@ pub use crate::cell::Cell;
 /// column's type read from its cells; JSON records; Parquet. A URL with no
 /// extension is read as what its server says it answered.
 pub fn load(path: &str) -> Result<CrowFrame, String> {
+    load_from(path, &[])
+}
+
+/// `frame.load[url, headers = map[…]]`: a URL's table, the headers sent
+/// with it.
+pub fn load_with<T: crate::display::CrowDisplay>(path: &str, headers: &std::collections::BTreeMap<String, T>) -> Result<CrowFrame, String> {
+    load_from(path, &crate::sources::header_pairs(path, headers)?)
+}
+
+/// A table, from wherever its path says, the headers sent with a URL.
+pub fn load_from(path: &str, headers: &[(String, String)]) -> Result<CrowFrame, String> {
     use crate::sources::{self, Format};
     let named = sources::format_of(path);
     if !sources::is_remote(path) {
@@ -27,7 +38,7 @@ pub fn load(path: &str) -> Result<CrowFrame, String> {
             _ => crate::frame::load_csv(path),
         };
     }
-    let fetched = sources::fetch(path)?;
+    let fetched = sources::fetch_with(path, headers)?;
     let text = |bytes: Vec<u8>| String::from_utf8(bytes).map_err(|_| format!("cannot read '{}': it is not text (UTF-8)", path));
     match named.unwrap_or_else(|| sources::format_sniffed(fetched.media.as_deref(), &fetched.bytes)) {
         Format::Parquet => parquet_frame(fetched.bytes),

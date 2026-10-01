@@ -37,12 +37,21 @@ impl CrowHandler {
     }
 }
 
-/// What a route answers when its handler fails or stops: 500, with the
-/// handler's name and the reason, which the log says too — the same in
-/// both modes.
+/// What a route answers when its handler fails or stops: 500 and an id,
+/// which the server's log names beside the handler and the reason — the
+/// same in both modes. (The answer had carried the reason itself, telling
+/// any client what the program reaches; Vijay, 2026-10-01.)
 pub fn route_stopped(handler: &str, reason: &str) -> CrowResponse {
-    eprintln!("crow: {} stopped: {}", handler, reason);
-    CrowResponse::stopped(handler, reason)
+    let id = failure_id();
+    eprintln!("crow: {} stopped [{}]: {}", handler, id, reason);
+    CrowResponse::stopped(&id)
+}
+
+/// A failure's id: eight hex digits, random, so the one the client quotes
+/// finds its line in the log.
+pub(crate) fn failure_id() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    crow_runtime::signin::random_hex(4).unwrap_or_else(|_| format!("{:08x}", NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)))
 }
 
 /// The Crow web application — wraps axum's Router.
@@ -469,9 +478,10 @@ mod tests {
         assert_eq!(pages.served().oneshot(get("/cards")).await.unwrap().status(), 404, "a page counts as a route");
     }
 
-    /// A handler that stops answers 500 with its name and the reason, as
-    /// the interpreter's route does (the compiled program had dropped the
-    /// connection), and the server answers the next request
+    /// A handler that stops answers 500 and an id, as the interpreter's
+    /// route does (the compiled program had dropped the connection) — the
+    /// reason is the server's log's, beside the id, not the client's — and
+    /// the server answers the next request
     #[tokio::test]
     async fn a_handler_that_stops_answers_500() {
         fn boom(_req: CrowRequest) -> CrowResponse {
@@ -481,8 +491,10 @@ mod tests {
         let router = CrowApp::new().route("/boom", CrowHandler::new("boom", boom)).route("/hello", CrowHandler::new("hello", hello_handler)).into_router();
         let resp = router.clone().oneshot(get("/boom")).await.unwrap();
         assert_eq!(resp.status(), 500);
-        let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        assert_eq!(String::from_utf8_lossy(&body), "boom stopped: line 5: index 9 is out of range for an array of 2 items");
+        let body = String::from_utf8_lossy(&to_bytes(resp.into_body(), usize::MAX).await.unwrap()).to_string();
+        let id = body.strip_prefix("the request could not be answered — the server's log has why, as ").unwrap_or_else(|| panic!("{}", body));
+        assert!(id.len() == 8 && id.chars().all(|c| c.is_ascii_hexdigit()), "{}", body);
+        assert!(!body.contains("index 9"), "the reason is not the client's: {}", body);
         assert_eq!(router.oneshot(get("/hello")).await.unwrap().status(), 200);
     }
 

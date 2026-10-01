@@ -1772,7 +1772,7 @@ fn cmd_install() {
     let updating = args.iter().any(|a| a == "--update");
     let named: Vec<String> = args.iter().filter(|a| !a.starts_with("--")).cloned().collect();
     let root = project_root(&std::env::current_dir().unwrap_or_default());
-    match packages::install(&root, &config.deps, &named, updating && named.is_empty()) {
+    match packages::install(&root, &config.deps, &named, updating && named.is_empty(), &crowfile_deps) {
         Ok(said) => {
             for line in said {
                 println!("  {}", line);
@@ -4178,6 +4178,33 @@ fn cmd_db(args: &[String]) {
     }
 }
 
+/// The dependencies a package's crowfile names, from its directory: none
+/// when it has no crowfile. (A package's own dependencies install beside
+/// it; packages.rs.)
+pub(crate) fn crowfile_deps(dir: &std::path::Path) -> Result<Vec<(String, String)>, String> {
+    let path = dir.join("crowfile");
+    let Ok(source) = std::fs::read_to_string(&path) else { return Ok(Vec::new()) };
+    let stmts = build(&source).map_err(|e| format!("{}: {}", path.display(), e))?;
+    let it = ir_interp::run_script(&stmts, "crowfile").map_err(|e| format!("{}: {}", path.display(), e))?;
+    Ok(deps_in(&it))
+}
+
+/// `deps = map[models = 'github.com/…@v1', mine = '../mine']`, as a ran
+/// crowfile holds it.
+fn deps_in(it: &ir_interp::IrInterp) -> Vec<(String, String)> {
+    it.var("deps")
+        .map(|val| {
+            if let value::Value::Map(map) = &val.value {
+                map.iter()
+                    .filter_map(|(name, v)| if let value::Value::Str(ver) = &v.value { Some((name.clone(), ver.clone())) } else { None })
+                    .collect::<Vec<_>>()
+            } else {
+                vec![]
+            }
+        })
+        .unwrap_or_default()
+}
+
 fn parse_crowfile() -> CrowfileConfig {
     let crowfile_source = match std::fs::read_to_string("crowfile") {
         Ok(s) => s,
@@ -4230,19 +4257,7 @@ fn parse_crowfile() -> CrowfileConfig {
             });
 
             // parse deps: [math = '1.0', http = '2.3']
-            let deps = it.var("deps").map(|val| {
-                if let value::Value::Map(map) = &val.value {
-                    map.iter().filter_map(|(name, v)| {
-                        if let value::Value::Str(ver) = &v.value {
-                            Some((name.clone(), ver.clone()))
-                        } else {
-                            None
-                        }
-                    }).collect::<Vec<_>>()
-                } else {
-                    vec![]
-                }
-            }).unwrap_or_default();
+            let deps = deps_in(&it);
 
             // parse [jobs] section: jobs = [train = 'jobs/train.co', ...]
             let jobs = it.var("jobs").map(|val| {
@@ -4481,7 +4496,7 @@ pub(crate) fn expand_module_imports_checked(
     // by what it imports, or a handler nothing in the part wires, is
     // refused whichever file is the entry
     for path in ex.done.keys() {
-        validate_part_alone(path)?;
+        validate_part_alone_from(path, ex.written.get(path).map(|d| d.as_path()))?;
     }
     // a part's function is typed from its tests' calls whichever file is
     // the entry, though the tests are the part's alone (set last, after
@@ -4939,7 +4954,15 @@ fn part_fingerprint(path: &std::path::Path) -> u64 {
 /// inlined, lowered and passed through the same gate as the whole app.
 /// A part is validated once per fingerprint (`VALIDATED_PARTS`), and
 /// reports under its project-relative path.
+#[cfg(test)]
 fn validate_part_alone(path: &std::path::Path) -> Result<(), String> {
+    validate_part_alone_from(path, None)
+}
+
+/// A part validated alone, its imports read from `written` — its directory
+/// as its importer reached it, which says a linked package is one — or
+/// from where it lies.
+fn validate_part_alone_from(path: &std::path::Path, written: Option<&std::path::Path>) -> Result<(), String> {
     let print = part_fingerprint(path);
     if let Some((seen, found)) = VALIDATED_PARTS.with(|v| v.borrow().get(path).cloned())
         && seen == print
@@ -4949,13 +4972,15 @@ fn validate_part_alone(path: &std::path::Path) -> Result<(), String> {
     // (an import that reaches back to this part while it is validated
     // finds it good, as it had)
     VALIDATED_PARTS.with(|v| v.borrow_mut().insert(path.to_path_buf(), (print, Ok(()))));
-    let found = validate_part_alone_now(path);
+    let found = validate_part_alone_now(path, written);
     VALIDATED_PARTS.with(|v| v.borrow_mut().insert(path.to_path_buf(), (print, found.clone())));
     found
 }
 
-fn validate_part_alone_now(path: &std::path::Path) -> Result<(), String> {
+fn validate_part_alone_now(path: &std::path::Path, written: Option<&std::path::Path>) -> Result<(), String> {
     let dir = path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+    // (its imports read from where its importer reached it)
+    let import_dir = written.map(|d| d.to_path_buf()).unwrap_or_else(|| dir.clone());
     let root = project_root(&dir);
     let root = std::fs::canonicalize(&root).unwrap_or_else(|_| root.to_path_buf());
     let rel = path
@@ -4965,7 +4990,7 @@ fn validate_part_alone_now(path: &std::path::Path) -> Result<(), String> {
     let source = std::fs::read_to_string(path).map_err(|e| format!("{}: {}", rel, e))?;
     let stmts = build(&source).map_err(|e| format!("{}: {}", rel, e))?;
     let mut visited = std::collections::HashSet::new();
-    let expanded = expand_module_imports_checked(&stmts, &dir, &mut visited)?;
+    let expanded = expand_module_imports_checked(&stmts, &import_dir, &mut visited)?;
     let lowered = lower::lower_program(&expanded).map_err(|e| format!("{}: error: {}", rel, e))?;
     let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
     let ctx = infer_and_validate(&lowered, describing()).map_err(|e| {
@@ -4992,6 +5017,9 @@ fn validate_part_alone_now(path: &std::path::Path) -> Result<(), String> {
 struct ModuleExpansion {
     /// modules already expanded, by file: the local name → prefixed name map
     done: std::collections::BTreeMap<std::path::PathBuf, std::collections::BTreeMap<String, String>>,
+    /// each module's directory as its importer's path spelled it, by file: a
+    /// linked package lies elsewhere, and only this path says it is one
+    written: std::collections::BTreeMap<std::path::PathBuf, std::path::PathBuf>,
     /// every module's prefixed declarations, in dependency order
     hoisted: Vec<ast::Stmt>,
 }
@@ -5029,11 +5057,20 @@ fn expand_into(
         // whichever file is the entry; without a crowfile the entry file's
         // directory is the root
         let root = project_root(source_dir);
+        // a package reaches the packages installed beside it — its own
+        // dependencies, which `crow install` puts in the same crow_modules/
+        // (read from the directory as its path spells it: a linked
+        // package's root is where it really lies)
+        let beside = package_dir(source_dir).and_then(|p| p.parent().map(|m| m.to_path_buf()));
         let mut candidates: Vec<std::path::PathBuf> = Vec::new();
         for ext in ["co", "crow"] {
             candidates.push(root.join(format!("{}.{}", file_rel, ext)));
             candidates.push(root.join(format!("crow_modules/{}.{}", file_rel, ext)));
             candidates.push(root.join(format!("crow_modules/{}/main.{}", file_rel, ext)));
+            if let Some(modules) = &beside {
+                candidates.push(modules.join(format!("{}.{}", file_rel, ext)));
+                candidates.push(modules.join(format!("{}/main.{}", file_rel, ext)));
+            }
             if root != source_dir {
                 candidates.push(source_dir.join(format!("{}.{}", file_rel, ext)));
             }
@@ -5191,6 +5228,7 @@ fn expand_into(
                 _ => {}
             }
         }
+        ex.written.insert(canon.clone(), mod_dir.to_path_buf());
         ex.done.insert(canon, local_names.clone());
         imported.push((spelling, local_names));
         // Keep the original statement (including Use, so the compiler knows about it)

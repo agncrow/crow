@@ -131,80 +131,141 @@ const MARKER: &str = ".crow-package";
 /// `root/crow_modules/`, pinned by `root/crow.lock`: a dependency the lock
 /// holds checks out the locked commit, and one it does not — or one named
 /// in `update`, or every one with `update_all` — takes what its reference
-/// names now, and the lock records it. What each did, one line each.
-pub fn install(root: &Path, deps: &[(String, String)], update: &[String], update_all: bool) -> Result<Vec<String>, String> {
+/// names now, and the lock records it. Each package's own dependencies —
+/// its crowfile's, which `deps_of` reads — are installed beside it, flat,
+/// and locked the same way; one package wanted at two sources is refused,
+/// naming who wanted each: a project holds one version of a package. What
+/// each did, one line each.
+pub fn install(
+    root: &Path,
+    deps: &[(String, String)],
+    update: &[String],
+    update_all: bool,
+    deps_of: &dyn Fn(&Path) -> Result<Vec<(String, String)>, String>,
+) -> Result<Vec<String>, String> {
     let modules = root.join("crow_modules");
     std::fs::create_dir_all(&modules).map_err(|e| format!("crow_modules/: {}", e))?;
     let lock_path = root.join("crow.lock");
     let old = Lock::read(&lock_path);
     let mut lock = Lock::default();
     let mut said = Vec::new();
-    for (name, spec) in deps {
-        let dest = modules.join(name);
-        match parse(spec)? {
-            Source::Local(path) => {
-                let abs = std::fs::canonicalize(root.join(&path)).map_err(|_| format!("{}: no directory at '{}'", name, spec))?;
-                if dest.exists() || dest.is_symlink() {
-                    let _ = std::fs::remove_file(&dest).or_else(|_| std::fs::remove_dir_all(&dest));
-                }
-                #[cfg(unix)]
-                std::os::unix::fs::symlink(&abs, &dest).map_err(|e| format!("{}: {}", name, e))?;
-                #[cfg(not(unix))]
-                copy_tree(&abs, &dest)?;
-                said.push(format!("{}: linked to {}", name, abs.display()));
+    // the project's dependencies, then each package's own as they are met:
+    // name, source, and the package that asked (none: the project)
+    let mut queue: std::collections::VecDeque<(String, String, Option<String>)> = deps.iter().map(|(n, s)| (n.clone(), s.clone(), None)).collect();
+    let mut wanted: BTreeMap<String, (String, Option<String>)> = BTreeMap::new();
+    let who = |by: &Option<String>| by.as_ref().map(|p| format!("the package {}", p)).unwrap_or_else(|| "the project".to_string());
+    while let Some((name, spec, by)) = queue.pop_front() {
+        if let Some((have, first)) = wanted.get(&name) {
+            if *have == spec {
+                continue;
             }
-            Source::Git { url, subdir, reference } => {
-                let refresh = update_all || update.contains(name);
-                let locked = old.entries.get(name).filter(|(s, _)| s == spec && !refresh).map(|(_, c)| c.clone());
-                let have = std::fs::read_to_string(dest.join(MARKER)).unwrap_or_default();
-                if let Some(commit) = &locked
-                    && have.trim() == format!("{}\n{}", spec, commit)
-                {
-                    lock.entries.insert(name.clone(), (spec.clone(), commit.clone()));
-                    said.push(format!("{}: {} at {} (installed)", name, spec, &commit[..commit.len().min(12)]));
-                    continue;
-                }
-                let fetch = modules.join(format!(".fetch-{}", name));
-                let _ = std::fs::remove_dir_all(&fetch);
-                let fetch_s = fetch.to_string_lossy().to_string();
-                let commit = match &locked {
-                    Some(commit) => {
-                        git(&["clone", "--quiet", "--no-checkout", &url, &fetch_s], None).map_err(|e| format!("{}: cannot fetch {}: {}", name, url, e))?;
-                        git(&["checkout", "--quiet", commit], Some(&fetch)).map_err(|e| format!("{}: the locked commit {} is not in {}: {}", name, commit, url, e))?;
-                        commit.clone()
-                    }
-                    None => {
-                        git(&["clone", "--quiet", &url, &fetch_s], None).map_err(|e| format!("{}: cannot fetch {}: {}", name, url, e))?;
-                        git(&["checkout", "--quiet", &reference], Some(&fetch)).map_err(|_| format!("{}: {} has no tag, branch or commit '{}'", name, url, reference))?;
-                        git(&["rev-parse", "HEAD"], Some(&fetch))?
-                    }
-                };
-                // a tag moved since the lock was written: the lock wins, and
-                // the install says so
-                if locked.is_some()
-                    && let Ok(now) = git(&["rev-parse", &format!("{}^{{commit}}", reference)], Some(&fetch))
-                    && now != commit
-                {
-                    said.push(format!("{}: '{}' now names {}, the lock keeps {} — `crow install --update {}` takes it", name, reference, &now[..now.len().min(12)], &commit[..commit.len().min(12)], name));
-                }
-                let package = if subdir.is_empty() { fetch.clone() } else { fetch.join(&subdir) };
-                if !package.is_dir() {
-                    let _ = std::fs::remove_dir_all(&fetch);
-                    return Err(format!("{}: {} has no directory '{}' at {}", name, url, subdir, reference));
-                }
-                if dest.exists() || dest.is_symlink() {
-                    let _ = std::fs::remove_file(&dest).or_else(|_| std::fs::remove_dir_all(&dest));
-                }
-                copy_tree(&package, &dest)?;
-                std::fs::write(dest.join(MARKER), format!("{}\n{}\n", spec, commit)).map_err(|e| format!("{}: {}", name, e))?;
-                let _ = std::fs::remove_dir_all(&fetch);
-                said.push(format!("{}: {} at {}", name, spec, &commit[..commit.len().min(12)]));
-                lock.entries.insert(name.clone(), (spec.clone(), commit));
-            }
+            return Err(format!(
+                "{} is wanted at two sources — '{}' by {} and '{}' by {}: a project holds one version of a package, so name the one they can share",
+                name,
+                have,
+                who(first),
+                spec,
+                who(&by)
+            ));
+        }
+        wanted.insert(name.clone(), (spec.clone(), by.clone()));
+        let refresh = update_all || update.contains(&name);
+        let (dest, line) = install_one(&root.to_path_buf(), &modules, &name, &spec, &old, refresh, &mut lock, &mut said)?;
+        if let Some(line) = line {
+            said.push(match &by {
+                Some(p) => format!("{} (for {})", line, p),
+                None => line,
+            });
+        }
+        // its own dependencies, a path it names read from where it is
+        let real = std::fs::canonicalize(&dest).unwrap_or(dest.clone());
+        for (n, s) in deps_of(&real)? {
+            let s = match parse(&s)? {
+                Source::Local(p) if p.is_relative() => real.join(p).display().to_string(),
+                _ => s,
+            };
+            queue.push_back((n, s, Some(name.clone())));
         }
     }
     std::fs::write(&lock_path, lock.text()).map_err(|e| format!("crow.lock: {}", e))?;
     Ok(said)
+}
+
+/// One dependency installed (or found installed): where it is, and the
+/// line that says what was done (a warning about a moved tag goes straight
+/// to `said`).
+#[allow(clippy::too_many_arguments)]
+fn install_one(
+    root: &PathBuf,
+    modules: &Path,
+    name: &str,
+    spec: &str,
+    old: &Lock,
+    refresh: bool,
+    lock: &mut Lock,
+    said: &mut Vec<String>,
+) -> Result<(PathBuf, Option<String>), String> {
+    let dest = modules.join(name);
+    match parse(spec)? {
+        Source::Local(path) => {
+            let abs = std::fs::canonicalize(root.join(&path)).map_err(|_| format!("{}: no directory at '{}'", name, spec))?;
+            if dest.exists() || dest.is_symlink() {
+                let _ = std::fs::remove_file(&dest).or_else(|_| std::fs::remove_dir_all(&dest));
+            }
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&abs, &dest).map_err(|e| format!("{}: {}", name, e))?;
+            #[cfg(not(unix))]
+            copy_tree(&abs, &dest)?;
+            Ok((dest, Some(format!("{}: linked to {}", name, abs.display()))))
+        }
+        Source::Git { url, subdir, reference } => {
+            let locked = old.entries.get(name).filter(|(s, _)| s == spec && !refresh).map(|(_, c)| c.clone());
+            let have = std::fs::read_to_string(dest.join(MARKER)).unwrap_or_default();
+            if let Some(commit) = &locked
+                && have.trim() == format!("{}\n{}", spec, commit)
+            {
+                lock.entries.insert(name.to_string(), (spec.to_string(), commit.clone()));
+                return Ok((dest, Some(format!("{}: {} at {} (installed)", name, spec, &commit[..commit.len().min(12)]))));
+            }
+            let fetch = modules.join(format!(".fetch-{}", name));
+            let _ = std::fs::remove_dir_all(&fetch);
+            let fetch_s = fetch.to_string_lossy().to_string();
+            let commit = match &locked {
+                Some(commit) => {
+                    git(&["clone", "--quiet", "--no-checkout", &url, &fetch_s], None).map_err(|e| format!("{}: cannot fetch {}: {}", name, url, e))?;
+                    git(&["checkout", "--quiet", commit], Some(&fetch)).map_err(|e| format!("{}: the locked commit {} is not in {}: {}", name, commit, url, e))?;
+                    commit.clone()
+                }
+                None => {
+                    git(&["clone", "--quiet", &url, &fetch_s], None).map_err(|e| format!("{}: cannot fetch {}: {}", name, url, e))?;
+                    git(&["checkout", "--quiet", &reference], Some(&fetch)).map_err(|_| format!("{}: {} has no tag, branch or commit '{}'", name, url, reference))?;
+                    git(&["rev-parse", "HEAD"], Some(&fetch))?
+                }
+            };
+            // a tag moved since the lock was written: the lock wins, and
+            // the install says so
+            if locked.is_some()
+                && let Ok(now) = git(&["rev-parse", &format!("{}^{{commit}}", reference)], Some(&fetch))
+                && now != commit
+            {
+                said.push(format!("{}: '{}' now names {}, the lock keeps {} — `crow install --update {}` takes it", name, reference, &now[..now.len().min(12)], &commit[..commit.len().min(12)], name));
+            }
+            let package = if subdir.is_empty() { fetch.clone() } else { fetch.join(&subdir) };
+            if !package.is_dir() {
+                let _ = std::fs::remove_dir_all(&fetch);
+                return Err(format!("{}: {} has no directory '{}' at {}", name, url, subdir, reference));
+            }
+            if dest.exists() || dest.is_symlink() {
+                let _ = std::fs::remove_file(&dest).or_else(|_| std::fs::remove_dir_all(&dest));
+            }
+            copy_tree(&package, &dest)?;
+            std::fs::write(dest.join(MARKER), format!("{}\n{}\n", spec, commit)).map_err(|e| format!("{}: {}", name, e))?;
+            let _ = std::fs::remove_dir_all(&fetch);
+            let line = format!("{}: {} at {}", name, spec, &commit[..commit.len().min(12)]);
+            lock.entries.insert(name.to_string(), (spec.to_string(), commit));
+            Ok((dest, Some(line)))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -240,6 +301,44 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// No package's crowfile: no dependencies of its own.
+    fn none(_: &Path) -> Result<Vec<(String, String)>, String> {
+        Ok(Vec::new())
+    }
+
+    /// A package's own dependencies install beside it and are locked, and a
+    /// package of the project reaches them; one package wanted at two
+    /// sources is refused, naming who wanted each
+    #[test]
+    fn a_packages_own_dependencies_install_beside_it() {
+        let base = std::env::temp_dir().join(format!("crow_pkg_deps_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (models, market, project) = (base.join("models"), base.join("market"), base.join("app"));
+        for d in [&models, &market, &project] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(market.join("bars.co"), "fn close[x]\n    return x\n").unwrap();
+        std::fs::write(models.join("crowfile"), "deps = map[market = '../market']\n").unwrap();
+        std::fs::write(models.join("fit.co"), "use market.bars\nfn fit[x]\n    return bars.close[x] * 2\n").unwrap();
+        let deps = vec![("models".to_string(), models.display().to_string())];
+        let said = install(&project, &deps, &[], false, &crate::crowfile_deps).unwrap();
+        assert!(said.iter().any(|l| l.starts_with("market: linked to") && l.ends_with("(for models)")), "{:?}", said);
+        assert!(project.join("crow_modules/market/bars.co").exists());
+        // the program uses models, whose fit uses market beside it
+        std::fs::write(project.join("main.co"), "use models.fit\nlog[fit.fit[21]]\n").unwrap();
+        let stmts = crate::build(&std::fs::read_to_string(project.join("main.co")).unwrap()).unwrap();
+        let expanded = crate::expand_module_imports(&stmts, &project, &mut std::collections::HashSet::new());
+        let it = crate::ir_interp::run_script(&expanded, "main").unwrap();
+        let _ = it;
+        // two sources for one package: refused, naming both
+        let other = base.join("market2");
+        std::fs::create_dir_all(&other).unwrap();
+        let deps = vec![("market".to_string(), other.display().to_string()), ("models".to_string(), models.display().to_string())];
+        let err = install(&project, &deps, &[], false, &crate::crowfile_deps).unwrap_err();
+        assert!(err.contains("market is wanted at two sources") && err.contains("by the project") && err.contains("by the package models"), "{}", err);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// A package from a repository: installed at its tag and locked; again,
     /// from what is installed, fetching nothing; a tag moved keeps the
     /// locked commit and says so; `--update` takes the new one
@@ -261,13 +360,13 @@ mod tests {
         git(&["clone", "--quiet", "--bare", &work.to_string_lossy(), &bare.to_string_lossy()], None).unwrap();
         let spec = format!("file://{}//models@v0.1.0", bare.display());
         let deps = vec![("models".to_string(), spec.clone())];
-        let said = install(&project, &deps, &[], false).unwrap();
+        let said = install(&project, &deps, &[], false, &none).unwrap();
         assert!(said[0].starts_with("models: "), "{:?}", said);
         assert!(project.join("crow_modules/models/line.co").exists());
         let locked = Lock::read(&project.join("crow.lock"));
         let first = locked.entries["models"].1.clone();
         // installed already: nothing fetched
-        let said = install(&project, &deps, &[], false).unwrap();
+        let said = install(&project, &deps, &[], false, &none).unwrap();
         assert!(said[0].ends_with("(installed)"), "{:?}", said);
         // the tag moves to a new commit: the lock keeps the old one
         std::fs::write(work.join("models/line.co"), "fn slope[a, b]\n    return (b - a) * 1.0\n").unwrap();
@@ -275,12 +374,12 @@ mod tests {
         g(&["tag", "-f", "v0.1.0"], &work);
         g(&["push", "--quiet", "--force", "--tags", &bare.to_string_lossy()], &work);
         let _ = std::fs::remove_dir_all(project.join("crow_modules/models"));
-        let said = install(&project, &deps, &[], false).unwrap();
+        let said = install(&project, &deps, &[], false, &none).unwrap();
         assert!(said.iter().any(|l| l.contains("now names")), "{:?}", said);
         assert_eq!(Lock::read(&project.join("crow.lock")).entries["models"].1, first);
         assert!(!std::fs::read_to_string(project.join("crow_modules/models/line.co")).unwrap().contains("1.0"));
         // --update takes what the tag names now
-        install(&project, &deps, &["models".to_string()], false).unwrap();
+        install(&project, &deps, &["models".to_string()], false, &none).unwrap();
         assert_ne!(Lock::read(&project.join("crow.lock")).entries["models"].1, first);
         assert!(std::fs::read_to_string(project.join("crow_modules/models/line.co")).unwrap().contains("1.0"));
         let _ = std::fs::remove_dir_all(&base);

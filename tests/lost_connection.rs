@@ -132,9 +132,10 @@ impl Drop for Served {
 }
 
 /// A served app whose database goes away and comes back: every request is
-/// answered — 500 with the reason while the database is gone, 200 once it
-/// is back — a slow handler holds up no other, and a malformed request
-/// leaves the server answering. In both modes.
+/// answered — 500 and an id while the database is gone, the reason in the
+/// server's log beside it, 200 once it is back — a slow handler holds up no
+/// other, and a malformed request leaves the server answering. In both
+/// modes.
 #[test]
 fn a_server_answers_through_its_database_going_away() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target");
@@ -146,7 +147,10 @@ fn a_server_answers_through_its_database_going_away() {
         if !db.running() {
             db.start();
         }
-        let child = Command::new(env!("CARGO_BIN_EXE_crow")).args(mode).arg("main.co").arg(db.port.to_string()).current_dir(&app).env("CROW_PORT", port.to_string()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+        // (the server's log, where a failure's reason is written)
+        let log_path = app.join(format!("server_{}.log", port));
+        let log = std::fs::File::create(&log_path).unwrap();
+        let child = Command::new(env!("CARGO_BIN_EXE_crow")).args(mode).arg("main.co").arg(db.port.to_string()).current_dir(&app).env("CROW_PORT", port.to_string()).stdout(Stdio::null()).stderr(log).spawn().unwrap();
         let _served = Served(child);
         let by = Instant::now() + Duration::from_secs(900);
         while get(port, "/count").0 != 200 {
@@ -161,11 +165,16 @@ fn a_server_answers_through_its_database_going_away() {
         assert_eq!(get(port, "/count").0, 200, "{:?}", mode);
         assert!(started.elapsed() < Duration::from_secs(2), "{:?}: a slow handler held another up", mode);
         assert_eq!(slow.join().unwrap(), (200, "slow done".to_string()), "{:?}", mode);
-        // the database goes away: the route answers why, and the server stays up
+        // the database goes away: the route answers 500 and an id, the
+        // server's log says why beside it, and the server stays up
         db.stop();
         let (status, body) = get(port, "/count");
         assert_eq!(status, 500, "{:?}: {}", mode, body);
-        assert!(body.contains("does not answer"), "{:?}: {}", mode, body);
+        let id = body.trim().rsplit(' ').next().unwrap_or("").to_string();
+        assert!(body.starts_with("the request could not be answered — the server's log has why, as ") && id.len() == 8, "{:?}: {}", mode, body);
+        assert!(!body.contains("does not answer"), "{:?}: the reason is not the client's: {}", mode, body);
+        let logged = std::fs::read_to_string(&log_path).unwrap_or_default();
+        assert!(logged.lines().any(|l| l.contains(&format!("count stopped [{}]", id)) && l.contains("does not answer")), "{:?}: the log has the reason beside {}: {}", mode, id, logged);
         // a malformed request is refused, and the server goes on
         let (bad, _) = ask(port, "GET /count HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: nope\r\nConnection: close\r\n\r\n");
         assert_eq!(bad, 400, "{:?}", mode);

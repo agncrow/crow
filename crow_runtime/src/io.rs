@@ -45,6 +45,11 @@ pub fn read(path: &str) -> Result<String, String> {
     fs_read(path)
 }
 
+/// `read[url, headers = map[…]]`: a URL's text, the headers sent with it.
+pub fn read_with<T: crate::display::CrowDisplay>(path: &str, headers: &BTreeMap<String, T>) -> Result<String, String> {
+    crate::sources::fetch_text_with(path, &crate::sources::header_pairs(path, headers)?)
+}
+
 /// `write[path, text]`: a file, or an S3 object.
 pub fn write(path: &str, content: &str) -> Result<String, String> {
     if crate::sources::is_remote(path) {
@@ -91,12 +96,22 @@ pub fn csv(path: &str) -> Result<Vec<BTreeMap<String, String>>, String> {
     parse_csv(path)
 }
 
+/// `io.csv[url, headers = map[…]]`.
+pub fn csv_with<T: crate::display::CrowDisplay>(path: &str, headers: &BTreeMap<String, T>) -> Result<Vec<BTreeMap<String, String>>, String> {
+    parse_csv_string(&crate::sources::fetch_text_with(path, &crate::sources::header_pairs(path, headers)?)?)
+}
+
 /// `io.lines[path]`.
 pub fn lines(path: &str) -> Result<Vec<String>, String> {
     if crate::sources::is_remote(path) {
         return Ok(crate::sources::fetch_text(path)?.lines().map(str::to_string).collect());
     }
     read_lines(path)
+}
+
+/// `io.lines[url, headers = map[…]]`.
+pub fn lines_with<T: crate::display::CrowDisplay>(path: &str, headers: &BTreeMap<String, T>) -> Result<Vec<String>, String> {
+    Ok(crate::sources::fetch_text_with(path, &crate::sources::header_pairs(path, headers)?)?.lines().map(str::to_string).collect())
 }
 
 pub fn fs_read(path: &str) -> Result<String, String> {

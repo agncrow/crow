@@ -341,6 +341,9 @@ pub enum Decision {
     /// A field read from it: a frame's column, a record's field, a map's
     /// key, which a value that failed does not have.
     Read(String),
+    /// An item read from it: a list's, a text's, a map's by its key, a
+    /// column's cell, a parsed value's — none of which a failed value has.
+    Item,
 }
 
 impl Decision {
@@ -351,6 +354,7 @@ impl Decision {
             Decision::Loop => "cannot loop over an error value".to_string(),
             Decision::Assign(var) => format!("cannot assign an error value to '{}'", var),
             Decision::Read(field) => format!("cannot read '{}' of an error value", field),
+            Decision::Item => "cannot read an item of an error value".to_string(),
         }
     }
 }
@@ -1017,6 +1021,7 @@ fn block(out: &mut String, b: &Block, depth: usize) {
                     Decision::Loop => " (a loop's list)".to_string(),
                     Decision::Assign(var) => format!(" (into {})", var),
                     Decision::Read(field) => format!(" (reading {})", field),
+                    Decision::Item => " (reading an item)".to_string(),
                 };
                 let _ = writeln!(out, "{}propagate {}{}", pad, values.join(", "), at);
             }
