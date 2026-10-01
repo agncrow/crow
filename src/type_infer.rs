@@ -500,6 +500,17 @@ impl TypeContext {
                 ],
             },
         );
+        // a request's answer (`request[url, method, body]`)
+        structs.insert(
+            "CrowReply".to_string(),
+            StructSig {
+                fields: vec![
+                    ("status".to_string(), CrowType::Int),
+                    ("body".to_string(), CrowType::Str),
+                    ("headers".to_string(), CrowType::Map(Box::new(CrowType::Str))),
+                ],
+            },
+        );
         structs.insert(
             "CrowElapsed".to_string(),
             StructSig {

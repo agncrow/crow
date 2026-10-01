@@ -112,24 +112,41 @@ pub fn unheld(what: String) -> bool {
 /// landed. `None` outside a rehearsal, or for a builtin that stays real.
 pub fn outside(name: &str, vals: &[crate::value::CrowValue]) -> Option<crate::value::CrowValue> {
     use crate::value::{CrowValue, Value};
-    if !matches!(name, "shell" | "write" | "mkdir" | "rm" | "mv" | "cp") {
+    if !matches!(name, "shell" | "request" | "write" | "mkdir" | "rm" | "mv" | "cp") {
         return None;
     }
     let r = active()?;
-    let args: Vec<String> = vals
-        .iter()
-        .map(|v| match &v.value {
-            Value::Str(s) => {
-                let s: String = s.chars().take(80).collect();
-                format!("{:?}", s)
+    let shown = |v: &CrowValue| match &v.value {
+        Value::Str(s) => {
+            let s: String = s.chars().take(80).collect();
+            format!("{:?}", s)
+        }
+        other => format!("{}", other),
+    };
+    let mut args: Vec<String> = vals.iter().map(shown).collect();
+    if name == "request" && vals.len() == 9 {
+        // a request's options by name, the ones it was given
+        const OPTIONS: [&str; 6] = ["headers", "query", "form", "files", "save", "timeout"];
+        args = vals[..3].iter().map(shown).collect();
+        for (option, v) in OPTIONS.iter().zip(&vals[3..]) {
+            let given = match &v.value {
+                Value::Str(s) => !s.is_empty(),
+                Value::Map(m) => !m.is_empty(),
+                Value::Float(f) => *f != 0.0,
+                Value::Int(n) => *n != 0,
+                _ => true,
+            };
+            if given {
+                args.push(format!("{} = {}", option, shown(v)));
             }
-            other => format!("{}", other),
-        })
-        .collect();
+        }
+    }
     if let Ok(mut e) = r.effects.lock() {
         e.push(format!("{}[{}]", name, args.join(", ")));
     }
     Some(match name {
+        // a request recorded, answered as one that landed with nothing to say
+        "request" => crate::table::write_reply(crow_runtime::sources::Reply { status: 200, ..Default::default() }),
         "shell" => {
             let mut m = std::collections::BTreeMap::new();
             m.insert("status".to_string(), CrowValue::ok(Value::Int(0)));
@@ -377,6 +394,38 @@ mod tests {
         assert!(!reads_only("WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x"));
         assert!(reads_only("SELECT 'insert' AS word FROM t"));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A request in a rehearsal is recorded, not sent: its URL, method and
+    /// body, then the options it was given, by name; it answers as one that
+    /// landed, with nothing to say, and nothing is saved
+    #[test]
+    fn a_rehearsed_request_is_recorded_with_its_options_by_name() {
+        use crate::value::{CrowValue, Value};
+        let text = |s: &str| CrowValue::ok(Value::Str(s.to_string()));
+        let map = |pairs: &[(&str, &str)]| CrowValue::ok(Value::Map(pairs.iter().map(|(k, v)| (k.to_string(), text(v))).collect()));
+        let r = begin(Path::new("/no/such/project"));
+        let vals = vec![
+            text("https://example.com/upload"),
+            text("POST"),
+            text(""),
+            map(&[("authorization", "Bearer k")]),
+            map(&[]),
+            map(&[("title", "July")]),
+            map(&[("report", "july.csv")]),
+            text("kept.bin"),
+            CrowValue::ok(Value::Float(5.0)),
+        ];
+        let answer = outside("request", &vals).expect("a rehearsal answers a request");
+        end();
+        let recorded = r.effects.lock().unwrap().clone();
+        assert_eq!(
+            recorded,
+            vec![r#"request["https://example.com/upload", "POST", "", headers = [authorization = 'Bearer k'], form = [title = 'July'], files = [report = 'july.csv'], save = "kept.bin", timeout = 5]"#.to_string()]
+        );
+        let Value::Map(m) = &answer.value else { panic!("a request answers a record: {:?}", answer) };
+        assert!(matches!(m["status"].value, Value::Int(200)));
+        assert!(!Path::new("kept.bin").exists());
     }
 
     /// Generated rows hold NULL in the second row of a column that can hold

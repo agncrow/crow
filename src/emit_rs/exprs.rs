@@ -39,7 +39,7 @@ fn fmt_piece(s: &str) -> String {
 
 /// The builtins whose own value is a result, whatever their arguments.
 const FALLIBLE_BUILTINS: &[&str] = &[
-    "error", "hash", "shell", "find", "input", "read", "write", "mkdir", "ls", "rm", "mv", "cp", "captured", "moment", "parse_time", "env", "json", "encode", "mail", "query",
+    "error", "hash", "shell", "request", "find", "input", "read", "write", "mkdir", "ls", "rm", "mv", "cp", "captured", "moment", "parse_time", "env", "json", "encode", "mail", "query",
     "exec", "sign", "verify", "socket", "send", "recv",
 ];
 
@@ -153,7 +153,7 @@ impl Emitter {
             Expr::Meta { base, which } => self.meta(base, *which),
             Expr::Interp(pieces) => self.interp(pieces),
             Expr::ListLit(items, ty) => self.list_lit(items, ty),
-            Expr::MapLit(pairs, _) => self.map_lit(pairs),
+            Expr::MapLit(pairs, ty) => self.map_lit(pairs, ty),
             Expr::RecordLit { name, fields } => self.record_lit(name, fields),
             Expr::Tree { element, attrs, children } => self.tree(element, attrs, children),
             Expr::ForExpr { var, iter, body, parallel, .. } => self.for_expr(var, iter, body, *parallel, e),
@@ -807,7 +807,7 @@ impl Emitter {
             if let CrowType::Struct(sname) = inner.as_ref() {
                 let is_copy = self.structs.get(sname).and_then(|s| s.fields.iter().find(|(f, _)| f == field).map(|(_, t)| matches!(t, Ty::Int | Ty::Float | Ty::Bool))).unwrap_or(false);
                 let suffix = if is_copy { "" } else { ".clone()" };
-                if matches!(sname.as_str(), "CrowShell" | "CrowFindResult") {
+                if matches!(sname.as_str(), "CrowShell" | "CrowFindResult" | "CrowReply") {
                     let suffix = if field == "status" { "" } else { ".clone()" };
                     return format!("{}.value.{}{}", obj, field, suffix);
                 }
@@ -850,7 +850,7 @@ impl Emitter {
             return format!("crow_runtime::core::map_key(&{}, \"{}\").unwrap_or_else(|e| crow_stop({}, e))", obj, field, self.current_line);
         }
         if let CrowType::Struct(sname) = &oty {
-            if matches!(sname.as_str(), "CrowShell" | "CrowFindResult" | "CrowElapsed") {
+            if matches!(sname.as_str(), "CrowShell" | "CrowFindResult" | "CrowElapsed" | "CrowReply") {
                 return format!("{}.{}", obj, field);
             }
         }
@@ -1039,8 +1039,13 @@ impl Emitter {
         }
     }
 
-    fn map_lit(&mut self, pairs: &[(String, Expr)]) -> String {
+    fn map_lit(&mut self, pairs: &[(String, Expr)], ty: &Ty) -> String {
         if pairs.is_empty() {
+            // (typed where nothing else would type it: a map of text a
+            // builtin takes whatever its values show as)
+            if matches!(ty, Ty::Map(e) if **e == Ty::Str) {
+                return "BTreeMap::<String, String>::new()".to_string();
+            }
             return "BTreeMap::new()".to_string();
         }
         let val_types: Vec<CrowType> = pairs.iter().map(|(_, v)| self.tt(v)).collect();
@@ -1486,7 +1491,7 @@ impl Emitter {
                     o => o,
                 };
                 let already = self.base_is_result(&name, &target, &raw_args);
-                const HELD: &[&str] = &["query", "exec", "insert", "transact", "read", "write", "fetch", "shell", "mail", "later", "notice", "sign_in", "download"];
+                const HELD: &[&str] = &["query", "exec", "insert", "transact", "read", "write", "fetch", "shell", "request", "mail", "later", "notice", "sign_in", "download"];
                 let stop_as = (self.reactive_epilogue.is_some() && HELD.contains(&name.as_str())).then(|| self.shown_fn_name());
                 self.pinned_module = saved_pin;
                 return self.propagation_block(&result_idx, &orig, &inner_expr, &inner_type, already, stop_as);
@@ -1614,6 +1619,11 @@ impl Emitter {
         self.needs_crow_runtime = true;
         if row.ret == Kind::Shell {
             self.needs_shell_struct = true;
+        }
+        if row.ret == Kind::Reply {
+            self.needs_reply_struct = true;
+            // a request reaches the network: the runtime's client comes with
+            self.runtime_features.insert("net".to_string());
         }
         // a parsed JSON value is serde's, which the program then names
         if row.ret == Kind::Json || row.ret == Kind::JsonList || row.params.contains(&Kind::Json) {

@@ -2846,6 +2846,13 @@ impl<'a> Lowerer<'a> {
             if self.pass == Pass::Final {
                 self.direct_effects.entry(current).or_default().insert(name.clone());
             }
+            // (an effect with a row is handed its arguments as any row's
+            // call is — the core's, or the module's that answers the name:
+            // a request's or a reader's options left out are maps of text)
+            let lowered = match self.ctx.registry.module_name_for(&name).map(str::to_string) {
+                Some(m) => self.row_arguments(&m, &name, lowered),
+                None => self.core_row_arguments(&name, lowered),
+            };
             let row = self.builtin_row(None, &name, &lowered);
             return Ok(Expr::Effect { name, row, args: lowered, ty, answered: true, propagates });
         }
@@ -2969,6 +2976,14 @@ impl<'a> Lowerer<'a> {
             .into_iter()
             .zip(kinds.iter().copied().map(Some).chain(std::iter::repeat(None)))
             .map(|(x, k)| {
+                // an empty map handed to a map of text is one (a request's
+                // headers left out)
+                if k == Some(Kind::TextMap) {
+                    return match x {
+                        Expr::MapLit(pairs, Ty::Map(e)) if pairs.is_empty() && *e == Ty::Unknown => Expr::MapLit(pairs, Ty::Map(Box::new(Ty::Str))),
+                        other => other,
+                    };
+                }
                 let item = match k {
                     Some(Kind::Words | Kind::Strs | Kind::Texts) => Ty::Str,
                     Some(Kind::Ints) => Ty::Int,
@@ -3973,6 +3988,16 @@ mod tests {
         ctx.describe_queries = false;
         ctx.infer_program(&stmts);
         lower(&stmts, &mut ctx, "t").err().unwrap_or_default()
+    }
+
+    /// A module asked for what it does not have is told so: `io.read` is
+    /// the core's `read` (it had said that io was no module or variable,
+    /// with `use io` written above it)
+    #[test]
+    fn a_module_without_the_name_says_so() {
+        assert_eq!(refusal_of("use io\nt = io.read['notes.txt']\nlog[t]\n"), "line 2: io has no 'read' — read is the core's: read[…]");
+        assert_eq!(refusal_of("use io\nt = io.slurp['notes.txt']\nlog[t]\n"), "line 2: io has no 'slurp'");
+        assert_eq!(refusal_of("t = nowhere.read['notes.txt']\nlog[t]\n"), "line 1: undefined module or variable 'nowhere'");
     }
 
     /// A page's address holds facts (spec, Core (Server)): a path's `:name`

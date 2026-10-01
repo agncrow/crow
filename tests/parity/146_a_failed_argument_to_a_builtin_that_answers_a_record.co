@@ -1,0 +1,29 @@
+--- A builtin that answers a record — shell's, find's, request's — handed
+--- an argument that failed is not called: the function hands the failure
+--- back, as it would any call's, the same in both modes. (Compiled, such a
+--- function did not build: the record had no value for a failed call to
+--- hold.)
+
+fn run_it[]
+    cmd = env['NO_SUCH_COMMAND_FOR_CROW']
+    r = shell[cmd]
+    return r.status
+
+fn first_number[]
+    text = env['NO_SUCH_TEXT_FOR_CROW']
+    m = find[text, '[0-9]+']
+    return m.groups
+
+fn ask[]
+    key = map[authorization = env['NO_SUCH_KEY_FOR_CROW']]
+    r = request['http://127.0.0.1:1/x', headers = key]
+    return r.status
+
+a = run_it[]
+log[a.ok]
+log[a.reason]
+b = first_number[]
+log[b.reason]
+c = ask[]
+log[c.kind]
+log[c.reason]

@@ -265,7 +265,7 @@ fn drawn_name(callee: &Expr) -> Option<String> {
 
 /// Calls whose value is a read of the world: named `q1`, `q2`, ... on the
 /// path so a condition on a query's cell stays readable.
-const READS: &[&str] = &["query", "exec", "insert", "fetch", "shell", "transact", "now", "rand", "random", "uuid", "input", "moment"];
+const READS: &[&str] = &["query", "exec", "insert", "fetch", "shell", "request", "transact", "now", "rand", "random", "uuid", "input", "moment"];
 
 #[derive(Clone, Default, Debug)]
 struct Path {
@@ -1402,7 +1402,7 @@ pub fn capability_of(effect: &str) -> Option<&'static str> {
     Some(match effect {
         "query" | "exec" | "insert" | "transact" | "migrate" | "connect" => "database",
         "read" | "write" | "mkdir" | "ls" | "rm" | "mv" | "cp" | "csv" | "lines" | "load" | "save" => "files",
-        "fetch" | "poll" | "send" | "recv" => "network",
+        "fetch" | "poll" | "send" | "recv" | "request" => "network",
         "serve" | "page" | "route" | "listen" => "serving",
         "shell" => "shell",
         "mail" => "mail",

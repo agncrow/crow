@@ -172,22 +172,23 @@ trades = load['s3://market-archive/2026/07/14/trades.csv']
 r = save[bars, 's3://reports/aapl.parquet']
 token = env['API_TOKEN']
 fills = load['https://api.example.com/fills.json', headers = map[authorization = 'Bearer `token`']]
+day = load['https://api.example.com/bars.csv', query = map[symbol = 'AAPL', day = '2026-07-14'], timeout = 20]
 ```
 
-Every reader takes `headers = map[…]`, sent with a URL's request — an API's key, a token — in both modes; without them a server's refusal is the read's error (`cannot read 'https://…': the server answered 401 Unauthorized`). A file has none to send and an S3 object is signed with the environment's credentials, so either given headers is refused: `cannot read 'trades.csv' with headers: headers go with an http:// or https:// URL`.
+Every reader takes three options for a URL, in both modes: `headers = map[…]`, sent with its request — an API's key, a token; `query = map[…]`, its pairs added to the URL, each name and value URL-encoded (`query = map[q = 'crow lang']` asks `?q=crow%20lang`, after the URL's own `?…` if it has one); and `timeout = seconds`, how long the read waits for its answer (unless told, thirty seconds to connect and ten minutes in all; `0` is as none). A map's values go as text, each as it shows, so a map of numbers is one too (`query = map[page = 2]`). Without the key a server's refusal is the read's error (`cannot read 'https://…': the server answered 401 Unauthorized`), and so is a server that does not answer in time (`cannot read 'https://…': no answer in 20 s`). A file has none to send and an S3 object is signed with the environment's credentials, so either given an option is refused: `cannot read 'trades.csv' with headers, a query or a timeout: they go with an http:// or https:// URL`; a timeout below 0 is refused too (`a timeout is a number of seconds, 0 or more — not -1`).
 
 A table's format is its extension: `.csv`, `.json` or `.parquet`. A URL with none is read as the media type its server names (`application/json`, `text/csv`, Parquet's), and failing that as its bytes show — Parquet's `PAR1`, JSON's opening bracket, CSV otherwise. A JSON table is a list of records, a row each, or an object holding exactly one list of records, as an API's answer `{"status": "OK", "results": [...]}` does; an object holding two is refused, naming them, and `json[read[url]]` reads it whole. An S3 object is read and written with the environment's credentials — `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` when there is one, `AWS_REGION` (`us-east-1` when unset) — signed as AWS's Signature Version 4 says; `AWS_ENDPOINT_URL` points it at an S3-compatible store (MinIO, R2) by path. Without credentials an object is read unsigned, as a public bucket's is. A URL is read, never written.
 
-What goes wrong is the read's error value, as a missing file's is, its reason naming the path: a server that answers an error (`cannot read 'https://…': the server answered 404 Not Found`, and S3's own words after it), one that does not answer within 30 seconds, a transfer longer than ten minutes, more than 4 GB. A program's own URL, built from what a reader typed, reaches wherever it names: a served program checks it as it checks any input.
+What goes wrong is the read's error value, as a missing file's is, its reason naming the path: a server that answers an error (`cannot read 'https://…': the server answered 404 Not Found`, and S3's own words after it), one that does not answer within 30 seconds (or its `timeout`), a transfer longer than ten minutes (or its `timeout`), more than 4 GB. A program's own URL, built from what a reader typed, reaches wherever it names: a served program checks it as it checks any input.
 
-**Design Note: one `load`, wherever the data is.** Considered: an HTTP client (`get`, `post`), an `s3` module and a `parquet` module, each with its own readers. Decided: where the data is and what shape it is in are the path's, not the program's, so every reader takes a URL or an S3 object as it takes a file, and the extension names the format — one way, which a new source or format joins without a new name. A key an API asks for is part of where the data is, so a reader sends headers with its URL (`headers = map[…]`, Vijay, 2026-10-01); an outbound HTTP client, for other methods and a body, stays on the roadmap.
+**Design Note: one `load`, wherever the data is.** Considered: an HTTP client (`get`, `post`), an `s3` module and a `parquet` module, each with its own readers. Decided: where the data is and what shape it is in are the path's, not the program's, so every reader takes a URL or an S3 object as it takes a file, and the extension names the format — one way, which a new source or format joins without a new name. A key an API asks for is part of where the data is, so a reader sends headers with its URL (`headers = map[…]`, Vijay, 2026-10-01), and so is the question a URL asks (`query = map[…]`, 2026-10-01); other methods, a body, a form and files are `request`'s (### Requests).
 
 ## JSON
 
 | Function | Description | Example |
 |----------|-------------|---|
 | `json[str]` | Parse JSON string into a Crow value (error-value on failure). Indexing the value reads its elements; a parse that failed, indexed, hands its error on, and an element that is JSON's `null` — or one the value lacks: past a list's end, a negative position, a key an object does not hold — is an error value of reason `null` (kind `'parse'`), in both modes | [JSON](../by-example/json.md) · [Web: responses and submodules](../by-example/web-more.md) · [Web: a JSON route](../by-example/web.md) |
-| `encode[value]` | Encode a Crow value as a JSON string: a record as an object of its fields, a tensor's whole numbers as ints (a float alone keeps its point: `encode[2.0]` is `2.0`), a NaN or infinite float as `null`, an error value as `null`; a function, a frame and a sparse matrix have no JSON and are refused. (The interpreter had refused to encode a record, and the compiled program did not build one.) | [JSON](../by-example/json.md) |
+| `encode[value]` | Encode a Crow value as a JSON string: a record as an object of its fields, a tensor's whole numbers as ints (a float alone keeps its point: `encode[2.0]` is `2.0`), a NaN or infinite float as `null`, an error value as `null`; a function, a frame and a sparse matrix have no JSON and are refused. (The interpreter had refused to encode a record, and the compiled program did not build one.) | [JSON](../by-example/json.md) · [Web: responses and submodules](../by-example/web-more.md) |
 
 A parsed value is JSON in both modes, held as it was parsed: `type` says what it holds — `map`, `array`, `str`, `int`, `float`, `bool`, or `error` for `null`. It shows as a Crow value of that kind would (`[1, 2.0]` shows as `[1, 2]`), encodes back as that value would (`[1,2]`), and a parsed object answers `keys`, `values` and `has`, in both modes (compiled, those did not build). A field a parsed object lacks, `j.missing`, is JSON's `null`: its `.ok` is false and its `.reason` is `null`. (The interpreter had converted a parsed value to lists, maps and tensors: an item past a parsed list's end, or a field a parsed object lacked, stopped the program where the compiled one read `null`.)
 
@@ -231,6 +232,40 @@ log[r.stdout]    --- 'hello'
 log[r.status]    --- 0
 ```
 
+## Requests
+
+| Function | Description | Example |
+|----------|-------------|---|
+| `request[url]` | An HTTP GET; returns a record with `status`, `body` and `headers` (their names in lower case), whatever the status (error-value with kind `'http'` only when no answer came) | [Web: responses and submodules](../by-example/web-more.md) |
+| `request[url, method]` | A request without a body: `'DELETE'`, `'HEAD'`, `'OPTIONS'` or `'GET'` | [Web: responses and submodules](../by-example/web-more.md) |
+| `request[url, method, body]` | A request with a body, as text: `'POST'`, `'PUT'`, `'PATCH'` or `'DELETE'` | [Web: responses and submodules](../by-example/web-more.md) |
+
+Each takes these options by name, any of them:
+
+| Option | What it sends | Example |
+|--------|---------------|---|
+| `headers = map[…]` | Its headers: an `authorization`, a `content-type` naming the body's type |  |
+| `query = map[…]` | Pairs added to the URL, each name and value URL-encoded, as a reader's are (#### Files, URLs and S3) | [Databases: `use db`](../by-example/db.md) · [Web: responses and submodules](../by-example/web-more.md) · [Working with Databases](../ch11-00-databases.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `form = map[…]` | A form, as a browser sends one: `application/x-www-form-urlencoded`, its fields URL-encoded | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `files = map[field = path]` | Files with the form, as `multipart/form-data`: each file's bytes under its field, named by its file name, typed by its extension (`.csv` as `text/csv`, `.png` as `image/png`, any other as `application/octet-stream`), and the form's fields as text beside them |  |
+| `save = path` | Where a success's bytes go: written to the file as they came — an image, an archive — when the status is a success (2xx), the record's `body` then `''`; any other answer's body stays in `body`, saying why, and the file is not written | [Frames: `use frame`](../by-example/frames.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `timeout = seconds` | How long it waits for its answer: unless told, thirty seconds to connect and ten minutes in all (`0` is as none) |  |
+
+```
+order = map[symbol = 'AAPL', side = 'buy']
+r = request['https://api.example.com/orders', 'POST', encode[order], headers = map[authorization = 'Bearer k']]
+if r.status eq 201
+    log['placed: `r.body`']
+found = request['https://api.example.com/search', query = map[q = 'crow lang'], timeout = 5]
+signed = request['https://example.com/login', 'POST', form = map[user = 'ada', password = pw]]
+sent = request['https://example.com/upload', 'POST', form = map[title = 'July'], files = map[report = 'july.csv']]
+got = request['https://example.com/logo.png', save = 'logo.png']
+```
+
+A request is answered, whatever its status: a 404 or a 500 is the record's `status`, read as `shell`'s is, and only a request that got no answer is an error value, of kind `'http'` — a server that does not answer (`cannot request 'https://…': …`), a URL that is none, a server that does not answer in time (`cannot request 'https://…': no answer in 5 s`), a URL that is none, a method that is not one (`'FETCH' is not an HTTP method — GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS`), a body, a form or files on a method that sends none (`a GET request sends no body — send it with POST, PUT or PATCH`; a form's fields can go as `query = map[…]` instead), a body beside a form or files (`a request sends a body, or a form and its files — not both`), a timeout below 0, a file to send that cannot be read and one to `save` that cannot be written. The method is a word in either case (`'post'` is `'POST'`). A body that is JSON — `encode[…]`, which opens with `{` or `[` — goes as `application/json`, any other as text, a form and files as their own types say, unless a `content-type` header names the type. A map's values go as text, each as it shows. A body answered is text — its bytes read as UTF-8, any that are not as `�` — so bytes that are not text are `save`d, not held. `request` is an effect: in a handler, one whose answer is used runs when asked, and one whose answer is not — a webhook told what happened — runs when the handler commits, so a handler that stops sends nothing (A handler is a transaction). A rehearsal (`crow check`) records a request instead of sending it. Both modes send it through the one client the readers use (`crow_runtime::sources`). `read` and `load` stay the readers: they want data, so a server's refusal is their error, where a request's record says it.
+
+**Design Note: one `request`, its method named.** Considered: a word for each method — `get`, `post`, `put`, `delete` — as many HTTP clients spell them. Decided: one `request` with its method as text, as `route['/up', 'POST', handler]` names the server's (Vijay, 2026-10-01): `get` would be a second `read`, `put` is the name a stream's feed is handed (`fn numbered[put, n]`), and `delete` would stand beside the map's `del`; a method as text reaches PATCH, HEAD and OPTIONS with no more names.
+
 ## Hashing
 
 | Function | Description | Example |
@@ -244,6 +279,27 @@ log[h]    --- '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824'
 ```
 
 `hash[pw, 'password']` is for storing a password: a salted, deliberately slow hash (Argon2id), written as one string that carries its algorithm, cost and salt (`$argon2id$v=19$m=19456,t=2,p=1$…`). Its salt is random, so hashing the same password twice gives two different strings; checking a password therefore hashes the attempt with the stored string in place of the algorithm and compares the two. The fast hashes (`sha256`, `sha512`, `md5`) are for fingerprints and checksums, never for passwords: they can be guessed at billions a second.
+
+## Encodings
+
+| Function | Description | Example |
+|----------|-------------|---|
+| `encode[text, scheme]` | Text written so something else can carry it: `'base64'` (the standard alphabet, padded with `=`), as an `authorization: Basic …` header or a binary field wants it; `'url'`, one component of a URL — every byte but a letter, a digit and `-` `.` `_` `~` written `%XX`, so a space is `%20` and `&`, `=`, `/` and `?` stand for themselves no more | [JSON](../by-example/json.md) · [Web: responses and submodules](../by-example/web-more.md) |
+| `decode[text, scheme]` | The text `encode[…, scheme]` was given: base64 in the standard or the URL-safe alphabet, padded or not, whitespace between skipped; a URL component's `%XX` each the byte it stands for (a `+` stays a `+`). Error-value with kind `'parse'` when the text is not in the scheme or decodes to bytes that are not text | [JSON](../by-example/json.md) |
+
+```
+pair = 'ada:secret'
+coded = encode[pair, 'base64']
+log['Basic `coded`']               --- 'Basic YWRhOnNlY3JldA=='
+log[decode[coded, 'base64']]       --- 'ada:secret'
+log[encode['crow & more', 'url']]  --- 'crow%20%26%20more'
+bad = decode['Zm9v!', 'base64']
+log[bad.reason]                    --- 'Zm9v!' is not base64: '!' is not in its alphabet
+```
+
+A scheme neither knows is refused before the program runs when the call writes it (`encode[] knows no scheme 'hex' — base64 or url`); one the program computes stops `encode`, and is `decode`'s error value, as text it cannot read is. A query and a form are encoded by `request` and the readers themselves (`query = map[…]`, `form = map[…]`), so a program rarely encodes a URL's piece by hand.
+
+**Design Note: one `encode`, its scheme named.** Considered: a builtin for each encoding — `base64`, `unbase64`, `urlencode` — as most libraries spell them. Decided: `encode` writes a value as text something else carries, and `decode` reads it back: JSON with no scheme, base64 or a URL's component with one, as `hash` names its algorithm (2026-10-01, for a Basic authorization). A new scheme joins without a new name. JSON is read back by `json[…]`, which parses text into a value; `decode` always takes a scheme, since what it gives back is text.
 
 ## Regex
 

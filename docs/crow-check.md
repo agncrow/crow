@@ -113,8 +113,9 @@ same fixtures run the tests where the servers are not: `crow test
 modes (spec, `crow test --fixtures`). A write
 is recorded as in any rehearsal, so a recording never changes a database. A write — `exec`, `insert`, a
 migration, a statement through `query` that changes rows — is recorded
-with its payload and the program sees success; a shell command and a file
-written, moved or removed are recorded instead of run; mail is recorded
+with its payload and the program sees success; a shell command, an HTTP
+`request` (answered `200` with nothing to say) and a file written, moved
+or removed are recorded instead of run; mail is recorded
 as the harness records it, and `fetch` answers nothing, as in any test. The clock stands at 2026-01-01 00:00 UTC until the
 test moves it, and random draws are seeded, so a scenario comes out the
 same on every run. An assertion that does not hold is reported, not

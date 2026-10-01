@@ -7,6 +7,8 @@
 //! table's format is its extension (`.csv`, `.json`, `.parquet`), or, for a
 //! URL with none, the media type its server names.
 
+use std::collections::BTreeMap;
+
 /// Whether a path names something not on this machine.
 pub fn is_remote(path: &str) -> bool {
     path.starts_with("http://") || path.starts_with("https://") || path.starts_with("s3://")
@@ -64,49 +66,99 @@ pub fn format_sniffed(media: Option<&str>, bytes: &[u8]) -> Format {
     }
 }
 
+/// What a reader sends with a URL: its `headers`, a `query` encoded into
+/// the URL, and how long it waits (`timeout`, in seconds; none: thirty
+/// seconds to connect and ten minutes in all).
+#[derive(Clone, Debug, Default)]
+pub struct Ask {
+    pub headers: Vec<(String, String)>,
+    pub query: Vec<(String, String)>,
+    pub timeout: f64,
+}
+
+impl Ask {
+    /// A reader's options for `path`: they go with an `http://` or
+    /// `https://` URL — a file has none to send, and an S3 object is signed
+    /// with the environment's credentials.
+    pub fn for_path(path: &str, headers: &BTreeMap<String, String>, query: &BTreeMap<String, String>, timeout: f64) -> Result<Ask, String> {
+        let asks = !headers.is_empty() || !query.is_empty() || timeout != 0.0;
+        if asks && !(path.starts_with("http://") || path.starts_with("https://")) {
+            return Err(format!("cannot read '{}' with headers, a query or a timeout: they go with an http:// or https:// URL", path));
+        }
+        if let Some(why) = timeout_refused(timeout) {
+            return Err(why);
+        }
+        Ok(Ask {
+            headers: headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            query: query.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            timeout,
+        })
+    }
+}
+
+/// A map's values as text, each as the one display shows it: what a
+/// request's headers, query, form and files are sent as.
+pub fn text_map<T: crate::display::CrowDisplay>(m: &BTreeMap<String, T>) -> BTreeMap<String, String> {
+    m.iter().map(|(k, v)| (k.clone(), v.crow_fmt())).collect()
+}
+
+/// A URL with a query's pairs added, each name and value URL-encoded (a
+/// space is `%20`, an `&` or `=` its own), after the `?` it has or one it
+/// is given.
+pub fn with_query(url: &str, query: &[(String, String)]) -> String {
+    if query.is_empty() {
+        return url.to_string();
+    }
+    // (a `#fragment` stays last)
+    let (base, fragment) = url.split_at(url.find('#').unwrap_or(url.len()));
+    let pairs: Vec<String> = query.iter().map(|(k, v)| format!("{}={}", crate::text::url_encode(k), crate::text::url_encode(v))).collect();
+    let joiner = match base.find('?') {
+        None => "?",
+        Some(_) if base.ends_with('?') || base.ends_with('&') => "",
+        Some(_) => "&",
+    };
+    format!("{}{}{}{}", base, joiner, pairs.join("&"), fragment)
+}
+
+/// Why a timeout is none: it is a number of seconds, 0 or more (0, as
+/// none given, waits as long as a reader does).
+fn timeout_refused(timeout: f64) -> Option<String> {
+    (!(timeout.is_finite() && timeout >= 0.0)).then(|| format!("a timeout is a number of seconds, 0 or more — not {}", timeout))
+}
+
 /// A remote source's bytes: an HTTP GET, or an S3 object read with the
 /// environment's AWS credentials (without them, unsigned, as a public
 /// bucket is read).
 pub fn fetch(path: &str) -> Result<Fetched, String> {
-    fetch_with(path, &[])
+    fetch_asked(path, &Ask::default())
 }
 
-/// `fetch`, with headers sent beside an HTTP GET — an API's key, a token.
-pub fn fetch_with(path: &str, headers: &[(String, String)]) -> Result<Fetched, String> {
+/// `fetch`, asked with a reader's options.
+pub fn fetch_asked(path: &str, ask: &Ask) -> Result<Fetched, String> {
     #[cfg(feature = "net")]
     {
         if path.starts_with("s3://") {
             net::s3(path, "GET", None).map(|(bytes, media)| Fetched { bytes, media })
         } else {
-            net::http_get(path, headers)
+            net::http_get(&with_query(path, &ask.query), &ask.headers, ask.timeout)
         }
     }
     #[cfg(not(feature = "net"))]
     {
-        let _ = headers;
+        let _ = ask;
         Err(format!("cannot read '{}': this program was built without network sources", path))
     }
 }
 
 /// A remote source's text.
 pub fn fetch_text(path: &str) -> Result<String, String> {
-    fetch_text_with(path, &[])
+    fetch_text_asked(path, &Ask::default())
 }
 
-/// A remote source's text, with headers sent beside an HTTP GET.
-pub fn fetch_text_with(path: &str, headers: &[(String, String)]) -> Result<String, String> {
-    let fetched = fetch_with(path, headers)?;
+/// A remote source's text, asked with a reader's options.
+pub fn fetch_text_asked(path: &str, ask: &Ask) -> Result<String, String> {
+    let fetched = fetch_asked(path, ask)?;
     String::from_utf8(fetched.bytes).map_err(|_| format!("cannot read '{}': it is not text (UTF-8)", path))
-}
-
-/// A reader's `headers = map[…]`, each as the one display shows its value:
-/// they go with an `http://` or `https://` URL — a file has none to send,
-/// and an S3 object is signed with the environment's credentials.
-pub fn header_pairs<T: crate::display::CrowDisplay>(path: &str, headers: &std::collections::BTreeMap<String, T>) -> Result<Vec<(String, String)>, String> {
-    if !(path.starts_with("http://") || path.starts_with("https://")) {
-        return Err(format!("cannot read '{}' with headers: headers go with an http:// or https:// URL", path));
-    }
-    Ok(headers.iter().map(|(k, v)| (k.clone(), v.crow_fmt())).collect())
 }
 
 /// Bytes written to a remote destination: an S3 object. A URL is read, not
@@ -123,6 +175,154 @@ pub fn put(path: &str, bytes: &[u8]) -> Result<(), String> {
     {
         let _ = bytes;
         Err(format!("cannot write '{}': this program was built without network sources", path))
+    }
+}
+
+/// What a request was answered (`request[url, method, body]`): its status,
+/// its body as text, and its headers, their names in lower case. A status
+/// that is no success is an answer like any other — `.status` says it.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Reply {
+    pub status: i64,
+    pub body: String,
+    pub headers: std::collections::BTreeMap<String, String>,
+}
+
+impl Reply {
+    /// The record a failed call holds — a request never answered — as a
+    /// compiled program's own structs have theirs (`crow_default`).
+    pub fn crow_default() -> Self {
+        Reply::default()
+    }
+}
+
+/// As the interpreter's record shows: its fields in name order.
+impl crate::display::CrowDisplay for Reply {
+    fn crow_repr(&self) -> String {
+        format!("[body = {}, headers = {}, status = {}]", self.body.crow_repr(), self.headers.crow_repr(), self.status.crow_repr())
+    }
+}
+
+impl crate::json::ToJson for Reply {
+    fn to_json(&self) -> crate::json::Json {
+        crate::json::object(vec![("body", self.body.to_json()), ("headers", self.headers.to_json()), ("status", self.status.to_json())])
+    }
+}
+
+/// The methods a request is sent with.
+const METHODS: &[&str] = &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+
+/// A file's media type, by its extension, as a multipart part names it.
+fn media_of(path: &str) -> &'static str {
+    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "csv" => "text/csv",
+        "json" => "application/json",
+        "txt" | "md" => "text/plain",
+        "html" => "text/html",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "pdf" => "application/pdf",
+        "parquet" => "application/vnd.apache.parquet",
+        _ => "application/octet-stream",
+    }
+}
+
+/// `request[url, method, body]` with every option: `headers`, a `query`
+/// encoded into the URL, a `form` sent URL-encoded, `files` sent with the
+/// form as a multipart body (each by its path), the answer's bytes `save`d
+/// to a file instead of held, and a `timeout` in seconds (0: thirty to
+/// connect, ten minutes in all). Answered whatever its status; a server
+/// that does not answer in time, a URL that is none, a method that is not
+/// one, a body where none goes, and a file that cannot be read or written
+/// are the call's error.
+#[allow(clippy::too_many_arguments)]
+pub fn request(
+    url: &str,
+    method: &str,
+    body: &str,
+    headers: &BTreeMap<String, String>,
+    query: &BTreeMap<String, String>,
+    form: &BTreeMap<String, String>,
+    files: &BTreeMap<String, String>,
+    save: &str,
+    timeout: f64,
+) -> Result<Reply, String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(format!("cannot request '{}': a request goes to an http:// or https:// URL", url));
+    }
+    let method = method.to_ascii_uppercase();
+    if !METHODS.contains(&method.as_str()) {
+        return Err(format!("'{}' is not an HTTP method — {}", method, METHODS.join(", ")));
+    }
+    if let Some(why) = timeout_refused(timeout) {
+        return Err(why);
+    }
+    let sends = !body.is_empty() || !form.is_empty() || !files.is_empty();
+    if sends && matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS") {
+        // (a form's fields can ride in the URL instead)
+        let instead = if body.is_empty() && files.is_empty() { ", or its fields as query = map[…]" } else { "" };
+        return Err(format!("a {} request sends no body — send it with POST, PUT or PATCH{}", method, instead));
+    }
+    if !body.is_empty() && (!form.is_empty() || !files.is_empty()) {
+        return Err("a request sends a body, or a form and its files — not both".to_string());
+    }
+    let mut headers: Vec<(String, String)> = headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let typed = headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
+    let bytes: Vec<u8> = if !files.is_empty() {
+        // a multipart body: the form's fields as text, each file's bytes
+        let boundary = format!("crow-{}", crate::signin::random_hex(12)?);
+        // (a name's quote and line breaks escaped, as a browser escapes them)
+        let quoted = |s: &str| s.replace('"', "%22").replace('\r', "%0D").replace('\n', "%0A");
+        let mut out: Vec<u8> = Vec::new();
+        for (name, value) in form {
+            out.extend(format!("--{}\r\nContent-Disposition: form-data; name=\"{}\"\r\n\r\n{}\r\n", boundary, quoted(name), value).into_bytes());
+        }
+        for (name, path) in files {
+            let data = std::fs::read(path).map_err(|e| format!("cannot request '{}': cannot read the file '{}': {}", url, path, e))?;
+            let file_name = std::path::Path::new(path).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| path.clone());
+            out.extend(format!("--{}\r\nContent-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\nContent-Type: {}\r\n\r\n", boundary, quoted(name), quoted(&file_name), media_of(path)).into_bytes());
+            out.extend(data);
+            out.extend(b"\r\n");
+        }
+        out.extend(format!("--{}--\r\n", boundary).into_bytes());
+        if !typed {
+            headers.push(("content-type".to_string(), format!("multipart/form-data; boundary={}", boundary)));
+        }
+        out
+    } else if !form.is_empty() {
+        if !typed {
+            headers.push(("content-type".to_string(), "application/x-www-form-urlencoded".to_string()));
+        }
+        form.iter().map(|(k, v)| format!("{}={}", crate::text::url_encode(k), crate::text::url_encode(v))).collect::<Vec<_>>().join("&").into_bytes()
+    } else {
+        // a body that is JSON (`encode[…]`) goes as JSON, any other as text
+        if !body.is_empty() && !typed {
+            let json = matches!(body.trim_start().chars().next(), Some('{') | Some('['));
+            headers.push(("content-type".to_string(), if json { "application/json" } else { "text/plain; charset=utf-8" }.to_string()));
+        }
+        body.as_bytes().to_vec()
+    };
+    let query: Vec<(String, String)> = query.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let url = with_query(url, &query);
+    #[cfg(feature = "net")]
+    {
+        let (status, answered, got) = net::request(&url, &method, &bytes, &headers, timeout)?;
+        let body = if save.is_empty() || !(200..300).contains(&status) {
+            String::from_utf8_lossy(&got).to_string()
+        } else {
+            // a success's bytes kept as they came — an image, an archive;
+            // any other answer's body stays to say why
+            std::fs::write(save, &got).map_err(|e| format!("cannot request '{}': cannot write '{}': {}", url, save, e))?;
+            String::new()
+        };
+        Ok(Reply { status, body, headers: answered })
+    }
+    #[cfg(not(feature = "net"))]
+    {
+        let _ = (bytes, headers, save, timeout);
+        Err(format!("cannot request '{}': this program was built without network sources", url))
     }
 }
 
@@ -242,10 +442,10 @@ mod net {
             .into()
     }
 
-    fn answered(path: &str, mut resp: ureq::http::Response<ureq::Body>) -> Result<(Vec<u8>, Option<String>), String> {
+    fn answered(path: &str, mut resp: ureq::http::Response<ureq::Body>, timeout: f64) -> Result<(Vec<u8>, Option<String>), String> {
         let status = resp.status();
         let media = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).map(str::to_string);
-        let bytes = resp.body_mut().with_config().limit(LIMIT).read_to_vec().map_err(|e| format!("cannot read '{}': {}", path, e))?;
+        let bytes = resp.body_mut().with_config().limit(LIMIT).read_to_vec().map_err(|e| unanswered("read", path, e, timeout))?;
         if !status.is_success() {
             // S3 says why in an XML body's <Message>
             let text = String::from_utf8_lossy(&bytes);
@@ -255,14 +455,78 @@ mod net {
         Ok((bytes, media))
     }
 
-    pub fn http_get(url: &str, headers: &[(String, String)]) -> Result<Fetched, String> {
-        let mut request = agent().get(url);
+    /// The client, waiting at most `timeout` seconds in all (0: the
+    /// defaults).
+    fn agent_waiting(timeout: f64) -> ureq::Agent {
+        let Ok(all) = Duration::try_from_secs_f64(timeout) else { return agent() };
+        if all.is_zero() {
+            return agent();
+        }
+        ureq::Agent::config_builder()
+            .timeout_connect(Some(all.min(Duration::from_secs(30))))
+            .timeout_global(Some(all))
+            .http_status_as_error(false)
+            .build()
+            .into()
+    }
+
+    /// Why a read or a request (`verb`) got no answer, or not all of one,
+    /// as the program reads it: a timeout says how long it waited.
+    fn unanswered(verb: &str, url: &str, e: ureq::Error, timeout: f64) -> String {
+        match e {
+            ureq::Error::Timeout(_) if timeout > 0.0 => format!("cannot {} '{}': no answer in {} s", verb, url, timeout),
+            ureq::Error::Timeout(_) => format!("cannot {} '{}': no answer in time", verb, url),
+            e => format!("cannot {} '{}': {}", verb, url, e),
+        }
+    }
+
+    pub fn http_get(url: &str, headers: &[(String, String)], timeout: f64) -> Result<Fetched, String> {
+        let request = with_headers(agent_waiting(timeout).get(url), headers);
+        let resp = request.call().map_err(|e| unanswered("read", url, e, timeout))?;
+        let (bytes, media) = answered(url, resp, timeout)?;
+        Ok(Fetched { bytes, media })
+    }
+
+    /// A request's headers, set on it.
+    fn with_headers<B>(mut request: ureq::RequestBuilder<B>, headers: &[(String, String)]) -> ureq::RequestBuilder<B> {
         for (name, value) in headers {
             request = request.header(name.as_str(), value.as_str());
         }
-        let resp = request.call().map_err(|e| format!("cannot read '{}': {}", url, e))?;
-        let (bytes, media) = answered(url, resp)?;
-        Ok(Fetched { bytes, media })
+        request
+    }
+
+    /// What a request was answered: its status, its headers (names in
+    /// lower case, repeated ones joined) and its bytes.
+    pub type Answer = (i64, BTreeMap<String, String>, Vec<u8>);
+
+    /// A request sent and answered, whatever its status.
+    pub fn request(url: &str, method: &str, body: &[u8], headers: &[(String, String)], timeout: f64) -> Result<Answer, String> {
+        let a = agent_waiting(timeout);
+        let sent = match method {
+            "POST" => with_headers(a.post(url), headers).send(body),
+            "PUT" => with_headers(a.put(url), headers).send(body),
+            "PATCH" => with_headers(a.patch(url), headers).send(body),
+            "DELETE" if !body.is_empty() => with_headers(a.delete(url), headers).force_send_body().send(body),
+            "DELETE" => with_headers(a.delete(url), headers).call(),
+            "HEAD" => with_headers(a.head(url), headers).call(),
+            "OPTIONS" => with_headers(a.options(url), headers).call(),
+            _ => with_headers(a.get(url), headers).call(),
+        };
+        let mut resp = sent.map_err(|e| unanswered("request", url, e, timeout))?;
+        let status = resp.status().as_u16() as i64;
+        let mut answered = BTreeMap::new();
+        for (name, value) in resp.headers() {
+            let value = String::from_utf8_lossy(value.as_bytes()).to_string();
+            answered
+                .entry(name.as_str().to_ascii_lowercase())
+                .and_modify(|v: &mut String| {
+                    v.push_str(", ");
+                    v.push_str(&value);
+                })
+                .or_insert(value);
+        }
+        let bytes = resp.body_mut().with_config().limit(LIMIT).read_to_vec().map_err(|e| unanswered("request", url, e, timeout))?;
+        Ok((status, answered, bytes))
     }
 
     fn env(name: &str) -> Option<String> {
@@ -325,7 +589,7 @@ mod net {
             req.call()
         }
         .map_err(|e| format!("cannot {} '{}': {}", verb, path, e))?;
-        answered(path, resp).map_err(|e| if verb == "write" { e.replacen("cannot read", "cannot write", 1) } else { e })
+        answered(path, resp, 0.0).map_err(|e| if verb == "write" { e.replacen("cannot read", "cannot write", 1) } else { e })
     }
 }
 

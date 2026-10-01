@@ -13,7 +13,7 @@ use crate::value::{CrowValue, Value};
 const IMPURE_BUILTINS: &[&str] = &[
     "read", "write", "log", "input", "rand", "time", "now", "sleep", "env", "exit",
     "args", "exists", "mkdir", "ls", "rm", "mv", "cp",
-    "later", "running", "shell",
+    "later", "running", "shell", "request",
     "captured",
 ];
 
@@ -31,10 +31,11 @@ pub(crate) const BUILTINS: &[&str] = &[
     "read", "write",
     "exists", "mkdir", "ls", "rm", "mv", "cp",
     "rand", "time", "sleep", "env", "exit",
-    "json", "encode",
+    "json", "encode", "decode",
     "error",
     "cpu", "gpu",
     "shell",
+    "request",
     "serve", "route", "page",
     "later", "running",
     "app", "html", "click", "elements", "change", "box", "fits", "style", "downloads", "mails",

@@ -45,9 +45,11 @@ pub fn read(path: &str) -> Result<String, String> {
     fs_read(path)
 }
 
-/// `read[url, headers = map[…]]`: a URL's text, the headers sent with it.
-pub fn read_with<T: crate::display::CrowDisplay>(path: &str, headers: &BTreeMap<String, T>) -> Result<String, String> {
-    crate::sources::fetch_text_with(path, &crate::sources::header_pairs(path, headers)?)
+/// `read[url, headers = map[…], query = map[…], timeout = s]`: a URL's
+/// text, asked with the options (crate::sources::Ask).
+pub fn read_asked(path: &str, headers: &BTreeMap<String, String>, query: &BTreeMap<String, String>, timeout: f64) -> Result<String, String> {
+    let ask = crate::sources::Ask::for_path(path, headers, query, timeout)?;
+    crate::sources::fetch_text_asked(path, &ask)
 }
 
 /// `write[path, text]`: a file, or an S3 object.
@@ -96,9 +98,9 @@ pub fn csv(path: &str) -> Result<Vec<BTreeMap<String, String>>, String> {
     parse_csv(path)
 }
 
-/// `io.csv[url, headers = map[…]]`.
-pub fn csv_with<T: crate::display::CrowDisplay>(path: &str, headers: &BTreeMap<String, T>) -> Result<Vec<BTreeMap<String, String>>, String> {
-    parse_csv_string(&crate::sources::fetch_text_with(path, &crate::sources::header_pairs(path, headers)?)?)
+/// `io.csv[url, headers = map[…], query = map[…], timeout = s]`.
+pub fn csv_asked(path: &str, headers: &BTreeMap<String, String>, query: &BTreeMap<String, String>, timeout: f64) -> Result<Vec<BTreeMap<String, String>>, String> {
+    parse_csv_string(&read_asked(path, headers, query, timeout)?)
 }
 
 /// `io.lines[path]`.
@@ -109,9 +111,9 @@ pub fn lines(path: &str) -> Result<Vec<String>, String> {
     read_lines(path)
 }
 
-/// `io.lines[url, headers = map[…]]`.
-pub fn lines_with<T: crate::display::CrowDisplay>(path: &str, headers: &BTreeMap<String, T>) -> Result<Vec<String>, String> {
-    Ok(crate::sources::fetch_text_with(path, &crate::sources::header_pairs(path, headers)?)?.lines().map(str::to_string).collect())
+/// `io.lines[url, headers = map[…], query = map[…], timeout = s]`.
+pub fn lines_asked(path: &str, headers: &BTreeMap<String, String>, query: &BTreeMap<String, String>, timeout: f64) -> Result<Vec<String>, String> {
+    Ok(read_asked(path, headers, query, timeout)?.lines().map(str::to_string).collect())
 }
 
 pub fn fs_read(path: &str) -> Result<String, String> {

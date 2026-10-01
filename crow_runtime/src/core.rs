@@ -482,6 +482,14 @@ pub struct Shell {
     pub stderr: String,
 }
 
+impl Shell {
+    /// The record a failed call holds — a command that never ran — as a
+    /// compiled program's own structs have theirs (`crow_default`).
+    pub fn crow_default() -> Self {
+        Shell { status: -1, stdout: String::new(), stderr: String::new() }
+    }
+}
+
 impl crate::display::CrowDisplay for Shell {
     fn crow_repr(&self) -> String {
         format!("[status = {}, stderr = {}, stdout = {}]", self.status.crow_repr(), self.stderr.crow_repr(), self.stdout.crow_repr())

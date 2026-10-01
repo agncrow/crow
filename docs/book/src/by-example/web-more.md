@@ -135,4 +135,42 @@ else
 no feed: socket
 ```
 
-Reference: spec section 13 (web).
+A program asks another server with `request` — a GET, or any method with
+a body. Its answer is a record, whatever the status: `status`, `body` and
+`headers`. Only a request that got no answer is an error value, as here:
+
+```crow
+order = map[symbol = 'AAPL', side = 'buy']
+r = request['http://127.0.0.1:1/orders', 'POST', encode[order]]
+if not r.ok
+    log['not placed: `r.kind`']
+else if r.status eq 201
+    log['placed: `r.body`']
+```
+
+```text
+not placed: http
+```
+
+A key goes in its headers, and a body that is JSON is sent as JSON:
+
+```crow,norun
+token = env['API_TOKEN']
+key = map[authorization = 'Bearer `token`']
+r = request['https://api.example.com/orders/7', 'DELETE', headers = key]
+log[r.status]
+```
+
+A query, a form, files and a timeout are options too, and `save` keeps a
+download's bytes in a file:
+
+```crow,norun
+pw = 'not this one'
+found = request['https://api.example.com/search', query = map[q = 'crow lang'], timeout = 5]
+signed = request['https://example.com/login', 'POST', form = map[user = 'ada', password = pw]]
+sent = request['https://example.com/upload', 'POST', form = map[title = 'July'], files = map[report = 'july.csv']]
+logo = request['https://example.com/logo.png', save = 'logo.png']
+log[logo.status]
+```
+
+Reference: spec section 13 (web), and Requests.

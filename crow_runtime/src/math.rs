@@ -116,10 +116,10 @@ pub fn load(path: &str) -> Result<CrowTensor, String> {
     Ok(CrowTensor::from_vec(data, vec![nrows, ncols]))
 }
 
-/// `math.load[url, headers = map[…]]`: a URL's table of numbers, the
-/// headers sent with it.
-pub fn load_with<T: crate::display::CrowDisplay>(path: &str, headers: &std::collections::BTreeMap<String, T>) -> Result<CrowTensor, String> {
-    let frame = crate::frames::load_from(path, &crate::sources::header_pairs(path, headers)?)?;
+/// `math.load[url, headers = map[…], query = map[…], timeout = s]`: a
+/// URL's table of numbers, asked with the options.
+pub fn load_asked(path: &str, headers: &std::collections::BTreeMap<String, String>, query: &std::collections::BTreeMap<String, String>, timeout: f64) -> Result<CrowTensor, String> {
+    let frame = crate::frames::load_asked(path, headers, query, timeout)?;
     let (data, nrows, ncols) = crate::frame::frame_to_tensor_data(&frame, None)?;
     Ok(CrowTensor::from_vec(data, vec![nrows, ncols]))
 }

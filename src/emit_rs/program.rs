@@ -684,7 +684,7 @@ impl Emitter {
         // structs
         let structs: Vec<StructDef> = self.part.structs.clone();
         for s in &structs {
-            if !matches!(s.name.as_str(), "CrowFindResult" | "CrowShell" | "CrowElapsed") {
+            if !matches!(s.name.as_str(), "CrowFindResult" | "CrowShell" | "CrowElapsed" | "CrowReply") {
                 self.emit_struct(s);
             }
         }
@@ -963,7 +963,7 @@ impl Emitter {
         loop {
             let before = ok.len();
             for (name, def) in &self.structs {
-                if matches!(name.as_str(), "CrowFindResult" | "CrowShell" | "CrowElapsed") || ok.contains(name) {
+                if matches!(name.as_str(), "CrowFindResult" | "CrowShell" | "CrowElapsed" | "CrowReply") || ok.contains(name) {
                     continue;
                 }
                 if def.fields.iter().all(|(_, t)| jsonable(&crow_type(t), &ok)) {
@@ -995,7 +995,7 @@ impl Emitter {
     /// has it if the rest does.
     fn record_is(&self, name: &str, field: &dyn std::ops::Fn(&Emitter, &Ty, &mut BTreeSet<String>) -> bool, seen: &mut BTreeSet<String>) -> bool {
         match name {
-            "CrowShell" | "CrowFindResult" => return true,
+            "CrowShell" | "CrowFindResult" | "CrowReply" => return true,
             "CrowElapsed" => return false,
             _ => {}
         }
@@ -1462,6 +1462,9 @@ impl Emitter {
             self.line("");
             self.line("#[derive(Clone, Debug)]");
             self.line("struct CrowFindResult { groups: Vec<String> }");
+            // the value a failed find's record holds (a struct's default)
+            self.line("#[allow(dead_code)]");
+            self.line("impl CrowFindResult { fn crow_default() -> Self { CrowFindResult { groups: Vec::new() } } }");
             self.line("impl crow_runtime::display::CrowDisplay for CrowFindResult {");
             self.line("    fn crow_repr(&self) -> String { use crow_runtime::display::CrowDisplay as _; format!(\"[groups = {}]\", self.groups.crow_repr()) }");
             self.line("}");
@@ -1476,10 +1479,19 @@ impl Emitter {
             self.line("#[allow(dead_code)]");
             self.line("type CrowShell = crow_runtime::core::Shell;");
         }
+        if self.needs_reply_struct {
+            // the runtime's own record, which `request`'s rows answer
+            self.needs_crow_runtime = true;
+            self.line("");
+            self.line("#[allow(dead_code)]");
+            self.line("type CrowReply = crow_runtime::sources::Reply;");
+        }
         if self.needs_elapsed_struct {
             self.line("");
             self.line("#[derive(Clone, Debug)]");
             self.line("struct CrowElapsed { seconds: f64, minutes: f64, hours: f64, days: f64 }");
+            self.line("#[allow(dead_code)]");
+            self.line("impl CrowElapsed { fn crow_default() -> Self { CrowElapsed { seconds: 0.0, minutes: 0.0, hours: 0.0, days: 0.0 } } }");
         }
     }
 

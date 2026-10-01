@@ -103,10 +103,28 @@ fn builtin_named_params(name: &str) -> Option<&'static [&'static str]> {
         "sort" => Some(&["desc"]),
         // test harness: app[view, width = 1280, wide = true]
         "app" => Some(&["width", "wide"]),
-        // a reader of a URL sends headers with it: load[url, headers = map[…]]
-        "read" | "lines" | "csv" | "load" => Some(&["headers"]),
         _ => None,
     }
+}
+
+/// What a reader of a URL is asked with — `read`, `lines`, `csv`, `load` —
+/// and the default of each, which the lowering fills in where a call that
+/// names one leaves another out (its row takes them all).
+fn reader_options() -> Vec<(&'static str, Expr)> {
+    vec![("headers", Expr::Map(vec![])), ("query", Expr::Map(vec![])), ("timeout", Expr::Float(0.0))]
+}
+
+/// What a request is sent with beyond its URL, method and body, and the
+/// default of each.
+fn request_options() -> Vec<(&'static str, Expr)> {
+    vec![
+        ("headers", Expr::Map(vec![])),
+        ("query", Expr::Map(vec![])),
+        ("form", Expr::Map(vec![])),
+        ("files", Expr::Map(vec![])),
+        ("save", Expr::Str(String::new())),
+        ("timeout", Expr::Float(0.0)),
+    ]
 }
 
 #[derive(Clone)]
@@ -1049,18 +1067,55 @@ impl Lowerer {
                     {
                         self.lower_ui_call(callee, args)
                     }
+                    // a reader of a URL, asked with options: read[url,
+                    // headers = map[…], query = map[…], timeout = s], the
+                    // ones it leaves out filled in
+                    Some(name @ ("read" | "lines" | "csv" | "load")) if !self.fns.contains_key(name) && has_named => {
+                        let (mut positional, options) = self.options(name, args, &reader_options())?;
+                        if positional.len() != 1 {
+                            return Err(self.err(format!("{}[] with options takes one path: {}[url, headers = map[…]]", name, name)));
+                        }
+                        positional.extend(options);
+                        Expr::Call { callee: Box::new(callee), args: positional }
+                    }
                     Some(name) if builtin_named_params(name).is_some() && has_named => {
                         let named_params = builtin_named_params(name).unwrap();
                         let resolved = self.resolve_builtin_args(name, named_params, args)?;
                         Expr::Call { callee: Box::new(callee), args: resolved }
                     }
+                    // request[url], request[url, method], request[url, method,
+                    // body], each with headers, query, form, files, save and
+                    // timeout by name: GET, an empty body and every option
+                    // left out filled in, so one row says every request
+                    Some("request") if !self.fns.contains_key("request") => {
+                        let (mut positional, options) = self.options("request", args, &request_options())?;
+                        if positional.is_empty() || positional.len() > 3 {
+                            return Err(self.err("request[] takes a URL, a method if not GET, and a body: request[url, 'POST', encode[order]]".to_string()));
+                        }
+                        if positional.len() < 2 {
+                            positional.push(Expr::Str("GET".to_string()));
+                        }
+                        if positional.len() < 3 {
+                            positional.push(Expr::Str(String::new()));
+                        }
+                        positional.extend(options);
+                        Expr::Call { callee: Box::new(callee), args: positional }
+                    }
                     // a module's reader named by its module: frame.load[url,
-                    // headers = map[…]], math.load, io.read, io.lines, io.csv
+                    // headers = map[…]], math.load, io.lines, io.csv
                     None if has_named
                         && matches!(&callee, Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if matches!(m.as_str(), "frame" | "math" | "io")) && matches!(field.as_str(), "read" | "lines" | "csv" | "load")) =>
                     {
-                        let resolved = self.resolve_builtin_args("load", &["headers"], args)?;
-                        Expr::Call { callee: Box::new(callee), args: resolved }
+                        let name = match &callee {
+                            Expr::FieldAccess { field, .. } => field.clone(),
+                            _ => "load".to_string(),
+                        };
+                        let (mut positional, options) = self.options(&name, args, &reader_options())?;
+                        if positional.len() != 1 {
+                            return Err(self.err(format!("{}[] with options takes one path: {}[url, headers = map[…]]", name, name)));
+                        }
+                        positional.extend(options);
+                        Expr::Call { callee: Box::new(callee), args: positional }
                     }
                     _ => {
                         if has_named {
@@ -1168,6 +1223,31 @@ impl Lowerer {
             }
         }
         Ok(resolved)
+    }
+
+    /// A builtin's options by name, each the call leaves out its default:
+    /// the positional arguments, then every option in order (what a row
+    /// that takes them all is handed — `request`, a reader of a URL).
+    fn options(&self, fn_name: &str, args: Vec<Expr>, options: &[(&str, Expr)]) -> Result<(Vec<Expr>, Vec<Expr>), String> {
+        let mut positional = Vec::new();
+        let mut given: Vec<Option<Expr>> = vec![None; options.len()];
+        for a in args {
+            match a {
+                Expr::Named { name, value } => {
+                    let Some(i) = options.iter().position(|(n, _)| *n == name) else {
+                        let names: Vec<&str> = options.iter().map(|(n, _)| *n).collect();
+                        return Err(self.err(format!("{}[] has no option '{}' — its options are {}", fn_name, name, names.join(", "))));
+                    };
+                    if given[i].is_some() {
+                        return Err(self.err(format!("argument '{}' given more than once in call to '{}'", name, fn_name)));
+                    }
+                    given[i] = Some(*value);
+                }
+                other => positional.push(other),
+            }
+        }
+        let filled = given.into_iter().zip(options).map(|(g, (_, default))| g.unwrap_or_else(|| default.clone())).collect();
+        Ok((positional, filled))
     }
 
     /// Builtins: reorder named args after the positionals in declared order.

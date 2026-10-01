@@ -1,0 +1,42 @@
+--- Text written so a header or a URL can carry it, and read back:
+--- encode[text, 'base64'] for a Basic authorization, encode[text, 'url']
+--- for one component of a URL, decode[text, scheme] the other way. Text
+--- decode cannot read is an error value of kind 'parse', its reason
+--- naming the text; a scheme the program computes that encode does not
+--- know stops it — the same in both modes.
+
+fn basic[user, password]
+    pair = '`user`:`password`'
+    coded = encode[pair, 'base64']
+    return 'Basic `coded`'
+
+log[basic['ada', 'secret']]
+log[encode['', 'base64']]
+log[encode['f', 'base64']]
+log[encode['fo', 'base64']]
+log[encode['foo', 'base64']]
+log[encode['naïve ☕', 'base64']]
+log[decode['YWRhOnNlY3JldA==', 'base64']]
+log[decode['Zm9vYg', 'base64']]
+log[decode['bmHDr3ZlIOKYlQ==', 'base64']]
+log[encode['a b&c=d/é?~', 'url']]
+log[decode['a%20b%26c%3dd%2F%C3%A9%3F~', 'url']]
+log[decode['1+1', 'url']]
+word = 'crow lang'
+back = decode[encode[word, 'base64'], 'base64']
+log[back.ok]
+log[str[back] eq word]
+bad = decode['Zm9v!', 'base64']
+log[bad.ok]
+log[bad.kind]
+log[bad.reason]
+short = decode['Zm9vY', 'base64']
+log[short.reason]
+binary = decode['/w==', 'base64']
+log[binary.reason]
+odd = decode['100%', 'url']
+log[odd.reason]
+schemes = ['base64', 'url', 'hex']
+for s in schemes
+    log[encode['x y', s]]
+log['not reached']

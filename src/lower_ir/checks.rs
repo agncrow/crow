@@ -25,9 +25,10 @@ pub(crate) const CORE_RESERVED: &[&str] = &[
     "read", "write",
     "exists", "mkdir", "ls", "rm", "mv", "cp",
     "rand", "time", "sleep", "env", "exit",
-    "json", "encode",
+    "json", "encode", "decode",
     "error",
     "shell",
+    "request",
     "hash",
     "find", "matches", "sub", "any", "all",
     "later", "running", "notice",
@@ -88,11 +89,12 @@ pub(crate) const BUILTINS: &[&str] = &[
     // System
     "rand", "time", "sleep", "env", "exit",
     // JSON
-    "json", "encode",
+    "json", "encode", "decode",
     // Error
     "error",
     // Shell
     "shell",
+    "request",
     // Hashing
     "hash",
     // Regex
@@ -607,7 +609,16 @@ impl<'a> Lowerer<'a> {
         let registry_module = REGISTRY_MODULES.contains(&real.as_str()) || real == "db";
         let registry_module = registry_module && self.ctx.registry.has_function(field);
         if !registry_module && !self.ctx.functions.contains_key(&prefixed) && !self.ctx.structs.contains_key(&prefixed) && !self.defined(module) {
-            self.refuse(format!("undefined module or variable '{}'", module));
+            // (a module that is one, asked for what it does not have — the
+            // core's `read` through `io` — is told so, not that it is none)
+            let known = REGISTRY_MODULES.contains(&real.as_str()) || real == "db";
+            if known && CORE_RESERVED.contains(&field) {
+                self.refuse(format!("{} has no '{}' — {} is the core's: {}[…]", module, field, field, field));
+            } else if known {
+                self.refuse(format!("{} has no '{}'", module, field));
+            } else {
+                self.refuse(format!("undefined module or variable '{}'", module));
+            }
         }
     }
 
@@ -648,6 +659,15 @@ impl<'a> Lowerer<'a> {
 
     pub(super) fn check_call(&mut self, name: &str, args: &[A], types: &[CrowType]) {
         let arg_type = |_: &Self, i: usize| -> CrowType { types.get(i).cloned().unwrap_or(CrowType::Unknown) };
+        // a scheme encode and decode do not know, written in the call, is
+        // refused before either mode runs (computed, encode stops on it)
+        if matches!(name, "encode" | "decode") && args.len() == 2 {
+            if let A::Str(scheme) = &args[1] {
+                if !crow_runtime::text::SCHEMES.contains(&scheme.as_str()) {
+                    self.refuse(crow_runtime::text::unknown_scheme(name, scheme));
+                }
+            }
+        }
         if name == "route" && !self.defined("route") && !matches!(arg_type(self, 0), CrowType::Str | CrowType::Unknown) {
             self.refuse("route[] takes a path first — the app is implicit: route['/', handler]".to_string());
         }
@@ -1058,6 +1078,9 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "grad" => argc == 1,
         // Shell / Hash / Regex / Date
         "shell" => argc == 1,
+        // url, method and body, then headers, query, form, files, save and
+        // timeout (the lowering fills in what a call leaves out)
+        "request" => argc == 9,
         "find" | "any" | "all" => argc == 2,
         "date" => argc == 3,
         "elapsed" => argc == 2,

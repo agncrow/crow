@@ -2320,7 +2320,7 @@ impl IrInterp {
     /// parameter list included — stops the handler: an error never reaches
     /// the world outside the session (core-design.md §2.1).
     fn effect_refused(&mut self, name: &str, vals: &[CrowValue]) -> Option<Result<CrowValue, String>> {
-        const EFFECTS: &[&str] = &["query", "exec", "insert", "transact", "read", "write", "fetch", "shell", "mail", "later", "notice", "sign_in", "download"];
+        const EFFECTS: &[&str] = &["query", "exec", "insert", "transact", "read", "write", "fetch", "shell", "request", "mail", "later", "notice", "sign_in", "download"];
         if self.held.is_none() || !EFFECTS.contains(&name) {
             return None;
         }

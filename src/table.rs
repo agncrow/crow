@@ -97,6 +97,9 @@ pub enum Kind {
     MapOf,
     /// `&BTreeMap<String, T>` taken: a map read.
     MapRef,
+    /// `&BTreeMap<String, String>` taken: a map's values as text, each as
+    /// it shows (a request's headers, query, form and files).
+    TextMap,
     /// `Vec<i64>` taken and given, moved or copied as a list is.
     Ints,
     /// `Vec<f64>` taken and given, moved or copied as a list is.
@@ -118,6 +121,10 @@ pub enum Kind {
     /// `crow_runtime::core::Shell` given: a command's status and output,
     /// the compiled program's `CrowShell` and the interpreter's record.
     Shell,
+    /// `crow_runtime::sources::Reply` given: a request's status, body and
+    /// headers, the compiled program's `CrowReply` and the interpreter's
+    /// record.
+    Reply,
     /// `&T` taken, any value that shows (`str`): the compiled program's
     /// `CrowDisplay`, the interpreter's value's.
     Shown,
@@ -219,6 +226,8 @@ impl Kind {
             Kind::Markup => CrowType::Markup,
             Kind::TextRows => CrowType::Array(Box::new(CrowType::Map(Box::new(CrowType::Str)))),
             Kind::Shell => CrowType::Struct("CrowShell".to_string()),
+            Kind::Reply => CrowType::Struct("CrowReply".to_string()),
+            Kind::TextMap => CrowType::Map(Box::new(CrowType::Str)),
             Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn => CrowType::Unknown,
             Kind::JsonList => CrowType::Array(Box::new(CrowType::Json)),
             // what the arguments' items are: inference types the call from
@@ -256,6 +265,7 @@ impl Kind {
             Kind::Cells => format!("crow_runtime::frames::Cells::from(({}).clone())", arg),
             Kind::Seq => format!("&({})[..]", arg),
             Kind::ShownDyn => format!("&({}) as &dyn crow_runtime::display::CrowDisplay", arg),
+            Kind::TextMap => format!("&crow_runtime::sources::text_map(&({}))", arg),
             // moved or copied (an item kept) where the call is made
             Kind::List | Kind::MapOf | Kind::Ints | Kind::Floats | Kind::Texts | Kind::Item => format!("({})", arg),
             _ => format!("&({})", arg),
@@ -307,11 +317,12 @@ impl Kind {
             Kind::Markup => "String::new()",
             Kind::TextRows => "Vec::<std::collections::BTreeMap<String, String>>::new()",
             Kind::Shell => "crow_runtime::core::Shell { status: -1, stdout: String::new(), stderr: String::new() }",
+            Kind::Reply => "crow_runtime::sources::Reply::default()",
             Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn => "unreachable!()",
             Kind::JsonList => "Vec::<serde_json::Value>::new()",
             // a generic answer never fails as a value (its rows answer or stop)
             Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef => "Vec::new()",
-            Kind::MapOf | Kind::MapRef => "std::collections::BTreeMap::new()",
+            Kind::MapOf | Kind::MapRef | Kind::TextMap => "std::collections::BTreeMap::new()",
         }
     }
 }
@@ -367,7 +378,7 @@ pub fn groups_mut<'a>(params: &[Kind], args: &'a mut [CrowValue], name: &str) ->
 /// modes — the interpreter stamps what its call answers, the compiled
 /// program's printing of a row stamps it (the compiled `rm` had stamped its
 /// empty answer while the interpreter did not).
-pub const READERS: &[&str] = &["query", "read", "fetch", "recv", "input", "load", "env", "shell", "ls", "csv", "lines"];
+pub const READERS: &[&str] = &["query", "read", "fetch", "recv", "input", "load", "env", "shell", "ls", "csv", "lines", "request"];
 
 /// A row's call as the compiled program prints it: each argument as its
 /// kind takes it, the failure as the row says. `line` is the stop's line
@@ -651,6 +662,12 @@ pub fn read_map_ref(v: &CrowValue) -> Result<&BTreeMap<String, CrowValue>, Strin
     }
 }
 
+/// A map's values as text, each as it shows.
+pub fn read_text_map(v: &CrowValue) -> Result<BTreeMap<String, String>, String> {
+    use crow_runtime::display::CrowDisplay;
+    Ok(read_map_ref(v)?.iter().map(|(k, v)| (k.clone(), v.crow_fmt())).collect())
+}
+
 /// A map the function makes its answer of.
 pub fn read_map_of(v: &CrowValue) -> Result<BTreeMap<String, CrowValue>, String> {
     read_map_ref(v).cloned()
@@ -711,6 +728,17 @@ pub fn write_ints(ns: Vec<i64>) -> CrowValue {
 
 pub fn write_floats(xs: Vec<f64>) -> CrowValue {
     CrowValue::ok(Value::Array(xs.into_iter().map(write_float).collect()))
+}
+
+/// A request's answer as the interpreter's record: its status, body and
+/// headers, as the compiled program's `CrowReply` holds them.
+pub fn write_reply(r: crow_runtime::sources::Reply) -> CrowValue {
+    let mut m = BTreeMap::new();
+    m.insert("status".to_string(), write_int(r.status));
+    m.insert("body".to_string(), write_str(r.body));
+    let headers: BTreeMap<String, CrowValue> = r.headers.into_iter().map(|(k, v)| (k, write_str(v))).collect();
+    m.insert("headers".to_string(), CrowValue::ok(Value::Map(headers)));
+    CrowValue::ok(Value::Map(m))
 }
 
 /// A command's answer as the interpreter's record: `status`, `stdout`,
@@ -804,6 +832,7 @@ macro_rules! read {
     (ItemRef, $g:expr) => { one($g)? };
     (MapOf, $g:expr) => { read_map_of(one($g)?)? };
     (MapRef, $g:expr) => { read_map_ref(one($g)?)? };
+    (TextMap, $g:expr) => { &read_text_map(one($g)?)? };
     (Ints, $g:expr) => { read_ints(one($g)?)? };
     (Floats, $g:expr) => { read_floats(one($g)?)? };
     (Texts, $g:expr) => { read_strs(one($g)?)? };
@@ -835,6 +864,7 @@ macro_rules! answer {
     (Markup, $x:expr) => { write_markup($x) };
     (TextRows, $x:expr) => { write_text_rows($x) };
     (Shell, $x:expr) => { write_shell($x) };
+    (Reply, $x:expr) => { write_reply($x) };
     (Json, $x:expr) => { write_json($x) };
     (JsonList, $x:expr) => { write_json_list($x) };
 }
@@ -981,6 +1011,11 @@ pub static ROWS: &[Row] = &[
     row!("display.str", "", "str", crow_runtime::display::shown, (Shown) -> Str, never),
     row!("json.parse", "", "json", crow_runtime::json::parse, (Str) -> Json, value "parse"),
     row!("json.encode", "", "encode", crow_runtime::json::encode, (Encoded) -> Str, never),
+    // text written so a header or a URL can carry it, and read back: a
+    // scheme encode does not know is a misuse; text decode cannot read is
+    // an error value
+    row!("text.encode", "", "encode", crow_runtime::text::encode_as, (Str, Str) -> Str, stops),
+    row!("text.decode", "", "decode", crow_runtime::text::decode_as, (Str, Str) -> Str, value "parse"),
     // log: the values as they show, one display for both modes (compiled,
     // an error without a value among several did not build)
     row!("display.log", "", "log", crow_runtime::display::log, (Shows) -> Unit, never),
@@ -1016,8 +1051,9 @@ pub static ROWS: &[Row] = &[
     // the row; a failure is an error value of kind 'io', a success of a
     // write empty text, as its type says (it had been `done` interpreted)
     row!("io.read", "", "read", crow_runtime::io::read, (Str) -> Str, value "io"),
-    // a URL read with headers sent beside it (`read[url, headers = map[…]]`)
-    row!("io.read_with", "", "read", crow_runtime::io::read_with, (Str, MapRef) -> Str, value "io"),
+    // a URL read with options: `read[url, headers = map[…], query = map[…],
+    // timeout = s]` (the lowering fills in what the call leaves out)
+    row!("io.read_asked", "", "read", crow_runtime::io::read_asked, (Str, TextMap, TextMap, Float) -> Str, value "io"),
     row!("io.write", "", "write", crow_runtime::io::write, (Str, Str) -> Str, value "io"),
     row!("io.exists", "", "exists", crow_runtime::io::exists, (Str) -> Bool, never),
     row!("io.mkdir", "", "mkdir", crow_runtime::io::mkdir, (Str) -> Str, value "io"),
@@ -1028,6 +1064,10 @@ pub static ROWS: &[Row] = &[
     // a command that cannot start is an error value of kind 'shell'; a
     // non-zero exit is an answer, read from `.status`
     row!("core.shell", "", "shell", crow_runtime::core::shell, (Str) -> Shell, value "shell"),
+    // an HTTP request, answered whatever its status: its URL, method and
+    // body, then its headers, query, form, files, save and timeout (the
+    // lowering fills in what the call leaves out: `request[url]` is a GET)
+    row!("core.request", "", "request", crow_runtime::sources::request, (Str, Str, Str, TextMap, TextMap, TextMap, TextMap, Str, Float) -> Reply, value "http"),
     // min and max of numbers (text was compared compiled and refused
     // interpreted: min['a', 'b'] is refused before the program runs)
     row!("core.min_ints", "", "min", crow_runtime::core::min_ints, (Whole, Whole) -> Int, never),
@@ -1276,14 +1316,14 @@ pub static ROWS: &[Row] = &[
     // failure is an error value of kind 'frame', as `load`'s is (compiled,
     // it stopped the program)
     row!("frame.load", "frame", "load", crow_runtime::frames::load, (Str) -> Frame, value "frame"),
-    row!("frame.load_with", "frame", "load", crow_runtime::frames::load_with, (Str, MapRef) -> Frame, value "frame"),
+    row!("frame.load_asked", "frame", "load", crow_runtime::frames::load_asked, (Str, TextMap, TextMap, Float) -> Frame, value "frame"),
     row!("frame.save", "frame", "save", crow_runtime::frames::save, (Frame, Str) -> Str, value "frame"),
     row!("io.csv", "io", "csv", crow_runtime::io::csv, (Str) -> TextRows, value "io"),
-    row!("io.csv_with", "io", "csv", crow_runtime::io::csv_with, (Str, MapRef) -> TextRows, value "io"),
+    row!("io.csv_asked", "io", "csv", crow_runtime::io::csv_asked, (Str, TextMap, TextMap, Float) -> TextRows, value "io"),
     row!("io.lines", "io", "lines", crow_runtime::io::lines, (Str) -> Strs, value "io"),
-    row!("io.lines_with", "io", "lines", crow_runtime::io::lines_with, (Str, MapRef) -> Strs, value "io"),
+    row!("io.lines_asked", "io", "lines", crow_runtime::io::lines_asked, (Str, TextMap, TextMap, Float) -> Strs, value "io"),
     row!("math.load", "math", "load", crow_runtime::math::load, (Str) -> Tensor, value "load"),
-    row!("math.load_with", "math", "load", crow_runtime::math::load_with, (Str, MapRef) -> Tensor, value "load"),
+    row!("math.load_asked", "math", "load", crow_runtime::math::load_asked, (Str, TextMap, TextMap, Float) -> Tensor, value "load"),
     // doc: markdown rendered by the kernel
     row!("doc.markdown", "doc", "markdown", crow_runtime::markdown::to_html, (Str) -> Markup, never),
     row!("doc.chapters", "doc", "chapters", crow_runtime::markdown::chapters_frame, (Str) -> Frame, never),
@@ -1546,7 +1586,7 @@ impl Kind {
             Kind::Sizes => "sizes",
             Kind::Groups => "tensors",
             Kind::Lists => "lists of text",
-            Kind::IntMap | Kind::FloatMap | Kind::MapOf | Kind::MapRef => "a map",
+            Kind::IntMap | Kind::FloatMap | Kind::MapOf | Kind::MapRef | Kind::TextMap => "a map",
             Kind::Unit => "nothing",
             Kind::List | Kind::Seq => "a list",
             Kind::Item | Kind::ItemRef => "a value",
@@ -1558,6 +1598,7 @@ impl Kind {
             Kind::Markup => "markup",
             Kind::TextRows => "rows of text",
             Kind::Shell => "a command's answer",
+            Kind::Reply => "a request's answer",
             Kind::Shown | Kind::Shows | Kind::ShownDyn => "a value",
             Kind::Encoded => "a value JSON can hold",
             Kind::JsonList => "a list of JSON values",
@@ -1589,7 +1630,7 @@ impl Kind {
                 Kind::Words => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column),
                 Kind::List | Kind::Seq => matches!(a, Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Records | Arg::Maps | Arg::Items | Arg::Fallible | Arg::FallibleNumbers),
                 Kind::Item | Kind::ItemRef => true,
-                Kind::MapOf | Kind::MapRef => a == Arg::Map,
+                Kind::MapOf | Kind::MapRef | Kind::TextMap => a == Arg::Map,
                 Kind::Ints => a == Arg::Ints,
                 Kind::Floats => a == Arg::Floats,
                 Kind::Json => a == Arg::Json,
