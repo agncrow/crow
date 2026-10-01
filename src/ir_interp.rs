@@ -1814,59 +1814,6 @@ impl IrInterp {
                 }
                 Ok(CrowValue::done())
             }
-            // the web module's builtins answer with stand-ins here: the
-            // served program is the compiled one, and a script that builds
-            // an app still runs to its end
-            "cors" | "sse" | "ws" | "static_dir" => {
-                let want = if name == "cors" { 1 } else { 3 };
-                if vals.len() < want {
-                    return Err(format!("{}[] takes {} arguments", name, want));
-                }
-                Ok(vals[0].clone())
-            }
-            "sessions" | "cache" => {
-                if name == "cache" && vals.is_empty() {
-                    return Err("cache[] requires at least 1 argument".into());
-                }
-                Ok(CrowValue::ok(Value::Map(std::collections::BTreeMap::new())))
-            }
-            "templates" => {
-                if vals.len() != 1 {
-                    return Err("templates[] takes 1 argument".into());
-                }
-                let glob = match vals[0].unwrap_or_propagate()? {
-                    Value::Str(s) => s.clone(),
-                    _ => String::new(),
-                };
-                let mut map = std::collections::BTreeMap::new();
-                map.insert("glob".to_string(), CrowValue::ok(Value::Str(glob)));
-                Ok(CrowValue::ok(Value::Map(map)))
-            }
-            "render" => {
-                if vals.len() != 3 {
-                    return Err("render[] takes 3 arguments (templates, name, data)".into());
-                }
-                let tname = match vals[1].unwrap_or_propagate()? {
-                    Value::Str(s) => s.clone(),
-                    _ => return Err("render[] name must be a string".into()),
-                };
-                Ok(CrowValue::ok(Value::Str(format!("[rendered: {}]", tname))))
-            }
-            "limit" => {
-                if vals.len() != 2 {
-                    return Err("limit[] takes 2 arguments (max, window)".into());
-                }
-                let mut map = std::collections::BTreeMap::new();
-                map.insert("max".to_string(), vals[0].clone());
-                map.insert("window".to_string(), vals[1].clone());
-                Ok(CrowValue::ok(Value::Map(map)))
-            }
-            "uploads" => {
-                if vals.len() != 1 {
-                    return Err("uploads[] takes 1 argument".into());
-                }
-                Ok(CrowValue::ok(Value::Array(vec![])))
-            }
             "connect" => {
                 if vals.len() != 1 {
                     return Err("connect[] takes 1 argument".into());

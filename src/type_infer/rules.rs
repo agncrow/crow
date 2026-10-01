@@ -327,8 +327,7 @@ impl TypeContext {
             // `json[map]` (use web): `json[text]` is its row
             "json" => CrowType::WebResponse,
             "text" => CrowType::WebResponse,
-            // Web.db builtins
-            "sqlite" => CrowType::WebDb,
+            // db builtins
             "exec" => CrowType::Void,
             "query" => CrowType::Array(Box::new(CrowType::Json)),
             // Web.auth builtins

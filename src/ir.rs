@@ -45,7 +45,7 @@ pub enum Ty {
     Result(Box<Ty>),
     Fn(Vec<Ty>, Box<Ty>),
     /// A connection or another handle the runtime owns: "db", "tx",
-    /// "sparse", "web.app", "web.request", "web.response", "web.db".
+    /// "sparse", "web.app", "web.request", "web.response".
     Handle(String),
     /// A view tree.
     Node,

@@ -2474,81 +2474,6 @@ mod tests {
     // --- P4: Web builtin interpreter mock tests ---
 
     #[test]
-    fn test_cors_builtin() {
-        let val = get_var("app = []\napp = cors[app]", "app");
-        assert!(matches!(&val.value, Value::Array(_)));
-    }
-
-    #[test]
-    fn test_sessions_builtin() {
-        let val = get_var("store = sessions[]", "store");
-        assert!(matches!(&val.value, Value::Map(_)));
-    }
-
-    #[test]
-    fn test_templates_builtin() {
-        let val = get_var("t = templates['./templates/**/*']", "t");
-        match &val.value {
-            Value::Map(m) => {
-                let glob = m.get("glob").unwrap();
-                assert_eq!(format!("{}", glob.value), "./templates/**/*");
-            }
-            _ => panic!("expected map"),
-        }
-    }
-
-    #[test]
-    fn test_render_builtin() {
-        let val = get_var("t = templates['./t/**/*']\ndata = map[name = 'crow']\nresult = render[t, 'index', data]", "result");
-        match &val.value {
-            Value::Str(s) => assert!(s.contains("rendered"), "should contain 'rendered': {}", s),
-            _ => panic!("expected string"),
-        }
-    }
-
-    #[test]
-    fn test_cache_builtin() {
-        let val = get_var("c = cache[100]", "c");
-        assert!(matches!(&val.value, Value::Map(_)));
-    }
-
-    #[test]
-    fn test_cache_with_ttl_builtin() {
-        let val = get_var("c = cache[100, 60]", "c");
-        assert!(matches!(&val.value, Value::Map(_)));
-    }
-
-    #[test]
-    fn test_limit_builtin() {
-        let val = get_var("limiter = limit[100, 60]", "limiter");
-        match &val.value {
-            Value::Map(m) => {
-                assert!(m.contains_key("max"));
-                assert!(m.contains_key("window"));
-            }
-            _ => panic!("expected map"),
-        }
-    }
-
-    #[test]
-    fn test_uploads_builtin() {
-        let val = get_var("req = []\nfiles = uploads[req]", "files");
-        assert!(matches!(&val.value, Value::Array(_)));
-    }
-
-    #[test]
-    fn test_sse_builtin() {
-        let val = get_var("fn handler[req]\n    return 'data'\napp = []\napp = sse[app, '/events', handler]", "app");
-        assert!(matches!(&val.value, Value::Array(_)));
-    }
-
-    #[test]
-    fn test_ws_builtin() {
-        let val = get_var("fn handler[req]\n    return 'ok'\napp = []\napp = ws[app, '/ws', handler]", "app");
-        assert!(matches!(&val.value, Value::Array(_)));
-    }
-
-    #[test]
     fn test_connect_builtin() {
         let val = get_var("sock = connect['ws://localhost:3000']", "sock");
         match &val.value {
@@ -2578,12 +2503,6 @@ mod tests {
     fn live_is_not_a_builtin() {
         let val = get_var("fn live[x]\n    return x + 1\nn = live[1]", "n");
         assert!(matches!(&val.value, Value::Int(2)), "got {:?}", val.value);
-    }
-
-    #[test]
-    fn test_static_dir_builtin() {
-        let val = get_var("app = []\napp = static_dir[app, '/assets', './public']", "app");
-        assert!(matches!(&val.value, Value::Array(_)));
     }
 
     #[test]

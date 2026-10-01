@@ -131,35 +131,6 @@ impl CrowApp {
         Ok(())
     }
 
-    /// Add a WebSocket route (`ws[app, path, handler]` in Crow).
-    ///
-    /// Available only when both `http` and `ws` features are enabled.
-    #[cfg(feature = "ws")]
-    pub fn ws_route(mut self, path: &str, handler: crate::ws::CrowWsHandler) -> Self {
-        let axum_path = crow_path_to_axum(path);
-        self.router = self.router.route(
-            &axum_path,
-            get(crate::ws::make_ws_axum_handler(handler)),
-        );
-        self.routed = true;
-        self
-    }
-
-    /// Add an SSE route (`sse[app, path, handler]` in Crow).
-    ///
-    /// Available only when the `sse` feature is enabled.
-    /// The handler receives a `CrowSseSender` and pushes events.
-    #[cfg(feature = "sse")]
-    pub fn sse_route(mut self, path: &str, handler: crate::sse::CrowSseHandler) -> Self {
-        let axum_path = crow_path_to_axum(path);
-        self.router = self.router.route(
-            &axum_path,
-            get(crate::sse::make_sse_axum_handler(handler)),
-        );
-        self.routed = true;
-        self
-    }
-
     // ── Convenience methods for feature-gated modules ──────────────
 
     /// Apply CORS middleware (`cors[app, {origins, '*'}]` in Crow).
@@ -201,26 +172,6 @@ impl CrowApp {
     #[cfg(feature = "rate")]
     pub fn rate_limiter(max_requests: u64, window_secs: u64) -> crate::rate::CrowRateLimiter {
         crate::rate::CrowRateLimiter::new(max_requests, window_secs)
-    }
-
-    /// Create a session store (`sessions[]` in Crow).
-    ///
-    /// Returns a `CrowSessionStore` to be shared across handlers.
-    ///
-    /// Available only when the `session` feature is enabled.
-    #[cfg(feature = "session")]
-    pub fn session_store() -> crate::session::CrowSessionStore {
-        crate::session::CrowSessionStore::new()
-    }
-
-    /// Load templates from a glob pattern (`templates['./templates/**/*']` in Crow).
-    ///
-    /// Returns a `CrowTemplates` engine for rendering.
-    ///
-    /// Available only when the `template` feature is enabled.
-    #[cfg(feature = "template")]
-    pub fn templates(glob: &str) -> Result<crate::template::CrowTemplates, String> {
-        crate::template::CrowTemplates::from_glob(glob)
     }
 
     /// Merge an external axum Router into this app.
@@ -513,51 +464,6 @@ mod tests {
         assert_eq!(crow_path_to_axum("/"), "/");
         assert_eq!(crow_path_to_axum("/a/:b/:c"), "/a/{b}/{c}");
         assert_eq!(crow_path_to_axum("/static/file.txt"), "/static/file.txt");
-    }
-
-    /// Integration test: start a real server with a WebSocket echo route,
-    /// connect with `CrowWebSocket`, send a message, and verify the echo.
-    #[cfg(feature = "ws")]
-    #[tokio::test]
-    async fn test_ws_route_echo_integration() {
-        use crate::ws;
-
-        // Build app with a WebSocket echo handler
-        let app = CrowApp::new().ws_route(
-            "/echo",
-            Arc::new(|sender: ws::CrowWsSender, msg: String| {
-                sender.send(&format!("echo: {msg}"));
-            }),
-        );
-
-        // Bind to a random available port
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        // Spawn the server in the background
-        tokio::spawn(async move {
-            axum::serve(listener, app.into_router()).await.unwrap();
-        });
-
-        // Give the server a moment to start
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-        // Connect using the blocking client (run in spawn_blocking to avoid
-        // blocking the tokio runtime)
-        let port = addr.port();
-        let result = tokio::task::spawn_blocking(move || {
-            let sock = ws::connect(&format!("ws://127.0.0.1:{port}/echo"));
-            assert!(sock.ok(), "WebSocket connection should succeed");
-
-            sock.send("hello");
-            let reply = sock.recv();
-            sock.close();
-            reply
-        })
-        .await
-        .unwrap();
-
-        assert_eq!(result, Some("echo: hello".to_string()));
     }
 }
 

@@ -31,9 +31,6 @@ pub mod client;
 #[cfg(feature = "ws")]
 pub mod ws;
 
-#[cfg(feature = "sse")]
-pub mod sse;
-
 #[cfg(feature = "cors")]
 pub mod cors;
 
@@ -49,26 +46,8 @@ pub mod rate;
 #[cfg(feature = "auth")]
 pub mod auth;
 
-#[cfg(feature = "session")]
-pub mod session;
-
-#[cfg(feature = "template")]
-pub mod template;
-
-#[cfg(feature = "db")]
-pub mod db;
-
 #[cfg(feature = "mail")]
 pub mod mail;
-
-#[cfg(feature = "cache")]
-pub mod cache;
-
-#[cfg(feature = "queue")]
-pub mod queue;
-
-#[cfg(feature = "docs")]
-pub mod docs;
 
 #[cfg(feature = "live")]
 pub mod live;

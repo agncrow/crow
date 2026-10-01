@@ -206,8 +206,6 @@ impl Emitter {
         if m == "web" && self.needs_crow_web {
             match f {
                 "new" => return "CrowApp::new()".to_string(),
-                "docs" if arg_strs.len() == 2 => return format!("crow_web::docs::CrowDocs::new(&{}, &{})", arg_strs[0], arg_strs[1]),
-                "queue" if arg_strs.len() == 1 => return format!("CrowQueue::new({} as usize)", arg_strs[0]),
                 _ => {}
             }
         }
@@ -309,8 +307,6 @@ impl Emitter {
                     )
                 }
             }
-            // a web queue's push (crow_web): a collection's is its row
-            "push" if n == 2 => format!("{}.push({})", a[0], a[1]),
             // the command line and the terminal
             "seed" if n == 1 => {
                 self.needs_crow_runtime = true;
@@ -651,31 +647,13 @@ impl Emitter {
             "insert" if db && n == 3 => format!("{}.insert(&{}, &{}).unwrap()", a[0], a[1], a[2]),
             "migrate" if db && n == 2 => format!("{}.migrate(&{}).unwrap()", a[0], a[1]),
             "transact" if db && n == 2 => format!("{}.transact(&|_tx| {{ {}(_tx); Ok(()) }}).unwrap()", a[0], a[1]),
-            "sqlite" if web && n == 1 => format!("CrowSqlite::open({})", a[0]),
-            "exec" if web && n >= 2 => format!("{}.execute({}, &[{}])", a[0], a[1], a[2..].join(", ")),
-            "query" if web && n >= 2 => format!("{}.query({}, &[{}])", a[0], a[1], a[2..].join(", ")),
             "sign" if web && n == 2 => format!("CrowJwt::sign({}, {})", a[0], a[1]),
             "verify" if web && n == 2 => format!("CrowJwt::verify({}, {})", a[0], a[1]),
-            "cors" if web && n == 1 => format!("{}.cors_permissive()", a[0]),
-            "cors" if web && n == 2 => format!("{}.cors(CrowCors::origins({}))", a[0], a[1]),
-            "sessions" if web && n == 0 => "CrowSessionStore::new()".to_string(),
-            "templates" if web && n == 1 => format!("CrowTemplates::from_glob({}).unwrap()", a[0]),
-            "render" if web && n == 3 => {
-                self.needs_serde_json = true;
-                format!("{}.render({}, serde_json::to_value(&{}).unwrap()).unwrap()", a[0], a[1], a[2])
-            }
-            "cache" if web && n == 1 => format!("CrowCache::new({} as u64)", a[0]),
-            "cache" if web && n == 2 => format!("CrowCache::with_ttl({} as u64, {} as u64)", a[0], a[1]),
-            "limit" if web && n == 2 => format!("CrowRateLimiter::new({} as u64, {} as u64)", a[0], a[1]),
-            "uploads" if web && n == 1 => format!("{}.uploads().await", a[0]),
-            "sse" if web && n == 3 => format!("{}.sse_route(&{}, Arc::new({}))", a[0], a[1], a[2]),
-            "ws" if web && n == 3 => format!("{}.ws_route(&{}, Arc::new({}))", a[0], a[1], a[2]),
             "connect" if web && n == 1 => format!("ws::connect(&{})", a[0]),
             "send" if web && n == 2 => format!("{}.send(&{})", a[0], a[1]),
             "recv" if web && n == 1 => format!("{}.recv().unwrap_or_default()", a[0]),
             "close" if web && n == 1 => format!("{}.close()", a[0]),
             "page" if web && (n == 2 || n == 3) => self.page_route(args, a),
-            "static_dir" if web && n == 3 => format!("{}.static_dir(&{}, &{})", a[0], a[1], a[2]),
             "smtp" if web && n == 4 => format!("CrowMailer::new(&{}, {} as u16, &{}, &{}).unwrap()", a[0], a[1], a[2], a[3]),
             "fetch" if n == 1 => format!("{{ __crow_state.register_fetch(\"_anon\", &{}); serde_json::Value::Null }}", a[0]),
             "poll" if n == 2 => format!("{{ __crow_state.register_poll(\"_anon\", &{}, {} as u64); serde_json::Value::Null }}", a[0], a[1]),

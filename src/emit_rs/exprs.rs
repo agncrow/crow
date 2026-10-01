@@ -1548,11 +1548,11 @@ impl Emitter {
             Target::Row(row) => self.module_row_call(row, args, arg_strs),
             Target::User(n) => self.user_call(n, args, arg_strs.to_vec()),
             Target::Module(m, f) => self.module_call(m, f, args, arg_strs, whole),
-            // (a web queue's push is the queue's; math on the dual numbers a
-            // function grad differentiates is the derivative's own form)
+            // (math on the dual numbers a function grad differentiates is
+            // the derivative's own form)
             Target::Runtime(_) => match self
                 .row_for(name, args)
-                .filter(|_| !(name == "push" && self.queue_push(args)) && !(self.emitting_dual && matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round")))
+                .filter(|_| !(self.emitting_dual && matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round")))
             {
                 Some(row) => self.table_call(row, args, arg_strs, whole),
                 None => match self.builtin(name, args, arg_strs, whole) {
@@ -1579,13 +1579,6 @@ impl Emitter {
         crate::table::print(row, &strs, crate::modules::STOP_LINE, None)
             .map(|code| code.replace(crate::modules::STOP_LINE, &self.current_line.to_string()))
             .unwrap_or_else(|e| format!("compile_error!({:?})", e))
-    }
-
-    /// `push[queue, task]`: a web queue's own push, no collection's.
-    pub(crate) fn queue_push(&self, args: &[Expr]) -> bool {
-        self.needs_crow_web
-            && self.web_features.contains("queue")
-            && !matches!(args.first().map(|x| Self::inner(&self.tt(x))), Some(CrowType::Array(_) | CrowType::NumArray(..)))
     }
 
     /// A builtin with a row: its runtime function, each argument printed as

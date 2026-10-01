@@ -2597,56 +2597,10 @@ A response is what a route returns. A page shows elements and text, so a view th
 | `sign[claims, secret]` | Sign a JWT from a claims map |
 | `verify[token, secret]` | Verify a JWT and return claims map |
 
-#### CORS (`use web.cors`)
-
-| Function | Description |
-|---|---|
-| `cors[app]` | Apply permissive CORS (allow all origins) |
-| `cors[app, origins]` | Apply CORS with specific allowed origins |
-
-#### Sessions (`use web.session`)
-
-| Function | Description |
-|---|---|
-| `sessions[]` | Create an in-memory session store |
-
-#### Templates (`use web.template`)
-
-| Function | Description |
-|---|---|
-| `templates[glob]` | Load templates matching a glob pattern |
-| `render[templates, name, data]` | Render a template with data |
-
-#### Cache (`use web.cache`)
-
-| Function | Description |
-|---|---|
-| `cache[max]` | Create an LRU cache with max entries |
-| `cache[max, ttl]` | Create an LRU cache with max entries and TTL in seconds |
-
-#### Rate Limiting (`use web.rate`)
-
-| Function | Description |
-|---|---|
-| `limit[max, window]` | Create a rate limiter (max requests per window seconds) |
-
-#### File Uploads (`use web.upload`)
-
-| Function | Description |
-|---|---|
-| `uploads[req]` | Extract uploaded files from a request |
-
-#### SSE (`use web.sse`)
-
-| Function | Description |
-|---|---|
-| `sse[app, path, handler]` | Add a Server-Sent Events endpoint |
-
 #### WebSocket (`use web.ws`)
 
 | Function | Description |
 |---|---|
-| `ws[app, path, handler]` | Add a WebSocket endpoint |
 | `connect[url]` | Connect to a WebSocket server |
 | `send[sock, msg]` | Send a message on a WebSocket |
 | `recv[sock]` | Receive a message from a WebSocket |
@@ -2671,12 +2625,6 @@ A response is what a route returns. A page shows elements and text, so a view th
 
 Both modes serve pages. `crow run file.co` compiles and serves; `crow run -i file.co` serves from the interpreter at once, with no Rust compile between an edit and the page — the live runtime keeps the sessions (their facts, the commit, the notice, the questions, the address, the reconnects) in both, and only who renders the views and runs the handlers differs. One difference is of timing, not of meaning: the interpreter computes a derivation where it is read, so a page served by it waits for its queries, where the compiled page shows the last value and catches up. `crow test --served` drives every page in `tests/served/`, and every app under `examples/` with a `main.events` script beside its `main.co` (served from a fresh copy, so its database starts empty in each mode), with the same events in both modes and compares the pages they settle on.
 
-#### Static Files (`use web.static`)
-
-| Function | Description |
-|---|---|
-| `static_dir[app, url_path, dir_path]` | Serve static files from a directory |
-
 #### Mail (`use web.mail`)
 
 | Function | Description |
@@ -2686,29 +2634,12 @@ Both modes serve pages. `crow run file.co` compiles and serves; `crow run -i fil
 
 `mail` is an effect like `notice` and `download`: in a handler, or a function a handler calls, a message whose answer is not used waits for the commit, and a stop drops it; used (`sent = mail[…]`), it is sent when asked, and a failure is the answer's reason. Outside a handler it is sent at once. A view or a derivation sends none, itself or through a function it calls, and is refused if it tries: it runs whenever the page needs it. A mailer is made once for the whole program, as a connection is, and prints as its host, never its password. In a test nothing is sent: `mails[a]` is the list of what the session sent, each a map of `to`, `subject` and `body`, and `crow test --compiled` records the compiled program's the same way.
 
-#### Queue (`use web.queue`)
-
-| Function | Description |
-|---|---|
-| `web.queue[n]` | Create a background task queue with n workers |
-| `push[queue, fn]` | Push a task onto the queue |
-
-#### API Docs (`use web.docs`)
-
-| Function | Description |
-|---|---|
-| `web.docs[title, version]` | Generate OpenAPI docs with Swagger UI |
-
-#### Embedded SQLite (`use web.db`, legacy)
-
-| Function | Description |
-|---|---|
-| `sqlite[path]` | Open an embedded SQLite handle for `query`/`exec` inside a web app. Superseded by the `db` module (`connect['sqlite://path']`), which works everywhere and returns error values; prefer that. |
-
 #### Client (`use web.client`)
 
 A program reads a URL with `read` and `load` (Files, URLs and S3), and a page pulls remote data with `fetch[url]` / `poll[url, seconds]` (reactive, see above). An outbound client for other methods, headers or a body (`post`, …) is on the roadmap and not yet part of the language.
 
+
+**Design Note: what web is.** Considered: the modules the web framework had gathered — a task queue (`web.queue`, `push`), templates (`templates`, `render`), an embedded SQLite handle (`web.db`'s `sqlite`), session stores (`sessions[]`), Server-Sent Events and WebSocket servers (`sse`, `ws`), an LRU cache (`cache`), generated API docs (`web.docs`), and CORS, static files, rate limits and uploads as calls on an `app` value the language no longer has (`cors[app]`, `static_dir[app, …]`, `limit[max, window]`, `uploads[req]`). Decided (Vijay, 2026-09-30): each was a second way to do what the language already does, or a stand-in the interpreter answered with a placeholder (`render` gave `[rendered: name]`), and each is gone. Background work is `later[f, …]`; a page is a view, not a template; a database is `db.connect`; a reader's session is a page's session, with `sign_in` for who they are; a server reaches a page through its live session and a client through `stream`; what a program computes once and reads often is a derivation. `use web` serves pages and routes, and its modules are `web.auth`, `web.mail` and `web.ws`; another is refused by name.
 
 ### db
 

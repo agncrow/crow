@@ -103,16 +103,6 @@ pub fn connect(url: &str) -> CrowWebSocket {
 }
 
 // ============================================================
-// Server-side WebSocket (async, uses axum — behind `http` feature)
-// ============================================================
-
-#[cfg(feature = "http")]
-mod server_ws;
-
-#[cfg(feature = "http")]
-pub use server_ws::{CrowWsHandler, CrowWsSender, make_ws_axum_handler};
-
-// ============================================================
 // Tests
 // ============================================================
 
@@ -142,6 +132,28 @@ mod tests {
     fn test_close_on_failed_socket_is_noop() {
         let sock = connect("ws://127.0.0.1:1");
         sock.close(); // should not panic
+    }
+
+    /// A server that echoes what it is sent: the client connects, sends,
+    /// reads the echo, and closes
+    #[test]
+    fn the_client_talks_to_a_server() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut ws = tungstenite::accept(stream).unwrap();
+            while let Ok(msg) = ws.read() {
+                if let Message::Text(t) = msg {
+                    let _ = ws.send(Message::Text(format!("echo: {}", t).into()));
+                }
+            }
+        });
+        let sock = connect(&format!("ws://127.0.0.1:{}/echo", port));
+        assert!(sock.ok(), "the connection opens");
+        sock.send("hello");
+        assert_eq!(sock.recv(), Some("echo: hello".to_string()));
+        sock.close();
     }
 }
 

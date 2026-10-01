@@ -53,23 +53,18 @@ the response is sent: each `put` sends a chunk as it is put, and answers
 whether the reader still listens, so `numbered` stops when they have gone.
 Both modes answer every one of these alike, to the byte.
 
-A session store, a cache, a rate limiter, and a mailer are created from
-their submodules:
+A mailer is made from `web.mail`:
 
 ```crow,norun
-use web, web.session, web.cache, web.rate, web.mail
+use web, web.mail
 
-sessions[]
-cache[100, 60]
-limit[10, 60]
 smtp['smtp.example.com', 587, 'user', 'pass']
 serve[3000]
 ```
 
-The remaining `web` names — `sign`/`verify` (JWT), `templates`/`render`,
-`uploads`, the WebSocket client (`connect send recv close`), `sse`,
-`ws`, `cors`, `static_dir`, and the legacy `sqlite` — are specified in section 13
-of the spec but do not yet have a compiled example; `crow test --docs`
-lists them as *spec only* so the gap stays visible.
+The remaining `web` names — `sign`/`verify` (JWT) and the WebSocket client
+(`connect send recv close`) — are specified in section 13 of the spec but do
+not yet have a compiled example; `crow test --docs` lists them as *spec
+only* so the gap stays visible.
 
 Reference: spec section 13 (web).

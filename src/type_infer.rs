@@ -58,8 +58,6 @@ pub enum CrowType {
     WebResponse,
     /// Web HTTP request (crow_web::core::CrowRequest).
     WebRequest,
-    /// SQLite database handle (crow_web::db::CrowSqlite).
-    WebDb,
     /// Database connection handle (crow_db::DbHandle) — `use db` connect[].
     DbHandle,
     /// Database transaction handle (&dyn crow_db::DbTx) — transact[] callback param.
@@ -151,7 +149,6 @@ impl CrowType {
             CrowType::WebApp => "crow_web::server::CrowApp".into(),
             CrowType::WebResponse => "crow_web::core::CrowResponse".into(),
             CrowType::WebRequest => "crow_web::core::CrowRequest".into(),
-            CrowType::WebDb => "crow_web::db::CrowSqlite".into(),
             CrowType::DbHandle => "crow_db::DbHandle".into(),
             CrowType::DbTx => "&dyn crow_db::DbTx".into(),
             CrowType::Mailer => "crow_web::mail::CrowMailer".into(),
@@ -186,7 +183,6 @@ impl CrowType {
             CrowType::WebApp => "crow_web::server::CrowApp::new()".into(),
             CrowType::WebResponse => "crow_web::core::CrowResponse::default()".into(),
             CrowType::WebRequest => "crow_web::core::CrowRequest::new()".into(),
-            CrowType::WebDb => "panic!(\"no default db\")".into(),
             CrowType::DbHandle => "panic!(\"no default db connection\")".into(),
             CrowType::DbTx => "panic!(\"no default db transaction\")".into(),
             CrowType::Mailer => "panic!(\"no default mailer\")".into(),
@@ -256,7 +252,6 @@ impl CrowType {
             CrowType::WebApp => "web.app".into(),
             CrowType::WebResponse => "web.response".into(),
             CrowType::WebRequest => "web.request".into(),
-            CrowType::WebDb => "web.db".into(),
             CrowType::DbHandle => "db.conn".into(),
             CrowType::DbTx => "db.tx".into(),
             CrowType::Mailer => "mailer".into(),

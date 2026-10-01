@@ -44,18 +44,22 @@ pub(super) const MAIL_IN_A_RENDER: &str = "mail[] sends a message, and a view or
 /// Reserved only in files that import web (use web / use web.*)
 pub(crate) const WEB_RESERVED: &[&str] = &[
     "route", "serve", "respond", "redirect", "html", "text",
-    "sqlite", "sign", "verify",
+    "sign", "verify",
     "app", "click", "elements", "change", "box", "fits", "style",
-    "cors", "sessions", "templates", "cache", "limit",
-    "uploads", "sse", "ws", "connect", "send", "recv", "close",
-    "page", "static_dir", "smtp", "mail", "mails", "msgpack", "arrow", "bytes", "stream",
+    "connect", "send", "recv", "close",
+    "page", "smtp", "mail", "mails", "msgpack", "arrow", "bytes", "stream",
     "reader", "sign_in", "sign_out", "download", "downloads",
 ];
 
 /// Web builtins the compiler implements but deliberately does NOT reserve
-/// (`render` is free for views; the response encoders are rarely-collided
-/// names). Listed so `crow test --docs` can hold the spec to them.
-pub(crate) const WEB_EXTRA_FUNCTIONS: &[&str] = &["msgpack", "arrow", "bytes", "stream", "render"];
+/// (the response encoders are rarely-collided names). Listed so `crow test
+/// --docs` can hold the spec to them.
+pub(crate) const WEB_EXTRA_FUNCTIONS: &[&str] = &["msgpack", "arrow", "bytes", "stream"];
+
+/// The web module's modules, `use web.auth` and the rest: what web does
+/// beyond serving pages and routes (spec, web). A server's options are
+/// `serve`'s and `route`'s, not modules of their own.
+pub(crate) const WEB_MODULES: &[&str] = &["auth", "mail", "ws"];
 
 /// Reserved only in files that import ui
 pub(crate) const UI_RESERVED: &[&str] = &["fetch", "poll", "field", "slider", "checkbox", "toggle", "radio", "tabs", "progress", "icon", "today"];
@@ -105,11 +109,9 @@ pub(crate) const BUILTINS: &[&str] = &[
     // Web
     "route", "serve", "respond", "redirect", "html", "text",
     "msgpack", "arrow", "bytes", "stream",
-    "sqlite", "exec", "query", "sign", "verify",
-    // Web P4 modules
-    "cors", "sessions", "templates", "render", "cache", "limit",
-    "uploads", "sse", "ws", "connect", "send", "recv", "close",
-    "page", "static_dir", "smtp", "mail",
+    "exec", "query", "sign", "verify",
+    "connect", "send", "recv", "close",
+    "page", "smtp", "mail",
     // UI reactive builtins
     "fetch", "poll", "field", "slider", "checkbox", "toggle", "radio", "tabs", "select", "progress", "icon", "today",
 ];
@@ -204,6 +206,13 @@ impl<'a> Lowerer<'a> {
                 S::Use { path, alias } => {
                     if path == "ui" {
                         self.v.ui_mode = true;
+                    }
+                    if let Some(sub) = path.strip_prefix("web.")
+                        && !WEB_MODULES.contains(&sub)
+                    {
+                        self.v.line = line;
+                        let modules: Vec<String> = WEB_MODULES.iter().map(|m| format!("web.{}", m)).collect();
+                        self.refuse(format!("web has no module '{}' — its modules are {}; a server's CORS, files and rate limits are serve's and route's options", sub, modules.join(", ")));
                     }
                     match alias {
                         Some(a) => {
@@ -1030,25 +1039,13 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "redirect" | "html" | "text" => argc == 1,
         "msgpack" | "arrow" | "bytes" => argc == 1,
         "stream" => argc >= 1, // stream[feed, a, …] calls feed[put, a, …]
-        "sqlite" => argc == 1,
         "exec" | "query" => argc >= 2,
         "sign" | "verify" => argc == 2,
-        // Web P4 modules
-        "cors" => argc == 1 || argc == 2,   // cors[app] or cors[app, origins_list]
-        "sessions" => argc == 0,              // sessions[]
-        "templates" => argc == 1,             // templates[glob]
-        "render" => argc == 3,                // render[t, name, data]
-        "cache" => argc == 1 || argc == 2,    // cache[max] or cache[max, ttl]
-        "limit" => argc == 2,                 // limit[max, window]
-        "uploads" => argc == 1,               // uploads[req]
-        "sse" => argc == 3,                   // sse[app, path, handler]
-        "ws" => argc == 3,                    // ws[app, path, handler]
         "connect" => argc == 1,               // connect[url]
         "send" => argc == 2,                  // send[sock, msg] or send[sender, data]
         "recv" => argc == 1,                  // recv[sock]
         "close" => argc == 1,                 // close[sock]
         "page" => argc == 2 || argc == 3,     // page[path, render] or page[path, render, handle]
-        "static_dir" => argc == 3,            // static_dir[app, url_path, dir_path]
         "smtp" => argc == 4,                  // smtp[host, port, user, pass]
         "mail" => argc == 4,                  // mail[mailer, to, subject, body]
         // UI reactive builtins
@@ -1140,6 +1137,17 @@ mod tests {
         let err = check_source(src).unwrap_err();
         assert!(err.contains("filter: 'keep' holds values that can fail, and a mask decides every row: guard each value with .ok (cells of a column that can be missing: fill the column first, fill[frame, 'column', value])"), "{}", err);
         assert!(check_source(&src.replace("j = join[a, b, 'k', 'left']", "j = fill[join[a, b, 'k', 'left'], 'q', 0.0]")).is_ok());
+    }
+
+    /// The web module's modules are web.auth, web.mail and web.ws: another
+    /// — one the web audit removed, or none there ever was — is refused by
+    /// name (a `use web.queue` had turned on a feature that no longer
+    /// exists, and the compiled program did not build)
+    #[test]
+    fn a_web_module_there_is_not_is_refused() {
+        let err = check_source("use web\nuse web.queue\nroute['/', ok]\nfn ok[req]\n    return text['ok']\n").unwrap_err();
+        assert!(err.contains("web has no module 'queue' — its modules are web.auth, web.mail, web.ws"), "{}", err);
+        assert!(check_source("use web, web.mail\nm = smtp['h', 25, 'u', 'p']\n").is_ok());
     }
 
     /// A function only tests call, handed a frame another function builds

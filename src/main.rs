@@ -816,9 +816,8 @@ fn cmd_test_docs() {
     // the gap is visible (they have no example link in the standard library pages).
     const SPEC_ONLY: &[&str] = &[
         "test", "today",                                    // keyword / removed name
-        "sign", "verify", "templates", "render", "uploads", // auth/template/upload codegen
+        "sign", "verify",                                   // auth codegen
         "connect", "send", "recv", "close",                // websocket client
-        "sse", "ws", "cors", "static_dir", "sqlite",       // legacy app-parameter APIs
         "app", "click",                                     // test-harness names (used in test blocks, not run blocks)
     ];
     // names a program reads as values, not calls: used when read at all

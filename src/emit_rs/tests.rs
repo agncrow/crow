@@ -1602,90 +1602,6 @@ fn test_web_no_async_without_web() {
 // --- P4: Web module codegen tests ---
 
 #[test]
-fn test_web_cors_permissive() {
-    let rust = transpile("use web\nuse web.cors\nsite = web.new[]\nsite = cors[site]\n");
-    assert!(rust.contains(".cors_permissive()"), "should emit cors_permissive()\n{}", rust);
-}
-
-#[test]
-fn test_web_cors_with_origins() {
-    let rust = transpile("use web\nuse web.cors\nsite = web.new[]\norigins = ['http://localhost']\nsite = cors[site, origins]\n");
-    assert!(rust.contains(".cors(CrowCors::origins("), "should emit cors with origins\n{}", rust);
-}
-
-#[test]
-fn test_web_cors_import() {
-    let rust = transpile("use web\nuse web.cors\nsite = web.new[]\nsite = cors[site]\n");
-    assert!(rust.contains("use crow_web::cors::CrowCors;"), "should import CrowCors\n{}", rust);
-}
-
-#[test]
-fn test_web_sessions() {
-    let rust = transpile("use web\nuse web.session\nstore = sessions[]\n");
-    assert!(rust.contains("CrowSessionStore::new()"), "should emit CrowSessionStore::new()\n{}", rust);
-}
-
-#[test]
-fn test_web_sessions_import() {
-    let rust = transpile("use web\nuse web.session\nstore = sessions[]\n");
-    assert!(rust.contains("use crow_web::session::CrowSessionStore;"), "should import CrowSessionStore\n{}", rust);
-}
-
-#[test]
-fn test_web_templates() {
-    let rust = transpile("use web\nuse web.template\nt = templates['./templates/**/*']\n");
-    assert!(rust.contains("CrowTemplates::from_glob("), "should emit CrowTemplates::from_glob()\n{}", rust);
-}
-
-#[test]
-fn test_web_render() {
-    let rust = transpile("use web\nuse web.template\nfn handler[req]\n    t = templates['./t/**/*']\n    data = map[name = 'crow']\n    return html[render[t, 'index', data]]\nsite = web.new[]\nsite = route[site, '/', handler]\n");
-    assert!(rust.contains(".render("), "should emit .render()\n{}", rust);
-}
-
-#[test]
-fn test_web_cache() {
-    let rust = transpile("use web\nuse web.cache\nc = cache[100]\n");
-    assert!(rust.contains("CrowCache::new(100"), "should emit CrowCache::new()\n{}", rust);
-}
-
-#[test]
-fn test_web_cache_with_ttl() {
-    let rust = transpile("use web\nuse web.cache\nc = cache[100, 60]\n");
-    assert!(rust.contains("CrowCache::with_ttl("), "should emit CrowCache::with_ttl()\n{}", rust);
-}
-
-#[test]
-fn test_web_limit() {
-    let rust = transpile("use web\nuse web.rate\nlimiter = limit[100, 60]\n");
-    assert!(rust.contains("CrowRateLimiter::new("), "should emit CrowRateLimiter::new()\n{}", rust);
-}
-
-#[test]
-fn test_web_limit_import() {
-    let rust = transpile("use web\nuse web.rate\nlimiter = limit[100, 60]\n");
-    assert!(rust.contains("use crow_web::rate::CrowRateLimiter;"), "should import CrowRateLimiter\n{}", rust);
-}
-
-#[test]
-fn test_web_sse() {
-    let rust = transpile("use web\nuse web.sse\nfn events[req]\n    return text['data']\nsite = web.new[]\nsite = sse[site, '/events', events]\n");
-    assert!(rust.contains(".sse_route("), "should emit .sse_route()\n{}", rust);
-}
-
-#[test]
-fn test_web_ws() {
-    let rust = transpile("use web\nuse web.ws\nfn handler[req]\n    return text['ok']\nsite = web.new[]\nsite = ws[site, '/ws', handler]\n");
-    assert!(rust.contains(".ws_route("), "should emit .ws_route()\n{}", rust);
-}
-
-#[test]
-fn test_web_static_dir() {
-    let rust = transpile("use web\nuse web.static\nsite = web.new[]\nsite = static_dir[site, '/assets', './public']\n");
-    assert!(rust.contains(".static_dir("), "should emit .static_dir()\n{}", rust);
-}
-
-#[test]
 fn test_web_smtp() {
     let rust = transpile("use web\nuse web.mail\nmailer = smtp['smtp.example.com', 587, 'user', 'pass']\n");
     assert!(rust.contains("CrowMailer::new("), "should emit CrowMailer::new()\n{}", rust);
@@ -1737,24 +1653,6 @@ fn test_web_send_recv_close() {
     assert!(rust.contains(".send("), "should emit .send()\n{}", rust);
     assert!(rust.contains(".recv()"), "should emit .recv()\n{}", rust);
     assert!(rust.contains(".close()"), "should emit .close()\n{}", rust);
-}
-
-#[test]
-fn test_web_queue() {
-    let rust = transpile("use web\nuse web.queue\nfn job[req]\n    return text['done']\nq = web.queue[4]\n");
-    assert!(rust.contains("CrowQueue::new("), "should emit CrowQueue::new()\n{}", rust);
-}
-
-#[test]
-fn test_web_docs() {
-    let rust = transpile("use web\nuse web.docs\nd = web.docs['My API', '1.0']\n");
-    assert!(rust.contains("crow_web::docs::CrowDocs::new("), "should emit CrowDocs::new()\n{}", rust);
-}
-
-#[test]
-fn test_web_uploads() {
-    let rust = transpile("use web\nuse web.upload\nfn handler[req]\n    files = uploads[req]\n    return text['ok']\nsite = web.new[]\nsite = route[site, '/upload', handler]\n");
-    assert!(rust.contains(".uploads()"), "should emit .uploads()\n{}", rust);
 }
 
 // --- DB module codegen tests ---

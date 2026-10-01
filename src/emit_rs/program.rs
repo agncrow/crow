@@ -554,17 +554,9 @@ impl Emitter {
             self.line("#[allow(unused_imports)]");
             self.line("use std::sync::Arc;");
             let web: Vec<(&str, &str)> = vec![
-                ("db", "use crow_web::db::CrowSqlite;"),
                 ("auth", "use crow_web::auth::CrowJwt;"),
-                ("cors", "use crow_web::cors::CrowCors;"),
-                ("session", "use crow_web::session::CrowSessionStore;"),
-                ("template", "use crow_web::template::CrowTemplates;"),
-                ("cache", "use crow_web::cache::CrowCache;"),
-                ("queue", "use crow_web::queue::CrowQueue;"),
-                ("rate", "use crow_web::rate::CrowRateLimiter;"),
                 ("mail", "use crow_web::mail::CrowMailer;"),
                 ("ws", "use crow_web::ws;"),
-                ("sse", "use crow_web::sse;"),
             ];
             for (f, l) in web {
                 if self.web_features.contains(f) {
