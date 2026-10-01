@@ -543,7 +543,12 @@ impl Emitter {
         } else if self.returns_unit && !self.cur_fn.is_empty() {
             "return;".to_string()
         } else if let Some(ret) = self.cur_ret.clone().filter(|_| !self.cur_fn.is_empty()) {
-            if self.view_mark || self.in_view() {
+            if self.view_mark {
+                // (through view_exit: the view's level closes, and a value
+                // still being caught up with marks it stale)
+                return format!("return state.view_exit(__view, CrowVNode::text(&format!(\"error: {{}}\", {v}.reason)));", v = v);
+            }
+            if self.in_view() {
                 return format!("return CrowVNode::text(&format!(\"error: {{}}\", {v}.reason));", v = v);
             }
             let inner_default = match &ret {

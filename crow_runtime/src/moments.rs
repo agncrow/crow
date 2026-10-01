@@ -21,8 +21,15 @@ thread_local! {
     static EVENT: std::cell::Cell<Option<f64>> = const { std::cell::Cell::new(None) };
 }
 
-/// The wall clock: seconds since the epoch.
+/// The wall clock: seconds since the epoch — or, in a replay of recordings
+/// (`crow test --fixtures`), the moment `CROW_CLOCK` names, still, as the
+/// recording's clock stood, so what a program stamps and asks is what was
+/// kept.
 pub fn clock() -> f64 {
+    static HELD: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
+    if let Some(at) = *HELD.get_or_init(|| std::env::var("CROW_CLOCK").ok().and_then(|s| s.trim().parse::<f64>().ok())) {
+        return at;
+    }
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs_f64())

@@ -328,20 +328,10 @@ pub(crate) mod schema_record {
     use super::CrowType;
     use std::collections::BTreeMap;
 
-    /// The FNV-1a hash of the parts, a stable file name
+    /// The FNV-1a hash of the parts, a stable file name (crow_db's, which a
+    /// replay names its files by too)
     pub(crate) fn fnv(parts: &[&str]) -> String {
-        let mut h: u64 = 0xcbf29ce484222325;
-        for (i, p) in parts.iter().enumerate() {
-            if i > 0 {
-                h ^= b'\n' as u64;
-                h = h.wrapping_mul(0x100000001b3);
-            }
-            for b in p.bytes() {
-                h ^= b as u64;
-                h = h.wrapping_mul(0x100000001b3);
-            }
-        }
-        format!("{:016x}", h)
+        crow_db::fixtures::fnv(parts)
     }
 
     fn file_for(var: &str, sql: &str) -> Option<std::path::PathBuf> {
@@ -368,18 +358,7 @@ pub(crate) mod schema_record {
 
     /// A record's statement and columns, from its file's text.
     pub(crate) fn parse(text: &str) -> Option<(String, Vec<(String, String)>)> {
-        let j: serde_json::Value = serde_json::from_str(text).ok()?;
-        let sql = j.get("sql")?.as_str()?.to_string();
-        let cols = j
-            .get("columns")?
-            .as_array()?
-            .iter()
-            .filter_map(|c| {
-                let pair = c.as_array()?;
-                Some((pair.first()?.as_str()?.to_string(), pair.get(1)?.as_str()?.to_string()))
-            })
-            .collect();
-        Some((sql, cols))
+        crow_db::fixtures::parse_record(text)
     }
 
     /// What `var` answered for `sql` when it last could, if it is kept.

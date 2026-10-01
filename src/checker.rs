@@ -399,6 +399,13 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
 
         'combos: for combo in &combos {
             counts.inputs_run += 1;
+            // a replay runs each test as the recording ran it: its draws
+            // seeded afresh, as a rehearsal's are
+            let replaying = crow_db::fixtures::replaying().is_some();
+            if replaying {
+                crow_runtime::rng::set_seed(0);
+                let _ = crow_db::fixtures::take_misses();
+            }
             // the declarations run first; one that fails (a database that is
             // down, a top-level query that errors) is the finding, named as
             // such — not the "undefined variable" every later test would see
@@ -423,10 +430,19 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
                         .collect();
                     format!("  (at {})", vals.join(", "))
                 };
+                // what the replay could not answer, which is likely why
+                let missed: String = if replaying {
+                    crow_db::fixtures::take_misses()
+                        .iter()
+                        .map(|m| format!("\n     no fixture held `{}` — `crow check --record-fixtures` records it where the database is", m))
+                        .collect()
+                } else {
+                    String::new()
+                };
                 issues.push(Issue::TestFailure {
                     block: block.label.clone(),
                     line: block.line,
-                    detail: format!("{}{}", msg, at),
+                    detail: format!("{}{}{}", msg, at, missed),
                 });
                 break 'combos; // one failure per block keeps reports readable
             }

@@ -647,7 +647,8 @@ pub(crate) fn check(handle: &DbHandle, url: &str, tables: &[Table], mode: Mode) 
 pub fn connect(url: &str, pool_size: Option<usize>, declared: &[&str]) -> Result<DbHandle, String> {
     let handle = crate::connect(url, pool_size.filter(|n| *n > 0))?;
     let tables: Vec<Table> = declared.iter().filter_map(|s| parse_table(s)).collect();
-    if tables.is_empty() {
+    // (a replay has no database to compare: its reads are what was kept)
+    if tables.is_empty() || crate::fixtures::replaying_for(url).is_some() {
         return Ok(handle);
     }
     let mode = mode()?;

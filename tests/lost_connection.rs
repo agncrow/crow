@@ -9,6 +9,9 @@ use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+mod common;
+use common::Scratch;
+
 const PROGRAM: &str = "use db
 
 port = args[][0]
@@ -23,51 +26,6 @@ for i in range[120]
         log['`i` down: `w.reason`']
     sleep[100]
 ";
-
-/// A Postgres cluster of the test's own, on its own port, stopped when the
-/// test ends.
-struct Scratch {
-    dir: std::path::PathBuf,
-    port: u16,
-}
-
-impl Scratch {
-    fn new(dir: std::path::PathBuf) -> Option<Scratch> {
-        let found = Command::new("initdb").arg("--version").output().is_ok_and(|o| o.status.success());
-        if !found {
-            eprintln!("lost_connection: no initdb on the PATH — skipped");
-            return None;
-        }
-        let _ = std::fs::remove_dir_all(&dir);
-        let init = Command::new("initdb").arg("-D").arg(&dir).args(["-U", "crow", "--auth=trust"]).output().ok()?;
-        assert!(init.status.success(), "initdb: {}", String::from_utf8_lossy(&init.stderr));
-        let port = std::net::TcpListener::bind("127.0.0.1:0").ok()?.local_addr().ok()?.port();
-        let s = Scratch { dir, port };
-        s.start();
-        Some(s)
-    }
-
-    fn start(&self) {
-        let opts = format!("-p {} -c unix_socket_directories='' -c listen_addresses=127.0.0.1", self.port);
-        let ok = Command::new("pg_ctl").arg("-D").arg(&self.dir).args(["-o", &opts, "-w", "-l"]).arg(self.dir.join("log")).arg("start").output().map(|o| o.status.success()).unwrap_or(false);
-        assert!(ok, "the scratch cluster starts");
-    }
-
-    fn stop(&self) {
-        let _ = Command::new("pg_ctl").arg("-D").arg(&self.dir).args(["-m", "fast", "-w", "stop"]).output();
-    }
-
-    fn running(&self) -> bool {
-        Command::new("pg_ctl").arg("-D").arg(&self.dir).arg("status").output().is_ok_and(|o| o.status.success())
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        self.stop();
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
 
 /// The program run in one mode while its database goes away and comes
 /// back: what it said, line by line.

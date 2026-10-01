@@ -32,6 +32,8 @@ pub mod clickhouse;
 pub mod migrate;
 
 pub mod schema;
+/// What a recording kept, and the replay that answers from it.
+pub mod fixtures;
 
 /// Resolves when the work under `flag` — or the whole program — should
 /// stop: a driver that can stop a running query on its server races the
@@ -395,6 +397,11 @@ impl std::fmt::Debug for DbHandle {
 /// - `postgres://user:pass@host/db` → PostgreSQL
 /// - `clickhouse://user:pass@host:port/db` → ClickHouse (native TCP)
 pub fn connect(url: &str, pool_size: Option<usize>) -> Result<DbHandle, String> {
+    // a replay of recordings (`crow test --fixtures`) connects to nothing:
+    // its reads are what was kept
+    if let Some(crow_dir) = fixtures::replaying_for(url) {
+        return Ok(DbHandle::new(fixtures::Replay::open(url, &crow_dir)));
+    }
     // One handle per server and process, and per sqlite file: parts that
     // each connect to the same Postgres or ClickHouse share its pool, so
     // the program's queries to one server are bounded by one pool, not one

@@ -13,6 +13,7 @@
 //! rehearsals after will be. Writes are recorded as in any rehearsal — a
 //! recording never changes a database.
 
+use crow_db::fixtures::{one_placeholder_per_list, reads_only, writes};
 use crow_runtime::frame::{Column, CrowFrame};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -70,16 +71,7 @@ pub fn begin_recording(root: &Path) -> Arc<Rehearsal> {
 }
 
 fn begin_as(root: &Path, recording: bool) -> Arc<Rehearsal> {
-    let mut schema = Vec::new();
-    if let Ok(dir) = std::fs::read_dir(root.join(".crow").join("schema")) {
-        let mut files: Vec<PathBuf> = dir.filter_map(|e| e.ok().map(|e| e.path())).collect();
-        files.sort();
-        for f in files {
-            if let Some(rec) = std::fs::read_to_string(&f).ok().and_then(|t| crate::type_infer::schema_record::parse(&t)) {
-                schema.push(rec);
-            }
-        }
-    }
+    let schema = crow_db::fixtures::records(&root.join(".crow"));
     let r = Arc::new(Rehearsal {
         schema,
         fixtures: root.join(".crow").join("fixtures"),
@@ -156,181 +148,21 @@ pub fn connect(url: &str) -> crow_db::DbHandle {
     crow_db::DbHandle::new(RehearsalDb { url: url.to_string(), r })
 }
 
-/// Whether a statement can only read: it starts as a query does and names
-/// no write anywhere (a `WITH … INSERT` writes). Only such a statement goes
-/// to a real database in a recording.
-fn reads_only(sql: &str) -> bool {
-    let mut words = Vec::new();
-    let mut word = String::new();
-    let mut quote: Option<char> = None;
-    for c in sql.chars() {
-        match quote {
-            Some(q) if c == q => quote = None,
-            Some(_) => {}
-            None if c == '\'' || c == '"' || c == '`' => quote = Some(c),
-            None if c.is_ascii_alphanumeric() || c == '_' => word.push(c.to_ascii_uppercase()),
-            None => {
-                if !word.is_empty() {
-                    words.push(std::mem::take(&mut word));
-                }
-            }
-        }
-    }
-    if !word.is_empty() {
-        words.push(word);
-    }
-    let first = words.first().map(String::as_str).unwrap_or("");
-    matches!(first, "SELECT" | "WITH" | "SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN")
-        && !words.iter().any(|w| {
-            matches!(w.as_str(), "INSERT" | "UPDATE" | "DELETE" | "MERGE" | "UPSERT" | "REPLACE" | "TRUNCATE" | "DROP" | "ALTER" | "CREATE" | "GRANT" | "REVOKE" | "ATTACH" | "DETACH" | "OPTIMIZE" | "KILL" | "SYSTEM" | "RENAME")
-        })
-}
-
-/// Whether a statement changes rows or the schema, not only reads them.
-fn writes(sql: &str) -> bool {
-    let first = sql.trim_start().split_whitespace().next().unwrap_or("").to_ascii_uppercase();
-    matches!(first.as_str(), "INSERT" | "UPDATE" | "DELETE" | "CREATE" | "ALTER" | "DROP" | "REPLACE" | "TRUNCATE" | "UPSERT" | "MERGE")
-}
-
-/// A statement with each list of parameters as the one `?` it was written
-/// as: `IN ?` handed a list runs as `IN (?, ?, ?)`, or `IN (NULL)` when the
-/// list is empty, and the record keeps `IN ?`.
-fn one_placeholder_per_list(sql: &str) -> String {
-    // (by character: a statement holds text like '—', which bytes would cut)
-    let c: Vec<char> = sql.chars().collect();
-    let skip = |k: &mut usize| {
-        while *k < c.len() && c[*k].is_whitespace() {
-            *k += 1
-        }
-    };
-    // a list goes where `IN ?` was written
-    let after_in = |i: usize| {
-        let mut j = i;
-        while j > 0 && c[j - 1].is_whitespace() {
-            j -= 1;
-        }
-        j >= 2 && c[j - 2].eq_ignore_ascii_case(&'I') && c[j - 1].eq_ignore_ascii_case(&'N') && (j == 2 || !(c[j - 3].is_alphanumeric() || c[j - 3] == '_'))
-    };
-    let mut out = String::with_capacity(sql.len());
-    let mut i = 0;
-    while i < c.len() {
-        if c[i] == '(' && after_in(i) {
-            // `(` then `?`s separated by commas, or a lone NULL, then `)`
-            let mut j = i + 1;
-            skip(&mut j);
-            let null = c.len() >= j + 4 && c[j..j + 4].iter().collect::<String>() == "NULL";
-            let list_end = if null {
-                let mut k = j + 4;
-                skip(&mut k);
-                (k < c.len() && c[k] == ')').then_some(k)
-            } else {
-                let mut k = j;
-                let mut seen = false;
-                while k < c.len() && c[k] == '?' {
-                    seen = true;
-                    k += 1;
-                    skip(&mut k);
-                    if k < c.len() && c[k] == ',' {
-                        k += 1;
-                        skip(&mut k);
-                    } else {
-                        break;
-                    }
-                }
-                (seen && k < c.len() && c[k] == ')').then_some(k)
-            };
-            if let Some(end) = list_end {
-                out.push('?');
-                i = end + 1;
-                continue;
-            }
-        }
-        out.push(c[i]);
-        i += 1;
-    }
-    out
-}
-
-/// Whether a statement as run matches one as recorded: the record's NULLs
-/// stood in for spans the program interpolated, so each matches any text,
-/// and a list of parameters is the one `?` it was written as.
-fn matches_record(run: &str, recorded: &str) -> bool {
-    matches_as_written(&one_placeholder_per_list(run), &one_placeholder_per_list(recorded))
-}
-
-fn matches_as_written(run: &str, recorded: &str) -> bool {
-    let parts: Vec<&str> = recorded.split("NULL").collect();
-    if parts.len() == 1 {
-        return run == recorded;
-    }
-    let mut rest = match run.strip_prefix(parts[0]) {
-        Some(r) => r,
-        None => return false,
-    };
-    let last = parts[parts.len() - 1];
-    for mid in &parts[1..parts.len() - 1] {
-        match rest.find(mid) {
-            Some(i) => rest = &rest[i + mid.len()..],
-            None => return false,
-        }
-    }
-    rest.ends_with(last)
-}
-
 impl Rehearsal {
     fn columns_for(&self, sql: &str) -> Option<Vec<(String, String)>> {
-        self.schema.iter().find(|(s, _)| matches_record(sql, s)).map(|(_, c)| c.clone())
+        crow_db::fixtures::columns_for(&self.schema, sql)
     }
 
     /// A fixture recorded for the statement: `{"sql", "columns", "rows"}`.
     fn fixture(&self, sql: &str) -> Option<CrowFrame> {
-        let path = self.fixtures.join(format!("{}.json", crate::type_infer::schema_record::fnv(&[&one_placeholder_per_list(sql)])));
-        let j: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
-        let cols: Vec<(String, String)> = j
-            .get("columns")?
-            .as_array()?
-            .iter()
-            .filter_map(|c| {
-                let p = c.as_array()?;
-                Some((p.first()?.as_str()?.to_string(), p.get(1)?.as_str()?.to_string()))
-            })
-            .collect();
-        let rows = j.get("rows")?.as_array()?;
-        let mut data = Vec::new();
-        let mut validity = Vec::new();
-        for (i, (_, kind)) in cols.iter().enumerate() {
-            let cells: Vec<&serde_json::Value> = rows.iter().map(|r| r.get(i).unwrap_or(&serde_json::Value::Null)).collect();
-            validity.push(cells.iter().map(|c| !c.is_null()).collect());
-            // a column that can hold NULL is marked `float?`
-            data.push(match kind.trim_end_matches('?') {
-                "int" => Column::Int(cells.iter().map(|c| c.as_i64().unwrap_or(0)).collect()),
-                "float" | "datetime" => Column::Float(cells.iter().map(|c| c.as_f64().unwrap_or(0.0)).collect()),
-                "bool" => Column::Bool(cells.iter().map(|c| c.as_bool().unwrap_or(false)).collect()),
-                _ => Column::Str(cells.iter().map(|c| c.as_str().map(|s| s.to_string()).unwrap_or_else(|| c.to_string())).collect()),
-            });
-        }
-        Some(CrowFrame::new(cols.into_iter().map(|(n, _)| n).collect(), data, validity))
+        let path = self.fixtures.join(format!("{}.json", crow_db::fixtures::fnv(&[&one_placeholder_per_list(sql)])));
+        crow_db::fixtures::fixture_frame(&std::fs::read_to_string(path).ok()?)
     }
 
     /// Rows generated from the statement's recorded columns (none when it
     /// was never recorded: an empty frame).
     fn generated_rows(&self, sql: &str, n: usize) -> CrowFrame {
-        let cols = self.columns_for(sql).unwrap_or_default();
-        let mut data = Vec::new();
-        let mut validity = Vec::new();
-        for (name, kind) in &cols {
-            // a column that can hold NULL holds one in the second row: the
-            // first reads as a value, and a walk over the rows meets the
-            // missing cell the program has to decide on
-            validity.push((0..n).map(|i| !(kind.ends_with('?') && i == 1)).collect());
-            data.push(match kind.trim_end_matches('?') {
-                "int" => Column::Int((1..=n as i64).collect()),
-                "float" | "datetime" => Column::Float((1..=n).map(|i| i as f64).collect()),
-                "bool" => Column::Bool((0..n).map(|i| i % 2 == 0).collect()),
-                _ => Column::Str((1..=n).map(|i| format!("{}{}", name, i)).collect()),
-            });
-        }
-        CrowFrame::new(cols.into_iter().map(|(n, _)| n).collect(), data, validity)
+        crow_db::fixtures::generated_rows(&self.columns_for(sql).unwrap_or_default(), n)
     }
 
     fn answer(&self, url: &str, sql: &str, params: &[serde_json::Value]) -> CrowFrame {
@@ -443,7 +275,7 @@ pub fn keep_fixtures(r: &Rehearsal) -> Result<Vec<(String, usize, usize)>, Strin
             })
             .collect();
         let doc = serde_json::json!({ "sql": key, "columns": columns, "rows": rows, "answered": answered });
-        let path = r.fixtures.join(format!("{}.json", crate::type_infer::schema_record::fnv(&[key])));
+        let path = r.fixtures.join(format!("{}.json", crow_db::fixtures::fnv(&[key])));
         std::fs::write(&path, serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())? + "\n").map_err(|e| e.to_string())?;
         out.push((key.clone(), frame.nrows(), *answered));
     }
@@ -500,6 +332,7 @@ impl crow_db::CrowDb for RehearsalDb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crow_db::fixtures::matches_record;
 
     #[test]
     fn a_statement_matches_its_record_with_spans_as_nulls() {

@@ -1640,7 +1640,19 @@ impl CrowLiveState {
             stack.truncate(depth);
             s
         };
-        if stale { node.attr("data-crow-stale", "") } else { node }
+        match node {
+            n if !stale => n,
+            n @ CrowVNode::Element { .. } => n.attr("data-crow-stale", ""),
+            // a view that showed a value it read as it caught up — `error:
+            // loading`, a derivation with none yet — is marked too, so the
+            // harness renders it again when the value lands (it had been
+            // taken as settled)
+            other => {
+                let mut attrs = HashMap::new();
+                attrs.insert("data-crow-stale".to_string(), String::new());
+                CrowVNode::el("span", attrs, vec![other])
+            }
+        }
     }
 
     /// `running[x]` for a derivation: is a recompute of it in flight?
@@ -5523,6 +5535,25 @@ mod tests {
         assert!(html.contains("<p data-crow-stale"), "the view that read it is marked: {}", html);
         assert!(!html.contains("<div data-crow-stale"), "its parent is not: {}", html);
         settle(&s, "test_bg_marked");
+    }
+
+    /// A view that showed text for what it read as it caught up — `error:
+    /// loading`, a derivation with none yet, refused by the view — is marked
+    /// too, in a span, so the harness renders it again once the value lands
+    /// (an unmarked text was taken as settled, and a compiled test read
+    /// `error: loading`); a view whose text is no catching up is as it was
+    #[test]
+    fn a_text_a_view_showed_while_catching_up_is_marked() {
+        let s = CrowLiveState::new();
+        let level = s.view_enter();
+        s.mark_stale();
+        let marked = s.view_exit(level, CrowVNode::text("error: loading")).to_html();
+        assert_eq!(marked, "<span data-crow-stale=\"\">error: loading</span>");
+        let level = s.view_enter();
+        let plain = s.view_exit(level, CrowVNode::text("error: no rows")).to_html();
+        assert_eq!(plain, "error: no rows");
+        // each level closed: nothing left open for the next render
+        assert!(s.view_stale.lock().unwrap().is_empty());
     }
 
     /// A value behind only the moving clock — a query over a playing

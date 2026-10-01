@@ -305,6 +305,25 @@ fn crow_main() {
                     .find(|a| !a.starts_with('-'))
                     .cloned()
                     .unwrap_or_else(|| parse_crowfile().entry);
+                if args.iter().any(|a| a == "--fixtures") {
+                    // `crow test --fixtures`: no database is reached — each
+                    // read is what `crow check --record-fixtures` kept, and
+                    // the clock and the random draws are as the recording
+                    // had them, for this process and the compiled apps its
+                    // tests open (crow_db::fixtures)
+                    let root = project_root(std::path::Path::new(&filename).parent().unwrap_or(std::path::Path::new(".")));
+                    let crow_dir = std::fs::canonicalize(&root).unwrap_or(root).join(".crow");
+                    // Rust 2024: the environment is process-global; nothing
+                    // else runs yet
+                    let misses = std::env::temp_dir().join(format!("crow_replay_misses_{}", process::id()));
+                    let _ = std::fs::write(&misses, "");
+                    unsafe {
+                        std::env::set_var("CROW_REPLAY", &crow_dir);
+                        std::env::set_var("CROW_REPLAY_MISSES", &misses);
+                        std::env::set_var("CROW_CLOCK", ir_interp::REHEARSAL_EPOCH.to_string());
+                        std::env::set_var("CROW_SEED", "0");
+                    }
+                }
                 cmd_test_blocks(&filename);
             }
         }
@@ -2968,6 +2987,7 @@ fn cmd_test_blocks(filename: &str) {
             (true, 0) => ", none opening an app to compile".to_string(),
             (true, n) => format!(", the apps they opened compiled ({} run{})", n, if n == 1 { "" } else { "s" }),
         };
+        let against = if crow_db::fixtures::replaying().is_some() { format!("{}, the databases answered from .crow/fixtures", against) } else { against };
         println!("\n  \x1b[32m✓ {} block{} pass\x1b[0m{} — {} truth{}, {} law{}, {} input{} run",
             counts.blocks, if counts.blocks == 1 { "" } else { "s" }, against,
             counts.truths, if counts.truths == 1 { "" } else { "s" },
@@ -5877,7 +5897,7 @@ mod module_parts_tests {
         let db = dir.join("never.db");
         let sql = "SELECT sym, px FROM bars WHERE d = ?";
         std::fs::write(
-            dir.join(".crow/schema").join(format!("{}.json", type_infer::schema_record::fnv(&["ch", sql]))),
+            dir.join(".crow/schema").join(format!("{}.json", crow_db::fixtures::fnv(&["ch", sql]))),
             serde_json::json!({ "via": "ch", "sql": sql, "columns": [["sym", "str"], ["px", "float"]] }).to_string(),
         )
         .unwrap();

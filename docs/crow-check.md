@@ -107,7 +107,10 @@ fixture as the `?` it was written as. `crow check --record-fixtures` runs
 the scenarios as *recordings*: a statement that can only read goes to the
 real database, what it answers first is kept as its fixture (its first
 10,000 rows; the run says when it kept fewer than there were), and a later
-read of it is answered from that, as the rehearsals after will be. A write
+read of it is answered from that, as the rehearsals after will be. The
+same fixtures run the tests where the servers are not: `crow test
+--fixtures` answers each Postgres and ClickHouse read from them, in both
+modes (spec, `crow test --fixtures`). A write
 is recorded as in any rehearsal, so a recording never changes a database. A write — `exec`, `insert`, a
 migration, a statement through `query` that changes rows — is recorded
 with its payload and the program sees success; a shell command and a file

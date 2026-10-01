@@ -83,7 +83,6 @@ pub(crate) mod settle;
 #[cfg(test)]
 use frames::*;
 pub use frames::describe_with_tables;
-pub(crate) use frames::schema_record;
 
 const SESSION_EFFECTS: &[&str] = &["notice", "sign_in", "sign_out", "download", "mail"];
 
