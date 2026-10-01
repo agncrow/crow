@@ -141,6 +141,11 @@ pub(crate) struct Emitter {
     pub(crate) has_noapp_web: bool,
     /// facts: name → (type, the Rust default)
     pub(crate) reactive_vars: BTreeMap<String, (CrowType, String)>,
+    /// Each fact's declared value as main computes it, where it reads a fact
+    /// declared before it: a render or a handler cannot compute it (its
+    /// getter falls back on the type's default, which no session reaches —
+    /// every session starts from the declared values).
+    pub(crate) fact_inits: BTreeMap<String, String>,
     /// top-level connections in a page program: process-wide statics
     pub(crate) static_handle_vars: BTreeSet<String>,
     /// facts a `fetch[]`/`poll[]` fills
@@ -221,6 +226,7 @@ impl Emitter {
             test_control: false,
             has_noapp_web: false,
             reactive_vars: BTreeMap::new(),
+            fact_inits: BTreeMap::new(),
             static_handle_vars: BTreeSet::new(),
             data_source_vars: BTreeSet::new(),
             derive_fns: BTreeSet::new(),

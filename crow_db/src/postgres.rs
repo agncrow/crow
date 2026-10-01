@@ -62,6 +62,23 @@ fn numbered_placeholders(sql: &str) -> String {
     out
 }
 
+/// Why no connection could be had, said as what it is: a database that
+/// does not answer (it is down, restarting, or out of reach) and why, a
+/// pool that had none free in time. The next request tries again, so a
+/// database that comes back is reached. (The pool's own words had read
+/// "Error occurred while creating a new object".)
+fn pool_error(e: deadpool_postgres::PoolError) -> String {
+    use deadpool_postgres::PoolError;
+    match e {
+        PoolError::Backend(err) => {
+            let why = std::error::Error::source(&err).map(|s| format!(" ({})", s)).unwrap_or_default();
+            format!("the database does not answer: {}{}", describe(err), why)
+        }
+        PoolError::Timeout(_) => "no connection to the database came free in time".to_string(),
+        other => format!("no connection to the database: {}", other),
+    }
+}
+
 /// The server's own message, not tokio-postgres's one-word summary.
 fn describe(e: tokio_postgres::Error) -> String {
     match e.as_db_error() {
@@ -295,7 +312,7 @@ impl CrowDb for CrowPostgresDb {
     fn begin_scope(&self) -> Option<Result<Box<dyn ScopeTx>, String>> {
         let rt = self.rt.clone();
         Some(Self::off_runtime(|| self.rt.block_on(async {
-            let client = self.pool.get().await.map_err(|e| format!("postgres pool error: {}", e))?;
+            let client = self.pool.get().await.map_err(pool_error)?;
             client.batch_execute("BEGIN").await.map_err(|e| format!("postgres begin: {}", describe(e)))?;
             Ok(Box::new(PgScope { client: Some(client), rt }) as Box<dyn ScopeTx>)
         })))
@@ -304,7 +321,7 @@ impl CrowDb for CrowPostgresDb {
     fn describe(&self, sql: &str) -> Result<Vec<(String, String)>, String> {
         Self::off_runtime(|| self.rt.block_on(async {
             let client = self.pool.get().await
-                .map_err(|e| format!("postgres pool error: {}", e))?;
+                .map_err(pool_error)?;
             let stmt = client.prepare(&numbered_placeholders(sql)).await
                 .map_err(|e| format!("postgres describe error: {}", describe(e)))?;
             Ok(stmt.columns().iter().map(|c| (c.name().to_string(), pg_kind(c.type_()).to_string())).collect())
@@ -322,7 +339,7 @@ impl CrowDb for CrowPostgresDb {
         }
         Self::off_runtime(|| self.rt.block_on(async {
             let client = self.pool.get().await
-                .map_err(|e| format!("postgres pool error: {}", e))?;
+                .map_err(pool_error)?;
             let _running = Running::start(client.cancel_token());
             let run = async {
                 let stmt = client.prepare_typed(&numbered_placeholders(sql), &pg_types).await
@@ -349,7 +366,7 @@ impl CrowDb for CrowPostgresDb {
         let flag = crow_runtime::cancel::current();
         Self::off_runtime(|| self.rt.block_on(async {
             let client = self.pool.get().await
-                .map_err(|e| format!("postgres pool error: {}", e))?;
+                .map_err(pool_error)?;
             let _running = Running::start(client.cancel_token());
             let run = async {
                 let stmt = client.prepare_typed(&numbered_placeholders(sql), &pg_types).await
@@ -381,7 +398,7 @@ impl CrowDb for CrowPostgresDb {
 
         Self::off_runtime(|| self.rt.block_on(async {
             let mut client = self.pool.get().await
-                .map_err(|e| format!("postgres pool error: {}", e))?;
+                .map_err(pool_error)?;
 
             let tx = client.transaction().await
                 .map_err(|e| format!("postgres begin error: {}", e))?;
@@ -418,7 +435,7 @@ impl CrowDb for CrowPostgresDb {
         // Each step blocks on its own; the user's function runs between them
         // on this thread, so its own queries never nest inside a block_on.
         let client = Self::off_runtime(|| self.rt.block_on(async {
-            let client = self.pool.get().await.map_err(|e| format!("postgres pool error: {}", e))?;
+            let client = self.pool.get().await.map_err(pool_error)?;
             client.simple_query("BEGIN").await.map_err(|e| format!("postgres begin error: {}", e))?;
             Ok::<_, String>(client)
         }))?;

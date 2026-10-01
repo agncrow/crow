@@ -67,6 +67,25 @@ route['/api', api, limit = 60]
 serve[3000, cors = ['https://app.example.com'], files = 'public']
 ```
 
+A route's handler is handed its request and nothing else, so it opens what
+it needs itself. Every `connect` to one URL in a program is one handle, so
+the handlers share its pool — and a query that fails while the database is
+away is the handler's to answer:
+
+```crow,norun
+use web, db
+
+fn count[req]
+    conn = connect[env['DATABASE_URL', 'sqlite://app.db']]
+    q = query[conn, 'SELECT count(*) AS n FROM trades']
+    if not q.ok
+        return respond[503, q.reason]
+    return text['trades: `q.n[0]`']
+
+route['/count', count]
+serve[3000]
+```
+
 A form's fields arrive in `req.form` and its files in `req.files`, each a
 copy the handler reads by its `path`.
 

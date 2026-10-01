@@ -514,6 +514,18 @@ impl Emitter {
             } else {
                 text
             };
+            let mut reads_a_fact = false;
+            crate::ir::visit_expr(&value, &mut |e| {
+                if matches!(e, Expr::Load(..)) {
+                    reads_a_fact = true;
+                }
+            });
+            if reads_a_fact {
+                self.fact_inits.insert(fact.name.clone(), default);
+                let fallback = ty.default_rust_value();
+                self.reactive_vars.insert(fact.name.clone(), (ty, fallback));
+                continue;
+            }
             self.reactive_vars.insert(fact.name.clone(), (ty, default));
         }
     }
@@ -1285,8 +1297,30 @@ impl Emitter {
             self.line("let mut __crow_state = CrowLiveState::new();");
             if !self.reactive_vars.is_empty() {
                 self.needs_serde_json = true;
-                for (v, (_, d)) in self.reactive_vars.clone() {
-                    self.line(&format!("__crow_state.set(\"{}\", serde_json::json!({}));", v, d));
+                // in the order they are declared, each bound by its name as
+                // a handler binds it: a fact's declared value can read one
+                // declared before it (`tripled = base * 3`), which had read
+                // a name nothing bound, so the program did not build
+                let declared: Vec<String> = self.part.facts.iter().map(|f| f.name.clone()).filter(|n| self.reactive_vars.contains_key(n)).collect();
+                let rest: Vec<String> = self.reactive_vars.keys().filter(|k| !declared.contains(k)).cloned().collect();
+                // (only a fact another declaration reads is bound: the rest
+                // live in the state alone)
+                let mut read_later = BTreeSet::new();
+                for f in &self.part.facts {
+                    crate::ir::visit_expr(&f.default, &mut |e| {
+                        if let Expr::Load(n, _) = e {
+                            read_later.insert(n.clone());
+                        }
+                    });
+                }
+                for v in declared.iter().chain(rest.iter()) {
+                    let d = self.fact_inits.get(v).cloned().unwrap_or_else(|| self.reactive_vars[v].1.clone());
+                    if read_later.contains(v) {
+                        self.line(&format!("let {} = {};", v, d));
+                        self.line(&format!("__crow_state.set(\"{}\", serde_json::json!({}));", v, v));
+                    } else {
+                        self.line(&format!("__crow_state.set(\"{}\", serde_json::json!({}));", v, d));
+                    }
                 }
             }
             // connections and data sources: set once, before anything reads them

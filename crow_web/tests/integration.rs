@@ -176,6 +176,33 @@ mod server_options {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A file or directory named with a dot is no file the app serves —
+    /// `files = '.'` had handed out `.env` and the key the sign-in cookies
+    /// are sealed with — however the path spells the dot; `.well-known`,
+    /// where a certificate authority looks, is served
+    #[tokio::test]
+    async fn files_named_with_a_dot_are_not_served() {
+        let dir = std::env::temp_dir().join(format!("crow_dotfiles_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(".crow/keys")).unwrap();
+        std::fs::create_dir_all(dir.join(".well-known/acme-challenge")).unwrap();
+        std::fs::write(dir.join(".env"), "SECRET=1").unwrap();
+        std::fs::write(dir.join(".crow/keys/secret"), "key").unwrap();
+        std::fs::write(dir.join(".well-known/acme-challenge/token"), "proof").unwrap();
+        std::fs::write(dir.join("index.html"), "home").unwrap();
+        let router = CrowApp::new().route("/api", CrowHandler::new("ok", ok)).files_from(dir.to_str().unwrap()).served_router();
+        for hidden in ["/.env", "/.crow/keys/secret", "/%2eenv", "/%2Ecrow/keys/secret", "/sub/../.env"] {
+            let resp = router.clone().oneshot(HttpRequest::builder().uri(hidden).body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(resp.status(), 404, "{} was served", hidden);
+            assert!(!body_of(resp).await.contains("SECRET"), "{}", hidden);
+        }
+        let proof = router.clone().oneshot(HttpRequest::builder().uri("/.well-known/acme-challenge/token").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(proof.status(), 200);
+        assert_eq!(body_of(proof).await, "proof");
+        let home = router.clone().oneshot(HttpRequest::builder().uri("/index.html").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(body_of(home).await, "home");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// `route[…, limit = 2]`: a client's third request in the minute is
     /// answered 429 with the seconds to wait
     #[tokio::test]

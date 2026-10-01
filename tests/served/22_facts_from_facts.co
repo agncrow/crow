@@ -1,0 +1,23 @@
+--- A fact declared from another: each declaration's value is computed in
+--- the order written, so `tripled` reads the `base` declared above it and
+--- `label` reads `base` in its text, in both modes. (Compiled, a fact read
+--- in another's declaration had read a name nothing bound, and the program
+--- did not build.)
+use web, ui
+
+base = 2
+tripled = base * 3
+label = 'base `base`'
+
+fn bump[]
+    base = base + 1
+    tripled = base * 3
+
+view render[]
+    return stack[
+        p['`label`: tripled is `tripled`'],
+        button['+', click = bump]
+    ]
+
+serve[3423]
+page['/', render]

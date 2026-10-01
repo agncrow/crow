@@ -1662,9 +1662,24 @@ fn collect_undefined_in_expr(
 pub fn run_static_checks(ctx: &TypeContext, top_level_stmts: &[Stmt]) -> Vec<Issue> {
     let mut issues = Vec::new();
     let reactive = reactive_readers(ctx);
+    // a route calls its handler with the request whether or not the
+    // handler reads it, so an unread request is no finding (removing it,
+    // as the finding had advised, makes a handler no route can call)
+    let route_handlers: BTreeSet<String> = top_level_stmts
+        .iter()
+        .filter_map(|s| match s {
+            // (the handler is the last name after the path: a method's text
+            // may come before it, and a limit after)
+            Stmt::ExprStmt(Expr::Call { callee, args }) if matches!(callee.as_ref(), Expr::Ident(n) if n == "route") => {
+                args.iter().skip(1).rev().find_map(|a| if let Expr::Ident(h) = a { Some(h.clone()) } else { None })
+            }
+            _ => None,
+        })
+        .collect();
     // Check user-defined functions
     for (name, sig) in &ctx.functions {
         let param_names: Vec<String> = sig.params.iter().map(|(n, _)| n.clone()).collect();
+        let checked_params: &[String] = if route_handlers.contains(name) { &[] } else { &param_names };
         // Views, handlers, derivations and their helpers write reactive
         // state; those assignments are the point of the fn, never "unused
         // locals".
@@ -1680,7 +1695,7 @@ pub fn run_static_checks(ctx: &TypeContext, top_level_stmts: &[Stmt]) -> Vec<Iss
             } else {
                 BTreeSet::new()
             };
-        issues.extend(find_unused_vars_in_fn(name, &param_names, &sig.body, &state_writes));
+        issues.extend(find_unused_vars_in_fn(name, checked_params, &sig.body, &state_writes));
         issues.extend(find_unreachable_code(name, &sig.body));
         issues.extend(find_undefined_vars_in_fn(name, &param_names, &sig.body, ctx));
     }
@@ -2553,6 +2568,19 @@ mod tests {
         let issues = run_static_checks(&ctx, &stmts);
         let unused: Vec<_> = issues.iter().filter(|i| matches!(i, Issue::UnusedVariable { var, .. } if var == "y")).collect();
         assert!(!unused.is_empty(), "should detect unused param 'y'");
+    }
+
+    /// A route calls its handler with the request, read or not: an unread
+    /// request is no finding (the fix it had offered, removing it, makes a
+    /// handler no route can call)
+    #[test]
+    fn a_route_handlers_unread_request_is_no_finding() {
+        let src = "use web\nfn health[req]\n    return text['ok']\nfn other[req, extra]\n    return text['ok']\nroute['/health', health]\nroute['/limited', health, limit = 5]\nserve[3000]\n";
+        let (stmts, ctx) = parse_and_infer(src);
+        let issues = run_static_checks(&ctx, &stmts);
+        assert!(!issues.iter().any(|i| matches!(i, Issue::UnusedVariable { func, .. } if func == "health")), "{:?}", issues.iter().map(|i| i.summary()).collect::<Vec<_>>());
+        // a function no route calls is checked as any other
+        assert!(issues.iter().any(|i| matches!(i, Issue::UnusedVariable { func, var, .. } if func == "other" && var == "extra")));
     }
 
     #[test]

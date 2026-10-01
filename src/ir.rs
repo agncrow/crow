@@ -332,6 +332,9 @@ pub enum Decision {
     Loop,
     /// Assigned into the named variable.
     Assign(String),
+    /// A field read from it: a frame's column, a record's field, a map's
+    /// key, which a value that failed does not have.
+    Read(String),
 }
 
 impl Decision {
@@ -341,6 +344,7 @@ impl Decision {
             Decision::Branch => "cannot branch on an error value".to_string(),
             Decision::Loop => "cannot loop over an error value".to_string(),
             Decision::Assign(var) => format!("cannot assign an error value to '{}'", var),
+            Decision::Read(field) => format!("cannot read '{}' of an error value", field),
         }
     }
 }
@@ -1006,6 +1010,7 @@ fn block(out: &mut String, b: &Block, depth: usize) {
                     Decision::Branch => String::new(),
                     Decision::Loop => " (a loop's list)".to_string(),
                     Decision::Assign(var) => format!(" (into {})", var),
+                    Decision::Read(field) => format!(" (reading {})", field),
                 };
                 let _ = writeln!(out, "{}propagate {}{}", pad, values.join(", "), at);
             }

@@ -25,7 +25,14 @@ fn get(port: u16, path: &str, extra: &str) -> String {
 struct Served(std::process::Child);
 
 impl Drop for Served {
+    /// `crow run` asked to stop hands it to the program it runs (a kill
+    /// cannot be handed on, and left the compiled app serving its port)
     fn drop(&mut self) {
+        let _ = Command::new("kill").arg(self.0.id().to_string()).status();
+        let by = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < by && matches!(self.0.try_wait(), Ok(None)) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
         let _ = self.0.kill();
         let _ = self.0.wait();
     }

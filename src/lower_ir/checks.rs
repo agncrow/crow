@@ -159,6 +159,9 @@ pub(super) struct Checks {
     pub stored: BTreeSet<String>,
     /// The line each fact is declared on: where its first value is given.
     pub fact_lines: HashMap<String, usize>,
+    /// The functions a top-level `route[…]` answers with: each is handed
+    /// its request and nothing else.
+    pub route_handlers: BTreeSet<String>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -245,6 +248,16 @@ impl<'a> Lowerer<'a> {
         }
         if imported.iter().any(|p| p == "ui") {
             self.v.used.insert("ui".to_string());
+        }
+        // the functions routes answer with (the last name after the path: a
+        // method's text may come before it, and a limit after)
+        for s in stmts {
+            if let S::ExprStmt(A::Call { callee, args }) = s
+                && matches!(callee.as_ref(), A::Ident(n) if n == "route")
+                && let Some(h) = args.iter().skip(1).rev().find_map(|a| if let A::Ident(h) = a { Some(h.clone()) } else { None })
+            {
+                self.v.route_handlers.insert(h);
+            }
         }
         // the program's own variables, each checked against the names
         // taken where it is first assigned
@@ -347,6 +360,13 @@ impl<'a> Lowerer<'a> {
             self.refuse(format!(
                 "{}derivations are not visible inside functions — read '{}' in a view or handler, or make this function a derivation",
                 prefix, name
+            ));
+        } else if in_fn.as_ref().is_some_and(|f| self.v.route_handlers.contains(f)) && self.v.module_vars.contains(name) {
+            // a route calls its handler with the request alone, so no
+            // parameter can carry the variable in
+            self.refuse(format!(
+                "{}module variables are not visible inside functions — a route's handler is handed its request alone: open what it needs inside it (every connect to one URL in a program is one handle, so a handler that connects shares one pool)",
+                prefix
             ));
         } else if in_fn.is_some() && self.v.module_vars.contains(name) {
             self.refuse(format!(
@@ -1455,6 +1475,19 @@ mod tests {
         assert!(err.contains("line 1: undefined variable 'totl'"), "{}", err);
         let err = check_source("amount = 3\nfn show[]\n    return 'amount is `amount`'\nlog[show[]]\n").unwrap_err();
         assert!(err.contains("in show: module variables are not visible inside functions — pass 'amount'"), "{}", err);
+    }
+
+    /// A route's handler is handed its request alone, so the advice for a
+    /// module variable it reads is to open what it needs inside it — not a
+    /// parameter no route can pass, nor wiring it is already given
+    #[test]
+    fn a_route_handler_reading_a_module_variable_is_told_to_open_it_itself() {
+        let src = "use web, db\nconn = connect['sqlite://app.db']\nfn count[req]\n    q = query[conn, 'SELECT 1 AS one']\n    return text['one']\nroute['/count', count]\nroute['/n', 'GET', count, 3]\nserve[3000]\n";
+        let err = check_source(src).unwrap_err();
+        assert!(err.contains("in count: module variables are not visible inside functions — a route's handler is handed its request alone: open what it needs inside it"), "{}", err);
+        assert!(!err.contains("wire the function as a handler"), "{}", err);
+        let ok = "use web, db\nfn count[req]\n    conn = connect['sqlite://app.db']\n    q = query[conn, 'SELECT 1 AS one']\n    return text['one']\nroute['/count', count]\nserve[3000]\n";
+        assert!(check_source(ok).is_ok(), "{:?}", check_source(ok));
     }
 
     /// A function handed in as a parameter is called with the arguments

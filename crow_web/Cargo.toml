@@ -14,6 +14,8 @@ tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"], opti
 tokio-stream = { version = "0.1", optional = true }
 futures-util = { version = "0.3", optional = true }
 tower-http = { version = "0.6.8", features = ["cors", "fs"], optional = true }
+# the static files' guard hands a request on to them (tower::ServiceExt)
+tower = { version = "0.5.3", features = ["util"], optional = true }
 # a route's multipart body: its fields and files
 multer = { version = "3", optional = true }
 bytes = { version = "1", optional = true }
@@ -33,7 +35,7 @@ default = []
 # a streamed response (`stream[feed]`) is a body the server sends as it comes
 # the server: routes, their CORS, files, rate limits and uploads (serve's
 # and route's options)
-http = ["dep:axum", "dep:tokio", "dep:tokio-stream", "dep:tower-http", "dep:multer", "dep:bytes", "dep:futures-util"]
+http = ["dep:axum", "dep:tokio", "dep:tokio-stream", "dep:tower-http", "dep:tower", "dep:multer", "dep:bytes", "dep:futures-util"]
 client = ["dep:reqwest"]
 ws = ["dep:tungstenite"]
 auth = ["dep:jsonwebtoken", "dep:axum", "dep:tokio", "dep:uuid"]

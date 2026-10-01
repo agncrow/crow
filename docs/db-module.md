@@ -90,21 +90,7 @@ The pool is transparent to users. Crow manages it automatically:
 
 ## Conflict Resolution
 
-`connect` is exported by both `db` and `web.ws`. When both modules are imported:
-
-```
-use db
-use web
-
---- ERROR: ambiguous — use db.connect or web.connect
-conn = connect['postgres://...']
-
---- Correct
-db_conn = db.connect['postgres://user:pass@host/mydb']
-ws_conn = web.connect['ws://localhost/ws']
-```
-
-This is a language-level rule, not db-specific. See `docs/language-spec.md` § Conflict Resolution.
+`connect` is db's alone — the WebSocket client opens with `socket[url]` — so a program that uses both `db` and `web` calls it bare. When two imported modules do export one name, a bare call is refused and names the qualified spellings: a language-level rule, not db's. See `docs/language-spec.md` § Conflict Resolution.
 
 ## Trait Design
 

@@ -16,7 +16,12 @@ impl TypeContext {
                 _ => false,
             };
             if is_connect {
-                if let Some(Expr::Str(url)) = args.first() {
+                // (a URL with a span in it is known only when the program
+                // runs: asked with the span's text, the database had
+                // answered that the URL is invalid)
+                if let Some(Expr::Str(url)) = args.first()
+                    && !url.contains('`')
+                {
                     self.conn_urls.retain(|(n, _)| n != name);
                     self.conn_urls.push((name.to_string(), url.clone()));
                 }

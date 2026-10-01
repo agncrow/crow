@@ -37,13 +37,27 @@ fn unb64(text: &str) -> Option<Vec<u8>> {
 
 /// A file only its owner reads, in the keys directory.
 fn write_private(name: &str, body: &str) -> Result<(), String> {
-    let dir = std::path::Path::new(KEYS_DIR);
-    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {}", KEYS_DIR, e))?;
+    write_private_in(std::path::Path::new(KEYS_DIR), name, body)
+}
+
+fn write_private_in(dir: &std::path::Path, name: &str, body: &str) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {}", dir.display(), e))?;
     let _ = std::fs::write(dir.join(".gitignore"), "*\n");
     let path = dir.join(name);
-    std::fs::write(&path, body).map_err(|e| format!("cannot write {}: {}", path.display(), e))?;
+    // created owner-only: written first and narrowed after, another user
+    // on the machine could have read it in between
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path).map_err(|e| format!("cannot write {}: {}", path.display(), e))?;
+    std::io::Write::write_all(&mut file, body.as_bytes()).map_err(|e| format!("cannot write {}: {}", path.display(), e))?;
+    #[cfg(unix)]
+    {
+        // (a file an older run wrote keeps the mode it was made with)
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
     }
@@ -227,6 +241,24 @@ pub fn is_ended(sid: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The key is the owner's from the moment it exists: created so, not
+    /// written and then narrowed
+    #[cfg(unix)]
+    #[test]
+    fn a_key_is_created_for_its_owner_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("crow_keys_{}", std::process::id()));
+        write_private_in(&dir, "secret", "abc").unwrap();
+        let mode = std::fs::metadata(dir.join("secret")).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(std::fs::read_to_string(dir.join("secret")).unwrap(), "abc");
+        assert_eq!(std::fs::read_to_string(dir.join(".gitignore")).unwrap(), "*\n");
+        // written again, it holds the new text alone
+        write_private_in(&dir, "secret", "d").unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("secret")).unwrap(), "d");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn ada() -> BTreeMap<String, String> {
         let mut r = BTreeMap::new();

@@ -1207,6 +1207,12 @@ impl IrInterp {
             }
             Expr::Field { base, name, .. } => {
                 let b = self.eval(base)?;
+                // a value that failed has no fields: where the lowering
+                // could not refuse it first (a fact's declared value), the
+                // read refuses it, as the compiled read does
+                if base.ty().is_result() && b.is_error() {
+                    return Err(format!("{} — {}", Decision::Read(name.clone()).refusal(), b.reason()));
+                }
                 // an app session reads its own reactive state: the globals
                 // while it is the active one, its waiting copy otherwise
                 if let Value::App(a) = &b.value {

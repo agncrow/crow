@@ -77,12 +77,23 @@ pub async fn request_from_axum(req: Request) -> Result<CrowRequest, Response> {
 /// each chunk it puts is sent as it comes. Then a `binary_body` (used by
 /// `msgpack[]`, `arrow[]` and `bytes[]`), then the text `body`.
 pub fn response_to_axum(crow_resp: CrowResponse) -> Response {
+    // a status or a header HTTP cannot carry — a header a handler built from
+    // what a request sent, holding a line break that would split the
+    // response — answers 500 with the reason, and the server's log says so
+    // (it had answered `internal error`, and said nothing)
+    if let Some(why) = unsendable(&crow_resp) {
+        eprintln!("crow: a response could not be sent: {}", why);
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("the response could not be sent: {}", why)).into_response();
+    }
     let mut builder = Builder::new().status(
         StatusCode::from_u16(crow_resp.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
     );
 
     for (k, v) in &crow_resp.headers {
-        builder = builder.header(k.as_str(), v.as_str());
+        // (a value's text beyond ASCII is sent as its bytes)
+        if let Ok(value) = header::HeaderValue::from_bytes(v.as_bytes()) {
+            builder = builder.header(k.as_str(), value);
+        }
     }
 
     // If no content-type was set, default to text/plain
@@ -107,6 +118,24 @@ pub fn response_to_axum(crow_resp: CrowResponse) -> Response {
         .unwrap_or_else(|_| {
             (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()
         })
+}
+
+/// Why a response cannot be sent, when it cannot: a status outside HTTP's,
+/// a header's name that is not one, a header's value holding a line break
+/// or another control character.
+fn unsendable(r: &CrowResponse) -> Option<String> {
+    if StatusCode::from_u16(r.status).is_err() {
+        return Some(format!("{} is not an HTTP status (100 to 999)", r.status));
+    }
+    for (k, v) in &r.headers {
+        if header::HeaderName::from_bytes(k.as_bytes()).is_err() {
+            return Some(format!("'{}' is not a header's name", k.escape_debug()));
+        }
+        if header::HeaderValue::from_bytes(v.as_bytes()).is_err() {
+            return Some(format!("the header '{}' holds a line break or another control character", k));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -190,6 +219,29 @@ mod tests {
             axum_resp.headers().get("content-type").unwrap(),
             "text/plain"
         );
+    }
+
+    /// A response HTTP cannot carry answers 500 with why: a header whose
+    /// value holds a line break (one a handler built from a request would
+    /// otherwise split the response), a status outside HTTP's. Text beyond
+    /// ASCII in a header's value is sent as its bytes.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_response_http_cannot_carry_says_why() {
+        let mut split = CrowResponse::new(200, "hello");
+        split.headers.insert("x-name".to_string(), "a\r\nset-cookie: s=1".to_string());
+        let resp = response_to_axum(split);
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(resp.headers().get("set-cookie").is_none());
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(String::from_utf8_lossy(&body), "the response could not be sent: the header 'x-name' holds a line break or another control character");
+        let resp = response_to_axum(CrowResponse::new(42, "odd"));
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(String::from_utf8_lossy(&body), "the response could not be sent: 42 is not an HTTP status (100 to 999)");
+        let mut accented = CrowResponse::new(200, "ok");
+        accented.headers.insert("x-city".to_string(), "Zürich".to_string());
+        let resp = response_to_axum(accented);
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get("x-city").unwrap().as_bytes(), "Zürich".as_bytes());
     }
 
     #[tokio::test(flavor = "multi_thread")]

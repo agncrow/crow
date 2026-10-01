@@ -1,0 +1,22 @@
+--- A connection is the database's alone, whatever else the program uses:
+--- in a program that also uses web, a URL built when the program runs —
+--- put together from parts, read from the environment — opens its
+--- database inside a function, as a route's handler opens its own, the
+--- same in both modes. (Compiled, such a program had built a call to
+--- nothing, and a URL the source did not spell had found no backend.)
+use web, db
+
+fn tally[scheme]
+    conn = connect['`scheme`://:memory:']
+    made = exec[conn, 'CREATE TABLE t (n INT)']
+    w = exec[conn, 'INSERT INTO t VALUES (3), (4), (5)']
+    return query[conn, 'SELECT count(*) AS c, sum(n) AS s FROM t']
+
+q = tally['sqlite']
+log[q.c[0]]
+log[q.s[0]]
+url = env['CROW_PARITY_140_UNSET', 'sqlite://:memory:']
+top = connect[url]
+log[top]
+r = query[top, 'SELECT 41 + 1 AS answer']
+log[r.answer[0]]

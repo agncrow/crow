@@ -88,8 +88,8 @@ Every feature follows this sequence.
    program when both modes must agree on new behavior; a book block when it
    is user-facing; an `app[]` harness test for anything a page renders.
 6. **Verify.** `cargo test --workspace`, `crow test --parity`, `crow test
-   --packages`, `crow test --docs`, `crow test --book`, and the layout
-   suites on the release binary.
+   --packages`, `crow test --fuzz`, `crow test --docs`, `crow test --book`,
+   and the layout suites on the release binary.
    CI runs the same on every push; it must be green.
 7. **Document after.** Reconcile the spec with what shipped; move the
    feature off the roadmap.

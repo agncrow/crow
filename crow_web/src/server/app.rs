@@ -190,7 +190,22 @@ impl CrowApp {
     /// with some answers an address none of them does with a 404.
     fn served(self) -> Router {
         let router = match (&self.files, self.routed) {
-            (Some(dir), _) => self.router.fallback_service(tower_http::services::ServeDir::new(dir).not_found_service(get(not_found_handler))),
+            (Some(dir), _) => {
+                let files = tower_http::services::ServeDir::new(dir).not_found_service(get(not_found_handler));
+                self.router.fallback(move |req: axum::extract::Request| {
+                    let files = files.clone();
+                    async move {
+                        use axum::response::IntoResponse;
+                        if hidden_path(req.uri().path()) {
+                            return not_found_handler(req.uri().clone()).await.into_response();
+                        }
+                        match tower::ServiceExt::oneshot(files, req).await {
+                            Ok(found) => found.into_response(),
+                            Err(never) => match never {},
+                        }
+                    }
+                })
+            }
             (None, true) => self.router.fallback(not_found_handler),
             (None, false) => self.router.fallback(default_welcome_handler),
         };
@@ -290,6 +305,15 @@ fn make_axum_handler(
 }
 
 /// An address no route or page answers, in an app that has some.
+/// Whether a path goes through a file or directory whose name starts with a
+/// dot — `.env`, `.git/`, `.crow/keys/` — which no app serves from its files
+/// (`files = '.'` had handed out the key the sign-in cookies are sealed
+/// with). `.well-known`, where a certificate authority looks, is served.
+/// Decoded first: `%2e` is a dot.
+fn hidden_path(path: &str) -> bool {
+    crate::core::request::decode_component(path).split(['/', '\\']).any(|segment| segment.starts_with('.') && segment != ".well-known")
+}
+
 async fn not_found_handler(uri: axum::http::Uri) -> (axum::http::StatusCode, axum::response::Html<String>) {
     let path = uri.path().replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
     (axum::http::StatusCode::NOT_FOUND, axum::response::Html(format!("<!DOCTYPE html><title>Not found</title><p>no page at {}</p>", path)))

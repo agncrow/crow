@@ -1,0 +1,46 @@
+--- A value that failed has no fields to read: a frame that did not load, a
+--- query that failed, text that did not parse, a record or a map a function
+--- could not make. Reading one refuses it first, as a decision on it is — a
+--- function hands the error back, the top level halts — with the reason it
+--- failed, the same in both modes. (Compiled, the read had found the failed
+--- value's placeholder, `frame has no property or column 'price'` or JSON's
+--- `null`, where the interpreter went on with the reason.) A record holding
+--- a field that failed did not fail itself: its `.ok` is true (compiled, it
+--- had not built).
+use frame, db
+
+struct Point [x, y]
+
+fn price_of[path]
+    df = load[path]
+    return df.price[0]
+
+fn answer[conn]
+    q = query[conn, 'SELECT n AS one FROM nope']
+    return q.one[0]
+
+fn name_of[text]
+    j = json[text]
+    return j.name
+
+fn make[s]
+    return Point[int[s], 1.5]
+
+r = price_of['/no/such/file.csv']
+log[r.ok]
+log[r.reason]
+conn = connect['sqlite://:memory:']
+a = answer[conn]
+log[a.ok]
+log[a.reason]
+n = name_of['{bad']
+log[n.ok]
+log[n.reason]
+log[str[name_of['{"name": "crow"}']]]
+p = make['x']
+log[p.ok]
+log[p.x.ok]
+log[p.y]
+df = load['/no/such/file.csv']
+log[df.price]
+log['not reached']

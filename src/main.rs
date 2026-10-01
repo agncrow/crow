@@ -24,6 +24,7 @@ mod derive;
 mod dev;
 mod lsp;
 mod kernel;
+mod fuzz;
 mod lexer;
 mod lower;
 mod parallel;
@@ -268,7 +269,7 @@ fn crow_main() {
             // the harnesses check every program's IR before running it
             // (ir_verify): a lowering that disagrees with itself fails its
             // program as the bug it is, in whichever suite reaches it
-            if args.iter().any(|a| matches!(a.as_str(), "--parity" | "--served" | "--book" | "--bench" | "--packages")) && std::env::var_os("CROW_IR_VERIFY").is_none() {
+            if args.iter().any(|a| matches!(a.as_str(), "--parity" | "--served" | "--book" | "--bench" | "--packages" | "--fuzz")) && std::env::var_os("CROW_IR_VERIFY").is_none() {
                 // Rust 2024: the environment is process-global; nothing else
                 // runs yet
                 unsafe { std::env::set_var("CROW_IR_VERIFY", "strict") };
@@ -283,6 +284,10 @@ fn crow_main() {
                 // hold one of the words
                 let only: Vec<String> = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect();
                 process::exit(served_parity::run(&only));
+            } else if args.iter().any(|a| a == "--fuzz") {
+                // `crow test --fuzz 20 --seed 7`: programs generated from a
+                // seed, run in both modes
+                fuzz::cmd_test_fuzz(&args[2..]);
             } else if args.iter().any(|a| a == "--packages") {
                 // `crow test --packages models`: only the packages named
                 let only: Vec<String> = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect();
@@ -387,6 +392,8 @@ fn print_usage() {
     eprintln!("  crow fmt --fix-views      migrate ui-building fns to view declarations");
     eprintln!("  crow launch 4 file.co  build + run on 4 distributed processes");
     eprintln!("  crow test --parity     run tests/parity/ in both modes, diff output (words after it pick programs by name)");
+    eprintln!("  crow test --packages   in the crow repository: each package's tests, and its example in both modes");
+    eprintln!("  crow test --fuzz [n]   n generated programs run in both modes; one they disagree on is kept (--seed s repeats a run)");
     eprintln!("  crow test --served     serve tests/served/ and the example apps in both modes, drive each page, compare");
     eprintln!("  crow test --compiled file.co  run the test blocks with the apps they open compiled");
     eprintln!("  crow test --book       execute every code block of the book in both modes");

@@ -1663,6 +1663,32 @@ fn test_db_connect_pool_size() {
     assert!(rust.contains("Some(5"), "should pass Some(5) for pool size\n{}", rust);
 }
 
+/// A connection is the database's in a program that also uses web, and
+/// a URL the source does not spell builds every backend it could name: a
+/// route's handler connecting with `env['DATABASE_URL']` had compiled to a
+/// call to nothing, and a URL put together from parts had found no backend
+#[test]
+fn a_web_programs_connection_from_the_environment_compiles() {
+    let src = "use web, db\nfn count[req]\n    conn = connect[env['DATABASE_URL']]\n    q = query[conn, 'SELECT 1 AS one']\n    return text['ok']\nroute['/count', count]\nserve[3000]\n";
+    let rust = transpile(src);
+    assert!(rust.contains("crow_db::schema::connect("), "{}", rust);
+    assert!(!rust.contains("= connect("), "{}", rust);
+    let stmts = crate::lower::lower_program(&crate::build(src).expect("parse failed")).expect("lowering failed");
+    let mut ctx = TypeContext::new();
+    ctx.infer_program(&stmts);
+    let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").expect("lowering to the IR failed");
+    let emitted = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false, None).expect("emitting failed");
+    let features: Vec<&str> = emitted.db_features.iter().map(String::as_str).collect();
+    assert_eq!(features, ["clickhouse", "postgres", "sqlite"]);
+    // a URL the source spells builds its own backend alone
+    let stmts = crate::lower::lower_program(&crate::build("use db\nconn = connect['sqlite://a.db']\n").expect("parse failed")).expect("lowering failed");
+    let mut ctx = TypeContext::new();
+    ctx.infer_program(&stmts);
+    let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").expect("lowering to the IR failed");
+    let emitted = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false, None).expect("emitting failed");
+    assert_eq!(emitted.db_features.iter().map(String::as_str).collect::<Vec<_>>(), ["sqlite"]);
+}
+
 #[test]
 fn test_db_connect_prefixed() {
     let rust = transpile("use db\nconn = db.connect['sqlite://test.db']\n");
@@ -2129,12 +2155,16 @@ fn an_error_of_another_type_returned_from_a_function_is_converted() {
 /// A frame assigned beside an independent statement keeps its columns'
 /// types for the reads that follow (this once exercised the wave
 /// emitter; statements run in order now, and the schema must survive
-/// that path too)
+/// that path too). `with` can fail — values of another length than the
+/// frame's rows — and a column of a frame that failed is refused before it
+/// is read, so the function hands that failure back: its value is a result
+/// of the float the cell is
 #[test]
 fn a_frame_assigned_beside_an_independent_statement_keeps_its_column_types() {
     let rust = transpile("use frame\nfn go[]\n    rows = with[frame.new[], 'v', [3.5, 4.5]]\n    k = 2\n    return rows.v[0] * k\nlog[go[]]\n");
     assert!(!rust.contains("rayon::join"), "statements run in order\n{}", rust);
-    assert!(rust.contains("-> f64"), "the cell is a float, so the product is\n{}", rust);
+    assert!(rust.contains("-> CrowResult<f64>"), "the cell is a float, so the product is\n{}", rust);
+    assert!(rust.contains("if !_c.ok { return CrowResult { ok: false, value: 0.0_f64"), "a frame that failed is handed back\n{}", rust);
 }
 
 #[test]

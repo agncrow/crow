@@ -785,6 +785,18 @@ impl Emitter {
     fn field(&mut self, base: &Expr, field: &str) -> String {
         let obj = self.expr(base);
         let oty = self.tt(base);
+        // a value that failed has no fields: where the lowering could not
+        // refuse it first (a fact's declared value), the read refuses it,
+        // with the reason the interpreter gives (it had read the failed
+        // value's placeholder)
+        let obj = if matches!(oty, CrowType::Result(_)) {
+            format!(
+                "({{ let _rf = ({}).clone(); if !_rf.ok {{ crow_stop({}, format!(\"cannot read '{}' of an error value — {{}}\", _rf.reason)) }} _rf }})",
+                obj, self.current_line, field
+            )
+        } else {
+            obj
+        };
         // a recursive link: unwrap the box
         if let CrowType::OptBoxStruct(sname) = &oty {
             let is_copy = self.structs.get(sname).and_then(|s| s.fields.iter().find(|(f, _)| f == field).map(|(_, t)| matches!(t, Ty::Int | Ty::Float | Ty::Bool))).unwrap_or(false);
@@ -864,9 +876,9 @@ impl Emitter {
         if which == Meta::Valid || (name == "ok" && matches!(oty, CrowType::FrameCol)) {
             return format!("{}.ok()", obj);
         }
-        if let CrowType::Struct(_) = oty {
-            return format!("{}.{}", obj, Self::rust_field(name));
-        }
+        // a record did not fail, whatever its fields hold (each field's
+        // `.ok` asks it): no record has a field of these names, so `p.ok`
+        // had not built
         // a dynamic value that is JSON null is an error value, reason 'null'
         if matches!(oty, CrowType::Json) {
             return match name {

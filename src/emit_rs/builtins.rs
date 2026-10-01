@@ -48,10 +48,15 @@ impl Emitter {
     }
 
     fn note_db_backend(&mut self, url: &str) {
-        if url.contains("clickhouse://") {
+        // a URL the source does not spell — read from the environment, a
+        // file, a parameter — could name any backend, so the program is
+        // built with each (it had been built with sqlite alone, and
+        // `connect[env['DATABASE_URL']]` was refused at run time)
+        let spelled = ["sqlite://", "postgres://", "postgresql://", "clickhouse://"].iter().any(|s| url.contains(s));
+        if url.contains("clickhouse://") || !spelled {
             self.db_features.insert("clickhouse".to_string());
         }
-        if url.contains("postgres://") || url.contains("postgresql://") {
+        if url.contains("postgres://") || url.contains("postgresql://") || !spelled {
             self.db_features.insert("postgres".to_string());
         }
     }
@@ -641,11 +646,11 @@ impl Emitter {
                 };
                 format!("{{ {}CrowResponse::stream(\"{}\", move |put| {{ {} }}) }}", captures, fname, run)
             }
-            "connect" if db && !web => {
-                self.note_db_backend(&a[0]);
-                self.db_connect(args, a)
-            }
-            "connect" if db && web && matches!(Self::lit_str(&args[0]), Some(u) if u.contains("://") && !u.starts_with("ws")) => {
+            // a connection is the database's alone, whatever else the
+            // program uses: a web program's URL built at run time
+            // (`connect[env['DATABASE_URL']]`) had compiled to a call to
+            // nothing, from when web's socket client was `connect` too
+            "connect" if db => {
                 self.note_db_backend(&a[0]);
                 self.db_connect(args, a)
             }

@@ -2924,6 +2924,12 @@ where
                     let sign_path = sign_path.clone();
                     let download_path = download_path.clone();
                     let upload_path = upload_path.clone();
+                    // a page's events are small — a click, a field's text;
+                    // its files come by their own request, under the
+                    // uploads limit — so a message is at most 4 MB (axum's
+                    // own bound was 64 MB), and a bigger one closes the
+                    // socket, which the page opens again
+                    let ws = ws.max_message_size(4 << 20).max_frame_size(4 << 20);
                     ws.on_upgrade(move |mut socket| async move {
                         use axum::extract::ws::Message;
                         // The page's own session when it brings a live token.

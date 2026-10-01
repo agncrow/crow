@@ -676,6 +676,9 @@ struct Lowerer<'a> {
     scopes: Vec<HashSet<String>>,
     /// Statements hoisted in front of the one being lowered (propagation).
     pre: Vec<Stmt>,
+    /// Lowering a fact's declared value, which nothing can stand in front
+    /// of: the facts are computed before the top level's statements run.
+    in_fact_default: bool,
     temp: usize,
     at: Where,
     in_ui: bool,
@@ -729,6 +732,7 @@ impl<'a> Lowerer<'a> {
             temp: 0,
             at: Where::Top,
             in_ui,
+            in_fact_default: false,
             calls: BTreeMap::new(),
             direct_effects: BTreeMap::new(),
             current_fn: String::new(),
@@ -1089,7 +1093,10 @@ impl<'a> Lowerer<'a> {
                     if self.ctx.derives.contains(name) {
                         self.refuse(format!("'{}' is derived — it follows what it reads; change those facts instead of assigning it", name));
                     }
-                    let default = self.lower_expr(value)?;
+                    self.in_fact_default = true;
+                    let default = self.lower_expr(value);
+                    self.in_fact_default = false;
+                    let default = default?;
                     self.check_assign(name, &self.checked(&default));
                     self.flush_pre_into(&mut part.main);
                     let ty = self.ctx.vars.get(name).map(ty_of).unwrap_or_else(|| default.ty());
@@ -2330,6 +2337,25 @@ impl<'a> Lowerer<'a> {
                             }
                         }
                         let base = if member { self.muted(|l| l.lower_expr(object))? } else { self.lower_expr(object)? };
+                        // a frame, a record, a map or a parsed value that can
+                        // fail is read from its payload, refused first when
+                        // it failed —
+                        // a function hands the error back, a handler stops,
+                        // the top level halts — as a decision on it is.
+                        // (Compiled, the read had found the failed value's
+                        // placeholder: `frame has no property or column
+                        // 'price'` for a load that found no file, and JSON's
+                        // `null` for a parse that failed, where the
+                        // interpreter went on with the load's or the parse's
+                        // error.)
+                        // (a fact's declared value has no statement to stand
+                        // in front of: the read itself refuses the value, in
+                        // both backends, with the same reason)
+                        let base = if !member && !self.in_fact_default && base.ty().is_result() && matches!(base.ty().payload(), Ty::Frame(_) | Ty::Record(_) | Ty::Map(_) | Ty::Json) {
+                            self.decided(base, Decision::Read(field.clone()))
+                        } else {
+                            base
+                        };
                         if !member {
                             self.check_field(&read(&base), field);
                         }
