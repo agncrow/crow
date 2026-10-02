@@ -19,7 +19,11 @@
 --- the session it writes. A click without the arguments its handler
 --- takes stops, as the handler stopping would: the interpreter failed the
 --- test at the click, and the compiled page dropped the event without a
---- word. CI runs it in the interpreter and compiled.
+--- word. A click handed a value that can fail hands on what it holds, as
+--- a call does, as finch's tests jump the play-head to a moment
+--- `parse_time` made: the compiled handler's parameter had been made a
+--- result, the click's number never fit it, and the head never moved. CI
+--- runs it in the interpreter and compiled.
 use web, ui, frame
 struct Order [symbol, qty]
 struct Tag [order, note]
@@ -30,6 +34,7 @@ sym = 'AB'
 said = ''
 given_qty = 0
 given_symbols = ['']
+play_head = 0.0
 
 fn place[]
     orders = push[orders, Order[sym, 100]]
@@ -97,6 +102,10 @@ fn place_given[first, more]
     given_qty = first.qty
     given_symbols = concat[[first.symbol], more]
 
+--- the play-head to `t`
+fn jump_to[t]
+    play_head = t
+
 --- writes state, and writes it only through that
 fn note_it[s]
     said = s
@@ -159,3 +168,11 @@ test a_click_without_its_arguments_stops[]
     assert[not r.ok, 'the click ran']
     assert[contains[r.reason, 'note_it[] expects 1 arguments, got 0'], r.reason]
     assert[said eq '', 'said `said`']
+
+test a_click_hands_on_what_a_value_that_can_fail_holds[]
+    a = app[shown]
+    click[a, jump_to[5.0]]
+    assert[play_head eq 5.0, 'head `play_head`']
+    sig = parse_time['2026-05-26 07:05:00']
+    click[a, jump_to[sig - 120.0]]
+    assert[play_head eq 1779778980.0, 'head `play_head`']

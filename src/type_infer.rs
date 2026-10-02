@@ -604,8 +604,13 @@ impl TypeContext {
                 continue;
             }
             for (i, t) in types.iter().enumerate() {
+                // a value that can fail reaches the handler as what it holds,
+                // as a call's argument does (`clock.jump[sig - 120.0]` where
+                // `sig` came from parse_time: compiled, the parameter had
+                // been made a result, and the click's number never fit it)
+                let t = reaching(t);
                 if !matches!(t, CrowType::Unknown) {
-                    met.entry((h.clone(), i)).and_modify(|m| *m = m.unify(t)).or_insert_with(|| t.clone());
+                    met.entry((h.clone(), i)).and_modify(|m| *m = m.unify(&t)).or_insert_with(|| t.clone());
                 }
             }
         }
@@ -662,13 +667,7 @@ impl TypeContext {
                 continue;
             }
             for (i, t) in types.iter().enumerate() {
-                // as a call's argument reaches its parameter (note_call)
-                let t = match t {
-                    CrowType::OptBoxStruct(n) => CrowType::Struct(n.clone()),
-                    CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Void) => CrowType::Unknown,
-                    CrowType::Result(inner) => *inner.clone(),
-                    other => other.clone(),
-                };
+                let t = reaching(t);
                 let entry = agreed.entry((f.clone(), i)).or_insert_with(|| Some(t.clone()));
                 let keep = match entry.as_ref() {
                     Some(a) => !matches!(t, CrowType::Unknown) && self.declares(&t) && a.compatible(&t),
@@ -1118,6 +1117,18 @@ pub fn dump_types(ctx: &TypeContext) -> String {
     out
 }
 
+/// The type a call's or a click's argument gives the parameter it reaches
+/// (note_call): what a value that can fail holds, since an error among the
+/// arguments is handed on before the call; a boxed record as the record.
+fn reaching(t: &CrowType) -> CrowType {
+    match t {
+        CrowType::OptBoxStruct(n) => CrowType::Struct(n.clone()),
+        CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Void) => CrowType::Unknown,
+        CrowType::Result(inner) => *inner.clone(),
+        other => other.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1253,6 +1264,19 @@ mod tests {
             ctx.infer_program(&stmts);
             assert_eq!(ctx.functions["begin"].params[0].1, CrowType::Float, "{} then {}", first, second);
         }
+    }
+
+    /// A click handed a value that can fail types its handler's parameter as
+    /// what the value holds, as a call does: finch's play-head jump, clicked
+    /// with `sig - 120.0` where `sig` came from `parse_time`, had a result
+    /// parameter compiled, and the harness's number never reached it
+    #[test]
+    fn a_click_handed_a_value_that_can_fail_types_what_it_holds() {
+        let src = "use web, ui\nhead = 0.0\nfn jump[t]\n    head = t\nview v[]\n    return p['`head`']\npage['/', v]\ntest t[]\n    a = app[v]\n    click[a, jump[5.0]]\n    sig = parse_time['2026-05-26 07:05:00']\n    click[a, jump[sig - 120.0]]\n";
+        let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        assert_eq!(ctx.functions["jump"].params[0].1, CrowType::Float);
     }
 
     /// A frame function over a value not typed yet is not guessed to be
