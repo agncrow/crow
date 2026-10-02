@@ -1,0 +1,59 @@
+--- A comparison of a frame's column, or of a list, with one value is a
+--- mask: each cell compared as two values compare, by one function in both
+--- modes. Numbers by value, exactly — an int as its float, NaN equal to
+--- nothing and unordered, so only `ne` holds for it; text by its
+--- characters, ordered by character code as `sort` orders it; bools equal
+--- or not; a value of another kind unequal; a missing cell holds nothing,
+--- `ne` included. The value may be written first. A filter whose predicate
+--- compares its frame's own columns is computed in one pass and keeps the
+--- rows the mask keeps. A cell whose kind has no order with the value,
+--- known only as the program runs (a file loaded), stops the program.
+--- (Compiled, a missing or NaN cell had been false for `ne`, `eq` had been
+--- nearness, text had been parsed as numbers and a column of bools had
+--- compared as nothing; the interpreter had stopped where compiled text was
+--- ordered, and counted a missing cell as `ne`; a list of text, a value
+--- written first and `eq` of a number with text had not built.)
+use frame, math
+
+a = with[with[frame.new[], 'symbol', ['A', 'B', 'C', 'D']], 'n', [1, 2, 3, 4]]
+a = with[a, 'x', [1.0, nan, 0.1 + 0.2, 2.0]]
+a = with[a, 'name', ['ada', 'Bob', 'cy', 'ada']]
+a = with[a, 'b', [true, false, true, false]]
+r = with[with[frame.new[], 'symbol', ['C', 'A', 'D']], 'm', [2.0, 1.0, 5.0]]
+r = with[r, 't', ['2', 'a', 'b']]
+df = join[a, r, 'symbol', 'left']
+log[df.n gt 2]
+log[df.n eq 2.0]
+log[df.x ne 2.0]
+log[df.x eq 0.3]
+log[df.x eq 0.1 + 0.2]
+log[df.x gte 1.0]
+log[df.m ne 2.0]
+log[df.m lt 3]
+log[df.name eq 'ada']
+log[df.name gt 'b']
+log[df.name lt 'a']
+log[df.t ne 'a']
+log[df.b eq true]
+log[df.b ne false]
+log[df.n eq 'x']
+log[df.name ne 2]
+log[3 lt df.n]
+log['ada' eq df.name]
+log[['b', 'a', 'c'] gte 'b']
+log[[true, false] eq true]
+log['b' gt 'a']
+log['a' eq 1]
+log[len[filter[df, df.m ne 2.0]]]
+log[len[filter[df, df.x ne 2.0]]]
+log[filter[df, df.n gt 1 and df.name ne 'cy'].symbol]
+log[filter[df, not (df.m lt 3.0) or df.name eq 'Bob'].symbol]
+log[filter[df, df.m.ok and 1.5 lt df.m].symbol]
+k = 2
+log[filter[df, df.n gte k and df.t.ok].symbol]
+write['parity149.csv', 'name,score\nada,10\nbob,x\n']
+f = frame.load['parity149.csv']
+rm['parity149.csv']
+log[filter[f, f.name gt 'b'].name]
+log[filter[f, f.score gt 5].name]
+log['not reached']

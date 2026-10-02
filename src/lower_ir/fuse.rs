@@ -1,24 +1,43 @@
-//! Element-wise chains of tensors fused into one call (second-half-design
-//! §3; crow_runtime::fused). A tree of `+`, `-`, `.*`, `./`, `.^`, `*` and
-//! `/` between a tensor and a number, and negation, whose value is a tensor,
-//! with two operations or more, and whose operands only read — a local, a
-//! fact, a derivation, a number written, a record's field of one — is one
-//! call of the runtime's kernel, which reads each element once and writes
-//! one tensor. Both backends call the same function, so the modes agree by
-//! construction; the kernel is tested against the operators themselves.
-//! An operand that could act or stop (a call, an index) keeps the chain to
+//! Chains computed in one pass (second-half-design §3), each one call of
+//! a runtime function both backends call, so the modes agree by
+//! construction, and each tested against the operators it replaces.
+//!
+//! - An element-wise chain of tensors (crow_runtime::fused): a tree of
+//!   `+`, `-`, `.*`, `./`, `.^`, `*` and `/` between a tensor and a number,
+//!   and negation, whose value is a tensor, with two operations or more,
+//!   and whose operands only read — a local, a fact, a derivation, a number
+//!   written, a record's field of one. The kernel reads each element once
+//!   and writes one tensor.
+//! - A filter's predicate (crow_runtime::mask::filter_where): `filter[f, p]`
+//!   whose `p` compares `f`'s own columns with values that only read —
+//!   `f.age gt 40`, `f.name ne 'bob'`, `40 lt f.age` — asks a column's
+//!   `.ok`, and combines those with `and`, `or` and `not`. The kernel
+//!   computes the predicate row block by row block, with no column read
+//!   into a list and no mask per comparison, deciding each cell with the
+//!   function every mask uses (crow_runtime::mask::holds).
+//!
+//! An operand that could act or stop (a call, an index) keeps its chain to
 //! the operators, which evaluate it where the program does.
 //! `CROW_NO_FUSE=1` leaves every chain to the operators: a fused build and
 //! an unfused one, compared.
 
 use crate::ir::*;
+use crate::table::Row;
+
+/// The rows the fused calls name.
+#[derive(Clone, Copy)]
+struct Rows {
+    tensor: &'static Row,
+    filter: &'static Row,
+}
 
 /// Every chain of the program, fused.
-pub(super) fn tensors(program: &mut Program) {
+pub(super) fn chains(program: &mut Program) {
     if std::env::var("CROW_NO_FUSE").is_ok_and(|v| !v.is_empty() && v != "0") {
         return;
     }
-    let Some(row) = crate::table::row("tensor.fused") else { return };
+    let (Some(tensor), Some(filter)) = (crate::table::row("tensor.fused"), crate::table::row("frame.filter_where")) else { return };
+    let row = Rows { tensor, filter };
     for part in &mut program.parts {
         for f in &mut part.fns {
             block(&mut f.body, row);
@@ -36,13 +55,13 @@ pub(super) fn tensors(program: &mut Program) {
     }
 }
 
-fn block(b: &mut Block, row: &'static crate::table::Row) {
+fn block(b: &mut Block, row: Rows) {
     for s in b.iter_mut() {
         stmt(s, row);
     }
 }
 
-fn stmt(s: &mut Stmt, row: &'static crate::table::Row) {
+fn stmt(s: &mut Stmt, row: Rows) {
     match s {
         Stmt::Let { expr: e, .. } | Stmt::Set { expr: e, .. } | Stmt::Store { expr: e, .. } | Stmt::Do(e) | Stmt::Return(Some(e)) => expr(e, row),
         Stmt::SetPath { path, expr: e, .. } => {
@@ -72,7 +91,7 @@ fn stmt(s: &mut Stmt, row: &'static crate::table::Row) {
     }
 }
 
-fn expr(e: &mut Expr, row: &'static crate::table::Row) {
+fn expr(e: &mut Expr, row: Rows) {
     // the widest chain rooted here, or the chains inside it
     let mut program = Vec::new();
     let mut operands = Vec::new();
@@ -82,7 +101,12 @@ fn expr(e: &mut Expr, row: &'static crate::table::Row) {
         let ty = e.ty();
         let mut args = vec![Expr::Const(Const::Str(program.join(" ")), Ty::Str)];
         args.extend(operands);
-        *e = Expr::Call { target: Target::Row(row), args, ty, propagates: false };
+        *e = Expr::Call { target: Target::Row(row.tensor), args, ty, propagates: false };
+        return;
+    }
+    if let Some(fused) = filter(e, row.filter) {
+        // (its frame and values only read: no chain is inside them)
+        *e = fused;
         return;
     }
     match e {
@@ -196,5 +220,117 @@ fn only_reads(e: &Expr) -> bool {
         Expr::Field { base, .. } => matches!(base.ty(), Ty::Record(_)) && only_reads(base),
         Expr::Convert { how: Convert::IntToFloat, expr: x, .. } => only_reads(x),
         _ => false,
+    }
+}
+
+// ── filters ─────────────────────────────────────────────────────────
+
+/// The fused filter a call is, when it is one: `filter[f, p]` whose
+/// predicate the kernel computes.
+fn filter(e: &Expr, row: &'static Row) -> Option<Expr> {
+    let Expr::Call { target: Target::Row(r), args, ty, propagates } = e else { return None };
+    if r.id != "frame.filter" || args.len() != 2 {
+        return None;
+    }
+    let frame = read_name(&args[0])?;
+    let mut fused = Predicate { frame, program: Vec::new(), columns: Vec::new(), values: Vec::new() };
+    fused.node(&args[1])?;
+    let columns = fused.columns.into_iter().map(|c| Expr::Const(Const::Str(c), Ty::Str)).collect();
+    let mut call = vec![
+        args[0].clone(),
+        Expr::Const(Const::Str(fused.program.join(" ")), Ty::Str),
+        Expr::ListLit(columns, Ty::List(Box::new(Ty::Str))),
+    ];
+    call.extend(fused.values);
+    Some(Expr::Call { target: Target::Row(row), args: call, ty: ty.clone(), propagates: *propagates })
+}
+
+/// The variable an expression reads, through the lowering's marks of a
+/// payload: `df`, `unwrap df`.
+fn read_name(e: &Expr) -> Option<&str> {
+    match e {
+        Expr::Local(n, _) | Expr::Move(n, _) | Expr::Load(n, _) | Expr::Derived(n, _) => Some(n),
+        Expr::Convert { how: Convert::Unwrap | Convert::Known, expr, .. } => read_name(expr),
+        _ => None,
+    }
+}
+
+/// A predicate being written: in postfix, over the filtered frame's
+/// columns (each once) and the values its comparisons compare them with.
+struct Predicate<'a> {
+    frame: &'a str,
+    program: Vec<String>,
+    columns: Vec<String>,
+    values: Vec<Expr>,
+}
+
+impl Predicate<'_> {
+    /// A node of the predicate, written: none when the kernel does not
+    /// compute it.
+    fn node(&mut self, e: &Expr) -> Option<()> {
+        match e {
+            Expr::Binary { op, l, r, .. } if op == "and" || op == "or" => {
+                self.node(l)?;
+                self.node(r)?;
+                self.program.push(op.clone());
+            }
+            Expr::Unary { op, expr: x, .. } if op == "not" => {
+                self.node(x)?;
+                self.program.push("not".to_string());
+            }
+            Expr::Binary { op, l, r, .. } => {
+                let cmp = crow_runtime::mask::Cmp::named(op)?;
+                // the column on either side: a value written first compares
+                // with the operator turned round (`40 lt f.age` is `f.age gt 40`)
+                let (col, value, cmp) = match (self.column(l), self.column(r)) {
+                    (Some(c), None) => (c, r, cmp),
+                    (None, Some(c)) => (c, l, cmp.flipped()),
+                    _ => return None,
+                };
+                if !matches!(value.ty(), Ty::Int | Ty::Float | Ty::Str | Ty::Markup | Ty::Bool) || !value_reads(value) {
+                    return None;
+                }
+                let c = self.column_at(col);
+                self.values.push((**value).clone());
+                self.program.extend([format!("c{}", c), format!("v{}", self.values.len() - 1), cmp.word().to_string()]);
+            }
+            Expr::Meta { base, which: Meta::Valid } => {
+                let c = self.column(base)?;
+                let c = self.column_at(c);
+                self.program.extend([format!("c{}", c), "ok".to_string()]);
+            }
+            _ => return None,
+        }
+        Some(())
+    }
+
+    /// The column of the filtered frame an expression reads.
+    fn column(&self, e: &Expr) -> Option<String> {
+        match e {
+            Expr::Field { base, name, ty: Ty::Column(_) } if read_name(base) == Some(self.frame) => Some(name.clone()),
+            Expr::Convert { how: Convert::Unwrap | Convert::Known, expr, .. } => self.column(expr),
+            _ => None,
+        }
+    }
+
+    fn column_at(&mut self, name: String) -> usize {
+        match self.columns.iter().position(|c| *c == name) {
+            Some(i) => i,
+            None => {
+                self.columns.push(name);
+                self.columns.len() - 1
+            }
+        }
+    }
+}
+
+/// Whether a value a predicate compares with only reads: what `only_reads`
+/// allows, text and bools written, and the payload of one a propagation
+/// already covered.
+fn value_reads(e: &Expr) -> bool {
+    match e {
+        Expr::Const(..) => true,
+        Expr::Convert { how: Convert::Unwrap | Convert::Known, expr, .. } => value_reads(expr),
+        _ => only_reads(e),
     }
 }

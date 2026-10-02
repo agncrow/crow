@@ -93,8 +93,8 @@ fn lower_checked_as(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: 
     decide_loops(&mut program);
     decide_answers(&mut program);
     written_names(&mut program);
-    // element-wise chains of tensors computed in one pass
-    fuse::tensors(&mut program);
+    // chains computed in one pass: element-wise tensors, a filter's predicate
+    fuse::chains(&mut program);
     // each connection opens with the tables the program declares on it
     schema::attach(&mut program);
     // the parts agree before a backend reads them (ir_verify): a lowering
@@ -2317,6 +2317,7 @@ impl<'a> Lowerer<'a> {
                 let mut l = self.lower_expr(left)?;
                 let mut r = self.lower_expr(right)?;
                 self.check_binop(op, self.checked(&l), self.checked(&r));
+                self.check_order(op, &l.ty(), &r.ty());
                 // a frame's column in arithmetic is its numbers, as it is
                 // handed to a function that takes them: converted the same
                 // way in both modes, a missing cell the reason it has none
@@ -4043,6 +4044,46 @@ mod tests {
         assert!(!product.contains("tensor.fused"), "the matrix product: {}", product);
         let inner = ir_of("m = [[1.0, 2.0], [3.0, 4.0]]\ny = m * (m .* 2.0 - 1.0)\nlog[y]\n");
         assert!(inner.contains("tensor.fused(\"#0 #1 elemmul #2 sub\""), "a chain inside a product: {}", inner);
+    }
+
+    /// A filter whose predicate compares the filtered frame's own columns
+    /// with values that only read, asks a column's `.ok`, and combines them
+    /// with `and`, `or` and `not` is one call of the fused kernel
+    /// (crow_runtime::mask::filter_where): a column read twice is one, a
+    /// value written first turns the operator round. A value that calls
+    /// something, another frame's column, and a mask held in a variable
+    /// are the operators'
+    #[test]
+    fn a_filters_predicate_is_one_call() {
+        let df = "use frame\ndf = with[with[frame.new[], 'name', ['ada', 'bob']], 'age', [30, 50]]\n";
+        let ir = ir_of(&format!("{}k = 40\nx = filter[df, df.age gt 40 and df.name ne 'bob' or not (k lt df.age) and df.age.ok]\nlog[len[x]]\n", df));
+        assert!(ir.contains("frame.filter_where(unwrap df, \"c0 v0 gt c1 v1 ne and c0 v2 gt not c0 ok and or\", [\"age\", \"name\"], 40, \"bob\", k)"), "{}", ir);
+        let call = ir_of(&format!("{}fn limit[]\n    40\nx = filter[df, df.age gt limit[]]\nlog[len[x]]\n", df));
+        assert!(!call.contains("filter_where"), "a value that calls: {}", call);
+        let other = ir_of(&format!("{}other = df\nx = filter[df, other.age gt 40]\nlog[len[x]]\n", df));
+        assert!(!other.contains("filter_where"), "another frame's column: {}", other);
+        let held = ir_of(&format!("{}m = df.age gt 40\nx = filter[df, m]\nlog[len[x]]\n", df));
+        assert!(!held.contains("filter_where"), "a mask in a variable: {}", held);
+    }
+
+    /// An order asked of kinds known to have none between them is refused
+    /// before the program runs, in the words the runtime stops with
+    /// (crow_runtime::mask::unordered): bools, a number with text, a
+    /// column of text with a number, two lists; a parsed value is read as
+    /// one first. Text with text has an order; arithmetic on a list of text
+    /// is refused as arithmetic on text is
+    #[test]
+    fn an_order_between_kinds_with_none_is_refused() {
+        assert!(refusal_of("log[true gt false]\n").contains("gt compares numbers with numbers or text with text, not a bool with a bool"));
+        assert!(refusal_of("log['a' lte 1]\n").contains("lte compares numbers with numbers or text with text, not text with a number"));
+        let df = "use frame\ndf = with[frame.new[], 'name', ['ada', 'bob']]\n";
+        assert!(refusal_of(&format!("{}log[df.name gt 2]\n", df)).contains("gt compares numbers with numbers or text with text, not text with a number"));
+        assert!(refusal_of(&format!("{}log[2 lt df.name]\n", df)).contains("lt compares numbers with numbers or text with text, not a number with text"));
+        assert!(refusal_of("log[['a'] gt ['b']]\n").contains("gt compares numbers with numbers or text with text, not a list with a list"));
+        assert!(refusal_of("j = json['{\"n\": 1}']\nlog[j.n gt 0]\n").contains("a value whose type the program does not know is read as one first"));
+        assert!(refusal_of("xs = ['1', '2']\nlog[xs + 1]\n").contains("cannot use '+' with array[str] and int"));
+        assert!(refusal_of("a = float['1.5']\nxs = [a, a]\nlog[xs eq 1.5]\n").contains("eq of a list of values that can fail is a mask, and a mask decides every row: guard each value with .ok"));
+        assert_eq!(refusal_of(&format!("{}log['b' gt 'a']\nlog[df.name gte 'b']\nlog['a' eq 1]\na = float['1.5']\nlog[[a] eq [a]]\n", df)), "");
     }
 
     /// A status the type settles is decided before the program runs: `.ok`

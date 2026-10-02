@@ -549,12 +549,11 @@ impl<'a> Lowerer<'a> {
             self.refuse("cannot use '+' with strings — interpolate to combine ('`a` `b`'), or collect parts and join[parts, sep] to build".to_string());
             return;
         }
-        // Numeric ops: both must be numeric (including NumArray, Sparse,
-        // FrameCol, and legacy Array(Str))
-        let is_num_like = |t: &CrowType| {
-            matches!(t, CrowType::Int | CrowType::Float | CrowType::NumArray(..) | CrowType::Sparse | CrowType::FrameCol)
-                || matches!(t, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Str))
-        };
+        // Numeric ops: both must be numeric (a tensor, a sparse matrix, a
+        // frame's column as its numbers); a list of text is no numbers (the
+        // compiled program had parsed it, where the interpreter made each
+        // item an error)
+        let is_num_like = |t: &CrowType| matches!(t, CrowType::Int | CrowType::Float | CrowType::NumArray(..) | CrowType::Sparse | CrowType::FrameCol);
         if !is_num_like(&lt) || !is_num_like(&rt) {
             let op_str = match op {
                 BinOp::Add => "+",
@@ -571,6 +570,54 @@ impl<'a> Lowerer<'a> {
                 ""
             };
             self.refuse(format!("cannot use '{}' with {} and {}{}", op_str, lt.crow_name(), rt.crow_name(), hint));
+        }
+    }
+
+    /// An order asked of two values (`gt`, `lt`, `gte`, `lte`): numbers
+    /// with numbers, text with text, or the items of a list or a frame's
+    /// column with one value — a mask. Where both sides' kinds are known
+    /// and have no order between them, the comparison is refused before the
+    /// program runs, in the words the runtime stops with where they show
+    /// only as it runs (crow_runtime::mask::unordered): bools, two lists, a
+    /// column of text with a number. A parsed value is read as one type
+    /// first, as arithmetic on one is. (Compiled, `true gt false` had
+    /// answered and text had been parsed as numbers, where the interpreter
+    /// stopped or answered false; several did not build.)
+    ///
+    /// A list of values that can fail compared with one value, by any of
+    /// the six, is a mask, and a mask decides every row: it is refused as
+    /// a filter refuses it (compiled, it had not built, where the
+    /// interpreter stopped on a failed item).
+    pub(super) fn check_order(&mut self, op: &BinOp, l: &Ty, r: &Ty) {
+        let cmp = match op {
+            BinOp::Eq => crow_runtime::mask::Cmp::Eq,
+            BinOp::Ne => crow_runtime::mask::Cmp::Ne,
+            BinOp::Gt => crow_runtime::mask::Cmp::Gt,
+            BinOp::Lt => crow_runtime::mask::Cmp::Lt,
+            BinOp::Gte => crow_runtime::mask::Cmp::Gte,
+            BinOp::Lte => crow_runtime::mask::Cmp::Lte,
+            _ => return,
+        };
+        let failing = |t: &Ty| matches!(t.payload(), Ty::List(item) if item.is_result());
+        let one = |t: &Ty| matches!(order_side(t), Some(OrderSide::One(_)));
+        if (failing(l) && one(r)) || (one(l) && failing(r)) {
+            self.refuse(format!("{} of a list of values that can fail is a mask, and a mask decides every row: guard each value with .ok (cells of a column that can be missing: compare the column, or fill it first, fill[frame, 'column', value])", cmp.word()));
+            return;
+        }
+        if !cmp.orders() {
+            return;
+        }
+        if matches!(l.payload(), Ty::Json) || matches!(r.payload(), Ty::Json) {
+            self.refuse(format!("{} compares numbers with numbers or text with text — a value whose type the program does not know is read as one first: int[…], float[…] or str[…]", cmp.word()));
+            return;
+        }
+        let (Some(a), Some(b)) = (order_side(l), order_side(r)) else { return };
+        let (x, y) = match (a, b) {
+            (OrderSide::Many(_), OrderSide::Many(_)) => ("a list", "a list"),
+            (OrderSide::One(x) | OrderSide::Many(x), OrderSide::One(y)) | (OrderSide::One(x), OrderSide::Many(y)) => (x, y),
+        };
+        if !(x == y && matches!(x, "a number" | "text")) {
+            self.refuse(crow_runtime::mask::unordered(cmp, x, y));
         }
     }
 
@@ -1583,4 +1630,31 @@ mod tests {
         let result = check_source("use db\nconn = db.connect['sqlite://:memory:']\nseen = 0\nfn count[c]\n    r = query[c, 'SELECT count(*) AS n FROM t']\n    seen = r.n[0]\n    return seen\nlog[count[conn]]\n");
         assert!(result.is_ok(), "{:?}", result);
     }
+}
+
+/// A side of an order, by its type: one value of a kind, or a list's (or a
+/// column's) items of a kind — none where the kind shows only as the
+/// program runs.
+enum OrderSide {
+    One(&'static str),
+    Many(&'static str),
+}
+
+fn order_side(t: &Ty) -> Option<OrderSide> {
+    Some(match t {
+        Ty::Int | Ty::Float => OrderSide::One("a number"),
+        Ty::Str | Ty::Markup => OrderSide::One("text"),
+        Ty::Bool => OrderSide::One("a bool"),
+        Ty::Result(x) => return order_side(x),
+        Ty::Tensor(..) => OrderSide::Many("a number"),
+        Ty::List(item) | Ty::Column(item) => match order_side(item)? {
+            OrderSide::One(k) => OrderSide::Many(k),
+            OrderSide::Many(_) => OrderSide::Many("a list"),
+        },
+        Ty::Map(_) => OrderSide::One("a map"),
+        Ty::Record(_) | Ty::OptRecord(_) => OrderSide::One("a record"),
+        Ty::Frame(_) => OrderSide::One("a frame"),
+        Ty::Node => OrderSide::One("markup"),
+        _ => return None,
+    })
 }

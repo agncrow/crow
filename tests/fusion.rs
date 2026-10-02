@@ -1,12 +1,19 @@
-//! Element-wise chains of tensors computed in one pass answer what the
-//! operators answer (crow_runtime::fused, second-half-design.md §3): each
-//! program here runs fused and with `CROW_NO_FUSE=1`, in both modes, and
-//! prints the same — every number, and a stop's words. (A benchmark's own
-//! timing lines are left out.)
+//! Chains computed in one pass answer what the operators answer
+//! (second-half-design.md §3): an element-wise chain of tensors
+//! (crow_runtime::fused) and a filter's predicate (crow_runtime::mask).
+//! Each program here runs fused and with `CROW_NO_FUSE=1`, in both modes,
+//! and prints the same — every number, every row kept, and a stop's words.
+//! (A benchmark's own timing lines are left out.)
 
 use std::process::Command;
 
-const PROGRAMS: &[&str] = &["tests/parity/148_an_elementwise_chain_in_one_pass.co", "tests/bench/tensors.co", "tests/bench/train.co"];
+const PROGRAMS: &[&str] = &[
+    "tests/parity/148_an_elementwise_chain_in_one_pass.co",
+    "tests/bench/tensors.co",
+    "tests/bench/train.co",
+    "tests/parity/149_a_mask_compares_each_cell_as_two_values_do.co",
+    "tests/parity/65_missing_cells.co",
+];
 
 /// What a run printed, its timings left out.
 fn run(mode: &[&str], file: &str, fused: bool) -> String {

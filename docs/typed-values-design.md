@@ -198,6 +198,14 @@ benchmark.
   program had printed the constant without evaluating it, so `loud[4].ok`
   never called `loud` and `xs[9].ok` never stopped, where the interpreter
   did both (parity 147).
+- **Decisions 2 and 3 decided against (2026-10-01).** The scalar lists
+  and markup as its own variant each touch about 200 places in the
+  interpreter — every place a list is taken apart, every string a view
+  places — and buy memory on long lists, and tidiness. The mask a
+  million-row filter made, which decision 3 was mostly for, is no longer
+  made: a filter's predicate is computed in one pass, with no column read
+  into a list (second-half-design §3). So the design ends here: a list
+  holds its items as values, and a string carries the markup flag.
 - **`Json` (2026-09-30).** The interpreter holds a parsed value as the
   compiled program does, a `serde_json::Value` (`Value::Json`): the rows
   that take JSON borrow it, a field or an item read from it is JSON, and

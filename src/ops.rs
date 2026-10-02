@@ -6,6 +6,7 @@
 
 use crate::ast::{BinOp, UnaryOp};
 use crate::value::*;
+use crow_runtime::mask::Cmp;
 use crow_runtime::stops;
 use crow_runtime::tensor::CrowTensor;
 
@@ -207,33 +208,27 @@ pub fn binop(
         },
         BinOp::Eq => equality_values(left, right, false),
         BinOp::Ne => equality_values(left, right, true),
-        BinOp::Gt => compare_values(l, r, |a, b| a > b),
-        BinOp::Lt => compare_values(l, r, |a, b| a < b),
-        BinOp::Gte => compare_values(l, r, |a, b| a >= b),
-        BinOp::Lte => compare_values(l, r, |a, b| a <= b),
+        BinOp::Gt => compare_values(l, r, Cmp::Gt),
+        BinOp::Lt => compare_values(l, r, Cmp::Lt),
+        BinOp::Gte => compare_values(l, r, Cmp::Gte),
+        BinOp::Lte => compare_values(l, r, Cmp::Lte),
         BinOp::And => logical_values(left, right, |a, b| a && b),
         BinOp::Or => logical_values(left, right, |a, b| a || b),
     }
 }
 
-/// eq/ne. Array vs scalar broadcasts element-wise into a boolean array
-/// (mask semantics, matching gt/lt); everything else is whole-value equality.
+/// eq/ne. A list compared with one value is a mask (`mask`); a tensor
+/// with a number, each element by value; everything else is whole-value
+/// equality.
 pub fn equality_values(
     left: &CrowValue,
     right: &CrowValue,
     negate: bool,
 ) -> Result<CrowValue, String> {
-    let is_scalar = |v: &Value| matches!(v, Value::Int(_) | Value::Float(_) | Value::Str(_) | Value::Bool(_));
-    let broadcast = |items: &[CrowValue], scalar: &CrowValue| -> CrowValue {
-        let results: Vec<CrowValue> = items.iter().map(|item| {
-            let eq = !item.is_error() && values_equal(item, scalar);
-            CrowValue::ok(Value::Bool(if negate { !eq } else { eq }))
-        }).collect();
-        CrowValue::ok(Value::Array(results))
-    };
+    let cmp = if negate { Cmp::Ne } else { Cmp::Eq };
     match (&left.value, &right.value) {
-        (Value::Array(items), r) if is_scalar(r) => Ok(broadcast(items, right)),
-        (l, Value::Array(items)) if is_scalar(l) => Ok(broadcast(items, left)),
+        (Value::Array(items), r) if is_scalar(r) => mask(items, cmp, r),
+        (l, Value::Array(items)) if is_scalar(l) => mask(items, cmp, l),
         // Tensor vs numeric scalar → element-wise mask (like gt/lt)
         (Value::NumArray(t), Value::Int(_) | Value::Float(_))
         | (Value::Int(_) | Value::Float(_), Value::NumArray(t)) => {
@@ -253,6 +248,42 @@ pub fn equality_values(
             Ok(CrowValue::ok(Value::Bool(if negate { !eq } else { eq })))
         }
     }
+}
+
+/// A value a mask compares with: a number, text or a bool.
+fn is_scalar(v: &Value) -> bool {
+    matches!(v, Value::Int(_) | Value::Float(_) | Value::Str(_) | Value::Bool(_) | Value::Dual(..))
+}
+
+/// A value as a comparison reads it (crow_runtime::mask): a number, text
+/// or a bool, or what else it is, named for the reason.
+fn mask_cell(v: &Value) -> crow_runtime::mask::Cell<'_> {
+    use crow_runtime::mask::Cell;
+    match v {
+        Value::Int(n) => Cell::Number(*n as f64),
+        Value::Float(x) | Value::Dual(x, _) => Cell::Number(*x),
+        Value::Str(s) => Cell::Text(s),
+        Value::Bool(b) => Cell::Bool(*b),
+        Value::Array(_) | Value::NumArray(_) => Cell::Other("a list"),
+        Value::Map(_) => Cell::Other("a map"),
+        Value::StructInstance(_) => Cell::Other("a record"),
+        Value::Json(_) => Cell::Other("a JSON value"),
+        Value::Frame(_) => Cell::Other("a frame"),
+        _ => Cell::Other("a value"),
+    }
+}
+
+/// A list compared with one value — a frame's column as its cells — is a
+/// mask: each item compared as the compiled program compares its column's
+/// cells, by the one function both call (crow_runtime::mask::holds), a
+/// missing cell false for every operator, `ne` included.
+fn mask(items: &[CrowValue], cmp: Cmp, value: &Value) -> Result<CrowValue, String> {
+    let value = mask_cell(value);
+    let out = items
+        .iter()
+        .map(|item| crow_runtime::mask::holds(cmp, mask_cell(&item.value), item.is_ok(), value).map(|b| CrowValue::ok(Value::Bool(b))))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(CrowValue::ok(Value::Array(out)))
 }
 
 /// and/or. Boolean arrays combine element-wise (mask semantics);
@@ -296,88 +327,31 @@ pub fn logical_values(
     }
 }
 
-pub fn compare_values(
-    l: &Value,
-    r: &Value,
-    cmp: impl Fn(f64, f64) -> bool,
-) -> Result<CrowValue, String> {
+pub fn compare_values(l: &Value, r: &Value, cmp: Cmp) -> Result<CrowValue, String> {
     match (l, r) {
-        (Value::Int(a), Value::Int(b)) => {
-            Ok(CrowValue::ok(Value::Bool(cmp(*a as f64, *b as f64))))
-        }
-        (Value::Float(a), Value::Float(b)) => {
-            Ok(CrowValue::ok(Value::Bool(cmp(*a, *b))))
-        }
-        (Value::Int(a), Value::Float(b)) => {
-            Ok(CrowValue::ok(Value::Bool(cmp(*a as f64, *b))))
-        }
-        (Value::Float(a), Value::Int(b)) => {
-            Ok(CrowValue::ok(Value::Bool(cmp(*a, *b as f64))))
-        }
-        (Value::Dual(a, _), Value::Dual(b, _)) => {
-            Ok(CrowValue::ok(Value::Bool(cmp(*a, *b))))
-        }
-        (Value::Dual(a, _), Value::Float(b)) => {
-            Ok(CrowValue::ok(Value::Bool(cmp(*a, *b))))
-        }
-        (Value::Float(a), Value::Dual(b, _)) => {
-            Ok(CrowValue::ok(Value::Bool(cmp(*a, *b))))
-        }
-        (Value::Dual(a, _), Value::Int(b)) => {
-            Ok(CrowValue::ok(Value::Bool(cmp(*a, *b as f64))))
-        }
-        (Value::Int(a), Value::Dual(b, _)) => {
-            Ok(CrowValue::ok(Value::Bool(cmp(*a as f64, *b))))
-        }
         // Vectorized: tensor compared to scalar → boolean mask array
-        (Value::NumArray(t), Value::Int(b)) => {
-            let s = *b as f64;
-            let results: Vec<CrowValue> = t.to_vec().iter()
-                .map(|&v| CrowValue::ok(Value::Bool(cmp(v, s))))
-                .collect();
-            Ok(CrowValue::ok(Value::Array(results)))
-        }
-        (Value::NumArray(t), Value::Float(b)) => {
-            let s = *b;
-            let results: Vec<CrowValue> = t.to_vec().iter()
-                .map(|&v| CrowValue::ok(Value::Bool(cmp(v, s))))
-                .collect();
-            Ok(CrowValue::ok(Value::Array(results)))
-        }
-        (Value::Int(a), Value::NumArray(t)) => {
-            let s = *a as f64;
-            let results: Vec<CrowValue> = t.to_vec().iter()
-                .map(|&v| CrowValue::ok(Value::Bool(cmp(s, v))))
-                .collect();
-            Ok(CrowValue::ok(Value::Array(results)))
-        }
-        (Value::Float(a), Value::NumArray(t)) => {
-            let s = *a;
-            let results: Vec<CrowValue> = t.to_vec().iter()
-                .map(|&v| CrowValue::ok(Value::Bool(cmp(s, v))))
-                .collect();
-            Ok(CrowValue::ok(Value::Array(results)))
-        }
-        // Vectorized: Array compared to scalar → boolean array
-        (Value::Array(items), scalar @ (Value::Int(_) | Value::Float(_))) => {
-            let results: Vec<CrowValue> = items.iter().map(|item| {
-                if item.is_error() {
-                    CrowValue::ok(Value::Bool(false))
-                } else {
-                    let val = match (&item.value, scalar) {
-                        (Value::Int(a), Value::Int(b)) => cmp(*a as f64, *b as f64),
-                        (Value::Float(a), Value::Float(b)) => cmp(*a, *b),
-                        (Value::Int(a), Value::Float(b)) => cmp(*a as f64, *b),
-                        (Value::Float(a), Value::Int(b)) => cmp(*a, *b as f64),
-                        _ => false,
-                    };
-                    CrowValue::ok(Value::Bool(val))
-                }
-            }).collect();
-            Ok(CrowValue::ok(Value::Array(results)))
-        }
+        (Value::NumArray(t), s @ (Value::Int(_) | Value::Float(_))) => tensor_mask(t, cmp, s),
+        (s @ (Value::Int(_) | Value::Float(_)), Value::NumArray(t)) => tensor_mask(t, cmp.flipped(), s),
+        // a list (a frame's column) compared with one value: a mask
+        (Value::Array(items), v) if is_scalar(v) => mask(items, cmp, v),
+        (v, Value::Array(items)) if is_scalar(v) => mask(items, cmp.flipped(), v),
+        // two values: numbers by value, text by character code; an order
+        // between kinds with none is the reason, as the lowering refuses it
+        // where it knows both
+        (a, b) if is_scalar(a) && is_scalar(b) => crow_runtime::mask::holds(cmp, mask_cell(a), true, mask_cell(b)).map(|b| CrowValue::ok(Value::Bool(b))),
         _ => Err("cannot compare these types".to_string()),
     }
+}
+
+/// A tensor compared with a number: each element by value.
+fn tensor_mask(t: &CrowTensor, cmp: Cmp, s: &Value) -> Result<CrowValue, String> {
+    let s = mask_cell(s);
+    let out = t
+        .to_vec()
+        .iter()
+        .map(|&v| crow_runtime::mask::holds(cmp, crow_runtime::mask::Cell::Number(v), true, s).map(|b| CrowValue::ok(Value::Bool(b))))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(CrowValue::ok(Value::Array(out)))
 }
 
 /// Apply a scalar arithmetic operation element-wise to an Array of CrowValues.

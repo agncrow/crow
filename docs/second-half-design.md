@@ -96,7 +96,9 @@ unknown columns.
    pass by the Rust backend, with `derive` as the lazy boundary.
    *Recommendation:* after the first two above, and after the interpreter's
    typed columns (`typed-values-design.md`), because a fusion is only
-   correct when every column's type is known.
+   correct when every column's type is known. *Not built (2026-10-01):*
+   the code there is chains almost no frame operations; what is fused is
+   a filter's predicate (the end of §3).
 
 **First step.** Schemas through `select`, `filter` and `sort`, with a
 parity program whose cells are typed without a database. *Built
@@ -277,8 +279,43 @@ across the cores; `tests/fusion.rs` runs programs fused and with
 chain (`x * 2.0 + x .* x - 1.0`, ten million elements) takes 6 ms in each
 mode where the operators took 34–38 ms.
 
+*Fusion of a filter's predicate (2026-10-01).* The relational
+sublanguage of §2's item 4 — `filter`, `select`, `group`, `join` and
+`sort` fused into one pass, with `derive` as the lazy boundary — is not
+built. A survey of the Crow code there is (finch, the examples, the
+packages, the book) found 58 filters and two chains of frame operations
+(`sort[filter[…]]`, `head[sort[…]]`), so a pipeline would fuse almost
+nothing, and a lazy `derive` would move where a derivation's errors show.
+What the survey found instead is the predicate: `filter[df, df.age gt 50
+and df.name ne 'bob']` read each column into a list — a value per cell in
+the interpreter — and made a mask per comparison and per `and`. A filter
+whose predicate compares its frame's own columns with values that only
+read, asks a column's `.ok`, and combines those with `and`, `or` and
+`not` is now one call of `crow_runtime::mask::filter_where` (the row
+`frame.filter_where`, in the pass that fuses tensor chains), which finds
+each column and checks each comparison's kinds in the operators' order,
+then decides the rows block by block and gathers them once. Settling it
+found the masks themselves disagreeing between the modes: a missing cell
+and NaN under `ne`, `eq` as nearness within 2⁻⁵², text parsed as numbers
+compiled, an order of text answered compiled and stopped interpreted, a
+column of bools comparing as nothing, and six forms that did not build
+compiled (a list of text or of bools against a value, a value written
+before its column, `eq` of a number with text, a grown list of ints).
+A mask's cell is now decided by one function both modes call
+(`crow_runtime::mask::holds`), and an order between kinds with none is
+refused before the program runs where both kinds are known (spec,
+Comparison and Boolean Masks; parity 149). The kernel is tested against
+the unfused masks on 2,000 generated frames and predicates (missing
+cells, NaN, ints, text, bools and moments, and a column the frame
+lacks), and `tests/fusion.rs` runs parity 149 and 65 fused and unfused in
+both modes. On a million rows a filter of three comparisons takes 10 ms
+interpreted and 12 ms compiled, where the unfused masks took 83 ms and
+35 ms.
+
 ## 4. Order
 
 Typed frames' first step comes first, because it unblocks the lowering's
 checks. Then capabilities' first step, a report that needs no syntax.
-Then shapes. Fusion waits for the interpreter's typed values.
+Then shapes. Fusion waits for the interpreter's typed values. *Fusion
+built (2026-10-01):* element-wise tensor chains and a filter's predicate
+(§3).

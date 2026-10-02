@@ -383,15 +383,19 @@ impl Emitter {
             // decides before the right's, as in the interpreter
             let ctr = self.binop_counter;
             self.binop_counter += 1;
+            let l_val = if l_res { format!("_binl_{}.value", ctr) } else { format!("(*_binl_{})", ctr) };
+            let r_val = if r_res { format!("_binr_{}.value", ctr) } else { format!("(*_binr_{})", ctr) };
+            let mask = self.mask(op, &l_val, &lti, &r_val, &rti);
             let result_type = match op {
+                _ if mask.is_some() => CrowType::Array(Box::new(CrowType::Bool)),
                 "eq" | "ne" | "gt" | "lt" | "gte" | "lte" | "and" | "or" => CrowType::Bool,
                 "mod" => CrowType::Int,
                 _ => lti.unify(&rti),
             };
             let default_val = result_type.default_rust_value();
-            let l_val = if l_res { format!("_binl_{}.value", ctr) } else { format!("(*_binl_{})", ctr) };
-            let r_val = if r_res { format!("_binr_{}.value", ctr) } else { format!("(*_binr_{})", ctr) };
             let inner_expr = match (&lti, &rti) {
+                _ if mask.is_some() => mask.unwrap_or_default(),
+                _ if Self::unlike(op, &l_val, &lti, &r_val, &rti).is_some() => Self::unlike(op, &l_val, &lti, &r_val, &rti).unwrap_or_default(),
                 _ if matches!(op, "eq" | "ne") && Self::numbers_mix(&lti, &rti) => {
                     let not = if op == "ne" { "!" } else { "" };
                     format!("{}crow_runtime::tensor::numbers_equal(&{}, &{})", not, l_val, r_val)
@@ -497,25 +501,13 @@ impl Emitter {
         if matches!(op, "and" | "or") && bool_list(&lti) && bool_list(&rti) {
             return format!("{}.iter().zip({}.iter()).map(|(_a, _b)| *_a {} *_b).collect::<Vec<bool>>()", l, r, op_str);
         }
-        if matches!(lti, CrowType::FrameCol) && matches!(rti, CrowType::Str) {
-            if cmp {
-                return format!("{}.compare_str(&{}, \"{}\")", l, r, op);
+        if cmp {
+            if let Some(m) = self.mask(op, &l, &lti, &r, &rti) {
+                return m;
             }
-            return format!("{} {} {}", l, op_str, r);
-        }
-        let str_list = matches!(&lti, CrowType::Array(i) if matches!(i.as_ref(), CrowType::Str));
-        if (matches!(lti, CrowType::FrameCol) || str_list) && matches!(rti, CrowType::Int | CrowType::Float) {
-            if cmp {
-                if matches!(lti, CrowType::FrameCol) {
-                    return format!("{}.compare({} as f64, \"{}\")", l, r, op);
-                }
-                return format!("crow_runtime::frame::col_compare(&{}, {} as f64, \"{}\")", l, r, op);
+            if let Some(u) = Self::unlike(op, &l, &lti, &r, &rti) {
+                return u;
             }
-            let arith = match op {
-                "add" | "sub" | "mul" | "div" => op,
-                _ => return format!("{} {} {}", l, op_str, r),
-            };
-            return format!("crow_runtime::frame::col_arithmetic(&{}, {} as f64, \"{}\")", l, r, arith);
         }
         if self.emitting_dual {
             if op == "pow" {
@@ -539,6 +531,50 @@ impl Emitter {
             (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l, op_str, r),
             _ => format!("{} {} {}", l, op_str, r),
         }
+    }
+
+    /// A mask: a frame's column, or a list of numbers, text or bools,
+    /// compared with one value — each cell by the function the interpreter
+    /// calls for its cells too (crow_runtime::mask), a missing one false,
+    /// an order between kinds with none the reason the program stops with.
+    /// The side written first is evaluated first. None when neither side
+    /// is one.
+    fn mask(&self, op: &str, l: &str, lt: &CrowType, r: &str, rt: &CrowType) -> Option<String> {
+        let cmp = crow_runtime::mask::Cmp::named(op)?;
+        let cell = |t: &CrowType| matches!(t, CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Markup | CrowType::Bool);
+        // a column (true) or a list of cells (false)
+        let many = |t: &CrowType| match t {
+            CrowType::FrameCol => Some(true),
+            CrowType::Array(item) if cell(item) => Some(false),
+            _ => None,
+        };
+        let call = |many: &str, column: bool, cmp: crow_runtime::mask::Cmp, value: &str| {
+            if column {
+                format!("({}).mask(crow_runtime::mask::Cmp::{:?}, crow_runtime::mask::Cell::from({})){}", many, cmp, value, self.or_stop())
+            } else {
+                format!("crow_runtime::mask::list(&{}, crow_runtime::mask::Cmp::{:?}, crow_runtime::mask::Cell::from({})){}", many, cmp, value, self.or_stop())
+            }
+        };
+        match (many(lt), many(rt)) {
+            (Some(column), None) if cell(rt) => Some(call(l, column, cmp, &format!("&({})", r))),
+            (None, Some(column)) if cell(lt) => Some(format!("{{ let _v = &({}); {} }}", l, call(r, column, cmp.flipped(), "_v"))),
+            _ => None,
+        }
+    }
+
+    /// Two values of different kinds — a number and text, a bool and
+    /// either — are unequal, as `eq` compares values whole: both are
+    /// evaluated, the left first, and the answer is `ne`'s. (Compiled, such
+    /// a comparison had not built, where the interpreter answered.)
+    fn unlike(op: &str, l: &str, lt: &CrowType, r: &str, rt: &CrowType) -> Option<String> {
+        let kind = |t: &CrowType| match t {
+            CrowType::Int | CrowType::Float => Some(0),
+            CrowType::Str | CrowType::Markup => Some(1),
+            CrowType::Bool => Some(2),
+            _ => None,
+        };
+        let (a, b) = (kind(lt)?, kind(rt)?);
+        (matches!(op, "eq" | "ne") && a != b).then(|| format!("{{ let _ = &({}); let _ = &({}); {} }}", l, r, op == "ne"))
     }
 
     /// An int operator that can fail — past 64 bits, a division by zero, a

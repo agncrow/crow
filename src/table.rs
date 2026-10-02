@@ -143,6 +143,12 @@ pub enum Kind {
     Operands,
     /// Each of `Operands`.
     Operand,
+    /// `&[crow_runtime::mask::Cell]` taken: the rest of the arguments, each
+    /// a number, text or a bool — the values a fused filter's predicate
+    /// compares its columns with.
+    Scalars,
+    /// Each of `Scalars`.
+    Scalar,
 }
 
 /// What a failure of the function is.
@@ -233,7 +239,7 @@ impl Kind {
             Kind::Shell => CrowType::Struct("CrowShell".to_string()),
             Kind::Reply => CrowType::Struct("CrowReply".to_string()),
             Kind::TextMap => CrowType::Map(Box::new(CrowType::Str)),
-            Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand => CrowType::Unknown,
+            Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand | Kind::Scalars | Kind::Scalar => CrowType::Unknown,
             Kind::JsonList => CrowType::Array(Box::new(CrowType::Json)),
             // what the arguments' items are: inference types the call from
             // them (a generic row's answer is the list or map it was given)
@@ -272,6 +278,7 @@ impl Kind {
             Kind::ShownDyn => format!("&({}) as &dyn crow_runtime::display::CrowDisplay", arg),
             Kind::TextMap => format!("&crow_runtime::sources::text_map(&({}))", arg),
             Kind::Operand => format!("crow_runtime::fused::Operand::from(&({}))", arg),
+            Kind::Scalar => format!("crow_runtime::mask::Cell::from(&({}))", arg),
             // moved or copied (an item kept) where the call is made
             Kind::List | Kind::MapOf | Kind::Ints | Kind::Floats | Kind::Texts | Kind::Item => format!("({})", arg),
             _ => format!("&({})", arg),
@@ -280,7 +287,7 @@ impl Kind {
 
     /// Whether the parameter takes the rest of the arguments.
     pub fn is_rest(self) -> bool {
-        matches!(self, Kind::Sizes | Kind::Groups | Kind::Lists | Kind::Shows | Kind::Operands)
+        matches!(self, Kind::Sizes | Kind::Groups | Kind::Lists | Kind::Shows | Kind::Operands | Kind::Scalars)
     }
 
     /// The kind of each argument a parameter takes: a size of the sizes, a
@@ -292,6 +299,7 @@ impl Kind {
             Kind::Lists => Kind::Strs,
             Kind::Shows => Kind::ShownDyn,
             Kind::Operands => Kind::Operand,
+            Kind::Scalars => Kind::Scalar,
             k => k,
         }
     }
@@ -325,7 +333,7 @@ impl Kind {
             Kind::TextRows => "Vec::<std::collections::BTreeMap<String, String>>::new()",
             Kind::Shell => "crow_runtime::core::Shell { status: -1, stdout: String::new(), stderr: String::new() }",
             Kind::Reply => "crow_runtime::sources::Reply::default()",
-            Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand => "unreachable!()",
+            Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand | Kind::Scalars | Kind::Scalar => "unreachable!()",
             Kind::JsonList => "Vec::<serde_json::Value>::new()",
             // a generic answer never fails as a value (its rows answer or stop)
             Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef => "Vec::new()",
@@ -821,6 +829,21 @@ pub fn read_operands(group: &[CrowValue]) -> Result<Vec<crow_runtime::fused::Ope
         .collect()
 }
 
+/// A fused filter's values: each a number, text or a bool.
+pub fn read_scalars(group: &[CrowValue]) -> Result<Vec<crow_runtime::mask::Cell<'_>>, String> {
+    use crow_runtime::mask::Cell;
+    group
+        .iter()
+        .map(|v| match &v.value {
+            Value::Int(n) => Ok(Cell::Number(*n as f64)),
+            Value::Float(x) => Ok(Cell::Number(*x)),
+            Value::Str(s) => Ok(Cell::Text(s)),
+            Value::Bool(b) => Ok(Cell::Bool(*b)),
+            _ => Err(format!("expected a number, text or a bool, got {}", named(v))),
+        })
+        .collect()
+}
+
 /// The groups of a group, each a tensor.
 pub fn read_groups(group: &[CrowValue]) -> Result<Vec<Cow<'_, CrowTensor>>, String> {
     group.iter().map(read_tensor).collect()
@@ -846,6 +869,7 @@ macro_rules! read {
     (Cells, $g:expr) => { read_cells(one($g)?)? };
     (Lists, $g:expr) => { &read_lists($g)?.iter().map(|l| l.as_slice()).collect::<Vec<&[String]>>() };
     (Operands, $g:expr) => { &read_operands($g)? };
+    (Scalars, $g:expr) => { &read_scalars($g)? };
     (Shows, $g:expr) => { &$g.iter().map(|v| v as &dyn crow_runtime::display::CrowDisplay).collect::<Vec<&dyn crow_runtime::display::CrowDisplay>>() };
     (List, $g:expr) => { read_list(one($g)?)? };
     (Seq, $g:expr) => { read_seq(one($g)?)? };
@@ -1323,6 +1347,7 @@ pub static ROWS: &[Row] = &[
     row!("frame.with", "frame", "with", crow_runtime::frames::with, (Frame, Str, Cells) -> Frame, value "frame"),
     row!("frame.select", "frame", "select", crow_runtime::frames::select, (Frame, Strs) -> Frame, stops),
     row!("frame.filter", "frame", "filter", crow_runtime::frames::filter, (Frame, Bools) -> Frame, stops),
+    row!("frame.filter_where", "", "__filter_where", crow_runtime::mask::filter_where, (Frame, Str, Strs, Scalars) -> Frame, stops),
     row!("frame.sort", "frame", "sort", crow_runtime::frames::sort, (Frame, Str) -> Frame, stops),
     row!("frame.sort_by", "frame", "sort", crow_runtime::frames::sort_by, (Frame, Str, Bool) -> Frame, stops),
     row!("frame.group", "frame", "group", crow_runtime::frames::group, (Frame, Str, Lists) -> Frame, stops),
@@ -1634,6 +1659,7 @@ impl Kind {
             Kind::Encoded => "a value JSON can hold",
             Kind::JsonList => "a list of JSON values",
             Kind::Operands | Kind::Operand => "a tensor or a number",
+            Kind::Scalars | Kind::Scalar => "a number, text or a bool",
         }
     }
 
@@ -1671,6 +1697,7 @@ impl Kind {
                 Kind::Shown | Kind::ShownDyn => a != Arg::Fn,
                 Kind::Encoded => !matches!(a, Arg::Fn | Arg::Frame | Arg::Sparse | Arg::Column),
                 Kind::Operand => matches!(a, Arg::Tensor | Arg::Int | Arg::Float),
+                Kind::Scalar => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth),
                 _ => true,
             }
     }

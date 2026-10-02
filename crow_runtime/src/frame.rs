@@ -295,77 +295,6 @@ impl CrowColumn {
         result
     }
 
-    /// Native vectorized comparison — no string parsing.
-    pub fn compare(&self, scalar: f64, op: &str) -> Vec<bool> {
-        let n = self.len();
-        let mut result = vec![false; n];
-        match self.data.as_ref() {
-            Column::Int(v) => {
-                for i in 0..n {
-                    if !self.valid[i] { continue; }
-                    let val = v[i] as f64;
-                    result[i] = cmp_f64(val, scalar, op);
-                }
-            }
-            Column::Float(v) => {
-                for i in 0..n {
-                    if !self.valid[i] { continue; }
-                    let val = v[i];
-                    if val.is_nan() { continue; }
-                    result[i] = cmp_f64(val, scalar, op);
-                }
-            }
-            Column::Str(v) => {
-                // Fallback: parse strings (for non-numeric columns)
-                for i in 0..n {
-                    if !self.valid[i] { continue; }
-                    if let Ok(val) = v[i].parse::<f64>() {
-                        result[i] = cmp_f64(val, scalar, op);
-                    }
-                }
-            }
-            _ => {} // Bool/DateTime: no comparison with f64 scalar
-        }
-        result
-    }
-
-    /// Native vectorized string comparison — compare column values against a string scalar.
-    pub fn compare_str(&self, scalar: &str, op: &str) -> Vec<bool> {
-        let n = self.len();
-        let mut result = vec![false; n];
-        match self.data.as_ref() {
-            Column::Str(v) => {
-                for i in 0..n {
-                    if !self.valid[i] { continue; }
-                    result[i] = match op {
-                        "eq" => v[i] == scalar,
-                        "ne" => v[i] != scalar,
-                        "gt" => v[i].as_str() > scalar,
-                        "lt" => v[i].as_str() < scalar,
-                        "gte" => v[i].as_str() >= scalar,
-                        "lte" => v[i].as_str() <= scalar,
-                        _ => false,
-                    };
-                }
-            }
-            Column::Int(v) => {
-                // Try parsing scalar as i64 for comparison
-                if let Ok(s) = scalar.parse::<i64>() {
-                    for i in 0..n {
-                        if !self.valid[i] { continue; }
-                        result[i] = match op {
-                            "eq" => v[i] == s,
-                            "ne" => v[i] != s,
-                            _ => false,
-                        };
-                    }
-                }
-            }
-            _ => {} // Other types: no string comparison
-        }
-        result
-    }
-
     /// Sum of numeric column values (skips nulls). Returns 0.0 for non-numeric or empty columns.
     pub fn sum(&self) -> f64 {
         let n = self.len();
@@ -485,19 +414,6 @@ impl fmt::Display for CrowColumn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let strings = self.to_strings();
         write!(f, "[{}]", strings.join(", "))
-    }
-}
-
-#[inline]
-fn cmp_f64(a: f64, b: f64, op: &str) -> bool {
-    match op {
-        "gt" => a > b,
-        "lt" => a < b,
-        "gte" => a >= b,
-        "lte" => a <= b,
-        "eq" => (a - b).abs() < f64::EPSILON,
-        "ne" => (a - b).abs() >= f64::EPSILON,
-        _ => false,
     }
 }
 
@@ -793,49 +709,6 @@ pub fn datetime_field(s: &str, field: &str) -> Option<i64> {
         _ => None,
     }
 }
-
-/// Vectorized comparison: compare each string-encoded value against a scalar.
-/// Missing values ("nan") produce false. Returns boolean mask.
-pub fn col_compare(col: &[String], scalar: f64, op: &str) -> Vec<bool> {
-    col.iter().map(|s| {
-        if s == "nan" { return false; }
-        if let Ok(v) = s.parse::<f64>() {
-            match op {
-                "gt" => v > scalar,
-                "lt" => v < scalar,
-                "gte" => v >= scalar,
-                "lte" => v <= scalar,
-                "eq" => (v - scalar).abs() < f64::EPSILON,
-                "ne" => (v - scalar).abs() >= f64::EPSILON,
-                _ => false,
-            }
-        } else { false }
-    }).collect()
-}
-
-/// Vectorized arithmetic: apply a scalar operation to each value in a string-encoded column.
-/// Missing values ("nan") are preserved as "nan".
-pub fn col_arithmetic(col: &[String], scalar: f64, op: &str) -> Vec<String> {
-    col.iter().map(|s| {
-        if s == "nan" { return "nan".to_string(); }
-        if let Ok(v) = s.parse::<f64>() {
-            let result = match op {
-                "add" => v + scalar,
-                "sub" => v - scalar,
-                "mul" => v * scalar,
-                "div" => v / scalar,
-                _ => v,
-            };
-            // Preserve integer display for whole numbers
-            if result == (result as i64) as f64 && result.is_finite() {
-                (result as i64).to_string()
-            } else {
-                result.to_string()
-            }
-        } else { s.clone() }
-    }).collect()
-}
-
 
 /// Convert frame columns to a flat f64 vector in row-major order.
 /// Only numeric (Int, Float) columns are accepted. Returns (data, nrows, ncols).
