@@ -508,6 +508,9 @@ impl Emitter {
             if let Some(u) = Self::unlike(op, &l, &lti, &r, &rti) {
                 return u;
             }
+            if let Some(w) = Self::whole(op, &l, &lti, &r, &rti) {
+                return w;
+            }
         }
         if self.emitting_dual {
             if op == "pow" {
@@ -575,6 +578,31 @@ impl Emitter {
         };
         let (a, b) = (kind(lt)?, kind(rt)?);
         (matches!(op, "eq" | "ne") && a != b).then(|| format!("{{ let _ = &({}); let _ = &({}); {} }}", l, r, op == "ne"))
+    }
+
+    /// A frame's column compared whole (`eq`, `ne`) with a column, a list
+    /// or a tensor: as two lists are, cell by cell, a missing cell equal to
+    /// nothing (crow_runtime::mask), both sides evaluated, the left first.
+    /// (Compiled, a column had equalled one with the same missing cells
+    /// where the cells held text, and one compared with a list had not
+    /// built.) None when neither side is a column compared whole.
+    fn whole(op: &str, l: &str, lt: &CrowType, r: &str, rt: &CrowType) -> Option<String> {
+        if !matches!(op, "eq" | "ne") {
+            return None;
+        }
+        let with = |t: &CrowType| match t {
+            CrowType::FrameCol => Some("equals"),
+            CrowType::Array(item) if matches!(item.as_ref(), CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Markup | CrowType::Bool) => Some("equals_list"),
+            CrowType::NumArray(..) => Some("equals_tensor"),
+            _ => None,
+        };
+        let not = if op == "ne" { "!" } else { "" };
+        let (column, other, method) = match (lt, rt) {
+            (CrowType::FrameCol, _) => ("_l", "_r", with(rt)?),
+            (_, CrowType::FrameCol) => ("_r", "_l", with(lt)?),
+            _ => return None,
+        };
+        Some(format!("({}{{ let _l = &({}); let _r = &({}); {}.{}({}) }})", not, l, r, column, method, other))
     }
 
     /// An int operator that can fail — past 64 bits, a division by zero, a

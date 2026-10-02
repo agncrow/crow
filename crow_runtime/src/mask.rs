@@ -212,6 +212,55 @@ impl CrowColumn {
     }
 }
 
+impl CrowColumn {
+    /// Row `i`'s moment as its text, as a cell of one reads.
+    fn moment_text(&self, i: usize) -> Option<String> {
+        match self.data.as_ref() {
+            Column::DateTime(ms, off) => Some(crate::frame::format_datetime(ms[i], off[i])),
+            _ => None,
+        }
+    }
+
+    /// Row `i` as a comparison reads it, a moment by its text.
+    fn cell<'a>(&'a self, i: usize, moment: &'a Option<String>) -> Cell<'a> {
+        match (self.data.as_ref(), moment) {
+            (_, Some(text)) => Cell::Text(text),
+            (Column::Float(v), _) => Cell::Number(v[i]),
+            (Column::Int(v), _) => Cell::Number(v[i] as f64),
+            (Column::Str(v), _) => Cell::Text(&v[i]),
+            (Column::Bool(v), _) => Cell::Bool(v[i]),
+            (Column::DateTime(..), None) => Cell::Other("a moment"),
+        }
+    }
+
+    /// Whether the column equals another whole, as two lists are equal
+    /// (spec, Comparison): the same number of cells, each there in both and
+    /// equal as two values are; a missing cell equals nothing, not even
+    /// another missing one.
+    pub fn equals(&self, other: &CrowColumn) -> bool {
+        self.len() == other.len()
+            && (0..self.len()).all(|i| {
+                let (a, b) = (self.moment_text(i), other.moment_text(i));
+                decide(Cmp::Eq, self.cell(i, &a), self.valid[i] && other.valid[i], other.cell(i, &b))
+            })
+    }
+
+    /// Whether the column equals a list whole, cell by item.
+    pub fn equals_list<T: AsCell>(&self, items: &[T]) -> bool {
+        self.len() == items.len()
+            && items.iter().enumerate().all(|(i, x)| {
+                let a = self.moment_text(i);
+                decide(Cmp::Eq, self.cell(i, &a), self.valid[i], x.as_cell())
+            })
+    }
+
+    /// Whether the column equals a tensor whole: a vector's numbers, each a
+    /// cell's partner (a matrix's items are rows, which no cell equals).
+    pub fn equals_tensor(&self, t: &crate::tensor::CrowTensor) -> bool {
+        t.ndim() == 1 && self.equals_list(&t.to_vec())
+    }
+}
+
 /// Whether a column's cells compare with a value: the reason when they do
 /// not. Its cells are all of its kind, a missing one too, so the first
 /// cell's comparison decides for every one.
@@ -579,6 +628,27 @@ mod tests {
             }
         }
         assert!(kept > 500 && stopped > 100, "kept {} stopped {}", kept, stopped);
+    }
+
+    /// A column compared whole is compared as a list is: cell by cell, an
+    /// int as its float, a missing cell equal to nothing — whatever its
+    /// column holds in its place (NaN, 0, empty text)
+    #[test]
+    fn a_column_compared_whole_is_compared_cell_by_cell() {
+        let col = |data: Column, valid: Vec<bool>| CrowColumn { data: std::sync::Arc::new(data), valid: std::sync::Arc::new(valid) };
+        let ints = col(Column::Int(vec![1, 2]), vec![true, true]);
+        let floats = col(Column::Float(vec![1.0, 2.0]), vec![true, true]);
+        assert!(ints.equals(&floats) && floats.equals(&ints));
+        assert!(ints.equals_list(&[1.0, 2.0]) && !ints.equals_list(&[1.0]) && !ints.equals_list(&[1.0, 3.0]));
+        assert!(ints.equals_tensor(&crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0], vec![2])));
+        assert!(!ints.equals_tensor(&crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0], vec![1, 2])));
+        for missing in [col(Column::Int(vec![1, 0]), vec![true, false]), col(Column::Str(vec!["a".to_string(), String::new()]), vec![true, false]), col(Column::Float(vec![1.0, f64::NAN]), vec![true, false])] {
+            assert!(!missing.equals(&missing), "{:?}", missing);
+        }
+        let text = col(Column::Str(vec!["a".to_string(), String::new()]), vec![true, false]);
+        assert!(!text.equals_list(&["a".to_string(), String::new()]));
+        let strs = col(Column::Str(vec!["p".to_string(), "q".to_string()]), vec![true, true]);
+        assert!(strs.equals_list(&["p".to_string(), "q".to_string()]) && !strs.equals(&ints));
     }
 
     #[test]
