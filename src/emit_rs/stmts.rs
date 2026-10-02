@@ -1,25 +1,9 @@
 //! Functions, derivations and statements.
 
-use super::program::{call_name, visit_block, visit_expr, visit_stmts};
+use super::program::{call_name, visit_block};
 use super::*;
 
 impl Emitter {
-    /// How a fact is read from the session's state.
-    pub(crate) fn state_getter(vname: &str, vtype: &CrowType, default: &str) -> String {
-        match vtype {
-            CrowType::Int => format!("state.get_i64(\"{}\", {})", vname, default),
-            CrowType::Float => format!("state.get_f64(\"{}\", {})", vname, default),
-            CrowType::Str | CrowType::Markup => format!("state.get_str(\"{}\", &{})", vname, default),
-            CrowType::Bool => format!("state.get_bool(\"{}\", {})", vname, default),
-            other => format!(
-                "state.get(\"{}\").and_then(|_v| serde_json::from_value::<{}>(_v.clone()).ok()).unwrap_or_else(|| {})",
-                vname,
-                other.to_rust_type(),
-                default
-            ),
-        }
-    }
-
     /// The derivations a block reads directly (inside text too).
     pub(crate) fn derivations_read(block: &[Stmt]) -> BTreeSet<String> {
         let mut out = BTreeSet::new();
@@ -28,59 +12,6 @@ impl Emitter {
                 out.insert(d.clone());
             }
         });
-        out
-    }
-
-    /// The facts a block reads or stores itself: all a handler, a render
-    /// or a derivation reads from the session's state up front (a helper it
-    /// calls reads its own).
-    pub(crate) fn facts_used(block: &[Stmt]) -> BTreeSet<String> {
-        let mut out = Self::facts_stored(block);
-        visit_block(block, &mut |e| {
-            if let Expr::Load(fact, _) = e {
-                out.insert(fact.clone());
-            }
-        });
-        // a part of one assigned (`items[0] = x`) names it too
-        visit_stmts(block, &mut |s| {
-            if let Stmt::SetPath { var, .. } = s {
-                out.insert(var.clone());
-            }
-        });
-        out
-    }
-
-    /// The facts a block stores itself.
-    pub(crate) fn facts_stored(block: &[Stmt]) -> BTreeSet<String> {
-        let mut out = BTreeSet::new();
-        visit_stmts(block, &mut |s| {
-            if let Stmt::Store { fact, .. } = s {
-                out.insert(fact.clone());
-            }
-        });
-        out
-    }
-
-    /// The user functions a block calls, transitively.
-    pub(crate) fn reach(&self, block: &[Stmt]) -> BTreeSet<String> {
-        let mut out = BTreeSet::new();
-        let mut todo: Vec<Block> = vec![block.to_vec()];
-        while let Some(b) = todo.pop() {
-            visit_block(&b, &mut |e| {
-                let callee = match e {
-                    Expr::Call { target: Target::User(n), .. } => Some(n.clone()),
-                    Expr::FnRef(n, _) | Expr::Deferred { name: n, .. } => Some(n.clone()),
-                    _ => None,
-                };
-                if let Some(n) = callee {
-                    if self.fns.contains_key(&n) && out.insert(n.clone()) {
-                        if let Some(f) = self.fns.get(&n) {
-                            todo.push(f.body.clone());
-                        }
-                    }
-                }
-            });
-        }
         out
     }
 
@@ -200,33 +131,27 @@ impl Emitter {
         if self.view_mark {
             self.line("let __view = state.view_enter();");
         }
-        if is_reactive_render || is_reactive_handler {
-            let used = Self::facts_used(&f.body);
-            for (v, (vt, d)) in self.reactive_vars.clone() {
-                if !used.contains(&v) {
-                    continue;
-                }
-                let kw = if is_reactive_handler { "let mut" } else { "let" };
-                self.line(&format!("{} {} = {};", kw, v, Self::state_getter(&v, &vt, &d)));
-                self.declare(&v, vt);
-            }
+        // the session's facts are read and written in place, where the body
+        // does; a handler, which writes them, reads a derivation where it
+        // uses it too — the memo answers at once unless a fact it reads has
+        // moved — and a view, which writes none, reads its derivations once
+        // as it starts
+        let saved_facts = self.facts_in_state;
+        self.facts_in_state = is_reactive_render || is_reactive_handler;
+        if is_reactive_render {
             if !self.derive_fns.is_empty() {
                 for d in Self::derivations_read(&f.body) {
                     if d == name {
                         continue;
                     }
                     let dty = self.derives.get(&d).map(|x| crow_type(&x.ty)).unwrap_or(CrowType::Unknown);
-                    let kw = if is_reactive_handler { "let mut" } else { "let" };
-                    self.line(&format!("{} {} = __derive_{}(state);", kw, d, d));
-                    if is_reactive_handler {
-                        self.handler_derivations.insert(d.clone());
-                    }
+                    self.line(&format!("let {} = __derive_{}(state);", d, d));
                     self.declare(&d, dty);
                 }
             }
             if is_reactive_render {
                 for v in self.data_source_vars.clone() {
-                    self.line(&format!("let {} = __json_to_frame(state.get(\"{}\").unwrap_or(&serde_json::Value::Null));", v, v));
+                    self.line(&format!("let {} = __json_to_frame(&state.get(\"{}\").unwrap_or(serde_json::Value::Null));", v, v));
                     self.declare(&v, CrowType::Frame(None));
                 }
             }
@@ -267,20 +192,12 @@ impl Emitter {
                     lines.push(format!("state.note_table_write(\"{}\");", t));
                 }
             }
-            // only the facts this body stores itself: a helper it called
-            // persisted its own writes
-            let own: Vec<String> = Self::facts_stored(&f.body).into_iter().filter(|v| self.reactive_vars.contains_key(v)).collect();
-            self.reactive_own_writes = own.clone();
-            for v in own {
-                lines.push(format!("state.set(\"{}\", serde_json::json!({}));", v, v));
-            }
             self.reactive_epilogue = Some(lines);
         }
 
         self.emit_block(&body);
 
-        self.reactive_own_writes.clear();
-        self.handler_derivations.clear();
+        self.facts_in_state = saved_facts;
         if let Some(lines) = self.reactive_epilogue.take() {
             for l in &lines {
                 self.line(l);
@@ -317,14 +234,7 @@ impl Emitter {
         self.returns_unit = false;
         self.cur_fn = name.clone();
         self.mutated = Self::mutated_in(&d.body);
-        let used = Self::facts_used(&d.body);
-        for (v, (vt, dv)) in self.reactive_vars.clone() {
-            if !used.contains(&v) {
-                continue;
-            }
-            self.line(&format!("let {} = {};", v, Self::state_getter(&v, &vt, &dv)));
-            self.declare(&v, vt);
-        }
+        let saved_facts = std::mem::replace(&mut self.facts_in_state, true);
         for other in Self::derivations_read(&d.body) {
             if other == name {
                 continue;
@@ -334,7 +244,7 @@ impl Emitter {
             self.declare(&other, oty);
         }
         for v in self.data_source_vars.clone() {
-            self.line(&format!("let {} = __json_to_frame(state.get(\"{}\").unwrap_or(&serde_json::Value::Null));", v, v));
+            self.line(&format!("let {} = __json_to_frame(&state.get(\"{}\").unwrap_or(serde_json::Value::Null));", v, v));
             self.declare(&v, CrowType::Frame(None));
         }
         let mut body = d.body.clone();
@@ -344,6 +254,7 @@ impl Emitter {
             }
         }
         self.emit_block(&body);
+        self.facts_in_state = saved_facts;
         let (scopes, ret, unit, cur, mutated) = saved;
         self.scopes = scopes;
         self.cur_ret = ret;
@@ -450,83 +361,6 @@ impl Emitter {
         }
     }
 
-    /// Before a handler calls a helper, the facts it stored so far land in
-    /// the state, so the helper sees them.
-    pub(crate) fn flush_before(&self) -> String {
-        self.reactive_own_writes.iter().map(|v| format!("state.set(\"{}\", serde_json::json!({}));", v, v)).collect::<Vec<_>>().join(" ")
-    }
-
-    /// After a helper, the facts it (or anything it calls) stored are read
-    /// back into the caller's locals.
-    pub(crate) fn reload_after(&self, callee: &str) -> String {
-        let Some(f) = self.fns.get(callee) else { return String::new() };
-        let mut reach = self.reach(&f.body);
-        reach.insert(callee.to_string());
-        let mut written = BTreeSet::new();
-        for n in &reach {
-            if let Some(g) = self.fns.get(n) {
-                written.extend(Self::facts_stored(&g.body));
-            }
-        }
-        let mut out = String::new();
-        for v in written {
-            if let Some((vt, d)) = self.reactive_vars.get(&v) {
-                if self.declared(&v) {
-                    out.push_str(&format!("{} = {}; ", v, Self::state_getter(&v, vt, d)));
-                }
-            }
-        }
-        out
-    }
-
-    /// The derivations of the handler being printed that these statements
-    /// read. Nothing inside a closure: the statement holding it read them.
-    fn handler_reads(&self, exprs: &[&Expr]) -> Vec<String> {
-        if self.reactive_epilogue.is_none() || self.handler_derivations.is_empty() || exprs.is_empty() || self.closure_depth > 0 {
-            return Vec::new();
-        }
-        let mut reads = BTreeSet::new();
-        for e in exprs {
-            visit_expr(e, &mut |x| {
-                if let Expr::Derived(d, _) = x {
-                    reads.insert(d.clone());
-                }
-            });
-        }
-        reads.into_iter().filter(|d| self.handler_derivations.contains(d)).collect()
-    }
-
-    /// Inside a handler, before a statement that reads derivations: the
-    /// facts it wrote land in the state, then each derivation is read again.
-    fn refresh_derivations(&mut self, exprs: &[&Expr]) {
-        let reads = self.handler_reads(exprs);
-        if reads.is_empty() {
-            return;
-        }
-        let flush = self.flush_before();
-        if !flush.is_empty() {
-            self.line(&flush);
-        }
-        for d in reads {
-            self.line(&format!("{} = __derive_{}(state);", d, d));
-        }
-    }
-
-    /// The expressions a statement evaluates itself.
-    fn own_exprs(s: &Stmt) -> Vec<&Expr> {
-        match s {
-            Stmt::Let { expr, .. } | Stmt::Set { expr, .. } | Stmt::Store { expr, .. } | Stmt::Do(expr) => vec![expr],
-            Stmt::Return(Some(e)) => vec![e],
-            Stmt::If { cond, .. } | Stmt::While { cond, .. } => vec![cond],
-            Stmt::For { iter, .. } => vec![iter],
-            Stmt::SetPath { path, expr, .. } => {
-                let mut v: Vec<&Expr> = path.iter().filter_map(|p| if let PathStep::Index(i) = p { Some(i) } else { None }).collect();
-                v.push(expr);
-                v
-            }
-            _ => Vec::new(),
-        }
-    }
 
     /// What a decision on an error does here: a handler stops, a function
     /// with a value hands the error back, a void function returns, the top
@@ -608,28 +442,14 @@ impl Emitter {
     }
 
     pub(crate) fn emit_stmt(&mut self, s: &Stmt) {
-        if !matches!(s, Stmt::While { .. }) {
-            let exprs: Vec<Expr> = match s {
-                Stmt::For { iter, body, .. } => {
-                    let mut v = vec![iter.clone()];
-                    visit_block(body, &mut |e| {
-                        if let Expr::Derived(..) = e {
-                            v.push(e.clone());
-                        }
-                    });
-                    v
-                }
-                _ => Self::own_exprs(s).into_iter().cloned().collect(),
-            };
-            let refs: Vec<&Expr> = exprs.iter().collect();
-            self.refresh_derivations(&refs);
-        }
         match s {
             Stmt::Line(n) => self.current_line = *n,
             Stmt::Let { var, ty, expr } => self.emit_let(var, ty, expr),
             Stmt::Set { var, expr } => self.emit_set(var, expr),
             Stmt::Store { fact, expr } => {
-                if self.declared(fact) {
+                if self.facts_in_state && self.reactive_vars.contains_key(fact) {
+                    self.emit_store_fact(fact, expr);
+                } else if self.declared(fact) {
                     self.emit_set(fact, expr);
                 } else if self.has_page_routes && self.cur_fn.is_empty() {
                     // a page program's top-level assignment set the default
@@ -658,14 +478,6 @@ impl Emitter {
                 let infinite = matches!(cond, Expr::Const(Const::Bool(true), _));
                 if infinite {
                     self.line("loop {");
-                } else if !self.handler_reads(&[cond]).is_empty() {
-                    self.line("loop {");
-                    self.indent += 1;
-                    self.refresh_derivations(&[cond]);
-                    let c = self.expr(cond);
-                    let c = self.guard_condition(cond, c);
-                    self.line(&format!("if !({}) {{ break; }}", c));
-                    self.indent -= 1;
                 } else {
                     let c = self.expr(cond);
                     let c = self.guard_condition(cond, c);
@@ -850,13 +662,81 @@ impl Emitter {
     }
 
     fn emit_set_path(&mut self, var: &str, path: &[PathStep], expr: &Expr) {
-        let val = self.expr(expr);
+        // a part of a fact of the session (`items[0] = x`, `p.qty = 3`),
+        // written in place: the value first, then the write, then the
+        // fact's version (typed-values-design.md §6)
+        let in_facts = self.facts_in_state && self.reactive_vars.contains_key(var);
+        let mut val = self.expr(expr);
+        if in_facts {
+            self.line("{");
+            self.indent += 1;
+            self.line(&format!("let _fv = {};", val));
+            val = "_fv".to_string();
+        }
+        self.emit_set_path_with(var, path, &val, in_facts);
+        if in_facts {
+            self.line(&format!("state.touch(\"{}\");", var));
+            self.indent -= 1;
+            self.line("}");
+        }
+    }
+
+    /// A fact of the session written in place: the value converted as an
+    /// assignment converts it (an int into a float, a value that can fail
+    /// refused first), then the fact's version bumps when the value moved,
+    /// as the state's own `set` decides (typed-values-design.md §6).
+    fn emit_store_fact(&mut self, fact: &str, expr: &Expr) {
+        let existing = self.reactive_vars.get(fact).map(|(t, _)| t.clone()).unwrap_or(CrowType::Unknown).text();
+        let text = self.owned_expr(expr);
+        let new_ty = self.tt(expr);
+        let float_from_int = |a: &CrowType, b: &CrowType| matches!(a, CrowType::Float) && matches!(b, CrowType::Int);
+        let value = match &new_ty {
+            CrowType::Result(inner) if !matches!(existing, CrowType::Result(_)) && (existing.compatible(inner) || float_from_int(&existing, inner)) => {
+                let abort = self.refuse_at("_asg", &Decision::Assign(fact.to_string()));
+                let cast = if float_from_int(&existing, inner) { " as f64" } else { "" };
+                format!("{{ let _asg = {}; if !_asg.ok {{ {} }} _asg.value{} }}", text, abort, cast)
+            }
+            _ if float_from_int(&existing, &new_ty) => format!("({}) as f64", text),
+            _ => {
+                if !matches!(existing, CrowType::Unknown) && !existing.compatible(&new_ty) {
+                    self.fail(format!("cannot reassign '{}' from {} to {} — variable type cannot change", fact, existing.crow_name(), new_ty.crow_name()));
+                }
+                text
+            }
+        };
+        let field = Self::rust_field(fact);
+        let moved = if self.crow_compares(&existing) {
+            format!("__facts(&*state).{} != _v", field)
+        } else {
+            format!("serde_json::to_value(&__facts(&*state).{}).ok() != serde_json::to_value(&_v).ok()", field)
+        };
+        self.line(&format!("{{ let _v = {}; let _moved = {}; __facts_mut(state).{} = _v; if _moved {{ state.touch(\"{}\"); }} }}", value, moved, field, fact));
+    }
+
+    /// Whether values of a type compare in Rust as `eq` compares them.
+    pub(crate) fn crow_compares(&self, t: &CrowType) -> bool {
+        match t {
+            CrowType::Int | CrowType::Float | CrowType::Bool | CrowType::Str | CrowType::Markup | CrowType::Json | CrowType::NumArray(..) | CrowType::Frame(_) | CrowType::FrameCol | CrowType::Unknown => true,
+            CrowType::Array(i) | CrowType::Map(i) | CrowType::Result(i) => self.crow_compares(i),
+            CrowType::Struct(n) => self.record_compares(n, &mut BTreeSet::new()),
+            _ => false,
+        }
+    }
+
+    fn emit_set_path_with(&mut self, var: &str, path: &[PathStep], val: &str, in_facts: bool) {
+        let val = val.to_string();
         // the object the last step writes into, and its type; each list
         // index is found before the write (`out[m].status = …` read
         // `out.len()` inside the element it was writing, which Rust's
         // borrows refuse)
-        let mut obj = if self.static_handle_vars.contains(var) { format!("__crow_handle_{}.get().unwrap().clone()", var) } else { var.to_string() };
-        let mut ty = self.local_ty(var).unwrap_or(CrowType::Unknown).text();
+        let mut obj = if in_facts {
+            format!("__facts_mut(state).{}", Self::rust_field(var))
+        } else if self.static_handle_vars.contains(var) {
+            format!("__crow_handle_{}.get().unwrap().clone()", var)
+        } else {
+            var.to_string()
+        };
+        let mut ty = if in_facts { self.reactive_vars.get(var).map(|(t, _)| t.clone()).unwrap_or(CrowType::Unknown).text() } else { self.local_ty(var).unwrap_or(CrowType::Unknown).text() };
         let mut found: Vec<String> = Vec::new();
         for step in &path[..path.len().saturating_sub(1)] {
             match step {

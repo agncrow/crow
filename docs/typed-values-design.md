@@ -206,7 +206,7 @@ benchmark.
   divergences (an item or a field a parsed value lacks read `null`
   compiled and stopped the interpreter).
 
-## 6. Facts as a struct: the design (2026-10-01)
+## 6. Facts as a struct (designed and built 2026-10-01)
 
 *Vijay, 2026-10-01: finish the typed values. Decision 5, §4 step 4.*
 
@@ -263,3 +263,28 @@ a write is the recomputed value, which `refresh_derivations` imitated.
 session's, committed as one or dropped), the versions and the keyed
 invalidation, the commit's rule (what the handler changed lands, nothing
 else), the harness's and the wire's JSON.
+
+**Built (2026-10-01).** `crow_web::live::Facts` and `JsonFacts`
+(`live/facts.rs`) stand behind `CrowLiveState`; `get` answers an owned
+value, `set` keeps the version rule, and `touch`, `facts`, `facts_mut`,
+`install_facts` and `facts_map` are what a compiled program and the edges
+use. A page program's emitter generates `CrowFacts` (a field per fact, its
+type's default, the runtime's own keys in `__rest`) with `__facts` and
+`__facts_mut`, and installs it as `main` starts; `main` still sets each
+fact's declared value. A fact read is `__facts(&*state).f`; a write is the
+value converted as an assignment converts it, compared with the field
+(`==`, or its JSON where the type has no `==`), stored, and `touch`ed when
+it moved; a part written (`items[0] = x`) is its value first, then the
+write through `__facts_mut`, then `touch`. A handler reads a derivation
+where it uses it; a view and a derivation, which write nothing, read theirs
+once as they start. A helper call evaluates its arguments, then calls, then
+checks for a stop. `state_getter`, the prologue and epilogue of facts,
+`flush_before`, `reload_after`, `refresh_derivations`, `handler_reads`,
+`facts_used` and the handler's derivation locals are gone. The served
+pages, the harnesses and the task board compiled, and finch's tests
+compiled, pass unchanged. finch's generated program wrote a fact as JSON in
+523 places and read one in 320 (prologues, epilogues, flushes, reloads);
+it writes 67 — `main` setting each fact's declared value — and reads none,
+with 495 reads and writes in place, and it is 9,208 lines where it was
+9,540.
+

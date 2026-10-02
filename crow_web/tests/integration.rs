@@ -266,10 +266,10 @@ mod live_integration {
     fn live_state_get_set_overwrite() {
         let mut state = CrowLiveState::new();
         state.set("count", serde_json::json!(0));
-        assert_eq!(state.get("count"), Some(&serde_json::json!(0)));
+        assert_eq!(state.get("count"), Some(serde_json::json!(0)));
 
         state.set("count", serde_json::json!(5));
-        assert_eq!(state.get("count"), Some(&serde_json::json!(5)));
+        assert_eq!(state.get("count"), Some(serde_json::json!(5)));
 
         assert!(state.get("missing").is_none());
     }

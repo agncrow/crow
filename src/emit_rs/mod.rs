@@ -165,8 +165,10 @@ pub(crate) struct Emitter {
     pub(crate) mutated: HashSet<String>,
     pub(crate) emitting_dual: bool,
     pub(crate) reactive_epilogue: Option<Vec<String>>,
-    pub(crate) reactive_own_writes: Vec<String>,
-    pub(crate) handler_derivations: BTreeSet<String>,
+    /// Inside a handler, a view or a derivation of a page program: a fact
+    /// is read and written in place, in the session's facts the body is
+    /// handed (typed-values-design.md §6).
+    pub(crate) facts_in_state: bool,
     pub(crate) view_mark: bool,
     pub(crate) closure_depth: usize,
     pub(crate) current_line: usize,
@@ -242,8 +244,7 @@ impl Emitter {
             mutated: HashSet::new(),
             emitting_dual: false,
             reactive_epilogue: None,
-            reactive_own_writes: Vec::new(),
-            handler_derivations: BTreeSet::new(),
+            facts_in_state: false,
             view_mark: false,
             closure_depth: 0,
             current_line: 0,

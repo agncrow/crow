@@ -210,6 +210,10 @@ impl Emitter {
         if self.static_handle_vars.contains(f) {
             return format!("__crow_handle_{}.get().unwrap().clone()", f);
         }
+        // a fact of the session, read in place where the body reads it
+        if self.facts_in_state && self.reactive_vars.contains_key(f) {
+            return format!("__facts(&*state).{}", Self::rust_field(f));
+        }
         f.to_string()
     }
 
@@ -1702,12 +1706,14 @@ impl Emitter {
             arg_strs.clone()
         };
         if helper_call {
-            let flush = self.flush_before();
-            let reloads = self.reload_after(name);
+            // the helper reads and writes the facts the handler does, in
+            // the one state they are handed: its arguments first, so none
+            // holds the state while the helper takes it
             let stop = self.stop_check();
-            if !reloads.is_empty() || !flush.is_empty() || !stop.is_empty() {
-                return format!("{{ {} let _r = {}({}); {}{} _r }}", flush, Self::rust_fn_name(name), all.join(", "), stop, reloads);
-            }
+            let bound: Vec<String> = arg_strs.iter().enumerate().map(|(i, a)| format!("let _a{} = {};", i, a)).collect();
+            let mut passed = vec!["state".to_string()];
+            passed.extend((0..arg_strs.len()).map(|i| format!("_a{}", i)));
+            return format!("{{ {} let _r = {}({}); {} _r }}", bound.join(" "), Self::rust_fn_name(name), passed.join(", "), stop);
         }
         // a helper outside the handler class that a render calls with no state
         let _ = map_literal_pairs;

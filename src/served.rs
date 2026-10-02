@@ -93,8 +93,8 @@ fn with_session(template: &IrInterp, state: &CrowLiveState) -> IrInterp {
     for name in template.fact_names.clone() {
         if let (Some(j), Some(declared)) = (state.get(&name), template.var(&name)) {
             let v = match template.fact_types.get(&name) {
-                Some(ty) => json_to_typed(j, ty, template, declared),
-                None => json_to_fact(j, declared),
+                Some(ty) => json_to_typed(&j, ty, template, declared),
+                None => json_to_fact(&j, declared),
             };
             it.set_fact(&name, v);
         }
@@ -252,7 +252,7 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
         for name in t.fact_names.clone() {
             if let Some(v) = it.var(&name).filter(|v| is_data(v)) {
                 let j = fact_to_json(v);
-                if state.get(&name) != Some(&j) {
+                if state.get(&name).as_ref() != Some(&j) {
                     state.set(&name, j);
                 }
             }

@@ -22,8 +22,10 @@
 --- word. A click handed a value that can fail hands on what it holds, as
 --- a call does, as finch's tests jump the play-head to a moment
 --- `parse_time` made: the compiled handler's parameter had been made a
---- result, the click's number never fit it, and the head never moved. CI
---- runs it in the interpreter and compiled.
+--- result, the click's number never fit it, and the head never moved. A
+--- handler's loop reads a fact and a derivation in each item, in parallel,
+--- from the session's facts the compiled loop's threads share. CI runs it
+--- in the interpreter and compiled.
 use web, ui, frame
 struct Order [symbol, qty]
 struct Tag [order, note]
@@ -106,6 +108,16 @@ fn place_given[first, more]
 fn jump_to[t]
     play_head = t
 
+derive doubled
+    return play_head * 2.0
+
+--- a loop that reads a fact and a derivation in each of its items, in
+--- parallel: compiled, from the session's facts the loop's threads share
+fn tally[]
+    parts = for x in [1.0, 2.0, 3.0]
+        x * doubled + play_head
+    said = 'tally `len[parts]` `parts[2]`'
+
 --- writes state, and writes it only through that
 fn note_it[s]
     said = s
@@ -122,7 +134,8 @@ view shown[]
         button['Place', click = place],
         button['Place all', click = place_all[Order['KL', 1], ['MN'], [2.0]]],
         button['Place a pair', click = place_pair],
-        button['Relay', click = relay_click]
+        button['Relay', click = relay_click],
+        button['Tally', click = tally]
     ]
 page['/', shown]
 
@@ -176,3 +189,9 @@ test a_click_hands_on_what_a_value_that_can_fail_holds[]
     sig = parse_time['2026-05-26 07:05:00']
     click[a, jump_to[sig - 120.0]]
     assert[play_head eq 1779778980.0, 'head `play_head`']
+
+test a_loop_reads_the_sessions_facts_in_each_item[]
+    a = app[shown]
+    click[a, jump_to[2.0]]
+    click[a, tally]
+    assert[said eq 'tally 3 14.0' or said eq 'tally 3 14', 'said `said`']

@@ -749,6 +749,7 @@ impl Emitter {
             self.emit_test_tables();
         }
         self.emit_main();
+        self.emit_facts_struct();
         self.emit_synthetic_types();
         // a result as the display kernel shows it inside a list: its value,
         // or its reason (written last: only a program that links the kernel
@@ -881,7 +882,7 @@ impl Emitter {
     /// field — in Rust too: every field's type does (a function, a handle
     /// and a view's tree do not). A record reached again through its own
     /// fields compares if the rest does.
-    fn record_compares(&self, name: &str, seen: &mut BTreeSet<String>) -> bool {
+    pub(crate) fn record_compares(&self, name: &str, seen: &mut BTreeSet<String>) -> bool {
         fn compares(e: &Emitter, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
             match t {
                 Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) => true,
@@ -1333,6 +1334,11 @@ impl Emitter {
         if self.has_page_routes {
             self.line("let mut __crow_app = CrowApp::new();");
             self.line("let mut __crow_state = CrowLiveState::new();");
+            // the session's facts in the program's own struct, typed field by
+            // field (typed-values-design.md §6)
+            if !self.reactive_vars.is_empty() {
+                self.line("__crow_state.install_facts(Box::new(CrowFacts::default()));");
+            }
             // the facts in the order they are declared — a connection, a data
             // source, or a value the sessions start from — so a declaration
             // can read one declared before it: a value (`tripled = base * 3`,
@@ -1440,6 +1446,98 @@ impl Emitter {
             _ => {}
         });
         out
+    }
+
+    /// The session's facts as the program's own struct (typed-values-design
+    /// §6): one typed field per fact, and the runtime's own keys beside them
+    /// as JSON; read and written in place by the handlers, views and
+    /// derivations through `__facts` and `__facts_mut`, and as JSON only at
+    /// the edges the runtime asks for.
+    fn emit_facts_struct(&mut self) {
+        if self.reactive_vars.is_empty() || !self.has_page_routes {
+            return;
+        }
+        let facts: Vec<(String, CrowType)> = self.reactive_vars.iter().map(|(n, (t, _))| (n.clone(), t.clone())).collect();
+        let rust_ty = |t: &CrowType| t.to_rust_type();
+        self.line("");
+        self.line("#[allow(non_snake_case, dead_code)]");
+        self.line("#[derive(Clone)]");
+        self.line("struct CrowFacts {");
+        for (n, t) in &facts {
+            self.line(&format!("    {}: {},", Self::rust_field(n), rust_ty(t)));
+        }
+        self.line("    __rest: std::collections::HashMap<String, serde_json::Value>,");
+        self.line("}");
+        self.line("impl Default for CrowFacts {");
+        self.line("    fn default() -> Self {");
+        self.line("        CrowFacts {");
+        for (n, t) in &facts {
+            self.line(&format!("            {}: {},", Self::rust_field(n), t.default_rust_value()));
+        }
+        self.line("            __rest: std::collections::HashMap::new(),");
+        self.line("        }");
+        self.line("    }");
+        self.line("}");
+        self.line("impl crow_web::live::Facts for CrowFacts {");
+        self.line("    fn box_clone(&self) -> Box<dyn crow_web::live::Facts> { Box::new(self.clone()) }");
+        self.line("    fn get_json(&self, name: &str) -> Option<serde_json::Value> {");
+        self.line("        match name {");
+        for (n, _) in &facts {
+            self.line(&format!("            \"{}\" => serde_json::to_value(&self.{}).ok(),", n, Self::rust_field(n)));
+        }
+        self.line("            _ => self.__rest.get(name).cloned(),");
+        self.line("        }");
+        self.line("    }");
+        self.line("    fn set_json(&mut self, name: &str, value: serde_json::Value) -> bool {");
+        self.line("        match name {");
+        for (n, t) in &facts {
+            self.line(&format!(
+                "            \"{}\" => match serde_json::from_value::<{}>(value) {{ Ok(v) => {{ self.{} = v; true }} Err(_) => false }},",
+                n,
+                rust_ty(t),
+                Self::rust_field(n)
+            ));
+        }
+        self.line("            _ => { self.__rest.insert(name.to_string(), value); true }");
+        self.line("        }");
+        self.line("    }");
+        self.line("    fn has(&self, name: &str) -> bool {");
+        let names: Vec<String> = facts.iter().map(|(n, _)| format!("\"{}\"", n)).collect();
+        self.line(&format!("        matches!(name, {}) || self.__rest.contains_key(name)", names.join(" | ")));
+        self.line("    }");
+        self.line("    fn names(&self) -> Vec<String> {");
+        self.line(&format!("        let mut out: Vec<String> = vec![{}];", names.iter().map(|n| format!("{}.to_string()", n)).collect::<Vec<_>>().join(", ")));
+        self.line("        out.extend(self.__rest.keys().cloned());");
+        self.line("        out");
+        self.line("    }");
+        self.line("    fn copy_fact(&mut self, from: &dyn crow_web::live::Facts, name: &str) {");
+        self.line("        let Some(f) = from.as_any().downcast_ref::<CrowFacts>() else {");
+        self.line("            if let Some(v) = from.get_json(name) { self.set_json(name, v); }");
+        self.line("            return;");
+        self.line("        };");
+        self.line("        match name {");
+        for (n, _) in &facts {
+            self.line(&format!("            \"{}\" => self.{f} = f.{f}.clone(),", n, f = Self::rust_field(n)));
+        }
+        self.line("            _ => match f.__rest.get(name) {");
+        self.line("                Some(v) => { self.__rest.insert(name.to_string(), v.clone()); }");
+        self.line("                None => { self.__rest.remove(name); }");
+        self.line("            },");
+        self.line("        }");
+        self.line("    }");
+        self.line("    fn as_any(&self) -> &dyn std::any::Any { self }");
+        self.line("    fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }");
+        self.line("}");
+        self.line("/// The session's facts, read in place.");
+        self.line("#[allow(dead_code)]");
+        self.line("fn __facts(state: &CrowLiveState) -> &CrowFacts {");
+        self.line("    state.facts().as_any().downcast_ref::<CrowFacts>().unwrap_or_else(|| crow_stop(0, \"the session's facts are not this program's (a bug in Crow)\".to_string()))");
+        self.line("}");
+        self.line("/// The session's facts, written in place (each write followed by `touch` when the value moved).");
+        self.line("#[allow(dead_code)]");
+        self.line("fn __facts_mut(state: &mut CrowLiveState) -> &mut CrowFacts {");
+        self.line("    state.facts_mut().as_any_mut().downcast_mut::<CrowFacts>().unwrap_or_else(|| crow_stop(0, \"the session's facts are not this program's (a bug in Crow)\".to_string()))");
+        self.line("}");
     }
 
     fn emit_synthetic_types(&mut self) {

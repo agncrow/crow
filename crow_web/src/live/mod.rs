@@ -29,6 +29,8 @@ use crate::view::{CrowVNode, Head};
 pub mod files;
 pub mod signin;
 pub mod test_control;
+mod facts;
+pub use facts::{facts_map, Facts, JsonFacts};
 
 /// Internal action type for the WebSocket event loop.
 enum LiveAction {
@@ -307,7 +309,7 @@ fn wake_holders(sid: &str, except: u64) {
 pub fn start_session(init: &CrowLiveState) -> CrowLiveState {
     let mut state = init.clone();
     state.session_id = next_session_id();
-    let sid = state.data.get(READER_SID).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let sid = state.get(READER_SID).and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
     let handle = std::sync::Arc::new(SessionHandle {
         id: state.session_id,
         wake: tokio::sync::Notify::new(),
@@ -339,7 +341,9 @@ fn register_session(id: u64, handle: &std::sync::Arc<SessionHandle>) {
 /// Server-side component state.
 #[derive(Debug)]
 pub struct CrowLiveState {
-    pub data: HashMap<String, serde_json::Value>,
+    /// the session's facts, in the store the program provides (a compiled
+    /// page program's struct; the runtime's JSON otherwise)
+    facts: Box<dyn Facts>,
     /// one version per fact key, bumped by every set — what derivations
     /// compare their inputs against
     pub versions: HashMap<String, u64>,
@@ -737,7 +741,7 @@ fn keep_session_in(dir: &std::path::Path, token: &str, state: &CrowLiveState) {
         let _ = std::fs::write(&ignore, "*\n");
     }
     let tmp = path.with_extension("tmp");
-    if std::fs::write(&tmp, serde_json::to_string(&state.data).unwrap_or_default()).is_ok() {
+    if std::fs::write(&tmp, serde_json::to_string(&state.facts_map()).unwrap_or_default()).is_ok() {
         let _ = std::fs::rename(&tmp, &path);
     }
 }
@@ -776,8 +780,8 @@ fn kept_session_in(dir: &std::path::Path, token: &str, init: &CrowLiveState) -> 
     let facts: HashMap<String, serde_json::Value> = serde_json::from_str(&body?).ok()?;
     let mut state = start_session(init);
     for (key, value) in facts {
-        match init.data.get(&key) {
-            Some(declared) if same_shape(declared, &value) => state.set(&key, value),
+        match init.get(&key) {
+            Some(declared) if same_shape(&declared, &value) => state.set(&key, value),
             _ => eprintln!("crow live: a kept session's fact '{}' changed since it was kept; it starts from its declared value", key),
         }
     }
@@ -1111,7 +1115,7 @@ fn apply_field(state: &mut CrowLiveState, event: &str, value: Option<&str>) -> b
         return true;
     }
     if let Some(val) = value {
-        if let Some(v) = coerce_field_value(state.get(key), val) {
+        if let Some(v) = coerce_field_value(state.get(key).as_ref(), val) {
             state.set(key, v);
             state.acted += 1;
         }
@@ -1246,7 +1250,7 @@ impl CrowLiveState {
     /// Create a new empty state.
     pub fn new() -> Self {
         Self {
-            data: HashMap::new(),
+            facts: Box::new(JsonFacts::default()),
             versions: HashMap::new(),
             acted: 0,
             tick: 0,
@@ -1345,10 +1349,10 @@ impl CrowLiveState {
         }
         // the facts the handler changed land; the rest stay as they are now
         let mut moved = false;
-        for (key, value) in copy.data {
+        for key in copy.facts.names() {
             let version = copy.versions.get(&key).copied();
             if version.is_some() && version != copy.base_versions.get(&key).copied() {
-                self.data.insert(key.clone(), value);
+                self.facts.copy_fact(&*copy.facts, &key);
                 self.versions.insert(key, version.unwrap_or_default());
                 moved = true;
             }
@@ -1378,7 +1382,7 @@ impl CrowLiveState {
 
     /// The page's signed-in reader: a map of strings, empty when nobody is.
     pub fn reader(&self) -> std::collections::BTreeMap<String, String> {
-        match self.data.get(READER) {
+        match self.get(READER) {
             Some(serde_json::Value::Object(m)) => m.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect(),
             _ => std::collections::BTreeMap::new(),
         }
@@ -1455,7 +1459,7 @@ impl CrowLiveState {
     }
 
     fn apply_sign(&mut self, record: Option<std::collections::BTreeMap<String, String>>) {
-        let old = self.data.get(READER_SID).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let old = self.get(READER_SID).and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
         // a sign-in replaces the one before it, which ends — in every session
         // that holds it, woken now to find it gone
         if !old.is_empty() {
@@ -1489,7 +1493,7 @@ impl CrowLiveState {
 
     /// The page each paged table is on, by its place among the render's.
     pub fn table_pages(&self) -> HashMap<usize, usize> {
-        match self.data.get(PAGES) {
+        match self.get(PAGES) {
             Some(serde_json::Value::Object(m)) => m
                 .iter()
                 .filter_map(|(k, v)| Some((k.parse().ok()?, v.as_u64()? as usize)))
@@ -1500,8 +1504,8 @@ impl CrowLiveState {
 
     /// A page's pager pressed: the table shows that page from now on.
     fn turn_page(&mut self, index: usize, at: usize) {
-        let mut pages = match self.data.get(PAGES) {
-            Some(serde_json::Value::Object(m)) => m.clone(),
+        let mut pages = match self.get(PAGES) {
+            Some(serde_json::Value::Object(m)) => m,
             _ => serde_json::Map::new(),
         };
         pages.insert(index.to_string(), serde_json::json!(at));
@@ -1518,7 +1522,7 @@ impl CrowLiveState {
     /// The column each sorted table is sorted by, and whether descending, by
     /// its place among the render's.
     pub fn table_sorts(&self) -> HashMap<usize, (String, bool)> {
-        match self.data.get(SORTS) {
+        match self.get(SORTS) {
             Some(serde_json::Value::Object(m)) => m
                 .iter()
                 .filter_map(|(k, v)| Some((k.parse().ok()?, serde_json::from_value::<(String, bool)>(v.clone()).ok()?)))
@@ -1531,8 +1535,8 @@ impl CrowLiveState {
     /// ascending, or descending when they already followed it ascending.
     fn sort_table(&mut self, index: usize, column: String) {
         let desc = matches!(self.table_sorts().get(&index), Some((c, false)) if *c == column);
-        let mut sorts = match self.data.get(SORTS) {
-            Some(serde_json::Value::Object(m)) => m.clone(),
+        let mut sorts = match self.get(SORTS) {
+            Some(serde_json::Value::Object(m)) => m,
             _ => serde_json::Map::new(),
         };
         sorts.insert(index.to_string(), serde_json::json!([column, desc]));
@@ -1551,7 +1555,7 @@ impl CrowLiveState {
     /// A sign-in signed out elsewhere: this session's reader is nobody now.
     /// Whether it was.
     fn drop_ended_sign_in(&mut self) -> bool {
-        let sid = self.data.get(READER_SID).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let sid = self.get(READER_SID).and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
         if signin::is_ended(&sid) {
             self.set_reader(std::collections::BTreeMap::new(), String::new());
             return true;
@@ -1613,7 +1617,7 @@ impl CrowLiveState {
     /// now, its cache shared, so what the recompute stores the page reads.
     fn snapshot(&self) -> CrowLiveState {
         CrowLiveState {
-            data: self.data.clone(),
+            facts: self.facts.box_clone(),
             versions: self.versions.clone(),
             acted: self.acted,
             tick: self.tick,
@@ -1910,7 +1914,7 @@ impl CrowLiveState {
                     return (t.to_string(), v);
                 }
                 // a slice of the table: the newest write that may touch it
-                let keyed = spec.keys.iter().find(|(kt, _, _)| kt == t).and_then(|(_, column, fact)| self.data.get(*fact).map(|value| keyed_version(t, column, value)));
+                let keyed = spec.keys.iter().find(|(kt, _, _)| kt == t).and_then(|(_, column, fact)| self.get(fact).map(|value| keyed_version(t, column, &value)));
                 let v = keyed.unwrap_or_else(|| TABLE_VERSIONS.lock().unwrap_or_else(|p| p.into_inner()).get(*t).copied().unwrap_or(0));
                 (t.to_string(), v)
             })
@@ -2008,17 +2012,12 @@ impl CrowLiveState {
                 }
             }
             let _guard = InFlight(key);
-            let before = snapshot.data.clone();
+            let before = snapshot.facts_map();
             // a scheduled function is one event and one transaction of its own
             crow_runtime::txn::begin();
             crow_runtime::moments::at(crow_runtime::moments::clock(), || f(&mut snapshot));
             let _ = crow_runtime::txn::finish(!snapshot.is_stopped());
-            let delta: Vec<(String, serde_json::Value)> = snapshot
-                .data
-                .iter()
-                .filter(|(k, v)| before.get(*k) != Some(*v))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
+            let delta: Vec<(String, serde_json::Value)> = snapshot.facts_map().into_iter().filter(|(k, v)| before.get(k) != Some(v)).collect();
             if let Some(tx) = tx {
                 let _ = tx.send(delta);
             }
@@ -2031,41 +2030,79 @@ impl CrowLiveState {
         crow_runtime::lock(later_registry()).contains(&format!("{}:{}", self.session_id, name))
     }
 
-    /// Get a value from state.
-    pub fn get(&self, key: &str) -> Option<&serde_json::Value> {
-        self.data.get(key)
+    /// A fact (or one of the runtime's own keys) as JSON.
+    pub fn get(&self, key: &str) -> Option<serde_json::Value> {
+        self.facts.get_json(key)
     }
 
-    /// Set a value in state. The key's version bumps only when the value
-    /// changed, so a derivation recomputes when a fact it reads actually
-    /// moved — a handler that rewrites a fact to the same value costs
-    /// nothing downstream.
+    /// Whether there is a fact (or a runtime key) of this name.
+    pub fn has(&self, key: &str) -> bool {
+        self.facts.has(key)
+    }
+
+    /// Set a fact from JSON. Its version bumps only when the value changed,
+    /// so a derivation recomputes when a fact it reads actually moved — a
+    /// handler that rewrites a fact to the same value costs nothing
+    /// downstream. A value the fact cannot hold changes nothing.
     pub fn set(&mut self, key: &str, value: serde_json::Value) {
-        let changed = self.data.get(key) != Some(&value);
-        self.data.insert(key.to_string(), value);
-        if changed {
+        let changed = self.facts.get_json(key).as_ref() != Some(&value);
+        if self.facts.set_json(key, value) && changed {
             self.versions.insert(key.to_string(), next_version());
         }
     }
 
+    /// A fact the program wrote in place moved: its version bumps, as
+    /// `set`'s does for a value that changed.
+    pub fn touch(&mut self, key: &str) {
+        self.versions.insert(key.to_string(), next_version());
+    }
+
+    /// The session's facts, as the program's code reads them in place.
+    pub fn facts(&self) -> &dyn Facts {
+        &*self.facts
+    }
+
+    /// The session's facts, as the program's code writes them in place
+    /// (each write followed by `touch` when the value moved).
+    pub fn facts_mut(&mut self) -> &mut dyn Facts {
+        &mut *self.facts
+    }
+
+    /// The program's own store for its facts, taking what the state holds
+    /// already (a compiled page program installs its struct as it starts).
+    pub fn install_facts(&mut self, mut facts: Box<dyn Facts>) {
+        for name in self.facts.names() {
+            if let Some(v) = self.facts.get_json(&name) {
+                facts.set_json(&name, v);
+            }
+        }
+        self.facts = facts;
+    }
+
+    /// Every fact as JSON, by name: the edges (a kept session, the dev
+    /// panel, the harness).
+    pub fn facts_map(&self) -> HashMap<String, serde_json::Value> {
+        facts_map(&*self.facts)
+    }
+
     /// Get an i64 from state, with default.
     pub fn get_i64(&self, key: &str, default: i64) -> i64 {
-        self.data.get(key).and_then(|v| v.as_i64()).unwrap_or(default)
+        self.get(key).and_then(|v| v.as_i64()).unwrap_or(default)
     }
 
     /// Get a string from state, with default.
     pub fn get_str(&self, key: &str, default: &str) -> String {
-        self.data.get(key).and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_else(|| default.to_string())
+        self.get(key).and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| default.to_string())
     }
 
     /// Get an f64 from state, with default.
     pub fn get_f64(&self, key: &str, default: f64) -> f64 {
-        self.data.get(key).and_then(|v| v.as_f64()).unwrap_or(default)
+        self.get(key).and_then(|v| v.as_f64()).unwrap_or(default)
     }
 
     /// Get a bool from state, with default.
     pub fn get_bool(&self, key: &str, default: bool) -> bool {
-        self.data.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
+        self.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
     }
 
     /// Register a one-time fetch: `fetch[url]` → stores result under `key`.
@@ -2092,7 +2129,7 @@ impl Clone for CrowLiveState {
     /// state, or the snapshot a `later` function runs against.
     fn clone(&self) -> Self {
         Self {
-            data: self.data.clone(),
+            facts: self.facts.box_clone(),
             versions: self.versions.clone(),
             acted: self.acted,
             tick: self.tick,
@@ -2817,7 +2854,7 @@ impl Address {
         let mut fits = true;
         for (name, fact) in &self.path {
             if let Some(text) = path.get(name) {
-                match coerce_field_value(state.get(fact), text) {
+                match coerce_field_value(state.get(fact).as_ref(), text) {
                     Some(v) => state.set(fact, v),
                     None => fits = false,
                 }
@@ -2825,7 +2862,7 @@ impl Address {
         }
         for (name, fact) in &self.query {
             if let Some(text) = query.get(name)
-                && let Some(v) = coerce_field_value(state.get(fact), text)
+                && let Some(v) = coerce_field_value(state.get(fact).as_ref(), text)
             {
                 state.set(fact, v);
             }
@@ -2905,16 +2942,16 @@ where
         // every session holds its reader (nobody, to begin with) with its
         // facts, so a kept session keeps who it was
         let mut initial_state = self.initial_state;
-        if !initial_state.data.contains_key(READER) {
+        if !initial_state.has(READER) {
             initial_state.set(READER, serde_json::json!({}));
         }
-        if !initial_state.data.contains_key(READER_SID) {
+        if !initial_state.has(READER_SID) {
             initial_state.set(READER_SID, serde_json::json!(""));
         }
-        if !initial_state.data.contains_key(PAGES) {
+        if !initial_state.has(PAGES) {
             initial_state.set(PAGES, serde_json::json!({}));
         }
-        if !initial_state.data.contains_key(SORTS) {
+        if !initial_state.has(SORTS) {
             initial_state.set(SORTS, serde_json::json!({}));
         }
         let init_state = std::sync::Arc::new(initial_state);
@@ -3218,7 +3255,7 @@ where
                         let mut dev_facts = serde_json::Map::new();
                         let mut dev_events: Vec<String> = Vec::new();
                         if dev_token().is_some() {
-                            let first = dev_panel(&state.data, &mut dev_facts, Vec::new(), 0.0, 0);
+                            let first = dev_panel(&state.facts_map(), &mut dev_facts, Vec::new(), 0.0, 0);
                             let _ = futures_util::SinkExt::send(&mut socket, Message::Text(first.to_string().into())).await;
                         }
 
@@ -3591,7 +3628,7 @@ where
                             }
                             // the dev panel's word on this render
                             if dev_token().is_some() {
-                                let word = dev_panel(&state.data, &mut dev_facts, std::mem::take(&mut dev_events), render_ms, sent);
+                                let word = dev_panel(&state.facts_map(), &mut dev_facts, std::mem::take(&mut dev_events), render_ms, sent);
                                 if futures_util::SinkExt::send(&mut socket, Message::Text(word.to_string().into())).await.is_err() {
                                     break;
                                 }
@@ -4740,7 +4777,7 @@ mod tests {
         let mut initial = CrowLiveState::new();
         initial.set("upload", serde_json::json!({}));
         let render = |s: &CrowLiveState| {
-            let up = s.get("upload").cloned().unwrap_or_default();
+            let up = s.get("upload").unwrap_or_default();
             let name = up["name"].as_str().unwrap_or("").to_string();
             let contents = up["path"].as_str().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
             CrowVNode::div(vec![
@@ -5052,7 +5089,7 @@ mod tests {
         let mut initial = CrowLiveState::new();
         initial.set("upload", serde_json::json!({}));
         let render = |s: &CrowLiveState| {
-            let name = s.get("upload").and_then(|u| u["name"].as_str()).unwrap_or("").to_string();
+            let name = s.get("upload").and_then(|u| u["name"].as_str().map(str::to_string)).unwrap_or_default();
             CrowVNode::div(vec![CrowVNode::field_typed("Trades", "upload", &name, "file", 0)])
         };
         let handle = |_: &mut CrowLiveState, _: &str, _: Option<&str>| {};
@@ -5164,7 +5201,7 @@ mod tests {
         let path: HashMap<String, String> = [("card".to_string(), "7".to_string())].into_iter().collect();
         let query: HashMap<String, String> = [("day".to_string(), "mon day".to_string())].into_iter().collect();
         assert!(address.read_into(&mut state, &path, &query));
-        assert_eq!(state.get("card"), Some(&serde_json::json!(7)), "in its fact's shape");
+        assert_eq!(state.get("card"), Some(serde_json::json!(7)), "in its fact's shape");
         assert_eq!(address.of(&state), ("/board/7".to_string(), "day=mon%20day".to_string()));
         assert!(Address::new("/", &[]).is_empty());
         // a path its fact cannot hold is no page; a query value is passed over
@@ -5702,7 +5739,7 @@ mod tests {
             st.set("same", serde_json::json!(a == b));
         };
         apply_event(&mut s, &serde_json::json!({ "event": "go" }).to_string(), &[&offers], &handler);
-        assert_eq!(s.get("same"), Some(&serde_json::json!(true)), "the handler read one moment");
+        assert_eq!(s.get("same"), Some(serde_json::json!(true)), "the handler read one moment");
         let vnode = s.render_with(&|_: &CrowLiveState| {
             let a = crow_runtime::moments::now();
             std::thread::sleep(std::time::Duration::from_millis(3));
@@ -5710,6 +5747,15 @@ mod tests {
             CrowVNode::text(if a == b { "one" } else { "two" })
         });
         assert_eq!(vnode.to_html(), "one", "the render read one moment");
+    }
+
+    /// A compiled handler's or view's parallel loop reads the session's
+    /// facts and derivations from inside its closure, so the state is
+    /// shared across the loop's threads (typed-values-design.md §6)
+    #[test]
+    fn the_session_state_can_be_shared_by_a_parallel_loop() {
+        fn shared<T: Sync + Send>() {}
+        shared::<CrowLiveState>();
     }
 
     #[test]
@@ -5722,9 +5768,9 @@ mod tests {
         let mut copy = s.working_copy();
         copy.set("a", serde_json::json!(2));
         copy.notice("saved".to_string());
-        assert_eq!(s.get("a"), Some(&serde_json::json!(1)), "nothing lands before the commit");
+        assert_eq!(s.get("a"), Some(serde_json::json!(1)), "nothing lands before the commit");
         assert_eq!(s.commit(copy), None);
-        assert_eq!(s.get("a"), Some(&serde_json::json!(2)));
+        assert_eq!(s.get("a"), Some(serde_json::json!(2)));
         assert_eq!(s.notice.as_ref().map(|n| n.0.as_str()), Some("saved"));
         // stops: nothing lands, the reason is the notice
         let mut copy = s.working_copy();
@@ -5734,7 +5780,7 @@ mod tests {
         copy.stop("apply stopped: no quote".to_string());
         let stopped = s.commit(copy).expect("the handler stopped");
         assert_eq!(stopped.reason, "apply stopped: no quote");
-        assert_eq!((s.get("a"), s.get("b")), (Some(&serde_json::json!(2)), Some(&serde_json::json!(1))), "a stop lands nothing");
+        assert_eq!((s.get("a"), s.get("b")), (Some(serde_json::json!(2)), Some(serde_json::json!(1))), "a stop lands nothing");
         // the reader is told it stopped and nothing changed, and an id; the
         // log has the reason beside the id
         assert!(stopped.id.len() == 8 && stopped.id.chars().all(|c| c.is_ascii_hexdigit()), "{}", stopped.id);
@@ -5868,7 +5914,7 @@ mod tests {
     fn test_live_state() {
         let mut state = CrowLiveState::new();
         state.set("count", serde_json::json!(0));
-        assert_eq!(state.get("count"), Some(&serde_json::json!(0)));
+        assert_eq!(state.get("count"), Some(serde_json::json!(0)));
     }
 
     #[test]
@@ -5890,7 +5936,7 @@ mod tests {
     #[test]
     fn test_live_state_default() {
         let state = CrowLiveState::default();
-        assert!(state.data.is_empty());
+        assert!(state.facts_map().is_empty());
     }
 
     #[test]

@@ -105,13 +105,13 @@ fn caught<T>(f: impl FnOnce() -> T) -> Result<T, String> {
 /// The routes, answering only when `CROW_TEST_CONTROL` is set.
 pub fn router(initial: CrowLiveState, view: ViewFn, handle: HandleFn, derived: DerivedFn) -> axum::Router {
     let mut initial = initial;
-    if !initial.data.contains_key(READER) {
+    if !initial.has(READER) {
         initial.set(READER, serde_json::json!({}));
     }
-    if !initial.data.contains_key(READER_SID) {
+    if !initial.has(READER_SID) {
         initial.set(READER_SID, serde_json::json!(""));
     }
-    if !initial.data.contains_key(PAGES) {
+    if !initial.has(PAGES) {
         initial.set(PAGES, serde_json::json!({}));
     }
     let control = std::sync::Arc::new(Control { initial, view, handle, derived, sessions: tokio::sync::Mutex::new(HashMap::new()) });
@@ -143,7 +143,7 @@ async fn answer(c: &Control, op: &str, body: serde_json::Value) -> Result<serde_
         // the test's own facts, as it holds them when it opens the app
         if let Some(serde_json::Value::Object(facts)) = body.get("facts") {
             for (k, v) in facts {
-                if state.data.contains_key(k) {
+                if state.has(k) {
                     state.set(k, v.clone());
                 }
             }
@@ -202,7 +202,7 @@ async fn answer(c: &Control, op: &str, body: serde_json::Value) -> Result<serde_
         "field" => {
             let name = text(&body, "name")?;
             let value = body.get("value").cloned().unwrap_or(serde_json::Value::Null);
-            if !s.state.data.contains_key(&name) {
+            if !s.state.has(&name) {
                 return Err(format!("change[]: no reactive variable named '{}' in the compiled program", name));
             }
             s.state.set(&name, value);
@@ -242,7 +242,7 @@ async fn answer(c: &Control, op: &str, body: serde_json::Value) -> Result<serde_
         // harness copies them into the test, as its sessions swap theirs in
         "facts" => {
             let facts: serde_json::Map<String, serde_json::Value> =
-                s.state.data.iter().filter(|(k, _)| !k.starts_with("__") && k.as_str() != READER).map(|(k, v)| (k.clone(), v.clone())).collect();
+                s.state.facts_map().into_iter().filter(|(k, _)| !k.starts_with("__") && k.as_str() != READER).collect();
             // and what the harness reads beside them: the notice and the reader
             let notice = s.state.notice.as_ref().map(|(text, at)| serde_json::json!({ "text": text, "at": at }));
             Ok(serde_json::json!({ "facts": facts, "notice": notice, "reader": s.state.reader() }))

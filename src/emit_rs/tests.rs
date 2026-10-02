@@ -6,11 +6,12 @@ use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::type_infer::TypeContext;
 
-/// A handler reads a derivation again after a write to what it reads —
-/// a helper's or its own — as the interpreter does (spec, Derivations,
-/// rule 1). The compiled handler read each derivation once at its
-/// start, so finch's hop said "RSI crosses 70 at 09:26:49" while the
-/// clock it had just moved showed 14:27:00.
+/// A handler reads a derivation after a write to what it reads — a
+/// helper's or its own — as the interpreter does (spec, Derivations, rule
+/// 1): where it uses it, from the session's facts, which the write changed
+/// in place (typed-values-design.md §6). The compiled handler had read each
+/// derivation once at its start, so finch's hop said "RSI crosses 70 at
+/// 09:26:49" while the clock it had just moved showed 14:27:00.
 #[test]
 fn a_handler_reads_a_derivation_after_a_write() {
     let src = "use web, ui\n\nbase = 1.0\nmsg = ''\n\nderive twice\n    return base * 2.0\n\nfn move_to[t]\n    base = t\n\nfn go[]\n    move_to[5.0]\n    msg = 'twice is `twice`'\n\nfn go_direct[]\n    base = 7.0\n    msg = 'twice is `twice`'\n\nview render[]\n    return stack[p[msg], button['Go', click = go], button['Direct', click = go_direct]]\n\nserve[3997]\npage['/', render]\n";
@@ -22,35 +23,30 @@ fn a_handler_reads_a_derivation_after_a_write() {
     };
     let go = body("go");
     let call = go.find("move_to(state").expect("the helper call");
-    let reread = go.rfind("twice = __derive_twice(state);").expect("twice read again");
-    let used = go.find("format!(\"twice is {}\", twice)").expect("the message");
-    assert!(call < reread && reread < used, "twice is read again after the helper, before the message:\n{}", go);
+    let used = go.find("format!(\"twice is {}\", __derive_twice(state))").expect("twice read where the message uses it");
+    assert!(call < used, "twice is read after the helper, in the message:\n{}", go);
     let direct = body("go_direct");
-    let write = direct.find("base = 7.0").expect("the handler's own write");
-    let flushed = direct.find("state.set(\"base\"").expect("the write lands before the read");
-    let reread = direct.rfind("twice = __derive_twice(state);").expect("twice read again");
-    let used = direct.find("format!(\"twice is {}\", twice)").expect("the message");
-    assert!(write < flushed && flushed < reread && reread < used, "the own write lands, then twice is read again:\n{}", direct);
+    let write = direct.find("__facts_mut(state).base = _v").expect("the handler's own write, in place");
+    let used = direct.find("format!(\"twice is {}\", __derive_twice(state))").expect("twice read where the message uses it");
+    assert!(write < used, "the own write lands in place, then twice is read:\n{}", direct);
+    assert!(!go.contains("state.set(") && !direct.contains("state.set("), "no handler writes its facts back as JSON:\n{}\n{}", go, direct);
 }
 
-/// A handler's loop reads its derivations before the loop: a parallel
-/// body runs in a closure, which reads nothing again (it writes no
-/// fact, so nothing it reads can move), and so does a collecting
-/// loop's. A read inside the closure would assign a captured local and
-/// borrow the state inside it — a build error.
+/// A handler's loop reads its derivations where it uses them: a parallel
+/// body runs in a closure that reads the session's state it shares (the
+/// state is Sync; a loop that writes a fact runs in order), and so does a
+/// collecting loop's. (A local copy read again inside the closure had been
+/// a build error; there is no copy now.)
 #[test]
-fn a_handler_loop_reads_its_derivations_before_the_loop() {
+fn a_handler_loop_reads_its_derivations_where_it_uses_them() {
     let src = "use web, ui\n\nbase = 1.0\nmsg = ''\nitems = [1, 2, 3]\n\nderive twice\n    return base * 2.0\n\nfn go[]\n    base = 5.0\n    for i in items\n        y = i * twice\n    out = for i in items\n        i * twice\n    msg = '`len[out]`'\n\nview render[]\n    return stack[p[msg], button['Go', click = go]]\n\nserve[3996]\npage['/', render]\n";
     let rust = transpile(src);
     let start = rust.find("fn go(state").expect("go is a handler");
     let rest = &rust[start..];
     let go = &rest[..rest.find("\n}\n").unwrap()];
     assert!(go.contains("par_iter().for_each("), "the loop is parallel:\n{}", go);
-    let rereads: Vec<&str> = go.lines().filter(|l| l.contains("twice = __derive_twice(state);") && !l.contains("let mut")).collect();
-    assert_eq!(rereads.len(), 2, "read again before the loop and before the collecting loop:\n{}", go);
-    for l in &rereads {
-        assert!(l.starts_with("    twice") , "read at the handler's level, never inside a closure: {:?}\n{}", l, go);
-    }
+    assert!(!go.contains("twice = __derive_twice"), "no copy of the derivation is kept or read again:\n{}", go);
+    assert!(go.matches("__derive_twice(state)").count() >= 2, "read where each loop uses it:\n{}", go);
 }
 
 /// A view reads its derivations into locals up front; handing one to a
@@ -1933,10 +1929,11 @@ fn test_reactive_counter() {
     // Reactive handler functions should get mut state param injected
     assert!(rust.contains("fn inc(state: &mut CrowLiveState)"), "inc should have injected mut state param\n{}", rust);
     assert!(rust.contains("fn dec(state: &mut CrowLiveState)"), "dec should have injected mut state param\n{}", rust);
-    // State preamble: state.get_i64 for reactive vars
-    assert!(rust.contains("state.get_i64(\"count\""), "should inject state.get_i64 preamble\n{}", rust);
-    // State epilogue: state.set for reactive vars in handlers
-    assert!(rust.contains("state.set(\"count\""), "should inject state.set epilogue in handlers\n{}", rust);
+    // the session's facts: a struct of the program's, read and written in
+    // place, each write bumping its fact's version when it moved
+    assert!(rust.contains("struct CrowFacts {") && rust.contains("    count: i64,"), "the facts' struct\n{}", rust);
+    assert!(rust.contains("__crow_state.install_facts(Box::new(CrowFacts::default()));"), "installed in main\n{}", rust);
+    assert!(rust.contains("__facts(&*state).count") && rust.contains("__facts_mut(state).count = _v") && rust.contains("state.touch(\"count\")"), "read and written in place\n{}", rust);
     // Dispatch function
     assert!(rust.contains("fn __crow_handle(state: &mut CrowLiveState, event: &str, _value: Option<&str>)"), "should generate __crow_handle dispatch\n{}", rust);
     assert!(rust.contains("\"inc\" => inc(state)"), "dispatch should route inc\n{}", rust);
@@ -2097,7 +2094,7 @@ fn test_fallible_condition_guarded_and_return_widened() {
 #[test]
 fn a_fact_a_handler_assigns_a_float_is_a_float_from_its_declaration() {
     let rust = transpile("use web, ui, frame\ndeleted = 0\nfn delete_row[id]\n    deleted = id\nview records[]\n    rows = frame.new[]\n    rows = with[rows, 'id', [3, 4]]\n    return table[rows, click = delete_row, key = 'id']\npage['/', records]\n");
-    assert!(rust.contains("state.get_f64(\"deleted\", ((0_i64) as f64))"), "the key column is float, so the fact is\n{}", rust);
+    assert!(rust.contains("    deleted: f64,") && rust.contains("__crow_state.set(\"deleted\", serde_json::json!((((0_i64) as f64))));"), "the key column is float, so the fact is\n{}", rust);
 }
 
 /// A function that assigns a fact's name, called from a view, would change
@@ -2143,7 +2140,13 @@ fn len_of_a_result_frame_compares_cleanly() {
 #[test]
 fn a_helper_sees_what_its_caller_wrote_so_far() {
     let rust = transpile("use web, ui\nskipped = ['']\nsym = 'A'\nstatus = ''\nfn hop[]\n    if contains[skipped, sym]\n        status = 'skipped'\n    else\n        status = 'kept'\nfn skip[]\n    skipped = concat[skipped, [sym]]\n    hop[]\nview render[]\n    return stack[p[status], button['Skip', click = skip], button['Hop', click = hop]]\npage['/', render]\n");
-    assert!(rust.contains("state.set(\"skipped\", serde_json::json!(skipped)); let _r = hop(state"), "the caller's write reaches the helper\n{}", rust);
+    // one copy of the session's facts: the caller's write is in it when
+    // the helper reads it
+    let skip = &rust[rust.find("fn skip(state").expect("skip is a handler")..];
+    let skip = &skip[..skip.find("\n}\n").unwrap_or(skip.len())];
+    let write = skip.find("__facts_mut(state).skipped = _v").expect("the caller's write, in place");
+    let call = skip.find("let _r = hop(state)").expect("the helper call");
+    assert!(write < call && !skip.contains("state.set("), "the caller's write reaches the helper\n{}", skip);
 }
 
 /// `if not b.ok return b` in a function whose value is another type:
