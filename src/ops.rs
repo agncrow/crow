@@ -217,37 +217,55 @@ pub fn binop(
     }
 }
 
-/// eq/ne. A list compared with one value is a mask (`mask`); a tensor
-/// with a number, each element by value; everything else is whole-value
-/// equality.
+/// eq/ne. Two values are compared when they are of one kind — a number is
+/// not text (crow_runtime::mask): a list compared with one value is a mask
+/// (`mask`), a tensor with a number each element by value, a parsed value
+/// with a value of its kind, two values of one kind whole; two kinds are the
+/// reason, which the lowering refuses where it knows both.
 pub fn equality_values(
     left: &CrowValue,
     right: &CrowValue,
     negate: bool,
 ) -> Result<CrowValue, String> {
+    use crow_runtime::mask;
     let cmp = if negate { Cmp::Ne } else { Cmp::Eq };
+    let answer = |b: bool| CrowValue::ok(Value::Bool(b));
     match (&left.value, &right.value) {
         (Value::Array(items), r) if is_scalar(r) => mask(items, cmp, r),
         (l, Value::Array(items)) if is_scalar(l) => mask(items, cmp, l),
-        // Tensor vs numeric scalar → element-wise mask (like gt/lt)
-        (Value::NumArray(t), Value::Int(_) | Value::Float(_))
-        | (Value::Int(_) | Value::Float(_), Value::NumArray(t)) => {
-            let s = match (&left.value, &right.value) {
-                (_, Value::Int(n)) | (Value::Int(n), _) => *n as f64,
-                (_, Value::Float(f)) | (Value::Float(f), _) => *f,
-                _ => unreachable!(),
-            };
-            let results: Vec<CrowValue> = t.to_vec().iter().map(|&v| {
-                let eq = v == s;
-                CrowValue::ok(Value::Bool(if negate { !eq } else { eq }))
-            }).collect();
-            Ok(CrowValue::ok(Value::Array(results)))
-        }
+        (Value::NumArray(t), s) | (s, Value::NumArray(t)) if is_scalar(s) => tensor_mask(t, cmp, s),
+        (Value::Json(a), Value::Json(b)) => mask::json_pair(cmp, a, b).map(answer),
+        (Value::Json(j), v) | (v, Value::Json(j)) if is_scalar(v) => mask::json_holds(cmp, j, mask_cell(v)).map(answer),
+        (a, b) if is_scalar(a) && is_scalar(b) => mask::holds(cmp, mask_cell(a), true, mask_cell(b)).map(answer),
         _ => {
-            let eq = values_equal(left, right);
-            Ok(CrowValue::ok(Value::Bool(if negate { !eq } else { eq })))
+            whole_kinds(&left.value, &right.value, cmp)?;
+            Ok(answer(values_equal(left, right) != negate))
         }
     }
+}
+
+/// Two lists compared whole — a column's cells among them — whose items'
+/// kinds show only as the program runs (a file's column) are of one kind,
+/// read from their first items, as the compiled program's columns read it
+/// (crow_runtime::mask, `CrowColumn::whole`).
+fn whole_kinds(a: &Value, b: &Value, cmp: Cmp) -> Result<(), String> {
+    use crow_runtime::mask::Cell;
+    fn first(v: &Value) -> Option<(usize, Cell<'_>)> {
+        match v {
+            Value::Array(items) => items.first().map(|i| (items.len(), mask_cell(&i.value))),
+            Value::NumArray(t) if t.ndim() == 1 => t.shape().first().filter(|&&n| n > 0).map(|&n| (n, Cell::Number(0.0))),
+            _ => None,
+        }
+    }
+    let cell = |c: &Cell| matches!(c, Cell::Number(_) | Cell::Text(_) | Cell::Bool(_));
+    if let (Some((n, x)), Some((m, y))) = (first(a), first(b))
+        && n == m
+        && cell(&x)
+        && cell(&y)
+    {
+        crow_runtime::mask::holds(cmp, x, false, y)?;
+    }
+    Ok(())
 }
 
 /// A value a mask compares with: a number, text or a bool.

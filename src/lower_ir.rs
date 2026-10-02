@@ -2909,7 +2909,10 @@ impl<'a> Lowerer<'a> {
             }
             let lowered = self.core_row_arguments(&name, lowered);
             let target = match self.builtin_row(None, &name, &lowered) {
-                Some(row) => Target::Row(row),
+                Some(row) => {
+                    self.check_item(row, &lowered);
+                    Target::Row(row)
+                }
                 None => Target::Runtime(runtime_name(&name)),
             };
             return Ok(Expr::Call { target, args: lowered, ty, propagates });
@@ -2933,7 +2936,10 @@ impl<'a> Lowerer<'a> {
             None => self.core_row_arguments(&name, lowered),
         };
         let target = match self.builtin_row(None, &name, &lowered) {
-            Some(row) => Target::Row(row),
+            Some(row) => {
+                self.check_item(row, &lowered);
+                Target::Row(row)
+            }
             None => Target::Runtime(name),
         };
         Ok(Expr::Call { target, args: lowered, ty, propagates })
@@ -4066,24 +4072,41 @@ mod tests {
         assert!(!held.contains("filter_where"), "a mask in a variable: {}", held);
     }
 
-    /// An order asked of kinds known to have none between them is refused
-    /// before the program runs, in the words the runtime stops with
-    /// (crow_runtime::mask::unordered): bools, a number with text, a
-    /// column of text with a number, two lists; a parsed value is read as
-    /// one first. Text with text has an order; arithmetic on a list of text
-    /// is refused as arithmetic on text is
+    /// Values of two kinds are not compared, and an order is asked only of
+    /// numbers or of text: where the lowering knows both kinds the
+    /// comparison is refused before the program runs, in the words the
+    /// runtime stops with (crow_runtime::mask::incomparable) — a number with
+    /// text, a bool with either, bools ordered, a column of text with a
+    /// number, two lists of two kinds; a parsed value is read as one type
+    /// before an order; an item put in or looked for in a collection of
+    /// another kind; a list of values that can fail as a mask; arithmetic on
+    /// a list of text
     #[test]
-    fn an_order_between_kinds_with_none_is_refused() {
-        assert!(refusal_of("log[true gt false]\n").contains("gt compares numbers with numbers or text with text, not a bool with a bool"));
-        assert!(refusal_of("log['a' lte 1]\n").contains("lte compares numbers with numbers or text with text, not text with a number"));
+    fn values_of_two_kinds_are_not_compared() {
+        let refused = |src: &str, words: &str| {
+            let r = refusal_of(src);
+            assert!(r.contains(words), "{}\nrefused with: {}", src, r);
+        };
+        refused("log['a' eq 1]\n", "eq compares values of one kind, not text with a number");
+        refused("log[1 ne 'a']\n", "ne compares values of one kind, not a number with text");
+        refused("log[true eq 1]\n", "eq compares values of one kind, not a bool with a number");
+        refused("log[true gt false]\n", "gt compares numbers with numbers or text with text, not a bool with a bool");
+        refused("log['a' lte 1]\n", "lte compares numbers with numbers or text with text, not text with a number");
         let df = "use frame\ndf = with[frame.new[], 'name', ['ada', 'bob']]\n";
-        assert!(refusal_of(&format!("{}log[df.name gt 2]\n", df)).contains("gt compares numbers with numbers or text with text, not text with a number"));
-        assert!(refusal_of(&format!("{}log[2 lt df.name]\n", df)).contains("lt compares numbers with numbers or text with text, not a number with text"));
-        assert!(refusal_of("log[['a'] gt ['b']]\n").contains("gt compares numbers with numbers or text with text, not a list with a list"));
-        assert!(refusal_of("j = json['{\"n\": 1}']\nlog[j.n gt 0]\n").contains("a value whose type the program does not know is read as one first"));
-        assert!(refusal_of("xs = ['1', '2']\nlog[xs + 1]\n").contains("cannot use '+' with array[str] and int"));
-        assert!(refusal_of("a = float['1.5']\nxs = [a, a]\nlog[xs eq 1.5]\n").contains("eq of a list of values that can fail is a mask, and a mask decides every row: guard each value with .ok"));
-        assert_eq!(refusal_of(&format!("{}log['b' gt 'a']\nlog[df.name gte 'b']\nlog['a' eq 1]\na = float['1.5']\nlog[[a] eq [a]]\n", df)), "");
+        refused(&format!("{}log[df.name gt 2]\n", df), "gt compares numbers with numbers or text with text, not text with a number");
+        refused(&format!("{}log[df.name eq 2]\n", df), "eq compares values of one kind, not text with a number");
+        refused(&format!("{}log[2 lt df.name]\n", df), "lt compares numbers with numbers or text with text, not a number with text");
+        refused("log[['a'] gt ['b']]\n", "gt compares numbers with numbers or text with text, not a list of text with a list of text");
+        refused("log[['a'] eq [1]]\n", "eq compares values of one kind, not a list of text with a list of numbers");
+        refused("j = json['{\"n\": 1}']\nlog[j.n gt 0]\n", "a value whose type the program does not know is read as one first");
+        refused("xs = ['1', '2']\nlog[xs + 1]\n", "cannot use '+' with array[str] and int");
+        refused("a = float['1.5']\nxs = [a, a]\nlog[xs eq 1.5]\n", "eq of a list of values that can fail is a mask, and a mask decides every row: guard each value with .ok");
+        refused("log[contains[['a'], 1]]\n", "contains[] takes a list and an item of its kind: its items are text, not a number");
+        refused("xs = push[['a'], 1]\nlog[xs]\n", "push[] takes a list and an item of its kind: its items are text, not a number");
+        refused("m = set[map[a = 'x'], 'b', 1]\nlog[m]\n", "set[] takes a map, a key and a value of its kind: its values are text, not a number");
+        // of one kind, they are compared: text ordered, an int beside a
+        // float, two lists whole, a parsed value as the program runs
+        assert_eq!(refusal_of(&format!("{}log['b' gt 'a']\nlog[df.name gte 'b']\nlog[1 eq 1.0]\nlog[['a'] eq ['a']]\nj = json['1']\nlog[j eq 'x']\na = float['1.5']\nlog[[a] eq [a]]\nlog[contains[['a'], 'b']]\n", df)), "");
     }
 
     /// A status the type settles is decided before the program runs: `.ok`

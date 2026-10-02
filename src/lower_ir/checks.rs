@@ -573,21 +573,24 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// An order asked of two values (`gt`, `lt`, `gte`, `lte`): numbers
-    /// with numbers, text with text, or the items of a list or a frame's
-    /// column with one value — a mask. Where both sides' kinds are known
-    /// and have no order between them, the comparison is refused before the
-    /// program runs, in the words the runtime stops with where they show
-    /// only as it runs (crow_runtime::mask::unordered): bools, two lists, a
-    /// column of text with a number. A parsed value is read as one type
-    /// first, as arithmetic on one is. (Compiled, `true gt false` had
-    /// answered and text had been parsed as numbers, where the interpreter
-    /// stopped or answered false; several did not build.)
+    /// A comparison of two values: two of one kind — numbers (an int beside
+    /// a float), text, bools, records, maps — and an order only of numbers
+    /// or of text; a list's or a frame's column's items with one value of
+    /// their kind (a mask), or two lists of one kind whole. Where both sides'
+    /// kinds are known and differ, or an order is asked of a kind with
+    /// none, the comparison is refused before the program runs, in the
+    /// words the runtime stops with where they show only as it runs
+    /// (crow_runtime::mask::incomparable): a number is not text (Vijay,
+    /// 2026-10-01), nor a bool either. A parsed value is compared as the
+    /// program runs, and is read as one type before an order. (Compiled,
+    /// `true gt false` had answered and text had been parsed as numbers,
+    /// where the interpreter stopped or answered false; several did not
+    /// build.)
     ///
-    /// A list of values that can fail compared with one value, by any of
-    /// the six, is a mask, and a mask decides every row: it is refused as
-    /// a filter refuses it (compiled, it had not built, where the
-    /// interpreter stopped on a failed item).
+    /// A list of values that can fail compared with one value is a mask,
+    /// and a mask decides every row: it is refused as a filter refuses it
+    /// (compiled, it had not built, where the interpreter stopped on a
+    /// failed item).
     pub(super) fn check_order(&mut self, op: &BinOp, l: &Ty, r: &Ty) {
         let cmp = match op {
             BinOp::Eq => crow_runtime::mask::Cmp::Eq,
@@ -604,20 +607,60 @@ impl<'a> Lowerer<'a> {
             self.refuse(format!("{} of a list of values that can fail is a mask, and a mask decides every row: guard each value with .ok (cells of a column that can be missing: compare the column, or fill it first, fill[frame, 'column', value])", cmp.word()));
             return;
         }
-        if !cmp.orders() {
-            return;
-        }
         if matches!(l.payload(), Ty::Json) || matches!(r.payload(), Ty::Json) {
-            self.refuse(format!("{} compares numbers with numbers or text with text — a value whose type the program does not know is read as one first: int[…], float[…] or str[…]", cmp.word()));
+            if cmp.orders() {
+                self.refuse(format!("{} compares numbers with numbers or text with text — a value whose type the program does not know is read as one first: int[…], float[…] or str[…]", cmp.word()));
+            }
             return;
         }
         let (Some(a), Some(b)) = (order_side(l), order_side(r)) else { return };
-        let (x, y) = match (a, b) {
-            (OrderSide::Many(_), OrderSide::Many(_)) => ("a list", "a list"),
-            (OrderSide::One(x) | OrderSide::Many(x), OrderSide::One(y)) | (OrderSide::One(x), OrderSide::Many(y)) => (x, y),
+        let scalar = |k: &str| matches!(k, "a number" | "text" | "a bool");
+        let (x, y) = match (&a, &b) {
+            // two lists: an order has none, and equality is whole, by the
+            // items each holds (a matrix's are its rows)
+            (OrderSide::Many(_), OrderSide::Many(_)) => {
+                let (Some(x), Some(y)) = (whole_items(l), whole_items(r)) else { return };
+                if !cmp.orders() && x == y {
+                    return;
+                }
+                (many_words(x), many_words(y))
+            }
+            // a mask: the items with a value of their kind
+            (OrderSide::Many(x), OrderSide::One(y)) | (OrderSide::One(y), OrderSide::Many(x)) if scalar(y) => {
+                let (x, y) = if matches!(a, OrderSide::Many(_)) { (*x, *y) } else { (*y, *x) };
+                (x.to_string(), y.to_string())
+            }
+            (OrderSide::Many(x), OrderSide::One(y)) => (many_words(x), y.to_string()),
+            (OrderSide::One(x), OrderSide::Many(y)) => (x.to_string(), many_words(y)),
+            (OrderSide::One(x), OrderSide::One(y)) => (x.to_string(), y.to_string()),
         };
-        if !(x == y && matches!(x, "a number" | "text")) {
-            self.refuse(crow_runtime::mask::unordered(cmp, x, y));
+        let compares = x == y && if cmp.orders() { matches!(x.as_str(), "a number" | "text") } else { true };
+        if !compares {
+            self.refuse(crow_runtime::mask::incomparable(cmp, &x, &y));
+        }
+    }
+
+    /// An item put in a collection, or looked for in one, is of the kind of
+    /// its items (`push`, `contains`, `set`): a list holds one kind (spec,
+    /// Arrays), and a number is not text. Refused where both kinds are
+    /// known. (The interpreter had made a list of two kinds, and answered
+    /// false for an item looked for in a list of another kind.)
+    pub(super) fn check_item(&mut self, row: &crate::table::Row, args: &[Expr]) {
+        let (holder, item, takes, what) = match row.id {
+            "core.push" => (args.first(), args.get(1), "a list and an item of its kind", "items"),
+            "core.contains" => (args.first(), args.get(1), "a list and an item of its kind", "items"),
+            "core.set" => (args.first(), args.get(2), "a map, a key and a value of its kind", "values"),
+            _ => return,
+        };
+        let (Some(holder), Some(item)) = (holder, item) else { return };
+        let inner = match holder.ty().payload() {
+            Ty::List(i) | Ty::Map(i) => (**i).clone(),
+            _ => return,
+        };
+        if let (Some((many, _)), Some((others, one))) = (item_kind(&inner), item_kind(&item.ty()))
+            && many != others
+        {
+            self.refuse(format!("{}[] takes {}: its {} are {}, not {}", row.name, takes, what, many, one));
         }
     }
 
@@ -1638,6 +1681,51 @@ mod tests {
 enum OrderSide {
     One(&'static str),
     Many(&'static str),
+}
+
+/// What a list, a tensor or a frame's column holds, compared whole: a
+/// vector's numbers, a matrix's rows (a list of rows is one), a column's
+/// cells — none where a tensor's rank, or the items' kind, shows only as
+/// the program runs.
+fn whole_items(t: &Ty) -> Option<&'static str> {
+    match t.payload() {
+        Ty::Tensor(_, Some(dims)) => Some(if dims.len() > 1 { "a list" } else { "a number" }),
+        Ty::List(item) | Ty::Column(item) => match item.payload() {
+            Ty::Tensor(..) | Ty::List(_) => Some("a list"),
+            other => match order_side(other)? {
+                OrderSide::One(k) => Some(k),
+                OrderSide::Many(_) => Some("a list"),
+            },
+        },
+        _ => None,
+    }
+}
+
+/// A list's items, as a reason names them.
+fn many_words(item: &str) -> String {
+    match item {
+        "a number" => "a list of numbers".to_string(),
+        "text" => "a list of text".to_string(),
+        "a bool" => "a list of bools".to_string(),
+        "a list" => "a list of lists".to_string(),
+        other => format!("a list of {}s", other.trim_start_matches("a ")),
+    }
+}
+
+/// An item's kind, as a collection's items and as one item: numbers and a
+/// number, text, bools and a bool, a struct's records and one of them,
+/// lists, maps — none where it shows only as the program runs.
+fn item_kind(t: &Ty) -> Option<(String, String)> {
+    Some(match t.payload() {
+        Ty::Int | Ty::Float => ("numbers".to_string(), "a number".to_string()),
+        Ty::Str | Ty::Markup => ("text".to_string(), "text".to_string()),
+        Ty::Bool => ("bools".to_string(), "a bool".to_string()),
+        Ty::Record(n) | Ty::OptRecord(n) => (format!("{} records", crate::lower::shown(n)), format!("a {} record", crate::lower::shown(n))),
+        Ty::List(_) | Ty::Tensor(..) => ("lists".to_string(), "a list".to_string()),
+        Ty::Map(_) => ("maps".to_string(), "a map".to_string()),
+        Ty::Frame(_) => ("frames".to_string(), "a frame".to_string()),
+        _ => return None,
+    })
 }
 
 fn order_side(t: &Ty) -> Option<OrderSide> {

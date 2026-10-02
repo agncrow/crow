@@ -1,10 +1,15 @@
-//! A comparison of a frame's column, or of a list, with one value is a
-//! mask: each cell compared as two values compare, a missing cell false
-//! (spec, Boolean Masks). One function decides a cell — `holds` — and
-//! every mask is built with it: the interpreter's over a list's items, the
-//! compiled program's over its typed column or list, and a filter whose
+//! Two values are compared when they are of one kind: numbers with
+//! numbers, text with text, bools with bools (spec, Comparison; Vijay,
+//! 2026-10-01: "a string is not a number"). A comparison of a frame's
+//! column, or of a list, with one value is a mask: each cell compared as
+//! two values compare, a missing cell false (spec, Boolean Masks). One
+//! function decides a cell — `holds` — and every comparison whose kinds
+//! show only as the program runs is decided with it: the interpreter's
+//! over a list's items, the compiled program's over its typed column or
+//! list, a parsed value (`json_holds`, `json_pair`), and a filter whose
 //! predicate is computed in one pass (`filter_where`, second-half-design
-//! §3). So a mask is the same in both modes, and the same fused or not.
+//! §3). So a comparison is the same in both modes, and the same fused or
+//! not.
 
 use std::cmp::Ordering;
 
@@ -96,8 +101,14 @@ impl Cell<'_> {
         }
     }
 
-    fn orders_with(&self, other: &Cell) -> bool {
-        matches!((self, other), (Cell::Number(_), Cell::Number(_)) | (Cell::Text(_), Cell::Text(_)))
+    /// Whether a comparison compares it with another: two of one kind —
+    /// numbers, text, bools — and an order only of numbers or of text.
+    fn compares_with(&self, other: &Cell, cmp: Cmp) -> bool {
+        match (self, other) {
+            (Cell::Number(_), Cell::Number(_)) | (Cell::Text(_), Cell::Text(_)) => true,
+            (Cell::Bool(_), Cell::Bool(_)) => !cmp.orders(),
+            _ => false,
+        }
     }
 }
 
@@ -165,12 +176,12 @@ impl AsCell for String {
 /// equal to nothing and unordered, so only `ne` holds for it; text by its
 /// characters, ordered by character code as `sort` orders it; bools are
 /// equal or not. A missing cell holds nothing, `ne` included. Values of
-/// different kinds are unequal, and only numbers and text have an order:
-/// an order asked of anything else is the reason the comparison has no
+/// two kinds are not compared — a number is not text — and only numbers
+/// and text have an order: either is the reason the comparison has no
 /// answer, whether or not the cell is there.
 pub fn holds(cmp: Cmp, cell: Cell, present: bool, value: Cell) -> Result<bool, String> {
-    if cmp.orders() && !cell.orders_with(&value) {
-        return Err(unordered(cmp, cell.kind(), value.kind()));
+    if !cell.compares_with(&value, cmp) {
+        return Err(incomparable(cmp, cell.kind(), value.kind()));
     }
     Ok(decide(cmp, cell, present, value))
 }
@@ -187,10 +198,55 @@ fn decide(cmp: Cmp, cell: Cell, present: bool, value: Cell) -> bool {
         })
 }
 
-/// The reason an order asked of two kinds with none between them has no
-/// answer — the words the lowering refuses it with when it knows both.
-pub fn unordered(cmp: Cmp, a: &str, b: &str) -> String {
-    format!("{} compares numbers with numbers or text with text, not {} with {}", cmp.word(), a, b)
+/// The reason a comparison of two kinds has no answer — the words the
+/// lowering refuses it with when it knows both: an order is of numbers or
+/// of text, and equality of two values of one kind.
+pub fn incomparable(cmp: Cmp, a: &str, b: &str) -> String {
+    if cmp.orders() {
+        format!("{} compares numbers with numbers or text with text, not {} with {}", cmp.word(), a, b)
+    } else {
+        format!("{} compares values of one kind, not {} with {}", cmp.word(), a, b)
+    }
+}
+
+/// A parsed value as a comparison reads it: a number, text or a bool, a
+/// list or a map named; JSON's null is none (it equals nothing).
+pub fn json_cell(j: &serde_json::Value) -> Option<Cell<'_>> {
+    use serde_json::Value as J;
+    match j {
+        J::Number(n) => n.as_f64().map(Cell::Number),
+        J::String(s) => Some(Cell::Text(s)),
+        J::Bool(b) => Some(Cell::Bool(*b)),
+        J::Array(_) => Some(Cell::Other("a list")),
+        J::Object(_) => Some(Cell::Other("a map")),
+        J::Null => None,
+    }
+}
+
+/// `eq` or `ne` of a parsed value with a value: compared as two values are
+/// when they are of one kind, and the reason when they are not — its kind
+/// shows only as the program runs. JSON's null equals nothing.
+pub fn json_holds(cmp: Cmp, j: &serde_json::Value, value: Cell) -> Result<bool, String> {
+    match json_cell(j) {
+        Some(cell) => holds(cmp, cell, true, value),
+        None => Ok(cmp == Cmp::Ne),
+    }
+}
+
+/// `eq` or `ne` of two parsed values: two lists or two maps compared whole
+/// as JSON, two of one kind as two values are, two of different kinds the
+/// reason; JSON's null equals nothing, not even another null.
+pub fn json_pair(cmp: Cmp, a: &serde_json::Value, b: &serde_json::Value) -> Result<bool, String> {
+    use serde_json::Value as J;
+    let eq = match (a, b) {
+        (J::Null, _) | (_, J::Null) => false,
+        (J::Array(_), J::Array(_)) | (J::Object(_), J::Object(_)) => a == b,
+        _ => match (json_cell(a), json_cell(b)) {
+            (Some(x), Some(y)) => return holds(cmp, x, true, y),
+            _ => false,
+        },
+    };
+    Ok(eq != (cmp == Cmp::Ne))
 }
 
 /// A list's mask: each item compared with the value.
@@ -233,31 +289,51 @@ impl CrowColumn {
         }
     }
 
-    /// Whether the column equals another whole, as two lists are equal
-    /// (spec, Comparison): the same number of cells, each there in both and
-    /// equal as two values are; a missing cell equals nothing, not even
-    /// another missing one.
-    pub fn equals(&self, other: &CrowColumn) -> bool {
-        self.len() == other.len()
-            && (0..self.len()).all(|i| {
-                let (a, b) = (self.moment_text(i), other.moment_text(i));
-                decide(Cmp::Eq, self.cell(i, &a), self.valid[i] && other.valid[i], other.cell(i, &b))
-            })
+    /// `eq` or `ne` of the column and another, whole, as two lists are
+    /// compared (spec, Comparison): equal when they have the same number of
+    /// cells, each there in both and equal as two values are; a missing cell
+    /// equals nothing, not even another missing one. Columns of two kinds
+    /// are the reason, read from their first cells (every cell is of its
+    /// column's kind).
+    pub fn whole(&self, cmp: Cmp, other: &CrowColumn) -> Result<bool, String> {
+        if self.len() != other.len() {
+            return Ok(cmp == Cmp::Ne);
+        }
+        if self.len() > 0 {
+            let (a, b) = (self.moment_text(0), other.moment_text(0));
+            holds(cmp, self.cell(0, &a), false, other.cell(0, &b))?;
+        }
+        let eq = (0..self.len()).all(|i| {
+            let (a, b) = (self.moment_text(i), other.moment_text(i));
+            decide(Cmp::Eq, self.cell(i, &a), self.valid[i] && other.valid[i], other.cell(i, &b))
+        });
+        Ok(eq != (cmp == Cmp::Ne))
     }
 
-    /// Whether the column equals a list whole, cell by item.
-    pub fn equals_list<T: AsCell>(&self, items: &[T]) -> bool {
-        self.len() == items.len()
-            && items.iter().enumerate().all(|(i, x)| {
-                let a = self.moment_text(i);
-                decide(Cmp::Eq, self.cell(i, &a), self.valid[i], x.as_cell())
-            })
+    /// `eq` or `ne` of the column and a list, whole, cell by item.
+    pub fn whole_list<T: AsCell>(&self, cmp: Cmp, items: &[T]) -> Result<bool, String> {
+        if self.len() != items.len() {
+            return Ok(cmp == Cmp::Ne);
+        }
+        if let Some(first) = items.first() {
+            let a = self.moment_text(0);
+            holds(cmp, self.cell(0, &a), false, first.as_cell())?;
+        }
+        let eq = items.iter().enumerate().all(|(i, x)| {
+            let a = self.moment_text(i);
+            decide(Cmp::Eq, self.cell(i, &a), self.valid[i], x.as_cell())
+        });
+        Ok(eq != (cmp == Cmp::Ne))
     }
 
-    /// Whether the column equals a tensor whole: a vector's numbers, each a
-    /// cell's partner (a matrix's items are rows, which no cell equals).
-    pub fn equals_tensor(&self, t: &crate::tensor::CrowTensor) -> bool {
-        t.ndim() == 1 && self.equals_list(&t.to_vec())
+    /// `eq` or `ne` of the column and a tensor, whole: a vector's numbers,
+    /// each a cell's partner (a matrix's items are rows, which no cell
+    /// equals).
+    pub fn whole_tensor(&self, cmp: Cmp, t: &crate::tensor::CrowTensor) -> Result<bool, String> {
+        if t.ndim() != 1 {
+            return Ok(cmp == Cmp::Ne);
+        }
+        self.whole_list(cmp, &t.to_vec())
     }
 }
 
@@ -433,11 +509,12 @@ mod tests {
         assert_eq!(holds(Cmp::Gt, Cell::Text("b"), true, Cell::Text("a")), Ok(true));
         assert_eq!(holds(Cmp::Lt, Cell::Text("B"), true, Cell::Text("a")), Ok(true));
         assert_eq!(holds(Cmp::Gte, Cell::Text("é"), true, Cell::Text("z")), Ok(true));
-        assert_eq!(holds(Cmp::Eq, Cell::Text("2"), true, n(2.0)), Ok(false));
-        assert_eq!(holds(Cmp::Ne, Cell::Text("2"), true, n(2.0)), Ok(true));
-        assert_eq!(holds(Cmp::Ne, Cell::Text("2"), false, n(2.0)), Ok(false));
+        assert_eq!(holds(Cmp::Eq, Cell::Text("2"), true, n(2.0)), Err("eq compares values of one kind, not text with a number".to_string()));
+        assert_eq!(holds(Cmp::Ne, Cell::Text("2"), false, n(2.0)), Err("ne compares values of one kind, not text with a number".to_string()));
         assert_eq!(holds(Cmp::Eq, Cell::Bool(true), true, Cell::Bool(true)), Ok(true));
-        assert_eq!(holds(Cmp::Ne, Cell::Bool(true), true, n(1.0)), Ok(true));
+        assert_eq!(holds(Cmp::Ne, Cell::Bool(true), true, Cell::Bool(false)), Ok(true));
+        assert_eq!(holds(Cmp::Ne, Cell::Bool(true), true, n(1.0)), Err("ne compares values of one kind, not a bool with a number".to_string()));
+        assert_eq!(holds(Cmp::Eq, Cell::Other("a list"), true, n(1.0)), Err("eq compares values of one kind, not a list with a number".to_string()));
         assert_eq!(holds(Cmp::Gt, Cell::Bool(true), true, Cell::Bool(false)), Err("gt compares numbers with numbers or text with text, not a bool with a bool".to_string()));
         assert_eq!(holds(Cmp::Lte, Cell::Text("2"), false, n(2.0)), Err("lte compares numbers with numbers or text with text, not text with a number".to_string()));
     }
@@ -466,13 +543,38 @@ mod tests {
         fn text(&mut self) -> String {
             ["", "a", "B", "ab", "é", "2", "a "][self.below(7) as usize].to_string()
         }
-        fn value(&mut self) -> (Option<f64>, Option<String>, Option<bool>) {
-            match self.below(3) {
+        fn value(&mut self) -> Drawn {
+            let kind = self.below(3);
+            self.of_kind(kind)
+        }
+        /// A value of a kind: 0 a number, 1 text, 2 a bool.
+        fn of_kind(&mut self, kind: u64) -> Drawn {
+            match kind {
                 0 => (Some(self.number()), None, None),
                 1 => (None, Some(self.text()), None),
                 _ => (None, None, Some(self.below(2) == 0)),
             }
         }
+        /// A value for a comparison with the frame's column `c` (f, i, s, b,
+        /// d, then one it lacks): of the column's kind nine times in ten.
+        fn value_for(&mut self, c: usize) -> Drawn {
+            let kind = [0, 0, 1, 2, 1].get(c).copied().unwrap_or(3);
+            if kind == 3 || self.below(10) == 0 { self.value() } else { self.of_kind(kind) }
+        }
+    }
+
+    type Drawn = (Option<f64>, Option<String>, Option<bool>);
+
+    fn cell_of(v: &Drawn) -> Cell<'_> {
+        match v {
+            (Some(x), _, _) => Cell::Number(*x),
+            (_, Some(s), _) => Cell::Text(s),
+            (_, _, Some(b)) => Cell::Bool(*b),
+            _ => Cell::Other("nothing"),
+        }
+    }
+
+    impl Gen {
     }
 
     /// A frame with a column of each kind, cells drawn, some missing.
@@ -499,10 +601,16 @@ mod tests {
         Not(Box<Tree>),
     }
 
-    fn tree(g: &mut Gen, columns: usize, values: usize, depth: u32) -> Tree {
+    /// A predicate over `columns` columns, each comparison's value drawn
+    /// into `values`.
+    fn tree(g: &mut Gen, columns: usize, values: &mut Vec<Drawn>, depth: u32) -> Tree {
         let ops = [Cmp::Eq, Cmp::Ne, Cmp::Gt, Cmp::Lt, Cmp::Gte, Cmp::Lte];
         match if depth == 0 { g.below(2) } else { g.below(6) } {
-            0 => Tree::Cmp(ops[g.below(6) as usize], g.below(columns as u64) as usize, g.below(values as u64) as usize),
+            0 => {
+                let (op, c) = (ops[g.below(6) as usize], g.below(columns as u64) as usize);
+                values.push(g.value_for(c));
+                Tree::Cmp(op, c, values.len() - 1)
+            }
             1 => Tree::Ok(g.below(columns as u64) as usize),
             2 => Tree::Not(Box::new(tree(g, columns, values, depth - 1))),
             3 => Tree::Or(Box::new(tree(g, columns, values, depth - 1)), Box::new(tree(g, columns, values, depth - 1))),
@@ -552,13 +660,8 @@ mod tests {
             let f = frame(&mut g, n);
             for name in ["f", "i", "s", "b", "d"] {
                 let col = f.col_native(name).expect("a column");
-                let (x, s, b) = g.value();
-                let value = match (&x, &s, &b) {
-                    (Some(x), _, _) => Cell::Number(*x),
-                    (_, Some(s), _) => Cell::Text(s),
-                    (_, _, Some(b)) => Cell::Bool(*b),
-                    _ => unreachable!(),
-                };
+                let drawn = g.value();
+                let value = cell_of(&drawn);
                 for cmp in [Cmp::Eq, Cmp::Ne, Cmp::Gt, Cmp::Lt, Cmp::Gte, Cmp::Lte] {
                     let cells: Result<Vec<bool>, String> = (0..col.len())
                         .map(|i| {
@@ -599,17 +702,9 @@ mod tests {
             if g.below(10) == 0 {
                 columns.push("zz".to_string());
             }
-            let drawn: Vec<(Option<f64>, Option<String>, Option<bool>)> = (0..3).map(|_| g.value()).collect();
-            let values: Vec<Cell> = drawn
-                .iter()
-                .map(|v| match v {
-                    (Some(x), _, _) => Cell::Number(*x),
-                    (_, Some(s), _) => Cell::Text(s),
-                    (_, _, Some(b)) => Cell::Bool(*b),
-                    _ => unreachable!(),
-                })
-                .collect();
-            let t = tree(&mut g, columns.len(), values.len(), 3);
+            let mut drawn = Vec::new();
+            let t = tree(&mut g, columns.len(), &mut drawn, 3);
+            let values: Vec<Cell> = drawn.iter().map(cell_of).collect();
             let mut program = Vec::new();
             postfix(&t, &mut program);
             let program = program.join(" ");
@@ -627,7 +722,7 @@ mod tests {
                 _ => panic!("{}: fused {:?}, unfused {:?}", program, fused.map(|f| f.nrows()), by_masks.map(|f| f.nrows())),
             }
         }
-        assert!(kept > 500 && stopped > 100, "kept {} stopped {}", kept, stopped);
+        assert!(kept > 600 && stopped > 200, "kept {} stopped {}", kept, stopped);
     }
 
     /// A column compared whole is compared as a list is: cell by cell, an
@@ -638,17 +733,37 @@ mod tests {
         let col = |data: Column, valid: Vec<bool>| CrowColumn { data: std::sync::Arc::new(data), valid: std::sync::Arc::new(valid) };
         let ints = col(Column::Int(vec![1, 2]), vec![true, true]);
         let floats = col(Column::Float(vec![1.0, 2.0]), vec![true, true]);
-        assert!(ints.equals(&floats) && floats.equals(&ints));
-        assert!(ints.equals_list(&[1.0, 2.0]) && !ints.equals_list(&[1.0]) && !ints.equals_list(&[1.0, 3.0]));
-        assert!(ints.equals_tensor(&crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0], vec![2])));
-        assert!(!ints.equals_tensor(&crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0], vec![1, 2])));
+        assert_eq!((ints.whole(Cmp::Eq, &floats), floats.whole(Cmp::Ne, &ints)), (Ok(true), Ok(false)));
+        assert_eq!((ints.whole_list(Cmp::Eq, &[1.0, 2.0]), ints.whole_list(Cmp::Eq, &[1.0]), ints.whole_list(Cmp::Ne, &[1.0, 3.0])), (Ok(true), Ok(false), Ok(true)));
+        assert_eq!(ints.whole_tensor(Cmp::Eq, &crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0], vec![2])), Ok(true));
+        assert_eq!(ints.whole_tensor(Cmp::Eq, &crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0], vec![1, 2])), Ok(false));
         for missing in [col(Column::Int(vec![1, 0]), vec![true, false]), col(Column::Str(vec!["a".to_string(), String::new()]), vec![true, false]), col(Column::Float(vec![1.0, f64::NAN]), vec![true, false])] {
-            assert!(!missing.equals(&missing), "{:?}", missing);
+            assert_eq!((missing.whole(Cmp::Eq, &missing), missing.whole(Cmp::Ne, &missing)), (Ok(false), Ok(true)), "{:?}", missing);
         }
         let text = col(Column::Str(vec!["a".to_string(), String::new()]), vec![true, false]);
-        assert!(!text.equals_list(&["a".to_string(), String::new()]));
+        assert_eq!(text.whole_list(Cmp::Eq, &["a".to_string(), String::new()]), Ok(false));
         let strs = col(Column::Str(vec!["p".to_string(), "q".to_string()]), vec![true, true]);
-        assert!(strs.equals_list(&["p".to_string(), "q".to_string()]) && !strs.equals(&ints));
+        assert_eq!(strs.whole_list(Cmp::Eq, &["p".to_string(), "q".to_string()]), Ok(true));
+        assert_eq!(strs.whole(Cmp::Eq, &ints), Err("eq compares values of one kind, not text with a number".to_string()));
+        assert_eq!(strs.whole_list(Cmp::Ne, &[1.0, 2.0]), Err("ne compares values of one kind, not text with a number".to_string()));
+        assert_eq!(strs.whole_list(Cmp::Eq, &[1.0]), Ok(false), "lengths first, as two lists' are");
+    }
+
+    /// A parsed value compares with a value of its kind, and stops with the
+    /// reason against another; JSON's null equals nothing
+    #[test]
+    fn a_parsed_value_compares_with_its_kind() {
+        let j = |s: &str| serde_json::from_str::<serde_json::Value>(s).expect("json");
+        assert_eq!(json_holds(Cmp::Eq, &j("1"), Cell::Number(1.0)), Ok(true));
+        assert_eq!(json_holds(Cmp::Eq, &j("\"ok\""), Cell::Text("ok")), Ok(true));
+        assert_eq!(json_holds(Cmp::Ne, &j("true"), Cell::Bool(true)), Ok(false));
+        assert_eq!(json_holds(Cmp::Eq, &j("1"), Cell::Text("1")), Err("eq compares values of one kind, not a number with text".to_string()));
+        assert_eq!(json_holds(Cmp::Eq, &j("[1]"), Cell::Number(1.0)), Err("eq compares values of one kind, not a list with a number".to_string()));
+        assert_eq!((json_holds(Cmp::Eq, &j("null"), Cell::Number(1.0)), json_holds(Cmp::Ne, &j("null"), Cell::Number(1.0))), (Ok(false), Ok(true)));
+        assert_eq!(json_pair(Cmp::Eq, &j("1"), &j("1.0")), Ok(true));
+        assert_eq!(json_pair(Cmp::Eq, &j("[1, {\"a\": 2}]"), &j("[1, {\"a\": 2}]")), Ok(true));
+        assert_eq!(json_pair(Cmp::Ne, &j("null"), &j("null")), Ok(true));
+        assert_eq!(json_pair(Cmp::Eq, &j("\"1\""), &j("1")), Err("eq compares values of one kind, not text with a number".to_string()));
     }
 
     #[test]

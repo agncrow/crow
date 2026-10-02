@@ -1,0 +1,23 @@
+--- A parsed JSON value compared with `eq` or `ne` is compared when it is
+--- of the other value's kind — a number with a number (an int as its
+--- float), text with text, a bool with a bool, two lists or two maps whole
+--- — and JSON's null equals nothing. Its kind shows only as the program
+--- runs, so one of another kind stops the program there: a number is not
+--- text. (The interpreter had answered `false` for a parsed `1` and `1.0`,
+--- where the compiled program answered `true`; both modes had answered
+--- `false` for a number and text.)
+j = json['{"status": "ok", "code": 200, "ratio": 1, "on": true, "tags": ["a", "b"], "none": null}']
+k = json['{"code": 200.0, "tags": ["a", "b"], "who": {"n": 1}}']
+log[j.status eq 'ok']
+log[j.status ne 'fail']
+log[j.code eq 200]
+log[j.ratio eq 1.0]
+log[j.on eq true]
+log[200 eq j.code]
+log[j.code eq k.code]
+log[j.tags eq k.tags]
+log[j.none eq 'x']
+log[j.none ne 'x']
+log[k.who eq k.who]
+log[j.code eq '200']
+log['not reached']

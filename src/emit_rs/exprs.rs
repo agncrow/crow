@@ -386,6 +386,7 @@ impl Emitter {
             let l_val = if l_res { format!("_binl_{}.value", ctr) } else { format!("(*_binl_{})", ctr) };
             let r_val = if r_res { format!("_binr_{}.value", ctr) } else { format!("(*_binr_{})", ctr) };
             let mask = self.mask(op, &l_val, &lti, &r_val, &rti);
+            let compared = mask.clone().or_else(|| self.comparison(op, &l_val, &lti, &r_val, &rti));
             let result_type = match op {
                 _ if mask.is_some() => CrowType::Array(Box::new(CrowType::Bool)),
                 "eq" | "ne" | "gt" | "lt" | "gte" | "lte" | "and" | "or" => CrowType::Bool,
@@ -394,8 +395,7 @@ impl Emitter {
             };
             let default_val = result_type.default_rust_value();
             let inner_expr = match (&lti, &rti) {
-                _ if mask.is_some() => mask.unwrap_or_default(),
-                _ if Self::unlike(op, &l_val, &lti, &r_val, &rti).is_some() => Self::unlike(op, &l_val, &lti, &r_val, &rti).unwrap_or_default(),
+                _ if compared.is_some() => compared.unwrap_or_default(),
                 _ if matches!(op, "eq" | "ne") && Self::numbers_mix(&lti, &rti) => {
                     let not = if op == "ne" { "!" } else { "" };
                     format!("{}crow_runtime::tensor::numbers_equal(&{}, &{})", not, l_val, r_val)
@@ -502,14 +502,8 @@ impl Emitter {
             return format!("{}.iter().zip({}.iter()).map(|(_a, _b)| *_a {} *_b).collect::<Vec<bool>>()", l, r, op_str);
         }
         if cmp {
-            if let Some(m) = self.mask(op, &l, &lti, &r, &rti) {
-                return m;
-            }
-            if let Some(u) = Self::unlike(op, &l, &lti, &r, &rti) {
-                return u;
-            }
-            if let Some(w) = Self::whole(op, &l, &lti, &r, &rti) {
-                return w;
+            if let Some(c) = self.comparison(op, &l, &lti, &r, &rti) {
+                return c;
             }
         }
         if self.emitting_dual {
@@ -565,44 +559,60 @@ impl Emitter {
         }
     }
 
-    /// Two values of different kinds — a number and text, a bool and
-    /// either — are unequal, as `eq` compares values whole: both are
-    /// evaluated, the left first, and the answer is `ne`'s. (Compiled, such
-    /// a comparison had not built, where the interpreter answered.)
-    fn unlike(op: &str, l: &str, lt: &CrowType, r: &str, rt: &CrowType) -> Option<String> {
-        let kind = |t: &CrowType| match t {
-            CrowType::Int | CrowType::Float => Some(0),
-            CrowType::Str | CrowType::Markup => Some(1),
-            CrowType::Bool => Some(2),
-            _ => None,
-        };
-        let (a, b) = (kind(lt)?, kind(rt)?);
-        (matches!(op, "eq" | "ne") && a != b).then(|| format!("{{ let _ = &({}); let _ = &({}); {} }}", l, r, op == "ne"))
+    /// A comparison the runtime decides (crow_runtime::mask): a mask, a
+    /// frame's column compared whole, or a parsed value compared with a
+    /// value — none for one Rust's operators compute (two numbers, two texts,
+    /// two bools; two values of two kinds the lowering refused).
+    fn comparison(&self, op: &str, l: &str, lt: &CrowType, r: &str, rt: &CrowType) -> Option<String> {
+        self.mask(op, l, lt, r, rt).or_else(|| self.whole(op, l, lt, r, rt)).or_else(|| self.json(op, l, lt, r, rt))
     }
 
     /// A frame's column compared whole (`eq`, `ne`) with a column, a list
     /// or a tensor: as two lists are, cell by cell, a missing cell equal to
-    /// nothing (crow_runtime::mask), both sides evaluated, the left first.
-    /// (Compiled, a column had equalled one with the same missing cells
-    /// where the cells held text, and one compared with a list had not
-    /// built.) None when neither side is a column compared whole.
-    fn whole(op: &str, l: &str, lt: &CrowType, r: &str, rt: &CrowType) -> Option<String> {
+    /// nothing, two kinds the reason (crow_runtime::mask), both sides
+    /// evaluated, the left first. (Compiled, a column had equalled one with
+    /// the same missing cells where the cells held text, and one compared
+    /// with a list had not built.) None when neither side is a column
+    /// compared whole.
+    fn whole(&self, op: &str, l: &str, lt: &CrowType, r: &str, rt: &CrowType) -> Option<String> {
         if !matches!(op, "eq" | "ne") {
             return None;
         }
+        let cmp = crow_runtime::mask::Cmp::named(op)?;
         let with = |t: &CrowType| match t {
-            CrowType::FrameCol => Some("equals"),
-            CrowType::Array(item) if matches!(item.as_ref(), CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Markup | CrowType::Bool) => Some("equals_list"),
-            CrowType::NumArray(..) => Some("equals_tensor"),
+            CrowType::FrameCol => Some("whole"),
+            CrowType::Array(item) if matches!(item.as_ref(), CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Markup | CrowType::Bool) => Some("whole_list"),
+            CrowType::NumArray(..) => Some("whole_tensor"),
             _ => None,
         };
-        let not = if op == "ne" { "!" } else { "" };
         let (column, other, method) = match (lt, rt) {
             (CrowType::FrameCol, _) => ("_l", "_r", with(rt)?),
             (_, CrowType::FrameCol) => ("_r", "_l", with(lt)?),
             _ => return None,
         };
-        Some(format!("({}{{ let _l = &({}); let _r = &({}); {}.{}({}) }})", not, l, r, column, method, other))
+        Some(format!("{{ let _l = &({}); let _r = &({}); {}.{}(crow_runtime::mask::Cmp::{:?}, {}){} }}", l, r, column, method, cmp, other, self.or_stop()))
+    }
+
+    /// A parsed value compared (`eq`, `ne`) with a number, text or a bool,
+    /// or with another parsed value: compared when they are of one kind,
+    /// the reason when they are not — their kinds show only as the program
+    /// runs — by the function the interpreter calls too
+    /// (crow_runtime::mask::json_holds, json_pair). (Compiled, JSON's own
+    /// equality had answered `false` for a number and text; interpreted, a
+    /// parsed `1` had not equalled `1.0`.)
+    fn json(&self, op: &str, l: &str, lt: &CrowType, r: &str, rt: &CrowType) -> Option<String> {
+        if !matches!(op, "eq" | "ne") {
+            return None;
+        }
+        let cmp = crow_runtime::mask::Cmp::named(op)?;
+        let cell = |t: &CrowType| matches!(t, CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Markup | CrowType::Bool);
+        let call = match (lt, rt) {
+            (CrowType::Json, CrowType::Json) => format!("crow_runtime::mask::json_pair(crow_runtime::mask::Cmp::{:?}, _l, _r)", cmp),
+            (CrowType::Json, t) if cell(t) => format!("crow_runtime::mask::json_holds(crow_runtime::mask::Cmp::{:?}, _l, crow_runtime::mask::Cell::from(_r))", cmp),
+            (t, CrowType::Json) if cell(t) => format!("crow_runtime::mask::json_holds(crow_runtime::mask::Cmp::{:?}, _r, crow_runtime::mask::Cell::from(_l))", cmp),
+            _ => return None,
+        };
+        Some(format!("{{ let _l = &({}); let _r = &({}); {}{} }}", l, r, call, self.or_stop()))
     }
 
     /// An int operator that can fail — past 64 bits, a division by zero, a

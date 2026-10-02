@@ -3,11 +3,11 @@
 --- modes. Numbers by value, exactly — an int as its float, NaN equal to
 --- nothing and unordered, so only `ne` holds for it; text by its
 --- characters, ordered by character code as `sort` orders it; bools equal
---- or not; a value of another kind unequal; a missing cell holds nothing,
---- `ne` included. The value may be written first. A filter whose predicate
---- compares its frame's own columns is computed in one pass and keeps the
---- rows the mask keeps. A cell whose kind has no order with the value,
---- known only as the program runs (a file loaded), stops the program.
+--- or not; a missing cell holds nothing, `ne` included. The value may be
+--- written first. A filter whose predicate compares its frame's own columns
+--- is computed in one pass and keeps the rows the mask keeps. A cell of
+--- another kind than the value — text is not a number — known only as the
+--- program runs (a file loaded), stops the program.
 --- (Compiled, a missing or NaN cell had been false for `ne`, `eq` had been
 --- nearness, text had been parsed as numbers and a column of bools had
 --- compared as nothing; the interpreter had stopped where compiled text was
@@ -36,14 +36,11 @@ log[df.name lt 'a']
 log[df.t ne 'a']
 log[df.b eq true]
 log[df.b ne false]
-log[df.n eq 'x']
-log[df.name ne 2]
 log[3 lt df.n]
 log['ada' eq df.name]
 log[['b', 'a', 'c'] gte 'b']
 log[[true, false] eq true]
 log['b' gt 'a']
-log['a' eq 1]
 log[len[filter[df, df.m ne 2.0]]]
 log[len[filter[df, df.x ne 2.0]]]
 log[filter[df, df.n gt 1 and df.name ne 'cy'].symbol]
@@ -55,5 +52,5 @@ write['parity149.csv', 'name,score\nada,10\nbob,x\n']
 f = frame.load['parity149.csv']
 rm['parity149.csv']
 log[filter[f, f.name gt 'b'].name]
-log[filter[f, f.score gt 5].name]
+log[filter[f, f.score eq 10].name]
 log['not reached']
