@@ -36,6 +36,14 @@
 
 ## Notes
 
+- **2026-10-01, element-wise chains in one pass.** `tensors`'
+  `elementwise_chain` (`x * 2.0 + x .* x - 1.0` over ten million
+  elements) is one call of the fused kernel (second-half-design.md §3):
+  6.1 ms interpreted and 5.9 ms compiled, where the operators, each
+  making a tensor of its own, took 37.6 ms and 34.2 ms
+  (`CROW_NO_FUSE=1`, the same build, back to back). The table above is
+  still the 2026-09-23 recording.
+
 - **2026-09-23, one rule for parallel loops.** A loop runs in parallel
   when nothing its body does can show the order (spec §14, For Loops),
   decided once in the lowering. Before, the interpreter kept any loop

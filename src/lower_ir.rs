@@ -14,6 +14,7 @@ use crate::ir::*;
 use crate::type_infer::{CrowType, TypeContext};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+mod fuse;
 mod checks;
 mod frames;
 pub(crate) mod schema;
@@ -92,6 +93,8 @@ fn lower_checked_as(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: 
     decide_loops(&mut program);
     decide_answers(&mut program);
     written_names(&mut program);
+    // element-wise chains of tensors computed in one pass
+    fuse::tensors(&mut program);
     // each connection opens with the tables the program declares on it
     schema::attach(&mut program);
     // the parts agree before a backend reads them (ir_verify): a lowering
@@ -4021,6 +4024,25 @@ mod tests {
         ctx.describe_queries = false;
         ctx.infer_program(&stmts);
         lower(&stmts, &mut ctx, "t").err().unwrap_or_default()
+    }
+
+    /// An element-wise chain of tensors whose operands only read is one call
+    /// of the fused kernel (crow_runtime::fused); a single operation, a chain
+    /// over a call (which acts where the program calls it), and the matrix
+    /// product are the operators'
+    #[test]
+    fn an_elementwise_chain_is_one_call() {
+        let ir = ir_of("x = [1.0, 2.0]\ny = x * 2.0 + x .* x - 1.0\nlog[y]\n");
+        // (a variable read three times is one operand)
+        assert!(ir.contains("tensor.fused(\"#0 #1 mul #0 #0 elemmul add #2 sub\""), "{}", ir);
+        let one = ir_of("x = [1.0, 2.0]\ny = x * 2.0\nlog[y]\n");
+        assert!(!one.contains("tensor.fused"), "one operation: {}", one);
+        let call = ir_of("use math\ny = zeros[2] * 2.0 + 1.0\nlog[y]\n");
+        assert!(!call.contains("tensor.fused"), "a chain over a call: {}", call);
+        let product = ir_of("m = [[1.0, 2.0], [3.0, 4.0]]\ny = m * m + 1.0\nlog[y]\n");
+        assert!(!product.contains("tensor.fused"), "the matrix product: {}", product);
+        let inner = ir_of("m = [[1.0, 2.0], [3.0, 4.0]]\ny = m * (m .* 2.0 - 1.0)\nlog[y]\n");
+        assert!(inner.contains("tensor.fused(\"#0 #1 elemmul #2 sub\""), "a chain inside a product: {}", inner);
     }
 
     /// A status the type settles is decided before the program runs: `.ok`

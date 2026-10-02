@@ -257,6 +257,26 @@ names the parameters the tensors were handed as. Found on the way:
 runtime swaps the last two, so a rank-3 tensor's transpose met by an
 element-wise operation was refused though it runs (parity 129).
 
+*Fusion of element-wise chains (2026-10-01; Vijay: finish the compiler
+work).* A tree of `+`, `-`, `.*`, `./`, `.^`, `*` and `/` between a tensor
+and a number, and negation, whose value is a tensor, with two operations
+or more and operands that only read, is one call of
+`crow_runtime::fused::run` (`lower_ir/fuse.rs`, a pass after the names
+are written; the row `tensor.fused`, whose operands are a rest of tensors
+and numbers). The kernel checks each operator's shapes in the operators'
+order, with their words, then computes the answer block by block — 4,096
+elements, across the cores from 65,536 — each element with the operators'
+own formulas (a tensor over a number multiplies by its reciprocal; a
+number minus a tensor adds the number to the negation), so the answer is
+theirs to the bit; a tensor on the GPU, whose operators compute in f32
+there, is left to the operators. A variable read twice is one operand.
+The kernel is tested against the operators on 3,000 generated chains
+(shapes broadcast, strided tensors, zeros and signs) and on large ones
+across the cores; `tests/fusion.rs` runs programs fused and with
+`CROW_NO_FUSE=1` in both modes and compares every line. The benchmark's
+chain (`x * 2.0 + x .* x - 1.0`, ten million elements) takes 6 ms in each
+mode where the operators took 34–38 ms.
+
 ## 4. Order
 
 Typed frames' first step comes first, because it unblocks the lowering's

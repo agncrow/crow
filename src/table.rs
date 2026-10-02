@@ -138,6 +138,11 @@ pub enum Kind {
     Shows,
     /// Each of `Shows`: `&dyn CrowDisplay`.
     ShownDyn,
+    /// `&[crow_runtime::fused::Operand]` taken: the rest of the arguments,
+    /// each a tensor or a number — a fused chain's operands.
+    Operands,
+    /// Each of `Operands`.
+    Operand,
 }
 
 /// What a failure of the function is.
@@ -228,7 +233,7 @@ impl Kind {
             Kind::Shell => CrowType::Struct("CrowShell".to_string()),
             Kind::Reply => CrowType::Struct("CrowReply".to_string()),
             Kind::TextMap => CrowType::Map(Box::new(CrowType::Str)),
-            Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn => CrowType::Unknown,
+            Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand => CrowType::Unknown,
             Kind::JsonList => CrowType::Array(Box::new(CrowType::Json)),
             // what the arguments' items are: inference types the call from
             // them (a generic row's answer is the list or map it was given)
@@ -266,6 +271,7 @@ impl Kind {
             Kind::Seq => format!("&({})[..]", arg),
             Kind::ShownDyn => format!("&({}) as &dyn crow_runtime::display::CrowDisplay", arg),
             Kind::TextMap => format!("&crow_runtime::sources::text_map(&({}))", arg),
+            Kind::Operand => format!("crow_runtime::fused::Operand::from(&({}))", arg),
             // moved or copied (an item kept) where the call is made
             Kind::List | Kind::MapOf | Kind::Ints | Kind::Floats | Kind::Texts | Kind::Item => format!("({})", arg),
             _ => format!("&({})", arg),
@@ -274,7 +280,7 @@ impl Kind {
 
     /// Whether the parameter takes the rest of the arguments.
     pub fn is_rest(self) -> bool {
-        matches!(self, Kind::Sizes | Kind::Groups | Kind::Lists | Kind::Shows)
+        matches!(self, Kind::Sizes | Kind::Groups | Kind::Lists | Kind::Shows | Kind::Operands)
     }
 
     /// The kind of each argument a parameter takes: a size of the sizes, a
@@ -285,6 +291,7 @@ impl Kind {
             Kind::Groups => Kind::Tensor,
             Kind::Lists => Kind::Strs,
             Kind::Shows => Kind::ShownDyn,
+            Kind::Operands => Kind::Operand,
             k => k,
         }
     }
@@ -318,7 +325,7 @@ impl Kind {
             Kind::TextRows => "Vec::<std::collections::BTreeMap<String, String>>::new()",
             Kind::Shell => "crow_runtime::core::Shell { status: -1, stdout: String::new(), stderr: String::new() }",
             Kind::Reply => "crow_runtime::sources::Reply::default()",
-            Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn => "unreachable!()",
+            Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand => "unreachable!()",
             Kind::JsonList => "Vec::<serde_json::Value>::new()",
             // a generic answer never fails as a value (its rows answer or stop)
             Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef => "Vec::new()",
@@ -801,6 +808,19 @@ pub fn read_sizes(group: &[CrowValue]) -> Result<Vec<i64>, String> {
     group.iter().map(read_int).collect()
 }
 
+/// A fused chain's operands: each a tensor, or a number.
+pub fn read_operands(group: &[CrowValue]) -> Result<Vec<crow_runtime::fused::Operand<'_>>, String> {
+    group
+        .iter()
+        .map(|v| match &v.value {
+            Value::NumArray(t) => Ok(crow_runtime::fused::Operand::Tensor(t.as_ref())),
+            Value::Int(n) => Ok(crow_runtime::fused::Operand::Number(*n as f64)),
+            Value::Float(x) => Ok(crow_runtime::fused::Operand::Number(*x)),
+            _ => Err(format!("expected a tensor or a number, got {}", named(v))),
+        })
+        .collect()
+}
+
 /// The groups of a group, each a tensor.
 pub fn read_groups(group: &[CrowValue]) -> Result<Vec<Cow<'_, CrowTensor>>, String> {
     group.iter().map(read_tensor).collect()
@@ -825,6 +845,7 @@ macro_rules! read {
     (Cell, $g:expr) => { &read_cell(one($g)?)? };
     (Cells, $g:expr) => { read_cells(one($g)?)? };
     (Lists, $g:expr) => { &read_lists($g)?.iter().map(|l| l.as_slice()).collect::<Vec<&[String]>>() };
+    (Operands, $g:expr) => { &read_operands($g)? };
     (Shows, $g:expr) => { &$g.iter().map(|v| v as &dyn crow_runtime::display::CrowDisplay).collect::<Vec<&dyn crow_runtime::display::CrowDisplay>>() };
     (List, $g:expr) => { read_list(one($g)?)? };
     (Seq, $g:expr) => { read_seq(one($g)?)? };
@@ -1011,6 +1032,10 @@ pub static ROWS: &[Row] = &[
     row!("display.str", "", "str", crow_runtime::display::shown, (Shown) -> Str, never),
     row!("json.parse", "", "json", crow_runtime::json::parse, (Str) -> Json, value "parse"),
     row!("json.encode", "", "encode", crow_runtime::json::encode, (Encoded) -> Str, never),
+    // an element-wise chain of tensors in one pass, which the lowering writes
+    // in place of the chain's operators (lower_ir/fuse.rs): a shape that does
+    // not meet stops with the operator's words
+    row!("tensor.fused", "", "__fused", crow_runtime::fused::run, (Str, Operands) -> Tensor, stops),
     // text written so a header or a URL can carry it, and read back: a
     // scheme encode does not know is a misuse; text decode cannot read is
     // an error value
@@ -1339,6 +1364,12 @@ pub fn by_id(id: &str) -> Option<&'static Row> {
     ROWS.iter().find(|r| r.id == id)
 }
 
+/// The row of an id: what a pass of the lowering writes itself (a fused
+/// chain's `tensor.fused`).
+pub fn row(id: &str) -> Option<&'static Row> {
+    ROWS.iter().find(|r| r.id == id)
+}
+
 /// The core builtin's row by its Crow name.
 pub fn core(name: &str) -> Option<&'static Row> {
     ROWS.iter().find(|r| r.module.is_empty() && r.name == name)
@@ -1602,6 +1633,7 @@ impl Kind {
             Kind::Shown | Kind::Shows | Kind::ShownDyn => "a value",
             Kind::Encoded => "a value JSON can hold",
             Kind::JsonList => "a list of JSON values",
+            Kind::Operands | Kind::Operand => "a tensor or a number",
         }
     }
 
@@ -1638,6 +1670,7 @@ impl Kind {
                 // a function shows as nothing, and JSON holds no function, frame or matrix
                 Kind::Shown | Kind::ShownDyn => a != Arg::Fn,
                 Kind::Encoded => !matches!(a, Arg::Fn | Arg::Frame | Arg::Sparse | Arg::Column),
+                Kind::Operand => matches!(a, Arg::Tensor | Arg::Int | Arg::Float),
                 _ => true,
             }
     }

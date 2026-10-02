@@ -1,0 +1,29 @@
+--- A chain of element-wise operations over tensors is computed in one
+--- pass: each element once, as the operators compute it, in their order
+--- and with their formulas — a tensor over a number multiplies by its
+--- reciprocal, a number minus a tensor negates the tensor first — so every
+--- answer is the operators' to the bit, in both modes. A row broadcasts
+--- along a matrix; an int counts as its float; a shape that does not meet,
+--- known only as the program runs, stops with the operator's words.
+use math
+
+x = [1.0, 2.0, 3.0, 4.0]
+y = [0.5, -1.5, 2.0, 0.0]
+log[x * 2.0 + x .* x - 1.0]
+log[-x + y .* 3.0]
+log[x ./ 2.0 - y / 4.0]
+log[1.0 - x .* y]
+log[2.0 / x + y]
+log[x .^ 2.0 .* y + 1.0]
+log[y ./ x .* 0.1 + 0.2 - 0.3]
+m = [[1.0, 2.0], [3.0, 4.0]]
+row = [10.0, 20.0]
+log[m + row .* 2.0 - 1.0]
+log[m .* m - row]
+n = 3
+log[x * n + y - n]
+k = 7.0
+log[(x - k) ./ (y + k)]
+short = zeros[len[x] - 1]
+log[x + short .* 2.0]
+log['not reached']

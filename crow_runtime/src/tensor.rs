@@ -175,6 +175,12 @@ impl CrowTensor {
         }
     }
 
+    /// The tensor's data, offset and strides, as a fused chain reads its
+    /// elements in place (crate::fused).
+    pub(crate) fn strided(&self) -> (std::borrow::Cow<'_, [f64]>, usize, &[usize]) {
+        (self.cpu_data(), self.offset, &self.strides)
+    }
+
     /// Transfer tensor data from GPU to CPU.
     /// If already on CPU, returns self (no-op).
     pub fn to_cpu(&self) -> CrowTensor {
@@ -765,7 +771,13 @@ impl CrowTensor {
     /// Whether two tensors' shapes broadcast for an element-wise operation
     /// named by `sign`: each pair of dimensions equal, or one of them 1.
     pub fn meets(&self, other: &CrowTensor, sign: &str) -> Result<(), String> {
-        let (a, b) = (self.shape(), other.shape());
+        Self::meets_shapes(self.shape(), other.shape(), sign)
+    }
+
+    /// Whether two shapes broadcast for an element-wise operation named by
+    /// `sign` (`meets`, by the shapes alone: a fused chain checks each
+    /// operator's operands before it computes any).
+    pub fn meets_shapes(a: &[usize], b: &[usize], sign: &str) -> Result<(), String> {
         let n = a.len().max(b.len());
         for i in 0..n {
             let da = if i < n - a.len() { 1 } else { a[i - (n - a.len())] };

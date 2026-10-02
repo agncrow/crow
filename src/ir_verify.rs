@@ -666,6 +666,7 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::Texts => items(t, &|e| matches!(e, Ty::Str | Ty::Markup)),
             Kind::Json => *t == Ty::Json,
             Kind::Column => matches!(t, Ty::Column(_)),
+            Kind::Operand => matches!(t, Ty::Tensor(..) | Ty::Int | Ty::Float),
             _ => true,
         }
 }

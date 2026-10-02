@@ -295,6 +295,17 @@ known, and nothing about them is refused before the program runs: an
 operation whose shapes do not meet stops the program where it runs, with
 the same words, in both modes.
 
+**A chain of element-wise operations is computed in one pass.** `x * 2.0
++ x .* x - 1.0` reads each element of `x` once and writes one tensor,
+where each operator would make a tensor of its own — across the machine's
+cores for a large one. Each element is what the operators compute, in
+their order and with their formulas, so the answer is the same to the
+bit, and a shape that does not meet stops with the operator's words at
+the first operator whose operands do not meet. A chain's operands are what
+only read — a variable, a fact, a derivation, a number written; one that
+calls something is computed where the program calls it, and its chain by
+the operators. The same in both modes.
+
 **Design Note: a function is one function whatever shapes it is
 handed.** Considered: a copy of a function for each shape its calls hand
 it, as a frame's columns make one (see Frames), so that each copy's
