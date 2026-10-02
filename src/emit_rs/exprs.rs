@@ -888,10 +888,17 @@ impl Emitter {
                 _ => format!("(if ({}).is_null() {{ \"parse\".to_string() }} else {{ String::new() }})", obj),
             };
         }
-        match name {
-            "ok" => "true".to_string(),
-            "trace" => "Vec::<String>::new()".to_string(),
-            _ => "String::new()".to_string(),
+        // a value that cannot fail did not; what was read for it is still
+        // evaluated — a call that acts, an index that can stop — as the
+        // interpreter evaluates it (compiled, it had been skipped)
+        let answer = match name {
+            "ok" => "true",
+            "trace" => "Vec::<String>::new()",
+            _ => "String::new()",
+        };
+        match base {
+            Expr::Const(..) | Expr::Local(..) | Expr::Move(..) | Expr::Load(..) | Expr::Derived(..) | Expr::Constant(..) | Expr::FnRef(..) => answer.to_string(),
+            _ => format!("{{ let _ = {}; {} }}", obj, answer),
         }
     }
 

@@ -954,7 +954,7 @@ x.kind            --- ''
 x.trace           --- []
 ```
 
-Non-fallible values always have `ok` of `true`, `reason` and `kind` are `''`, and `trace` is `[]`.
+Non-fallible values always have `ok` of `true`, `reason` and `kind` are `''`, and `trace` is `[]` — decided before the program runs, from the value's type. What is read for them is still read: `loud[4].ok` calls `loud`, and `xs[9].ok` past a list's end stops, in both modes (compiled, the value read for them had been skipped).
 
 A list is a value like any other: `names.ok` is `true` for a list that did not fail, whatever it holds, so `if not listing.ok` guards a listing that failed and nothing else. The one per-row reading is a frame column's: `df.age.ok` is its cells' validity, `false` where a cell is missing (see frame).
 

@@ -187,6 +187,17 @@ benchmark.
   - *Builtins from the table* (§4 step 2): form and one implementation
     per builtin; the state-free builtins are shared already
     (`core-runtime-builtins.md`).
+- **Decision 1 built (2026-10-01; Vijay: finish the typed values).**
+  `.ok`, `.reason`, `.kind` and `.trace` of a value whose type cannot fail
+  — not a result, not a parsed value, not unknown — are decided by the
+  lowering: a plain read (a local, a fact, a derivation, a record's
+  field) is the constant itself in the IR (`display.log!held(true)`), and
+  the interpreter answers the others from the type without looking at a
+  status. A value read through something that acts or stops (a call, an
+  index, arithmetic) is still evaluated in both modes: the compiled
+  program had printed the constant without evaluating it, so `loud[4].ok`
+  never called `loud` and `xs[9].ok` never stopped, where the interpreter
+  did both (parity 147).
 - **`Json` (2026-09-30).** The interpreter holds a parsed value as the
   compiled program does, a `serde_json::Value` (`Value::Json`): the rows
   that take JSON borrow it, a field or an item read from it is JSON, and
@@ -194,3 +205,61 @@ benchmark.
   maps and tensors, and back at every JSON row, is gone, and with it two
   divergences (an item or a field a parsed value lacks read `null`
   compiled and stopped the interpreter).
+
+## 6. Facts as a struct: the design (2026-10-01)
+
+*Vijay, 2026-10-01: finish the typed values. Decision 5, §4 step 4.*
+
+**What it replaces.** A compiled session keeps its facts as JSON
+(`CrowLiveState.data`). A handler, a render and a derivation read the
+facts they use into Rust locals as they start; a handler writes its own
+back as it ends (its epilogue). Around every call of a helper that
+handles facts too, the handler writes its facts to the JSON first
+(`flush_before`) and reads the helper's writes back after
+(`reload_after`), and before a statement that reads a derivation after a
+write it writes and re-reads (`refresh_derivations`). Three copies of
+one fact can be live at once: the handler's local, the helper's local,
+and the JSON. Every compiled-only bug of the handler class so far was
+two of them disagreeing.
+
+**The store.** The session's facts are one value the program provides:
+
+```rust
+pub trait Facts: Send + Sync {
+    fn box_clone(&self) -> Box<dyn Facts>;
+    fn get_json(&self, name: &str) -> Option<serde_json::Value>;   // the edges
+    fn set_json(&mut self, name: &str, value: serde_json::Value) -> bool;
+    fn names(&self) -> Vec<String>;
+    fn copy_fact(&mut self, from: &dyn Facts, name: &str);         // a commit
+    fn as_any(&self) -> &dyn std::any::Any;
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+}
+```
+
+- `JsonFacts` (a map of JSON values) is the runtime's own, which the
+  interpreter's served pages and every runtime test use: nothing about
+  them changes.
+- A compiled page program generates `struct CrowFacts`, one typed field
+  per fact and a JSON map for the keys it does not declare (the runtime's
+  own, `__reader`, `__pages`, a data source's answer). Its `get_json` and
+  `set_json` are the only places its facts meet JSON: the harness
+  (`a.count`, `change[a, …]`), a bound input's text, the dev panel, a kept
+  session, `later[]`'s deltas.
+- `CrowLiveState.data` becomes `facts: Box<dyn Facts>`; `get` answers an
+  owned value, `set` writes through `set_json`, and both keep the version
+  rule (a version bumps only when the value moved).
+
+**The compiled bodies.** A handler, a helper, a render and a derivation
+read and write the session's facts where the program does, through the
+state they are handed: `facts(state).count`, and for a write
+`facts_mut(state).count = v` and `state.touch_changed("count", moved)`.
+There is no prologue, no epilogue, no flush, no reload: a helper the
+handler calls reads what the handler wrote because there is one copy. A
+derivation is read where it is used, `__derive_x(state)`, whose memo
+answers at once unless a fact it reads has moved since — so a read after
+a write is the recomputed value, which `refresh_derivations` imitated.
+
+**What stays.** The working copy (a handler's facts are a clone of the
+session's, committed as one or dropped), the versions and the keyed
+invalidation, the commit's rule (what the handler changed lands, nothing
+else), the harness's and the wire's JSON.

@@ -1242,6 +1242,15 @@ impl IrInterp {
             }
             Expr::Meta { base, which } => {
                 let b = self.eval(base)?;
+                // a value its type says cannot fail did not: the lowering
+                // decides, and what was read for it has been read
+                if *which != Meta::Valid && crate::lower_ir::meta_decided(&base.ty()) {
+                    return Ok(match which {
+                        Meta::Ok => CrowValue::ok(Value::Bool(true)),
+                        Meta::Trace => CrowValue::ok(Value::Array(Vec::new())),
+                        _ => CrowValue::ok(Value::Str(String::new())),
+                    });
+                }
                 let name = match which {
                     Meta::Ok => "ok",
                     Meta::Reason => "reason",

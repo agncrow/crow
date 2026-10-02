@@ -1,0 +1,31 @@
+--- `.ok`, `.reason`, `.kind` and `.trace` of a value whose type says it
+--- cannot fail are decided before the program runs: true, empty, empty, no
+--- trace (typed-values decision 1). What is read for them is still read,
+--- the same in both modes: a call that logs logs, and an index past a
+--- list's end stops. (Compiled, the value read for them was skipped: the
+--- call never ran and the index never stopped.) A value that can fail, and
+--- a parsed value whose item is JSON's null, are asked as the program runs.
+
+fn loud[x]
+    log['called `x`']
+    return x
+
+n = 3
+log[n.ok]
+log[len[n.reason]]
+log[len[n.kind]]
+log[len[n.trace]]
+xs = [1, 2]
+log[xs.ok]
+m = map[a = 1]
+log[m.ok]
+log[loud[4].ok]
+log[len[loud[5].reason]]
+r = float['x']
+log[r.ok]
+log[r.kind]
+j = json['[1, null]']
+log[j[0].ok]
+log[j[1].ok]
+log[xs[5].ok]
+log['not reached']

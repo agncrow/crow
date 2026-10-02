@@ -507,6 +507,39 @@ impl LoopOrder {
     }
 }
 
+/// `.ok`, `.reason`, `.kind` or `.trace` of a value its type says cannot
+/// fail, decided here: true, empty text, no trace (typed-values-design.md,
+/// decision 1) — nothing is looked at as the program runs. A value read
+/// through something that can act or stop (a call, an index, arithmetic)
+/// is left to the backends, which evaluate it and answer the same.
+fn decided_meta(e: Expr) -> Expr {
+    let Expr::Meta { base, which } = &e else { return e };
+    if *which == Meta::Valid || !meta_decided(&base.ty()) || !plain_read(base) {
+        return e;
+    }
+    match which {
+        Meta::Ok => Expr::Const(Const::Bool(true), Ty::Bool),
+        Meta::Trace => Expr::ListLit(Vec::new(), Ty::List(Box::new(Ty::Str))),
+        _ => Expr::Const(Const::Str(String::new()), Ty::Str),
+    }
+}
+
+/// Whether a value of this type cannot fail: not a result, not a parsed
+/// value (JSON's null is an error value), and not unknown.
+pub(crate) fn meta_decided(t: &Ty) -> bool {
+    !t.is_result() && !matches!(t, Ty::Json | Ty::Unknown)
+}
+
+/// Whether reading an expression only reads: a constant, a local, a fact, a
+/// derivation, a function, or a record's field of one.
+fn plain_read(e: &Expr) -> bool {
+    match e {
+        Expr::Const(..) | Expr::Local(..) | Expr::Move(..) | Expr::Load(..) | Expr::Derived(..) | Expr::Constant(..) | Expr::FnRef(..) => true,
+        Expr::Field { base, .. } => matches!(base.ty(), Ty::Record(_)) && plain_read(base),
+        _ => false,
+    }
+}
+
 /// A node whose order shows by itself: an effect, a draw from the seeded
 /// generator, an assertion, a look at background work, or a paged table
 /// (the render numbers them in order).
@@ -2329,7 +2362,7 @@ impl<'a> Lowerer<'a> {
                             "kind" => Meta::Kind,
                             _ => Meta::Trace,
                         };
-                        Expr::Meta { base: Box::new(base), which }
+                        decided_meta(Expr::Meta { base: Box::new(base), which })
                     }
                     _ => {
                         if let A::Ident(m) = object.as_ref() {
@@ -3988,6 +4021,21 @@ mod tests {
         ctx.describe_queries = false;
         ctx.infer_program(&stmts);
         lower(&stmts, &mut ctx, "t").err().unwrap_or_default()
+    }
+
+    /// A status the type settles is decided before the program runs: `.ok`
+    /// of a value that cannot fail is true and its reason empty
+    /// (typed-values decision 1); one that can fail, and a parsed value's,
+    /// are asked as it runs; one read through a call or an index keeps the
+    /// read, which acts or stops
+    #[test]
+    fn a_status_its_type_settles_is_decided() {
+        let ir = ir_of("fn loud[x]\n    log['called']\n    return x\nn = 3\nlog[n.ok]\nlog[n.reason]\nr = float['x']\nlog[r.ok]\nj = json['[1]']\nlog[j[0].ok]\nlog[loud[4].ok]\nxs = [1, 2]\nlog[xs[1].ok]\n");
+        assert!(ir.contains("display.log!held(true)"), "{}", ir);
+        assert!(ir.contains("display.log!held(\"\")"), "{}", ir);
+        assert!(ir.contains("display.log!held(r.ok)"), "{}", ir);
+        assert!(ir.contains("[0].ok)"), "a parsed value's status is asked: {}", ir);
+        assert!(ir.contains("4).ok)") && ir.contains("[1].ok)"), "what acts or stops keeps its read: {}", ir);
     }
 
     /// A module asked for what it does not have is told so: `io.read` is

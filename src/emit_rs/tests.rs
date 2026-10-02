@@ -489,9 +489,10 @@ fn test_error_trace_field_access() {
 
 #[test]
 fn test_raw_value_kind_is_empty() {
+    // a value that cannot fail has an empty kind, decided by the lowering
     let src = "x = 5\ny = x.kind\n";
     let rust = transpile(src);
-    assert!(rust.contains("String::new()"), "raw value .kind should be empty string\n{}", rust);
+    assert!(rust.contains("let y: String = \"\".to_string();"), "raw value .kind should be empty string\n{}", rust);
 }
 
 #[test]
