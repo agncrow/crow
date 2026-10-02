@@ -1119,6 +1119,61 @@ fn apply_field(state: &mut CrowLiveState, event: &str, value: Option<&str>) -> b
     true
 }
 
+/// A handler's stop as the session took it: its reason (`apply stopped:
+/// no quote`), which the server's log keeps, and the id the reader is told
+/// in its place (spec, The notice). A reason is the runtime's own words —
+/// a database's error, a file's path — so it goes no further than the log,
+/// as a failed route's does (Vijay, 2026-10-01).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stopped {
+    pub reason: String,
+    pub id: String,
+}
+
+impl Stopped {
+    /// A stop, given its id.
+    pub fn new(reason: String) -> Self {
+        Stopped { reason, id: crate::core::response::failure_id() }
+    }
+
+    /// What the reader is told: that it stopped, that nothing changed, and
+    /// the id the log has its reason under.
+    pub fn told(&self) -> String {
+        match stop_parts(&self.reason).0 {
+            Some(who) => format!("{} stopped, and nothing changed — {}{}", who, crate::core::response::LOG_HAS_WHY, self.id),
+            None => format!("it stopped, and nothing changed — {}{}", crate::core::response::LOG_HAS_WHY, self.id),
+        }
+    }
+
+    /// The server's log line, a failed route's form: `apply stopped
+    /// [3f9a1c07]: no quote`.
+    pub fn logged(&self) -> String {
+        match stop_parts(&self.reason) {
+            (Some(who), why) => format!("{} stopped [{}]: {}", who, self.id, why),
+            (None, why) => format!("stopped [{}]: {}", self.id, why),
+        }
+    }
+}
+
+/// The handler a stop's reason names, and why it stopped (`apply stopped:
+/// no quote`); no handler when the reason names none.
+fn stop_parts(reason: &str) -> (Option<&str>, &str) {
+    match reason.split_once(" stopped: ") {
+        Some((who, why)) if !who.is_empty() && !who.contains(char::is_whitespace) => (Some(who), why),
+        _ => (None, reason),
+    }
+}
+
+/// A stop the session took: the server's log has its reason beside the id
+/// the reader was told, and under `crow dev` the panel lists it with the
+/// events its render answers.
+fn log_stop(stopped: &Stopped, dev_events: &mut Vec<String>) {
+    eprintln!("crow live: {}", stopped.logged());
+    if dev_token().is_some() {
+        dev_events.push(stopped.logged());
+    }
+}
+
 /// Run a handler on its working copy as one event and one transaction:
 /// its database writes commit with it, or roll back when it stopped, and a
 /// commit the database refuses is a stop too. The copy comes back for the
@@ -1133,6 +1188,7 @@ where
     if let Err(e) = crow_runtime::txn::finish(!copy.is_stopped()) {
         copy.stop(format!("{} stopped: {}", event, e));
     }
+    copy.name_stop(event);
     if let Some(budget) = budget_ms() {
         let ms = t0.elapsed().as_millis();
         if ms > budget {
@@ -1180,8 +1236,8 @@ where
         return (true, seq);
     }
     let copy = run_handler(state.working_copy(), &event, value.as_deref(), handle);
-    if let Some(reason) = state.commit(copy) {
-        eprintln!("crow live: {}", reason);
+    if let Some(stopped) = state.commit(copy) {
+        eprintln!("crow live: {}", stopped.logged());
     }
     (true, seq)
 }
@@ -1265,9 +1321,10 @@ impl CrowLiveState {
 
     /// The handler ended: its writes land as one — its facts, the tables it
     /// wrote (every other reader of them is woken now), then its held
-    /// effects in program order. A stopped handler lands nothing; its reason
-    /// becomes the session's notice, which is returned.
-    pub fn commit(&mut self, copy: CrowLiveState) -> Option<String> {
+    /// effects in program order. A stopped handler lands nothing: the
+    /// reader is told it stopped, with an id, as the session's notice, and
+    /// the stop — its reason beside the id — is returned for the log.
+    pub fn commit(&mut self, copy: CrowLiveState) -> Option<Stopped> {
         let tables: Vec<(String, u64)> = copy.local_tables.lock().unwrap_or_else(|p| p.into_inner()).drain().collect();
         // what each write said lands before its table's readers look again —
         // on a stop too: a store without transactions kept what it was given
@@ -1282,8 +1339,9 @@ impl CrowLiveState {
             for (t, v) in tables {
                 publish_table(&t, v, self.session_id);
             }
-            self.notice = Some((reason.clone(), crow_runtime::moments::now()));
-            return Some(reason);
+            let stopped = Stopped::new(reason);
+            self.notice = Some((stopped.told(), crow_runtime::moments::now()));
+            return Some(stopped);
         }
         // the facts the handler changed land; the rest stay as they are now
         let mut moved = false;
@@ -1502,12 +1560,24 @@ impl CrowLiveState {
     }
 
     /// A handler that failed outright (a key its map lacks, a panic in the
-    /// runtime) stopped: nothing it did landed, and the reader is told why,
-    /// as a stop is told — the interpreter's page says the same.
-    fn stopped_by(&mut self, handler: &str, why: &str) {
-        let reason = format!("{} stopped: {}", handler, why);
-        eprintln!("crow live: {}", reason);
-        self.notice = Some((reason, crow_runtime::moments::now()));
+    /// runtime) stopped: nothing it did landed, and the reader is told so,
+    /// as a stop is told — the interpreter's page says the same. The stop
+    /// is returned for the log.
+    fn stopped_by(&mut self, handler: &str, why: &str) -> Stopped {
+        let stopped = Stopped::new(format!("{} stopped: {}", handler, why));
+        self.notice = Some((stopped.told(), crow_runtime::moments::now()));
+        stopped
+    }
+
+    /// A stop's reason names its handler (`apply stopped: …`); one the
+    /// runtime made without it — a download that could not be handed on, a
+    /// sign-in refused — is named for the event that ran.
+    pub fn name_stop(&mut self, event: &str) {
+        if let Some(reason) = self.stopped.as_mut()
+            && stop_parts(reason).0.is_none()
+        {
+            *reason = format!("{} stopped: {}", event, reason);
+        }
     }
 
     /// The handler stops: nothing it did lands (core-design.md §2).
@@ -3265,11 +3335,11 @@ where
                                     crow_runtime::lock(later_registry()).remove(&format!("{}:{}", state.session_id, handler));
                                     match done {
                                         Ok(copy) => {
-                                            if let Some(reason) = state.commit(copy) {
-                                                eprintln!("crow live: {}", reason);
+                                            if let Some(stopped) = state.commit(copy) {
+                                                log_stop(&stopped, &mut dev_events);
                                             }
                                         }
-                                        Err(why) => state.stopped_by(&handler, &why),
+                                        Err(why) => log_stop(&state.stopped_by(&handler, &why), &mut dev_events),
                                     }
                                     acks.extend(seq);
                                     render = true;
@@ -3379,11 +3449,11 @@ where
                                         later_registry().lock().unwrap_or_else(|p| p.into_inner()).remove(&key);
                                         match done {
                                             Ok(copy) => {
-                                                if let Some(reason) = state.commit(copy) {
-                                                    eprintln!("crow live: {}", reason);
+                                                if let Some(stopped) = state.commit(copy) {
+                                                    log_stop(&stopped, &mut dev_events);
                                                 }
                                             }
-                                            Err(e) => state.stopped_by(&event, &panic_reason(e)),
+                                            Err(e) => log_stop(&state.stopped_by(&event, &panic_reason(e)), &mut dev_events),
                                         }
                                         acks.extend(seq);
                                     }
@@ -3540,8 +3610,8 @@ where
                         // then the session waits for its tab to come back
                         if let Some((handler, _, job)) = running {
                             if let Ok(copy) = job.await {
-                                if let Some(reason) = state.commit(copy) {
-                                    eprintln!("crow live: {}", reason);
+                                if let Some(stopped) = state.commit(copy) {
+                                    eprintln!("crow live: {}", stopped.logged());
                                 }
                             }
                             later_registry().lock().unwrap_or_else(|p| p.into_inner()).remove(&format!("{}:{}", session_id, handler));
@@ -5662,9 +5732,27 @@ mod tests {
         copy.set("b", serde_json::json!(3));
         copy.notice("saved again".to_string());
         copy.stop("apply stopped: no quote".to_string());
-        assert_eq!(s.commit(copy), Some("apply stopped: no quote".to_string()));
+        let stopped = s.commit(copy).expect("the handler stopped");
+        assert_eq!(stopped.reason, "apply stopped: no quote");
         assert_eq!((s.get("a"), s.get("b")), (Some(&serde_json::json!(2)), Some(&serde_json::json!(1))), "a stop lands nothing");
-        assert_eq!(s.notice.as_ref().map(|n| n.0.as_str()), Some("apply stopped: no quote"));
+        // the reader is told it stopped and nothing changed, and an id; the
+        // log has the reason beside the id
+        assert!(stopped.id.len() == 8 && stopped.id.chars().all(|c| c.is_ascii_hexdigit()), "{}", stopped.id);
+        assert_eq!(s.notice.as_ref().map(|n| n.0.clone()), Some(format!("apply stopped, and nothing changed — the server's log has why, as {}", stopped.id)));
+        assert_eq!(stopped.logged(), format!("apply stopped [{}]: no quote", stopped.id));
+        // a stop the runtime made without the handler's name is named for
+        // the event that ran (a download that could not be handed on)
+        let mut copy = s.working_copy();
+        copy.stop("download: no such file".to_string());
+        copy.name_stop("export");
+        let stopped = s.commit(copy).expect("the handler stopped");
+        assert_eq!(stopped.reason, "export stopped: download: no such file");
+        assert!(s.notice.as_ref().is_some_and(|n| n.0.starts_with("export stopped, and nothing changed — ")));
+        // a reason already naming its handler keeps it
+        let mut copy = s.working_copy();
+        copy.stop("helper stopped: line 3: map has no key 'x'".to_string());
+        copy.name_stop("apply");
+        assert_eq!(s.commit(copy).map(|s| s.reason), Some("helper stopped: line 3: map has no key 'x'".to_string()));
     }
 
     /// mail[…] whose answer the handler does not use is sent when the

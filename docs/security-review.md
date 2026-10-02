@@ -93,6 +93,13 @@ Found and fixed (Vijay's decision, 2026-10-01):
   server's log names the handler and the reason beside it, in both modes
   (`a_handler_that_stops_answers_500`; the lost-connection test reads the
   log for it). A response HTTP cannot carry answers the same way.
+- A page's handler that stopped told its reader the reason as the
+  session's notice — `skip_symbol stopped: clickhouse query error: …` —
+  the same internals, to whoever had the page open. The reader is now told
+  that it stopped, that nothing changed, and an id; the server's log has
+  the reason beside the id, in both modes, and under `crow dev` the dev
+  panel lists it (`tests/dev.rs`, served 06; Vijay, 2026-10-01). A test
+  reads the reason from the click's value.
 
 ## Uploads
 

@@ -2359,7 +2359,9 @@ impl IrInterp {
         if let Err(reason) = fits {
             let told = format!("{} stopped: {}", name, reason);
             self.last_stop = Some(told.clone());
-            self.session_notice.insert(id, (told, crow_runtime::moments::now()));
+            // the reader is told it stopped, and an id; the reason is the
+            // click's value and, served, the server's log (crow_web::live)
+            self.session_notice.insert(id, (crow_web::live::Stopped::new(told).told(), crow_runtime::moments::now()));
             let mut stopped = CrowValue::error_with_kind(&reason, "stop", "");
             stopped.status_mut().trace.clear();
             return Ok(stopped);
@@ -2391,7 +2393,7 @@ impl IrInterp {
                 }
                 let told = format!("{} stopped: {}", who, reason);
                 self.last_stop = Some(told.clone());
-                self.session_notice.insert(id, (told, crow_runtime::moments::now()));
+                self.session_notice.insert(id, (crow_web::live::Stopped::new(told).told(), crow_runtime::moments::now()));
                 Ok(CrowValue::error_with_kind(&reason, &kind, &self.trace_entry()))
             }
             Err(e) => Err(e),

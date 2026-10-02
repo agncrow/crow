@@ -138,6 +138,7 @@ fn http_steps(port: u16, steps: &[serde_json::Value]) -> Result<Vec<String>, Str
 /// An answer as both modes must agree on it: its status line, its content
 /// type and where it sends the reader, and its body.
 fn answer_of(raw: &str) -> String {
+    use crow_web::core::response::ids_read_past;
     let (head, body) = raw.split_once("\r\n\r\n").unwrap_or((raw, ""));
     let mut lines = head.lines();
     let status = lines.next().unwrap_or("").to_string();
@@ -149,16 +150,8 @@ fn answer_of(raw: &str) -> String {
         })
         .collect();
     kept.sort();
-    // a failure's id is random, a line in each mode's own log: the answers
-    // agree on everything but it
-    let marker = "the server's log has why, as ";
-    let body = match body.find(marker) {
-        Some(at) if body[at + marker.len()..].chars().take(8).all(|c| c.is_ascii_hexdigit()) => {
-            format!("{}<id>{}", &body[..at + marker.len()], body[at + marker.len()..].chars().skip(8).collect::<String>())
-        }
-        _ => body.to_string(),
-    };
-    format!("{} | {} | {}", status, kept.join(" | "), body)
+    // (a failure's id is random, a line in each mode's own log)
+    format!("{} | {} | {}", status, kept.join(" | "), ids_read_past(body))
 }
 
 /// Trade a sign-in's ticket for its cookie, as the page's script does: the
@@ -185,7 +178,8 @@ struct Shown {
 impl Shown {
     /// The page with what the tab shows, as the modes are compared.
     fn with(&self, page: &CrowVNode) -> String {
-        format!("{} | title: {} | address: {}", canonical(&page.to_html()), self.title, self.address)
+        use crow_web::core::response::ids_read_past;
+        format!("{} | title: {} | address: {}", ids_read_past(&canonical(&page.to_html())), self.title, self.address)
     }
 }
 

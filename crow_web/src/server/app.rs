@@ -42,16 +42,9 @@ impl CrowHandler {
 /// same in both modes. (The answer had carried the reason itself, telling
 /// any client what the program reaches; Vijay, 2026-10-01.)
 pub fn route_stopped(handler: &str, reason: &str) -> CrowResponse {
-    let id = failure_id();
+    let id = crate::core::response::failure_id();
     eprintln!("crow: {} stopped [{}]: {}", handler, id, reason);
     CrowResponse::stopped(&id)
-}
-
-/// A failure's id: eight hex digits, random, so the one the client quotes
-/// finds its line in the log.
-pub(crate) fn failure_id() -> String {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    crow_runtime::signin::random_hex(4).unwrap_or_else(|_| format!("{:08x}", NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)))
 }
 
 /// The Crow web application — wraps axum's Router.

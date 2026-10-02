@@ -1,6 +1,7 @@
 --- A helper called for what it writes, handed a failed value, stops the
---- handler, as an effect given one does: nothing the click did lands and
---- the reason is the session's notice (docs/bug-classes.md, decision 1).
+--- handler, as an effect given one does: nothing the click did lands, the
+--- reader is told it stopped, and the reason is the click's value
+--- (docs/bug-classes.md, decision 1).
 --- The helper's value is dropped, so auto-propagation made the error its
 --- value and nobody read it: the click counted, the helper never ran, and
 --- the page said nothing. CI runs it against the interpreter and against
@@ -30,4 +31,6 @@ test a_helper_handed_a_failed_value_stops_the_handler[]
     r = click[a, apply]
     assert[not r.ok, 'the click stopped']
     assert[a.count eq 1, 'nothing the click did landed: `a.count`']
-    assert[contains[html[a], 'apply stopped: cannot convert'], 'the page `html[a]`']
+    assert[contains[r.reason, 'cannot convert'], 'why it stopped: `r.reason`']
+    assert[contains[html[a], 'apply stopped, and nothing changed'], 'the page `html[a]`']
+    assert[not contains[html[a], 'cannot convert'], 'the reader is not told the reason: `html[a]`']

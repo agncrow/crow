@@ -3094,7 +3094,9 @@ fn scenario_artifacts(entry: &str, parts: &std::collections::BTreeMap<String, St
             section(&mut text, "answered with generated rows", &r.generated.lock().map(|g| g.clone()).unwrap_or_default());
             section(&mut text, "did not hold on rehearsal data", &r.unheld.lock().map(|u| u.clone()).unwrap_or_default());
             section(&mut text, "changed", &changed_facts);
-            out.insert(key, (file.clone(), text));
+            // (a stopped handler's notice holds a random id, which no two
+            // rehearsals share)
+            out.insert(key, (file.clone(), crow_web::core::response::ids_read_past(&text)));
         }
     }
     out

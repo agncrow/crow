@@ -108,8 +108,9 @@ A handler's writes land together when it ends, or not at all. It works on
 its own copy of the session's facts — a render never sees it halfway — and
 its database writes are one transaction, committed with it. When an error
 reaches a decision, a fact or a database call, the handler **stops**:
-nothing it did lands, and the reader is told why through the session's
-*notice*:
+nothing it did lands, and the reader is told so through the session's
+*notice* — that it stopped, that nothing changed, and an id. Why is in the
+server's log beside that id, and is the click's value in a test:
 
 ```crow
 use web, ui
@@ -142,7 +143,8 @@ test one_transaction[]
     r = click[a, broken]
     assert[not r.ok]
     assert[a.saved eq 1]
-    assert[contains[html[a], 'broken stopped: cannot convert']]
+    assert[contains[r.reason, 'cannot convert']]
+    assert[contains[html[a], 'broken stopped, and nothing changed']]
 
 page['/', panel]
 log['panel defined']

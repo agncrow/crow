@@ -1,6 +1,7 @@
 //! `crow dev` from the outside: the program served by the interpreter and
 //! reloaded as its file changes, each tab's session kept and its dev panel
-//! told each event; a change that breaks it leaves the last good program
+//! told each event — a handler that stopped with its reason, which its
+//! reader is not told; a change that breaks it leaves the last good program
 //! serving, whose pages are told the refusal; and the program stops with
 //! `crow dev`.
 
@@ -103,7 +104,12 @@ fn crow_dev_reloads_a_program_as_its_file_changes() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let port = 3433;
-    let program = |word: &str| format!("use web, ui\nn = 0\nfn inc[]\n    n = n + 1\nview home[]\n    return stack[p['{} `n`'], button['+', click = inc]]\nserve[{}]\npage['/', home]\n", word, port);
+    let program = |word: &str| {
+        format!(
+            "use web, ui\nn = 0\nfn inc[]\n    n = n + 1\nfn bad[]\n    px = float['no quote']\n    if px gt 1.0\n        n = 5\nview home[]\n    return stack[p['{} `n`'], p['said: `notice.text`'], button['+', click = inc], button['x', click = bad]]\nserve[{}]\npage['/', home]\n",
+            word, port
+        )
+    };
     std::fs::write(dir.join("app.co"), program("first")).unwrap();
     let mut dev = Dev(Command::new(env!("CARGO_BIN_EXE_crow"))
         .args(["dev", "app.co"])
@@ -142,6 +148,16 @@ fn crow_dev_reloads_a_program_as_its_file_changes() {
     // the dev panel hears it: the event, the fact it moved, the render
     let heard = read_until(&mut ws, "\"panel\"");
     assert!(heard.iter().any(|w| w.contains("\"changed\":{\"n\":[0,1]}") && w.contains("\"events\":[\"inc\"]") && w.contains("\"render_ms\"")), "the panel hears the click: {:?}", heard);
+    // a handler that stops: its reader is told it stopped, and an id; the
+    // panel and the server's log have why, beside that id
+    ws.send(tungstenite::Message::Text(serde_json::json!({ "event": "bad", "seq": 2 }).to_string().into())).unwrap();
+    let told = read_until(&mut ws, "bad stopped, and nothing changed");
+    let id: String = told.iter().find_map(|w| w.split("the server's log has why, as ").nth(1)).map(|t| t.chars().take(8).collect()).unwrap_or_default();
+    assert!(id.len() == 8 && id.chars().all(|c| c.is_ascii_hexdigit()), "the reader is told an id: {:?}", told);
+    assert!(!told.iter().any(|w| w.contains("no quote")), "the reader is not told why: {:?}", told);
+    let heard = read_until(&mut ws, "\"panel\"");
+    assert!(heard.iter().any(|w| w.contains(&format!("bad stopped [{}]: cannot convert", id))), "the panel hears why, beside the id: {:?}", heard);
+    until("the stop in the server's log", || log().contains(&format!("crow live: bad stopped [{}]: cannot convert", id)));
     drop(ws);
     std::fs::write(dir.join("app.co"), program("second")).unwrap();
     until("the change reloading it", || get(port, "/").contains("<p>second 0</p>"));
@@ -153,10 +169,10 @@ fn crow_dev_reloads_a_program_as_its_file_changes() {
     // its pages are told why
     std::fs::write(dir.join("app.co"), program("third").replace("stack[p[", "stack[pp[")).unwrap();
     until("the refusal", || log().contains("refused"));
-    assert!(log().contains("app.co: line 6: undefined function 'pp'"), "{}", log());
+    assert!(log().contains("app.co: line 10: undefined function 'pp'"), "{}", log());
     assert!(get(port, "/").contains("<p>second 0</p>"), "the last good program serves: {}", log());
     let words = socket_words(port);
-    assert!(words.iter().any(|w| w.contains("\"type\":\"dev\"") && w.contains("app.co: line 6: undefined function 'pp'")), "a page is told the refusal: {:?}\n{}", words, log());
+    assert!(words.iter().any(|w| w.contains("\"type\":\"dev\"") && w.contains("app.co: line 10: undefined function 'pp'")), "a page is told the refusal: {:?}\n{}", words, log());
     // only the crow dev that started the program speaks to its pages
     assert!(post(port, "/_dev/reload").starts_with("HTTP/1.1 403"), "a word without the token is refused");
     std::fs::write(dir.join("app.co"), program("fourth")).unwrap();

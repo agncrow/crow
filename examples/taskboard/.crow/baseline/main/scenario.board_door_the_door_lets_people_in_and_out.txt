@@ -13,8 +13,8 @@ scenario board_door_the_door_lets_people_in_and_out (board/door.co)
   answered with generated rows:
     SELECT role, hash FROM people WHERE name = ?
   did not hold on rehearsal data:
-    test:44: log_in stopped: unsupported hash algorithm 'hash1' (use sha256, sha512, md5, password, or a stored password hash) eq no one called nobody
-    test:49: log_in stopped: unsupported hash algorithm 'hash1' (use sha256, sha512, md5, password, or a stored password hash) eq wrong password
+    test:44: log_in stopped, and nothing changed — the server's log has why, as <id> eq no one called nobody
+    test:49: log_in stopped, and nothing changed — the server's log has why, as <id> eq wrong password
   changed:
     name = ada
     password = lovelace

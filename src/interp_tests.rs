@@ -3411,14 +3411,16 @@ mod tests {
     const TXN: &str = "use web, ui\ncount = 0\nfn buy[]\n    count = count + 1\n    notice['bought']\n    px = float['no quote within 2s']\n    if px gt 1.0\n        count = count + 10\nfn helper_fails[]\n    px = float['helper failed']\n    if px gt 1.0\n        count = 99\nfn outer[]\n    count = count + 1\n    helper_fails[]\n    count = count + 100\nfn ok_notice[]\n    count = count + 1\n    notice['saved `count`']\nfn later_work[]\n    count = count + 1000\nfn schedules[]\n    later[later_work]\n    count = count + 1\nfn schedules_then_stops[]\n    later[later_work]\n    px = float['stopped after scheduling']\n    if px gt 1.0\n        count = 5\nview v[]\n    return stack[p['`count`'], p['said: `notice.text`'], button['a', click = buy], button['b', click = outer], button['c', click = ok_notice], button['d', click = schedules], button['e', click = schedules_then_stops]]\n";
 
     #[test]
-    fn a_handler_that_stops_lands_nothing_and_says_why() {
-        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    r = click[a, buy]\n    assert[not r.ok]\n    assert[r.reason eq 'cannot convert \\'no quote within 2s\\' to float']\n    assert[a.count eq 0]\n    assert[contains[html[a], 'said: buy stopped: cannot convert']]\n", TXN));
+    fn a_handler_that_stops_lands_nothing_and_its_click_says_why() {
+        // the reader is told it stopped, and an id; the reason is the click's
+        // value (and, served, the server's log beside the id)
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    r = click[a, buy]\n    assert[not r.ok]\n    assert[r.reason eq 'cannot convert \\'no quote within 2s\\' to float']\n    assert[a.count eq 0]\n    assert[contains[html[a], 'said: buy stopped, and nothing changed — the server\\'s log has why, as ']]\n    assert[not contains[html[a], 'no quote within']]\n", TXN));
         assert!(issues.is_empty(), "harness issues: {:?}", issues);
     }
 
     #[test]
     fn a_helper_that_stops_stops_its_handler() {
-        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    click[a, outer]\n    assert[a.count eq 0]\n    assert[contains[html[a], 'helper_fails stopped: cannot convert']]\n", TXN));
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    r = click[a, outer]\n    assert[a.count eq 0]\n    assert[contains[r.reason, 'cannot convert']]\n    assert[contains[html[a], 'helper_fails stopped, and nothing changed']]\n", TXN));
         assert!(issues.is_empty(), "harness issues: {:?}", issues);
     }
 
@@ -3440,7 +3442,7 @@ mod tests {
 
     #[test]
     fn an_error_reaching_an_effect_or_a_fact_stops_the_handler() {
-        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    click[a, setup]\n    r = click[a, bad_effect]\n    assert[not r.ok]\n    assert[a.count eq 0]\n    assert[len[rows] eq 0]\n    q = click[a, bad_fact]\n    assert[not q.ok]\n    assert[a.price eq 1.5]\n    assert[a.count eq 0]\n    assert[contains[html[a], 'bad_fact stopped: cannot convert']]\n", REACHES));
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    click[a, setup]\n    r = click[a, bad_effect]\n    assert[not r.ok]\n    assert[a.count eq 0]\n    assert[len[rows] eq 0]\n    q = click[a, bad_fact]\n    assert[not q.ok]\n    assert[a.price eq 1.5]\n    assert[a.count eq 0]\n    assert[contains[q.reason, 'cannot convert']]\n    assert[contains[html[a], 'bad_fact stopped, and nothing changed']]\n", REACHES));
         assert!(issues.is_empty(), "harness issues: {:?}", issues);
     }
 

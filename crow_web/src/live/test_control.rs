@@ -184,14 +184,17 @@ async fn answer(c: &Control, op: &str, body: serde_json::Value) -> Result<serde_
                     if let Err(e) = crow_runtime::txn::finish(!copy.is_stopped()) {
                         copy.stop(format!("{} stopped: {}", event, e));
                     }
+                    copy.name_stop(&event);
                     copy
                 })
             })?;
             let stopped = s.state.commit(copy);
             s.settle();
             s.state.next_tick();
+            // the click's value is the reason, as a test reads it; the page
+            // tells its reader the id
             Ok(match stopped {
-                Some(reason) => serde_json::json!({ "ok": false, "reason": reason }),
+                Some(stopped) => serde_json::json!({ "ok": false, "reason": stopped.reason }),
                 None => serde_json::json!({ "ok": true }),
             })
         }

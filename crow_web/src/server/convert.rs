@@ -82,9 +82,9 @@ pub fn response_to_axum(crow_resp: CrowResponse) -> Response {
     // response — answers 500 with the reason, and the server's log says so
     // (it had answered `internal error`, and said nothing)
     if let Some(why) = unsendable(&crow_resp) {
-        let id = super::app::failure_id();
+        let id = crate::core::response::failure_id();
         eprintln!("crow: a response could not be sent [{}]: {}", id, why);
-        return (StatusCode::INTERNAL_SERVER_ERROR, format!("the request could not be answered — the server's log has why, as {}", id)).into_response();
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("the request could not be answered — {}{}", crate::core::response::LOG_HAS_WHY, id)).into_response();
     }
     let mut builder = Builder::new().status(
         StatusCode::from_u16(crow_resp.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),

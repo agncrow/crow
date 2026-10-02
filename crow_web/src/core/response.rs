@@ -2,6 +2,39 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+/// The words that hand a reader a failure's id in place of its reason — a
+/// route's 500, a page's handler that stopped — under which the server's
+/// log files the reason: a reason names what the program reaches, a
+/// database's address or a file's path (Vijay, 2026-10-01).
+pub const LOG_HAS_WHY: &str = "the server's log has why, as ";
+
+/// A failure's id: eight hex digits, random, so the one a reader quotes
+/// finds its line in the log.
+pub fn failure_id() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    crow_runtime::signin::random_hex(4).unwrap_or_else(|_| format!("{:08x}", NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)))
+}
+
+/// Text with each failure's id read past, as `<id>`: an id is random, a
+/// line in one run's log, so what compares two runs — the served pages of
+/// both modes, a baseline's scenarios — agrees on everything but it.
+pub fn ids_read_past(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(LOG_HAS_WHY) {
+        let (head, tail) = rest.split_at(at + LOG_HAS_WHY.len());
+        out.push_str(head);
+        rest = tail;
+        // (eight hex digits are eight bytes)
+        if let Some(id) = tail.get(..8).filter(|id| id.bytes().all(|b| b.is_ascii_hexdigit())) {
+            out.push_str("<id>");
+            rest = &tail[id.len()..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// HTTP response returned by Crow route handlers.
 ///
 /// Handlers return responses via helper functions:
@@ -187,13 +220,11 @@ impl CrowResponse {
         Self::new(status, body)
     }
 
-    /// What a route answers when its handler fails or stops: 500, with the
-    /// handler's name and the reason — the same words in both modes.
     /// A failure's answer: 500, with the id the server's log files its
     /// reason under — the client is told no more (a reason names what the
     /// program reaches: a database's address, a file's path).
     pub fn stopped(id: &str) -> Self {
-        Self::respond(500, format!("the request could not be answered — the server's log has why, as {}", id))
+        Self::respond(500, format!("the request could not be answered — {}{}", LOG_HAS_WHY, id))
     }
 
     /// Redirect response (302 Found).
@@ -225,6 +256,21 @@ impl Default for CrowResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A failure's id is random, so what compares two runs reads past it —
+    /// a baseline recording a stopped handler's notice had changed on every
+    /// `crow check`; text that is no id after the words is left alone
+    #[test]
+    fn a_failure_id_is_read_past() {
+        let told = format!("apply stopped, and nothing changed — {}3f9a1c07 eq saved", LOG_HAS_WHY);
+        assert_eq!(ids_read_past(&told), "apply stopped, and nothing changed — the server's log has why, as <id> eq saved");
+        let two = format!("{w}0badcafe, {w}12345678.", w = LOG_HAS_WHY);
+        assert_eq!(ids_read_past(&two), "the server's log has why, as <id>, the server's log has why, as <id>.");
+        for left in [format!("{}not-hex!", LOG_HAS_WHY), format!("{}12ab", LOG_HAS_WHY), format!("{}é1234567", LOG_HAS_WHY), "no id here".to_string()] {
+            assert_eq!(ids_read_past(&left), left);
+        }
+        assert!(failure_id().len() == 8 && failure_id().bytes().all(|b| b.is_ascii_hexdigit()));
+    }
 
     #[test]
     fn test_response_json() {
