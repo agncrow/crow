@@ -121,7 +121,9 @@ sorted = sort[df, col]             --- dynamic column names just work
 | select | Pick columns | `sub = select[df, ['age', 'salary']]` |
 | filter | Filter rows | `old = filter[df, df.age gt 50]` |
 | sort | Sort by column | `s = sort[df, 'age']` |
-| group | Group and aggregate | `g = group[df, 'dept', ['salary', 'mean'], ['age', 'max']]` |
+| group | Group and aggregate, by one key or several | `g = group[df, ['dept', 'city'], ['salary', 'mean'], ['age', 'max']]` |
+| pivot | The long frame made wide: rows, columns, the values between | `wide = pivot[df, 'symbol', 'day', 'close']` |
+| window | A column computed over each row's partition | `with[df, 'avg3', window[df, 'close', 'mean', n = 3, by = 'symbol']]` |
 | join | Combine frames on key | `m = join[df1, df2, 'id']` |
 | stack | Stack frames vertically | `all = stack[df1, df2]` |
 | head | First N rows | `top = head[df, 5]` |
@@ -134,7 +136,9 @@ sorted = sort[df, col]             --- dynamic column names just work
 | tz | Convert timezone | `utc = tz[d, '+09:00']` |
 
 - `sort` defaults ascending. `sort[df, 'age', desc = true]` for descending.
-- `group` takes pairs of `['column', 'agg']` — single scan, multiple aggregations.
+- `group` takes pairs of `['column', 'agg']` — single scan, multiple aggregations; a list of keys groups by their combinations, each key column kept as it was.
+- `pivot` reshapes only: a pair two rows share stops the program, naming the `group` that aggregates it first (spec, Design Note "pivot reshapes, group aggregates").
+- `window` is `sum`, `mean`, `min`, `max`, `count`, `lag`, `lead` or `rank` over the trailing `n` rows (0: every row so far) within the partitions `by` names (2026-10-02).
 - `join` defaults inner. `join[df1, df2, 'id', 'left']` for left/right/outer.
 
 Plus properties: `.shape`, `.columns`, `.dtypes`

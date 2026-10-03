@@ -129,20 +129,94 @@ impl<'a> Lowerer<'a> {
         })
     }
 
+    /// The builtin a call names, when it is no function of the program's:
+    /// its module, when the call is qualified, and its name.
+    fn builtin_named(&self, callee: &A) -> Option<(Option<String>, String)> {
+        match callee {
+            A::Ident(n) if !self.ctx.functions.contains_key(n) && !self.ctx.specializations.contains_key(n) => Some((None, n.clone())),
+            A::FieldAccess { object, field } => match object.as_ref() {
+                A::Ident(m) if self.is_module(m) && !self.declared(m) => Some((Some(self.ctx.module_aliases.get(m).cloned().unwrap_or_else(|| m.clone())), field.clone())),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// `window[df, col, how, n = …, by = …]`'s column, typed by what it
+    /// computes: a float for `sum`, `mean`, `min` and `max`, an int for
+    /// `count` and `rank`, the column's own cells for `lag` and `lead`,
+    /// which can be missing at a partition's edge — as can every cell when
+    /// a `by` column can have missing cells (a row in no partition). A
+    /// column nothing typed gives dynamic cells, as a loaded file's are.
+    pub(super) fn column_typed(&mut self, callee: &A, args: &[A], arg_types: &[CrowType], ty: Ty) -> Ty {
+        if !matches!(ty.payload(), Ty::Column(_)) {
+            return ty;
+        }
+        let Some((module, name)) = self.builtin_named(callee) else { return ty };
+        if name != "window" || !matches!(module.as_deref(), None | Some("frame")) {
+            return ty;
+        }
+        let base = arg_types.first().and_then(|t| t.frame_cols()).cloned().flatten();
+        let lit = |i: usize| match args.get(i) {
+            Some(A::Str(s)) if !s.contains('`') => Some(s.clone()),
+            _ => None,
+        };
+        if let Some(b) = &base {
+            if let Some(col) = lit(1) {
+                self.refuse_missing("window", &Some(b.clone()), &col);
+            }
+            for key in Self::names_in(args.get(4)) {
+                self.refuse_missing("window", &Some(b.clone()), &key);
+            }
+        }
+        let column = |name: &str| base.as_ref().and_then(|b| b.cols.get(name).cloned());
+        let fallible = |t: &CrowType| matches!(t, CrowType::Result(_));
+        let keys_fallible = Self::names_in(args.get(4)).iter().any(|k| column(k).is_some_and(|t| fallible(&t)));
+        let source = lit(1).and_then(|c| column(&c));
+        let cell = match lit(2).as_deref() {
+            Some("sum" | "mean" | "min" | "max") => CrowType::Float,
+            Some("count") => CrowType::Int,
+            Some("rank") => match source {
+                Some(t) if fallible(&t) => CrowType::Result(Box::new(CrowType::Int)),
+                Some(_) => CrowType::Int,
+                None if base.is_some() => CrowType::Int,
+                None => CrowType::Json,
+            },
+            Some("lag" | "lead") => match source {
+                Some(CrowType::Result(t)) => CrowType::Result(t),
+                Some(t) => CrowType::Result(Box::new(t)),
+                None => CrowType::Json,
+            },
+            _ => return ty,
+        };
+        let cell = match cell {
+            CrowType::Json | CrowType::Result(_) => cell,
+            t if keys_fallible => CrowType::Result(Box::new(t)),
+            t => t,
+        };
+        let column = Ty::Column(Box::new(ty_of(&cell)));
+        match ty {
+            Ty::Result(_) => Ty::Result(Box::new(column)),
+            _ => column,
+        }
+    }
+
+    /// The column names an argument writes: one, or a list of them.
+    fn names_in(arg: Option<&A>) -> Vec<String> {
+        match arg {
+            Some(A::Str(s)) if !s.contains('`') && !s.is_empty() => vec![s.clone()],
+            Some(A::Array(items)) => items.iter().filter_map(|i| if let A::Str(s) = i { Some(s.clone()) } else { None }).collect(),
+            _ => Vec::new(),
+        }
+    }
+
     /// A call's type with the columns of the frame it answers, when it is a
     /// frame operation: its result's columns are its arguments'.
     pub(super) fn frame_typed(&mut self, callee: &A, args: &[A], arg_types: &[CrowType], lowered: &[Expr], ty: Ty) -> Ty {
         if !matches!(ty.payload(), Ty::Frame(None)) {
             return ty;
         }
-        let (module, name) = match callee {
-            A::Ident(n) if !self.ctx.functions.contains_key(n) && !self.ctx.specializations.contains_key(n) => (None, n.clone()),
-            A::FieldAccess { object, field } => match object.as_ref() {
-                A::Ident(m) if self.is_module(m) && !self.declared(m) => (Some(self.ctx.module_aliases.get(m).cloned().unwrap_or_else(|| m.clone())), field.clone()),
-                _ => return ty,
-            },
-            _ => return ty,
-        };
+        let Some((module, name)) = self.builtin_named(callee) else { return ty };
         // a builtin that answers a frame no rule here reads the columns of
         // answers one whose columns show as it runs (`load`, `stats`)
         // (a column handed on whole is its cells, as its type says them: the
@@ -189,8 +263,8 @@ impl<'a> Lowerer<'a> {
                 }
             }
             "group" => {
-                if let Some(col) = lit(1) {
-                    self.refuse_missing(name, &base(0), &col);
+                for key in Self::names_in(args.get(1)) {
+                    self.refuse_missing(name, &base(0), &key);
                 }
                 for a in args.iter().skip(2) {
                     if let A::Array(pair) = a {
@@ -204,6 +278,13 @@ impl<'a> Lowerer<'a> {
                 if let Some(key) = lit(2) {
                     self.refuse_missing(name, &base(0), &key);
                     self.refuse_missing(name, &base(1), &key);
+                }
+            }
+            "pivot" => {
+                for i in 1..=3 {
+                    if let Some(col) = lit(i) {
+                        self.refuse_missing(name, &base(0), &col);
+                    }
                 }
             }
             _ => {}
@@ -458,17 +539,19 @@ impl<'a> Lowerer<'a> {
                     }
                     Arc::new(c)
                 }),
-                // group[f, 'key', ['col', 'agg'], …]: the key as it was, and
-                // each aggregate a float named col_agg
+                // group[f, 'key', ['col', 'agg'], …] or group[f, ['a', 'b'],
+                // …]: each key as it was, and each aggregate a float named
+                // col_agg
                 "group" => base(0).map(|b| {
                     let mut cols = BTreeMap::new();
                     let mut open = false;
-                    match lit(1) {
-                        Some(key) => {
-                            let t = b.cols.get(&key).cloned().unwrap_or(CrowType::Str);
-                            cols.insert(key, t);
-                        }
-                        None => open = true,
+                    let keys = Self::names_in(args.get(1));
+                    if keys.is_empty() {
+                        open = true;
+                    }
+                    for key in keys {
+                        let t = b.cols.get(&key).cloned().unwrap_or(CrowType::Str);
+                        cols.insert(key, t);
                     }
                     for a in args.iter().skip(2) {
                         match a {
@@ -482,6 +565,16 @@ impl<'a> Lowerer<'a> {
                         }
                     }
                     Arc::new(Cols { cols, open })
+                }),
+                // pivot[f, 'rows', 'cols', 'values']: the rows column as it
+                // was; the rest are named by the cells of 'cols' as it runs
+                "pivot" => base(0).map(|b| {
+                    let mut cols = BTreeMap::new();
+                    if let Some(rows) = lit(1) {
+                        let t = b.cols.get(&rows).cloned().unwrap_or(CrowType::Str);
+                        cols.insert(rows, t);
+                    }
+                    Arc::new(Cols { cols, open: true })
                 }),
                 _ => return None,
         })

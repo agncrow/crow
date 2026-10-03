@@ -98,7 +98,11 @@ unknown columns.
    typed columns (`typed-values-design.md`), because a fusion is only
    correct when every column's type is known. *Not built (2026-10-01):*
    the code there is chains almost no frame operations; what is fused is
-   a filter's predicate (the end of §3).
+   a filter's predicate (the end of §3). *The relational vocabulary grew
+   instead (2026-10-02):* `group` by several keys, `pivot`, and `window`
+   (running and trailing aggregates, lags, leads and ranks within
+   partitions), each one runtime function both modes call, the keys and
+   the window's cells typed in the frame's type (spec, frame).
 
 **First step.** Schemas through `select`, `filter` and `sort`, with a
 parity program whose cells are typed without a database. *Built

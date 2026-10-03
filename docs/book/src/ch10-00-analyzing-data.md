@@ -175,3 +175,71 @@ Twenty-odd lines: load, validate shape, filter, sort, aggregate, format.
 Every piece was a chapter you've already read — frames just give the
 pieces something worth doing. Chapter 13 does this against a live
 database with a web UI on top; next, the database half of that story.
+
+## Several Keys, Pivots and Windows
+
+`group` takes a list of keys for a row per combination; `pivot` lays one
+column's cells out as columns; and `window` computes a column over each
+row's partition — a running sum per symbol, the previous row's price —
+which `with` adds to the frame:
+
+```crow
+use frame
+
+csv = 'symbol,day,qty,price
+AAPL,1,100,191.5
+MSFT,1,50,415.2
+AAPL,2,40,193.1
+NVDA,1,20,875.0
+MSFT,2,25,411.9'
+write['trades.csv', csv]
+trades = frame.load['trades.csv']
+
+by_day = group[trades, ['symbol', 'day'], ['qty', 'sum']]
+log[by_day]
+
+wide = pivot[trades, 'symbol', 'day', 'qty']
+log[wide]
+
+trades = with[trades, 'so_far', window[trades, 'qty', 'sum', by = 'symbol']]
+trades = with[trades, 'prev', window[trades, 'price', 'lag', n = 1, by = 'symbol']]
+log[trades]
+rm['trades.csv']
+```
+
+```text
+symbol  day  qty_sum
+   str  int    float
+------  ---  -------
+  AAPL    1      100
+  MSFT    1       50
+  AAPL    2       40
+  NVDA    1       20
+  MSFT    2       25
+
+[5 rows x 3 cols]
+symbol    1    2
+   str  int  int
+------  ---  ---
+  AAPL  100   40
+  MSFT   50   25
+  NVDA   20  nan
+
+[3 rows x 3 cols]
+symbol  day  qty  price  so_far   prev
+   str  int  int  float   float  float
+------  ---  ---  -----  ------  -----
+  AAPL    1  100  191.5     100    nan
+  MSFT    1   50  415.2      50    nan
+  AAPL    2   40  193.1     140  191.5
+  NVDA    1   20    875      20    nan
+  MSFT    2   25  411.9      75  415.2
+
+[5 rows x 6 cols]
+```
+
+A pivot's cell is missing where no row has the pair (NVDA on day 2), and
+a pair two rows share stops the program, naming the `group` that would
+aggregate it first. A window's `n` is the trailing rows (`n = 3` for a
+three-row mean; 0, the default, for every row so far), and `how` is one
+of `sum`, `mean`, `min`, `max`, `count`, `lag`, `lead` and `rank`.

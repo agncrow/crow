@@ -212,9 +212,8 @@ pub fn sort_by(f: &CrowFrame, name: &str, desc: bool) -> Result<CrowFrame, Strin
     f.sort(name, desc)
 }
 
-/// `group[frame, name, [column, how], …]`: one row per value of `name`,
-/// each `[column, how]` an aggregation of `column`.
-pub fn group(f: &CrowFrame, by: &str, aggs: &[&[String]]) -> Result<CrowFrame, String> {
+/// The aggregations a `group` is given, each `[column, how]`.
+fn aggregations<'a>(aggs: &'a [&'a [String]]) -> Result<Vec<(&'a str, AggFn)>, String> {
     let mut pairs = Vec::with_capacity(aggs.len());
     for a in aggs {
         let [column, how] = a else {
@@ -223,7 +222,41 @@ pub fn group(f: &CrowFrame, by: &str, aggs: &[&[String]]) -> Result<CrowFrame, S
         let how = AggFn::from_str(how).ok_or_else(|| format!("group: no aggregation '{}' — write 'sum', 'mean', 'min', 'max' or 'count'", how))?;
         pairs.push((column.as_str(), how));
     }
-    f.group(by, &pairs)
+    Ok(pairs)
+}
+
+/// `group[frame, name, [column, how], …]`: one row per value of `name`,
+/// each `[column, how]` an aggregation of `column`.
+pub fn group(f: &CrowFrame, by: &str, aggs: &[&[String]]) -> Result<CrowFrame, String> {
+    f.group_by(&[by], &aggregations(aggs)?)
+}
+
+/// `group[frame, ['a', 'b'], [column, how], …]`: one row per distinct
+/// combination of the keys' cells.
+pub fn group_keys(f: &CrowFrame, keys: &[String], aggs: &[&[String]]) -> Result<CrowFrame, String> {
+    let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+    f.group_by(&keys, &aggregations(aggs)?)
+}
+
+/// `pivot[frame, rows, cols, values]`: the long frame made wide — a row per
+/// cell of `rows`, a column per cell of `cols`, the `values` cell of each
+/// pair in between (`CrowFrame::pivot`).
+pub fn pivot(f: &CrowFrame, rows: &str, cols: &str, values: &str) -> Result<CrowFrame, String> {
+    f.pivot(rows, cols, values)
+}
+
+/// `window[frame, col, how, n = rows, by = [keys]]`: a column computed over
+/// each row's partition (`CrowFrame::window`).
+pub fn window(f: &CrowFrame, col: &str, how: &str, n: i64, by: &[String]) -> Result<CrowColumn, String> {
+    let by: Vec<&str> = by.iter().map(String::as_str).collect();
+    f.window(col, how, n, &by)
+}
+
+/// `window[frame, col, how, n = rows, by = 'key']`: one key names the
+/// partitions.
+pub fn window_one(f: &CrowFrame, col: &str, how: &str, n: i64, by: &str) -> Result<CrowColumn, String> {
+    let by: Vec<&str> = if by.is_empty() { Vec::new() } else { vec![by] };
+    f.window(col, how, n, &by)
 }
 
 /// `join[left, right, key]`: the rows whose keys match.
@@ -349,6 +382,99 @@ mod tests {
         assert_eq!(tz("2026-07-14T13:30:00Z", "+09:00"), Ok("2026-07-14T22:30:00+09:00".to_string()));
         assert_eq!(tz("2026-07-14T13:30:00Z", "+5:30"), Err("tz: invalid offset '+5:30', use 'UTC' or '+HH:MM'/'-HH:MM'".to_string()));
         assert_eq!(datetime("not a time"), Err("datetime: cannot parse 'not a time'".to_string()));
+    }
+
+    /// Trades over two days and symbols: the frame the groups, pivots and
+    /// windows below are read from.
+    fn trades() -> CrowFrame {
+        let f = with(&new(), "sym", Cells::from(vec!["b".to_string(), "a".to_string(), "b".to_string(), "a".to_string(), "b".to_string()])).expect("five rows");
+        let f = with(&f, "day", Cells::from(vec![2_i64, 1, 1, 2, 1])).expect("five rows");
+        let f = with(&f, "qty", Cells::from(vec![10_i64, 1, 20, 2, 30])).expect("five rows");
+        with(&f, "px", Cells::from(vec![1.5, 2.0, 0.5, 4.0, 1.0])).expect("five rows")
+    }
+
+    fn column(f: &CrowFrame, name: &str) -> (Column, Vec<bool>) {
+        let c = f.col_native(name).expect("the column");
+        ((*c.data).clone(), (*c.valid).clone())
+    }
+
+    /// A group's keys keep their kinds and come in the order first seen,
+    /// one key or several; an aggregate is a float named column_how.
+    #[test]
+    fn a_group_keeps_its_keys_kinds() {
+        let f = trades();
+        let sum = ["qty".to_string(), "sum".to_string()];
+        let g = group(&f, "day", &[&sum]).expect("a group");
+        assert_eq!(g.columns, vec!["day", "qty_sum"]);
+        assert_eq!(column(&g, "day").0, Column::Int(vec![2, 1]));
+        assert_eq!(column(&g, "qty_sum").0, Column::Float(vec![12.0, 51.0]));
+        let g = group_keys(&f, &["sym".to_string(), "day".to_string()], &[&sum]).expect("a group");
+        assert_eq!(g.columns, vec!["sym", "day", "qty_sum"]);
+        assert_eq!(column(&g, "sym").0, Column::Str(vec!["b".into(), "a".into(), "b".into(), "a".into()]));
+        assert_eq!(column(&g, "day").0, Column::Int(vec![2, 1, 1, 2]));
+        assert_eq!(column(&g, "qty_sum").0, Column::Float(vec![10.0, 1.0, 50.0, 2.0]));
+        assert_eq!(group_keys(&f, &[], &[&sum]).map(|_| ()), Err("group: a key is needed — group[frame, 'col', …] or group[frame, ['a', 'b'], …]".to_string()));
+        assert_eq!(group_keys(&f, &["sym".to_string(), "sym".to_string()], &[&sum]).map(|_| ()), Err("group: key 'sym' is named twice".to_string()));
+        assert_eq!(group_keys(&f, &["sym".to_string(), "nope".to_string()], &[&sum]).map(|_| ()), Err("group: column 'nope' not found".to_string()));
+    }
+
+    /// A pivot is one row per cell of `rows`, a column per cell of `cols`,
+    /// both ascending, the values between and a missing cell where no row
+    /// has the pair; a pair two rows share is the reason.
+    #[test]
+    fn a_pivot_makes_the_long_frame_wide() {
+        let f = trades();
+        let one_per_pair = filter(&f, &[true, true, false, true, true]).expect("four rows");
+        let p = pivot(&one_per_pair, "sym", "day", "qty").expect("a pivot");
+        assert_eq!(p.columns, vec!["sym", "1", "2"]);
+        assert_eq!(column(&p, "sym").0, Column::Str(vec!["a".into(), "b".into()]));
+        assert_eq!(column(&p, "1"), (Column::Int(vec![1, 30]), vec![true, true]));
+        assert_eq!(column(&p, "2"), (Column::Int(vec![2, 10]), vec![true, true]));
+        let sparse = filter(&f, &[true, true, false, false, true]).expect("three rows");
+        let p = pivot(&sparse, "day", "sym", "px").expect("a pivot");
+        assert_eq!(p.columns, vec!["day", "a", "b"]);
+        assert_eq!(column(&p, "day").0, Column::Int(vec![1, 2]));
+        let (a, present) = column(&p, "a");
+        assert_eq!(present, vec![true, false]);
+        assert!(matches!(a, Column::Float(v) if v[0] == 2.0 && v[1].is_nan()));
+        assert_eq!(column(&p, "b"), (Column::Float(vec![1.0, 1.5]), vec![true, true]));
+        assert_eq!(
+            pivot(&f, "sym", "day", "qty").map(|_| ()),
+            Err("pivot: 'b' and '1' appear 2 times — one row per pair: aggregate first, group[frame, ['sym', 'day'], ['qty', 'mean']]".to_string())
+        );
+        assert_eq!(pivot(&f, "sym", "sym", "qty").map(|_| ()), Err("pivot: the rows and the columns are one column, 'sym'".to_string()));
+        assert_eq!(pivot(&f, "sym", "day", "nope").map(|_| ()), Err("pivot: column 'nope' not found".to_string()));
+    }
+
+    /// A window is computed over each row's partition in the frame's order:
+    /// running and trailing aggregates, counts, lags and leads with missing
+    /// cells at a partition's edge, and ranks with ties.
+    #[test]
+    fn a_window_is_computed_over_each_rows_partition() {
+        let f = trades();
+        let by = ["sym".to_string()];
+        let c = |r: Result<CrowColumn, String>| r.map(|c| ((*c.data).clone(), (*c.valid).clone()));
+        assert_eq!(c(window(&f, "qty", "sum", 0, &by)), Ok((Column::Float(vec![10.0, 1.0, 30.0, 3.0, 60.0]), vec![true; 5])));
+        assert_eq!(c(window(&f, "qty", "mean", 2, &by)), Ok((Column::Float(vec![10.0, 1.0, 15.0, 1.5, 25.0]), vec![true; 5])));
+        assert_eq!(c(window(&f, "px", "max", 0, &[])), Ok((Column::Float(vec![1.5, 2.0, 2.0, 4.0, 4.0]), vec![true; 5])));
+        assert_eq!(c(window(&f, "px", "min", 2, &[])), Ok((Column::Float(vec![1.5, 1.5, 0.5, 0.5, 1.0]), vec![true; 5])));
+        assert_eq!(c(window(&f, "qty", "count", 0, &by)), Ok((Column::Int(vec![1, 1, 2, 2, 3]), vec![true; 5])));
+        assert_eq!(c(window(&f, "qty", "lag", 1, &by)), Ok((Column::Int(vec![0, 0, 10, 1, 20]), vec![false, false, true, true, true])));
+        let (lead, present) = c(window(&f, "px", "lead", 1, &by)).expect("a column");
+        assert_eq!(present, vec![true, true, true, false, false]);
+        assert!(matches!(lead, Column::Float(v) if v[..3] == [0.5, 4.0, 1.0] && v[3].is_nan() && v[4].is_nan()));
+        assert_eq!(c(window(&f, "px", "rank", 0, &[])), Ok((Column::Int(vec![3, 4, 1, 5, 2]), vec![true; 5])));
+        let tied = with(&f, "t", Cells::from(vec![1_i64, 1, 2, 2, 3])).expect("five rows");
+        assert_eq!(c(window(&tied, "t", "rank", 0, &[])), Ok((Column::Int(vec![1, 1, 3, 3, 5]), vec![true; 5])));
+        assert_eq!(c(window(&f, "sym", "rank", 0, &by)), Ok((Column::Int(vec![1, 1, 1, 1, 1]), vec![true; 5])));
+        assert_eq!(window(&f, "qty", "median", 0, &[]).map(|_| ()), Err("window: no window 'median' — write 'sum', 'mean', 'min', 'max', 'count', 'lag', 'lead' or 'rank'".to_string()));
+        assert_eq!(window(&f, "qty", "lag", 0, &[]).map(|_| ()), Err("window: lag needs n of 1 or more, the rows between (got 0)".to_string()));
+        assert_eq!(window(&f, "qty", "sum", -1, &[]).map(|_| ()), Err("window: n is 0 or more (got -1)".to_string()));
+        assert!(window(&f, "sym", "sum", 0, &[]).is_err(), "a column of text has no sum");
+        assert_eq!(window(&f, "qty", "sum", 0, &["nope".to_string()]).map(|_| ()), Err("window: column 'nope' not found".to_string()));
+        // a missing key cell: a cell in no partition, missing
+        let keyed = CrowFrame::new(vec!["k".into(), "x".into()], vec![Column::Int(vec![1, 1, 1]), Column::Float(vec![1.0, 2.0, 3.0])], vec![vec![true, false, true], vec![true; 3]]);
+        assert_eq!(c(window(&keyed, "x", "sum", 0, &["k".to_string()])), Ok((Column::Float(vec![1.0, 0.0, 4.0]), vec![true, false, true])));
     }
 
     /// A column copied with `with` keeps its missing cells (both modes had

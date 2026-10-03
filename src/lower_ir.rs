@@ -2802,6 +2802,7 @@ impl<'a> Lowerer<'a> {
         }
         let ty = self.call_type(callee, args, &arg_types, &full_types, None);
         let ty = self.frame_typed(callee, args, &arg_types, &lowered, ty);
+        let ty = self.column_typed(callee, args, &arg_types, ty);
         // a builtin's tensor has the shape the program states for it
         let ty = match shapes::call_dims(&name, &lowered) {
             Some(dims) if !self.ctx.functions.contains_key(&name) => shapes::shaped(ty, Some(dims)),
@@ -4107,6 +4108,31 @@ mod tests {
         // of one kind, they are compared: text ordered, an int beside a
         // float, two lists whole, a parsed value as the program runs
         assert_eq!(refusal_of(&format!("{}log['b' gt 'a']\nlog[df.name gte 'b']\nlog[1 eq 1.0]\nlog[['a'] eq ['a']]\nj = json['1']\nlog[j eq 'x']\na = float['1.5']\nlog[[a] eq [a]]\nlog[contains[['a'], 'b']]\n", df)), "");
+    }
+
+    /// A group by several keys keeps each key's type; a pivot's rows column
+    /// is known and its others show as it runs; a window's column is typed
+    /// by what it computes — a float, an int, the source's cells that can
+    /// be missing for a lag — and a column it names that the frame lacks
+    /// is refused, as a key the frame lacks is
+    #[test]
+    fn a_group_by_keys_a_pivot_and_a_window_are_typed() {
+        let t = "use frame\nt = with[with[with[frame.new[], 'sym', ['b', 'a']], 'day', [2, 1]], 'px', [1.5, 2.0]]\n";
+        let ir = ir_of(&format!("{}g = group[t, ['sym', 'day'], ['px', 'max']]\nlog[g.day[0]]\np = pivot[t, 'sym', 'day', 'px']\nlog[p.sym[0]]\nw = with[t, 'prev', window[t, 'px', 'lag', n = 1, by = 'sym']]\nlog[w.prev[0].ok]\nr = with[t, 'r', window[t, 'px', 'rank']]\nlog[r.r[0]]\nm = with[t, 'm', window[t, 'px', 'mean', n = 2]]\nlog[m.m[0]]\n", t));
+        assert!(ir.contains("let g: Result(Frame{day: Float, px_max: Float, sym: Str}) = frame.group_keys("), "{}", ir);
+        assert!(ir.contains("let p: Result(Frame{sym: Str, …}) = frame.pivot("), "{}", ir);
+        assert!(ir.contains("prev: Result(Float)") && ir.contains("frame.window_one(unwrap t, \"px\", \"lag\", 1, \"sym\")"), "{}", ir);
+        assert!(ir.contains("r: Int") && ir.contains("frame.window(unwrap t, \"px\", \"rank\", 0, [])"), "{}", ir);
+        assert!(ir.contains("m: Float"), "{}", ir);
+        assert!(refusal_of(&format!("{}log[len[group[t, ['sym', 'nope'], ['px', 'max']]]]\n", t)).contains("group: column 'nope' not found — the frame's columns are 'day', 'px', 'sym'"));
+        assert!(refusal_of(&format!("{}log[len[pivot[t, 'sym', 'nope', 'px']]]\n", t)).contains("pivot: column 'nope' not found"));
+        assert!(refusal_of(&format!("{}log[window[t, 'nope', 'sum']]\n", t)).contains("window: column 'nope' not found"));
+        assert!(refusal_of(&format!("{}log[window[t, 'px', 'sum', by = 'nope']]\n", t)).contains("window: column 'nope' not found"));
+        // (an option it does not have, and a count it does not take, are
+        // refused as the call is read, before the lowering)
+        let front = |src: &str| crate::lower::lower_program(&crate::build(src).expect("parses")).err().map(|e| format!("{}", e)).unwrap_or_default();
+        assert!(front(&format!("{}log[window[t, 'px', 'sum', rows = 2]]\n", t)).contains("window[] has no option 'rows' — its options are n, by"));
+        assert!(front(&format!("{}log[window[t, 'px']]\n", t)).contains("window[] takes a frame, a column and what to compute"));
     }
 
     /// A status the type settles is decided before the program runs: `.ok`

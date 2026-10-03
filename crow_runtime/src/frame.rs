@@ -1049,109 +1049,43 @@ impl AggFn {
 impl CrowFrame {
     /// Group by a column and aggregate multiple (col, agg) pairs.
     pub fn group(&self, group_col: &str, aggs: &[(&str, AggFn)]) -> Result<CrowFrame, String> {
-        let gi = self.col_index(group_col)
-            .ok_or_else(|| format!("group: column '{}' not found", group_col))?;
+        self.group_by(&[group_col], aggs)
+    }
+
+    /// `group[frame, ['a', 'b'], [column, how], …]`: one row per distinct
+    /// combination of the keys' cells, in the order each is first seen,
+    /// the key columns as they were (their kinds kept) and a float per
+    /// aggregate named `column_how`. A row with a missing key cell is in
+    /// no group.
+    pub fn group_by(&self, keys: &[&str], aggs: &[(&str, AggFn)]) -> Result<CrowFrame, String> {
+        if keys.is_empty() {
+            return Err("group: a key is needed — group[frame, 'col', …] or group[frame, ['a', 'b'], …]".to_string());
+        }
+        let key_idx: Vec<usize> = keys
+            .iter()
+            .map(|k| self.col_index(k).ok_or_else(|| format!("group: column '{}' not found", k)))
+            .collect::<Result<_, _>>()?;
+        if let Some(twice) = keys.iter().enumerate().find(|(i, k)| keys[..*i].contains(k)).map(|(_, k)| k) {
+            return Err(format!("group: key '{}' is named twice", twice));
+        }
         // every aggregated column exists before the work is shared out (a
         // misspelled one panicked a worker thread)
         let agg_cols: Vec<usize> = aggs
             .iter()
             .map(|(c, _)| self.col_index(c).ok_or_else(|| format!("group: column '{}' not found", c)))
             .collect::<Result<_, _>>()?;
+        let (group_ids, first_rows) = self.partitions(&key_idx);
+        let ngroups = first_rows.len();
 
-        // Build groups using native keys for speed (avoid fmt_cell string alloc)
-        let valid = self.validity[gi].as_ref();
-        let nrows = self.nrows();
-        // group_ids[row] = group index for that row (u32 saves memory)
-        let mut group_ids: Vec<u32> = vec![u32::MAX; nrows];
-        let group_keys: Vec<String>; // display keys for output
-        let ngroups: usize;
-
-        match self.data[gi].as_ref() {
-            Column::Int(v) => {
-                let mut key_map: std::collections::HashMap<i64, u32> = std::collections::HashMap::new();
-                let mut keys_ordered: Vec<i64> = Vec::new();
-                for row in 0..nrows {
-                    if !valid[row] { continue; }
-                    let k = v[row];
-                    let len = keys_ordered.len() as u32;
-                    let gid = *key_map.entry(k).or_insert_with(|| { keys_ordered.push(k); len });
-                    group_ids[row] = gid;
-                }
-                ngroups = keys_ordered.len();
-                group_keys = keys_ordered.iter().map(|k| k.to_string()).collect();
-            }
-            Column::Float(v) => {
-                let mut key_map: std::collections::HashMap<u64, u32> = std::collections::HashMap::new();
-                let mut keys_ordered: Vec<f64> = Vec::new();
-                for row in 0..nrows {
-                    if !valid[row] { continue; }
-                    let k = v[row].to_bits();
-                    let len = keys_ordered.len() as u32;
-                    let gid = *key_map.entry(k).or_insert_with(|| { keys_ordered.push(v[row]); len });
-                    group_ids[row] = gid;
-                }
-                ngroups = keys_ordered.len();
-                group_keys = keys_ordered.iter().map(|k| format!("{}", k)).collect();
-            }
-            Column::Str(v) => {
-                let mut key_map: std::collections::HashMap<&str, u32> = std::collections::HashMap::new();
-                let mut keys_ordered: Vec<&str> = Vec::new();
-                for row in 0..nrows {
-                    if !valid[row] { continue; }
-                    let k = v[row].as_str();
-                    let len = keys_ordered.len() as u32;
-                    let gid = *key_map.entry(k).or_insert_with(|| { keys_ordered.push(k); len });
-                    group_ids[row] = gid;
-                }
-                ngroups = keys_ordered.len();
-                group_keys = keys_ordered.iter().map(|k| k.to_string()).collect();
-            }
-            Column::Bool(v) => {
-                let mut key_map: std::collections::HashMap<bool, u32> = std::collections::HashMap::new();
-                let mut keys_ordered: Vec<bool> = Vec::new();
-                for row in 0..nrows {
-                    if !valid[row] { continue; }
-                    let k = v[row];
-                    let len = keys_ordered.len() as u32;
-                    let gid = *key_map.entry(k).or_insert_with(|| { keys_ordered.push(k); len });
-                    group_ids[row] = gid;
-                }
-                ngroups = keys_ordered.len();
-                group_keys = keys_ordered.iter().map(|k| k.to_string()).collect();
-            }
-            Column::DateTime(millis, _) => {
-                let mut key_map: std::collections::HashMap<i64, u32> = std::collections::HashMap::new();
-                let mut keys_ordered: Vec<i64> = Vec::new();
-                for row in 0..nrows {
-                    if !valid[row] { continue; }
-                    let k = millis[row];
-                    let len = keys_ordered.len() as u32;
-                    let gid = *key_map.entry(k).or_insert_with(|| { keys_ordered.push(k); len });
-                    group_ids[row] = gid;
-                }
-                ngroups = keys_ordered.len();
-                group_keys = keys_ordered.iter().map(|k| {
-                    self.data[gi].fmt_cell(keys_ordered.iter().position(|v| v == k).unwrap_or(0), true)
-                }).collect();
-            }
-        }
-
-        // Build result columns: group key + one column per aggregation
-        let mut result_cols: Vec<String> = vec![group_col.to_string()];
-        let mut result_data: Vec<Column> = Vec::new();
-        let mut result_valid: Vec<Vec<bool>> = Vec::new();
-
-        result_data.push(Column::Str(group_keys));
-        result_valid.push(vec![true; ngroups]);
+        let mut result_cols: Vec<String> = keys.iter().map(|k| k.to_string()).collect();
+        let mut result_data: Vec<Column> = key_idx.iter().map(|&ki| take_rows(&self.data[ki], &first_rows)).collect();
+        let mut result_valid: Vec<Vec<bool>> = vec![vec![true; ngroups]; keys.len()];
 
         // Aggregate columns — process each agg column in parallel
         let agg_results: Vec<(String, Vec<f64>)> = aggs.par_iter().zip(agg_cols.par_iter()).map(|((col_name, agg_fn), &ci)| {
             let agg_name = format!("{}_{:?}", col_name, agg_fn).to_lowercase();
             let col_valid = self.validity[ci].as_ref();
-
-            let vals = aggregate_by_groups(
-                self.data[ci].as_ref(), col_valid, &group_ids, ngroups, *agg_fn,
-            );
+            let vals = aggregate_by_groups(self.data[ci].as_ref(), col_valid, &group_ids, ngroups, *agg_fn);
             (agg_name, vals)
         }).collect();
 
@@ -1162,6 +1096,231 @@ impl CrowFrame {
         }
 
         Ok(CrowFrame::new(result_cols, result_data, result_valid))
+    }
+
+    /// Each row's partition by the cells of the key columns — a number per
+    /// distinct combination, first seen first, `u32::MAX` for a row with a
+    /// missing key cell — and the first row of each partition.
+    fn partitions(&self, key_idx: &[usize]) -> (Vec<u32>, Vec<usize>) {
+        let nrows = self.nrows();
+        let per_key: Vec<Vec<u32>> = key_idx.iter().map(|&ki| codes(&self.data[ki], &self.validity[ki])).collect();
+        if per_key.len() == 1 {
+            let ids = per_key.into_iter().next().unwrap_or_default();
+            let mut first_rows = Vec::new();
+            for (row, &id) in ids.iter().enumerate() {
+                if id != u32::MAX && id as usize == first_rows.len() {
+                    first_rows.push(row);
+                }
+            }
+            return (ids, first_rows);
+        }
+        let mut ids = vec![u32::MAX; nrows];
+        let mut first_rows = Vec::new();
+        let mut seen: std::collections::HashMap<Vec<u32>, u32> = std::collections::HashMap::new();
+        for row in 0..nrows {
+            let key: Vec<u32> = per_key.iter().map(|c| c[row]).collect();
+            if key.contains(&u32::MAX) {
+                continue;
+            }
+            let next = first_rows.len() as u32;
+            let id = *seen.entry(key).or_insert_with(|| {
+                first_rows.push(row);
+                next
+            });
+            ids[row] = id;
+        }
+        (ids, first_rows)
+    }
+
+    /// `pivot[frame, rows, cols, values]`: a wide frame — one row per
+    /// distinct cell of `rows`, a column per distinct cell of `cols`, named
+    /// by the cell's text, each holding the `values` cell of the row that
+    /// has that pair, and a missing cell where no row does. Rows and columns
+    /// come in ascending order of their cells. A pair two rows share is the
+    /// reason: pivot reshapes, and `group` aggregates.
+    pub fn pivot(&self, rows: &str, cols: &str, values: &str) -> Result<CrowFrame, String> {
+        let at = |name: &str| self.col_index(name).ok_or_else(|| format!("pivot: column '{}' not found", name));
+        let (ri, ci, vi) = (at(rows)?, at(cols)?, at(values)?);
+        if ri == ci {
+            return Err(format!("pivot: the rows and the columns are one column, '{}'", rows));
+        }
+        let (row_codes, row_first) = self.partitions(&[ri]);
+        let (col_codes, col_first) = self.partitions(&[ci]);
+        // each distinct cell's place in ascending order
+        let row_order = order_of(&self.data[ri], &row_first);
+        let col_order = order_of(&self.data[ci], &col_first);
+        let place = |order: &[usize]| {
+            let mut place = vec![0usize; order.len()];
+            for (p, &code) in order.iter().enumerate() {
+                place[code] = p;
+            }
+            place
+        };
+        let (row_place, col_place) = (place(&row_order), place(&col_order));
+        let (nr, nc) = (row_first.len(), col_first.len());
+        let mut source: Vec<Option<usize>> = vec![None; nr * nc];
+        let mut twice: Option<(usize, usize)> = None;
+        for row in 0..self.nrows() {
+            let (rc, cc) = (row_codes[row], col_codes[row]);
+            if rc == u32::MAX || cc == u32::MAX {
+                continue;
+            }
+            let slot = row_place[rc as usize] * nc + col_place[cc as usize];
+            if source[slot].is_some() {
+                twice.get_or_insert((rc as usize, cc as usize));
+            } else {
+                source[slot] = Some(row);
+            }
+        }
+        if let Some((rc, cc)) = twice {
+            let count = (0..self.nrows()).filter(|&r| row_codes[r] as usize == rc && col_codes[r] as usize == cc).count();
+            return Err(format!(
+                "pivot: '{}' and '{}' appear {} times — one row per pair: aggregate first, group[frame, ['{}', '{}'], ['{}', 'mean']]",
+                self.data[ri].fmt_cell(row_first[rc], true),
+                self.data[ci].fmt_cell(col_first[cc], true),
+                count, rows, cols, values
+            ));
+        }
+        let names: Vec<String> = col_order.iter().map(|&code| self.data[ci].fmt_cell(col_first[code], true)).collect();
+        if let Some(name) = names.iter().find(|n| **n == rows) {
+            return Err(format!("pivot: a cell of '{}' is '{}', the name of the rows column", cols, name));
+        }
+        let mut out_cols = vec![rows.to_string()];
+        out_cols.extend(names);
+        let row_cells: Vec<usize> = row_order.iter().map(|&code| row_first[code]).collect();
+        let mut data = vec![take_rows(&self.data[ri], &row_cells)];
+        let mut valid = vec![vec![true; nr]];
+        let value_valid = self.validity[vi].as_ref();
+        for c in 0..nc {
+            let picks: Vec<Option<usize>> = (0..nr).map(|r| source[r * nc + c].filter(|&row| value_valid[row])).collect();
+            let (col, ok) = take_some_rows(&self.data[vi], &picks);
+            data.push(col);
+            valid.push(ok);
+        }
+        Ok(CrowFrame::new(out_cols, data, valid))
+    }
+
+    /// `window[frame, col, how, n = …, by = …]`: a column of the frame's
+    /// length, each cell computed from the rows of its partition (the rows
+    /// sharing the `by` keys' cells; one partition without `by`), in the
+    /// frame's order. `sum`, `mean`, `min`, `max` over the trailing `n`
+    /// rows, or over every row so far when `n` is 0 (fewer rows at a
+    /// partition's start are the rows there are); `count` the present cells
+    /// among them; `lag` and `lead` the cell `n` rows back or ahead, missing
+    /// where there is none; `rank` the cell's rank in its partition,
+    /// ascending, equal cells sharing a rank and the next rank skipping. A
+    /// row whose partition key is missing has a missing cell.
+    pub fn window(&self, col: &str, how: &str, n: i64, by: &[&str]) -> Result<CrowColumn, String> {
+        let ci = self.col_index(col).ok_or_else(|| format!("window: column '{}' not found", col))?;
+        let how = Window::named(how).ok_or_else(|| format!("window: no window '{}' — write 'sum', 'mean', 'min', 'max', 'count', 'lag', 'lead' or 'rank'", how))?;
+        if n < 0 {
+            return Err(format!("window: n is 0 or more (got {})", n));
+        }
+        if matches!(how, Window::Lag | Window::Lead) && n == 0 {
+            return Err(format!("window: {} needs n of 1 or more, the rows between (got 0)", how.word()));
+        }
+        let n = n as usize;
+        let by_idx: Vec<usize> = by
+            .iter()
+            .map(|k| self.col_index(k).ok_or_else(|| format!("window: column '{}' not found", k)))
+            .collect::<Result<_, _>>()?;
+        let nrows = self.nrows();
+        let (ids, first_rows) = if by_idx.is_empty() { (vec![0u32; nrows], if nrows > 0 { vec![0] } else { vec![] }) } else { self.partitions(&by_idx) };
+        // the rows of each partition, in the frame's order
+        let mut members: Vec<Vec<usize>> = vec![Vec::new(); first_rows.len()];
+        for (row, &id) in ids.iter().enumerate() {
+            if id != u32::MAX {
+                members[id as usize].push(row);
+            }
+        }
+        let column = self.data[ci].as_ref();
+        let valid = self.validity[ci].as_ref();
+        let out_valid_from = |present: &dyn Fn(usize) -> bool| -> Vec<bool> { (0..nrows).map(|r| ids[r] != u32::MAX && present(r)).collect() };
+        match how {
+            Window::Sum | Window::Mean | Window::Min | Window::Max => {
+                let xs = self.col_native(col).ok_or_else(|| format!("window: column '{}' not found", col))?.numbers()?.to_vec();
+                let mut out = vec![0.0; nrows];
+                let parts: Vec<Vec<(usize, f64)>> = members
+                    .par_iter()
+                    .map(|rows| {
+                        let mut acc = Vec::with_capacity(rows.len());
+                        let mut running = 0.0;
+                        for (k, &row) in rows.iter().enumerate() {
+                            let value = if n == 0 {
+                                running += xs[row];
+                                match how {
+                                    Window::Sum => running,
+                                    Window::Mean => running / (k + 1) as f64,
+                                    Window::Min => rows[..=k].iter().map(|&r| xs[r]).fold(f64::INFINITY, f64::min),
+                                    _ => rows[..=k].iter().map(|&r| xs[r]).fold(f64::NEG_INFINITY, f64::max),
+                                }
+                            } else {
+                                let from = k.saturating_sub(n - 1);
+                                let window = rows[from..=k].iter().map(|&r| xs[r]);
+                                match how {
+                                    Window::Sum => window.sum(),
+                                    Window::Mean => window.sum::<f64>() / (k + 1 - from) as f64,
+                                    Window::Min => window.fold(f64::INFINITY, f64::min),
+                                    _ => window.fold(f64::NEG_INFINITY, f64::max),
+                                }
+                            };
+                            acc.push((row, value));
+                        }
+                        acc
+                    })
+                    .collect();
+                for (row, value) in parts.into_iter().flatten() {
+                    out[row] = value;
+                }
+                Ok(CrowColumn { data: Arc::new(Column::Float(out)), valid: Arc::new(out_valid_from(&|_| true)) })
+            }
+            Window::Count => {
+                let mut out = vec![0i64; nrows];
+                for rows in &members {
+                    let mut so_far = 0i64;
+                    for (k, &row) in rows.iter().enumerate() {
+                        out[row] = if n == 0 {
+                            so_far += valid[row] as i64;
+                            so_far
+                        } else {
+                            let from = k.saturating_sub(n - 1);
+                            rows[from..=k].iter().filter(|&&r| valid[r]).count() as i64
+                        };
+                    }
+                }
+                Ok(CrowColumn { data: Arc::new(Column::Int(out)), valid: Arc::new(out_valid_from(&|_| true)) })
+            }
+            Window::Lag | Window::Lead => {
+                let mut picks: Vec<Option<usize>> = vec![None; nrows];
+                for rows in &members {
+                    for (k, &row) in rows.iter().enumerate() {
+                        let from = if matches!(how, Window::Lag) { k.checked_sub(n) } else { k.checked_add(n).filter(|&j| j < rows.len()) };
+                        picks[row] = from.map(|j| rows[j]).filter(|&r| valid[r]);
+                    }
+                }
+                let (data, ok) = take_some_rows(column, &picks);
+                Ok(CrowColumn { data: Arc::new(data), valid: Arc::new(ok) })
+            }
+            Window::Rank => {
+                if matches!(column, Column::Bool(_)) {
+                    return Err(format!("window: rank orders numbers or text, and column '{}' holds bools", col));
+                }
+                let mut out = vec![0i64; nrows];
+                for rows in &members {
+                    let present: Vec<usize> = rows.iter().copied().filter(|&r| valid[r]).collect();
+                    let order = order_of(column, &present);
+                    let mut rank = 0;
+                    for (k, &p) in order.iter().enumerate() {
+                        let row = present[p];
+                        if k == 0 || !cells_equal(column, present[order[k - 1]], row) {
+                            rank = k as i64 + 1;
+                        }
+                        out[row] = rank;
+                    }
+                }
+                Ok(CrowColumn { data: Arc::new(Column::Int(out)), valid: Arc::new(out_valid_from(&|r| valid[r])) })
+            }
+        }
     }
 
     /// Inner/left/right/outer join on a key column.
@@ -1344,6 +1503,122 @@ fn join_indices_native(
 
 
 /// Aggregate using group_ids array (avoids building per-group Vec<usize> row lists).
+/// A column's cells as codes: each distinct present cell a number, first
+/// seen first; a missing cell `u32::MAX`.
+fn codes(col: &Column, valid: &[bool]) -> Vec<u32> {
+    fn coded<K: std::hash::Hash + Eq>(keys: impl Iterator<Item = K>, valid: &[bool]) -> Vec<u32> {
+        let mut seen: std::collections::HashMap<K, u32> = std::collections::HashMap::new();
+        keys.enumerate()
+            .map(|(row, k)| {
+                if !valid[row] {
+                    return u32::MAX;
+                }
+                let next = seen.len() as u32;
+                *seen.entry(k).or_insert(next)
+            })
+            .collect()
+    }
+    match col {
+        Column::Int(v) => coded(v.iter().copied(), valid),
+        Column::Float(v) => coded(v.iter().map(|x| x.to_bits()), valid),
+        Column::Str(v) => coded(v.iter().map(String::as_str), valid),
+        Column::Bool(v) => coded(v.iter().copied(), valid),
+        Column::DateTime(ms, _) => coded(ms.iter().copied(), valid),
+    }
+}
+
+/// The named rows of a column, as a column.
+fn take_rows(col: &Column, rows: &[usize]) -> Column {
+    match col {
+        Column::Int(v) => Column::Int(rows.iter().map(|&r| v[r]).collect()),
+        Column::Float(v) => Column::Float(rows.iter().map(|&r| v[r]).collect()),
+        Column::Str(v) => Column::Str(rows.iter().map(|&r| v[r].clone()).collect()),
+        Column::Bool(v) => Column::Bool(rows.iter().map(|&r| v[r]).collect()),
+        Column::DateTime(ms, off) => Column::DateTime(rows.iter().map(|&r| ms[r]).collect(), rows.iter().map(|&r| off[r]).collect()),
+    }
+}
+
+/// The named rows of a column, a missing cell where no row is named.
+fn take_some_rows(col: &Column, rows: &[Option<usize>]) -> (Column, Vec<bool>) {
+    let valid: Vec<bool> = rows.iter().map(Option::is_some).collect();
+    let data = match col {
+        Column::Int(v) => Column::Int(rows.iter().map(|r| r.map_or(0, |r| v[r])).collect()),
+        Column::Float(v) => Column::Float(rows.iter().map(|r| r.map_or(f64::NAN, |r| v[r])).collect()),
+        Column::Str(v) => Column::Str(rows.iter().map(|r| r.map(|r| v[r].clone()).unwrap_or_default()).collect()),
+        Column::Bool(v) => Column::Bool(rows.iter().map(|r| r.is_some_and(|r| v[r])).collect()),
+        Column::DateTime(ms, off) => Column::DateTime(rows.iter().map(|r| r.map_or(0, |r| ms[r])).collect(), rows.iter().map(|r| r.map_or(0, |r| off[r])).collect()),
+    };
+    (data, valid)
+}
+
+/// The positions of `rows` in ascending order of their cells: numbers by
+/// value (NaN last), text by character code, bools false first, moments
+/// by their instant; equal cells keep their order.
+fn order_of(col: &Column, rows: &[usize]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    match col {
+        Column::Int(v) => order.sort_by_key(|&p| v[rows[p]]),
+        Column::Float(v) => order.sort_by(|&a, &b| v[rows[a]].partial_cmp(&v[rows[b]]).unwrap_or_else(|| v[rows[a]].is_nan().cmp(&v[rows[b]].is_nan()))),
+        Column::Str(v) => order.sort_by(|&a, &b| v[rows[a]].cmp(&v[rows[b]])),
+        Column::Bool(v) => order.sort_by_key(|&p| v[rows[p]]),
+        Column::DateTime(ms, _) => order.sort_by_key(|&p| ms[rows[p]]),
+    }
+    order
+}
+
+/// Whether two of a column's cells are equal, as two values are.
+fn cells_equal(col: &Column, a: usize, b: usize) -> bool {
+    match col {
+        Column::Int(v) => v[a] == v[b],
+        Column::Float(v) => v[a] == v[b],
+        Column::Str(v) => v[a] == v[b],
+        Column::Bool(v) => v[a] == v[b],
+        Column::DateTime(ms, _) => ms[a] == ms[b],
+    }
+}
+
+/// What a window computes.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Window {
+    Sum,
+    Mean,
+    Min,
+    Max,
+    Count,
+    Lag,
+    Lead,
+    Rank,
+}
+
+impl Window {
+    fn named(how: &str) -> Option<Window> {
+        Some(match how {
+            "sum" => Window::Sum,
+            "mean" => Window::Mean,
+            "min" => Window::Min,
+            "max" => Window::Max,
+            "count" => Window::Count,
+            "lag" => Window::Lag,
+            "lead" => Window::Lead,
+            "rank" => Window::Rank,
+            _ => return None,
+        })
+    }
+
+    fn word(self) -> &'static str {
+        match self {
+            Window::Sum => "sum",
+            Window::Mean => "mean",
+            Window::Min => "min",
+            Window::Max => "max",
+            Window::Count => "count",
+            Window::Lag => "lag",
+            Window::Lead => "lead",
+            Window::Rank => "rank",
+        }
+    }
+}
+
 fn aggregate_by_groups(col: &Column, valid: &[bool], group_ids: &[u32], ngroups: usize, agg: AggFn) -> Vec<f64> {
     let nrows = group_ids.len();
     match agg {

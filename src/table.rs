@@ -545,6 +545,13 @@ pub fn read_strs(v: &CrowValue) -> Result<Vec<String>, String> {
     }
 }
 
+/// A frame's column as the interpreter holds one: its cells as a list, a
+/// missing one an error of reason `missing` holding the column's
+/// placeholder, as `df.col` reads them (ops::frame_cell).
+pub fn write_column(c: crow_runtime::frame::CrowColumn) -> CrowValue {
+    CrowValue::ok(Value::Array((0..c.len()).map(|i| crate::ops::column_cell(&c.data, c.valid[i], i)).collect()))
+}
+
 pub fn write_strs(ss: Vec<String>) -> CrowValue {
     CrowValue::ok(Value::Array(ss.into_iter().map(write_str).collect()))
 }
@@ -897,6 +904,7 @@ macro_rules! answer {
     (IntMap, $x:expr) => { write_int_map($x) };
     (FloatMap, $x:expr) => { write_float_map($x) };
     (Frame, $x:expr) => { write_frame($x) };
+    (Column, $x:expr) => { write_column($x) };
     (Strs, $x:expr) => { write_strs($x) };
     (Tensors, $x:expr) => { write_tensors($x) };
     (Unit, $x:expr) => { write_unit($x) };
@@ -1351,6 +1359,10 @@ pub static ROWS: &[Row] = &[
     row!("frame.sort", "frame", "sort", crow_runtime::frames::sort, (Frame, Str) -> Frame, stops),
     row!("frame.sort_by", "frame", "sort", crow_runtime::frames::sort_by, (Frame, Str, Bool) -> Frame, stops),
     row!("frame.group", "frame", "group", crow_runtime::frames::group, (Frame, Str, Lists) -> Frame, stops),
+    row!("frame.group_keys", "frame", "group", crow_runtime::frames::group_keys, (Frame, Strs, Lists) -> Frame, stops),
+    row!("frame.pivot", "frame", "pivot", crow_runtime::frames::pivot, (Frame, Str, Str, Str) -> Frame, stops),
+    row!("frame.window", "frame", "window", crow_runtime::frames::window, (Frame, Str, Str, Int, Strs) -> Column, stops),
+    row!("frame.window_one", "frame", "window", crow_runtime::frames::window_one, (Frame, Str, Str, Int, Str) -> Column, stops),
     row!("frame.join", "frame", "join", crow_runtime::frames::join, (Frame, Frame, Str) -> Frame, stops),
     row!("frame.join_how", "frame", "join", crow_runtime::frames::join_how, (Frame, Frame, Str, Str) -> Frame, stops),
     row!("frame.stack", "frame", "stack", crow_runtime::frames::stack, (Frame, Frame) -> Frame, stops),

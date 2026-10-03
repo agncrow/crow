@@ -1,0 +1,47 @@
+--- A frame grouped by several keys has one row per combination of their
+--- cells, in the order first seen, each key column as it was (its kind
+--- kept — a group's key had come out as text in both modes, so an int key
+--- could not be added to). A pivot makes the long frame wide: a row per
+--- cell of `rows`, a column per cell of `cols` in ascending order, the
+--- `values` cell of each pair between and a missing cell where no row has
+--- the pair; a pair two rows share stops the program, naming the group
+--- that aggregates it. A window is a column computed over each row's
+--- partition in the frame's order — running and trailing sums and means,
+--- counts, lags and leads missing at a partition's edge, ranks with ties —
+--- added with `with`. The same in both modes.
+use frame, math
+t = with[frame.new[], 'sym', ['b', 'a', 'b', 'a', 'b']]
+t = with[t, 'day', [2, 1, 1, 2, 1]]
+t = with[t, 'qty', [10, 1, 20, 2, 30]]
+t = with[t, 'px', [1.5, 2.0, 0.5, 4.0, 1.0]]
+g = group[t, ['sym', 'day'], ['qty', 'sum'], ['px', 'max']]
+log[g]
+log[g.day[0] + 1]
+log[g.sym]
+one = group[t, 'day', ['qty', 'sum']]
+log[one.day[0] + 1]
+p = pivot[filter[t, not (t.qty eq 20)], 'sym', 'day', 'qty']
+log[p]
+log[p.columns]
+log[p.sym]
+log[p.sym[1] eq 'b']
+thin = pivot[filter[t, t.qty lt 20], 'day', 'sym', 'px']
+log[thin]
+t = with[t, 'run', window[t, 'qty', 'sum', by = 'sym']]
+t = with[t, 'avg2', window[t, 'px', 'mean', n = 2, by = ['sym']]]
+t = with[t, 'lo', window[t, 'px', 'min', n = 2]]
+t = with[t, 'prev', window[t, 'px', 'lag', n = 1, by = 'sym']]
+t = with[t, 'next', window[t, 'qty', 'lead', n = 1, by = 'sym']]
+t = with[t, 'rank', window[t, 'px', 'rank']]
+t = with[t, 'nth', window[t, 'qty', 'count', by = 'sym']]
+log[t]
+log[t.prev.ok]
+log[t.prev[2] * 2.0]
+log[t.rank[3] + 0]
+log[t.run[4] + t.avg2[4]]
+log[sum[t.run]]
+log[window[t, 'qty', 'lead', n = 2]]
+tied = with[frame.new[], 'v', [1, 1, 2, 2, 3]]
+log[window[tied, 'v', 'rank']]
+log[pivot[t, 'sym', 'day', 'qty']]
+log['not reached']

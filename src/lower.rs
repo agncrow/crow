@@ -114,6 +114,13 @@ fn reader_options() -> Vec<(&'static str, Expr)> {
     vec![("headers", Expr::Map(vec![])), ("query", Expr::Map(vec![])), ("timeout", Expr::Float(0.0))]
 }
 
+/// What a window is computed over beyond its frame, column and kind —
+/// `n` rows (0: every row so far) within the partitions `by` names (none:
+/// the whole frame) — and the default of each.
+fn window_options() -> Vec<(&'static str, Expr)> {
+    vec![("n", Expr::Int(0)), ("by", Expr::Array(vec![]))]
+}
+
 /// What a request is sent with beyond its URL, method and body, and the
 /// default of each.
 fn request_options() -> Vec<(&'static str, Expr)> {
@@ -1083,6 +1090,16 @@ impl Lowerer {
                         let resolved = self.resolve_builtin_args(name, named_params, args)?;
                         Expr::Call { callee: Box::new(callee), args: resolved }
                     }
+                    // window[frame, col, how, n = rows, by = keys]: the options
+                    // it leaves out filled in, so its rows take them all
+                    Some("window") if !self.fns.contains_key("window") => {
+                        let (mut positional, options) = self.options("window", args, &window_options())?;
+                        if positional.len() != 3 {
+                            return Err(self.err("window[] takes a frame, a column and what to compute, then n = rows and by = keys: window[df, 'close', 'mean', n = 3, by = 'symbol']".to_string()));
+                        }
+                        positional.extend(options);
+                        Expr::Call { callee: Box::new(callee), args: positional }
+                    }
                     // request[url], request[url, method], request[url, method,
                     // body], each with headers, query, form, files, save and
                     // timeout by name: GET, an empty body and every option
@@ -1097,6 +1114,15 @@ impl Lowerer {
                         }
                         if positional.len() < 3 {
                             positional.push(Expr::Str(String::new()));
+                        }
+                        positional.extend(options);
+                        Expr::Call { callee: Box::new(callee), args: positional }
+                    }
+                    // frame.window[…], its options filled in as the bare call's
+                    None if matches!(&callee, Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if m == "frame") && field == "window") => {
+                        let (mut positional, options) = self.options("window", args, &window_options())?;
+                        if positional.len() != 3 {
+                            return Err(self.err("window[] takes a frame, a column and what to compute, then n = rows and by = keys: window[df, 'close', 'mean', n = 3, by = 'symbol']".to_string()));
                         }
                         positional.extend(options);
                         Expr::Call { callee: Box::new(callee), args: positional }

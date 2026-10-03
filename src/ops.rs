@@ -629,28 +629,33 @@ pub fn valid(obj: CrowValue) -> Result<CrowValue, String> {
 /// A frame's cell: a missing one is an error of kind `missing` (the
 /// column's `.ok` reads it false, a read by index gets its placeholder).
 pub fn frame_cell(frame: &crow_runtime::frame::CrowFrame, col: usize, row: usize) -> CrowValue {
-    if !frame.validity[col][row] {
+    column_cell(frame.data[col].as_ref(), frame.validity[col][row], row)
+}
+
+/// A column's cell, `valid` saying whether it is there: a missing one is
+/// an error of kind `missing` holding the column's placeholder.
+pub fn column_cell(column: &crow_runtime::frame::Column, valid: bool, row: usize) -> CrowValue {
+    use crow_runtime::frame::Column;
+    if !valid {
         let mut missing = CrowValue::error_with_kind("nan", "missing", "");
         missing.status_mut().trace.clear();
         // the safe default a failed value holds (spec §10), of the column's
         // kind: a column copied from its cells keeps its kind even when every
         // cell is missing
-        missing.value = match frame.data[col].as_ref() {
-            crow_runtime::frame::Column::Int(_) => Value::Int(0),
-            crow_runtime::frame::Column::Float(_) => Value::Float(f64::NAN),
-            crow_runtime::frame::Column::Bool(_) => Value::Bool(false),
-            crow_runtime::frame::Column::Str(_) | crow_runtime::frame::Column::DateTime(..) => Value::Str(String::new()),
+        missing.value = match column {
+            Column::Int(_) => Value::Int(0),
+            Column::Float(_) => Value::Float(f64::NAN),
+            Column::Bool(_) => Value::Bool(false),
+            Column::Str(_) | Column::DateTime(..) => Value::Str(String::new()),
         };
         return missing;
     }
-    CrowValue::ok(match frame.data[col].as_ref() {
-        crow_runtime::frame::Column::Int(v) => Value::Int(v[row]),
-        crow_runtime::frame::Column::Float(v) => Value::Float(v[row]),
-        crow_runtime::frame::Column::Str(v) => Value::Str(v[row].clone()),
-        crow_runtime::frame::Column::Bool(v) => Value::Bool(v[row]),
-        crow_runtime::frame::Column::DateTime(millis, offsets) => {
-            Value::Str(crow_runtime::frame::format_datetime(millis[row], offsets[row]))
-        }
+    CrowValue::ok(match column {
+        Column::Int(v) => Value::Int(v[row]),
+        Column::Float(v) => Value::Float(v[row]),
+        Column::Str(v) => Value::Str(v[row].clone()),
+        Column::Bool(v) => Value::Bool(v[row]),
+        Column::DateTime(millis, offsets) => Value::Str(crow_runtime::frame::format_datetime(millis[row], offsets[row])),
     })
 }
 
