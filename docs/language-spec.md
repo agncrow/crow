@@ -3054,11 +3054,11 @@ GPU uses f32 internally (wgpu limitation). CrowTensor uses f64. Conversion happe
 
 ### Automatic Differentiation (grad)
 
-`grad[f]` takes a function and returns a new function that computes the gradient of `f`. Uses forward-mode automatic differentiation with dual numbers.
+`grad[f]` takes a function and returns a function of the same parameters that computes the gradient of `f`: its derivative with respect to each parameter. A function of numbers is differentiated forward, with dual numbers; a function of tensors backward, over a tape its run records. The `grad` builtin works identically in both modes.
 
-#### Single Parameter
+#### Numbers
 
-When `f` takes one parameter and returns a scalar, `grad[f]` returns a function that computes the derivative:
+When `f` takes one number and returns a number, `grad[f]` returns a function that computes the derivative:
 
 ```
 fn f[x]
@@ -3068,9 +3068,7 @@ df = grad[f]
 log[df[3]]       --- 6 (derivative of x^2 at x=3 is 2*3=6)
 ```
 
-#### Multiple Parameters
-
-When `f` takes multiple parameters, `grad[f]` returns a function that computes the gradient (array of partial derivatives):
+When `f` takes several numbers, `grad[f]` returns a function that computes the gradient (a list of partial derivatives):
 
 ```
 fn g[x, y]
@@ -3080,21 +3078,29 @@ dg = grad[g]
 log[dg[3, 4]]    --- [6, 8] (∂g/∂x=2x=6, ∂g/∂y=2y=8)
 ```
 
-#### Supported Operations
+All arithmetic operations (`+`, `-`, `*`, `/`, `^`) and `sqrt`, `abs`, `floor`, `ceil`, `round` are differentiable (the last three have derivative 0). Forward mode carries a value and a derivative in each number; for N parameters, N passes compute the gradient. A function handed to `grad` is a function of floats: its parameters are floats wherever it is called, so an int handed to it is a float, as it is to any float parameter, and the builtins its body calls are the ones for floats. (Its parameters had no type, `grad[f][3]` left them so even where `df = grad[f]` did not, and a compiled program that called such a function with an int had not built.)
 
-All arithmetic operations (`+`, `-`, `*`, `/`) and these math builtins are differentiable:
+#### Tensors
 
-- `sqrt` — derivative: 1/(2√x)
-- `abs` — derivative: sign(x)
-- `^` (power) — derivative: n·x^(n-1) for constant exponent
-- `floor`, `ceil`, `round` — derivative: 0 (piecewise constant)
+When a call of the gradient hands `f` tensors, `f` is a function of tensors and `grad[f]` computes the gradient of the number `f` answers with respect to each tensor parameter — one tensor for one parameter, a list of tensors, one per parameter in order, for several:
 
-#### Implementation
+```
+use math, math.nn
 
-Uses forward-mode AD with dual numbers. Each number carries a value and a derivative component. For N parameters, N forward passes compute the full gradient. The `grad` builtin works identically in both modes.
+fn loss[w, b, x, y]
+    p = sigmoid[x * w + b]
+    return bce[flatten[p], y]
 
-A function handed to `grad` is a function of floats: its parameters are floats wherever it is called, so an int handed to it is a float, as it is to any float parameter, and the builtins its body calls are the ones for floats. (Its parameters had no type, `grad[f][3]` left them so even where `df = grad[f]` did not, and a compiled program that called such a function with an int had not built.)
+g = grad[loss]
+grads = g[w, b, x, y]        --- [∂loss/∂w, ∂loss/∂b, ∂loss/∂x, ∂loss/∂y]
+w = w - grads[0] * 0.1
+```
 
+`f` runs once on *traced* tensors, each remembering how it was computed from the parameters, and the tape is walked backwards from `f`'s number, so every parameter's gradient comes from one run however many parameters there are (reverse mode: what training needs). Each operation computes its value as the operator does, so `f`'s number is the same whether traced or not, to the bit. The operations a function `grad` differentiates may use: `+`, `-`, `*` (a number, or the matrix product), `/`, `.*`, `./`, `.^`, `^`, negation; `sum` and `mean`, whole or along an axis; `exp`, `ln`, `sqrt`, `tanh`, `abs`; `relu`, `sigmoid`, `softmax`, `mse`, `bce`, `crossentropy`, `linear`; `transpose`, `reshape`, `flatten`; `len` and `.shape`; and the constructors (`zeros`, `ones`, `full`, `eye`, `randn`, `tensor`, `linspace`), which make constants. A helper `f` calls is differentiated too, through its own run. A value `f` reads that is no parameter — a fact, a tensor from outside — is a constant, with no gradient. A loop in `f` runs in order, since one tape records the run. `log` inside `f` prints the value. `f` answers a number (a tensor of one element counts); the gradient of a parameter the answer does not depend on is zeros of its shape. A shape that does not meet stops the program where it runs, with the operator's words, as it does untraced.
+
+What is refused before the program runs, in both modes: an operation on a traced value that is not in the list (`grad: loss calls \`max\`, which is not differentiable`), an index into a tensor or a loop over one inside `f`, a comparison of tensors (a comparison of two numbers decides as it would, with no gradient through the decision), a parameter that is a record or a list, parameters of two kinds (numbers beside tensors: all numbers, or all tensors), and `grad` called inside a function `grad` differentiates. A function `grad` differentiates is typed by the calls of its gradient: `g[w, b, x, y]` types `loss`'s parameters as those tensors, as a direct call would.
+
+**Design Note: one `grad`.** Considered: a `backward` on tensors that remember their history, as PyTorch's `requires_grad` and `.backward()` do (rejected: a tensor would carry a history the program never wrote, and a value's meaning would depend on where it came from); a separate `gradient[f]` for tensors beside `grad[f]` for numbers (rejected: two names for one operation, decided by the parameters' kinds that the call already shows). Decided (2026-10-02): one `grad`, forward over numbers and backward over tensors, the kind decided by what its gradient is handed; the list of differentiable operations is the list, and anything outside it is refused before the program runs rather than silently a constant.
 
 ### Distributed Support
 

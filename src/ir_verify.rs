@@ -457,8 +457,10 @@ impl<'p> Verifier<'p> {
                 e.ty()
             }
             Expr::ListLit(items, ty) => {
+                // (a tensor literal's items are its rows where it has them)
                 let el = match ty {
-                    Ty::List(el) | Ty::Tensor(el, _) => Some(el.as_ref().clone()),
+                    Ty::List(el) => Some(el.as_ref().clone()),
+                    Ty::Tensor(el, dims) => Some(Ty::tensor_item(el, dims)),
                     _ => None,
                 };
                 for i in items {

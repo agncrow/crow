@@ -130,6 +130,12 @@ pub(crate) struct Emitter {
     pub(crate) schema_mode: Option<crow_db::schema::Mode>,
     pub(crate) by_ref_params: BTreeMap<String, HashSet<String>>,
     pub(crate) grad_functions: BTreeSet<String>,
+    /// The functions grad differentiates over tensors, and those they
+    /// reach (the IR's `traced`): each printed again over traced values.
+    pub(crate) traced_functions: BTreeSet<String>,
+    /// Printing a function's traced copy: numbers and tensors are traced
+    /// values, every operation the autograd kernel's.
+    pub(crate) emitting_traced: bool,
     pub(crate) web_handlers: HashSet<String>,
     pub(crate) live_render_fns: HashSet<String>,
     pub(crate) live_handle_fns: HashSet<String>,
@@ -222,6 +228,8 @@ impl Emitter {
             schema_mode: None,
             by_ref_params: BTreeMap::new(),
             grad_functions: BTreeSet::new(),
+            traced_functions: BTreeSet::new(),
+            emitting_traced: false,
             web_handlers: HashSet::new(),
             live_render_fns: HashSet::new(),
             live_handle_fns: HashSet::new(),

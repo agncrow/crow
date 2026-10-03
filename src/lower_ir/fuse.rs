@@ -39,7 +39,10 @@ pub(super) fn chains(program: &mut Program) {
     let (Some(tensor), Some(filter)) = (crate::table::row("tensor.fused"), crate::table::row("frame.filter_where")) else { return };
     let row = Rows { tensor, filter };
     for part in &mut program.parts {
-        for f in &mut part.fns {
+        // (a function grad differentiates is left to the operators the tape
+        // records: a fused kernel would be opaque to it)
+        let traced = part.traced.clone();
+        for f in part.fns.iter_mut().filter(|f| !traced.contains(&f.name)) {
             block(&mut f.body, row);
         }
         for d in &mut part.derives {

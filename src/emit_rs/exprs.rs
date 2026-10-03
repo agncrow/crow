@@ -73,6 +73,8 @@ impl Emitter {
                     let inner = self.expr(expr);
                     if self.emitting_dual {
                         inner
+                    } else if self.emitting_traced {
+                        format!("crow_runtime::autograd::Traced::number(({}) as f64)", inner)
                     } else {
                         format!("(({}) as f64)", inner)
                     }
@@ -195,6 +197,8 @@ impl Emitter {
                 };
                 if self.emitting_dual {
                     format!("CrowDual::from({})", lit)
+                } else if self.emitting_traced {
+                    format!("crow_runtime::autograd::Traced::number({})", lit)
                 } else {
                     lit
                 }
@@ -349,6 +353,11 @@ impl Emitter {
         };
         let left = &strip(left, self);
         let right = &strip(right, self);
+        if self.emitting_traced {
+            if let Some(s) = self.traced_binary(op, left, right) {
+                return s;
+            }
+        }
         if matches!(op, "eq" | "ne") {
             if let Some(s) = self.optbox_comparison(left, op, right) {
                 return s;
@@ -642,7 +651,9 @@ impl Emitter {
         let ty = Self::inner(&self.tt(e));
         match op {
             "neg" => {
-                if matches!(ty, CrowType::NumArray(..)) {
+                if self.emitting_traced && matches!(ty, CrowType::Float | CrowType::NumArray(..)) {
+                    format!("crow_runtime::autograd::neg({})", Self::tr(&inner))
+                } else if matches!(ty, CrowType::NumArray(..)) {
                     format!("{}.neg()", inner)
                 } else if matches!(ty, CrowType::Int) && !matches!(Emitter::raw(e), Expr::Const(..)) && !self.emitting_dual {
                     // only the smallest int has no negation
@@ -830,6 +841,8 @@ impl Emitter {
                 // parameter takes it, and a failed one stops)
                 CrowType::Result(_) if takes_failure => s,
                 CrowType::Result(t) => as_float(format!("{{ let _ix = &({}); if !_ix.ok {{ crow_stop({}, _ix.reason.clone()); }} _ix.value.clone() }}", s, self.current_line), &t),
+                // (a tensor a gradient is handed is read, and the local lives on)
+                CrowType::NumArray(..) if matches!(Emitter::raw(a), Expr::Local(..)) => format!("{}.clone()", s),
                 t => as_float(s, &t),
             });
         }
@@ -913,7 +926,7 @@ impl Emitter {
         if matches!(oinner, CrowType::NumArray(..)) {
             let t = if matches!(oty, CrowType::Result(_)) { format!("{}.value.clone()", obj) } else { obj.clone() };
             match field {
-                "shape" => return format!("{}.shape().iter().map(|&s| s as i64).collect::<Vec<i64>>()", t),
+                "shape" => return format!("{}.shape().iter().map(|&s| s as i64).collect::<Vec<i64>>()", if self.emitting_traced { format!("({}).value", Self::tr(&t)) } else { t.to_string() }),
                 "dtype" => return "\"float\".to_string()".to_string(),
                 "device" => return format!("if {}.is_gpu() {{ \"gpu\".to_string() }} else {{ \"cpu\".to_string() }}", t),
                 "grad" => return "\"none\".to_string()".to_string(),
@@ -1656,6 +1669,11 @@ impl Emitter {
 
     /// A call, by what it names.
     fn dispatch(&mut self, target: &Target, name: &str, args: &[Expr], arg_strs: &[String], whole: &Expr) -> String {
+        if self.emitting_traced {
+            if let Some(s) = self.traced_dispatch(target, name, args, arg_strs, whole) {
+                return s;
+            }
+        }
         match target {
             // math on the dual numbers a function grad differentiates is the
             // derivative's own form
@@ -1684,6 +1702,128 @@ impl Emitter {
     /// A module's row: its runtime function, each argument printed, a view's
     /// tree handed to it as its markup; it stops on the line its call is on
     /// (modules::STOP_LINE).
+    /// Whether a value is traced inside a function's traced copy: a number
+    /// or a tensor there is a traced value (crow_runtime::autograd::Traced).
+    fn traced_type(t: &CrowType) -> bool {
+        matches!(Self::inner(t), CrowType::Float | CrowType::NumArray(..))
+    }
+
+    /// A value as the autograd kernel's operand (`&Traced`): a traced value
+    /// borrowed, a plain number or tensor — an int, a list's item, a
+    /// global's — as a constant (crow_runtime::autograd::AsTraced).
+    fn tr(s: &str) -> String {
+        format!("&*crow_runtime::autograd::AsTraced::traced(&({}))", s)
+    }
+
+    /// An operand of a traced operator.
+    fn traced_operand(&mut self, e: &Expr) -> String {
+        let s = self.operand(e);
+        Self::tr(&s)
+    }
+
+    /// An operator inside a function's traced copy: the autograd kernel's,
+    /// recorded on the tape, a shape that does not meet stopping the
+    /// program with the operator's words; a comparison of two numbers
+    /// decides as it would. None where neither operand is traced (ints,
+    /// text, bools).
+    fn traced_binary(&mut self, op: &str, left: &Expr, right: &Expr) -> Option<String> {
+        let (lt, rt) = (self.tt(left), self.tt(right));
+        if !Self::traced_type(&lt) && !Self::traced_type(&rt) {
+            return None;
+        }
+        let both_tensors = matches!(Self::inner(&lt), CrowType::NumArray(..)) && matches!(Self::inner(&rt), CrowType::NumArray(..));
+        let l = self.traced_operand(left);
+        let r = self.traced_operand(right);
+        let stop = self.or_stop();
+        let f = match op {
+            "add" => "add",
+            "sub" => "sub",
+            "mul" if both_tensors => "matmul",
+            "mul" | "elemmul" => "mul",
+            "div" if both_tensors => return Some("compile_error!(\"use ./ for element-wise tensor division\")".to_string()),
+            "div" | "elemdiv" => "div",
+            "pow" | "elempow" => "pow",
+            "eq" | "ne" | "gt" | "lt" | "gte" | "lte" => {
+                let sign = match op {
+                    "eq" => "==",
+                    "ne" => "!=",
+                    "gt" => ">",
+                    "lt" => "<",
+                    "gte" => ">=",
+                    _ => "<=",
+                };
+                return Some(format!("(({}).as_number().unwrap_or(f64::NAN) {} ({}).as_number().unwrap_or(f64::NAN))", l, sign, r));
+            }
+            other => return Some(format!("compile_error!(\"grad: `{}` is not differentiable\")", other)),
+        };
+        Some(format!("crow_runtime::autograd::{}({}, {}){}", f, l, r, stop))
+    }
+
+    /// A call inside a function's traced copy: a differentiable builtin
+    /// handed a traced value is the autograd kernel's, a call handed none
+    /// answers a constant (a constructor's tensor, `float` of an int), a
+    /// function of the program's is its own traced copy. None where the
+    /// call neither takes nor answers a traced value (a range, text).
+    fn traced_dispatch(&mut self, target: &Target, name: &str, args: &[Expr], arg_strs: &[String], whole: &Expr) -> Option<String> {
+        if let Target::User(n) = target {
+            if self.traced_functions.contains(n) {
+                let passed: Vec<String> = args
+                    .iter()
+                    .zip(arg_strs)
+                    .map(|(a, s)| {
+                        if Self::traced_type(&self.tt(a)) {
+                            let raw = self.expr(a);
+                            format!("crow_runtime::autograd::AsTraced::traced(&({})).into_owned()", raw)
+                        } else {
+                            s.clone()
+                        }
+                    })
+                    .collect();
+                return Some(format!("_traced_{}({})", Self::rust_fn_name(n), passed.join(", ")));
+            }
+            return None;
+        }
+        let traced_arg = args.iter().any(|x| Self::traced_type(&self.tt(x)));
+        if !traced_arg {
+            let wrap = match Self::inner(&self.tt(whole)) {
+                CrowType::Float if !matches!(self.tt(whole), CrowType::Result(_)) => "crow_runtime::autograd::Traced::number",
+                CrowType::NumArray(..) if !matches!(self.tt(whole), CrowType::Result(_)) => "crow_runtime::autograd::Traced::from",
+                _ => return None,
+            };
+            let inner = self.dispatch_plain(target, name, args, arg_strs, whole);
+            return Some(format!("{}({})", wrap, inner));
+        }
+        let a = |i: usize| Self::tr(&arg_strs.get(i).cloned().unwrap_or_default());
+        let plain = |i: usize| arg_strs.get(i).cloned().unwrap_or_default();
+        let stop = self.or_stop();
+        let n = args.len();
+        Some(match (name, n) {
+            ("sum", 1) | ("mean", 1) | ("exp", 1) | ("ln", 1) | ("sqrt", 1) | ("tanh", 1) | ("abs", 1) | ("relu", 1) | ("sigmoid", 1) | ("softmax", 1) | ("transpose", 1) | ("flatten", 1) => {
+                format!("crow_runtime::autograd::{}({})", name, a(0))
+            }
+            ("sum", 2) | ("mean", 2) => format!("crow_runtime::autograd::{}_axis({}, ({}) as usize){}", name, a(0), plain(1), stop),
+            ("mse", 2) | ("bce", 2) | ("crossentropy", 2) => format!("crow_runtime::autograd::{}({}, {}){}", name, a(0), a(1), stop),
+            ("linear", 3) => format!("crow_runtime::autograd::linear({}, {}, {}){}", a(0), a(1), a(2), stop),
+            ("reshape", k) if k >= 2 => {
+                let sizes: Vec<String> = (1..k).map(|i| format!("({}) as usize", plain(i))).collect();
+                format!("crow_runtime::autograd::reshape({}, vec![{}]){}", a(0), sizes.join(", "), stop)
+            }
+            ("len", 1) => format!("crow_runtime::core::len_tensor(&({}).value)", a(0)),
+            ("float", 1) | ("tensor", 1) => format!("({}).clone()", a(0)),
+            ("int", 1) => format!("(({}).as_number().unwrap_or(0.0) as i64)", a(0)),
+            _ => format!("compile_error!(\"grad: `{}` is not differentiable\")", name),
+        })
+    }
+
+    /// A call printed as it is outside a traced copy (a constructor's
+    /// tensor, wrapped as a constant by the caller).
+    fn dispatch_plain(&mut self, target: &Target, name: &str, args: &[Expr], arg_strs: &[String], whole: &Expr) -> String {
+        let was = std::mem::replace(&mut self.emitting_traced, false);
+        let out = self.dispatch(target, name, args, arg_strs, whole);
+        self.emitting_traced = was;
+        out
+    }
+
     fn module_row_call(&mut self, row: &crate::table::Row, args: &[Expr], arg_strs: &[String]) -> String {
         let mut strs = arg_strs.to_vec();
         for (i, a) in args.iter().enumerate() {

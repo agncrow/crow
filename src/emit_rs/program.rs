@@ -186,12 +186,16 @@ impl Emitter {
             || self.any_expr(&|e| call_name(e).as_deref() == Some("cpu") && matches!(call_args(e).first().map(Emitter::raw), Some(Expr::Const(Const::Int(n), _)) if *n > 1));
         self.needs_rayon = par;
 
-        // gradient targets: their parameters and value are floats
+        // gradient targets over numbers: their parameters and value are
+        // floats; over tensors (the IR's `traced`), a copy over traced values
+        self.traced_functions = self.part.traced.clone();
         let blocks = self.all_blocks();
         let mut grads = BTreeSet::new();
         for b in &blocks {
             for f in Self::fn_args_of_calls(b, "grad", &|args| args.iter().filter_map(fn_named).map(|s| s.to_string()).collect()) {
-                grads.insert(f);
+                if !self.traced_functions.contains(&f) {
+                    grads.insert(f);
+                }
             }
         }
         if !grads.is_empty() {
@@ -740,6 +744,11 @@ impl Emitter {
                 if let Some(f) = self.fns.get(&g).cloned() {
                     self.emit_dual_function(&f);
                 }
+            }
+        }
+        for t in self.traced_functions.clone() {
+            if let Some(f) = self.fns.get(&t).cloned() {
+                self.emit_traced_function(&f);
             }
         }
         if !self.reactive_event_handlers.is_empty() {

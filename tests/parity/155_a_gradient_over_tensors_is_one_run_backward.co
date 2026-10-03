@@ -1,0 +1,68 @@
+--- `grad[f]` of a function whose parameters are tensors is a function
+--- of the same parameters answering the gradient of f's number with
+--- respect to each — one tensor for one parameter, a list of tensors for
+--- several — by reverse-mode differentiation over a tape f's run records
+--- (spec, Automatic Differentiation). The operations f uses compute as
+--- the operators do, so f's number is the same traced and untraced to
+--- the bit; a helper f calls is differentiated too; a loop in f runs in
+--- order; a value f reads that is no parameter is a constant. A shape
+--- that does not meet stops with the operator's words. Numbers still
+--- differentiate forward, as before. The same in both modes.
+use math, math.nn
+
+fn square_sum[w]
+    return sum[w .* w]
+
+g = grad[square_sum]
+log[g[[1.0, 2.0, 3.0]]]
+
+fn hidden[x, w1, b1]
+    return relu[x * w1 + b1]
+
+fn loss[w1, b1, w2, b2, x, y]
+    h = hidden[x, w1, b1]
+    p = sigmoid[h * w2 + b2]
+    return bce[flatten[p], y]
+
+x = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]
+y = [0.0, 1.0, 1.0, 0.0]
+w1 = [[0.5, -0.2, 0.1], [0.3, 0.8, -0.5]]
+b1 = [[0.1, 0.0, -0.1]]
+w2 = [[0.4], [-0.6], [0.2]]
+b2 = [[0.05]]
+grads = grad[loss][w1, b1, w2, b2, x, y]
+log[len[grads]]
+log[round[sum[grads[0]] * 100000.0] / 100000.0]
+log[round[sum[grads[2]] * 100000.0] / 100000.0]
+log[grads[3]]
+log[sum[grads[4]] eq 0.0 or sum[grads[4]] ne 0.0]
+log[round[loss[w1, b1, w2, b2, x, y] * 100000.0] / 100000.0]
+
+--- a step of gradient descent lowers the loss
+step = grad[loss]
+for i in range[20]
+    gs = step[w1, b1, w2, b2, x, y]
+    w1 = w1 - gs[0] * 0.5
+    b1 = b1 - gs[1] * 0.5
+    w2 = w2 - gs[2] * 0.5
+    b2 = b2 - gs[3] * 0.5
+log[loss[w1, b1, w2, b2, x, y] lt 0.69]
+
+fn rising[w]
+    total = 0.0
+    for i in range[3]
+        total = total + sum[w .* w] * float[i + 1]
+    log['tracing `total`']
+    return total
+
+log[grad[rising][[1.0, 1.0]]]
+
+fn f[x]
+    return x * x
+log[grad[f][3.0]]
+
+fn mismatched[a, b]
+    return sum[a + b]
+n = len[[1.0, 2.0, 3.0]]
+log[grad[mismatched][ones[n], ones[2]]]
+log['not reached']

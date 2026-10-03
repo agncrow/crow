@@ -17,6 +17,7 @@ pub mod json;
 pub mod later;
 pub mod layout;
 pub mod cancel;
+pub mod autograd;
 pub mod cell;
 pub mod chart;
 pub mod core;

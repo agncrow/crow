@@ -55,13 +55,13 @@ pub enum Ty {
 
 impl Ty {
     /// A tensor's item — what a loop walks and an index reads — by its
-    /// element type or by its dimensions: a row when it has two or more,
-    /// else a number (type_infer's `tensor_item`, at the IR's types).
+    /// dimensions: a row when it has two or more, else a number
+    /// (type_infer's `tensor_item`, at the IR's types; a tensor's element
+    /// is always a number).
     pub fn tensor_item(elem: &Ty, dims: &Option<crate::type_infer::Dims>) -> Ty {
-        match (elem, dims) {
-            (Ty::Tensor(..), _) => elem.clone(),
-            (number, Some(d)) if d.len() >= 2 => Ty::Tensor(Box::new(number.clone()), Some(d[1..].to_vec())),
-            (number, _) => number.clone(),
+        match dims {
+            Some(d) if d.len() >= 2 => Ty::Tensor(Box::new(elem.clone()), Some(d[1..].to_vec())),
+            _ => elem.clone(),
         }
     }
 
@@ -183,6 +183,10 @@ pub struct Part {
     /// belong to (the part's prefix; "" for the entry's own): what a part
     /// does before anything runs (a connection it opens, a page it serves).
     pub main_effects: std::collections::BTreeMap<String, Vec<String>>,
+    /// The functions `grad` differentiates over tensors, and those they
+    /// reach: run on traced values, copied over them when compiled, left
+    /// alone by the fusion pass (lower_ir::grad).
+    pub traced: std::collections::BTreeSet<String>,
 }
 
 #[derive(Debug, Clone)]

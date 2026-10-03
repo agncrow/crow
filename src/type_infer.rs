@@ -11,9 +11,28 @@ pub type Dims = Vec<Option<usize>>;
 /// it tensors: the dimensions they agree on; any other rank, or no shape,
 /// is no shape. What is not known stays not known: a join never invents a
 /// dimension.
+/// A list's shape as a tensor: a vector of numbers, a matrix of rows (one
+/// dimension more than its rows have), unknown for anything else.
+fn list_dims(item: &CrowType) -> Option<Dims> {
+    match item {
+        CrowType::Int | CrowType::Float => Some(vec![None]),
+        CrowType::NumArray(_, d) => {
+            let mut out = vec![None];
+            out.extend(d.clone().unwrap_or_else(|| vec![None]));
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+/// What two shapes agree on: each dimension both state, unknown where
+/// they differ; the rank, where one side knows it and the other knows
+/// nothing (a function handed a matrix literal by one call and a record's
+/// tensor by another still walks rows); nothing where the ranks differ.
 pub fn join_dims(a: &Option<Dims>, b: &Option<Dims>) -> Option<Dims> {
     match (a, b) {
         (Some(a), Some(b)) if a.len() == b.len() => Some(a.iter().zip(b).map(|(x, y)| if x == y { *x } else { None }).collect()),
+        (Some(a), None) | (None, Some(a)) => Some(vec![None; a.len()]),
         _ => None,
     }
 }
@@ -312,7 +331,13 @@ impl CrowType {
             // meet), and what either knows of the items is kept (an empty
             // list and a tensor of floats are floats)
             (CrowType::Array(a), CrowType::NumArray(b, _)) => CrowType::Array(Box::new(a.unify(b))),
-            (CrowType::NumArray(a, _), CrowType::Array(b)) => CrowType::tensor(a.unify(b)),
+            (CrowType::NumArray(a, da), CrowType::Array(b)) => {
+                let elem = match a.unify(b) {
+                    CrowType::NumArray(e, _) => *e,
+                    e => e,
+                };
+                CrowType::NumArray(Box::new(elem), join_dims(da, &list_dims(b)))
+            }
             (CrowType::Map(a), CrowType::Map(b)) => CrowType::Map(Box::new(a.unify(b))),
             // two ways a frame could have come: the columns both give (a
             // frame whose columns are not worked out yet adds nothing — one
@@ -418,6 +443,10 @@ pub struct TypeContext {
     /// Names declared with `view` — UI-tree builders; the element vocabulary
     /// is active only inside their bodies
     pub views: std::collections::BTreeSet<String>,
+    /// The functions `grad` differentiates whose parameters the seek
+    /// guessed floats: a call of the gradient that hands tensors retypes
+    /// them (the lowering's Index path), and takes the name out
+    pub grad_forced: std::collections::BTreeSet<String>,
     /// While a function body is inferred: the names it has assigned so far
     /// (its parameters to begin with). The first assignment of another
     /// name binds a new local (spec §7), whatever the module calls it.
@@ -536,6 +565,7 @@ impl TypeContext {
             functions: BTreeMap::new(),
             call_signatures: BTreeMap::new(),
             views: std::collections::BTreeSet::new(),
+            grad_forced: std::collections::BTreeSet::new(),
             body_assigned: None,
             in_view: false,
             is_ui: false,
@@ -1037,17 +1067,15 @@ impl TypeContext {
     /// What a loop's variable holds: an item of the list, a number of the
     /// tensor (a row of a matrix), an item of a parsed JSON list.
     /// A tensor's item — what a loop walks and an index reads: a row when
-    /// it has two or more dimensions, by its element type (a literal's
-    /// nested rows) or by the dimensions its type carries (`transpose`,
+    /// its dimensions are two or more (a literal's nesting, `transpose`,
     /// `zeros[2, 3]`); else one of its numbers. (The dimensions had been
     /// passed over: a loop over `transpose[m]`, or `zeros[2, 3][1]`, read
     /// numbers where both modes' values held rows, and the compiled program
     /// walked the numbers.)
     pub(crate) fn tensor_item(inner: &CrowType, dims: &Option<Dims>) -> CrowType {
-        match (inner, dims) {
-            (CrowType::NumArray(..), _) => inner.clone(),
-            (number, Some(d)) if d.len() >= 2 => CrowType::NumArray(Box::new(number.clone()), Some(d[1..].to_vec())),
-            (number, _) => number.clone(),
+        match dims {
+            Some(d) if d.len() >= 2 => CrowType::NumArray(Box::new(inner.clone()), Some(d[1..].to_vec())),
+            _ => inner.clone(),
         }
     }
 

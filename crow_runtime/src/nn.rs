@@ -89,7 +89,7 @@ pub fn bce(pred: &CrowTensor, target: &CrowTensor) -> Result<f64, String> {
     if pred.len() != target.len() {
         return Err(format!("bce: pred and target must be one length, got {} and {}", pred.len(), target.len()));
     }
-    let eps = 1e-12;
+    let eps = BCE_EPS;
     let pd = pred.to_vec();
     let td = target.to_vec();
     let n = pd.len();
@@ -103,6 +103,12 @@ pub fn bce(pred: &CrowTensor, target: &CrowTensor) -> Result<f64, String> {
     }
     Ok(-total / n as f64)
 }
+
+/// How close to 0 or 1 a probability is read in the binary cross-entropy:
+/// a prediction is read within [eps, 1 - eps], so a sure wrong answer is a
+/// large loss, never an infinite one (the loss's gradient reads it the
+/// same way, crate::autograd).
+pub const BCE_EPS: f64 = 1e-12;
 
 /// Linear layer: x * w + b, matrices x and w, the bias broadcasting.
 pub fn linear(x: &CrowTensor, w: &CrowTensor, b: &CrowTensor) -> Result<CrowTensor, String> {

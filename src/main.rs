@@ -16,6 +16,7 @@ mod ir_verify;
 mod lower_ir;
 mod emit_rs;
 mod ops;
+mod autograd_bridge;
 mod baseline;
 mod states;
 mod checker;

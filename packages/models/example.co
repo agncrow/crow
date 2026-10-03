@@ -3,7 +3,7 @@
 --- and compares the two).
 use math
 use regression, logistic, kmeans, tree, mlp
-use knn, bayes, ridge, pca, forest, metrics, prepare
+use knn, bayes, ridge, pca, forest, metrics, prepare, softmax, svm
 
 lin = regression.fit[[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [2.0, 1.0]], [1.0, 3.0, -2.0, 0.0, 2.0]]
 log['regression: `round[lin.coef[0] * 1000.0] / 1000.0` `round[lin.coef[1] * 1000.0] / 1000.0` `round[lin.intercept * 1000.0] / 1000.0`']
@@ -46,6 +46,12 @@ log['forest: `forest.classify[fr, [1.0, 5.0]]` `forest.classify[fr, [3.9, 5.0]]`
 truth = [1, 0, 1, 1, 0, 0]
 guess = [1, 0, 0, 1, 1, 0]
 log['metrics: accuracy `round[metrics.accuracy[truth, guess] * 1000.0] / 1000.0` f1 `round[metrics.f1[truth, guess] * 1000.0] / 1000.0` rmse `metrics.rmse[[1.0, 2.0, 3.0], [1.0, 2.0, 5.0]]`']
+
+sm = softmax.fit[[[0.0], [0.2], [1.0], [1.2], [2.0], [2.2]], [0, 0, 1, 1, 2, 2], 3, 400, 0.5]
+log['softmax: `softmax.classify[sm, [[0.1], [1.1], [2.1]]]`']
+
+sv = svm.fit[[[1.0, 1.0], [1.5, 2.0], [2.0, 1.0], [6.0, 6.0], [6.5, 7.0], [7.0, 6.0]], [-1.0, -1.0, -1.0, 1.0, 1.0, 1.0], 300, 0.1]
+log['svm: `svm.classify[sv, [[1.0, 2.0], [7.0, 7.0]]]`']
 
 held = prepare.divide[xf, yf, 0.25, 3]
 sc = prepare.fit_scale[held.x_train]

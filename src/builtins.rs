@@ -43,6 +43,7 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                     Value::Fn(_) => "fn".to_string(),
                     Value::StructInstance(si) => si.shown.clone(),
                     Value::Dual(_, _) => "float".to_string(),
+                    Value::Traced(t) => if t.value.ndim() == 0 { "float" } else { "array" }.to_string(),
                     Value::GradFn(_) => "fn".to_string(),
                     Value::Frame(_) => "frame".to_string(),
                     Value::DbConn(_) => "db".to_string(),

@@ -358,11 +358,24 @@ impl TypeContext {
             "today" => CrowType::Str,
             // Autograd
             "grad" => {
-                // grad[f] returns a function with the same arity as f, but all params are Float
-                // and return is Float (1 param) or Array<Float> (N params)
+                // grad[f] is a function of f's parameters: of numbers, each
+                // a float, answering a float (one parameter) or a list of
+                // floats; of tensors, answering a tensor or a list of them
                 if let Some(Expr::Ident(fn_name)) = args.first() {
                     if let Some(sig) = self.functions.get(fn_name) {
                         let n = sig.params.len();
+                        // (parameters the seek only guessed floats: not known
+                        // until a call of the gradient says, numbers or tensors)
+                        if self.grad_forced.contains(fn_name) {
+                            return CrowType::Fn(vec![CrowType::Unknown; n], Box::new(CrowType::Unknown));
+                        }
+                        let tensors = sig.params.iter().any(|(_, t)| matches!(t, CrowType::NumArray(..)));
+                        if tensors {
+                            let param_types: Vec<CrowType> = sig.params.iter().map(|(_, t)| t.clone()).collect();
+                            let one = CrowType::tensor(CrowType::Float);
+                            let ret = if n == 1 { one } else { CrowType::Array(Box::new(one)) };
+                            return CrowType::Fn(param_types, Box::new(ret));
+                        }
                         let param_types = vec![CrowType::Float; n];
                         let ret = if n == 1 {
                             CrowType::Float
@@ -747,7 +760,12 @@ impl TypeContext {
     }
 
     /// A list literal's type from its items': numbers make a tensor, and
-    /// nested numeric rows a tensor of higher rank.
+    /// nested numeric rows a tensor of higher rank — one more dimension
+    /// than its rows, each unknown until the lowering counts the literal
+    /// (shapes.rs). A tensor's element is always a number: its rank is the
+    /// count of its dimensions. (A matrix literal had been a tensor of row
+    /// tensors, a second form of one type beside the flat one every
+    /// operation answers, and the two had not fit each other.)
     pub(crate) fn array_type(items: impl Iterator<Item = CrowType>) -> CrowType {
         let mut any = false;
         let mut inner = CrowType::Unknown;
@@ -759,14 +777,14 @@ impl TypeContext {
             return CrowType::Array(Box::new(CrowType::Unknown));
         }
         // All-numeric array literals become NumArray (backed by CrowTensor).
-        // Nested numeric literals build higher-rank tensors: the inner
-        // type of a rank-2 tensor is the rank-1 row tensor.
-        if matches!(inner, CrowType::Int | CrowType::Float) {
-            CrowType::tensor(inner)
-        } else if matches!(inner, CrowType::NumArray(..)) {
-            CrowType::tensor(inner)
-        } else {
-            CrowType::Array(Box::new(inner))
+        match inner {
+            CrowType::Int | CrowType::Float => CrowType::tensor(inner),
+            CrowType::NumArray(elem, dims) => {
+                let mut rank = vec![None];
+                rank.extend(dims.unwrap_or_else(|| vec![None]));
+                CrowType::NumArray(elem, Some(rank))
+            }
+            inner => CrowType::Array(Box::new(inner)),
         }
     }
 

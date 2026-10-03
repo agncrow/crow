@@ -26,6 +26,12 @@ pub fn binop(
     let l = &left.value;
     let r = &right.value;
 
+    // a value a function grad differentiates computes with: the autograd
+    // kernel's own operation, recorded on the tape
+    if matches!(l, Value::Traced(_)) || matches!(r, Value::Traced(_)) {
+        return crate::autograd_bridge::binop(op, l, r);
+    }
+
     match op {
         BinOp::Add => match (l, r) {
             // Dual number rules: dual(a,a') + dual(b,b') = dual(a+b, a'+b')
@@ -409,6 +415,9 @@ pub fn unaryop(
     }
 
     let v = &val.value;
+    if matches!(v, Value::Traced(_)) {
+        return crate::autograd_bridge::unaryop(op, v);
+    }
     match op {
         UnaryOp::Neg => match v {
             Value::Int(n) => stops::neg(*n).map(|n| CrowValue::ok(Value::Int(n))),
@@ -441,6 +450,7 @@ pub fn is_truthy(val: &CrowValue) -> bool {
         Value::Str(s) => !s.is_empty(),
         Value::Array(l) => !l.is_empty(),
         Value::NumArray(t) => !t.is_empty(),
+        Value::Traced(t) => t.as_number().is_none_or(|x| x != 0.0),
         Value::Done => false,
         _ => true,
     }
@@ -524,6 +534,9 @@ pub fn values_equal(a: &CrowValue, b: &CrowValue) -> bool {
 /// `Point[1, 2]`.
 pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, String> {
     match &callee.value {
+    // (the lowering refuses an index into a tensor a function grad
+    // differentiates holds; this is one it could not see)
+    Value::Traced(_) => Err("grad: an index into a tensor is not differentiable — compute with the tensor whole".to_string()),
     // a parsed value's item or key, as the compiled program reads its JSON:
     // one it lacks (or a negative position) is JSON's null, an error value
     // of reason `null`
@@ -734,6 +747,10 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
         }
     }
 
+    // a traced tensor's properties are its value's
+    if let Value::Traced(tr) = &obj.value {
+        return crate::ops::field(CrowValue::ok(Value::NumArray(Box::new(tr.value.clone()))), field);
+    }
     // NumArray properties: .shape, .dtype, .device, .grad
     if let Value::NumArray(t) = &obj.value {
         match field {

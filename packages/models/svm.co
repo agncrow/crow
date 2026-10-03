@@ -1,0 +1,44 @@
+--- A linear support vector machine: the line that keeps the two classes
+--- a margin apart, fitted by gradient descent on the hinge loss with the
+--- weights' squares penalised by `penalty` — the gradient by `grad`. `x`
+--- holds a row of features per sample, `y` a class for each, −1 or 1.
+use math, math.nn
+
+struct Svm [w, b]
+
+--- the mean hinge loss, max[0, 1 − y·(x·w + b)], plus the penalty
+fn loss[w, b, x, y]
+    margins = y .* flatten[x * w + b]
+    hinge = mean[relu[1.0 - margins]]
+    return hinge + 0.01 * sum[w .* w]
+
+fn fit[x, y, steps, rate]
+    k = len[x[0]]
+    w = zeros[k, 1]
+    b = zeros[1]
+    xs = tensor[x]
+    ys = tensor[y]
+    g = grad[loss]
+    for s in range[steps]
+        gs = g[w, b, xs, ys]
+        w = w - gs[0] * rate
+        b = b - gs[1] * rate
+    return Svm[w, b]
+
+--- each sample's side of the line: −1 or 1
+fn classify[m, x]
+    sides = flatten[tensor[x] * m.w + m.b]
+    out = for s in sides
+        if s gte 0.0
+            1
+        else
+            -1
+    return out
+
+--- two classes a line separates: every sample on its own side
+test separates_two_classes[]
+    x = [[1.0, 1.0], [1.5, 2.0], [2.0, 1.0], [6.0, 6.0], [6.5, 7.0], [7.0, 6.0]]
+    y = [-1.0, -1.0, -1.0, 1.0, 1.0, 1.0]
+    m = fit[x, y, 300, 0.1]
+    assert[classify[m, x] eq [-1, -1, -1, 1, 1, 1]]
+    assert[classify[m, [[1.0, 2.0], [7.0, 7.0]]] eq [-1, 1]]

@@ -15,6 +15,7 @@ use crate::type_infer::{CrowType, TypeContext};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod fuse;
+pub(crate) mod grad;
 mod checks;
 mod frames;
 pub(crate) mod schema;
@@ -93,6 +94,12 @@ fn lower_checked_as(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: 
     decide_loops(&mut program);
     decide_answers(&mut program);
     written_names(&mut program);
+    // the functions grad differentiates over tensors: what they may do,
+    // their loops in order, and the set the backends trace
+    let refusals = grad::settle(&mut program);
+    if !refusals.is_empty() {
+        return Err(Refusal::Invalid(refusals.into_iter().map(|(f, m)| (m, Some(f))).collect()));
+    }
     // chains computed in one pass: element-wise tensors, a filter's predicate
     fuse::chains(&mut program);
     // each connection opens with the tables the program declares on it
@@ -535,6 +542,17 @@ pub(crate) fn meta_decided(t: &Ty) -> bool {
 
 /// Whether reading an expression only reads: a constant, a local, a fact, a
 /// derivation, a function, or a record's field of one.
+fn gradient_of_call(e: &Expr) -> Option<String> {
+    // the function a gradient is of, when an expression is `grad[f]`
+    match e {
+        Expr::Call { target: Target::Runtime(n), args, .. } if n == "grad" || n.ends_with(".grad") => match args.first() {
+            Some(Expr::FnRef(f, _)) => Some(f.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn plain_read(e: &Expr) -> bool {
     match e {
         Expr::Const(..) | Expr::Local(..) | Expr::Move(..) | Expr::Load(..) | Expr::Derived(..) | Expr::Constant(..) | Expr::FnRef(..) => true,
@@ -708,6 +726,9 @@ struct Lowerer<'a> {
     /// A session's fragment (`lower_fragment`): its top-level names
     /// outlive it.
     fragment: bool,
+    /// The locals that hold a gradient (`g = grad[f]`), by the function
+    /// each is of: a call of one types that function's parameters.
+    grad_of: HashMap<String, String>,
     /// Locals declared so far, innermost scope last.
     scopes: Vec<HashSet<String>>,
     /// Statements hoisted in front of the one being lowered (propagation).
@@ -763,6 +784,7 @@ impl<'a> Lowerer<'a> {
         Lowerer {
             ctx,
             fragment: false,
+            grad_of: HashMap::new(),
             scopes: vec![HashSet::new()],
             pre: Vec::new(),
             temp: 0,
@@ -1059,6 +1081,7 @@ impl<'a> Lowerer<'a> {
             tests: vec![],
             main: vec![],
             main_effects: BTreeMap::new(),
+            traced: std::collections::BTreeSet::new(),
         };
         let fact_names: BTreeSet<String> = self.ctx.facts.clone();
         let written: BTreeSet<String> = facts_written_by_fns(stmts, &fact_names);
@@ -1887,6 +1910,9 @@ impl<'a> Lowerer<'a> {
     }
 
     fn assign(&mut self, name: &str, expr: Expr) -> Stmt {
+        if let Some(f) = gradient_of_call(&expr) {
+            self.grad_of.insert(name.to_string(), f);
+        }
         match self.pass {
             Pass::Settle => return self.settled(name, expr),
             Pass::Scan => return self.scanned(name, expr),
@@ -2439,7 +2465,13 @@ impl<'a> Lowerer<'a> {
                 for i in items {
                     out.push(self.lower_expr(i)?);
                 }
-                let ty = shapes::shaped(ty_of(&TypeContext::array_type(out.iter().map(full))), shapes::literal_dims(&out));
+                // (a literal whose rows' sizes show only as the program runs
+                // keeps the rank its nesting states)
+                let ty = ty_of(&TypeContext::array_type(out.iter().map(full)));
+                let ty = match shapes::literal_dims(&out) {
+                    Some(dims) => shapes::shaped(ty, Some(dims)),
+                    None => ty,
+                };
                 Expr::ListLit(out, ty)
             }
             A::Map(pairs) => {
@@ -2595,6 +2627,18 @@ impl<'a> Lowerer<'a> {
                 if **cell != Ty::Unknown && !matches!(index, CrowType::NumArray(..) | CrowType::Array(_)) {
                     let ty = (**cell).clone();
                     return Ok(Expr::Index { base: Box::new(base), indices: idx, ty });
+                }
+            }
+            // a call of a gradient types the function it is of, as a direct
+            // call would: the tensors it hands retype parameters the seek
+            // guessed floats (a function grad differentiates is of numbers,
+            // or of tensors), and every call after unifies
+            if let Some(f) = self.gradient_of(&base) {
+                if self.pass == Pass::Scan && self.unscanned == 0 {
+                    // (an int handed to a function of numbers is a float)
+                    let handed: Vec<CrowType> = full_types.iter().map(|t| if *t == CrowType::Int { CrowType::Float } else { t.clone() }).collect();
+                    self.ctx.grad_forced.remove(&f);
+                    self.ctx.note_call(&A::Ident(f), args, &handed);
                 }
             }
             let ty = self.call_type(callee, args, &arg_types, &full_types, Some(read(&base)));
@@ -3245,6 +3289,15 @@ impl<'a> Lowerer<'a> {
 
     /// The specialised name of a user function called at these argument
     /// types, when it has one.
+    /// The function a gradient being called is of: `grad[f][…]`, or a
+    /// local holding one (`g = grad[f]`, then `g[…]`).
+    fn gradient_of(&self, base: &Expr) -> Option<String> {
+        match base {
+            Expr::Local(g, _) | Expr::Move(g, _) => self.grad_of.get(g).cloned(),
+            other => gradient_of_call(other),
+        }
+    }
+
     fn specialised(&self, name: &str, full_types: &[CrowType]) -> String {
         self.ctx.specialization_for(name, full_types).unwrap_or_else(|| name.to_string())
     }
@@ -4342,6 +4395,47 @@ mod tests {
         assert!(ir.contains("return core.sqrt(x)"), "{}", ir);
         assert!(ir.contains("pure sq(x: Float) -> Float"), "{}", ir);
         assert!(ir.contains("call sq(float(2))"), "{}", ir);
+    }
+
+    /// A function `grad` differentiates over tensors is typed by the calls
+    /// of its gradient: its parameters the tensors handed, its answer a
+    /// number; the gradient of one parameter is a tensor, of several a list
+    /// of tensors; and the function and the ones it reaches are traced —
+    /// their chains unfused, since a fused kernel is opaque to the tape
+    #[test]
+    fn a_function_grad_differentiates_over_tensors() {
+        let ir = ir_of("use math, math.nn\nfn loss[w, x, y]\n    return mse[flatten[x * w], y]\nfn helper[w]\n    return sum[w .* w + w]\nfn outer[w]\n    return helper[w] * 2.0\ng = grad[loss]\ngs = g[zeros[2, 1], [[1.0, 0.0], [0.0, 1.0]], [1.0, 2.0]]\nlog[gs[0].shape]\nh = grad[outer][[1.0, 2.0]]\nlog[h.shape]\n");
+        assert!(ir.contains("loss(w: Tensor(Float") && ir.contains(") -> Float"), "{}", ir);
+        assert!(ir.contains("helper(w: Tensor(Float"), "{}", ir);
+        assert!(ir.contains("let gs: List(Tensor(Float))"), "{}", ir);
+        assert!(ir.contains("let h: Tensor(Float)"), "{}", ir);
+        assert!(!ir.contains("fused"), "{}", ir);
+    }
+
+    /// A function handed a matrix literal by one call, a tensor of unknown
+    /// shape by another and a list of rows grown by `push` by a third keeps
+    /// the rank the literal states: its rows are rows (the join had dropped
+    /// to unknown, and `len[x[0]]` was refused as the length of a number)
+    #[test]
+    fn a_parameter_keeps_the_rank_one_call_states() {
+        let ir = ir_of("use math\nstruct S[xs]\nfn first[x]\n    return len[x[0]]\ns = S[zeros[2, 2]]\nrows = []\nrows = push[rows, [1.0, 2.0]]\nlog[first[[[1.0, 2.0], [3.0, 4.0]]]]\nlog[first[s.xs]]\nlog[first[rows]]\n");
+        assert!(ir.contains("first(x: Tensor(Float, [?, 2])) -> Int") || ir.contains("first(x: Tensor(Float, [?, ?])) -> Int"), "{}", ir);
+    }
+
+    /// What a function `grad` differentiates over tensors may not do is
+    /// refused before the program runs, with the function and the line
+    #[test]
+    fn a_function_grad_differentiates_over_tensors_is_checked() {
+        let refuses = |src: &str, words: &str| {
+            let r = refusal_of(src);
+            assert!(r.contains(words), "{}\n--- wanted: {}", r, words);
+        };
+        refuses("use math\nfn f[w]\n    return max[w]\nlog[grad[f][[3.0, 1.0]]]\n", "grad: f calls `max`, which is not differentiable");
+        refuses("use math\nfn f[w]\n    return w[0] * w[1]\nlog[grad[f][[3.0, 1.0]]]\n", "grad: f indexes a tensor");
+        refuses("use math\nfn f[w]\n    t = 0.0\n    for x in w\n        t = t + x\n    return t\nlog[grad[f][[3.0, 1.0]]]\n", "grad: f walks a tensor");
+        refuses("use math\nfn f[w, k]\n    return sum[w] * k\nlog[grad[f][[1.0, 2.0], 3.0]]\n", "a function grad differentiates takes tensors, or numbers alone — f takes a tensor, a number");
+        refuses("use math\nfn inner[x]\n    return x * x\nfn outer[w]\n    return sum[w] * grad[inner][2.0]\nlog[grad[outer][[1.0]]]\n", "grad: outer calls grad");
+        refuses("use math\nfn f[w]\n    n = len[w gt 0.0]\n    return sum[w] * float[n]\nlog[grad[f][[3.0, 1.0]]]\n", "grad: f compares tensors with `gt`");
     }
 
     /// A test that builds a record the program only receives types the

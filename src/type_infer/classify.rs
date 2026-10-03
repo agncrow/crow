@@ -484,10 +484,12 @@ impl TypeContext {
             seek_stmts(stmts, &mut seeks, &mut widgets);
             for f in seeks {
                 if let Some(g) = f.strip_prefix("grad:") {
-                    if let Some(sig) = self.functions.get_mut(g) {
-                        for p in sig.params.iter_mut() {
-                            p.1 = p.1.unify(&CrowType::Float);
-                        }
+                    // a function grad differentiates is typed by the calls of
+                    // its gradient (the lowering's Index path): of numbers, an
+                    // int counted as its float, or of tensors; until one is
+                    // seen its parameters are not known (`grad_forced`)
+                    if self.functions.contains_key(g) {
+                        self.grad_forced.insert(g.to_string());
                     }
                 } else if let Some(sig) = self.functions.get_mut(&f) {
                     if let Some(p) = sig.params.first_mut() {

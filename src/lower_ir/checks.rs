@@ -664,9 +664,20 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// A field read from a record.
+    /// A field read from a record; a list has `len` and no other field (a
+    /// list of tensors asked its `.shape` had stopped interpreted and not
+    /// built compiled).
     pub(super) fn check_field(&mut self, obj_type: &CrowType, field: &str) {
         if matches!(field, "ok" | "reason" | "kind" | "trace") {
+            return;
+        }
+        if matches!(obj_type, CrowType::Array(_)) && field != "len" {
+            let owner = match field {
+                "shape" | "dtype" | "device" => "a tensor's",
+                "columns" | "dtypes" => "a frame's",
+                _ => "a record's",
+            };
+            self.refuse(format!("a list has no field '{}': `.{}` is {} — index an item for its own", field, field, owner));
             return;
         }
         if let CrowType::Struct(name) = obj_type {
@@ -1498,6 +1509,8 @@ mod tests {
     #[test]
     fn test_struct_bad_field() {
         assert!(check_source("struct Point[x, y]\np = Point[1, 2]\nlog[p.z]\n").unwrap_err().contains("has no field 'z'"));
+        let err = check_source("use math\nxs = for i in range[2]\n    zeros[2]\nlog[xs.shape]\nlog[xs.len]\n").unwrap_err();
+        assert!(err.contains("a list has no field 'shape': `.shape` is a tensor's") && !err.contains("'len'"), "{}", err);
     }
 
     #[test]

@@ -305,6 +305,60 @@ impl Emitter {
         self.line("");
     }
 
+    /// A function `grad` differentiates over tensors, or one it reaches:
+    /// its copy over traced values (crow_runtime::autograd::Traced), every
+    /// number and tensor traced, every operation the kernel's.
+    pub(crate) fn emit_traced_function(&mut self, f: &Fn) {
+        let traced = |t: &Ty| matches!(crow_type(t), CrowType::Float | CrowType::NumArray(..));
+        let params: Vec<String> = f
+            .params
+            .iter()
+            .map(|(p, t)| if traced(t) { format!("{}: crow_runtime::autograd::Traced", p) } else { format!("{}: {}", p, crow_type(t).to_rust_type()) })
+            .collect();
+        let ret = if traced(&f.ret) { "crow_runtime::autograd::Traced".to_string() } else { crow_type(&f.ret).to_rust_type() };
+        self.needs_crow_runtime = true;
+        self.line("#[allow(unused_mut, unused_variables, non_snake_case, unreachable_code)]");
+        self.line(&format!("fn _traced_{}({}) -> {} {{", Self::rust_fn_name(&f.name), params.join(", "), ret));
+        self.indent += 1;
+        let saved = (
+            std::mem::take(&mut self.scopes),
+            std::mem::take(&mut self.ref_params),
+            std::mem::take(&mut self.mutated),
+            self.cur_ret.take(),
+            self.returns_unit,
+            std::mem::take(&mut self.cur_fn),
+        );
+        self.scopes = vec![HashMap::new()];
+        self.cur_ret = Some(crow_type(&f.ret));
+        self.returns_unit = false;
+        self.cur_fn = f.name.clone();
+        self.emitting_traced = true;
+        self.mutated = Self::mutated_in(&f.body);
+        for (p, t) in &f.params {
+            self.declare(p, crow_type(t));
+        }
+        let mut body = f.body.clone();
+        if let Some(i) = body.iter().rposition(|s| !matches!(s, Stmt::Line(_))) {
+            if let Stmt::Do(e) = &body[i] {
+                body[i] = Stmt::Return(Some(e.clone()));
+            }
+        }
+        for s in &body {
+            self.emit_stmt(s);
+        }
+        self.emitting_traced = false;
+        let (scopes, refs, mutated, ret, unit, cur) = saved;
+        self.scopes = scopes;
+        self.ref_params = refs;
+        self.mutated = mutated;
+        self.cur_ret = ret;
+        self.returns_unit = unit;
+        self.cur_fn = cur;
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+    }
+
     /// A function `grad` differentiates, over dual numbers.
     pub(crate) fn emit_dual_function(&mut self, f: &Fn) {
         let params: Vec<String> = f.params.iter().map(|(p, _)| format!("{}: CrowDual", p)).collect();
@@ -583,7 +637,7 @@ impl Emitter {
         }
         let kw = if self.mutated.contains(var) { "let mut" } else { "let" };
         let in_live_callback = self.live_render_fns.contains(&self.cur_fn) || self.live_handle_fns.contains(&self.cur_fn) || self.views.contains(&self.cur_fn);
-        if self.emitting_dual || in_live_callback || matches!(t, CrowType::Unknown) {
+        if self.emitting_dual || self.emitting_traced || in_live_callback || matches!(t, CrowType::Unknown) {
             self.line(&format!("{} {} = {};", kw, var, text));
         } else {
             self.line(&format!("{} {}: {} = {};", kw, var, t.to_rust_type(), text));
@@ -892,7 +946,8 @@ impl Emitter {
         let is_copy = Self::is_copy_type(&elem);
         // in parallel as the lowering decided, unless cpu[1] asked for one core
         let forced_sequential = self.cpu_count.map_or(false, |n| n <= 1);
-        let use_par = !forced_sequential && parallel;
+        // (a traced copy runs its loops in order: one tape records the run)
+        let use_par = !forced_sequential && parallel && !self.emitting_traced;
         // an item of text, or a parsed value, is the loop's own, as the body
         // reads it (a borrowed one compared with a cell's text did not build)
         let text = matches!(elem, CrowType::Str | CrowType::Markup | CrowType::Json);

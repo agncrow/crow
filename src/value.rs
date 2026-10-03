@@ -189,6 +189,11 @@ pub enum Value {
     /// to lists, maps and tensors, which JSON's own rows then converted back.
     Json(Box<serde_json::Value>),
     Dual(f64, f64), // dual number for autograd: (real, derivative)
+    /// A tensor a function `grad` differentiates computes with: its value
+    /// and, where it depends on a parameter, its node on the tape
+    /// (crow_runtime::autograd). A number inside such a function is a
+    /// tensor of no dimensions.
+    Traced(Box<crow_runtime::autograd::Traced>),
     App(Box<AppSession>), // headless app session for test blocks
     GradFn(FnValue), // gradient function wrapping a user function
     Done, // represents no value (from 'done' status)
@@ -247,6 +252,7 @@ impl Value {
             Value::Response(_) => "response",
             Value::Json(j) => crow_runtime::json::type_word(j),
             Value::Dual(_, _) => "float", // Dual appears as float to user
+            Value::Traced(t) => if t.value.ndim() == 0 { "float" } else { "array" },
             Value::GradFn(_) => "fn",
             Value::Done => "done",
         }
@@ -291,6 +297,12 @@ impl fmt::Display for Value {
                 write!(f, "{}", j.crow_fmt())
             }
             Value::GradFn(func) => write!(f, "<grad {}>", func.name),
+            // a traced value shows as its value: a number, or the tensor
+            Value::Traced(t) => match t.as_number().filter(|_| t.value.ndim() == 0) {
+                Some(x) if x == (x as i64) as f64 && x.is_finite() => write!(f, "{}", x as i64),
+                Some(x) => write!(f, "{}", x),
+                None => write!(f, "{}", t.value),
+            },
             Value::Dual(real, _) => {
                 // Display as float (user never sees the derivative)
                 if *real == (*real as i64) as f64 && real.is_finite() {

@@ -3,9 +3,11 @@
 Small models written in Crow, on `math` and `math.nn`: least squares and
 ridge regression, logistic regression, k nearest neighbours, Gaussian
 naive Bayes, k-means, principal components, a decision tree, a random
-forest and a one-hidden-layer network — with the metrics that score them
-and the split and scaling that prepare their data. Each one fits the same
-way every run, and answers the same in `crow run -i` and `crow run`.
+forest, and three trained by `grad` with no derivative written out —
+softmax regression, a linear support vector machine and a one-hidden-layer
+network — with the metrics that score them and the split and scaling that
+prepare their data. Each one fits the same way every run, and answers the
+same in `crow run -i` and `crow run`.
 
 ```
 deps = map[models = 'github.com/agncrow/crow/packages/models@main']
@@ -29,7 +31,9 @@ holds a target (or a class) for each.
 | `logistic` | `fit[x, y, steps, rate]` → `Logistic[coef, intercept]`, `y` of 0s and 1s | `probability[m, x]`, `classify[m, x]` — a 0 or 1 per row |
 | `kmeans` | `fit[x, k, rounds]` → `Clusters[centres, labels]` | `assign[c, r]` — the nearest centre's index |
 | `tree` | `fit[x, y, depth]` → the root `Node`, `y` of int classes | `classify[t, r]` — a class for one sample |
-| `mlp` | `fit[x, y, hidden, steps, rate, seed]` → `Net[w1, b1, w2, b2]` | `probability[net, x]`, `classify[net, x]` |
+| `mlp` | `fit[x, y, hidden, steps, rate, seed]` → `Net[w1, b1, w2, b2]`, by `grad` | `probability[net, x]`, `classify[net, x]` |
+| `softmax` | `fit[x, y, classes, steps, rate]` → `Softmax[w, b, classes]`, `y` of int classes, by `grad` | `scores[m, x]` — a row of scores per sample; `classify[m, x]` — the greatest's class per row |
+| `svm` | `fit[x, y, steps, rate]` → `Svm[w, b]`, `y` of −1s and 1s, by `grad` | `classify[m, x]` — −1 or 1 per row |
 | `ridge` | `fit[x, y, penalty]` → `Ridge[coef, intercept]` | `predict[m, x]` — a number per row |
 | `knn` | `fit[x, y, k]` → `Knn[x, y, k]` | `classify[m, r]` — the class most of the k nearest have; `predict[m, r]` — their mean target |
 | `bayes` | `fit[x, y]` → `Bayes[classes, means, variances, priors]`, `y` of int classes | `classify[m, r]`, `probability[m, r]` — a probability per class |

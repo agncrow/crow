@@ -18,7 +18,7 @@ Import with `use math.nn`. Functions become top-level after import.
 
 | Function | Description | Example |
 |---|---|---|
-| `mse[pred, target]` | Mean squared error (Float) | [Neural-network building blocks: `use math.nn`](../by-example/nn.md) |
+| `mse[pred, target]` | Mean squared error (Float) | [Automatic differentiation](../by-example/grad.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) |
 | `crossentropy[logits, targets]` | Cross-entropy loss with log-sum-exp stability (Float): logits `[classes]` with one target, or `[batch, classes]` with a target per row, each a class from 0 up to classes − 1 | [Neural-network building blocks: `use math.nn`](../by-example/nn.md) |
 | `bce[pred, target]` | Binary cross-entropy with clamping (Float) | [Neural-network building blocks: `use math.nn`](../by-example/nn.md) |
 

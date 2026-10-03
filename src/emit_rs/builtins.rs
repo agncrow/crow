@@ -259,8 +259,20 @@ impl Emitter {
             "grad" if n == 1 => {
                 if let Some(fname) = fn_named(&args[0]) {
                     if let Some(sig) = self.fns.get(fname).cloned() {
-                        let dual = format!("_dual_{}", Self::rust_fn_name(fname));
                         let ps: Vec<String> = sig.params.iter().map(|(p, _)| p.clone()).collect();
+                        // over tensors: the function's traced copy run on
+                        // leaves, its number differentiated backwards
+                        if self.traced_functions.contains(fname) {
+                            self.needs_crow_runtime = true;
+                            let cps: Vec<String> = ps.iter().map(|p| format!("{}: crow_runtime::tensor::CrowTensor", p)).collect();
+                            let leaves: Vec<String> = (0..ps.len()).map(|i| format!("_l[{}].clone()", i)).collect();
+                            let (ret, pick) = if ps.len() == 1 { ("crow_runtime::tensor::CrowTensor", "[0].clone()") } else { ("Vec<crow_runtime::tensor::CrowTensor>", "") };
+                            return Some(format!(
+                                "|{}| -> {} {{ crow_runtime::autograd::gradient(&[{}], |_l| Ok(_traced_{}({}))).unwrap_or_else(|e| crow_stop({}, e)){} }}",
+                                cps.join(", "), ret, ps.join(", "), Self::rust_fn_name(fname), leaves.join(", "), self.current_line, pick
+                            ));
+                        }
+                        let dual = format!("_dual_{}", Self::rust_fn_name(fname));
                         if ps.len() == 1 {
                             return Some(format!("|{p}: f64| -> f64 {{ {df}(CrowDual::new({p}, 1.0)).dual }}", p = ps[0], df = dual));
                         }
