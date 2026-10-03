@@ -1,0 +1,83 @@
+--- Getting data ready for a model: a split into a training and a test
+--- set (the rows shuffled from `seed`, so a split is the same every run),
+--- and features standardised to a mean of zero and a spread of one by
+--- what the training rows showed. `x` holds a row of features per
+--- sample, `y` a target or a class for each.
+use math, math.stats
+
+struct Split [x_train, y_train, x_test, y_test]
+struct Scale [means, spreads]
+
+--- the rows numbered 0 to n − 1 in a random order
+fn shuffled[n]
+    order = []
+    for i in range[n]
+        order = push[order, i]
+    for i in range[n]
+        j = rand[n]
+        held = order[i]
+        order[i] = order[j]
+        order[j] = held
+    return order
+
+--- `share` of the rows held out for testing, the rest for training
+fn divide[x, y, share, seed_n]
+    if share lte 0.0 or share gte 1.0
+        return error['divide: share is between 0 and 1 (got `share`)', 'divide']
+    seed[seed_n]
+    n = len[y]
+    order = shuffled[n]
+    tests = int[round[float[n] * share]]
+    x_test = []
+    y_test = []
+    x_train = []
+    y_train = []
+    for k in range[n]
+        i = order[k]
+        if k lt tests
+            x_test = push[x_test, x[i]]
+            y_test = push[y_test, y[i]]
+        else
+            x_train = push[x_train, x[i]]
+            y_train = push[y_train, y[i]]
+    return Split[x_train, y_train, x_test, y_test]
+
+--- feature j over the rows, as a list of numbers
+fn feature[x, j]
+    out = for r in x
+        float[r[j]]
+    return out
+
+--- each feature's mean and spread over the rows (a spread of zero is
+--- read as one, so a constant feature stays constant)
+fn fit_scale[x]
+    k = len[x[0]]
+    means = for j in range[k]
+        mean[feature[x, j]]
+    spreads = for j in range[k]
+        max[std[feature[x, j]], 0.000001]
+    return Scale[tensor[means], tensor[spreads]]
+
+--- the rows of x standardised by the scale
+fn scale[s, x]
+    rows = for r in x
+        (tensor[r] - s.means) ./ s.spreads
+    return stack[rows]
+
+test splits_and_scales[]
+    x = [[1.0, 10.0], [2.0, 20.0], [3.0, 30.0], [4.0, 40.0], [5.0, 50.0]]
+    y = [1, 2, 3, 4, 5]
+    s = divide[x, y, 0.4, 3]
+    assert[len[s.y_test] eq 2]
+    assert[len[s.y_train] eq 3]
+    assert[len[s.x_train] eq 3]
+    again = divide[x, y, 0.4, 3]
+    assert[again.y_test eq s.y_test]
+    assert[not divide[x, y, 1.0, 3].ok]
+    sc = fit_scale[x]
+    assert[sc.means eq [3.0, 30.0]]
+    z = flatten[scale[sc, x]]
+    --- the first row: both features two spreads below their means
+    assert[abs[z[0] + 2.0 / sqrt[2.0]] lt 0.000001]
+    assert[abs[z[1] + 2.0 / sqrt[2.0]] lt 0.000001]
+    assert[abs[z[4]] lt 0.000001]

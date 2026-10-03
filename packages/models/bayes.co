@@ -1,0 +1,85 @@
+--- Gaussian naive Bayes: each class is a product of one normal
+--- distribution per feature, fitted from the class's samples (its means
+--- and variances), and a sample is classed where the log of its prior
+--- times those densities is greatest. `x` holds a row of features per
+--- sample, `y` an int class for each. A variance is floored, so a
+--- feature every sample of a class shares still has a density.
+use math
+
+struct Bayes [classes, means, variances, priors]
+
+--- the distinct classes, in the order first seen
+fn classes_of[y]
+    out = []
+    for c in y
+        if not contains[out, c]
+            out = push[out, c]
+    return out
+
+--- the population variance of a list of numbers
+fn spread[vals]
+    t = tensor[vals]
+    d = t - mean[t]
+    return mean[d .* d]
+
+--- feature j of the samples of class c, as a list
+fn feature_of[x, y, c, j]
+    out = []
+    for i in range[len[y]]
+        if y[i] eq c
+            out = push[out, float[x[i][j]]]
+    return out
+
+fn fit[x, y]
+    classes = classes_of[y]
+    n = float[len[y]]
+    k = len[x[0]]
+    means = []
+    variances = []
+    priors = []
+    for c in classes
+        mu = for j in range[k]
+            mean[feature_of[x, y, c, j]]
+        v = for j in range[k]
+            max[spread[feature_of[x, y, c, j]], 0.000001]
+        means = push[means, tensor[mu]]
+        variances = push[variances, tensor[v]]
+        priors = push[priors, float[len[feature_of[x, y, c, 0]]] / n]
+    return Bayes[classes, means, variances, priors]
+
+--- the log of a sample's density under class k, plus the log prior
+fn score[m, r, k]
+    d = tensor[r] - m.means[k]
+    v = m.variances[k]
+    return ln[m.priors[k]] - 0.5 * sum[ln[v * 6.283185307179586]] - 0.5 * sum[d .* d ./ v]
+
+fn classify[m, r]
+    best = m.classes[0]
+    best_score = score[m, r, 0]
+    for k in range[len[m.classes]]
+        s = score[m, r, k]
+        if s gt best_score
+            best = m.classes[k]
+            best_score = s
+    return best
+
+--- each class's probability for a sample, summing to one
+fn probability[m, r]
+    scores = for k in range[len[m.classes]]
+        score[m, r, k]
+    top = max[tensor[scores]]
+    weights = exp[tensor[scores] - top]
+    return weights / sum[weights]
+
+--- two classes apart on one feature, alike on the other: the fit tells
+--- them by the feature that differs
+test classes_by_each_features_density[]
+    x = [[1.0, 5.0], [1.2, 5.1], [0.8, 4.9], [6.0, 5.0], [6.2, 5.1], [5.8, 4.9]]
+    y = [0, 0, 0, 1, 1, 1]
+    m = fit[x, y]
+    assert[classify[m, [1.1, 5.0]] eq 0]
+    assert[classify[m, [5.9, 5.0]] eq 1]
+    p = probability[m, [1.1, 5.0]]
+    assert[p[0] gt 0.99]
+    assert[abs[sum[p] - 1.0] lt 0.000001]
+    assert[m.priors eq [0.5, 0.5]]

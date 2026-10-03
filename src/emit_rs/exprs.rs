@@ -131,6 +131,12 @@ impl Emitter {
                                 inner, self.current_line
                             )
                         }
+                        // a list of rows is a matrix: rows of one shape, or the
+                        // reason (the interpreter's words)
+                        CrowType::Array(item) if matches!(item.as_ref(), CrowType::NumArray(..)) => {
+                            self.needs_crow_runtime = true;
+                            format!("crow_runtime::tensor::CrowTensor::from_elements(&({})){}", inner, self.or_stop())
+                        }
                         CrowType::Array(_) => {
                             self.needs_crow_runtime = true;
                             format!("{{ let _v: Vec<f64> = ({}).iter().map(|x| *x as f64).collect(); let _n = _v.len(); crow_runtime::tensor::CrowTensor::from_vec(_v, vec![_n]) }}", inner)
@@ -1523,9 +1529,11 @@ impl Emitter {
         // an argument's error is the call's value (spec, auto-propagation),
         // unless the IR says the call takes it as it is (a collecting loop
         // gathering what an iteration yielded, errors included)
+        // (a function of the program's named like an element is a call,
+        // not the element: it hands a failed argument on)
         let skip = (!propagates && matches!(target, Target::Runtime(_) | Target::Row(_)))
             || matches!(name.as_str(), "log" | "assert" | "cpu" | "gpu" | "nodes" | "type" | "error" | "captured" | "running")
-            || (self.needs_ui && !from_module && (name == "chart" || name == "table" || crate::lower::UI_ELEMENTS.contains(&name.as_str())));
+            || (self.needs_ui && !from_module && !matches!(target, Target::User(_)) && (name == "chart" || name == "table" || crate::lower::UI_ELEMENTS.contains(&name.as_str())));
         if !skip {
             let result_idx: Vec<usize> = raw_args.iter().enumerate().filter(|(_, a)| matches!(self.tt(a), CrowType::Result(_))).map(|(i, _)| i).collect();
             if !result_idx.is_empty() {

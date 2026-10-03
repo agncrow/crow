@@ -68,14 +68,43 @@ pub(super) fn call_dims(name: &str, args: &[Expr]) -> Option<Dims> {
         "full" if args.len() >= 2 => Some(sizes(&args[..args.len() - 1])),
         "eye" if args.len() == 1 => Some(vec![size(&args[0]), size(&args[0])]),
         "linspace" if args.len() == 3 => Some(vec![size(&args[2])]),
-        // the last two axes swapped (the runtime's CrowTensor::transpose)
-        "transpose" if args.len() == 1 => args[0].ty().tensor_dims().filter(|d| d.len() >= 2).map(|d| {
-            let mut d = d.clone();
+        // the last two axes swapped (the runtime's CrowTensor::transpose);
+        // a list of rows is the matrix they stack to
+        "transpose" if args.len() == 1 => args[0].ty().tensor_dims().cloned().or_else(|| stacked_dims(&args[0].ty())).filter(|d| d.len() >= 2).map(|mut d| {
             let n = d.len();
             d.swap(n - 2, n - 1);
             d
         }),
         "reshape" if args.len() >= 2 => Some(sizes(&args[1..])),
+        // a list of rows stacked along a new axis: one dimension more than
+        // its rows have; a list of lists of numbers is a matrix
+        "stack" if args.len() == 1 => stacked_dims(&args[0].ty()),
+        // numbers as a tensor: a list's a vector, a list of lists' a matrix,
+        // a tensor's its own
+        "tensor" if args.len() == 1 => match args[0].ty().payload() {
+            Ty::List(item) => match item.payload() {
+                Ty::Int | Ty::Float => Some(vec![None]),
+                Ty::List(inner) if matches!(inner.payload(), Ty::Int | Ty::Float) => Some(vec![None, None]),
+                _ => None,
+            },
+            Ty::Tensor(_, d) => d.clone(),
+            Ty::Column(_) => Some(vec![None]),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The shape a list of rows has stacked: one dimension more than each row
+/// has, where the rows' shape is known (a list of lists of numbers is a
+/// matrix); none where the rows' rank shows only as the program runs.
+pub(super) fn stacked_dims(list: &Ty) -> Option<Dims> {
+    match list.payload() {
+        Ty::List(item) => match item.payload() {
+            Ty::Tensor(_, Some(d)) => Some(std::iter::once(None).chain(d.iter().cloned()).collect()),
+            Ty::List(inner) if matches!(inner.payload(), Ty::Int | Ty::Float) => Some(vec![None, None]),
+            _ => None,
+        },
         _ => None,
     }
 }

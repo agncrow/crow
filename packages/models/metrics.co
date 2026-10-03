@@ -1,0 +1,94 @@
+--- How well a model did: for classes, the share it got right and, for
+--- the class `1` against `0`, precision, recall and their harmonic mean;
+--- for values, the root mean square error, the mean absolute error and
+--- r². `truth` holds what was so, `guess` what the model said, one per
+--- sample, as lists of one length.
+use math
+
+--- the two lists checked to be one length
+fn paired[truth, guess]
+    if len[truth] ne len[guess]
+        return error['metrics: truth and guess are one length, got `len[truth]` and `len[guess]`', 'metrics']
+    return len[truth]
+
+--- the share of samples classed right
+fn accuracy[truth, guess]
+    n = paired[truth, guess]
+    right = 0
+    for i in range[n]
+        if truth[i] eq guess[i]
+            right = right + 1
+    return float[right] / float[n]
+
+--- true positives, guessed positives and real positives for the class 1
+fn counts[truth, guess]
+    n = paired[truth, guess]
+    tp = 0
+    gp = 0
+    rp = 0
+    for i in range[n]
+        if guess[i] eq 1
+            gp = gp + 1
+        if truth[i] eq 1
+            rp = rp + 1
+        if truth[i] eq 1 and guess[i] eq 1
+            tp = tp + 1
+    return [tp, gp, rp]
+
+--- of the samples guessed 1, the share that were
+fn precision[truth, guess]
+    c = counts[truth, guess]
+    if c[1] eq 0
+        return 0.0
+    return float[c[0]] / float[c[1]]
+
+--- of the samples that were 1, the share guessed so
+fn recall[truth, guess]
+    c = counts[truth, guess]
+    if c[2] eq 0
+        return 0.0
+    return float[c[0]] / float[c[2]]
+
+--- the harmonic mean of precision and recall
+fn f1[truth, guess]
+    p = precision[truth, guess]
+    r = recall[truth, guess]
+    if p + r eq 0.0
+        return 0.0
+    return 2.0 * p * r / (p + r)
+
+--- the root of the mean squared error
+fn rmse[truth, guess]
+    n = paired[truth, guess]
+    d = tensor[truth] - tensor[guess]
+    return sqrt[sum[d .* d] / float[n]]
+
+--- the mean absolute error
+fn mae[truth, guess]
+    n = paired[truth, guess]
+    return sum[abs[tensor[truth] - tensor[guess]]] / float[n]
+
+--- the share of the truth's variance the guesses explain
+fn r2[truth, guess]
+    n = paired[truth, guess]
+    t = tensor[truth]
+    d = t - tensor[guess]
+    spread = t - mean[t]
+    total = sum[spread .* spread]
+    if total eq 0.0
+        return 0.0
+    return 1.0 - sum[d .* d] / total
+
+test scores_classes_and_values[]
+    truth = [1, 0, 1, 1, 0, 0]
+    guess = [1, 0, 0, 1, 1, 0]
+    assert[abs[accuracy[truth, guess] - 4.0 / 6.0] lt 0.000001]
+    assert[abs[precision[truth, guess] - 2.0 / 3.0] lt 0.000001]
+    assert[abs[recall[truth, guess] - 2.0 / 3.0] lt 0.000001]
+    assert[abs[f1[truth, guess] - 2.0 / 3.0] lt 0.000001]
+    assert[precision[[0, 0], [0, 0]] eq 0.0]
+    assert[rmse[[1.0, 2.0, 3.0], [1.0, 2.0, 5.0]] eq sqrt[4.0 / 3.0]]
+    assert[abs[mae[[1.0, 2.0, 3.0], [2.0, 2.0, 5.0]] - 1.0] lt 0.000001]
+    assert[abs[r2[[1.0, 2.0, 3.0], [1.0, 2.0, 3.0]] - 1.0] lt 0.000001]
+    assert[abs[r2[[1.0, 2.0, 3.0], [2.0, 2.0, 2.0]]] lt 0.000001]
+    assert[not accuracy[[1, 0], [1]].ok]

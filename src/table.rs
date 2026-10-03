@@ -464,6 +464,11 @@ pub fn read_str(v: &CrowValue) -> Result<&str, String> {
 pub fn read_tensor(v: &CrowValue) -> Result<Cow<'_, CrowTensor>, String> {
     match &v.value {
         Value::NumArray(t) => Ok(Cow::Borrowed(t.as_ref())),
+        // a list of rows is a matrix, as a list of numbers is a vector
+        Value::Array(items) if !items.is_empty() && items.iter().all(|i| i.is_ok() && matches!(i.value, Value::NumArray(_))) => {
+            let rows: Vec<CrowTensor> = items.iter().filter_map(|i| if let Value::NumArray(t) = &i.value { Some(t.as_ref().clone()) } else { None }).collect();
+            CrowTensor::from_elements(&rows).map(Cow::Owned)
+        }
         Value::Array(items) => {
             let mut data = Vec::with_capacity(items.len());
             for (i, item) in items.iter().enumerate() {
@@ -1687,7 +1692,7 @@ impl Kind {
                 Kind::Whole => a == Arg::Int,
                 // numbers held as a list or a column are converted where
                 // they meet the parameter (the lowering's row arguments)
-                Kind::Tensor => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Column | Arg::FallibleNumbers),
+                Kind::Tensor => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Column | Arg::FallibleNumbers | Arg::Tensors),
                 Kind::Tensors => a == Arg::Tensors,
                 Kind::Str => a == Arg::Text,
                 Kind::Strs | Kind::Texts => a == Arg::Texts,

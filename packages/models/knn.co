@@ -1,0 +1,65 @@
+--- k nearest neighbours: a sample is classed by the most common class
+--- among the `k` training samples nearest to it (by Euclidean distance;
+--- a tie goes to the smaller class), and valued by their mean target.
+--- `x` holds a row of features per sample, `y` a class or a target for
+--- each. The fit keeps the data; the asking does the work.
+use math
+
+struct Knn [x, y, k]
+
+fn fit[x, y, k]
+    if k lt 1
+        return error['knn: k is 1 or more', 'knn']
+    if k gt len[y]
+        return error['knn: k is at most the number of samples (`len[y]`)', 'knn']
+    return Knn[x, y, k]
+
+--- the indices of the k samples nearest to r, nearest first
+fn nearest[m, r]
+    distances = for row in m.x
+        norm[tensor[row] - tensor[r]]
+    order = argsort[tensor[distances]]
+    out = []
+    for i in range[m.k]
+        out = push[out, int[order[i]]]
+    return out
+
+--- the most common class among the k nearest, the smaller class on a tie
+fn classify[m, r]
+    votes = map[]
+    for i in nearest[m, r]
+        key = '`m.y[i]`'
+        if has[votes, key]
+            votes[key] = votes[key] + 1
+        else
+            votes[key] = 1
+    best = m.y[nearest[m, r][0]]
+    best_n = 0
+    for i in nearest[m, r]
+        c = m.y[i]
+        n = votes['`c`']
+        if n gt best_n or (n eq best_n and c lt best)
+            best = c
+            best_n = n
+    return best
+
+--- the mean target of the k nearest
+fn predict[m, r]
+    total = 0.0
+    for i in nearest[m, r]
+        total = total + float[m.y[i]]
+    return total / float[m.k]
+
+--- two clusters of classes, a sample near each: classed with its
+--- neighbours; a value is its neighbours' mean
+test classes_by_its_neighbours[]
+    x = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [9.0, 9.0], [9.0, 8.0], [8.0, 9.0]]
+    y = [0, 0, 0, 1, 1, 1]
+    m = fit[x, y, 3]
+    assert[classify[m, [0.5, 0.5]] eq 0]
+    assert[classify[m, [8.5, 8.5]] eq 1]
+    r = fit[x, [1.0, 1.0, 1.0, 5.0, 5.0, 5.0], 3]
+    assert[predict[r, [0.2, 0.2]] eq 1.0]
+    assert[predict[r, [8.8, 8.8]] eq 5.0]
+    assert[not fit[x, y, 0].ok]
+    assert[not fit[x, y, 7].ok]

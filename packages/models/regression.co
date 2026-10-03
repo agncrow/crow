@@ -6,11 +6,13 @@ use math
 
 struct Linear [coef, intercept, r2]
 
---- each column's mean, as a vector
+--- each column's mean, as a vector (the rows a list or a matrix)
 fn column_means[x]
-    cols = transpose[x]
-    means = for c in cols
-        mean[c]
+    k = len[x[0]]
+    means = for j in range[k]
+        vals = for r in x
+            float[r[j]]
+        mean[vals]
     return tensor[means]
 
 --- the fit: centred inputs solved by least squares, the intercept from

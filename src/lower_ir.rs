@@ -3074,6 +3074,12 @@ impl<'a> Lowerer<'a> {
             .zip(kinds)
             .map(|(x, k)| match (k, x.ty()) {
                 (Kind::Tensor, Ty::List(e)) if matches!(e.payload(), Ty::Int | Ty::Float) => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: Ty::tensor(Ty::Float) },
+                // a list of rows is a matrix where a tensor is taken (spec,
+                // Arrays: a list of rows and a matrix hold numbers alike)
+                (Kind::Tensor, Ty::List(e)) if matches!(e.payload(), Ty::Tensor(..)) => {
+                    let ty = Ty::Tensor(Box::new(Ty::Float), shapes::stacked_dims(&x.ty()));
+                    Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty }
+                }
                 // (a plain int: one that can fail is handed on as its error,
                 // through the mark the backends read)
                 (Kind::Item | Kind::ItemRef, Ty::Int) if floats && !matches!(x, Expr::Convert { how: Convert::Unwrap, .. }) => {
@@ -3135,7 +3141,8 @@ impl<'a> Lowerer<'a> {
                     _ => false,
                 };
                 if k == Kind::Tensor && numbers {
-                    Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: Ty::tensor(Ty::Float) }
+                    let ty = Ty::Tensor(Box::new(Ty::Float), shapes::stacked_dims(&x.ty()));
+                    Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty }
                 } else {
                     x
                 }
@@ -4133,6 +4140,38 @@ mod tests {
         let front = |src: &str| crate::lower::lower_program(&crate::build(src).expect("parses")).err().map(|e| format!("{}", e)).unwrap_or_default();
         assert!(front(&format!("{}log[window[t, 'px', 'sum', rows = 2]]\n", t)).contains("window[] has no option 'rows' — its options are n, by"));
         assert!(front(&format!("{}log[window[t, 'px']]\n", t)).contains("window[] takes a frame, a column and what to compute"));
+    }
+
+    /// A function named like an element (`h3`, `p`) is a call outside a
+    /// view: handed a value that can fail for a plain parameter it is typed
+    /// as able to fail, as any call is — auto-propagation had skipped it as
+    /// the element, so `.ok` of its answer was decided true and the compiled
+    /// program did not build (found by the fuzzer, whose helpers are h1, h2)
+    #[test]
+    fn a_function_named_like_an_element_hands_a_failure_on() {
+        let ir = ir_of("fn h3[x]\n    return x + 1\nt = float['x']\nw = h3[t]\nlog[w.ok]\nu = h3[float['y']]\nlog[u]\n");
+        assert!(ir.contains("let w: Result(Float) = call h3(unwrap t)"), "{}", ir);
+        assert!(ir.contains("display.log!held(w.ok)"), "asked, not decided: {}", ir);
+        assert!(ir.contains("let u: Result(Float) = call h3(unwrap core.float_of(\"y\"))"), "{}", ir);
+    }
+
+    /// A call whose argument's kind shows only as the program runs is typed
+    /// by what every row of its name answers, else not known: `abs` of a
+    /// map's item nothing typed is no int (the first row's answer had been
+    /// taken, and a float came); `stack` of a list of rows, and `tensor` of
+    /// a list, state their shapes, so a stacked matrix's columns walk as
+    /// rows; a list of rows is a matrix where a tensor is taken
+    #[test]
+    fn a_call_on_an_unknown_value_is_typed_by_what_its_rows_agree_on() {
+        let ir = ir_of("d = map[]\nv = abs[d['x']]\nlog[abs[v - 1.0]]\nlog[len[d['x']]]\n");
+        assert!(ir.contains("let v: ? = abs("), "{}", ir);
+        assert!(!ir.contains("core.abs_int"), "no row picked before the value comes: {}", ir);
+        assert!(ir.contains("len("), "a len of an unknown value is left to its values, typed as every len row answers: {}", ir);
+        let ir = ir_of("use math\nm = [[1.0, 2.0], [3.0, 4.0]]\nrows = []\nfor r in m\n    rows = push[rows, r * 2.0]\ns = stack[rows]\nt = transpose[rows]\ncols = transpose[s]\nmeans = for c in cols\n    mean[c]\nlog[means]\nv = tensor[[1.0, 2.0]]\nlog[v]\n");
+        assert!(ir.contains("let s: Tensor(Float, [?, 2]) = math.stack("), "{}", ir);
+        assert!(ir.contains("let t: Tensor(Float, [2, ?]) = math.transpose(tensor(move rows))") || ir.contains("math.transpose(tensor(rows))"), "{}", ir);
+        assert!(ir.contains("let means: Tensor(Float) = ") || ir.contains("let means: List(Float)"), "{}", ir);
+        assert!(ir.contains("let v: Tensor(Float, [2])") || ir.contains("let v: Tensor(Float, [?])"), "{}", ir);
     }
 
     /// A status the type settles is decided before the program runs: `.ok`

@@ -3,6 +3,7 @@
 --- and compares the two).
 use math
 use regression, logistic, kmeans, tree, mlp
+use knn, bayes, ridge, pca, forest, metrics, prepare
 
 lin = regression.fit[[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [2.0, 1.0]], [1.0, 3.0, -2.0, 0.0, 2.0]]
 log['regression: `round[lin.coef[0] * 1000.0] / 1000.0` `round[lin.coef[1] * 1000.0] / 1000.0` `round[lin.intercept * 1000.0] / 1000.0`']
@@ -22,3 +23,30 @@ log['tree: splits on `t.feature`, [1.5, 5] is `tree.classify[t, [1.5, 5.0]]`, [3
 xo = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]
 net = mlp.fit[xo, [0, 1, 1, 0], 8, 4000, 0.5, 7]
 log['mlp: `mlp.classify[net, xo]`']
+
+xk = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [9.0, 9.0], [9.0, 8.0], [8.0, 9.0]]
+yk = [0, 0, 0, 1, 1, 1]
+kn = knn.fit[xk, yk, 3]
+log['knn: `knn.classify[kn, [0.5, 0.5]]` `knn.classify[kn, [8.5, 8.5]]`']
+
+nb = bayes.fit[[[1.0, 5.0], [1.2, 5.1], [0.8, 4.9], [6.0, 5.0], [6.2, 5.1], [5.8, 4.9]], [0, 0, 0, 1, 1, 1]]
+log['bayes: `bayes.classify[nb, [1.1, 5.0]]` `bayes.classify[nb, [5.9, 5.0]]` priors `nb.priors`']
+
+rg = ridge.fit[[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [2.0, 1.0]], [1.0, 3.0, -2.0, 0.0, 2.0], 1.0]
+log['ridge: `round[rg.coef[0] * 1000.0] / 1000.0` `round[rg.coef[1] * 1000.0] / 1000.0` `round[rg.intercept * 1000.0] / 1000.0`']
+
+pc = pca.fit[[[0.0, 0.0], [1.0, 1.0], [2.0, 2.0], [3.0, 3.0]], 1]
+log['pca: explains `round[pc.explained[0] * 1000.0] / 1000.0`']
+
+xf = [[1.0, 9.0], [2.0, 1.0], [3.0, 8.0], [4.0, 2.0], [0.5, 3.0], [3.5, 7.0], [1.5, 2.0], [3.8, 6.0]]
+yf = [0, 0, 1, 1, 0, 1, 0, 1]
+fr = forest.fit[xf, yf, 7, 3, 11]
+log['forest: `forest.classify[fr, [1.0, 5.0]]` `forest.classify[fr, [3.9, 5.0]]`']
+
+truth = [1, 0, 1, 1, 0, 0]
+guess = [1, 0, 0, 1, 1, 0]
+log['metrics: accuracy `round[metrics.accuracy[truth, guess] * 1000.0] / 1000.0` f1 `round[metrics.f1[truth, guess] * 1000.0] / 1000.0` rmse `metrics.rmse[[1.0, 2.0, 3.0], [1.0, 2.0, 5.0]]`']
+
+held = prepare.divide[xf, yf, 0.25, 3]
+sc = prepare.fit_scale[held.x_train]
+log['prepare: `len[held.y_train]` train `len[held.y_test]` test, means `sc.means`']

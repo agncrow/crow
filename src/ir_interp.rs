@@ -1086,6 +1086,12 @@ impl IrInterp {
                     // CrowColumn::numbers reads them: a missing cell or a
                     // cell of text or a bool is the reason it has none
                     Convert::ToTensor => match &v.value {
+                        // a list of rows is a matrix: rows of one shape, or
+                        // the reason (the compiled program's words)
+                        Value::Array(items) if v.is_ok() && !items.is_empty() && items.iter().all(|i| i.is_ok() && matches!(i.value, Value::NumArray(_))) => {
+                            let rows: Vec<crow_runtime::tensor::CrowTensor> = items.iter().filter_map(|i| if let Value::NumArray(t) = &i.value { Some(t.as_ref().clone()) } else { None }).collect();
+                            CrowValue::ok(Value::NumArray(Box::new(crow_runtime::tensor::CrowTensor::from_elements(&rows)?)))
+                        }
                         Value::Array(items) if v.is_ok() => {
                             let column = matches!(expr.ty(), Ty::Column(_));
                             let mut data = Vec::with_capacity(items.len());

@@ -1,0 +1,53 @@
+--- Ridge regression: least squares with the coefficients' squares
+--- penalised by `penalty`, which steadies a fit on features that move
+--- together. The inputs are centred, so the intercept is exact and
+--- unpenalised: coef solves (XᵀX + penalty·I) coef = Xᵀy on the centred X.
+--- `x` holds a row of features per sample, `y` a target for each.
+use math
+
+struct Ridge [coef, intercept]
+
+--- each column's mean, as a vector (the rows a list or a matrix)
+fn column_means[x]
+    k = len[x[0]]
+    means = for j in range[k]
+        vals = for r in x
+            float[r[j]]
+        mean[vals]
+    return tensor[means]
+
+fn fit[x, y, penalty]
+    if penalty lt 0.0
+        return error['ridge: penalty is 0 or more', 'ridge']
+    means = column_means[x]
+    rows = for r in x
+        tensor[r] - means
+    centred = stack[rows]
+    y_mean = mean[y]
+    k = centred.shape[1]
+    gram = transpose[centred] * centred + eye[k] * penalty
+    coef = solve[gram, transpose[centred] * reshape[tensor[y] - y_mean, len[y], 1]]
+    coef = flatten[coef]
+    intercept = y_mean - dot[coef, means]
+    return Ridge[coef, intercept]
+
+--- the model's prediction for each row of x
+fn predict[m, x]
+    out = for r in x
+        dot[tensor[r], m.coef] + m.intercept
+    return tensor[out]
+
+--- with no penalty the fit is least squares; a penalty pulls the
+--- coefficients toward zero
+test shrinks_toward_zero[]
+    x = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [2.0, 1.0]]
+    y = [1.0, 3.0, -2.0, 0.0, 2.0]
+    m = fit[x, y, 0.0]
+    assert[abs[m.coef[0] - 2.0] lt 0.000001]
+    assert[abs[m.coef[1] + 3.0] lt 0.000001]
+    assert[abs[m.intercept - 1.0] lt 0.000001]
+    r = fit[x, y, 10.0]
+    assert[abs[r.coef[0]] lt 2.0]
+    assert[abs[r.coef[1]] lt 3.0]
+    assert[abs[predict[r, [[0.0, 0.0]]][0] - r.intercept] lt 0.000001]
+    assert[not fit[x, y, -1.0].ok]

@@ -623,7 +623,11 @@ pub fn fits(v: &Ty, slot: &Ty) -> bool {
         (Ty::Node, Ty::Markup | Ty::Str) | (Ty::Markup, Ty::Node) => true,
         // an empty list literal handed where numbers go is an empty tensor
         (Ty::List(a), Ty::Tensor(..)) if **a == Ty::Unknown => true,
-        (Ty::List(a), Ty::List(b)) | (Ty::Map(a), Ty::Map(b)) | (Ty::Tensor(a, _), Ty::Tensor(b, _)) | (Ty::Column(a), Ty::Column(b)) => fits(a, b),
+        // a tensor of ints in a slot of floats: both hold f64, and an int
+        // counts as its float (a parameter one call hands ints and another
+        // floats is a tensor of floats)
+        (Ty::Tensor(a, _), Ty::Tensor(b, _)) => fits(a, b) || (**a == Ty::Int && **b == Ty::Float),
+        (Ty::List(a), Ty::List(b)) | (Ty::Map(a), Ty::Map(b)) | (Ty::Column(a), Ty::Column(b)) => fits(a, b),
         (Ty::Frame(_), Ty::Frame(_)) => true,
         (Ty::Record(a), Ty::OptRecord(b)) | (Ty::OptRecord(a), Ty::Record(b)) => a == b,
         (Ty::Fn(..), Ty::Fn(..)) => true,

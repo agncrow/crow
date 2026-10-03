@@ -66,6 +66,20 @@ impl TypeContext {
             // from the arguments
             let given = row.ret.generic() || (row.ret == crate::table::Kind::Tensor && row.params.first() == Some(&crate::table::Kind::Tensor));
             if !given {
+                // an argument whose kind shows only as the program runs
+                // picks the row then: the call's type is what every row of
+                // the name answers, or not known (the first row's answer
+                // had been taken — `abs` an int — and a float came)
+                if kinds.iter().any(|k| matches!(k, crate::table::Arg::Unknown | crate::table::Arg::AnyList)) {
+                    let answers: Vec<CrowType> = crate::table::ROWS
+                        .iter()
+                        .filter(|r| r.module.is_empty() && r.name == name && crate::table::kinds_of(r.params, args.len()).is_some())
+                        .map(|r| r.crow_type())
+                        .collect();
+                    if answers.iter().any(|t| *t != answers[0]) {
+                        return CrowType::Unknown;
+                    }
+                }
                 return row.crow_type();
             }
         }
@@ -525,9 +539,13 @@ impl TypeContext {
         // a view renders what it is given: a failed argument shows
         // its reason inside the tree, it never fails the view; a record
         // holds a failed value in its field, as a module's record does
+        // (an element's name is the element inside a view, and a function
+        // of the program's elsewhere: `h1[x]` outside a view hands a failed
+        // `x` on as any call does — the fuzzer's helpers are named h1, h2)
+        let element = crate::lower::UI_ELEMENTS.contains(&name) && (self.in_view || !self.functions.contains_key(name));
         let skip = matches!(name, "log" | "assert" | "type" | "cpu" | "gpu" | "error" | "table" | "chart" | "__known")
             || self.structs.contains_key(name)
-            || crate::lower::UI_ELEMENTS.contains(&name)
+            || element
             || (self.in_view && crate::lower::is_ui_control(name, matches!(arg_types.first().cloned().map(Self::walked), Some(CrowType::Frame(_)))))
             || self.views.contains(name);
         if !skip && !matches!(base, CrowType::Result(_) | CrowType::Void) {

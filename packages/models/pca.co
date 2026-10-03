@@ -1,0 +1,52 @@
+--- Principal components: the `k` directions along which the centred
+--- samples vary most, from the singular value decomposition of the
+--- centred matrix, and the share of the variance each explains. `x`
+--- holds a row of features per sample.
+use math
+
+struct Pca [means, components, explained]
+
+--- each column's mean, as a vector (the rows a list or a matrix)
+fn column_means[x]
+    k = len[x[0]]
+    means = for j in range[k]
+        vals = for r in x
+            float[r[j]]
+        mean[vals]
+    return tensor[means]
+
+fn fit[x, k]
+    means = column_means[x]
+    rows = for r in x
+        r - means
+    centred = stack[rows]
+    width = len[x[0]]
+    if k lt 1 or k gt width
+        return error['pca: k is between 1 and the number of features (`width`)', 'pca']
+    parts = svd[centred]
+    s = parts[1]
+    vt = parts[2]
+    power = s .* s
+    explained = for i in range[k]
+        power[i] / sum[power]
+    --- the first k rows of Vt, as a k × width matrix
+    components = reshape[slice[flatten[vt], 0, k * width], k, width]
+    return Pca[means, components, tensor[explained]]
+
+--- each row of x as its coordinates along the components
+fn transform[p, x]
+    rows = for r in x
+        r - p.means
+    return stack[rows] * transpose[p.components]
+
+--- points along a line: one component explains them all, and their
+--- coordinates along it are their distances from the centre
+test finds_the_line_the_points_lie_on[]
+    x = [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0], [3.0, 3.0]]
+    p = fit[x, 1]
+    assert[abs[p.explained[0] - 1.0] lt 0.000001]
+    t = flatten[transform[p, x]]
+    assert[abs[abs[t[0]] - abs[t[3]]] lt 0.000001]
+    assert[abs[t[1] + t[2]] lt 0.000001]
+    assert[abs[abs[t[3]] - 3.0 * abs[t[1]]] lt 0.000001]
+    assert[not fit[x, 3].ok]

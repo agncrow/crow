@@ -1,0 +1,39 @@
+--- A function handed a value that failed, for a parameter that cannot
+--- fail, hands the error on as its own answer (spec §10,
+--- auto-propagation), whatever the function is named: `h3`, `p`, `a` are
+--- the element vocabulary inside a view and the program's own functions
+--- elsewhere. The call is typed as able to fail, so `.ok` of its answer
+--- asks the answer, an operator on the answer carries the error, and
+--- inside a function the error goes back to the caller. (Both modes had
+--- typed a call of a function named like an element as its plain
+--- return: the interpreter decided `.ok` true of an answer that was the
+--- error, and the compiled program did not build. The fuzzer's helpers
+--- are named h1, h2, which is how it was found.)
+fn h3[x]
+    return x + 1
+
+fn p[s]
+    k = h3[float[s]]
+    return k * 2
+
+fn plus[x]
+    return x + 1
+
+t = float['x']
+w = h3[t]
+log[w]
+log[w.ok]
+log[w.kind]
+log[w + 1]
+r = p['z']
+log[r]
+log[r.ok]
+log[p['2']]
+u = plus[h3[float['y']]]
+log[u]
+log[u.ok]
+good = h3[2.5]
+log[good]
+log[good.ok]
+if not w.ok
+    log['w failed: `w.reason`']

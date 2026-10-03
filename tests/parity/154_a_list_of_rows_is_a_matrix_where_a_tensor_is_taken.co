@@ -1,0 +1,33 @@
+--- A list of rows — tensors of one shape, built by push from a matrix's
+--- rows — is a matrix wherever a tensor is taken (spec, Arrays: a list
+--- of rows and a matrix hold numbers alike): `transpose`, `stack`, a
+--- column's mean. A list of rows of two shapes is the reason, in both
+--- modes. `stack` of a list of rows is a matrix the type knows the rank
+--- of, so its columns are walked as rows and each is numbers. A call
+--- whose argument's kind shows only as the program runs is typed by what
+--- its rows all answer, or not at all: `abs` of such a value is not an
+--- int before the value comes. (Compiled, a list of rows handed to
+--- `transpose` had been refused; iterating a stacked matrix's transpose
+--- had been typed as numbers, so `mean` of a column was refused; `abs` of
+--- an unknown value picked the int row and stopped on a float.)
+use math
+
+m = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+rows = []
+for r in m
+    rows = push[rows, r * 2.0]
+log[transpose[rows]]
+log[stack[rows]]
+cols = transpose[stack[rows]]
+means = for c in cols
+    mean[c]
+log[means]
+log[len[rows]]
+d = map[]
+d['x'] = 2.5
+d['y'] = -4.0
+v = abs[d['x']] - abs[d['y']]
+log[abs[v]]
+ragged = push[rows, [1.0, 2.0]]
+log[transpose[ragged]]
+log['not reached']

@@ -53,6 +53,51 @@ makes the sign-in cookie `Secure` over https, and `X-Forwarded-For` lets a
 route's `limit` count each client rather than the proxy (the app believes
 it only from a proxy on its own machine).
 
+## How Far One Process Goes
+
+A Crow app is one process: its sessions, its derivations' values and its
+tables' versions live in it, and that is a decision, not a limit you
+discover later (session-layer-design.md §6). How far one goes is
+measured, not guessed. `tests/capacity.rs` serves a compiled app — a
+route that queries, a route that answers JSON, a live page — and
+measures it:
+
+```bash
+cargo test --release --test capacity -- --ignored --nocapture
+```
+
+On a laptop (an M-series Mac, over loopback, eight clients), one process:
+
+```text
+sessions: 2007 opened in 0.1s (24903 a second), 0 failed, p50 0.29 ms, p99 0.57 ms
+memory: 30784 KB before, 39184 KB after: 4.2 KB a session
+tabs: 500 sockets opened and held in 2.1s, each sent its render; 142.0 KB a connected session
+a route answering JSON (/status): 34418 a second, 0 failed, p50 0.21 ms, p99 0.30 ms
+a route that queries (/count): 29972 a second, 0 failed, p50 0.25 ms, p99 0.34 ms
+a page load (/): 27260 a second, 0 failed, p50 0.27 ms, p99 0.37 ms
+```
+
+Read it as: a tab that is open costs about 140 KB while it is open, so a
+gigabyte holds some seven thousand open tabs of a page like this one (a
+bigger page holds a bigger render); a page loaded and left costs a few
+kilobytes until its grace period ends; and the routes themselves are not
+where the time goes — a real route is as fast as its query. The soak test
+(`tests/soak.rs`) holds an app at a steady load for as long as you ask
+and watches that memory and latency stay flat.
+
+What bounds a process in practice: the file descriptors it may hold (one
+per open tab — raise `ulimit -n` on a server), the proxy's own limits on
+connections, the memory the open tabs' renders take, and the database
+behind the routes. When an app outgrows that, a second process is a
+second app: run one per port behind a proxy that sends each tab back to
+the process it started on (a sticky route by cookie or address), and let
+the database be what they share. A write one process makes shows in
+another's derivations when their `fresh = N` window elapses, as an
+external source's does — the table's version that wakes a derivation at
+once lives in the process that wrote it. Sessions that any process could
+resume, and a change that wakes every process, are not built: not before
+an app needs them.
+
 ## Growing It
 
 Every direction from here is a chapter you've already read:

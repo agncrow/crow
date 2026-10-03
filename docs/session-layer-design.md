@@ -449,7 +449,11 @@ What finch can then delete, each a separate edit, none required:
   table versions live in one process. An app that outgrows one process
   would need sessions any process can resume from a shared store — the
   LiveView shape — and cross-process invalidation; not before an app
-  needs it.
+  needs it. *Measured (2026-10-02, `tests/capacity.rs`):* a connected tab
+  costs about 140 KB, a parked session 4 KB, and a trivial route answers
+  ~30,000 requests a second on a laptop; the book's deployment chapter
+  says what bounds a process and how to run several behind a proxy
+  (spec, Design Note "one process").
 - **Concurrent handlers within one session.** One at a time; merging
   concurrent working copies is a database's job, not a page's.
 - **Presence** (who else is looking) waits for the reference app to ask
