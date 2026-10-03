@@ -372,7 +372,17 @@ impl TypeContext {
                         let tensors = sig.params.iter().any(|(_, t)| matches!(t, CrowType::NumArray(..)));
                         if tensors {
                             let param_types: Vec<CrowType> = sig.params.iter().map(|(_, t)| t.clone()).collect();
-                            let one = CrowType::tensor(CrowType::Float);
+                            // (each gradient is shaped like its parameter: the
+                            // list's items have what the parameters' shapes share)
+                            let dims = param_types
+                                .iter()
+                                .filter_map(|t| match t {
+                                    CrowType::NumArray(_, d) => Some(d.clone()),
+                                    _ => None,
+                                })
+                                .reduce(|a, b| super::join_dims(&a, &b))
+                                .flatten();
+                            let one = CrowType::NumArray(Box::new(CrowType::Float), dims);
                             let ret = if n == 1 { one } else { CrowType::Array(Box::new(one)) };
                             return CrowType::Fn(param_types, Box::new(ret));
                         }

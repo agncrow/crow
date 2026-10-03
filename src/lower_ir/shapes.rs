@@ -8,13 +8,17 @@
 //! program computes stays unknown; a function's parameter has the
 //! dimensions its calls agree on (a shape is no reason for a copy of the
 //! function: every tensor compiles alike); and only a mismatch of two known
-//! dimensions is refused.
+//! dimensions is refused. A tensor's rank is always in its type: every
+//! builtin's answer has one (`row_dims`), and a loop over a tensor walks
+//! rows or numbers, an index reads a row or a number, by it — refused
+//! where the lowering does not know it (`check_rank_known`), so both
+//! backends decide alike (spec, Arrays, Design Note "rank is in the type").
 
 use super::*;
 use crate::type_infer::{shown_dims, Dims};
 
 /// A literal size: an int the program wrote.
-fn size(x: &Expr) -> Option<usize> {
+pub(super) fn size(x: &Expr) -> Option<usize> {
     match x {
         Expr::Const(Const::Int(n), _) if *n >= 0 => Some(*n as usize),
         Expr::Convert { expr, .. } => size(expr),
@@ -28,6 +32,8 @@ pub(super) fn shaped(ty: Ty, dims: Option<Dims>) -> Ty {
     match ty {
         Ty::Tensor(elem, _) => Ty::Tensor(elem, dims),
         Ty::Result(inner) => Ty::Result(Box::new(shaped(*inner, dims))),
+        // a list of tensors shaped alike (`qr`'s two matrices, `fft`'s two)
+        Ty::List(item) if matches!(item.payload(), Ty::Tensor(..)) => Ty::List(Box::new(shaped(*item, dims))),
         other => other,
     }
 }
@@ -120,9 +126,13 @@ fn tensor(x: &Expr) -> bool {
 pub(super) fn binary_dims(op: &BinOp, l: &Expr, r: &Expr) -> Option<Dims> {
     let (ls, rs) = (l.ty().tensor_dims().cloned(), r.ty().tensor_dims().cloned());
     match op {
-        // tensor × tensor is the matrix product
-        BinOp::Mul if tensor(l) && tensor(r) => match (ls?, rs?) {
-            (a, b) if a.len() == 2 && b.len() == 2 => Some(vec![a[0], b[1]]),
+        // tensor × tensor is the matrix product: a matrix (`check_shapes`
+        // refuses two known shapes that are not matrices)
+        BinOp::Mul if tensor(l) && tensor(r) => match (ls, rs) {
+            (Some(a), Some(b)) if a.len() == 2 && b.len() == 2 => Some(vec![a[0], b[1]]),
+            (Some(a), None) if a.len() == 2 => Some(vec![a[0], None]),
+            (None, Some(b)) if b.len() == 2 => Some(vec![None, b[1]]),
+            (None, None) => Some(vec![None, None]),
             _ => None,
         },
         BinOp::Add | BinOp::Sub | BinOp::ElemMul | BinOp::ElemDiv | BinOp::ElemPow if tensor(l) && tensor(r) => broadcast(&ls?, &rs?).ok(),
@@ -138,13 +148,169 @@ pub(super) fn binary_dims(op: &BinOp, l: &Expr, r: &Expr) -> Option<Dims> {
     }
 }
 
+/// The shape of a builtin's tensor where `call_dims` states no sizes: by
+/// the rank every builtin's answer has (spec, Arrays: rank is in the type)
+/// — an element-wise map keeps its argument's shape, a reduction along an
+/// axis drops that axis, a constructor has a dimension per size, a loaded
+/// table is a matrix, and so on — with the sizes that follow. None where
+/// the rank depends on a value (`transpose` of a tensor of unknown rank,
+/// `svd`'s pieces, whose ranks differ).
+pub(super) fn row_dims(name: &str, args: &[Expr]) -> Option<Dims> {
+    let dims = |i: usize| -> Option<Dims> { args.get(i).and_then(|a| a.ty().tensor_dims().cloned()) };
+    let items = |i: usize| -> Option<Dims> {
+        args.get(i).and_then(|a| match a.ty().payload() {
+            Ty::List(item) => item.payload().tensor_dims().cloned(),
+            _ => None,
+        })
+    };
+    let unknown = |n: usize| -> Option<Dims> { Some(vec![None; n]) };
+    let sizes = |xs: &[Expr]| -> Dims { xs.iter().map(size).collect() };
+    let first_unknown = |d: Option<Dims>| -> Option<Dims> {
+        d.map(|mut d| {
+            if let Some(x) = d.first_mut() {
+                *x = None;
+            }
+            d
+        })
+    };
+    // the element-wise shape of two or three operands, where every one's
+    // shape is known
+    let broadcast_of = |is: &[usize]| -> Option<Dims> {
+        let mut out: Option<Dims> = None;
+        for &i in is {
+            let d = dims(i)?;
+            out = Some(match out {
+                Some(o) => broadcast(&o, &d).ok()?,
+                None => d,
+            });
+        }
+        out
+    };
+    let n = args.len();
+    match name {
+        // element-wise maps, and the transforms that keep a shape
+        "exp" | "ln" | "log2" | "log10" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "sinh" | "cosh" | "tanh" | "sign" | "abs" | "sqrt" | "floor" | "ceil" | "round" | "gamma" | "erf" | "factorial" | "bessel" | "clip" | "zscore" | "relu" | "sigmoid" | "softmax" | "gelu" | "cumsum" | "cumprod" | "sort" | "reverse" | "shuffle" | "argsort" | "triu" | "tril" | "inv" | "pinv" | "cholesky" | "ifft" | "lowpass" | "highpass" | "bandpass" => dims(0),
+        // an indicator of a series is a series, whatever held the prices
+        "sma" | "ema" | "rsi" => unknown(1),
+        "atan2" | "choose" => broadcast_of(&[0, 1]),
+        "where" => broadcast_of(&[0, 1, 2]),
+        "mod" if n == 2 && tensor(&args[1]) => broadcast_of(&[0, 1]),
+        "mod" => dims(0),
+        // `tensor[t]` is its own, `tensor[df]` a matrix; `stack[t]` restacks a
+        // tensor's rows, `stack[rows, axis]` one dimension more than a row
+        "tensor" | "dense" if n == 1 => match args[0].ty().payload() {
+            Ty::Tensor(_, d) => d.clone(),
+            Ty::Frame(_) => unknown(2),
+            Ty::Handle(h) if h == "sparse" => unknown(2),
+            _ => None,
+        },
+        "tensor" if n == 2 => unknown(2),
+        "stack" if n == 1 => dims(0),
+        "stack" if n == 2 => stacked_dims(&args[0].ty()).or_else(|| dims(0)).map(|d| vec![None; d.len()]),
+        // a reduction along an axis drops it
+        "sum" | "mean" | "min" | "max" | "prod" if n == 2 => dims(0).map(|mut d| match size(&args[1]) {
+            Some(ax) if ax < d.len() => {
+                d.remove(ax);
+                d
+            }
+            _ => vec![None; d.len().saturating_sub(1)],
+        }),
+        // vectors: a flattened tensor's numbers, a range, a sample, a signal
+        "flatten" => Some(vec![dims(0).and_then(|d| d.iter().copied().try_fold(1usize, |p, x| x.map(|x| p * x)))]),
+        "arange" | "unique" | "vwap" | "rolling_sum" | "cvd" | "rsi_buckets" | "conv" | "spmv" => unknown(1),
+        "hamming" | "hanning" | "permutation" if n == 1 => Some(vec![size(&args[0])]),
+        "topk" | "choice" if n == 2 => Some(vec![size(&args[1])]),
+        // matrices
+        "conv2d" | "spectrogram" | "load" => unknown(2),
+        "diag" => match dims(0) {
+            Some(d) if d.len() == 1 => Some(vec![d[0], d[0]]),
+            Some(d) if d.len() == 2 => unknown(1),
+            _ => None,
+        },
+        // random draws: a dimension per size after the distribution's numbers
+        "normal" | "uniform" | "gamma_dist" | "beta_dist" if n >= 3 => Some(sizes(&args[2..])),
+        "poisson" | "bernoulli" | "exponential" if n >= 2 => Some(sizes(&args[1..])),
+        // one row more or fewer, a slice of rows, a join along an axis
+        "pop" | "slice" => first_unknown(dims(0)),
+        "push" if n == 2 && tensor(&args[1]) => first_unknown(dims(0)),
+        "push" if n == 2 && tensor(&args[0]) => unknown(1),
+        "concat" if n >= 2 && tensor(&args[0]) => dims(0).map(|mut d| {
+            let ax = args.get(2).and_then(size).unwrap_or(0);
+            if ax < d.len() {
+                d[ax] = None;
+            }
+            d
+        }),
+        // a system's solution is shaped like its right-hand side, its rows
+        // the matrix's columns
+        "solve" if n == 2 => dims(1),
+        "lstsq" if n == 2 => dims(1).map(|mut d| {
+            if let Some(x) = d.first_mut() {
+                *x = dims(0).and_then(|a| a.get(1).copied()).flatten();
+            }
+            d
+        }),
+        // a layer's rows are its input's, its columns its weights'
+        "linear" if n == 3 => Some(vec![dims(0).and_then(|d| d.first().copied()).flatten(), dims(1).and_then(|d| d.get(1).copied()).flatten()]),
+        // lists of tensors shaped alike: `qr`'s matrices, a transform's real
+        // and imaginary parts (`svd` and `eigen`, whose pieces differ, are
+        // typed piece by piece: `piece_dims`)
+        "qr" | "fft2" | "stft" => unknown(2),
+        "fft" => dims(0),
+        "conjugate" => items(0),
+        // a complex tensor's parts are shaped like its pieces
+        "real" | "imag" | "magnitude" | "phase" => items(0),
+        // a complex number is two vectors of one number each
+        "complex" => unknown(1),
+        _ => None,
+    }
+}
+
+/// The shapes of the pieces a decomposition answers, by position: `svd`'s
+/// U (the rows of its matrix), singular values (a vector) and Vt (its
+/// columns); `eigen`'s values (a vector) and vectors (a square matrix). A
+/// list holds items of one type, so the list's item says nothing of them;
+/// an index by a literal position reads the piece's own shape.
+pub(super) fn piece_dims(name: &str, arg: Option<&Dims>) -> Option<Vec<Option<Dims>>> {
+    let at = |i: usize| arg.and_then(|d| d.get(i).copied()).flatten();
+    match name {
+        "svd" => Some(vec![Some(vec![at(0), None]), Some(vec![None]), Some(vec![None, at(1)])]),
+        "eigen" => Some(vec![Some(vec![at(0)]), Some(vec![at(0), at(0)])]),
+        _ => None,
+    }
+}
+
 impl<'a> Lowerer<'a> {
-    /// A tensor local a part of which is assigned: its shape is no longer
-    /// stated from there on, so nothing is refused of it.
+    /// A loop over a tensor walks rows or numbers, and an index into one
+    /// reads a row or a number, by the tensor's rank — which its type
+    /// states, so both backends decide alike. Where the lowering does not
+    /// know it, the decision is refused rather than guessed, and the
+    /// program states the rank.
+    pub(super) fn check_rank_known(&mut self, x: &Expr, what: &str) {
+        if self.pass != Pass::Final || !matches!(x.ty().payload(), Ty::Tensor(_, None)) {
+            return;
+        }
+        let name = match x {
+            Expr::Local(v, _) | Expr::Move(v, _) => format!("`{}`", v),
+            Expr::Field { base, name, .. } => match base.as_ref() {
+                Expr::Local(v, _) | Expr::Move(v, _) => format!("`{}.{}`", v, name),
+                _ => format!("`.{}`", name),
+            },
+            _ => "the tensor".to_string(),
+        };
+        let read = if what.starts_with("a loop") { "walks rows or numbers" } else { "reads a row or a number" };
+        self.refuse(format!(
+            "{} {} {} by its rank, and the rank of {} is not known here — state it: reshape[t, rows, columns] for a matrix, flatten[t] for a vector",
+            what, name, read, name
+        ));
+    }
+
+    /// A tensor local a part of which is assigned: its sizes are no longer
+    /// stated from there on, so nothing is refused of them; its rank stays.
     pub(super) fn forget_shape(&mut self, var: &str) {
         fn forget(t: &CrowType) -> CrowType {
             match t {
-                CrowType::NumArray(elem, _) => CrowType::NumArray(elem.clone(), None),
+                CrowType::NumArray(elem, dims) => CrowType::NumArray(elem.clone(), dims.as_ref().map(|d| vec![None; d.len()])),
                 CrowType::Result(inner) => CrowType::Result(Box::new(forget(inner))),
                 other => other.clone(),
             }

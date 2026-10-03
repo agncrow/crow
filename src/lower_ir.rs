@@ -11,7 +11,7 @@
 
 use crate::ast::{BinOp, Expr as A, Stmt as S};
 use crate::ir::*;
-use crate::type_infer::{CrowType, TypeContext};
+use crate::type_infer::{CrowType, Dims, TypeContext};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod fuse;
@@ -542,6 +542,14 @@ pub(crate) fn meta_decided(t: &Ty) -> bool {
 
 /// Whether reading an expression only reads: a constant, a local, a fact, a
 /// derivation, a function, or a record's field of one.
+/// The pieces' shapes where `e` is a decomposition's call (`svd[m]`).
+fn pieces_of_call(e: &Expr) -> Option<Vec<Option<Dims>>> {
+    let Expr::Call { args, .. } = e else { return None };
+    let name = crate::ir::call_name(e)?;
+    let dims = args.first().and_then(|a| a.ty().tensor_dims().cloned());
+    shapes::piece_dims(&name, dims.as_ref())
+}
+
 fn gradient_of_call(e: &Expr) -> Option<String> {
     // the function a gradient is of, when an expression is `grad[f]`
     match e {
@@ -729,6 +737,9 @@ struct Lowerer<'a> {
     /// The locals that hold a gradient (`g = grad[f]`), by the function
     /// each is of: a call of one types that function's parameters.
     grad_of: HashMap<String, String>,
+    /// The locals holding a decomposition's pieces (`parts = svd[m]`), with
+    /// each piece's shape by position (shapes::piece_dims).
+    pieces: HashMap<String, Vec<Option<Dims>>>,
     /// Locals declared so far, innermost scope last.
     scopes: Vec<HashSet<String>>,
     /// Statements hoisted in front of the one being lowered (propagation).
@@ -785,6 +796,7 @@ impl<'a> Lowerer<'a> {
             ctx,
             fragment: false,
             grad_of: HashMap::new(),
+            pieces: HashMap::new(),
             scopes: vec![HashSet::new()],
             pre: Vec::new(),
             temp: 0,
@@ -1166,6 +1178,11 @@ impl<'a> Lowerer<'a> {
                     let refuses = default.ty().is_result();
                     let ty = self.ctx.vars.get(name).map(ty_of).unwrap_or_else(|| default.ty());
                     let ty = if refuses { ty.payload().clone() } else { ty };
+                    // a fact's tensor has the shape its declared value states
+                    let ty = match default.ty().tensor_dims().cloned() {
+                        Some(d) => shapes::shaped(ty, Some(d)),
+                        None => ty,
+                    };
                     // an int default of a fact that holds floats is a float
                     // (spec §1): the interpreter held the int until a handler
                     // stored a float, where the compiled program converted it
@@ -1647,6 +1664,15 @@ impl<'a> Lowerer<'a> {
                 }
                 let idx = self.lower_expr(index)?;
                 let (var, mut path) = self.muted_target(object)?;
+                // a tensor's item assigned is a number: a row cannot be (the
+                // interpreter had stopped there, and the compiled program
+                // had not built)
+                if path.is_empty() && matches!(self.ctx.vars.get(&var), Some(CrowType::NumArray(..))) && matches!(expr.ty().payload(), Ty::Tensor(..) | Ty::List(_)) {
+                    self.refuse(format!(
+                        "`{}[…]` takes a number: a tensor's rows cannot be assigned one at a time — build the matrix anew (concat[…], stack[…], reshape[…])",
+                        crate::lower::shown(&var)
+                    ));
+                }
                 path.push(PathStep::Index(idx));
                 self.forget_shape(&var);
                 vec![Stmt::SetPath { var, path, expr }]
@@ -1742,6 +1768,7 @@ impl<'a> Lowerer<'a> {
                     self.join_detailed(&before, &end);
                     b
                 } else {
+                    self.check_rank_known(&it, "a loop over");
                     let saved = self.bind_loop_var(var, &it.ty());
                     // a body that binds a frame anew reads, at its top, what
                     // the loop's entry and its end both give
@@ -1912,6 +1939,14 @@ impl<'a> Lowerer<'a> {
     fn assign(&mut self, name: &str, expr: Expr) -> Stmt {
         if let Some(f) = gradient_of_call(&expr) {
             self.grad_of.insert(name.to_string(), f);
+        }
+        match pieces_of_call(&expr) {
+            Some(p) => {
+                self.pieces.insert(name.to_string(), p);
+            }
+            None => {
+                self.pieces.remove(name);
+            }
         }
         match self.pass {
             Pass::Settle => return self.settled(name, expr),
@@ -2352,7 +2387,7 @@ impl<'a> Lowerer<'a> {
                 // mask, whose missing cells are false (spec, Boolean Masks)
                 if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow | BinOp::ElemMul | BinOp::ElemDiv | BinOp::ElemPow) {
                     let numbers = |x: Expr| match x.ty() {
-                        Ty::Column(_) => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: Ty::tensor(Ty::Float) },
+                        Ty::Column(_) => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: Ty::vector(Ty::Float) },
                         _ => x,
                     };
                     l = numbers(l);
@@ -2520,6 +2555,7 @@ impl<'a> Lowerer<'a> {
                     self.ctx.scan_loop_var(var, read(&it));
                     None
                 } else {
+                    self.check_rank_known(&it, "a loop over");
                     Some(self.bind_loop_var(var, &it.ty()))
                 };
                 let listed = self.pass == Pass::Scan && fn_list.is_some();
@@ -2634,14 +2670,32 @@ impl<'a> Lowerer<'a> {
             // guessed floats (a function grad differentiates is of numbers,
             // or of tensors), and every call after unifies
             if let Some(f) = self.gradient_of(&base) {
-                if self.pass == Pass::Scan && self.unscanned == 0 {
+                // (the call typed wherever it is lowered: as an index's base
+                // too, `grad[f][x][1]` — unifying twice changes nothing)
+                if self.pass == Pass::Scan {
                     // (an int handed to a function of numbers is a float)
                     let handed: Vec<CrowType> = full_types.iter().map(|t| if *t == CrowType::Int { CrowType::Float } else { t.clone() }).collect();
                     self.ctx.grad_forced.remove(&f);
                     self.ctx.note_call(&A::Ident(f), args, &handed);
                 }
             }
+            // a row or a number, by a rank the lowering knows
+            if let ([index], Ty::Tensor(_, None)) = (arg_types.as_slice(), base.ty().payload()) {
+                if matches!(index, CrowType::Int | CrowType::Unknown) {
+                    self.check_rank_known(&base, "an index into");
+                }
+            }
             let ty = self.call_type(callee, args, &arg_types, &full_types, Some(read(&base)));
+            // a decomposition's piece, read by its literal position, has its
+            // own shape (the list's item type has none of them)
+            let position = if idx.len() == 1 { shapes::size(&idx[0]) } else { None };
+            let ty = match (self.pieces_of(&base), position) {
+                (Some(pieces), Some(i)) => match pieces.get(i) {
+                    Some(Some(d)) => shapes::shaped(ty, Some(d.clone())),
+                    _ => ty,
+                },
+                _ => ty,
+            };
             // (an item of a refused value is the payload's item: the call's
             // type, read from the variable, still said it could fail — but
             // a parsed value's item can fail itself, JSON's null where it
@@ -2847,8 +2901,9 @@ impl<'a> Lowerer<'a> {
         let ty = self.call_type(callee, args, &arg_types, &full_types, None);
         let ty = self.frame_typed(callee, args, &arg_types, &lowered, ty);
         let ty = self.column_typed(callee, args, &arg_types, ty);
-        // a builtin's tensor has the shape the program states for it
-        let ty = match shapes::call_dims(&name, &lowered) {
+        // a builtin's tensor has the shape the program states for it, and
+        // the rank every builtin's answer has
+        let ty = match shapes::call_dims(&name, &lowered).or_else(|| shapes::row_dims(&name, &lowered)) {
             Some(dims) if !self.ctx.functions.contains_key(&name) => shapes::shaped(ty, Some(dims)),
             _ => ty,
         };
@@ -3085,7 +3140,7 @@ impl<'a> Lowerer<'a> {
                     Expr::ListLit(items, Ty::List(e)) if items.is_empty() && *e == Ty::Unknown => {
                         let list = Expr::ListLit(items, Ty::List(Box::new(item)));
                         if k == Some(Kind::Tensor) {
-                            Expr::Convert { how: Convert::ToTensor, expr: Box::new(list), ty: Ty::tensor(Ty::Float) }
+                            Expr::Convert { how: Convert::ToTensor, expr: Box::new(list), ty: Ty::vector(Ty::Float) }
                         } else {
                             list
                         }
@@ -3117,7 +3172,7 @@ impl<'a> Lowerer<'a> {
             .into_iter()
             .zip(kinds)
             .map(|(x, k)| match (k, x.ty()) {
-                (Kind::Tensor, Ty::List(e)) if matches!(e.payload(), Ty::Int | Ty::Float) => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: Ty::tensor(Ty::Float) },
+                (Kind::Tensor, Ty::List(e)) if matches!(e.payload(), Ty::Int | Ty::Float) => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: Ty::vector(Ty::Float) },
                 // a list of rows is a matrix where a tensor is taken (spec,
                 // Arrays: a list of rows and a matrix hold numbers alike)
                 (Kind::Tensor, Ty::List(e)) if matches!(e.payload(), Ty::Tensor(..)) => {
@@ -3291,6 +3346,16 @@ impl<'a> Lowerer<'a> {
     /// types, when it has one.
     /// The function a gradient being called is of: `grad[f][…]`, or a
     /// local holding one (`g = grad[f]`, then `g[…]`).
+    /// The pieces a value indexed holds: a decomposition called here, or a
+    /// local one was assigned to.
+    fn pieces_of(&self, base: &Expr) -> Option<Vec<Option<Dims>>> {
+        match base {
+            Expr::Local(v, _) | Expr::Move(v, _) => self.pieces.get(v).cloned(),
+            Expr::Convert { expr, .. } => self.pieces_of(expr),
+            e => pieces_of_call(e),
+        }
+    }
+
     fn gradient_of(&self, base: &Expr) -> Option<String> {
         match base {
             Expr::Local(g, _) | Expr::Move(g, _) => self.grad_of.get(g).cloned(),
@@ -4408,7 +4473,7 @@ mod tests {
         assert!(ir.contains("loss(w: Tensor(Float") && ir.contains(") -> Float"), "{}", ir);
         assert!(ir.contains("helper(w: Tensor(Float"), "{}", ir);
         assert!(ir.contains("let gs: List(Tensor(Float))"), "{}", ir);
-        assert!(ir.contains("let h: Tensor(Float)"), "{}", ir);
+        assert!(ir.contains("let h: Tensor(Float, [2])"), "{}", ir);
         assert!(!ir.contains("fused"), "{}", ir);
     }
 
@@ -4420,6 +4485,38 @@ mod tests {
     fn a_parameter_keeps_the_rank_one_call_states() {
         let ir = ir_of("use math\nstruct S[xs]\nfn first[x]\n    return len[x[0]]\ns = S[zeros[2, 2]]\nrows = []\nrows = push[rows, [1.0, 2.0]]\nlog[first[[[1.0, 2.0], [3.0, 4.0]]]]\nlog[first[s.xs]]\nlog[first[rows]]\n");
         assert!(ir.contains("first(x: Tensor(Float, [?, 2])) -> Int") || ir.contains("first(x: Tensor(Float, [?, ?])) -> Int"), "{}", ir);
+    }
+
+    /// A tensor's rank is in its type: every builtin's answer has one, so a
+    /// loop over it walks rows or numbers and an index reads a row or a
+    /// number as the type decides, in both modes; where the rank is not
+    /// known at a loop or an index — a piece of `svd`, whose ranks differ —
+    /// the program is refused with the fix; a row assigned into a tensor
+    /// is refused too (the interpreter had stopped, the compiled program
+    /// had not built)
+    #[test]
+    fn a_loop_and_an_index_go_by_the_rank_the_type_states() {
+        let ir = ir_of("use math, math.nn\nstruct Net[w]\nnet = Net[zeros[2, 3] + 1.0]\nfor r in relu[net.w]\n    a = r\n    log[a]\nfor x in sum[net.w, 1]\n    b = x\n    log[b]\nfor x in flatten[net.w]\n    c = x\n    log[c]\nfor r in reshape[linspace[0.0, 5.0, 6], 3, 2]\n    d = r\n    log[d]\nrow0 = concat[net.w, net.w][0]\nfn fn_loss[w]\n    return sum[w .* w]\ng = grad[fn_loss][net.w]\nf = g[1]\nv = [1.0, 2.0]\nv[0] = 3.0\nfor x in v\n    h = x\n    log[h]\nlog[row0, f]\n");
+        assert!(ir.contains("let a: Tensor(Float, [3]) = "), "{}", ir);
+        assert!(ir.contains("let b: Float = "), "{}", ir);
+        assert!(ir.contains("let c: Float = "), "{}", ir);
+        assert!(ir.contains("let d: Tensor(Float, [2]) = "), "{}", ir);
+        assert!(ir.contains("let row0: Tensor(Float, [3]) = core.concat_tensors("), "{}", ir);
+        assert!(ir.contains("pure fn_loss(w: Tensor(Float, [2, 3])) -> Float"), "{}", ir);
+        assert!(ir.contains("let g: Tensor(Float, [2, 3]) = grad(fn fn_loss)[net.w]"), "{}", ir);
+        assert!(ir.contains("let f: Tensor(Float, [3]) = g[1]"), "{}", ir);
+        assert!(ir.contains("let h: Float = "), "{}", ir);
+        // (a piece read by a position the program computes has no shape)
+        let refused = refusal_of("use math\nm = [[2.0, 0.0], [0.0, 3.0]]\nparts = svd[m]\ni = 0\nu = parts[i]\nfor r in u\n    log[r]\nlog[parts[i][0]]\n");
+        assert!(refused.contains("line 6: a loop over `u` walks rows or numbers by its rank, and the rank of `u` is not known here — state it: reshape[t, rows, columns] for a matrix, flatten[t] for a vector"), "{}", refused);
+        assert!(refused.contains("line 8: an index into the tensor reads a row or a number by its rank"), "{}", refused);
+        let refused = refusal_of("use math\nm = eye[2]\nm[1] = [7.0, 8.0]\n");
+        assert!(refused.contains("`m[…]` takes a number: a tensor's rows cannot be assigned one at a time"), "{}", refused);
+        // a decomposition's pieces, each its own shape by position
+        let ir = ir_of("use math\nm = [[2.0, 0.0, 1.0], [0.0, 3.0, 1.0]]\nparts = svd[m]\ns = parts[1]\nvt = parts[2]\nfor x in s\n    log[x]\nfor r in vt\n    log[r]\nlog[svd[m][0][0]]\nq = qr[m]\nlog[q[0][0]]\n");
+        assert!(ir.contains("let s: Tensor(Float, [?]) = parts[1]"), "{}", ir);
+        assert!(ir.contains("let vt: Tensor(Float, [?, 3]) = parts[2]"), "{}", ir);
+        assert!(ir.contains("let q: List(Tensor(Float, [?, ?])) = math.qr("), "{}", ir);
     }
 
     /// What a function `grad` differentiates over tensors may not do is

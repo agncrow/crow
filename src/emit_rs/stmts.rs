@@ -902,14 +902,18 @@ impl Emitter {
             return self.column_items(&iter_str, &cell);
         }
         match it {
+            // rows or numbers as the type decided, through the runtime's one
+            // walk (crow_runtime::core): a value of another rank stops
             CrowType::NumArray(inner, dims) => {
                 let elem = crate::type_infer::TypeContext::tensor_item(inner, dims);
+                self.needs_crow_runtime = true;
+                let line = self.current_line;
                 let walked = if matches!(elem, CrowType::NumArray(..)) {
-                    format!("{}.rows()", iter_str)
+                    format!("crow_runtime::core::walk_rows(&({})).unwrap_or_else(|e| crow_stop({}, e))", iter_str, line)
                 } else if matches!(elem, CrowType::Int) {
-                    format!("{}.to_vec().iter().map(|&v| v as i64).collect::<Vec<i64>>()", iter_str)
+                    format!("crow_runtime::core::walk_numbers(&({})).unwrap_or_else(|e| crow_stop({}, e)).iter().map(|&v| v as i64).collect::<Vec<i64>>()", iter_str, line)
                 } else {
-                    format!("{}.to_vec()", iter_str)
+                    format!("crow_runtime::core::walk_numbers(&({})).unwrap_or_else(|e| crow_stop({}, e))", iter_str, line)
                 };
                 (walked, elem)
             }

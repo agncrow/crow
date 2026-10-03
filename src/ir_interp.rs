@@ -867,7 +867,7 @@ impl IrInterp {
                 if it.is_error() {
                     return self.refuse(it, &Decision::Loop);
                 }
-                let items = crate::ops::iter_items(&it)?;
+                let items = Self::walked_items(&it, iter)?;
                 if *parallel && items.len() > 1 && !self.tracing {
                     self.run_parallel(&items, var, body, false)?;
                     return Ok(Flow::Next);
@@ -1157,7 +1157,7 @@ impl IrInterp {
                             idx.push(self.eval(i)?);
                         }
                         let b = self.lookup(v).ok_or_else(|| format!("undefined variable '{}'", v))?;
-                        let cell = crate::ops::index(b, idx)?;
+                        let cell = Self::index_value(b, idx, ty)?;
                         return Ok(if matches!(base.ty(), Ty::Column(_)) { placeholder(cell, ty) } else { cell });
                     }
                 }
@@ -1178,8 +1178,8 @@ impl IrInterp {
                                 let col = f.col_index(name).ok_or_else(|| crow_runtime::stops::no_column(name))?;
                                 crate::ops::frame_cell(f, col, crate::ops::list_position(&at, f.nrows())?)
                             }
-                            Value::StructInstance(si) => crate::ops::index(&si.fields[name], vec![at])?,
-                            Value::Map(m) => crate::ops::index(&m[name], vec![at])?,
+                            Value::StructInstance(si) => Self::index_value(&si.fields[name], vec![at], ty)?,
+                            Value::Map(m) => Self::index_value(&m[name], vec![at], ty)?,
                             _ => unreachable!(),
                         };
                         return Ok(if matches!(base.ty(), Ty::Column(_)) { placeholder(cell, ty) } else { cell });
@@ -1219,7 +1219,7 @@ impl IrInterp {
                     }
                     _ => {}
                 }
-                crate::ops::index(&b, idx)?
+                Self::index_value(&b, idx, ty)?
             }
             Expr::Field { base, name, .. } => {
                 let b = self.eval(base)?;
@@ -1334,7 +1334,7 @@ impl IrInterp {
                         _ => Ok(CrowValue::done()),
                     };
                 }
-                let items = crate::ops::iter_items(&it)?;
+                let items = Self::walked_items(&it, iter)?;
                 if *parallel && items.len() > 1 && !self.tracing {
                     let results = self.run_parallel(&items, var, body, true)?;
                     return Ok(crate::ops::collect_loop(results, as_tensor));
@@ -1433,6 +1433,43 @@ impl IrInterp {
     /// outer variable or fact and reaches no effect, so nothing is lost
     /// when the clones are dropped; a `return` inside is refused.
     /// The local a chain of fields starts from: `bars` in `bars.c`.
+    /// What a loop over a tensor walks, as the IR's type decided
+    /// (crow_runtime::core::walk_rows, walk_numbers — the compiled program
+    /// reads the value through the same two): a matrix's rows, a vector's
+    /// numbers, ints of a tensor of ints and floats of one of floats. The
+    /// value had decided — rows by its rank, and a whole number as an int —
+    /// where the compiled program went by the type, so `type[x]` and a loop
+    /// over a matrix typed by nothing differed between the modes. Any other
+    /// value walks its items.
+    fn walked_items(it: &CrowValue, iter: &Expr) -> Result<Vec<CrowValue>, String> {
+        if let (Value::NumArray(t), Ty::Tensor(e, dims)) = (&it.value, iter.ty().payload()) {
+            return Ok(match Ty::tensor_item(e, dims) {
+                Ty::Tensor(..) => crow_runtime::core::walk_rows(t)?.into_iter().map(|r| CrowValue::ok(Value::NumArray(Box::new(r)))).collect(),
+                Ty::Int => crow_runtime::core::walk_numbers(t)?.into_iter().map(|v| CrowValue::ok(Value::Int(v as i64))).collect(),
+                _ => crow_runtime::core::walk_numbers(t)?.into_iter().map(|v| CrowValue::ok(Value::Float(v))).collect(),
+            });
+        }
+        crate::ops::iter_items(it)
+    }
+
+    /// `t[i]` of a tensor, as the IR's type decided (crow_runtime::core::
+    /// row_at, number_at): a matrix's row, a vector's number — an int of a
+    /// tensor of ints, else a float. A gather by a tensor of indices, and
+    /// any value that is no tensor, read by their own rule.
+    fn index_value(b: &CrowValue, idx: Vec<CrowValue>, ty: &Ty) -> Result<CrowValue, String> {
+        if let (Value::NumArray(t), [i]) = (&b.value, idx.as_slice())
+            && let Value::Int(i) = &i.value
+        {
+            match ty.payload() {
+                Ty::Tensor(..) => return crow_runtime::core::row_at(t, *i).map(|r| CrowValue::ok(Value::NumArray(Box::new(r)))),
+                Ty::Int => return crow_runtime::core::number_at(t, *i).map(|v| CrowValue::ok(Value::Int(v as i64))),
+                Ty::Float => return crow_runtime::core::number_at(t, *i).map(|v| CrowValue::ok(Value::Float(v))),
+                _ => {}
+            }
+        }
+        crate::ops::index(b, idx)
+    }
+
     fn root_local(e: &Expr) -> Option<&str> {
         match e {
             Expr::Local(v, _) => Some(v),

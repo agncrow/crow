@@ -297,6 +297,11 @@ impl<'p> Verifier<'p> {
     /// What a loop walks, and the type of each item.
     fn walked(&mut self, iter: &Expr) -> Ty {
         let t = self.expr(iter);
+        // (the lowering refuses a loop over a tensor whose rank it does
+        // not know, so both backends walk rows or numbers as the type says)
+        if let Ty::Tensor(_, None) = t.payload() {
+            self.found("a loop walks a tensor whose rank is not known — rows or numbers, decided by nothing".to_string());
+        }
         match &t {
             Ty::List(e) | Ty::Column(e) => e.as_ref().clone(),
             Ty::Tensor(e, dims) => Ty::tensor_item(e, dims),
@@ -434,9 +439,16 @@ impl<'p> Verifier<'p> {
                 ty.clone()
             }
             Expr::Index { base, indices, ty } => {
-                self.expr(base);
+                let bt = self.expr(base);
+                let mut index_types = Vec::new();
                 for i in indices {
-                    self.expr(i);
+                    index_types.push(self.expr(i));
+                }
+                // (a row or a number, decided by a rank the lowering knows)
+                if let (Ty::Tensor(_, None), [it]) = (bt.payload(), index_types.as_slice())
+                    && matches!(it.payload(), Ty::Int | Ty::Unknown)
+                {
+                    self.found("an index reads a tensor whose rank is not known — a row or a number, decided by nothing".to_string());
                 }
                 ty.clone()
             }

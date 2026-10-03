@@ -1,0 +1,58 @@
+--- A tensor's rank is in its type: a loop over a tensor walks rows or
+--- numbers, and an index reads a row or a number, as the type decides,
+--- in both modes — a matrix from a record's field, from a function, from
+--- a parameter, from an element-wise map, a reduction along an axis,
+--- `reshape`, `concat`, `push`, `stack`, `eye` and a gradient; a float
+--- tensor's item is a float, whole or not (the interpreter had read `2.0`
+--- as the int `2`, and walked rows where the compiled program walked
+--- numbers, wherever the type knew no rank). A tensor whose rank the type
+--- does not know is refused where it is walked or indexed (spec, Arrays).
+use math, math.nn
+
+struct Net[w, b]
+
+fn rows_of[m]
+    out = []
+    for r in m
+        out = push[out, sum[r]]
+    return out
+
+fn made[k]
+    return ones[k, 2] * 3.0
+
+fn loss[w]
+    return sum[w .* w]
+
+fn loss2[w, c]
+    return sum[w .* c]
+
+net = Net[zeros[2, 3] + 1.0, [0.5, 0.5]]
+for r in net.w
+    log['`type[r]` `r`']
+log[net.w[1]]
+log[type[net.b[0]]]
+log[net.b[0] + 1]
+log[rows_of[made[3]]]
+log[rows_of[relu[net.w - 2.0]]]
+log[rows_of[reshape[linspace[0.0, 5.0, 6], 3, 2]]]
+for x in sum[net.w, 1]
+    log['`type[x]` `x`']
+for x in [2.0, 3.0]
+    log['`type[x]` `x`']
+v = [2.0, 3.0]
+log[type[v[0]]]
+ints = [1, 2, 3]
+for i in ints
+    log['`type[i]` `i`']
+log[type[ints[0]]]
+m = eye[2]
+log[rows_of[concat[m, m]]]
+log[rows_of[push[m, [5.0, 6.0]]]]
+log[rows_of[transpose[m + 1.0]]]
+log[rows_of[grad[loss][net.w]]]
+gs = grad[loss2][net.w, net.w]
+log[rows_of[gs[1]]]
+vv = [1.0, 2.0, 3.0]
+vv[0] = 9.0
+for x in vv
+    log[x]

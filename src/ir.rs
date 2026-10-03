@@ -70,6 +70,11 @@ impl Ty {
         Ty::Tensor(Box::new(elem), None)
     }
 
+    /// A vector of `elem`s: one dimension, its size unstated.
+    pub fn vector(elem: Ty) -> Ty {
+        Ty::Tensor(Box::new(elem), Some(vec![None]))
+    }
+
     /// A tensor's shape, of a tensor or of one that can fail, when its type
     /// knows it.
     pub fn tensor_dims(&self) -> Option<&crate::type_infer::Dims> {

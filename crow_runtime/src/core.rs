@@ -182,6 +182,53 @@ pub fn len_tensor(t: &crate::tensor::CrowTensor) -> i64 {
     }
 }
 
+/// What a loop over a matrix walks: its rows. A tensor's rank is in its
+/// type (spec, Arrays), and the lowering decides from it whether a loop
+/// walks rows or numbers and an index reads a row or a number — refusing
+/// the decision where the rank is not known — so both backends read a
+/// value through these four, and a value whose rank disagrees with its
+/// type stops them with the same words: a bug in Crow's shape rules, never
+/// a silent difference between the two.
+pub fn walk_rows(t: &crate::tensor::CrowTensor) -> Result<Vec<crate::tensor::CrowTensor>, String> {
+    if t.ndim() < 2 {
+        return Err(rank_disagrees("rows", "a matrix", t));
+    }
+    Ok(t.rows())
+}
+
+/// What a loop over a vector walks: its numbers.
+pub fn walk_numbers(t: &crate::tensor::CrowTensor) -> Result<Vec<f64>, String> {
+    if t.ndim() >= 2 {
+        return Err(rank_disagrees("numbers", "a vector", t));
+    }
+    Ok(t.to_vec())
+}
+
+/// `m[i]` of a matrix: its row, or the reason the index is outside.
+pub fn row_at(t: &crate::tensor::CrowTensor, i: i64) -> Result<crate::tensor::CrowTensor, String> {
+    if t.ndim() < 2 {
+        return Err(rank_disagrees("a row", "a matrix", t));
+    }
+    Ok(t.index0(crate::stops::row(i, t.shape()[0])?))
+}
+
+/// `v[i]` of a vector: its number, or the reason the index is outside.
+pub fn number_at(t: &crate::tensor::CrowTensor, i: i64) -> Result<f64, String> {
+    if t.ndim() >= 2 {
+        return Err(rank_disagrees("a number", "a vector", t));
+    }
+    Ok(t.get_flat(crate::stops::item(i, t.len())?))
+}
+
+fn rank_disagrees(read: &str, typed: &str, t: &crate::tensor::CrowTensor) -> String {
+    format!(
+        "the program reads {} of a tensor its type says is {}, but the value has shape {:?} — a bug in Crow's shape rules, not in this program",
+        read,
+        typed,
+        t.shape()
+    )
+}
+
 /// `len[frame]`: its rows.
 pub fn len_frame(f: &crate::frame::CrowFrame) -> i64 {
     f.nrows() as i64
@@ -637,4 +684,22 @@ mod tests {
         assert_eq!(v.as_ptr(), before);
         assert_eq!(v.len(), 10);
     }
+
+    /// A loop walks, and an index reads, what the type decided; a value of
+    /// another rank is refused with the reason, never read the other way.
+    #[test]
+    fn a_walk_and_a_read_follow_the_rank_the_type_decided() {
+        let m = crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let v = crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0], vec![2]);
+        assert_eq!(walk_rows(&m).unwrap().len(), 2);
+        assert_eq!(walk_numbers(&v).unwrap(), vec![1.0, 2.0]);
+        assert_eq!(row_at(&m, 1).unwrap().to_vec(), vec![3.0, 4.0]);
+        assert_eq!(number_at(&v, -1).unwrap(), 2.0);
+        assert!(walk_rows(&v).unwrap_err().contains("reads rows of a tensor its type says is a matrix, but the value has shape [2]"));
+        assert!(walk_numbers(&m).unwrap_err().contains("a bug in Crow's shape rules"));
+        assert!(row_at(&v, 0).unwrap_err().contains("reads a row"));
+        assert!(number_at(&m, 0).unwrap_err().contains("reads a number"));
+        assert!(row_at(&m, 2).unwrap_err().contains("out of range"));
+    }
+
 }

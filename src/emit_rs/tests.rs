@@ -767,7 +767,7 @@ fn test_then_chaining_transpile() {
 fn test_negative_index_transpile() {
     let rust = transpile("nums = [10, 20, 30]\nx = nums[-1]\n");
     // the runtime resolves a negative index, and stops on one outside
-    assert!(rust.contains("crow_runtime::stops::item(_i, _t.len()).unwrap_or_else(|e| crow_stop(2, e))"), "should resolve the index through the runtime\n{}", rust);
+    assert!(rust.contains("crow_runtime::core::number_at(&nums, _i).unwrap_or_else(|e| crow_stop(2, e))"), "should resolve the index through the runtime's one read\n{}", rust);
 }
 
 #[test]
@@ -843,14 +843,13 @@ fn test_numarray_neg_transpile() {
 #[test]
 fn test_numarray_indexing_transpile() {
     let rust = transpile("nums = [10, 20, 30]\nx = nums[0]\n");
-    assert!(rust.contains("get_flat"), "NumArray indexing should use get_flat\n{}", rust);
+    assert!(rust.contains("crow_runtime::core::number_at("), "NumArray indexing reads a number through the runtime\n{}", rust);
 }
 
 #[test]
 fn test_numarray_negative_index_transpile() {
     let rust = transpile("nums = [10, 20, 30]\nx = nums[-1]\n");
-    assert!(rust.contains("get_flat"), "NumArray negative indexing should use get_flat\n{}", rust);
-    assert!(rust.contains("crow_runtime::stops::item("), "should handle negative index\n{}", rust);
+    assert!(rust.contains("crow_runtime::core::number_at("), "NumArray negative indexing reads a number through the runtime, which resolves the index\n{}", rust);
 }
 
 #[test]
@@ -881,7 +880,7 @@ fn test_numarray_contains_transpile() {
 #[test]
 fn test_numarray_for_loop_transpile() {
     let rust = transpile("cpu[1]\na = [1, 2, 3]\nfor x in a\n    log['{x}']\n");
-    assert!(rust.contains("to_vec()"), "for loop over NumArray should use to_vec()\n{}", rust);
+    assert!(rust.contains("crow_runtime::core::walk_numbers("), "for loop over a vector walks its numbers through the runtime\n{}", rust);
 }
 
 #[test]

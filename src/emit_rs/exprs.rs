@@ -767,13 +767,16 @@ impl Emitter {
                 if matches!(idx_ty, Some(CrowType::NumArray(..))) {
                     return format!("{}.try_gather(&{}){}", b, idx, self.or_stop());
                 }
-                // an index outside stops the program with the runtime's words
+                // a row or a number as the type decided, through the runtime's
+                // one read (crow_runtime::core): an index outside, or a value
+                // of another rank, stops the program with the runtime's words
                 let line = self.current_line;
+                self.needs_crow_runtime = true;
                 if matches!(crate::type_infer::TypeContext::tensor_item(el, dims), CrowType::NumArray(..)) {
-                    return format!("{{ let _i = {}; let _t = &{}; _t.index0(crow_runtime::stops::row(_i, _t.shape()[0]).unwrap_or_else(|e| crow_stop({}, e))) }}", idx, b, line);
+                    return format!("{{ let _i = {}; crow_runtime::core::row_at(&{}, _i).unwrap_or_else(|e| crow_stop({}, e)) }}", idx, b, line);
                 }
                 let cast = if matches!(el.as_ref(), CrowType::Int) { " as i64" } else { "" };
-                format!("{{ let _i = {}; let _t = &{}; _t.get_flat(crow_runtime::stops::item(_i, _t.len()).unwrap_or_else(|e| crow_stop({}, e))){} }}", idx, b, line, cast)
+                format!("{{ let _i = {}; crow_runtime::core::number_at(&{}, _i).unwrap_or_else(|e| crow_stop({}, e)){} }}", idx, b, line, cast)
             }
             CrowType::Array(el) => {
                 let suffix = if Self::is_copy_type(el) { "" } else { ".clone()" };
@@ -841,8 +844,9 @@ impl Emitter {
                 // parameter takes it, and a failed one stops)
                 CrowType::Result(_) if takes_failure => s,
                 CrowType::Result(t) => as_float(format!("{{ let _ix = &({}); if !_ix.ok {{ crow_stop({}, _ix.reason.clone()); }} _ix.value.clone() }}", s, self.current_line), &t),
-                // (a tensor a gradient is handed is read, and the local lives on)
-                CrowType::NumArray(..) if matches!(Emitter::raw(a), Expr::Local(..)) => format!("{}.clone()", s),
+                // (a tensor a gradient is handed is read: the local, or the
+                // record it is a field of, lives on)
+                CrowType::NumArray(..) if matches!(Emitter::raw(a), Expr::Local(..) | Expr::Field { .. }) => format!("{}.clone()", s),
                 t => as_float(s, &t),
             });
         }
