@@ -1,0 +1,60 @@
+--- A support vector machine with a radial kernel: the two classes
+--- separated in the space the kernel implies, which is a curved boundary
+--- in the features' own — `width` sets how local the kernel is, `c` how
+--- much a sample on the wrong side costs. The dual is solved by projected
+--- gradient ascent on the samples' weights, the bias folded into the
+--- kernel (one more constant feature). `x` holds a row of features per
+--- sample, `y` a class for each, −1 or 1.
+use math
+
+struct KernelSvm [x, y, alpha, width]
+
+--- the kernel between two samples, with the constant that stands for the bias
+fn kernel[a, b, width]
+    d = a - b
+    return exp[0.0 - width * sum[d .* d]] + 1.0
+
+fn fit[x, y, width, c, steps, rate]
+    n = len[y]
+    xs = for r in x
+        tensor[r]
+    ys = tensor[y]
+    rows = for i in range[n]
+        kernel_row[xs, ys, i, width]
+    q = stack[rows]
+    alpha = zeros[n]
+    for s in range[steps]
+        g = ones[n] - flatten[q * reshape[alpha, n, 1]]
+        alpha = clip[alpha + g * rate, 0.0, c]
+    return KernelSvm[xs, ys, alpha, width]
+
+--- row i of the dual's matrix: y_i y_j k(x_i, x_j) for every j
+fn kernel_row[xs, ys, i, width]
+    out = for j in range[len[xs]]
+        ys[i] * ys[j] * kernel[xs[i], xs[j], width]
+    return tensor[out]
+
+--- the signed distance to the boundary, in the kernel's space
+fn score[m, r]
+    total = 0.0
+    for i in range[len[m.alpha]]
+        total = total + m.alpha[i] * m.y[i] * kernel[m.x[i], tensor[r], m.width]
+    return total
+
+--- each sample's side: −1 or 1
+fn classify[m, x]
+    out = for r in x
+        if score[m, r] gte 0.0
+            1
+        else
+            -1
+    return out
+
+--- a class inside a ring of the other: no line separates them, the
+--- kernel's boundary does
+test separates_a_ring[]
+    x = [[0.0, 0.0], [0.2, 0.1], [-0.1, 0.2], [0.1, -0.2], [2.0, 2.0], [-2.0, 2.0], [2.0, -2.0], [-2.0, -2.0]]
+    y = [-1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0]
+    m = fit[x, y, 0.5, 10.0, 500, 0.05]
+    assert[classify[m, x] eq [-1, -1, -1, -1, 1, 1, 1, 1]]
+    assert[classify[m, [[0.05, 0.05], [1.9, 2.1]]] eq [-1, 1]]

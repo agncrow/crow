@@ -679,6 +679,8 @@ ops = [double, square]
 ops[0][3]                     --- 6
 ```
 
+A function handed as a value is typed by what the parameter it is handed to is applied with — `apply[double, 5]` types `double`'s `x` as an int, by `f[x]` inside `apply` — however far it is handed on: through a function that only passes it along to the one that applies it, and to a module's function called qualified (`crossval.crossval[x, y, 3, 1, fit_ridge, score_ridge]` in the models package types `fit_ridge` by the rows `crossval` fits it to). A function handed as a value that nothing types — one never called directly, handed to a parameter that is only copied into a variable — is refused before the program runs, with the fix: apply it in the function it is handed to, or call it directly once. (Compiled, such a function had been left out of the program, and one handed on had been read as text.)
+
 
 ### No Lambdas
 

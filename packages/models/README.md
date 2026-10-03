@@ -1,13 +1,17 @@
 # models
 
-Small models written in Crow, on `math` and `math.nn`: least squares and
-ridge regression, logistic regression, k nearest neighbours, Gaussian
-naive Bayes, k-means, principal components, a decision tree, a random
-forest, and three trained by `grad` with no derivative written out —
-softmax regression, a linear support vector machine and a one-hidden-layer
-network — with the metrics that score them and the split and scaling that
-prepare their data. Each one fits the same way every run, and answers the
-same in `crow run -i` and `crow run`.
+Small models written in Crow, on `math` and `math.nn`: least squares,
+ridge, the lasso and the elastic net, logistic and softmax regression,
+support vector machines (linear and with a radial kernel) and support
+vector regression, k nearest neighbours, Gaussian naive Bayes, k-means,
+DBSCAN, agglomerative clustering, a Gaussian mixture, principal
+components, a decision tree, a random forest, gradient boosting, an
+isolation forest and a one-hidden-layer network — four of them trained
+by `grad` with no derivative written out — with the metrics that score
+them, cross-validation and a parameter search, and the split, scaling,
+polynomial features and encodings that prepare their data. Each one fits
+the same way every run, and answers the same in `crow run -i` and
+`crow run`.
 
 ```
 deps = map[models = 'github.com/agncrow/crow/packages/models@main']
@@ -40,7 +44,16 @@ holds a target (or a class) for each.
 | `pca` | `fit[x, k]` → `Pca[means, components, explained]` | `transform[p, x]` — each row's coordinates along the components |
 | `forest` | `fit[x, y, trees, depth, seed]` → `Forest[trees]`, `y` of int classes | `classify[f, r]` — the class most trees give |
 | `metrics` | — | `accuracy`, `precision`, `recall`, `f1` (the class 1 against 0), `rmse`, `mae`, `r2`, each `[truth, guess]` |
-| `prepare` | `divide[x, y, share, seed]` → `Split[x_train, y_train, x_test, y_test]`; `fit_scale[x]` → `Scale[means, spreads]` | `scale[s, x]` — the rows standardised |
+| `prepare` | `divide[x, y, share, seed]` → `Split[x_train, y_train, x_test, y_test]`; `fit_scale[x]` → `Scale[means, spreads]`; `labels[names]` → `Labels[names]` | `scale[s, x]` — the rows standardised; `polynomial[x, degree]` — the rows with their products of features; `onehot[y]` — int classes as columns of ones and zeros; `code[l, name]`, `codes[l, names]` — names as ints |
+| `boost` | `fit[x, y, trees, depth, rate]` → `Boost[base, rate, trees]`, gradient-boosted regression trees | `predict[m, x]` — a number per row; `classify[m, x]` — a 0 or 1 per row, for targets of 0 and 1 |
+| `lasso` | `fit[x, y, penalty, ratio, steps]` → `Lasso[coef, intercept]`, `ratio` 1 the lasso, 0 ridge, between them the elastic net | `predict[m, x]` — a number per row |
+| `kernel_svm` | `fit[x, y, width, c, steps, rate]` → `KernelSvm[x, y, alpha, width]`, a radial kernel, `y` of −1s and 1s | `classify[m, x]` — −1 or 1 per row; `score[m, r]` — a sample's signed distance |
+| `svr` | `fit[x, y, width, epsilon, penalty, steps, rate]` → `Svr[x, beta, width]`, by `grad` | `predict[m, x]` — a number per row |
+| `dbscan` | `fit[x, eps, min_points]` → `Dbscan[labels, clusters]`, −1 for noise | — |
+| `agglomerative` | `fit[x, k, linkage]` → `Merged[labels]`, linkage `'single'`, `'complete'` or `'average'` | — |
+| `mixture` | `fit[x, k, rounds]` → `Mixture[weights, means, variances]`, by expectation–maximisation | `probability[m, r]` — a probability per curve; `classify[m, r]` — the likeliest curve |
+| `isolation` | `fit[x, trees, sample, seed]` → `Isolation[trees, sample]` | `score[f, r]` — an anomaly score, 0 to 1; `anomalies[f, x, threshold]` — the rows scoring at least it |
+| `crossval` | `crossval[x, y, folds, seed, fit, score]` → `Folds[scores, mean]`; `search[x, y, folds, seed, candidates, fit, score]` → `Search[best, score, scores]` | `fit` a function of (x, y) — or (x, y, candidate) — answering a model, `score` one of (model, x, y) answering a number (`fit_ridge`, `score_ridge` show the shape) |
 
 - `regression` solves the centred inputs by least squares (`lstsq`), so the
   intercept is exact and `r2` says how much of `y`'s variance the fit explains.

@@ -1,0 +1,89 @@
+--- Cross-validation and a search over a parameter. The rows are dealt
+--- into `folds` parts (shuffled from `seed`, so the folds are the same
+--- every run); each part is held out in turn while a model is fitted to
+--- the rest and scored on it, and the mean scorer is the model's measure
+--- on rows it has not seen. `fitter` is a function of (x, y) answering a
+--- model, `scorer` one of (model, x, y) answering a number — `fit_ridge`
+--- and `score_ridge` below are the shape they take. `search` does it for
+--- each candidate value, `fitter` taking the value third, and answers the
+--- best. `x` holds a row of features per sample, `y` a target for each.
+use math, prepare, ridge, metrics
+
+struct Held [x_train, y_train, x_test, y_test]
+struct Folds [scores, mean]
+struct Search [best, scorer, scores]
+
+--- the rows dealt to part `part` of `folds`, and the rest
+fn held_out[x, y, order, folds, part]
+    n = len[y]
+    x_test = []
+    y_test = []
+    x_train = []
+    y_train = []
+    for k in range[n]
+        i = order[k]
+        if k % folds eq part
+            x_test = push[x_test, x[i]]
+            y_test = push[y_test, y[i]]
+        else
+            x_train = push[x_train, x[i]]
+            y_train = push[y_train, y[i]]
+    return Held[x_train, y_train, x_test, y_test]
+
+fn crossval[x, y, folds, seed_n, fitter, scorer]
+    n = len[y]
+    if folds lt 2 or folds gt n
+        return error['crossval: folds is between 2 and the number of rows (`n`), got `folds`', 'crossval']
+    seed[seed_n]
+    order = prepare.shuffled[n]
+    scores = []
+    for part in range[folds]
+        h = held_out[x, y, order, folds, part]
+        m = fitter[h.x_train, h.y_train]
+        scores = push[scores, scorer[m, h.x_test, h.y_test]]
+    return Folds[scores, mean[scores]]
+
+--- each candidate's mean score over the folds, and the best of them
+fn search[x, y, folds, seed_n, candidates, fitter, scorer]
+    n = len[y]
+    if folds lt 2 or folds gt n
+        return error['search: folds is between 2 and the number of rows (`n`), got `folds`', 'search']
+    if len[candidates] eq 0
+        return error['search: no candidates to try', 'search']
+    seed[seed_n]
+    order = prepare.shuffled[n]
+    scores = []
+    for v in candidates
+        total = 0.0
+        for part in range[folds]
+            h = held_out[x, y, order, folds, part]
+            m = fitter[h.x_train, h.y_train, v]
+            total = total + scorer[m, h.x_test, h.y_test]
+        scores = push[scores, total / folds]
+    best = argmax[tensor[scores]]
+    return Search[candidates[best], scores[best], scores]
+
+--- the shape `fitter` and `scorer` take, for ridge regression scored by r²
+fn fit_ridge[x, y]
+    return ridge.fit[x, y, 0.1]
+
+fn fit_ridge_with[x, y, penalty]
+    return ridge.fit[x, y, penalty]
+
+fn score_ridge[m, x, y]
+    return metrics.r2[y, ridge.predict[m, x]]
+
+--- a line with a little noise: ridge scores high on rows it did not fitter,
+--- and the search prefers the lightest penalty on clean data
+test scores_held_out_rows[]
+    x = [[0.0], [1.0], [2.0], [3.0], [4.0], [5.0], [6.0], [7.0], [8.0]]
+    y = [1.0, 3.1, 4.9, 7.2, 8.8, 11.1, 13.0, 14.9, 17.1]
+    f = crossval[x, y, 3, 1, fit_ridge, score_ridge]
+    assert[len[f.scores] eq 3]
+    assert[f.mean gt 0.9]
+    again = crossval[x, y, 3, 1, fit_ridge, score_ridge]
+    assert[again.scores eq f.scores]
+    s = search[x, y, 3, 1, [0.01, 1.0, 100.0], fit_ridge_with, score_ridge]
+    assert[s.best eq 0.01]
+    assert[len[s.scores] eq 3]
+    assert[not crossval[x, y, 1, 1, fit_ridge, score_ridge].ok]

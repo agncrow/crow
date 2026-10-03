@@ -1,0 +1,70 @@
+--- Support vector regression with a radial kernel: a prediction is a
+--- weighted sum of the kernel between the sample and every training
+--- row, the weights fitted by gradient descent on the ε-insensitive loss
+--- (an error within `epsilon` costs nothing) plus `penalty` on the
+--- weights' roughness — the gradient by `grad`, nothing written out. `x`
+--- holds a row of features per sample, `y` a number for each.
+use math, math.nn
+
+struct Svr [x, beta, width]
+
+fn kernel[a, b, width]
+    d = a - b
+    return exp[0.0 - width * sum[d .* d]]
+
+--- the kernel between every pair of training rows
+fn kernel_matrix[xs, width]
+    rows = for i in range[len[xs]]
+        kernel_row[xs, i, width]
+    return stack[rows]
+
+fn kernel_row[xs, i, width]
+    out = for j in range[len[xs]]
+        kernel[xs[i], xs[j], width]
+    return tensor[out]
+
+--- the mean ε-insensitive loss of the fit `k * beta` against `y`, and
+--- the roughness penalty (`eps` and `pen` are tensors of one number, so
+--- every parameter is a tensor)
+fn loss[beta, k, y, eps, pen]
+    fitted = k * beta
+    miss = relu[abs[fitted - y] - eps]
+    return mean[miss] + pen * sum[beta .* fitted]
+
+fn fit[x, y, width, epsilon, penalty, steps, rate]
+    n = len[y]
+    xs = for r in x
+        tensor[r]
+    k = kernel_matrix[xs, width]
+    target = reshape[tensor[y], n, 1]
+    beta = zeros[n, 1]
+    eps = full[1, epsilon]
+    pen = full[1, penalty]
+    g = grad[loss]
+    for s in range[steps]
+        gs = g[beta, k, target, eps, pen]
+        beta = beta - gs[0] * rate
+    return Svr[xs, flatten[beta], width]
+
+--- the model's number for one sample
+fn value_of[m, r]
+    total = 0.0
+    for i in range[len[m.beta]]
+        total = total + m.beta[i] * kernel[m.x[i], tensor[r], m.width]
+    return total
+
+--- a number per row
+fn predict[m, x]
+    out = for r in x
+        value_of[m, r]
+    return out
+
+--- a wave no line follows: the kernel's sum does, within the tube
+test follows_a_wave[]
+    x = [[0.0], [1.0], [2.0], [3.0], [4.0], [5.0], [6.0]]
+    y = [0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0]
+    m = fit[x, y, 1.0, 0.05, 0.001, 400, 0.5]
+    guesses = predict[m, x]
+    for i in range[len[y]]
+        assert[abs[guesses[i] - y[i]] lt 0.3]
+    assert[predict[m, [[1.0]]][0] gt predict[m, [[3.0]]][0]]

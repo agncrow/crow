@@ -1,0 +1,74 @@
+--- The lasso and the elastic net: least squares with the coefficients'
+--- sizes penalised — `ratio` of `penalty` on their absolute values,
+--- which drives the needless ones to exactly zero, the rest on their
+--- squares — fitted by coordinate descent, each coefficient in turn with
+--- the others held. `ratio` 1 is the lasso, 0 is ridge. The features and
+--- the target are centred, and the intercept comes from their means. `x`
+--- holds a row of features per sample, `y` a number for each.
+use math
+
+struct Lasso [coef, intercept]
+
+--- feature j over the rows, as a tensor
+fn column[x, j]
+    out = for r in x
+        float[r[j]]
+    return tensor[out]
+
+--- `z` pulled towards zero by `lam`, and to zero within it
+fn soft[z, lam]
+    if z gt lam
+        return z - lam
+    if z lt 0.0 - lam
+        return z + lam
+    return 0.0
+
+fn fit[x, y, penalty, ratio, steps]
+    if ratio lt 0.0 or ratio gt 1.0
+        return error['lasso: ratio is between 0 (ridge) and 1 (the lasso), got `ratio`', 'lasso']
+    n = len[y]
+    k = len[x[0]]
+    means = for j in range[k]
+        mean[column[x, j]]
+    centred = for j in range[k]
+        column[x, j] - means[j]
+    ys = tensor[y]
+    y_mean = mean[ys]
+    yc = ys - y_mean
+    coef = zeros[k]
+    for s in range[steps]
+        for j in range[k]
+            --- the residual without feature j's share
+            partial = yc
+            for l in range[k]
+                if l ne j
+                    partial = partial - centred[l] * coef[l]
+            rho = sum[centred[j] .* partial] / n
+            z = sum[centred[j] .* centred[j]] / n + penalty * (1.0 - ratio)
+            if z gt 0.0
+                coef[j] = soft[rho, penalty * ratio] / z
+            else
+                coef[j] = 0.0
+    intercept = y_mean
+    for j in range[k]
+        intercept = intercept - coef[j] * means[j]
+    return Lasso[coef, intercept]
+
+--- a number per row
+fn predict[m, x]
+    out = for r in x
+        sum[tensor[r] .* m.coef] + m.intercept
+    return out
+
+--- the target is three times the first feature; the second says
+--- nothing, and the lasso drops it exactly where ridge only shrinks it
+test drops_the_needless_feature[]
+    x = [[1.0, 1.0], [2.0, 0.0], [3.0, 1.0], [4.0, 0.0], [5.0, 1.0], [6.0, 0.0]]
+    y = [3.0, 6.0, 9.0, 12.0, 15.0, 18.0]
+    m = fit[x, y, 0.5, 1.0, 100]
+    assert[m.coef[1] eq 0.0]
+    assert[m.coef[0] gt 2.5 and m.coef[0] lte 3.0]
+    r = fit[x, y, 0.05, 0.0, 100]
+    assert[r.coef[1] ne 0.0]
+    assert[abs[predict[r, [[7.0, 1.0]]][0] - 21.0] lt 1.0]
+    assert[not fit[x, y, 0.5, 2.0, 10].ok]

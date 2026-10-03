@@ -1,12 +1,15 @@
 --- Getting data ready for a model: a split into a training and a test
 --- set (the rows shuffled from `seed`, so a split is the same every run),
---- and features standardised to a mean of zero and a spread of one by
---- what the training rows showed. `x` holds a row of features per
---- sample, `y` a target or a class for each.
+--- features standardised to a mean of zero and a spread of one by what
+--- the training rows showed, the products of features for a linear model
+--- to bend with, and classes as columns of ones and zeros or names as
+--- codes. `x` holds a row of features per sample, `y` a target or a
+--- class for each.
 use math, math.stats
 
 struct Split [x_train, y_train, x_test, y_test]
 struct Scale [means, spreads]
+struct Labels [names]
 
 --- the rows numbered 0 to n − 1 in a random order
 fn shuffled[n]
@@ -64,6 +67,66 @@ fn scale[s, x]
         (tensor[r] - s.means) ./ s.spreads
     return stack[rows]
 
+--- a row's features with every product of two of them (degree 2), and of
+--- three (degree 3): what a line fits in these is a curve in the features
+fn expand[r, degree]
+    k = len[r]
+    out = []
+    for j in range[k]
+        out = push[out, float[r[j]]]
+    if degree gte 2
+        for a in range[k]
+            for b in range[a, k]
+                out = push[out, float[r[a]] * float[r[b]]]
+    if degree gte 3
+        for a in range[k]
+            for b in range[a, k]
+                for c in range[b, k]
+                    out = push[out, float[r[a]] * float[r[b]] * float[r[c]]]
+    return tensor[out]
+
+--- the rows of x with their polynomial features, up to `degree`
+fn polynomial[x, degree]
+    if degree lt 1 or degree gt 3
+        return error['polynomial: degree is 1, 2 or 3, got `degree`', 'polynomial']
+    rows = for r in x
+        expand[r, degree]
+    return stack[rows]
+
+--- a row of zeros with a one at `c`
+fn hot[c, width]
+    row = zeros[width]
+    row[c] = 1.0
+    return row
+
+--- the classes 0 to k − 1 as k columns: row i has a one in column y[i]
+fn onehot[y]
+    width = int[max[tensor[y]]] + 1
+    rows = for c in y
+        hot[c, width]
+    return stack[rows]
+
+--- the distinct names in order, each standing for its position
+fn labels[names]
+    seen = []
+    for s in sort[names]
+        if not contains[seen, s]
+            seen = push[seen, s]
+    return Labels[seen]
+
+--- a name's code, or −1 for a name the labels lack
+fn code[l, name]
+    for i in range[len[l.names]]
+        if l.names[i] eq name
+            return i
+    return 0 - 1
+
+--- each name's code
+fn codes[l, names]
+    out = for s in names
+        code[l, s]
+    return out
+
 test splits_and_scales[]
     x = [[1.0, 10.0], [2.0, 20.0], [3.0, 30.0], [4.0, 40.0], [5.0, 50.0]]
     y = [1, 2, 3, 4, 5]
@@ -81,3 +144,17 @@ test splits_and_scales[]
     assert[abs[z[0] + 2.0 / sqrt[2.0]] lt 0.000001]
     assert[abs[z[1] + 2.0 / sqrt[2.0]] lt 0.000001]
     assert[abs[z[4]] lt 0.000001]
+
+--- the products of two features, classes as columns, names as codes
+test expands_and_encodes[]
+    p = polynomial[[[2.0, 3.0]], 2]
+    assert[p[0] eq [2.0, 3.0, 4.0, 6.0, 9.0]]
+    assert[p.shape eq [1, 5]]
+    assert[polynomial[[[2.0]], 3][0] eq [2.0, 4.0, 8.0]]
+    assert[not polynomial[[[2.0]], 4].ok]
+    h = onehot[[0, 2, 1]]
+    assert[h.shape eq [3, 3]]
+    assert[h[1] eq [0.0, 0.0, 1.0]]
+    l = labels[['pear', 'apple', 'pear', 'fig']]
+    assert[l.names eq ['apple', 'fig', 'pear']]
+    assert[codes[l, ['pear', 'fig', 'plum']] eq [2, 1, -1]]

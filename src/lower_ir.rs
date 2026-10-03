@@ -2680,10 +2680,10 @@ impl<'a> Lowerer<'a> {
                 }
             }
             // a row or a number, by a rank the lowering knows
-            if let ([index], Ty::Tensor(_, None)) = (arg_types.as_slice(), base.ty().payload()) {
-                if matches!(index, CrowType::Int | CrowType::Unknown) {
-                    self.check_rank_known(&base, "an index into");
-                }
+            if let ([index], Ty::Tensor(_, None)) = (arg_types.as_slice(), base.ty().payload())
+                && matches!(index, CrowType::Int | CrowType::Unknown)
+            {
+                self.check_rank_known(&base, "an index into");
             }
             let ty = self.call_type(callee, args, &arg_types, &full_types, Some(read(&base)));
             // a decomposition's piece, read by its literal position, has its
@@ -2926,11 +2926,15 @@ impl<'a> Lowerer<'a> {
             let lowered = self.row_arguments(&m, &name, lowered);
             let target = match self.builtin_row(Some(&m), &name, &lowered) {
                 Some(row) => Target::Row(row),
-                None => Target::Module(m, name),
+                None => {
+                    self.check_handed_functions(&lowered);
+                    Target::Module(m, name)
+                }
             };
             return Ok(Expr::Call { target, args: lowered, ty, propagates });
         }
         if self.ctx.functions.contains_key(&name) || self.ctx.specializations.contains_key(&name) {
+            self.check_handed_functions(&lowered);
             if let Some(seen) = &mut self.seen {
                 seen.calls.push((name.clone(), full_types.clone()));
             }
@@ -2948,9 +2952,12 @@ impl<'a> Lowerer<'a> {
                     }
                 }
             }
-            // a test's call, for what only tests type (`type_clicks`)
+            // a test's call, for what only tests type (`type_clicks`) — and
+            // the functions it hands as values, typed by the parameters they
+            // are handed to as a call outside a test hands them
             if let Some(tested) = &mut self.tested {
                 tested.push((name.clone(), lowered.iter().map(read).collect()));
+                self.ctx.hand_functions(&name, args);
             }
             let resolved = self.specialised(&name, &full_types);
             // an int handed to a float parameter is a float (spec §1), as one
@@ -3346,6 +3353,28 @@ impl<'a> Lowerer<'a> {
     /// types, when it has one.
     /// The function a gradient being called is of: `grad[f][…]`, or a
     /// local holding one (`g = grad[f]`, then `g[…]`).
+    /// A function handed as a value to a function of the program's is
+    /// typed by what the parameter it is handed to is applied with; one
+    /// nothing types cannot be built (the compiled program had left it
+    /// out, and the call of it did not build), so it is refused with the
+    /// fix. A function handed to a builtin — a page's view, a route's
+    /// handler, `grad`'s function — is the runtime's to type.
+    fn check_handed_functions(&mut self, args: &[Expr]) {
+        if self.pass != Pass::Final {
+            return;
+        }
+        for a in args {
+            if let Expr::FnRef(f, _) = a
+                && self.ctx.functions.get(f).is_some_and(|sig| sig.params.iter().any(|(_, t)| *t == CrowType::Unknown))
+            {
+                self.refuse(format!(
+                    "`{}` is handed as a value, and nothing types its parameters — apply it in the function it is handed to, or call it directly once",
+                    crate::lower::shown(f)
+                ));
+            }
+        }
+    }
+
     /// The pieces a value indexed holds: a decomposition called here, or a
     /// local one was assigned to.
     fn pieces_of(&self, base: &Expr) -> Option<Vec<Option<Dims>>> {
@@ -3467,7 +3496,10 @@ pub(crate) fn infer_by_lowering(ctx: &mut TypeContext, stmts: &[S]) {
     // function may come from another that only now has: a frame another
     // function builds, whose columns were not worked out the first time
     for _ in 0..4 {
-        if !Lowerer::for_inference(ctx, in_ui, stmts).type_clicks(stmts) {
+        // (a test's call hands functions as values too, which moves their
+        // signatures without a parameter of the callee's moving)
+        let handed = ctx.signatures();
+        if !Lowerer::for_inference(ctx, in_ui, stmts).type_clicks(stmts) && handed == ctx.signatures() {
             break;
         }
         for _ in 0..8 {
@@ -4512,6 +4544,12 @@ mod tests {
         assert!(refused.contains("line 8: an index into the tensor reads a row or a number by its rank"), "{}", refused);
         let refused = refusal_of("use math\nm = eye[2]\nm[1] = [7.0, 8.0]\n");
         assert!(refused.contains("`m[…]` takes a number: a tensor's rows cannot be assigned one at a time"), "{}", refused);
+        // a function handed as a value: typed however far it is handed on,
+        // and refused where nothing types it
+        let ir = ir_of("fn double[x]\n    return x * 2\nfn apply[f, x]\n    return f[x]\nfn relay[f, x]\n    return apply[f, x]\nlog[relay[double, 21]]\n");
+        assert!(ir.contains("pure double(x: Int) -> Int"), "{}", ir);
+        let refused = refusal_of("fn scaled[v]\n    return v * 1.5\nfn with_both[g, x, y]\n    held = g\n    return apply[held, x] + apply[held, y]\nfn apply[f, x]\n    return f[x]\nlog[with_both[scaled, 2.0, 4.0]]\n");
+        assert!(refused.contains("`scaled` is handed as a value, and nothing types its parameters"), "{}", refused);
         // a decomposition's pieces, each its own shape by position
         let ir = ir_of("use math\nm = [[2.0, 0.0, 1.0], [0.0, 3.0, 1.0]]\nparts = svd[m]\ns = parts[1]\nvt = parts[2]\nfor x in s\n    log[x]\nfor r in vt\n    log[r]\nlog[svd[m][0][0]]\nq = qr[m]\nlog[q[0][0]]\n");
         assert!(ir.contains("let s: Tensor(Float, [?]) = parts[1]"), "{}", ir);

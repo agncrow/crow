@@ -1,0 +1,117 @@
+--- Gradient boosting: a sum of small regression trees, each one fitted
+--- to what the ones before it still got wrong (the residuals) and added
+--- at `rate` of its say — for a number per sample, or a class of 0 or 1
+--- read at a half. Each tree splits on the feature and threshold that
+--- leave the least spread around each side's mean, down to `depth`
+--- levels. `x` holds a row of features per sample, `y` a number for
+--- each.
+use math
+
+struct Tree [leaf, value, feature, threshold, left, right]
+struct Boost [base, rate, trees]
+
+--- the mean of the targets at the indices
+fn mean_of[y, idx]
+    total = 0.0
+    for i in idx
+        total = total + y[i]
+    return total / len[idx]
+
+--- the sum of squared deviations from the mean, at the indices
+fn spread[y, idx]
+    m = mean_of[y, idx]
+    out = 0.0
+    for i in idx
+        d = y[i] - m
+        out = out + d * d
+    return out
+
+--- the samples' indices on each side of a split
+fn side[x, idx, feature, threshold, want_left]
+    out = []
+    for i in idx
+        goes_left = x[i][feature] lte threshold
+        if goes_left eq want_left
+            out = push[out, i]
+    return out
+
+fn grow[x, y, idx, depth]
+    leaf = Tree[true, mean_of[y, idx], 0, 0.0, 0, 0]
+    if depth eq 0 or len[idx] lt 2
+        return leaf
+    best = spread[y, idx]
+    best_feature = -1
+    best_threshold = 0.0
+    for f in range[len[x[0]]]
+        for i in idx
+            t = x[i][f]
+            left = side[x, idx, f, t, true]
+            right = side[x, idx, f, t, false]
+            if len[left] gt 0 and len[right] gt 0
+                score = spread[y, left] + spread[y, right]
+                if score lt best
+                    best = score
+                    best_feature = f
+                    best_threshold = t
+    if best_feature lt 0
+        return leaf
+    l = grow[x, y, side[x, idx, best_feature, best_threshold, true], depth - 1]
+    r = grow[x, y, side[x, idx, best_feature, best_threshold, false], depth - 1]
+    return Tree[false, 0.0, best_feature, best_threshold, l, r]
+
+--- one tree's say for a sample
+fn value_of_tree[node, r]
+    if node.leaf
+        return node.value
+    if r[node.feature] lte node.threshold
+        return value_of_tree[node.left, r]
+    return value_of_tree[node.right, r]
+
+fn fit[x, y, trees, depth, rate]
+    n = len[y]
+    every = range[n]
+    base = mean_of[y, every]
+    current = for i in every
+        base
+    grown = []
+    for t in range[trees]
+        residual = for i in every
+            y[i] - current[i]
+        tree = grow[x, residual, every, depth]
+        grown = push[grown, tree]
+        current = for i in every
+            current[i] + rate * value_of_tree[tree, x[i]]
+    return Boost[base, rate, grown]
+
+--- the model's number for one sample: the base and every tree's say
+fn value_of[m, r]
+    total = m.base
+    for t in m.trees
+        total = total + m.rate * value_of_tree[t, r]
+    return total
+
+--- a number per row
+fn predict[m, x]
+    out = for r in x
+        value_of[m, r]
+    return out
+
+--- a 0 or 1 per row, for targets of 0 and 1
+fn classify[m, x]
+    out = for r in x
+        int[value_of[m, r] gte 0.5]
+    return out
+
+--- a curve no line fits, and a band in the middle of one feature, which
+--- no single split tells: the trees add up to both
+test fits_a_curve_and_a_band[]
+    x = [[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]]
+    y = [0.0, 1.0, 4.0, 9.0, 16.0, 25.0]
+    m = fit[x, y, 40, 2, 0.5]
+    guesses = predict[m, x]
+    for i in range[len[y]]
+        assert[abs[guesses[i] - y[i]] lt 0.5]
+    band = [0.0, 0.0, 1.0, 1.0, 0.0, 0.0]
+    c = fit[x, band, 30, 2, 0.5]
+    assert[classify[c, x] eq [0, 0, 1, 1, 0, 0]]
+    assert[classify[c, [[2.5], [4.5]]] eq [1, 0]]

@@ -1,0 +1,79 @@
+--- Agglomerative clustering: every sample its own cluster, then the two
+--- closest merged, again and again, until `k` remain. How close two
+--- clusters are is the `linkage`: 'single' (their nearest pair of
+--- samples), 'complete' (their farthest) or 'average' (the mean over
+--- every pair). `x` holds a row of features per sample.
+use math
+
+struct Merged [labels]
+
+fn distance[a, b]
+    return norm[tensor[a] - tensor[b]]
+
+--- the distance between two clusters (lists of indices), by the linkage
+fn apart[x, members_a, members_b, linkage]
+    best = 0.0
+    first = true
+    total = 0.0
+    count = 0
+    for i in members_a
+        for j in members_b
+            d = distance[x[i], x[j]]
+            total = total + d
+            count = count + 1
+            if first
+                best = d
+                first = false
+            else
+                if linkage eq 'single' and d lt best
+                    best = d
+                if linkage eq 'complete' and d gt best
+                    best = d
+    if linkage eq 'average'
+        return total / count
+    return best
+
+fn fit[x, k, linkage]
+    n = len[x]
+    if k lt 1 or k gt n
+        return error['agglomerative: k is between 1 and the number of samples (`n`), got `k`', 'agglomerative']
+    if linkage ne 'single' and linkage ne 'complete' and linkage ne 'average'
+        return error['agglomerative: linkage is single, complete or average, got `linkage`', 'agglomerative']
+    groups = for i in range[n]
+        [i]
+    while len[groups] gt k
+        best_a = 0
+        best_b = 1
+        best_d = apart[x, groups[0], groups[1], linkage]
+        for a in range[len[groups]]
+            for b in range[a + 1, len[groups]]
+                d = apart[x, groups[a], groups[b], linkage]
+                if d lt best_d
+                    best_d = d
+                    best_a = a
+                    best_b = b
+        merged = concat[groups[best_a], groups[best_b]]
+        rest = []
+        for g in range[len[groups]]
+            if g ne best_a and g ne best_b
+                rest = push[rest, groups[g]]
+        groups = push[rest, merged]
+    labels = for i in range[n]
+        0
+    for g in range[len[groups]]
+        for i in groups[g]
+            labels[i] = g
+    return Merged[labels]
+
+--- two groups, far apart, under each linkage: the pairs stay together
+test merges_the_near_ones[]
+    x = [[0.0, 0.0], [0.1, 0.0], [5.0, 5.0], [5.1, 5.0], [0.0, 0.2]]
+    for linkage in ['single', 'complete', 'average']
+        m = fit[x, 2, linkage]
+        assert[m.labels[0] eq m.labels[1]]
+        assert[m.labels[0] eq m.labels[4]]
+        assert[m.labels[2] eq m.labels[3]]
+        assert[m.labels[0] ne m.labels[2]]
+    assert[len[fit[x, 1, 'single'].labels] eq 5]
+    assert[not fit[x, 2, 'median'].ok]
+    assert[not fit[x, 9, 'single'].ok]

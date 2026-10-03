@@ -1,0 +1,55 @@
+--- DBSCAN: clusters grown from dense points. A point with `min_points`
+--- neighbours within `eps` (itself counted) is a core point; its
+--- neighbours join its cluster, and a core neighbour's neighbours too,
+--- until the cluster is surrounded by sparse points. A point in no
+--- cluster is noise, labelled −1. The number of clusters is what the
+--- data has, not a parameter. `x` holds a row of features per sample.
+use math
+
+struct Dbscan [labels, clusters]
+
+fn distance[a, b]
+    return norm[tensor[a] - tensor[b]]
+
+--- the indices within `eps` of sample i, itself among them
+fn neighbours[x, i, eps]
+    out = []
+    for j in range[len[x]]
+        if distance[x[i], x[j]] lte eps
+            out = push[out, j]
+    return out
+
+fn fit[x, eps, min_points]
+    n = len[x]
+    labels = for i in range[n]
+        0 - 2
+    cluster = 0
+    for i in range[n]
+        if labels[i] eq 0 - 2
+            near = neighbours[x, i, eps]
+            if len[near] lt min_points
+                labels[i] = 0 - 1
+            else
+                labels[i] = cluster
+                queue = near
+                while len[queue] gt 0
+                    j = queue[len[queue] - 1]
+                    queue = pop[queue]
+                    if labels[j] eq 0 - 1
+                        labels[j] = cluster
+                    if labels[j] eq 0 - 2
+                        labels[j] = cluster
+                        more = neighbours[x, j, eps]
+                        if len[more] gte min_points
+                            queue = concat[queue, more]
+                cluster = cluster + 1
+    return Dbscan[labels, cluster]
+
+--- two tight groups and a point far from both: two clusters, one noise
+test finds_the_dense_groups[]
+    x = [[0.0, 0.0], [0.1, 0.0], [0.0, 0.1], [5.0, 5.0], [5.1, 5.0], [5.0, 5.1], [20.0, 20.0]]
+    d = fit[x, 0.5, 2]
+    assert[d.labels eq [0, 0, 0, 1, 1, 1, -1]]
+    assert[d.clusters eq 2]
+    lone = fit[x, 0.5, 4]
+    assert[lone.clusters eq 0]

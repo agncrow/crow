@@ -1,0 +1,101 @@
+--- An isolation forest: random trees, each splitting a random feature
+--- at a random point between its least and greatest among the samples
+--- it holds, until every sample is alone. An ordinary sample takes many
+--- splits to isolate, an anomaly few, so a short path is the mark: a
+--- score near 1 is an anomaly, one near 0.5 or below ordinary. The
+--- trees grow from `seed`, so a fit is the same every run. `x` holds a
+--- row of features per sample.
+use math
+
+struct Cut [leaf, size, feature, threshold, left, right]
+struct Isolation [trees, sample]
+
+fn least[x, idx, f]
+    out = x[idx[0]][f]
+    for i in idx
+        if x[i][f] lt out
+            out = x[i][f]
+    return out
+
+fn greatest[x, idx, f]
+    out = x[idx[0]][f]
+    for i in idx
+        if x[i][f] gt out
+            out = x[i][f]
+    return out
+
+fn grow[x, idx, depth, limit]
+    if depth gte limit or len[idx] lte 1
+        return Cut[true, len[idx], 0, 0.0, 0, 0]
+    f = rand[len[x[0]]]
+    lo = least[x, idx, f]
+    hi = greatest[x, idx, f]
+    if hi eq lo
+        return Cut[true, len[idx], 0, 0.0, 0, 0]
+    t = lo + rand[] * (hi - lo)
+    left = []
+    right = []
+    for i in idx
+        if x[i][f] lt t
+            left = push[left, i]
+        else
+            right = push[right, i]
+    return Cut[false, len[idx], f, t, grow[x, left, depth + 1, limit], grow[x, right, depth + 1, limit]]
+
+--- the mean path length of an unsuccessful search in a tree of n
+--- samples: what a leaf holding n stands for
+fn average_path[n]
+    if n lte 1.0
+        return 0.0
+    return 2.0 * (ln[n - 1.0] + 0.5772156649) - 2.0 * (n - 1.0) / n
+
+--- how many splits a sample takes to isolate in one tree
+fn path[node, r, depth]
+    if node.leaf
+        return depth + average_path[float[node.size]]
+    if r[node.feature] lt node.threshold
+        return path[node.left, r, depth + 1.0]
+    return path[node.right, r, depth + 1.0]
+
+--- `trees` trees, each grown from `sample_n` rows drawn at random
+fn fit[x, trees, sample_n, seed_n]
+    seed[seed_n]
+    n = len[x]
+    size = min[sample_n, n]
+    limit = ceil[ln[float[size]] / ln[2.0]]
+    grown = []
+    for t in range[trees]
+        idx = []
+        for i in range[size]
+            idx = push[idx, rand[n]]
+        grown = push[grown, grow[x, idx, 0, limit]]
+    return Isolation[grown, size]
+
+--- a sample's anomaly score, 0 to 1
+fn score[f, r]
+    total = 0.0
+    for t in f.trees
+        total = total + path[t, r, 0.0]
+    avg = total / len[f.trees]
+    return 2.0 ^ (0.0 - avg / average_path[float[f.sample]])
+
+--- the rows scoring at least `threshold`
+fn anomalies[f, x, threshold]
+    out = []
+    for i in range[len[x]]
+        if score[f, x[i]] gte threshold
+            out = push[out, i]
+    return out
+
+--- a cloud of ordinary points and one far away: the far one scores
+--- highest, and is the one anomaly found
+test isolates_the_outlier[]
+    x = [[0.0, 0.0], [0.1, 0.2], [-0.2, 0.1], [0.2, -0.1], [-0.1, -0.2], [0.0, 0.3], [0.3, 0.0], [-0.3, 0.1], [10.0, 10.0]]
+    f = fit[x, 50, 9, 7]
+    far = score[f, [10.0, 10.0]]
+    near = score[f, [0.0, 0.1]]
+    assert[far gt near]
+    assert[far gt 0.6]
+    assert[anomalies[f, x, 0.6] eq [8]]
+    again = fit[x, 50, 9, 7]
+    assert[score[again, [10.0, 10.0]] eq far]

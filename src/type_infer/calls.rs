@@ -219,31 +219,7 @@ impl TypeContext {
                     }
                 }
                 self.functions.get_mut(name).unwrap().params = new_params;
-
-                // Propagate types to functions passed as arguments:
-                // If param type is Fn(...) and arg is a function name, update that function's signature
-                let updated_sig = self.functions.get(name).unwrap().clone();
-                for (i, arg) in args.iter().enumerate() {
-                    if i < updated_sig.params.len() {
-                        if let CrowType::Fn(param_types, ret_type) = &updated_sig.params[i].1 {
-                            if let Expr::Ident(fn_name) = arg {
-                                if self.functions.contains_key(fn_name) {
-                                    let target_sig = self.functions.get(fn_name).unwrap().clone();
-                                    let mut new_target_params = target_sig.params.clone();
-                                    for (j, pt) in param_types.iter().enumerate() {
-                                        if j < new_target_params.len() {
-                                            new_target_params[j].1 = new_target_params[j].1.unify(pt);
-                                        }
-                                    }
-                                    let new_ret = target_sig.return_type.unify(ret_type);
-                                    let target = self.functions.get_mut(fn_name).unwrap();
-                                    target.params = new_target_params;
-                                    target.return_type = new_ret;
-                                }
-                            }
-                        }
-                    }
-                }
+                self.hand_functions(name, args);
             }
 
             // Is it a struct constructor?
@@ -289,6 +265,7 @@ impl TypeContext {
                         }
                     }
                     self.functions.get_mut(&prefixed).unwrap().params = new_params;
+                    self.hand_functions(&prefixed, args);
                 }
                 // Module struct constructor: update field types from args
                 if self.structs.contains_key(&prefixed) {
@@ -301,6 +278,53 @@ impl TypeContext {
                     }
                     self.structs.get_mut(&prefixed).unwrap().fields = new_fields;
                 }
+            }
+        }
+    }
+
+    /// A function handed as a value takes the types the parameter it is
+    /// handed to is applied with (`apply[double, 5]` types `double` by
+    /// `f[x]` inside `apply`), and a variable holding a function handed on
+    /// (`relay[f, x]` passing its `f` to `apply`) takes them too, so the
+    /// function behind it is typed however far it is handed. A module's
+    /// function called qualified hands its functions the same way. (A
+    /// function handed to `crossval.crossval[…]` had stayed untyped, and
+    /// the compiled program left it out; one handed on had been read as
+    /// text.)
+    pub(crate) fn hand_functions(&mut self, callee: &str, args: &[Expr]) {
+        let Some(sig) = self.functions.get(callee).cloned() else { return };
+        for (i, arg) in args.iter().enumerate() {
+            let Some((_, CrowType::Fn(param_types, ret_type))) = sig.params.get(i) else { continue };
+            let Expr::Ident(n) = arg else { continue };
+            // what the function knows of itself flows into the parameter
+            // too — its answer above all, so a model a handed `fit` answers
+            // is typed where the parameter is applied, and the `score` it
+            // is then handed to knows its model (settled over the rounds)
+            let merged = if let Some(target) = self.functions.get(n).cloned() {
+                let mut params = target.params.clone();
+                for (j, pt) in param_types.iter().enumerate() {
+                    if j < params.len() {
+                        params[j].1 = params[j].1.unify(pt);
+                    }
+                }
+                let ret = target.return_type.unify(ret_type);
+                if let Some(t) = self.functions.get_mut(n) {
+                    t.params = params.clone();
+                    t.return_type = ret.clone();
+                }
+                CrowType::Fn(params.into_iter().map(|(_, t)| t).collect(), Box::new(ret))
+            } else if let Some(existing @ CrowType::Fn(..)) = self.vars.get(n).cloned() {
+                let handed = CrowType::Fn(param_types.clone(), ret_type.clone());
+                let merged = existing.unify(&handed);
+                self.vars.insert(n.clone(), merged.clone());
+                merged
+            } else {
+                continue;
+            };
+            if let Some(c) = self.functions.get_mut(callee)
+                && let Some(p) = c.params.get_mut(i)
+            {
+                p.1 = p.1.unify(&merged);
             }
         }
     }

@@ -1,0 +1,130 @@
+--- A Gaussian mixture: `k` bell curves, each with its own mean and
+--- spread per feature, and a weight for each — fitted by
+--- expectation–maximisation from k-means' centres, for `rounds` rounds:
+--- each sample's responsibility is each curve's share of its likelihood,
+--- and each curve is refitted to the samples weighed by it. Where
+--- k-means gives a sample to one centre, a mixture gives it a probability
+--- per curve. `x` holds a row of features per sample.
+use math
+
+struct Mixture [weights, means, variances]
+
+--- the density of a sample under a curve with mean `m` and variances `v`
+fn density[r, m, v]
+    d = tensor[r] - m
+    expo = 0.0 - 0.5 * sum[(d .* d) ./ v]
+    scale = 1.0
+    for j in range[len[v]]
+        scale = scale / sqrt[2.0 * pi * v[j]]
+    return scale * exp[expo]
+
+--- each curve's share of a sample's likelihood
+fn responsibilities[mx, r]
+    raw = for j in range[len[mx.weights]]
+        mx.weights[j] * density[r, mx.means[j], mx.variances[j]]
+    total = sum[raw]
+    if total eq 0.0
+        out = for p in raw
+            1.0 / len[raw]
+        return out
+    out = for p in raw
+        p / total
+    return out
+
+--- a curve's weight: the mean responsibility it has
+fn weight_of[resp, j, n]
+    total = 0.0
+    for i in range[n]
+        total = total + resp[i][j]
+    return total / n
+
+--- a curve's mean: the samples weighed by their responsibility
+fn mean_of[x, resp, j]
+    total = zeros[len[x[0]]]
+    weight = 0.0
+    for i in range[len[x]]
+        total = total + tensor[x[i]] * resp[i][j]
+        weight = weight + resp[i][j]
+    return total / max[weight, 0.000001]
+
+--- a curve's variances per feature, around its mean (a floor keeps a
+--- curve from collapsing on one sample)
+fn variance_of[x, resp, j, m]
+    total = zeros[len[x[0]]]
+    weight = 0.0
+    for i in range[len[x]]
+        d = tensor[x[i]] - m
+        total = total + (d .* d) * resp[i][j]
+        weight = weight + resp[i][j]
+    return total / max[weight, 0.000001] + 0.000001
+
+--- the index of the centre nearest a sample
+fn nearest[centres, r]
+    best = 0
+    best_d = norm[tensor[r] - centres[0]]
+    for j in range[1, len[centres]]
+        d = norm[tensor[r] - centres[j]]
+        if d lt best_d
+            best = j
+            best_d = d
+    return best
+
+--- the mean of the samples nearest centre j, or the centre when none is
+fn centre_of[x, centres, j]
+    total = zeros[len[x[0]]]
+    count = 0
+    for r in x
+        if nearest[centres, r] eq j
+            total = total + tensor[r]
+            count = count + 1
+    if count eq 0
+        return centres[j]
+    return total / count
+
+--- where the curves start: the first k samples as centres, moved to
+--- their samples' means a few times (k-means' first rounds)
+fn starting_means[x, k]
+    centres = for j in range[k]
+        tensor[x[j]]
+    for step in range[10]
+        centres = for j in range[k]
+            centre_of[x, centres, j]
+    return centres
+
+fn fit[x, k, rounds]
+    n = len[x]
+    means = starting_means[x, k]
+    variances = for j in range[k]
+        ones[len[x[0]]]
+    weights = for j in range[k]
+        1.0 / k
+    mx = Mixture[weights, means, variances]
+    for step in range[rounds]
+        resp = for r in x
+            responsibilities[mx, r]
+        weights = for j in range[k]
+            weight_of[resp, j, n]
+        means = for j in range[k]
+            mean_of[x, resp, j]
+        variances = for j in range[k]
+            variance_of[x, resp, j, means[j]]
+        mx = Mixture[weights, means, variances]
+    return mx
+
+--- a probability per curve for one sample
+fn probability[mx, r]
+    return responsibilities[mx, r]
+
+--- the curve a sample most likely came from
+fn classify[mx, r]
+    return argmax[tensor[responsibilities[mx, r]]]
+
+--- two groups of three: two curves, half the weight each, and a sample
+--- between them nearer one is more likely that one's
+test tells_two_curves_apart[]
+    x = [[0.0, 0.0], [0.2, 0.1], [-0.1, 0.2], [5.0, 5.0], [5.2, 4.9], [4.9, 5.1]]
+    mx = fit[x, 2, 20]
+    assert[abs[mx.weights[0] - 0.5] lt 0.01]
+    assert[classify[mx, [0.1, 0.1]] ne classify[mx, [5.0, 5.0]]]
+    p = probability[mx, [4.0, 4.0]]
+    assert[p[classify[mx, [5.0, 5.0]]] gt 0.99]

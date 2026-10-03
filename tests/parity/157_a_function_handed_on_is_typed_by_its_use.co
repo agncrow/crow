@@ -1,0 +1,20 @@
+--- A function handed as a value is typed by what the parameter it is
+--- handed to is applied with, however far it is handed on: through a
+--- function that only passes it along to the one that applies it, and
+--- through another one of those. (Compiled, a function handed on had
+--- been read as text, and one never called directly was left out of
+--- the program.) One nothing types is refused before the program runs.
+fn double[x]
+    return x * 2
+
+fn apply[f, x]
+    return f[x]
+
+fn relay[f, x]
+    return apply[f, x]
+
+fn relay_twice[f, x]
+    return relay[f, x]
+
+log[relay[double, 21]]
+log[relay_twice[double, 4]]
