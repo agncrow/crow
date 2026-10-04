@@ -72,6 +72,9 @@ steps on every push and must be green.
   the modules' scopes are read from the program's own functions
   (`crow_modules_carried`), never from whatever was inlined last on the
   thread: a harness lowers a part's tests and the app in turn.
+- A crate added to a manifest gets its line in the spec's Design Note
+  "what stays native, and why" (section 13), with its reason under design
+  rule 20; a formula over existing builtins is written in Crow instead.
 - `crow_runtime`, `crow_db` and `crow_web` deny panics under clippy: a
   runtime function answers its reason, and a failure no value can carry
   stops through `crow_runtime::stops` (docs/bug-classes.md).

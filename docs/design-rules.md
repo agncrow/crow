@@ -86,7 +86,10 @@ repository root points assistants here.
     each function takes, answers and how it fails) and its body in
     `src/modules/<name>.co`, inlined into the program that imports it and
     tested on its own (`crow test src/modules/nn.co`); a stop inside it
-    names the line of the call in the program.
+    names the line of the call in the program. The spec's Design Note
+    "what stays native, and why" (section 13) accounts for every crate
+    the manifests name, by one of the four reasons; a crate added gets
+    its line there.
 
 ## Workflow
 

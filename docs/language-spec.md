@@ -1763,6 +1763,15 @@ result = utils.double[5]    --- 10
 
 The modules that ship with Crow. Their exports are bare names in files that import them (`use math`), qualified-only under an alias (`use math as m`), and always reachable with the prefix (`math.sum[...]`) — see section 12.
 
+**Design Note: what stays native, and why.** Considered: the standard library wholly in Crow, Rust kept for the compiler alone. Decided (design rule 20; Vijay, 2026-10-04): native code stays where one of four reasons holds, and every crate the manifests name (`Cargo.toml`, `crow_runtime/`, `crow_web/`, `crow_db/`) is accounted for here — a crate added gets its line, with its reason.
+
+- *A mechanism of the runtime, which no formula can be:* the server and its pages (axum, tokio, tower, tokio-stream, futures-util) and what runs inside its request handling — multipart uploads (multer), CORS and static files (tower-http), the signed sign-in cookie and session ids (hmac, sha2, base64, uuid), a live page's `fetch[]` sources polled by the server (reqwest); the database drivers' pools and the race of a query against a stop (tokio-postgres, deadpool-postgres, klickhouse, tokio, tokio-stream); the seeded process-global random source (rand); the autograd tape; parallel loops (rayon).
+- *A validated kernel:* TLS (rustls, webpki-roots); the digests, the keyed digests and the password hash (sha2, sha1, md-5, hmac, argon2), randomness from the operating system (getrandom); regular expressions (regex); the formats a table travels in (arrow, parquet, serde_json, bytes); linear algebra, the FFT, sparse matrices and the GPU (faer, rustfft, sprs, wgpu, pollster, bytemuck); time zones (chrono, chrono-tz); markdown (pulldown-cmark); a number written and read exactly (itoa, ryu), `erf` to the last bit (libm); the distributions drawn by rejection (rand_distr).
+- *A C library:* SQLite (rusqlite).
+- *The compiler's own tooling:* the Jupyter kernel (zeromq, libc), the REPL (rustyline), the language server (lsp-server, lsp-types), `crow check`'s SQL facts (sqlparser), snapshots of a program (bincode, serde), the served harness's client (tungstenite, in the compiler alone).
+
+Written in Crow on the `sys` layer, their crates gone: the HTTP client and every reader of a URL or an S3 object (ureq), tokens (jsonwebtoken), msgpack (rmp-serde), the WebSocket client (tungstenite, from the web runtime) and mail (lettre). Still native, and when each could move: ClickHouse over its HTTP interface, a `request` and a parser of its row format, after measuring against the native driver; the Postgres wire protocol — the startup, SCRAM over `hmac`, the rows — which is the session layer's driver, measured first; normal draws as Box–Muller over uniform tensors. What runs inside the Rust server's request handling moves only once the server can call Crow, or the design changes — a live page's sources polled by the program itself, with `request`.
+
 
 ### math
 

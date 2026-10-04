@@ -67,6 +67,14 @@ Not in 1.0: CI on every push waits (the local gate is the check), and so does th
 
 ## Remaining Work
 
+### Native → Crow, still open (design rule 20; the spec's Design Note "what stays native, and why")
+
+- [ ] **ClickHouse over its HTTP interface** — a `request` and a parser of its row format, written in Crow; measured against the native driver (klickhouse) first, since it is the session layer's driver.
+- [ ] **The Postgres wire protocol** — the startup, SCRAM over `hmac`, the rows; the session layer's driver, measured first. The biggest of the moves.
+- [ ] **Normal draws as Box–Muller** over uniform tensors (the other distributions draw by rejection and stay native).
+- What runs inside the Rust server's request handling — multipart uploads, CORS, the signed cookie, session ids, a live page's `fetch[]` sources — stays native while the server is Rust; the sources move if the program polls them itself with `request` (a design change, not taken).
+
+
 > **Design review fixes:** [docs/design-review.md](design-review.md) tracks the July 2026 review pushbacks (frame DSL uniformity, semantics gaps, early-exit, LLM pack, syntax taxes, parity architecture). Being fixed in that order.
 
 ### P0 — Quick fixes (hours) ✅
