@@ -455,6 +455,10 @@ fn write_book_block(dir: &std::path::Path, code: &str) -> Result<std::path::Path
 }
 
 fn cmd_test_book() {
+    // the book's page on `sys` shows the standard library's own layer: its
+    // blocks run through the harness's door, which a program has not
+    // SAFETY: set before the blocks' processes are spawned, on one thread
+    unsafe { std::env::set_var("CROW_SYS", "1") };
     let dir = std::path::Path::new("docs/book/src");
     if !dir.is_dir() {
         eprintln!("error: no docs/book/src/ directory found (run from the project root)");
@@ -739,11 +743,12 @@ fn reference_tables(h2: &str, h3: &str, h4: &str) -> Option<Vec<&'static str>> {
         "io" => vec!["io"],
         "doc" => vec!["doc"],
         "chart" => vec!["chart"],
+        "sys" => vec!["sys"],
         "frame" => vec!["frame"],
         "db" => vec!["db"],
         h if h == "web" || h.starts_with("Layout") => vec!["web", "ui", "element", "control", "chart"],
         // the section's opening, before any module's heading
-        _ => vec!["core", "web", "ui", "element", "control", "math", "math.stats", "math.nn", "frame", "db", "io", "doc", "chart"],
+        _ => vec!["core", "web", "ui", "element", "control", "math", "math.stats", "math.nn", "frame", "db", "io", "doc", "chart", "sys"],
     })
 }
 
@@ -777,6 +782,7 @@ fn cmd_test_docs() {
         ("io", modules::io::IO_FUNCTIONS.to_vec()),
         ("doc", modules::doc::DOC_FUNCTIONS.to_vec()),
         ("chart", modules::chart::CHART_FUNCTIONS.to_vec()),
+        ("sys", modules::sys::SYS_FUNCTIONS.to_vec()),
     ];
     for (_, names) in tables.iter_mut() { names.sort(); names.dedup(); }
     let known: BTreeSet<&str> = tables.iter().flat_map(|(_, ns)| ns.iter().copied()).collect();
@@ -829,7 +835,7 @@ fn cmd_test_docs() {
             page_blocks.push((p.strip_prefix(book_dir).unwrap_or(p).to_string_lossy().to_string(), title, mine));
         }
     }
-    for m in ["math", "math.stats", "math.nn", "frame", "io", "db", "doc", "chart", "web", "ui"] {
+    for m in ["math", "math.stats", "math.nn", "frame", "io", "db", "doc", "chart", "sys", "web", "ui"] {
         let used = blocks.lines().any(|l| l.starts_with("use ") && l[4..].split(',').any(|part| {
             let part = part.trim();
             let base = part.split(" as ").next().unwrap_or(part).trim();
@@ -962,6 +968,7 @@ fn cmd_test_docs() {
     if let Some(i) = section("### io") { add("io", "io", "use io", "io", "Structured file parsing beyond the built-in read and write.", one(Some(i)), vec![]); }
     if let Some(d) = section("### doc") { add("doc", "doc", "use doc", "doc", "Documentation from Markdown, rendered by the kernel so both execution modes write the same pages.", one(Some(d)), vec![]); }
     if let Some(c) = section("### chart") { add("chart", "chart", "use chart", "chart", "Technical indicators for the chart element, computed by the kernel so both execution modes draw the same numbers.", one(Some(c)), vec![]); }
+    if let Some(y) = section("### sys") { add("sys", "sys", "use sys", "sys", "The standard library's own layer: bytes, and a connection to a host, for the modules written in Crow — a program may not import it.", one(Some(y)), vec![]); }
     // web splits where the spec does: the view side (`use ui`) and the server side (`use web`)
     // (the spec's `### web` runs, through the `### Layout` section, up to `### db`)
     if let (Some((w0, _)), Some((d0, _))) = (section("### web"), section("### db")) {
@@ -4430,6 +4437,27 @@ mod refine_tests {
 /// module reached through two importers — the tape and the trading parts
 /// both reading the clock — is one copy. This runs *before* type inference
 /// so the main program's call sites can inform module function param types.
+/// Whether a file may import `sys`, the standard library's own layer: the
+/// modules the compiler ships (src/modules), and the harnesses' door
+/// (`CROW_SYS=1`, for the tests and the book that show it). A program
+/// reaches what `sys` builds — `request`, `socket`, the readers — never
+/// `sys` itself (spec, The standard library's layer).
+fn sys_allowed(dir: &std::path::Path) -> bool {
+    if std::env::var_os("CROW_SYS").is_some() {
+        return true;
+    }
+    let standard = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src/modules"));
+    let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    canon(dir).starts_with(canon(standard))
+}
+
+fn sys_refusal(line: usize) -> String {
+    format!(
+        "line {}: `sys` is the standard library's own layer — a program serves with serve[…], reads with request[…], read[…] and socket[…], and connects with connect[…]",
+        line
+    )
+}
+
 fn expand_module_imports(
     stmts: &[ast::Stmt],
     source_dir: &std::path::Path,
@@ -4458,6 +4486,9 @@ pub(crate) fn expand_module_imports_checked(
         match st {
             ast::Stmt::Line(n) => line = *n,
             ast::Stmt::Use { path, alias } => {
+                if path == "sys" && !sys_allowed(source_dir) {
+                    return Err(sys_refusal(line));
+                }
                 own_lines.entry(use_key(path, alias)).or_insert(line);
             }
             _ => {}
@@ -5119,6 +5150,21 @@ fn expand_into(
         // The module's own imports are hoisted first and its references to
         // them rewritten
         let mod_dir = file_path.parent().unwrap_or(source_dir);
+        // (a module of the program's may not open the standard library's
+        // layer either: the door is the compiler's own modules')
+        if !sys_allowed(mod_dir) {
+            let mut at = 0usize;
+            for st in &mod_stmts {
+                match st {
+                    ast::Stmt::Line(n) => at = *n,
+                    ast::Stmt::Use { path, .. } if path == "sys" => {
+                        eprintln!("{}: {}", file_path.display(), sys_refusal(at));
+                        process::exit(1);
+                    }
+                    _ => {}
+                }
+            }
+        }
         let mod_stmts = expand_into(&mod_stmts, mod_dir, ex, in_progress);
         in_progress.remove(&key);
 
@@ -6045,6 +6091,19 @@ mod module_parts_tests {
         let own = check("use chart\nuse lib.scan\nfn spread[vwap]\n    return vwap * 2.0\nlog[spread[1.0]]\nlog[scan.smooth[[1.0]]]\n");
         assert!(own.as_ref().is_err_and(|e| e.contains("'vwap' is provided by chart (imported on line 1)")), "{:?}", own);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `use sys` is the standard library's: a program's file is refused
+    /// before it runs, with the way a program reaches what `sys` builds
+    #[test]
+    fn a_program_may_not_import_sys() {
+        // SAFETY: the door is read by this process alone, in this test
+        unsafe { std::env::remove_var("CROW_SYS") };
+        let stmts = crate::build("use sys\nb = bytes['x']\nlog[len[b]]\n").expect("parses");
+        let dir = std::env::temp_dir();
+        let mut visited = std::collections::HashSet::new();
+        let out = expand_module_imports_checked(&stmts, &dir, &mut visited);
+        assert!(out.as_ref().is_err_and(|e| e.contains("line 1: `sys` is the standard library's own layer")), "{:?}", out.map(|_| ()));
     }
 
     /// The gate names an error found in an imported part by the part's

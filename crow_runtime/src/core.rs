@@ -250,7 +250,7 @@ pub fn len_json(j: &serde_json::Value) -> Result<i64, String> {
         serde_json::Value::Bool(_) => "a bool",
         serde_json::Value::Null => "a value",
     };
-    Err(format!("len[] takes a list, text, a map, numbers or a frame, got {}", got))
+    Err(format!("len[] takes a list, text, a map, numbers, a frame or bytes, got {}", got))
 }
 
 /// `contains[list, x]`: whether an item is `x`, compared as `eq` compares

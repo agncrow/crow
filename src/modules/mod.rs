@@ -6,6 +6,7 @@ pub mod io;
 pub mod math;
 pub mod nn;
 pub mod stats;
+pub mod sys;
 
 use std::collections::HashMap;
 use std::sync::Arc;

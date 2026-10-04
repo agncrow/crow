@@ -1,0 +1,262 @@
+//! `use sys`: the standard library's own layer (spec, "The standard
+//! library's layer") — bytes, and a connection to a host, plain or behind
+//! TLS, read and written as bytes. A program may not import it: the
+//! modules written in Crow build `request`, `socket` and the readers on
+//! it, and a program reaches those. Both backends call these functions.
+
+use std::io::{Read, Write};
+use std::sync::{Arc, Mutex};
+
+/// Bytes: what a connection reads and writes, and text encoded as UTF-8.
+/// Its own type, not `Vec<u8>`, so it shows as bytes do and is told apart
+/// from a list of ints.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Bytes(pub Vec<u8>);
+
+impl Bytes {
+    pub fn len(&self) -> i64 {
+        self.0.len() as i64
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl crate::display::CrowDisplay for Bytes {
+    fn crow_repr(&self) -> String {
+        format!("<{} bytes>", self.0.len())
+    }
+}
+
+impl std::fmt::Display for Bytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<{} bytes>", self.0.len())
+    }
+}
+
+/// `sys.bytes[text]`: the text's UTF-8.
+pub fn bytes_of_text(s: &str) -> Bytes {
+    Bytes(s.as_bytes().to_vec())
+}
+
+/// `sys.text[bytes]`: the text the bytes spell in UTF-8, or the reason
+/// they spell none.
+pub fn text_of_bytes(b: &Bytes) -> Result<String, String> {
+    String::from_utf8(b.0.clone()).map_err(|e| format!("not UTF-8 text: invalid byte at {}", e.utf8_error().valid_up_to()))
+}
+
+/// `sys.slice[bytes, from, to]`: the bytes from `from` to `to` (excluded),
+/// counted from the end when negative, as a text's slice is.
+pub fn slice(b: &Bytes, from: i64, to: i64) -> Result<Bytes, String> {
+    let n = b.0.len() as i64;
+    let at = |i: i64| if i < 0 { n + i } else { i };
+    let (lo, hi) = (at(from), at(to));
+    if lo < 0 || hi > n || lo > hi {
+        return Err(format!("slice [{}, {}) is outside {} bytes", from, to, n));
+    }
+    Ok(Bytes(b.0[lo as usize..hi as usize].to_vec()))
+}
+
+/// `sys.find[bytes, needle]`: where the needle first occurs, or -1.
+pub fn find(b: &Bytes, needle: &Bytes) -> i64 {
+    if needle.0.is_empty() {
+        return 0;
+    }
+    b.0.windows(needle.0.len()).position(|w| w == needle.0.as_slice()).map_or(-1, |i| i as i64)
+}
+
+/// `sys.concat[a, b]`: the two in order.
+pub fn concat(a: &Bytes, b: &Bytes) -> Bytes {
+    let mut out = a.0.clone();
+    out.extend_from_slice(&b.0);
+    Bytes(out)
+}
+
+/// `sys.byte[bytes, i]`: the byte at `i` as an int, counted from the end
+/// when negative.
+pub fn byte(b: &Bytes, i: i64) -> Result<i64, String> {
+    let n = b.0.len();
+    let at = crate::stops::item(i, n)?;
+    Ok(b.0[at] as i64)
+}
+
+/// `len[bytes]`: how many.
+pub fn len_bytes(b: &Bytes) -> i64 {
+    b.len()
+}
+
+enum Conn {
+    Plain(std::net::TcpStream),
+    Tls(Box<rustls::StreamOwned<rustls::ClientConnection, std::net::TcpStream>>),
+}
+
+impl Conn {
+    fn tcp(&self) -> &std::net::TcpStream {
+        match self {
+            Conn::Plain(s) => s,
+            Conn::Tls(s) => s.get_ref(),
+        }
+    }
+}
+
+/// A connection to a host: one, behind a lock, however many values hold
+/// it; closed by `close` or when it is let go.
+#[derive(Clone)]
+pub struct CrowStream {
+    inner: Arc<Mutex<Option<Conn>>>,
+    name: Arc<str>,
+}
+
+impl std::fmt::Debug for CrowStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "stream {}", self.name)
+    }
+}
+
+impl crate::display::CrowDisplay for CrowStream {
+    fn crow_repr(&self) -> String {
+        format!("<stream {}>", self.name)
+    }
+}
+
+impl CrowStream {
+    /// What a failed `open` holds: a stream that is closed.
+    pub fn closed() -> Self {
+        CrowStream { inner: Arc::new(Mutex::new(None)), name: Arc::from("closed") }
+    }
+}
+
+fn tls_config() -> Arc<rustls::ClientConfig> {
+    static CONFIG: std::sync::OnceLock<Arc<rustls::ClientConfig>> = std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            let mut roots = rustls::RootCertStore::empty();
+            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            Arc::new(rustls::ClientConfig::builder().with_root_certificates(roots).with_no_client_auth())
+        })
+        .clone()
+}
+
+/// `sys.open[host, port, tls, seconds]`: a connection to the host's port,
+/// behind TLS when asked, each read and write giving up after the seconds
+/// (none when they are 0), or the reason none could be made.
+pub fn open(host: &str, port: i64, tls: bool, seconds: f64) -> Result<CrowStream, String> {
+    use std::net::ToSocketAddrs;
+    if !(0..=65535).contains(&port) {
+        return Err(format!("port {} is outside 0 to 65535", port));
+    }
+    let timeout = (seconds > 0.0).then(|| std::time::Duration::from_secs_f64(seconds));
+    let addrs: Vec<std::net::SocketAddr> = (host, port as u16).to_socket_addrs().map_err(|e| format!("cannot resolve {}: {}", host, e))?.collect();
+    let Some(addr) = addrs.first() else { return Err(format!("cannot resolve {}", host)) };
+    let tcp = match timeout {
+        Some(t) => std::net::TcpStream::connect_timeout(addr, t),
+        None => std::net::TcpStream::connect(addr),
+    }
+    .map_err(|e| format!("cannot connect to {}:{}: {}", host, port, e))?;
+    tcp.set_read_timeout(timeout).map_err(|e| e.to_string())?;
+    tcp.set_write_timeout(timeout).map_err(|e| e.to_string())?;
+    let conn = if tls {
+        let name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|_| format!("{} is no name a certificate can carry", host))?;
+        let client = rustls::ClientConnection::new(tls_config(), name).map_err(|e| format!("TLS to {}: {}", host, e))?;
+        Conn::Tls(Box::new(rustls::StreamOwned::new(client, tcp)))
+    } else {
+        Conn::Plain(tcp)
+    };
+    Ok(CrowStream { inner: Arc::new(Mutex::new(Some(conn))), name: Arc::from(format!("{}:{}", host, port)) })
+}
+
+/// `sys.send[stream, bytes]`: the bytes written, all of them, or the reason.
+pub fn send(s: &CrowStream, b: &Bytes) -> Result<i64, String> {
+    let mut guard = s.inner.lock().map_err(|_| "the stream is held by a thread that stopped".to_string())?;
+    let Some(conn) = guard.as_mut() else { return Err("the stream is closed".to_string()) };
+    let r = match conn {
+        Conn::Plain(t) => t.write_all(&b.0).and_then(|_| t.flush()),
+        Conn::Tls(t) => t.write_all(&b.0).and_then(|_| t.flush()),
+    };
+    r.map_err(|e| format!("cannot send to {}: {}", s.name, e))?;
+    Ok(b.len())
+}
+
+/// `sys.recv[stream, most, seconds]`: up to `most` bytes as they arrive —
+/// none when the other side closed — waiting at most the seconds (the
+/// connection's own wait when they are 0), or the reason: a wait that
+/// passed its seconds, a stream that is closed.
+pub fn recv(s: &CrowStream, most: i64, seconds: f64) -> Result<Bytes, String> {
+    if most <= 0 {
+        return Err(format!("recv[] reads at most a positive number of bytes, got {}", most));
+    }
+    let mut guard = s.inner.lock().map_err(|_| "the stream is held by a thread that stopped".to_string())?;
+    let Some(conn) = guard.as_mut() else { return Err("the stream is closed".to_string()) };
+    if seconds > 0.0 {
+        conn.tcp().set_read_timeout(Some(std::time::Duration::from_secs_f64(seconds))).map_err(|e| e.to_string())?;
+    }
+    let mut buf = vec![0u8; most as usize];
+    let r = match conn {
+        Conn::Plain(t) => t.read(&mut buf),
+        Conn::Tls(t) => t.read(&mut buf),
+    };
+    match r {
+        Ok(n) => {
+            buf.truncate(n);
+            Ok(Bytes(buf))
+        }
+        Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => Err(format!("no data from {} in {} s", s.name, seconds)),
+        Err(e) => Err(format!("cannot read from {}: {}", s.name, e)),
+    }
+}
+
+/// `sys.close[stream]`: the connection let go; every call after is refused.
+pub fn close(s: &CrowStream) {
+    if let Ok(mut guard) = s.inner.lock() {
+        *guard = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A server that echoes what it is sent, once, then closes.
+    fn echo_once() -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut s, _)) = listener.accept() {
+                let mut buf = [0u8; 64];
+                if let Ok(n) = s.read(&mut buf) {
+                    let _ = s.write_all(&buf[..n]);
+                }
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn bytes_are_text_sliced_found_and_joined() {
+        let b = bytes_of_text("héllo");
+        assert_eq!(b.len(), 6);
+        assert_eq!(text_of_bytes(&b).unwrap(), "héllo");
+        assert_eq!(text_of_bytes(&slice(&b, 1, 2).unwrap()).unwrap_err().contains("not UTF-8"), true);
+        assert_eq!(find(&b, &bytes_of_text("llo")), 3);
+        assert_eq!(find(&b, &bytes_of_text("x")), -1);
+        assert_eq!(text_of_bytes(&concat(&slice(&b, 0, 1).unwrap(), &slice(&b, -2, 6).unwrap())).unwrap(), "hlo");
+        assert_eq!(byte(&b, -1).unwrap(), b'o' as i64);
+        assert!(slice(&b, 2, 1).is_err());
+        assert_eq!(format!("{}", b), "<6 bytes>");
+    }
+
+    #[test]
+    fn a_connection_sends_receives_and_closes() {
+        let port = echo_once();
+        let s = open("127.0.0.1", port as i64, false, 2.0).unwrap();
+        assert_eq!(send(&s, &bytes_of_text("ping")).unwrap(), 4);
+        assert_eq!(text_of_bytes(&recv(&s, 64, 2.0).unwrap()).unwrap(), "ping");
+        // the server closed: nothing more comes
+        assert!(recv(&s, 64, 2.0).unwrap().is_empty());
+        close(&s);
+        assert!(send(&s, &bytes_of_text("x")).unwrap_err().contains("closed"));
+        assert!(open("127.0.0.1", 1, false, 0.2).unwrap_err().contains("cannot connect"));
+        assert!(open("127.0.0.1", 70000, false, 0.2).unwrap_err().contains("outside"));
+    }
+}

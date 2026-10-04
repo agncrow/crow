@@ -113,6 +113,12 @@ pub enum Kind {
     /// `&CrowColumn` taken: a frame's column, which only the compiled
     /// program holds as one (the interpreter holds its cells as a list).
     Column,
+    /// `&Bytes` taken, `Bytes` given (crow_runtime::sys): what a
+    /// connection reads and writes.
+    Bytes,
+    /// `&CrowStream` taken, `CrowStream` given: a connection `sys.open`
+    /// made.
+    Stream,
     /// `String` given: markup a view places as markup (`doc.markdown`).
     Markup,
     /// `Vec<BTreeMap<String, String>>` given: rows of text by column
@@ -234,6 +240,8 @@ impl Kind {
             Kind::Floats => CrowType::Array(Box::new(CrowType::Float)),
             Kind::Json => CrowType::Json,
             Kind::Column => CrowType::FrameCol,
+            Kind::Bytes => CrowType::Bytes,
+            Kind::Stream => CrowType::Stream,
             Kind::Markup => CrowType::Markup,
             Kind::TextRows => CrowType::Array(Box::new(CrowType::Map(Box::new(CrowType::Str)))),
             Kind::Shell => CrowType::Struct("CrowShell".to_string()),
@@ -327,6 +335,8 @@ impl Kind {
             Kind::Ints => "Vec::<i64>::new()",
             Kind::Floats => "Vec::<f64>::new()",
             Kind::Json => "serde_json::Value::Null",
+            Kind::Bytes => "crow_runtime::sys::Bytes::default()",
+            Kind::Stream => "crow_runtime::sys::CrowStream::closed()",
             // taken, never given
             Kind::Column => "unreachable!()",
             Kind::Markup => "String::new()",
@@ -747,6 +757,30 @@ pub fn read_column(v: &CrowValue) -> Result<crow_runtime::frame::CrowColumn, Str
     }
 }
 
+/// Bytes, as `sys` reads and writes them.
+pub fn read_bytes(v: &CrowValue) -> Result<crow_runtime::sys::Bytes, String> {
+    match &v.value {
+        Value::Bytes(b) => Ok(b.clone()),
+        _ => Err(format!("expected bytes, got {}", named(v))),
+    }
+}
+
+pub fn write_bytes(b: crow_runtime::sys::Bytes) -> CrowValue {
+    CrowValue::ok(Value::Bytes(b))
+}
+
+/// A connection `sys.open` made.
+pub fn read_stream(v: &CrowValue) -> Result<crow_runtime::sys::CrowStream, String> {
+    match &v.value {
+        Value::Stream(s) => Ok(s.clone()),
+        _ => Err(format!("expected a stream, got {}", named(v))),
+    }
+}
+
+pub fn write_stream(s: crow_runtime::sys::CrowStream) -> CrowValue {
+    CrowValue::ok(Value::Stream(s))
+}
+
 pub fn write_list(items: Vec<CrowValue>) -> CrowValue {
     CrowValue::ok(Value::Array(items))
 }
@@ -901,6 +935,8 @@ macro_rules! read {
     (Texts, $g:expr) => { read_strs(one($g)?)? };
     (Json, $g:expr) => { &*read_json(one($g)?)? };
     (Column, $g:expr) => { &read_column(one($g)?)? };
+    (Bytes, $g:expr) => { &read_bytes(one($g)?)? };
+    (Stream, $g:expr) => { &read_stream(one($g)?)? };
     (Shown, $g:expr) => { one($g)? };
     (Encoded, $g:expr) => { one($g)? };
 }
@@ -916,6 +952,8 @@ macro_rules! answer {
     (FloatMap, $x:expr) => { write_float_map($x) };
     (Frame, $x:expr) => { write_frame($x) };
     (Column, $x:expr) => { write_column($x) };
+    (Bytes, $x:expr) => { write_bytes($x) };
+    (Stream, $x:expr) => { write_stream($x) };
     (Strs, $x:expr) => { write_strs($x) };
     (Tensors, $x:expr) => { write_tensors($x) };
     (Unit, $x:expr) => { write_unit($x) };
@@ -1024,6 +1062,7 @@ pub static ROWS: &[Row] = &[
     // the refusal the interpreter gives the value it parsed to (compiled,
     // its length was 0)
     row!("core.len_json", "", "len", crow_runtime::core::len_json, (Json) -> Int, stops),
+    row!("core.len_bytes", "", "len", crow_runtime::sys::len_bytes, (Bytes) -> Int, never),
     // an item compared as `eq` compares it: a record field by field, a map
     // entry by entry
     row!("core.contains", "", "contains", crow_runtime::core::contains, (Seq, ItemRef) -> Bool, never),
@@ -1356,6 +1395,18 @@ pub static ROWS: &[Row] = &[
     row!("chart.vwap_trailing", "chart", "vwap", crow_runtime::indicators::vwap_trailing, (Tensor, Tensor, Tensor, Float) -> Tensor, stops),
     row!("chart.rolling_sum", "chart", "rolling_sum", crow_runtime::indicators::rolling_sum, (Tensor, Tensor, Float) -> Tensor, stops),
     row!("chart.cvd", "chart", "cvd", crow_runtime::indicators::cvd, (Tensor, Tensor) -> Tensor, stops),
+    // `use sys`: the standard library's own layer (crow_runtime::sys) — a
+    // program may not import it (spec, The standard library's layer)
+    row!("sys.open", "sys", "open", crow_runtime::sys::open, (Str, Int, Bool, Float) -> Stream, value "sys"),
+    row!("sys.send", "sys", "send", crow_runtime::sys::send, (Stream, Bytes) -> Int, value "sys"),
+    row!("sys.recv", "sys", "recv", crow_runtime::sys::recv, (Stream, Int, Float) -> Bytes, value "sys"),
+    row!("sys.close", "sys", "close", crow_runtime::sys::close, (Stream) -> Unit, never),
+    row!("sys.bytes", "sys", "bytes", crow_runtime::sys::bytes_of_text, (Str) -> Bytes, never),
+    row!("sys.text", "sys", "text", crow_runtime::sys::text_of_bytes, (Bytes) -> Str, value "parse"),
+    row!("sys.slice", "sys", "slice", crow_runtime::sys::slice, (Bytes, Int, Int) -> Bytes, stops),
+    row!("sys.find", "sys", "find", crow_runtime::sys::find, (Bytes, Bytes) -> Int, never),
+    row!("sys.concat", "sys", "concat", crow_runtime::sys::concat, (Bytes, Bytes) -> Bytes, never),
+    row!("sys.byte", "sys", "byte", crow_runtime::sys::byte, (Bytes, Int) -> Int, stops),
     // frame (a column the frame lacks, an aggregation or a join it does not
     // know, a mask or a count that does not fit: the reason the program
     // stops with, as df.col of a missing column is — the interpreter had
@@ -1500,6 +1551,8 @@ fn listed(items: &[String], last: &str) -> String {
 pub enum Arg {
     Int,
     Float,
+    Bytes,
+    Stream,
     /// A parsed JSON value, whose kind shows only as it runs.
     Json,
     /// A tensor.
@@ -1569,6 +1622,8 @@ impl Arg {
             Arg::Map => "a map",
             Arg::Record => "a record",
             Arg::Sparse => "a sparse matrix",
+            Arg::Bytes => "bytes",
+            Arg::Stream => "a stream",
             Arg::Frame => "a frame",
             Arg::Fn => "a function",
             Arg::AnyList => "a list",
@@ -1597,6 +1652,8 @@ impl Arg {
             CrowType::Map(_) => Arg::Map,
             CrowType::Struct(_) | CrowType::OptBoxStruct(_) => Arg::Record,
             CrowType::Sparse => Arg::Sparse,
+            CrowType::Bytes => Arg::Bytes,
+            CrowType::Stream => Arg::Stream,
             CrowType::Frame(_) => Arg::Frame,
             CrowType::Fn(..) => Arg::Fn,
             _ => Arg::Unknown,
@@ -1637,6 +1694,8 @@ impl Arg {
             Value::Map(_) => Arg::Map,
             Value::StructInstance(_) => Arg::Record,
             Value::Sparse(_) => Arg::Sparse,
+            Value::Bytes(_) => Arg::Bytes,
+            Value::Stream(_) => Arg::Stream,
             Value::Frame(_) => Arg::Frame,
             Value::Fn(_) | Value::GradFn(_) => Arg::Fn,
             Value::Json(_) => Arg::Json,
@@ -1655,6 +1714,8 @@ impl Kind {
             Kind::Str => "text",
             Kind::Tensor => "numbers",
             Kind::Tensors => "a list of tensors",
+            Kind::Bytes => "bytes",
+            Kind::Stream => "a stream",
             Kind::Strs => "a list of text",
             Kind::Bools => "a list of bools",
             Kind::Sparse => "a sparse matrix",
@@ -1663,6 +1724,8 @@ impl Kind {
             Kind::Cells => "a column's values",
             Kind::Words => "a list",
             Kind::Sizes => "sizes",
+            Kind::Bytes => "bytes",
+            Kind::Stream => "stream",
             Kind::Groups => "tensors",
             Kind::Lists => "lists of text",
             Kind::IntMap | Kind::FloatMap | Kind::MapOf | Kind::MapRef | Kind::TextMap => "a map",
@@ -1705,6 +1768,8 @@ impl Kind {
                 Kind::Bool => a == Arg::Truth,
                 Kind::Bools => a == Arg::Truths,
                 Kind::Sparse => a == Arg::Sparse,
+                Kind::Bytes => a == Arg::Bytes,
+                Kind::Stream => a == Arg::Stream,
                 Kind::Frame => a == Arg::Frame,
                 Kind::Cell => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Json),
                 Kind::Cells => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column),

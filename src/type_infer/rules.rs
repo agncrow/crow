@@ -593,7 +593,7 @@ impl TypeContext {
         // Registry-module prefixed call (math.zeros[...],
         // or via alias: m.zeros after `use math as m`)
         let real = self.module_aliases.get(module).cloned().unwrap_or_else(|| module.to_string());
-        if matches!(real.as_str(), "math" | "io" | "frame" | "db" | "doc" | "chart" | "math.stats" | "math.nn") && self.registry.has_function(field) {
+        if matches!(real.as_str(), "math" | "io" | "frame" | "db" | "doc" | "chart" | "sys" | "math.stats" | "math.nn") && self.registry.has_function(field) {
             if let Some(t) = self.registry.type_of_in(&real, field, arg_types) {
                 // auto-propagation applies to qualified calls too:
                 // a fallible argument makes the result fallible

@@ -70,6 +70,18 @@ repository root points assistants here.
 19. **Track progress.** `docs/roadmap.md` lists planned, in-progress, and
     rejected features. Built and documented features leave the roadmap;
     rejected ones stay, with the reason.
+20. **Formulas in Crow, primitives in Rust, laws in Crow for both.** A
+    standard module is written in Crow wherever it is a formula over other
+    builtins (`math.nn`, `math.stats`, the indicators); native only when
+    it must be — it touches the operating system, it is the compiler's own
+    mechanism (the autograd tape), it is a validated numeric kernel
+    (`faer`, `rustfft`), or it is a scalar loop the interpreter cannot
+    afford. The native primitives the Crow-written modules stand on live
+    under `use sys`, which only the compiler's own modules may import: a
+    program sees one way (`serve`, `request`, `connect`, `read`), the
+    library the smallest layer that lets the rest be Crow. Every kernel
+    that stays native gets laws in Crow (known answers, algebraic
+    identities), run by the gate in both modes.
 
 ## Workflow
 

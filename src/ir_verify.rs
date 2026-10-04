@@ -670,6 +670,8 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::Whole => *t == Ty::Int,
             Kind::Words => matches!(t, Ty::Tensor(..) | Ty::Column(_)) || items(t, &|e| matches!(e, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup)),
             Kind::Bool => *t == Ty::Bool,
+            Kind::Bytes => *t == Ty::Bytes,
+            Kind::Stream => matches!(t, Ty::Handle(h) if h == "stream"),
             Kind::Str => matches!(t, Ty::Str | Ty::Markup),
             Kind::Tensor => matches!(t, Ty::Tensor(..)) || items(t, &|_| false),
             Kind::Tensors => items(t, &|e| matches!(e, Ty::Tensor(..))),

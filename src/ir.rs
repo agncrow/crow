@@ -18,6 +18,8 @@ pub enum Ty {
     Float,
     Bool,
     Str,
+    /// Bytes: what a connection reads and writes (`use sys`).
+    Bytes,
     Unit,
     /// Text that is markup (a view's, an element's, `doc`'s): a string
     /// everywhere a string is read, placed as markup by a view.
@@ -120,6 +122,7 @@ impl std::fmt::Display for Ty {
             Ty::Float => write!(f, "Float"),
             Ty::Bool => write!(f, "Bool"),
             Ty::Str => write!(f, "Str"),
+            Ty::Bytes => write!(f, "Bytes"),
             Ty::Markup => write!(f, "Markup"),
             Ty::Unit => write!(f, "Unit"),
             Ty::List(t) => write!(f, "List({})", t),

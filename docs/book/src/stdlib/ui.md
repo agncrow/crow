@@ -209,7 +209,7 @@ Pages are composed from layout primitives, never styled with CSS. Five container
 | `color`, `background` | a colour token: `text muted accent up down surface bg` — never a literal colour |  |
 | `lines = 2` | clamp a wrapping paragraph | [Structured files: `use io`](../by-example/io.md) |
 | `below = 'phone' \| 'tablet'`, `becomes = 'stack'`, `columns_then = 1`, `hidden_below` | responsive rules at named widths (phone < 600, tablet < 1024) — no media queries |  |
-| `open = true`, `side = 'left' \| 'right'` | a disclosure's or layer's state (any bool expression) and a drawer's or dropdown's side |  |
+| `open = true`, `side = 'left' \| 'right'` | a disclosure's or layer's state (any bool expression) and a drawer's or dropdown's side | [The standard library's layer: `use sys`](../by-example/sys.md) |
 | `tip = 'text'`, `fit = 'cover' \| 'contain'`, `active = '/path'` | a tooltip on anything; how an `img` fills its `aspect` box; the current page of a `nav` |  |
 
 Layout attributes are literals; a wrong value is a compile error naming the scale (`gap = 'huge' is not a spacing step (xs s m l xl)`), the same in both modes. Attributes outside the vocabulary (`class`, `href`, `name`, ...) pass through as HTML. Labels, headings, buttons, and cells are single-line; only `p` wraps.

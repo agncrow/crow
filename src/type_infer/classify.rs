@@ -125,6 +125,11 @@ impl TypeContext {
                             self.registry.load(std::sync::Arc::new(crate::modules::io::IoModule));
                         }
                     }
+                    if path == "sys" {
+                        if !self.registry.is_loaded("sys") {
+                            self.registry.load(std::sync::Arc::new(crate::modules::sys::SysModule));
+                        }
+                    }
                     if path == "frame" {
                         if !self.registry.is_loaded("frame") {
                             self.registry.load(std::sync::Arc::new(crate::modules::frame::FrameModule));

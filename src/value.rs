@@ -180,6 +180,10 @@ pub enum Value {
     /// A WebSocket client's connection (`socket[url]`), shared by every
     /// value that holds it.
     Socket(crow_web::ws::CrowSocket),
+    /// Bytes (`use sys`): what a connection reads and writes.
+    Bytes(crow_runtime::sys::Bytes),
+    /// A connection `sys.open` made, shared by every value that holds it.
+    Stream(crow_runtime::sys::CrowStream),
     /// What a route's handler answers: `text[…]`, `html[…]`, `json[…]`,
     /// `respond[status, body]`, `redirect[url]`, `bytes[…]` (use web).
     Response(Box<crow_web::core::CrowResponse>),
@@ -249,6 +253,8 @@ impl Value {
             Value::DbConn(_) => "db",
             Value::Mailer(..) => "mailer",
             Value::Socket(_) => "socket",
+            Value::Bytes(_) => "bytes",
+            Value::Stream(_) => "stream",
             Value::Response(_) => "response",
             Value::Json(j) => crow_runtime::json::type_word(j),
             Value::Dual(_, _) => "float", // Dual appears as float to user
@@ -291,6 +297,8 @@ impl fmt::Display for Value {
             Value::DbConn(h) => write!(f, "<db:{}>", h.backend_name()),
             Value::Mailer(_, host) => write!(f, "<mailer:{}>", host),
             Value::Socket(s) => write!(f, "<{:?}>", s),
+            Value::Bytes(b) => write!(f, "{}", b),
+            Value::Stream(s) => write!(f, "<{:?}>", s),
             Value::Response(r) => write!(f, "<response {}>", r.status),
             Value::Json(j) => {
                 use crow_runtime::display::CrowDisplay as _;

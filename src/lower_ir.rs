@@ -639,6 +639,8 @@ pub fn ty_of(t: &CrowType) -> Ty {
         CrowType::Sparse => Ty::Handle("sparse".into()),
         CrowType::Mailer => Ty::Handle("mailer".into()),
         CrowType::Socket => Ty::Handle("socket".into()),
+        CrowType::Bytes => Ty::Bytes,
+        CrowType::Stream => Ty::Handle("stream".into()),
         CrowType::App => Ty::Handle("app".into()),
         CrowType::Void => Ty::Unit,
         CrowType::Unknown => Ty::Unknown,
@@ -652,6 +654,7 @@ pub fn crow_type(t: &Ty) -> CrowType {
         Ty::Int => CrowType::Int,
         Ty::Float => CrowType::Float,
         Ty::Bool => CrowType::Bool,
+        Ty::Bytes => CrowType::Bytes,
         Ty::Str => CrowType::Str,
         Ty::Markup => CrowType::Markup,
         Ty::Unit => CrowType::Void,
@@ -674,6 +677,7 @@ pub fn crow_type(t: &Ty) -> CrowType {
             "web.request" => CrowType::WebRequest,
             "mailer" => CrowType::Mailer,
             "socket" => CrowType::Socket,
+            "stream" => CrowType::Stream,
             "app" => CrowType::App,
             _ => CrowType::Unknown,
         },
@@ -3120,7 +3124,7 @@ impl<'a> Lowerer<'a> {
     fn builtin_row(&self, module: Option<&str>, name: &str, lowered: &[Expr]) -> Option<&'static crate::table::Row> {
         use crate::table::Arg;
         let pinned = match module {
-            Some(m) if matches!(m, "math" | "io" | "frame" | "doc" | "chart" | "math.stats" | "math.nn") && self.ctx.registry.has_function(name) => Some(m),
+            Some(m) if matches!(m, "math" | "io" | "frame" | "doc" | "chart" | "sys" | "math.stats" | "math.nn") && self.ctx.registry.has_function(name) => Some(m),
             Some(_) => return None,
             None => None,
         };

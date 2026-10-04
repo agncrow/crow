@@ -119,7 +119,7 @@ pub(crate) const BUILTINS: &[&str] = &[
 ];
 
 /// The modules whose functions and constants a bare `use` makes names.
-const REGISTRY_MODULES: &[&str] = &["math", "math.stats", "math.nn", "io", "frame", "doc", "chart"];
+const REGISTRY_MODULES: &[&str] = &["math", "math.stats", "math.nn", "io", "frame", "doc", "chart", "sys"];
 
 /// What the checks keep while the program is lowered.
 #[derive(Default)]
@@ -787,7 +787,10 @@ impl<'a> Lowerer<'a> {
         // mode has them (the interpreter had answered msgpack, arrow, bytes
         // and stream with a map that only looked like a response)
         let web_program = self.ctx.bare_modules.iter().any(|m| m == "web" || m.starts_with("web."));
-        if !own && !web_program && matches!(name, "route" | "serve" | "respond" | "redirect" | "msgpack" | "arrow" | "bytes" | "stream") {
+        // (a module imported bare that provides the name answers it: `bytes`
+        // under `use sys` is the standard library's, not a response)
+        let provided = self.ctx.registry.providers_of(name).iter().any(|m| self.ctx.bare_modules.contains(*m));
+        if !own && !web_program && !provided && matches!(name, "route" | "serve" | "respond" | "redirect" | "msgpack" | "arrow" | "bytes" | "stream") {
             self.refuse(format!("{}[] is web's: add `use web`", name));
             return;
         }
@@ -1559,7 +1562,7 @@ mod tests {
     #[test]
     fn a_collection_given_a_wrong_kind_is_refused() {
         assert!(check_source("log[has[[1, 2], 1]]\n").unwrap_err().contains("has[] takes a map and text, got numbers and an int"));
-        assert!(check_source("log[len[5]]\n").unwrap_err().contains("len[] takes a list, text, a map, numbers or a frame, got an int"));
+        assert!(check_source("log[len[5]]\n").unwrap_err().contains("len[] takes a list, text, a map, numbers, a frame or bytes, got an int"));
         let sorted = check_source("struct P [x, y]\nlog[sort[[P[3, 4], P[1, 2]]]]\n").unwrap_err();
         assert!(sorted.contains("sort[] takes a list of ints, a list of numbers, a list of text or numbers, got a list of records"), "{}", sorted);
         assert!(check_source("log[range[2.5]]\n").unwrap_err().contains("range[] takes an int, got a number"));

@@ -32,14 +32,14 @@ A route's handler is handed the request, and nothing else: it is a function, so 
 
 | Function | Description | Example |
 |---|---|---|
-| `text[s]` | Plain text response | [Web: responses and submodules](../by-example/web-more.md) |
+| `text[s]` | Plain text response | [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) |
 | `html[s]` | HTML response | [Web: responses and submodules](../by-example/web-more.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Derivations](../ch12-08-derive.md) |
 | `json[map]` | JSON response from a map | [JSON](../by-example/json.md) · [Web: responses and submodules](../by-example/web-more.md) · [Web: a JSON route](../by-example/web.md) |
 | `respond[status, body]` | Response with custom status code | [Web: responses and submodules](../by-example/web-more.md) |
 | `redirect[url]` | HTTP redirect response | [Web: responses and submodules](../by-example/web-more.md) |
 | `msgpack[value]` | MessagePack binary response: the value as JSON holds it, packed (`application/msgpack`) | [Web: responses and submodules](../by-example/web-more.md) |
 | `arrow[frame]` | The frame as an Arrow IPC stream (`application/vnd.apache.arrow.stream`), which pandas, polars and every Arrow reader take | [Web: responses and submodules](../by-example/web-more.md) |
-| `bytes[data]` | Raw binary response (`application/octet-stream`) | [Web: responses and submodules](../by-example/web-more.md) |
+| `bytes[data]` | Raw binary response (`application/octet-stream`) | [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) |
 | `stream[feed]` | A text response sent as `feed` puts it, chunk by chunk; `stream[feed, a, …]` hands `feed` the rest | [Web: responses and submodules](../by-example/web-more.md) |
 
 **A stream is sent as its feed puts it.** `stream[feed, a, …]` answers at once, and when the response is sent it calls `feed[put, a, …]` on a thread of its own. Each `put[text]` sends that chunk to the reader as it is put, and answers whether the reader still listens: `false` once they have gone, so a long feed can stop early. The arguments after the feed are the values they have when the handler answers, which is how a feed reads the request. A feed puts text — a value is written into text first, ``put['`row`\n']`` — and a `put` handed anything else is refused before the program runs; the chunks go out in the order they are put, a loop's included. A feed that fails or stops ends the body where it is, and the log says why. The body is `text/plain`, sent chunked.
@@ -77,7 +77,7 @@ A token is how an API, which has no page session, says who calls it: `sign` give
 | Function | Description | Example |
 |---|---|---|
 | `socket[url]` | A connection to a WebSocket server, `ws://` or `wss://` | [Web: responses and submodules](../by-example/web-more.md) |
-| `send[s, text]` | Send a text message; answers empty text | [Web: responses and submodules](../by-example/web-more.md) |
+| `send[s, text]` | Send a text message; answers empty text | [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) |
 | `recv[s]` / `recv[s, secs]` | The next message, as text — waiting for it, or at most `secs` seconds | [Web: responses and submodules](../by-example/web-more.md) |
 | `close[s]` | Close the connection, for every value that holds it | [Web: responses and submodules](../by-example/web-more.md) |
 

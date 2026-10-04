@@ -499,6 +499,7 @@ pub fn values_equal(a: &CrowValue, b: &CrowValue) -> bool {
         (Value::Int(x), Value::Float(y)) => (*x as f64) == *y,
         (Value::Float(x), Value::Int(y)) => *x == (*y as f64),
         (Value::Dual(x, _), Value::Dual(y, _)) => x == y,
+        (Value::Bytes(x), Value::Bytes(y)) => x == y,
         (Value::Dual(x, _), Value::Float(y)) => x == y,
         (Value::Float(x), Value::Dual(y, _)) => x == y,
         (Value::Dual(x, _), Value::Int(y)) => *x == (*y as f64),

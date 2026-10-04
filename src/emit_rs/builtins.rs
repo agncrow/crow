@@ -484,6 +484,8 @@ impl Emitter {
                         // a frame's column is the list of its cells there
                         CrowType::Array(_) | CrowType::NumArray(..) | CrowType::FrameCol => "\"array\"".to_string(),
                         CrowType::Sparse => "\"sparse\"".to_string(),
+                        CrowType::Bytes => "\"bytes\"".to_string(),
+                        CrowType::Stream => "\"stream\"".to_string(),
                         CrowType::Map(_) => "\"map\"".to_string(),
                         CrowType::Fn(_, _) => "\"fn\"".to_string(),
                         CrowType::Void => "\"none\"".to_string(),

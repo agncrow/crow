@@ -20,6 +20,11 @@ rand_distr = "0.6.0"
 rayon = "1.11.0"
 serde = { version = "1", features = ["derive", "rc"] }
 rustfft = "6.4.1"
+# `sys`: the standard library's own layer — a TCP connection, plain or
+# behind TLS, for the modules written in Crow (spec, The standard library's
+# layer)
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1.0"
 ryu = "1.0.23"
 sprs = "0.11.4"
 wgpu = "28.0.0"
