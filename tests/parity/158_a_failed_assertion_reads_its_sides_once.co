@@ -1,0 +1,15 @@
+--- A failed assertion reports the comparison and both sides as they
+--- were: each side is read once, as the compiled program reads them.
+--- (The interpreter had read both sides again for its message, so a
+--- side that moved a local — its last use — found it gone and said
+--- `cannot access field 'w' on this value` instead of `assert failed`.)
+struct Thing [w]
+
+fn pick[t]
+    return len[t.w] - 1
+
+p = [0.5, 0.25]
+t = Thing[[1.0, 2.0]]
+log['before']
+assert[p[pick[t]] gt 0.99]
+log['not reached']

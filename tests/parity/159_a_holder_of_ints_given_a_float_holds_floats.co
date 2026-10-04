@@ -1,0 +1,40 @@
+--- A variable that is ever assigned a float is a float (spec §1), and
+--- so is what holds one: a list or a map of ints handed a float holds
+--- floats from then on, a record's float field given an int that can
+--- fail holds a float that can fail, and a list of rows made of a local
+--- leaves the local to be read again. (Compiled, none of the three
+--- built; interpreted, `push[[1, 2], 2.5]` kept an int among floats.)
+use math, frame
+
+xs = push[[1, 2], 2.5]
+log[xs]
+log[type[xs[0]]]
+ys = push[range[3], 2.5]
+log[ys]
+log[type[ys[0]]]
+log[concat[range[2], ys]]
+log[contains[range[3], 2.0]]
+log[contains[range[3], 2.5]]
+m = set[map[a = 1], 'b', 2.5]
+log[m]
+log[type[m['a']]]
+log[concat[[1, 2], [0.5]]]
+log[type[concat[[0.5], [1, 2]][2]]]
+
+struct P [x, y]
+a = P[1.5, 2.0]
+df = with[frame.new[], 'a', [1, 2, 3]]
+b = P[len[frame.stack[df, df]], 3.0]
+log[b.x]
+log[type[b.x]]
+c = P[int['12'], 3.0]
+log[c.x]
+log[type[c.x]]
+d = P[int['x'], 3.0]
+log[d.x.ok]
+
+v = ones[3]
+w = [1.0, 2.0, 3.0]
+log[math.stack[[v, w]]]
+for x in v
+    log[x * 2.0]

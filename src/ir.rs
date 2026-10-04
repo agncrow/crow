@@ -428,6 +428,9 @@ pub enum Convert {
     /// A list of numbers to a tensor, or back.
     ToTensor,
     ToList,
+    /// A list or a map of ints as one of floats: a holder handed a float
+    /// holds floats from then on (spec §1).
+    IntsToFloats,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1091,6 +1094,7 @@ pub fn expr(e: &Expr) -> String {
             Convert::ToStr => format!("str({})", expr(inner)),
             Convert::ToTensor => format!("tensor({})", expr(inner)),
             Convert::ToList => format!("list({})", expr(inner)),
+            Convert::IntsToFloats => format!("floats({})", expr(inner)),
         },
         Expr::Binary { op, l, r, .. } => format!("({} {} {})", expr(l), op, expr(r)),
         Expr::Unary { op, expr: inner, .. } => format!("({} {})", op, expr(inner)),

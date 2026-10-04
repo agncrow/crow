@@ -979,13 +979,17 @@ impl IrInterp {
                     Expr::Binary { op, l, r, .. } => (op, l, r),
                     _ => unreachable!(),
                 };
-                let full = self.eval(&args[0])?;
+                // (each side read once, as the compiled program reads them:
+                // a failed assertion had read both again for its message,
+                // and a side that moved a local, or drew a random number,
+                // then said something else)
+                let lv = self.eval(l)?;
+                let rv = self.eval(r)?;
+                let full = crate::ops::binop(&lv, &binop_of(op)?, &rv)?;
                 if !full.is_ok() {
                     return Err(format!("cannot branch on an error value — {}", full.reason()));
                 }
                 if matches!(full.value, Value::Bool(false)) {
-                    let lv = self.eval(l)?;
-                    let rv = self.eval(r)?;
                     if crate::rehearsal::unheld(format!("{}: {} {} {}", self.trace_entry(), lv.value, op, rv.value)) {
                         return Ok(CrowValue::done());
                     }
@@ -1072,6 +1076,22 @@ impl IrInterp {
                 match how {
                     Convert::IntToFloat => match &v.value {
                         Value::Int(n) if v.is_ok() => CrowValue::ok(Value::Float(*n as f64)),
+                        _ => v,
+                    },
+                    // a holder of ints as one of floats (an error stays)
+                    Convert::IntsToFloats => match &v.value {
+                        Value::Array(items) if v.is_ok() => CrowValue::ok(Value::Array(
+                            items.iter().map(|i| match &i.value {
+                                Value::Int(n) if i.is_ok() => CrowValue::ok(Value::Float(*n as f64)),
+                                _ => i.clone(),
+                            }).collect(),
+                        )),
+                        Value::Map(m) if v.is_ok() => CrowValue::ok(Value::Map(
+                            m.iter().map(|(k, i)| (k.clone(), match &i.value {
+                                Value::Int(n) if i.is_ok() => CrowValue::ok(Value::Float(*n as f64)),
+                                _ => i.clone(),
+                            })).collect(),
+                        )),
                         _ => v,
                     },
                     // a tensor's numbers as a list's items, ints where the

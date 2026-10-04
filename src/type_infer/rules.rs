@@ -163,8 +163,11 @@ impl TypeContext {
             // Immutable collection builtins (return same type as first arg)
             "push" => {
                 // push[array, val] returns Array/NumArray with element type from val
+                // (a holder that can fail is read by what it holds: a tensor
+                // that can fail pushed to had been typed a list, and the
+                // compiled program's tensor push did not build into it)
                 if let Some(arg) = args.first() {
-                    let arr_type = arg_ty(arg);
+                    let arr_type = Self::walked(arg_ty(arg));
                     if args.len() == 2 {
                         // a value that can fail is handed on as the call's
                         // error, never pushed: the items are its value's

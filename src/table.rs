@@ -737,8 +737,14 @@ pub fn read_json(v: &CrowValue) -> Result<std::borrow::Cow<'_, serde_json::Value
 
 /// A frame's column: the interpreter holds its cells as a list, whose own
 /// row it picks.
+/// A frame's column as the interpreter holds it — its cells, a missing one
+/// an error — read as the column the runtime's rows take (`len` of a
+/// column; it had been refused: "expected a frame's column, got array").
 pub fn read_column(v: &CrowValue) -> Result<crow_runtime::frame::CrowColumn, String> {
-    Err(format!("expected a frame's column, got {}", named(v)))
+    match read_cells(v)? {
+        crow_runtime::frames::Cells::Column(data, valid) => Ok(crow_runtime::frame::CrowColumn { data: std::sync::Arc::new(data), valid: std::sync::Arc::new(valid) }),
+        crow_runtime::frames::Cells::One(_) => Err(format!("expected a frame's column, got {}", named(v))),
+    }
 }
 
 pub fn write_list(items: Vec<CrowValue>) -> CrowValue {

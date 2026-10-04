@@ -498,7 +498,11 @@ impl Emitter {
                     }
                 }
                 self.needs_crow_runtime = true;
-                format!("({}).to_string()", word(&ty0, &a[0], &shown))
+                // (the value is read first, as every argument is: a stop
+                // inside it — an index outside its list — stops here too,
+                // as it does interpreted; the word had been decided without
+                // reading it)
+                format!("{{ let _t = &({}); ({}).to_string() }}", a[0], word(&ty0, "(*_t)", &shown))
             }
             // `json[map]`, a web response (use web): `json[text]` is its row
             "json" if n == 1 => {

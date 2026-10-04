@@ -249,7 +249,7 @@ fn test_swap_uses_temporaries() {
     let rust = transpile(src);
     let read_b = rust.find("= b;").expect("b is read into a temporary");
     let read_a = rust.find("= a;").expect("a is read into a temporary");
-    let write_a = rust.find("a = t").expect("a is written from a temporary");
+    let write_a = rust.find("a = _t").expect("a is written from a temporary");
     assert!(read_b < write_a && read_a < write_a, "both are read before either is written\n{}", rust);
 }
 
@@ -2153,7 +2153,9 @@ fn a_helper_sees_what_its_caller_wrote_so_far() {
 #[test]
 fn an_error_of_another_type_returned_from_a_function_is_converted() {
     let rust = transpile("fn half[s]\n    n = int[s]\n    if not n.ok\n        return n\n    return n / 2.0\nlog[half['8']]\n");
-    assert!(rust.contains("ok: _r.ok, value: 0.0_f64"), "{}", rust);
+    // (the error travels; the int it would hold converts to the float the
+    // function answers)
+    assert!(rust.contains("ok: _r.ok, value: (_r.value as f64)"), "{}", rust);
 }
 
 /// A frame assigned beside an independent statement keeps its columns'

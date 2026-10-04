@@ -1812,7 +1812,15 @@ impl<'a> Lowerer<'a> {
                         CrowType::Result(inner) => matches!(inner.as_ref(), CrowType::Float),
                         t => matches!(t, CrowType::Float),
                     });
-                let mut x = if floats && x.ty() == Ty::Int { Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float } } else { x };
+                // (an int that can fail returned from a function of floats
+                // that can fail converts as its payload: a function handed as
+                // a value beside one answering floats answers floats)
+                let mut x = if floats && x.ty().payload() == &Ty::Int && !matches!(x, Expr::Convert { how: Convert::Unwrap, .. }) {
+                    let ty = if x.ty().is_result() { Ty::Result(Box::new(Ty::Float)) } else { Ty::Float };
+                    Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty }
+                } else {
+                    x
+                };
                 // a handler's value goes to nobody: a helper it returns is
                 // called for what it writes, as a statement's is
                 if self.at == Where::In(FnKind::Handler) {
@@ -1956,6 +1964,41 @@ impl<'a> Lowerer<'a> {
         let expr = if self.declared(name) && !(self.is_fact(name) && self.sees_facts()) { self.held_by(name, expr) } else { expr };
         let before = self.ctx.vars.get(name).cloned();
         self.rebind(name, &full(&expr));
+        // (converted before a local bound anew is, too: the conversions had
+        // come after that early return, so a list that can fail bound anew
+        // was given a tensor, which did not build)
+        // an int assigned to a float variable is a float (spec §1): the
+        // conversion is explicit in the form
+        let expr = if matches!(self.ctx.vars.get(name), Some(CrowType::Float)) && expr.ty() == Ty::Int {
+            Expr::Convert { how: Convert::IntToFloat, expr: Box::new(expr), ty: Ty::Float }
+        } else {
+            expr
+        };
+        // numbers held as a tensor assigned to a variable that holds a list,
+        // or the other way, are converted where they meet: `xs = [1.5]` into
+        // a list the program grows (compiled, the tensor did not build into
+        // the `Vec`, and the interpreter held a tensor where the IR said a
+        // list)
+        // (a value that can fail converts as its payload, its failure kept)
+        let as_held = |held: &CrowType, failing: bool| if failing { Ty::Result(Box::new(ty_of(held))) } else { ty_of(held) };
+        let failing = expr.ty().is_result();
+        // (a variable that holds a value that can fail is read by what it
+        // holds: a list that can fail given a tensor that can converts too)
+        let held = self.ctx.vars.get(name).map(|t| match t {
+            CrowType::Result(inner) => inner.as_ref(),
+            t => t,
+        });
+        let expr = match (held, expr.ty().payload().clone()) {
+            (Some(var @ CrowType::Array(_)), Ty::Tensor(..)) => {
+                let ty = as_held(var, failing);
+                Expr::Convert { how: Convert::ToList, expr: Box::new(expr), ty }
+            }
+            (Some(var @ CrowType::NumArray(..)), Ty::List(e)) if matches!(*e, Ty::Int | Ty::Float) => {
+                let ty = as_held(var, failing);
+                Expr::Convert { how: Convert::ToTensor, expr: Box::new(expr), ty }
+            }
+            _ => expr,
+        };
         // a frame given other columns in the block it was bound in is bound
         // anew there (a Rust `let` shadows it the same way), when it is held
         // the same way — a frame, or one that can fail
@@ -1973,23 +2016,6 @@ impl<'a> Lowerer<'a> {
             let ty = ty_of(self.ctx.vars.get(name).unwrap_or(&CrowType::Unknown));
             return Stmt::Let { var: name.to_string(), ty, expr };
         }
-        // an int assigned to a float variable is a float (spec §1): the
-        // conversion is explicit in the form
-        let expr = if matches!(self.ctx.vars.get(name), Some(CrowType::Float)) && expr.ty() == Ty::Int {
-            Expr::Convert { how: Convert::IntToFloat, expr: Box::new(expr), ty: Ty::Float }
-        } else {
-            expr
-        };
-        // numbers held as a tensor assigned to a variable that holds a list,
-        // or the other way, are converted where they meet: `xs = [1.5]` into
-        // a list the program grows (compiled, the tensor did not build into
-        // the `Vec`, and the interpreter held a tensor where the IR said a
-        // list)
-        let expr = match (self.ctx.vars.get(name), expr.ty()) {
-            (Some(var @ CrowType::Array(_)), Ty::Tensor(..)) => Expr::Convert { how: Convert::ToList, expr: Box::new(expr), ty: ty_of(var) },
-            (Some(var @ CrowType::NumArray(..)), Ty::List(e)) if matches!(*e, Ty::Int | Ty::Float) => Expr::Convert { how: Convert::ToTensor, expr: Box::new(expr), ty: ty_of(var) },
-            _ => expr,
-        };
         if self.is_fact(name) && self.sees_facts() {
             return Stmt::Store { fact: name.to_string(), expr };
         }
@@ -2275,7 +2301,9 @@ impl<'a> Lowerer<'a> {
 
     fn fresh(&mut self) -> String {
         self.temp += 1;
-        format!("t{}", self.temp)
+        // (named as no function of the program's is: a program with a
+        // function `t1` had its value shadowed by the temporary, compiled)
+        format!("_t{}", self.temp)
     }
 
     /// An assignment target's path, its variable and fields already
@@ -2394,6 +2422,13 @@ impl<'a> Lowerer<'a> {
                     r = numbers(r);
                 }
                 self.check_shapes(op, &l, &r);
+                // `%` is the ints' remainder (spec, Operators): a float on
+                // either side is refused before the program runs (the
+                // interpreter had stopped on it where the compiled program
+                // computed a float's remainder)
+                if matches!(op, BinOp::Mod) && self.pass == Pass::Final && (matches!(l.ty().payload(), Ty::Float) || matches!(r.ty().payload(), Ty::Float)) {
+                    self.refuse("`%` takes ints and answers the remainder — round a float first (int[x], floor[x], round[x]), or use mod[t, d] on a tensor".to_string());
+                }
                 let ty = shapes::shaped(ty_of(&self.ctx.binop_type(op, read(&l), read(&r))), shapes::binary_dims(op, &l, &r));
                 let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow | BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte);
                 if arithmetic {
@@ -2738,7 +2773,11 @@ impl<'a> Lowerer<'a> {
                 // an int given a float field is a float, as one handed to a
                 // float parameter is (compiled, `P[1, 2]` beside `P[1, 2.5]`
                 // did not build, and the interpreter kept the int)
-                let how = match (declared.get(i).map(|t| t.payload()), value.ty()) {
+                // (an int that can fail — `len` of a frame that can — is a
+                // float that can fail: the payload converts, the failure
+                // stays; it had been left an int in a field of floats, and
+                // the compiled program did not build)
+                let how = match (declared.get(i).map(|t| t.payload()), value.ty().payload()) {
                     (Some(Ty::List(_)), Ty::Tensor(..)) => Some(Convert::ToList),
                     (Some(Ty::Tensor(..)), Ty::List(_)) => Some(Convert::ToTensor),
                     (Some(Ty::Float), Ty::Int) if !matches!(value, Expr::Convert { how: Convert::Unwrap, .. }) => Some(Convert::IntToFloat),
@@ -2746,7 +2785,8 @@ impl<'a> Lowerer<'a> {
                 };
                 fields.push(match how {
                     Some(how) => {
-                        let ty = declared[i].payload().clone();
+                        let payload = declared[i].payload().clone();
+                        let ty = if value.ty().is_result() { Ty::Result(Box::new(payload)) } else { payload };
                         Expr::Convert { how, expr: Box::new(value), ty }
                     }
                     None => value,
@@ -3015,7 +3055,12 @@ impl<'a> Lowerer<'a> {
                 }
             }
             let lowered = self.core_row_arguments(&name, lowered);
-            let target = match self.builtin_row(None, &name, &lowered) {
+            let row = self.builtin_row(None, &name, &lowered);
+            let (lowered, ty) = match row {
+                Some(row) => Self::widen_items(row, lowered, ty),
+                None => (lowered, ty),
+            };
+            let target = match row {
                 Some(row) => {
                     self.check_item(row, &lowered);
                     Target::Row(row)
@@ -3042,7 +3087,12 @@ impl<'a> Lowerer<'a> {
             }
             None => self.core_row_arguments(&name, lowered),
         };
-        let target = match self.builtin_row(None, &name, &lowered) {
+        let row = self.builtin_row(None, &name, &lowered);
+        let (lowered, ty) = match row {
+            Some(row) => Self::widen_items(row, lowered, ty),
+            None => (lowered, ty),
+        };
+        let target = match row {
             Some(row) => {
                 self.check_item(row, &lowered);
                 Target::Row(row)
@@ -3373,6 +3423,55 @@ impl<'a> Lowerer<'a> {
                 ));
             }
         }
+    }
+
+    /// A list or a map of ints handed a float holds floats from then on, as
+    /// a variable that is ever assigned a float is a float (spec §1): the
+    /// holder is converted where it meets the float, and the answer holds
+    /// floats. (The interpreter had kept a mixed list — `push[[1, 2], 2.5]`
+    /// was `[1, 2, 2.5]`, ints among floats — and the compiled program had
+    /// not built.)
+    fn widen_items(row: &'static crate::table::Row, mut args: Vec<Expr>, ty: Ty) -> (Vec<Expr>, Ty) {
+        fn ints(t: &Ty) -> bool {
+            matches!(t.payload(), Ty::List(e) | Ty::Map(e) if **e == Ty::Int)
+        }
+        fn floats(t: &Ty) -> bool {
+            matches!(t.payload(), Ty::List(e) | Ty::Map(e) if **e == Ty::Float)
+        }
+        fn of_floats(t: Ty) -> Ty {
+            match t {
+                Ty::List(e) if *e == Ty::Int => Ty::List(Box::new(Ty::Float)),
+                Ty::Map(e) if *e == Ty::Int => Ty::Map(Box::new(Ty::Float)),
+                Ty::Result(inner) => Ty::Result(Box::new(of_floats(*inner))),
+                other => other,
+            }
+        }
+        fn widen(args: &mut [Expr], at: usize) {
+            let x = std::mem::replace(&mut args[at], Expr::Const(Const::Int(0), Ty::Int));
+            let ty = of_floats(x.ty());
+            args[at] = Expr::Convert { how: Convert::IntsToFloats, expr: Box::new(x), ty };
+        }
+        let item = match row.id {
+            "core.push" | "core.contains" => 1,
+            "core.set" => 2,
+            "core.concat" if args.len() == 2 => {
+                if ints(&args[0].ty()) && floats(&args[1].ty()) {
+                    widen(&mut args, 0);
+                    return (args, of_floats(ty));
+                }
+                if floats(&args[0].ty()) && ints(&args[1].ty()) {
+                    widen(&mut args, 1);
+                    return (args, of_floats(ty));
+                }
+                return (args, ty);
+            }
+            _ => return (args, ty),
+        };
+        if args.len() > item && ints(&args[0].ty()) && matches!(args[item].ty().payload(), Ty::Float) {
+            widen(&mut args, 0);
+            return (args, of_floats(ty));
+        }
+        (args, ty)
     }
 
     /// The pieces a value indexed holds: a decomposition called here, or a
@@ -4519,6 +4618,37 @@ mod tests {
         assert!(ir.contains("first(x: Tensor(Float, [?, 2])) -> Int") || ir.contains("first(x: Tensor(Float, [?, ?])) -> Int"), "{}", ir);
     }
 
+    /// A tensor that can fail pushed to is a tensor (that can fail): its
+    /// holder is read by what it holds (it had been typed a list)
+    #[test]
+    fn a_failing_tensor_pushed_to_stays_a_tensor() {
+        let ir = ir_of("use frame\ndf = with[frame.new[], 'a', [1, 2]]\nv = push[push[[3, 1], len[frame.stack[df, df]]], 10]\nlog[v]\n");
+        assert!(ir.contains("let v: Result(Tensor(Int"), "{}", ir);
+    }
+
+    /// `%` takes ints: a float on either side is refused before the program
+    /// runs (the interpreter had stopped on it, the compiled program went on)
+    #[test]
+    fn a_remainder_of_a_float_is_refused() {
+        let refused = refusal_of("x = 2.5\nlog[x % 3]\nlog[7 % 2.0]\n");
+        assert!(refused.contains("line 2: `%` takes ints and answers the remainder"), "{}", refused);
+        assert!(refused.contains("line 3: `%` takes ints"), "{}", refused);
+        let ir = ir_of("log[7 % 2]\n");
+        assert!(ir.contains("(7 mod 2)"), "{}", ir);
+    }
+
+    /// A holder of ints given a float holds floats; a record's float field
+    /// given an int that can fail holds a float that can fail
+    #[test]
+    fn a_holder_of_ints_given_a_float_holds_floats() {
+        let ir = ir_of("use frame\nxs = push[range[3], 2.5]\nm = set[map[a = 1], 'b', 2.5]\nc = concat[range[2], xs]\nstruct P [x, y]\na = P[1.5, 2.0]\nb = P[int['12'], 3.0]\nlog[xs, m, c, a, b]\n");
+        assert!(ir.contains("let xs: List(Float) = core.push(floats(") && ir.contains(", 2.5)"), "{}", ir);
+        assert!(ir.contains("let m: Map(Float) = core.set(floats(core.set(core.map_new(), \"a\", 1)), \"b\", 2.5)"), "{}", ir);
+        assert!(ir.contains("let c: List(Float) = core.concat(floats("), "{}", ir);
+        assert!(ir.contains("struct P { x: Result(Float), y: Float }"), "{}", ir);
+        assert!(ir.contains("P{float(core.int_of(\"12\")), 3.0}"), "{}", ir);
+    }
+
     /// A tensor's rank is in its type: every builtin's answer has one, so a
     /// loop over it walks rows or numbers and an index reads a row or a
     /// number as the type decides, in both modes; where the rank is not
@@ -4743,7 +4873,7 @@ mod tests {
     fn a_fallible_condition_is_propagated_first() {
         let ir = ir_of("fn check[s]\n    n = int[s]\n    if n gt 5\n        return 'big'\n    return 'small'\nlog[check['7']]\n");
         assert!(ir.contains("propagate"), "{}", ir);
-        assert!(ir.contains("propagate t1\n    if unwrap t1"), "{}", ir);
+        assert!(ir.contains("propagate _t1\n    if unwrap _t1"), "{}", ir);
     }
 
     #[test]

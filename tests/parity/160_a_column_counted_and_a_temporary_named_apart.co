@@ -1,0 +1,38 @@
+--- Five the fuzzer found in one afternoon: `len` of a frame's column
+--- (the interpreter had refused it, "expected a frame's column, got
+--- array"); a tensor that can fail assigned to a variable holding a
+--- list (compiled, the tensor was left in the result and the program
+--- did not build); a function named like the lowering's own
+--- temporaries, `t1` (the temporary shadowed it, compiled); a tensor
+--- that can fail pushed to (typed a list, so the compiled push did not
+--- build); and `type[x]` reading `x` first, as every call reads its
+--- argument (compiled, the word had been decided without reading it,
+--- so a stop inside `x` never came).
+use math, frame
+
+df = with[with[with[frame.new[], 'k', ['x', 'y', 'x']], 'a', [1, 2, 3]], 'b', [0.5, 1.5, 2.5]]
+log[len[df.k]]
+log[len[df.a]]
+log[len[sort[df, 'b'].k]]
+
+xs = range[2]
+xs = push[[5, -1], len[frame.stack[df, df]]]
+log[xs]
+log[type[xs[0]]]
+
+fn t1[m]
+    return sum[m] * 2.0
+
+t = with[df, 'c', df.a * 2]
+log['`len[t]` `t1[[1.0, 2.0]]`']
+
+pushed = push[push[[3, 1, 2, 3], 3], len[frame.stack[df, df]]]
+log[pushed]
+log[type[pushed[5]]]
+
+fn noisy[x]
+    log['noisy ran']
+    return x
+
+log[type[noisy[2.5]]]
+log[type[noisy[df]]]

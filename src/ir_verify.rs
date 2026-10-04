@@ -608,11 +608,15 @@ impl<'p> Verifier<'p> {
                 // a plain value read through the mark is itself
                 other => agrees(other, ty),
             },
-            Convert::IntToFloat => matches!(inner.payload(), Ty::Int | Ty::Unknown) && matches!(ty, Ty::Float),
+            // (a value that can fail converts as its payload does)
+            Convert::IntToFloat => matches!(inner.payload(), Ty::Int | Ty::Unknown) && matches!(ty.payload(), Ty::Float),
+            Convert::IntsToFloats => {
+                matches!(ty.payload(), Ty::List(e) | Ty::Map(e) if **e == Ty::Float) && matches!(inner.payload(), Ty::List(e) | Ty::Map(e) if **e == Ty::Int || **e == Ty::Unknown)
+            }
             Convert::ToStr => matches!(ty, Ty::Str | Ty::Markup),
             // numbers held as a list, a frame's column, or already a tensor
-            Convert::ToTensor => matches!(ty, Ty::Tensor(..)) && matches!(inner.payload(), Ty::List(_) | Ty::Column(_) | Ty::Tensor(..) | Ty::Unknown),
-            Convert::ToList => matches!(ty, Ty::List(_)),
+            Convert::ToTensor => matches!(ty.payload(), Ty::Tensor(..)) && matches!(inner.payload(), Ty::List(_) | Ty::Column(_) | Ty::Tensor(..) | Ty::Unknown),
+            Convert::ToList => matches!(ty.payload(), Ty::List(_)),
         };
         if !ok {
             self.found(format!("a conversion {:?} of {} claims to give {}", how, inner, ty));

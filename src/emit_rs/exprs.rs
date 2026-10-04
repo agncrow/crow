@@ -75,8 +75,25 @@ impl Emitter {
                         inner
                     } else if self.emitting_traced {
                         format!("crow_runtime::autograd::Traced::number(({}) as f64)", inner)
+                    } else if matches!(ty, Ty::Result(_)) {
+                        // a value that can fail, converted as one: its payload
+                        // converted, its failure kept (a conversion typed plain
+                        // reads the payload the propagation unwrapped)
+                        format!("{{ let _r = {}; CrowResult {{ ok: _r.ok, value: (_r.value as f64), reason: _r.reason, kind: _r.kind, trace: _r.trace, captured: _r.captured }} }}", inner)
                     } else {
                         format!("(({}) as f64)", inner)
+                    }
+                }
+                Convert::IntsToFloats => {
+                    let inner = self.owned_expr(expr);
+                    let map = match Self::inner(&self.tt(expr)) {
+                        CrowType::Map(_) => "into_iter().map(|(k, v)| (k, v as f64)).collect::<std::collections::BTreeMap<String, f64>>()",
+                        _ => "into_iter().map(|v| v as f64).collect::<Vec<f64>>()",
+                    };
+                    if matches!(ty, Ty::Result(_)) {
+                        format!("{{ let _r = {}; CrowResult {{ ok: _r.ok, value: _r.value.{}, reason: _r.reason, kind: _r.kind, trace: _r.trace, captured: _r.captured }} }}", inner, map)
+                    } else {
+                        format!("({}).{}", inner, map)
                     }
                 }
                 Convert::Unwrap => {
@@ -111,14 +128,18 @@ impl Emitter {
                 // holds ints; a list's numbers as a tensor of one axis
                 Convert::ToList => {
                     let inner = self.expr(expr);
+                    let ints = matches!(ty.payload(), Ty::List(e) if **e == Ty::Int);
+                    let as_list = if ints { ".to_vec().into_iter().map(|x| x as i64).collect::<Vec<i64>>()" } else { ".to_vec()" };
+                    // (a tensor that can fail: its payload converted, its
+                    // failure kept — it had been left a tensor in a result
+                    // of a list, which did not build)
+                    if matches!(ty, Ty::Result(_)) && matches!(self.tt(expr), CrowType::Result(p) if matches!(p.as_ref(), CrowType::NumArray(..))) {
+                        return format!("{{ let _r = {}; CrowResult {{ ok: _r.ok, value: (_r.value){}, reason: _r.reason, kind: _r.kind, trace: _r.trace, captured: _r.captured }} }}", inner, as_list);
+                    }
                     if !matches!(self.tt(expr), CrowType::NumArray(..)) {
                         return inner;
                     }
-                    if matches!(ty, Ty::List(e) if **e == Ty::Int) {
-                        format!("({}).to_vec().into_iter().map(|x| x as i64).collect::<Vec<i64>>()", inner)
-                    } else {
-                        format!("({}).to_vec()", inner)
-                    }
+                    format!("({}){}", inner, as_list)
                 }
                 Convert::ToTensor => {
                     let inner = self.expr(expr);
@@ -1090,7 +1111,11 @@ impl Emitter {
                 let elem_is_tensor = items.iter().any(|i| matches!(self.tt(i), CrowType::NumArray(..)));
                 self.needs_crow_runtime = true;
                 if elem_is_tensor {
-                    let elems: Vec<String> = items.iter().map(|i| self.expr(i)).collect();
+                    // (each row owned: a local read here is copied, and
+                    // lives on for the reads after — `stack[[v, w]]` had
+                    // moved `v` into the list, and a loop over it later
+                    // did not build)
+                    let elems: Vec<String> = items.iter().map(|i| self.owned_expr(i)).collect();
                     return format!("crow_runtime::tensor::CrowTensor::from_elements(&[{}]){}", elems.join(", "), self.or_stop());
                 }
                 let vals: Vec<String> = items.iter().map(|i| format!("{} as f64", self.expr(i))).collect();
