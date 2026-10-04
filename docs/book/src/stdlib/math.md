@@ -13,6 +13,7 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 | `ones[d1, d2, ...]` | Tensor of ones with given shape | [Math: tensors](../by-example/math.md) |
 | `full[d1, d2, ..., value]` | Tensor filled with `value` (last arg) | [Math: tensors](../by-example/math.md) |
 | `eye[n]` | n×n identity matrix | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) |
+| `onehot[targets, classes]` | A row per target, 1 in its class's column and 0 elsewhere: the targets a vector of whole numbers from 0 to classes − 1 (a target that is no class stops the program: `onehot: 7 is not a class of 3 (0 to 2)`) | [Math: tensors](../by-example/math.md) |
 | `diag[tensor]` | Extract diagonal from a 2D tensor | [Math: tensors](../by-example/math.md) |
 | `linspace[start, end, n]` | `n` evenly spaced values from `start` to `end` | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) |
 | `arange[start, end, step]` | Values from `start` to `end` by `step` | [Math: tensors](../by-example/math.md) |

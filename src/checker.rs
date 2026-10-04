@@ -30,7 +30,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     "args", "input",
     "read", "write",
     "exists", "mkdir", "ls", "rm", "mv", "cp",
-    "rand", "time", "sleep", "env", "exit",
+    "rand", "time", "sleep", "env", "exit", "halt",
     "json", "encode", "decode",
     "error",
     "cpu", "gpu",

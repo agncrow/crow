@@ -423,11 +423,7 @@ pub fn fit(data: &CrowTensor, dist: &str) -> Result<BTreeMap<String, f64>, Strin
 
 /// Approximate error function using Abramowitz & Stegun formula 7.1.26.
 fn erf_approx(x: f64) -> f64 {
-    let sign = if x >= 0.0 { 1.0 } else { -1.0 };
-    let x = x.abs();
-    let t = 1.0 / (1.0 + 0.3275911 * x);
-    let poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
-    sign * (1.0 - poly * (-x * x).exp())
+    libm::erf(x)
 }
 
 /// Chi-square CDF via the regularized lower incomplete gamma function.

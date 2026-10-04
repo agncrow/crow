@@ -219,6 +219,9 @@ log[s]                     --- [1,2,3]
 | `env[name, default]` | Get environment variable, return default if not set — as text, as the variable is (`env['PORT', 3000]` is `'3000'` when `PORT` is unset; the interpreter had answered the int) | [The system: shell, environment, time, arguments](../by-example/system.md) · [Web: responses and submodules](../by-example/web-more.md) |
 | `exit[]` | Exit with code 0 | [The system: shell, environment, time, arguments](../by-example/system.md) |
 | `exit[code]` | Exit with given code | [The system: shell, environment, time, arguments](../by-example/system.md) |
+| `halt[reason]` | Halt the program with the reason, on the line of the call, as a builtin given what it cannot take does: a program's own precondition (When a Program Stops) | [The system: shell, environment, time, arguments](../by-example/system.md) |
+
+**Design Note: `halt` beside `assert`.** Considered: `assert[false, reason]` for a precondition a program or a standard module written in Crow finds broken (rejected: it says `assertion failed: …`, an assertion's words, where a module's refusal must read as a builtin's does — `crossentropy: target 7 is not a class of 3 (0 to 2)`); `exit[1]` after `log[reason]` (rejected: an exit is not a stop — it lands no error, and a handler would not answer 500 with the reason). Decided (2026-10-04, with `math.nn` written in Crow): one unconditional halt, `halt[reason]`, the reason as written, on the line of the call; `assert` remains the check that says it checked. Named as `assert`'s own description has it ("halt with error"), and not `stop`: a trading program's stop-loss and a bus's stop are variables a program writes, and a builtin's name is reserved everywhere.
 
 ## Shell
 

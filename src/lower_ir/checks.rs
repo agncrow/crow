@@ -24,7 +24,7 @@ pub(crate) const CORE_RESERVED: &[&str] = &[
     "args", "input",
     "read", "write",
     "exists", "mkdir", "ls", "rm", "mv", "cp",
-    "rand", "time", "sleep", "env", "exit",
+    "rand", "time", "sleep", "env", "exit", "halt",
     "json", "encode", "decode",
     "error",
     "shell",
@@ -87,7 +87,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     // File system
     "exists", "mkdir", "ls", "rm", "mv", "cp",
     // System
-    "rand", "time", "sleep", "env", "exit",
+    "rand", "time", "sleep", "env", "exit", "halt",
     // JSON
     "json", "encode", "decode",
     // Error

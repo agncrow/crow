@@ -396,102 +396,136 @@ pub fn abs(a: &Traced) -> Traced {
     unary(a, a.value.map(f64::abs), move || av.map(|x| if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 }))
 }
 
-pub fn relu(a: &Traced) -> Traced {
+/// `clip[t, lo, hi]`: each element held within the bounds; the gradient
+/// passes where the element lies strictly inside them and is 0 at and
+/// beyond a bound (so `clip[x, 0.0, inf]` is relu, its gradient 0 at 0).
+/// The bounds are numbers and take no gradient.
+pub fn clip(a: &Traced, lo: &Traced, hi: &Traced) -> Result<Traced, String> {
+    let (lo, hi) = match (lo.as_number(), hi.as_number()) {
+        (Some(lo), Some(hi)) => (lo, hi),
+        _ => return Err("clip: the bounds are numbers".to_string()),
+    };
     let av = a.value.clone();
-    unary(a, crate::nn::relu(&a.value), move || av.map(|x| if x > 0.0 { 1.0 } else { 0.0 }))
+    Ok(unary(a, a.value.clip(lo, hi), move || av.map(|x| if x > lo && x < hi { 1.0 } else { 0.0 })))
 }
 
-pub fn sigmoid(a: &Traced) -> Traced {
-    let value = crate::nn::sigmoid(&a.value);
-    let out = value.clone();
-    unary(a, value, move || out.map(|s| s * (1.0 - s)))
+/// `erf[t]`: d/dx erf(x) = 2/√π · exp(−x²).
+pub fn erf(a: &Traced) -> Traced {
+    let av = a.value.clone();
+    unary(a, a.value.erf(), move || av.map(|x| std::f64::consts::FRAC_2_SQRT_PI * (-x * x).exp()))
 }
 
-/// `softmax[t]`: the tensor's elements to one, as the runtime's softmax
-/// normalizes (one row of logits).
-pub fn softmax(a: &Traced) -> Traced {
-    let value = crate::nn::softmax(&a.value);
-    let out = value.clone();
+/// `floor[t]`, `ceil[t]`, `round[t]`: piecewise constant, so the answer is
+/// a constant of the tape (derivative 0, as for numbers).
+pub fn floor(a: &Traced) -> Traced {
+    Traced::constant(a.value.map(f64::floor))
+}
+
+pub fn ceil(a: &Traced) -> Traced {
+    Traced::constant(a.value.map(f64::ceil))
+}
+
+pub fn round(a: &Traced) -> Traced {
+    Traced::constant(a.value.map(f64::round))
+}
+
+/// Where the extreme of each slice along `axis` lies, in the flat data:
+/// one position per element of the reduced tensor, in its row-major order
+/// (the first of equal extremes), with the reduced shape.
+fn extreme_positions(t: &CrowTensor, axis: usize, better: impl Fn(f64, f64) -> bool) -> (Vec<usize>, Vec<usize>) {
+    let mut out_shape = t.shape().to_vec();
+    out_shape.remove(axis);
+    let out_n = CrowTensor::numel(&out_shape);
+    let out_strides = CrowTensor::row_major_strides(&out_shape);
+    let src_strides = CrowTensor::row_major_strides(t.shape());
+    let src = t.to_vec();
+    let mut best: Vec<Option<(f64, usize)>> = vec![None; out_n];
+    for (flat, &x) in src.iter().enumerate() {
+        let mut remaining = flat;
+        let mut out_flat = 0usize;
+        let mut out_dim = 0;
+        for d in 0..t.ndim() {
+            let idx = remaining / src_strides[d];
+            remaining %= src_strides[d];
+            if d != axis {
+                out_flat += idx * out_strides[out_dim];
+                out_dim += 1;
+            }
+        }
+        if let Some(slot) = best.get_mut(out_flat) {
+            match slot {
+                Some((v, _)) if !better(x, *v) => {}
+                _ => *slot = Some((x, flat)),
+            }
+        }
+    }
+    (best.into_iter().map(|b| b.map_or(0, |(_, i)| i)).collect(), out_shape)
+}
+
+/// A reduction to the extreme along an axis: the gradient reaches the
+/// element each slice's extreme was read from.
+fn extreme_axis(a: &Traced, axis: usize, value: CrowTensor, better: impl Fn(f64, f64) -> bool + 'static) -> Traced {
+    let (positions, _) = extreme_positions(&a.value, axis, better);
+    let shape = a.value.shape().to_vec();
     let node = record(vec![a.node], move |g| {
-        // d = s .* (g - sum(g .* s))
-        let dot = g.mul(&out).sum();
-        vec![out.mul(&g.sub_scalar(dot))]
+        let mut d = vec![0.0; CrowTensor::numel(&shape)];
+        for (slot, g_slot) in g.to_vec().into_iter().enumerate() {
+            if let Some(&pos) = positions.get(slot) {
+                if let Some(cell) = d.get_mut(pos) {
+                    *cell += g_slot;
+                }
+            }
+        }
+        vec![CrowTensor::from_vec(d, shape.clone())]
     });
     Traced::from(value, node)
 }
 
-/// `mse[pred, target]`: a number.
-pub fn mse(p: &Traced, t: &Traced) -> Result<Traced, String> {
-    let value = crate::nn::mse(&p.value, &t.value)?;
-    let (pv, tv) = (p.value.clone(), t.value.clone());
-    let n = p.value.len().max(1) as f64;
-    let node = record(vec![p.node, t.node], move |g| {
-        let d = pv.sub(&tv).mul_scalar(2.0 * g.sum() / n);
-        vec![d.clone(), d.neg()]
-    });
-    Ok(Traced::from(CrowTensor::scalar(value), node))
-}
-
-/// `bce[pred, target]`: a number, each prediction read within
-/// [eps, 1 - eps] as the loss reads it (no gradient past the clamp).
-pub fn bce(p: &Traced, t: &Traced) -> Result<Traced, String> {
-    let value = crate::nn::bce(&p.value, &t.value)?;
-    let (pv, tv) = (p.value.to_vec(), t.value.to_vec());
-    let shape = p.value.shape().to_vec();
-    let n = pv.len().max(1) as f64;
-    let node = record(vec![p.node, t.node], move |g| {
-        let eps = crate::nn::BCE_EPS;
-        let scale = g.sum() / n;
-        let dp: Vec<f64> = pv
-            .iter()
-            .zip(&tv)
-            .map(|(&p, &t)| {
-                if !(eps..=1.0 - eps).contains(&p) {
-                    return 0.0;
-                }
-                (p - t) / (p * (1.0 - p)) * scale
-            })
-            .collect();
-        let dt: Vec<f64> = pv.iter().map(|&p| { let c = p.max(eps).min(1.0 - eps); -(c.ln() - (1.0 - c).ln()) * scale }).collect();
-        vec![CrowTensor::from_vec(dp, shape.clone()), CrowTensor::from_vec(dt, shape.clone())]
-    });
-    Ok(Traced::from(CrowTensor::scalar(value), node))
-}
-
-/// `crossentropy[logits, targets]`: a number; the targets are classes
-/// and get no gradient.
-pub fn crossentropy(logits: &Traced, targets: &Traced) -> Result<Traced, String> {
-    let value = crate::nn::crossentropy(&logits.value, &targets.value)?;
-    let (lv, tv) = (logits.value.clone(), targets.value.to_vec());
-    let node = record(vec![logits.node, targets.node], move |g| {
-        // each row's softmax less one at its class, over the batch
-        let rows = if lv.ndim() == 1 { 1 } else { lv.shape()[0] };
-        let classes = lv.len() / rows.max(1);
-        let data = lv.to_vec();
-        let scale = g.sum() / rows.max(1) as f64;
-        let mut d = Vec::with_capacity(data.len());
-        for (r, &t) in tv.iter().enumerate() {
-            let row = &data[r * classes..(r + 1) * classes];
-            let max_val = row.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let exps: Vec<f64> = row.iter().map(|&x| (x - max_val).exp()).collect();
-            let sum: f64 = exps.iter().sum();
-            for (k, e) in exps.iter().enumerate() {
-                let s = e / sum - if k == t as usize { 1.0 } else { 0.0 };
-                d.push(s * scale);
-            }
+/// A reduction to the extreme of the whole tensor: a number, its gradient
+/// reaching the first element that holds it.
+fn extreme(a: &Traced, value: f64, better: impl Fn(f64, f64) -> bool) -> Traced {
+    let data = a.value.to_vec();
+    let mut at = 0usize;
+    for (i, &x) in data.iter().enumerate() {
+        if i == 0 || better(x, data[at]) {
+            at = i;
         }
-        vec![CrowTensor::from_vec(d, lv.shape().to_vec()), CrowTensor::zeros(vec![tv.len()])]
+    }
+    let shape = a.value.shape().to_vec();
+    let node = record(vec![a.node], move |g| {
+        let mut d = vec![0.0; CrowTensor::numel(&shape)];
+        if let Some(cell) = d.get_mut(at) {
+            *cell = g.sum();
+        }
+        vec![CrowTensor::from_vec(d, shape.clone())]
     });
-    Ok(Traced::from(CrowTensor::scalar(value), node))
+    Traced::from(CrowTensor::scalar(value), node)
 }
 
-/// `linear[x, w, b]`: x * w + b.
-pub fn linear(x: &Traced, w: &Traced, b: &Traced) -> Result<Traced, String> {
-    let xw = matmul(x, w)?;
-    if xw.value.meets(&b.value, "+").is_err() {
-        return Err(format!("linear: a bias of shape {:?} does not meet x * w of shape {:?}", b.value.shape(), xw.value.shape()));
+/// `max[t]`: a number.
+pub fn max(a: &Traced) -> Traced {
+    extreme(a, crate::math::max(&a.value), |x, best| x > best)
+}
+
+/// `min[t]`: a number.
+pub fn min(a: &Traced) -> Traced {
+    extreme(a, crate::math::min(&a.value), |x, best| x < best)
+}
+
+/// `max[t, axis = k]`.
+pub fn max_axis(a: &Traced, axis: usize) -> Result<Traced, String> {
+    if axis >= a.value.ndim() {
+        return Err(format!("max: axis {} is outside a tensor of {} dimensions", axis, a.value.ndim()));
     }
-    add(&xw, b)
+    Ok(extreme_axis(a, axis, a.value.max_axis(axis), |x, best| x > best))
+}
+
+/// `min[t, axis = k]`.
+pub fn min_axis(a: &Traced, axis: usize) -> Result<Traced, String> {
+    if axis >= a.value.ndim() {
+        return Err(format!("min: axis {} is outside a tensor of {} dimensions", axis, a.value.ndim()));
+    }
+    Ok(extreme_axis(a, axis, a.value.min_axis(axis), |x, best| x < best))
 }
 
 #[cfg(test)]
@@ -577,37 +611,66 @@ mod tests {
             check("sqrt", &[positive.clone()], |x| Ok(sum(&sqrt(&x[0]))));
             check("tanh", &[a.clone()], |x| Ok(sum(&tanh(&x[0]))));
             check("abs", &[a.clone()], |x| Ok(sum(&abs(&x[0]))));
-            check("relu", &[a.clone()], |x| Ok(sum(&mul(&relu(&x[0]), &x[0])?)));
-            check("sigmoid", &[a.clone()], |x| Ok(sum(&mul(&sigmoid(&x[0]), &x[0])?)));
-            check("softmax", &[a.clone()], |x| Ok(sum(&mul(&softmax(&x[0]), &x[1.min(0)])?)));
-            check("mse", &[a.clone(), b.clone()], |x| mse(&x[0], &x[1]));
-            let probs = g.tensor(&[5], 0.1, 0.9);
-            let truth = CrowTensor::from_vec(vec![1.0, 0.0, 1.0, 1.0, 0.0], vec![5]);
-            check("bce", &[probs.clone(), truth.clone()], |x| bce(&x[0], &x[1]));
-            let logits = g.tensor(&[3, 4], -2.0, 2.0);
-            let classes = CrowTensor::from_vec(vec![0.0, 3.0, 1.0], vec![3]);
-            check("crossentropy", &[logits.clone()], |x| crossentropy(&x[0], &Traced::constant(classes.clone())));
-            check("linear", &[a.clone(), m.clone(), bias.clone()], |x| Ok(sum(&mul(&linear(&x[0], &x[1], &x[2])?, &linear(&x[0], &x[1], &x[2])?)?)));
+            check("clip", &[a.clone()], |x| Ok(sum(&mul(&clip(&x[0], &Traced::number(-1.00005), &Traced::number(0.99995))?, &x[0])?)));
+            check("erf", &[a.clone()], |x| Ok(sum(&erf(&x[0]))));
+            check("max", &[a.clone()], |x| mul(&max(&x[0]), &sum(&x[0])));
+            check("min", &[a.clone()], |x| mul(&min(&x[0]), &sum(&x[0])));
+            check("max axis 0", &[a.clone()], |x| Ok(sum(&mul(&max_axis(&x[0], 0)?, &max_axis(&x[0], 0)?)?)));
+            check("min axis 1", &[a.clone()], |x| Ok(sum(&mul(&min_axis(&x[0], 1)?, &sum_axis(&x[0], 1)?)?)));
         }
     }
 
     /// A small network's loss, differentiated with respect to every weight,
     /// against finite differences: the chain through matmul, a bias
-    /// broadcast, relu, sigmoid and the loss.
+    /// broadcast, and relu, sigmoid and the binary cross-entropy written as
+    /// the formulas math.nn states them in Crow (src/modules/nn.co).
     #[test]
     fn a_networks_loss_differentiates_to_the_weights() {
         let mut g = Gen(7);
         let x = g.tensor(&[6, 3], -1.0, 1.0);
-        let y = CrowTensor::from_vec(vec![1.0, 0.0, 1.0, 1.0, 0.0, 0.0], vec![6, 1]);
+        let y = CrowTensor::from_vec(vec![1.0, 0.0, 1.0, 1.0, 0.0, 0.0], vec![6]);
         let w1 = g.tensor(&[3, 5], -0.5, 0.5);
         let b1 = g.tensor(&[1, 5], -0.5, 0.5);
         let w2 = g.tensor(&[5, 1], -0.5, 0.5);
         let b2 = g.tensor(&[1, 1], -0.5, 0.5);
+        let one = Traced::number(1.0);
+        let relu = |z: &Traced| clip(z, &Traced::number(0.0), &Traced::number(f64::INFINITY));
+        let sigmoid = |z: &Traced| div(&Traced::number(1.0), &add(&Traced::number(1.0), &exp(&neg(z)))?);
+        let bce = |p: &Traced, t: &Traced| -> Result<Traced, String> {
+            let p = clip(p, &Traced::number(1e-12), &Traced::number(1.0 - 1e-12))?;
+            let hit = mul(t, &ln(&p))?;
+            let miss = mul(&sub(&one, t)?, &ln(&sub(&one, &p)?))?;
+            Ok(neg(&mean(&add(&hit, &miss)?)))
+        };
         check("network", &[w1, b1, w2, b2], |p| {
-            let h = relu(&add(&matmul(&Traced::constant(x.clone()), &p[0])?, &p[1])?);
-            let out = sigmoid(&add(&matmul(&h, &p[2])?, &p[3])?);
-            bce(&flatten(&out), &Traced::constant(CrowTensor::from_vec(y.to_vec(), vec![6])))
+            let h = relu(&add(&matmul(&Traced::constant(x.clone()), &p[0])?, &p[1])?)?;
+            let out = sigmoid(&add(&matmul(&h, &p[2])?, &p[3])?)?;
+            bce(&flatten(&out), &Traced::constant(y.clone()))
         });
+    }
+
+    /// `floor`, `ceil` and `round` are constants of the tape: the gradient
+    /// through `sum[floor[x] .* x]` is floor[x] itself; and an extreme's
+    /// gradient reaches the first element holding it.
+    #[test]
+    fn a_step_is_a_constant_and_an_extreme_reaches_its_element() {
+        let a = CrowTensor::from_vec(vec![0.5, 1.5, -0.5, 2.5], vec![4]);
+        let grads = gradient(&[a.clone()], |x| Ok(sum(&mul(&floor(&x[0]), &x[0])?))).expect("a gradient");
+        assert_eq!(grads[0].to_vec(), vec![0.0, 1.0, -1.0, 2.0]);
+        let grads = gradient(&[a.clone()], |x| Ok(sum(&mul(&round(&x[0]), &ceil(&x[0]))?))).expect("a gradient");
+        assert_eq!(grads[0].to_vec(), vec![0.0; 4]);
+        let tie = CrowTensor::from_vec(vec![1.0, 3.0, 3.0, 2.0], vec![4]);
+        let grads = gradient(&[tie.clone()], |x| Ok(max(&x[0]))).expect("a gradient");
+        assert_eq!(grads[0].to_vec(), vec![0.0, 1.0, 0.0, 0.0]);
+        let grads = gradient(&[tie.clone()], |x| Ok(min(&x[0]))).expect("a gradient");
+        assert_eq!(grads[0].to_vec(), vec![1.0, 0.0, 0.0, 0.0]);
+        let m = CrowTensor::from_vec(vec![1.0, 5.0, 3.0, 4.0, 2.0, 6.0], vec![2, 3]);
+        let grads = gradient(&[m.clone()], |x| Ok(sum(&max_axis(&x[0], 1)?))).expect("a gradient");
+        assert_eq!(grads[0].to_vec(), vec![0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+        let grads = gradient(&[m.clone()], |x| Ok(sum(&min_axis(&x[0], 0)?))).expect("a gradient");
+        assert_eq!(grads[0].to_vec(), vec![1.0, 0.0, 1.0, 0.0, 1.0, 0.0]);
+        assert_eq!(max_axis(&Traced::constant(m.clone()), 2).map(|_| ()), Err("max: axis 2 is outside a tensor of 2 dimensions".to_string()));
+        assert_eq!(clip(&Traced::constant(m), &Traced::constant(CrowTensor::zeros(vec![2])), &Traced::number(1.0)).map(|_| ()), Err("clip: the bounds are numbers".to_string()));
     }
 
     /// A traced function's answer is the untraced function's to the bit,

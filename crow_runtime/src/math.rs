@@ -47,6 +47,30 @@ pub fn eye(n: i64) -> Result<CrowTensor, String> {
     Ok(CrowTensor::eye(stops::size("eye", n)?))
 }
 
+/// `onehot[targets, classes]`: a row per target, 1 in its class's column
+/// and 0 elsewhere — the targets a vector of whole numbers from 0 up to
+/// classes − 1, each named where it is not.
+pub fn onehot(targets: &CrowTensor, classes: i64) -> Result<CrowTensor, String> {
+    if classes < 1 {
+        return Err(format!("onehot: the count of classes is 1 or more (got {})", classes));
+    }
+    if targets.ndim() != 1 {
+        return Err(format!("onehot: the targets are a vector, got {} dimensions", targets.ndim()));
+    }
+    let classes = classes as usize;
+    let ts = targets.to_vec();
+    let mut data = vec![0.0; ts.len() * classes];
+    for (r, &t) in ts.iter().enumerate() {
+        if t.fract() != 0.0 || t < 0.0 || t >= classes as f64 {
+            return Err(format!("onehot: {} is not a class of {} (0 to {})", t, classes, classes - 1));
+        }
+        if let Some(cell) = data.get_mut(r * classes + t as usize) {
+            *cell = 1.0;
+        }
+    }
+    Ok(CrowTensor::from_vec(data, vec![ts.len(), classes]))
+}
+
 /// `linspace[start, stop, n]`: n evenly spaced values, both ends included.
 pub fn linspace(start: f64, stop: f64, n: i64) -> Result<CrowTensor, String> {
     Ok(CrowTensor::linspace(start, stop, stops::size("linspace", n)?))
@@ -901,5 +925,17 @@ mod tests {
     fn a_diagonal_needs_one_or_two_dimensions() {
         assert!(diag(&CrowTensor::zeros(vec![2, 2, 2])).is_err());
         assert_eq!(diag(&CrowTensor::from_vec(vec![1.0, 2.0], vec![2])).map(|t| t.shape().to_vec()), Ok(vec![2, 2]));
+    }
+
+    /// A one-hot row per target; a target that is no class is the reason.
+    #[test]
+    fn a_onehot_row_per_target() {
+        let t = CrowTensor::from_vec(vec![0.0, 2.0, 1.0], vec![3]);
+        assert_eq!(onehot(&t, 3).map(|m| (m.shape().to_vec(), m.to_vec())), Ok((vec![3, 3], vec![1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0])));
+        assert_eq!(onehot(&t, 2).map(|_| ()), Err("onehot: 2 is not a class of 2 (0 to 1)".to_string()));
+        assert_eq!(onehot(&CrowTensor::from_vec(vec![0.5], vec![1]), 2).map(|_| ()), Err("onehot: 0.5 is not a class of 2 (0 to 1)".to_string()));
+        assert_eq!(onehot(&CrowTensor::from_vec(vec![-1.0], vec![1]), 2).map(|_| ()), Err("onehot: -1 is not a class of 2 (0 to 1)".to_string()));
+        assert_eq!(onehot(&t, 0).map(|_| ()), Err("onehot: the count of classes is 1 or more (got 0)".to_string()));
+        assert_eq!(onehot(&CrowTensor::zeros(vec![2, 2]), 2).map(|_| ()), Err("onehot: the targets are a vector, got 2 dimensions".to_string()));
     }
 }

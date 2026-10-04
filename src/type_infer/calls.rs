@@ -222,6 +222,16 @@ impl TypeContext {
                 self.hand_functions(name, args);
             }
 
+            // a builtin written in Crow (a row of the table whose body is
+            // a function of the standard library, inlined): its call is a
+            // call of that function with the row's parameters — its
+            // contract — however the arguments came
+            if !self.functions.contains_key(name) && !self.structs.contains_key(name) {
+                if let Some(m) = self.registry.module_name_for(name).map(str::to_string) {
+                    self.note_crow_row(&m, name, arg_types);
+                }
+            }
+
             // Is it a struct constructor?
             if self.structs.contains_key(name) {
                 let sig = self.structs.get(name).unwrap().clone();
@@ -246,6 +256,12 @@ impl TypeContext {
                     self.vars.insert(name.clone(), unified);
                 }
             }
+        }
+        // a builtin written in Crow called through its module's name
+        // (`math.nn.relu[…]`)
+        if let Some((m, f)) = Self::module_path(callee) {
+            let real = self.module_aliases.get(&m).cloned().unwrap_or(m);
+            self.note_crow_row(&real, &f, arg_types);
         }
         // Module function/struct call: module.func[args] or module.Struct[args]
         if let Expr::FieldAccess { object, field } = callee {
@@ -279,6 +295,55 @@ impl TypeContext {
                     self.structs.get_mut(&prefixed).unwrap().fields = new_fields;
                 }
             }
+        }
+    }
+
+    /// A call's module path and name, where the callee is qualified:
+    /// `m.f` and `a.b.f` (`math.nn.relu`).
+    pub(crate) fn module_path(callee: &Expr) -> Option<(String, String)> {
+        let Expr::FieldAccess { object, field } = callee else { return None };
+        match object.as_ref() {
+            Expr::Ident(m) => Some((m.clone(), field.clone())),
+            Expr::FieldAccess { object: inner, field: sub } => match inner.as_ref() {
+                Expr::Ident(m) => Some((format!("{}.{}", m, sub), field.clone())),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// A call of a builtin written in Crow (crate::table, `crow!`): the
+    /// row its arguments' kinds pick names the program's function its body
+    /// is inlined as, whose parameters take the row's kinds — one
+    /// signature, whatever the program hands it — so the body is typed
+    /// once, as the module's tests type it.
+    pub(crate) fn note_crow_row(&mut self, module: &str, name: &str, arg_types: &[CrowType]) {
+        let kinds: Vec<crate::table::Arg> = arg_types
+            .iter()
+            .map(|t| match t {
+                CrowType::Result(inner) => inner.as_ref(),
+                other => other,
+            })
+            .map(crate::table::Arg::of_type)
+            .collect();
+        let Some(row) = crate::table::crow_row(module, name, &kinds) else { return };
+        let f = crate::table::crow_fn_name(row);
+        let Some(sig) = self.functions.get(&f).cloned() else { return };
+        let given: Vec<CrowType> = row.params.iter().map(|k| k.crow_type()).collect();
+        let mut params = sig.params.clone();
+        for (i, t) in given.iter().enumerate() {
+            if let Some(p) = params.get_mut(i) {
+                p.1 = p.1.unify(t);
+            }
+        }
+        if given.len() == params.len() && given.iter().all(Self::type_is_concrete) {
+            let entry = self.call_signatures.entry(f.clone()).or_default();
+            if !entry.iter().any(|existing| Self::same_signature(existing, &given)) {
+                entry.push(given);
+            }
+        }
+        if let Some(sig) = self.functions.get_mut(&f) {
+            sig.params = params;
         }
     }
 

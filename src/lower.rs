@@ -162,6 +162,12 @@ thread_local! {
 }
 
 pub fn lower_program(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
+    // a standard module written in Crow is inlined where it is imported
+    // (crate::modules::inline_crow_modules), so every pipeline — a run, a
+    // build, a test, the language server — sees its functions as the
+    // program's own
+    let inlined = crate::modules::inline_crow_modules(stmts)?;
+    let stmts: &[Stmt] = &inlined;
     let web = stmts.iter().any(|s| matches!(s, Stmt::Use { path, alias: None } if path == "web" || path.starts_with("web.")));
     PROGRAM_WEB.with(|w| w.set(web));
     let mut l = Lowerer::new(web);

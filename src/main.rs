@@ -5297,7 +5297,7 @@ fn expand_into(
 /// locally (params, locals) that must NOT be rewritten. String interpolation
 /// contents are not rewritten (known limitation — interpolate locals, not
 /// module-level names, inside module strings).
-fn rewrite_refs_stmt(
+pub(crate) fn rewrite_refs_stmt(
     stmt: &mut ast::Stmt,
     map: &std::collections::BTreeMap<String, String>,
     shadowed: &std::collections::HashSet<String>,

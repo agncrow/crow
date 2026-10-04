@@ -24,4 +24,17 @@ log[linear[[[1.0, 2.0]], [[1.0], [1.0]], [0.5]]]
 [[3.5]]
 ```
 
+`math.nn` is written in Crow over the math builtins (`src/modules/nn.co`): each function's row in the builtin table is its contract, and under `grad` the formulas differentiate as any function does. A misuse stops the program with the reason, on the line of the call (this block builds but is not run):
+
+```crow,norun
+use math, math.nn
+
+w = [[1.0, 0.0, 0.0], [0.0, 1.0, 1.0]]
+log[linear[[[1.0, 2.0, 3.0]], w, [1.0, 1.0, 1.0]]]
+```
+
+```text
+runtime error: line 4: linear: x has 3 columns and w 2 rows — x * w needs them equal
+```
+
 Reference: spec section 13 (math → Neural Networks).

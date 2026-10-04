@@ -760,7 +760,7 @@ mod tests {
     /// sim/autonext.co alone).
     #[test]
     fn a_function_returning_what_it_does_not_know_returns_an_unknown() {
-        let p = lowered("fn closing[xs, w]\n    stop = -1.0\n    e = ended[xs, 0, w]\n    stop = e\n    return stop\nfn ended[xs, i, w]\n    if xs[i] lt 0.0\n        return w\n    return xs[i]\n");
+        let p = lowered("fn closing[xs, w]\n    held = -1.0\n    e = ended[xs, 0, w]\n    held = e\n    return held\nfn ended[xs, i, w]\n    if xs[i] lt 0.0\n        return w\n    return xs[i]\n");
         assert_eq!(verify(&p), Vec::<String>::new());
         let ended = p.parts[0].fns.iter().find(|f| f.name == "ended").expect("ended is lowered");
         assert_eq!(ended.ret, Ty::Unknown);
@@ -771,7 +771,7 @@ mod tests {
     /// converted it.
     #[test]
     fn a_facts_int_default_is_a_float_where_it_holds_floats() {
-        let p = lowered("use web, ui\nlevel = 0\nfn raise[x]\n    level = x * 1.5\nview render[]\n    return p['`level`']\npage['/', render]\n");
+        let p = lowered("use web, ui\nlevel = 0\nfn lift[x]\n    level = x * 1.5\nfn up[]\n    lift[2.0]\nview render[]\n    return stack[p['`level`'], button['+', click = up]]\npage['/', render]\n");
         assert_eq!(verify(&p), Vec::<String>::new());
         let fact = p.parts[0].facts.iter().find(|f| f.name == "level").expect("the fact");
         assert_eq!(fact.ty, Ty::Float);

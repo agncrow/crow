@@ -81,7 +81,12 @@ repository root points assistants here.
     program sees one way (`serve`, `request`, `connect`, `read`), the
     library the smallest layer that lets the rest be Crow. Every kernel
     that stays native gets laws in Crow (known answers, algebraic
-    identities), run by the gate in both modes.
+    identities), run by the gate in both modes. A standard module written
+    in Crow keeps its contract in the builtin table (`crow!` rows: what
+    each function takes, answers and how it fails) and its body in
+    `src/modules/<name>.co`, inlined into the program that imports it and
+    tested on its own (`crow test src/modules/nn.co`); a stop inside it
+    names the line of the call in the program.
 
 ## Workflow
 

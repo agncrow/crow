@@ -9,7 +9,7 @@ pub struct MathModule;
 
 pub(crate) const MATH_FUNCTIONS: &[&str] = &[
     // Tensor creation
-    "zeros", "ones", "eye", "randn", "linspace", "arange", "full", "diag", "tensor",
+    "zeros", "ones", "eye", "onehot", "randn", "linspace", "arange", "full", "diag", "tensor",
     // Element-wise math (ln replaces log; abs/sqrt/floor/ceil/round overlap with core builtins)
     "exp", "ln", "log2", "log10",
     "sin", "cos", "sign", "clip", "mod",

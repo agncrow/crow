@@ -376,15 +376,24 @@ impl TypeContext {
                         if tensors {
                             let param_types: Vec<CrowType> = sig.params.iter().map(|(_, t)| t.clone()).collect();
                             // (each gradient is shaped like its parameter: the
-                            // list's items have what the parameters' shapes share)
-                            let dims = param_types
+                            // list's items have what the parameters' shapes
+                            // share — a rank only when every parameter's is
+                            // that rank; parameters of two ranks, or one of
+                            // no known rank, leave the items' rank unknown,
+                            // where a join had let a later vector set it)
+                            let shapes: Vec<&Option<super::Dims>> = param_types
                                 .iter()
                                 .filter_map(|t| match t {
-                                    CrowType::NumArray(_, d) => Some(d.clone()),
+                                    CrowType::NumArray(_, d) => Some(d),
                                     _ => None,
                                 })
-                                .reduce(|a, b| super::join_dims(&a, &b))
-                                .flatten();
+                                .collect();
+                            let dims = match shapes.first() {
+                                Some(Some(first)) if shapes.iter().all(|d| d.as_ref().is_some_and(|d| d.len() == first.len())) => {
+                                    shapes.iter().skip(1).fold(Some(first.clone()), |acc, d| super::join_dims(&acc, d))
+                                }
+                                _ => None,
+                            };
                             let one = CrowType::NumArray(Box::new(CrowType::Float), dims);
                             let ret = if n == 1 { one } else { CrowType::Array(Box::new(one)) };
                             return CrowType::Fn(param_types, Box::new(ret));
@@ -443,6 +452,15 @@ impl TypeContext {
         // Unwrap to get inner types for determining result type
         let lt_inner = if let CrowType::Result(inner) = &lt { *inner.clone() } else { lt };
         let rt_inner = if let CrowType::Result(inner) = &rt { *inner.clone() } else { rt };
+        // a side nothing has typed yet makes an arithmetic answer nothing
+        // has typed: a guess (`x - max[x]` read as a number while `x` was
+        // unknown) had stuck as the function's return type, since a type
+        // only widens from round to round, and a test's call of the
+        // function — typed last — was refused by it
+        let arithmetic = !matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte | BinOp::And | BinOp::Or);
+        if arithmetic && (matches!(lt_inner, CrowType::Unknown) || matches!(rt_inner, CrowType::Unknown)) {
+            return if has_result { CrowType::Result(Box::new(CrowType::Unknown)) } else { CrowType::Unknown };
+        }
         // Check if either side is a frame column (FrameCol or legacy Array(Str))
         let is_frame_col = |t: &CrowType| matches!(t, CrowType::FrameCol) || matches!(t, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Str));
         let result_type = match op {

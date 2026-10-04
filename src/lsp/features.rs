@@ -216,6 +216,8 @@ pub fn document_symbols(a: &Analysis) -> Vec<DocumentSymbol> {
     for stmt in &a.stmts {
         match stmt {
             Stmt::Line(n) => line = *n,
+            // (a standard module's functions, inlined, are not the document's)
+            Stmt::FnDecl { name, .. } if crate::modules::is_crow_fn(name) => {}
             Stmt::FnDecl { name, is_view, .. } => {
                 out.push(symbol(
                     name,

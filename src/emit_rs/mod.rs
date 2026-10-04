@@ -178,6 +178,10 @@ pub(crate) struct Emitter {
     pub(crate) view_mark: bool,
     pub(crate) closure_depth: usize,
     pub(crate) current_line: usize,
+    /// Whether the function being emitted is a standard module's written
+    /// in Crow (crate::modules::is_crow_fn): its stops name the line it
+    /// was called from (`line_now`), noted before the call.
+    pub(crate) in_crow_fn: bool,
     pub(crate) binop_counter: usize,
     pub(crate) move_target: Option<String>,
     pub(crate) pinned_module: Option<String>,
@@ -256,6 +260,7 @@ impl Emitter {
             view_mark: false,
             closure_depth: 0,
             current_line: 0,
+            in_crow_fn: false,
             binop_counter: 0,
             move_target: None,
             pinned_module: None,
@@ -320,9 +325,9 @@ impl Emitter {
             self.source_file.strip_suffix(".co").or_else(|| self.source_file.strip_suffix(".crow")).unwrap_or(&self.source_file)
         };
         if self.cur_fn.is_empty() {
-            format!("format!(\"{}:{{}}\", {})", stem, self.current_line)
+            format!("format!(\"{}:{{}}\", {})", stem, self.line_now())
         } else {
-            format!("format!(\"{}.{}:{{}}\", {})", stem, self.shown_fn_name(), self.current_line)
+            format!("format!(\"{}.{}:{{}}\", {})", stem, self.shown_fn_name(), self.line_now())
         }
     }
 
@@ -366,7 +371,7 @@ impl Emitter {
     /// What a runtime call that can refuse ends with: its value, or the
     /// program stops on this line with the runtime's reason.
     pub(crate) fn or_stop(&self) -> String {
-        format!(".unwrap_or_else(|e| crow_stop({}, e))", self.current_line)
+        format!(".unwrap_or_else(|e| crow_stop({}, e))", self.line_now())
     }
 
     /// A call argument as the program wrote it: the lowering marks a

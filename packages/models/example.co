@@ -66,7 +66,7 @@ sc = prepare.fit_scale[held.x_train]
 log['prepare: `len[held.y_train]` train `len[held.y_test]` test, means `sc.means`']
 fruit = prepare.labels[['pear', 'apple']]
 cd = prepare.codes[fruit, ['apple', 'pear', 'fig']]
-log['prepare: polynomial `prepare.polynomial[[[2.0, 3.0]], 2][0]`, onehot `prepare.onehot[[0, 2, 1]][1]`, codes `cd`']
+log['prepare: polynomial `prepare.polynomial[[[2.0, 3.0]], 2][0]`, onehot `onehot[[0.0, 2.0, 1.0], 3][1]`, codes `cd`']
 
 x1d = [[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]]
 bt = boost.fit[x1d, [0.0, 1.0, 4.0, 9.0, 16.0, 25.0], 40, 2, 0.5]

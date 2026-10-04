@@ -27,7 +27,6 @@ pub mod linalg;
 pub mod markdown;
 pub mod mask;
 pub mod math;
-pub mod nn;
 pub mod pool;
 pub mod rng;
 pub mod signal;

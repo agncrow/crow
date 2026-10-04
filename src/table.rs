@@ -205,6 +205,13 @@ impl Row {
         self.path.replace(' ', "")
     }
 
+    /// Whether the row's body is a function of the standard library written
+    /// in Crow (`crow!`): the lowering calls that function where it would
+    /// call a Rust row's runtime function.
+    pub fn is_crow(&self) -> bool {
+        self.path == IN_CROW
+    }
+
     /// The call's type, for inference and the lowering: the answer's, able
     /// to fail when a failure is a value.
     pub fn crow_type(&self) -> CrowType {
@@ -418,6 +425,9 @@ pub fn print(row: &Row, args: &[String], line: &str, trace: Option<&str>) -> Res
         } else {
             printed.push(k.print(&args[a], line));
         }
+    }
+    if row.is_crow() {
+        return Err(format!("a bug in Crow: `{}` is written in Crow, and its call was left to the runtime (an argument's kind not known before the program runs)", row.name));
     }
     let call = format!("{}({})", row.rust_path(), printed.join(", "));
     let captured = if READERS.contains(&row.name) { "crow_runtime::moments::now()" } else { "0.0" };
@@ -1008,6 +1018,57 @@ macro_rules! respond {
 /// its parameters and answer, and what a failure is (`never`, `stops`, or
 /// `value "kind"`). The interpreter's call is made from the same tokens the
 /// emitter prints, so the two cannot name different functions.
+/// The path of a row whose body is Crow (`crow!`).
+pub const IN_CROW: &str = "crow";
+
+/// The name of the program's function a Crow row's body is inlined as:
+/// the module's path and the name, behind an underscore no program
+/// spells (`_math_nn_relu`); `crate::modules::inline` makes them.
+pub fn crow_fn_name(row: &Row) -> String {
+    format!("_{}_{}", row.module.replace('.', "_"), row.name)
+}
+
+/// The Crow row of a module's name that takes these kinds, when it is one.
+pub fn crow_row(module: &str, name: &str, args: &[Arg]) -> Option<&'static Row> {
+    self::module(module, name, args).filter(|r| r.is_crow() && takes(r, args))
+}
+
+fn written_in_crow(name: &str) -> String {
+    format!("a bug in Crow: `{}` is written in Crow, and was called as a runtime function", name)
+}
+
+/// A value as a Crow row's parameter takes it, for the interpreter to hand
+/// the row's function a value nothing typed before the program ran: the
+/// kinds the standard library's Crow is written over.
+pub fn value_as(kind: Kind, v: &CrowValue) -> Result<CrowValue, String> {
+    Ok(match kind {
+        Kind::Tensor => CrowValue::ok(Value::NumArray(Box::new(read_tensor(v)?.into_owned()))),
+        Kind::Float => CrowValue::ok(Value::Float(read_float(v)?)),
+        Kind::Int | Kind::Whole => CrowValue::ok(Value::Int(read_int(v)?)),
+        Kind::Str => CrowValue::ok(Value::Str(read_str(v)?.to_string())),
+        Kind::Bool => CrowValue::ok(Value::Bool(read_bool(v)?)),
+        other => return Err(format!("a bug in Crow: a builtin written in Crow takes {} here, which the runtime cannot hand it", other.words())),
+    })
+}
+
+/// A row whose body is a function of the standard library written in Crow
+/// (src/modules/*.co; design rule 20): the table states its contract — what
+/// it takes, what it answers, how it fails — and both backends call the
+/// function the module's source is inlined as (`crow_fn_name`). The
+/// interpreter's closures here are never reached: a call whose kinds the
+/// lowering did not know picks the row as the program runs and hands the
+/// function its values through `value_as`.
+macro_rules! crow {
+    ($id:literal, $module:literal, $name:literal, ($($k:ident),*) -> $r:ident, $($fails:tt)+) => {
+        Row {
+            id: $id, name: $name, module: $module, path: IN_CROW,
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+),
+            call: |_args: &[CrowValue], _trace: &str| Err(written_in_crow($name)),
+            take: |_args: Vec<CrowValue>, _trace: &str| Err(written_in_crow($name)),
+        }
+    };
+}
+
 macro_rules! row {
     ($id:literal, $module:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, $($fails:tt)+) => {
         Row {
@@ -1149,6 +1210,7 @@ pub static ROWS: &[Row] = &[
     row!("core.input_prompt", "", "input", crow_runtime::core::input_prompt, (Str) -> Str, value "io"),
     row!("core.exit", "", "exit", crow_runtime::core::exit, () -> Unit, never),
     row!("core.exit_code", "", "exit", crow_runtime::core::exit_code, (Whole) -> Unit, never),
+    row!("core.halt", "", "halt", crow_runtime::core::halt, (Str) -> Unit, stops),
     row!("core.sleep_ms", "", "sleep", crow_runtime::core::sleep_ms, (Whole) -> Unit, stops),
     row!("core.sleep", "", "sleep", crow_runtime::core::sleep_secs, (Float) -> Unit, stops),
     row!("core.time", "", "time", crow_runtime::core::time, () -> Float, never),
@@ -1217,6 +1279,7 @@ pub static ROWS: &[Row] = &[
     row!("math.randn", "math", "randn", crow_runtime::math::randn, (Sizes) -> Tensor, stops),
     row!("math.full", "math", "full", crow_runtime::math::full, (Sizes, Float) -> Tensor, stops),
     row!("math.eye", "math", "eye", crow_runtime::math::eye, (Int) -> Tensor, stops),
+    row!("math.onehot", "math", "onehot", crow_runtime::math::onehot, (Tensor, Int) -> Tensor, stops),
     row!("math.linspace", "math", "linspace", crow_runtime::math::linspace, (Float, Float, Int) -> Tensor, stops),
     row!("math.arange", "math", "arange", crow_runtime::math::arange, (Float, Float, Float) -> Tensor, stops),
     row!("math.diag", "math", "diag", crow_runtime::math::diag, (Tensor) -> Tensor, stops),
@@ -1373,16 +1436,17 @@ pub static ROWS: &[Row] = &[
     row!("stats.anova", "math.stats", "anova", crow_runtime::stats::anova, (Groups) -> FloatMap, stops),
     row!("stats.kstest", "math.stats", "kstest", crow_runtime::stats::kstest, (Tensor, Str) -> FloatMap, stops),
     row!("stats.fit", "math.stats", "fit", crow_runtime::stats::fit, (Tensor, Str) -> FloatMap, stops),
-    // math.nn (shapes that do not meet, a target that is no class: the
+    // math.nn, written in Crow (src/modules/nn.co): the rows are its contract
+    // (shapes that do not meet, a target that is no class: the
     // reason, where a kernel panicked or a loss read a logit of 0)
-    row!("nn.relu", "math.nn", "relu", crow_runtime::nn::relu, (Tensor) -> Tensor, never),
-    row!("nn.sigmoid", "math.nn", "sigmoid", crow_runtime::nn::sigmoid, (Tensor) -> Tensor, never),
-    row!("nn.softmax", "math.nn", "softmax", crow_runtime::nn::softmax, (Tensor) -> Tensor, never),
-    row!("nn.gelu", "math.nn", "gelu", crow_runtime::nn::gelu, (Tensor) -> Tensor, never),
-    row!("nn.mse", "math.nn", "mse", crow_runtime::nn::mse, (Tensor, Tensor) -> Float, stops),
-    row!("nn.crossentropy", "math.nn", "crossentropy", crow_runtime::nn::crossentropy, (Tensor, Tensor) -> Float, stops),
-    row!("nn.bce", "math.nn", "bce", crow_runtime::nn::bce, (Tensor, Tensor) -> Float, stops),
-    row!("nn.linear", "math.nn", "linear", crow_runtime::nn::linear, (Tensor, Tensor, Tensor) -> Tensor, stops),
+    crow!("nn.relu", "math.nn", "relu", (Tensor) -> Tensor, never),
+    crow!("nn.sigmoid", "math.nn", "sigmoid", (Tensor) -> Tensor, never),
+    crow!("nn.softmax", "math.nn", "softmax", (Tensor) -> Tensor, never),
+    crow!("nn.gelu", "math.nn", "gelu", (Tensor) -> Tensor, never),
+    crow!("nn.mse", "math.nn", "mse", (Tensor, Tensor) -> Float, stops),
+    crow!("nn.crossentropy", "math.nn", "crossentropy", (Tensor, Tensor) -> Float, stops),
+    crow!("nn.bce", "math.nn", "bce", (Tensor, Tensor) -> Float, stops),
+    crow!("nn.linear", "math.nn", "linear", (Tensor, Tensor, Tensor) -> Tensor, stops),
     // chart (a window of no rows, series of two lengths: the reason, where
     // a negative window was a huge one compiled and one row interpreted,
     // and a shorter series cut the others)
@@ -1724,8 +1788,6 @@ impl Kind {
             Kind::Cells => "a column's values",
             Kind::Words => "a list",
             Kind::Sizes => "sizes",
-            Kind::Bytes => "bytes",
-            Kind::Stream => "stream",
             Kind::Groups => "tensors",
             Kind::Lists => "lists of text",
             Kind::IntMap | Kind::FloatMap | Kind::MapOf | Kind::MapRef | Kind::TextMap => "a map",

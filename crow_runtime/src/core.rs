@@ -441,6 +441,15 @@ pub fn sleep_ms(ms: i64) -> Result<(), String> {
     Ok(())
 }
 
+/// `halt[reason]`: the program stops with the reason, on the line of the
+/// call, as a builtin given what it cannot take does — a program's own
+/// precondition, and a standard module's written in Crow (spec, When a
+/// Program Stops). (Named `halt`, as `assert`'s own words have it: `stop`
+/// is a trading program's stop-loss, a bus's stop.)
+pub fn halt(reason: &str) -> Result<(), String> {
+    Err(reason.to_string())
+}
+
 /// `sleep[s]` of a float: seconds; one that is negative is refused.
 pub fn sleep_secs(s: f64) -> Result<(), String> {
     if s.is_nan() || s < 0.0 || s.is_infinite() {

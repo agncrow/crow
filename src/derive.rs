@@ -73,6 +73,10 @@ const BOUND_INPUTS: &[&str] = &["field", "slider", "checkbox", "toggle", "radio"
 /// handler calls, or bound to an input in a view. Every other fact is a
 /// constant for the life of the program.
 pub fn written_facts(fns: &BTreeMap<String, Vec<Stmt>>, facts: &BTreeSet<String>) -> BTreeSet<String> {
+    // (a standard module's function, inlined, writes no fact: its locals
+    // are its own, whatever the program calls its facts)
+    let fns: BTreeMap<String, Vec<Stmt>> = fns.iter().filter(|(n, _)| !crate::modules::is_crow_fn(n)).map(|(n, b)| (n.clone(), b.clone())).collect();
+    let fns = &fns;
     fn walk(stmts: &[Stmt], facts: &BTreeSet<String>, out: &mut BTreeSet<String>) {
         for st in stmts {
             match st {

@@ -907,7 +907,7 @@ impl<'a> Lowerer<'a> {
             FnKind::View
         } else if self.ctx.view_handlers.contains(name) {
             FnKind::Handler
-        } else if self.in_ui && assigns_any(body, &own_facts(name, &self.ctx.facts)) {
+        } else if self.in_ui && !crate::modules::is_crow_fn(name) && assigns_any(body, &own_facts(name, &self.ctx.facts)) {
             // (a script has no facts: its function's first assignment of a
             // name is a local, whatever the top level calls)
             FnKind::Helper
@@ -1575,7 +1575,9 @@ impl<'a> Lowerer<'a> {
     }
 
     fn is_fact(&self, name: &str) -> bool {
-        self.in_ui && self.ctx.facts.contains(name) && !self.scopes.iter().skip(1).any(|s| s.contains(name))
+        // (a standard module's function, inlined, has locals of its own:
+        // one named like a fact of the program is still its local)
+        self.in_ui && self.ctx.facts.contains(name) && !self.scopes.iter().skip(1).any(|s| s.contains(name)) && !crate::modules::is_crow_fn(&self.current_fn)
     }
 
     /// The type a variable takes from a value: a fact a ui program declares
@@ -2665,14 +2667,19 @@ impl<'a> Lowerer<'a> {
         };
         if indexes_value {
             // a name or `m.x` indexed is checked as the call it is written
-            // as, after its arguments
-            self.unscanned += 1;
+            // as, after its arguments; a call indexed (`f[x][0]`) is a call,
+            // its arguments saying of its callee what any call's do (it had
+            // been lowered unscanned, and a function only ever called so
+            // kept its parameters unknown)
             let base = match callee {
-                A::Ident(_) => self.muted(|l| l.lower_expr(callee))?,
-                A::FieldAccess { object, .. } if matches!(object.as_ref(), A::Ident(_)) => self.muted(|l| l.lower_expr(callee))?,
+                A::Ident(_) | A::FieldAccess { .. } if !matches!(callee, A::FieldAccess { object, .. } if !matches!(object.as_ref(), A::Ident(_))) => {
+                    self.unscanned += 1;
+                    let base = self.muted(|l| l.lower_expr(callee));
+                    self.unscanned -= 1;
+                    base?
+                }
                 _ => self.lower_expr(callee)?,
             };
-            self.unscanned -= 1;
             // an item of a value that can fail is read from its payload,
             // refused first when it failed — a function hands the error
             // back, a handler stops, the top level halts — as a field read
@@ -2969,6 +2976,7 @@ impl<'a> Lowerer<'a> {
             }
             let lowered = self.row_arguments(&m, &name, lowered);
             let target = match self.builtin_row(Some(&m), &name, &lowered) {
+                Some(row) if row.is_crow() => self.crow_target(row),
                 Some(row) => Target::Row(row),
                 None => {
                     self.check_handed_functions(&lowered);
@@ -3097,6 +3105,7 @@ impl<'a> Lowerer<'a> {
             None => (lowered, ty),
         };
         let target = match row {
+            Some(row) if row.is_crow() => self.crow_target(row),
             Some(row) => {
                 self.check_item(row, &lowered);
                 Target::Row(row)
@@ -3104,6 +3113,22 @@ impl<'a> Lowerer<'a> {
             None => Target::Runtime(name),
         };
         Ok(Expr::Call { target, args: lowered, ty, propagates })
+    }
+
+    /// A builtin written in Crow (crate::table, `crow!`): its call is a call
+    /// of the program's function its body is inlined as, the arguments read
+    /// as the row's parameters take them (`row_arguments`), the answer the
+    /// row's. Its stops name the line of this call (crate::modules).
+    fn crow_target(&mut self, row: &'static crate::table::Row) -> Target {
+        // (the copy for the row's own signature, were the function
+        // specialised by another call)
+        let given: Vec<CrowType> = row.params.iter().map(|k| k.crow_type()).collect();
+        let f = self.specialised(&crate::table::crow_fn_name(row), &given);
+        if self.pass == Pass::Final {
+            let current = self.current_fn.clone();
+            self.calls.entry(current).or_default().insert(f.clone());
+        }
+        Target::User(f)
     }
 
     /// The row a builtin's call runs, decided once, here, from its
@@ -4699,7 +4724,7 @@ mod tests {
             let r = refusal_of(src);
             assert!(r.contains(words), "{}\n--- wanted: {}", r, words);
         };
-        refuses("use math\nfn f[w]\n    return max[w]\nlog[grad[f][[3.0, 1.0]]]\n", "grad: f calls `max`, which is not differentiable");
+        refuses("use math\nfn f[w]\n    return prod[w]\nlog[grad[f][[3.0, 1.0]]]\n", "grad: f calls `prod`, which is not differentiable");
         refuses("use math\nfn f[w]\n    return w[0] * w[1]\nlog[grad[f][[3.0, 1.0]]]\n", "grad: f indexes a tensor");
         refuses("use math\nfn f[w]\n    t = 0.0\n    for x in w\n        t = t + x\n    return t\nlog[grad[f][[3.0, 1.0]]]\n", "grad: f walks a tensor");
         refuses("use math\nfn f[w, k]\n    return sum[w] * k\nlog[grad[f][[1.0, 2.0], 3.0]]\n", "a function grad differentiates takes tensors, or numbers alone — f takes a tensor, a number");
@@ -4965,5 +4990,38 @@ mod tests {
     fn a_loop_that_can_return_an_error_runs_in_order() {
         let ir = ir_of("fn f[xs]\n    out = for x in xs\n        if int[x] gt 0\n            x\n    return len[out]\nlog[f[['1', '2']]]\n");
         assert!(!loop_line(&ir, "for x in").ends_with("parallel"), "{}", ir);
+    }
+
+    /// A builtin written in Crow (math.nn, src/modules/nn.co) is its row's
+    /// call: the arguments read as the row takes them, the call the
+    /// module's function, the answer the row's; a misuse is refused before
+    /// the program runs with the row's words, naming the builtin the
+    /// program called and not the formula's innards.
+    #[test]
+    fn a_builtin_written_in_crow_is_its_rows_call() {
+        let ir = ir_of("use math, math.nn\nlog[relu[[-1.0, 2.0]]]\nlog[mse[[1.0, 2.0], [1.0, 4.0]]]\nlog[sum[relu[[[1.0, -2.0], [3.0, 0.5]]]]]\n");
+        assert!(ir.contains("pure _math_nn_relu(x: Tensor(Float)) -> Tensor(Float)"), "{}", ir);
+        assert!(ir.contains("call _math_nn_mse([1.0, 2.0], [1.0, 4.0])"), "{}", ir);
+        // (the row's rank rule: an element-wise formula keeps its argument's)
+        assert!(ir.contains("math.sum(call _math_nn_relu([[1.0, (neg 2.0)], [3.0, 0.5]]))"), "{}", ir);
+        assert!(!ir.contains("_math_nn_through_all"), "a function only the module's tests use is not inlined: {}", ir);
+        let r = refusal_of("use math, math.nn\nlog[relu[5]]\n");
+        assert!(r.contains("relu[] takes numbers, got an int"), "{}", r);
+        let r = refusal_of("use math, math.nn\nlog[mse[[1.0], 'x']]\n");
+        assert!(r.contains("mse[] takes numbers and numbers, got numbers and text"), "{}", r);
+    }
+
+    /// A call indexed (`f[x][0]`) types its callee as any call does; a
+    /// function whose parameter nothing has typed answers nothing typed
+    /// (not a number guessed from `x - max[x]`); and a gradient's list has
+    /// its items' rank only where every parameter shares it.
+    #[test]
+    fn an_indexed_call_and_an_untyped_parameter_type_as_calls_do() {
+        let ir = ir_of("use math\nfn f[x]\n    return x .* 2.0\nlog[f[[1.0]][0]]\n");
+        assert!(ir.contains("pure f(x: Tensor(Float, [1])) -> Tensor(Float, [1])"), "{}", ir);
+        let ir = ir_of("use math\nfn g[x]\n    e = exp[x - max[x]]\n    return e / sum[e]\nlog[1]\n");
+        assert!(ir.contains("pure g(x: ?) -> ?"), "{}", ir);
+        let r = refusal_of("use math, math.nn\nfn loss[w, y]\n    return mse[flatten[w], y]\ngrads = grad[loss][[[1.0], [2.0]], [1.0, 2.0]]\nlog[grads[0][0][0]]\n");
+        assert!(r.contains("the rank of the tensor is not known here"), "{}", r);
     }
 }

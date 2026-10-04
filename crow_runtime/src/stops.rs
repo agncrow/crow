@@ -10,6 +10,25 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+// ── the call's line ─────────────────────────────────────────────────
+
+thread_local! {
+    static CALL_LINE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The line of the program a standard module's function (one written in
+/// Crow, inlined into the program) was called from: the compiled program
+/// notes it before the call, and a stop inside the function names it,
+/// as the interpreter's does, never a line of the module's own source.
+pub fn at_line(line: usize) {
+    CALL_LINE.with(|l| l.set(line));
+}
+
+/// The line noted by [`at_line`].
+pub fn call_line() -> usize {
+    CALL_LINE.with(|l| l.get())
+}
+
 // ── indexes ─────────────────────────────────────────────────────────
 
 /// Where index `i` reads in a sequence of `len`: a negative index counts

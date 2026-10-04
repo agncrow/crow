@@ -465,7 +465,7 @@ impl Emitter {
     fn halt_at(&self, v: &str, at: &Decision) -> String {
         format!(
             "{{ eprintln!(\"runtime error: line {}: {} — {{}}\", {v}.reason); std::process::exit(1); }}",
-            self.current_line,
+            self.line_now(),
             at.refusal(),
             v = v
         )
@@ -801,7 +801,7 @@ impl Emitter {
                         _ => CrowType::Unknown,
                     };
                     obj = if matches!(ty, CrowType::Map(_)) {
-                        format!("(*{}.get_mut(\"{}\").unwrap_or_else(|| crow_stop({}, crow_runtime::stops::no_key(\"{}\"))))", obj, f, self.current_line, f)
+                        format!("(*{}.get_mut(\"{}\").unwrap_or_else(|| crow_stop({}, crow_runtime::stops::no_key(\"{}\"))))", obj, f, self.line_now(), f)
                     } else {
                         format!("{}.{}", obj, Self::rust_field(f))
                     };
@@ -814,10 +814,10 @@ impl Emitter {
                         _ => CrowType::Unknown,
                     };
                     obj = if matches!(ty, CrowType::Map(_)) {
-                        format!("(*{{ let _k = {i}; {o}.get_mut(&_k).unwrap_or_else(|| crow_stop({l}, crow_runtime::stops::no_key(&_k))) }})", i = idx, o = obj, l = self.current_line)
+                        format!("(*{{ let _k = {i}; {o}.get_mut(&_k).unwrap_or_else(|| crow_stop({l}, crow_runtime::stops::no_key(&_k))) }})", i = idx, o = obj, l = self.line_now())
                     } else {
                         let k = found.len();
-                        found.push(format!("let _at{k} = crow_runtime::stops::item({i}, {o}.len()).unwrap_or_else(|e| crow_stop({l}, e));", k = k, i = idx, o = obj, l = self.current_line));
+                        found.push(format!("let _at{k} = crow_runtime::stops::item({i}, {o}.len()).unwrap_or_else(|e| crow_stop({l}, e));", k = k, i = idx, o = obj, l = self.line_now()));
                         format!("{}[_at{}]", obj, k)
                     };
                     ty = next;
@@ -843,10 +843,10 @@ impl Emitter {
                         self.needs_crow_runtime = true;
                         self.line_after(&found, &format!(
                             "{{ let _i = {}; let mut _tmp = {}.to_vec(); let _idx = crow_runtime::stops::item(_i, _tmp.len()).unwrap_or_else(|e| crow_stop({}, e)); _tmp[_idx] = {} as f64; {} = crow_runtime::tensor::CrowTensor::from_vec(_tmp, {}.shape().to_vec()); }}",
-                            idx, obj, self.current_line, val, obj, obj
+                            idx, obj, self.line_now(), val, obj, obj
                         ));
                     }
-                    _ => self.line_after(&found, &format!("{{ let _i = {}; let _idx = crow_runtime::stops::item(_i, {}.len()).unwrap_or_else(|e| crow_stop({}, e)); {}[_idx] = {}; }}", idx, obj, self.current_line, obj, val)),
+                    _ => self.line_after(&found, &format!("{{ let _i = {}; let _idx = crow_runtime::stops::item(_i, {}.len()).unwrap_or_else(|e| crow_stop({}, e)); {}[_idx] = {}; }}", idx, obj, self.line_now(), obj, val)),
                 }
             }
             None => self.line_after(&found, &format!("{} = {};", obj, val)),
@@ -907,7 +907,7 @@ impl Emitter {
             CrowType::NumArray(inner, dims) => {
                 let elem = crate::type_infer::TypeContext::tensor_item(inner, dims);
                 self.needs_crow_runtime = true;
-                let line = self.current_line;
+                let line = self.line_now();
                 let walked = if matches!(elem, CrowType::NumArray(..)) {
                     format!("crow_runtime::core::walk_rows(&({})).unwrap_or_else(|e| crow_stop({}, e))", iter_str, line)
                 } else if matches!(elem, CrowType::Int) {
@@ -920,7 +920,7 @@ impl Emitter {
             CrowType::Json => {
                 self.needs_crow_runtime = true;
                 self.needs_serde_json = true;
-                (format!("crow_runtime::json::items(&({})).unwrap_or_else(|e| crow_stop({}, e))", iter_str, self.current_line), CrowType::Json)
+                (format!("crow_runtime::json::items(&({})).unwrap_or_else(|e| crow_stop({}, e))", iter_str, self.line_now()), CrowType::Json)
             }
             CrowType::Array(inner) => (iter_str, inner.as_ref().clone()),
             _ => (iter_str, CrowType::Unknown),

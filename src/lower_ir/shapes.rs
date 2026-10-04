@@ -73,6 +73,8 @@ pub(super) fn call_dims(name: &str, args: &[Expr]) -> Option<Dims> {
         // the last argument is the value every cell holds
         "full" if args.len() >= 2 => Some(sizes(&args[..args.len() - 1])),
         "eye" if args.len() == 1 => Some(vec![size(&args[0]), size(&args[0])]),
+        // a row per target, a column per class
+        "onehot" if args.len() == 2 => Some(vec![None, size(&args[1])]),
         "linspace" if args.len() == 3 => Some(vec![size(&args[2])]),
         // the last two axes swapped (the runtime's CrowTensor::transpose);
         // a list of rows is the matrix they stack to

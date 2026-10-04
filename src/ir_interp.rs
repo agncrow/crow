@@ -1615,6 +1615,12 @@ impl IrInterp {
     /// The length of a value read where it lies, by the row the IR names
     /// (or, when the values pick it, the row they pick).
     fn len_of(target: &Target, v: &CrowValue, trace: &str) -> Result<CrowValue, String> {
+        // a traced value's length is read through the kernel's side, as
+        // every call on one is (a function grad differentiates had read
+        // its tensor's length through the row, which does not take one)
+        if matches!(v.value, Value::Traced(_)) {
+            return crate::autograd_bridge::call("len", std::slice::from_ref(v));
+        }
         match target {
             Target::Row(row) => (row.call)(std::slice::from_ref(v), trace),
             _ => Self::core_rows("len", std::slice::from_ref(v), trace, false).unwrap_or_else(|| Err("len[] is not a builtin".into())),
@@ -1672,6 +1678,18 @@ impl IrInterp {
     /// a frame function given something other than a frame is the builtin
     /// (sort[xs], join[parts, sep]); then the builtins; then what only a
     /// walker can do.
+    /// A builtin written in Crow (crate::table, `crow!`) whose row the
+    /// values pick as the program runs — a call the lowering could not
+    /// decide, an argument's kind unknown to it: the row's function, handed
+    /// the values as its parameters take them. None where no Crow row takes
+    /// them (the registry answers, or refuses, as for any name).
+    fn crow_row_call(&mut self, module: &str, name: &str, vals: &[CrowValue]) -> Option<Result<CrowValue, String>> {
+        let kinds: Vec<crate::table::Arg> = vals.iter().map(crate::table::Arg::of_value).collect();
+        let row = crate::table::crow_row(module, name, &kinds)?;
+        let handed: Result<Vec<CrowValue>, String> = row.params.iter().zip(vals).map(|(k, v)| crate::table::value_as(*k, v)).collect();
+        Some(handed.and_then(|handed| self.call_user(&crate::table::crow_fn_name(row), handed)))
+    }
+
     fn bare_call(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
         if let Some(stop) = self.effect_refused(name, &vals) {
             return stop;
@@ -1698,6 +1716,11 @@ impl IrInterp {
         // unless a tensor is among the arguments
         let scalar_overlap = OVERLAPPING.contains(&name) && !vals.iter().any(|v| matches!(v.value, Value::NumArray(_)));
         if self.registry.has_function(name) && !scalar_overlap {
+            if let Some(m) = self.registry.module_name_for(name).map(str::to_string) {
+                if let Some(answer) = self.crow_row_call(&m, name, &vals) {
+                    return answer;
+                }
+            }
             let frame_fn = self.registry.module_name_for(name) == Some("frame");
             let first_is_frame = vals.first().map_or(false, |a| matches!(a.value, Value::Frame(_)));
             let core_too = crate::checker::BUILTINS.contains(&name);
@@ -2299,6 +2322,9 @@ impl IrInterp {
             }
         }
         if self.registry.is_loaded(module) {
+            if let Some(answer) = self.crow_row_call(module, name, &vals) {
+                return answer;
+            }
             return self.registry.call_in(module, name, &vals).map(|v| Self::stamp(name, v));
         }
         Err(format!("the IR interpreter does not run '{}.{}' yet", module, name))

@@ -2,9 +2,9 @@
 --- set (the rows shuffled from `seed`, so a split is the same every run),
 --- features standardised to a mean of zero and a spread of one by what
 --- the training rows showed, the products of features for a linear model
---- to bend with, and classes as columns of ones and zeros or names as
---- codes. `x` holds a row of features per sample, `y` a target or a
---- class for each.
+--- to bend with, and names as codes (classes as columns of ones and
+--- zeros are math's `onehot`). `x` holds a row of features per sample,
+--- `y` a target or a class for each.
 use math, math.stats
 
 struct Split [x_train, y_train, x_test, y_test]
@@ -93,19 +93,6 @@ fn polynomial[x, degree]
         expand[r, degree]
     return stack[rows]
 
---- a row of zeros with a one at `c`
-fn hot[c, width]
-    row = zeros[width]
-    row[c] = 1.0
-    return row
-
---- the classes 0 to k − 1 as k columns: row i has a one in column y[i]
-fn onehot[y]
-    width = int[max[tensor[y]]] + 1
-    rows = for c in y
-        hot[c, width]
-    return stack[rows]
-
 --- the distinct names in order, each standing for its position
 fn labels[names]
     seen = []
@@ -152,7 +139,7 @@ test expands_and_encodes[]
     assert[p.shape eq [1, 5]]
     assert[polynomial[[[2.0]], 3][0] eq [2.0, 4.0, 8.0]]
     assert[not polynomial[[[2.0]], 4].ok]
-    h = onehot[[0, 2, 1]]
+    h = onehot[[0.0, 2.0, 1.0], 3]
     assert[h.shape eq [3, 3]]
     assert[h[1] eq [0.0, 0.0, 1.0]]
     l = labels[['pear', 'apple', 'pear', 'fig']]

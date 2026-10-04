@@ -675,7 +675,24 @@ impl TypeContext {
         };
         let Some(p) = slot else { return false };
         let ours = matches!(p.1, CrowType::Unknown) || before.as_ref() == Some(&p.1);
-        if !ours || p.1 == *t {
+        // a tensor parameter the program's calls typed takes the shapes a
+        // test's calls hand it too: what the sizes disagree on is unknown
+        // (one call in the program had fixed a function's sizes, and a
+        // test's call of another size was refused by the shape the program's
+        // call gave the return)
+        if !ours {
+            if let (CrowType::NumArray(pe, pd), CrowType::NumArray(te, td)) = (&p.1, t) {
+                if pe == te && pd != td {
+                    let joined = CrowType::NumArray(pe.clone(), join_dims(pd, td));
+                    if joined != p.1 {
+                        p.1 = joined;
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+        if p.1 == *t {
             return false;
         }
         p.1 = t.clone();

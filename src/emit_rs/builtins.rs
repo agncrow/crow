@@ -142,7 +142,7 @@ impl Emitter {
             a.first().cloned().unwrap_or_default(),
             pool,
             declared.join(", "),
-            self.current_line
+            self.line_now()
         )
     }
 
@@ -189,7 +189,7 @@ impl Emitter {
             None => self.registry.emit_rust(name, &strs, &arg_types),
         };
         // a module stops on the line its call is on (modules::STOP_LINE)
-        emitted.map(|code| code.replace(crate::modules::STOP_LINE, &self.current_line.to_string())).unwrap_or_else(|e| format!("compile_error!({:?})", e))
+        emitted.map(|code| code.replace(crate::modules::STOP_LINE, &self.line_now())).unwrap_or_else(|e| format!("compile_error!({:?})", e))
     }
 
     pub(crate) fn module_call(&mut self, m: &str, f: &str, args: &[Expr], arg_strs: &[String], whole: &Expr) -> String {
@@ -269,7 +269,7 @@ impl Emitter {
                             let (ret, pick) = if ps.len() == 1 { ("crow_runtime::tensor::CrowTensor", "[0].clone()") } else { ("Vec<crow_runtime::tensor::CrowTensor>", "") };
                             return Some(format!(
                                 "|{}| -> {} {{ crow_runtime::autograd::gradient(&[{}], |_l| Ok(_traced_{}({}))).unwrap_or_else(|e| crow_stop({}, e)){} }}",
-                                cps.join(", "), ret, ps.join(", "), Self::rust_fn_name(fname), leaves.join(", "), self.current_line, pick
+                                cps.join(", "), ret, ps.join(", "), Self::rust_fn_name(fname), leaves.join(", "), self.line_now(), pick
                             ));
                         }
                         let dual = format!("_dual_{}", Self::rust_fn_name(fname));
@@ -442,13 +442,13 @@ impl Emitter {
                 self.pop_scope();
                 format!(
                     "{{ let _al = {}; let _ar = {}; if !({}) {{ crow_stop({}, crow_runtime::display::assert_failed(\"{}\", &crow_runtime::display::shown(&_al), &crow_runtime::display::shown(&_ar))); }} }}",
-                    ls, rs, cond, self.current_line, op
+                    ls, rs, cond, self.line_now(), op
                 )
             }
             "assert" if n == 1 || n == 2 => {
                 let cond = match &ty0 {
                     CrowType::Bool => a[0].clone(),
-                    CrowType::Result(_) => format!("{{ let _a = &({}); if !_a.ok {{ crow_stop({}, format!(\"cannot branch on an error value — {{}}\", _a.reason)); }} _a.value }}", a[0], self.current_line),
+                    CrowType::Result(_) => format!("{{ let _a = &({}); if !_a.ok {{ crow_stop({}, format!(\"cannot branch on an error value — {{}}\", _a.reason)); }} _a.value }}", a[0], self.line_now()),
                     CrowType::Int => format!("({}) != 0", a[0]),
                     CrowType::Str => format!("!({}).is_empty()", a[0]),
                     _ => format!("({}) != 0", a[0]),
@@ -456,9 +456,9 @@ impl Emitter {
                 // a failed assert stops with the interpreter's words, not
                 // the Rust expression it was printed as
                 if n == 2 {
-                    format!("if !({}) {{ crow_stop({}, format!(\"assertion failed: {{}}\", {})); }}", cond, self.current_line, a[1])
+                    format!("if !({}) {{ crow_stop({}, format!(\"assertion failed: {{}}\", {})); }}", cond, self.line_now(), a[1])
                 } else {
-                    format!("if !({}) {{ crow_stop({}, \"assertion failed\".to_string()); }}", cond, self.current_line)
+                    format!("if !({}) {{ crow_stop({}, \"assertion failed\".to_string()); }}", cond, self.line_now())
                 }
             }
             "error" if n == 1 || n == 2 => {

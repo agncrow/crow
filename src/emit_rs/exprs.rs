@@ -151,7 +151,7 @@ impl Emitter {
                             self.needs_crow_runtime = true;
                             format!(
                                 "{{ let _xs = &({}); let mut _v: Vec<f64> = Vec::with_capacity(_xs.len()); for (_i, _x) in _xs.iter().enumerate() {{ if !_x.ok {{ crow_stop({}, if _x.kind == \"missing\" {{ crow_runtime::stops::missing_cell(_i) }} else {{ format!(\"item {{}} of the list failed: {{}}\", _i, _x.reason) }}) }} _v.push(_x.value as f64); }} let _n = _v.len(); crow_runtime::tensor::CrowTensor::from_vec(_v, vec![_n]) }}",
-                                inner, self.current_line
+                                inner, self.line_now()
                             )
                         }
                         // a list of rows is a matrix: rows of one shape, or the
@@ -498,13 +498,13 @@ impl Emitter {
             return match op {
                 // a shape mismatch stops the program as the interpreter
                 // stops it, with the runtime's words, never a bare panic
-                "add" => format!("{}.try_elementwise(&{}, \"+\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.current_line),
-                "sub" => format!("{}.try_elementwise(&{}, \"-\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.current_line),
-                "mul" => format!("{}.try_matmul(&{}).unwrap_or_else(|e| crow_stop({}, e))", l, r, self.current_line),
+                "add" => format!("{}.try_elementwise(&{}, \"+\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
+                "sub" => format!("{}.try_elementwise(&{}, \"-\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
+                "mul" => format!("{}.try_matmul(&{}).unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
                 "div" => "compile_error!(\"use ./ for element-wise tensor division\")".to_string(),
-                "elemmul" => format!("{}.try_elementwise(&{}, \".*\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.current_line),
-                "elemdiv" => format!("{}.try_elementwise(&{}, \"./\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.current_line),
-                "elempow" => format!("{}.try_elementwise(&{}, \".^\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.current_line),
+                "elemmul" => format!("{}.try_elementwise(&{}, \".*\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
+                "elemdiv" => format!("{}.try_elementwise(&{}, \"./\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
+                "elempow" => format!("{}.try_elementwise(&{}, \".^\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
                 "eq" => format!("{} == {}", l, r),
                 "ne" => format!("{} != {}", l, r),
                 _ => format!("{} {} {}", l, op_str, r),
@@ -664,7 +664,7 @@ impl Emitter {
             "pow" => "pow",
             _ => return None,
         };
-        Some(format!("crow_runtime::stops::{}({}, {}).unwrap_or_else(|e| crow_stop({}, e))", f, l, r, self.current_line))
+        Some(format!("crow_runtime::stops::{}({}, {}).unwrap_or_else(|e| crow_stop({}, e))", f, l, r, self.line_now()))
     }
 
     fn unary(&mut self, op: &str, e: &Expr) -> String {
@@ -678,7 +678,7 @@ impl Emitter {
                     format!("{}.neg()", inner)
                 } else if matches!(ty, CrowType::Int) && !matches!(Emitter::raw(e), Expr::Const(..)) && !self.emitting_dual {
                     // only the smallest int has no negation
-                    format!("crow_runtime::stops::neg({}).unwrap_or_else(|e| crow_stop({}, e))", inner, self.current_line)
+                    format!("crow_runtime::stops::neg({}).unwrap_or_else(|e| crow_stop({}, e))", inner, self.line_now())
                 } else {
                     format!("(-{})", inner)
                 }
@@ -775,7 +775,7 @@ impl Emitter {
             .map(|i| {
                 let s = self.expr(i);
                 if matches!(self.tt(i), CrowType::Result(_)) {
-                    format!("{{ let _ix = &({}); if !_ix.ok {{ crow_stop({}, _ix.reason.clone()); }} _ix.value.clone() }}", s, self.current_line)
+                    format!("{{ let _ix = &({}); if !_ix.ok {{ crow_stop({}, _ix.reason.clone()); }} _ix.value.clone() }}", s, self.line_now())
                 } else {
                     s
                 }
@@ -791,7 +791,7 @@ impl Emitter {
                 // a row or a number as the type decided, through the runtime's
                 // one read (crow_runtime::core): an index outside, or a value
                 // of another rank, stops the program with the runtime's words
-                let line = self.current_line;
+                let line = self.line_now();
                 self.needs_crow_runtime = true;
                 if matches!(crate::type_infer::TypeContext::tensor_item(el, dims), CrowType::NumArray(..)) {
                     return format!("{{ let _i = {}; crow_runtime::core::row_at(&{}, _i).unwrap_or_else(|e| crow_stop({}, e)) }}", idx, b, line);
@@ -801,16 +801,16 @@ impl Emitter {
             }
             CrowType::Array(el) => {
                 let suffix = if Self::is_copy_type(el) { "" } else { ".clone()" };
-                format!("{{ let _i = {}; let _v = &{}; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop({}, e))]{} }}", idx, b, self.current_line, suffix)
+                format!("{{ let _i = {}; let _v = &{}; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop({}, e))]{} }}", idx, b, self.line_now(), suffix)
             }
             CrowType::Str | CrowType::Markup => {
-                format!("{{ let _s: Vec<char> = {}.chars().collect(); let _i = {}; _s[crow_runtime::stops::char_at(_i, _s.len()).unwrap_or_else(|e| crow_stop({}, e))].to_string() }}", b, idx, self.current_line)
+                format!("{{ let _s: Vec<char> = {}.chars().collect(); let _i = {}; _s[crow_runtime::stops::char_at(_i, _s.len()).unwrap_or_else(|e| crow_stop({}, e))].to_string() }}", b, idx, self.line_now())
             }
             CrowType::FrameCol => {
                 let getter = Self::cell_getter(&Self::inner(&self.tt(whole)));
                 // a column that can have missing cells: the cell is a result,
                 // a missing one an error
-                let line = self.current_line;
+                let line = self.line_now();
                 if matches!(self.tt(whole), CrowType::Result(_)) {
                     return format!(
                         "{{ let _i = {}; let _c = &{}; let _idx = crow_runtime::stops::item(_i, _c.len()).unwrap_or_else(|e| crow_stop({}, e)); let _ok = _c.valid[_idx]; let _why = if _ok {{ String::new() }} else {{ \"missing\".to_string() }}; CrowResult {{ ok: _ok, value: _c.{}(_idx), reason: _why.clone(), kind: _why, trace: vec![], captured: 0.0 }} }}",
@@ -821,7 +821,7 @@ impl Emitter {
             }
             CrowType::Map(_) => {
                 self.needs_crow_runtime = true;
-                format!("crow_runtime::core::map_key(&{}, &*({})).unwrap_or_else(|e| crow_stop({}, e))", b, idx_strs.join(", "), self.current_line)
+                format!("crow_runtime::core::map_key(&{}, &*({})).unwrap_or_else(|e| crow_stop({}, e))", b, idx_strs.join(", "), self.line_now())
             }
             // an element of a JSON value: JSON's null is an error value of
             // reason `null`, as the interpreter reads it
@@ -864,7 +864,7 @@ impl Emitter {
                 // (a call the IR says cannot fail: the argument goes as its
                 // parameter takes it, and a failed one stops)
                 CrowType::Result(_) if takes_failure => s,
-                CrowType::Result(t) => as_float(format!("{{ let _ix = &({}); if !_ix.ok {{ crow_stop({}, _ix.reason.clone()); }} _ix.value.clone() }}", s, self.current_line), &t),
+                CrowType::Result(t) => as_float(format!("{{ let _ix = &({}); if !_ix.ok {{ crow_stop({}, _ix.reason.clone()); }} _ix.value.clone() }}", s, self.line_now()), &t),
                 // (a tensor a gradient is handed is read: the local, or the
                 // record it is a field of, lives on)
                 CrowType::NumArray(..) if matches!(Emitter::raw(a), Expr::Local(..) | Expr::Field { .. }) => format!("{}.clone()", s),
@@ -914,7 +914,7 @@ impl Emitter {
         let obj = if matches!(oty, CrowType::Result(_)) {
             format!(
                 "({{ let _rf = ({}).clone(); if !_rf.ok {{ crow_stop({}, format!(\"cannot read '{}' of an error value — {{}}\", _rf.reason)) }} _rf }})",
-                obj, self.current_line, field
+                obj, self.line_now(), field
             )
         } else {
             obj
@@ -937,7 +937,7 @@ impl Emitter {
             }
             if matches!(inner.as_ref(), CrowType::Map(_)) {
                 self.needs_crow_runtime = true;
-                return format!("crow_runtime::core::map_key(&{}.value, \"{}\").unwrap_or_else(|e| crow_stop({}, e))", obj, field, self.current_line);
+                return format!("crow_runtime::core::map_key(&{}.value, \"{}\").unwrap_or_else(|e| crow_stop({}, e))", obj, field, self.line_now());
             }
         }
         let oinner = Self::inner(&oty);
@@ -964,12 +964,12 @@ impl Emitter {
                 "shape" => format!("vec![{f}.nrows() as i64, {f}.ncols() as i64]", f = f),
                 "columns" => format!("{}.columns.iter().map(|c: &String| c.clone()).collect::<Vec<String>>()", f),
                 "dtypes" => format!("{}.dtypes().iter().map(|d: &&str| d.to_string()).collect::<Vec<String>>()", f),
-                _ => format!("{}.col_native(\"{}\").unwrap_or_else(|| crow_stop({}, crow_runtime::stops::no_column(\"{}\")))", f, field, self.current_line, field),
+                _ => format!("{}.col_native(\"{}\").unwrap_or_else(|| crow_stop({}, crow_runtime::stops::no_column(\"{}\")))", f, field, self.line_now(), field),
             };
         }
         if matches!(oty, CrowType::Map(_)) {
             self.needs_crow_runtime = true;
-            return format!("crow_runtime::core::map_key(&{}, \"{}\").unwrap_or_else(|e| crow_stop({}, e))", obj, field, self.current_line);
+            return format!("crow_runtime::core::map_key(&{}, \"{}\").unwrap_or_else(|e| crow_stop({}, e))", obj, field, self.line_now());
         }
         if let CrowType::Struct(sname) = &oty {
             if matches!(sname.as_str(), "CrowShell" | "CrowFindResult" | "CrowElapsed" | "CrowReply") {
@@ -1118,7 +1118,13 @@ impl Emitter {
                     let elems: Vec<String> = items.iter().map(|i| self.owned_expr(i)).collect();
                     return format!("crow_runtime::tensor::CrowTensor::from_elements(&[{}]){}", elems.join(", "), self.or_stop());
                 }
+                // (a literal's numbers are constants, in a traced copy too:
+                // the tensor they make is wrapped as a constant where it is
+                // used — each number had been printed as a traced one, and
+                // `as f64` did not build)
+                let was = std::mem::replace(&mut self.emitting_traced, false);
                 let vals: Vec<String> = items.iter().map(|i| format!("{} as f64", self.expr(i))).collect();
+                self.emitting_traced = was;
                 return format!("crow_runtime::tensor::CrowTensor::from_vec(vec![{}], vec![{}])", vals.join(", "), items.len());
             }
         }
@@ -1808,7 +1814,8 @@ impl Emitter {
                         }
                     })
                     .collect();
-                return Some(format!("_traced_{}({})", Self::rust_fn_name(n), passed.join(", ")));
+                let call = format!("_traced_{}({})", Self::rust_fn_name(n), passed.join(", "));
+                return Some(self.at_call_line(n, call));
             }
             return None;
         }
@@ -1827,12 +1834,12 @@ impl Emitter {
         let stop = self.or_stop();
         let n = args.len();
         Some(match (name, n) {
-            ("sum", 1) | ("mean", 1) | ("exp", 1) | ("ln", 1) | ("sqrt", 1) | ("tanh", 1) | ("abs", 1) | ("relu", 1) | ("sigmoid", 1) | ("softmax", 1) | ("transpose", 1) | ("flatten", 1) => {
+            ("sum", 1) | ("mean", 1) | ("max", 1) | ("min", 1) | ("exp", 1) | ("ln", 1) | ("sqrt", 1) | ("tanh", 1) | ("abs", 1) | ("erf", 1) | ("floor", 1) | ("ceil", 1) | ("round", 1) | ("transpose", 1) | ("flatten", 1) => {
                 format!("crow_runtime::autograd::{}({})", name, a(0))
             }
-            ("sum", 2) | ("mean", 2) => format!("crow_runtime::autograd::{}_axis({}, ({}) as usize){}", name, a(0), plain(1), stop),
-            ("mse", 2) | ("bce", 2) | ("crossentropy", 2) => format!("crow_runtime::autograd::{}({}, {}){}", name, a(0), a(1), stop),
-            ("linear", 3) => format!("crow_runtime::autograd::linear({}, {}, {}){}", a(0), a(1), a(2), stop),
+            ("sum", 2) | ("mean", 2) | ("max", 2) | ("min", 2) => format!("crow_runtime::autograd::{}_axis({}, ({}) as usize){}", name, a(0), plain(1), stop),
+            ("clip", 3) => format!("crow_runtime::autograd::clip({}, {}, {}){}", a(0), a(1), a(2), stop),
+            ("onehot", 2) => format!("crow_runtime::autograd::Traced::constant(crow_runtime::math::onehot(&({}).value, ({}) as i64){})", a(0), plain(1), stop),
             ("reshape", k) if k >= 2 => {
                 let sizes: Vec<String> = (1..k).map(|i| format!("({}) as usize", plain(i))).collect();
                 format!("crow_runtime::autograd::reshape({}, vec![{}]){}", a(0), sizes.join(", "), stop)
@@ -1864,7 +1871,7 @@ impl Emitter {
         }
         self.needs_crow_runtime = true;
         crate::table::print(row, &strs, crate::modules::STOP_LINE, None)
-            .map(|code| code.replace(crate::modules::STOP_LINE, &self.current_line.to_string()))
+            .map(|code| code.replace(crate::modules::STOP_LINE, &self.line_now()))
             .unwrap_or_else(|e| format!("compile_error!({:?})", e))
     }
 
@@ -1923,12 +1930,35 @@ impl Emitter {
             }
         }
         let trace = self.trace_format_expr();
-        crate::table::print(row, &strs, &self.current_line.to_string(), Some(&trace)).unwrap_or_else(|e| format!("compile_error!({:?})", e))
+        crate::table::print(row, &strs, &self.line_now(), Some(&trace)).unwrap_or_else(|e| format!("compile_error!({:?})", e))
     }
 
     /// A user function's call: a view's or an element's tree handed to it
     /// is its markup; a handler calling a helper hands it the state and
     /// reads back what it wrote; a view calling a view hands it the state.
+    /// The line a stop names: the statement's, or, inside a standard
+    /// module's function written in Crow, the line of the call that
+    /// reached it (crow_runtime::stops::call_line, noted by `at_call_line`).
+    pub(crate) fn line_now(&self) -> String {
+        if self.in_crow_fn {
+            "crow_runtime::stops::call_line()".to_string()
+        } else {
+            self.current_line.to_string()
+        }
+    }
+
+    /// A call of a standard module's function written in Crow, the call's
+    /// line noted first so a stop inside it names this line (inside such a
+    /// function the note already holds the program's line).
+    pub(crate) fn at_call_line(&mut self, callee: &str, call: String) -> String {
+        if crate::modules::is_crow_fn(callee) && !self.in_crow_fn {
+            self.needs_crow_runtime = true;
+            format!("{{ crow_runtime::stops::at_line({}); {} }}", self.current_line, call)
+        } else {
+            call
+        }
+    }
+
     pub(crate) fn user_call(&mut self, name: &str, args: &[Expr], mut arg_strs: Vec<String>) -> String {
         let params: Vec<Ty> = self.fns.get(name).map(|f| f.params.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default();
         for (i, a) in args.iter().enumerate() {
@@ -1968,7 +1998,8 @@ impl Emitter {
         }
         // a helper outside the handler class that a render calls with no state
         let _ = map_literal_pairs;
-        format!("{}({})", Self::rust_fn_name(name), all.join(", "))
+        let call = format!("{}({})", Self::rust_fn_name(name), all.join(", "));
+        self.at_call_line(name, call)
     }
 }
 

@@ -16,9 +16,12 @@ use crate::ir::*;
 
 /// The builtins a traced function may call with a traced value.
 pub(crate) const DIFFERENTIABLE: &[&str] = &[
-    "sum", "mean", "exp", "ln", "sqrt", "tanh", "abs", "relu", "sigmoid", "softmax", "mse", "bce", "crossentropy", "linear", "transpose", "reshape", "flatten",
-    // read, never differentiated: a length, a conversion of a number
-    "len", "float", "int", "log",
+    "sum", "mean", "max", "min", "exp", "ln", "sqrt", "tanh", "abs", "erf", "clip", "transpose", "reshape", "flatten",
+    // piecewise constant: a constant of the tape (derivative 0)
+    "floor", "ceil", "round",
+    // read, never differentiated: a length, a conversion of a number, the
+    // one-hot rows of classes
+    "len", "float", "int", "log", "onehot",
 ];
 
 /// The builtins that make constants: their arguments are sizes or lists.
